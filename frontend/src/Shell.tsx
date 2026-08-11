@@ -46,6 +46,7 @@
 
 import { Button } from '@/components/ui/button';
 import { AdminScreen } from './features/admin';
+import { AppViewIsland } from './features/app-frame';
 import { BrowseScreen } from './features/apps/browse-screen';
 import { ProfileScreen } from './features/profile';
 import { LandingScreen } from './features/auth/landing';
@@ -305,17 +306,16 @@ export function Shell() {
           `platform` so a first paint before any render behaves as before,
           and chromeless needs no special case any more — it always lands on
           an app surface.
+
+          An ISLAND since #1085 chunk H (step 2), and the last region the
+          step-2 migration converts: features/app-frame owns #app-view, keeps
+          #app-content exactly as it was (empty, filled by public/js/** with
+          innerHTML) and adds one sibling, #app-frame-host, which owns the
+          embedded app's <iframe> end to end. That split is what lets the frame
+          survive a tab switch instead of being reloaded by the next
+          #app-content write — see features/app-frame/app-frame.tsx.
       */}
-      <div
-        id="app-view"
-        className="hidden flex flex-col"
-        data-app-surface="platform"
-        style={{ flex: "1", minHeight: "0", height: "0" }}
-      >
-        <div id="app-content" className="flex-1" style={{ minHeight: "0", overflow: "hidden" }}>
-          {/* Tab content renders here */}
-        </div>
-      </div>
+      <AppViewIsland />
       {/* Notifications dropdown (top-right anchored) — an ISLAND since #1079
           chunk B: features/notifications owns the whole subtree and
           public/js/notifications.js is retired. */}

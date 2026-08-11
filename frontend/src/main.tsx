@@ -75,6 +75,13 @@ import './features/dev-board/mount';
 // gesture that reads the resulting DOM on its next statement. Imported here so
 // the bridge exists before hydration rather than at first render of the island.
 import './features/staging/mount';
+// #1085 chunk H, step 2: publishes window.UsernodeReact.appFrame. This one is
+// the most timing-sensitive of the three — AppView.beginLaunch runs inside
+// PlatformUI.transition's reveal callback (so the frame exists before the zoom's
+// first frame paints) and reads back the frame element on its next line to
+// assign `src`. A bridge that only appeared at first render of the island would
+// miss that window and the eager launch would silently fall back.
+import './features/app-frame/mount';
 // #1084 chunk G: the retired public/js/dev-chat.js, moved into the bundle
 // verbatim. Imported HERE rather than from a Shell island for the same reason
 // as the dev board above — #dc-view is written into an empty #app-content at

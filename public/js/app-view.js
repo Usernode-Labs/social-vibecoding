@@ -780,13 +780,19 @@ const AppView = {
     AppView.tokenRefreshInterval = setInterval(async () => {
       await AppView.refreshToken(AppView.appData && AppView.appData.slug);
       // Rewrite the iframe src so the child app picks up the fresh token.
-      // Only when the App tab is the visible one; other tabs re-fetch on
-      // next render anyway. Reuses the inner deep link so a mid-session
-      // refresh doesn't yank the viewer back to the app root (#743).
-      const iframe = document.getElementById('app-iframe');
-      if (iframe && AppView.appData?.url
+      // Only when a frame is actually mounted. Reuses the inner deep link so a
+      // mid-session refresh doesn't yank the viewer back to the app root (#743).
+      //
+      // #1085 chunk H: through the frame seam, and note what "mounted" now
+      // covers. The frame survives a switch to the Dev tab (it is parked, not
+      // rebuilt), so this refresh reaches a parked frame too — which it must:
+      // "other tabs re-fetch on next render anyway" stopped being true the
+      // moment coming back stopped being a rebuild, and a parked app whose
+      // token expired is a running app whose API calls start failing.
+      const frame = AppView._appFrame();
+      if (frame.hasFrame() && AppView.appData?.url
           && AppView.tokenForSlug(AppView.appData.slug)) {
-        iframe.src = AppView.buildAppIframeSrc();
+        frame.setSrc(AppView.buildAppIframeSrc());
       }
     }, AppView.TOKEN_REFRESH_MS);
   },
@@ -968,21 +974,140 @@ const AppView = {
       ></iframe>`;
   },
 
-  // The cover: app icon + name on the theme background. `pinned` marks a
-  // cover that must never be revealed away (the screenshot state).
-  _launchCoverHtml(record, { id = 'app-launch-cover', pinned = false } = {}) {
+  // The cover's CONTENT, as data rather than markup (#1085 chunk H): the icon
+  // tile's kind and inner HTML (from Home.iconTileFor, the helper that paints
+  // every icon tile on the platform) plus the app's RAW name. The React cover
+  // and the DOM cover below are both built from this one descriptor — React
+  // escapes the text itself, _coverHtml calls escapeHtml — so the two can't
+  // drift apart.
+  _coverDescriptor(record) {
     const home = AppView._home();
     const tile = home && typeof home.iconTileFor === 'function'
       ? home.iconTileFor(record || {})
       : { kind: 'letter', html: escapeHtml(((record && record.name) || '?').charAt(0).toUpperCase()) };
-    const name = escapeHtml((record && record.name) || '');
+    return {
+      iconKind: tile.kind,
+      iconHtml: tile.html,
+      name: (record && record.name) || '',
+      note: 'Opening…',
+      spinner: false,
+    };
+  },
+
+  // The cover: app icon + name on the theme background. `pinned` marks a
+  // cover that must never be revealed away (the screenshot state).
+  _launchCoverHtml(record, opts = {}) {
+    return AppView._coverHtml(AppView._coverDescriptor(record), opts);
+  },
+
+  _coverHtml(cover, { id = 'app-launch-cover', pinned = false } = {}) {
     return `
       <div id="${id}" class="app-launch-cover"${pinned ? ' data-pinned="true"' : ''} aria-hidden="true">
-        <div class="app-icon-tile app-launch-cover-icon" data-icon="${tile.kind}">${tile.html}</div>
-        <p class="app-launch-cover-name">${name}</p>
-        <p class="app-launch-cover-note" id="${id}-note">Opening…</p>
+        <div class="app-icon-tile app-launch-cover-icon" data-icon="${cover.iconKind}">${cover.iconHtml}</div>
+        <p class="app-launch-cover-name">${escapeHtml(cover.name)}</p>
+        <p class="app-launch-cover-note" id="${id}-note">${escapeHtml(cover.note)}</p>
         <div class="dc-status-spinner-arc app-launch-cover-spinner hidden" id="${id}-spinner"></div>
       </div>`;
+  },
+
+  // ── The React seam for the App tab's app frame (#1085 chunk H, step 2) ──
+  //
+  // #app-iframe is React-owned now — frontend/src/features/app-frame/ — and it
+  // is the one element in this shell that must never be re-created behind the
+  // user's back: it holds ANOTHER APP'S live document, so a new element is a
+  // reload that throws away whatever they had inside it. Every path that used
+  // to build, rebuild, hide or drop that frame therefore goes through this
+  // seam, whose whole contract is "mutate the element you already have".
+  //
+  // Same adopt-or-fall-back resolution as _staging() further down.
+  _appFrame() {
+    return (typeof window !== 'undefined' && window.UsernodeReact
+      && window.UsernodeReact.appFrame) || AppView._appFrameDom;
+  },
+
+  // The DOM half of the pair: the pre-chunk-H code path, kept verbatim. Live
+  // only where the bundle is not — the node-side render tests load this file as
+  // a classic script into a stubbed document — and in that world it is the SOLE
+  // writer of these nodes, the same single-owner rule the island lives under.
+  //
+  // One method answers differently from the React bridge, deliberately:
+  // `keeps()` is always false here. This adapter has no frame that can survive
+  // an #app-content write, so "rebuild" is the only truthful answer it can
+  // give, and it is exactly the behaviour chunk H replaces.
+  _appFrameDom: {
+    _el(id) {
+      return (typeof document !== 'undefined' && document.getElementById)
+        ? document.getElementById(id) : null;
+    },
+    mount({ slug, cover = null, faded = true } = {}) {
+      const dom = AppView._appFrameDom;
+      const content = dom._el('app-content');
+      if (!content || !slug) return false;
+      content.innerHTML = `
+      <div class="app-launch-host w-full h-full">
+        ${AppView._appIframeHtml({ hidden: faded })}${cover ? AppView._coverHtml(cover) : ''}
+      </div>`;
+      return !!dom._el('app-iframe');
+    },
+    keeps() { return false; },
+    activate() { return !!AppView._appFrameDom._el('app-iframe'); },
+    // No-ops: in a DOM-only shell the next #app-content write is what removes
+    // the frame, exactly as it always was.
+    park() {},
+    unmount() {},
+    isActive() { return !!AppView._appFrameDom._el('app-iframe'); },
+    frame() { return AppView._appFrameDom._el('app-iframe'); },
+    hasFrame() { return !!AppView._appFrameDom._el('app-iframe'); },
+    setSrc(src) {
+      const el = AppView._appFrameDom._el('app-iframe');
+      if (!el || !src) return false;
+      el.src = src;
+      return true;
+    },
+    setOnLoad(fn) {
+      const el = AppView._appFrameDom._el('app-iframe');
+      if (!el) return false;
+      el.onload = fn || null;
+      return true;
+    },
+    hasCover() { return !!AppView._appFrameDom._el('app-launch-cover'); },
+    coverSpinner(visible) {
+      AppView._appFrameDom._el('app-launch-cover-spinner')
+        ?.classList.toggle('hidden', !visible);
+    },
+    coverNote(text) {
+      const note = AppView._appFrameDom._el('app-launch-cover-note');
+      if (note) note.textContent = text || '';
+    },
+    reveal({ reduceMotion = false } = {}) {
+      const dom = AppView._appFrameDom;
+      const iframe = dom._el('app-iframe');
+      if (iframe) iframe.style.opacity = '1';
+      const cover = dom._el('app-launch-cover');
+      if (!cover) return false;
+      // The screenshot state pins its cover: it is the subject of the shot.
+      if (cover.dataset && cover.dataset.pinned === 'true') return false;
+      if (reduceMotion) { cover.remove(); return false; }
+      cover.classList.add('app-launch-cover--out');
+      return true;
+    },
+    dropCover() { AppView._appFrameDom._el('app-launch-cover')?.remove(); },
+    stats() { return { mounts: 0, navigations: 0 }; },
+  },
+
+  // Hide the frame without dropping it: the App tab is no longer the surface on
+  // screen, but the app it holds keeps running. Called by every path that takes
+  // #app-content over for something else.
+  _parkAppFrame() {
+    AppView._appFrame().park();
+  },
+
+  // Drop the frame for good — the app is being LEFT, not parked. Also
+  // invalidates the issue-state announcement (#685): the WindowProxy that made
+  // it is going away with the frame.
+  _unmountAppFrame() {
+    AppView._issueStateSource = null;
+    AppView._appFrame().unmount();
   },
 
   // Mount the launch surface and start the app loading. Called from inside
@@ -1008,16 +1133,18 @@ const AppView = {
     // consistent to read. open() replaces it with the full detail payload.
     AppView.appData = rec;
 
-    content.innerHTML = `
-      <div class="app-launch-host w-full h-full">
-        ${AppView._appIframeHtml({ hidden: true })}
-        ${AppView._launchCoverHtml(rec)}
-      </div>`;
+    // #1085 chunk H: through the frame seam. The store write is flushed
+    // synchronously, so the element exists on the next line — which it has to,
+    // because this runs inside PlatformUI.transition's reveal callback and the
+    // whole point is that the document request goes out in the same tick as the
+    // tap.
+    const frame = AppView._appFrame();
+    frame.mount({ slug, cover: AppView._coverDescriptor(rec), faded: true });
     // #970: an app frame is on screen from this moment — the shell stops
     // reserving the home-indicator strip and forwards it to the app.
     AppView._setSurface('app');
 
-    const iframe = document.getElementById('app-iframe');
+    const iframe = frame.frame();
     if (!iframe) return false;
 
     const proceed = (src) => {
@@ -1028,7 +1155,7 @@ const AppView = {
       // refresh, different app) rebuilds instead of adopting.
       AppView._launchAdopt = { launchId, slug, src };
       AppView._watchLaunchLoad(iframe, launchId);
-      iframe.src = src;
+      frame.setSrc(src);
     };
 
     if (AppView.hasFreshToken(slug)) {
@@ -1087,7 +1214,14 @@ const AppView = {
       fn();
     }, ms));
 
+    // #1085 chunk H: the App tab's cover is React-owned, so its spinner and its
+    // note are store writes — a classList / textContent write into React-owned
+    // DOM gets reconciled away on the next render. The landing viewer's cover is
+    // still a hand-written node appended to a long-lived frame, and keeps the
+    // DOM path.
+    const isReactCover = coverId === 'app-launch-cover';
     at(AppView.LAUNCH_SPINNER_MS, () => {
+      if (isReactCover) { AppView._appFrame().coverSpinner(true); return; }
       document.getElementById(`${coverId}-spinner`)?.classList.remove('hidden');
     });
     at(AppView.LAUNCH_REVEAL_CAP_MS, () => {
@@ -1098,8 +1232,10 @@ const AppView = {
       reveal();
     });
     at(AppView.LAUNCH_SLOW_MS, () => {
+      const text = 'This is taking longer than expected…';
+      if (isReactCover) { AppView._appFrame().coverNote(text); return; }
       const note = document.getElementById(`${coverId}-note`);
-      if (note) note.textContent = 'This is taking longer than expected…';
+      if (note) note.textContent = text;
     });
   },
 
@@ -1126,6 +1262,25 @@ const AppView = {
     const timers = opts.timers || AppView._launchTimers;
     timers.forEach((t) => clearTimeout(t));
     timers.length = 0;
+
+    // #1085 chunk H: the App tab's frame and cover are React-owned, so the
+    // cross-fade is a pair of store writes rather than a style write and a
+    // `cover.remove()`. The fade-out timer stays HERE, with the constant it
+    // reads and the generation counter it belongs to; only the removal itself
+    // moved into the store.
+    //
+    // The landing viewer's surface (`app-viewer-cover` over #app-viewer-frame)
+    // is still hand-written DOM and keeps the path below.
+    if (iframeId === 'app-iframe' && coverId === 'app-launch-cover') {
+      const frame = AppView._appFrame();
+      if (frame.hasFrame() || frame.hasCover()) {
+        if (frame.reveal({ reduceMotion: AppView._reduceMotion() })) {
+          setTimeout(() => frame.dropCover(), AppView.LAUNCH_FADE_MS + 40);
+        }
+        return;
+      }
+    }
+
     const iframe = document.getElementById(iframeId);
     if (iframe) iframe.style.opacity = '1';
     const cover = document.getElementById(coverId);
@@ -1174,6 +1329,11 @@ const AppView = {
     // #1084 chunk G: this path replaces #app-content by hand, so retire any
     // interim React root that owns it first — see _teardownDevRoots.
     AppView._teardownDevRoots();
+    // #1085 chunk H: the shot paints its own (pinned, frameless) cover into
+    // #app-content, so the React frame host has to go — it would otherwise sit
+    // over it. Deliberately NOT converted: the shot is the one launch surface
+    // with no app behind it, and a React frame would try to load a real origin.
+    AppView._unmountAppFrame();
 
     const home = AppView._home();
     const apps = (home && Array.isArray(home._apps)) ? home._apps : [];
@@ -1208,11 +1368,13 @@ const AppView = {
     const content = document.getElementById('app-content');
     const appData = AppView.appData;
 
-    // #685: every render replaces the iframe (or removes it), so any
-    // prior issue-state announcement is stale. A WindowProxy keeps its
-    // identity across same-iframe navigations, so clearing here (not
-    // just on close) is what invalidates it on re-render.
-    AppView._issueStateSource = null;
+    // #685: an issue-state announcement is invalidated by the frame that made
+    // it going away, and a WindowProxy keeps its identity across same-iframe
+    // navigations, so it has to be cleared wherever the frame is replaced or
+    // dropped. That used to be "every render" — #1085 chunk H made a render
+    // that keeps the frame a real case, so the clear moved down into the three
+    // branches that don't keep it (both placeholder paths via
+    // _unmountAppFrame, and the rebuild at the bottom).
 
     // #1084 chunk G: every branch below replaces #app-content by hand, so
     // retire any interim React root that owns it first — see
@@ -1224,6 +1386,10 @@ const AppView = {
       // it is gone — retire the generation so its pending callbacks and the
       // adoption offer can't outlive the frame they belong to.
       AppView._teardownLaunch();
+      // #1085 chunk H: and drop the frame outright rather than parking it. The
+      // app is no longer running (creating / awaiting_secrets / error / gone),
+      // so there is nothing worth keeping alive behind the placeholder.
+      AppView._unmountAppFrame();
       let inner;
       if (appData?.status === 'creating') {
         inner = '<div class="status-dot creating"></div><p class="text-sm">App is spinning up...</p>';
@@ -1296,6 +1462,9 @@ const AppView = {
     // instead and re-render automatically once connectivity returns.
     if (window.Offline && Offline.isOffline()) {
       AppView._teardownLaunch();
+      // Same as the status branch above: offline, the frame would render a
+      // broken cross-origin document, so it goes rather than parks.
+      AppView._unmountAppFrame();
       content.innerHTML = `
         <div class="flex flex-col items-center justify-center h-full text-zinc-500 dark:text-zinc-400 gap-2 p-4 text-center">
           <p class="text-sm">This app needs a connection — reconnect to open it.</p>
@@ -1313,41 +1482,53 @@ const AppView = {
     }
 
     const iframeSrc = AppView.buildAppIframeSrc();
+    const frame = AppView._appFrame();
 
     // #931: one-shot adoption. beginLaunch may already have mounted this
     // exact frame during the open animation; read the offer and null it in
     // the same breath, so only the FIRST render after a launch can adopt.
-    // Every later render (WS status flip, swapToProduction, the offline
-    // retry, a post-merge reload) rebuilds as it always did.
     const adopt = AppView._launchAdopt;
     AppView._launchAdopt = null;
-    if (adopt
-        && adopt.launchId === AppView._launchId
-        && adopt.slug === appData.slug
-        && adopt.src === iframeSrc
-        && document.getElementById('app-iframe')) {
-      // Same app, same URL, frame already loading (or loaded) — touching
-      // the DOM here would restart the document load and undo the whole
-      // point of the eager launch. The surface flag still has to be
-      // asserted (#970): beginLaunch set it, but a render that adopts must
-      // not depend on that, or an adopted launch could keep a stale flag.
+    const adopts = !!adopt
+      && adopt.launchId === AppView._launchId
+      && adopt.slug === appData.slug
+      && adopt.src === iframeSrc
+      && frame.hasFrame();
+
+    // #1085 chunk H generalises that one-shot into a standing rule: if the
+    // frame React holds is ALREADY this app at ALREADY this url, this render
+    // must touch nothing. Rebuilding it would restart the document load —
+    // which is what App → Dev → App used to do, silently discarding whatever
+    // the user had on screen inside someone else's app. (The DOM adapter
+    // answers false here: it has no frame that survives an #app-content write,
+    // so for it every later render still rebuilds, exactly as before.)
+    if (adopts || frame.keeps({ slug: appData.slug, src: iframeSrc })) {
+      // The surface flag still has to be asserted (#970): beginLaunch set it,
+      // but a render that keeps the frame must not depend on that, or it could
+      // carry a stale flag over from the Dev surface it just left.
+      frame.activate();
       AppView._setSurface('app');
       return;
     }
     AppView._teardownLaunch();
+    // #685: this render DOES replace the frame, so the announcement goes.
+    AppView._issueStateSource = null;
 
-    content.innerHTML = AppView._appIframeHtml({ src: iframeSrc });
+    frame.mount({ slug: appData.slug, faded: false });
     // #970: full-bleed frame; the insets go to the app instead.
     AppView._setSurface('app');
 
-    const iframe = document.getElementById('app-iframe');
-    iframe.addEventListener('load', () => {
+    // `onload`, not addEventListener: the element outlives a render now, so a
+    // listener added per render would stack. It is the same single slot the
+    // reveal ladder writes, and the two are alternative paths over one frame.
+    frame.setOnLoad(() => {
       AppView.iframeFocused = true;
       // #970: the app's document is up — hand it the insets that apply to
       // this frame's rect. Also covers the token-refresh re-src, which
       // reloads the frame without re-rendering.
       AppView.scheduleSafeAreaBroadcast();
     });
+    frame.setSrc(iframeSrc);
   },
 
   // #21: fetch + render the "live on <sha> · PR #N" pill. Called on App
@@ -1572,6 +1753,13 @@ const AppView = {
     // chat, session, topic) and wants clearance above the home indicator.
     // Set once here rather than per branch — they all replace #app-content.
     AppView._setSurface('platform');
+
+    // #1085 chunk H: PARK the app frame, don't drop it. Dev mode takes
+    // #app-content over, but the app the user was just looking at is still the
+    // app they are working on — hiding its host leaves its document, its
+    // sockets and its unsaved state alive, so switching back is instant and
+    // lossless instead of a reload.
+    AppView._parkAppFrame();
 
     // Capture the Dev list's scroll position before any branch below
     // overwrites #app-content. #dev-forum-scroll only exists when the
