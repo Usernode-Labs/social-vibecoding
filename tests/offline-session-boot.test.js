@@ -40,7 +40,8 @@ const AUTH_SHARED = FRONTEND('features/auth/shared.ts');
 const AUTH_SCREENS_TSX = ['features/auth/landing.tsx', 'features/auth/login.tsx']
   .map(FRONTEND).join('\n');
 const AUTH_WAITING_TSX = FRONTEND('features/auth/waiting.tsx');
-const SETTINGS = read('js/settings.js');
+// Moved into the React bundle with #settings-screen (#1081 chunk D).
+const SETTINGS = FRONTEND('features/settings/settings.js');
 const HOME = read('js/home.js');
 const CSS = read('css/app.css');
 const HTML = read('index.html');

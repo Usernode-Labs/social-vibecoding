@@ -42,7 +42,7 @@ const APP_SRC = fs.readFileSync(
   'utf8'
 );
 const SETTINGS_SRC = fs.readFileSync(
-  path.join(__dirname, '..', 'public', 'js', 'settings.js'),
+  path.join(__dirname, '..', 'frontend', 'src', 'features', 'settings', 'settings.js'),
   'utf8'
 );
 const MIGRATE_SRC = fs.readFileSync(

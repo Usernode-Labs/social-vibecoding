@@ -257,7 +257,7 @@ test('cc_estimate SSE payload carries remainingSeconds', () => {
 test('settings modal has the experimental toggle wired to the endpoint', () => {
   const html = read('public/index.html');
   assert.match(html, /id="ai-progress-estimate"/, 'settings modal must have the checkbox');
-  const settings = read('public/js/settings.js');
+  const settings = read('frontend/src/features/settings/settings.js');
   assert.match(settings, /\/api\/me\/ai-progress-estimate/, 'settings.js must POST the toggle');
 });
 

@@ -7,8 +7,11 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const ROOT = path.join(__dirname, '..');
-const SETTINGS_SOURCE = fs.readFileSync(path.join(ROOT, 'public/js/settings.js'), 'utf8');
-const SHELL_SOURCE = fs.readFileSync(path.join(ROOT, 'frontend/src/Shell.tsx'), 'utf8');
+const SETTINGS_SOURCE = fs.readFileSync(path.join(ROOT, 'frontend/src/features/settings/settings.js'), 'utf8');
+// #1081 chunk D: the alerts pane's markup moved out of Shell.tsx into its own
+// component. Same markup, same assertions — only the file changed.
+const ALERTS_SOURCE = fs.readFileSync(
+  path.join(ROOT, 'frontend/src/features/settings/sections/alerts.tsx'), 'utf8');
 
 const CATEGORIES = [
   ['direct_interactions', 'Direct interactions', true],
@@ -23,9 +26,8 @@ test('settings renders clear user-facing category labels and descriptions', () =
   assert.match(SETTINGS_SOURCE,
     /\{ key: 'alerts', label: 'Notifications & alerts', group: 'Preferences' \}/,
     'the category controls are discoverable from the Settings navigation');
-  const block = SHELL_SOURCE.slice(
-    SHELL_SOURCE.indexOf('id="settings-mobile-push-preferences"'),
-    SHELL_SOURCE.indexOf('data-settings-section="home-panels"')
+  const block = ALERTS_SOURCE.slice(
+    ALERTS_SOURCE.indexOf('id="settings-mobile-push-preferences"')
   );
   assert.match(block, /Mobile push categories/);
   assert.match(block, /Activity notifications switch remains the master control/);

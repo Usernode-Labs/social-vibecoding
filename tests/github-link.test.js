@@ -208,7 +208,7 @@ test('the link surface is absent when no OAuth app is configured', () => {
     /if \(!githubLink\.isEnabled\(config\)\) return res\.status\(404\)\.json\(\{ error: 'not_found' \}\)/
   );
   // And the Settings section says so instead of offering a dead button.
-  const settingsSrc = fs.readFileSync(path.join(__dirname, '../public/js/settings.js'), 'utf8');
+  const settingsSrc = fs.readFileSync(path.join(__dirname, '../frontend/src/features/settings/settings.js'), 'utf8');
   assert.match(settingsSrc, /link\.available === false[\s\S]{0,300}not configured/);
 });
 
@@ -293,7 +293,7 @@ test('the Settings copy describes the grant it actually asks for', () => {
 
   // And the connected row states it too, driven by the server's `access`
   // field rather than a hardcoded claim.
-  const settingsSrc = fs.readFileSync(path.join(__dirname, '../public/js/settings.js'), 'utf8');
+  const settingsSrc = fs.readFileSync(path.join(__dirname, '../frontend/src/features/settings/settings.js'), 'utf8');
   assert.match(settingsSrc, /link\.access === 'identity'/);
   assert.match(settingsSrc, /holds no GitHub access token/);
   assert.match(settingsSrc, /github\.com\/settings\/applications/);

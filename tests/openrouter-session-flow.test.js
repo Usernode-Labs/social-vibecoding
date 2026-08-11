@@ -19,7 +19,7 @@ const appView = fs.readFileSync(
   'utf8',
 );
 const settings = fs.readFileSync(
-  path.join(__dirname, '..', 'public', 'js', 'settings.js'),
+  path.join(__dirname, '..', 'frontend', 'src', 'features', 'settings', 'settings.js'),
   'utf8',
 );
 const server = fs.readFileSync(

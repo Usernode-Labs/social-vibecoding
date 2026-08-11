@@ -151,7 +151,7 @@ test('the settings screen skips the request when the surface is unavailable', ()
   const fs = require('node:fs');
   const path = require('node:path');
   const settings = fs.readFileSync(
-    path.join(__dirname, '..', 'public', 'js', 'settings.js'), 'utf8'
+    path.join(__dirname, '..', 'frontend', 'src', 'features', 'settings', 'settings.js'), 'utf8'
   );
 
   assert.match(settings, /_cliAuthAvailable\(\)\s*\{/,
