@@ -283,11 +283,11 @@ export function ImportPrDialog() {
               code in the preview, so read the diff on GitHub first.
           */}
           <p className="text-xs text-zinc-500 mb-4">
-            A staging preview is built from the pull request's head commit, so it takes a few minutes to appear — and automated checks stay pending until it does. Rows marked
+            {"A staging preview is built from the pull request's head commit, so it takes a few minutes to appear — and automated checks stay pending until it does. Rows marked "}
             <span className="text-amber-600 dark:text-amber-400">
               from a fork
             </span>
-            are branches in someone else's repository: review the changes on GitHub before importing.
+            {" are branches in someone else's repository: review the changes on GitHub before importing."}
           </p>
           <div
             id="import-pr-list"
