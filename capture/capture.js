@@ -207,6 +207,28 @@ function settleMaxMs(env) {
   return (Number.isFinite(raw) && raw >= 0) ? raw : SETTLE_MAX_MS;
 }
 
+// ── Assertion polling ──
+//
+// The quiet window judges the page by what it EMITS — console output, page
+// errors, request lifecycle. Timers, rAF work, IndexedDB reads and
+// service-worker-served fetches emit none of those, so a screen can read as
+// "quiet" while it is still rendering. The flat 2s settle this replaced
+// masked that gap; shrinking it surfaced a wave of "Expected element was not
+// found" failures on exactly the data-driven routes (20 of this repo's own
+// declared checks in the first post-#1147 run). So presence assertions POLL:
+// a check whose element is already there passes on the first probe and pays
+// nothing; one whose screen is mid-render keeps being re-asked until it holds
+// or the cohort's shared deadline expires. The deadline is per COHORT, not
+// per check — ten missing selectors on one broken screen cost one ceiling,
+// which is what lets the group budget stay proportional to cohort count.
+const ASSERT_POLL_MS = 100;
+const ASSERT_MAX_MS = 5000;
+
+function assertMaxMs(env) {
+  const raw = parseInt((env || {}).TEST_ASSERT_MAX_MS, 10);
+  return (Number.isFinite(raw) && raw >= 0) ? raw : ASSERT_MAX_MS;
+}
+
 // An activity clock a page's listeners bump. Created per group and shared by
 // every cohort's settle, so a late error from cohort 1 still holds cohort 2's
 // window open — the page is one document either way.
@@ -1017,6 +1039,9 @@ async function runTestGroup(browser, group, opts) {
   const lead = tests[0];
   const quietMs = Number.isFinite(o.settleQuietMs) ? o.settleQuietMs : SETTLE_QUIET_MS;
   const maxMs = Number.isFinite(o.settleMaxMs) ? o.settleMaxMs : SETTLE_MAX_MS;
+  const assertMax = Number.isFinite(o.assertMaxMs) ? o.assertMaxMs : ASSERT_MAX_MS;
+  const assertPoll = Number.isFinite(o.assertPollMs) && o.assertPollMs > 0
+    ? o.assertPollMs : ASSERT_POLL_MS;
   const consoleErrors = [];
   const pushErr = (errKind, message, source) => {
     if (consoleErrors.length >= MAX_CONSOLE_ERRORS) return;
@@ -1113,7 +1138,6 @@ async function runTestGroup(browser, group, opts) {
         // then wait it out.
         activity.bump();
         await waitForQuiet(activity, { quietMs, maxMs, minMs: Math.min(SETTLE_MIN_MS, maxMs) });
-        sharedErrorCount = consoleErrors.length;
       } else {
         cohortFrom = consoleErrors.length;
         try {
@@ -1133,23 +1157,15 @@ async function runTestGroup(browser, group, opts) {
         await waitForQuiet(activity, { quietMs, maxMs });
       }
 
-      // Frozen per cohort, for the same reason it used to be frozen per group:
-      // a straggling async error must not split one render into contradictory
-      // verdicts across the checks judging it.
-      const cohortErrors = ci === 0
-        ? consoleErrors.slice(0, sharedErrorCount)
-        : consoleErrors.slice(0, sharedErrorCount).concat(consoleErrors.slice(cohortFrom));
-      const errorCount = cohortErrors.length;
-
-      // Per-check presence assertions against the currently rendered view.
-      for (const t of cohort.tests) {
-        let failureReason = loadFailure;
-        if (!failureReason && t.expectSelector) {
+      // One probe of a test's presence assertions against the currently
+      // rendered view. Returns '' when they hold, else the failure reason.
+      const probePresence = async (t) => {
+        if (t.expectSelector) {
           let found = false;
           try { found = !!(await page.$(t.expectSelector)); } catch { found = false; }
-          if (!found) failureReason = `Expected element "${t.expectSelector}" was not found`;
+          if (!found) return `Expected element "${t.expectSelector}" was not found`;
         }
-        if (!failureReason && t.expectText) {
+        if (t.expectText) {
           let found = false;
           try {
             // innerText reflects RENDERED text, including CSS text-transform —
@@ -1164,8 +1180,49 @@ async function runTestGroup(browser, group, opts) {
               t.expectText
             );
           } catch { found = false; }
-          if (!found) failureReason = `Expected text "${t.expectText}" was not found on the page`;
+          if (!found) return `Expected text "${t.expectText}" was not found on the page`;
         }
+        return '';
+      };
+
+      // Poll the cohort's assertions until every one holds or the shared
+      // deadline expires (see ASSERT_MAX_MS). The settle above only waited
+      // for the page to stop EMITTING; a screen rendered by timers, rAF or
+      // service-worker-served fetches goes quiet before it is done, and a
+      // one-shot probe here judged those screens mid-render. A check whose
+      // element is present pays a single probe; only a cohort with a check
+      // still failing keeps waiting, and never past its one shared ceiling.
+      const presenceReasons = new Map();
+      if (!loadFailure) {
+        const assertDeadlineAt = Date.now() + assertMax;
+        let pending = cohort.tests;
+        for (;;) {
+          const still = [];
+          for (const t of pending) {
+            const reason = await probePresence(t);
+            presenceReasons.set(t.index, reason);
+            if (reason) still.push(t);
+          }
+          pending = still;
+          const leftMs = assertDeadlineAt - Date.now();
+          if (!pending.length || leftMs <= 0) break;
+          await sleep(Math.min(assertPoll, leftMs));
+        }
+      }
+
+      // Frozen per cohort, for the same reason it used to be frozen per group:
+      // a straggling async error must not split one render into contradictory
+      // verdicts across the checks judging it. Frozen AFTER the poll, so an
+      // error that fires while assertions wait is still heard — the flat
+      // settle this replaced would have been listening through that window.
+      if (ci === 0) sharedErrorCount = consoleErrors.length;
+      const cohortErrors = ci === 0
+        ? consoleErrors.slice(0, sharedErrorCount)
+        : consoleErrors.slice(0, sharedErrorCount).concat(consoleErrors.slice(cohortFrom));
+      const errorCount = cohortErrors.length;
+
+      for (const t of cohort.tests) {
+        let failureReason = loadFailure || presenceReasons.get(t.index) || '';
         // Console errors fail the check unless it opted out. A failed load /
         // missing assertion already set failureReason.
         if (!failureReason && !t.allowConsoleErrors && errorCount > 0) {
@@ -1198,9 +1255,11 @@ const GROUP_EXTRA_CHECK_MS = 1000;
 
 // Extra allowance for each hash cohort past the first. A cohort costs a hash
 // write plus one settle, not a navigation — but a settle can run to
-// SETTLE_MAX_MS, so the budget has to grow with cohort count or a full
-// six-cohort group would be timed out for doing exactly what it was told to.
-const GROUP_EXTRA_COHORT_MS = 4000;
+// SETTLE_MAX_MS and a cohort with failing checks polls its assertions up to
+// ASSERT_MAX_MS more, so the budget has to grow with cohort count or a full
+// six-cohort group with one broken screen per cohort would be timed out for
+// doing exactly what it was told to.
+const GROUP_EXTRA_COHORT_MS = 8000;
 
 // Run the whole declared suite through a bounded worker pool, each group in
 // its own browser context. Two layers of batching:
@@ -1256,6 +1315,8 @@ async function runTests(browser, tests, opts) {
   const settleOpts = {
     settleQuietMs: Number.isFinite(o.settleQuietMs) ? o.settleQuietMs : settleQuietMs(env),
     settleMaxMs: Number.isFinite(o.settleMaxMs) ? o.settleMaxMs : settleMaxMs(env),
+    assertMaxMs: Number.isFinite(o.assertMaxMs) ? o.assertMaxMs : assertMaxMs(env),
+    assertPollMs: Number.isFinite(o.assertPollMs) ? o.assertPollMs : ASSERT_POLL_MS,
   };
   const startedAt = now();
   let ran = 0;
@@ -1403,4 +1464,4 @@ if (require.main === module) {
 // file whose BEHAVIOUR (how many navigations it makes, whether it starts a
 // recording) is the thing under test, and it takes its page from the browser
 // it is handed, so a fake browser exercises it without Chromium.
-module.exports = { parseCookie, resolveTargets, resolveDeviceScaleFactor, parseTargetViewport, parseCompanion, mediaEnabled, resolveTests, captureTarget, runTests, runTestGroup, groupTestsByUrl, groupTestsByDocument, groupTests, cohortsOf, hashGroupCap, waitForQuiet, makeActivityClock, settleQuietMs, settleMaxMs, poolSize, testTimeoutMs, testsDeadlineMs, setFrameSink, CHROMIUM_LAUNCH_ARGS };
+module.exports = { parseCookie, resolveTargets, resolveDeviceScaleFactor, parseTargetViewport, parseCompanion, mediaEnabled, resolveTests, captureTarget, runTests, runTestGroup, groupTestsByUrl, groupTestsByDocument, groupTests, cohortsOf, hashGroupCap, waitForQuiet, makeActivityClock, settleQuietMs, settleMaxMs, assertMaxMs, poolSize, testTimeoutMs, testsDeadlineMs, setFrameSink, CHROMIUM_LAUNCH_ARGS };
