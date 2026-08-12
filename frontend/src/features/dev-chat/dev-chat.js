@@ -43,6 +43,14 @@
 // reset me back to Sonnet".
 const MODEL_STORAGE_KEY = 'usernode:dc:model';
 
+// A `?shot=` screenshot-state deep link is a standing request, not a
+// one-shot: _maybeOpenShotOptions keeps trying until the surface is actually
+// on screen or this window closes. Comfortably inside the capture harness's
+// own 5s presence poll, and short enough that a wrong ?shot= value costs
+// nothing. Both are only ever reached from a ?shot= URL.
+const SHOT_OPTIONS_WAIT_MS = 4000;
+const SHOT_OPTIONS_RETRY_MS = 100;
+
 function loadStoredModel() {
   try {
     const v = localStorage.getItem(MODEL_STORAGE_KEY);
@@ -1059,7 +1067,14 @@ const DevChat = {
     if (DevChat._isOpenRouterSession()) return false;
     const b = DevChat.budget;
     if (!b) return false;
-    if (window.Settings?.state?.hasApiKey) return false;
+    // A key on file bypasses the allowance entirely, so exhaustion stops
+    // nothing and there is nothing to offer. Except the staging DEMO key
+    // (#1055): `?demo=1` reports a fake `…7f2c` on file so a reviewer can
+    // see the key-on-file branch of the meter, and that key cannot be used
+    // for anything — reading it as a real one suppressed the very
+    // out-of-credits card the demo state exists to show.
+    const settings = window.Settings?.state;
+    if (settings?.hasApiKey && !settings.demoKey) return false;
     const userOut = typeof b.spentCents === 'number' && typeof b.limitCents === 'number'
       && b.spentCents >= b.limitCents;
     const globalOut = typeof b.globalSpentCents === 'number' && typeof b.globalLimitCents === 'number'
@@ -1208,6 +1223,8 @@ const DevChat = {
   // location.hash, and every cohort after the first got a plain composer.
   // Same guard, per active fragment.
   _shotOptionsHash: null,
+  _shotOptionsTimer: null,
+  _shotOptionsDeadline: 0,
   _shotVenueSheetHash: null,
 
   // Read defensively, like the `?shot=` reads themselves: the composer's
@@ -1415,8 +1432,8 @@ const DevChat = {
   // Screenshot-state deep links (#1055):
   //   ?shot=session-options               → the menu itself, open
   //   ?shot=session-options-instructions  → the CLI instructions card
-  // Once per addressed session (see _shotOptionsHash), and only when the
-  // composer is actually on screen —
+  // Once per addressed session (see _shotOptionsHash), and only once the
+  // composer is actually on screen (waited for, see _tryOpenShotOptions) —
   // a re-render must not pop the menu back open under the user. `restore` is
   // the one exception, passed by renderChatView when the menu it just
   // dismissed was open a moment ago: reopening what was already open is not
@@ -1429,23 +1446,66 @@ const DevChat = {
     let shot = null;
     try { shot = new URLSearchParams(location.search).get('shot'); } catch { /* ignore */ }
     if (shot !== 'session-options' && shot !== 'session-options-instructions') return;
+    DevChat._shotOptionsDeadline = Date.now() + SHOT_OPTIONS_WAIT_MS;
+    DevChat._tryOpenShotOptions(shot, addr);
+  },
+
+  // The open is committed on SUCCESS and retried until it succeeds or the
+  // window above closes, because everything it needs can legitimately be
+  // not-ready-yet on a cold deep link: the composer is written synchronously
+  // by renderChatView but LAID OUT a frame or more later (offsetParent stays
+  // null while the dev screen is still being revealed), and
+  // session-options.js publishes whenever the shell's script queue reaches
+  // it. The first cut read either as "not now" *after* stamping
+  // _shotOptionsHash, so the next render early-returned and the surface
+  // never appeared at all — and on a session with nothing running there is
+  // no next render to try again with. Bounded twice over: by the deadline,
+  // and by the address still matching, so navigating away can't leave a
+  // timer behind.
+  _tryOpenShotOptions(shot, addr) {
+    if (DevChat._shotOptionsTimer) {
+      clearTimeout(DevChat._shotOptionsTimer);
+      DevChat._shotOptionsTimer = null;
+    }
+    if (DevChat._addressKey() !== addr) return;
+    const again = () => {
+      if (Date.now() >= DevChat._shotOptionsDeadline) return;
+      DevChat._shotOptionsTimer = setTimeout(
+        () => DevChat._tryOpenShotOptions(shot, addr), SHOT_OPTIONS_RETRY_MS
+      );
+    };
     const btn = document.getElementById('dc-budget-options');
-    if (!btn || btn.offsetParent === null) return;
-    DevChat._shotOptionsHash = addr;
+    if (!btn || btn.offsetParent === null || !window.SessionOptions) { again(); return; }
     // Deferred a frame: the composer was written synchronously just above
     // and the kit's flip/clamp placement needs the button's settled rect.
     requestAnimationFrame(() => {
+      if (DevChat._addressKey() !== addr) return;
       if (shot === 'session-options-instructions') {
-        if (!window.SessionOptions) return;
         DevChat._optionsCard = SessionOptions.openInstructions({
           state: DevChat._sessionOptionsState(),
           onClose: () => { DevChat._optionsCard = null; },
         });
-        return;
+      } else {
+        DevChat.openSessionOptions(btn);
+        requestAnimationFrame(() => DevChat._assertOptionsMenuOpaque());
       }
-      DevChat.openSessionOptions(btn);
-      requestAnimationFrame(() => DevChat._assertOptionsMenuOpaque());
+      if (DevChat._shotOptionsShowing(shot)) DevChat._shotOptionsHash = addr;
+      else again();
     });
+  },
+
+  // Ask the DOCUMENT, not the return value. With a kit present
+  // openInstructions hands its panel to the kit's modal shell and never
+  // attaches the overlay it built, so a truthy handle is not evidence the
+  // card is on screen; the card's own `<pre>` is. The menu variant keeps
+  // its handle as a second witness because the touch idiom draws an action
+  // sheet rather than a popover.
+  _shotOptionsShowing(shot) {
+    if (shot === 'session-options-instructions') {
+      const pre = document.getElementById('dc-options-commands');
+      return !!(pre && pre.isConnected);
+    }
+    return !!(document.querySelector('.un-popover') || DevChat._optionsMenu);
   },
 
   // Same regression lock as home.js's card menu (#847): a translucent

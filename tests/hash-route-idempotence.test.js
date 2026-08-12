@@ -170,7 +170,11 @@ test('dev chat\'s shot latches key on the address, not on the document', () => {
   const options = body(devChat, '  _maybeOpenShotOptions(');
   assert.match(options, /if \(DevChat\._shotOptionsHash === addr && !restore\) return;/,
     'an explicit restore still re-opens at the same address');
-  assert.match(options, /DevChat\._shotOptionsHash = addr;/);
+  // The latch WRITE lives in _tryOpenShotOptions now — it is the thing that
+  // knows whether the surface actually came up (see the retry test below) —
+  // and it still records the ADDRESS, which is what this test is about.
+  assert.match(body(devChat, '  _tryOpenShotOptions('),
+    /if \(DevChat\._shotOptionsShowing\(shot\)\) DevChat\._shotOptionsHash = addr;/);
   // Both read the address through the same defensive accessor the `?shot=`
   // reads already use — the composer's unit tests evaluate this module in a
   // sandbox with a document but no `location`.
@@ -178,6 +182,36 @@ test('dev chat\'s shot latches key on the address, not on the document', () => {
   for (const fn of [venue, options]) {
     assert.match(fn, /const addr = DevChat\._addressKey\(\);/);
   }
+});
+
+// The other half of "the shot belongs to the address": it also has to
+// actually HAPPEN there. `?shot=session-options-instructions` had one chance
+// at one animation frame — the composer button had to be laid out and
+// session-options.js published by then, and a miss stamped the latch anyway,
+// so the next render early-returned and the card never appeared (on an idle
+// session there is no next render either). It waits now, bounded.
+test('the session-options shot keeps trying until the surface is actually up', () => {
+  const fn = body(devChat, '  _tryOpenShotOptions(');
+  assert.match(fn, /if \(DevChat\._addressKey\(\) !== addr\) return;/,
+    'a retry that outlived its address stops instead of opening the wrong thing');
+  assert.match(fn, /if \(Date\.now\(\) >= DevChat\._shotOptionsDeadline\) return;/,
+    'and the retry window is bounded');
+  assert.match(fn, /if \(!btn \|\| btn\.offsetParent === null \|\| !window\.SessionOptions\) \{ again\(\); return; \}/,
+    'not-laid-out-yet and not-published-yet are RETRIES, not failures');
+  assert.match(fn, /else again\(\);/, 'and so is an open that produced nothing');
+  assert.match(devChat, /DevChat\._shotOptionsDeadline = Date\.now\(\) \+ SHOT_OPTIONS_WAIT_MS;/,
+    'the entry point opens the window');
+  assert.match(devChat, /const SHOT_OPTIONS_WAIT_MS = \d+;/, 'both bounds are named constants');
+  assert.match(devChat, /const SHOT_OPTIONS_RETRY_MS = \d+;/);
+
+  // Success is read off the DOCUMENT: with a kit present, openInstructions
+  // hands its panel to the kit's modal shell and never attaches the overlay
+  // it built, so a truthy handle proves nothing about what is on screen.
+  const showing = body(devChat, '  _shotOptionsShowing(');
+  assert.match(showing, /getElementById\('dc-options-commands'\)/,
+    "the instructions card's own <pre> — the element the #1055 check asserts");
+  assert.match(showing, /pre\.isConnected/);
+  assert.match(showing, /\.un-popover/, 'and the menu variant reads its popover');
 });
 
 test('the venue-sheet and session-options cohorts are sibling fragments of one document', () => {

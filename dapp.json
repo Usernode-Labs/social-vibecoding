@@ -565,9 +565,9 @@
       "expectSelector": "button.attr-chip[data-attr-field=\"assignee\"] .attr-avatar-empty"
     },
     {
-      "name": "Dev board cards offer Explore in dev chat from the card ⋯ menu (#827)",
+      "name": "Dev board cards offer Explore in dev chat — on the card face or in its ⋯ menu (#827, #1135)",
       "path": "/?demo=1&shot=card-menu&card=proposal:9000043#app/usernode-2d5619/dev",
-      "expectSelector": ".dev-card-menu [data-menu-idx][title^=\"Open a dev chat with a message about this PR\"]",
+      "expectSelector": "[data-proposal-id=\"9000043\"][title^=\"Open a dev chat with a message about this PR\"], .dev-card-menu [data-menu-idx][title^=\"Open a dev chat with a message about this PR\"]",
       "expectText": "Explore in dev chat"
     },
     {
@@ -1910,10 +1910,10 @@
       "expectText": "resets Monday 00:00 UTC"
     },
     {
-      "name": "Out of daily credits: the chat offers all four ways to keep building (#967, #1049)",
+      "name": "Out of daily credits: the chat offers every way to keep building (#967, #1049, #1086)",
       "path": "/?demo=1#app/usernode-2d5619/dev/sessions/990402",
       "expectSelector": "[data-credits-card] [data-credits-hash=\"#settings/connectors\"]",
-      "expectText": "Four ways to keep building right now"
+      "expectText": "ways to keep building right now"
     },
     {
       "name": "Settings has a Claude & ChatGPT connectors section with the connector URL (#967)",
