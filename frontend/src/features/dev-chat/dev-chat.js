@@ -43,6 +43,16 @@
 // reset me back to Sonnet".
 const MODEL_STORAGE_KEY = 'usernode:dc:model';
 
+// A `?shot=` screenshot-state deep link names a SURFACE, not a moment, so
+// the open is held up for a window rather than attempted once — see
+// _holdShotSurface. The window covers the capture harness's whole judging
+// window (capture/capture.js: a settle of up to 1.5s, then presence
+// assertions polled for up to 5s, and a cohort that fails is reloaded and
+// judged again), with room for a slow preview on top. Only ever reached
+// from a `?shot=` URL.
+const SHOT_HOLD_MS = 10000;
+const SHOT_HOLD_RETRY_MS = 100;
+
 function loadStoredModel() {
   try {
     const v = localStorage.getItem(MODEL_STORAGE_KEY);
@@ -1059,7 +1069,14 @@ const DevChat = {
     if (DevChat._isOpenRouterSession()) return false;
     const b = DevChat.budget;
     if (!b) return false;
-    if (window.Settings?.state?.hasApiKey) return false;
+    // A key on file bypasses the allowance entirely, so exhaustion stops
+    // nothing and there is nothing to offer. Except the staging DEMO key
+    // (#1055): `?demo=1` reports a fake `…7f2c` on file so a reviewer can
+    // see the key-on-file branch of the meter, and that key cannot be used
+    // for anything — reading it as a real one suppressed the very
+    // out-of-credits card the demo state exists to show.
+    const settings = window.Settings?.state;
+    if (settings?.hasApiKey && !settings.demoKey) return false;
     const userOut = typeof b.spentCents === 'number' && typeof b.limitCents === 'number'
       && b.spentCents >= b.limitCents;
     const globalOut = typeof b.globalSpentCents === 'number' && typeof b.globalLimitCents === 'number'
@@ -1209,6 +1226,9 @@ const DevChat = {
   // Same guard, per active fragment.
   _shotOptionsHash: null,
   _shotVenueSheetHash: null,
+  // The one live surface hold (see _holdShotSurface). At most one: the two
+  // deep links below are different `?shot=` values, so no URL asks for both.
+  _shotHold: null,
 
   // Read defensively, like the `?shot=` reads themselves: the composer's
   // unit tests evaluate this module in a bare sandbox that has a document
@@ -1395,57 +1415,167 @@ const DevChat = {
     return reason || 'flag_off';
   },
 
+  // ── A `?shot=` surface is HELD up, not opened once (#1055, #1086) ──
+  //
+  // A screenshot-state deep link asks for a surface to be ON SCREEN WHEN THE
+  // PAGE IS JUDGED, and both ends of that are late. The anchor is written by
+  // renderChatView but LAID OUT a frame or more later (offsetParent stays
+  // null while the dev screen is still being revealed) and its module
+  // publishes whenever the shell's script queue reaches it — so opening on
+  // the first render can be too early. And anything that lands afterwards
+  // can take the surface back down: a budget response injecting the
+  // out-of-credits card, a websocket push, a stream frame each re-render the
+  // transcript, the transcript auto-scrolls to follow (initScrollTracking's
+  // observer), and the kit dismisses an open popover on ANY scroll outside
+  // it (native.js's presentPopover onScroll). One open is therefore not
+  // enough in either direction: opening on the first render alone lost the
+  // race in #1055, and stopping at the first success lost all nine venue /
+  // options checks to the `?demo=1` credits card, which lands ~1.5s later —
+  // inside every one of their poll windows.
+  //
+  // So the open is re-asserted every SHOT_HOLD_RETRY_MS for SHOT_HOLD_MS:
+  // opened when the anchor is ready and the surface is down, left alone when
+  // it is up. It stops at the window, on a fragment change (the grouped
+  // capture runner moves between sessions by writing location.hash — a hold
+  // must not follow it), and on a TRUSTED click or keypress, which is a
+  // human driving the page rather than a capture judging it. Every entry
+  // point is gated on a `?shot=` URL, so no real session reaches any of it.
+  _holdShotSurface(key, addr, spec) {
+    const live = DevChat._shotHold;
+    if (live && live.key === key && live.addr === addr) return;
+    DevChat._releaseShotHold();
+    const hold = {
+      key,
+      addr,
+      spec,
+      timer: null,
+      until: Date.now() + SHOT_HOLD_MS,
+      onUserInput: (e) => { if (!e || e.isTrusted) DevChat._releaseShotHold(); },
+    };
+    DevChat._shotHold = hold;
+    try {
+      document.addEventListener('pointerdown', hold.onUserInput, true);
+      document.addEventListener('keydown', hold.onUserInput, true);
+    } catch { /* no document (unit sandbox): the tick still bounds itself */ }
+    DevChat._tickShotHold();
+  },
+
+  _releaseShotHold() {
+    const hold = DevChat._shotHold;
+    DevChat._shotHold = null;
+    if (!hold) return;
+    if (hold.timer) clearTimeout(hold.timer);
+    try {
+      document.removeEventListener('pointerdown', hold.onUserInput, true);
+      document.removeEventListener('keydown', hold.onUserInput, true);
+    } catch { /* ignore */ }
+  },
+
+  _tickShotHold() {
+    const hold = DevChat._shotHold;
+    if (!hold) return;
+    if (DevChat._addressKey() !== hold.addr || Date.now() >= hold.until) {
+      DevChat._releaseShotHold();
+      return;
+    }
+    if (hold.timer) clearTimeout(hold.timer);
+    hold.timer = setTimeout(DevChat._tickShotHold, SHOT_HOLD_RETRY_MS);
+    if (hold.spec.showing() || !hold.spec.ready()) return;
+    // Deferred a frame: on the render that armed this hold the anchor was
+    // written synchronously just above, and the kit's flip/clamp placement
+    // needs its settled rect.
+    requestAnimationFrame(() => {
+      if (DevChat._shotHold !== hold) return;
+      if (DevChat._addressKey() !== hold.addr) return;
+      if (hold.spec.showing() || !hold.spec.ready()) return;
+      hold.spec.open();
+    });
+  },
+
+  // Ask the DOCUMENT whether the surface is up, never a handle: the kit
+  // owns the teardown (outside click, Escape, scroll) and a dismissed
+  // popover leaves its Promise handle set until the microtask that clears
+  // it runs. `.un-action-sheet` is the same surface on touch, where the
+  // kit's adaptive menu draws a sheet instead.
+  _shotSurfaceShowing() {
+    return !!document.querySelector('.un-popover, .un-action-sheet');
+  },
+
   // Screenshot-state deep link `?shot=venue-sheet` (#1086): the sheet the
-  // change control opens, with all six venues on it. Once per addressed
-  // session (see _shotVenueSheetHash) and only when the control is actually
-  // on screen, exactly like the options menu below — a re-render must not
-  // pop it open under the user.
+  // change control opens, with all six venues on it. Armed once per
+  // addressed session (see _shotVenueSheetHash) — after its window closes a
+  // re-render must not pop it open under the user — and held up for that
+  // window by the machinery above.
   _maybeOpenShotVenueSheet() {
     const addr = DevChat._addressKey();
-    if (DevChat._shotVenueSheetHash === addr) return;
     let shot = null;
     try { shot = new URLSearchParams(location.search).get('shot'); } catch { return; }
     if (shot !== 'venue-sheet') return;
-    const btn = document.querySelector('#dc-venue-slot [data-venue-change]');
-    if (!btn || btn.offsetParent === null) return;
+    const anchor = () => document.querySelector('#dc-venue-slot [data-venue-change]');
+    // Already armed for this session: the hold owns the reopen, but a
+    // re-render is the one moment worth asking for it NOW rather than at
+    // the next tick.
+    if (DevChat._shotVenueSheetHash === addr) { DevChat._tickShotHold(); return; }
     DevChat._shotVenueSheetHash = addr;
-    requestAnimationFrame(() => DevChat.openVenueSheet(btn));
+    DevChat._holdShotSurface('venue-sheet', addr, {
+      ready: () => {
+        const btn = anchor();
+        return !!(btn && btn.offsetParent !== null && window.BuildVenues);
+      },
+      showing: () => DevChat._shotSurfaceShowing(),
+      open: () => DevChat.openVenueSheet(anchor()),
+    });
   },
 
   // Screenshot-state deep links (#1055):
   //   ?shot=session-options               → the menu itself, open
   //   ?shot=session-options-instructions  → the CLI instructions card
-  // Once per addressed session (see _shotOptionsHash), and only when the
-  // composer is actually on screen —
-  // a re-render must not pop the menu back open under the user. `restore` is
-  // the one exception, passed by renderChatView when the menu it just
-  // dismissed was open a moment ago: reopening what was already open is not
-  // popping anything open, and it is what keeps a shot deep link showing its
-  // state across a re-render. Both are still gated on a `?shot=` URL, so a
-  // real session never reaches either path.
+  // Armed once per addressed session (see _shotOptionsHash) and held up the
+  // same way. `restore` is renderChatView telling us it just dismissed a
+  // menu that was open a moment ago: reopening what was already open is not
+  // popping anything open, so the hold is ticked immediately instead of
+  // leaving the composer bare until the next one.
   _maybeOpenShotOptions(restore) {
     const addr = DevChat._addressKey();
-    if (DevChat._shotOptionsHash === addr && !restore) return;
     let shot = null;
     try { shot = new URLSearchParams(location.search).get('shot'); } catch { /* ignore */ }
     if (shot !== 'session-options' && shot !== 'session-options-instructions') return;
-    const btn = document.getElementById('dc-budget-options');
-    if (!btn || btn.offsetParent === null) return;
+    if (DevChat._shotOptionsHash === addr) {
+      if (restore) DevChat._tickShotHold();
+      return;
+    }
     DevChat._shotOptionsHash = addr;
-    // Deferred a frame: the composer was written synchronously just above
-    // and the kit's flip/clamp placement needs the button's settled rect.
-    requestAnimationFrame(() => {
-      if (shot === 'session-options-instructions') {
-        if (!window.SessionOptions) return;
-        DevChat._optionsCard = SessionOptions.openInstructions({
-          state: DevChat._sessionOptionsState(),
-          onClose: () => { DevChat._optionsCard = null; },
-        });
-        return;
-      }
-      DevChat.openSessionOptions(btn);
-      requestAnimationFrame(() => DevChat._assertOptionsMenuOpaque());
+    DevChat._holdShotSurface(`options:${shot}`, addr, {
+      ready: () => {
+        const btn = document.getElementById('dc-budget-options');
+        return !!(btn && btn.offsetParent !== null && window.SessionOptions);
+      },
+      showing: () => DevChat._shotOptionsShowing(shot),
+      open: () => {
+        if (shot === 'session-options-instructions') {
+          DevChat._optionsCard = SessionOptions.openInstructions({
+            state: DevChat._sessionOptionsState(),
+            onClose: () => { DevChat._optionsCard = null; },
+          });
+          return;
+        }
+        DevChat.openSessionOptions(document.getElementById('dc-budget-options'));
+        requestAnimationFrame(() => DevChat._assertOptionsMenuOpaque());
+      },
     });
+  },
+
+  // With a kit present openInstructions hands its panel to the kit's modal
+  // shell and never attaches the overlay it built, so a truthy handle is
+  // not evidence the card is on screen; the card's own `<pre>` is. (A modal
+  // is not scroll-dismissed either, so that variant's hold only ever waits
+  // for the open — it never has to repair one.)
+  _shotOptionsShowing(shot) {
+    if (shot === 'session-options-instructions') {
+      const pre = document.getElementById('dc-options-commands');
+      return !!(pre && pre.isConnected);
+    }
+    return DevChat._shotSurfaceShowing();
   },
 
   // Same regression lock as home.js's card menu (#847): a translucent

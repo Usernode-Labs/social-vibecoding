@@ -97,6 +97,7 @@ const turnWatchdog = require('../services/turn-watchdog');
 const recoveryRetry = require('../services/recovery-retry');
 const turnLifecycle = require('../services/turn-lifecycle');
 const turnEffects = require('../services/turn-effects');
+const llmTelemetry = require('../services/llm-telemetry');
 const TURN_WRAPUP_EFFECT_KEYS = Object.freeze({
   llm: 'turn_wrapup_llm',
   pills: 'turn_wrapup_pills',
@@ -108,6 +109,63 @@ const HEADLESS_WRAPUP_EFFECT_KEYS = Object.freeze({
   message: 'headless_wrapup_message',
   spend: 'headless_wrapup_spend',
 });
+
+// Content-free caller context for services/llm.js. This object is consumed
+// locally by the telemetry wrapper and is never spread into a provider
+// request body.
+function invocationTelemetry(pool, session, component, backend = 'mayor') {
+  return {
+    pool,
+    appId: session && session.app_id,
+    sessionId: session && session.id,
+    backend,
+    component,
+  };
+}
+
+function recordLocalCodingInvocation(pool, {
+  session, turnId, turn, outcome, component, attemptNumber, correlationId, startedAt,
+}) {
+  if (!turnId) return;
+  if (!['completed', 'failed', 'stopped', 'aborted'].includes(outcome)) return;
+  // A queued/offered turn that was declined before acceptance never invoked
+  // the local model. Likewise, a vanished/abandoned offer is not enough
+  // evidence to claim a provider invocation; only run-terminal outcomes are.
+  const acceptedAt = turn && turn.accepted_at ? new Date(turn.accepted_at) : null;
+  if (!acceptedAt || !Number.isFinite(acceptedAt.getTime())) return;
+  const finishedAt = turn && turn.finished_at ? new Date(turn.finished_at) : new Date();
+  const durationMs = acceptedAt && Number.isFinite(acceptedAt.getTime())
+    && Number.isFinite(finishedAt.getTime())
+    ? Math.max(0, finishedAt.getTime() - acceptedAt.getTime())
+    : Math.max(0, Date.now() - startedAt.getTime());
+  const normalizedOutcome = outcome === 'completed'
+    ? 'success'
+    : (outcome === 'stopped' || outcome === 'aborted') ? 'cancelled' : 'error';
+  void llmTelemetry.record(pool, {
+    invocationKey: `local_agent:${turnId}`,
+    timestamp: acceptedAt || startedAt,
+    appId: session.app_id,
+    sessionId: session.id,
+    provider: 'local',
+    backend: 'coding_agent',
+    component,
+    requestedModel: null,
+    servedModel: null,
+    billingPath: 'local_subscription',
+    inputTokens: null,
+    cacheReadInputTokens: null,
+    cacheWriteInputTokens: null,
+    outputTokens: null,
+    reasoningOutputTokens: null,
+    costUsd: null,
+    costSource: 'unavailable',
+    durationMs,
+    outcome: normalizedOutcome,
+    stopReason: outcome || null,
+    attemptNumber,
+    correlationId,
+  });
+}
 const estimateGuard = require('../services/estimate-guard');
 // #892: what an unearned "nearly done" phrase is replaced with. Mirrors the
 // user-facing wording of ccPhaseLabel() in public/js/cc-progress-summary.js
@@ -4131,6 +4189,11 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
               signal: stopHandle.abort.signal,
               onToken: (text) => send('token', { text }),
               apiKey: userApiKey,
+              telemetryContext: invocationTelemetry(
+                pool,
+                session,
+                dataIters === 0 ? 'mayor_phase_1' : 'mayor_data_iteration',
+              ),
             });
             await noteModelFallback(mayor1);
 
@@ -4373,6 +4436,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
               signal: stopHandle.abort.signal,
               onToken: (text) => send('token', { text }),
               apiKey: userApiKey,
+              telemetryContext: invocationTelemetry(pool, session, 'mayor_data_iteration'),
             });
             await noteModelFallback(retry);
             const retryText = retry.stopReason === 'refusal'
@@ -4902,6 +4966,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
             toolChoice: { type: 'auto' },
             onToken: (text) => send('token', { text }),
             apiKey: userApiKey,
+            telemetryContext: invocationTelemetry(pool, session, 'mayor_phase_2'),
           }));
         let mayor2;
         let mayor2Disposition = 'executed';
@@ -6842,6 +6907,11 @@ async function runHeadlessSession({
         model: selectedModel,
         tools,
         apiKey: userApiKey,
+        telemetryContext: invocationTelemetry(
+          pool,
+          session,
+          dataIters === 0 ? 'headless_decision' : 'mayor_data_iteration',
+        ),
       });
       await noteModelFallback(mayor1);
 
@@ -7069,6 +7139,7 @@ async function runHeadlessSession({
             model: selectedModel,
             tools: [DISPATCH_TOOL],
             apiKey: userApiKey,
+            telemetryContext: invocationTelemetry(pool, session, 'headless_decision'),
           }),
         });
         const mayor2 = decisionEffect.response;
@@ -7267,6 +7338,7 @@ async function runHeadlessSession({
               // turn. Other wrap-up outcomes ignore the tool.
               tools: [SUGGEST_ANSWERS_TOOL],
               apiKey: userApiKey,
+              telemetryContext: invocationTelemetry(pool, session, 'headless_wrapup'),
             }),
           });
           const mayor3 = phase3Effect.response;
@@ -7334,6 +7406,7 @@ async function runHeadlessSession({
             tools,
             toolChoice: { type: 'none' },
             apiKey: userApiKey,
+            telemetryContext: invocationTelemetry(pool, session, 'headless_wrapup'),
           }),
         });
         const mayor2 = directEffect.response;
@@ -7678,6 +7751,7 @@ async function runRecoveredWrapUp({
       tools: [SUGGEST_REPLIES_TOOL],
       toolChoice: { type: 'auto' },
       apiKey: userApiKey,
+      telemetryContext: invocationTelemetry(pool, session, 'mayor_phase_2'),
     }));
 
     let mayor;
@@ -8181,6 +8255,16 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
       journal: activeTurn.journal,
       turnId: activeTurn.turnId || null,
       agentBackend: activeTurn.backend || 'claude_code',
+      telemetryComponent: activeTurn.telemetryComponent
+        || (activeTurn.mode === 'scout' ? 'coding_agent_scout'
+          : activeTurn.mode === 'build' ? 'coding_agent_build' : null),
+      telemetryCorrelationId: activeTurn.telemetryCorrelationId || activeTurn.turnId || null,
+      telemetryAttemptNumber: activeTurn.telemetryAttemptNumber || activeTurn.attemptNumber || 1,
+      requestedModel: activeTurn.model || null,
+      startedAt: activeTurn.startedAt || null,
+      attemptNumber: activeTurn.attemptNumber || 1,
+      billingByok: activeTurn.byok === true,
+      providerWasDispatched: turnLifecycle.phaseOf(activeTurn) !== turnLifecycle.PHASE_DISPATCH_PENDING,
       // #664: seed the per-turn BYOK tally from the persisted record so
       // post-restart switched calls accumulate on top of pre-restart ones.
       byokCentsSoFar: Number(activeTurn.byokCents || 0),
@@ -8449,6 +8533,7 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
         systemPrompt: wrapPrompt,
         model: selectedModel,
         apiKey: userApiKey,
+        telemetryContext: invocationTelemetry(pool, session, 'headless_wrapup'),
       }),
     });
     const mayor2 = recoveredEffect.response;
@@ -9167,6 +9252,11 @@ async function resolveTurnPills({
         tool: SUGGEST_REPLIES_TOOL,
         apiKey,
         signal,
+        telemetryContext: {
+          pool,
+          appId: session && session.app_id,
+          sessionId: session && session.id,
+        },
       }), QR_ENFORCE_TIMEOUT_MS);
       const replies = sanitizeQuickReplies(forced.replies);
       if (replies) {
@@ -9198,6 +9288,11 @@ async function resolveTurnPills({
         rules: QUICK_REPLY_RULES_TEXT,
         context,
         apiKey,
+        telemetryContext: {
+          pool,
+          appId: session && session.app_id,
+          sessionId: session && session.id,
+        },
       }), QR_GENERATE_TIMEOUT_MS);
       const replies = sanitizeQuickReplies(gen.replies);
       if (replies) {
@@ -10067,6 +10162,8 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
     // checks, no visuals, no PR metadata. A scout turn is read-only, and the
     // absence of that whole tail is the feature, not an omission.
     let seenScoutLines = 0;
+    const localScoutCorrelationId = crypto.randomUUID();
+    let localScoutAttemptNumber = 0;
     const dispatchLocalScout = async () => {
       // This is the read-only completion path: it returns no commit, no push
       // flag and no branch movement, so the caller's shared tail has nothing
@@ -10098,6 +10195,8 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
         };
       }
       const turnId = queued.turn.id;
+      const telemetryStartedAt = new Date();
+      localScoutAttemptNumber += 1;
       if (stopHandle) stopHandle.localTurnId = String(turnId);
       let announcedAccepted = false;
       const { outcome, turn: finished } = await localAgent.awaitTurnResult(pool, turnId, {
@@ -10110,6 +10209,16 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
           for (const line of lines.slice(seenScoutLines)) onScoutProgress(line);
           seenScoutLines = Math.max(seenScoutLines, lines.length);
         },
+      });
+      recordLocalCodingInvocation(pool, {
+        session,
+        turnId,
+        turn: finished,
+        outcome,
+        component: headless ? 'coding_agent_headless' : 'coding_agent_scout',
+        attemptNumber: localScoutAttemptNumber,
+        correlationId: localScoutCorrelationId,
+        startedAt: telemetryStartedAt,
       });
       const explain = {
         declined: `${lease.label} declined this turn`,
@@ -10148,22 +10257,31 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
       // Shared dispatcher for BOTH the Codex attempt loop and the Claude
       // fallback, so the expensive execInWorker options (holdTurnRecord,
       // onProgress) live in exactly one place per tool.
-      const doScout = (ctx) => worker.execInWorker(session.id, {
-        mode: 'scout',
-        prompt: scoutPrompt,
-        model: turnModel,
-        commitMsg: '',
-        resumeSessionId: resumeThreadId,
-        branchName: session.branch_name,
-        ...(ctx || {}),
-        prodDebug,
-        // Hold the durable turn record through this tool's own tail
-        // (spec persist + frozen version + Mayor wrap-up). Short, but the
-        // same restart shape loses it — see the "Post-agent TAIL" note in
-        // services/worker.js. Released by finishTurn in the finally below.
-        holdTurnRecord: true,
-        onProgress: onScoutProgress,
-      });
+      const claudeTelemetryCorrelationId = crypto.randomUUID();
+      let claudeTelemetryAttemptNumber = 0;
+      const doScout = (ctx) => {
+        const isClaudeDispatch = !ctx || !ctx.logicalTurnId;
+        if (isClaudeDispatch) claudeTelemetryAttemptNumber += 1;
+        return worker.execInWorker(session.id, {
+          mode: 'scout',
+          prompt: scoutPrompt,
+          model: turnModel,
+          commitMsg: '',
+          resumeSessionId: resumeThreadId,
+          branchName: session.branch_name,
+          ...(ctx || {}),
+          prodDebug,
+          telemetryComponent: headless ? 'coding_agent_headless' : 'coding_agent_scout',
+          telemetryCorrelationId: isClaudeDispatch ? claudeTelemetryCorrelationId : null,
+          telemetryAttemptNumber: isClaudeDispatch ? claudeTelemetryAttemptNumber : null,
+          // Hold the durable turn record through this tool's own tail
+          // (spec persist + frozen version + Mayor wrap-up). Short, but the
+          // same restart shape loses it — see the "Post-agent TAIL" note in
+          // services/worker.js. Released by finishTurn in the finally below.
+          holdTurnRecord: true,
+          onProgress: onScoutProgress,
+        });
+      };
       if (runLocally) {
         // Local turns do not enter the platform's Codex attempt ledger and a
         // retry must stay on the same attached machine.
@@ -10183,6 +10301,7 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
       const routed = await runCodexAttemptLoop({
         pool, session, userId: req.user.id, config, isCodexSession,
         turnModel, resumeThreadId, mode: 'scout',
+        telemetryComponent: headless ? 'coding_agent_headless' : 'coding_agent_scout',
         resolveRuntime: () => agentTurn.resolveCodexRuntimeContext({
           pool, session, userId: req.user.id, model: turnModel,
           resumeThreadId, config,
@@ -10483,7 +10602,7 @@ async function runCodexAttemptLoop({
   pool, session, userId, config, isCodexSession, turnModel,
   resumeThreadId, resolveRuntime, dispatchOnce, retryPredicate,
   sendStatus, waitForStopped, prepareRetry, classifyAttemptStatus,
-  containerName, mode = 'build',
+  containerName, mode = 'build', telemetryComponent = null,
 }) {
   // One logical turn id per coding-tool invocation (plan 7.1); attempt 1
   // gets attempt_number=1, a retry gets attempt_number=2.
@@ -10499,6 +10618,10 @@ async function runCodexAttemptLoop({
       status,
       threadId: result?.agentThreadId || null,
       usageTotal: agentTurn.usageTotalFromResult(result),
+      telemetryComponent: result?.providerDispatched === true
+        ? (telemetryComponent
+          || (mode === 'scout' ? 'coding_agent_scout' : 'coding_agent_build'))
+        : null,
       errorCode: err
         ? agentTurn.classifyErrorCode(err)
         : result?.agentRetryFresh ? 'resume_thread_missing' : null,
@@ -10531,6 +10654,8 @@ async function runCodexAttemptLoop({
         runtimeContext,
         allowRetryPending: allowRetryPendingForAttempt,
         mode,
+        telemetryComponent: telemetryComponent
+          || (mode === 'scout' ? 'coding_agent_scout' : 'coding_agent_build'),
       });
     } catch (startErr) {
       // plan 8.5 (Commit 6): a stale-version/busy race surfaces as a
@@ -10752,6 +10877,9 @@ async function forceStopSession(pool, sessionId, username, handle) {
               status: 'cancelled',
               errorCode: 'user_cancelled',
               errorDetail: 'Turn was force-stopped by the user.',
+              telemetryComponent: turnLifecycle.phaseOf(activeTurn) === turnLifecycle.PHASE_DISPATCH_PENDING
+                ? null
+                : activeTurn.telemetryComponent || null,
             });
           } catch (ledgerErr) {
             ledgerReady = false;
@@ -11492,6 +11620,11 @@ path: /another/changed/view
             remainingSeconds: previousRemainingSeconds,
             elapsedMs: lastEstimateAtMs == null ? 0 : lastEstimateAtMs - turnStartedMs,
           },
+          telemetryContext: {
+            pool,
+            appId: session.app_id,
+            sessionId: session.id,
+          },
         }).then(async ({ text, remainingSeconds, usage, model: estModel, promptVersion }) => {
           consecutiveFailures = 0;
           ticksToSkip = 0;
@@ -11640,6 +11773,8 @@ path: /another/changed/view
     // platform's own GitHub App (POST /api/cli/agent/turns/:id/commit) and
     // there is nothing left to push.
     let seenLocalLines = 0;
+    const localBuildCorrelationId = crypto.randomUUID();
+    let localBuildAttemptNumber = 0;
     const dispatchLocalBuild = async () => {
       const baseSha = session.checks_commit_sha || null;
       const queued = await localAgent.enqueueTurn(pool, {
@@ -11675,6 +11810,8 @@ path: /another/changed/view
         };
       }
       const turnId = queued.turn.id;
+      const telemetryStartedAt = new Date();
+      localBuildAttemptNumber += 1;
       if (stopHandle) stopHandle.localTurnId = String(turnId);
       let announcedAccepted = false;
       const { outcome, turn: finished } = await localAgent.awaitTurnResult(pool, turnId, {
@@ -11687,6 +11824,16 @@ path: /another/changed/view
           for (const line of lines.slice(seenLocalLines)) onAgentProgress(line);
           seenLocalLines = Math.max(seenLocalLines, lines.length);
         },
+      });
+      recordLocalCodingInvocation(pool, {
+        session,
+        turnId,
+        turn: finished,
+        outcome,
+        component: headless ? 'coding_agent_headless' : 'coding_agent_build',
+        attemptNumber: localBuildAttemptNumber,
+        correlationId: localBuildCorrelationId,
+        startedAt: telemetryStartedAt,
       });
       const headSha = finished?.head_sha || null;
       // 'declined' and 'abandoned' are the two outcomes that are nobody's
@@ -11735,30 +11882,39 @@ path: /another/changed/view
       // Shared dispatcher for BOTH the Codex attempt loop and the Claude
       // fallback, so the expensive execInWorker options (holdTurnRecord +
       // the estimator/phase onProgress closure) live in exactly one place.
-      const doBuild = (ctx) => worker.execInWorker(session.id, {
-        mode: 'build',
-        prompt: claudePrompt,
-        model: turnModel,
-        commitMsg,
-        resumeSessionId: resumeThreadId,
-        branchName: session.branch_name,
-        ...(ctx || {}),
-        prodDebug,
-        // Hold the durable turn record through the tail below (push heal →
-        // PR → staging build → visuals → completion card → Mayor wrap-up).
-        // That stretch is minutes long — a self-app staging build alone
-        // spends ~4:45 cloning the platform DB — and used to run with
-        // active_turn already cleared, so a restart inside it left the chat
-        // frozen on "Building staging preview..." with no way back (session
-        // 2954). Released by finishTurn in the finally at the end of this
-        // function; every tail step stamps its milestone so a resumed tail
-        // redoes none of them.
-        holdTurnRecord: true,
-        // #892 (phase marker), #891 (terminal-marker estimator teardown) and
-        // the persisted progress log all live in onAgentProgress above, which
-        // the local runner shares.
-        onProgress: onAgentProgress,
-      });
+      const claudeTelemetryCorrelationId = crypto.randomUUID();
+      let claudeTelemetryAttemptNumber = 0;
+      const doBuild = (ctx) => {
+        const isClaudeDispatch = !ctx || !ctx.logicalTurnId;
+        if (isClaudeDispatch) claudeTelemetryAttemptNumber += 1;
+        return worker.execInWorker(session.id, {
+          mode: 'build',
+          prompt: claudePrompt,
+          model: turnModel,
+          commitMsg,
+          resumeSessionId: resumeThreadId,
+          branchName: session.branch_name,
+          ...(ctx || {}),
+          prodDebug,
+          telemetryComponent: headless ? 'coding_agent_headless' : 'coding_agent_build',
+          telemetryCorrelationId: isClaudeDispatch ? claudeTelemetryCorrelationId : null,
+          telemetryAttemptNumber: isClaudeDispatch ? claudeTelemetryAttemptNumber : null,
+          // Hold the durable turn record through the tail below (push heal →
+          // PR → staging build → visuals → completion card → Mayor wrap-up).
+          // That stretch is minutes long — a self-app staging build alone
+          // spends ~4:45 cloning the platform DB — and used to run with
+          // active_turn already cleared, so a restart inside it left the chat
+          // frozen on "Building staging preview..." with no way back (session
+          // 2954). Released by finishTurn in the finally at the end of this
+          // function; every tail step stamps its milestone so a resumed tail
+          // redoes none of them.
+          holdTurnRecord: true,
+          // #892 (phase marker), #891 (terminal-marker estimator teardown) and
+          // the persisted progress log all live in onAgentProgress above, which
+          // the local runner shares.
+          onProgress: onAgentProgress,
+        });
+      };
       if (runLocally) {
         // Local turns do not enter the platform's Codex attempt ledger and a
         // retry must stay on the same attached machine.
@@ -11776,6 +11932,7 @@ path: /another/changed/view
       const routed = await runCodexAttemptLoop({
         pool, session, userId: req.user.id, config, isCodexSession,
         turnModel, resumeThreadId, mode: 'build',
+        telemetryComponent: headless ? 'coding_agent_headless' : 'coding_agent_build',
         resolveRuntime: () => agentTurn.resolveCodexRuntimeContext({
           pool, session, userId: req.user.id, model: turnModel,
           resumeThreadId, config,

@@ -30,8 +30,17 @@ test('declared checks do not require removed All Apps UI or write access from th
   assert.equal(names.has("Dev '+' menu shows Proposal approvals on the self-app (#646)"), false);
 });
 
-test('the out-of-credits check follows the four-route external-agent UI', () => {
+test('the out-of-credits check asserts the routes, not how many there are', () => {
   const check = dapp.tests.find((entry) => entry.name.startsWith('Out of daily credits:'));
   assert.ok(check);
-  assert.equal(check.expectText, 'Four ways to keep building right now');
+  // CreditOptions.introFor spells the count from the list it was handed, so
+  // the number moves with the deployment's own gating (four here, five where
+  // the external agent flows are available, fewer with no CLI). Freezing
+  // "Four" into the check made a correct card read as a regression the first
+  // time a route was added; the sentence's stable half is what it asserts.
+  assert.equal(check.expectText, 'ways to keep building right now');
+  assert.doesNotMatch(check.expectText, /^(?:No|One|Two|Three|Four|Five|Six|Seven|Eight|Nine)\b/);
+  // The card is identified by its routes instead — the connector handoff is
+  // the one that only exists when the card actually rendered.
+  assert.match(check.expectSelector, /\[data-credits-card\] \[data-credits-hash=/);
 });

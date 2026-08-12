@@ -459,6 +459,12 @@ export function LandingScreen() {
     // First app the directory would actually open: not gated, has a URL.
     const target = st.appsList.find((a) => a && !a.requires_login && a.url);
     if (!target) return;
+    // `st.appsReady` settles when the FETCH does; the tiles appear when React
+    // commits the state it set, which is a tick or more later. So wait for
+    // the element, like every other step here waits on DOM state — reading
+    // "not committed yet" as "no directory" and returning is how this shot
+    // finished without ever stamping the marker below.
+    if (!(await until(() => !!landingTileFor(target.slug), 2000))) return;
     for (let cycle = 0; cycle < 2; cycle++) {
       // POLL for the tile: `appsReady` resolves when the FETCH lands, but the
       // tiles appear one React commit later, so a synchronous lookup here found

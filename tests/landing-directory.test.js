@@ -314,6 +314,11 @@ test('?shot=anon-back scripts two guest open/back cycles', () => {
   assert.match(tsx, /runAnonBackShot/);
   // Two cycles: the bug only appears from the second open onward.
   assert.match(tsx, /cycle < 2/);
+  // Every step of the script waits on DOM state, INCLUDING the first one:
+  // `appsReady` settles when the fetch resolves, a tick before React commits
+  // the tiles, so reading the grid straight after it found nothing to open
+  // and the shot returned having stamped nothing at all.
+  assert.match(tsx, /if \(!\(await until\(\(\) => !!landingTileFor\(target\.slug\), \d+\)\)\) return;/);
   // The completion stamp the dapp.json test asserts on.
   assert.match(tsx, /setAttribute\('data-anon-back', 'done'\)/);
   const manifest = JSON.parse(read('dapp.json'));

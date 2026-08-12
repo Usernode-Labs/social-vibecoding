@@ -302,7 +302,16 @@ async function runAppChange({ campaign, app, exemplarSummary, onUsage }) {
   let nudged = false;
 
   for (let iter = 0; iter < MAX_TOOL_ITERATIONS; iter++) {
-    const res = await llm.streamChat({ messages, systemPrompt, tools: CAMPAIGN_TOOLS });
+    const res = await llm.streamChat({
+      messages,
+      systemPrompt,
+      tools: CAMPAIGN_TOOLS,
+      telemetryContext: {
+        appId: app.id,
+        backend: 'helper',
+        component: 'other_helper',
+      },
+    });
     if (onUsage && res.usage) {
       try { onUsage(res.usage, res.servedModel); } catch { /* accounting never fails the run */ }
     }
