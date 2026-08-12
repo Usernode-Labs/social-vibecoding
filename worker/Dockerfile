@@ -2,8 +2,15 @@ FROM node:22-bookworm-slim
 
 # unzip backs `usernode-attachments <id> --unzip <dir>` — extracting
 # user-attached reference zips inside this disposable container.
+# python3/make/g++ are node-gyp's toolchain: native npm deps (bcrypt et al)
+# normally install a prebuilt binding, but node-pre-gyp falls back to
+# building from source whenever the prebuilt download misses (new node ABI,
+# transient GitHub-releases failure) — and on the slim base that fallback
+# died with a raw gyp stack, failing the unit-suite check's `npm ci` for
+# any repo with a native dep. The toolchain makes the fallback actually
+# work, for the unit-suite one-shot and for agent build turns alike.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git curl wget ca-certificates unzip \
+    git curl wget ca-certificates unzip python3 make g++ \
   && rm -rf /var/lib/apt/lists/*
 
 # ── Local Postgres for the in-loop browser (build turns only, #659) ────
