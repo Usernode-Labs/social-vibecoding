@@ -285,6 +285,83 @@ html.un-kb .platform-safe-bar {
   box-shadow: 0 0.5px 0 var(--un-hairline);
 }
 
+/* ── Native iOS performance baseline (#787) ──────────────────────────
+   The Flutter shell marks the top document with .in-native-webview before
+   first paint (index.html) and the kit independently adds .un-ios.  Together
+   those are a reliable scope for the reported surface; do not guess a phone
+   model from the UA, and do not reduce motion in Safari/PWA or on Android.
+
+   Live backdrop blur is unusually expensive in a WKWebView while the content
+   behind it scrolls or a transition snapshot moves.  These surfaces already
+   own opaque sheet backgrounds, so dropping the blur preserves contrast while
+   avoiding a full-surface filter pass.  The nav tokens are translucent by
+   design, therefore pin them to the platform surface in this scope. */
+html.un-ios.in-native-webview {
+  --un-navbar-bg: var(--bg-primary);
+  --un-toast-bg: #1c1c2a;
+}
+
+html.un-ios.in-native-webview .platform-chat-header.un-scrolled,
+html.un-ios.in-native-webview .un-navbar,
+html.un-ios.in-native-webview .un-action-card,
+html.un-ios.in-native-webview .un-alert,
+html.un-ios.in-native-webview .un-toast {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+/* The kit's default iOS page transition dims its full-page snapshot with a
+   brightness filter while also translating it.  Keep the spatial push/pop
+   cue, but use transform-only keyframes and a shorter capture lifetime in the
+   native shell.  Reduce Motion remains stricter in native.css and disables
+   these animations entirely. */
+html.un-ios.in-native-webview[data-un-vt]::view-transition-old(root),
+html.un-ios.in-native-webview[data-un-vt]::view-transition-new(root) {
+  animation-duration: 260ms;
+}
+html.un-ios.in-native-webview[data-un-vt="push"]::view-transition-old(root) {
+  animation-name: un-vt-native-ios-parallax-out-left;
+}
+html.un-ios.in-native-webview[data-un-vt="pop"]::view-transition-new(root) {
+  animation-name: un-vt-native-ios-parallax-in-left;
+}
+@keyframes un-vt-native-ios-parallax-out-left {
+  from { transform: translateX(0); }
+  to { transform: translateX(-30%); }
+}
+@keyframes un-vt-native-ios-parallax-in-left {
+  from { transform: translateX(-30%); }
+  to { transform: translateX(0); }
+}
+/* app.css loads after native.css, so repeat the accessibility override at
+   this selector's higher specificity. Without this rule, the performance
+   animation-name above would win back one sub-property from the kit's earlier
+   `animation: none` shorthand and accidentally re-enable Reduce Motion. */
+@media (prefers-reduced-motion: reduce) {
+  html.un-ios.in-native-webview[data-un-vt]::view-transition-old(root),
+  html.un-ios.in-native-webview[data-un-vt]::view-transition-new(root) {
+    animation: none;
+  }
+}
+
+/* Infinite decorative effects keep compositing even when the user is idle.
+   Their state must remain legible without motion: lifecycle colors stay in
+   place and busy session dots gain a static ring.  Functional progress
+   spinners are intentionally not selected. */
+html.un-ios.in-native-webview .status-dot.creating,
+html.un-ios.in-native-webview .work-cog-spinning,
+html.un-ios.in-native-webview .app-version-pill--stale .app-version-pill-dot {
+  animation: none;
+}
+html.un-ios.in-native-webview .dc-active-dot-busy.dc-active-dot-active {
+  animation: none;
+  box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.38);
+}
+html.un-ios.in-native-webview .dc-active-dot-busy.dc-active-dot-promoted {
+  animation: none;
+  box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.38);
+}
+
 /* Pressed-state opt-outs: the kit gives every button an instant
    scale-press, which reads wrong on dense strip controls that sit
    flush against siblings (the header App/Dev switch, segmented pills,

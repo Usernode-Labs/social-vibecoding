@@ -2060,6 +2060,11 @@
       "expectText": "— Somewhere else —"
     },
     {
+      "name": "Native-iOS performance scope activates from a URL (#787)",
+      "path": "/?un-platform=ios&un-native-webview=1",
+      "expectSelector": "html.un-ios.in-native-webview #platform-header"
+    },
+    {
       "name": "The local-CLI card spells the commands for THIS session (#1055)",
       "path": "/?demo=1&shot=session-options-instructions#app/usernode-2d5619/dev/sessions/990405",
       "expectSelector": "#dc-options-commands",
