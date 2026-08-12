@@ -121,6 +121,11 @@ const EVENT_TYPES = Object.freeze({
   // reading the staging:private local_agent_turns table.
   // metadata: { outcome, runtime, durationMs }.
   LOCAL_AGENT_TURN: 'local_agent_turn',
+  // Content-free, provider-neutral LLM invocation baseline (#717). Detailed
+  // fields live in a strict allowlisted metadata shape written by
+  // services/llm-telemetry.js; OpenRouter's existing agent_turns ledger is
+  // normalized alongside these rows by the admin aggregate report.
+  LLM_INVOCATION: 'llm_invocation',
 });
 
 // Record a single analytics event. Fire-and-forget — returns a promise

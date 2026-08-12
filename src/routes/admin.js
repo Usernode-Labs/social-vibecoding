@@ -11,6 +11,7 @@ const limits = require('../services/limits');
 const anthropicCredits = require('../services/anthropic-credits');
 const dbExport = require('../services/db-export');
 const events = require('../services/events');
+const llmTelemetry = require('../services/llm-telemetry');
 const appRollover = require('../services/app-rollover');
 const stagingReap = require('../services/staging-reap');
 const stagingEnv = require('../services/staging-env');
@@ -41,6 +42,31 @@ function adminRoutes(config) {
   const pool = getPool(config);
 
   router.use('/api/admin', adminMiddleware);
+
+  // #717: content-free usage baseline across Mayor/helper calls and coding
+  // agents. Read-only and aggregate-only; view-only admins may inspect it.
+  router.get('/api/admin/llm-telemetry', async (req, res) => {
+    const rawDays = req.query.days == null ? '14' : String(req.query.days);
+    if (!/^\d+$/.test(rawDays)) {
+      return res.status(400).json({
+        error: `days must be an integer between 1 and ${llmTelemetry.MAX_REPORT_DAYS}`,
+      });
+    }
+    const days = Number(rawDays);
+    if (days < 1 || days > llmTelemetry.MAX_REPORT_DAYS) {
+      return res.status(400).json({
+        error: `days must be an integer between 1 and ${llmTelemetry.MAX_REPORT_DAYS}`,
+      });
+    }
+    try {
+      return res.json(await llmTelemetry.aggregateReport(pool, { days }));
+    } catch (err) {
+      log.warn('admin', 'LLM telemetry aggregate failed', {
+        code: err && err.code ? String(err.code).slice(0, 64) : 'query_failed',
+      });
+      return res.status(500).json({ error: 'Could not load LLM telemetry' });
+    }
+  });
 
   // ── Operations Overview ────────────────────────────────────
   //

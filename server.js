@@ -76,6 +76,7 @@ const { topochainMobileRoutes } = require('./src/routes/topochain/mobile');
 const { topochainAdminRoutes } = require('./src/routes/topochain/admin');
 const github = require('./src/services/github');
 const llm = require('./src/services/llm');
+const llmTelemetry = require('./src/services/llm-telemetry');
 const worker = require('./src/services/worker');
 const activeWorkersSvc = require('./src/services/active-workers');
 const turnWatchdog = require('./src/services/turn-watchdog');
@@ -1063,6 +1064,10 @@ async function start() {
   await withMigrationLock(getPool(config), () => migrate(config));
   await mobilePush.initialize(config);
   await github.init(config);
+  // Configure the collection kill switch even on deployments with no
+  // Anthropic client. OpenRouter/local coding runs are initialized by their
+  // own paths and still need the provider-neutral collector.
+  llmTelemetry.init(config);
   await llm.init(config);
 
   worker.ensureWorkerImage().catch((err) => {
@@ -2245,6 +2250,9 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
           status: 'failed',
           errorCode: 'recovery_abandoned',
           errorDetail: 'Durable turn was abandoned after its worker container disappeared.',
+          telemetryComponent: turnLifecycle.phaseOf(goneTurn) === turnLifecycle.PHASE_DISPATCH_PENDING
+            ? null
+            : goneTurn.telemetryComponent || null,
         });
       } catch (ledgerErr) {
         const disposition = await recoveryRetry.retainOrQuarantineRecoveryError({
@@ -3200,6 +3208,16 @@ async function resumeDetachedTurnInner({
       journal: activeTurn.journal,
       turnId: activeTurn.turnId || null,
       agentBackend: activeTurn.backend || 'claude_code',
+      telemetryComponent: activeTurn.telemetryComponent
+        || (activeTurn.mode === 'scout' ? 'coding_agent_scout'
+          : activeTurn.mode === 'build' ? 'coding_agent_build' : null),
+      telemetryCorrelationId: activeTurn.telemetryCorrelationId || activeTurn.turnId || null,
+      telemetryAttemptNumber: activeTurn.telemetryAttemptNumber || activeTurn.attemptNumber || 1,
+      requestedModel: activeTurn.model || null,
+      startedAt: activeTurn.startedAt || null,
+      attemptNumber: activeTurn.attemptNumber || 1,
+      billingByok: activeTurn.byok === true,
+      providerWasDispatched: turnLifecycle.phaseOf(activeTurn) !== turnLifecycle.PHASE_DISPATCH_PENDING,
       // #664: seed the per-turn BYOK tally from the persisted record so
       // post-restart switched calls accumulate on top of pre-restart ones.
       byokCentsSoFar: Number(activeTurn.byokCents || 0),
@@ -3828,6 +3846,9 @@ function startSessionAutoPauseSweeper(config) {
                 status: 'failed',
                 errorCode: 'recovery_abandoned',
                 errorDetail: 'Durable turn was abandoned after its worker became stale.',
+                telemetryComponent: turnLifecycle.phaseOf(row.active_turn) === turnLifecycle.PHASE_DISPATCH_PENDING
+                  ? null
+                  : row.active_turn.telemetryComponent || null,
               });
             } catch (ledgerErr) {
               const disposition = await recoveryRetry.retainOrQuarantineRecoveryError({

@@ -235,6 +235,10 @@ function load() {
     // default; this is an availability/kill switch, never a global provider
     // choice. Each user explicitly chooses the backend for their session.
     codexOpenrouterEnabled: String(process.env.CODEX_OPENROUTER_ENABLED || 'true') === 'true',
+    // #717: collection-only emergency switch. Reporting remains readable so
+    // operators can inspect already-recorded aggregates after disabling new
+    // writes. This never changes provider/model/routing behaviour.
+    llmTelemetryEnabled: String(process.env.LLM_TELEMETRY_ENABLED || 'true') === 'true',
     openrouterBetaUserIds: (process.env.CODEX_OPENROUTER_BETA_USER_IDS || '')
       .split(',').map((s) => s.trim()).filter(Boolean),
     openrouterDefaultCodexModel: process.env.OPENROUTER_DEFAULT_CODEX_MODEL || '',
