@@ -7,11 +7,21 @@
 // text. It also cancels the pending preview debounce at submit so an
 // in-flight preview can't rewrite the field mid-submit.
 //
-// We load the real app.js into a vm context (so the tests can't drift
-// from shipped code), run App.bindEvents() against stub DOM elements
-// with recorded listeners, fake timers, and a recording fetch, then
-// drive the type → auto-fill → submit flows and assert on the body
+// We load the real feedback controller into a vm context (so the tests
+// can't drift from shipped code), run its init() against stub DOM
+// elements with recorded listeners, fake timers, and a recording fetch,
+// then drive the type → auto-fill → submit flows and assert on the body
 // sent to POST /api/feedback.
+//
+// That block used to live inside App.bindEvents in public/js/app.js, and
+// this harness used to run app.js. #1078 chunk I moved it, unchanged, to
+// frontend/src/features/dialogs/feedback-controller.js when the dialog
+// became a stateful island — same code, now reached through an init()
+// the island calls from its layout effect instead of a 900-line method.
+// The module is ESM (frontend/ is "type": "module"), so the two module
+// keywords are stripped before evaluation: there is no bundler here, and
+// its single import is a side-effect one whose global this file's flows
+// never reach.
 //
 // Run with: node --test tests/feedback-title-stale.test.js
 
@@ -21,10 +31,12 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-const APP_SRC = fs.readFileSync(
-  path.join(__dirname, '..', 'public', 'js', 'app.js'),
+const FEEDBACK_SRC = fs.readFileSync(
+  path.join(__dirname, '..', 'frontend', 'src', 'features', 'dialogs', 'feedback-controller.js'),
   'utf8'
-);
+)
+  .replace(/^import .*$/gm, '')   // side-effect import of ./screenshot-select
+  .replace(/^export /gm, '');     // `export function init` → a context global
 
 // Stub DOM element: records addEventListener handlers so tests can fire
 // 'input' / 'click' / 'blur' events the way the browser would.
@@ -59,9 +71,8 @@ function makeEl(id) {
   };
 }
 
-// Build a vm sandbox running the real app.js with:
-//  - memoized stub elements for every getElementById (null for
-//    header-menu-btn so HeaderMenu.init early-returns),
+// Build a vm sandbox running the real feedback controller with:
+//  - memoized stub elements for every getElementById,
 //  - fake timers (recorded, manually runnable/flushable),
 //  - a recording fetch that answers the title-preview and feedback
 //    endpoints.
@@ -77,7 +88,6 @@ function makeHarness({ previewTitle = 'Partial Title' } = {}) {
     location: { search: '', hash: '', pathname: '/' },
     document: {
       getElementById: (id) => {
-        if (id === 'header-menu-btn') return null; // HeaderMenu.init early-return
         if (!els.has(id)) els.set(id, makeEl(id));
         return els.get(id);
       },
@@ -101,18 +111,21 @@ function makeHarness({ previewTitle = 'Partial Title' } = {}) {
     addEventListener: () => {},
     localStorage: { getItem: () => null, setItem: () => {} },
     sessionStorage: { getItem: () => null, setItem: () => {} },
-    // bindEvents dereferences AppView.closeRenameModal etc. at bind
-    // time — a permissive stub keeps the wiring alive; appData stays
-    // undefined so the feedback target resolves to 'platform'.
+    // init() dereferences AppView.issueStateAvailable etc. at wire time —
+    // a permissive stub keeps the wiring alive; appData stays undefined so
+    // the feedback target resolves to 'platform'.
     AppView: new Proxy({}, { get: (t, p) => (p === 'appData' ? undefined : () => {}) }),
-    PlatformUI: { pullToRefresh: () => {} },
+    PlatformUI: { pullToRefresh: () => {}, toast: () => {} },
+    // The controller reads these off `window` at wire time; only their
+    // presence matters here (`App` must be truthy or init() early-returns).
+    App: new Proxy({}, { get: () => undefined, set: () => true }),
     alert: () => {},
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
-  vm.runInContext(APP_SRC, sandbox);
-  sandbox.window.App.bindEvents();
+  vm.runInContext(FEEDBACK_SRC, sandbox);
+  sandbox.init();
 
   const el = (id) => sandbox.document.getElementById(id);
   return {
