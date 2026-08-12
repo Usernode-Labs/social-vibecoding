@@ -192,6 +192,14 @@ test('the menu carries every section, grouped, with no external tools left', () 
   const sideHtml = consoleJs.slice(consoleJs.indexOf('  _navItemsHtml()'));
   assert.match(sideHtml.slice(0, 1200), /_groupedSections\(\)/,
     'the sidebar groups via the shared helper');
+  // #1152 made each heading a collapse toggle. Both builders must key that
+  // state off the group NAME the shared helper emits — keying off the map
+  // index would silently mis-pair the moment _visibleSections() narrows the
+  // menu and a group drops out, collapsing the wrong heading's rows.
+  for (const [label, html] of [['sidebar', sideHtml], ['mobile menu', menuHtml]]) {
+    assert.match(html.slice(0, 2400), /_isGroupCollapsed\(g\.name\)/,
+      `the ${label}'s collapse state is keyed by group name, not by index`);
+  }
 });
 
 // #860: the six folded-in sections each live in their own module. They were

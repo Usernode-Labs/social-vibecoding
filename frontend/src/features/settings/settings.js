@@ -44,7 +44,7 @@
     // otherwise 'platform' | 'claude-code' | 'codex'. `externalFlowsAvailable`
     // says whether this deployment can offer the Claude Code / Codex
     // hand-off at all — the server decides, we only render what it reports.
-    state: { hasApiKey: false, keyLast4: null, usernodePubkey: null, walletLinkEnabled: false, aiProgressEstimate: false, locale: null, devFlowPreference: null, externalFlowsAvailable: false },
+    state: { hasApiKey: false, demoKey: false, keyLast4: null, usernodePubkey: null, walletLinkEnabled: false, aiProgressEstimate: false, locale: null, devFlowPreference: null, externalFlowsAvailable: false },
     _walletPollTimer: null,
     _alertsTestTimer: null,
     _walletExpiresAt: null,
@@ -350,6 +350,11 @@
         if (!r.ok) return;
         const j = await r.json();
         this.state.hasApiKey = !!j.user?.hasApiKey;
+        // Staging only, and only under ?demo=1: the key reported above is a
+        // fixture, not something anything can be billed to. Carried so the
+        // surfaces that branch on "a key is on file" can tell the two apart
+        // (DevChat._creditsExhausted is the one that has to).
+        this.state.demoKey = !!j.user?.demoKey;
         this.state.keyLast4 = j.user?.keyLast4 || null;
         this.state.usernodePubkey = j.user?.usernodePubkey || null;
         this.state.walletLinkEnabled = !!j.user?.walletLinkEnabled;
