@@ -2361,8 +2361,8 @@ const AppView = {
           ? item.in_progress.claims : [];
         const myClaim = ipClaims.some((c) => c.mine);
         rows.push(myClaim
-          ? `<button class="gc-vote-btn" title="Remove your in-progress mark from this issue" onclick="AppView.clearIssueClaim(${item.number})">Clear in progress</button>`
-          : `<button class="gc-vote-btn" title="Mark this issue as in progress — you're working on it" onclick="AppView.markIssueInProgress(${item.number})">Mark in progress</button>`);
+          ? `<button class="gc-vote-btn" title="Give up your claim on this issue so somebody else can take it" onclick="AppView.clearIssueClaim(${item.number})">Release my claim</button>`
+          : `<button class="gc-vote-btn" title="Tell everyone you're taking this issue — a claim, not a promise of progress" onclick="AppView.markIssueInProgress(${item.number})">Claim this issue</button>`);
         const meta = AppView._ghIssuesMeta || {};
         const kudosDisabled = item.my_bounty || meta.myRemaining === 0;
         rows.push(`<button class="gc-vote-btn"${kudosDisabled ? ' disabled' : ''} title="Pledge a kudos bounty — paid to whoever's merged PR closes this issue" onclick="AppView.giveIssueBounty(${item.number})">${item.my_bounty ? '&#9733; Bountied' : 'Pledge kudos'}</button>`);
@@ -5154,7 +5154,12 @@ const AppView = {
       // In progress renders through a dedicated builder: pinned own
       // sessions (+ the visibility caption and the archived toggle),
       // then issue cards, then other users' shared sessions.
-      { key: 'inprogress', title: 'In progress', items: kInProgress, cardsHtml: AppView._inProgressCardsHtml(kInProgress, filtering) },
+      // #1112: titled "Underway", but the key stays `inprogress` — it is the
+      // stored kanban column_key, the `#dev-kanban-col-inprogress` id and the
+      // `?col=` deep-link value. Retitling is copy; rekeying would break
+      // saved drag orders and every existing link.
+      { key: 'inprogress', title: 'Underway', items: kInProgress, cardsHtml: AppView._inProgressCardsHtml(kInProgress, filtering),
+        hint: 'Somebody or something is on these — being worked on, auto-solving, paused, waiting on an answer, or just claimed. The chip on each card says which.' },
       { key: 'inreview', title: 'In review', items: kInReview, render: (x) => (x.kind === 'proposal' ? AppView._renderProposalCard(x.item) : AppView._renderGovCard(x.item)),
         orderCol: 'review', orderKey: (x) => AppView._cardOrderKey('review', x) },
       { key: 'done', title: 'Done', items: kDone, render: (m) => (m.row_type === 'close_issue' ? AppView._renderCompletedCloseIssueCard(m) : AppView._renderMergedCard(m)), count: filtering ? kDone.length : doneTotal, footer: doneFooter },
@@ -5199,7 +5204,7 @@ const AppView = {
       html += `
         <div id="dev-kanban-col-${escapeAttr(col.key)}" data-kanban-col="${escapeAttr(col.key)}"
           class="dev-kanban-col${activeCls}">
-          <div class="dev-kanban-col-head text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider mb-2 px-0.5">
+          <div class="dev-kanban-col-head text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider mb-2 px-0.5"${col.hint ? ` title="${escapeAttr(col.hint)}"` : ''}>
             ${escapeHtml(col.title)} <span class="text-zinc-400 dark:text-zinc-500 font-mono">· ${count}</span>
           </div>
           ${cards}
@@ -5581,6 +5586,21 @@ const AppView = {
     { key: 'none', label: 'No priority set' },
   ],
 
+  // #1112: the seven work states as a printed report says them — lower-case
+  // fragments for a comma-joined meta line, where the chip's title-case
+  // "Needs an answer" would read as a heading. Same keys as
+  // _issueWorkState, so a state added there and not here prints nothing
+  // rather than a stale phrase.
+  REPORT_WORK_STATE_LABELS: {
+    in_review: 'in review',
+    working: 'being worked on',
+    auto_solving: 'auto-solving',
+    paused: 'paused',
+    answer_needed: 'needs an answer',
+    draft_ready: 'draft ready to review',
+    claimed: 'claimed',
+  },
+
   // Hard cap on the merged-history pager: 10 sequential pages of 50 rows.
   // Keeps one Reporting click from becoming a 40-request storm on a
   // long-lived app; the overflow is DISCLOSED in the document rather than
@@ -5913,6 +5933,9 @@ const AppView = {
         if (ip && Array.isArray(ip.users)) ip.users.forEach(push);
         if (ip && Array.isArray(ip.claims)) ip.claims.forEach((c) => push(c && c.username));
         const h = it.headless;
+        // #1112: the same derivation the chip uses, so a printed report and
+        // the board it was printed from name the same state.
+        const st = AppView._issueWorkState(it);
         workIssues.push({
           kind: 'work-issue',
           number: it.number != null ? it.number : null,
@@ -5921,6 +5944,8 @@ const AppView = {
           people,
           headless: !!(h && (h.status === 'generating' || h.status === 'ready')),
           claimed: !!(ip && Array.isArray(ip.claims) && ip.claims.length),
+          state: st ? st.key : null,
+          stateLabel: st ? (AppView.REPORT_WORK_STATE_LABELS[st.key] || '') : '',
           at: it.updatedAt || null, atMs: ts(it.updatedAt),
           chatCount: num(it.chatCount),
         });
@@ -5990,8 +6015,15 @@ const AppView = {
         partial: !!d.mergedPartial,
         empty: shownDone === 0,
       },
+      // #1112: one model group still, but the renderer prints it as TWO
+      // sections — "Awaiting review" (review + gov, where the work is done
+      // and people are the bottleneck) and "Underway" (sessions + issues,
+      // where the work itself is still happening). `empty` keeps its old
+      // meaning (nothing in either); the two flags below drive the sections.
       inProgress: {
         review, gov, sessions, issues: workIssues,
+        emptyAwaiting: !(review.length || gov.length),
+        emptyWork: !(sessions.length || workIssues.length),
         empty: !(review.length || gov.length || sessions.length || workIssues.length),
       },
       backlog: {
@@ -6111,7 +6143,8 @@ const AppView = {
         const parts = [];
         if (s.completed) parts.push(`${s.completed} completed`);
         if (s.inReview) parts.push(`${s.inReview} awaiting review`);
-        if (s.inProgress) parts.push(`${s.inProgress} in progress`);
+        // #1112: "underway" matches the section this count comes from.
+        if (s.inProgress) parts.push(`${s.inProgress} underway`);
         if (s.backlog) parts.push(`${s.backlog} assigned in backlog`);
         const blurb = blurbs.get(s.username);
         return `<li class="ur-rpt-row">`
@@ -6349,15 +6382,19 @@ const AppView = {
     html += `<section class="ur-rpt-section" data-section="done">`
       + `<h2 class="ur-rpt-h2">Done &mdash; completed work</h2>${doneBody}</section>`;
 
-    // ── In progress ───────────────────────────────────────────────────
+    // ── Awaiting review ───────────────────────────────────────────────
+    // #1112: split out of the old single "In progress" H2. These two lists
+    // are work that is FINISHED and waiting on people; the section below is
+    // work still happening. Printing both under one heading is what made a
+    // reader unable to tell whether anything needed them.
     const ip = m.inProgress || {};
-    let ipBody = '';
-    if (ip.empty) {
-      ipBody = `<p class="ur-rpt-empty">No work is in progress.</p>`;
+    let arBody = '';
+    if (ip.emptyAwaiting) {
+      arBody = `<p class="ur-rpt-empty">Nothing is waiting for review or a vote.</p>`;
     } else {
       if ((ip.review || []).length) {
-        ipBody += `<h3 class="ur-rpt-h3">Awaiting review or vote</h3>`;
-        ipBody += rows(ip.review.map((e) => `<li class="ur-rpt-row">`
+        arBody += `<h3 class="ur-rpt-h3">Awaiting review or vote</h3>`;
+        arBody += rows(ip.review.map((e) => `<li class="ur-rpt-row">`
           + `<div class="ur-rpt-title">${eh(e.title)}</div>`
           + metaLine([
             e.prNumber != null
@@ -6371,8 +6408,8 @@ const AppView = {
           + `</li>`));
       }
       if ((ip.gov || []).length) {
-        ipBody += `<h3 class="ur-rpt-h3">Governance proposals</h3>`;
-        ipBody += rows(ip.gov.map((e) => `<li class="ur-rpt-row">`
+        arBody += `<h3 class="ur-rpt-h3">Governance proposals</h3>`;
+        arBody += rows(ip.gov.map((e) => `<li class="ur-rpt-row">`
           + `<div class="ur-rpt-title">${eh(e.title)}<span class="ur-rpt-tag">${eh(e.govKindLabel)}</span></div>`
           + metaLine([
             e.issueNumber != null
@@ -6384,6 +6421,18 @@ const AppView = {
           ])
           + `</li>`));
       }
+    }
+    html += `<section class="ur-rpt-section" data-section="awaiting-review">`
+      + `<h2 class="ur-rpt-h2">Awaiting review</h2>${arBody}</section>`;
+
+    // ── Underway ──────────────────────────────────────────────────────
+    // Work still happening: live sessions plus the issues somebody or
+    // something is on. Each issue row names its exact state rather than the
+    // old catch-all "in progress" note.
+    let ipBody = '';
+    if (ip.emptyWork) {
+      ipBody = `<p class="ur-rpt-empty">Nothing is underway.</p>`;
+    } else {
       if ((ip.sessions || []).length) {
         ipBody += `<h3 class="ur-rpt-h3">Being worked on right now</h3>`;
         ipBody += rows(ip.sessions.map((e) => `<li class="ur-rpt-row">`
@@ -6397,19 +6446,18 @@ const AppView = {
       }
       if ((ip.issues || []).length) {
         ipBody += `<h3 class="ur-rpt-h3">Issues with work underway</h3>`;
-        ipBody += rows(ip.issues.map((e) => `<li class="ur-rpt-row">`
+        ipBody += rows(ip.issues.map((e) => `<li class="ur-rpt-row" data-work-state="${ea(e.state || '')}">`
           + `<div class="ur-rpt-title">${eh(e.title)}</div>`
           + metaLine([
             e.number != null ? `<span class="ur-rpt-num">${link(e.htmlUrl, `#${e.number}`)}</span>` : '',
             e.people && e.people.length ? eh(e.people.join(', ')) : '',
-            e.headless ? 'auto-solve run in progress' : '',
-            e.claimed && !(e.people || []).length ? 'claimed' : '',
+            e.stateLabel ? eh(e.stateLabel) : '',
           ])
           + `</li>`));
       }
     }
     html += `<section class="ur-rpt-section" data-section="inprogress">`
-      + `<h2 class="ur-rpt-h2">In progress</h2>${ipBody}</section>`;
+      + `<h2 class="ur-rpt-h2">Underway</h2>${ipBody}</section>`;
 
     // ── Backlog ───────────────────────────────────────────────────────
     const bl = m.backlog || {};
@@ -10139,7 +10187,7 @@ const AppView = {
         ? `<span class="gc-checks-running-badge" title="A close proposal for this issue is up for vote">Close proposed</span>`
         : '';
 
-    // ── Badges: close status + In progress + at most three metadata chips ──
+    // ── Badges: close status + work state + at most three metadata chips ──
     const badges = [
       closeBadge,
       AppView._inProgressChipHtml(issue),
@@ -10179,9 +10227,20 @@ const AppView = {
       ? issue.in_progress.claims : [];
     const adminClaimList = (noNav && ipClaims.length
       && typeof App !== 'undefined' && App.user && App.user.canAdminWrite)
-      ? `<div class="mt-1 flex flex-wrap items-center gap-1 px-0.5 text-[0.65rem] text-zinc-500 dark:text-zinc-400">In-progress claims:${ipClaims.map((c) =>
-          ` <span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-sky-500/10 text-sky-500">${escapeHtml(c.username || '?')}<button type="button" class="hover:text-sky-700 dark:hover:text-sky-300" title="Clear ${escapeAttr(c.username || 'this user')}'s in-progress claim (admin)" onclick="AppView.clearIssueClaim(${n}, ${parseInt(c.userId, 10) || 0})">&times;</button></span>`
+      ? `<div class="mt-1 flex flex-wrap items-center gap-1 px-0.5 text-[0.65rem] text-zinc-500 dark:text-zinc-400">Claims:${ipClaims.map((c) =>
+          ` <span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-sky-500/10 text-sky-500">${escapeHtml(c.username || '?')}<button type="button" class="hover:text-sky-700 dark:hover:text-sky-300" title="Release ${escapeAttr(c.username || 'this user')}'s claim (admin)" onclick="AppView.clearIssueClaim(${n}, ${parseInt(c.userId, 10) || 0})">&times;</button></span>`
         ).join('')}</div>`
+      : '';
+
+    // #1112: the chip is four words wide — it can name the state but not
+    // explain it. On the topic head, where the reader has actually stopped
+    // to find out what is happening, spell it out in one plain sentence:
+    // who, what, when, and the date the mark clears itself. Head only; the
+    // feed's dense cards have no room and the chip's tooltip carries the
+    // same text there.
+    const workState = noNav ? AppView._issueWorkState(issue) : null;
+    const workNote = workState
+      ? `<div class="mt-1 px-0.5 text-[0.7rem] leading-snug text-zinc-500 dark:text-zinc-400" data-work-note="${escapeAttr(workState.key)}">${escapeHtml(workState.note)}</div>`
       : '';
 
     // #133/#556: the creating user renders in the meta line above, and the
@@ -10210,7 +10269,7 @@ const AppView = {
           chatCount: issue.chatCount,
           uncapped: noNav,
           actions,
-          extraHtml: adminClaimList,
+          extraHtml: `${workNote}${adminClaimList}`,
           dense: !noNav,
         })}
         ${AppView._cardRailHtml(`issue:${n}`, menu, {
@@ -10276,19 +10335,22 @@ const AppView = {
       : `<button class="gc-vote-btn" title="Start a dev chat to solve this issue" onclick="AppView.createPrForIssue(${n})">Create proposal</button>`;
   },
 
-  // The issue card's SECOND action: the in-progress claim toggle, promoted
-  // out of the ⋯ menu. Reads `mine` off the claim list exactly as the menu
-  // row it replaces did, so the button never offers a POST the server would
+  // The issue card's SECOND action: the claim toggle, promoted out of the
+  // ⋯ menu. Reads `mine` off the claim list exactly as the menu row it
+  // replaces did, so the button never offers a POST the server would
   // refuse. The long "expires after ~7 days" explanation stays in the
   // tooltip — it is the reason the mark is safe to leave on, not something
-  // the label has room for.
+  // the label has room for. #1112 renamed both labels: "Mark in progress"
+  // promised progress the button cannot deliver, and it was the same phrase
+  // as the chip covering six OTHER states, so pressing it looked like it
+  // ought to produce whichever of them the reader had last seen.
   _issueProgressActionHtml(issue) {
     const n = issue.number;
     const claims = (issue.in_progress && Array.isArray(issue.in_progress.claims))
       ? issue.in_progress.claims : [];
     return claims.some((c) => c.mine)
-      ? `<button class="gc-vote-btn" title="Remove your in-progress mark from this issue" onclick="AppView.clearIssueClaim(${n})">Clear in progress</button>`
-      : `<button class="gc-vote-btn" title="Mark this issue as in progress — you&#39;re working on it. Expires on its own after ~7 days without activity; discussion in the issue&#39;s thread keeps it alive." onclick="AppView.markIssueInProgress(${n})">Mark in progress</button>`;
+      ? `<button class="gc-vote-btn" title="Give up your claim on this issue so somebody else can take it" onclick="AppView.clearIssueClaim(${n})">Release my claim</button>`
+      : `<button class="gc-vote-btn" title="Tell everyone you&#39;re taking this issue — a claim, not a promise of progress. Clears on its own after ~7 days without activity; discussion in the issue&#39;s thread keeps it alive." onclick="AppView.markIssueInProgress(${n})">Claim this issue</button>`;
   },
 
   // Everything an issue card demoted off its face, as ⋯ descriptors.
@@ -10346,15 +10408,15 @@ const AppView = {
       if (!st.progressOnFace) {
         items.push(myClaim
           ? {
-            label: 'Clear in progress',
+            label: 'Release my claim',
             icon: 'clear',
-            title: 'Remove your in-progress mark from this issue',
+            title: 'Give up your claim on this issue so somebody else can take it',
             act: () => AppView.clearIssueClaim(n),
           }
           : {
-            label: 'Mark in progress',
+            label: 'Claim this issue',
             icon: 'progress',
-            title: 'Mark this issue as in progress — you’re working on it. Expires on its own after ~7 days without activity; discussion in the issue’s thread keeps it alive.',
+            title: 'Tell everyone you’re taking this issue — a claim, not a promise of progress. Clears on its own after ~7 days without activity; discussion in the issue’s thread keeps it alive.',
             act: () => AppView.markIssueInProgress(n),
           });
       }
@@ -10791,10 +10853,11 @@ const AppView = {
     }
   },
 
-  // "Mark in progress" — add (or renew) the viewer's own claim on an
-  // issue. Optimistic: the cached row gains the claim and repaints right
-  // away; the server's issue_update broadcast reconciles everyone
-  // (including this client) with authoritative data moments later.
+  // "Claim this issue" (#1112 renamed it from "Mark in progress") — add (or
+  // renew) the viewer's own claim on an issue. Optimistic: the cached row
+  // gains the claim and repaints right away; the server's issue_update
+  // broadcast reconciles everyone (including this client) with authoritative
+  // data moments later.
   async markIssueInProgress(issueNumber) {
     const slug = AppView.appData && AppView.appData.slug;
     if (!slug) return;
@@ -10805,7 +10868,7 @@ const AppView = {
       });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        PlatformUI.toast(data.error || `Couldn't mark in progress (HTTP ${resp.status}).`);
+        PlatformUI.toast(data.error || `Couldn't claim this issue (HTTP ${resp.status}).`);
         return;
       }
       const issue = (AppView._ghIssues || []).find((i) => i.number === issueNumber);
@@ -10825,11 +10888,12 @@ const AppView = {
         if (document.getElementById('gc-thread-head')) AppView._renderTopicHead();
       }
     } catch (err) {
-      PlatformUI.toast(`Couldn't mark in progress: ${err.message}`);
+      PlatformUI.toast(`Couldn't claim this issue: ${err.message}`);
     }
   },
 
-  // "Clear in progress" — remove a claim. With no userId: the viewer's
+  // "Release my claim" (#1112 renamed it from "Clear in progress") — remove a
+  // claim. With no userId: the viewer's
   // own. With one (admin per-claim clear control in the topic view):
   // that user's — the server 403s anyone but the claimer or a
   // write-admin. Optimistic like markIssueInProgress; the `mine` flag is
@@ -10847,7 +10911,7 @@ const AppView = {
       });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        PlatformUI.toast(data.error || `Couldn't clear the in-progress mark (HTTP ${resp.status}).`);
+        PlatformUI.toast(data.error || `Couldn't release the claim (HTTP ${resp.status}).`);
         return;
       }
       const issue = (AppView._ghIssues || []).find((i) => i.number === issueNumber);
@@ -10865,7 +10929,7 @@ const AppView = {
         if (document.getElementById('gc-thread-head')) AppView._renderTopicHead();
       }
     } catch (err) {
-      PlatformUI.toast(`Couldn't clear the in-progress mark: ${err.message}`);
+      PlatformUI.toast(`Couldn't release the claim: ${err.message}`);
     }
   },
 
@@ -12231,45 +12295,240 @@ const AppView = {
     return !!(issue.in_progress || (h && (h.status === 'generating' || h.status === 'ready')));
   },
 
-  // The "In progress" chip on an issue card. Label derives from the
-  // distinct PEOPLE involved (session owners + claimers, deduped): one
-  // person → their name ("· you" when it's the viewer), several → a
-  // count. The tooltip names everyone with their role. When the server
-  // chose a link target (in_progress.target — proposal > own session >
-  // shared session, per-viewer) the chip is a button that opens the
-  // linked work; otherwise a plain informational span (private work,
-  // claims-only, or headless-only — those rows' own buttons navigate).
-  _inProgressChipHtml(issue) {
+  // #1112: mirrors IN_PROGRESS_PAUSED_WINDOW_DAYS / ISSUE_CLAIM_TTL_DAYS in
+  // src/routes/issues.js. Only used to SAY when a mark clears itself; the
+  // server remains the only thing that actually expires anything, so the two
+  // drifting apart makes a sentence stale, never the board wrong.
+  WORK_PAUSED_WINDOW_DAYS: 7,
+  WORK_CLAIM_TTL_DAYS: 7,
+
+  // ── #1112: the one work state an issue is actually in ────────────────
+  //
+  // A single "In progress" chip used to cover seven unrelated situations —
+  // a proposal waiting on reviewers, an agent mid-turn, an auto-solve run,
+  // a session somebody paused days ago, a run waiting on an answer, a
+  // finished draft, and a bare manual claim. All seven read identically, so
+  // the chip told a reader nothing they could act on. This resolves exactly
+  // ONE state, first match wins, in the order below:
+  //
+  //   in_review > working > auto_solving > paused > answer_needed
+  //             > draft_ready > claimed
+  //
+  // Pure and DOM-free so it can be unit-tested directly, and shared by the
+  // chip, the topic head's plain-language note and the report's row notes —
+  // one derivation, so those three can never disagree. It is deliberately
+  // NOT the bucket predicate: _issueInProgress above still decides which
+  // cards sit in the Underway column, and its truth table is unchanged.
+  // Returns null when no live signal exists.
+  _issueWorkState(issue) {
+    if (!issue) return null;
     const ip = issue.in_progress || null;
-    const h = issue.headless;
-    const headlessLive = !!(h && (h.status === 'generating' || h.status === 'ready'));
-    if (!ip && !headlessLive) return '';
+    const h = issue.headless || null;
+    const hStatus = h ? h.status : null;
+    const headlessLive = hStatus === 'generating' || hStatus === 'ready';
+    if (!ip && !headlessLive) return null;
+
     const sessUsers = (ip && Array.isArray(ip.users)) ? ip.users.filter(Boolean) : [];
-    const claims = (ip && Array.isArray(ip.claims)) ? ip.claims : [];
-    const claimUsers = claims.map((c) => c && c.username).filter(Boolean);
-    const people = [];
-    for (const u of [...sessUsers, ...claimUsers]) {
-      if (!people.includes(u)) people.push(u);
+    const claims = (ip && Array.isArray(ip.claims)) ? ip.claims.filter(Boolean) : [];
+    const claimUsers = claims.map((c) => c.username).filter(Boolean);
+    // Per-session detail (`sessions`) is the #1112 addition to
+    // composeInProgress. A payload written before it — a cached response, a
+    // hand-built fixture — still carries `count`/`users`, so synthesise
+    // plain active sessions from those rather than losing the chip.
+    let sessions = (ip && Array.isArray(ip.sessions)) ? ip.sessions.filter(Boolean) : [];
+    if (!sessions.length && ip && Number(ip.count) > 0) {
+      sessions = (sessUsers.length ? sessUsers : [null]).map((u) => ({
+        sessionId: 0, username: u, mine: false, status: 'active', busy: false, lastActivityAt: null,
+      }));
     }
-    const mine = !!(ip && ip.mine);
-    let label;
-    if (people.length > 1) label = `In progress · ${people.length}`;
-    else if (mine) label = 'In progress · you';
-    else if (people.length === 1) label = `In progress · ${people[0]}`;
-    else label = 'In progress';
-    const tip = [];
-    if (claimUsers.length) tip.push(`Claimed by ${claimUsers.join(', ')}`);
-    const workers = sessUsers.filter((u) => !claimUsers.includes(u));
-    if (workers.length) tip.push(`Working in a dev session: ${workers.join(', ')}`);
-    if (headlessLive) tip.push('An auto-solve run is on this issue');
-    const title = tip.join(' · ') || 'This issue is being worked on';
-    const baseCls = 'dev-badge bg-sky-500/10 text-sky-500';
+
+    // True distinct headcount. `peopleTotal` counts everyone the server saw;
+    // `users` is capped for display, so trusting the longer of the two keeps
+    // the "+N" honest without ever inventing people.
+    const distinct = [];
+    for (const u of [...sessUsers, ...claimUsers]) if (!distinct.includes(u)) distinct.push(u);
+    const totalRaw = ip ? Number(ip.peopleTotal) : NaN;
+    const people = (Number.isFinite(totalRaw) && totalRaw > distinct.length) ? totalRaw : distinct.length;
+
+    const pick = (list) => list.find((s) => s.mine) || list[0] || null;
+    const named = (s) => (s ? (s.mine ? 'you' : (s.username || null)) : null);
+    const withStatus = (...want) => sessions.filter((s) => want.includes(s.status));
+    const review = withStatus('promoted', 'merging');
+    const active = withStatus('active');
+    const paused = withStatus('paused');
+    const busy = active.filter((s) => s.busy);
+    const clearMs = (iso, days) => {
+      const t = Date.parse(iso || '');
+      return Number.isFinite(t) ? t + days * 86400000 : 0;
+    };
+
+    let key = null;
+    let who = null;
+    let at = null;
+    let clearAt = 0;
+    let spinner = false;
+    let tone = 'sky';
+    if (review.length) {
+      key = 'in_review'; tone = 'violet';
+      const s = pick(review); who = named(s); at = s.lastActivityAt;
+    } else if (active.length) {
+      key = 'working';
+      // Emerald + spinner only while a turn is genuinely running, which is
+      // the same `busy` the session card itself paints — the two surfaces
+      // read one predicate, so they cannot contradict each other.
+      const s = pick(busy.length ? busy : active);
+      spinner = !!busy.length; tone = busy.length ? 'emerald' : 'sky';
+      who = named(s); at = s.lastActivityAt;
+    } else if (hStatus === 'generating') {
+      key = 'auto_solving'; spinner = true;
+    } else if (paused.length) {
+      key = 'paused'; tone = 'zinc';
+      const s = pick(paused); who = named(s); at = s.lastActivityAt;
+      clearAt = clearMs(at, AppView.WORK_PAUSED_WINDOW_DAYS);
+    } else if (hStatus === 'ready' && h.outcome === 'question') {
+      key = 'answer_needed'; tone = 'amber';
+    } else if (hStatus === 'ready') {
+      key = 'draft_ready'; tone = 'amber';
+    } else if (claims.length) {
+      key = 'claimed';
+      const c = claims.find((x) => x.mine) || claims[0];
+      who = c.mine ? 'you' : (c.username || null);
+      at = c.claimedAt || null;
+      clearAt = Date.parse(c.expiresAt || '') || clearMs(at, AppView.WORK_CLAIM_TTL_DAYS);
+      if (!Number.isFinite(clearAt)) clearAt = 0;
+    } else if (sessions.length) {
+      // A linked session in a status none of the buckets above name (a
+      // status added later, say). Say the truthful minimum, don't vanish.
+      key = 'working';
+      const s = pick(sessions); who = named(s); at = s.lastActivityAt;
+    } else {
+      return null;
+    }
+
+    const LABELS = {
+      in_review: 'In review',
+      working: 'Being worked on',
+      auto_solving: 'Auto-solving…',
+      paused: 'Paused',
+      answer_needed: 'Needs an answer',
+      draft_ready: 'Draft ready to review',
+      claimed: 'Claimed',
+    };
+    // The three bot states name nobody — there is no person to name, and
+    // "Auto-solving… · maya" would imply maya is at a keyboard.
+    const namesAPerson = key === 'in_review' || key === 'working'
+      || key === 'paused' || key === 'claimed';
+    let label = LABELS[key];
+    if (namesAPerson && who) {
+      label += ` · ${who}`;
+      if (people > 1) label += ` +${people - 1}`;
+    }
+
+    const note = AppView._workStateNote({ key, who, at, clearAt, claimUsers, headlessLive, otherClaims: key !== 'claimed' && claims.length > 0 });
+    return { key, label, tone, spinner, who, people, at, clearAt, tip: note, note };
+  },
+
+  // Plain-English age for the work-state sentences. relTime()'s "5d ago" is
+  // right for a dense meta line and wrong inside a sentence, so this spells
+  // the units out. Returns '' for an unusable timestamp, and every caller
+  // omits its clause in that case rather than printing a gap.
+  _workAgeText(iso) {
+    const then = Date.parse(iso || '');
+    if (!Number.isFinite(then)) return '';
+    const mins = Math.max(0, Math.round((Date.now() - then) / 60000));
+    if (mins < 2) return 'just now';
+    if (mins < 60) return `${mins} minutes ago`;
+    const hrs = Math.round(mins / 60);
+    if (hrs < 24) return hrs === 1 ? 'an hour ago' : `${hrs} hours ago`;
+    const days = Math.round(hrs / 24);
+    if (days <= 1) return 'yesterday';
+    if (days < 30) return `${days} days ago`;
+    return `on ${AppView._workDateText(then)}`;
+  },
+
+  _workDateText(ms) {
+    if (!Number.isFinite(ms) || !ms) return '';
+    try { return new Date(ms).toLocaleDateString(); } catch { return ''; }
+  },
+
+  // The sentence the topic head prints under the title, and the chip's
+  // tooltip everywhere else. Says who, what, when, and — for the two states
+  // that expire on their own — the date they clear themselves, which is the
+  // single most-asked question about the old chip ("is anyone actually on
+  // this, or did someone press a button last month?").
+  _workStateNote(s) {
+    const isYou = s.who === 'you';
+    const subj = isYou ? 'You' : (s.who || 'Someone');
+    const has = isYou ? 'have' : 'has';
+    const is = isYou ? 'are' : 'is';
+    const age = AppView._workAgeText(s.at);
+    const when = age ? ` ${age}` : '';
+    const clears = s.clearAt ? AppView._workDateText(s.clearAt) : '';
+    let main;
+    if (s.key === 'in_review') {
+      main = `${subj} ${has} put this up for review as a proposal, so it is waiting on reviewers rather than on more work.`;
+    } else if (s.key === 'working') {
+      main = `${subj} ${is} working on this in a dev session${age ? `, last active ${age}` : ''}.`;
+    } else if (s.key === 'auto_solving') {
+      main = 'An auto-solve run is working on this right now.';
+    } else if (s.key === 'paused') {
+      main = `${subj} started work on this and paused it${when}, so nobody is working on it at the moment.`
+        + (clears ? ` This clears itself on ${clears} unless the session picks up again.` : '');
+    } else if (s.key === 'answer_needed') {
+      main = 'An auto-solve run got part way and asked a question — it needs an answer from someone before it can go further.';
+    } else if (s.key === 'draft_ready') {
+      main = 'An auto-solve run finished and left a draft here for someone to look over.';
+    } else {
+      main = `${subj} claimed this issue${when} but ${has} not started a dev session on it yet.`
+        + (clears ? ` The claim clears itself on ${clears}.` : '');
+    }
+    const also = [];
+    if (s.otherClaims && s.claimUsers && s.claimUsers.length) {
+      also.push(`claimed by ${s.claimUsers.join(', ')}`);
+    }
+    if (s.headlessLive && s.key !== 'auto_solving' && s.key !== 'answer_needed' && s.key !== 'draft_ready') {
+      also.push('an auto-solve run is on it too');
+    }
+    return also.length ? `${main} Also: ${also.join('; ')}.` : main;
+  },
+
+  // The work-state chip on an issue card — a thin painter over
+  // _issueWorkState above. Exactly ONE badge, whatever the state, so the
+  // card's four-badge budget is untouched. When the server chose a link
+  // target (in_progress.target — proposal > own session > shared session,
+  // per-viewer) the chip is a button that opens the linked work; otherwise
+  // a plain informational span (private work, claims-only, or headless-only
+  // — those rows' own buttons navigate).
+  _WORK_TONE_CLS: {
+    violet: 'bg-violet-500/10 text-violet-400',
+    sky: 'bg-sky-500/10 text-sky-500',
+    emerald: 'bg-emerald-500/10 text-emerald-500',
+    zinc: 'bg-zinc-500/10 text-zinc-500',
+    amber: 'bg-amber-500/10 text-amber-500',
+  },
+  _WORK_TONE_HOVER: {
+    violet: 'hover:bg-violet-500/20',
+    sky: 'hover:bg-sky-500/20',
+    emerald: 'hover:bg-emerald-500/20',
+    zinc: 'hover:bg-zinc-500/20',
+    amber: 'hover:bg-amber-500/20',
+  },
+
+  _inProgressChipHtml(issue) {
+    const st = AppView._issueWorkState(issue);
+    if (!st) return '';
+    const tone = AppView._WORK_TONE_CLS[st.tone] || AppView._WORK_TONE_CLS.sky;
+    const hover = AppView._WORK_TONE_HOVER[st.tone] || AppView._WORK_TONE_HOVER.sky;
+    const spin = st.spinner
+      ? '<span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>'
+      : '';
+    const ip = issue.in_progress || null;
     const target = ip && ip.target;
     const targetId = target ? parseInt(target.sessionId, 10) : 0;
     if (target && targetId) {
-      return `<button type="button" class="${baseCls} hover:bg-sky-500/20" title="${escapeAttr(`${title} — open the linked work`)}" onclick="AppView.openInProgressTarget('${escapeAttr(String(target.kind))}', ${targetId})">${escapeHtml(label)}</button>`;
+      return `<button type="button" class="dev-badge ${tone} ${hover}" data-work-state="${escapeAttr(st.key)}" title="${escapeAttr(`${st.tip} — open the linked work`)}" onclick="AppView.openInProgressTarget('${escapeAttr(String(target.kind))}', ${targetId})">${spin}${escapeHtml(st.label)}</button>`;
     }
-    return `<span class="${baseCls}" title="${escapeAttr(title)}">${escapeHtml(label)}</span>`;
+    return `<span class="dev-badge ${tone}" data-work-state="${escapeAttr(st.key)}" title="${escapeAttr(st.tip)}">${spin}${escapeHtml(st.label)}</span>`;
   },
 
   // Navigate to the work behind an issue's "In progress" chip, reusing

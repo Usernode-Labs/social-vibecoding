@@ -275,7 +275,7 @@ test('issue card: the state-driven primary + the in-progress toggle; kudos / clo
   // every row now, and this issue card had one button to put in it; claiming
   // is what a reader does with an issue before writing any code, and the
   // chip it toggles is right above it in the status band.
-  assert.match(html, /markIssueInProgress\(5\)[^>]*>Mark in progress</);
+  assert.match(html, /markIssueInProgress\(5\)[^>]*>Claim this issue</);
   assertCardActionContract(AppView, html, { primary: 2, menu: true, previewIcon: false });
   // Generating a headless proposal spends the viewer's credits, so it is a
   // chosen ⋯ action rather than the card's most prominent button.
@@ -284,7 +284,7 @@ test('issue card: the state-driven primary + the in-progress toggle; kudos / clo
   assert.ok(menuHas(AppView, html, /Propose to close/), 'Propose to close in ⋯');
   assert.ok(menuHas(AppView, html, /Set priority/), 'Set priority… in ⋯');
   // Promoted, so it is NOT also a menu row — one action, one place.
-  assert.ok(!menuHas(AppView, html, /Mark in progress/),
+  assert.ok(!menuHas(AppView, html, /Claim this issue/),
     'the claim toggle is on the face, so not duplicated in ⋯');
   // …and the ones that stayed demoted are not on the card face.
   assert.doesNotMatch(html, /giveIssueBounty/, 'no kudos pill');
@@ -292,15 +292,15 @@ test('issue card: the state-driven primary + the in-progress toggle; kudos / clo
 });
 
 // The other half of the toggle: a claim the viewer already holds renders as
-// "Clear in progress", keyed off `mine` exactly as the menu row it replaced.
+// "Release my claim", keyed off `mine` exactly as the menu row it replaced.
 test('issue card: the promoted claim toggle flips to Clear for the viewer\'s own claim', () => {
   const AppView = makeAppView(ME);
   const html = AppView._renderIssueRow(baseIssue({
     in_progress: { claims: [{ mine: true, username: 'me' }] },
   }));
-  assert.match(html, /clearIssueClaim\(5\)[^>]*>Clear in progress</);
+  assert.match(html, /clearIssueClaim\(5\)[^>]*>Release my claim</);
   assert.doesNotMatch(html, /markIssueInProgress/, 'not both states at once');
-  assert.ok(!menuHas(AppView, html, /Clear in progress/), 'and not duplicated in ⋯');
+  assert.ok(!menuHas(AppView, html, /Release my claim/), 'and not duplicated in ⋯');
 });
 
 // A read-only viewer can't claim anything, so the promoted button is absent

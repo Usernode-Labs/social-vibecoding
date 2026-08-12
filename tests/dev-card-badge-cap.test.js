@@ -233,20 +233,21 @@ test('the pill is exempt from the cap, so four chips still fit beside it', () =>
   const AppView = makeAppView();
   const html = AppView._renderIssueRow({
     number: 5, title: 'x', ...ATTRS,
-    in_progress: { users: ['maya'], mine: false, claims: [], target: null },
+    in_progress: { count: 1, users: ['maya'], peopleTotal: 1, mine: false, claims: [], sessions: [{ sessionId: 1, username: 'maya', mine: false, status: 'active', busy: false, lastActivityAt: null }], target: null },
   });
-  // In progress + priority + assignee + category is exactly BADGE_MAX.
-  for (const chip of ['In progress · maya', 'High', '@maya', 'Bug']) {
+  // The one work-state chip + priority + assignee + category is exactly
+  // BADGE_MAX — #1112 renamed the chip, it is still ONE badge.
+  for (const chip of ['Being worked on · maya', 'High', '@maya', 'Bug']) {
     assert.ok(html.includes(chip), `${chip} survives the cap`);
   }
 });
 
-test('issue: the In-progress chip leads, then the three chips', () => {
+test('issue: the work-state chip leads, then the three chips', () => {
   const AppView = makeAppView();
   const html = AppView._renderIssueRow(ISSUE({
-    ...ATTRS, in_progress: { users: ['maya'], mine: false, claims: [], target: null },
+    ...ATTRS, in_progress: { count: 1, users: ['maya'], peopleTotal: 1, mine: false, claims: [], sessions: [{ sessionId: 1, username: 'maya', mine: false, status: 'active', busy: false, lastActivityAt: null }], target: null },
   }));
-  assert.ok(html.indexOf('In progress · maya') < html.indexOf('High'));
+  assert.ok(html.indexOf('Being worked on · maya') < html.indexOf('High'));
 });
 
 test('an over-budget proposal drops the LOWEST-priority chip, never the pill', () => {

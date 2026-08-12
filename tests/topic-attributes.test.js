@@ -907,8 +907,19 @@ test('chips reuse the sibling-badge pill recipe + tint-deepening hover', () => {
   // padding + line-height. The utility classes supply only the tint.
   assert.match(fe, /const base = 'attr-chip dev-badge'/,
     'chip base uses the shared badge geometry class');
-  for (const other of [/dev-chat-badge dev-badge /, /'dev-badge bg-sky-500\/10/, /'dev-badge font-mono bg-violet/]) {
+  for (const other of [/dev-chat-badge dev-badge /, /'dev-badge font-mono bg-violet/]) {
     assert.match(fe, other, 'the sibling badges share it too');
+  }
+  // #1112: the work-state chip picks its tint from a table (it has five of
+  // them now), so its class list is composed rather than a single literal —
+  // but it still leads with the same shared geometry class, and every tint in
+  // the table is the same `bg-<hue>-500/10 text-<hue>-…` badge recipe.
+  assert.match(fe, /class="dev-badge \$\{tone\}/, 'the work-state chip leads with dev-badge');
+  const toneTable = fe.slice(fe.indexOf('_WORK_TONE_CLS:'), fe.indexOf('_WORK_TONE_HOVER:'));
+  assert.match(toneTable, /sky: 'bg-sky-500\/10 text-sky-500'/, 'sky tint is the badge recipe');
+  for (const line of toneTable.split('\n')) {
+    const tint = line.match(/'(bg-[a-z]+-500\/10 text-[a-z]+-[0-9]{3})'/);
+    if (tint) assert.match(tint[1], /^bg-([a-z]+)-500\/10 text-\1-[0-9]{3}$/, `off-recipe tint: ${tint[1]}`);
   }
   assert.match(fe, /bg-zinc-500\/10 text-zinc-500/, 'muted placeholder uses the badge muted tint');
   // Hover deepens the same tint (like the linked-issue pills), not a filter.

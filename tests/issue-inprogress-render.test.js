@@ -1,11 +1,12 @@
-// Rendering tests for the "In progress" status feature (app-view.js):
+// Rendering tests for the issue work-state feature (app-view.js):
 //
 //   1. issueChipsHtml — the reverse "#N" chip helper (sanitize / dedupe /
 //      sort, in-app navigation, no pr_url requirement).
-//   2. _inProgressChipHtml / _issueInProgress — the issue-card chip's
-//      label, tooltip, clickable-vs-informational variants.
-//   3. _renderIssueRow — chip placement, the Mark/Clear-in-progress claim
-//      button, and the topic-view admin claim list.
+//   2. _issueWorkState / _inProgressChipHtml / _issueInProgress — the seven
+//      states (#1112), their precedence, tones and "+N" headcount, plus the
+//      chip's clickable-vs-informational variants.
+//   3. _renderIssueRow — chip placement, the claim/release button, the
+//      topic-head work note (#1112) and the topic-view admin claim list.
 //   4. Session cards + proposal cards — reverse chips (live proposals go
 //      in-app; merged cards keep external GitHub links).
 //   5. _bucketDevItems — kanban routing of in-progress issues.
@@ -94,7 +95,18 @@ test('issueChipsHtml sanitizes, dedupes, sorts, and navigates in-app', () => {
   assert.match(AppView.issueChipsHtml([5], { label: 'Closes' }), /Closes #5/);
 });
 
-// ── 2. the "In progress" chip ────────────────────────────────────────────
+// ── 2. the work-state chip ───────────────────────────────────────────────
+//
+// #1112: one chip, seven mutually exclusive states, first match wins in the
+// order in_review > working > auto_solving > paused > answer_needed >
+// draft_ready > claimed. The old chip said "In progress" for all seven.
+
+// A session as composeInProgress now reports it (`sessions[]`, #1112).
+const sess = (over) => ({
+  sessionId: 100, username: 'maya', mine: false, status: 'active',
+  busy: false, lastActivityAt: '2026-08-12T00:00:00Z',
+  ...over,
+});
 
 test('_issueInProgress ORs sessions/claims with live headless state', () => {
   const AppView = makeAppView();
@@ -107,23 +119,149 @@ test('_issueInProgress ORs sessions/claims with live headless state', () => {
   assert.equal(AppView._issueInProgress(baseIssue({ headless: { status: 'failed' } })), false);
 });
 
-test('chip label: single person by name, viewer as "you", several as a count', () => {
+test('_issueWorkState names each of the seven states with its own tone', () => {
+  const AppView = makeAppView();
+  const st = (over) => AppView._issueWorkState(baseIssue(over));
+  const ip = (over) => ({ count: 1, users: ['maya'], peopleTotal: 1, mine: false, claims: [], sessions: [], target: null, ...over });
+
+  const inReview = st({ in_progress: ip({ sessions: [sess({ status: 'promoted' })] }) });
+  assert.equal(inReview.key, 'in_review');
+  assert.equal(inReview.label, 'In review · maya');
+  assert.equal(inReview.tone, 'violet');
+  assert.equal(inReview.spinner, false);
+
+  const working = st({ in_progress: ip({ sessions: [sess()] }) });
+  assert.equal(working.key, 'working');
+  assert.equal(working.label, 'Being worked on · maya');
+  assert.equal(working.tone, 'sky');
+  assert.equal(working.spinner, false);
+
+  // A turn actually running goes emerald WITH the spinner — the same `busy`
+  // the session card paints, so the two surfaces cannot disagree.
+  const busy = st({ in_progress: ip({ sessions: [sess({ busy: true })] }) });
+  assert.equal(busy.key, 'working');
+  assert.equal(busy.tone, 'emerald');
+  assert.equal(busy.spinner, true);
+
+  const auto = st({ headless: { status: 'generating' } });
+  assert.equal(auto.key, 'auto_solving');
+  assert.equal(auto.label, 'Auto-solving…');
+  assert.equal(auto.spinner, true);
+
+  const paused = st({ in_progress: ip({ sessions: [sess({ status: 'paused' })] }) });
+  assert.equal(paused.key, 'paused');
+  assert.equal(paused.label, 'Paused · maya');
+  assert.equal(paused.tone, 'zinc');
+
+  const question = st({ headless: { status: 'ready', outcome: 'question' } });
+  assert.equal(question.key, 'answer_needed');
+  assert.equal(question.label, 'Needs an answer');
+  assert.equal(question.tone, 'amber');
+
+  const draft = st({ headless: { status: 'ready', outcome: 'spec' } });
+  assert.equal(draft.key, 'draft_ready');
+  assert.equal(draft.label, 'Draft ready to review');
+  assert.equal(draft.tone, 'amber');
+
+  const claimed = st({
+    in_progress: ip({
+      count: 0, users: [], sessions: [],
+      claims: [{ username: 'maya', userId: 8, mine: false, claimedAt: '2026-08-10T00:00:00Z' }],
+    }),
+  });
+  assert.equal(claimed.key, 'claimed');
+  assert.equal(claimed.label, 'Claimed · maya');
+  assert.equal(claimed.tone, 'sky');
+
+  // No live signal at all → no state, no chip.
+  assert.equal(st({}), null);
+});
+
+test('_issueWorkState precedence: first match wins, in the documented order', () => {
+  const AppView = makeAppView();
+  const st = (over) => AppView._issueWorkState(baseIssue(over)).key;
+  const withSess = (sessions, headless, claims) => ({
+    in_progress: {
+      count: sessions.length, users: sessions.map((s) => s.username), peopleTotal: 1,
+      mine: false, claims: claims || [], sessions, target: null,
+    },
+    headless: headless || null,
+  });
+
+  // in_review beats everything else that could be true at once.
+  assert.equal(st(withSess(
+    [sess({ status: 'promoted' }), sess({ sessionId: 2, status: 'active', busy: true })],
+    { status: 'generating' },
+    [{ username: 'bob', mine: false }]
+  )), 'in_review');
+  // working beats an auto-solve run and a claim.
+  assert.equal(st(withSess([sess()], { status: 'generating' }, [{ username: 'bob', mine: false }])), 'working');
+  // auto_solving beats a paused session.
+  assert.equal(st(withSess([sess({ status: 'paused' })], { status: 'generating' })), 'auto_solving');
+  // paused beats a finished run and a claim.
+  assert.equal(st(withSess([sess({ status: 'paused' })], { status: 'ready', outcome: 'question' })), 'paused');
+  // answer_needed beats draft_ready (which is the other `ready` outcome) …
+  assert.equal(st(withSess([], { status: 'ready', outcome: 'question' })), 'answer_needed');
+  // … and both beat a bare claim.
+  assert.equal(st(withSess([], { status: 'ready', outcome: 'code' }, [{ username: 'bob', mine: false }])), 'draft_ready');
+  assert.equal(st(withSess([], null, [{ username: 'bob', mine: false }])), 'claimed');
+});
+
+test('chip names the viewer as "you" and suffixes the TRUE extra headcount', () => {
   const AppView = makeAppView();
   const chip = (ip) => AppView._inProgressChipHtml(baseIssue({ in_progress: ip }));
 
-  assert.match(chip({ count: 1, users: ['maya'], mine: false, claims: [], target: null }),
-    /In progress · maya/);
-  assert.match(chip({ count: 1, users: ['me'], mine: true, claims: [], target: null }),
-    /In progress · you/);
-  // Distinct people across sessions AND claims are counted, deduped.
   assert.match(chip({
-    count: 1, users: ['maya'], mine: false,
-    claims: [{ username: 'bob', mine: false }], target: null,
-  }), /In progress · 2/);
+    count: 1, users: ['maya'], peopleTotal: 1, mine: false, claims: [],
+    sessions: [sess()], target: null,
+  }), /Being worked on · maya/);
   assert.match(chip({
-    count: 1, users: ['maya'], mine: false,
-    claims: [{ username: 'maya', mine: false }], target: null,
-  }), /In progress · maya/, 'same person claiming AND working counts once');
+    count: 1, users: ['me'], peopleTotal: 1, mine: true, claims: [],
+    sessions: [sess({ username: 'me', mine: true })], target: null,
+  }), /Being worked on · you/);
+  // Distinct people across sessions AND claims are counted, deduped, and the
+  // extra ones ride as "+N" rather than replacing the name.
+  assert.match(chip({
+    count: 1, users: ['maya'], peopleTotal: 2, mine: false,
+    claims: [{ username: 'bob', mine: false }], sessions: [sess()], target: null,
+  }), /Being worked on · maya \+1/);
+  assert.match(chip({
+    count: 1, users: ['maya'], peopleTotal: 1, mine: false,
+    claims: [{ username: 'maya', mine: false }], sessions: [sess()], target: null,
+  }), /Being worked on · maya</, 'same person claiming AND working counts once');
+  // #1112: peopleTotal is the TRUE headcount even when `users` is capped for
+  // display, so a five-person issue no longer under-reports as "+2".
+  assert.match(chip({
+    count: 5, users: ['maya', 'bob', 'cara', 'dan', 'eve'], peopleTotal: 6, mine: false,
+    claims: [], sessions: [sess()], target: null,
+  }), /Being worked on · maya \+5/);
+  // The three bot states name nobody — there is no person at a keyboard.
+  const auto = AppView._inProgressChipHtml(baseIssue({ headless: { status: 'generating' } }));
+  assert.match(auto, /Auto-solving…/);
+  assert.ok(!auto.includes(' · '), 'no name on a bot state');
+});
+
+test('the chip is exactly ONE badge carrying its state key', () => {
+  const AppView = makeAppView();
+  const html = AppView._inProgressChipHtml(baseIssue({
+    in_progress: {
+      count: 1, users: ['maya'], peopleTotal: 1, mine: false, claims: [],
+      sessions: [sess({ status: 'paused' })], target: null,
+    },
+  }));
+  assert.equal((html.match(/dev-badge/g) || []).length, 1, 'one badge, whatever the state');
+  assert.match(html, /data-work-state="paused"/);
+});
+
+test('a payload with no sessions[] still renders a state', () => {
+  // An older cached /github-issues response (or a fixture written before
+  // #1112) carries count/users but no per-session detail.
+  const AppView = makeAppView();
+  const st = AppView._issueWorkState(baseIssue({
+    in_progress: { count: 1, users: ['maya'], mine: false, claims: [], target: null },
+  }));
+  assert.equal(st.key, 'working');
+  assert.equal(st.label, 'Being worked on · maya');
 });
 
 test('chip is a button when a target exists, a plain span otherwise', () => {
@@ -149,7 +287,7 @@ test('chip is a button when a target exists, a plain span otherwise', () => {
     headless: { status: 'generating' },
   }));
   assert.match(headlessOnly, /<span/);
-  assert.match(headlessOnly, /In progress/);
+  assert.match(headlessOnly, /Auto-solving…/);
   assert.match(headlessOnly, /auto-solve/i);
 });
 
@@ -180,12 +318,12 @@ test('openInProgressTarget dispatches to the existing navigation handlers', () =
 function claimLabels(AppView, html) {
   const row = html.match(/<div class="gc-card-actions">([\s\S]*?)<\/div>/);
   const labels = row
-    ? (row[1].match(/>(?:Mark|Clear) in progress</g) || []).map((s) => s.slice(1, -1))
+    ? (row[1].match(/>(?:Claim this issue|Release my claim)</g) || []).map((s) => s.slice(1, -1))
     : [];
   const m = html.match(/data-card-menu="([^"]+)"/);
   const inMenu = m
     ? (AppView._cardMenus[m[1]] || []).map((it) => it.label)
-      .filter((l) => /in progress/i.test(l))
+      .filter((l) => /claim/i.test(l))
     : [];
   // join(), not deepEqual: _cardMenus is built inside the vm realm, so a
   // cross-realm array fails deepStrictEqual on its prototype alone.
@@ -193,66 +331,117 @@ function claimLabels(AppView, html) {
   return labels;
 }
 
-test('issue row renders the chip and offers "Mark in progress" when the viewer holds no claim', () => {
+test('issue row renders the chip and offers "Claim this issue" when the viewer holds no claim', () => {
   const AppView = makeAppView();
   const html = AppView._renderIssueRow(baseIssue({
-    in_progress: { count: 1, users: ['maya'], mine: false, claims: [], target: null },
+    in_progress: { count: 1, users: ['maya'], mine: false, claims: [], sessions: [sess()], target: null },
   }));
-  assert.match(html, /In progress · maya/);
-  assert.equal(claimLabels(AppView, html).join('|'), 'Mark in progress');
+  assert.match(html, /Being worked on · maya/);
+  assert.equal(claimLabels(AppView, html).join('|'), 'Claim this issue');
+  // #1112: the label no longer promises progress, and no longer repeats the
+  // phrase the chip uses for six other states.
+  assert.ok(!html.includes('Mark in progress'));
 });
 
-test('issue row swaps to "Clear in progress" when the viewer holds a claim', () => {
+test('issue row swaps to "Release my claim" when the viewer holds a claim', () => {
   const AppView = makeAppView();
   const html = AppView._renderIssueRow(baseIssue({
     in_progress: {
-      count: 0, users: [], mine: true,
+      count: 0, users: [], mine: true, sessions: [],
       claims: [{ username: 'me', userId: 42, mine: true }], target: null,
     },
   }));
-  assert.equal(claimLabels(AppView, html).join('|'), 'Clear in progress',
+  assert.equal(claimLabels(AppView, html).join('|'), 'Release my claim',
     'the viewer can only clear their OWN claim from here');
 });
 
-test('other users\' claims never block the viewer\'s own Mark button', () => {
+test('other users\' claims never block the viewer\'s own claim button', () => {
   const AppView = makeAppView();
   const html = AppView._renderIssueRow(baseIssue({
     in_progress: {
-      count: 0, users: [], mine: false,
+      count: 0, users: [], mine: false, sessions: [],
       claims: [{ username: 'maya', userId: 8, mine: false }], target: null,
     },
   }));
   // Claims are per-user and never exclusive.
-  assert.equal(claimLabels(AppView, html).join('|'), 'Mark in progress');
+  assert.equal(claimLabels(AppView, html).join('|'), 'Claim this issue');
 });
 
 test('read-only viewers see the chip but no action buttons', () => {
   const AppView = makeAppView({ readOnly: true });
   const html = AppView._renderIssueRow(baseIssue({
-    in_progress: { count: 1, users: ['maya'], mine: false, claims: [], target: null },
+    in_progress: { count: 1, users: ['maya'], mine: false, claims: [], sessions: [sess()], target: null },
   }));
-  assert.match(html, /In progress · maya/);
-  assert.ok(!html.includes('Mark in progress'));
+  assert.match(html, /Being worked on · maya/);
+  assert.ok(!html.includes('Claim this issue'));
 });
 
 test('admin claim list renders in the topic view (noNav) only, for write-admins only', () => {
   const withClaims = {
     in_progress: {
-      count: 0, users: [], mine: false,
+      count: 0, users: [], mine: false, sessions: [],
       claims: [{ username: 'maya', userId: 8, mine: false }], target: null,
     },
   };
   const admin = makeAppView({ admin: true });
   const topicHtml = admin._renderIssueRow(baseIssue(withClaims), { noNav: true });
-  assert.match(topicHtml, /In-progress claims:/);
+  assert.match(topicHtml, /Claims:/);
+  assert.ok(!topicHtml.includes('In-progress claims:'), '#1112 dropped the redundant prefix');
   assert.match(topicHtml, /AppView\.clearIssueClaim\(3, 8\)/);
   // Feed variant: no admin list even for admins.
   const feedHtml = admin._renderIssueRow(baseIssue(withClaims));
-  assert.ok(!feedHtml.includes('In-progress claims:'));
+  assert.ok(!feedHtml.includes('Claims:'));
   // Non-admin topic view: no list.
   const user = makeAppView();
   const userTopic = user._renderIssueRow(baseIssue(withClaims), { noNav: true });
-  assert.ok(!userTopic.includes('In-progress claims:'));
+  assert.ok(!userTopic.includes('Claims:'));
+});
+
+// #1112: the chip names the state; the topic head explains it in a sentence,
+// including the date the mark clears itself — the question the old chip left
+// a reader with ("is anyone actually on this?").
+test('the topic head prints a plain dated work note; the feed card does not', () => {
+  const AppView = makeAppView();
+  const fiveDaysAgo = new Date(Date.now() - 5 * 86400000).toISOString();
+  const issue = baseIssue({
+    in_progress: {
+      count: 1, users: ['maya'], peopleTotal: 1, mine: false, claims: [],
+      sessions: [sess({ status: 'paused', lastActivityAt: fiveDaysAgo })],
+      target: null,
+    },
+  });
+  const topic = AppView._renderIssueRow(issue, { noNav: true });
+  const note = topic.match(/data-work-note="paused"[^>]*>([^<]*)</);
+  assert.ok(note, 'the head carries a [data-work-note]');
+  assert.match(note[1], /maya started work on this and paused it 5 days ago/);
+  assert.match(note[1], /clears itself on/);
+  // The self-clear date is the paused window past the last activity, not today.
+  const clears = new Date(Date.now() + 2 * 86400000).toLocaleDateString();
+  assert.ok(note[1].includes(clears), `note names ${clears}: ${note[1]}`);
+  // Dense feed cards have no room; the chip's tooltip carries the same text.
+  const feed = AppView._renderIssueRow(issue);
+  assert.ok(!feed.includes('data-work-note'));
+  assert.match(feed, /title="[^"]*paused it 5 days ago/);
+});
+
+test('the work note adds an "Also:" clause when more than one thing applies', () => {
+  const AppView = makeAppView();
+  const html = AppView._renderIssueRow(baseIssue({
+    in_progress: {
+      count: 1, users: ['maya'], peopleTotal: 2, mine: false,
+      claims: [{ username: 'bob', userId: 8, mine: false }],
+      sessions: [sess({ status: 'paused' })], target: null,
+    },
+  }), { noNav: true });
+  const note = html.match(/data-work-note="paused"[^>]*>([^<]*)</);
+  assert.match(note[1], /Also: claimed by bob\./);
+});
+
+test('no live signal → no chip and no work note', () => {
+  const AppView = makeAppView();
+  const html = AppView._renderIssueRow(baseIssue(), { noNav: true });
+  assert.ok(!html.includes('data-work-note'));
+  assert.ok(!html.includes('data-work-state'));
 });
 
 // ── 4. reverse chips on session + proposal cards ─────────────────────────

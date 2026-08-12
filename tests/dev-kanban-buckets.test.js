@@ -242,6 +242,68 @@ test('Done interleaves applied close-issue rows with merged PRs by activity', ()
   assert.equal(b.done[1].row_type, 'close_issue');
 });
 
+// ── #1112: the chip got seven states; the buckets got none ─────────────────
+// The whole point of the change was that the card SAYS more, not that it MOVES.
+// _issueInProgress stayed byte-identical, so these two tests are the guard
+// against a later "tidy-up" folding the new state list into the predicate.
+
+test('all seven work states land the issue in the same Underway bucket', () => {
+  const AppView = makeAppView();
+  const sess = (over) => ({
+    sessionId: 1, username: 'erin', mine: false, status: 'active',
+    busy: false, lastActivityAt: at(1), ...over,
+  });
+  const cases = {
+    in_review: { in_progress: { count: 1, users: ['erin'], claims: [], sessions: [sess({ status: 'promoted' })] } },
+    working: { in_progress: { count: 1, users: ['erin'], claims: [], sessions: [sess()] } },
+    paused: { in_progress: { count: 1, users: ['erin'], claims: [], sessions: [sess({ status: 'paused' })] } },
+    claimed: { in_progress: { count: 0, users: [], claims: [{ username: 'erin', mine: false }], sessions: [] } },
+    auto_solving: { headless: { status: 'generating' } },
+    answer_needed: { headless: { status: 'ready', outcome: 'question' } },
+    draft_ready: { headless: { status: 'ready', outcome: 'spec' } },
+  };
+  for (const [key, fields] of Object.entries(cases)) {
+    const b = AppView._bucketDevItems({
+      issues: [issue({ number: 3, ...fields })], proposals: [], gov: [], merged: [],
+    });
+    assert.deepEqual(inProgOf(b.inProgress), ['issue:3'], `${key} is underway`);
+    assert.deepEqual(numbersOf(b.issues), [], `${key} left the Issues column`);
+    // …and the chip really is showing that state, so the case is meaningful.
+    assert.equal(AppView._issueWorkState(issue({ number: 3, ...fields })).key, key);
+  }
+});
+
+test('the new sessions[]/peopleTotal fields never move a card by themselves', () => {
+  const AppView = makeAppView();
+  // No in_progress payload and no headless run: still the Issues column.
+  const b = AppView._bucketDevItems({
+    issues: [issue({ number: 1, in_progress: null })], proposals: [], gov: [], merged: [],
+  });
+  assert.deepEqual(numbersOf(b.issues), [1], 'stays in Issues');
+  assert.deepEqual(inProgOf(b.inProgress), []);
+  assert.equal(AppView._issueWorkState(b.issues[0]), null, 'and shows no chip');
+
+  // The predicate is unchanged, which means it still routes on the PRESENCE of
+  // the object — the route returns null rather than an all-zero payload, so
+  // this shape only reaches the board from a hand-built fixture. #1112 did not
+  // tighten it: only the chip reads the fields inside.
+  const empty = { count: 0, users: [], claims: [], sessions: [], peopleTotal: 0 };
+  const b2 = AppView._bucketDevItems({
+    issues: [issue({ number: 1, in_progress: empty })], proposals: [], gov: [], merged: [],
+  });
+  assert.deepEqual(inProgOf(b2.inProgress), ['issue:1'], 'same column as before #1112');
+  assert.equal(AppView._issueWorkState(b2.inProgress[0].item), null,
+    'and no chip, because there is no state to name');
+
+  // peopleTotal is a headcount for the `+N` suffix — never a state on its own.
+  const b3 = AppView._bucketDevItems({
+    issues: [issue({ number: 1, in_progress: { ...empty, peopleTotal: 9 } })],
+    proposals: [], gov: [], merged: [],
+  });
+  assert.deepEqual(inProgOf(b3.inProgress), ['issue:1']);
+  assert.equal(AppView._issueWorkState(b3.inProgress[0].item), null);
+});
+
 test('issue columns sort newest-activity first', () => {
   const AppView = makeAppView();
   const b = AppView._bucketDevItems({

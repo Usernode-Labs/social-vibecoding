@@ -334,18 +334,23 @@ test('a failed pager reports partial history rather than under-claiming', () => 
   assert.match(html, /full history could not be loaded/);
 });
 
-test('empty input yields all three empty states and no crash', () => {
+test('empty input yields every empty state and no crash', () => {
   const AppView = makeAppView();
   const m = build(AppView, {});
   assert.equal(m.done.empty, true);
   assert.equal(m.inProgress.empty, true);
+  assert.equal(m.inProgress.emptyAwaiting, true);
+  assert.equal(m.inProgress.emptyWork, true);
   assert.equal(m.backlog.empty, true);
   const html = AppView._renderReportHtml(m, { standalone: false });
   assert.match(html, /Nothing has been completed yet\./);
-  assert.match(html, /No work is in progress\./);
+  // #1112: the old single "No work is in progress." became one empty string
+  // per section, so an empty report says which half is empty.
+  assert.match(html, /Nothing is waiting for review or a vote\./);
+  assert.match(html, /Nothing is underway\./);
   assert.match(html, /The backlog is empty\./);
-  // Still a real document, with all three sections present.
-  for (const s of ['done', 'inprogress', 'backlog']) {
+  // Still a real document, with every section present.
+  for (const s of ['done', 'awaiting-review', 'inprogress', 'backlog']) {
     assert.ok(html.includes(`data-section="${s}"`), `missing section ${s}`);
   }
   // And it survives being called with nothing at all.
@@ -451,6 +456,90 @@ test('the on-screen fragment renders every populated group heading', () => {
   assert.match(html, /2 of 3 yes/);
   // The privacy note the spec requires on the export footer.
   assert.match(html, /reflects what the person who generated it can see/);
+});
+
+// ── #1112: "In progress" split into "Awaiting review" + "Underway" ─────────
+// One H2 used to cover four lists: two of finished work waiting on people and
+// two of work still happening. A reader scanning the report could not tell
+// whether anything needed them.
+
+test('the report splits Awaiting review from Underway, in that order', () => {
+  const AppView = makeAppView();
+  const m = build(AppView, {
+    issues: [issue({ number: 2, in_progress: { count: 1, users: ['erin'], claims: [] } })],
+    proposals: [prop({ id: 100 })],
+    gov: [govRow({ id: 200, kind: 'rename', payload: { newName: 'Acme Two' } })],
+    merged: [mergedRow({ id: 300 })],
+    mySessions: [session({ id: 400, username: 'me' })],
+    mergedTotal: 1,
+  });
+  assert.equal(m.inProgress.emptyAwaiting, false);
+  assert.equal(m.inProgress.emptyWork, false);
+  const html = AppView._renderReportHtml(m, { standalone: false });
+
+  // Done → Awaiting review → Underway → Backlog.
+  const at = (s) => html.indexOf(`data-section="${s}"`);
+  assert.ok(at('done') < at('awaiting-review'), 'Done first');
+  assert.ok(at('awaiting-review') < at('inprogress'), 'Awaiting review before Underway');
+  assert.ok(at('inprogress') < at('backlog'), 'Backlog last');
+  assert.match(html, /data-section="awaiting-review"><h2 class="ur-rpt-h2">Awaiting review<\/h2>/);
+  assert.match(html, /data-section="inprogress"><h2 class="ur-rpt-h2">Underway<\/h2>/);
+  assert.ok(!/<h2 class="ur-rpt-h2">In progress<\/h2>/.test(html), 'the old H2 is gone');
+
+  // The proposal and the governance row are in the FIRST section; the session
+  // and the issue are in the second.
+  const ar = html.slice(at('awaiting-review'), at('inprogress'));
+  const uw = html.slice(at('inprogress'), at('backlog'));
+  assert.ok(ar.includes('Proposal 100') && ar.includes('Acme Two'));
+  assert.ok(!ar.includes('Session 400') && !ar.includes('Issue 2'));
+  assert.ok(uw.includes('Session 400') && uw.includes('Issue 2'));
+  // The section key stays `inprogress` — the retitle is copy only.
+  assert.ok(html.includes('data-section="inprogress"'));
+});
+
+test('an underway issue row prints its exact work state, not "in progress"', () => {
+  const AppView = makeAppView();
+  const sess = (over) => ({
+    sessionId: 1, username: 'erin', mine: false, status: 'active',
+    busy: false, lastActivityAt: '2026-08-01T00:00:00Z', ...over,
+  });
+  const cases = [
+    ['in_review', 'in review', { count: 1, users: ['erin'], claims: [], sessions: [sess({ status: 'promoted' })] }, null],
+    ['working', 'being worked on', { count: 1, users: ['erin'], claims: [], sessions: [sess()] }, null],
+    ['paused', 'paused', { count: 1, users: ['erin'], claims: [], sessions: [sess({ status: 'paused' })] }, null],
+    ['claimed', 'claimed', { count: 0, users: [], claims: [{ username: 'erin', mine: false }], sessions: [] }, null],
+    ['auto_solving', 'auto-solving', null, { status: 'generating' }],
+    ['answer_needed', 'needs an answer', null, { status: 'ready', outcome: 'question' }],
+    ['draft_ready', 'draft ready to review', null, { status: 'ready', outcome: 'spec' }],
+  ];
+  for (const [key, phrase, ip, headless] of cases) {
+    const m = build(AppView, {
+      issues: [issue({ number: 2, in_progress: ip, headless })],
+      merged: [], mergedTotal: 0,
+    });
+    assert.equal(m.inProgress.issues.length, 1, `${key}: the issue is underway`);
+    assert.equal(m.inProgress.issues[0].state, key);
+    assert.equal(m.inProgress.issues[0].stateLabel, phrase);
+    const html = AppView._renderReportHtml(m, { standalone: false });
+    assert.match(html, new RegExp(`data-work-state="${key}"`), `${key}: row carries its state`);
+    assert.ok(html.includes(phrase), `${key}: row prints "${phrase}"`);
+  }
+  // The old catch-all notes are gone.
+  const any = AppView._renderReportHtml(build(AppView, {
+    issues: [issue({ number: 2, headless: { status: 'generating' } })], merged: [], mergedTotal: 0,
+  }), { standalone: false });
+  assert.ok(!any.includes('auto-solve run in progress'));
+});
+
+test('owner counts say "underway", matching the section they come from', () => {
+  const AppView = makeAppView();
+  const m = build(AppView, {
+    issues: [issue({ number: 2, asg: 'carol', in_progress: { count: 1, users: ['carol'], claims: [] } })],
+    merged: [], mergedTotal: 0,
+  });
+  const html = AppView._renderReportHtml(m, { standalone: false, ai: { owners: [] } });
+  assert.match(html, /1 underway/);
+  assert.ok(!html.includes('1 in progress'));
 });
 
 test('governance kind labels cover every non-code proposal kind', () => {
