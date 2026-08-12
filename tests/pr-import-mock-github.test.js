@@ -130,6 +130,11 @@ const PR = 9401;
 function importedSession() {
   return {
     id: 55, app_id: 9, app_slug: 'demo', app_name: 'Demo',
+    // #1162: 'promoted' — an import lands In progress now, and the head-change
+    // note is status-aware (only a proposal up for vote is asked to
+    // re-review). This fixture exercises the up-for-vote wording; the
+    // In-progress wording is covered in tests/pr-import-sync.test.js.
+    status: 'promoted',
     source: 'imported', pr_number: PR, pr_title: 'Mock imported PR',
     branch_name: 'mock/importable-widget', repo_url: 'https://github.com/acme/demo',
     imported_pr_head_sha: null, // set per test

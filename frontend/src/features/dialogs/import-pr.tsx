@@ -2,8 +2,12 @@
  * Import-a-PR dialog (#import-pr-modal).
  *
  * Lists open PRs on the app's repo that aren't already imported; importing one
- * creates a promoted proposal via POST /api/apps/:slug/pr-import and navigates
- * to it. Only reachable from the "+" menu when `pr_import_enabled` (#687).
+ * creates a session via POST /api/apps/:slug/pr-import and navigates to it.
+ * Only reachable from the "+" menu when `pr_import_enabled` (#687).
+ *
+ * #1162: an import lands **In progress**, not In review. The POST no longer
+ * sends `promote`, so the server's new default applies, and the response's
+ * `status` decides where we route (see the openTopic call in `submit`).
  *
  * Markup extracted verbatim from Shell.tsx by #1078 chunk A; #1078 chunk I
  * moved the behaviour in and made it stateful. The render output is still
@@ -29,13 +33,16 @@
  * ── #846: the import POST is awaited IN PLACE ─────────────────────────
  *
  * Progress row, dimmed list, frozen buttons — and only a server-confirmed
- * import routes the user, to the new proposal's DISCUSSION page
- * (`openTopic('proposal')`), never the dev-chat session view. An imported
- * proposal has no dev session by design (see the sessionBtn / importedNote
- * branches in `_renderProposalCard` / `_proposalDetailsHtml`), and that view
- * renders an empty transcript with a live composer until the minutes-long
- * staging build lands. The proposal page is complete on arrival and refreshes
- * itself on checks_ready / staging_ready.
+ * import routes the user, to the imported row's DISCUSSION page, never the
+ * dev-chat session view. An imported row has no dev session by design (see
+ * the sessionBtn / importedNote branches in `_renderProposalCard` /
+ * `_proposalDetailsHtml`), and that view renders an empty transcript with a
+ * live composer until the minutes-long staging build lands. The page is
+ * complete on arrival and refreshes itself on checks_ready / staging_ready.
+ *
+ * Which topic that is now depends on the returned `status` (#1162): an
+ * In-progress import is a `session` topic — `openTopic('proposal')` would
+ * 404, because /api/sessions/:id/proposal only serves promoted rows.
  *
  * `busy` is also the dialog's `canClose` veto: a dismiss mid-request would
  * strand the user with an import they can't see the outcome of. `useDialog`
@@ -212,6 +219,7 @@ export function ImportPrDialog() {
     setImportBusy(true, pr);
 
     let sessionId: string | null = null;
+    let status = '';
     try {
       const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/pr-import`, {
         method: 'POST',
@@ -232,6 +240,7 @@ export function ImportPrDialog() {
         return;
       }
       sessionId = data.sessionId;
+      status = String(data.status || '');
     } catch {
       setImportBusy(false);
       setError('Network error — please try again.');
@@ -242,9 +251,14 @@ export function ImportPrDialog() {
     // dialog — so it covers the transition instead of flashing the screen the
     // user came from.
     setImportBusy(false);
+    // #1162: the default import is In progress, which lives on the `session`
+    // topic. Only a caller that asked to promote lands on `proposal` — that
+    // page loads from /api/sessions/:id/proposal, which serves promoted rows
+    // only and would 404 for an In-progress import.
+    const topic = status === 'promoted' ? 'proposal' : 'session';
     try {
       await (appView?.openTopic as ((kind: string, id: string | null) => Promise<void>))(
-        'proposal',
+        topic,
         sessionId,
       );
     } catch {
@@ -253,7 +267,7 @@ export function ImportPrDialog() {
       // the staging build takes minutes, and until it lands the proposal shows
       // "Preview building…" with checks pending.
       window.PlatformUI?.toast?.(
-        `PR #${pr} was imported — its preview is being built now. Find it in the Dev proposals list.`,
+        `PR #${pr} was imported — its preview is being built now. Find it on the Dev board.`,
       );
     }
     dialog.close();
@@ -271,8 +285,14 @@ export function ImportPrDialog() {
           <h2 className="text-lg font-bold mb-1">
             Import a PR as a proposal
           </h2>
+          {/*
+              #1162: an import lands In progress, like any other piece of work
+              in flight — it is NOT up for vote yet. Say so here, because the
+              old copy promised the opposite ("it goes straight into voting")
+              and that is exactly the expectation this issue reverses.
+          */}
           <p className="text-xs text-zinc-500 mb-2">
-            Pick an open pull request to turn into a proposal people can vote on. It goes straight into voting, just like a native proposal.
+            Pick an open pull request to bring onto the dev board. It arrives <span className="font-medium">In progress</span> — put it up for vote from its card when it’s ready for people to review.
           </p>
           {/*
               #866: two expectations worth setting before the import, both of

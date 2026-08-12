@@ -1860,6 +1860,14 @@ const AppView = {
         App.switchTab('dev', parseInt(sessionChip.dataset.sessionChip, 10), 'sessions');
         return;
       }
+      const importedRow = e.target.closest('[data-imported-session-row]');
+      if (importedRow) {
+        // #1162: the viewer's own IMPORTED PR, In progress. There is no dev
+        // chat behind it (the server refuses turns on the row), so it opens
+        // its discussion topic — the same destination its card's ⋯ offers.
+        AppView.openTopic('session', parseInt(importedRow.dataset.importedSessionRow, 10));
+        return;
+      }
       const sharedRow = e.target.closest('[data-shared-session-row]');
       if (sharedRow) {
         // Someone else's shared session → its public discussion topic
@@ -1885,13 +1893,15 @@ const AppView = {
     bodyEl.addEventListener('keydown', (ev) => {
       if (ev.key !== 'Enter' && ev.key !== ' ') return;
       const el = ev.target.closest
-        && ev.target.closest('[data-session-chip], [data-shared-session-row]');
+        && ev.target.closest('[data-session-chip], [data-shared-session-row], [data-imported-session-row]');
       if (!el) return;
       ev.preventDefault();
       if (el.dataset.sessionChip) {
         App.switchTab('dev', parseInt(el.dataset.sessionChip, 10), 'sessions');
       } else {
-        AppView.openTopic('session', parseInt(el.dataset.sharedSessionRow, 10));
+        AppView.openTopic('session', parseInt(
+          el.dataset.sharedSessionRow || el.dataset.importedSessionRow, 10
+        ));
       }
     });
 
@@ -2366,6 +2376,20 @@ const AppView = {
         rows.push(`<button class="gc-vote-btn" title="Withdraw this proposal (closes the PR, removes it from the vote panel)" onclick="AppView.withdrawProposal(${item.id})">Withdraw</button>`);
       }
       if (window.Kudos) rows.push(Kudos.renderButton(item, { compact: true }));
+    } else if (kind === 'session') {
+      // #1162: the imported PR's own topic is where its owner can put it up
+      // for vote with room for the full label — the board card carries the
+      // same action, this is its canonical destination.
+      //
+      // A row with no user_id came from /api/me/active-sessions, which only
+      // ever serves the viewer's own sessions; shared rows carry one.
+      // 'active' only — the endpoint's own precondition (see the SELECT in
+      // POST /api/sessions/:id/promote). Imported rows are never auto-paused
+      // (services/session-lifecycle.js), so this is not a state they sit in.
+      const mine = !!(App.user && (item.user_id == null || item.user_id === App.user.id));
+      if (!AppView.readOnly && mine && item.source === 'imported' && item.status === 'active') {
+        rows.push(`<button class="gc-vote-btn" title="Put this pull request up for a merge vote — it moves to In review" onclick="AppView.promoteImportedSession(${item.id}, this)">Put up for vote</button>`);
+      }
     } else if (kind === 'issue') {
       // The issue card's demoted actions, spelled out where there is room.
       if (!AppView.readOnly) {
@@ -6714,6 +6738,40 @@ const AppView = {
     }));
   },
 
+  // #1162: the one badge an imported session card carries. Proposal cards
+  // spell their provenance out in the meta line (_proposalProvenanceWords),
+  // but a session card's meta line is the visibility subtitle, and "this is
+  // someone else's pull request, not a dev session" is the single most
+  // important thing to read off an In-progress card — so it gets a slot.
+  // Amber, matching the imported note in the proposal detail view.
+  _importedBadgeHtml(s) {
+    if (!s || s.source !== 'imported') return '';
+    return '<span class="dev-badge bg-amber-500/10 text-amber-600 dark:text-amber-400"'
+      + ' title="Imported from GitHub — the code is maintained there, and there is no in-app dev session for it">'
+      + 'Imported PR</span>';
+  },
+
+  // #1162: put an imported PR up for a merge vote. Same endpoint the native
+  // "propose" path uses; the server routes an imported row through its own
+  // promote branch (src/routes/votes.js promoteImportedSession).
+  async promoteImportedSession(sessionId, btn) {
+    if (btn) { btn.disabled = true; btn.textContent = 'Putting up for vote…'; }
+    try {
+      const resp = await fetch(`/api/sessions/${sessionId}/promote`, { method: 'POST' });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        if (btn) { btn.disabled = false; btn.textContent = 'Put up for vote'; }
+        PlatformUI.toast(data.error || 'Could not put this pull request up for vote');
+        return;
+      }
+      PlatformUI.toast('Up for vote — it moved to In review');
+      await AppView._loadDevFeed();
+    } catch (_) {
+      if (btn) { btn.disabled = false; btn.textContent = 'Put up for vote'; }
+      PlatformUI.toast('Network error — try again');
+    }
+  },
+
   _sessionStatusTagHtml(s) {
     return AppView._sessionBusy(s)
       ? '<span class="dev-badge bg-emerald-500/10 text-emerald-500"><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>working…</span>'
@@ -6732,6 +6790,12 @@ const AppView = {
     const statusTag = AppView._sessionStatusTagHtml(s);
     const shared = !!s.shared_at;
     const transcriptShared = !!s.transcript_shared_at;
+    // #1162: an imported PR is one of these cards now — it lands In progress
+    // and waits here until someone puts it up for vote. It is a session row
+    // with no session behind it: no dev chat, no worker, no transcript to
+    // share, and the code is its external author's, not the importer's. So
+    // the card says what it is and offers the one action it has.
+    const imported = s.source === 'imported';
     // Count comes from the shared-sessions row; a freshly-shared session
     // may not be in _sharedById yet (background refresh pending) — the
     // badge still renders, with the count at 0.
@@ -6741,9 +6805,11 @@ const AppView = {
     // on ensure-staging, which rebuilds the preview if the idle GC
     // reclaimed it.
     const preview = AppView.cardPreviewHtml(s, { kind: 'own-session', sessionId: s.id });
-    const subtitle = shared
-      ? (transcriptShared ? 'Visible to everyone · chat readable' : 'Visible to everyone')
-      : 'Only you can see this';
+    const subtitle = imported
+      ? `Imported pull request${s.imported_pr_author ? ` by ${escapeHtml(s.imported_pr_author)}` : ''} · not up for vote yet`
+      : (shared
+        ? (transcriptShared ? 'Visible to everyone · chat readable' : 'Visible to everyone')
+        : 'Only you can see this');
 
     // "Open chat" is GONE as a pill. Tapping this card opens the owner's dev
     // chat — its working surface, and its canonical destination; the public
@@ -6754,13 +6820,24 @@ const AppView = {
     // one thing you do to your own session card, the subtitle right above it
     // states the current state, and the card now reserves an action band that
     // otherwise held nothing but the icon Preview.
-    const visibilityBtn = AppView.readOnly ? '' : (shared
+    const visibilityBtn = (AppView.readOnly || imported) ? '' : (shared
       ? `<button class="gc-vote-btn" title="Make this session private again (removes it from everyone&#39;s In progress area, and stops anyone reading the chat)" onclick="AppView._setSessionShared(${s.id}, false, null)">Hide</button>`
       : `<button class="gc-vote-btn" title="Show this session in everyone&#39;s In progress area — others can comment and open its live preview, but can&#39;t read your chat unless you also share it" onclick="AppView._setSessionShared(${s.id}, true, null)">Make visible</button>`);
+    // #1162: the imported card's one action — the same promote the native
+    // "ready to propose" path performs, against the same endpoint. It
+    // replaces the visibility control rather than joining it: an imported PR
+    // is group business from the moment it lands (it is already visible), so
+    // "Hide" would only take a PR everyone can see on GitHub off the board.
+    // Gated on 'active' because that is exactly what POST /promote accepts —
+    // offering the button on any other state would render a control whose
+    // only outcome is a 404 toast.
+    const promoteBtn = (AppView.readOnly || !imported || s.status !== 'active') ? ''
+      : `<button class="gc-vote-btn" title="Put this pull request up for a merge vote — it moves to In review" onclick="AppView.promoteImportedSession(${s.id}, this)">Put up for vote</button>`;
     const menu = [];
     // The SECOND opt-in, offered only once the session is visible (there is
     // nowhere for a reader to reach an invisible session's chat from).
-    if (shared) {
+    // Never on an imported row: there is no chat behind it to publish.
+    if (shared && !imported) {
       menu.push(transcriptShared
         ? {
           label: 'Chat shared — stop sharing',
@@ -6774,6 +6851,8 @@ const AppView = {
           title: "Let everyone read this chat, read-only — they can't reply in it, and can't see your costs or uploaded files",
           act: () => AppView._setTranscriptShared(s.id, true, null),
         });
+    }
+    if (shared) {
       const chatN = sh ? (parseInt(sh.chat_count, 10) || 0) : 0;
       menu.push({
         label: `Open public discussion${chatN ? ` (${chatN})` : ''}`,
@@ -6783,9 +6862,11 @@ const AppView = {
       });
     }
     menu.push({
-      label: 'Archive',
+      label: imported ? 'Remove from the board' : 'Archive',
       icon: 'archive',
-      title: 'Archive this session (closes the PR, frees the slot)',
+      title: imported
+        ? 'Take this imported pull request off the board — this closes it on GitHub too, exactly as withdrawing a proposal does'
+        : 'Archive this session (closes the PR, frees the slot)',
       danger: true,
       act: () => {
         (async () => {
@@ -6795,13 +6876,19 @@ const AppView = {
       },
     });
     // `preview` goes to the rail, not in here — see _cardRailHtml below.
-    const actions = AppView._cardActionsHtml({ primary: [visibilityBtn] });
+    const actions = AppView._cardActionsHtml({ primary: [promoteBtn, visibilityBtn] });
 
     // A private session gets the muted/draft shell — that IS the signal
     // nobody else can see it, replacing the caption that used to sit above
     // the group. Single-row shell like every other card on the board.
     const mutedCls = shared ? '' : ` ${AppView.DEV_CARD_MUTED_CLS}`;
-    return `<div data-session-chip="${s.id}" role="button" tabindex="0"
+    // #1162: an imported card taps through to the PR's own discussion topic,
+    // not to `dev` — there is no dev chat on the other side of it, and
+    // App.switchTab('dev', id) would land on a session that refuses turns.
+    const nav = imported
+      ? `data-imported-session-row="${s.id}"`
+      : `data-session-chip="${s.id}"`;
+    return `<div ${nav} role="button" tabindex="0"
       class="${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}${mutedCls}"
       title="${s.busy ? 'AI is working — ' : ''}${label}">
       ${AppView._cardContentHtml({
@@ -6811,7 +6898,7 @@ const AppView = {
         // element itself carries the full text (`label` is already escaped).
         titleAttrs: ` title="${label}"`,
         metaHtml: subtitle,
-        badges: [statusTag, AppView._sessionVenueChipHtml(s), AppView.issueChipsHtml(s.linked_issues)],
+        badges: [statusTag, AppView._importedBadgeHtml(s), AppView._sessionVenueChipHtml(s), AppView.issueChipsHtml(s.linked_issues)],
         chatCount: null,
         actions,
       })}
@@ -6845,8 +6932,13 @@ const AppView = {
         icon: AppView._devCardIcon('session'),
         titleHtml: label,
         titleAttrs: ` title="${label}"`,
-        metaHtml: `${owner} is working on this`,
-        badges: [statusTag, AppView.issueChipsHtml(s.linked_issues)],
+        // #1162: an imported PR is on this board as someone else's card too,
+        // and "<user> is working on this" is the wrong sentence for it —
+        // the importer is not the author, and nobody is mid-turn on it.
+        metaHtml: s.source === 'imported'
+          ? `Imported pull request${s.imported_pr_author ? ` by ${escapeHtml(s.imported_pr_author)}` : ''} · imported by ${owner}`
+          : `${owner} is working on this`,
+        badges: [statusTag, AppView._importedBadgeHtml(s), AppView.issueChipsHtml(s.linked_issues)],
         chatCount: s.chat_count,
         // No pills of its own: reading the chat IS the whole-card tap, so the
         // dense band renders reserved-and-empty (see _cardContentHtml).
@@ -12904,8 +12996,16 @@ const AppView = {
     // the redirect just set, so the URL follows.
     if (DevChat.currentSession.source === 'imported') {
       const importedId = Number(restoreSessionId);
+      // #1162: which discussion page depends on where the import is in its
+      // life. Up for vote → the proposal topic (the vote panel is there). In
+      // progress → the session topic; the proposal topic reads from
+      // /promoted, which only serves promoted/merging/merged rows, so
+      // sending an In-progress import there would strand it on a card that
+      // cannot load.
+      const st = DevChat.currentSession.status;
+      const upForVote = st === 'promoted' || st === 'merging' || st === 'merged';
       DevChat.currentSession = null;
-      AppView.openTopic('proposal', importedId);
+      AppView.openTopic(upForVote ? 'proposal' : 'session', importedId);
       return;
     }
 

@@ -153,10 +153,19 @@ async function applyHeadChange({ config, pool, session, pr, repo, newHead, oldHe
   // #866: one appended clause rather than a second note — the rebuild is
   // part of the same "this proposal moved" event, and the Preview slot on
   // the card goes back to "building…" as a direct consequence of it.
+  //
+  // #1162: an imported PR that is still In progress has never been up for a
+  // vote, so it has no votes to clear — telling its thread otherwise would be
+  // a lie about something the group is meant to trust. Same event, honest
+  // sentence for each state.
+  const upForVote = session.status === 'promoted' || session.status === 'merging';
+  const rebuildClause =
+    'The staging preview and automated checks are being rebuilt against the new commit.';
   await sendSystemMessage(
     pool, session.app_id,
-    `${label} was updated on GitHub — earlier votes were cleared, please re-review the new changes. `
-      + 'The staging preview and automated checks are being rebuilt against the new commit.',
+    upForVote
+      ? `${label} was updated on GitHub — earlier votes were cleared, please re-review the new changes. ${rebuildClause}`
+      : `${label} was updated on GitHub. ${rebuildClause}`,
     'system',
     { headChanged: true, prNumber: session.pr_number, headSha: newHead },
     { type: 'session', ref: session.id }
@@ -299,13 +308,20 @@ async function rerunChecksForNewHead({ config, pool, session, newHead }) {
 // loaded before a build that takes minutes. A withdrawn proposal is
 // 'archived'; a merged one is 'merged'. Fails OPEN (returns true) if the row
 // can't be read, so a transient DB hiccup never throws away a good build.
+//
+// #1162: 'active'/'paused' are open states here. An imported PR now lands In
+// progress and its import-time preview is built while it sits there — keeping
+// only 'promoted'/'merging' would have thrown away every import's build the
+// moment it finished, which is the whole point of building it.
+const PREVIEW_OPEN_STATUSES = new Set(['active', 'paused', 'promoted', 'merging']);
+
 async function stillOpenForPreview(pool, session) {
   try {
     const { rows } = await pool.query(
       `SELECT status FROM chat_sessions WHERE id = $1`, [session.id]
     );
     const status = rows[0] ? rows[0].status : null;
-    if (rows.length && status !== 'promoted' && status !== 'merging') {
+    if (rows.length && !PREVIEW_OPEN_STATUSES.has(status)) {
       log.info('pr-import-sync', 'Proposal left the vote while its preview was building — discarding the build', {
         sessionId: session.id, status,
       });

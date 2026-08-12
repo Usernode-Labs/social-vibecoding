@@ -148,10 +148,11 @@ test('the same validator backs both paths, so both land identically', () => {
 
 test('the import writes the parsed notes, and defaults to today’s behaviour', () => {
   const SRC = fs.readFileSync(path.join(__dirname, '../src/routes/votes.js'), 'utf8');
-  const insert = SRC.slice(
-    SRC.indexOf('const importTesting = parseImportTesting(req.body)'),
-    SRC.indexOf('const importTesting = parseImportTesting(req.body)') + 1400
-  );
+  // Slice from the parse to the end of the INSERT's parameter list. Anchoring
+  // on the closing `);` rather than a byte count keeps this from breaking
+  // every time a comment lands between the two (as #1162's did).
+  const from = SRC.indexOf('const importTesting = parseImportTesting(req.body)');
+  const insert = SRC.slice(from, SRC.indexOf('const sessionId = inserted[0].id', from));
   assert.ok(insert.length > 0, 'the import route parses the body');
   // The three columns the capture step and the "How to test" panel read.
   assert.match(insert, /testing_md, testing_path, testing_paths/);

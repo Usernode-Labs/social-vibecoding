@@ -522,7 +522,10 @@ test('submit hands the service a loopback import that replays the caller\'s sess
     'loopback only: 127.0.0.1 and this process\'s own port');
   assert.equal(seen[0].opts.headers.cookie, 'session=abc123',
     'the caller\'s own session is replayed, so the import is attributed to them');
-  assert.equal(seen[0].opts.body, '{"pr":5}');
+  // #1162: the browser import now lands In progress, but a connector
+  // SUBMITTING finished work is asking for review — so this one path keeps
+  // the old destination by saying so explicitly.
+  assert.equal(seen[0].opts.body, '{"pr":5,"promote":true}');
 });
 
 test('an import that cannot be reached is reported, not thrown', async () => {

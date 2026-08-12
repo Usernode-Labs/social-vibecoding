@@ -395,6 +395,18 @@
       "expectSelector": "#dev-body [data-session-chip=\"990102\"] .dc-status-spinner-arc, #dev-body [data-shared-session-row=\"990001\"] .dc-status-spinner-arc"
     },
     {
+      "name": "Dev board: an imported PR lands In progress, not In review (#1162)",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-body [data-imported-session-row=\"990108\"] [onclick*=\"promoteImportedSession\"]",
+      "expectText": "not up for vote yet"
+    },
+    {
+      "name": "Dev board: an imported card is badged and credits its external author (#1162)",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-body [data-shared-session-row=\"990004\"] .dev-badge[title^=\"Imported from GitHub\"]",
+      "expectText": "imported by staging-demo-user"
+    },
+    {
       "name": "Platform variables panel renders on the platform app (#826 folded into app secrets)",
       "path": "/?shot=secrets#app/usernode-2d5619/dev",
       "expectSelector": "#app-secrets-list code"

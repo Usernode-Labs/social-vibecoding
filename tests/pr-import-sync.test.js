@@ -215,8 +215,11 @@ function recordingPool() {
   };
 }
 
+// `status` matters since #1162: an import can be In progress (no votes to
+// clear, so no "please re-review") or up for vote. Both callers of
+// syncImportedProposal select cs.*, so the column is always present.
 const SESSION = {
-  id: 321, app_id: 9, app_slug: 'demo', app_name: 'Demo',
+  id: 321, app_id: 9, app_slug: 'demo', app_name: 'Demo', status: 'promoted',
   source: 'imported', pr_number: 77, pr_title: 'External work',
   branch_name: 'feature/x', repo_url: 'https://github.com/acme/demo',
   imported_pr_head_sha: 'a'.repeat(40),
@@ -276,6 +279,47 @@ test('syncImportedProposal: head change resets tally, posts re-review, re-runs p
 
     assert.equal(buildSha, NEW, 'staging build pinned to the new head SHA');
     assert.equal(captureSha, NEW, 'checks captured against the new head SHA');
+  });
+});
+
+// #1162 — the same head change on an In-progress import. Everything the
+// sweeper DOES is unchanged (advance the SHA, rebuild the pinned preview);
+// what changes is the note it posts, because an In-progress import has no
+// votes to have cleared. Telling people their votes were cleared and asking
+// them to re-review a proposal nobody was ever asked to vote on is a false
+// statement, and it is the note most likely to be read on the board.
+test('syncImportedProposal: an In-progress import is told the preview is rebuilding, not to re-review', async () => {
+  const NEW = 'b'.repeat(40);
+  const sysMessages = [];
+  let buildSha = null;
+
+  await withStubs([
+    [fakeGithub, 'getPR', async () => ({ head: { sha: NEW, ref: 'feature/x' }, base: { ref: 'main' }, mergeable: true })],
+    [fakeGithub, 'getOctokit', async () => ({ rest: { repos: { compareCommits: async () => ({ data: { behind_by: 0 } }) } } })],
+    [fakeWs, 'sendSystemMessage', async (_pool, _appId, content, msgType, meta, thread) => {
+      sysMessages.push({ content, msgType, meta, thread });
+    }],
+    [fakeStaging, 'buildAndDeployStaging', async (_c, _s, _a, sha) => { buildSha = sha; return { containerId: 'cid', stagingUrl: 'https://s', hostname: 'h' }; }],
+    [fakeVisuals, 'captureForSession', async () => {}],
+  ], async () => {
+    const pool = recordingPool();
+    const res = await prImportSync.syncImportedProposal({
+      config: {}, pool, session: { ...SESSION, status: 'active' },
+    });
+    assert.equal(res, 'updated');
+
+    assert.equal(sysMessages.length, 1, 'still exactly one note');
+    assert.match(sysMessages[0].content, /updated on GitHub/i);
+    assert.doesNotMatch(sysMessages[0].content, /re-review/i,
+      'nobody was asked to review it yet, so there is nothing to re-review');
+    assert.doesNotMatch(sysMessages[0].content, /votes/i,
+      'an In-progress import has no votes to have cleared');
+    assert.match(sysMessages[0].content, /preview and automated checks are being rebuilt/i,
+      'the preview really is rebuilding, In progress or not');
+
+    assert.equal(buildSha, NEW, 'the pinned rebuild happens either way');
+    const headUpdate = pool.calls.find((c) => /SET imported_pr_head_sha = \$1/.test(c.sql));
+    assert.equal(headUpdate.params[0], NEW, 'the head SHA still advances');
   });
 });
 

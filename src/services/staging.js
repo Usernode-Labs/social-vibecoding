@@ -85,8 +85,9 @@ function hasInFlightBuild(sessionId) {
 
 // #866 — display-only preview state for a proposal row, derived on read.
 //
-// An imported PR is promoted the instant it's imported, so its card exists
-// for minutes before its preview does. With nothing but `staging_url` to go
+// An imported PR gets a card the instant it's imported (In progress since
+// #1162, up for vote before that), so its card exists for minutes before its
+// preview does — the SHA-pinned build starts at import time either way. With nothing but `staging_url` to go
 // on the client can't tell "still building" from "will never build", and a
 // row with no Preview button reads as a bug either way. These two derived
 // fields close that gap WITHOUT a persisted staging_state column: the

@@ -552,7 +552,14 @@ function devFlowRoutes(config) {
               // proposal is attributed to them rather than to the platform.
               cookie,
             },
-            body: JSON.stringify({ pr: prNumber }),
+            // #1162: importing now lands In progress by default, but a
+            // connector submission is not an import — it is "the work you
+            // ordered is finished, here it is for review". That is the
+            // explicit request the import API keeps honouring, and it is
+            // what the promoted cap and proposal-rate gates in submitWork
+            // were written to bound. Dropping it would make submit_work
+            // silently stop putting anything up for a vote.
+            body: JSON.stringify({ pr: prNumber, promote: true }),
           });
           const text = await resp.text();
           let parsed = null;

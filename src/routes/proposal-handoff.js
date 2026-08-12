@@ -638,7 +638,8 @@ function proposalHandoffRoutes(config) {
       const caps = effectiveSessionCaps(config, req.user);
       const { rows: ownCounts } = await pool.query(
         `SELECT COUNT(*) AS cnt FROM chat_sessions
-          WHERE user_id = $1 AND status = 'active' AND is_headless = FALSE`,
+          WHERE user_id = $1 AND status = 'active' AND is_headless = FALSE
+            AND source IS DISTINCT FROM 'imported'`,
         [req.user.id]
       );
       if (Number(ownCounts[0].cnt) >= caps.activeSessions) {

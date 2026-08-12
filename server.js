@@ -3713,6 +3713,7 @@ function startSessionAutoPauseSweeper(config) {
         `SELECT id FROM chat_sessions
          WHERE status = 'active'
            AND active_turn IS NULL
+           AND source IS DISTINCT FROM 'imported'
            AND last_activity_at < NOW() - make_interval(secs => $1::double precision / 1000.0)
            AND NOT ($2::boolean AND COALESCE(branch_name, '') LIKE 'staging-fixture/%')
          ORDER BY last_activity_at ASC
@@ -4083,6 +4084,12 @@ function startSessionAutoPauseSweeper(config) {
       log.warn('server', 'Staging app-file sweep failed', { err: err.message });
     }
 
+    // Pass 6 exempts nothing for #1162 beyond widening its status filter:
+    // an imported PR sits 'active' (In progress) before anyone puts it up for
+    // vote, and its head can move in exactly the same way while it waits —
+    // tracking it only from promotion would leave the card describing a
+    // commit the PR no longer has.
+    //
     // Pass 6: imported-PR head sync (#687, Slice 3). For each OPEN imported
     // proposal, fetch the PR's current head.sha and no-op on an unchanged
     // head; on a head change reset the vote tally, post a "please
@@ -4097,7 +4104,7 @@ function startSessionAutoPauseSweeper(config) {
            FROM chat_sessions cs
            JOIN apps a ON cs.app_id = a.id
           WHERE cs.source = 'imported'
-            AND cs.status IN ('promoted', 'merging')
+            AND cs.status IN ('active', 'paused', 'promoted', 'merging')
             AND cs.pr_number IS NOT NULL
           ORDER BY cs.promoted_at ASC NULLS FIRST
           LIMIT 50`

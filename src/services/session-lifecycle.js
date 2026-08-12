@@ -68,9 +68,16 @@ async function pauseSession({ pool, sessionId, userId = null, reason = 'manual' 
   // This mirrors the auto-pause sweeper and LRU eviction, which already
   // refuse to pause promoted sessions. The manual /pause endpoint handles
   // the worker teardown for promoted sessions itself (see routes/sessions.js).
+  //
+  // #1162: imported PRs are never paused either. They sit In progress with no
+  // worker to reclaim — there is nothing for a pause to free — and pausing
+  // one would strand it: POST /api/sessions/:id/promote only accepts an
+  // 'active' row, so the idle sweeper would quietly make every imported PR
+  // unpromotable a few minutes after it landed.
   const { rows } = await pool.query(
     `UPDATE chat_sessions SET status = 'paused'
      WHERE id = $1${ownerClause} AND status = 'active'
+       AND source IS DISTINCT FROM 'imported'
      RETURNING id`,
     params
   );
@@ -133,6 +140,7 @@ async function freeGlobalSlot({ pool, graceMs, excludeSessionId = null }) {
   const { rows } = await pool.query(
     `SELECT id FROM chat_sessions
      WHERE status = 'active'
+       AND source IS DISTINCT FROM 'imported'
        AND last_activity_at < NOW() - make_interval(secs => $1::double precision / 1000.0)${exclude}
      ORDER BY last_activity_at ASC
      LIMIT 20`,

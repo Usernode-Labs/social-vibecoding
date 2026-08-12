@@ -2,7 +2,10 @@
 //
 // The audit must enforce the SAME invariant the import guard enforces
 // (importedPrNumbers in routes/votes.js): at most one LIVE
-// ('promoted'/'merging'/'merged') imported session per (app_id, pr_number).
+// ('active'/'paused'/'promoted'/'merging'/'merged') imported session per
+// (app_id, pr_number). #1162 added the first two: an import now lands In
+// progress, so that is where a live claim on a PR normally sits, and the two
+// filters have to keep matching in both directions.
 // Archived imports are deliberately excluded — withdrawing an import and
 // re-importing the reopened PR is a documented flow, and it leaves the
 // withdrawn session behind with its pr_number intact.
@@ -43,9 +46,29 @@ test('the audit scopes to live statuses, mirroring the import guard', async () =
   assert.ok(scan, 'the duplicate-group scan ran');
   assert.match(scan, /source = 'imported'/, 'imported rows only');
   assert.match(
-    scan, /status IN \('promoted', 'merging', 'merged'\)/,
+    scan, /status IN \('active', 'paused', 'promoted', 'merging', 'merged'\)/,
     'withdraw → re-import (an archived row beside a live one) must not brick the boot'
   );
+  assert.doesNotMatch(
+    scan, /'archived'/,
+    'archived imports stay excluded — re-importing a withdrawn PR is supported'
+  );
+});
+
+// #1162 in one assertion: the audit's status list and the import guard's must
+// be the same set, or an In-progress import is either double-importable (guard
+// too narrow) or a boot abort (audit too wide).
+test('the audit status scope matches importedPrNumbers in routes/votes.js', () => {
+  const fs = require('node:fs');
+  const scopeOf = (src) => {
+    const m = src.match(/status IN \(([^)]*)\)/g) || [];
+    return m.map((s) => s.match(/'[a-z_]+'/g).sort().join(','));
+  };
+  const wanted = "'active','merged','merging','paused','promoted'";
+  const migrate = fs.readFileSync(require.resolve('../src/db/migrate'), 'utf8');
+  const votes = fs.readFileSync(require.resolve('../src/routes/votes'), 'utf8');
+  assert.ok(scopeOf(migrate).includes(wanted), 'migrate.js audit scopes to the live set');
+  assert.ok(scopeOf(votes).includes(wanted), 'votes.js import guard scopes to the same set');
 });
 
 test('a live duplicate still aborts the boot loudly', async () => {

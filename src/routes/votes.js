@@ -1289,6 +1289,19 @@ function voteMatchesReviewedRevision(expectedHeadSha, revision) {
   return !!expected && expected === current;
 }
 
+// #1162: does this import request explicitly ask for the PR to go straight up
+// for vote? The default is In progress (status 'active'); a caller that means
+// "this is finished work, review it now" says so. Two spellings, because two
+// kinds of caller exist: `promote: true` reads naturally from the connector
+// submit path, and `status: 'promoted'` names the column value directly for
+// anything driving the import API by hand. Anything else — including the
+// browser import button, which sends neither — gets the In-progress default.
+function wantsImportPromoted(body) {
+  if (!body || typeof body !== 'object') return false;
+  if (body.promote === true || body.promote === 'true' || body.promote === 1) return true;
+  return String(body.status || '').toLowerCase() === 'promoted';
+}
+
 // Optional testing metadata on a PR import. Returns the three column values
 // the imported session row is created with — all null when the request body
 // carries nothing, which is the browser import button's case and leaves that
@@ -1552,6 +1565,20 @@ function voteRoutes(config) {
       }
 
       const [, repoOwner, repoName] = (session.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+
+      // #1162: an imported PR promotes through its own path. Everything below
+      // this branch is written for a proposal the platform authored on a
+      // branch in the base repo: it creates the PR lazily, reopens a closed
+      // one, flips draft off, and builds staging by resolving
+      // `heads/<branch_name>`. None of that is true of an imported PR — the
+      // head may live on a fork, the PR belongs to its external author, and
+      // its checks build is SHA-pinned through pr-import-sync. So promoting
+      // one means exactly: confirm it is still open, re-read its head, mark
+      // it up for vote, and make sure a preview describes that head.
+      if (session.source === 'imported') {
+        await promoteImportedSession({ req, res, session });
+        return;
+      }
 
       // #183 lazy PR creation: sessions cloned from a headless auto run
       // arrive here without a PR (the headless contract defers it). Create
@@ -1977,7 +2004,9 @@ function voteRoutes(config) {
   // The three endpoints (candidate list, preview, import) let a collaborator pull an
   // externally-authored PR into the vote flow instead of building it in the
   // platform's AI dev-chat. Preview/candidates are read-only; import creates
-  // a `source='imported'` chat_sessions row promoted straight into voting.
+  // a `source='imported'` chat_sessions row — In progress by default (#1162),
+  // put up for vote through POST /api/sessions/:id/promote like any other
+  // proposal.
   //
   // Parse owner/repo from an app's repo_url, or null.
   const parseRepo = (url) => {
@@ -1996,14 +2025,135 @@ function voteRoutes(config) {
     prImportSync.kickImportedChecks({ config, pool, session, app, headSha });
   };
 
+  // #1162: put an In-progress imported PR up for vote. Called from
+  // POST /api/sessions/:id/promote in place of the native promote body, which
+  // assumes a platform-authored branch in the base repo (see the branch there
+  // for why none of that applies here). Always answers `res` itself.
+  //
+  // The head is re-read at promote time and stored, because the external
+  // author may have pushed since the import: reviewed_head_sha for an
+  // imported row IS imported_pr_head_sha (services/pr-vote-revision.js), so
+  // the revision the vote binds to has to be the one that is live now.
+  const promoteImportedSession = async ({ req, res, session }) => {
+    const repo = parseRepo(session.repo_url);
+    const gh = importGithubClient();
+    if (!gh.isEnabled() || !repo || !session.pr_number) {
+      return res.status(409).json({
+        error: 'This imported proposal has no pull request to put up for vote.',
+      });
+    }
+
+    let pr;
+    try {
+      pr = await gh.getPR(repo.owner, repo.repo, session.pr_number);
+    } catch (err) {
+      log.warn('votes', 'Imported promote PR read failed', {
+        sessionId: session.id, pr: session.pr_number, err: err.message,
+      });
+      return res.status(503).json({
+        error: 'GitHub could not verify the pull request. Try promoting again shortly.',
+      });
+    }
+    if (pr && pr.merged) {
+      return res.status(409).json({
+        error: `PR #${session.pr_number} was already merged on GitHub — there is nothing to vote on.`,
+      });
+    }
+    // Unlike a native proposal, a closed imported PR is NOT reopened here:
+    // the PR belongs to its external author, and reopening someone else's
+    // closed PR from a vote button is not this platform's call.
+    if (pr && pr.state !== 'open') {
+      return res.status(409).json({
+        error: `PR #${session.pr_number} is closed on GitHub — ask its author to reopen it, then import it again.`,
+      });
+    }
+    const headSha = pr?.head?.sha || session.imported_pr_head_sha || null;
+
+    const promoted = await pool.query(
+      `UPDATE chat_sessions
+          SET status = 'promoted', promoted_at = NOW(),
+              stale_notified_at = NULL,
+              imported_pr_head_sha = COALESCE($2, imported_pr_head_sha)
+        WHERE id = $1 AND status = 'active' AND source = 'imported'`,
+      [session.id, headSha]
+    );
+    if (!promoted.rowCount) {
+      return res.status(409).json({ error: 'session_state_changed' });
+    }
+    session.status = 'promoted';
+    if (headSha) session.imported_pr_head_sha = headSha;
+
+    // Same head-scoped hygiene the native path does: a re-promote after a
+    // withdrawal must not carry votes cast against a different revision.
+    await pool.query(
+      `DELETE FROM pr_votes WHERE session_id = $1 AND head_sha IS DISTINCT FROM $2`,
+      [session.id, headSha]
+    ).catch(() => {});
+
+    // #788: does the diff touch dapp.json's `admins` block? Same gate the
+    // native promote applies, and it must be applied before the first
+    // vote-panel render.
+    await appAdmins.refreshExplicitApproval(pool, session, session).catch(() => {});
+
+    const label = session.pr_title
+      ? `PR #${session.pr_number} — ${session.pr_title}`
+      : `PR #${session.pr_number}`;
+    const announce = `${req.user.username} put ${label} up for voting`;
+    await sendSystemMessage(pool, session.app_id, announce, 'vote',
+      { vote: { sessionId: session.id, prNumber: session.pr_number } }
+    ).catch(() => {});
+    await sendSystemMessage(pool, session.app_id, announce, 'vote',
+      { vote: { sessionId: session.id, prNumber: session.pr_number } },
+      { type: 'session', ref: session.id }
+    ).catch(() => {});
+
+    const { pushSessionUpdate } = require('../services/ws');
+    pushSessionUpdate({
+      action: 'promoted', sessionId: session.id, appSlug: session.app_slug,
+    });
+    try {
+      events.record(pool, {
+        type: events.EVENT_TYPES.PR_PROMOTED,
+        userId: req.user.id, appId: session.app_id, sessionId: session.id,
+        metadata: { prNumber: session.pr_number, source: 'imported' },
+      });
+    } catch { /* events are best-effort */ }
+    log.info('votes', 'Imported proposal promoted', {
+      sessionId: session.id, prNumber: session.pr_number,
+    });
+
+    res.json({
+      ok: true,
+      prNumber: session.pr_number,
+      prUrl: session.pr_url || null,
+      prTitle: session.pr_title || null,
+    });
+
+    // Make sure a preview + checks verdict describe the head that is now up
+    // for vote. The import-time build usually already did this, so the common
+    // case is a no-op; a head that moved while the proposal sat In progress
+    // (or an import whose build failed) rebuilds here, fire-and-forget.
+    const needsBuild = !session.staging_url
+      || (headSha && normalizedSha(session.checks_commit_sha) !== normalizedSha(headSha));
+    if (needsBuild) {
+      kickImportedChecks(
+        session,
+        { id: session.app_id, slug: session.app_slug, name: session.app_name, repo_url: session.repo_url },
+        headSha
+      );
+    }
+  };
+
   // Which of this app's PR numbers are already imported and still live/merged
   // (so the picker + import guard don't offer/allow a duplicate). Archived
   // imports are excluded so a withdrawn import can be re-imported.
+  // 'active'/'paused' are in the list since #1162: that is where an import
+  // now starts, and a PR sitting In progress is emphatically already imported.
   const importedPrNumbers = async (appId) => {
     const { rows } = await pool.query(
       `SELECT DISTINCT pr_number FROM chat_sessions
         WHERE app_id = $1 AND source = 'imported' AND pr_number IS NOT NULL
-          AND status IN ('promoted', 'merging', 'merged')`,
+          AND status IN ('active', 'paused', 'promoted', 'merging', 'merged')`,
       [appId]
     );
     return new Set(rows.map((r) => r.pr_number));
@@ -2131,8 +2281,9 @@ function voteRoutes(config) {
     }
   });
 
-  // POST import a PR as a proposal. Collab access. Creates a promoted
-  // `source='imported'` session and kicks its SHA-pinned checks build.
+  // POST import a PR as a proposal. Collab access. Creates a
+  // `source='imported'` session — In progress by default (#1162) — and kicks
+  // its SHA-pinned checks build.
   router.post('/api/apps/:slug/pr-import', drainGuard, async (req, res) => {
     try {
       const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'collab', '*');
@@ -2182,14 +2333,30 @@ function voteRoutes(config) {
       // three columns NULL, exactly as before.
       const importTesting = parseImportTesting(req.body);
 
-      // Create the imported proposal row, promoted straight into voting.
+      // #1162: an imported PR lands In progress, not In review. Importing is
+      // "this PR is now the group's work", which is not the same statement as
+      // "this PR is ready and I'm asking for a merge vote" — the second is a
+      // separate, deliberate act, exactly as it is for a native dev session.
+      // The old behaviour is still reachable, so a caller that means "import
+      // AND put it straight up for vote" keeps it: `promote: true` (or the
+      // explicit `status: 'promoted'`). The connector's submit_work path
+      // asks for it, because that submission IS the request for review.
+      const promoteNow = wantsImportPromoted(req.body);
+
+      // Create the imported proposal row. In progress rows are shared on
+      // creation: an imported PR is group business the moment it lands, and
+      // there is no private dev-chat transcript on it to leak (the row has no
+      // worker and refuses AI turns), so the whole team sees it on the board
+      // exactly as they saw it when import went straight to voting.
       const { rows: inserted } = await pool.query(
         `INSERT INTO chat_sessions
            (app_id, user_id, branch_name, pr_number, pr_url, pr_title, status,
-            source, imported_pr_head_sha, imported_pr_author, promoted_at, created_at,
+            source, imported_pr_head_sha, imported_pr_author, promoted_at,
+            shared_at, created_at, last_activity_at,
             testing_md, testing_path, testing_paths)
-         VALUES ($1, $2, $3, $4, $5, $6, 'promoted',
-            'imported', $7, $8, NOW(), NOW(),
+         VALUES ($1, $2, $3, $4, $5, $6, $12,
+            'imported', $7, $8, CASE WHEN $12 = 'promoted' THEN NOW() END,
+            CASE WHEN $12 = 'promoted' THEN NULL ELSE NOW() END, NOW(), NOW(),
             $9, $10, $11::jsonb)
          RETURNING id`,
         [
@@ -2197,6 +2364,7 @@ function voteRoutes(config) {
           pr.title || `PR #${prNumber}`, headSha, pr.user?.login || null,
           importTesting.testingMd, importTesting.testingPath,
           importTesting.testingPaths ? JSON.stringify(importTesting.testingPaths) : null,
+          promoteNow ? 'promoted' : 'active',
         ]
       );
       const sessionId = inserted[0].id;
@@ -2204,35 +2372,52 @@ function voteRoutes(config) {
         id: sessionId, app_id: app.id, app_slug: app.slug, user_id: req.user.id,
         branch_name: headBranch, pr_number: prNumber, pr_title: pr.title || null,
         repo_url: app.repo_url, staging_url: null, source: 'imported',
+        status: promoteNow ? 'promoted' : 'active',
       };
 
-      // Announce it for voting (group chat + the proposal's own thread),
-      // mirroring the native promote path.
+      // Announce it (group chat + the proposal's own thread). Only a promoted
+      // import gets the 'vote' message type — that is what renders live vote
+      // buttons inline on the activity row, and an In-progress proposal has
+      // nothing to vote on yet.
       const label = pr.title ? `PR #${prNumber} — ${pr.title}` : `PR #${prNumber}`;
-      await sendSystemMessage(pool, app.id,
-        `${req.user.username} imported ${label} for voting`,
-        'vote',
-        { vote: { sessionId, prNumber } }
-      ).catch(() => {});
-      await sendSystemMessage(pool, app.id,
-        `${req.user.username} imported ${label} for voting`,
-        'vote',
-        { vote: { sessionId, prNumber } },
+      const announce = promoteNow
+        ? `${req.user.username} imported ${label} for voting`
+        : `${req.user.username} imported ${label}`;
+      const msgType = promoteNow ? 'vote' : 'system';
+      const msgMeta = promoteNow
+        ? { vote: { sessionId, prNumber } }
+        : { session: { sessionId, prNumber } };
+      await sendSystemMessage(pool, app.id, announce, msgType, msgMeta).catch(() => {});
+      await sendSystemMessage(pool, app.id, announce, msgType, msgMeta,
         { type: 'session', ref: sessionId }
       ).catch(() => {});
 
       const { pushSessionUpdate } = require('../services/ws');
-      pushSessionUpdate({ action: 'promoted', sessionId, appSlug: app.slug });
+      pushSessionUpdate({
+        action: promoteNow ? 'promoted' : 'created', sessionId, appSlug: app.slug,
+      });
       try {
-        events.record(pool, {
-          type: events.EVENT_TYPES.PR_PROMOTED,
-          userId: req.user.id, appId: app.id, sessionId,
-          metadata: { prNumber, source: 'imported' },
-        });
+        if (promoteNow) {
+          events.record(pool, {
+            type: events.EVENT_TYPES.PR_PROMOTED,
+            userId: req.user.id, appId: app.id, sessionId,
+            metadata: { prNumber, source: 'imported' },
+          });
+        } else {
+          // Same event a native/CLI-handoff session records on creation —
+          // an In-progress import is a session that started, not a promote.
+          events.record(pool, {
+            type: events.EVENT_TYPES.DEV_SESSION_STARTED,
+            userId: req.user.id, appId: app.id, sessionId,
+            metadata: { prNumber, source: 'imported' },
+          });
+        }
       } catch { /* events are best-effort */ }
 
-      log.info('votes', 'PR imported as proposal', { sessionId, prNumber, appId: app.id });
-      res.json({ ok: true, sessionId, prNumber });
+      log.info('votes', 'PR imported as proposal', {
+        sessionId, prNumber, appId: app.id, status: session.status,
+      });
+      res.json({ ok: true, sessionId, prNumber, status: session.status });
 
       // Kick the SHA-pinned staging build + checks after responding.
       const appForBuild = { id: app.id, slug: app.slug, name: app.name, repo_url: app.repo_url };
@@ -5081,6 +5266,9 @@ module.exports = {
   voteMatchesReviewedRevision,
   // Connector-submitted testing metadata on an import, unit-tested directly.
   parseImportTesting,
+  // (#1162) The one place that decides whether an import lands In progress or
+  // straight in review, unit-tested directly in tests/pr-import-in-progress.
+  wantsImportPromoted,
   recordVote,
   // (#1115) The applied-close demo rows live here because they belong to the
   // Completed stream, but GET /api/apps/:slug/governance/:id in issues.js has

@@ -162,9 +162,18 @@ test('only a server-confirmed import navigates, and it goes to the discussion pa
   assert.match(submit, /\/pr-import`/, 'to the app’s pr-import endpoint');
   assert.match(submit, /body: JSON\.stringify\(\{ pr \}\)/, 'with just the PR number');
   assert.match(submit, /encodeURIComponent\(slug\)/, 'slug is encoded into the path');
-  // The destination is the proposal's DISCUSSION page, never the dev-chat
-  // session view — an imported PR has no dev session.
-  assert.match(submit, /openTopic[\s\S]{0,200}'proposal',\s*\n?\s*sessionId/, 'routes to the proposal topic');
+  // #1162: still JUST the PR number — the browser import asks for the
+  // server's default, which is now In progress. A `promote: true` in that
+  // body would silently restore the old straight-to-voting behaviour.
+  const body = submit.slice(submit.indexOf('body:'), submit.indexOf('});', submit.indexOf('body:')));
+  assert.doesNotMatch(body, /promote|status/, 'the dialog never asks to promote');
+  // The destination is the row's DISCUSSION page, never the dev-chat session
+  // view — an imported PR has no dev session. WHICH discussion page depends
+  // on the status the server reports: /api/sessions/:id/proposal serves
+  // promoted rows only, so an In-progress import is a `session` topic.
+  assert.match(submit, /const topic = status === 'promoted' \? 'proposal' : 'session'/,
+    'the topic follows the returned status');
+  assert.match(submit, /openTopic[\s\S]{0,200}\n?\s*topic,\s*\n?\s*sessionId/, 'and that is what it routes to');
   // Navigation is downstream of the ok branch: every failure path returns
   // before `sessionId` is read.
   const okAt = submit.indexOf('sessionId = data.sessionId;');
@@ -219,7 +228,7 @@ test('a network error surfaces without navigating', () => {
 // user is told where to find it rather than left staring at a frozen dialog.
 test('a throwing navigation still closes the dialog and toasts', () => {
   const submit = fnBody('submit');
-  const tail = submit.slice(submit.indexOf('setImportBusy(false);\n    try {'));
+  const tail = submit.slice(submit.indexOf('const topic ='));
   assert.match(tail, /PlatformUI\?\.toast\?\.\(/, 'the user is told');
   assert.match(tail, /PR #\$\{pr\} was imported/, 'by PR number');
   // #866: and told that the Preview button isn't there yet — the staging

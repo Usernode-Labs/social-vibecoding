@@ -996,6 +996,10 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         `SELECT cs.id, cs.branch_name, cs.pr_number, cs.pr_url, cs.pr_title,
                 cs.session_title, cs.status, cs.linked_issues, cs.shared_at,
                 cs.transcript_shared_at, cs.created_at, cs.source,
+                -- #1162: an imported PR now sits in this list while it is In
+                -- progress, and its card names the external author rather
+                -- than implying the importer wrote the code.
+                cs.imported_pr_author,
                 cs.agent_backend, cs.agent_model,
                 GREATEST(cs.created_at, COALESCE(m.last_message_at, cs.created_at)) AS last_activity_at,
                 a.slug AS app_slug, a.name AS app_name
@@ -1141,6 +1145,27 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
             status: 'promoted', linked_issues: [], shared_at: null,
             created_at: new Date(Date.now() - 5 * 3600 * 1000).toISOString(),
             last_activity_at: new Date(Date.now() - 45 * 60 * 1000).toISOString(),
+            app_slug: config.selfAppSlug, app_name: 'Usernode', busy: false,
+          },
+          // #1162: an imported PR, In progress. This is the state the issue
+          // asked for and it is unreachable in a demo preview otherwise —
+          // creating one takes a real GitHub PR and a real import. The card
+          // it produces is the whole change end to end: the amber "Imported
+          // PR" badge, the "not up for vote yet" subtitle naming the
+          // EXTERNAL author, "Put up for vote" instead of the visibility
+          // control, and a tap target that goes to the discussion rather
+          // than to a dev chat that does not exist. Shared on creation, like
+          // every import. The button 404s in a demo (fake id), same as every
+          // other mock row's.
+          {
+            id: 990108, branch_name: 'outside/their-feature', pr_number: 990108,
+            pr_url: null, pr_title: '[Mock] Imported pull request — In progress',
+            session_title: null,
+            status: 'active', source: 'imported', imported_pr_author: 'outside-contributor',
+            linked_issues: [],
+            shared_at: new Date(Date.now() - 12 * 60 * 1000).toISOString(),
+            created_at: new Date(Date.now() - 12 * 60 * 1000).toISOString(),
+            last_activity_at: new Date(Date.now() - 12 * 60 * 1000).toISOString(),
             app_slug: config.selfAppSlug, app_name: 'Usernode', busy: false,
           }
         );
@@ -1392,6 +1417,11 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         `SELECT cs.id, cs.session_title, cs.pr_title, cs.branch_name, cs.status,
                 cs.staging_url, (cs.pr_number IS NOT NULL) AS can_preview,
                 cs.linked_issues,
+                -- #1162: imported PRs sit here now (In progress until someone
+                -- puts them up for vote), and a card that calls someone else's
+                -- pull request "<user>'s change" misdescribes it. source is
+                -- the same non-sensitive provenance /promoted already exposes.
+                cs.source, cs.imported_pr_author,
                 (cs.transcript_shared_at IS NOT NULL) AS transcript_shared,
                 (SELECT COUNT(*)::int FROM chat_session_messages m
                   WHERE m.session_id = cs.id) AS message_count,
@@ -1470,6 +1500,25 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
             last_activity_at: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
             chat_count: 1, last_message_at: new Date().toISOString(), busy: false,
             transcript_shared: false, message_count: 0,
+          },
+          // #1162: the other half of the In-progress import — SOMEONE ELSE'S,
+          // which is what most imports look like to most viewers. It carries
+          // the same badge, but its meta line has to name two different
+          // people (the author of the code and whoever imported it) and must
+          // not say "<user> is working on this": nobody is mid-turn on an
+          // imported PR. No promote action here — it is not the viewer's.
+          {
+            id: 990004, session_title: null,
+            pr_title: '[Mock] Someone else’s imported pull request',
+            branch_name: 'outside/their-other-feature', status: 'active',
+            source: 'imported', imported_pr_author: 'outside-contributor',
+            linked_issues: [],
+            staging_url: null, can_preview: true, user_id: 0, username: 'staging-demo-user',
+            shared_at: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
+            created_at: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
+            last_activity_at: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
+            chat_count: 0, last_message_at: null, busy: false,
+            transcript_shared: false, message_count: 0,
           }
         );
       }
@@ -1508,10 +1557,17 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // The ceiling itself is per-REQUESTER: full platform admins get a
       // raised cap (services/session-caps.js). Never compare against
       // config.maxUserSessions directly here.
+      //
+      // #1162: imported PRs are excluded everywhere this count is taken.
+      // They became 'active' rows when import stopped going straight to
+      // voting, but the cap exists to bound WORKERS — an imported row has
+      // none (it refuses AI turns outright), so counting one would cost a
+      // user a real dev slot for a PR someone else wrote.
       const caps = effectiveSessionCaps(config, req.user);
       const { rows: countRows } = await pool.query(
         `SELECT COUNT(*) as cnt FROM chat_sessions
-         WHERE user_id = $1 AND status = 'active' AND is_headless = FALSE`,
+         WHERE user_id = $1 AND status = 'active' AND is_headless = FALSE
+           AND source IS DISTINCT FROM 'imported'`,
         [req.user.id]
       );
       if (parseInt(countRows[0].cnt) >= caps.activeSessions) {
@@ -1837,7 +1893,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       const caps = effectiveSessionCaps(config, req.user);
       const { rows: countRows } = await pool.query(
         `SELECT COUNT(*) as cnt FROM chat_sessions
-         WHERE user_id = $1 AND status = 'active' AND is_headless = FALSE`,
+         WHERE user_id = $1 AND status = 'active' AND is_headless = FALSE
+           AND source IS DISTINCT FROM 'imported'`,
         [req.user.id]
       );
       if (parseInt(countRows[0].cnt) >= caps.activeSessions) {
@@ -2959,7 +3016,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       const caps = effectiveSessionCaps(config, req.user);
       const { rows: countRows } = await pool.query(
         `SELECT COUNT(*) as cnt FROM chat_sessions
-         WHERE user_id = $1 AND status = 'active' AND is_headless = FALSE`,
+         WHERE user_id = $1 AND status = 'active' AND is_headless = FALSE
+           AND source IS DISTINCT FROM 'imported'`,
         [req.user.id]
       );
       if (parseInt(countRows[0].cnt) >= caps.activeSessions) {
@@ -3220,7 +3278,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       const caps = effectiveSessionCaps(config, req.user);
       const { rows: countRows } = await pool.query(
         `SELECT COUNT(*) as cnt FROM chat_sessions
-         WHERE user_id = $1 AND status = 'active'`,
+         WHERE user_id = $1 AND status = 'active'
+           AND source IS DISTINCT FROM 'imported'`,
         [req.user.id]
       );
       if (parseInt(countRows[0].cnt) >= caps.activeSessions) {
@@ -3233,6 +3292,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         const { rows: lruRows } = await pool.query(
           `SELECT id FROM chat_sessions
            WHERE user_id = $1 AND status = 'active' AND id <> $2
+             AND source IS DISTINCT FROM 'imported'
            ORDER BY last_activity_at ASC`,
           [req.user.id, sessionId]
         );

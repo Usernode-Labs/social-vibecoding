@@ -224,7 +224,7 @@ async function logSchemaApplyBlockers(pool) {
 // SCOPE — imported rows only, and only LIVE ones (see the status filter
 // below). The invariant PR-import relies on (and any future partial UNIQUE
 // index must encode the same way) is `(app_id, pr_number) WHERE source =
-// 'imported' AND status IN ('promoted','merging','merged')`.
+// 'imported' AND status IN ('active','paused','promoted','merging','merged')`.
 // NATIVE sessions can legitimately share an (app_id, pr_number)
 // — most concretely, the staging seed fixtures deliberately reuse fake PR
 // numbers across different native fixtures, which a broad audit would (and
@@ -271,11 +271,18 @@ async function auditDuplicatePrSessions(pool) {
   // the audit itself stuck behind the very deploy it was blocking. The
   // invariant PR-import actually relies on is "at most one LIVE session
   // claims a PR", so that is exactly what we audit.
+  //
+  // #1162 added 'active'/'paused' to that list, in lockstep with
+  // importedPrNumbers: an import now lands In progress, so those states are
+  // where a live claim on a PR normally sits. The two filters must keep
+  // matching — a state the guard blocks but the audit ignores is a duplicate
+  // waiting to happen; a state the audit counts but the guard allows is a
+  // boot abort waiting to happen.
   const { rows } = await pool.query(
     `SELECT app_id, pr_number, array_agg(id ORDER BY id) AS session_ids, COUNT(*)
        FROM chat_sessions
       WHERE pr_number IS NOT NULL AND source = 'imported'
-        AND status IN ('promoted', 'merging', 'merged')
+        AND status IN ('active', 'paused', 'promoted', 'merging', 'merged')
       GROUP BY app_id, pr_number
      HAVING COUNT(*) > 1`
   );

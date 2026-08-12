@@ -1126,6 +1126,10 @@ function registerTools(server, ctx) {
     const importProposal = (targetSlug, pr) => callPlatform(
       baseUrl, accessToken, 'POST', `/api/apps/${targetSlug}/pr-import`, {
         pr,
+        // #1162: a bare import lands In progress now; submit_work explicitly
+        // asks for review, because that is what submitting finished work
+        // means here (and what the promoted cap above bounds).
+        promote: true,
         ...(testing.testingPaths ? { testingPaths: testing.testingPaths } : {}),
         ...(testing.testingSteps ? { testingSteps: testing.testingSteps } : {}),
       }
