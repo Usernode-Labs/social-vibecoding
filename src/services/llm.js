@@ -882,9 +882,10 @@ Respond with ONLY a JSON object: {“title”: “...”}. No prose before or af
 // tokens (≈1-1.5¢, about 5% of the turn) carrying the only things the pills
 // actually need: the reply just written, a few prior turns, and the state.
 //
-// IF PROMPT CACHING EVER LANDS in this codebase (nothing sets cache_control
-// today), re-evaluate: a cached full-context reprompt would be both cheaper
-// and better-informed than this digest, and would be the better mechanism.
+// #717 now enables prompt caching on the shared streamed-request path, but
+// this digest remains intentional: a cache miss should not replay tens of
+// thousands of irrelevant tokens, and a small focused prompt keeps this
+// backstop cheap even when no reusable prefix is available.
 
 // The compact digest both helpers send. Shared so the forced call and the
 // Haiku backstop see IDENTICAL context — a pill set should not depend on

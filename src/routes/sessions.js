@@ -12680,7 +12680,8 @@ When the user explicitly asks you to create, file, open, log, or raise an issue 
   // 120 KB on every Mayor call, including each autonomous decision/wrap-up
   // phase. The compact work-order excerpt is derived from that SAME source
   // file and preserves the cross-cutting rules a planner needs. Dispatched
-  // scout/build agents still receive getAppConventions() in full below.
+  // scout/build agents still receive getAppConventions() in full elsewhere
+  // in this route.
   const conventionsBlock = `
 
 ==== PLATFORM CONVENTIONS (authoritative) ====
