@@ -1550,9 +1550,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // like everyone else. Don't "complete the pattern" by exempting
       // them here.
       const { rows: globalRows } = await pool.query(
-        `SELECT COUNT(*) as cnt FROM chat_sessions
-          WHERE status = 'promoted'
-             OR (status = 'active' AND source IS DISTINCT FROM 'imported')`
+        `SELECT COUNT(*) as cnt FROM chat_sessions WHERE status IN ('active', 'promoted')`
       );
       if (parseInt(globalRows[0].cnt) >= config.maxGlobalSessions) {
         // At the global cap: try to reclaim a slot from a globally idle
@@ -1715,9 +1713,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // /sessions), but they consume a real worker slot, so the global cap
       // still applies.
       const { rows: globalRows } = await pool.query(
-        `SELECT COUNT(*) as cnt FROM chat_sessions
-          WHERE status = 'promoted'
-             OR (status = 'active' AND source IS DISTINCT FROM 'imported')`
+        `SELECT COUNT(*) as cnt FROM chat_sessions WHERE status IN ('active', 'promoted')`
       );
       if (parseInt(globalRows[0].cnt) >= config.maxGlobalSessions) {
         const { freed } = await sessionLifecycle.freeGlobalSlot({
@@ -1856,9 +1852,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         return res.status(429).json({ error: `You already have ${caps.activeSessions} running sessions. Pause or archive one first.` });
       }
       const { rows: globalRows } = await pool.query(
-        `SELECT COUNT(*) as cnt FROM chat_sessions
-          WHERE status = 'promoted'
-             OR (status = 'active' AND source IS DISTINCT FROM 'imported')`
+        `SELECT COUNT(*) as cnt FROM chat_sessions WHERE status IN ('active', 'promoted')`
       );
       if (parseInt(globalRows[0].cnt) >= config.maxGlobalSessions) {
         const { freed } = await sessionLifecycle.freeGlobalSlot({
@@ -2981,9 +2975,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         return res.status(429).json({ error: `You already have ${caps.activeSessions} running sessions. Pause or archive one first.` });
       }
       const { rows: globalRows } = await pool.query(
-        `SELECT COUNT(*) as cnt FROM chat_sessions
-          WHERE status = 'promoted'
-             OR (status = 'active' AND source IS DISTINCT FROM 'imported')`
+        `SELECT COUNT(*) as cnt FROM chat_sessions WHERE status IN ('active', 'promoted')`
       );
       if (parseInt(globalRows[0].cnt) >= config.maxGlobalSessions) {
         const { freed } = await sessionLifecycle.freeGlobalSlot({
@@ -3213,9 +3205,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       if (!ownRows.length) return res.status(404).json({ error: 'Session not found or not paused' });
 
       const { rows: globalRows } = await pool.query(
-        `SELECT COUNT(*) as cnt FROM chat_sessions
-          WHERE status = 'promoted'
-             OR (status = 'active' AND source IS DISTINCT FROM 'imported')`
+        `SELECT COUNT(*) as cnt FROM chat_sessions WHERE status IN ('active', 'promoted')`
       );
       if (parseInt(globalRows[0].cnt) >= config.maxGlobalSessions) {
         // At the global cap: reclaim a slot from a globally idle session

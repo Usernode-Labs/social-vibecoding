@@ -611,6 +611,39 @@ test('a passing check for an older native commit is merge-blocked and re-run exa
   }
 });
 
+test('a passing check for an older imported commit cannot authorize the promoted head', async () => {
+  const ctx = loadVotes();
+  const pool = recordingPool([
+    [/SELECT check_state, test_results/, [{
+      check_state: 'passing',
+      test_results: [],
+      checks_checked_at: new Date().toISOString(),
+      checks_commit_sha: OLD,
+    }]],
+    [/SET status = 'merging'/, [{ id: 41 }]],
+  ]);
+  const session = nativeSession({
+    source: 'imported',
+    reviewed_head_sha: null,
+    imported_pr_head_sha: NEW,
+    checks_commit_sha: OLD,
+  });
+  try {
+    const result = await ctx.subject.checkAndMerge({}, pool, session);
+    assert.equal(result.merged, false);
+    assert.equal(result.checksBlocked, true);
+    assert.equal(result.checksRevisionMismatch, true);
+    assert.ok(!pool.queries.some((q) => /SET status = 'merging'/.test(q.sql)),
+      'an old green check never reaches the merge claim');
+    assert.deepEqual(ctx.pendingCalls, [{ sessionId: session.id, sha: NEW }]);
+    assert.equal(ctx.rerunCalls[0].newHead, NEW,
+      'the imported SHA-pinned rebuild targets the promoted head');
+    assert.equal(ctx.mergeCalls.length, 0);
+  } finally {
+    ctx.restore();
+  }
+});
+
 test('native head-moved merge returns to review and resets against the new live SHA', async () => {
   const moved = new Error('head changed');
   moved.headMoved = true;

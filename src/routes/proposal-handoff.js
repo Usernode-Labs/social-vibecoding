@@ -646,9 +646,7 @@ function proposalHandoffRoutes(config) {
         return res.status(429).json({ error: `You already have ${caps.activeSessions} running sessions. Pause or archive one first.` });
       }
       const { rows: globalCounts } = await pool.query(
-        `SELECT COUNT(*) AS cnt FROM chat_sessions
-          WHERE status = 'promoted'
-             OR (status = 'active' AND source IS DISTINCT FROM 'imported')`
+        `SELECT COUNT(*) AS cnt FROM chat_sessions WHERE status IN ('active', 'promoted')`
       );
       if (Number(globalCounts[0].cnt) >= Number(config.maxGlobalSessions || 100)) {
         const { freed } = await sessionLifecycle.freeGlobalSlot({

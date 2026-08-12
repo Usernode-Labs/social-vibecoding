@@ -52,7 +52,7 @@ function occupancy({ own, global: globalCount }) {
   return async (sql) => {
     const s = String(sql);
     if (/status = 'active' AND is_headless = FALSE/.test(s)) return { rows: [{ cnt: String(own) }] };
-    if (/status = 'promoted'[\s\S]*status = 'active'/.test(s)) return { rows: [{ cnt: String(globalCount) }] };
+    if (/status IN \('active', 'promoted'\)/.test(s)) return { rows: [{ cnt: String(globalCount) }] };
     if (/INSERT INTO chat_sessions/.test(s)) {
       return { rows: [{ id: 99, app_id: APP.id, user_id: 7, status: 'active', branch_name: 'dev/tester-1' }] };
     }

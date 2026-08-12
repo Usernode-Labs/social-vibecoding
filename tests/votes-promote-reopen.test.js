@@ -81,6 +81,8 @@ function loadVotesRouter({ getPRImpl, reopenImpl, pool } = {}) {
     events: require.resolve('../src/services/events'),
     appAccess: require.resolve('../src/services/app-access'),
     topicAttrs: require.resolve('../src/services/topic-attributes'),
+    visuals: require.resolve('../src/services/visuals'),
+    prImportSync: require.resolve('../src/services/pr-import-sync'),
     subject: require.resolve('../src/routes/votes'),
   };
   const orig = {};
@@ -90,6 +92,8 @@ function loadVotesRouter({ getPRImpl, reopenImpl, pool } = {}) {
   const reopenCalls = [];
   const systemMessages = [];
   const octokitRequests = [];
+  const pendingCalls = [];
+  const rerunCalls = [];
 
   stub(ids.logger, { info() {}, warn() {}, error() {}, debug() {} });
   stub(ids.pool, { getPool: () => pool });
@@ -139,6 +143,16 @@ function loadVotesRouter({ getPRImpl, reopenImpl, pool } = {}) {
   stub(ids.events, { record: () => {}, EVENT_TYPES: { PR_PROMOTED: 'pr_promoted', PR_MERGED: 'pr_merged' } });
   stub(ids.appAccess, { sessionCollabGuard: () => (_req, _res, next) => next() });
   stub(ids.topicAttrs, {});
+  stub(ids.visuals, {
+    setChecksPending: async (_pool, sessionId, sha) => {
+      pendingCalls.push({ sessionId, sha });
+      return true;
+    },
+    notifyChecksPending() {},
+  });
+  stub(ids.prImportSync, {
+    rerunChecksForNewHead: async (args) => { rerunCalls.push(args); },
+  });
 
   delete require.cache[ids.subject];
   const { voteRoutes } = require(ids.subject);
@@ -148,7 +162,10 @@ function loadVotesRouter({ getPRImpl, reopenImpl, pool } = {}) {
       if (orig[k]) require.cache[id] = orig[k]; else delete require.cache[id];
     }
   };
-  return { voteRoutes, getPRCalls, reopenCalls, systemMessages, octokitRequests, restore };
+  return {
+    voteRoutes, getPRCalls, reopenCalls, systemMessages, octokitRequests,
+    pendingCalls, rerunCalls, restore,
+  };
 }
 
 async function withServer({
@@ -265,6 +282,26 @@ test('promote: an active imported PR captures its head and becomes ready for vot
     assert.equal(update.params[1], HEAD, 'the live imported head is the reviewed revision');
     assert.equal(ctx.octokitRequests.length, 1, 'the PR is marked ready only at promotion');
     assert.equal(ctx.octokitRequests[0].params.draft, false);
+  });
+});
+
+test('promote: an imported head change is marked pending before voting opens', async () => {
+  const imported = {
+    ...sessionRow,
+    source: 'imported',
+    imported_pr_head_sha: OLD_HEAD,
+    checks_commit_sha: OLD_HEAD,
+  };
+  await withServer({
+    session: imported,
+    getPRImpl: async () => ({ state: 'open', merged: false, head: { sha: HEAD } }),
+  }, async (ctx) => {
+    const r = await fetch(`${ctx.base}/api/sessions/7/promote`, { method: 'POST' });
+    assert.equal(r.status, 200);
+    assert.deepEqual(ctx.pendingCalls, [{ sessionId: imported.id, sha: HEAD }],
+      'the old green verdict is invalidated before the promote response');
+    assert.equal(ctx.rerunCalls.length, 1);
+    assert.equal(ctx.rerunCalls[0].newHead, HEAD);
   });
 });
 

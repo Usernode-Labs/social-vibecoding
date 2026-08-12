@@ -899,6 +899,30 @@ async function kickNativeRevisionChecks({ config, pool, session, headSha }) {
   }));
 }
 
+// Imported PRs use their GitHub head as the reviewed revision. Stamp that
+// revision pending before returning control to a promotion/vote request, then
+// let the SHA-pinned preview rebuild continue in the background. The merge
+// gate independently compares the verdict SHA, so even a failed pending write
+// cannot let an older green result authorize this head.
+async function kickImportedRevisionChecks({ config, pool, session, headSha }) {
+  const visuals = require('../services/visuals');
+  await visuals.setChecksPending(pool, session.id, headSha, 'building', 'pr-import')
+    .catch((err) => log.warn('votes', 'Imported revision setChecksPending failed (non-fatal)', {
+      sessionId: session.id, headSha, err: err.message,
+    }));
+  try { visuals.notifyChecksPending(session.id, headSha, 'building', 'pr-import'); } catch (_) {}
+
+  const prImportSync = require('../services/pr-import-sync');
+  prImportSync.rerunChecksForNewHead({
+    config,
+    pool,
+    session,
+    newHead: headSha,
+  }).catch((err) => log.warn('votes', 'Imported revision checks re-run failed', {
+    sessionId: session.id, headSha, err: err.message,
+  }));
+}
+
 // #955: how far back the classifier will follow first parents looking for the
 // reviewed revision. Stacked platform syncs are the reason it is more than one
 // (a drain can resolve, fail to merge, and resolve again before anything
@@ -1785,11 +1809,9 @@ function voteRoutes(config) {
             // the row entered In progress. Promotion re-read GitHub above;
             // if that head moved, start a SHA-pinned rebuild even when the
             // earlier preview has not finished yet.
-            require('../services/pr-import-sync').rerunChecksForNewHead({
-              config, pool, session, newHead: promotedHeadSha,
-            }).catch((err) => log.warn('votes', 'Imported revision checks re-run failed', {
-              sessionId: session.id, headSha: promotedHeadSha, err: err.message,
-            }));
+            await kickImportedRevisionChecks({
+              config, pool, session, headSha: promotedHeadSha,
+            });
           } else if (previousReviewedHead !== promotedHeadSha && session.staging_url) {
             await kickNativeRevisionChecks({
               config, pool, session, headSha: promotedHeadSha,
@@ -2179,6 +2201,24 @@ function voteRoutes(config) {
       const imported = await importedPrNumbers(app.id);
       if (imported.has(prNumber)) {
         return res.status(409).json({ error: `PR #${prNumber} has already been imported.` });
+      }
+
+      // An active import owns no dev worker, but it immediately builds and
+      // retains a staging preview. Keep it outside the per-user worker cap
+      // while still respecting the platform-wide host-resource ceiling used
+      // by ordinary sessions and promoted proposals.
+      const { rows: globalRows } = await pool.query(
+        `SELECT COUNT(*) AS cnt FROM chat_sessions WHERE status IN ('active', 'promoted')`
+      );
+      if (Number(globalRows[0]?.cnt || 0) >= Number(config.maxGlobalSessions || 100)) {
+        const { freed } = await require('../services/session-lifecycle').freeGlobalSlot({
+          pool, graceMs: config.sessionPressureGraceMs,
+        });
+        if (!freed) {
+          return res.status(429).json({
+            error: 'Platform is at capacity right now. Try importing this pull request again in a few minutes.',
+          });
+        }
       }
 
       let pr;
@@ -4155,15 +4195,13 @@ async function checkAndMerge(config, pool, session, options = {}) {
          FROM chat_sessions WHERE id = $1`,
       [session.id]
     );
-    const nativeReviewedHead = session.source === 'imported'
-      ? null
-      : (session.reviewed_head_sha || null);
+    const reviewedHead = reviewedHeadForSession(session);
     const returnedChecksSha = checkRows[0]?.checks_commit_sha;
-    const checksRevisionMismatch = !!nativeReviewedHead
+    const checksRevisionMismatch = !!reviewedHead
       // `undefined` exists only in narrow unit-test row adapters that predate
       // the selected column; PostgreSQL returns null for a real unset value.
       && returnedChecksSha !== undefined
-      && returnedChecksSha !== nativeReviewedHead;
+      && !sameSha(returnedChecksSha, reviewedHead);
     // A green verdict for an older commit is not a green verdict for the
     // reviewed code. Treat it as pending and rebuild exactly the pinned SHA.
     const checkState = checksRevisionMismatch
@@ -4184,9 +4222,15 @@ async function checkAndMerge(config, pool, session, options = {}) {
       const stalePending = checkState === null
         || (checkState === 'pending' && (Date.now() - checkedAt) > CHECKS_STALE_MS);
       if (checksRevisionMismatch) {
-        await kickNativeRevisionChecks({
-          config, pool, session, headSha: nativeReviewedHead,
-        });
+        if (session.source === 'imported') {
+          await kickImportedRevisionChecks({
+            config, pool, session, headSha: reviewedHead,
+          });
+        } else {
+          await kickNativeRevisionChecks({
+            config, pool, session, headSha: reviewedHead,
+          });
+        }
       } else if (stalePending) {
         const stagingRecovery = require('../services/staging-recovery');
         stagingRecovery.recheckSessionChecks({

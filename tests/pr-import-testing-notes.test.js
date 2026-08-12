@@ -148,6 +148,10 @@ test('the same validator backs both paths, so both land identically', () => {
 
 test('the import writes parsed notes and defaults browser imports to active', () => {
   const SRC = fs.readFileSync(path.join(__dirname, '../src/routes/votes.js'), 'utf8');
+  const route = SRC.slice(
+    SRC.indexOf("router.post('/api/apps/:slug/pr-import'"),
+    SRC.indexOf('// #687 Slice 6')
+  );
   const insert = SRC.slice(
     SRC.indexOf('const importTesting = parseImportTesting(req.body)'),
     SRC.indexOf('const sessionId = inserted[0].id')
@@ -167,4 +171,10 @@ test('the import writes parsed notes and defaults browser imports to active', ()
   assert.match(insert, /const initialStatus = promote \? 'promoted' : 'active'/);
   assert.match(insert, /CASE WHEN \$7 = 'active' THEN NOW\(\) END/,
     'an active import is shared onto the In-progress board');
+  assert.match(route, /status IN \('active', 'promoted'\)/,
+    'worker-less imports still count against global staging capacity');
+  assert.match(route, /session-lifecycle'\)\.freeGlobalSlot/,
+    'a full platform must reclaim a real worker slot or refuse the import');
+  assert.ok(route.indexOf("status IN ('active', 'promoted')") < route.indexOf('INSERT INTO chat_sessions'),
+    'capacity is checked before the imported row launches a staging build');
 });
