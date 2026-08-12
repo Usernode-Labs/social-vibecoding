@@ -1126,6 +1126,7 @@ function registerTools(server, ctx) {
     const importProposal = (targetSlug, pr) => callPlatform(
       baseUrl, accessToken, 'POST', `/api/apps/${targetSlug}/pr-import`, {
         pr,
+        promote: true,
         ...(testing.testingPaths ? { testingPaths: testing.testingPaths } : {}),
         ...(testing.testingSteps ? { testingSteps: testing.testingSteps } : {}),
       }

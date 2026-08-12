@@ -6,6 +6,8 @@
 //   - reopen refused → 409 with an actionable error, session NOT promoted;
 //   - already-merged PR → 409 (nothing left to vote on);
 //   - open PR → its immutable head is captured and promotion proceeds;
+//   - imported active PR → current head is captured and GitHub is marked ready;
+//   - imported closed PR → refused without reopening someone else's PR;
 //   - transient GET failure → promotion fails closed (nothing can be reviewed
 //     or checked against an unknown revision).
 //
@@ -87,6 +89,7 @@ function loadVotesRouter({ getPRImpl, reopenImpl, pool } = {}) {
   const getPRCalls = [];
   const reopenCalls = [];
   const systemMessages = [];
+  const octokitRequests = [];
 
   stub(ids.logger, { info() {}, warn() {}, error() {}, debug() {} });
   stub(ids.pool, { getPool: () => pool });
@@ -103,7 +106,12 @@ function loadVotesRouter({ getPRImpl, reopenImpl, pool } = {}) {
       return {};
     },
     // The ready-for-review PATCH goes through a bare installation client.
-    getInstallationOctokit: async () => ({ request: async () => ({ data: {} }) }),
+    getInstallationOctokit: async () => ({
+      request: async (route, params) => {
+        octokitRequests.push({ route, params });
+        return { data: {} };
+      },
+    }),
   });
   stub(ids.staging, { rebuildProduction: async () => ({ ok: true }), teardownStaging: async () => {} });
   stub(ids.docker, {});
@@ -140,7 +148,7 @@ function loadVotesRouter({ getPRImpl, reopenImpl, pool } = {}) {
       if (orig[k]) require.cache[id] = orig[k]; else delete require.cache[id];
     }
   };
-  return { voteRoutes, getPRCalls, reopenCalls, systemMessages, restore };
+  return { voteRoutes, getPRCalls, reopenCalls, systemMessages, octokitRequests, restore };
 }
 
 async function withServer({
@@ -234,6 +242,42 @@ test('promote: a closed-unmerged PR is reopened, then promoted', async () => {
     assert.equal(r.status, 200);
     assert.deepEqual(ctx.reopenCalls, [{ owner: 'acme', repo: 'widget', pr: 26 }]);
     assert.ok(ctx.pool.issued(/SET status = 'promoted', promoted_at = NOW\(\),[\s\S]*reviewed_head_sha/), 'session promoted');
+  });
+});
+
+test('promote: an active imported PR captures its head and becomes ready for voting', async () => {
+  const imported = {
+    ...sessionRow,
+    source: 'imported',
+    imported_pr_head_sha: OLD_HEAD,
+    checks_commit_sha: HEAD,
+  };
+  await withServer({
+    session: imported,
+    getPRImpl: async () => ({ state: 'open', merged: false, head: { sha: HEAD } }),
+  }, async (ctx) => {
+    const r = await fetch(`${ctx.base}/api/sessions/7/promote`, { method: 'POST' });
+    assert.equal(r.status, 200);
+    assert.equal(ctx.reopenCalls.length, 0);
+    const update = ctx.pool.queries.find((q) => /SET status = 'promoted'/.test(q.sql));
+    assert.ok(update);
+    assert.match(update.sql, /imported_pr_head_sha = CASE WHEN source = 'imported'/);
+    assert.equal(update.params[1], HEAD, 'the live imported head is the reviewed revision');
+    assert.equal(ctx.octokitRequests.length, 1, 'the PR is marked ready only at promotion');
+    assert.equal(ctx.octokitRequests[0].params.draft, false);
+  });
+});
+
+test('promote: a closed imported PR is refused without reopening it', async () => {
+  await withServer({
+    session: { ...sessionRow, source: 'imported', imported_pr_head_sha: OLD_HEAD },
+    getPRImpl: async () => ({ state: 'closed', merged: false, head: { sha: HEAD } }),
+  }, async (ctx) => {
+    const r = await fetch(`${ctx.base}/api/sessions/7/promote`, { method: 'POST' });
+    assert.equal(r.status, 409);
+    assert.match((await r.json()).error, /closed on GitHub/i);
+    assert.equal(ctx.reopenCalls.length, 0, 'the platform does not reopen an external PR');
+    assert.ok(!ctx.pool.issued(/SET status = 'promoted'/));
   });
 });
 

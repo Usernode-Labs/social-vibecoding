@@ -522,7 +522,8 @@ test('submit hands the service a loopback import that replays the caller\'s sess
     'loopback only: 127.0.0.1 and this process\'s own port');
   assert.equal(seen[0].opts.headers.cookie, 'session=abc123',
     'the caller\'s own session is replayed, so the import is attributed to them');
-  assert.equal(seen[0].opts.body, '{"pr":5}');
+  assert.equal(seen[0].opts.body, '{"pr":5,"promote":true}',
+    'automated submit keeps its explicit straight-to-vote contract');
 });
 
 test('an import that cannot be reached is reported, not thrown', async () => {

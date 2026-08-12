@@ -130,6 +130,7 @@ const PR = 9401;
 function importedSession() {
   return {
     id: 55, app_id: 9, app_slug: 'demo', app_name: 'Demo',
+    status: 'promoted',
     source: 'imported', pr_number: PR, pr_title: 'Mock imported PR',
     branch_name: 'mock/importable-widget', repo_url: 'https://github.com/acme/demo',
     imported_pr_head_sha: null, // set per test

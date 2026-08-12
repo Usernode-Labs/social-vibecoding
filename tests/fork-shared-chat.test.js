@@ -101,7 +101,7 @@ function makeDispatcher({
     if (/COUNT\(\*\) as cnt/.test(sql) && /user_id = \$1/.test(sql)) {
       return { rows: [{ cnt: String(userActiveCount) }] };
     }
-    if (/COUNT\(\*\) as cnt/.test(sql) && /status IN \('active', 'promoted'\)/.test(sql)) {
+    if (/COUNT\(\*\) as cnt/.test(sql) && /status = 'promoted'[\s\S]*status = 'active'/.test(sql)) {
       return { rows: [{ cnt: String(globalCount) }] };
     }
     if (/INSERT INTO chat_sessions/.test(sql)) return { rows: [insertedSession] };
