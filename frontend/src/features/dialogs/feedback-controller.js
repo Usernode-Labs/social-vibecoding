@@ -47,6 +47,8 @@
 // `window.ScreenshotSelect`, which the capture path below reads by name.
 import './screenshot-select';
 
+import { publishVisibility } from '../../lib/visibility-store';
+
 // The shell globals this block reaches for. Resolved in `init()` rather than
 // at module scope because the SSG prerender pass evaluates this module in
 // Node, where there is no `window`.
@@ -442,10 +444,17 @@ export function init() {
     };
 
     // The header's speech-bubble carries a small violet dot while anything is
-    // waiting — the only ambient sign that unsent feedback exists.
+    // waiting — the only ambient sign that unsent feedback exists. The dot is
+    // a node inside the React header island, so this PUBLISHES rather than
+    // toggling the class by id: a classList write that lands before the
+    // header's hydration commit is a mismatch React 19 patches away — the
+    // constant `className="hidden …"` comes back and nothing repaints,
+    // because ?shot=feedback-queued pins connectivity and no later event
+    // fires. That stomp is why the check flipped pass/fail ~50/50 by boot
+    // timing (#1054). The store's mount-time apply makes either order paint
+    // — same seam as the offline banner and the header's own visibility.
     const paintQueueDot = (n) => {
-      const dot = document.getElementById('feedback-queue-dot');
-      if (dot) dot.classList.toggle('hidden', !(n > 0));
+      publishVisibility('feedback-queue-dot', n > 0);
     };
 
     // Every count() is async (opening IndexedDB can take a moment) and three
