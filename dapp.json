@@ -1906,6 +1906,36 @@
       "expectText": "Four ways to keep building right now"
     },
     {
+      "name": "Out of daily credits: the banner says when the allowance comes back (#593)",
+      "path": "/?demo=1#app/usernode-2d5619/dev/sessions/990402",
+      "expectSelector": "#dc-credits-banner [data-credits-reset]",
+      "expectText": "reset at midnight UTC"
+    },
+    {
+      "name": "The composer meter states what is LEFT, not just what is spent (#593)",
+      "path": "/?shot=credits-low#app/usernode-2d5619/dev/sessions/990403",
+      "expectSelector": "#dc-budget [data-credits-remaining]",
+      "expectText": "$5.00 left"
+    },
+    {
+      "name": "Nearly out of credits: the chat warns before a turn is refused (#593)",
+      "path": "/?shot=credits-low#app/usernode-2d5619/dev/sessions/990403",
+      "expectSelector": "#dc-credits-low-banner [data-credits-low-lead]",
+      "expectText": "Running low on free AI credits"
+    },
+    {
+      "name": "The low-credits warning offers a way to keep going before it bites (#593)",
+      "path": "/?shot=credits-low#app/usernode-2d5619/dev/sessions/990403",
+      "expectSelector": "#dc-credits-low-banner .dc-credits-banner-actions #dc-credits-add-key",
+      "expectText": "Add API key"
+    },
+    {
+      "name": "The drawer's AI-credit row shows the remaining allowance (#555, #593)",
+      "path": "/?shot=menu&demo=1",
+      "expectSelector": "#drawer-row-ai-budget .ai-budget-meter [data-credits-remaining]",
+      "expectText": "$6.40 left"
+    },
+    {
       "name": "Settings has a Claude & ChatGPT connectors section with the connector URL (#967)",
       "path": "/?demo=1#settings/connectors",
       "expectSelector": "[data-settings-section=\"connectors\"]:not(.hidden) #connectors-section:not(.hidden) #connector-url",

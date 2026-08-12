@@ -1,5 +1,6 @@
-/* Out-of-credits routes — the single source of truth for "your daily AI
- * credits ran out; here is how to keep building".
+/* Daily-AI-credit copy — the single source of truth for "here is where you
+ * stand on today's allowance", and for "it ran out; here is how to keep
+ * building".
  *
  * Three surfaces render the same three options and must never drift:
  *   1. the in-chat card DevChat pushes when POST /chat answers
@@ -19,6 +20,17 @@
  * chat. tests/credit-options.test.js asserts the hashes correspond to
  * declared sections, so a renamed section can't silently produce a dead
  * link.
+ *
+ * #593 widened it from "you ran out" to the whole allowance story, because
+ * the states are one story and were told in different words in each place:
+ * the composer meter said `$13.60/$20.00` and hid the remainder and the
+ * reset in a tooltip, the drawer row said the same thing in its own
+ * formatting, and nothing at all was said as the allowance ran low. So
+ * `creditState()` (normalise either budget payload → one state), plus the
+ * money/reset formatting and the low-balance copy, live here too. The
+ * threshold is NOT defined here: it arrives on the payload from
+ * limits.LOW_BALANCE_PCT, and LOW_PCT below is only the fallback for a
+ * payload that predates it.
  */
 (function () {
   'use strict';
@@ -49,6 +61,164 @@
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#39;');
+  }
+
+  // ── Where the user stands (#593) ────────────────────────────────────
+  //
+  // Fallback only: the live value rides on both budget payloads as
+  // `lowBalancePct` (src/services/limits.js LOW_BALANCE_PCT is the
+  // definition). This keeps a cached page from rendering NaN.
+  var LOW_PCT = 80;
+
+  function money(cents) {
+    var n = Number(cents);
+    return '$' + (Number.isFinite(n) ? n / 100 : 0).toFixed(2);
+  }
+
+  // "3h 20m" / "45m" / "under a minute". null when there is nothing to
+  // count down to, so callers can drop the clause instead of printing a
+  // gap. `nowMs` is injectable for the tests.
+  function resetIn(resetsAt, nowMs) {
+    if (!resetsAt) return null;
+    var at = Date.parse(resetsAt);
+    if (!Number.isFinite(at)) return null;
+    var ms = at - (nowMs == null ? Date.now() : nowMs);
+    if (ms <= 0) return null;
+    var mins = Math.floor(ms / 60000);
+    if (mins < 1) return 'under a minute';
+    var hours = Math.floor(mins / 60);
+    if (!hours) return mins + 'm';
+    var rem = mins % 60;
+    return hours + 'h' + (rem ? ' ' + rem + 'm' : '');
+  }
+
+  // The one sentence every surface uses to answer "when do I get them
+  // back?". Names the boundary the server names (midnight UTC — the
+  // llm_usage date rollover), then translates it, because almost nobody
+  // reading it is on UTC and "tomorrow" was the old, wrong shorthand.
+  function resetSentence(state, nowMs) {
+    var s = state || {};
+    var parts = 'Free credits reset at midnight UTC';
+    var at = s.resetsAt ? new Date(s.resetsAt) : null;
+    if (at && Number.isFinite(at.getTime())) {
+      var local = null;
+      try {
+        // Only worth translating for a reader who is not already on UTC —
+        // otherwise it prints "midnight UTC — 12:00 AM your time", which
+        // is the same fact twice.
+        if (at.getTimezoneOffset() !== 0) {
+          local = at.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+        }
+      } catch (err) { /* no Intl — the UTC boundary still reads fine */ }
+      if (local) parts += ' — ' + local + ' your time';
+      var left = resetIn(s.resetsAt, nowMs);
+      if (left) parts += (local ? ', about ' : ' — about ') + left + ' from now';
+    }
+    return parts + '.';
+  }
+
+  // Normalises either budget payload into one state. The composer reads
+  // GET /api/budget (spend + the shared cap + BYOK spillover), the drawer
+  // row reads GET /api/me/ai-budget (no global figures — those are
+  // admin-only, see redact() in services/status.js). Both describe the
+  // same allowance, so both collapse to the same four levels:
+  //
+  //   unknown   — nothing fetched yet, or a cap of 0: say nothing
+  //   ok        — headroom
+  //   low       — at or past lowBalancePct of the cap; warn proactively
+  //   exhausted — the personal allowance or the shared one is spent
+  //
+  // `level` describes the ALLOWANCE, not whether the user can keep going:
+  // a BYOK key bypasses the cap entirely (#119), so `hasByokKey` stays a
+  // separate field and the surface decides whether "exhausted" is even
+  // worth mentioning.
+  function creditState(snapshot) {
+    var s = snapshot || null;
+    var limitCents = s ? Number(s.limitCents) : NaN;
+    var spentCents = s ? Number(s.spentCents) : NaN;
+    if (!s || !Number.isFinite(limitCents) || !Number.isFinite(spentCents) || limitCents <= 0) {
+      return {
+        level: 'unknown', limitCents: 0, spentCents: 0, remainingCents: 0,
+        byokCents: 0, pctUsed: 0, hasByokKey: !!(s && s.hasByokKey),
+        globalOut: false, resetsAt: (s && s.resetsAt) || null,
+        lowPct: (s && Number(s.lowBalancePct)) || LOW_PCT,
+      };
+    }
+    var remainingCents = Number.isFinite(Number(s.remainingCents))
+      ? Math.max(0, Number(s.remainingCents))
+      : Math.max(0, limitCents - spentCents);
+    // Both spellings: /api/budget calls it byokSpentCents, the drawer
+    // payload calls it byokCents.
+    var byokCents = Number(s.byokCents);
+    if (!Number.isFinite(byokCents)) byokCents = Number(s.byokSpentCents);
+    if (!Number.isFinite(byokCents)) byokCents = 0;
+    var globalLimit = Number(s.globalLimitCents);
+    var globalSpent = Number(s.globalSpentCents);
+    var globalOut = Number.isFinite(globalLimit) && globalLimit > 0
+      && Number.isFinite(globalSpent) && globalSpent >= globalLimit;
+    var lowPct = Number(s.lowBalancePct);
+    if (!Number.isFinite(lowPct) || lowPct <= 0 || lowPct >= 100) lowPct = LOW_PCT;
+    var pctUsed = Math.min(100, (spentCents / limitCents) * 100);
+    var level = 'ok';
+    if (globalOut || spentCents >= limitCents) level = 'exhausted';
+    else if (pctUsed >= lowPct) level = 'low';
+    return {
+      level: level,
+      limitCents: limitCents,
+      spentCents: spentCents,
+      remainingCents: remainingCents,
+      byokCents: byokCents,
+      pctUsed: pctUsed,
+      hasByokKey: !!s.hasByokKey,
+      globalOut: globalOut,
+      resetsAt: s.resetsAt || null,
+      lowPct: lowPct,
+    };
+  }
+
+  // The meter, as data. Both surfaces render `spent/limit` plus — new in
+  // #593 — what is actually LEFT, which is the figure a builder deciding
+  // whether to start another turn is looking for and the one that used to
+  // be tooltip-only (invisible on touch, and absent from every review
+  // screenshot). Returned as parts, not HTML, because the two surfaces
+  // wrap them differently.
+  function meterParts(state) {
+    var s = state || {};
+    var spent = money(s.spentCents);
+    var limit = money(s.limitCents);
+    // `spent`/`limit` come out separately as well as joined: both surfaces
+    // colour the spend figure and leave the cap grey, so both need the
+    // halves, and neither should be re-deriving the formatting.
+    var parts = [{ key: 'pair', text: spent + '/' + limit, spent: spent, limit: limit }];
+    if (s.level === 'exhausted') {
+      parts.push({ key: 'remaining', text: s.globalOut ? 'shared budget spent' : 'none left' });
+    } else if (s.level === 'ok' || s.level === 'low') {
+      parts.push({ key: 'remaining', text: money(s.remainingCents) + ' left' });
+    }
+    if (s.byokCents > 0) {
+      parts.push({ key: 'byok', text: 'your key ' + money(s.byokCents) });
+    }
+    return parts;
+  }
+
+  // Tone for the meter. Same three colours the two surfaces already used,
+  // now derived from the level so they cannot disagree about where amber
+  // starts.
+  function meterTone(state) {
+    var level = (state || {}).level;
+    if (level === 'exhausted') return 'red';
+    if (level === 'low') return 'amber';
+    return 'emerald';
+  }
+
+  // The proactive warning (#593). Deliberately not a scaled-down copy of
+  // the exhausted lead: nothing has been refused yet, so it states the
+  // headroom and the boundary and lets the same route buttons sit under
+  // it, rather than announcing a failure that hasn't happened.
+  function lowLead(state) {
+    var s = state || {};
+    return 'Running low on free AI credits — ' + money(s.remainingCents)
+      + ' of ' + money(s.limitCents) + ' left today.';
   }
 
   // The ways out. `hasApiKey` flips the API-key entry: limits.loadUserApiKey
@@ -251,6 +421,14 @@
 
   var CreditOptions = {
     SETTINGS_HASHES: SETTINGS_HASHES,
+    LOW_PCT: LOW_PCT,
+    money: money,
+    resetIn: resetIn,
+    resetSentence: resetSentence,
+    creditState: creditState,
+    meterParts: meterParts,
+    meterTone: meterTone,
+    lowLead: lowLead,
     options: options,
     introFor: introFor,
     lead: lead,
