@@ -36,6 +36,13 @@ function delivery(overrides = {}) {
     permission_status: 'authorized',
     registration_user_id: 7,
     registration_session_expires_at: new Date(Date.now() + 60_000),
+    app_name: 'MyPage',
+    source_username: null,
+    message_content: null,
+    session_title: 'Fix login redirect loop',
+    pr_title: null,
+    branch_name: null,
+    detail: null,
     ...overrides,
   };
 }
@@ -77,14 +84,35 @@ function harness({
   return { worker, calls };
 }
 
-test('eligible delivery sends one generic bound message and marks it sent', async () => {
+test('eligible delivery sends one contextual bound message and marks it sent', async () => {
   const { worker, calls } = harness();
   await worker.processDelivery(JOB);
   assert.equal(calls.sent.length, 1);
   assert.deepEqual(calls.finished, [{ job: JOB, status: 'sent', code: null, availableAt: null }]);
   assert.equal(calls.sent[0].data.notification_id, '42');
   assert.equal(calls.sent[0].data.environment, 'production');
-  assert.equal(calls.sent[0].notification.body, 'You have new activity');
+  assert.deepEqual(calls.sent[0].notification, {
+    title: 'Session finished · MyPage',
+    body: '"Fix login redirect loop" is ready to review',
+  });
+});
+
+test('a delivery with no context fields still sends with the generic fallback', async () => {
+  const { worker, calls } = harness({
+    row: delivery({
+      kind: 'mention',
+      push_category: 'direct_interactions',
+      app_name: null,
+      source_username: null,
+      message_content: null,
+      session_title: null,
+    }),
+  });
+  await worker.processDelivery(JOB);
+  assert.equal(calls.sent.length, 1);
+  assert.deepEqual(calls.sent[0].notification, {
+    title: 'Usernode', body: 'You have new activity',
+  });
 });
 
 test('pre-send revalidation cancels ineligible recipient and deployment state', async () => {
@@ -135,6 +163,18 @@ test('delivery reload includes the current deployment state and activation times
   assert.match(seen.sql, /state\.send_enabled AS deployment_send_enabled/);
   assert.match(seen.sql, /state\.send_not_before AS deployment_send_not_before/);
   assert.match(seen.sql, /state\.firebase_project_id AS deployment_firebase_project_id/);
+  // Send-time context for the contextual notification copy (#3289): the same
+  // joins the in-app dropdown uses, all LEFT so a missing row can never make
+  // an otherwise-valid delivery vanish.
+  assert.match(seen.sql, /LEFT JOIN apps a ON a\.id = n\.app_id/);
+  assert.match(seen.sql, /LEFT JOIN users su ON su\.id = n\.source_user_id/);
+  assert.match(seen.sql, /LEFT JOIN chat_messages cm ON cm\.id = n\.chat_message_id/);
+  assert.match(seen.sql, /LEFT JOIN chat_sessions cs ON cs\.id = n\.session_id/);
+  assert.match(seen.sql, /a\.name AS app_name/);
+  assert.match(seen.sql, /su\.username AS source_username/);
+  assert.match(seen.sql, /cm\.content AS message_content/);
+  assert.match(seen.sql, /cs\.session_title, cs\.pr_title, cs\.branch_name/);
+  assert.match(seen.sql, /n\.detail/);
   assert.deepEqual(seen.params, [JOB.id]);
 });
 
