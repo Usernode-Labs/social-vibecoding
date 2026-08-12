@@ -31,7 +31,7 @@ const path = require('node:path');
 const root = path.join(__dirname, '..');
 const issuesJs = fs.readFileSync(path.join(root, 'src/routes/issues.js'), 'utf8');
 const stagingJs = fs.readFileSync(path.join(root, 'src/services/staging.js'), 'utf8');
-const secretsUiJs = fs.readFileSync(path.join(root, 'public/js/app-secrets.js'), 'utf8');
+const secretsUiJs = fs.readFileSync(path.join(root, 'frontend/src/features/dialogs/app-secrets-controller.js'), 'utf8');
 
 // The `kind === 'secret_change'` validation block inside the issue-create
 // route, and the vote-apply function, sliced out by their opening lines.

@@ -327,7 +327,7 @@ export function ImportPrDialog() {
                         #{num} · {String(c.title || '')}
                       </span>
                       <span className="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
-                        {String(c.author || 'unknown')} —{' '}
+                        {`${String(c.author || 'unknown')} — `}
                         <span className="font-mono">
                           {String(c.headBranch || '')} → {String(c.baseBranch || '')}
                         </span>
@@ -344,7 +344,7 @@ export function ImportPrDialog() {
                           className="block text-xs text-amber-600 dark:text-amber-400 mt-0.5"
                           title="This branch lives in a fork, not in this app's own repository. The preview is built from the pull request's head commit. Review the changes on GitHub before importing."
                         >
-                          from a fork —{' '}
+                          {'from a fork — '}
                           <span className="font-mono">{String(c.headRepo || 'unknown fork')}</span>
                         </span>
                       ) : null}
