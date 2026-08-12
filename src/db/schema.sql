@@ -881,6 +881,20 @@ ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS check_error_notified
 -- to its previous wording for NULL, so nothing regresses on old proposals.
 -- Advisory/display only — the merge gate reads check_state, never this.
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS check_phase VARCHAR(24);
+-- WHY this check run started, alongside check_phase's "which half is it in".
+-- The merge-gate trace recorded trigger='capture' for every run — literally
+-- the name of the function that opened it — so a measurement of "1.81 checks
+-- runs per proposal, 91 of 204 are re-runs" could count the re-runs but could
+-- not say which were a human pressing Re-run, which were a new commit, and
+-- which were the recovery sweeper re-driving a run that had gone quiet. Those
+-- want completely different fixes. Values are visuals.CHECK_TRIGGERS
+-- ('proposal-open', 'commit-push', 'sync-main', 'pr-import',
+-- 'manual-recheck', 'promote-kick', 'boot-reconcile', 'stuck-sweep',
+-- 'fleet-maintenance'); anything else is stored as NULL.
+-- NULL on legacy rows and whenever the writer did not name one — the card
+-- simply shows no trigger caption then. Advisory/display only, exactly like
+-- check_phase: the merge gate reads check_state and nothing else.
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS check_trigger VARCHAR(32);
 -- #11: vote-to-undo a merged PR. When the undo majority is reached we
 -- open a `git revert <merge_commit_sha>` PR and insert a new
 -- chat_sessions row pointing back here via revert_of_session_id.

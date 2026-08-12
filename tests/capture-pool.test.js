@@ -38,7 +38,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
-  runTests, groupTestsByUrl, poolSize, testTimeoutMs, testsDeadlineMs, setFrameSink,
+  runTests, runTestGroup, groupTestsByUrl, groupTestsByDocument, groupTests, cohortsOf,
+  hashGroupCap, poolSize, testTimeoutMs, testsDeadlineMs, setFrameSink,
 } = require('../capture/capture');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -328,6 +329,193 @@ test('groupTestsByUrl preserves declaration order within and across groups', () 
   const groups = groupTestsByUrl(tests);
   assert.deepEqual(groups.map((g) => g.map((t) => t.index)), [[0, 2], [1], [3]],
     'first-appearance order across groups, declaration order within');
+});
+
+// ── Document grouping + the quiet-window settle (#1144) ─────────────────
+//
+// Per-URL grouping keyed on the fully resolved URL, so `…/dev#/a` and
+// `…/dev#/b` were two cold loads of one document. This repo's 314 checks
+// resolve to 158 URLs but only 73 documents, and at ~2s of unconditional
+// settle per navigation over 8 lanes that was ~40s of a 72s capture spent
+// asleep. Grouping by document and moving between hashes in-page removes the
+// duplicate loads; the quiet window removes the sleep that is not needed.
+//
+// Two properties are load-bearing and neither is visible from the frame
+// format: a hash cohort's console errors must not be blamed on its siblings,
+// and a page that never goes quiet must still be cut off.
+
+test('groupTestsByDocument shares a document across hashes and caps the cohorts', () => {
+  const t = (index, url) => ({ index, url });
+  const groups = groupTestsByDocument([
+    t(0, 'http://s/dev#/a'), t(1, 'http://s/other'), t(2, 'http://s/dev#/b'),
+    t(3, 'http://s/dev#/a'), t(4, 'http://s/dev'),
+  ], { cap: 6 });
+  assert.deepEqual(groups.map((g) => g.map((x) => x.index)), [[0, 3, 2, 4], [1]],
+    'one group per document, ordered cohort-major (each hash\'s checks stay '
+    + 'adjacent so the page is visited once per cohort), first-appearance '
+    + 'order across both levels');
+
+  // The cap keeps one popular document from serialising into a single lane
+  // and becoming the critical path while other workers sit idle.
+  const many = Array.from({ length: 7 }, (_, i) => t(i, `http://s/dev#/${i}`));
+  const capped = groupTestsByDocument(many, { cap: 3 });
+  assert.deepEqual(capped.map((g) => g.length), [3, 3, 1],
+    'overflow spills into further groups for the same document');
+  assert.equal(hashGroupCap({}), 6, 'the default cap');
+  assert.equal(hashGroupCap({ TEST_HASH_GROUP_CAP: '3' }), 3);
+  assert.equal(hashGroupCap({ TEST_HASH_GROUP_CAP: 'lots' }), 6, 'garbage falls back');
+});
+
+test('the hash-less cohort always leads, and the kill-switch restores per-URL grouping', () => {
+  // Clearing a fragment is not a same-document navigation — reaching the bare
+  // document by writing location.hash would reload the page mid-group. So it
+  // has to be the cold load.
+  const cohorts = cohortsOf([
+    { index: 0, url: 'http://s/dev#/a' },
+    { index: 1, url: 'http://s/dev' },
+    { index: 2, url: 'http://s/dev#/b' },
+  ]);
+  assert.deepEqual(cohorts.map((c) => c.hash), ['', '#/a', '#/b']);
+
+  const tests = [{ index: 0, url: 'http://s/dev#/a' }, { index: 1, url: 'http://s/dev#/b' }];
+  assert.equal(groupTests(tests, {}).length, 1, 'one document, one group');
+  assert.equal(groupTests(tests, { TEST_GROUP_BY_DOCUMENT: '0' }).length, 2,
+    'the flag restores a group per URL, with no deploy');
+});
+
+// A page whose console output is under the test's control, so attribution can
+// be observed. Mirrors the production listener shape (page.on('console', …)).
+function makeEventPage({ onGoto, onHash } = {}) {
+  const handlers = new Map();
+  const page = {
+    gotos: [], hashes: [],
+    on(ev, fn) {
+      if (!handlers.has(ev)) handlers.set(ev, []);
+      handlers.get(ev).push(fn);
+    },
+    emitError(text) {
+      for (const fn of handlers.get('console') || []) {
+        fn({ type: () => 'error', text: () => text, location: () => ({ url: 'app.js', lineNumber: 1 }) });
+      }
+    },
+    async setViewport() {},
+    async goto(u) {
+      page.gotos.push(u);
+      if (onGoto) onGoto(page);
+      return { status: () => 200 };
+    },
+    async $() { return {}; },
+    async evaluate(fn, arg) {
+      // The hash switch is the only evaluate that touches location.
+      if (typeof fn === 'function' && /location\.hash/.test(String(fn))) {
+        page.hashes.push(arg);
+        if (onHash) onHash(page, arg);
+        return undefined;
+      }
+      return true;
+    },
+    async close() {},
+  };
+  return page;
+}
+
+test('a hash cohort owns its own console errors, and load errors are shared', async () => {
+  const read = collect();
+  const timers = [];
+  const page = makeEventPage({
+    onGoto: (p) => timers.push(setTimeout(() => p.emitError('boot exploded'), 40)),
+    onHash: (p, h) => timers.push(setTimeout(() => p.emitError(`broken in ${h}`), 60)),
+  });
+  const group = [
+    { index: 0, name: 'a', path: '/dev', url: 'http://s/dev#/a' },
+    { index: 1, name: 'b', path: '/dev', url: 'http://s/dev#/b' },
+  ];
+  try {
+    await runTestGroup({ newPage: async () => page }, group,
+      { settleQuietMs: 100, settleMaxMs: 900 });
+  } finally {
+    for (const t of timers) clearTimeout(t);
+  }
+  const { frames } = read();
+  assert.equal(page.gotos.length, 1, 'one cold load for the whole document');
+  assert.deepEqual(page.hashes, ['#/b'], 'the second cohort is reached in-page');
+
+  const a = frames.find((f) => f.index === 0);
+  const b = frames.find((f) => f.index === 1);
+  assert.deepEqual(a.consoleErrors.map((e) => e.message), ['boot exploded'],
+    'the cold-load error belongs to every cohort — each would have seen it '
+    + 'when it was its own navigation');
+  assert.deepEqual(b.consoleErrors.map((e) => e.message), ['boot exploded', 'broken in #/b'],
+    'but the error raised after the hash switch belongs to that cohort alone');
+  assert.match(a.failureReason, /1 console error/);
+  assert.match(b.failureReason, /2 console errors/);
+});
+
+test('a cohort that breaks does not fail the cohorts it shares a document with', async () => {
+  const read = collect();
+  const timers = [];
+  const page = makeEventPage({
+    onHash: (p, h) => {
+      if (h === '#/b') timers.push(setTimeout(() => p.emitError('only b is broken'), 40));
+    },
+  });
+  const group = [
+    { index: 0, name: 'a', path: '/dev', url: 'http://s/dev#/a' },
+    { index: 1, name: 'b', path: '/dev', url: 'http://s/dev#/b' },
+    { index: 2, name: 'c', path: '/dev', url: 'http://s/dev#/c' },
+  ];
+  try {
+    await runTestGroup({ newPage: async () => page }, group,
+      { settleQuietMs: 80, settleMaxMs: 600 });
+  } finally {
+    for (const t of timers) clearTimeout(t);
+  }
+  const { frames } = read();
+  const byIndex = new Map(frames.map((f) => [f.index, f]));
+  assert.equal(byIndex.get(0).status, 'pass');
+  assert.equal(byIndex.get(1).status, 'fail');
+  assert.equal(byIndex.get(2).status, 'pass',
+    'a later cohort is not tainted by an earlier one — strictly better than '
+    + 'the group-wide freeze this replaced');
+});
+
+test('a page that never goes quiet is cut off at the settle ceiling', async () => {
+  // The quiet window is what makes the common case fast; the ceiling is what
+  // keeps a chatty page from holding a worker until the group deadline.
+  const read = collect();
+  let noisy = null;
+  let n = 0;
+  const page = makeEventPage({
+    onGoto: (p) => { noisy = setInterval(() => p.emitError(`noise ${n += 1}`), 20); },
+  });
+  const started = Date.now();
+  try {
+    await runTestGroup({ newPage: async () => page },
+      [{ index: 0, name: 'a', path: '/p', url: 'http://s/p' }],
+      { settleQuietMs: 100, settleMaxMs: 400 });
+  } finally {
+    if (noisy) clearInterval(noisy);
+  }
+  const elapsed = Date.now() - started;
+  const { frames } = read();
+  assert.ok(elapsed >= 350, `it must wait out a still-noisy page, took ${elapsed}ms`);
+  assert.ok(elapsed < 1200, `but not past the ceiling, took ${elapsed}ms`);
+  assert.equal(frames[0].status, 'fail', 'and the errors it did see still count');
+});
+
+test('a quiet page settles well inside the ceiling', async () => {
+  // The whole point: a document with nothing left to say used to pay a flat
+  // 2000ms per navigation regardless.
+  const read = collect();
+  const page = makeEventPage();
+  const started = Date.now();
+  await runTestGroup({ newPage: async () => page },
+    [{ index: 0, name: 'a', path: '/p', url: 'http://s/p' }],
+    { settleQuietMs: 100, settleMaxMs: 2000 });
+  const elapsed = Date.now() - started;
+  const { frames } = read();
+  assert.equal(frames[0].status, 'pass');
+  assert.ok(elapsed < 900, `a silent page should not wait out the ceiling, took ${elapsed}ms`);
 });
 
 test('pool bounds come from env with sane defaults and a hard ceiling', () => {

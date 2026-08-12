@@ -1056,11 +1056,11 @@ function proposalHandoffRoutes(config) {
           if (!adopted.rowCount) {
             return res.status(409).json({ error: 'session_state_changed' });
           }
-          const pending = await visuals.setChecksPending(pool, session.id, input.headSha);
+          const pending = await visuals.setChecksPending(pool, session.id, input.headSha, 'building', 'commit-push');
           if (pending === false) {
             return res.status(409).json({ error: 'session_state_changed' });
           }
-          visuals.notifyChecksPending(session.id, input.headSha);
+          visuals.notifyChecksPending(session.id, input.headSha, 'building', 'commit-push');
 
           const freshSession = {
             ...session,

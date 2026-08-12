@@ -1338,6 +1338,16 @@
       "expectText": "Running the automated tests"
     },
     {
+      "name": "Checks card says an author's commit started the run (#1144)",
+      "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000022",
+      "expectText": "Triggered by a new commit on this proposal."
+    },
+    {
+      "name": "Checks card owns up to a platform-restarted run (#1144)",
+      "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000026",
+      "expectText": "Restarted automatically by the platform."
+    },
+    {
       "name": "Imported PR proposal card shows the Imported PR badge (#687)",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectText": "Imported PR"

@@ -171,6 +171,70 @@ const MAX_CONSOLE_ERRORS = 20;
 const MAX_CONSOLE_MSG_LEN = 500;
 const CONSOLE_ONLY_SETTLE_MS = 1500;
 
+// ── Settle: a bounded QUIET WINDOW, not a fixed sleep (#1144) ──
+//
+// The declared suite used to pay SETTLE_MS + CONSOLE_ONLY_SETTLE_MS = 2000ms
+// of unconditional sleep per navigation, whatever the page did. Production
+// measured 158 navigations over 8 lanes for this repo's own manifest — ~20
+// waves, so ~40s of a 72s capture was spent asleep on pages that had already
+// gone quiet the instant `networkidle2` resolved.
+//
+// The safety property those sleeps existed for is real and is preserved: a
+// page that is STILL emitting deferred async errors keeps getting waited on,
+// right up to SETTLE_MAX_MS. What changes is the common case — a page with
+// nothing left to say proceeds after one quiet window instead of two full
+// seconds. `lastAt` is bumped by console output, page errors and request
+// lifecycle events, so "quiet" means the document is genuinely idle rather
+// than merely past a timer.
+//
+// SETTLE_MIN_MS is the floor after a cold navigation. `networkidle2` already
+// resolves 500ms after the last request, so a page whose deferred error fires
+// a few hundred ms into idle would be judged before it spoke if the only bound
+// were the quiet window. The floor keeps a guaranteed listening period; any
+// error inside it re-arms the window, so the noisy case still runs long.
+const SETTLE_QUIET_MS = 250;
+const SETTLE_MIN_MS = 500;
+const SETTLE_MAX_MS = 1500;
+const SETTLE_POLL_MS = 50;
+
+function settleQuietMs(env) {
+  const raw = parseInt((env || {}).TEST_SETTLE_QUIET_MS, 10);
+  return (Number.isFinite(raw) && raw >= 0) ? raw : SETTLE_QUIET_MS;
+}
+
+function settleMaxMs(env) {
+  const raw = parseInt((env || {}).TEST_SETTLE_MAX_MS, 10);
+  return (Number.isFinite(raw) && raw >= 0) ? raw : SETTLE_MAX_MS;
+}
+
+// An activity clock a page's listeners bump. Created per group and shared by
+// every cohort's settle, so a late error from cohort 1 still holds cohort 2's
+// window open — the page is one document either way.
+function makeActivityClock(now) {
+  const clock = now || (() => Date.now());
+  return { lastAt: clock(), now: clock, bump() { this.lastAt = this.now(); } };
+}
+
+// Wait until the page has been quiet for `quietMs` — but never less than
+// `minMs`, and never more than `maxMs`. Returns the elapsed wait.
+async function waitForQuiet(activity, opts) {
+  const o = opts || {};
+  const quietMs = Number.isFinite(o.quietMs) ? o.quietMs : SETTLE_QUIET_MS;
+  const maxMs = Number.isFinite(o.maxMs) ? o.maxMs : SETTLE_MAX_MS;
+  const minMs = Math.min(Number.isFinite(o.minMs) ? o.minMs : 0, maxMs);
+  const now = typeof o.now === 'function' ? o.now : (activity && activity.now) || (() => Date.now());
+  const nap = typeof o.sleep === 'function' ? o.sleep : sleep;
+  const pollMs = Number.isFinite(o.pollMs) && o.pollMs > 0 ? o.pollMs : SETTLE_POLL_MS;
+  const startedAt = now();
+  for (;;) {
+    const elapsed = now() - startedAt;
+    if (elapsed >= maxMs) return elapsed;
+    const quietFor = now() - (activity ? activity.lastAt : 0);
+    if (elapsed >= minMs && quietFor >= quietMs) return elapsed;
+    await nap(Math.max(1, Math.min(pollMs, maxMs - elapsed)));
+  }
+}
+
 // ── Test-suite pool bounds (every declared check now runs, see runTests) ──
 //
 // The suite used to be at most 12 checks run strictly one after another.
@@ -794,6 +858,108 @@ function groupTestsByUrl(tests) {
   return Array.from(byUrl.values());
 }
 
+// ── Document grouping (#1144) ──
+//
+// groupTestsByUrl keys on the fully resolved URL, so two checks share a page
+// load only if they'd request byte-identical URLs. For a hash-routed SPA that
+// is the wrong unit: this repo's 314 checks resolve to 158 distinct URLs but
+// only 73 distinct DOCUMENTS — 231 of them differ from a sibling by the
+// `#hash` alone. Each of those paid a full cold load of the same document.
+//
+// So the key is the document (origin + pathname + search) and the members are
+// ordered into HASH COHORTS. runTestGroup loads the document once and moves
+// between cohorts by writing `location.hash`, which is the app's own supported
+// navigation path (public/js/app.js wires popstate/hashchange →
+// restoreFromHash) rather than a simulation of one.
+//
+// THE COHORT CAP KEEPS THE POOL FED. One group holding 28 cohorts would
+// serialise into a single lane and become the critical path however many
+// workers are idle, so a document's cohorts are chunked and each chunk becomes
+// its own group (its own navigation, its own context). Measured navigation
+// counts for this repo's manifest by cap: 4 → 92, 6 → 85, 8 → 82, 12 → 79,
+// against 158 ungrouped. 6 takes nearly all the win while leaving ≥8 groups
+// for the pool at all times.
+//
+// A HASH SWITCH IS NOT A COLD LOAD — module-level init runs once per group
+// instead of once per check — so a bug that only reproduces on first paint of
+// a sub-route would be missed. TEST_GROUP_BY_DOCUMENT=0 restores per-URL
+// grouping with one env flip on the host, no deploy.
+const HASH_GROUP_CAP = 6;
+
+function hashGroupCap(env) {
+  const raw = parseInt((env || {}).TEST_HASH_GROUP_CAP, 10);
+  if (!Number.isFinite(raw) || raw < 1) return HASH_GROUP_CAP;
+  return Math.min(64, raw);
+}
+
+function groupByDocument(env) {
+  return (env || {}).TEST_GROUP_BY_DOCUMENT !== '0';
+}
+
+// Split a resolved URL into its document half and its fragment. Kept as plain
+// string surgery rather than `new URL()` so a malformed url (which resolveTests
+// tolerates) degrades to "its own document" instead of throwing.
+function splitDocumentUrl(url) {
+  const s = String(url == null ? '' : url);
+  const i = s.indexOf('#');
+  if (i === -1) return { doc: s, hash: '' };
+  return { doc: s.slice(0, i), hash: s.slice(i) };
+}
+
+// The hash cohorts of an already-built group, in order. Members are adjacent
+// by construction (groupTestsByDocument emits them that way), but this reads
+// them back from the URLs so a hand-built group — the unit-test fakes, or a
+// per-URL group under the kill-switch — behaves identically.
+//
+// The hash-less cohort, if the group has one, is hoisted to the front so it is
+// always the COLD navigation. Sub-navigation writes `location.hash`, and
+// clearing a fragment is not a same-document navigation — it would reload the
+// page mid-group. Leading with it means every switch is to a real fragment.
+function cohortsOf(group) {
+  const tests = Array.isArray(group) ? group : [group];
+  const byHash = new Map();
+  for (const t of tests) {
+    const { hash } = splitDocumentUrl(t && t.url);
+    if (!byHash.has(hash)) byHash.set(hash, []);
+    byHash.get(hash).push(t);
+  }
+  const cohorts = Array.from(byHash.entries()).map(([hash, members]) => ({ hash, tests: members }));
+  const bare = cohorts.findIndex((c) => !c.hash);
+  if (bare > 0) cohorts.unshift(cohorts.splice(bare, 1)[0]);
+  return cohorts;
+}
+
+function groupTestsByDocument(tests, opts) {
+  const cap = Math.max(1, Number((opts || {}).cap) || HASH_GROUP_CAP);
+  // doc -> Map(hash -> tests[]). Both levels are insertion-ordered, so the
+  // suite's declaration order survives into the dispatch order.
+  const byDoc = new Map();
+  for (const t of (Array.isArray(tests) ? tests : [])) {
+    const { doc, hash } = splitDocumentUrl(t.url);
+    if (!byDoc.has(doc)) byDoc.set(doc, new Map());
+    const byHash = byDoc.get(doc);
+    if (!byHash.has(hash)) byHash.set(hash, []);
+    byHash.get(hash).push(t);
+  }
+  const groups = [];
+  for (const byHash of byDoc.values()) {
+    const cohorts = Array.from(byHash.values());
+    for (let i = 0; i < cohorts.length; i += cap) {
+      // Flatten the chunk: a group stays a plain array of tests, which is what
+      // the pool's budget/timeout/emit paths already iterate.
+      groups.push([].concat(...cohorts.slice(i, i + cap)));
+    }
+  }
+  return groups;
+}
+
+// The dispatch-time entry point: document grouping unless the kill-switch is
+// set, in which case the historical per-URL grouping.
+function groupTests(tests, env) {
+  if (!groupByDocument(env)) return groupTestsByUrl(tests);
+  return groupTestsByDocument(tests, { cap: hashGroupCap(env) });
+}
+
 // #47: run the declared tests for ONE route against the staging build.
 // Navigates once, collects console errors / uncaught exceptions / failed
 // loads (the #381 baseline) for that load, then evaluates each check's
@@ -824,9 +990,18 @@ function groupTestsByUrl(tests) {
 // `browser` may be a Browser (per-group context, the production shape) or
 // anything else exposing newPage (the unit-test fakes; also tolerates
 // being handed a BrowserContext).
-async function runTestGroup(browser, group) {
+//
+// A group may now span several HASH COHORTS of one document (#1144). The
+// document is loaded once, for the first cohort; every later cohort is reached
+// by writing `location.hash`, which is the app's own navigation path. Console
+// errors are attributed per cohort — see the comment on `sharedErrorCount`.
+async function runTestGroup(browser, group, opts) {
+  const o = opts || {};
   const tests = Array.isArray(group) ? group : [group];
+  const cohorts = cohortsOf(tests);
   const lead = tests[0];
+  const quietMs = Number.isFinite(o.settleQuietMs) ? o.settleQuietMs : SETTLE_QUIET_MS;
+  const maxMs = Number.isFinite(o.settleMaxMs) ? o.settleMaxMs : SETTLE_MAX_MS;
   const consoleErrors = [];
   const pushErr = (errKind, message, source) => {
     if (consoleErrors.length >= MAX_CONSOLE_ERRORS) return;
@@ -860,7 +1035,15 @@ async function runTestGroup(browser, group) {
     }
     page = await (context || browser).newPage();
     await page.setViewport(VIEWPORT);
-    page.on('console', (msg) => {
+
+    // The settle's activity clock. Every signal that the document is still
+    // doing something bumps it; `waitForQuiet` returns once nothing has.
+    const activity = makeActivityClock();
+    const on = (event, handler) => {
+      try { page.on(event, handler); } catch { /* fake pages may not emit it */ }
+    };
+    on('console', (msg) => {
+      activity.bump();
       try {
         if (msg.type() !== 'error') return;
         const loc = typeof msg.location === 'function' ? msg.location() : null;
@@ -870,10 +1053,17 @@ async function runTestGroup(browser, group) {
         pushErr('console', msg.text(), src);
       } catch { /* ignore a single malformed console message */ }
     });
-    page.on('pageerror', (err) => {
+    on('pageerror', (err) => {
+      activity.bump();
       try { pushErr('pageerror', (err && (err.stack || err.message)) || String(err), ''); }
       catch { /* ignore */ }
     });
+    // Request lifecycle: a route that is still fetching is not quiet, however
+    // silent its console is. This is what keeps a lazily-hydrating sub-route
+    // from being judged before it renders.
+    for (const ev of ['request', 'response', 'requestfinished', 'requestfailed']) {
+      on(ev, () => activity.bump());
+    }
 
     try {
       const resp = await page.goto(lead.url, { waitUntil: 'networkidle2', timeout: NAV_TIMEOUT_MS });
@@ -886,57 +1076,93 @@ async function runTestGroup(browser, group) {
       return;
     }
 
-    await sleep(SETTLE_MS);
     let loadFailure = '';
     if (status >= 400) {
       pushErr('load', `page returned HTTP ${status}`, lead.url);
       loadFailure = `Page returned HTTP ${status}`;
     }
-    // Give deferred async errors a moment to fire before we judge.
-    await sleep(CONSOLE_ONLY_SETTLE_MS);
 
-    // The console verdict is a property of the PAGE LOAD, shared by every
-    // check on this route. Freeze it here so a straggling async error that
-    // fires while the 30th assertion is being evaluated can't split one
-    // load into contradictory verdicts across the group.
-    const errorCount = consoleErrors.length;
+    // Errors seen during the cold load belong to EVERY cohort in the group —
+    // they are a property of the document all of them share, and before this
+    // change each cohort was its own navigation and would have observed them
+    // itself. Errors after a hash switch belong to that cohort alone, which is
+    // strictly better attribution than the old group-wide freeze: a broken
+    // sub-route no longer fails its siblings.
+    let sharedErrorCount = 0;
 
-    // Per-check presence assertions against the one loaded page.
-    for (const t of tests) {
-      let failureReason = loadFailure;
-      if (!failureReason && t.expectSelector) {
-        let found = false;
-        try { found = !!(await page.$(t.expectSelector)); } catch { found = false; }
-        if (!found) failureReason = `Expected element "${t.expectSelector}" was not found`;
-      }
-      if (!failureReason && t.expectText) {
-        let found = false;
+    for (let ci = 0; ci < cohorts.length; ci += 1) {
+      const cohort = cohorts[ci];
+      let cohortFrom = 0;
+      if (ci === 0) {
+        // Stamp the clock so the cold load always gets a listening window,
+        // then wait it out.
+        activity.bump();
+        await waitForQuiet(activity, { quietMs, maxMs, minMs: Math.min(SETTLE_MIN_MS, maxMs) });
+        sharedErrorCount = consoleErrors.length;
+      } else {
+        cohortFrom = consoleErrors.length;
         try {
-          // innerText reflects RENDERED text, including CSS text-transform —
-          // a `text-transform: uppercase` header turns "Your apps" into
-          // "YOUR APPS" and a case-sensitive includes() can never match the
-          // human-written expectation. Compare case-insensitively: keeps the
-          // "visible on the page" semantics (hidden text still fails) while
-          // making the assertion robust to styling-only casing.
-          found = await page.evaluate(
-            (text) => (document.body ? document.body.innerText : '')
-              .toLowerCase().includes(String(text).toLowerCase()),
-            t.expectText
-          );
-        } catch { found = false; }
-        if (!found) failureReason = `Expected text "${t.expectText}" was not found on the page`;
+          await page.evaluate((h) => {
+            if (window.location.hash === h) {
+              // Already there (the app normalised the fragment itself) — poke
+              // the router anyway so this cohort gets a fresh render.
+              window.dispatchEvent(new HashChangeEvent('hashchange'));
+              return;
+            }
+            window.location.hash = h;
+          }, cohort.hash);
+        } catch (err) {
+          pushErr('load', `hash navigation to ${cohort.hash} failed: ${err.message}`, lead.url);
+        }
+        activity.bump();
+        await waitForQuiet(activity, { quietMs, maxMs });
       }
-      // Console errors fail the check unless it opted out. A failed load /
-      // missing assertion already set failureReason.
-      if (!failureReason && !t.allowConsoleErrors && errorCount > 0) {
-        failureReason = `${errorCount} console error${errorCount === 1 ? '' : 's'} on load`;
+
+      // Frozen per cohort, for the same reason it used to be frozen per group:
+      // a straggling async error must not split one render into contradictory
+      // verdicts across the checks judging it.
+      const cohortErrors = ci === 0
+        ? consoleErrors.slice(0, sharedErrorCount)
+        : consoleErrors.slice(0, sharedErrorCount).concat(consoleErrors.slice(cohortFrom));
+      const errorCount = cohortErrors.length;
+
+      // Per-check presence assertions against the currently rendered view.
+      for (const t of cohort.tests) {
+        let failureReason = loadFailure;
+        if (!failureReason && t.expectSelector) {
+          let found = false;
+          try { found = !!(await page.$(t.expectSelector)); } catch { found = false; }
+          if (!found) failureReason = `Expected element "${t.expectSelector}" was not found`;
+        }
+        if (!failureReason && t.expectText) {
+          let found = false;
+          try {
+            // innerText reflects RENDERED text, including CSS text-transform —
+            // a `text-transform: uppercase` header turns "Your apps" into
+            // "YOUR APPS" and a case-sensitive includes() can never match the
+            // human-written expectation. Compare case-insensitively: keeps the
+            // "visible on the page" semantics (hidden text still fails) while
+            // making the assertion robust to styling-only casing.
+            found = await page.evaluate(
+              (text) => (document.body ? document.body.innerText : '')
+                .toLowerCase().includes(String(text).toLowerCase()),
+              t.expectText
+            );
+          } catch { found = false; }
+          if (!found) failureReason = `Expected text "${t.expectText}" was not found on the page`;
+        }
+        // Console errors fail the check unless it opted out. A failed load /
+        // missing assertion already set failureReason.
+        if (!failureReason && !t.allowConsoleErrors && errorCount > 0) {
+          failureReason = `${errorCount} console error${errorCount === 1 ? '' : 's'} on load`;
+        }
+        const pass = !failureReason;
+        emitTest(t.index, pass ? 'pass' : 'fail', status, {
+          name: t.name, path: t.path,
+          consoleErrors: t.allowConsoleErrors ? [] : cohortErrors,
+          failureReason: pass ? '' : failureReason,
+        });
       }
-      const pass = !failureReason;
-      emitTest(t.index, pass ? 'pass' : 'fail', status, {
-        name: t.name, path: t.path,
-        consoleErrors: t.allowConsoleErrors ? [] : consoleErrors,
-        failureReason: pass ? '' : failureReason,
-      });
     }
   } catch (err) {
     // emitTest de-duplicates by index, so checks that already reported are
@@ -955,13 +1181,21 @@ async function runTestGroup(browser, group) {
 // worker long" from the ungrouped design.
 const GROUP_EXTRA_CHECK_MS = 1000;
 
+// Extra allowance for each hash cohort past the first. A cohort costs a hash
+// write plus one settle, not a navigation — but a settle can run to
+// SETTLE_MAX_MS, so the budget has to grow with cohort count or a full
+// six-cohort group would be timed out for doing exactly what it was told to.
+const GROUP_EXTRA_COHORT_MS = 4000;
+
 // Run the whole declared suite through a bounded worker pool, each group in
 // its own browser context. Two layers of batching:
 //
-//   * URL GROUPS (groupTestsByUrl): checks on the same resolved URL share
-//     one navigation and one settled page — this repo's suite is 234 checks
-//     over ~106 routes, so grouping halves the number of navigations, and
-//     navigation + settle is where nearly all of a check's wall clock goes.
+//   * DOCUMENT GROUPS (groupTests): checks on the same document share one
+//     navigation and one settled page, sub-navigating by hash within it —
+//     this repo's suite is 314 checks over 158 resolved URLs but only 73
+//     documents, and navigation + settle is where nearly all of a check's
+//     wall clock goes. TEST_GROUP_BY_DOCUMENT=0 falls back to the older
+//     per-URL grouping.
 //   * THE POOL: groups run through `concurrency` workers. Replaces the
 //     sequential loop that made a 241-check suite a ~16-minute job.
 //
@@ -1002,13 +1236,21 @@ async function runTests(browser, tests, opts) {
     return { ran: 0, expected: 0, deadline: false };
   }
 
-  const groups = groupTestsByUrl(list);
+  const env = o.env || process.env;
+  const groups = typeof o.groupTests === 'function' ? o.groupTests(list) : groupTests(list, env);
+  const settleOpts = {
+    settleQuietMs: Number.isFinite(o.settleQuietMs) ? o.settleQuietMs : settleQuietMs(env),
+    settleMaxMs: Number.isFinite(o.settleMaxMs) ? o.settleMaxMs : settleMaxMs(env),
+  };
   const startedAt = now();
   let ran = 0;
   let hitDeadline = false;
 
   const runOne = async (group) => {
-    const groupBudgetMs = perTestMs + GROUP_EXTRA_CHECK_MS * (group.length - 1);
+    const cohortCount = cohortsOf(group).length;
+    const groupBudgetMs = perTestMs
+      + GROUP_EXTRA_CHECK_MS * (group.length - 1)
+      + GROUP_EXTRA_COHORT_MS * Math.max(0, cohortCount - 1);
     let timer = null;
     const timeout = new Promise((resolve) => {
       timer = setTimeout(() => resolve('timeout'), groupBudgetMs);
@@ -1018,7 +1260,7 @@ async function runTests(browser, tests, opts) {
     try {
       outcome = await Promise.race([
         Promise.resolve()
-          .then(() => runTestGroup(browser, group))
+          .then(() => runTestGroup(browser, group, settleOpts))
           .then(() => 'done', (err) => `error:${(err && err.message) || err}`),
         timeout,
       ]);
@@ -1124,6 +1366,7 @@ async function main() {
         concurrency: poolSize(process.env),
         testTimeoutMs: testTimeoutMs(process.env),
         deadlineMs: testsDeadlineMs(process.env),
+        env: process.env,
       });
     }
   } finally {
@@ -1145,4 +1388,4 @@ if (require.main === module) {
 // file whose BEHAVIOUR (how many navigations it makes, whether it starts a
 // recording) is the thing under test, and it takes its page from the browser
 // it is handed, so a fake browser exercises it without Chromium.
-module.exports = { parseCookie, resolveTargets, resolveDeviceScaleFactor, parseTargetViewport, parseCompanion, mediaEnabled, resolveTests, captureTarget, runTests, groupTestsByUrl, poolSize, testTimeoutMs, testsDeadlineMs, setFrameSink, CHROMIUM_LAUNCH_ARGS };
+module.exports = { parseCookie, resolveTargets, resolveDeviceScaleFactor, parseTargetViewport, parseCompanion, mediaEnabled, resolveTests, captureTarget, runTests, runTestGroup, groupTestsByUrl, groupTestsByDocument, groupTests, cohortsOf, hashGroupCap, waitForQuiet, makeActivityClock, settleQuietMs, settleMaxMs, poolSize, testTimeoutMs, testsDeadlineMs, setFrameSink, CHROMIUM_LAUNCH_ARGS };
