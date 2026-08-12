@@ -256,8 +256,9 @@ test("setChecksPending returns a 'skipped' row to 'pending' for the next commit 
     assert.match(q.sql, /SET check_state = 'pending'/);
     assert.match(q.sql, /status IN \('active', 'paused', 'promoted', 'merging'\)/,
       'a delayed retry cannot resurrect checks on archived or merged rows');
-    // $3 is check_phase — NULL when the caller names no stage.
-    assert.deepEqual(q.params, [42, 'feed0042', null]);
+    // $3 is check_phase and $4 is check_trigger — both NULL when the caller
+    // names neither a stage nor a reason.
+    assert.deepEqual(q.params, [42, 'feed0042', null, null]);
   } finally { restore(); }
 });
 
@@ -396,7 +397,7 @@ test('the heal compares and pins the IMPORTED head sha, never the fork branch na
 test('the heal claims the resolved commit before staging can fail', () => {
   assert.match(
     RECOVERY_SRC,
-    /const commitHash = [\s\S]*?await visuals\.setChecksPending\(pool, session\.id, commitHash\)[\s\S]*?buildAndDeployStaging\(config, session, app, commitHash\)/,
+    /const commitHash = [\s\S]*?await visuals\.setChecksPending\(pool, session\.id, commitHash,[\s\S]*?buildAndDeployStaging\(config, session, app, commitHash\)/,
     'a boot failure must be stored against the same commit the rebuild attempted'
   );
 });

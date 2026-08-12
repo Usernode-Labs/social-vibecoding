@@ -348,11 +348,11 @@ async function advanceReviewAfterPlatformSync(pool, session, result, opts = {}) 
 // so the sync path owns it now that the reconciler no longer sees a head move.
 async function kickChecksForSyncedHead(config, pool, session, headSha) {
   const visuals = require('./visuals');
-  await visuals.setChecksPending(pool, session.id, headSha, 'building')
+  await visuals.setChecksPending(pool, session.id, headSha, 'building', 'sync-main')
     .catch((err) => log.warn('sync-main', 'setChecksPending failed (non-fatal)', {
       sessionId: session.id, headSha, err: err.message,
     }));
-  try { visuals.notifyChecksPending(session.id, headSha, 'building'); } catch (_) {}
+  try { visuals.notifyChecksPending(session.id, headSha, 'building', 'sync-main'); } catch (_) {}
   session.check_state = 'pending';
   session.checks_commit_sha = headSha;
   require('./pr-import-sync').rerunChecksForNewHead({

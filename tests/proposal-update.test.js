@@ -801,7 +801,9 @@ test('an ACTIVE session gets the commit, pending checks and a staging rebuild', 
 
   // And the platform's ordinary post-commit machinery ran, rather than a
   // second implementation of it.
-  assert.deepEqual(log.pending[0].slice(1), [501, FORK_HEAD]);
+  // #1144: the phase and the trigger ride along on the same call — a reviewer
+  // watching this run sees "preparing the staging preview", started by a push.
+  assert.deepEqual(log.pending[0].slice(1), [501, FORK_HEAD, 'building', 'commit-push']);
   assert.equal(log.notified.length, 1);
   assert.deepEqual(log.pipelineBegan, [501]);
   assert.equal(log.started.length, 1);
