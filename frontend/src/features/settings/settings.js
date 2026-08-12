@@ -3035,6 +3035,7 @@
         'fixes this.',
       'no-transport': 'This screen can’t reach the Usernode app from here.',
       'not-native': 'This screen can’t reach the Usernode app from here.',
+      'page-changed': 'The request was cancelled because this page changed.',
     },
     USERNODE_READ_ERROR_FALLBACK: 'The Usernode app returned no settings.',
 

@@ -9,10 +9,10 @@
 // header as a pill originally; moved into the drawer to keep the header
 // uncluttered.
 //
-// Data flow: the app pushes `usernode:node-status` CustomEvents (once per
-// page load + on pill-state transitions), so the row renders from the
-// event stream; `usernode.getNodeStatus()` is only called for the initial
-// value and when the detail sheet opens. No polling.
+// Data flow: the app pushes `usernode:node-status` CustomEvents (once through
+// the explicit realm-readiness replay + on pill-state transitions), so the row
+// renders from the event stream; `usernode.getNodeStatus()` is only called for
+// the initial value and when the detail sheet opens. No polling.
 //
 // The row is present for every native top frame, even while capabilities or
 // node state are unavailable. Desktop browsers and child-app iframes keep it
@@ -75,9 +75,9 @@
       }
 
       // Wire this BEFORE the asynchronous capability probe. The native app
-      // pushes this event after page load, so it is independent positive proof
-      // that node status is supported and rescues a transient/degraded first
-      // probe instead of leaving the row hidden for the whole document.
+      // pushes this event through the readiness replay, so it is independent
+      // positive proof that node status is supported and rescues a transient /
+      // degraded first probe instead of leaving the row hidden for the realm.
       window.addEventListener('usernode:node-status', (e) => {
         const status = e && e.detail;
         if (!status || typeof status.status !== 'string') return;

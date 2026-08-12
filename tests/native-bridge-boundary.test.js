@@ -8,6 +8,8 @@ const bridgeSource = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'usernode-bridge.js'),
   'utf8'
 );
+const CALL_NATIVE_HOOK_MARKER =
+  '  // ── Iframe-relay client: discover parent + receive responses';
 
 const SETTINGS_SNAPSHOT = {
   buildInfo: { appVersion: '1.4.2', buildNumber: '87' },
@@ -27,9 +29,12 @@ function loadBridge({
   silentMethods = [],
   errorMethods = {},
   timeoutScale = 1,
+  exposeCallNative = false,
+  delayedMethods = {},
 } = {}) {
   const nativePosts = [];
   const messageListeners = [];
+  const windowListeners = {};
   const responses = {
     getBridgeInfo: {
       version: 4,
@@ -53,6 +58,7 @@ function loadBridge({
       deliveryActive: true,
     },
     claimPendingSocialNotification: { notificationId: 42 },
+    markPrivilegedBridgeReady: { ready: true },
   };
   const sandbox = {
     console: { log() {}, warn() {}, error() {} },
@@ -95,6 +101,8 @@ function loadBridge({
     },
     addEventListener(type, listener) {
       if (type === 'message') messageListeners.push(listener);
+      if (!windowListeners[type]) windowListeners[type] = [];
+      windowListeners[type].push(listener);
     },
     dispatchEvent() {},
     fetch: async () => ({ ok: false }),
@@ -116,11 +124,28 @@ function loadBridge({
       const value = Object.prototype.hasOwnProperty.call(
         responses, request.method
       ) ? responses[request.method] : true;
+      if (Object.prototype.hasOwnProperty.call(delayedMethods, request.method)) {
+        setTimeout(() => {
+          sandbox.__usernodeResolve(request.id, value, null);
+        }, delayedMethods[request.method] * timeoutScale);
+        return;
+      }
       sandbox.__usernodeResolve(request.id, value, null);
     },
   };
   vm.createContext(sandbox);
-  vm.runInContext(bridgeSource, sandbox);
+  const source = exposeCallNative
+    ? bridgeSource.replace(
+      CALL_NATIVE_HOOK_MARKER,
+      '  window.__callNativeForBoundaryTest = callNative;\n\n' +
+      CALL_NATIVE_HOOK_MARKER
+    )
+    : bridgeSource;
+  if (exposeCallNative) {
+    assert.notEqual(source, bridgeSource,
+      'the test-only callNative hook marker must match the production bridge');
+  }
+  vm.runInContext(source, sandbox);
 
   return {
     sandbox,
@@ -136,10 +161,13 @@ function loadBridge({
     dispatchMessage(event) {
       for (const listener of messageListeners) listener(event);
     },
+    dispatchWindow(type, event = {}) {
+      for (const listener of windowListeners[type] || []) listener(event);
+    },
   };
 }
 
-test('top-frame privileged calls carry one closure-only navigation capability', async () => {
+test('top-frame privileged calls carry one closure-only realm capability', async () => {
   const loaded = loadBridge({
     capabilities: [
       'privilegedBridgeCapability',
@@ -191,6 +219,156 @@ test('top-frame privileged calls carry one closure-only navigation capability', 
   assert.equal(loaded.sandbox.usernode.privilegedCapability, undefined,
     'the capability is not exposed on the public bridge object');
 });
+
+test('page readiness is an explicit top-frame privileged handshake', async () => {
+  const loaded = loadBridge({
+    capabilities: [
+      'privilegedBridgeCapability',
+      'privilegedBridgeReady',
+      'markPrivilegedBridgeReady',
+    ],
+  });
+
+  assert.deepEqual(
+    await loaded.sandbox.usernode.markPrivilegedBridgeReady(),
+    { ready: true }
+  );
+  assert.deepEqual(
+    loaded.nativePosts.map((post) => post.method),
+    [
+      'getBridgeInfo',
+      'getBridgeInfo',
+      'getPrivilegedBridgeCapability',
+      'markPrivilegedBridgeReady',
+    ]
+  );
+  assert.equal(
+    loaded.nativePosts[3].privilegedCapability,
+    'navigation-capability'
+  );
+});
+
+test('delayed valid readiness does not time out at the short probe budget',
+  async () => {
+    const loaded = loadBridge({
+      capabilities: [
+        'privilegedBridgeCapability',
+        'privilegedBridgeReady',
+        'markPrivilegedBridgeReady',
+      ],
+      timeoutScale: 0.001,
+      delayedMethods: { markPrivilegedBridgeReady: 6000 },
+    });
+
+    assert.deepEqual(
+      await loaded.sandbox.usernode.markPrivilegedBridgeReady(),
+      { ready: true }
+    );
+    assert.equal(
+      loaded.nativePosts.filter(
+        (post) => post.method === 'markPrivilegedBridgeReady'
+      ).length,
+      1
+    );
+  });
+
+test('inconclusive readiness probes retry but old builds remain conclusive',
+  async () => {
+    const transient = loadBridge({
+      capabilities: [
+        'privilegedBridgeCapability',
+        'privilegedBridgeReady',
+        'markPrivilegedBridgeReady',
+      ],
+      silentMethods: ['getBridgeInfo'],
+      timeoutScale: 0.01,
+    });
+
+    await assert.rejects(
+      transient.sandbox.usernode.markPrivilegedBridgeReady(),
+      (error) => error && error.usernodeKind === 'probe-inconclusive'
+    );
+    transient.unsilence('getBridgeInfo');
+    assert.deepEqual(
+      await transient.sandbox.usernode.markPrivilegedBridgeReady(),
+      { ready: true }
+    );
+    assert.deepEqual(
+      transient.nativePosts.map((post) => post.method),
+      [
+        'getBridgeInfo',
+        'getBridgeInfo',
+        'getBridgeInfo',
+        'getPrivilegedBridgeCapability',
+        'markPrivilegedBridgeReady',
+      ]
+    );
+
+    const oldBuild = loadBridge({ capabilities: [] });
+    assert.equal(
+      (await oldBuild.sandbox.usernode.markPrivilegedBridgeReady()).ready,
+      false
+    );
+    assert.deepEqual(
+      oldBuild.nativePosts.map((post) => post.method),
+      ['getBridgeInfo']
+    );
+  });
+
+test('pagehide rejects a dropped direct-native response before BFCache restore',
+  async () => {
+    const loaded = loadBridge({
+      capabilities: ['privilegedBridgeCapability', 'logout'],
+      silentMethods: ['logout'],
+    });
+
+    const request = loaded.sandbox.usernode.logout();
+    await new Promise((resolve) => setImmediate(resolve));
+    loaded.dispatchWindow('pagehide');
+    await assert.rejects(request, /page changed/);
+    assert.equal(
+      Object.keys(loaded.sandbox.__usernodeBridge.pending).length,
+      0,
+      'the bridge must retire the abandoned native request'
+    );
+  });
+
+test('pagehide also rejects an in-flight privileged capability bootstrap',
+  async () => {
+    const loaded = loadBridge({
+      capabilities: ['privilegedBridgeCapability', 'logout'],
+      silentMethods: ['getPrivilegedBridgeCapability'],
+    });
+
+    const request = loaded.sandbox.usernode.logout();
+    await new Promise((resolve) => setImmediate(resolve));
+    loaded.dispatchWindow('pagehide');
+    await assert.rejects(request, /page changed/);
+    assert.equal(
+      Object.keys(loaded.sandbox.__usernodeBridge.pending).length,
+      0
+    );
+  });
+
+test('pagehide leaves ordinary embedded-dapp requests on their prior contract',
+  async () => {
+    const loaded = loadBridge({
+      silentMethods: ['getWalletState'],
+    });
+
+    const request = loaded.sandbox.usernode.getWalletState();
+    await new Promise((resolve) => setImmediate(resolve));
+    loaded.dispatchWindow('pagehide');
+
+    const pendingIds = Object.keys(loaded.sandbox.__usernodeBridge.pending);
+    assert.equal(pendingIds.length, 1);
+    loaded.sandbox.__usernodeResolve(
+      pendingIds[0],
+      { address: 'ut1-wallet' },
+      null
+    );
+    assert.deepEqual(await request, { address: 'ut1-wallet' });
+  });
 
 test('old native builds retain the legacy privileged request shape', async () => {
   const loaded = loadBridge({ capabilities: ['logout'] });
@@ -271,6 +449,60 @@ test('Social push state and tap methods stay behind the top-frame capability',
     }
     assert.deepEqual(loaded.nativePosts[3].args, { enabled: true });
     assert.deepEqual(loaded.nativePosts[5].args, { notificationId: 42 });
+  });
+
+test('notification permission actions require the top-frame capability',
+  async () => {
+    const methods = [
+      'requestNotificationPermission',
+      'requestAlarmPermissions',
+      'openNotificationSettings',
+    ];
+    const loaded = loadBridge({
+      capabilities: ['privilegedBridgeCapability', ...methods],
+      exposeCallNative: true,
+    });
+
+    for (const method of methods) {
+      await loaded.sandbox.__callNativeForBoundaryTest(method, {});
+    }
+
+    assert.deepEqual(
+      loaded.nativePosts.map((post) => post.method),
+      [
+        'getBridgeInfo',
+        'getPrivilegedBridgeCapability',
+        ...methods,
+      ]
+    );
+    for (const post of loaded.nativePosts.slice(2)) {
+      assert.equal(post.privilegedCapability, 'navigation-capability');
+    }
+
+    const relayed = loadBridge();
+    const childReplies = [];
+    const child = {
+      postMessage(value, origin) { childReplies.push({ value, origin }); },
+    };
+    for (const method of methods) {
+      relayed.dispatchMessage({
+        source: child,
+        origin: 'https://child.example',
+        data: {
+          __usernode_relay: 'request',
+          id: method,
+          method,
+          args: {},
+        },
+      });
+    }
+
+    assert.equal(relayed.nativePosts.length, 0,
+      'an iframe cannot forward notification permission actions to native');
+    assert.equal(childReplies.length, methods.length);
+    for (const reply of childReplies) {
+      assert.match(reply.value.error, /top-level page/);
+    }
   });
 
 test('legacy shortcut management gets a full request budget after probing',
