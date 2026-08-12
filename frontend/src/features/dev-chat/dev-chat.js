@@ -1197,7 +1197,18 @@ const DevChat = {
 
   _optionsMenu: null,
   _optionsCard: null,
-  _shotOptionsDone: false,
+  // #1146: the two `?shot=` latches below are keyed on the fragment they
+  // were applied at, NOT on the document. Both used to be booleans, which
+  // read as "once per page load" — right for the thing they guard (a status
+  // poll's re-render must not pop the menu back open under the user) and
+  // wrong for the address, because one `?shot=` document addresses several
+  // sessions by fragment (dapp.json points five checks at
+  // /?demo=1&shot=venue-sheet, one per session). Cold-loading each fragment
+  // hid it; the grouped capture runner reaches the siblings by writing
+  // location.hash, and every cohort after the first got a plain composer.
+  // Same guard, per active fragment.
+  _shotOptionsHash: null,
+  _shotVenueSheetHash: null,
 
   // Everything the menu needs, read from the places that already own each
   // fact: Settings mirrors /api/auth/me's BYOK state, App.user carries the
@@ -1376,24 +1387,26 @@ const DevChat = {
   },
 
   // Screenshot-state deep link `?shot=venue-sheet` (#1086): the sheet the
-  // change control opens, with all six venues on it. Once per page load and
-  // only when the control is actually on screen, exactly like the options
-  // menu below — a re-render must not pop it open under the user.
+  // change control opens, with all six venues on it. Once per addressed
+  // session (see _shotVenueSheetHash) and only when the control is actually
+  // on screen, exactly like the options menu below — a re-render must not
+  // pop it open under the user.
   _maybeOpenShotVenueSheet() {
-    if (DevChat._shotVenueSheetDone) return;
+    if (DevChat._shotVenueSheetHash === location.hash) return;
     let shot = null;
     try { shot = new URLSearchParams(location.search).get('shot'); } catch { return; }
     if (shot !== 'venue-sheet') return;
     const btn = document.querySelector('#dc-venue-slot [data-venue-change]');
     if (!btn || btn.offsetParent === null) return;
-    DevChat._shotVenueSheetDone = true;
+    DevChat._shotVenueSheetHash = location.hash;
     requestAnimationFrame(() => DevChat.openVenueSheet(btn));
   },
 
   // Screenshot-state deep links (#1055):
   //   ?shot=session-options               → the menu itself, open
   //   ?shot=session-options-instructions  → the CLI instructions card
-  // Once per page load, and only when the composer is actually on screen —
+  // Once per addressed session (see _shotOptionsHash), and only when the
+  // composer is actually on screen —
   // a re-render must not pop the menu back open under the user. `restore` is
   // the one exception, passed by renderChatView when the menu it just
   // dismissed was open a moment ago: reopening what was already open is not
@@ -1401,13 +1414,13 @@ const DevChat = {
   // state across a re-render. Both are still gated on a `?shot=` URL, so a
   // real session never reaches either path.
   _maybeOpenShotOptions(restore) {
-    if (DevChat._shotOptionsDone && !restore) return;
+    if (DevChat._shotOptionsHash === location.hash && !restore) return;
     let shot = null;
     try { shot = new URLSearchParams(location.search).get('shot'); } catch { /* ignore */ }
     if (shot !== 'session-options' && shot !== 'session-options-instructions') return;
     const btn = document.getElementById('dc-budget-options');
     if (!btn || btn.offsetParent === null) return;
-    DevChat._shotOptionsDone = true;
+    DevChat._shotOptionsHash = location.hash;
     // Deferred a frame: the composer was written synchronously just above
     // and the kit's flip/clamp placement needs the button's settled rect.
     requestAnimationFrame(() => {

@@ -453,11 +453,15 @@ const App = {
       detail: { user: App.user },
     }));
     App.restoreFromHash();
-    App._applyMenuShot();
+    // The fragment-scoped `?shot=` states, applied for whatever fragment is
+    // live now and re-applied whenever it changes — see _applyRouteShots.
+    App._applyRouteShots();
+    // The two that DRIVE a navigation instead of painting a state stay
+    // once-per-document: _applyMenuNavShot clicks a drawer row and
+    // _applySettingsBackShot assigns a hash and traverses back out of it, so
+    // re-running either on the hashchange it just caused would loop.
     App._applyMenuNavShot();
     App._applySettingsBackShot();
-    App._applyLaunchShot();
-    App._applyFeedbackShot();
     // #1054: a verified session is the first moment a queued submit can
     // actually be filed — /api/feedback is session-gated, so flushing any
     // earlier would only burn 401s. Everything after this is event- and
@@ -502,6 +506,31 @@ const App = {
   // state, no writes, so it is deliberately NOT env-gated: an
   // IS_STAGING-only link would starve the production "before" shot
   // forever, while an ungated one starts working the moment it ships.
+  // The fragment this ran for last, so a repeat dispatch for the same
+  // address is a no-op (one history traversal fires popstate AND
+  // hashchange, so the router runs twice in a tick — #1102).
+  _shotHash: null,
+
+  // #1146: `?shot=` states are a property of the ADDRESS, not of the
+  // document load. These three used to be applied exactly once, from the
+  // boot path, which is correct only when a document is ever looked at on
+  // one fragment. The grouped capture runner reaches a document's other
+  // cohorts by writing location.hash, and a check pointed at
+  // `/?shot=feedback#leaderboard` after one pointed at `/?shot=feedback`
+  // would find no dialog. Re-applying on every real fragment change makes
+  // the hash switch render what a cold load at that fragment renders.
+  //
+  // Only the state-PAINTING appliers belong here; see the note beside the
+  // two navigation-driving ones in enterAuthed.
+  _applyRouteShots() {
+    if (!App.user) return;
+    if (App._shotHash === location.hash) return;
+    App._shotHash = location.hash;
+    App._applyMenuShot();
+    App._applyLaunchShot();
+    App._applyFeedbackShot();
+  },
+
   _applyMenuShot() {
     let shot = null;
     try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
@@ -1903,8 +1932,23 @@ const App = {
     // the URL bar). Both routes converge on restoreFromHash, which is
     // idempotent — re-applying the same hash is a no-op via the
     // currentApp/currentTab guards inside it.
-    window.addEventListener('popstate', () => App.restoreFromHash());
-    window.addEventListener('hashchange', () => App.restoreFromHash());
+    //
+    // Both also re-apply the fragment-scoped `?shot=` states (#1146), which
+    // is what makes a sibling-fragment hash switch render what a cold load
+    // at that fragment renders. _applyRouteShots dedupes on the hash, so the
+    // traversal's duplicate pair still applies them exactly once.
+    window.addEventListener('popstate', () => App._routeFromHash());
+    window.addEventListener('hashchange', () => App._routeFromHash());
+  },
+
+  // What popstate / hashchange run: the router, then the fragment-scoped
+  // `?shot=` states for the address it just landed on. Kept separate from
+  // restoreFromHash so the many in-app callers that route WITHOUT the
+  // address having moved (boot, the auth screens, the alias rewrites) don't
+  // drag the shot appliers along.
+  _routeFromHash() {
+    App.restoreFromHash();
+    App._applyRouteShots();
   },
 
   restoreFromHash() {
@@ -2022,8 +2066,9 @@ const App = {
         App.setChromeless(false);
         // Optional sub-view segment (#leaderboard/history etc.) — pass
         // it through so deep links land on the right tab. Bare
-        // #leaderboard keeps whatever tab was last active (the Topochain
-        // standings — the primary tab — on first visit). A third segment
+        // #leaderboard is the standings' own canonical address, so it
+        // RESETS to that tab rather than keeping whatever was last active
+        // (see _routeLeaderboard). A third segment
         // on the users tab (#leaderboard/users/<username>) deep-links a
         // user profile (#60). #leaderboard/kudos, #leaderboard/topochain
         // and #leaderboard/challenges select a SECTION rather than a
@@ -2566,9 +2611,23 @@ const App = {
   // _setSub clears profile state and would replaceState the profile hash
   // away. When the screen is already open they re-render in place; the
   // open() each caller runs afterwards dedupes the in-flight load.
+  //
+  // #1146: the address is the source of truth on ENTRY, including the
+  // absence of a segment. A bare #leaderboard means the standings — that is
+  // the tab's canonical address, and the declared check "Bare #leaderboard
+  // renders all three tabs and opens on the standings (#962)" says so — but
+  // the module remembers its last section for the session, so arriving here
+  // from #leaderboard/challenges used to leave the challenges tab up. Cold
+  // loading hid it (a fresh module starts on 'topochain'); a sibling-fragment
+  // hash switch, which is how the grouped capture runner reaches every
+  // cohort of a document, does not. Reset explicitly so both arrivals render
+  // the same screen. _setSection early-returns when the section is already
+  // current, so the common case costs nothing.
   _routeLeaderboard(sub, profileUser, challengeTarget) {
     if (profileUser && window.Leaderboard?.openProfile) {
       Leaderboard.openProfile(profileUser);
+    } else if (!sub && window.Leaderboard?._setSection) {
+      Leaderboard._setSection('topochain');
     } else if ((sub === 'topochain' || sub === 'kudos' || sub === 'challenges')
                && window.Leaderboard?._setSection) {
       // Register the challenge deep link BEFORE the section mounts (#982).
