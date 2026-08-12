@@ -129,6 +129,112 @@
   var _privilegedCapabilitySupported = null;
   var _sessionWalletRelayAdmitted = true;
 
+  // ── Privileged-handshake outcome record ───────────────────────────────
+  //
+  // A refused handshake used to exist only as an English sentence on one
+  // rejected Promise, so a device stuck in that state left no diagnosable
+  // trace — every dependent screen just said "could not load". Keep one
+  // classified record of the last handshake outcome beside the capability.
+  //
+  // `state` is one of:
+  //   "unknown"       nothing has been attempted in this realm yet
+  //   "ready"         a capability token was issued to this realm
+  //   "blocked-frame" the app refused THIS frame/realm
+  //   "unsupported"   the installed build predates the handshake
+  //   "inconclusive"  getBridgeInfo came back degraded — "don't know"
+  //   "unattached"    the app never answered the bootstrap call
+  //
+  // It carries no capability token and no user data: a state name, the
+  // app's machine-readable code when it sends one, the bridge kind, the
+  // app's own sentence, a timestamp and an attempt count.
+  var _privilegedState = {
+    state: "unknown",
+    code: null,
+    kind: null,
+    message: null,
+    at: null,
+    attempts: 0,
+  };
+
+  // Machine-readable refusal codes (NATIVE-BRIDGE.md, "Privileged refusal
+  // codes"). CODE FIRST, PROSE SECOND: a stable code from the app decides
+  // the state, and the English sentence is only consulted when no code
+  // arrived. Builds that predate the code send prose alone, which is why
+  // the fallback stays.
+  var _PRIVILEGED_REFUSAL_STATES = {
+    privileged_frame_unauthorized: "blocked-frame",
+    privileged_unsupported_version: "unsupported",
+    privileged_bootstrap_timeout: "unattached",
+  };
+  var _PRIVILEGED_FRAME_PROSE = /main frame|realm|not authori[sz]ed|origin/i;
+
+  // → a state name when this rejection is a privileged refusal, else null.
+  // An ordinary method error ("terms provider unavailable") is the app
+  // answering us and must NOT be mistaken for the handshake being down.
+  function classifyPrivilegedFailure(err) {
+    if (!err) return null;
+    var code = (typeof err.usernodeCode === "string") ? err.usernodeCode : "";
+    if (code && _PRIVILEGED_REFUSAL_STATES[code]) {
+      return _PRIVILEGED_REFUSAL_STATES[code];
+    }
+    var kind = err.usernodeKind;
+    if (kind === "probe-inconclusive") return "inconclusive";
+    if (kind === "no-transport") return _inIframe ? "blocked-frame" : "unattached";
+    if (kind === "timeout") return "unattached";
+    // A navigation cancelled the call; the handshake itself is unjudged.
+    if (kind === "page-changed") return null;
+    if (_PRIVILEGED_FRAME_PROSE.test(String(err.message || ""))) {
+      return "blocked-frame";
+    }
+    // A code we don't recognise still arrived on the refusal channel, so a
+    // newer app can name a new reason without this build going silent.
+    return code ? "blocked-frame" : null;
+  }
+
+  function recordPrivilegedState(state, err) {
+    _privilegedState = {
+      state: state,
+      code: (err && typeof err.usernodeCode === "string" && err.usernodeCode)
+        ? err.usernodeCode : null,
+      kind: (err && typeof err.usernodeKind === "string")
+        ? err.usernodeKind : null,
+      message: (err && err.message) ? String(err.message) : null,
+      at: Date.now(),
+      attempts: (state === "ready") ? 0 : (_privilegedState.attempts + 1),
+    };
+    return _privilegedState;
+  }
+
+  // Tags a rejection that came out of the privileged handshake so callers
+  // can tell it from a method that ran and failed. `usernodePrivileged` is
+  // non-enumerable: it must not widen anything that serialises the error.
+  function privilegedFailure(err) {
+    var e = (err && typeof err.message === "string")
+      ? err : new Error(String(err));
+    if (typeof e.usernodeKind !== "string") {
+      e.usernodeKind = "privileged-unavailable";
+    }
+    try {
+      Object.defineProperty(e, "usernodePrivileged", {
+        value: true, enumerable: false, configurable: true, writable: true,
+      });
+    } catch (_) { e.usernodePrivileged = true; }
+    return e;
+  }
+
+  // One place where a bootstrap rejection is classified, recorded and
+  // tagged. "unattached" is the fallback: the handshake did not complete
+  // and we cannot say why, which is exactly the state the diagnostics
+  // panel tells the user to clear by force-closing and reopening the app.
+  function recordPrivilegedFailure(err) {
+    var state = classifyPrivilegedFailure(err) || "unattached";
+    // Tag BEFORE recording so the record carries the same kind the caller
+    // will see on the thrown error, not the untagged original.
+    var tagged = privilegedFailure(err);
+    recordPrivilegedState(state, tagged);
+    return tagged;
+  }
+
   function isPrivilegedNativeMethod(method) {
     return _PRIVILEGED_NATIVE_METHODS[method] === true;
   }
@@ -195,14 +301,29 @@
   })();
 
   // Shared promise bridge for native calls (Flutter resolves via
-  // `window.__usernodeResolve(id, value, error)`).
+  // `window.__usernodeResolve(id, value, error[, errorInfo])`).
+  //
+  // `error` is, and stays, a plain STRING: every installed app build calls
+  // this with three arguments and renders that message itself, so an object
+  // there would surface as "[object Object]" on those builds. A build that
+  // wants to say something machine-readable passes a FOURTH argument
+  // `{ code: "privileged_frame_unauthorized" }` alongside the same English
+  // sentence — older builds never pass it and JavaScript drops arguments a
+  // function does not declare, so the channel is compatible both ways. The
+  // code surfaces as `err.usernodeCode`; the vocabulary is the "Privileged
+  // refusal codes" section of NATIVE-BRIDGE.md.
   window.__usernodeBridge = window.__usernodeBridge || { pending: {} };
-  window.__usernodeResolve = function (id, value, error) {
+  window.__usernodeResolve = function (id, value, error, errorInfo) {
     var entry = window.__usernodeBridge.pending[id];
     if (!entry) return;
     delete window.__usernodeBridge.pending[id];
-    if (error) entry.reject(new Error(error));
-    else entry.resolve(value);
+    if (error) {
+      var err = new Error(error);
+      var code = (errorInfo && typeof errorInfo.code === "string")
+        ? errorInfo.code.trim() : "";
+      if (code) err.usernodeCode = code;
+      entry.reject(err);
+    } else entry.resolve(value);
   };
 
   // Errors raised BY the bridge (as opposed to relayed from native) carry
@@ -310,10 +431,10 @@
 
   function ensurePrivilegedCapability() {
     if (_inIframe) {
-      return Promise.reject(taggedNativeError(
+      return Promise.reject(recordPrivilegedFailure(taggedNativeError(
         "Privileged Usernode methods are only available to the top-level page",
         "no-transport"
-      ));
+      )));
     }
     if (_privilegedCapability) {
       return Promise.resolve(_privilegedCapability);
@@ -342,12 +463,16 @@
       var supported = Array.isArray(capabilities) &&
         capabilities.indexOf("privilegedBridgeCapability") !== -1;
       _privilegedCapabilitySupported = supported;
-      if (!supported) return null;
+      if (!supported) {
+        recordPrivilegedState("unsupported", null);
+        return null;
+      }
       return postNative(_PRIVILEGED_CAPABILITY_METHOD, {}).then(function (token) {
         if (typeof token !== "string" || !token) {
           throw new Error("Native bridge returned an invalid privileged capability");
         }
         _privilegedCapability = token;
+        recordPrivilegedState("ready", null);
         return token;
       });
     });
@@ -359,7 +484,7 @@
       },
       function (err) {
         _privilegedCapabilityPromise = null;
-        throw err;
+        throw recordPrivilegedFailure(err);
       }
     );
     return _privilegedCapabilityPromise;
@@ -382,7 +507,13 @@
         if (capability && _privilegedCapability === capability) {
           _privilegedCapability = null;
         }
-        throw err;
+        // Only a REFUSAL re-classifies the handshake. A method that ran
+        // and failed is the app answering us, and stays "rejected".
+        var state = classifyPrivilegedFailure(err);
+        if (!state) throw err;
+        var tagged = privilegedFailure(err);
+        recordPrivilegedState(state, tagged);
+        throw tagged;
       });
     });
   }
@@ -4057,6 +4188,12 @@
   // frame can only ever read failures of calls it made itself.
   var _lastNativeReadErrors = {};
 
+  // Last CONCLUSIVE getBridgeInfo answer, kept so getBridgeDiagnostics()
+  // below can report the installed build synchronously. A degraded probe
+  // deliberately does not overwrite it — "don't know" must not erase what
+  // we did know.
+  var _lastBridgeInfo = null;
+
   function nativeReadErrorKind(err) {
     return (err && typeof err.usernodeKind === "string")
       ? err.usernodeKind
@@ -4084,6 +4221,66 @@
       kind: rec.kind,
       message: rec.message,
       at: rec.at,
+    };
+  };
+
+  // getBridgeDiagnostics() → a SYNCHRONOUS, copied snapshot of everything
+  // this frame knows about its own bridge: transport, the installed build
+  // as last probed, the privileged-handshake outcome and the per-method
+  // failure records. Settings renders it and offers it as copyable text,
+  // which is what turns "it just says could not load" into a report
+  // somebody can act on.
+  //
+  // It deliberately carries NO capability token and no user data — the
+  // token lives in this closure and never reaches a message — and each
+  // frame reads only its own map, so an embedded dapp learns nothing about
+  // the top frame.
+  window.usernode.getBridgeDiagnostics = function () {
+    var info = _lastBridgeInfo;
+    var privileged = {
+      state: _privilegedState.state,
+      code: _privilegedState.code,
+      kind: _privilegedState.kind,
+      message: _privilegedState.message,
+      at: _privilegedState.at,
+      attempts: _privilegedState.attempts,
+    };
+    if (_inIframe) {
+      // A child frame can never hold the capability, so report the answer
+      // that is true for it regardless of what it last attempted.
+      privileged.state = "blocked-frame";
+      privileged.kind = "no-transport";
+      privileged.message =
+        "Privileged Usernode methods are only available to the top-level page";
+    }
+    var lastErrors = {};
+    Object.keys(_lastNativeReadErrors).forEach(function (method) {
+      var rec = _lastNativeReadErrors[method];
+      if (!rec) return;
+      lastErrors[method] = {
+        method: rec.method,
+        kind: rec.kind,
+        message: rec.message,
+        at: rec.at,
+      };
+    });
+    return {
+      isNative: window.usernode.isNative === true,
+      isTopFrame: !_inIframe,
+      inIframe: _inIframe,
+      usesIframeRelay: _useIframeRelay === true,
+      hasNativeChannel: _hasNativeChannel === true,
+      origin: (typeof location !== "undefined" && location.origin)
+        ? location.origin : null,
+      bridgeVersion: (info && typeof info.version === "number")
+        ? info.version : 0,
+      capabilities: (info && Array.isArray(info.capabilities))
+        ? info.capabilities.slice() : [],
+      appVersion: (info && info.appVersion) ? String(info.appVersion) : null,
+      buildNumber: (info && info.buildNumber) ? String(info.buildNumber) : null,
+      privileged: privileged,
+      lastErrors: lastErrors,
+      collectedAt: Date.now(),
     };
   };
 
@@ -4141,7 +4338,10 @@
     return callNativeChromeRead(
       "getBridgeInfo", {}, _CHROME_PROBE_TIMEOUT_MS, null
     ).then(function (info) {
-      if (info && Array.isArray(info.capabilities)) return info;
+      if (info && Array.isArray(info.capabilities)) {
+        _lastBridgeInfo = info;
+        return info;
+      }
       return { version: 0, capabilities: [], degraded: true };
     });
   };
@@ -4254,30 +4454,43 @@
   // ponder for a while; the ceiling here is purely defensive.
   var _PERMISSION_REQUEST_TIMEOUT_MS = 120000;
 
+  // Actions REJECT (a silent no-op would leave a toggle lying about its
+  // state), but they now record the reason exactly like the reads above.
+  // Until this existed a refused privileged ACTION — sign-out, every
+  // toggle — left no trace at all: only reads were diagnosable, so a
+  // device whose handshake was refused could not be told apart from one
+  // that was merely offline.
   function callNativeChromeAction(method, args, timeoutMs) {
     if (!window.usernode.isNative) {
-      return Promise.reject(new Error(
-        method + " is only available inside the Usernode mobile app."
-      ));
+      var offMessage =
+        method + " is only available inside the Usernode mobile app.";
+      recordNativeReadError(method, "not-native", offMessage);
+      return Promise.reject(new Error(offMessage));
     }
     return new Promise(function (resolve, reject) {
       var done = false;
       var timer = setTimeout(function () {
         if (done) return;
         done = true;
-        reject(new Error(method + " is not supported by this app build"));
+        var message = method + " is not supported by this app build";
+        recordNativeReadError(method, "timeout", message);
+        reject(new Error(message));
       }, timeoutMs);
       callNative(method, args).then(
         function (v) {
           if (done) return;
           done = true;
           clearTimeout(timer);
+          delete _lastNativeReadErrors[method];
           resolve(v);
         },
         function (err) {
           if (done) return;
           done = true;
           clearTimeout(timer);
+          recordNativeReadError(
+            method, nativeReadErrorKind(err), err && err.message
+          );
           reject(err);
         }
       );

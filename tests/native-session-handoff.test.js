@@ -630,7 +630,9 @@ test('native failures do not start and logout invalidates an active handoff', as
   loggingOut.sandbox.App.user = { id: 5 };
   const active = loggingOut.NativeChrome.runLoginHandoff();
   await settle();
-  assert.equal(await loggingOut.NativeChrome.prepareWebLogout(), true);
+  assert.deepEqual(plain(await loggingOut.NativeChrome.prepareWebLogout()), {
+    nativeTerminal: true, latch: 'acknowledged', reason: null, code: null,
+  });
   assert.equal(loggingOut.calls.logout, 0,
     'preflight closes admission without tearing down the WebView');
   assert.equal(await loggingOut.NativeChrome.commitNativeLogout(), true);
@@ -646,7 +648,7 @@ test('native failures do not start and logout invalidates an active handoff', as
   assert.equal(loggingOut.calls.startNode.length, 0);
 });
 
-test('inconclusive native logout probe is discarded so retry re-probes',
+test('an inconclusive native logout probe is re-probed in place, not deferred',
   async () => {
     let probes = 0;
     const loaded = loadNativeChrome({
@@ -658,14 +660,63 @@ test('inconclusive native logout probe is discarded so retry re-probes',
       },
     });
 
-    await assert.rejects(
-      loaded.NativeChrome.prepareWebLogout(),
-      /bridge probe was inconclusive/i
-    );
-    assert.equal(loaded.NativeChrome._infoPromise, null);
-
-    assert.equal(await loaded.NativeChrome.prepareWebLogout(), true);
+    // One preflight, not two: making the user tap again is exactly what a
+    // stuck device cannot escape.
+    const report = await loaded.NativeChrome.prepareWebLogout();
     assert.equal(probes, 2);
+    assert.equal(report.nativeTerminal, true);
+    assert.equal(report.latch, 'unsupported');
+  });
+
+test('a persistently inconclusive probe reports instead of rejecting',
+  async () => {
+    let probes = 0;
+    const loaded = loadNativeChrome({
+      getBridgeInfoImpl: async () => {
+        probes += 1;
+        return { version: 0, capabilities: [] };
+      },
+    });
+
+    const report = await loaded.NativeChrome.prepareWebLogout();
+    assert.equal(probes, 2);
+    assert.equal(report.nativeTerminal, false);
+    assert.equal(report.latch, 'inconclusive');
+    assert.match(report.reason, /inconclusive/i);
+    assert.equal(loaded.NativeChrome._infoPromise, null,
+      'the useless cached probe is still discarded');
+    assert.equal(loaded.NativeChrome.lastSessionFailure().stage,
+      'logout-preflight');
+  });
+
+test('a refused session-handoff latch reports the refusal code and does not throw',
+  async () => {
+    const refusal = new Error(
+      'Privileged bridge is unavailable for this main frame'
+    );
+    refusal.usernodeCode = 'privileged_frame_unauthorized';
+    refusal.usernodeKind = 'privileged-unavailable';
+    const loaded = loadNativeChrome({
+      getBridgeInfoImpl: async () => ({
+        version: 4, capabilities: ['logout', 'beginSessionHandoff'],
+      }),
+      beginSessionHandoffImpl: async () => { throw refusal; },
+    });
+
+    const report = await loaded.NativeChrome.prepareWebLogout();
+
+    assert.equal(report.nativeTerminal, false);
+    assert.equal(report.latch, 'unavailable');
+    assert.equal(report.code, 'privileged_frame_unauthorized');
+    assert.match(report.reason, /main frame/i);
+    // Admission is still closed even though the latch refused — the
+    // fallback loosens the exit, never the fail-closed wallet gate.
+    assert.equal(loaded.NativeChrome._sessionWalletRelayAdmitted, false);
+    assert.equal(loaded.NativeChrome._authenticatedSessionAdmitted, false);
+    const failure = loaded.NativeChrome.lastSessionFailure();
+    assert.equal(failure.stage, 'logout-preflight');
+    assert.equal(failure.code, 'privileged_frame_unauthorized');
+    assert.equal(failure.kind, 'privileged-unavailable');
   });
 
 test('non-ready auth event recovers closed admission through login handoff',

@@ -886,3 +886,235 @@ test('the Experimental toggle still gates the whole section', () => {
   // existing preview gate rather than inventing a second one.
   assert.match(settingsJs, /_renderExperimentalSection\(\)[\s\S]{0,4000}_renderLocalAgentsSection\(\)/);
 });
+
+// ── "Usernode app — connection" (the diagnostics panel) ─────────────────
+
+test('the usernode section is gated on being in the app, not on a capability', () => {
+  const section = settingsJs.slice(
+    settingsJs.indexOf('    async _renderUsernodeSection() {'),
+    settingsJs.indexOf('    _usernodeReadError() {'),
+  );
+  assert.ok(section, '_renderUsernodeSection exists');
+  assert.match(section, /bridge\.isNative === true/,
+    'the gate reads the unprivileged isNative flag');
+  assert.doesNotMatch(section, /NativeChrome\.has\('getSettingsState'\)/,
+    'a capability probe cannot gate the screen that diagnoses failed probes');
+});
+
+test('the connection panel renders above the failures it explains', () => {
+  const body = settingsJs.slice(
+    settingsJs.indexOf('    _renderUsernodeBody(readError, loading) {'),
+    settingsJs.indexOf('    _renderUsernodeError(parent, readError, loading) {'),
+  );
+  const panelAt = body.indexOf('this._renderUsernodeConnection(section);');
+  const errorAt = body.indexOf('this._renderUsernodeError(');
+  assert.ok(panelAt > -1, 'the panel is rendered from the section body');
+  assert.ok(errorAt > panelAt,
+    'the explanation comes before the "could not load" box, not after it');
+});
+
+test('the panel has stable ids and both actions', () => {
+  const panel = settingsJs.slice(
+    settingsJs.indexOf('    _renderUsernodeConnection(section) {'),
+    settingsJs.indexOf('    async _retryUsernodeConnection() {'),
+  );
+  assert.ok(panel, '_renderUsernodeConnection exists');
+  assert.match(panel, /box\.id = 'settings-usernode-connection'/);
+  assert.match(panel, /retry\.id = 'settings-usernode-connection-retry'/);
+  assert.match(panel, /copy\.id = 'settings-usernode-connection-copy'/);
+  assert.match(panel, /'Try again'/);
+  assert.match(panel, /'Copy diagnostics'/);
+  // PlatformUI.copyText is the real API (async → boolean, never throws).
+  assert.match(panel, /PlatformUI\.copyText\(/);
+  assert.doesNotMatch(panel, /PlatformUI\.copy\(/);
+  // JS-built, so they must not appear in the static shell.
+  for (const id of [
+    'settings-usernode-connection',
+    'settings-usernode-connection-retry',
+    'settings-usernode-connection-copy',
+  ]) {
+    assert.doesNotMatch(html, new RegExp(`id="${id}"`),
+      `#${id} is built by settings.js, never shipped in the markup`);
+  }
+});
+
+test('Try again re-probes, re-admits and re-arms readiness in one press', () => {
+  const retry = settingsJs.slice(
+    settingsJs.indexOf('    async _retryUsernodeConnection() {'),
+    settingsJs.indexOf('    async _renderUsernodeSection() {'),
+  );
+  assert.ok(retry, '_retryUsernodeConnection exists');
+  assert.match(retry, /NativeChrome\._infoPromise = null/,
+    'the cached probe is discarded so the retry actually re-probes');
+  assert.match(retry, /NativeChrome\.getInfo\(\)/);
+  assert.match(retry, /NativeChrome\.recoverSessionAdmission\(\)/);
+  assert.match(retry, /SocialPush\.retryBridgeReadiness\(\)/);
+  assert.match(retry, /await this\._renderUsernodeSection\(\)/);
+});
+
+test('every privileged state has a plain-language reason, remedy-ordered', () => {
+  const table = settingsJs.slice(
+    settingsJs.indexOf('    PRIVILEGED_STATE_REASONS: {'),
+    settingsJs.indexOf('    DEMO_BRIDGE_DIAGNOSTICS: {'),
+  );
+  assert.ok(table, 'PRIVILEGED_STATE_REASONS exists');
+  for (const state of [
+    'ready', 'blocked-frame', 'unsupported', 'inconclusive', 'unattached',
+    'unknown',
+  ]) {
+    assert.match(table, new RegExp(`'${state}':`),
+      `${state} has copy, so no state renders as a blank panel`);
+  }
+  // The remedy order the report asked for: force-close and reopen FIRST,
+  // reinstall only if that does not clear it.
+  for (const key of ['blocked-frame', 'unattached']) {
+    const at = table.indexOf(`'${key}':`);
+    const next = table.indexOf("':", table.indexOf('\n', at) + 1);
+    const copy = table.slice(at, next > at ? next + 200 : table.length);
+    const closeAt = copy.search(/[Ff]orce-close/);
+    const reinstallAt = copy.search(/reinstall/i);
+    assert.ok(closeAt > -1, `${key} tells the user to force-close and reopen`);
+    assert.ok(reinstallAt > closeAt,
+      `${key} offers reinstalling only after the cheaper remedy`);
+  }
+});
+
+test('the read error vocabulary covers a refused privileged bridge', () => {
+  const reasons = settingsJs.slice(
+    settingsJs.indexOf('    USERNODE_READ_ERROR_REASONS: {'),
+    settingsJs.indexOf('    USERNODE_READ_ERROR_FALLBACK:'),
+  );
+  assert.match(reasons, /'privileged-unavailable':/,
+    'the bridge kind added this turn has copy on the consumer side');
+});
+
+test('a refused bridge changes what the dependent messages say', () => {
+  assert.match(settingsJs, /_nativeActionMessage\(err, fallback\) \{/);
+  const helper = settingsJs.slice(
+    settingsJs.indexOf('    _nativeActionMessage(err, fallback) {'),
+  ).slice(0, 500);
+  assert.match(helper, /err\.usernodePrivileged === true/,
+    'it keys off the bridge tag, not English pattern-matching');
+  // Every user-facing failure path that can be caused by a refused bridge.
+  for (const site of [
+    'this._nativeActionMessage(err,\n              `Could not save the setting',
+    "this._nativeActionMessage(err, 'Action failed')",
+    'this._nativeActionMessage(err, failMsg)',
+  ]) {
+    assert.ok(settingsJs.includes(site), `${site} routes through the helper`);
+  }
+});
+
+test('the diagnostics text carries no token and no user data', () => {
+  const text = settingsJs.slice(
+    settingsJs.indexOf('    _bridgeDiagnosticsText(diag) {'),
+    settingsJs.indexOf('    _renderUsernodeConnection(section) {'),
+  );
+  assert.ok(text, '_bridgeDiagnosticsText exists');
+  for (const banned of [
+    'privilegedCapability', 'App.user', 'token', 'cookie', 'localStorage',
+  ]) {
+    assert.ok(!text.includes(banned),
+      `the copyable report must never include ${banned}`);
+  }
+  assert.match(text, /SocialPush\.readinessState\(\)/,
+    'the readiness budget is part of the report');
+  assert.match(text, /NativeChrome\.lastSessionFailure\(\)/,
+    'the last admission failure is part of the report');
+});
+
+// Read-only staging/screenshot hook. It must be incapable of touching a real
+// bridge, a real session, or any state at all.
+test('the bridgediag demo hook is read-only and reads the HASH query', () => {
+  const flag = settingsJs.slice(
+    settingsJs.indexOf('    _bridgeDiagDemo() {'),
+    settingsJs.indexOf('    _bridgeDiagnostics() {'),
+  );
+  assert.ok(flag, '_bridgeDiagDemo exists');
+  // The self-app is hash-routed: #settings?bridgediag=demo puts the query
+  // inside the fragment, not in location.search.
+  assert.match(flag, /window\.location\.hash/,
+    'the fragment query is where a hash-routed deep link puts it');
+  assert.match(flag, /window\.location\.search/,
+    'the ordinary query string is accepted too');
+  assert.match(flag, /'bridgediag'\) === 'demo'/);
+
+  const panel = settingsJs.slice(
+    settingsJs.indexOf('    _renderUsernodeConnection(section) {'),
+    settingsJs.indexOf('    async _retryUsernodeConnection() {'),
+  );
+  assert.match(panel, /'Staging demo — sample data'/,
+    'the demo snapshot is labelled as fake on screen');
+  assert.match(panel, /retry\.disabled = true;\n\s+copy\.disabled = true;/,
+    'the demo may not drive the real bridge');
+
+  const snapshot = settingsJs.slice(
+    settingsJs.indexOf('    DEMO_BRIDGE_DIAGNOSTICS: {'),
+    settingsJs.indexOf('    _bridgeDiagDemo() {'),
+  );
+  assert.match(snapshot, /Staging demo/,
+    'the synthetic values say so in the data itself');
+  assert.match(snapshot, /invalid/,
+    'the demo origin is a reserved non-resolvable name');
+});
+
+test('the demo deep link is a declared test path', () => {
+  const paths = JSON.stringify(manifest.tests || []);
+  assert.ok(paths.includes('bridgediag=demo'),
+    'the screenshot state added this turn is exercised by dapp.json');
+});
+
+// ── Sign-out no longer dead-ends on a refused bridge ────────────────────
+
+test('a refused native latch confirms instead of aborting the sign-out', () => {
+  const logout = settingsJs.slice(
+    settingsJs.indexOf('    async logout() {'),
+    settingsJs.indexOf('    _confirmDegradedSignOut(preflight) {'),
+  );
+  assert.ok(logout, 'logout() and its confirm helper exist');
+  assert.match(logout, /latch === 'unavailable'/);
+  assert.match(logout, /latch === 'inconclusive'/);
+  // The ordering that matters: the confirm happens BEFORE the web logout,
+  // and a refused latch no longer returns early.
+  const confirmAt = logout.indexOf('_confirmDegradedSignOut(preflight)');
+  const fetchAt = logout.indexOf("'/api/auth/logout'");
+  assert.ok(confirmAt > -1 && fetchAt > confirmAt,
+    'the user is asked before the web session is cleared, not instead of it');
+  assert.match(logout, /result === true/,
+    'a legacy boolean preflight is still understood');
+  const helper = settingsJs.slice(
+    settingsJs.indexOf('    _confirmDegradedSignOut(preflight) {'),
+  ).slice(0, 900);
+  assert.match(helper, /typeof PlatformUI\.confirm !== 'function'/);
+  assert.match(helper, /Promise\.resolve\(true\)/,
+    'no dialog to ask with is not a reason to trap someone in a session');
+  assert.match(helper, /danger: true/);
+});
+
+test('an unconfirmed app sign-out is named on the login screen, once', () => {
+  assert.match(settingsJs,
+    /NATIVE_SIGNOUT_NOTICE_KEY: 'sv:native_signout_incomplete'/);
+  const notice = settingsJs.slice(
+    settingsJs.indexOf('    _showIncompleteNativeSignOutNotice() {'),
+  ).slice(0, 900);
+  assert.match(notice, /removeItem\(this\.NATIVE_SIGNOUT_NOTICE_KEY\)/,
+    'one-shot: the flag is cleared as it is read');
+  assert.match(notice, /priority: true/);
+  const init = settingsJs.slice(
+    settingsJs.indexOf('    init() {'),
+    settingsJs.indexOf('    async logout() {'),
+  );
+  assert.match(init, /this\._showIncompleteNativeSignOutNotice\(\);/,
+    'the next document shows it');
+});
+
+test('the best-effort app logout cannot block leaving the app', () => {
+  const best = settingsJs.slice(
+    settingsJs.indexOf('    _bestEffortNativeLogout() {'),
+    settingsJs.indexOf("    NATIVE_SIGNOUT_NOTICE_KEY:"),
+  );
+  assert.ok(best, '_bestEffortNativeLogout exists');
+  assert.match(best, /NATIVE_SIGNOUT_BUDGET_MS/, 'it is time-boxed');
+  assert.match(best, /settle\(false\)/, 'a rejection resolves false, never throws');
+  assert.doesNotMatch(best, /throw /);
+});

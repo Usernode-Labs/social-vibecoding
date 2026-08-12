@@ -335,6 +335,10 @@
       // a modal. Leaving it is a real hash navigation (the header back
       // button, the device back gesture) — see handleBack / _exitSettings.
 
+      // A sign-out the app never acknowledged left a note for the next
+      // document; this is that document.
+      this._showIncompleteNativeSignOutNotice();
+
       this.refresh();
     },
 
@@ -2356,13 +2360,44 @@
 
       // Close wallet admission before the first asynchronous web cleanup.
       // New native builds also acknowledge their process-wide latch here.
-      let nativeTerminal = false;
+      let preflight = {
+        nativeTerminal: false, latch: 'unsupported', reason: null, code: null,
+      };
       try {
         if (window.NativeChrome && NativeChrome.prepareWebLogout) {
-          nativeTerminal = await NativeChrome.prepareWebLogout();
+          const result = await NativeChrome.prepareWebLogout();
+          preflight = (result && typeof result === 'object')
+            ? result
+            : {
+              nativeTerminal: result === true,
+              latch: 'unsupported',
+              reason: null,
+              code: null,
+            };
         }
       } catch (error) {
-        return fail(error);
+        // prepareWebLogout resolves a report now, but a rejection must not
+        // be a dead end either — treat it exactly like a refused latch.
+        console.warn('[settings] native logout preflight failed:', error);
+        preflight = {
+          nativeTerminal: false,
+          latch: 'unavailable',
+          reason: (error && error.message) ? String(error.message) : null,
+          code: null,
+        };
+      }
+
+      // THE DEAD END THIS REMOVES: a refused privileged bridge used to
+      // abort here, BEFORE POST /api/auth/logout, so the web session
+      // survived and the user had no way out of the app at all. The
+      // admission latches are already closed; ask, then sign out of the
+      // web session regardless. The app's own session is attempted
+      // best-effort below and named on the login screen if it survives.
+      const degraded = preflight.latch === 'unavailable' ||
+        preflight.latch === 'inconclusive';
+      if (degraded && !await this._confirmDegradedSignOut(preflight)) {
+        if (btn) btn.disabled = false;
+        return false;
       }
 
       try {
@@ -2389,15 +2424,104 @@
       // This must remain the final statement on the native path: successful
       // native logout replaces the WebView, so the old document has no
       // timeout or navigation continuation.
-      if (nativeTerminal) {
+      if (preflight.nativeTerminal) {
         // FIXME: if this rejects after web cleanup, add a fail-closed retry UI
         // without resuming normal work in this old document.
         return NativeChrome.commitNativeLogout();
       }
 
+      if (degraded && !await this._bestEffortNativeLogout()) {
+        // The app kept its session. Say so on the login screen rather than
+        // leaving the user to discover it, and point at the fix.
+        this._noteIncompleteNativeSignOut();
+      }
+
       // Hard navigation on purpose: enterAuthed is one-shot per document
       // in a regular browser or an old app without hard logout.
       window.location.href = '/#login';
+    },
+
+    // The user's call, not ours: the web session is going either way, but
+    // they should know the app may stay signed in on this device.
+    _confirmDegradedSignOut(preflight) {
+      if (!window.PlatformUI || typeof PlatformUI.confirm !== 'function') {
+        // No dialog to ask with is not a reason to trap someone in a
+        // session — proceed, and the login-screen notice still fires.
+        return Promise.resolve(true);
+      }
+      const detail = preflight && preflight.reason
+        ? ` (${preflight.reason})`
+        : '';
+      return PlatformUI.confirm({
+        title: 'Sign out without the app?',
+        message: 'The Usernode app isn’t responding to this screen' +
+          detail + ', so it may stay signed in on this device. ' +
+          'You’ll be signed out of Social either way — force-close ' +
+          'and reopen the app to finish signing out there.',
+        confirmLabel: 'Sign out anyway',
+        cancelLabel: 'Cancel',
+        danger: true,
+      });
+    },
+
+    // The app may still accept a plain logout even though its privileged
+    // latch never answered. Try, briefly, and swallow the rejection: the
+    // web session is already gone, so nothing here may block the user from
+    // leaving. Resolves whether the app accepted it.
+    NATIVE_SIGNOUT_BUDGET_MS: 3000,
+
+    _bestEffortNativeLogout() {
+      const bridge = window.usernode;
+      if (!bridge || bridge.isNative !== true ||
+          typeof bridge.logout !== 'function') {
+        return Promise.resolve(false);
+      }
+      return new Promise((resolve) => {
+        let done = false;
+        const settle = (ok) => {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          resolve(ok);
+        };
+        const timer = setTimeout(() => settle(false),
+          this.NATIVE_SIGNOUT_BUDGET_MS);
+        try {
+          bridge.logout().then(() => settle(true), (err) => {
+            console.warn('[settings] best-effort native logout failed:', err);
+            settle(false);
+          });
+        } catch (err) {
+          console.warn('[settings] best-effort native logout threw:', err);
+          settle(false);
+        }
+      });
+    },
+
+    NATIVE_SIGNOUT_NOTICE_KEY: 'sv:native_signout_incomplete',
+
+    _noteIncompleteNativeSignOut() {
+      try {
+        sessionStorage.setItem(this.NATIVE_SIGNOUT_NOTICE_KEY, '1');
+      } catch (_) { /* private mode / disabled storage: nothing to note */ }
+    },
+
+    // One-shot, on the next document — which is the login screen, since
+    // logout hard-navigates there. Without it the user lands on login with
+    // no idea the app may still hold its own session.
+    _showIncompleteNativeSignOutNotice() {
+      let flagged = false;
+      try {
+        flagged = sessionStorage.getItem(this.NATIVE_SIGNOUT_NOTICE_KEY) === '1';
+        if (flagged) sessionStorage.removeItem(this.NATIVE_SIGNOUT_NOTICE_KEY);
+      } catch (_) { return; }
+      if (!flagged) return;
+      if (!window.PlatformUI || typeof PlatformUI.toast !== 'function') return;
+      PlatformUI.toast(
+        'Signed out of Social. The Usernode app didn’t confirm — ' +
+        'force-close and reopen it to finish signing out there.',
+        { duration: 10000, priority: true }
+      );
     },
 
     // Ask the active service worker to drop its API cache; resolves on ack
@@ -3036,16 +3160,263 @@
       'no-transport': 'This screen can’t reach the Usernode app from here.',
       'not-native': 'This screen can’t reach the Usernode app from here.',
       'page-changed': 'The request was cancelled because this page changed.',
+      'privileged-unavailable': 'The Usernode app refused this screen’s ' +
+        'secure connection. See “Usernode app — connection” below.',
     },
     USERNODE_READ_ERROR_FALLBACK: 'The Usernode app returned no settings.',
+
+    // ── The connection panel ──────────────────────────────────────────
+    //
+    // Plain-language reason per privileged-handshake `state` (the record
+    // from usernode.getBridgeDiagnostics). The remedies are ordered the
+    // way the report that prompted this was: force-close and reopen
+    // FIRST, reinstall only if that doesn't clear it.
+    PRIVILEGED_STATE_LABELS: {
+      'ready': 'Connected',
+      'blocked-frame': 'Refused',
+      'unsupported': 'Not in this app build',
+      'inconclusive': 'Unconfirmed',
+      'unattached': 'No answer',
+      'unknown': 'Not needed yet',
+    },
+    PRIVILEGED_STATE_REASONS: {
+      'ready': 'This screen can manage the app’s settings.',
+      'blocked-frame': 'The app is refusing this screen’s secure ' +
+        'connection, so app settings and app sign-out can’t be ' +
+        'changed from here. Force-close the app and reopen it — that ' +
+        'usually re-establishes it. If it keeps happening, reinstalling ' +
+        'the app clears the stuck state.',
+      'unsupported': 'This app build predates the secure connection this ' +
+        'screen uses. Update the Usernode app to manage its settings here.',
+      'inconclusive': 'The app hasn’t answered yet, so we can’t ' +
+        'tell whether the secure connection is up. It may still be ' +
+        'starting — try again in a moment.',
+      'unattached': 'The app never answered this screen’s secure ' +
+        'connection request. Force-close the app and reopen it; if that ' +
+        'doesn’t help, reinstalling the app clears the stuck state.',
+      'unknown': 'This screen hasn’t needed the app’s secure ' +
+        'connection yet.',
+    },
+
+    // Staging/screenshot hook: `?bridgediag=demo`, in the fragment query
+    // (#settings?bridgediag=demo) or the ordinary query string. READ-ONLY
+    // — it renders a fixed synthetic snapshot and disables both actions,
+    // so it can never touch a real bridge, a real session or any state.
+    DEMO_BRIDGE_DIAGNOSTICS: {
+      isNative: true,
+      isTopFrame: true,
+      inIframe: false,
+      usesIframeRelay: false,
+      hasNativeChannel: true,
+      origin: 'https://staging.demo.invalid',
+      bridgeVersion: 4,
+      capabilities: ['getBridgeInfo', 'getSettingsState', 'logout'],
+      appVersion: '0.0.0-demo',
+      buildNumber: '0',
+      privileged: {
+        state: 'blocked-frame',
+        code: 'privileged_frame_unauthorized',
+        kind: 'privileged-unavailable',
+        message: 'Staging demo — privileged bridge is unavailable for this main frame',
+        at: 0,
+        attempts: 3,
+      },
+      lastErrors: {
+        getSettingsState: {
+          method: 'getSettingsState',
+          kind: 'privileged-unavailable',
+          message: 'Staging demo — privileged bridge is unavailable for this main frame',
+          at: 0,
+        },
+      },
+      collectedAt: 0,
+    },
+
+    _bridgeDiagDemo() {
+      try {
+        const hash = String(window.location.hash || '');
+        const q = hash.indexOf('?');
+        if (q !== -1 &&
+            new URLSearchParams(hash.slice(q + 1)).get('bridgediag') === 'demo') {
+          return true;
+        }
+        return new URLSearchParams(window.location.search)
+          .get('bridgediag') === 'demo';
+      } catch (_) {
+        return false;
+      }
+    },
+
+    _bridgeDiagnostics() {
+      if (this._bridgeDiagDemo()) return this.DEMO_BRIDGE_DIAGNOSTICS;
+      const bridge = window.usernode;
+      if (!bridge || typeof bridge.getBridgeDiagnostics !== 'function') {
+        return null;
+      }
+      try {
+        return bridge.getBridgeDiagnostics();
+      } catch (err) {
+        console.warn('[settings] getBridgeDiagnostics failed:', err);
+        return null;
+      }
+    },
+
+    // The copyable report. Deliberately assembled from the diagnostics
+    // snapshot only — it carries no capability token, no session cookie
+    // and no user data, so it is safe to paste into an issue.
+    _bridgeDiagnosticsText(diag) {
+      const at = (ms) => {
+        if (!ms) return 'never';
+        try { return new Date(ms).toISOString(); } catch (_) { return String(ms); }
+      };
+      const lines = [
+        'Usernode bridge diagnostics',
+        `collected: ${at(diag.collectedAt)}`,
+        `origin: ${diag.origin || 'unknown'}`,
+        `native: ${diag.isNative} topFrame: ${diag.isTopFrame} ` +
+          `relay: ${diag.usesIframeRelay} channel: ${diag.hasNativeChannel}`,
+        `bridge version: ${diag.bridgeVersion}`,
+        `app: ${diag.appVersion || 'unknown'} (${diag.buildNumber || '?'})`,
+        `capabilities: ${(diag.capabilities || []).join(', ') || 'none'}`,
+        `privileged state: ${diag.privileged.state}` +
+          (diag.privileged.code ? ` code: ${diag.privileged.code}` : '') +
+          (diag.privileged.kind ? ` kind: ${diag.privileged.kind}` : ''),
+        `privileged attempts: ${diag.privileged.attempts} ` +
+          `last: ${at(diag.privileged.at)}`,
+      ];
+      if (diag.privileged.message) {
+        lines.push(`privileged message: ${diag.privileged.message}`);
+      }
+      const methods = Object.keys(diag.lastErrors || {});
+      lines.push(methods.length
+        ? 'last read errors:'
+        : 'last read errors: none');
+      methods.forEach((method) => {
+        const rec = diag.lastErrors[method];
+        lines.push(`  ${method}: ${rec.kind} — ${rec.message || 'no message'} ` +
+          `(${at(rec.at)})`);
+      });
+      const readiness = (window.SocialPush &&
+        typeof SocialPush.readinessState === 'function')
+        ? SocialPush.readinessState()
+        : null;
+      if (readiness) {
+        lines.push(`push readiness: ready=${readiness.ready} ` +
+          `attempts=${readiness.attempts} exhausted=${readiness.exhausted}` +
+          (readiness.lastError ? ` last=${readiness.lastError}` : ''));
+      }
+      const session = (window.NativeChrome &&
+        typeof NativeChrome.lastSessionFailure === 'function')
+        ? NativeChrome.lastSessionFailure()
+        : null;
+      if (session) {
+        lines.push(`last session failure: ${session.stage} — ` +
+          `${session.message || 'no message'} (${at(session.at)})`);
+      }
+      return lines.join('\n');
+    },
+
+    // Rendered FIRST inside the Usernode app section and independent of
+    // the settings snapshot: when the handshake is refused there is no
+    // snapshot, and this panel is the only thing that can say why.
+    _renderUsernodeConnection(section) {
+      const diag = this._bridgeDiagnostics();
+      if (!diag) return null;
+      const demo = this._bridgeDiagDemo();
+      const box = this._unSection(section, 'Usernode app — connection',
+        'What this screen can reach in the app, and what to do when it can’t.');
+      box.id = 'settings-usernode-connection';
+      if (demo) {
+        box.appendChild(this._unEl('p',
+          'text-xs font-medium text-amber-600 dark:text-amber-400 mb-2',
+          'Staging demo — sample data'));
+      }
+      const state = (diag.privileged && diag.privileged.state) || 'unknown';
+      this._unStatusRow(box, 'Secure app connection', state === 'ready',
+        this.PRIVILEGED_STATE_LABELS.ready,
+        this.PRIVILEGED_STATE_LABELS[state] || 'Unavailable');
+      box.appendChild(this._unEl('p',
+        'text-xs text-zinc-500 dark:text-zinc-400 mt-2',
+        this.PRIVILEGED_STATE_REASONS[state] ||
+          this.PRIVILEGED_STATE_REASONS.unknown));
+      const buildBits = [];
+      if (diag.appVersion) {
+        buildBits.push(`App ${diag.appVersion}` +
+          (diag.buildNumber ? ` (${diag.buildNumber})` : ''));
+      }
+      buildBits.push(`Bridge v${diag.bridgeVersion}`);
+      box.appendChild(this._unEl('p',
+        'text-xs font-mono text-zinc-500 dark:text-zinc-500 mt-2 break-words',
+        buildBits.join(' · ')));
+      if (diag.privileged && diag.privileged.message) {
+        box.appendChild(this._unEl('p',
+          'text-xs font-mono text-zinc-500 dark:text-zinc-500 mt-1 break-words',
+          diag.privileged.message));
+      }
+      const actions = this._unEl('div');
+      const retry = this._unButton(actions, 'Try again',
+        () => this._retryUsernodeConnection());
+      retry.id = 'settings-usernode-connection-retry';
+      const copy = this._unButton(actions, 'Copy diagnostics', async () => {
+        const text = this._bridgeDiagnosticsText(diag);
+        const ok = window.PlatformUI && PlatformUI.copyText
+          ? await PlatformUI.copyText(text)
+          : false;
+        if (window.PlatformUI && PlatformUI.toast) {
+          PlatformUI.toast(ok ? 'Diagnostics copied' : 'Could not copy',
+            ok ? {} : { error: true });
+        }
+      });
+      copy.id = 'settings-usernode-connection-copy';
+      if (demo) {
+        // Read-only hook: the buttons are rendered so the screenshot shows
+        // the real panel, but they must not touch a bridge or a session.
+        retry.disabled = true;
+        copy.disabled = true;
+      }
+      box.appendChild(actions);
+      return box;
+    },
+
+    // Everything a stuck device can retry from here, in one press: a fresh
+    // capability probe, a fresh admission attempt, a fresh readiness
+    // budget, then a re-read of the settings snapshot.
+    async _retryUsernodeConnection() {
+      if (window.NativeChrome) {
+        NativeChrome._infoPromise = null;
+        try {
+          if (typeof NativeChrome.getInfo === 'function') {
+            await NativeChrome.getInfo();
+          }
+          if (typeof NativeChrome.recoverSessionAdmission === 'function') {
+            await NativeChrome.recoverSessionAdmission();
+          }
+        } catch (err) {
+          console.warn('[settings] connection retry failed:', err);
+        }
+      }
+      if (window.SocialPush &&
+          typeof SocialPush.retryBridgeReadiness === 'function') {
+        try { SocialPush.retryBridgeReadiness(); } catch (_) {}
+      }
+      this._usernodeState = null;
+      await this._renderUsernodeSection();
+    },
 
     async _renderUsernodeSection() {
       const section = document.getElementById('settings-usernode-section');
       if (!section) return;
-      const gated = window.NativeChrome &&
-        await NativeChrome.has('getSettingsState');
-      // This capability probe is async, so the "Usernode app" menu row can
-      // only be resolved once it settles — re-render the nav either way.
+      // Gated on BEING IN THE APP, not on the getSettingsState capability.
+      // That probe is itself a casualty of the failures this section now
+      // diagnoses — a degraded getBridgeInfo answers "no capabilities", so
+      // the section used to disappear exactly when the user needed it most.
+      // getBridgeInfo is unprivileged, so `isNative` stays readable on a
+      // device whose privileged handshake is refused.
+      const bridge = window.usernode;
+      const gated = this._bridgeDiagDemo() ||
+        (!!bridge && bridge.isNative === true);
+      // The gate resolves asynchronously downstream, so the "Usernode app"
+      // menu row is only settled here — re-render the nav either way.
       if (!gated) {
         section.classList.add('hidden');
         this._renderNavIfOpen();
@@ -3062,7 +3433,10 @@
       }
       let state = null;
       try {
-        state = await window.usernode.getSettingsState();
+        state = (window.usernode &&
+          typeof window.usernode.getSettingsState === 'function')
+          ? await window.usernode.getSettingsState()
+          : null;
       } catch (err) {
         // Defensive only: the bridge read resolves a fallback rather than
         // rejecting, so the reason arrives through the record below.
@@ -3085,6 +3459,9 @@
     // Why the snapshot came back empty, straight from the bridge's
     // out-of-band record. null when the bridge is too old to keep one.
     _usernodeReadError() {
+      if (this._bridgeDiagDemo()) {
+        return this.DEMO_BRIDGE_DIAGNOSTICS.lastErrors.getSettingsState;
+      }
       return (window.NativeChrome &&
         typeof NativeChrome.lastReadError === 'function')
         ? NativeChrome.lastReadError('getSettingsState')
@@ -3153,7 +3530,8 @@
           if (window.PlatformUI) {
             const detail = opts.includeErrorDetail && err && err.message
               ? `: ${err.message}` : '';
-            PlatformUI.toast(`Could not save the setting${detail}`);
+            PlatformUI.toast(this._nativeActionMessage(err,
+              `Could not save the setting${detail}`));
           }
         } finally {
           input.disabled = false;
@@ -3183,7 +3561,9 @@
           await onClick();
         } catch (err) {
           console.warn('[settings] usernode action failed:', err);
-          if (window.PlatformUI) PlatformUI.toast('Action failed');
+          if (window.PlatformUI) {
+            PlatformUI.toast(this._nativeActionMessage(err, 'Action failed'));
+          }
         } finally {
           btn.disabled = false;
         }
@@ -3213,8 +3593,23 @@
           typeof window.usernode.openNativeScreen !== 'function') return;
       window.usernode.openNativeScreen(screen).catch((err) => {
         console.warn('[settings] openNativeScreen failed:', err);
-        if (window.PlatformUI) PlatformUI.toast(failMsg);
+        if (window.PlatformUI) {
+          PlatformUI.toast(this._nativeActionMessage(err, failMsg));
+        }
       });
+    },
+
+    // A refused privileged handshake is not "action failed" — nothing the
+    // user does on this screen will work until the app re-establishes it,
+    // so say that instead of a message that invites another tap. The
+    // bridge tags those rejections; see usernodePrivileged in
+    // public/usernode-bridge.js.
+    _nativeActionMessage(err, fallback) {
+      if (err && err.usernodePrivileged === true) {
+        return 'The Usernode app isn’t accepting changes from this ' +
+          'screen. Force-close and reopen the app, then try again.';
+      }
+      return fallback;
     },
 
     // Awaits a bridge setter and re-renders the section from the refreshed
@@ -3352,6 +3747,10 @@
       section.textContent = '';
       const perms = (s && s.permissions) || {};
       const isAndroid = perms.platform === 'android';
+
+      // First, so a refused handshake explains itself above the failures
+      // it causes rather than below them.
+      this._renderUsernodeConnection(section);
 
       if (!s) {
         this._renderUsernodeError(section, readError, loading);
@@ -3544,15 +3943,39 @@
           const admissionPending = window.NativeChrome &&
             typeof NativeChrome.isSessionAdmitted === 'function' &&
             !NativeChrome.isSessionAdmitted();
+          // "Finishing secure app sign-in…" is a lie once the handshake has
+          // been refused — nothing is finishing. Name the state and point
+          // at the panel that explains it.
+          const diag = this._bridgeDiagnostics();
+          const stuck = !!diag && diag.privileged &&
+            (diag.privileged.state === 'blocked-frame' ||
+             diag.privileged.state === 'unattached');
           holder.appendChild(this._unEl('p',
             'text-xs text-zinc-500 dark:text-zinc-400',
-            admissionPending
-              ? 'Finishing secure app sign-in before enabling notifications…'
-              : 'Notification settings are temporarily unavailable.'));
+            stuck
+              ? 'The Usernode app isn’t accepting this screen’s ' +
+                'secure connection, so notifications can’t be set up. ' +
+                'See “Usernode app — connection” above.'
+              : (admissionPending
+                ? 'Finishing secure app sign-in before enabling notifications…'
+                : 'Notification settings are temporarily unavailable.')));
+          const failure = (window.NativeChrome &&
+            typeof NativeChrome.lastSessionFailure === 'function')
+            ? NativeChrome.lastSessionFailure()
+            : null;
+          if (failure && failure.message) {
+            holder.appendChild(this._unEl('p',
+              'text-xs font-mono text-zinc-500 dark:text-zinc-500 mt-1 break-words',
+              failure.message));
+          }
           if (admissionPending &&
               typeof NativeChrome.recoverSessionAdmission === 'function') {
             this._unButton(holder, 'Try again', async () => {
               await NativeChrome.recoverSessionAdmission();
+              if (window.SocialPush &&
+                  typeof SocialPush.retryBridgeReadiness === 'function') {
+                try { SocialPush.retryBridgeReadiness(); } catch (_) {}
+              }
               render(await SocialPush.getState());
             });
           }
