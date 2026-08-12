@@ -5457,10 +5457,10 @@ html.in-native-webview #header-title {
    next to the name.
 
    HEADER SLIM-DOWN: this used to also collapse
-   #platform-version-pill-slot / #app-version-pill-slot, because those
-   two sat in the header and shoved the title around. They live in the
-   drawer FOOTER now (as plain .drawer-ver text), where there is room for
-   them at every width, so they are deliberately NOT in the selector
+   #platform-version-pill-slot, because it sat in the header and shoved the
+   title around. It lives in the drawer FOOTER now (as plain .drawer-ver
+   text), where there is room at every width, so it is deliberately NOT in
+   the selector
    below — that collapse was the reason mobile users could never see
    build status at all. Only the home-card class slot still collapses. */
 @media (max-width: 640px) {
@@ -5543,19 +5543,19 @@ a.drawer-meter:hover .drawer-meter-strong {
 }
 
 /* ── Drawer footer (bottom-anchored) ──────────────────────
-   Platform build, native app build, dApp build, fork lineage, then the two
-   app link rows.
+   Web revision, installed mobile-app version, fork lineage, then the two app
+   link rows. A particular dApp's SHA does not belong in this block.
    Version values are TEXT, not pills: the old "usernode · 1a2b3c4"
    pill overflowed the 15rem panel, and the project name was redundant
-   next to a row already labelled "Platform version". A label + a mono
-   version, right-aligned, reads as a footer signature, not a control. */
+   next to an already-labelled row. A label + a mono value, right-aligned,
+   reads as a footer signature, not a control. */
 .drawer-ver-row {
   min-height: 26px;
   padding-top: 3px;
   padding-bottom: 3px;
 }
-/* The label names what the value IS ("Platform version" / "App version" /
-   "dApp version") in sentence case, not an uppercase-tracked micro-caption:
+/* The label names what the value IS ("Web revision" / "Mobile app version")
+   in sentence case, not an uppercase-tracked micro-caption:
    at 10px + 0.06em the old "PLATFORM" read as decoration and left the
    value looking like a stray word rather than a version. */
 .drawer-ver-label {

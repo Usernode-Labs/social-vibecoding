@@ -1,6 +1,6 @@
 // The hamburger drawer's behaviour — open/close, the kit-panel adoption, the
-// presentation state App._entryTransition reads, and the two app-scoped rows'
-// visibility (#1079 chunk B). Moved verbatim out of public/js/app.js, where it
+// presentation state App._entryTransition reads, and app-scoped visibility
+// (#1079 chunk B). Moved verbatim out of public/js/app.js, where it
 // lived as App.HeaderMenu / App.DrawerStatus, when #header-menu-panel became a
 // React island: the markup is React's now, so the code that drives it belongs
 // beside the component rather than in the shell's router module.
@@ -26,19 +26,11 @@
 // The publication is guarded on `window` because the SSG prerender pass
 // evaluates this module's whole graph in Node.
 
-// Drawer status/version rows (header slim-down): the kudos + AI-credit
-// meters render into #drawer-status-pane, and the platform/app build
-// lines + native app build + fork lineage label into #drawer-footer — none of
-// them in the header any more. Their RENDERERS are untouched — every existing
-// slot kept its id through both moves — so all this owns is the app-scoped
-// rows' visibility plus the hamburger's amber deploy dot.
+// Drawer status/version rows (header slim-down): the kudos + AI-credit meters
+// render into #drawer-status-pane, and the web revision + mobile-app release +
+// fork lineage label render into #drawer-footer — none of them in the header
+// any more. The dApp SHA does not belong in this platform-information block.
 const DrawerStatus = {
-  // The "dApp" build row follows the same lifecycle as
-  // #drawer-row-github / #drawer-row-share: visible only while an app
-  // is open, except for the self-hosted platform where it would duplicate
-  // the platform SHA immediately above it. Called from openApp and from every
-  // navigate* that leaves an app behind.
-  //
   // The header's App/Dev switch rides the SAME lifecycle, which is why
   // it's owned here rather than in a seventh place: this one call
   // already covers openApp, navigateHome, AppView.close() and all six
@@ -47,9 +39,6 @@ const DrawerStatus = {
   // was a child of #app-view and disappeared whenever that did — but a
   // header-resident control has to be hidden explicitly.
   setAppOpen(open) {
-    const row = document.getElementById('drawer-row-app-version');
-    const showDappVersion = !!open && !window.AppView?.appData?.self_hosted;
-    if (row) row.classList.toggle('hidden', !showDappVersion);
     // Fork lineage is app-scoped too — closing an app can never leave
     // the previous app's "Forked from" line behind.
     if (!open) DrawerStatus.setForkVisible(false);
@@ -86,13 +75,10 @@ const DrawerStatus = {
   },
 
   // Mirror "a deploy is in flight" onto the hamburger. Read straight
-  // off the rendered version lines rather than threading state: their
-  // markup is already the single source of truth for the deploying
-  // state (renderAppVersionPillHTML / renderPlatformVersionPill both
-  // stamp .drawer-ver--deploying on the footer's text form), and both
-  // may change independently. Scoped to #drawer-footer — where the two
-  // version lines live since the footer split — so a deploying home-tile
-  // pill elsewhere in the document can never light this dot.
+  // off the rendered web revision rather than threading state: its markup is
+  // already the single source of truth for the platform deploying state.
+  // Scoped to #drawer-footer so a deploying dApp pill on a home tile can never
+  // light this dot.
   refreshDeployDot() {
     const dot = document.getElementById('header-menu-deploy-dot');
     if (!dot) return;
@@ -106,9 +92,8 @@ const DrawerStatus = {
 // (#122). Top to bottom: the kudos/AI-credit status pane, the theme
 // selector directly below it, the native Node/Wallet rows, the four
 // main nav rows (Profile, Leaderboard, Settings, Admin & moderation),
-// and a bottom-anchored footer carrying the platform/native-app/dApp build
-// lines plus GitHub + Share. (Members & visibility moved to the Dev "+" menu
-// — #645.)
+// and a bottom-anchored footer carrying the web/mobile-app releases plus
+// GitHub + Share. (Members & visibility moved to the Dev "+" menu — #645.)
 const HeaderMenu = {
   _panel: null,
 

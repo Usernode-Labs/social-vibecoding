@@ -773,8 +773,9 @@ const App = {
 
   // Four rendering states, all rendered as .drawer-ver text (see
   // public/css/app.css) with modifier classes for the dev / deploying /
-  // stale variants — the same text form the per-app version line below
-  // it in the drawer footer uses, so the two read as one block.
+  // stale variants. This is deliberately labelled as a web revision in the
+  // drawer: a Git SHA is useful deployment identity, but it is not the
+  // installed Flutter mobile-app version.
   //
   // The slot moved out of the header (header slim-down) and then out of
   // the drawer's status pane into #drawer-footer, but kept its id
@@ -802,7 +803,7 @@ const App = {
       && runningSha !== 'dev';
 
     // The project label ("usernode ·") used to prefix every state here.
-    // It's gone: the row this renders into is LABELLED "Platform" in the
+    // It's gone: the row this renders into is LABELLED "Web revision" in the
     // drawer footer, so repeating the project name was pure redundancy —
     // and it was what pushed "usernode · 1a2b3c4" past the 15rem panel
     // and into truncation. Bare version only. (`info.name` is still
@@ -810,7 +811,7 @@ const App = {
     if (!runningSha || runningSha === 'dev') {
       // No GIT_SHA. STAGING PREVIEWS OF THE PLATFORM ARE BUILT WITHOUT
       // ONE, so this is the state a PR tester actually sees — and a row
-      // reading "Platform version  dev" told them nothing about which
+      // reading "Web revision  dev" told them nothing about which
       // build they were looking at. Name the environment instead when the
       // server reports one, and keep the literal "dev" for a local run
       // (and for a production build missing its SHA, where printing
@@ -818,7 +819,7 @@ const App = {
       const staging = info.env === 'staging';
       const label = staging ? 'staging' : 'dev';
       const tip = staging
-        ? 'Staging preview of the platform — built without a commit SHA, so there is no version to link'
+        ? 'Staging preview of the platform — built without a commit SHA, so there is no revision to link'
         : 'Running outside of a deploy (no GIT_SHA set)';
       paint(`
         <span class="drawer-ver drawer-ver--dev" title="${tip}">${label}</span>`);
@@ -870,8 +871,8 @@ const App = {
     })[c]);
   },
 
-  // Per-app redeploy WS handler. Flips affected pills into / out of
-  // the yellow + spinner state. Reacts to BOTH the start broadcast
+  // Per-app redeploy WS handler. Flips the affected home-card pill into / out
+  // of the yellow + spinner state. Reacts to BOTH the start broadcast
   // (deploying:true → render the deploying pill) and the end
   // broadcast (deploying:false → re-fetch the version so the new
   // SHA shows up). The server emits these from staging.js around
@@ -883,23 +884,6 @@ const App = {
     const deployProgress = data.deploying
       ? { deploying: true, startedAt: data.startedAt, fromSha: data.fromSha || null }
       : null;
-
-    // NOTE: `AppView` / `Home` are top-level `const` from classic
-    // <script>s — they live in the shared script-global lexical env
-    // but are NOT properties of `window`, so `window.AppView` would
-    // silently short-circuit to false. Use `typeof` instead.
-    if (typeof AppView !== 'undefined' && AppView.appData?.slug === slug) {
-      if (data.deploying) {
-        AppView.applyHeaderDeployProgress(deployProgress);
-      } else {
-        // Deploy ended — re-pull /api/apps/:slug/version to pick up
-        // the new SHA. The trailing `app_version_changed` broadcast
-        // (if a SHA actually changed) would also trigger this, but
-        // refetching here covers the failure case where the deploy
-        // ended without changing the SHA.
-        AppView.refreshVersionPill();
-      }
-    }
 
     // Home-screen card pill (only if the home screen is visible).
     const homeVisible = App._isScreenVisible('home-screen');
@@ -1029,15 +1013,9 @@ const App = {
             }
             break;
           case 'app_version_changed':
-            // #21: a PR just merged and prod was rebuilt. If the user
-            // is currently on this app's App tab, refresh the commit
-            // pill in place so they see the new SHA without reloading.
-            if (typeof AppView !== 'undefined' && AppView.appData?.slug === data.appSlug) {
-              AppView.refreshVersionPill();
-            }
-            // Home screen: re-pull the apps list so the home-screen
-            // pill picks up the new SHA. Cheap; only fires on a real
-            // version change.
+            // #21: a PR just merged and prod was rebuilt. Re-pull the home
+            // list so the app card's commit pill picks up the new SHA.
+            // The drawer is platform information and has no dApp SHA slot.
             if (typeof Home !== 'undefined' && App._isScreenVisible('home-screen')) {
               Home.load();
             }
@@ -1050,10 +1028,9 @@ const App = {
             }
             break;
           case 'app_redeploy_status':
-            // Per-app rebuild started/ended. Flip both the header
-            // pill (if this app is open) and the home-screen card
-            // pill (if visible) into / out of the yellow + spinner
-            // state immediately, no extra server round-trip.
+            // Per-app rebuild started/ended. Flip the home-screen card pill
+            // (if visible) into / out of the yellow + spinner state
+            // immediately, no extra server round-trip.
             App.handleAppRedeployStatus(data);
             break;
           case 'admin_rollover_status':
@@ -1118,7 +1095,6 @@ const App = {
     if (window.AdminConsole?.isOpen?.()) AdminConsole.loadStagingReap?.();
     App.loadVersion();
     if (App.currentApp && typeof AppView !== 'undefined' && AppView.appData) {
-      AppView.refreshVersionPill();
       // Re-fetch tab-specific state. We don't blow away the DOM —
       // these helpers update in place — so scroll positions, drafts,
       // etc. survive the resync.
@@ -1692,7 +1668,7 @@ const App = {
   // broadcasts (it's a cheap, honest fact) — this handler simply
   // doesn't branch on it, and per-proposal state is carried by the
   // proposal's own badges. A tab left open across a platform deploy is
-  // caught up by the drawer's stale-version pill
+  // caught up by the drawer's stale-revision indicator
   // (renderPlatformVersionPill) or by pull-to-refresh (_refreshOrReload).
   handleVoteUpdate(data) {
     // Refresh the proposals tab / inline chat vote state if we're in
@@ -4258,9 +4234,9 @@ const App = {
     if (drs && AppView.appData?.status === 'running' && AppView.appData?.url) {
       drs.classList.remove('hidden');
     }
-    // Reveal the drawer footer's "App" build row on the same lifecycle.
-    // AppView.refreshVersionPill() fills the slot; the fork line is
-    // revealed separately by AppView.renderForkBadge().
+    // Publish the app-open lifecycle for the header mode switch and fork
+    // lineage. A particular dApp's SHA is intentionally not shown in the
+    // platform-information footer.
     App.DrawerStatus.setAppOpen(true);
     // Members & visibility moved from the drawer into the Dev tab's "+"
     // menu (#645) — AppView._plusMenuShowsMembers() is the single gate.
