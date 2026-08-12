@@ -195,10 +195,25 @@ test('#dev-body stays a legacy host — a constant dangerouslySetInnerHTML', () 
   // AppView._repaintDevBody() replaces its innerHTML on every mode switch, so
   // rendering #dev-feed / #gc-merged as JSX children would make each
   // view-mode re-render reconcile against nodes the module has replaced.
+  //
+  // The WRAPPER OBJECT must be a module-level constant too, not an inline
+  // `{{ __html: … }}` literal. React 19 diffs host props by REFERENCE and its
+  // dangerouslySetInnerHTML setter assigns innerHTML unconditionally (the
+  // __html string comparison React 18 did in diffProperties is gone), so an
+  // inline literal — a fresh object every render — makes EVERY re-render of
+  // the frame rewrite #dev-body back to the placeholder. The view-mode store
+  // re-renders the frame on every toggle click, which turned each PM /
+  // Reporting switch into "Loading…" forever: _repaintDevBody() painted, then
+  // React's commit clobbered the paint.
   assert.match(
     FRAME,
-    /id="dev-body"[\s\S]{0,200}dangerouslySetInnerHTML=\{\{ __html: DEV_BODY_INITIAL_HTML \}\}/,
-    '#dev-body is filled from a constant HTML string'
+    /id="dev-body"[\s\S]{0,200}dangerouslySetInnerHTML=\{DEV_BODY_INITIAL\}/,
+    '#dev-body is filled from a module-constant {__html} object, not an inline literal'
+  );
+  assert.match(
+    FRAME,
+    /^const DEV_BODY_INITIAL = \{ __html: DEV_BODY_INITIAL_HTML \};$/m,
+    'the wrapper object is module-level, so its identity is stable across renders'
   );
   // Constant means constant: the string is a module-level const with no
   // interpolation, so React writes it once and never looks inside again.

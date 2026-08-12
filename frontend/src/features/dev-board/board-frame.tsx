@@ -19,11 +19,15 @@
  * Legacy-owned hosts, rendered by React but never reconciled into:
  *   * `#dev-body` — `AppView._repaintDevBody()` replaces its `innerHTML` on
  *     every mode switch and feed reload, so its initial content is a CONSTANT
- *     `dangerouslySetInnerHTML` string. React writes it once at mount and,
- *     because the string never changes, never looks inside again. Rendering
- *     `#dev-feed` and `#gc-merged` as JSX children instead would make every
- *     view-mode re-render reconcile against nodes the module has since
- *     replaced.
+ *     `dangerouslySetInnerHTML` OBJECT (`DEV_BODY_INITIAL`). React writes it
+ *     once at mount and, because the object's identity never changes, never
+ *     looks inside again. The identity is what matters: React 19 diffs host
+ *     props by reference and re-assigns `innerHTML` whenever the `{__html}`
+ *     wrapper is a new object, even for an identical string — an inline
+ *     literal here made every toggle click wipe the module's paint back to
+ *     "Loading…". Rendering `#dev-feed` and `#gc-merged` as JSX children
+ *     instead would make every view-mode re-render reconcile against nodes
+ *     the module has since replaced.
  *   * `#dev-locked-notice`, `#dev-chat-card-preview`, `#dc-secrets-state` —
  *     leaves the module writes text or `innerHTML` into, and in the notice's
  *     case toggles `hidden` on. They are safe because React renders their
@@ -226,6 +230,17 @@ const DEV_BODY_INITIAL_HTML =
   '<div id="dev-feed"><div class="text-xs text-zinc-500 dark:text-zinc-400">Loading…</div></div>' +
   '<div id="gc-merged" class="mt-4"></div>';
 
+/**
+ * Module-level so the prop's IDENTITY is stable across renders. React 19's
+ * host-prop diff is `nextProp !== lastProp` and its dangerouslySetInnerHTML
+ * setter assigns `innerHTML` unconditionally (the `__html` string comparison
+ * React 18 did is gone) — with an inline `{{ __html: … }}` literal, every
+ * re-render of this frame (i.e. every view-toggle click, via the view-mode
+ * store) rewrote #dev-body back to the placeholder right after
+ * `_repaintDevBody()` painted it.
+ */
+const DEV_BODY_INITIAL = { __html: DEV_BODY_INITIAL_HTML };
+
 export function DevBoardFrame({
   selfHosted,
   readOnly,
@@ -406,7 +421,7 @@ export function DevBoardFrame({
         <div
           id="dev-body"
           className="px-3 py-2"
-          dangerouslySetInnerHTML={{ __html: DEV_BODY_INITIAL_HTML }}
+          dangerouslySetInnerHTML={DEV_BODY_INITIAL}
         />
       </div>
     </div>
