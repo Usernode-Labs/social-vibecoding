@@ -366,6 +366,13 @@
       "key": "DATABASE_URL",
       "group": "Managed by the deploy",
       "description": "Platform Postgres connection string, assembled by docker-compose from USERNODE_DB_PASSWORD. Documentation only — it is a reserved key and can never be written from here."
+    },
+    {
+      "key": "WAITLIST_GITHUB_CLIENT_SECRET",
+      "group": "General",
+      "description": "Used in the waitlist process to verify accounts",
+      "required": true,
+      "private": true
     }
   ],
   "tests": [
