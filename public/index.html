@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en" class="dark">
 <head>
-  <!-- shell-build stamp: 43c9ad682260d766e76469242b45ce6795366d287f5596161244caef52de5618 -->
+  <!-- shell-build stamp: 9737e80444dafa74285bff3155d77babefb5d7a482d78044396fd5cb50098fd6 -->
   <!-- GENERATED FILE — DO NOT EDIT.
        Built from frontend/ by `npm run build:shell`; the markup lives in
        frontend/src/Shell.tsx and this <head> in frontend/src/head.html.
@@ -107,7 +107,20 @@
     // title never flashes in before being hidden — the bridge sets
     // `window.usernode.isNative` synchronously at load time based on
     // the presence of the injected `Usernode` JS channel.
-    if (window.usernode && window.usernode.isNative) {
+    // `?un-native-webview=1` forces the same class from a plain URL. The
+    // real signal is the injected JS channel, which a headless browser can
+    // never have — so without this override the native-only presentation
+    // (see the "Native iOS performance baseline" block in css/app.css) is
+    // unreachable by proposal checks and invisible to before/after
+    // screenshots. Mirrors the kit's own `?un-platform=ios` skin override,
+    // and is deliberately NOT staging-gated: a pure presentation flag with
+    // no writes, so the "before" shot works the moment this ships.
+    var forcedNative = false;
+    try {
+      forcedNative = new URLSearchParams(window.location.search)
+        .get('un-native-webview') === '1';
+    } catch (e) { /* no URL API / opaque origin — fall through */ }
+    if (forcedNative || (window.usernode && window.usernode.isNative)) {
       document.documentElement.classList.add('in-native-webview');
     }
   </script>
