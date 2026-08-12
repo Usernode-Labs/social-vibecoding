@@ -433,8 +433,13 @@ export function LandingScreen() {
    * dapp.json assertion can't pass vacuously on a directory that never loaded
    * (an empty list leaves the attribute unset).
    *
-   * Steps wait on the actual DOM state rather than a fixed delay: the whole
-   * sequence has to finish inside the check runner's ~2s settle.
+   * Steps wait on the actual DOM state rather than a fixed delay. Budgets are
+   * CAPS, not sleeps: the happy path finishes as fast as the transitions do.
+   * They are generous because the close leg rides history.back() → popstate →
+   * the 600ms unwind guard and takes ~2s even on an idle page — the old 900ms
+   * cap expired mid-close every time, cycle two ran against a still-open
+   * viewer, and the stamp never landed (the check runner polls the assertion
+   * since #1148, so a few seconds of page-side patience is free).
    */
   const runAnonBackShot = useCallback(async () => {
     const viewer = byId('app-viewer');
@@ -458,12 +463,15 @@ export function LandingScreen() {
       const tile = landingTileFor(target.slug);
       if (!tile) return;
       tile.click();
-      if (!(await until(isOpen, 600))) return;
+      if (!(await until(isOpen, 5000))) return;
       // Let the zoom-in settle before backing out, so each cycle exercises a
       // fully-open viewer rather than a mid-transition one.
       await wait(140);
       byId('landing-back-btn')?.click();
-      await until(() => !isOpen(), 900);
+      // The stamp below is the assertion's subject: a close that never lands
+      // means the guest back path is genuinely broken, so bail WITHOUT
+      // stamping rather than start cycle two against an open viewer.
+      if (!(await until(() => !isOpen(), 8000))) return;
     }
     viewer.setAttribute('data-anon-back', 'done');
   }, [st]);
