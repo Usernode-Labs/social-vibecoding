@@ -1981,6 +1981,21 @@ CREATE INDEX IF NOT EXISTS idx_apps_self_hosted
 -- sessions can never SELECT it. tests/prod-debug-access.test.js
 -- cross-checks the credential-tagged columns below against the lists.
 --
+-- RELATED (#1130): there is a SECOND read-only role, the admin SQL
+-- console's (topochain_console_ro,
+-- src/services/topochain/db-console-scope.js). It denies credential
+-- COLUMNS, never whole tables, because a platform admin who cannot read
+-- a table here just reads it somewhere less redacted. It IMPORTS
+-- DENIED_COLUMNS above (so a new credential column added there covers
+-- both roles) and adds CONSOLE_CREDENTIAL_COLUMNS for the columns inside
+-- the tables debug-access.js denies wholesale. So a new credential
+-- column needs a DENIED_COLUMNS entry; a new credential column on a
+-- table that is denied WHOLESALE for prod-debug needs a
+-- CONSOLE_CREDENTIAL_COLUMNS entry as well.
+-- tests/topochain-db-tools.test.js cross-checks the credential-tagged
+-- columns below, and sweeps this file for credential-shaped column
+-- names, against the console lists.
+--
 -- Table-level: every row is sensitive in its entirety.
 COMMENT ON TABLE sessions               IS 'staging:private';
 COMMENT ON TABLE activation_codes       IS 'staging:private';

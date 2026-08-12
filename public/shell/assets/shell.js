@@ -1,4 +1,4 @@
-/*! shell-build stamp: 99746b2d67b63e5a72fe313a3b2cb7ac4b77a2e26efa3f73041c78003c6b3006 */
+/*! shell-build stamp: c10730ccda1411e90100dec64da1a9abffefa27b26fb5d4c50fa62afd2917406 */
 var ub=Object.defineProperty;var pb=(e,t,a)=>t in e?ub(e,t,{enumerable:!0,configurable:!0,writable:!0,value:a}):e[t]=a;var an=(e,t,a)=>pb(e,typeof t!="symbol"?t+"":t,a);var hc={exports:{}},Ei={};/**
  * @license React
  * react-jsx-runtime.production.js
@@ -2467,7 +2467,7 @@ Error generating stack: `+d.message+`
         </div>
         <div class="lg:order-1 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-1">
           ${g._panel({title:"Templates",body:`<div id="admin-topo-sql-templates" class="space-y-1">${g._skeleton(3)}</div>`})}
-          ${g._panel({title:"Schema",subtitle:"Every table in the app database. Click one to draft a SELECT.",body:`
+          ${g._panel({title:"Schema",subtitle:"Every table in the app database, including the auth and push tables. Credential columns are hidden. Click one to draft a SELECT.",body:`
               <input id="admin-topo-sql-schema-filter" type="search" placeholder="Filter tables&hellip;"
                 aria-label="Filter tables" autocomplete="off" class="${Wn} mb-2">
               <p id="admin-topo-sql-schema-count" class="mb-1 text-xs text-zinc-500" role="status"></p>

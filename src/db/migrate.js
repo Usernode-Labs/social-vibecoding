@@ -37,6 +37,9 @@ async function migrate(config) {
   await seedStagingDemoUser(pool);
   await seedSelfApp(pool, config);
   await seedStagingNotifications(pool, config);
+  // #1130: must run AFTER seedStagingNotifications — its delivery rows hang
+  // off a notification id that seeder owns.
+  await seedStagingPushDeliveries(pool, config);
   await seedStagingAdminConsoleData(pool);
   await seedStagingEnvProposal(pool, config);
   await seedStagingMergedPrs(pool, config);
@@ -1768,6 +1771,145 @@ async function seedStagingNotifications(pool, config) {
     multiAppInserted,
     backlogInserted,
     otherApps: otherApps.length,
+  });
+}
+
+// #1130: staging fixtures for the mobile-push delivery tables, so the admin
+// SQL console has something to SELECT the moment they become queryable.
+//
+// The issue that widened the console's scope was an admin trying to debug
+// push delivery and being told the tables "are not available in this
+// console". They are now — with `mobile_push_registrations`'s encrypted
+// destination and lookup hash masked at the GRANT level — but on a fresh
+// staging preview all three tables are EMPTY: they are table-level
+// `staging:private`, so cloneDatabase TRUNCATEs them, and staging never
+// registers a real device. A reviewer clicking `mobile_push_deliveries` in
+// the schema browser would draft a perfectly valid SELECT and get zero
+// rows, which looks identical to the bug. These three rows make the
+// widening visible.
+//
+// INERT BY CONSTRUCTION: the fixture uses its own `environment` value
+// ('staging-fixture'), never `config.mobilePushEnvironment`. So
+// mobile-push.js's synchronizeDeploymentState leaves the registration
+// alone (it only DELETEs registrations for the CONFIGURED environment on a
+// project change) and its cross-environment sweeps are no-ops here — they
+// force send_enabled=FALSE (already false) and cancel only 'pending'/
+// 'sending' deliveries (these are 'sent' and 'dead'). The push worker
+// claims 'pending' rows only, so it never touches these either. No real
+// device, no real FCM token, nothing sendable.
+//
+// Idempotent: every insert is ON CONFLICT DO NOTHING against a real unique
+// constraint, and the two delivery rows are keyed by the fixed
+// (notification_id, environment, installation_id) triple.
+async function seedStagingPushDeliveries(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: appRows } = await pool.query(
+    'SELECT id FROM apps WHERE slug = $1',
+    [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) {
+    log.warn('db', 'Staging push-delivery fixtures skipped: self-app row missing', {
+      slug: config.selfAppSlug,
+    });
+    return;
+  }
+
+  // `mobile_push_deliveries.notification_id` is a NOT NULL FK, so the
+  // fixture hangs off a notification that already exists. Lowest id on the
+  // self-app: seedStagingNotifications runs immediately before this and is
+  // itself idempotent, so that id is stable across reboots — which is what
+  // keeps the deliveries' ON CONFLICT key stable too.
+  const { rows: notificationRows } = await pool.query(
+    `SELECT id, user_id FROM notifications
+      WHERE app_id = $1
+      ORDER BY id ASC
+      LIMIT 1`,
+    [appId]
+  );
+  if (!notificationRows.length) {
+    log.warn('db', 'Staging push-delivery fixtures skipped: no notification to attach to');
+    return;
+  }
+  const notificationId = notificationRows[0].id;
+  const userId = notificationRows[0].user_id;
+
+  const ENVIRONMENT = 'staging-fixture';
+  const LIVE_INSTALLATION = '11300000-0000-4000-8000-000000000001';
+  const GONE_INSTALLATION = '11300000-0000-4000-8000-000000000002';
+
+  // Obviously fake, and both masked in the console anyway: `registration_hash`
+  // still has to satisfy the table's `^[0-9a-f]{64}$` CHECK, and
+  // `registration_enc` its non-blank one. Neither is a real FCM token and
+  // neither decrypts to anything.
+  const REGISTRATION_HASH = '11300000'.repeat(8);
+  const REGISTRATION_ENC = 'staging-fixture-not-a-real-push-registration';
+
+  await pool.query(
+    `INSERT INTO mobile_push_registrations
+       (user_id, environment, installation_id, provider, registration_hash,
+        registration_enc, platform, permission_status, session_expires_at,
+        last_seen_at)
+     VALUES
+       ($1, $2, $3::uuid, 'fcm', $4, $5, 'android', 'authorized',
+        NOW() + INTERVAL '7 days', NOW() - INTERVAL '20 minutes')
+     ON CONFLICT (environment, installation_id) DO NOTHING`,
+    [userId, ENVIRONMENT, LIVE_INSTALLATION, REGISTRATION_HASH, REGISTRATION_ENC]
+  );
+
+  // One delivered row and one that exhausted its retries, because the
+  // status/attempts/last_error_code triple is the whole reason an admin
+  // opens this table. The 'dead' row deliberately has registration_id NULL
+  // (the device's registration was already reaped, which is the real-world
+  // shape of an UNREGISTERED failure) so the console's joined template
+  // exercises its LEFT JOIN against a missing registration too.
+  await pool.query(
+    `INSERT INTO mobile_push_deliveries
+       (notification_id, registration_id, environment, installation_id,
+        status, attempts, available_at, expires_at, sent_at, last_error_code,
+        created_at, updated_at)
+     SELECT $1, r.id, $2::varchar, $3::uuid,
+            'sent', 1,
+            NOW() - INTERVAL '19 minutes', NOW() + INTERVAL '5 hours',
+            NOW() - INTERVAL '19 minutes', NULL,
+            NOW() - INTERVAL '20 minutes', NOW() - INTERVAL '19 minutes'
+       FROM mobile_push_registrations r
+      WHERE r.environment = $2::varchar AND r.installation_id = $3::uuid
+     ON CONFLICT (notification_id, environment, installation_id) DO NOTHING`,
+    [notificationId, ENVIRONMENT, LIVE_INSTALLATION]
+  );
+
+  await pool.query(
+    `INSERT INTO mobile_push_deliveries
+       (notification_id, registration_id, environment, installation_id,
+        status, attempts, available_at, expires_at, sent_at, last_error_code,
+        created_at, updated_at)
+     VALUES
+       ($1, NULL, $2, $3::uuid,
+        'dead', 5,
+        NOW() - INTERVAL '15 minutes', NOW() - INTERVAL '10 minutes',
+        NULL, 'UNREGISTERED',
+        NOW() - INTERVAL '20 minutes', NOW() - INTERVAL '15 minutes')
+     ON CONFLICT (notification_id, environment, installation_id) DO NOTHING`,
+    [notificationId, ENVIRONMENT, GONE_INSTALLATION]
+  );
+
+  // The deployment-state row the console's joined template and the schema
+  // browser both make more legible. send_enabled FALSE (and so
+  // send_not_before NULL, per the table's own CHECK) — nothing about this
+  // fixture can cause a send.
+  await pool.query(
+    `INSERT INTO mobile_push_deployment_state
+       (environment, firebase_project_id, send_enabled, send_not_before)
+     VALUES ($1, 'staging-fixture-firebase-project', FALSE, NULL)
+     ON CONFLICT (environment) DO NOTHING`,
+    [ENVIRONMENT]
+  );
+
+  log.info('db', 'Staging push-delivery fixtures seeded', {
+    environment: ENVIRONMENT,
+    notificationId,
   });
 }
 
