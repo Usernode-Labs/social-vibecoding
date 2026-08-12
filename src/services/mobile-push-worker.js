@@ -208,7 +208,11 @@ class MobilePushWorker {
       `SELECT d.id, d.attempts, d.expires_at,
               d.created_at AS delivery_created_at,
               n.id AS notification_id, n.user_id AS notification_user_id,
-              n.kind, n.read_at,
+              n.kind, n.read_at, n.detail,
+              a.name AS app_name,
+              su.username AS source_username,
+              cm.content AS message_content,
+              cs.session_title, cs.pr_title, cs.branch_name,
               policy.category AS push_category,
               COALESCE(preference.enabled, policy.default_enabled, FALSE) AS push_enabled,
               d.environment AS delivery_environment,
@@ -222,6 +226,10 @@ class MobilePushWorker {
               r.session_expires_at AS registration_session_expires_at
          FROM mobile_push_deliveries d
          JOIN notifications n ON n.id = d.notification_id
+         LEFT JOIN apps a ON a.id = n.app_id
+         LEFT JOIN users su ON su.id = n.source_user_id
+         LEFT JOIN chat_messages cm ON cm.id = n.chat_message_id
+         LEFT JOIN chat_sessions cs ON cs.id = n.session_id
          LEFT JOIN mobile_push_kind_categories policy ON policy.kind = n.kind
          LEFT JOIN mobile_push_preferences preference
            ON preference.user_id = n.user_id
@@ -340,6 +348,17 @@ class MobilePushWorker {
         installationId: row.installation_id,
         userId: row.notification_user_id,
         expiresAt: row.expires_at,
+        // Send-time display context (#3289). Every field is optional: the
+        // policy degrades to the generic copy rather than failing a delivery.
+        context: {
+          appName: row.app_name,
+          sourceUsername: row.source_username,
+          messageContent: row.message_content,
+          sessionTitle: row.session_title,
+          prTitle: row.pr_title,
+          branchName: row.branch_name,
+          detail: row.detail,
+        },
       });
     } catch (err) {
       await this.finish(job, 'dead', String(err.message || 'message_invalid').slice(0, 96));
