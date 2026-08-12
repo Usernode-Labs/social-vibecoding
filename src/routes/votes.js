@@ -330,13 +330,22 @@ function stagingMockProposals(viewer) {
     // a mid-flight build was indistinguishable from a wedged one. These two
     // rows are the only way to review both captions in a preview — a real
     // staging clone has no in-flight run to look at. The fixture above keeps
-    // check_phase absent on purpose: it is the NULL/legacy-wording case.
+    // check_phase absent on purpose: it is the NULL/legacy-wording case, and
+    // it carries no check_trigger either — the pre-#1144 rows that predate the
+    // column render with no "why is this running" caption at all.
+    //
+    // #1144: check_trigger is the other half of the pending detail. A run that
+    // the platform started for itself (a boot reconcile, a stuck sweep) used to
+    // be indistinguishable from one the author asked for, which is exactly the
+    // confusion that made re-runs look like flakes. These two rows carry the
+    // two ends of that range — an author's commit, and a platform restart.
     {
       ...mk(9000022, 900122,
         '[Mock] Checks-phase test: preparing the staging preview (build + DB clone)',
         0.06, 1, 0, 0, { required: 2, windowEndsAt: hoursAhead(70) }),
       check_state: 'pending',
       check_phase: 'building',
+      check_trigger: 'commit-push',
       recheckable: true,
       test_results: [],
       checks_checked_at: hoursAgo(0.02),
@@ -351,6 +360,7 @@ function stagingMockProposals(viewer) {
         0.06, 1, 0, 0, { required: 2, windowEndsAt: hoursAhead(70) }),
       check_state: 'pending',
       check_phase: 'testing',
+      check_trigger: 'stuck-sweep',
       recheckable: true,
       test_results: [],
       checks_checked_at: hoursAgo(0.02),
@@ -872,11 +882,11 @@ function nativeGithubTarget(session) {
 
 async function kickNativeRevisionChecks({ config, pool, session, headSha }) {
   const visuals = require('../services/visuals');
-  await visuals.setChecksPending(pool, session.id, headSha, 'building')
+  await visuals.setChecksPending(pool, session.id, headSha, 'building', 'commit-push')
     .catch((err) => log.warn('votes', 'Native revision setChecksPending failed (non-fatal)', {
       sessionId: session.id, headSha, err: err.message,
     }));
-  try { visuals.notifyChecksPending(session.id, headSha, 'building'); } catch (_) {}
+  try { visuals.notifyChecksPending(session.id, headSha, 'building', 'commit-push'); } catch (_) {}
 
   const prImportSync = require('../services/pr-import-sync');
   prImportSync.rerunChecksForNewHead({
@@ -1430,6 +1440,7 @@ function mergedRowSelect() {
            -- 'testing'), so the checks card names the stage instead of
            -- showing one opaque "still running". NULL = legacy wording.
            cs.check_phase,
+           cs.check_trigger,
            -- Platform-variables pre-merge check (display mirror; the merge
            -- gate re-evaluates live).
            cs.platform_env_state, cs.platform_env_detail,
@@ -1849,7 +1860,7 @@ function voteRoutes(config) {
             ).catch((err) => log.warn('votes', 'promote setChecksPending failed (non-fatal)', {
               sessionId: session.id, err: err.message,
             }));
-            visualsService.notifyChecksPending(session.id, commitHash === 'latest' ? null : commitHash, 'building');
+            visualsService.notifyChecksPending(session.id, commitHash === 'latest' ? null : commitHash, 'building', 'promote-kick');
           }
           let result;
           try {
@@ -1881,7 +1892,10 @@ function voteRoutes(config) {
           // heuristic + all failure handling live inside the service.
           const visualsService = require('../services/visuals');
           visualsService.captureForSession(
-            config, session, app, commitHash === 'latest' ? null : commitHash, result
+            config, session, app, commitHash === 'latest' ? null : commitHash, result,
+            // The promote path must merge on a verdict it just took, so this
+            // one runs even when the row already reads passing for the commit.
+            { trigger: 'promote-kick', force: true }
           ).catch((err) => {
             log.warn('votes', 'Post-promote visuals capture failed', { sessionId: session.id, err: err.message });
           });
@@ -2534,7 +2548,7 @@ function voteRoutes(config) {
         `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.status,
                 cs.created_at, cs.promoted_at,
                 cs.merge_conflict_state, cs.behind_main,
-                cs.check_state, cs.check_error_detail, cs.check_phase,
+                cs.check_state, cs.check_error_detail, cs.check_phase, cs.check_trigger,
                 cs.requires_explicit_approval,
                 -- #866: so the home strip can derive the same
                 -- building/unavailable preview state the proposal card
@@ -2747,6 +2761,7 @@ function voteRoutes(config) {
            -- 'testing'), so the checks card names the stage instead of
            -- showing one opaque "still running". NULL = legacy wording.
            cs.check_phase,
+           cs.check_trigger,
            -- Platform-variables pre-merge check (display mirror; the merge
            -- gate re-evaluates live).
            cs.platform_env_state, cs.platform_env_detail,

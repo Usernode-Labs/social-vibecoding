@@ -5979,7 +5979,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           // proposal sat merge-blocked on "still running its tests" until a
           // sweep happened to heal it. Fire-and-forget; captureForSession
           // owns all failure handling and is _inFlight-guarded.
-          visuals.captureForSession(config, session, app, commitHash === 'latest' ? null : commitHash, result, { send: () => {} })
+          visuals.captureForSession(config, session, app, commitHash === 'latest' ? null : commitHash, result, { send: () => {}, trigger: 'manual-recheck' })
             .catch((err) => log.warn('visuals', 'Deploy-staging capture failed (non-fatal)', {
               sessionId: session.id, err: err.message,
             }));
@@ -6178,11 +6178,11 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // fire-and-forget below re-stamps idempotently — same commit sha, so
       // the failure-streak bookkeeping is preserved).
       const visualsService = require('../services/visuals');
-      await visualsService.setChecksPending(pool, sessionId, session.checks_commit_sha || null, 'building')
+      await visualsService.setChecksPending(pool, sessionId, session.checks_commit_sha || null, 'building', 'manual-recheck')
         .catch((err) => log.warn('sessions', 'recheck setChecksPending failed (non-fatal)', {
           sessionId, err: err.message,
         }));
-      visualsService.notifyChecksPending(sessionId, session.checks_commit_sha || null, 'building');
+      visualsService.notifyChecksPending(sessionId, session.checks_commit_sha || null, 'building', 'manual-recheck');
 
       res.json({ status: 'running', checkState: 'pending' });
 
@@ -8336,7 +8336,7 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
         // #461: pend the checks for the NEW commit before the build, so the
         // previous commit's verdict (e.g. a stale 'passing') can't satisfy
         // the merge gate while this build runs — or after it fails.
-        await visuals.setChecksPending(pool, session.id, result.sha, 'building')
+        await visuals.setChecksPending(pool, session.id, result.sha, 'building', 'commit-push')
           .catch((err) => log.warn('visuals', 'setChecksPending failed (non-fatal)', { sessionId: session.id, err: err.message }));
         try {
           stagingResult = await staging.buildAndDeployStaging(config, session, app, result.sha);
@@ -8357,7 +8357,7 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
           ).catch(() => {});
           // Before/after visuals: best-effort, never throws; there is no live
           // client to stream to on a resumed run, so the no-op send is fine.
-          visuals.captureForSession(config, session, app, result.sha, stagingResult, { send: () => {} })
+          visuals.captureForSession(config, session, app, result.sha, stagingResult, { send: () => {}, trigger: 'commit-push' })
             .catch((err) => log.warn('visuals', 'Resumed headless capture failed (non-fatal)', { sessionId: session.id, err: err.message }));
           dispatchSummary = `Commit ${result.sha.substring(0, 8)} pushed to ${session.branch_name}, and a staging preview was built. `
             + 'Headless mode: no PR was opened (it is created on a clone at propose time).'
@@ -12101,7 +12101,7 @@ path: /another/changed/view
         // the UI-affecting heuristic and swallows every failure. No PR
         // exists on the headless path — the stored artifacts surface in
         // the PR body later via applyPrMetadata at promote time.
-        visuals.captureForSession(config, session, app, commitHash, stagingResult, { send })
+        visuals.captureForSession(config, session, app, commitHash, stagingResult, { send, trigger: 'commit-push' })
           .catch((err) => log.warn('visuals', 'Headless capture failed (non-fatal)', {
             sessionId: session.id, err: err.message,
           }));
@@ -12337,7 +12337,7 @@ path: /another/changed/view
         // it patches the PR body's "Before / after" block directly and
         // emits visuals_ready (via this turn's send → SSE/WS/bus) so the
         // staging card upgrades in place.
-        visuals.captureForSession(config, session, app, commitHash, stagingResult, { send })
+        visuals.captureForSession(config, session, app, commitHash, stagingResult, { send, trigger: 'commit-push' })
           .catch((err) => log.warn('visuals', 'Capture failed (non-fatal)', {
             sessionId: session.id, err: err.message,
           }));

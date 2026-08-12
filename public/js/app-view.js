@@ -8212,11 +8212,22 @@ const AppView = {
       // unrecognised / absent phase (legacy rows, a proposal checked before
       // this shipped) keeps the previous wording verbatim.
       const phase = AppView._checksPhaseCopy(pr.check_phase);
+      // …and WHY it started. "Started 4 minutes ago" answers a different
+      // question from "who asked for this": a run kicked off by the platform's
+      // own recovery sweeper reads as inexplicable churn without it, and a
+      // reviewer who just pressed Re-run has no confirmation that the run they
+      // are looking at is theirs. NULL / unrecognised renders nothing at all,
+      // so legacy rows are unchanged.
+      const why = AppView._checksTriggerCopy(pr.check_trigger);
+      const trigger = why
+        ? `<div class="mt-0.5 opacity-80">${escapeHtml(why)}</div>`
+        : '';
       return `
         <div class="mt-2 rounded border border-zinc-300/40 dark:border-zinc-700/60 bg-zinc-500/5 px-2 py-1.5 text-zinc-600 dark:text-zinc-400">
           <div class="font-medium"><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>${escapeHtml(phase.title)}</div>
           <div class="mt-0.5 opacity-90">${escapeHtml(phase.detail)} Merge is blocked until all tests pass.</div>
           ${started}
+          ${trigger}
           ${stale ? '<div class="mt-1 opacity-80">If this has been running for a while, the platform re-runs the checks automatically — or re-run them now.</div>' : ''}
           ${stale ? AppView._recheckBtnHtml(pr) : ''}
         </div>`;
@@ -8449,6 +8460,26 @@ const AppView = {
       title: 'Checks are still running…',
       detail: 'The staging build is being tested.',
     };
+  },
+
+  // Why the run in flight started (chat_sessions.check_trigger). Written in
+  // the reviewer's terms, not the platform's — nobody outside the codebase
+  // knows what a "stuck sweep" is. Unknown/NULL renders nothing rather than
+  // a placeholder: no caption is honest, a wrong one is not.
+  CHECKS_TRIGGER_COPY: {
+    'proposal-open': 'Triggered by this proposal being opened.',
+    'commit-push': 'Triggered by a new commit on this proposal.',
+    'sync-main': 'Triggered by this proposal being updated from main.',
+    'pr-import': 'Triggered by a new commit on the imported pull request.',
+    'manual-recheck': 'Triggered by someone asking for a re-run.',
+    'promote-kick': 'Triggered by this proposal being put to a vote.',
+    'boot-reconcile': 'Restarted by the platform after it came back up.',
+    'stuck-sweep': 'Restarted automatically by the platform.',
+    'fleet-maintenance': 'Triggered by scheduled platform maintenance.',
+  },
+
+  _checksTriggerCopy(trigger) {
+    return AppView.CHECKS_TRIGGER_COPY[trigger] || '';
   },
 
   // #447: the "Re-run checks" action. Renders for the proposal's owner or an

@@ -2996,7 +2996,7 @@ async function finalizeRecoveredTurn({
     // can't satisfy the merge gate while this build runs — or after it
     // fails. The live dev-turn path does this; recovery used to skip it.
     const visuals = require('./src/services/visuals');
-    await visuals.setChecksPending(pool, sessionId, result.sha, 'building')
+    await visuals.setChecksPending(pool, sessionId, result.sha, 'building', 'boot-reconcile')
       .catch((err) => log.warn('server', 'Recovered turn: setChecksPending failed (non-fatal)', {
         sessionId, err: err.message,
       }));
@@ -3011,7 +3011,7 @@ async function finalizeRecoveredTurn({
       });
       await publishRecoveredStaging({ outcome: 'success', stagingUrl: reusedStaging });
       summaryParts.push(`Staging preview is live: ${reusedStaging}`);
-      visuals.captureForSession(config, session, app, result.sha, null, { send: () => {} })
+      visuals.captureForSession(config, session, app, result.sha, null, { send: () => {}, trigger: 'boot-reconcile' })
         .catch((err) => log.warn('server', 'Recovered turn: reused-preview capture failed (non-fatal)', {
           sessionId, err: err.message,
         }));

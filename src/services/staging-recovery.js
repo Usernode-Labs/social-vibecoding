@@ -66,6 +66,25 @@ async function stagingNeedsRebuild(session, { config = null } = {}) {
   return true;
 }
 
+// Recovery's own `reason` strings name the CODE PATH; visuals.CHECK_TRIGGERS
+// names why a checks run started, which is the vocabulary the merge-gate trace
+// and the proposal card share. Map one to the other here rather than leaking a
+// recovery-internal label into either. An unmapped reason reads as the sweeper,
+// which is what every unnamed recovery path actually is.
+const CHECK_TRIGGER_BY_REASON = {
+  'manual-recheck': 'manual-recheck',
+  'preview-click': 'manual-recheck',
+  startup: 'boot-reconcile',
+  'stuck-checks-boot': 'boot-reconcile',
+  tail_worker_gone: 'boot-reconcile',
+  dangling_tail: 'boot-reconcile',
+  heal: 'stuck-sweep',
+  'stuck-checks-sweep': 'stuck-sweep',
+};
+function checkTriggerForReason(reason) {
+  return CHECK_TRIGGER_BY_REASON[reason] || 'stuck-sweep';
+}
+
 // Rebuild the staging preview for a single session that has a branch +
 // commits ahead of main but a NULL/dead staging_url. Shared by the
 // startup recovery sweep (recoverSessions), the periodic sweeper's
@@ -195,11 +214,11 @@ async function rebuildSessionStaging({ config, pool, session, reason }) {
   // allowed through storeChecks' latest-head CAS instead of being discarded
   // as stale and leaving the old commit permanently pending. Imported rows
   // remain pinned to importedHead above.
-  await visuals.setChecksPending(pool, session.id, commitHash).catch((err) =>
+  await visuals.setChecksPending(pool, session.id, commitHash, null, checkTriggerForReason(reason)).catch((err) =>
     log.warn('staging-recovery', 'rebuild setChecksPending failed (non-fatal)', {
       sessionId: session.id, err: err.message,
     }));
-  visuals.notifyChecksPending(session.id, commitHash);
+  visuals.notifyChecksPending(session.id, commitHash, null, checkTriggerForReason(reason));
 
   // Create PR if missing (active-session recovery only). Route through
   // applyPrMetadata — NOT a bare createPR — so the PR gets a real
@@ -339,7 +358,13 @@ async function rebuildSessionStaging({ config, pool, session, reason }) {
   // Fire-and-forget with the same failure-swallowing as the dev-turn
   // callers; captureForSession is itself _inFlight-guarded so a concurrent
   // live capture isn't duplicated.
-  visuals.captureForSession(config, session, app, commitHash, stagingResult, { send: () => {} })
+  visuals.captureForSession(config, session, app, commitHash, stagingResult, {
+    send: () => {},
+    trigger: checkTriggerForReason(reason),
+    // Deliberately NOT forced: a rebuild whose head already has a passing
+    // verdict has nothing new to learn, and this path fires on every heal
+    // sweep and every preview click.
+  })
     .catch((err) => log.warn('staging-recovery', 'Post-rebuild checks capture failed (non-fatal)', {
       sessionId: session.id, err: err.message,
     }));
@@ -557,11 +582,11 @@ async function recheckSessionChecks({ config, pool, session, reason }) {
   // re-stamps idempotently (same commit sha → failure streak preserved).
   {
     const visuals = require('./visuals');
-    await visuals.setChecksPending(pool, session.id, session.checks_commit_sha || null, 'building')
+    await visuals.setChecksPending(pool, session.id, session.checks_commit_sha || null, 'building', checkTriggerForReason(reason))
       .catch((err) => log.warn('staging-recovery', 'recheck setChecksPending failed (non-fatal)', {
         sessionId: session.id, err: err.message,
       }));
-    visuals.notifyChecksPending(session.id, session.checks_commit_sha || null, 'building');
+    visuals.notifyChecksPending(session.id, session.checks_commit_sha || null, 'building', checkTriggerForReason(reason));
   }
   if (await stagingNeedsRebuild(session, { config })) {
     // rebuildSessionStaging owns the capture (see above) and the no-op
@@ -574,7 +599,13 @@ async function recheckSessionChecks({ config, pool, session, reason }) {
   // prior verdict described). _inFlight-guarded internally.
   const visuals = require('./visuals');
   const app = { id: session.app_id, slug: session.app_slug, name: session.app_name, repo_url: session.repo_url };
-  visuals.captureForSession(config, session, app, session.checks_commit_sha || null, null, { send: () => {} })
+  visuals.captureForSession(config, session, app, session.checks_commit_sha || null, null, {
+    send: () => {},
+    trigger: checkTriggerForReason(reason),
+    // A human pressing "Re-run checks" is asking for a FRESH verdict, so
+    // this one path forces the run even when the row already reads passing.
+    force: reason === 'manual-recheck',
+  })
     .catch((err) => log.warn('staging-recovery', 'Direct checks re-run failed (non-fatal)', {
       sessionId: session.id, reason, err: err.message,
     }));

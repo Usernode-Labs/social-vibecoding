@@ -764,7 +764,11 @@ async function storeChecksSkipped(
 // the legacy display. It is deliberately a plain assignment rather than
 // another CASE arm — the phase describes the run happening right now, not
 // the commit, so a backoff retry of the same commit still updates it.
-async function setChecksPending(pool, sessionId, commitSha, phase = null) {
+//
+// `trigger` records WHY the run started (see CHECK_TRIGGERS). Written on
+// every stamp, including as NULL when the caller does not name one, so a
+// label can never outlive the run it described.
+async function setChecksPending(pool, sessionId, commitSha, phase = null, trigger = null) {
   // $2 is spliced into both an assignment to checks_commit_sha (varchar) and
   // IS DISTINCT FROM comparisons (inferred text). Without the explicit ::text
   // casts postgres refuses to prepare the statement — "inconsistent types
@@ -778,6 +782,7 @@ async function setChecksPending(pool, sessionId, commitSha, phase = null) {
     `UPDATE chat_sessions
        SET check_state = 'pending', checks_commit_sha = $2::text, checks_checked_at = NOW(),
            check_phase = $3::text,
+           check_trigger = $4::text,
            check_next_retry_at = NULL,
            consecutive_check_failures = CASE WHEN checks_commit_sha IS DISTINCT FROM $2::text
                                              THEN 0 ELSE consecutive_check_failures END,
@@ -789,7 +794,7 @@ async function setChecksPending(pool, sessionId, commitSha, phase = null) {
                                           THEN NULL ELSE check_error_notified_at END
      WHERE id = $1
        AND status IN ('active', 'paused', 'promoted', 'merging')`,
-    [sessionId, commitSha || null, normalizeCheckPhase(phase)]
+    [sessionId, commitSha || null, normalizeCheckPhase(phase), normalizeCheckTrigger(trigger)]
   );
   return write.rowCount !== 0;
 }
@@ -800,6 +805,29 @@ async function setChecksPending(pool, sessionId, commitSha, phase = null) {
 const CHECK_PHASES = new Set(['building', 'testing']);
 function normalizeCheckPhase(phase) {
   return CHECK_PHASES.has(phase) ? phase : null;
+}
+
+// Why a check run started. The merge-gate trace used to record trigger
+// 'capture' for every single run — the name of the function that opened it,
+// which tells a reader nothing. Production runs 1.81 checks per proposal and
+// 91 of 204 runs are re-runs; "who asked for this one" is the difference
+// between a redundant re-run worth eliminating and a legitimate one.
+//
+// A closed vocabulary, normalised at the boundary: an unrecognised value
+// stores as NULL rather than leaking a caller's private string into the card.
+const CHECK_TRIGGERS = new Set([
+  'proposal-open',     // the proposal's first run
+  'commit-push',       // a new commit landed on the branch
+  'sync-main',         // the branch was refreshed from main
+  'pr-import',         // an imported GitHub PR moved its head
+  'manual-recheck',    // a human pressed "Re-run checks"
+  'promote-kick',      // promotion re-ran checks before merging
+  'boot-reconcile',    // server boot re-drove an interrupted run
+  'stuck-sweep',       // the recovery sweeper re-drove a stalled run
+  'fleet-maintenance', // a fleet-wide rebuild
+]);
+function normalizeCheckTrigger(trigger) {
+  return CHECK_TRIGGERS.has(trigger) ? trigger : null;
 }
 
 // ── Capture-outcome snapshot (screenshot-reliability spec) ──────────────
@@ -1174,7 +1202,40 @@ function sessionGitRef(session, commitHash) {
   return (session && session.branch_name) || null;
 }
 
-async function captureForSession(config, session, app, commitHash, stagingResult, { send } = {}) {
+// Is a run for exactly this commit already decided? Reads the row rather than
+// trusting the caller's `session` snapshot, which may have been selected
+// minutes earlier and several runs ago.
+//
+// 'passing' only. A 'failing' row is NOT skipped: the retry machinery, the
+// sweeper and a human pressing Re-run all legitimately re-drive a failure,
+// and a flaky failure that never gets a second chance is a stuck proposal.
+async function checksAlreadyDecided(pool, sessionId, commitHash) {
+  if (!commitHash) return false;
+  try {
+    const { rows } = await pool.query(
+      'SELECT check_state, checks_commit_sha FROM chat_sessions WHERE id = $1', [sessionId]
+    );
+    const row = rows[0];
+    return !!row && row.check_state === 'passing' && row.checks_commit_sha === commitHash;
+  } catch (err) {
+    // Unreadable state means RUN, never skip — a skipped run leaves the gate
+    // reading whatever was there before.
+    log.warn('visuals', 'Redundancy probe failed — running checks anyway', {
+      sessionId, err: err.message,
+    });
+    return false;
+  }
+}
+
+// `trigger` names why this run started (see CHECK_TRIGGERS) and rides into
+// both the merge-debug trace and chat_sessions.check_trigger.
+//
+// `force` runs the suite even when the row already reads 'passing' for this
+// exact commit. The callers that set it are the ones where a fresh verdict is
+// the whole point of the request — a human pressing "Re-run checks", and the
+// promote-time kick that must not merge on a verdict it did not just take.
+async function captureForSession(config, session, app, commitHash, stagingResult, opts = {}) {
+  const { send, trigger = null, force = false } = opts || {};
   const key = captureKey(session.id);
   if (_inFlight.has(key)) {
     // Re-queue instead of dropping: park the NEWER run's arguments (latest
@@ -1182,14 +1243,36 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     // `send` is deliberately NOT carried over — by the time the queued run
     // fires, the requesting turn's SSE stream is long closed, so the queued
     // run publishes via the session bus + global WS instead.
-    _queued.set(key, { config, session, app, commitHash, stagingResult });
+    _queued.set(key, { config, session, app, commitHash, stagingResult, trigger, force });
     log.info('visuals', 'Capture already in flight — re-queued for after it finishes', {
-      sessionId: session.id, commitHash: commitHash || null,
+      sessionId: session.id, commitHash: commitHash || null, trigger,
     });
     return;
   }
   _inFlight.add(key);
   const pool = getPool(config);
+
+  // ── Skip a provably redundant run (#1144) ──
+  //
+  // Production runs 1.81 checks runs per proposal — 91 of 204 are re-runs —
+  // and each one is ~106s of a merge gate a human is waiting behind. Several
+  // of those callers fire unconditionally on a path that also runs for
+  // reasons unrelated to the commit (a boot reconcile, the stuck sweeper, a
+  // second staging build of an unchanged head), so they re-tested a commit
+  // whose verdict was already recorded and could not change.
+  //
+  // The bar is deliberately narrow: same session, same commit, already
+  // 'passing'. That combination cannot produce new information — the suite is
+  // run against a build of that exact tree. Anything else runs.
+  if (!force && await checksAlreadyDecided(pool, session.id, commitHash)) {
+    log.info('visuals', 'Checks already passing for this commit — skipping redundant run', {
+      sessionId: session.id, commitHash, trigger,
+    });
+    _inFlight.delete(key);
+    drainQueued(key, session.id, commitHash, null);
+    return;
+  }
+
   // Per-run timing trace (kind='checks'). Nothing recorded how long a checks
   // run took, so diagnosing the slowdown that motivated this meant reading a
   // few hundred lines of container log before they rotated away. This is the
@@ -1202,7 +1285,10 @@ async function captureForSession(config, session, app, commitHash, stagingResult
   const mergeDebug = require('./merge-debug');
   const debugRunId = await mergeDebug.startRun(pool, {
     appId: app.id, sessionId: session.id, prNumber: session.pr_number || null,
-    kind: 'checks', trigger: 'capture',
+    // Every run used to record trigger='capture' — the name of this function.
+    // With the real trigger, the same trace query that measures re-run COUNT
+    // can finally attribute it.
+    kind: 'checks', trigger: normalizeCheckTrigger(trigger) || 'capture',
   });
   const traceStep = (phase, message, detail) =>
     mergeDebug.step(pool, debugRunId, { phase, message, detail });
@@ -1214,6 +1300,14 @@ async function captureForSession(config, session, app, commitHash, stagingResult
   try {
     const buildTimings = (stagingResult && stagingResult.timings) || null;
     if (buildTimings) {
+      if (buildTimings.sourceFetchMs != null) {
+        // Everything before the image build: the shallow clone of the branch,
+        // its submodules, and the manifest/secrets gating. It was the one leg
+        // of the build half with no phase of its own, so its cost showed up
+        // only as the gap between the run's start and its first step — which
+        // is exactly where an unexplained regression hides.
+        traceStep('source_fetch', 'Branch source fetched', { durationMs: buildTimings.sourceFetchMs });
+      }
       if (buildTimings.imageBuildMs != null) {
         traceStep('image_build', 'Staging image built', { durationMs: buildTimings.imageBuildMs });
       }
@@ -1234,12 +1328,12 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     // 'passing' while the fresh build is being tested. Best-effort.
     // Phase 'testing': the staging preview is already up by the time capture
     // starts, so everything from here is the suite running against it.
-    await setChecksPending(pool, session.id, commitHash, 'testing').catch((err) => {
+    await setChecksPending(pool, session.id, commitHash, 'testing', trigger).catch((err) => {
       log.warn('visuals', 'setChecksPending failed (non-fatal)', { sessionId: session.id, err: err.message });
     });
     // #607: flip open clients' badges to "Checks running…" right away —
     // the terminal notifyChecks below can be minutes out.
-    notifyChecksPending(session.id, commitHash, 'testing');
+    notifyChecksPending(session.id, commitHash, 'testing', trigger);
 
     // Heuristic gate. If the compare call fails, default to capturing —
     // staging exists, and a wasted screenshot is cheaper than a missed one.
@@ -1877,27 +1971,46 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       summary: `checks ${traceStatus} in ${Math.round(totalMs / 1000)}s`,
     });
     _inFlight.delete(key);
-    // Improvement 5: drain a re-queued capture (a rebuild that arrived while
-    // this run was shooting). Dispatched detached — awaiting it here would
-    // hold this call open for the queued run's whole duration, and every
-    // caller is fire-and-forget. The recursive call re-enters the _inFlight
-    // guard normally, so a request that lands during the queued run parks
-    // itself in turn (still depth 1 — latest wins).
-    const next = _queued.get(key);
-    if (next) {
-      _queued.delete(key);
-      log.info('visuals', 'Draining re-queued capture', {
-        sessionId: session.id, commitHash: next.commitHash || null,
-      });
-      // Calling the async function directly claims _inFlight synchronously
-      // before its first await. This avoids a one-tick gap where another
-      // surface could observe neither an active nor queued capture.
-      captureForSession(next.config, next.session, next.app, next.commitHash, next.stagingResult)
-        .catch((err) => log.warn('visuals', 'Re-queued capture failed (non-fatal)', {
-          sessionId: session.id, err: err.message,
-        }));
-    }
+    drainQueued(key, session.id, commitHash, traceStatus);
   }
+}
+
+// Improvement 5: drain a re-queued capture (a rebuild that arrived while this
+// run was shooting). Dispatched detached — awaiting it would hold the finished
+// run's call open for the queued run's whole duration, and every caller is
+// fire-and-forget. The recursive call re-enters the _inFlight guard normally,
+// so a request that lands during the queued run parks itself in turn (still
+// depth 1 — latest wins).
+//
+// `justRanSha` / `verdict` are the run that is releasing the slot. A queued
+// run for the SAME commit that has just been given a real verdict is dropped
+// (#1144): the two builds are of one tree, and the parked request exists
+// because the request ARRIVED late, not because anything changed. That is the
+// single most common redundant run in production — a second staging build of
+// an unchanged head landing while the first one's suite is still going.
+// 'error' and 'skipped' are not verdicts in that sense, so they still drain.
+function drainQueued(key, sessionId, justRanSha, verdict) {
+  const next = _queued.get(key);
+  if (!next) return;
+  _queued.delete(key);
+  const decided = verdict === 'passing' || verdict === 'failing';
+  if (!next.force && decided && justRanSha && next.commitHash === justRanSha) {
+    log.info('visuals', 'Dropping re-queued capture — same commit already decided', {
+      sessionId, commitHash: justRanSha, verdict, trigger: next.trigger || null,
+    });
+    return;
+  }
+  log.info('visuals', 'Draining re-queued capture', {
+    sessionId, commitHash: next.commitHash || null, trigger: next.trigger || null,
+  });
+  // Calling the async function directly claims _inFlight synchronously
+  // before its first await. This avoids a one-tick gap where another
+  // surface could observe neither an active nor queued capture.
+  captureForSession(next.config, next.session, next.app, next.commitHash, next.stagingResult,
+    { trigger: next.trigger || null, force: !!next.force })
+    .catch((err) => log.warn('visuals', 'Re-queued capture failed (non-fatal)', {
+      sessionId, err: err.message,
+    }));
 }
 
 // #47: fetch the proposal's declared dapp.json `tests` from GitHub (the
@@ -2007,7 +2120,7 @@ function notifyVisualsReady(sessionId, visuals, send) {
 //
 // `phase` rides along so a card that re-renders from the event alone shows
 // the right stage caption without waiting for its next fetch.
-function notifyChecksPending(sessionId, commitSha, phase = null) {
+function notifyChecksPending(sessionId, commitSha, phase = null, trigger = null) {
   try {
     const event = {
       type: 'checks_ready',
@@ -2017,6 +2130,7 @@ function notifyChecksPending(sessionId, commitSha, phase = null) {
       failingCount: 0,
       commitSha: commitSha || null,
       checkPhase: normalizeCheckPhase(phase),
+      checkTrigger: normalizeCheckTrigger(trigger),
     };
     sessionBus.publish(sessionId, event);
     const { broadcastGlobal } = require('./ws');
@@ -2086,6 +2200,9 @@ module.exports = {
   storeChecksSkipped,
   setChecksPending,
   notifyChecksPending,
+  checksAlreadyDecided,
+  normalizeCheckTrigger,
+  CHECK_TRIGGERS,
   summarizeBootFailure,
   maybeAutoMergeAfterChecks,
   consoleSnapshotFromTests,
