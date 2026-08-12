@@ -565,19 +565,37 @@ const AppView = {
         // query-string-injected selector.
         const wantRow = /^(priority|category|assignee)$/.test(q.get('row') || '') ? q.get('row') : null;
         let tries = 0;
+        // A HUMAN who opens one of these links must not have a menu put back
+        // under them, so their first real gesture ends the window. A capture
+        // only navigates and settles, so it keeps its surface. (An outside
+        // click is also what _closeCardMenu listens for, so this fires on the
+        // same gesture that dismisses — the menu goes down and stays down.)
+        const done = () => {
+          clearInterval(tick);
+          document.removeEventListener('pointerdown', onUserInput, true);
+          document.removeEventListener('keydown', onUserInput, true);
+        };
+        const onUserInput = (e) => { if (!e || e.isTrusted) done(); };
+        document.addEventListener('pointerdown', onUserInput, true);
+        document.addEventListener('keydown', onUserInput, true);
         const tick = setInterval(() => {
-          // Retries only until the board has cards to tap — an open menu now
-          // SURVIVES the repaints those fetches trigger (_reanchorCardMenu),
-          // so once it is up this is done. With `row=`, the target is one
-          // step later: the menu is a means, and the picker it opens is the
-          // state being asked for. Stop on route change too, and cap the
-          // window so a link left open in a real tab can't keep polling.
+          // Re-asserted for the whole window rather than stopped at the first
+          // success. The open has to wait for _loadDevData's fetches (a board
+          // with no cards has no trigger to tap), and an open menu survives
+          // the repaints those trigger (_reanchorCardMenu) — but NOT a
+          // scroll, which dismisses by design (see initCardMenus), and a
+          // column that finishes loading late scrolls the board. Stopping at
+          // the first success left the check judging a board with nothing on
+          // it. With `row=`, the target is one step later: the menu is a
+          // means, and the picker it opens is the state being asked for.
+          // Stop on route change too, and cap the window so a link left open
+          // in a real tab can't keep polling.
           const arrived = wantRow ? !!document.getElementById('attr-popover') : !!AppView._openCardMenu;
-          if (arrived || !String(location.hash || '').includes(`app/${slug}`)
-              || (tries += 1) > 40) {
-            clearInterval(tick);
+          if (!String(location.hash || '').includes(`app/${slug}`) || (tries += 1) > 40) {
+            done();
             return;
           }
+          if (arrived) return;
           if (wantRow && AppView._openCardMenu) {
             // Clicking the row closes the menu and opens the popover, so a
             // retry re-opens the menu from scratch — no half state to unwind.

@@ -282,7 +282,7 @@ function deterministicPrMetadataDraft({ userMessage, ccSummary, requests, summar
 // derived from current session state. Durable turns receipt this draft once;
 // recovery can then re-render fresh issue/testing/visual blocks without buying
 // another model call or replaying stale deterministic metadata.
-async function generatePrMetadataDraft({ userMessage, ccSummary, requests, summaries, specs, username, apiKey }) {
+async function generatePrMetadataDraft({ userMessage, ccSummary, requests, summaries, specs, username, apiKey, telemetryContext }) {
   const fallback = fallbackPrMetadataDraft(username);
 
   // When the caller passes a user's own key (BYOK, #30) we can hit the
@@ -299,6 +299,7 @@ async function generatePrMetadataDraft({ userMessage, ccSummary, requests, summa
       specs,
       username,
       apiKey,
+      telemetryContext,
     });
     return {
       title: meta.title,
@@ -557,6 +558,11 @@ async function applyPrMetadata({
 
   const generationArgs = {
     userMessage, ccSummary, requests, summaries, specs, username, apiKey,
+    telemetryContext: {
+      pool,
+      appId: session && session.app_id,
+      sessionId: session && session.id,
+    },
   };
   let meta;
   let metadataBillingByok = !!effectBillingByok;

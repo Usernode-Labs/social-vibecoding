@@ -1,4 +1,6 @@
+const crypto = require('crypto');
 const log = require('./logger');
+const llmTelemetry = require('./llm-telemetry');
 
 // Single source of truth for the default chat model. Callers that don't
 // pass an explicit `model` fall back to this, so bumping the platform's
@@ -75,6 +77,7 @@ let Anthropic;
 let client;
 
 async function init(config) {
+  llmTelemetry.init(config);
   // Always import the SDK so BYOK users can still work even when the
   // admin key is absent — we just don't spin up a shared `client` in
   // that case. Before this change a BYOK-only deployment would throw
@@ -119,7 +122,192 @@ Important rules:
   return prompt;
 }
 
-async function streamChat({ messages, systemPrompt, model, tools, toolChoice, onToken, onThinking, onDone, onError, signal, apiKey }) {
+function usageMetric(usage, key) {
+  if (!usage || usage[key] == null) return null;
+  const value = Number(usage[key]);
+  return Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+function telemetryCostUsd(usage, model) {
+  const input = usageMetric(usage, 'input_tokens');
+  const output = usageMetric(usage, 'output_tokens');
+  if (input == null || output == null) return null;
+  return estimateCostCents({ input_tokens: input, output_tokens: output }, model) / 100;
+}
+
+function anthropicOutcome(stopReason) {
+  return stopReason === 'refusal' ? 'refusal' : 'success';
+}
+
+function telemetryBase(context, defaults, apiKey) {
+  const ctx = context || {};
+  return {
+    pool: ctx.pool || null,
+    appId: ctx.appId,
+    sessionId: ctx.sessionId,
+    backend: ctx.backend || defaults.backend,
+    component: ctx.component || defaults.component,
+    billingPath: ctx.billingPath || (apiKey ? 'anthropic_byok' : 'platform'),
+    correlationId: ctx.correlationId || crypto.randomUUID(),
+    attemptNumber: Number.isInteger(ctx.attemptNumber) && ctx.attemptNumber > 0
+      ? ctx.attemptNumber
+      : 1,
+  };
+}
+
+function recordAnthropicResponse({
+  context, requestedModel, response, startedAt, durationMs, attemptNumber,
+}) {
+  try {
+    const outerUsage = response && response.usage;
+    const iterations = Array.isArray(outerUsage && outerUsage.iterations)
+      && outerUsage.iterations.length
+      ? outerUsage.iterations
+      : null;
+    const usageRows = iterations || [outerUsage || null];
+    const boundary = fallbackBoundary(response && response.content);
+
+    usageRows.forEach((entry, index) => {
+      const usage = entry && entry.usage ? entry.usage : entry;
+      const isLast = index === usageRows.length - 1;
+      const isFallback = entry && entry.type === 'fallback_message';
+      const iterationModel = safeTelemetryModel(entry && entry.model)
+        || (isFallback ? safeTelemetryModel(boundary && boundary.to) : null)
+        || (!isLast ? safeTelemetryModel(boundary && boundary.from) : null)
+        || safeTelemetryModel(response && response.model)
+        || requestedModel;
+      const stopReason = !isLast && iterations && detectFallback(response)
+        ? 'refusal'
+        : (response && response.stop_reason) || null;
+      // The outer usage object is the only source on older response shapes.
+      // It is safe to use for a single iteration, but never duplicate an
+      // aggregate total across multiple physical model invocations.
+      const effectiveUsage = usageRows.length === 1 && !hasUsageMetrics(usage)
+        ? outerUsage
+        : usage;
+      const eventAttempt = attemptNumber + index;
+      const costUsd = telemetryCostUsd(effectiveUsage, iterationModel);
+      void llmTelemetry.record(context.pool, {
+        invocationKey: `${context.correlationId}:${eventAttempt}`,
+        timestamp: startedAt,
+        appId: context.appId,
+        sessionId: context.sessionId,
+        provider: 'anthropic',
+        backend: context.backend,
+        component: context.component,
+        // The provider request's model remains the requested model for every
+        // server-side fallback hop; the iteration model is what was served.
+        requestedModel,
+        servedModel: iterationModel,
+        billingPath: context.billingPath,
+        inputTokens: usageMetric(effectiveUsage, 'input_tokens'),
+        cacheReadInputTokens: usageMetric(effectiveUsage, 'cache_read_input_tokens'),
+        cacheWriteInputTokens: usageMetric(effectiveUsage, 'cache_creation_input_tokens'),
+        outputTokens: usageMetric(effectiveUsage, 'output_tokens'),
+        reasoningOutputTokens: null,
+        costUsd,
+        costSource: costUsd == null ? 'unavailable' : 'platform_estimate',
+        // A server-side fallback exposes one duration for the enclosing API
+        // request, not per model iteration. Attribute it once to the final
+        // iteration instead of duplicating it across attempts.
+        durationMs: isLast ? durationMs : null,
+        outcome: anthropicOutcome(stopReason),
+        stopReason,
+        attemptNumber: eventAttempt,
+        correlationId: context.correlationId,
+      });
+    });
+    return usageRows.length;
+  } catch {
+    // Observation must never turn a successful provider response into a
+    // failed user turn, even if a future SDK ships an unexpected usage shape.
+    return 1;
+  }
+}
+
+function safeTelemetryModel(value) {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function hasUsageMetrics(usage) {
+  return usageMetric(usage, 'input_tokens') != null
+    || usageMetric(usage, 'output_tokens') != null
+    || usageMetric(usage, 'cache_read_input_tokens') != null
+    || usageMetric(usage, 'cache_creation_input_tokens') != null;
+}
+
+function isAnthropicCancellation(error) {
+  return !!(error && (
+    error.name === 'AbortError'
+    || (error.constructor && error.constructor.name === 'APIUserAbortError')
+    || error.code === 'ABORT_ERR'
+  ));
+}
+
+function recordAnthropicError({
+  context, requestedModel, startedAt, durationMs, attemptNumber, error,
+}) {
+  try {
+    const cancelled = isAnthropicCancellation(error);
+    void llmTelemetry.record(context.pool, {
+      invocationKey: `${context.correlationId}:${attemptNumber}`,
+      timestamp: startedAt,
+      appId: context.appId,
+      sessionId: context.sessionId,
+      provider: 'anthropic',
+      backend: context.backend,
+      component: context.component,
+      requestedModel,
+      servedModel: null,
+      billingPath: context.billingPath,
+      costSource: 'unavailable',
+      durationMs,
+      outcome: cancelled ? 'cancelled' : 'error',
+      stopReason: cancelled ? 'cancelled' : null,
+      attemptNumber,
+      correlationId: context.correlationId,
+    });
+  } catch {
+    // See recordAnthropicResponse: telemetry is never load-bearing.
+  }
+}
+
+async function createMessageWithTelemetry({
+  activeClient, params, requestOptions, passRequestOptions = false,
+  telemetryContext, defaults, apiKey,
+}) {
+  const context = telemetryBase(telemetryContext, defaults, apiKey);
+  const startedAt = new Date();
+  const startedMs = Date.now();
+  try {
+    // Preserve the provider call's arity as well as its params object. Some
+    // SDK stubs distinguish create(params) from create(params, undefined).
+    const response = passRequestOptions
+      ? await activeClient.messages.create(params, requestOptions)
+      : await activeClient.messages.create(params);
+    recordAnthropicResponse({
+      context,
+      requestedModel: params.model,
+      response,
+      startedAt,
+      durationMs: Date.now() - startedMs,
+      attemptNumber: context.attemptNumber,
+    });
+    return response;
+  } catch (error) {
+    recordAnthropicError({
+      context,
+      requestedModel: params.model,
+      startedAt,
+      durationMs: Date.now() - startedMs,
+      attemptNumber: context.attemptNumber,
+      error,
+    });
+    throw error;
+  }
+}
+
+async function streamChat({ messages, systemPrompt, model, tools, toolChoice, onToken, onThinking, onDone, onError, signal, apiKey, telemetryContext }) {
   // BYOK (#30): when the caller passes a user-provided key, we spin up
   // a transient client for this request instead of reusing the shared
   // one. Otherwise fall back to the admin key. Creating a client per
@@ -129,6 +317,10 @@ async function streamChat({ messages, systemPrompt, model, tools, toolChoice, on
   if (!activeClient) throw new Error('LLM not initialized');
 
   const requestedModel = model || DEFAULT_MODEL;
+  const context = telemetryBase(telemetryContext, {
+    backend: 'mayor', component: 'other_helper',
+  }, apiKey);
+  let nextAttemptNumber = context.attemptNumber;
 
   // Pass the abort signal via request options so /api/sessions/:id/stop
   // can cancel an in-flight Mayor call cleanly (instead of us just
@@ -155,20 +347,45 @@ async function streamChat({ messages, systemPrompt, model, tools, toolChoice, on
       // the model from calling tools again after a tool_result round-trip.
       if (toolChoice) params.tool_choice = toolChoice;
 
-      const stream = withFallbacks
-        ? activeClient.beta.messages.stream({
-          ...params,
-          betas: [FALLBACK_BETA],
-          fallbacks: [{ model: FALLBACK_TARGET_MODEL }],
-        }, requestOptions)
-        : activeClient.messages.stream(params, requestOptions);
+      const startedAt = new Date();
+      const startedMs = Date.now();
+      const attemptNumber = nextAttemptNumber;
+      try {
+        const stream = withFallbacks
+          ? activeClient.beta.messages.stream({
+            ...params,
+            betas: [FALLBACK_BETA],
+            fallbacks: [{ model: FALLBACK_TARGET_MODEL }],
+          }, requestOptions)
+          : activeClient.messages.stream(params, requestOptions);
 
-      stream.on('text', (text) => {
-        fullText += text;
-        if (onToken) onToken(text);
-      });
+        stream.on('text', (text) => {
+          fullText += text;
+          if (onToken) onToken(text);
+        });
 
-      return stream.finalMessage();
+        const finalMessage = await stream.finalMessage();
+        nextAttemptNumber += recordAnthropicResponse({
+          context,
+          requestedModel: runModel,
+          response: finalMessage,
+          startedAt,
+          durationMs: Date.now() - startedMs,
+          attemptNumber,
+        });
+        return finalMessage;
+      } catch (error) {
+        recordAnthropicError({
+          context,
+          requestedModel: runModel,
+          startedAt,
+          durationMs: Date.now() - startedMs,
+          attemptNumber,
+          error,
+        });
+        nextAttemptNumber += 1;
+        throw error;
+      }
     };
 
     let finalMessage = await runStream(requestedModel, {
@@ -335,7 +552,7 @@ function stripLoneSurrogates(s) {
   return out;
 }
 
-async function generatePrMetadata({ userRequest, ccSummary, requests, summaries, specs, username, apiKey }) {
+async function generatePrMetadata({ userRequest, ccSummary, requests, summaries, specs, username, apiKey, telemetryContext }) {
   const activeClient = apiKey ? new Anthropic({ apiKey }) : client;
   if (!activeClient) throw new Error('LLM not initialized');
 
@@ -392,11 +609,17 @@ ${specBlock ? `\nSPEC${specList.length > 1 ? 'S' : ''} (intended scope / theme):
 Author: ${stripLoneSurrogates(username) || 'unknown'}`;
 
   const model = 'claude-haiku-4-5';
-  const resp = await activeClient.messages.create({
-    model,
-    max_tokens: 512,
-    system,
-    messages: [{ role: 'user', content: user }],
+  const resp = await createMessageWithTelemetry({
+    activeClient,
+    params: {
+      model,
+      max_tokens: 512,
+      system,
+      messages: [{ role: 'user', content: user }],
+    },
+    telemetryContext,
+    defaults: { backend: 'helper', component: 'pr_metadata' },
+    apiKey,
   });
 
   const text = (resp.content || []).find((b) => b.type === 'text')?.text || '';
@@ -610,7 +833,7 @@ const ESTIMATE_SCHEMA = {
 // catch and skip the tick (the estimate is decorative, never load-bearing).
 async function estimateRunProgress({
   userRequest, progressTail, elapsedMs, steps, apiKey,
-  lastPhase, distinctFiles, previousGuess,
+  lastPhase, distinctFiles, previousGuess, telemetryContext,
 }) {
   const activeClient = apiKey ? new Anthropic({ apiKey }) : client;
   if (!activeClient) throw new Error('LLM not initialized');
@@ -664,19 +887,25 @@ PROGRESS LOG (tail):
 ${tail || '(no output yet)'}`;
 
   const model = 'claude-haiku-4-5';
-  const resp = await activeClient.messages.create({
-    model,
-    max_tokens: 120,
-    system,
-    messages: [{ role: 'user', content: user }],
-    // Structured outputs (#323): force Haiku to emit schema-matching JSON so
-    // the JSON.parse / fence / smart-quote failure class can't occur for normal
-    // completions. claude-haiku-4-5 supports structured outputs, and
-    // The current Anthropic SDK accepts output_config.format on messages.create().
-    // The schema guarantees type + presence only; the brace-extraction +
-    // sanitize path below stays as a defensive fallback for off-schema output
-    // (refusal / max_tokens truncation / older models).
-    output_config: { format: { type: 'json_schema', schema: ESTIMATE_SCHEMA } },
+  const resp = await createMessageWithTelemetry({
+    activeClient,
+    params: {
+      model,
+      max_tokens: 120,
+      system,
+      messages: [{ role: 'user', content: user }],
+      // Structured outputs (#323): force Haiku to emit schema-matching JSON so
+      // the JSON.parse / fence / smart-quote failure class can't occur for normal
+      // completions. claude-haiku-4-5 supports structured outputs, and
+      // The current Anthropic SDK accepts output_config.format on messages.create().
+      // The schema guarantees type + presence only; the brace-extraction +
+      // sanitize path below stays as a defensive fallback for off-schema output
+      // (refusal / max_tokens truncation / older models).
+      output_config: { format: { type: 'json_schema', schema: ESTIMATE_SCHEMA } },
+    },
+    telemetryContext,
+    defaults: { backend: 'helper', component: 'progress_estimate' },
+    apiKey,
   });
 
   const raw = (resp.content || []).find((b) => b.type === 'text')?.text || '';
@@ -755,7 +984,7 @@ function parseSessionTitleText(text) {
 //
 // Returns { title, usage, model } so callers can debit the cost to the
 // requesting user exactly like the PR-metadata call.
-async function generateSessionTitle({ requests, specs, issueTitle, apiKey }) {
+async function generateSessionTitle({ requests, specs, issueTitle, apiKey, telemetryContext }) {
   const activeClient = apiKey ? new Anthropic({ apiKey }) : client;
   if (!activeClient) throw new Error('LLM not initialized');
 
@@ -781,11 +1010,17 @@ Respond with ONLY a JSON object: {“title”: “...”}. No prose before or af
   if (spec) parts.push(`SPEC (intended scope):\n${spec.slice(0, 3000)}`);
 
   const model = 'claude-haiku-4-5';
-  const resp = await activeClient.messages.create({
-    model,
-    max_tokens: 64,
-    system,
-    messages: [{ role: 'user', content: parts.join('\n\n') }],
+  const resp = await createMessageWithTelemetry({
+    activeClient,
+    params: {
+      model,
+      max_tokens: 64,
+      system,
+      messages: [{ role: 'user', content: parts.join('\n\n') }],
+    },
+    telemetryContext,
+    defaults: { backend: 'helper', component: 'session_title' },
+    apiKey,
   });
 
   const text = (resp.content || []).find((b) => b.type === 'text')?.text || '';
@@ -882,7 +1117,7 @@ function buildQuickReplyContext({ appName, state, transcriptTail, replyText } = 
 // model }. THROWS when no tool_use came back (refusal, max_tokens
 // truncation, transport error) — resolveTurnPills catches and drops to the
 // next rung.
-async function requireQuickReplies({ rules, context, model, tool, apiKey, signal }) {
+async function requireQuickReplies({ rules, context, model, tool, apiKey, signal, telemetryContext }) {
   const activeClient = apiKey ? new Anthropic({ apiKey }) : client;
   if (!activeClient) throw new Error('LLM not initialized');
   if (!tool || !tool.name) throw new Error('requireQuickReplies needs the suggest_replies tool shape');
@@ -894,14 +1129,22 @@ Call ${tool.name} now with those pills, and nothing else. Do not write any text 
 
 ${rules || ''}`;
 
-  const resp = await activeClient.messages.create({
-    model: runModel,
-    max_tokens: 300,
-    system,
-    messages: [{ role: 'user', content: context }],
-    tools: [tool],
-    tool_choice: { type: 'tool', name: tool.name },
-  }, signal ? { signal } : undefined);
+  const resp = await createMessageWithTelemetry({
+    activeClient,
+    params: {
+      model: runModel,
+      max_tokens: 300,
+      system,
+      messages: [{ role: 'user', content: context }],
+      tools: [tool],
+      tool_choice: { type: 'tool', name: tool.name },
+    },
+    requestOptions: signal ? { signal } : undefined,
+    passRequestOptions: true,
+    telemetryContext,
+    defaults: { backend: 'helper', component: 'quick_replies' },
+    apiKey,
+  });
 
   const call = (resp.content || []).find((b) => b.type === 'tool_use' && b.name === tool.name);
   if (!call) throw new Error('Forced suggest_replies call returned no tool_use');
@@ -927,7 +1170,7 @@ const QUICK_REPLIES_SCHEMA = {
 // model from the turn's own, so a model-specific failure doesn't take both
 // rungs down with it. Throws on any failure so the caller can fall through
 // to the deterministic static set.
-async function generateQuickReplies({ rules, context, apiKey }) {
+async function generateQuickReplies({ rules, context, apiKey, telemetryContext }) {
   const activeClient = apiKey ? new Anthropic({ apiKey }) : client;
   if (!activeClient) throw new Error('LLM not initialized');
 
@@ -938,16 +1181,22 @@ ${rules || ''}
 Respond with ONLY a JSON object: {"replies": ["...", "..."]}. No prose before or after.`;
 
   const model = 'claude-haiku-4-5';
-  const resp = await activeClient.messages.create({
-    model,
-    max_tokens: 200,
-    system,
-    messages: [{ role: 'user', content: context }],
-    // Structured outputs (#323 precedent): force schema-matching JSON so
-    // the parse-failure class can't occur for normal completions. The
-    // fence/smart-quote repair below stays as a defensive fallback for
-    // refusals and max_tokens truncation.
-    output_config: { format: { type: 'json_schema', schema: QUICK_REPLIES_SCHEMA } },
+  const resp = await createMessageWithTelemetry({
+    activeClient,
+    params: {
+      model,
+      max_tokens: 200,
+      system,
+      messages: [{ role: 'user', content: context }],
+      // Structured outputs (#323 precedent): force schema-matching JSON so
+      // the parse-failure class can't occur for normal completions. The
+      // fence/smart-quote repair below stays as a defensive fallback for
+      // refusals and max_tokens truncation.
+      output_config: { format: { type: 'json_schema', schema: QUICK_REPLIES_SCHEMA } },
+    },
+    telemetryContext,
+    defaults: { backend: 'helper', component: 'quick_replies' },
+    apiKey,
   });
 
   const raw = (resp.content || []).find((b) => b.type === 'text')?.text || '';
@@ -977,16 +1226,18 @@ const FEEDBACK_FALLBACK_TITLE = 'Feedback from Usernode';
 // on any failure — LLM disabled, API error, empty response — and callers
 // decide whether that means "file with the fallback title" or "back off
 // and retry later".
-async function generateIssueTitle({ description, apiKey }) {
+async function generateIssueTitle({ description, apiKey, telemetryContext }) {
   const activeClient = apiKey ? new Anthropic({ apiKey }) : client;
   if (!activeClient) throw new Error('LLM not initialized');
   const model = 'claude-haiku-4-5';
-  const resp = await activeClient.messages.create({
-    model,
-    max_tokens: 60,
-    messages: [{
-      role: 'user',
-      content: `Write a short GitHub issue title (no quotes) for this feedback. Phrase it as an imperative action starting with a verb (e.g. "Fix broken leaderboard sort", "Add dark mode toggle"), not a noun phrase or description.
+  const resp = await createMessageWithTelemetry({
+    activeClient,
+    params: {
+      model,
+      max_tokens: 60,
+      messages: [{
+        role: 'user',
+        content: `Write a short GitHub issue title (no quotes) for this feedback. Phrase it as an imperative action starting with a verb (e.g. "Fix broken leaderboard sort", "Add dark mode toggle"), not a noun phrase or description.
 
 If the feedback describes one problem, keep the title to 5-10 words. A single problem described with several symptoms, or one problem plus context or steps to reproduce, still counts as one problem — do not use the multi-issue form for it.
 
@@ -996,7 +1247,11 @@ Respond with only the title.
 
 FEEDBACK:
 ${stripLoneSurrogates(description).trim()}`,
-    }],
+      }],
+    },
+    telemetryContext,
+    defaults: { backend: 'helper', component: 'other_helper' },
+    apiKey,
   });
   const title = ((resp.content || []).find((b) => b.type === 'text')?.text || '').trim();
   if (!title) throw new Error('Empty issue title response');
@@ -1075,7 +1330,7 @@ function sanitizeReportSummary(parsed, knownUsernames) {
   return { narrative, highlights, risks, owners };
 }
 
-async function generateReportSummary({ inputJson, appName, knownUsernames, apiKey }) {
+async function generateReportSummary({ inputJson, appName, knownUsernames, apiKey, telemetryContext }) {
   const activeClient = apiKey ? new Anthropic({ apiKey }) : client;
   if (!activeClient) throw new Error('LLM not initialized');
 
@@ -1097,12 +1352,18 @@ DEVELOPMENT STATE (JSON):
 ${inputJson}`;
 
   const model = 'claude-haiku-4-5';
-  const resp = await activeClient.messages.create({
-    model,
-    max_tokens: 2000,
-    system,
-    messages: [{ role: 'user', content: user }],
-    output_config: { format: { type: 'json_schema', schema: REPORT_SUMMARY_SCHEMA } },
+  const resp = await createMessageWithTelemetry({
+    activeClient,
+    params: {
+      model,
+      max_tokens: 2000,
+      system,
+      messages: [{ role: 'user', content: user }],
+      output_config: { format: { type: 'json_schema', schema: REPORT_SUMMARY_SCHEMA } },
+    },
+    telemetryContext,
+    defaults: { backend: 'helper', component: 'other_helper' },
+    apiKey,
   });
 
   const raw = (resp.content || []).find((b) => b.type === 'text')?.text || '';

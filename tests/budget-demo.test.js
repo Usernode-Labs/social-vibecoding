@@ -76,6 +76,32 @@ test('the fixture reports the user’s own allowance as exhausted', () => {
   assert.match(DEMO_BRANCH, /demo: true/);
 });
 
+// The two halves of the #1055 fixture used to cancel each other out: the
+// budget half says "your allowance is spent", the profile half says "you have
+// a key on file (…7f2c)" — and a key on file is precisely the condition that
+// makes exhaustion irrelevant, so _creditsExhausted() returned false and the
+// card the demo state exists to show was never injected. The fake key has to
+// be distinguishable from a real one at the point of that decision.
+test('the demo API key does not read as a real key on file', () => {
+  const SETTINGS_SRC = fs.readFileSync(
+    path.join(__dirname, '../frontend/src/features/settings/settings.js'), 'utf8'
+  );
+  // Same gate as everything else here, so `demoKey` cannot exist in
+  // production — which is what makes branching on it safe.
+  const profile = AUTH_SRC.slice(AUTH_SRC.indexOf('let demoKey = false;'));
+  assert.match(profile.slice(0, 300), /IS_STAGING && req\.query\.demo === '1'/);
+  assert.match(profile, /\.\.\.\(demoKey \? \{ demoKey: true \} : \{\}\)/,
+    'reported alongside hasApiKey, not instead of it — the key-on-file UI still renders');
+
+  assert.match(SETTINGS_SRC, /this\.state\.demoKey = !!j\.user\?\.demoKey;/,
+    'carried into the client state the surfaces read');
+  assert.match(SETTINGS_SRC, /state: \{ hasApiKey: false, demoKey: false,/,
+    'and defaulted, so a stale/failed refresh reads as "not a demo key"');
+
+  assert.match(DEV_CHAT_SRC, /if \(settings\?\.hasApiKey && !settings\.demoKey\) return false;/,
+    'exhaustion is only suppressed by a key that can actually be billed');
+});
+
 test('it mirrors the established staging-fixture idiom', () => {
   // GET /api/me/ai-budget is the sibling that set this pattern; the two
   // should look the same so neither drifts into an ad-hoc shape.
