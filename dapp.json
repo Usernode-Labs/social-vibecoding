@@ -1484,6 +1484,16 @@
       "expectText": "Operations"
     },
     {
+      "name": "Admin console menu groups are collapsible (#1152)",
+      "path": "/#admin",
+      "expectSelector": "#admin-nav-desktop [data-admin-group-toggle=\"Operations\"][aria-expanded=\"true\"]"
+    },
+    {
+      "name": "Admin console menu groups ship expanded, including the active section's (#1152)",
+      "path": "/#admin/users",
+      "expectSelector": "#admin-nav-desktop [data-admin-group=\"People\"]:not(.hidden) [data-admin-section=\"users\"]"
+    },
+    {
       "name": "Admin console deep-links Overview by its explicit segment",
       "path": "/#admin/overview",
       "expectSelector": "#admin-section-content #admin-overview-stuck"

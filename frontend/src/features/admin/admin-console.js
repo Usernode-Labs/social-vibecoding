@@ -154,6 +154,17 @@ export const AdminUI = Object.freeze({
 // Guarded because the prerender pass evaluates this module in Node.
 if (typeof window !== 'undefined') window.AdminUI = AdminUI;
 
+// Which menu groups (Operations, People, Insights, Platform) the viewer has
+// COLLAPSED, persisted per browser (#1152). Versioned key, same shape as
+// Notifications' notif_expanded_groups_v1.
+//
+// The set stores the COLLAPSED names, not the expanded ones, and that
+// inversion is load-bearing: SECTIONS has grown repeatedly (Push delivery,
+// Email delivery, Estimator accuracy, Seasons), so "absent means expanded" is
+// what keeps every future section visible to someone whose store predates it.
+// It also makes "all four expanded on a first visit" the empty-store default.
+const NAV_COLLAPSED_KEY = 'admin_nav_collapsed_groups_v1';
+
 const AdminConsole = {
   _open: false,
   _section: 'overview',
@@ -374,6 +385,9 @@ const AdminConsole = {
     if (AdminConsole._isMobile() && !valid) {
       AdminConsole._level = 1;
       AdminConsole._section = fallback;
+      // This branch repaints without going through setSection, so the
+      // arrival rule has to be applied here too (#1152).
+      AdminConsole._ensureActiveGroupExpanded();
       AdminConsole._renderShell();
       AdminConsole._renderContent();
       AdminConsole._syncChrome();
@@ -455,6 +469,9 @@ const AdminConsole = {
     }
     AdminConsole._level = targetLevel;
     AdminConsole._transition(() => {
+      // Mobile drill-in / pop repaints without setSection — same arrival
+      // rule, applied before the menu and sidebar are rebuilt (#1152).
+      AdminConsole._ensureActiveGroupExpanded();
       AdminConsole._renderShell();
       AdminConsole._renderContent();
       AdminConsole._syncChrome();
@@ -653,6 +670,106 @@ const AdminConsole = {
     } catch { return false; }
   },
 
+  // ── Menu group collapse state (#1152) ─────────────────────────────────
+
+  // The COLLAPSED group names, lazily loaded from localStorage on first
+  // read. Both menu builders regenerate their markup from THIS on every
+  // repaint and neither derives anything from the DOM, so a toggle survives
+  // a section switch, a viewport crossing and a reload identically.
+  _collapsedGroups: null,
+
+  _collapsed() {
+    if (!AdminConsole._collapsedGroups) AdminConsole._loadCollapsedGroups();
+    return AdminConsole._collapsedGroups;
+  },
+
+  // Corrupt, foreign or unavailable storage all resolve to "nothing
+  // collapsed": this runs inside a render path, so it must never throw.
+  _loadCollapsedGroups() {
+    AdminConsole._collapsedGroups = new Set();
+    // Only render/toggle paths reach here, but the guard sits next to the
+    // storage read regardless — the prerender pass evaluates this module in
+    // Node, where there is no localStorage (see the window.AdminUI guard).
+    if (typeof window === 'undefined') return;
+    try {
+      const raw = localStorage.getItem(NAV_COLLAPSED_KEY);
+      const arr = raw ? JSON.parse(raw) : [];
+      if (!Array.isArray(arr)) return;
+      // Prune names no SECTIONS entry carries any more, so the store can't
+      // grow unbounded and a RENAMED group resets to expanded — the safe
+      // direction, since a stale entry would hide live rows.
+      const live = new Set(AdminConsole.SECTIONS.map((s) => s.group || 'Other'));
+      let changed = false;
+      for (const name of arr) {
+        const key = String(name);
+        if (live.has(key)) AdminConsole._collapsedGroups.add(key);
+        else changed = true;
+      }
+      if (changed) AdminConsole._saveCollapsedGroups();
+    } catch {
+      AdminConsole._collapsedGroups = new Set();
+    }
+  },
+
+  _saveCollapsedGroups() {
+    try {
+      localStorage.setItem(
+        NAV_COLLAPSED_KEY,
+        JSON.stringify([...AdminConsole._collapsed()])
+      );
+    } catch { /* storage may be unavailable; non-fatal, in-memory for the session */ }
+  },
+
+  _isGroupCollapsed(name) {
+    return AdminConsole._collapsed().has(String(name));
+  },
+
+  _setGroupCollapsed(name, collapsed) {
+    const set = AdminConsole._collapsed();
+    const key = String(name);
+    if (collapsed) set.add(key);
+    else set.delete(key);
+    AdminConsole._saveCollapsedGroups();
+  },
+
+  // "Never hide where I am": arriving at a section reveals its group, so a
+  // deep link into a collapsed group (a bookmark, one of the retired-page
+  // redirect stubs) can't leave the highlighted row invisible. Called
+  // BEFORE the repaint that follows it, and only on ARRIVAL — deliberately
+  // not enforced continuously, or the group you are using would be the one
+  // group you cannot collapse.
+  _ensureActiveGroupExpanded() {
+    const s = AdminConsole._visibleSections().find((x) => x.key === AdminConsole._section);
+    if (!s) return;
+    const name = String(s.group || 'Other');
+    const set = AdminConsole._collapsed();
+    if (!set.has(name)) return;
+    set.delete(name);
+    AdminConsole._saveCollapsedGroups();
+  },
+
+  // aria-controls targets have to be unique, and at phone width the hidden
+  // desktop sidebar and the level-1 menu are BOTH in the document — hence
+  // one id prefix per surface ('admin-nav-group', 'admin-menu-group').
+  _groupDomId(prefix, name) {
+    return `${prefix}-${String(name).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}`;
+  },
+
+  // The heading affordance both menus share: a real <button>, so Tab plus
+  // Enter/Space come for free and no keydown handler is needed, with the
+  // aria-expanded/aria-controls pair and the platform's chevron idiom
+  // (down when open, right when closed — home-panels.js's rotation trick).
+  _groupToggleHtml(name, domId, collapsed, cls) {
+    const label = `${collapsed ? 'Expand' : 'Collapse'} ${name}`;
+    const chevron = `<svg data-admin-group-chevron aria-hidden="true"
+        class="w-3 h-3 shrink-0 transition-transform${collapsed ? ' -rotate-90' : ''}"
+        fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/></svg>`;
+    return `<button type="button" data-admin-group-toggle="${AdminConsole.esc(name)}"
+        aria-expanded="${collapsed ? 'false' : 'true'}" aria-controls="${domId}"
+        title="${AdminConsole.esc(label)}" aria-label="${AdminConsole.esc(label)}"
+        class="${cls}">${chevron}<span class="flex-1 min-w-0 truncate">${AdminConsole.esc(name)}</span></button>`;
+  },
+
   // ── Shell: menu (sidebar / mobile list) + content host ────────────────
 
   // The visible sections bucketed by `group`, in first-appearance order.
@@ -669,9 +786,9 @@ const AdminConsole = {
     return groups;
   },
 
-  // Desktop sidebar rows, grouped under headings. Sixteen flat rows is a
-  // lot to scan; the headings are the mitigation (and stay cheap — no
-  // second level of nav state).
+  // Desktop sidebar rows, grouped under headings. Nineteen flat rows is a
+  // lot to scan; the headings are the mitigation, and since #1152 each one
+  // is a collapse/expand button whose state persists per browser.
   _navItemsHtml() {
     const active = AdminConsole._section;
     const itemHtml = (s) => {
@@ -683,11 +800,23 @@ const AdminConsole = {
       return `<button type="button" role="tab" aria-selected="${isActive ? 'true' : 'false'}"
         data-admin-section="${s.key}" class="${cls}">${AdminConsole.NAV_ICONS[s.key] || ''}<span class="flex-1 min-w-0 truncate">${AdminConsole.esc(s.label)}</span></button>`;
     };
-    return AdminConsole._groupedSections().map((g, i) => `
+    return AdminConsole._groupedSections().map((g, i) => {
+      // Rendered from the persisted set, never from the DOM — so this
+      // wholesale repaint (it runs on every section switch) reproduces
+      // whatever the viewer collapsed.
+      const collapsed = AdminConsole._isGroupCollapsed(g.name);
+      const domId = AdminConsole._groupDomId('admin-nav-group', g.name);
+      // No spacing utility on the items wrapper: the rows were adjacent
+      // before this became a wrapped group, and they stay adjacent.
+      return `
       <div class="${i === 0 ? '' : 'mt-6'}">
-        <div class="px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500">${AdminConsole.esc(g.name)}</div>
-        ${g.items.map(itemHtml).join('')}
-      </div>`).join('');
+        ${AdminConsole._groupToggleHtml(g.name, domId, collapsed,
+          'flex items-center gap-1.5 w-full text-left px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 transition-colors')}
+        <div id="${domId}" data-admin-group="${AdminConsole.esc(g.name)}"${collapsed ? ' class="hidden"' : ''}>
+          ${g.items.map(itemHtml).join('')}
+        </div>
+      </div>`;
+    }).join('');
   },
 
   // Mobile level 1: the section menu. A list, not a tab set — so plain
@@ -707,14 +836,22 @@ const AdminConsole = {
         <span class="flex-1 min-w-0 text-sm font-medium truncate">${AdminConsole.esc(s.label)}</span>
         ${chevron}
       </button>`;
-    const groups = AdminConsole._groupedSections().map((g) => `
+    // The toggle stays OUTSIDE the card, so [&>button:last-child] keeps
+    // meaning "the last section row" rather than picking up a heading.
+    const groups = AdminConsole._groupedSections().map((g) => {
+      const collapsed = AdminConsole._isGroupCollapsed(g.name);
+      const domId = AdminConsole._groupDomId('admin-menu-group', g.name);
+      return `
       <div class="mb-5">
-        <div class="px-4 pb-1.5 text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500">${AdminConsole.esc(g.name)}</div>
-        <div class="${AdminUI.card} overflow-hidden
-                    [&>button:last-child]:border-b-0">
+        ${AdminConsole._groupToggleHtml(g.name, domId, collapsed,
+          'flex items-center gap-1.5 w-full text-left px-4 pb-1.5 text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500')}
+        <div id="${domId}" data-admin-group="${AdminConsole.esc(g.name)}"
+             class="${AdminUI.card} overflow-hidden
+                    [&>button:last-child]:border-b-0${collapsed ? ' hidden' : ''}">
           ${g.items.map(rowHtml).join('')}
         </div>
-      </div>`).join('');
+      </div>`;
+    }).join('');
     return `<nav id="admin-mobile-menu" aria-label="Admin sections" class="-mx-4">${groups}</nav>`;
   },
 
@@ -740,6 +877,7 @@ const AdminConsole = {
       // producers wire their own output — _renderMobileMenu right after its
       // innerHTML write, and each section module for its own controls.
       AdminConsole._wireSectionButtons(sideHost);
+      AdminConsole._wireGroupToggles(sideHost);
     }
     // In public mode the viewer isn't an admin at all, so the view-only
     // ADMIN banner would be nonsense — suppress it rather than showing an
@@ -766,6 +904,36 @@ const AdminConsole = {
     });
   },
 
+  // Menu-group headings (#1152). A press is a MENU-ONLY action: it mutates
+  // the persisted set and then the DOM IN PLACE — never setSection,
+  // _renderShell, _renderContent, _writeHash or location.hash. Three
+  // reasons: the section on screen keeps rendering untouched, a phone
+  // repaint would tear the menu's own rows down mid-gesture, and focus
+  // stays on the heading you just pressed so several can be collapsed in a
+  // row. Scoped to the host just written, exactly like _wireSectionButtons,
+  // so repaints can't accumulate handlers.
+  _wireGroupToggles(root) {
+    if (!root) return;
+    root.querySelectorAll('[data-admin-group-toggle]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const name = btn.dataset.adminGroupToggle;
+        const next = !AdminConsole._isGroupCollapsed(name);
+        AdminConsole._setGroupCollapsed(name, next);
+        btn.setAttribute('aria-expanded', next ? 'false' : 'true');
+        const label = `${next ? 'Expand' : 'Collapse'} ${name}`;
+        btn.setAttribute('title', label);
+        btn.setAttribute('aria-label', label);
+        const chevron = btn.querySelector('[data-admin-group-chevron]');
+        if (chevron) chevron.classList.toggle('-rotate-90', next);
+        // `hidden` takes the rows out of tab order too, so tabbing skips a
+        // collapsed group rather than walking invisible buttons.
+        const id = btn.getAttribute('aria-controls');
+        const items = id && document.getElementById(id);
+        if (items) items.classList.toggle('hidden', next);
+      });
+    });
+  },
+
   setSection(key, opts) {
     key = AdminConsole._canonicalSection(key);
     const visible = AdminConsole._visibleSections();
@@ -773,6 +941,9 @@ const AdminConsole = {
       key = AdminConsole._publicMode() ? (visible[0]?.key || 'status') : 'overview';
     }
     AdminConsole._section = key;
+    // Arrival at a section reveals its group, before the repaint that would
+    // otherwise draw the active row inside a collapsed one (#1152).
+    AdminConsole._ensureActiveGroupExpanded();
     // Repaint the sidebar's active state. This used to be the "the shell is
     // already built" half of a branch whose other half rebuilt #admin-root
     // from scratch; the chassis is React's now, so it always exists and
@@ -860,6 +1031,7 @@ const AdminConsole = {
   _renderMobileMenu(host) {
     host.innerHTML = AdminConsole._mobileMenuHtml();
     AdminConsole._wireSectionButtons(host);
+    AdminConsole._wireGroupToggles(host);
   },
 
   _renderSection() {
