@@ -2065,12 +2065,33 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         } catch { /* pill falls back to the raw tallies */ }
       }
 
+      // A GET on this route is NOT by itself evidence that the user opened
+      // the session. The dev chat refetches it programmatically all the
+      // time, and most of those fetches happen at the exact moment a turn
+      // ends: the fallback-done reconcile (#465), the progress poll's
+      // !busy branch, the sync-terminal refresh, the vote/version pill
+      // refresh. Since #138 creates a session_done notification on EVERY
+      // turn completion, the completion was being marked read by the
+      // reconcile fetch ~200ms after it was written — so the cog's green
+      // badge painted and vanished within one frame, i.e. never appeared.
+      //
+      // The two attention-scoped side effects below therefore need the
+      // caller to SAY that a person opened the session: `?opened=1`, set
+      // only by DevChat.openSession's user-initiated call sites (session
+      // row / active-chip click, hash restore, post-flow reopen). Machine
+      // refetches omit it and are now side-effect free apart from the
+      // activity bump.
+      const userOpened = req.query.opened === '1';
+
       // Viewing a session counts as activity so the auto-pause sweeper
       // doesn't pause a session the user is actively reading. Fire-and-
       // forget — the view shouldn't block on this write, and a missed
-      // bump just means the next chat turn / open re-marks it. Opening
-      // also disarms notify_on_done (#161): the owner is looking at the
-      // session again, so a left-mid-turn completion needs no notification.
+      // bump just means the next chat turn / open re-marks it. This one
+      // stays on every fetch: a session being polled by its owner's open
+      // tab is in use, and gating it on ?opened=1 would let a long turn
+      // look idle to the sweeper. A user open ALSO disarms notify_on_done
+      // (#161): the owner is looking at the session again, so a
+      // left-mid-turn completion needs no notification.
       //
       // OWNER ONLY. Both of those are statements about the owner's
       // attention, and neither is true when the admin read above is what
@@ -2079,23 +2100,25 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // owner's "tell me when it's done" notification.
       if (rows[0].user_id === req.user.id) {
         pool.query(
-          `UPDATE chat_sessions SET last_activity_at = NOW(), notify_on_done = FALSE WHERE id = $1`,
+          `UPDATE chat_sessions SET last_activity_at = NOW()${userOpened ? ', notify_on_done = FALSE' : ''} WHERE id = $1`,
           [req.params.id]
         ).catch((err) => log.warn('sessions', 'activity bump on view failed', { err: err.message }));
       }
 
-      // #161 auto-dismiss: opening the session is the canonical "user saw
-      // it" signal — resolve any unread session_done rows for it, even
-      // when the user navigated here on their own rather than via the
-      // notification. Fire-and-forget; cross-tab badge sync on change.
-      notifications.markReadForAction(pool, req.user.id, 'session_opened', rows[0].id)
-        .then((cleared) => {
-          if (cleared > 0) {
-            const { pushNotificationToUser } = require('../services/ws');
-            pushNotificationToUser(req.user.id, { type: 'notifications_changed' });
-          }
-        })
-        .catch((err) => log.warn('sessions', 'session_opened dismiss failed', { err: err.message }));
+      // #161 auto-dismiss: a user opening the session is the canonical
+      // "user saw it" signal — resolve any unread session_done rows for
+      // it, even when the user navigated here on their own rather than via
+      // the notification. Fire-and-forget; cross-tab badge sync on change.
+      if (userOpened) {
+        notifications.markReadForAction(pool, req.user.id, 'session_opened', rows[0].id)
+          .then((cleared) => {
+            if (cleared > 0) {
+              const { pushNotificationToUser } = require('../services/ws');
+              pushNotificationToUser(req.user.id, { type: 'notifications_changed' });
+            }
+          })
+          .catch((err) => log.warn('sessions', 'session_opened dismiss failed', { err: err.message }));
+      }
 
       const { rows: messages } = await pool.query(
         `SELECT id, role, content, model, token_count, cost_cents, metadata, created_at
@@ -4197,6 +4220,12 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
                 return out;
               })
             );
+            // #990: close the fetch step and name the one that is actually
+            // running now. Must land AFTER the batch resolves (so the
+            // client's _deactivateLastStatus freezes a truthful duration on
+            // the fetch row) and BEFORE the re-invocation below, which is
+            // the silent window this row covers.
+            await sendStatus(DATA_TOOL_THINKING_STATUS);
             mayorConvo = [
               ...mayorConvo,
               // Verbatim assistant content (incl. the tool_use blocks) so the
@@ -5950,7 +5979,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           // proposal sat merge-blocked on "still running its tests" until a
           // sweep happened to heal it. Fire-and-forget; captureForSession
           // owns all failure handling and is _inFlight-guarded.
-          visuals.captureForSession(config, session, app, commitHash === 'latest' ? null : commitHash, result, { send: () => {} })
+          visuals.captureForSession(config, session, app, commitHash === 'latest' ? null : commitHash, result, { send: () => {}, trigger: 'manual-recheck' })
             .catch((err) => log.warn('visuals', 'Deploy-staging capture failed (non-fatal)', {
               sessionId: session.id, err: err.message,
             }));
@@ -6149,11 +6178,11 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // fire-and-forget below re-stamps idempotently — same commit sha, so
       // the failure-streak bookkeeping is preserved).
       const visualsService = require('../services/visuals');
-      await visualsService.setChecksPending(pool, sessionId, session.checks_commit_sha || null, 'building')
+      await visualsService.setChecksPending(pool, sessionId, session.checks_commit_sha || null, 'building', 'manual-recheck')
         .catch((err) => log.warn('sessions', 'recheck setChecksPending failed (non-fatal)', {
           sessionId, err: err.message,
         }));
-      visualsService.notifyChecksPending(sessionId, session.checks_commit_sha || null, 'building');
+      visualsService.notifyChecksPending(sessionId, session.checks_commit_sha || null, 'building', 'manual-recheck');
 
       res.json({ status: 'running', checkState: 'pending' });
 
@@ -8307,7 +8336,7 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
         // #461: pend the checks for the NEW commit before the build, so the
         // previous commit's verdict (e.g. a stale 'passing') can't satisfy
         // the merge gate while this build runs — or after it fails.
-        await visuals.setChecksPending(pool, session.id, result.sha, 'building')
+        await visuals.setChecksPending(pool, session.id, result.sha, 'building', 'commit-push')
           .catch((err) => log.warn('visuals', 'setChecksPending failed (non-fatal)', { sessionId: session.id, err: err.message }));
         try {
           stagingResult = await staging.buildAndDeployStaging(config, session, app, result.sha);
@@ -8328,7 +8357,7 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
           ).catch(() => {});
           // Before/after visuals: best-effort, never throws; there is no live
           // client to stream to on a resumed run, so the no-op send is fine.
-          visuals.captureForSession(config, session, app, result.sha, stagingResult, { send: () => {} })
+          visuals.captureForSession(config, session, app, result.sha, stagingResult, { send: () => {}, trigger: 'commit-push' })
             .catch((err) => log.warn('visuals', 'Resumed headless capture failed (non-fatal)', { sessionId: session.id, err: err.message }));
           dispatchSummary = `Commit ${result.sha.substring(0, 8)} pushed to ${session.branch_name}, and a staging preview was built. `
             + 'Headless mode: no PR was opened (it is created on a clone at propose time).'
@@ -9523,6 +9552,15 @@ function dataToolStatusLine(calls) {
   }
   return "Reading the repo's GitHub issues...";
 }
+
+// #990: the step line emitted once a data-tool batch has RESOLVED, while
+// the model is re-invoked with the fetched material in context. Without it
+// the ladder's last live row still says "Fetching github.com..." for the
+// whole (observed: ~12s) compose window — the reporter read that stale,
+// still-spinning row as "it wasn't thinking", then the reply popped in.
+// Emitting a fresh row is what makes the client freeze the fetch row with
+// its real "(took Xs)" and start a new ticker, on reload as well as live.
+const DATA_TOOL_THINKING_STATUS = 'Thinking about what came back...';
 
 // Build the Mayor's message history from chat_session_messages rows.
 // Folds each CC output (persisted as a system row with metadata.ccOutput)
@@ -12063,7 +12101,7 @@ path: /another/changed/view
         // the UI-affecting heuristic and swallows every failure. No PR
         // exists on the headless path — the stored artifacts surface in
         // the PR body later via applyPrMetadata at promote time.
-        visuals.captureForSession(config, session, app, commitHash, stagingResult, { send })
+        visuals.captureForSession(config, session, app, commitHash, stagingResult, { send, trigger: 'commit-push' })
           .catch((err) => log.warn('visuals', 'Headless capture failed (non-fatal)', {
             sessionId: session.id, err: err.message,
           }));
@@ -12299,7 +12337,7 @@ path: /another/changed/view
         // it patches the PR body's "Before / after" block directly and
         // emits visuals_ready (via this turn's send → SSE/WS/bus) so the
         // staging card upgrades in place.
-        visuals.captureForSession(config, session, app, commitHash, stagingResult, { send })
+        visuals.captureForSession(config, session, app, commitHash, stagingResult, { send, trigger: 'commit-push' })
           .catch((err) => log.warn('visuals', 'Capture failed (non-fatal)', {
             sessionId: session.id, err: err.message,
           }));
@@ -12899,4 +12937,4 @@ CMD ["node", "server.js"]
   return { containerId, stagingUrl, hostname };
 }
 
-module.exports = { runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, advanceSharedReviewAfterSync, advanceReviewAfterPlatformSync, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, stripFakeCompletionMarker, buildMayorMessages, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError };
+module.exports = { runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, advanceSharedReviewAfterSync, advanceReviewAfterPlatformSync, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, stripFakeCompletionMarker, buildMayorMessages, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError };

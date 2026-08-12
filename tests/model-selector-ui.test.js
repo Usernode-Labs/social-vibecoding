@@ -1,4 +1,4 @@
-// UI contract for the #800 model selector in public/js/dev-chat.js.
+// UI contract for the #800 model selector in frontend/src/features/dev-chat/dev-chat.js.
 //
 // Same approach as openSession-streaming-reset.test.js: dev-chat.js is a
 // plain browser script (`const DevChat = {…}`), so we load its source
@@ -29,7 +29,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const SRC = fs.readFileSync(
-  path.join(__dirname, '..', 'public', 'js', 'dev-chat.js'),
+  path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'dev-chat.js'),
   'utf8'
 );
 
@@ -524,7 +524,7 @@ test('choosing Usernode hands the session back and never leaves a half-set selec
 
 test('the hand-back is the browser-side escape hatch, and refuses demo rows', () => {
   const source = fs.readFileSync(
-    path.join(__dirname, '..', 'public', 'js', 'dev-chat.js'), 'utf8'
+    path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'dev-chat.js'), 'utf8'
   );
   const fn = source.slice(
     source.indexOf('  async _handBackToUsernode() {'),
@@ -541,7 +541,7 @@ test('the hand-back is the browser-side escape hatch, and refuses demo rows', ()
 
 test('runner state is per session and never bleeds across a switch', () => {
   const source = fs.readFileSync(
-    path.join(__dirname, '..', 'public', 'js', 'dev-chat.js'), 'utf8'
+    path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'dev-chat.js'), 'utf8'
   );
   // openSession clears all three before the /status read re-establishes them.
   assert.match(

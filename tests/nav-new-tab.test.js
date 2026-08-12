@@ -26,12 +26,13 @@ const html = read('public/index.html');
 const swJs = read('public/js/../sw.js');
 const appJs = read('public/js/app.js');
 const appViewJs = read('public/js/app-view.js');
-const browseJs = read('public/js/browse.js');
-const devChatJs = read('public/js/dev-chat.js');
-const homeJs = read('public/js/home.js');
-const leaderboardJs = read('public/js/leaderboard.js');
+const browseJs = read('frontend/src/features/apps/browse.js');
+const devChatJs = read('frontend/src/features/dev-chat/dev-chat.js');
+const chatFrameTsx = read('frontend/src/features/dev-board/chat-frame.tsx');
+const { HOME_SRC: homeJs } = require('./helpers/home-modules');
+const leaderboardJs = read('frontend/src/features/leaderboard/leaderboard.js');
 const settingsJs = read('frontend/src/features/settings/settings.js');
-const adminConsoleJs = read('public/js/admin-console.js');
+const adminConsoleJs = read('frontend/src/features/admin/admin-console.js');
 const dapp = JSON.parse(read('dapp.json'));
 
 // The body of one method in the NavLink object literal.
@@ -226,14 +227,10 @@ const ANCHORS = [
     href: /href="\$\{App\.currentApp \? `#app\/\$\{escapeHtml\(App\.currentApp\)\}\/dev` : ''\}"/,
     handler: "document.getElementById('dc-back').addEventListener",
   },
-  {
-    label: 'back out of the app-wide dev chat',
-    src: () => appViewJs, file: 'app-view.js',
-    markup: /<a id="dev-chat-back"/,
-    oldTag: /<button id="dev-chat-back"/,
-    href: /href="\$\{AppView\._devPageHref\(\)\}"/,
-    handler: "document.getElementById('dev-chat-back').addEventListener",
-  },
+  // 'back out of the app-wide dev chat' is NOT in this list: #1084 chunk G
+  // converted that sub-view's frame to React, which splits the control across
+  // two files, and every entry here has a single source. It gets the same two
+  // assertions by hand below.
   {
     label: 'back out of an issue / proposal / governance topic',
     src: () => appViewJs, file: 'app-view.js',
@@ -278,6 +275,32 @@ for (const a of ANCHORS) {
       `${a.file}: preventDefault ahead of the guard swallows the new tab`);
   });
 }
+
+// The dev general-chat back link, split by #1084 chunk G: the anchor is JSX in
+// frontend/src/features/dev-board/chat-frame.tsx, and the plain-click handler is
+// the onBackClick prop AppView._renderChatSubView still passes in. Same two
+// properties as the loop above asserts for every other control — a real <a>
+// with a resolvable target, and a guard that runs before preventDefault.
+test('"back out of the app-wide dev chat" is a real anchor with a real target', () => {
+  assert.match(chatFrameTsx, /<a\s+id="dev-chat-back"/,
+    'chat-frame.tsx: the control must be an <a>');
+  assert.ok(!/<button[^>]*id="dev-chat-back"/.test(chatFrameTsx + appViewJs),
+    'the old <button> tag is gone from both the component and app-view.js');
+  assert.match(chatFrameTsx, /href=\{backHref\}/,
+    'chat-frame.tsx: the anchor must carry the href prop, not a bare "#"');
+  assert.match(appViewJs, /backHref: AppView\._devPageHref\(\),/,
+    'app-view.js must resolve that href through the same shared helper as before');
+});
+
+test('"back out of the app-wide dev chat" leaves a modified click to the browser', () => {
+  const body = handlerAfter(appViewJs, 'onBackClick: (e) => {', 400);
+  const guard = body.indexOf('NavLink.isNativeClick(e)');
+  const prevent = body.indexOf('e.preventDefault()');
+  assert.ok(guard !== -1, 'app-view.js: the modified-click guard went missing');
+  assert.ok(prevent !== -1, 'app-view.js: a plain click must still be intercepted');
+  assert.ok(guard < prevent,
+    'app-view.js: preventDefault ahead of the guard swallows the new tab');
+});
 
 test('the dev sub-views resolve their target through one helper', () => {
   const at = appViewJs.indexOf('  _devPageHref() {');

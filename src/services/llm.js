@@ -1014,9 +1014,10 @@ ${stripLoneSurrogates(description).trim()}`,
 const REPORT_SUMMARY_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['narrative', 'risks', 'owners'],
+  required: ['narrative', 'highlights', 'risks', 'owners'],
   properties: {
     narrative: { type: 'string' },
+    highlights: { type: 'array', items: { type: 'string' } },
     risks: {
       type: 'array',
       items: {
@@ -1053,6 +1054,10 @@ function sanitizeReportSummary(parsed, knownUsernames) {
   const clip = (v, n) => String(typeof v === 'string' ? v : '').trim().slice(0, n);
   const known = new Set((knownUsernames || []).map((u) => String(u)));
   const narrative = clip(p.narrative, 2500);
+  const highlights = (Array.isArray(p.highlights) ? p.highlights : [])
+    .slice(0, 8)
+    .map((h) => clip(h, 200))
+    .filter(Boolean);
   const risks = (Array.isArray(p.risks) ? p.risks : []).slice(0, 8)
     .map((r) => ({
       title: clip(r && r.title, 120),
@@ -1067,7 +1072,7 @@ function sanitizeReportSummary(parsed, knownUsernames) {
     }))
     .filter((o) => o.username && o.blurb && known.has(o.username))
     .slice(0, 20);
-  return { narrative, risks, owners };
+  return { narrative, highlights, risks, owners };
 }
 
 async function generateReportSummary({ inputJson, appName, knownUsernames, apiKey }) {
@@ -1080,6 +1085,7 @@ Write for a non-technical reader who wants to know how the project is going.
 
 Return JSON with exactly these fields:
 - "narrative": 2-4 short paragraphs (plain text, paragraphs separated by a blank line, no markdown, no headings, no lists) summarizing overall momentum, what has shipped recently, what is moving now, and what is waiting. Mention concrete titles sparingly.
+- "highlights": 3-8 short bullet strings capturing the most important progress points — what shipped, what is moving, what is blocked. Each one plain-text sentence, no markdown. When the snapshot contains a "previousReport" field, focus the highlights on what changed since that report (its lockedAt date); otherwise summarize the current state.
 - "risks": up to 8 concrete risks worth a maintainer's attention, most severe first. Look for: proposals stuck awaiting votes, failing checks, high-priority backlog items nobody is working on, work concentrated on a single contributor, and a backlog growing faster than completions. Each risk: short "title", one-or-two-sentence "detail", "severity" of "high", "medium" or "low". If nothing qualifies, return an empty array — never invent risks.
 - "owners": one entry per contributor username that appears in the data, each with a single-sentence "blurb" describing what they have been working on. Only use usernames exactly as they appear in the data. Skip contributors with nothing attributable.
 
@@ -1110,9 +1116,9 @@ ${inputJson}`;
   const match = text.match(/\{[\s\S]*\}/);
   if (!match) throw new Error('No JSON object in report summary response');
   const parsed = JSON.parse(match[0]);
-  const { narrative, risks, owners } = sanitizeReportSummary(parsed, knownUsernames);
+  const { narrative, highlights, risks, owners } = sanitizeReportSummary(parsed, knownUsernames);
   if (!narrative) throw new Error('Empty narrative in report summary response');
-  return { narrative, risks, owners, usage: resp.usage, model };
+  return { narrative, highlights, risks, owners, usage: resp.usage, model };
 }
 
 // Test hook: swap the shared client for a stub so streamChat's fallback

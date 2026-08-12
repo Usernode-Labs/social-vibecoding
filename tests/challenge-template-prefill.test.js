@@ -25,16 +25,19 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const root = path.join(__dirname, '..');
-const TOPO_SRC = fs.readFileSync(path.join(root, 'public/js/admin-topochain.js'), 'utf8');
+const TOPO_SRC = fs.readFileSync(path.join(root, 'frontend/src/features/admin/admin-topochain.js'), 'utf8')
+  // The one line a bare vm cannot evaluate: the AdminUI import the module
+  // grew when #1082 chunk E moved it into the React bundle. ADMIN_UI_SRC
+  // below supplies that binding instead, as the bundler does in the browser.
+  .replace(/^import \{ AdminUI \} from '\.\/admin-console\.js';$/m, '');
 
-// admin-console.js always loads first in the browser (script order in
-// Shell.tsx) and defines window.AdminUI, whose recipes this module's
-// PANEL_CLS reads at load time. Same extraction as the estimator test.
+// The module's PANEL_CLS reads AdminUI at load time, so the registry has to
+// be bound before the module body runs. Same extraction as the estimator test.
 const ADMIN_UI_SRC = (() => {
-  const consoleSrc = fs.readFileSync(path.join(root, 'public/js/admin-console.js'), 'utf8');
-  const m = consoleSrc.match(/window\.AdminUI = Object\.freeze\(\{[\s\S]*?\n\}\);/);
+  const consoleSrc = fs.readFileSync(path.join(root, 'frontend/src/features/admin/admin-console.js'), 'utf8');
+  const m = consoleSrc.match(/export const AdminUI = Object\.freeze\(\{[\s\S]*?\n\}\);/);
   assert.ok(m, 'admin-console.js defines the AdminUI registry');
-  return m[0];
+  return m[0].replace(/^export const/, 'var');
 })();
 
 // ── Two staging-shaped templates, straight out of the seed ─────────────
@@ -280,8 +283,9 @@ function loadModule() {
   sandbox.window.AdminConsole = adminConsole;
   sandbox.AdminConsole = adminConsole;
   vm.createContext(sandbox);
+  // `var` at a vm context's top level IS the sandbox global, so the module
+  // body resolves the bare AdminUI identifier without further wiring.
   vm.runInContext(ADMIN_UI_SRC, sandbox, { filename: 'admin-console.js#AdminUI' });
-  sandbox.AdminUI = sandbox.window.AdminUI;
   vm.runInContext(TOPO_SRC, sandbox, { filename: 'admin-topochain.js' });
   const Topo = sandbox.window.AdminTopochain;
   assert.ok(Topo, 'AdminTopochain is mirrored onto window');

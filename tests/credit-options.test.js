@@ -28,7 +28,7 @@ const SETTINGS_SRC = fs.readFileSync(
   path.join(__dirname, '../frontend/src/features/settings/settings.js'), 'utf8'
 );
 const DEV_CHAT_SRC = fs.readFileSync(
-  path.join(__dirname, '../public/js/dev-chat.js'), 'utf8'
+  path.join(__dirname, '../frontend/src/features/dev-chat/dev-chat.js'), 'utf8'
 );
 const APP_VIEW_SRC = fs.readFileSync(
   path.join(__dirname, '../public/js/app-view.js'), 'utf8'
@@ -288,13 +288,18 @@ test('all three surfaces render from the shared module', () => {
   assert.match(APP_VIEW_SRC, /CreditOptions\.cardHtml\(state\)/,
     'the Generate-proposal modal renders the shared card');
 
-  // And the module has to be loaded before its consumers.
+  // And the module has to be loaded before its consumers. #1084 chunk G moved
+  // dev-chat.js into the React bundle, whose entry is `type="module"` and so
+  // deferred past every classic /js/** script — that attribute is the ordering
+  // guarantee for that consumer now, in place of a tag position.
   const creditIdx = INDEX_SRC.indexOf('/js/credit-options.js');
-  const devChatIdx = INDEX_SRC.indexOf('/js/dev-chat.js');
   const appViewIdx = INDEX_SRC.indexOf('/js/app-view.js');
   assert.ok(creditIdx > 0, 'credit-options.js is loaded by the shell');
-  assert.ok(creditIdx < devChatIdx, 'loaded before dev-chat.js');
   assert.ok(creditIdx < appViewIdx, 'loaded before app-view.js');
+  assert.ok(!INDEX_SRC.includes('src="/js/dev-chat.js"'),
+    'dev-chat.js is bundled now (chunk G) — it must not come back as a tag');
+  assert.ok(INDEX_SRC.includes('<script type="module" src="/shell/assets/shell.js">'),
+    'the React entry must stay a deferred module so DevChat sees window.CreditOptions');
 });
 
 test('the dev chat renders the refusal as a card, not as prose', () => {

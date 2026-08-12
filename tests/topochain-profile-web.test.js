@@ -34,7 +34,13 @@ const shellSource = read('frontend/src/Shell.tsx');
 // own island — same markup, same comments, new file.
 const menuSource = read('frontend/src/features/header/header-menu.tsx');
 const nativeChrome = read('public/js/native-chrome.js');
-const profileJs = read('public/js/profile.js');
+const profileJs = read('frontend/src/features/profile/profile.js');
+// #1083 chunk F did the same for the screen itself: <main id="profile-screen">
+// and its host div moved out of Shell.tsx into this island, which is also where
+// the renderer now lives (./profile.js beside it). Shell.tsx keeps the comment
+// describing where the screen's data comes from, above the <ProfileScreen /> it
+// renders in the region's place — so the comment assertions below read both.
+const profileIsland = read('frontend/src/features/profile/index.tsx');
 
 // ─── The drawer row ships visible ───────────────────────────────────────
 
@@ -81,10 +87,16 @@ test('the screen-host comments no longer describe an external leaderboard', () =
   // alone since the leaderboard merge: the sibling #challenges-screen
   // <main> this used to start from is gone, folded into the Leaderboard
   // screen's Challenges tab.
-  const hosts = shellSource.slice(
-    Math.max(0, shellSource.indexOf('id="profile-screen"') - 1200),
-    shellSource.indexOf('id="profile-screen"') + 400
-  );
+  //
+  // Two files since chunk F: the comment sits in Shell.tsx above
+  // <ProfileScreen />, the host markup it describes sits in the island. Both
+  // are checked, so moving the prose to either side keeps this honest.
+  const shellAt = shellSource.indexOf('<ProfileScreen />');
+  assert.ok(shellAt > 0, 'the shell must still render the profile screen');
+  const islandAt = profileIsland.indexOf('id="profile-screen"');
+  assert.ok(islandAt > 0, 'the island must still host #profile-screen');
+  const hosts = shellSource.slice(Math.max(0, shellAt - 1200), shellAt)
+    + profileIsland.slice(0, islandAt + 400);
   assert.doesNotMatch(hosts, /public leaderboard service/);
   assert.doesNotMatch(hosts, /using the bridge's\s*\n?\s*getProfileInfo participant id/);
   assert.match(hosts, /in-process/,

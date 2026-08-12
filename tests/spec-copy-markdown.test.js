@@ -26,7 +26,7 @@ const ROOT = path.join(__dirname, '..');
 const read = (...p) => fs.readFileSync(path.join(ROOT, ...p), 'utf8');
 
 const platformUiSrc = read('public', 'js', 'platform-ui.js');
-const devChatSrc = read('public', 'js', 'dev-chat.js');
+const devChatSrc = read('frontend', 'src', 'features', 'dev-chat', 'dev-chat.js');
 const groupChatSrc = read('public', 'js', 'group-chat.js');
 const appCss = read('public', 'css', 'app.css');
 const sessionsSrc = read('src', 'routes', 'sessions.js');

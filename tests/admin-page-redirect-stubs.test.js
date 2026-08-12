@@ -69,7 +69,7 @@ test('/admin#campaign-<id> deep-links the campaign instead of losing the id', ()
   assert.match(src, /'#admin\/campaigns\/' \+ m\[1\]/,
     'and maps it onto #admin/campaigns/<id>');
   // The consuming side owns that second hash level.
-  const campaigns = read('public/js/admin-campaigns.js');
+  const campaigns = read('frontend/src/features/admin/admin-campaigns.js');
   assert.match(campaigns, /#admin\\\/campaigns\\\/\(\\d\+\)/,
     'admin-campaigns.js reads the campaign id back out of the hash');
 });
@@ -109,10 +109,14 @@ test('the public JSON endpoints stay mounted before authMiddleware', () => {
 test('nothing links to the retired standalone pages any more', () => {
   // The old pages each carried a hand-rolled row of cross-links; the console
   // menu replaces them. A stray href would send an admin back out of the app.
-  const files = ['public/index.html', 'public/js/admin-console.js']
-    .concat(fs.readdirSync(path.join(root, 'public/js'))
-      .filter((f) => f.startsWith('admin-'))
-      .map((f) => path.join('public/js', f)));
+  // The console's ten modules live in the React bundle since #1082 chunk E;
+  // public/js is still scanned because a future admin-* module there would be
+  // just as able to smuggle one of these links back in.
+  const dirs = ['frontend/src/features/admin', 'public/js'];
+  const files = ['public/index.html'].concat(dirs.flatMap((dir) => fs
+    .readdirSync(path.join(root, dir))
+    .filter((f) => f.startsWith('admin-') && f.endsWith('.js'))
+    .map((f) => path.join(dir, f))));
   for (const rel of files) {
     const src = read(rel);
     for (const href of ['href="/dashboard"', 'href="/debug"', 'href="/gallery"',

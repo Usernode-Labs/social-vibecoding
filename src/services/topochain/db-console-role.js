@@ -28,20 +28,25 @@
 // regardless of how cleverly the query asks for them. This module
 // creates and maintains that role: `topochain_console_ro`, granted
 // SELECT on exactly the tables `db-console-scope.js` resolves (every base
-// table in `public` minus the credential-bearing ones), with a
-// COLUMN-LEVEL grant on each table that has denied columns —
-// `onchain_accounts` excluding `secret_key`/`registration_code`, `users`
-// excluding `password`, and so on (Postgres column-level GRANT SELECT
-// means every OTHER access path — direct reference, `SELECT *`,
+// table in `public`), with a COLUMN-LEVEL grant on each table that has
+// denied columns — `onchain_accounts` excluding
+// `secret_key`/`registration_code`, `users` excluding `password`,
+// `sessions` excluding `token`, and so on (Postgres column-level GRANT
+// SELECT means every OTHER access path — direct reference, `SELECT *`,
 // `row_to_json`, a cast, a future function nobody's thought of yet — is
 // refused at the executor with "permission denied for table
 // onchain_accounts", full stop).
 //
-// The scope widening (topochain tables -> the whole schema) changed WHICH
-// tables get a grant and nothing about this mechanism: the deny lists it
-// grants around are `services/debug-access.js`'s, reused rather than
-// restated, and every table on them still ends this function with no
-// grant at all. See `db-console-scope.js`'s header.
+// Neither scope widening changed anything about this mechanism, only
+// WHICH statement each table gets. #1130's widening (per-table denials ->
+// per-COLUMN denials, so `mobile_push_deliveries` and friends stop being
+// invisible) moved ~20 tables from "no grant at all" to "a column-level
+// grant that omits the credential columns", which is the same enforcement
+// primitive this file already relied on for `users` and
+// `onchain_accounts`. The column deny list is still
+// `services/debug-access.js`'s, reused rather than restated, merged with
+// the console's own per-column map. See `db-console-scope.js`'s header
+// for why the two capabilities' TABLE lists diverge on purpose.
 // `sql-console.js`'s `runConsoleQuery`
 // executes every console query with `SET LOCAL ROLE
 // topochain_console_ro` inside the same transaction, so the pooled
@@ -95,8 +100,11 @@ function quoteIdent(name) {
 // `buildGrantStatements`.
 //
 // A table with denied columns gets a COLUMN-LEVEL grant listing only the
-// allowed ones; everything else gets a plain table grant. Denied TABLES
-// never appear in the scope at all, so they get no grant of either kind.
+// allowed ones; everything else gets a plain table grant. A table on
+// `DENIED_CONSOLE_TABLES` never appears in the scope at all, so it gets
+// no grant of either kind — that list is empty today (#1130) and exists
+// only as an escape hatch, so in practice every base table in `public`
+// gets exactly one of the two statements.
 // Exported for unit tests (with a mock pool).
 async function buildGrantStatements(pool) {
   const scope = await loadConsoleScope(pool);

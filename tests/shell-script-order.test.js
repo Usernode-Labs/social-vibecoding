@@ -63,6 +63,7 @@ const ADDED_SCRIPTS = [
   '/js/dev-flow-select.js', // #1049 — the dev-flow picker + walkthrough
   '/js/session-options.js', // #1055 — the composer's session/billing menu
   '/js/build-venues.js', // the six build venues, shared by every picker
+  '/js/feedback-queue.js', // #1054 — the offline feedback outbox, before app.js
 ];
 
 // Modules a conversion chunk RETIRED, with the reason. Each one's behaviour
@@ -116,7 +117,155 @@ const RETIRED_SCRIPTS = {
   // scripts at all (they are IIFEs for the server-rendered /cli/authorize and
   // connector-consent pages, in neither Shell.tsx nor SHELL_ASSETS).
   '/js/settings.js': 'settings screen converted to a React island (chunk D)',
+  // #1082 chunk E — #admin-screen became an island
+  // (frontend/src/features/admin/), and all ten admin modules moved verbatim
+  // into the same directory: same objects, same `window.AdminConsole` /
+  // `window.AdminUI` / `window.Admin<Section>` publications (app.js calls the
+  // first, and AdminConsole._renderSection dispatches sections through
+  // window[modName]), now behind a `typeof window` guard for the prerender
+  // pass. None of them had a DOMContentLoaded bootstrap to replace — the
+  // console mounts on demand from App.navigateToAdminConsole.
+  //
+  // All ten in ONE chunk because they were one load-order cluster: the nine
+  // section modules read the AdminUI registry admin-console.js defines, and
+  // admin-topochain.js reads it at module-evaluation time. Inside the bundle
+  // that is an `import`, so retiring admin-console.js's tag on its own would
+  // have left the other nine reading an undefined global.
+  '/js/admin-console.js': 'admin console chassis converted to a React island (chunk E)',
+  '/js/admin-status.js': 'admin Health & status section moved into the console island (chunk E)',
+  '/js/admin-node.js': 'admin Node & chain section moved into the console island (chunk E)',
+  '/js/admin-analytics.js': 'admin Analytics section moved into the console island (chunk E)',
+  '/js/admin-estimator.js': 'admin Estimator accuracy section moved into the console island (chunk E)',
+  '/js/admin-merges.js': 'admin Merge debug section moved into the console island (chunk E)',
+  '/js/admin-gallery.js': 'admin Screenshot gallery section moved into the console island (chunk E)',
+  '/js/admin-campaigns.js': 'admin Maintenance campaigns section moved into the console island (chunk E)',
+  '/js/admin-mail.js': 'admin Email delivery section moved into the console island (chunk E)',
+  '/js/admin-topochain.js': 'admin Seasons/Events/Challenges section moved into the console island (chunk E)',
+  // #1083 chunk F — #browse-screen became an island
+  // (frontend/src/features/apps/browse-screen.tsx) and the module moved
+  // verbatim into the same directory, keeping its `window.Browse` publication
+  // (app.js's #apps hash branch, navigateToBrowse and nav-link.js all reach it
+  // that way) behind a `typeof window` guard for the prerender pass. It had no
+  // DOMContentLoaded bootstrap — the screen mounts on demand from
+  // App.navigateToBrowse.
+  //
+  // Its load-order dependency on home.js went with it. browse.js used to load
+  // AFTER home.js to read Home.iconTileFor / Home.renderAppPillsHtml as
+  // globals; those two are features/apps/app-card.js now, an explicit import
+  // here and a delegating method on Home (which is still classic until step 4
+  // of the chunk). The remaining Home reads — isYours, matchesQuery,
+  // toggleAdded, menuItemsFor — are state rather than markup, stay on the
+  // global, and only run once a viewer opens #apps, long after every classic
+  // script has evaluated.
+  '/js/browse.js': 'browse-all-apps screen converted to a React island (chunk F)',
+  // Same chunk, step 2: #profile-screen became an island
+  // (frontend/src/features/profile/index.tsx) and the renderer moved to
+  // frontend/src/features/profile/profile.js. It keeps `window.Profile` — the
+  // #profile hash branch, App.navigateToProfile / _exitProfile and the header
+  // menu's Profile row all reach it that way, and app.js is still classic —
+  // behind a `typeof window` guard for the prerender pass.
+  //
+  // It had no load-order dependency to carry: nothing else read a Profile
+  // global at evaluation time, and it had no DOMContentLoaded bootstrap. The
+  // one ordering claim in the comment it replaced ("loaded before app.js,
+  // whose restoreFromHash calls Profile.open()") still holds for a stronger
+  // reason — the bundle entry is a module script, so it evaluates after every
+  // classic script here.
+  '/js/profile.js': 'profile screen converted to a React island (chunk F)',
+  // Same chunk, step 3: #leaderboard-screen became an island
+  // (frontend/src/features/leaderboard/index.tsx) and ALL FIVE of its modules
+  // moved into that directory. Each keeps its `window.X` publication behind a
+  // `typeof window` guard — app.js's #leaderboard branch and its aliases,
+  // App.navigateToLeaderboard / _routeLeaderboard, its pull-to-refresh handler
+  // and app-view.js's twelve Kudos call sites all still reach them by name.
+  //
+  // They moved TOGETHER because they are one screen with one lifecycle: the
+  // Leaderboard module lazily mounts the three guests when their tab is first
+  // shown and tears them down in its own close(), and the two Topochain-domain
+  // panes read the shared event selection from TopochainEventContext. Inside
+  // the bundle that is a set of imports in the island rather than an order
+  // implied by five tags.
+  //
+  // The one piece of DOM that changed hands is the SECTION TAB STRIP.
+  // _renderSectionTabs() used to innerHTML three buttons into #standings-tabs;
+  // it publishes through features/leaderboard/section-store.ts now and the
+  // island renders the strip from the new Tabs primitive
+  // (frontend/@/components/ui/tabs.tsx), emitting the same buttons with the
+  // same data-standings-tab keys. Pane visibility deliberately did NOT move —
+  // _applySection still toggles `hidden` on the three pane roots and the event
+  // bar, which is safe because React renders their className as a constant
+  // prop (see frontend/src/lib/legacy-dom.ts).
+  //
+  // kudos.js's ordering claim ("before app-view.js, whose panel renderer calls
+  // Kudos.renderButton") survives the move: all twelve of those call sites read
+  // `window.Kudos` at call time behind a guard, and the bundle entry is a
+  // module script in the head, so it evaluates after every classic script here
+  // and before DOMContentLoaded.
+  '/js/kudos.js': 'Kudos widget moved into the leaderboard island (chunk F)',
+  '/js/leaderboard.js': 'leaderboard screen converted to a React island (chunk F)',
+  '/js/topochain-event-context.js':
+    "the screen's shared event bar moved into the leaderboard island (chunk F)",
+  '/js/topochain-leaderboard.js':
+    'the standings pane moved into the leaderboard island (chunk F)',
+  '/js/topochain-challenges.js':
+    'the challenges pane moved into the leaderboard island (chunk F)',
+  // Same chunk, step 4 — the last region: #home-screen became an island
+  // (frontend/src/features/home/index.tsx) and its three modules moved into
+  // that directory. Each keeps its `window.X` publication behind a `typeof
+  // window` guard, because the classic half still reaches all three by name:
+  // app.js's navigateHome / _exitHome / resyncCurrentView and its WS app-event
+  // fan-out, app-view.js, build-log.js, settings.js and notifications.js call
+  // Home; home-panels.js and home-layout.js are read by home.js and by each
+  // other. Their DOMContentLoaded-era bootstrap is the island's init call.
+  //
+  // They moved TOGETHER because the three tags were one ordered chain —
+  // geometry, then the widget renderers the grid calls into, then the grid —
+  // and inside the bundle that chain is the island's import list.
+  //
+  // NO DOM changed hands. The island renders the screen's structure exactly as
+  // the hand-written shell had it and leaves all four innerHTML hosts
+  // (#app-list, #home-panels, #home-widget-strip-section, and the search bar's
+  // `data-revealed`) to the modules, which is what keeps the two things this
+  // screen is fragile about intact: #home-search-input's focus and caret
+  // survive the grid re-render on every WS app event because the input is
+  // emitted once and never re-rendered, and drag-to-rearrange still runs
+  // entirely in home.js against PlatformUI and the native kit, with React never
+  // reconciling inside #app-list.
+  //
+  // home.js was also the last declarer of the ambient `escapeHtml` /
+  // `formatRelativeTime` pair; both are module-scoped now. The note at the top
+  // of features/home/home.js traces every remaining consumer.
+  '/js/home.js': 'home launcher grid converted to a React island (chunk F)',
+  '/js/home-layout.js': 'home grid geometry moved into the home island (chunk F)',
+  '/js/home-panels.js': 'home widget renderers moved into the home island (chunk F)',
+  // #1084 chunk G, second commit — the dev session chat's module moved into
+  // frontend/src/features/dev-chat/dev-chat.js. This one is a MOVE ONLY: the
+  // 8,800 lines are unchanged apart from the header and the two `typeof window`
+  // guards around its bootstrap, and it still publishes `window.DevChat` at
+  // module scope for the dozen legacy callers that read the bare global
+  // (app.js, app-view.js, group-chat.js, dev-flow-select.js, session-options.js,
+  // credit-options.js, settings.js, dev-alerts.js, …). renderChatView() still
+  // writes #dc-view.innerHTML, so the chat screen is NOT React-owned yet —
+  // that conversion has to take the frame and the composer's streaming state
+  // together, and it is not in this commit.
+  //
+  // It goes ALONE, unlike chunk E's ten-module cluster, because it is the only
+  // consumer end of its load-order chain: the eight pure helpers that had to
+  // load before it (session-state, merge-status, build-log,
+  // session-transcript, spec-sections, cc-progress-summary, dev-alerts,
+  // streaming-markdown) all have consumers outside these two screens and keep
+  // their tags. Their relative order still holds for a stronger reason — the
+  // bundle entry is a deferred module, so it evaluates after every classic tag.
+  '/js/dev-chat.js': 'dev session chat module moved into the React bundle (chunk G)',
 };
+
+// public/js/topochain-events.js is deliberately NOT in that map, and now stays
+// out of it for good. It is the shared "which event should this screen open
+// on?" RULE — pure data with no DOM of its own — so chunk E could not move it
+// with the console and chunk F has no region to move it with either: its one
+// consumer (features/leaderboard/topochain-event-context.js) is in the bundle,
+// reads window.TopochainEvents at call time behind a guard, and is deferred
+// past this classic script. Moving it would be a rewrite, not a move.
 
 test('every legacy script is loaded, in exactly the baseline order', () => {
   const expected = baseline.scripts.filter((s) => !(s in RETIRED_SCRIPTS));
@@ -134,7 +283,7 @@ test('every legacy script is loaded, in exactly the baseline order', () => {
 });
 
 test('the shell still loads the expected number of legacy scripts', () => {
-  // 46 /js/** tags, ALL at the end of <body> — the head has none left. The
+  // 25 /js/** tags, ALL at the end of <body> — the head has none left. The
   // count moves whenever main adds a module — it was 48 at the chassis swap
   // (plus theme.js in the head), main's mail console and credit-options
   // screens brought it to 50, #1036's nav-link.js made 51, #1049's
@@ -144,12 +293,20 @@ test('the shell still loads the expected number of legacy scripts', () => {
   // retires dev-console.js (52), notifications.js and work-drawer.js (50),
   // then header-layout.js, node-pill.js, wallet-sheet.js, ai-credit.js and
   // theme.js (46 — theme.js was the head's only one, so the body count drops
-  // by four). #1081 chunk D retires settings.js (45).
+  // by four). #1081 chunk D retires settings.js (45), and #1082 chunk E
+  // retires the admin console's ten modules in one go (35) — see the cluster
+  // note in RETIRED_SCRIPTS for why they could not go one at a time. It goes
+  // back UP when a new module ships: #1054's feedback-queue.js makes 36.
+  // #1083 chunk F retires its ten modules one screen at a time: browse.js
+  // (35), profile.js (34), the leaderboard screen's five together (29), and
+  // finally the home screen's three (26). #1084 chunk G retires dev-chat.js
+  // (25) — the eight pure chat helpers keep their tags, because group-chat.js,
+  // app-view.js and the session drawer still read them as globals.
   const bodyScripts = scriptsOf(after.slice(after.indexOf('</head>')))
     .filter((s) => s.src && s.src.startsWith('/js/'));
   assert.equal(
-    bodyScripts.length, 45,
-    `expected the 45 legacy /js/** scripts at the end of <body>, found ${bodyScripts.length}. `
+    bodyScripts.length, 25,
+    `expected the 25 legacy /js/** scripts at the end of <body>, found ${bodyScripts.length}. `
     + 'Adding or removing one is fine, but it also needs a matching SHELL_ASSETS entry in '
     + 'public/sw.js (tests/pwa-shell-wiring.test.js enforces that) — so update this count '
     + 'deliberately rather than loosening the check.',
@@ -194,8 +351,12 @@ test('a retired script is really gone, everywhere', () => {
 test('nav-link.js loads ahead of every module that consumes it', () => {
   // Excluded from the fixture comparison above (the frozen pre-migration
   // document predates it), so its position is pinned here instead. #1036:
-  // app.js, app-view.js, browse.js, dev-chat.js, home.js and leaderboard.js
-  // all reference window.NavLink, and it has no dependencies of its own.
+  // app.js, app-view.js, dev-chat.js, home.js and leaderboard.js all
+  // reference window.NavLink, and it has no dependencies of its own.
+  // browse.js, leaderboard.js and dev-chat.js are consumers too and are kept
+  // in the list below even though #1083 chunk F and #1084 chunk G retired their
+  // tags — the `idx === -1` arm covers them, and the entries document that a
+  // re-added tag would still have to come after.
   const srcs = scriptsOf(after).filter((s) => s.src && s.src.startsWith('/js/')).map((s) => s.src);
   const at = srcs.indexOf('/js/nav-link.js');
   assert.notEqual(at, -1, 'the shell must load /js/nav-link.js');
@@ -205,6 +366,31 @@ test('nav-link.js loads ahead of every module that consumes it', () => {
     assert.ok(idx === -1 || at < idx,
       `nav-link.js must load before ${consumer}, which reads window.NavLink`);
   }
+  // The converted consumers live in the bundle now, and the bundle's tag is
+  // in the HEAD — ahead of nav-link.js in document order. What makes that
+  // safe is `type="module"`, which defers it past every classic script, so
+  // that attribute is the actual guarantee and is asserted rather than
+  // assumed. (frontend/src/head.html owns the tag.)
+  const entry = scriptsOf(after).find((s) => s.src === ENTRY_SRC);
+  assert.ok(entry, `the shell must load ${ENTRY_SRC}`);
+  assert.equal(entry.type, 'module',
+    `${ENTRY_SRC} must stay type="module": that is what defers it past the classic `
+    + 'scripts its own modules read globals from (window.NavLink, window.Home, window.PlatformUI).');
+});
+
+test('feedback-queue.js loads ahead of app.js, which arms and drains it', () => {
+  // Excluded from the fixture comparison above for the same reason as
+  // nav-link.js, so its position is pinned here. #1054: app.js calls
+  // FeedbackQueue.init() while wiring the Send Feedback dialog and hands it
+  // any submit the network refuses, so window.FeedbackQueue has to exist by
+  // then. The module itself depends on nothing (window.Offline is read lazily,
+  // inside the flush triggers).
+  const srcs = scriptsOf(after).filter((s) => s.src && s.src.startsWith('/js/')).map((s) => s.src);
+  const at = srcs.indexOf('/js/feedback-queue.js');
+  assert.notEqual(at, -1, 'the shell must load /js/feedback-queue.js');
+  const appAt = srcs.indexOf('/js/app.js');
+  assert.ok(appAt === -1 || at < appAt,
+    'feedback-queue.js must load before app.js, which reads window.FeedbackQueue');
 });
 
 test('dev-flow-select.js loads ahead of the modules that consume it', () => {
@@ -212,7 +398,9 @@ test('dev-flow-select.js loads ahead of the modules that consume it', () => {
   // nav-link.js, so its position is pinned here. #1049: dev-chat.js owns the
   // state and calls DevFlowSelect.pickerHtml / wizardHtml / wire, and
   // app-view.js pokes DevChat._devFlow from the "+" menu — the module itself
-  // has no dependencies at all.
+  // has no dependencies at all. dev-chat.js keeps its entry below even though
+  // #1084 chunk G retired its tag: the `idx === -1` arm covers it, and the
+  // deferred bundle runs after every classic script anyway.
   const srcs = scriptsOf(after).filter((s) => s.src && s.src.startsWith('/js/')).map((s) => s.src);
   const at = srcs.indexOf('/js/dev-flow-select.js');
   assert.notEqual(at, -1, 'the shell must load /js/dev-flow-select.js');
@@ -228,6 +416,8 @@ test('session-options.js loads ahead of the modules that consume it', () => {
   // two modules before it, so its position is pinned here. #1055: dev-chat.js
   // owns the state and calls SessionOptions.open / openInstructions; the
   // module itself depends only on PlatformUI, which loads earlier still.
+  // dev-chat.js keeps its entry below despite #1084 chunk G retiring its tag,
+  // for the same reason as in the dev-flow-select.js check above.
   const srcs = scriptsOf(after).filter((s) => s.src && s.src.startsWith('/js/')).map((s) => s.src);
   const at = srcs.indexOf('/js/session-options.js');
   assert.notEqual(at, -1, 'the shell must load /js/session-options.js');
@@ -249,7 +439,8 @@ test('build-venues.js loads ahead of the modules that consume it', () => {
   // surface that asks "where should this be built?" reads window.BuildVenues,
   // which is four modules — if any one of them loads first it silently falls
   // back to whatever local copy it still has, which is exactly the drift
-  // this module exists to end.
+  // this module exists to end. dev-chat.js keeps its entry below despite
+  // #1084 chunk G retiring its tag (the `idx === -1` arm covers it).
   const srcs = scriptsOf(after).filter((s) => s.src && s.src.startsWith('/js/')).map((s) => s.src);
   const at = srcs.indexOf('/js/build-venues.js');
   assert.notEqual(at, -1, 'the shell must load /js/build-venues.js');

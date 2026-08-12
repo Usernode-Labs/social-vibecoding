@@ -1263,8 +1263,8 @@ html, body {
 
    640px IS the breakpoint: it is Tailwind's `sm` on #app-list's
    `grid-cols-4 sm:grid-cols-5`, and HomeLayout.BREAKPOINT_PX in
-   public/js/home-layout.js. All three must agree or the JS lays out against
-   a column count the CSS isn't rendering. */
+   frontend/src/features/home/home-layout.js. All three must agree or the JS
+   lays out against a column count the CSS isn't rendering. */
 @media (max-width: 639.98px) {
   :root {
     /* 116px — p-2 (16) + icon 56 + gap-1.5 (6) + title 26 + caption 12 */
@@ -2848,7 +2848,36 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   gap: 6px;
   margin-top: 6px;
 }
+/* ── The dense (board) action band: exactly one row ────────
+   Selected as "the action row that follows a dense status band", because
+   .dev-card-status is emitted only by the dense branch of _cardContentHtml
+   and the action band is always its immediate next sibling. The detail
+   view's own .gc-card-actions list is a different surface — it is allowed
+   to wrap to as many rows as it needs and must NOT be capped here.
 
+   Same reserve-and-clip contract as the status band: 24px is .gc-vote-btn's
+   fixed height, the buttons may wrap, and the surplus row is hidden whole
+   rather than showing a strip of half-height pills. The band holds its row
+   open even with no buttons in it (the settled close-issue row has none),
+   which is what keeps a column of cards the same height. */
+.dev-card-status + .gc-card-actions {
+  min-height: 24px;
+  max-height: 24px;
+  overflow: hidden;
+}
+/* The kudos pill arrives wrapped in Kudos.renderButton's positioning span
+   (it anchors the absolute .kudos-popover), and that span is an inline-block:
+   its height is a LINE box, so it measured 25.5px around a 24px button and
+   the extra 1.5px of font descender pushed the button down inside it. In a
+   24px band with zero slack that clipped the button's bottom border — the one
+   half-cut pill on the whole board. inline-flex makes the wrapper hug the
+   button instead of a line box; the popover is absolute, so it stays out of
+   the flex sizing. Scoped to the dense band: the detail view's kudos button
+   sits in an uncapped row where the phantom 1.5px is harmless. */
+.dev-card-status + .gc-card-actions .kudos-wrap {
+  display: inline-flex;
+  align-items: center;
+}
 /* Square icon variant of the action pill — the icon-only Preview
    affordance and the ⋯ overflow trigger. Same 11px pill family and the
    same hover behaviour as .gc-vote-btn (which it composes with), but a
@@ -2863,30 +2892,58 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
    <span>, so they get the pill's geometry with no pointer affordance. */
 span.gc-vote-btn-icon { cursor: default; }
 
-/* ── The card head: headline + badges, with ⋯ pinned top-right ──────
-   The ⋯ trigger lives in the card's TOP-RIGHT corner rather than in the
-   action row: the corner is where "more about this card" belongs, and it
-   keeps the action row to the one or two things you'd actually do. Its own
-   flex column means it can never collide with the 💬 badge (inside the
-   wrapping badge row to its left) or the drag grip (a gutter outside the
-   card entirely), and the chevron stays outside this box as the card's own
-   last child. */
+/* ── The card head: type icon + title, and nothing else ────────────────
+   THE indent lives here, and only here. The title is the one thing that
+   belongs beside the icon; everything else (.dev-card-meta,
+   .dev-card-badges, .gc-card-actions, the issue card's
+   claim list) is a sibling of the head, not of the icon, so it starts at
+   the card's padding edge and gets the card's full width. The gap is
+   12px — the same gap-3 the icon had as a card-level sibling — so the
+   title sits exactly where it always did.
+
+   `center`, not `flex-start`: the head is the title's row now, so the
+   36px icon centres against the title's one or two lines. It only ever
+   floated halfway down the card back when it was a sibling of the whole
+   content column and centred against the pill and action rows too — the
+   fix for that was moving it in here, not top-aligning it, and now that
+   the meta line has moved out there is nothing left below the title for
+   `center` to drift toward.
+
+   The ⋯ trigger is not in here: it lives in the card's TOP-RIGHT rail
+   (.dev-card-rail), because the corner is where "more about this card"
+   belongs and it keeps the action row to the one or two things you'd
+   actually do. Its own flex column means it can never collide with the
+   💬 badge or the drag grip (a gutter outside the card entirely). */
 .dev-card-head {
   display: flex;
-  align-items: flex-start;
-  gap: 6px;
+  align-items: center;
+  gap: 12px;
 }
+/* The title's cell. flex-basis:auto + min-width:0 is what lets a long
+   title wrap onto extra lines instead of being cut off — it is never
+   truncated, unlike the meta line below it. */
 .dev-card-head-main {
   flex: 1 1 auto;
   min-width: 0;
 }
-/* Optically aligned with the FIRST line of the title rather than with the
-   top of the head box — the title's 20px line-box is taller than the 24px
-   button by too little to centre, so a 2px lift lands it on the cap line. */
-/* The right-edge rail: ⋯ pinned to the card's top-right corner, chevron
-   centred in whatever height is left below it. One column for both, because
-   a kanban column only gives a card ~175px of text width and a separate
-   flex slot for the ⋯ cost 30px of it. */
+/* The right-edge rail: ⋯ pinned to the card's top-right corner, the icon
+   Preview pinned to its bottom-right one, and the chevron centred in whatever
+   height is left between them. One column for all three, because a kanban
+   column only gives a card ~175px of text width and a separate flex slot for
+   the ⋯ cost 30px of it.
+
+   Pinning the eye HERE rather than at the end of the action band is what puts
+   it in one vertical line down a whole column of cards: the band's trailing
+   pill moves left and right with the width of the vote/claim pills before it,
+   the rail's bottom does not. It also keeps the eye out of the band's
+   `max-height: 24px` clip, so a card whose pills already fill that row can no
+   longer hide its preview.
+
+   The centring rule matches `> svg` — i.e. the chevron and nothing else, since
+   the ⋯ trigger is a <button> and the preview a <button>/<span>. So the same
+   two auto margins do all three jobs: with a preview they centre the chevron
+   BETWEEN the two pills, and without one they centre it in the space below the
+   ⋯ exactly as before, reserving no empty slot for a preview that isn't there. */
 .dev-card-rail {
   display: flex;
   flex-direction: column;
@@ -2898,6 +2955,12 @@ span.gc-vote-btn-icon { cursor: default; }
 .dev-card-rail > svg {
   margin-top: auto;
   margin-bottom: auto;
+}
+/* Both pills keep their 24px box in a column that may be shorter than their
+   sum — flex-shrink applies to HEIGHT here, and a squashed eye would clip its
+   own border the way the kudos wrapper once did. */
+.dev-card-rail > .gc-vote-btn-icon {
+  flex: none;
 }
 .dev-card-menu-btn {
   flex: none;
@@ -2916,13 +2979,69 @@ span.gc-vote-btn-icon { cursor: default; }
   color: var(--text-primary);
   overflow-wrap: break-word;
 }
-.dev-card-headline-meta {
+/* ── The dense (board) title: exactly two lines ────────────
+   Two lines, always — clamped at two and RESERVING both. A board title used
+   to run to however many lines it needed, which pushed the meta line, the
+   status band and the actions of that one card out of step with every card
+   beside it; a column of cards then had no shared rhythm and the eye had to
+   re-find the status band on every row. Two lines is what the observed
+   titles need (a PR title or an issue title wraps to two at kanban width and
+   very rarely to three), so clamping there loses almost nothing and the
+   `title` attribute on this element carries the full text regardless.
+
+   -webkit-line-clamp is the only mechanism that truncates at a LINE count
+   with an ellipsis; it needs the -webkit-box display and vertical orient to
+   act, and those are still how every current engine implements it. The
+   unprefixed `line-clamp` is listed after it for engines that have shipped
+   the standard property.
+
+   min-height reserves the second line when the title only fills one, so a
+   one-line title and a two-line title put their meta lines at the same y.
+   2 x 1.35 x 13.5px = 36.45px.
+
+   The detail head keeps the unclamped .dev-card-title: it has nothing to
+   align against, and its author-only inline title editor must not be inside
+   a -webkit-box. */
+.dev-card-title-clamp {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  min-height: 36.45px;
+}
+/* ── The meta line, full width ─────────────────────────────
+   "PR#123 · author · 2h ago" — the title's subtitle, and a band of its own
+   below the head rather than a second line inside the icon's indent. It
+   truncates rather than wrapping (single-line ellipsis, unlike the title),
+   so the indent was costing it words it could otherwise show: in a kanban
+   column the 36px chip plus its 12px gap is a fifth of the row. No
+   margin-top — it reads as the title's second line, which is what it was
+   when the two shared a cell.
+
+   The min-height reserves the line even when a card has no subtitle at all:
+   an empty div is 0px tall, and one card in a column silently skipping this
+   band is exactly the misalignment the reserved bands exist to prevent.
+   1.4 x 11.5px = 16.1px.
+
+   max-height pins the other end, the same min===max contract the status and
+   action bands use. A subtitle carrying the `#123` link is a mixed-font line
+   — the mono anchor's ascent/descent differ from the surrounding sans strut,
+   and a line box is the union of both, so those metas measured 17.09px while
+   plain-text ones measured 16.09. One pixel, but it moved the status and
+   action bands of every linked card down relative to its neighbours, which is
+   the entire thing this band exists to prevent. Measured in the browser: the
+   tallest glyph box in the mixed line spans y=2..15, so the clip only ever
+   removes empty descender leading. */
+.dev-card-meta {
   font-size: 11.5px;
   line-height: 1.4;
   color: var(--text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  min-height: 16.1px;
+  max-height: 16.1px;
 }
 
 /* ── Card overflow (⋯) menu ──────────────────────────────
@@ -3071,21 +3190,99 @@ span.gc-vote-btn-icon { cursor: default; }
   vertical-align: middle;
 }
 .gc-vote-inline:empty { display: none; }
+/* ── The status band, full width ───────────────────────────
+   The state bar, the 💬 count, the Closes-#N pills and the metadata chips
+   (priority / assignee / category). These used to ride on the title's own
+   line, which put them inside the icon's indent AND made them compete with
+   the title for width — in a kanban column two chips already forced a wrap.
+   On their own row below the head they start at the card's padding edge like
+   every other band, and the same four chips fit on one line. The gaps are
+   the ones that row carried as Tailwind utilities (gap-x-2 / gap-y-1), so
+   chip spacing is unchanged. */
+.dev-card-badges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  margin-top: 5px;
+}
+/* ── The dense (board) status band: exactly one row ────────
+   Reserved, and clipped rather than shrunk. The band is one row tall, its
+   children may wrap, and the overflow is hidden — so a card with more pills
+   than fit loses the surplus WHOLE (they wrap onto a second row that is
+   simply not shown) instead of showing a strip of half-height pills. That is
+   why the height is fixed rather than a max: an empty band still holds the
+   row open, which is what keeps the action band below it at the same y on
+   every card in a column.
+
+   22px is the state bar's height (.dev-status-pill-block, the tallest thing
+   in the band — .dev-badge chips are 20px and centre inside it), so a full
+   row exactly fills the band with no dead space.
+
+   Not applied to the detail head, which has no neighbour to align with and
+   must show every chip. */
+.dev-card-badges.dev-card-status {
+  min-height: 22px;
+  max-height: 22px;
+  overflow: hidden;
+}
+/* ── …except when it holds nothing at all (#1139) ───────────
+   The reserve above buys inter-card alignment with 27px (22px of row + the
+   5px margin) of blank band on every card that has no state, no linkage, no
+   metadata chip and no messages. On most apps that is EVERY issue card — the
+   metadata chips need someone to have voted, and only a third of apps have
+   any issue-thread messages at all — so the alignment it bought was between
+   uniformly empty rows, and the blank band was the only thing anyone saw.
+
+   The node is RETAINED and hidden rather than omitted from the markup: the
+   action band's own one-row cap is written as `.dev-card-status +
+   .gc-card-actions` (above), and `display: none` leaves sibling adjacency
+   intact where removing the element would silently uncap the action row on
+   exactly these cards. Several dapp.json checks walk the same four-band
+   chain for the same reason.
+
+   _cardContentHtml stamps the flag from its render inputs, not from the
+   emitted HTML — the 💬 badge is present-but-`hidden` at count 0, so neither
+   a string test nor `:empty` would ever fire here. bumpThreadBadge clears the
+   flag when it reveals that badge in place. */
+.dev-card-badges.dev-card-status[data-empty="1"] {
+  display: none;
+}
+/* The two merge-lifecycle text badges predate .dev-badge and size themselves
+   from their own line-height, so inside a clipped band they were the one
+   child that could shrink, wrap its label to a second line and get cut
+   through the middle of the text. Given the chip box here (and ONLY here —
+   they are also used as an icon-sized preview state in the action row, and
+   in the feed and home strips, all of which own their own geometry). */
+.dev-card-status > .gc-merging-badge,
+.dev-card-status > .gc-checks-running-badge {
+  box-sizing: border-box;
+  height: 20px;
+  line-height: 1;
+  flex-shrink: 0;
+}
 /* Live "yes / majority" tally shown ahead of the inline buttons, in a
    little boxed pill to match the buttons / "You voted X" box. */
-/* ── The composite status pill, full width ─────────────────
-   On a card the pill spans the whole content width on its own row: a
-   proportional tally reads as a progress bar there, where wedged between
-   chips at thumbnail width it read as noise. The capsule form
-   (.gc-vote-count without -block) is kept for the detail head and for the
-   group-chat / home surfaces that still call voteCountPill. */
-.dev-status-row {
-  margin-top: 7px;
-}
+/* ── The composite status pill, as a bar ───────────────────
+   On a card the pill is a BAR rather than a capsule: a proportional tally
+   reads as a progress bar, where wedged between chips at thumbnail width it
+   read as noise. The capsule form (.gc-vote-count without -block) is kept
+   for the detail head and for the group-chat / home surfaces that still call
+   voteCountPill.
+
+   It leads the status band and FLEXES instead of taking the whole width, so
+   the chips that used to sit on a row of their own can share that row: it
+   grows into whatever the chips leave, down to a 7rem floor that still fits
+   a tally and its fill. It had a row to itself until the card had four bands
+   to reserve — at which point "state" and "metadata" as separate rows was
+   one band more than the layout could afford, and the pill had never needed
+   the entire width, only more of it than a chip. */
 .dev-status-pill-block {
   display: flex;
   align-items: center;
-  width: 100%;
+  flex: 1 1 auto;
+  min-width: 7rem;
+  max-width: 100%;
   height: 22px;
   padding: 0 9px;
   border-radius: 7px;
@@ -3218,21 +3415,6 @@ span.gc-vote-btn-icon { cursor: default; }
   white-space: nowrap;
   vertical-align: middle;
 }
-/* Dev-card headline cell (title + meta, left of the tally / 💬 pills).
-   flex-basis:auto makes the cell's preferred width the title's natural
-   single-line width, so on narrow screens the pills after it wrap to
-   the next flex line one by one (the 💬 discussion badge first, then
-   the vote tally) instead of the title being squeezed into an
-   ellipsis. Only when the title alone is wider than the card does the
-   cell shrink (min-width:0) and the title text wrap onto extra lines —
-   the title is never cut off. */
-.dev-card-headline { flex: 1 1 auto; min-width: 0; }
-/* The meta line under the title routinely overflows (PR# · user · time
-   · pills) and is fine to truncate. Inline-size containment zeroes its
-   intrinsic width contribution so only the *title's* width decides
-   when the pills wrap; without it a long meta line would push the
-   pills down even when the title fits comfortably. */
-.dev-card-headline-meta { contain: inline-size; }
 /* "Merging…" badge shown next to the vote controls while a PR is merging.
    #405: recoloured emerald → amber so every in-flight "working toward a
    merge" stage (Merging…, Resolving conflicts…) reads amber-with-spinner,
@@ -3973,6 +4155,14 @@ span.gc-vote-btn-icon { cursor: default; }
 }
 .dc-streaming-dots span:nth-child(2) { animation-delay: 0.16s; }
 .dc-streaming-dots span:nth-child(3) { animation-delay: 0.32s; }
+
+/* #990: the trailing activity indicator is the dots on a .dc-status-line row,
+   so it sits flush under the step ladder it belongs to instead of indented
+   like the retired standalone spinner. Only the doubled vertical padding
+   (2px from the row + 4px from the dots) needs trimming. */
+.dc-activity-line { padding: 0 0 4px; }
+.dc-activity-line .dc-streaming-dots { padding: 2px 0; }
+.dc-activity-label { font-size: 11px; color: var(--text-muted); }
 
 @keyframes dc-dot-bounce {
   0%, 80%, 100% { transform: translateY(0); opacity: 0.4; }

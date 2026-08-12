@@ -619,13 +619,13 @@ async function settleActiveSession({ config, pool, session, sessionId, headSha, 
     return { rebuilding: false };
   }
 
-  const pending = await visuals.setChecksPending(pool, sessionId, headSha)
+  const pending = await visuals.setChecksPending(pool, sessionId, headSha, 'building', 'commit-push')
     .catch((err) => {
       log.warn('proposal-update', 'setChecksPending failed (non-fatal)', { sessionId, err: err.message });
       return true;
     });
   if (pending === false) return { rebuilding: false };
-  try { visuals.notifyChecksPending(sessionId, headSha); } catch { /* notify only */ }
+  try { visuals.notifyChecksPending(sessionId, headSha, 'building', 'commit-push'); } catch { /* notify only */ }
 
   const app = {
     id: session.app_id,

@@ -298,6 +298,55 @@ test('the phase caption still renders the stale-run escape hatch', () => {
   assert.match(html, /Re-run checks/);
 });
 
+// #1144: WHY the run started. "Started 4 minutes ago" answers a different
+// question from "who asked for this" — a run the platform kicked off for
+// itself (boot reconcile, stuck sweep) reads as inexplicable churn without
+// it, and someone who just pressed Re-run gets no confirmation that the run
+// on screen is theirs.
+test('a pending run names what triggered it, alongside the stage and the start time', () => {
+  const AppView = makeAppView(ME);
+  const html = AppView._checksDetailHtml(baseProposal({
+    user_id: ME, check_state: 'pending', check_phase: 'building',
+    check_trigger: 'commit-push', test_results: [],
+    checks_checked_at: new Date(Date.now() - 60 * 1000).toISOString(),
+  }));
+  assert.match(html, /Triggered by a new commit on this proposal\./);
+  // The trigger is an ADDITION — it replaces neither the stage caption nor
+  // the started-at line.
+  assert.match(html, /Preparing the staging preview/);
+  assert.match(html, /Started .+\./);
+});
+
+test('a platform-initiated run says so, rather than looking like unexplained churn', () => {
+  const AppView = makeAppView(ME);
+  for (const [trigger, copy] of [
+    ['stuck-sweep', /Restarted automatically by the platform\./],
+    ['boot-reconcile', /Restarted by the platform after it came back up\./],
+    ['manual-recheck', /Triggered by someone asking for a re-run\./],
+    ['promote-kick', /Triggered by this proposal being put to a vote\./],
+  ]) {
+    const html = AppView._checksDetailHtml(baseProposal({
+      user_id: ME, check_state: 'pending', check_trigger: trigger, test_results: [],
+      checks_checked_at: new Date(Date.now() - 60 * 1000).toISOString(),
+    }));
+    assert.match(html, copy, `trigger ${trigger}`);
+  }
+});
+
+test('an unrecognised or absent trigger renders no caption at all', () => {
+  // Every row written before #1144 carries NULL, and they far outnumber the
+  // new ones — an "unknown" line on all of them would be worse than silence.
+  const AppView = makeAppView(ME);
+  for (const check_trigger of [null, undefined, '', 'capture', 'COMMIT-PUSH', 42]) {
+    const html = AppView._checksDetailHtml(baseProposal({
+      user_id: ME, check_state: 'pending', check_trigger, test_results: [],
+      checks_checked_at: new Date(Date.now() - 60 * 1000).toISOString(),
+    }));
+    assert.doesNotMatch(html, /Triggered by|Restarted /, `trigger ${JSON.stringify(check_trigger)}`);
+    assert.match(html, /Checks are still running/, 'the rest of the block is unchanged');
+  }
+});
+
 test('a STALE pending run (past the 10-min window) still offers the re-run button', () => {
   const AppView = makeAppView(ME);
   const html = AppView._checksDetailHtml(baseProposal({

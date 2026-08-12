@@ -122,7 +122,8 @@ test('the trigger is pinned in the top-right RAIL on every card type that has on
   for (const [kind, html] of Object.entries(cards)) {
     assert.match(html, /dev-card-head-main/, `${kind}: uses the shared head`);
     // The rail is the card's LAST child — a right-edge column with the ⋯ on
-    // top and the chevron centred below.
+    // top, the icon Preview (when there is one) pinned at the bottom, and the
+    // chevron centred in between.
     assert.match(html, /dev-card-rail/, `${kind}: rail present`);
     const rail = html.slice(html.indexOf('dev-card-rail'));
     assert.match(rail, /dev-card-menu-btn/, `${kind}: trigger inside the rail`);
@@ -132,7 +133,7 @@ test('the trigger is pinned in the top-right RAIL on every card type that has on
       assert.ok(!/data-card-menu/.test(actions[0]),
         `${kind}: the trigger is in the rail, not the action row`);
     }
-    const badgeRow = html.match(/<div class="flex flex-wrap items-center gap-x-2 gap-y-1">[\s\S]*?<\/div>\s*<\/div>/);
+    const badgeRow = html.match(/<div class="dev-card-badges">[\s\S]*?<\/div>/);
     if (badgeRow) {
       assert.ok(!/data-card-menu/.test(badgeRow[0]),
         `${kind}: the trigger cannot collide with the 💬 badge`);
@@ -142,14 +143,26 @@ test('the trigger is pinned in the top-right RAIL on every card type that has on
 
 test('a card with no ⋯ still gets its chevron, with no empty rail around it', () => {
   const AppView = makeAppView();
-  // A shared session demotes nothing, so _cardRailHtml returns the bare
-  // chevron rather than a one-child column.
+  // A shared session demotes nothing, so with nothing to preview either
+  // _cardRailHtml returns the bare chevron rather than a one-child column.
   const html = AppView._renderSharedSessionCard({
     id: 71, session_title: 'Theirs', username: 'them', user_id: 9,
   });
   assert.equal(menuKeyOf(html), null);
   assert.doesNotMatch(html, /dev-card-rail/);
   assert.match(html, /M9 5l7 7-7 7/, 'the chevron survives on its own');
+
+  // Give that same card a preview and the column DOES appear — the eye needs
+  // something to be pinned to the bottom of, even with no ⋯ above it.
+  const withPreview = AppView._renderSharedSessionCard({
+    id: 71, session_title: 'Theirs', username: 'them', user_id: 9, staging_url: 'https://s',
+  });
+  assert.equal(menuKeyOf(withPreview), null, 'still nothing demoted');
+  assert.match(withPreview, /dev-card-rail/);
+  const rail = withPreview.slice(withPreview.indexOf('dev-card-rail'));
+  assert.doesNotMatch(rail, /dev-card-menu-btn/, 'no trigger in it');
+  assert.match(rail, /M9 5l7 7-7 7[\s\S]*gc-vote-btn-preview/,
+    'chevron above, eye at the bottom');
 });
 
 test('an applied close-issue card has no ⋯ and no action row at all', () => {
@@ -159,8 +172,13 @@ test('an applied close-issue card has no ⋯ and no action row at all', () => {
     payload: { issueNumber: 5, issueTitle: 'T', appliedAt: '2026-06-02T00:00:00Z', appliedBy: 'group-vote', required: 2 },
   });
   assert.equal(menuKeyOf(html), null);
-  assert.doesNotMatch(html, /gc-card-actions/);
-  assert.match(html, /dev-status-row/, 'but it does get the full-width pill');
+  // The four-band card RESERVES an action band on every dense card, so this
+  // one now renders an empty .gc-card-actions rather than none: the point is
+  // that a settled vote has nothing to offer, not that the card is shorter
+  // than its neighbours in the same column.
+  assert.match(html, /<div class="gc-card-actions"><\/div>/, 'reserved, and empty');
+  assert.doesNotMatch(html, /gc-card-actions">\s*<button/, 'no actions inside it');
+  assert.match(html, /dev-status-pill-block/, 'and it does get the tally bar');
 });
 
 test('a repaint under the same key OVERWRITES rather than accumulating', () => {
@@ -186,7 +204,10 @@ test('proposal, foreign, plain collaborator', () => {
   const labels = menuLabels(AppView, AppView._renderProposalCard(PR()));
   assert.ok(!labels.some((l) => /Admin merge/.test(l)), 'not an admin');
   assert.ok(!labels.some((l) => /Open session|Withdraw/.test(l)), 'not the author');
-  assert.ok(labels.some((l) => /Explore in dev chat/.test(l)));
+  // Explore moved to the card FACE for exactly this viewer (foreign, live
+  // proposal, can collaborate), so it is deliberately absent from ⋯.
+  assert.ok(!labels.some((l) => /Explore in dev chat/.test(l)), 'promoted onto the face');
+  assert.match(AppView._renderProposalCard(PR()), /gc-explore-chat-btn/, '…where it is');
   assert.ok(labels.some((l) => /kudos/i.test(l)));
   assert.ok(labels.some((l) => /Set priority/.test(l)));
 });
@@ -279,7 +300,9 @@ test('issue: the full demoted set, and Open on GitHub last', () => {
     ISSUE({ htmlUrl: 'https://gh/i/5' })));
   assert.equal(labels[0], 'Generate proposal');
   assert.ok(labels.some((l) => /Pledge kudos/.test(l)));
-  assert.ok(labels.some((l) => /Mark in progress/.test(l)));
+  // The claim toggle is PROMOTED to the action band, so it left the menu.
+  assert.ok(!labels.some((l) => /Mark in progress/.test(l)), 'promoted onto the face');
+  assert.match(AppView._renderIssueRow(ISSUE()), /gc-card-actions[\s\S]*?markIssueInProgress/);
   assert.ok(labels.some((l) => /Propose to close/.test(l)));
   assert.equal(labels[labels.length - 1], 'Open on GitHub');
 });
@@ -324,13 +347,19 @@ test('own session: visibility, chat-sharing, discussion and Archive', () => {
   AppView._sharedById = { 51: { id: 51, chat_count: 2 } };
   const sess = (over) => ({ id: 51, session_title: 'Mine', status: 'active', ...over });
 
-  const priv = menuLabels(AppView, AppView._renderMySessionCard(sess()));
-  assert.equal(priv.join('|'), 'Make visible|Archive',
+  // Visibility is PROMOTED to the action band now (the four-band card reserves
+  // one, and this is the single thing you do to your own session), so it is a
+  // pill on the face and NOT a ⋯ row. Everything else stays demoted.
+  const privHtml = AppView._renderMySessionCard(sess());
+  assert.match(privHtml, /gc-card-actions[\s\S]*?_setSessionShared\(51, true[^>]*>Make visible</);
+  assert.equal(menuLabels(AppView, privHtml).join('|'), 'Archive',
     'a private session has nowhere for a reader to reach its chat from');
 
-  const vis = menuLabels(AppView, AppView._renderMySessionCard(
-    sess({ shared_at: '2026-06-01T00:00:00Z' })));
-  assert.equal(vis.join('|'), 'Hide|Share chat|Open public discussion (2)|Archive');
+  const visHtml = AppView._renderMySessionCard(sess({ shared_at: '2026-06-01T00:00:00Z' }));
+  assert.match(visHtml, /gc-card-actions[\s\S]*?_setSessionShared\(51, false[^>]*>Hide</,
+    'the same pill, flipped');
+  assert.equal(menuLabels(AppView, visHtml).join('|'),
+    'Share chat|Open public discussion (2)|Archive');
 
   const shared = menuItems(AppView, AppView._renderMySessionCard(
     sess({ shared_at: '2026-06-01T00:00:00Z', transcript_shared_at: '2026-06-01T01:00:00Z' })));
@@ -470,12 +499,12 @@ test('every repaint path re-anchors instead of dismissing', () => {
 
 // The other half of the same bug: the headless poll repainted the whole board
 // every 8 seconds whether or not anything had moved, so even one surviving
-// menu would have been re-filled on a timer for no reason.
-test('the headless poll only repaints when a run actually moved', () => {
-  const at = SRC.indexOf('_syncHeadlessPolling() {');
-  const poll = SRC.slice(at, at + 3000);
-  assert.match(poll, /if \(changed\) AppView\._repaintCards\(\);/,
-    'an unconditional repaint here churns the board on a timer');
+// menu would have been re-filled on a timer for no reason. #1038 deleted that
+// timer outright — the board now flips the card from the pushed session_state
+// event — so the guard is simply that it stays deleted.
+test('no timer repaints the board on a schedule (headless poll stays retired)', () => {
+  assert.doesNotMatch(SRC, /_syncHeadlessPolling\s*\(\)\s*\{/,
+    'an unconditional repaint on a timer churns the board (and any open ⋯ menu)');
 });
 
 // ── Presentation: dropdown vs action sheet ──────────────────────────────
@@ -605,7 +634,10 @@ test('the dropdown draws the glyph in a decorative leading column', () => {
 
 test('the ✨ that used to live inside the Explore label is now its icon', () => {
   const AppView = makeAppView();
-  const item = menuItems(AppView, AppView._renderProposalCard(PR()))
+  // Read off a MERGED card: a live proposal promotes Explore onto its face, so
+  // the merged board is where the ⋯ row still lives.
+  const item = menuItems(AppView, AppView._renderMergedCard(
+    PR({ status: 'merged', chat_count: 0 }), 3))
     .find((i) => /Explore in dev chat/.test(i.label));
   assert.equal(item.label, 'Explore in dev chat', 'no glyph baked into the label');
   assert.equal(AppView._menuIconGlyph(item), AppView.MENU_ICONS.explore);

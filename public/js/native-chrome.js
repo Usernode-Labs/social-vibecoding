@@ -261,7 +261,16 @@
           return true;
         }
         return false;
-      })().catch((error) => {
+      })().then((admitted) => {
+        // Device permissions are not account-level: the iOS notification
+        // prompt (and the Android alarm/battery asks) should reach
+        // signed-out users too, so a settled anonymous session is a
+        // first-run trigger just like the post-login handoff. The run is
+        // shared/latched, so a login racing this cannot stack a second
+        // sheet. In a plain browser the capability probe bails it out.
+        if (admitted) NativeChrome.maybeShowFirstRunPermissions();
+        return admitted;
+      }).catch((error) => {
         console.warn('[native-chrome] anonymous-session admission failed:',
           error && error.message ? error.message : error);
         return false;
@@ -558,20 +567,90 @@
     //
     // Replaces the native onboarding permission screens: after the first
     // successful login handoff on a device, offer the exact-alarm /
-    // battery-optimization prompts the node needs for block production.
-    // One-shot per device (localStorage marker, set on dismiss either
-    // way) — the same rows live permanently in Settings → Usernode app,
-    // so skipping here loses nothing.
+    // battery-optimization prompts (Android) or the notification prompt
+    // (iOS) the node needs. One-shot per device via a localStorage
+    // marker set on dismiss — except on iOS while the OS notification
+    // prompt has never been presented (permission still un-determined),
+    // where the marker is not final: the OS prompt itself is one-shot,
+    // so an un-asked device must keep its chance. The same rows live
+    // permanently in Settings → Usernode app.
     _FIRST_RUN_KEY: 'sv:onboarding_permissions_done',
+    _firstRunPromise: null,
+    _firstRunSheetPresented: false,
+    // Delay between post-grant permission-status re-reads (the native
+    // caches settle asynchronously after the OS dialog).
+    _FIRST_RUN_RECHECK_MS: 800,
 
     _markFirstRunDone() {
       try { localStorage.setItem(NativeChrome._FIRST_RUN_KEY, '1'); } catch (_) {}
     },
 
-    async maybeShowFirstRunPermissions() {
+    // iOS: whether the app has ever presented the OS notification prompt.
+    // The settings snapshot only carries the exactAlarmGranted boolean,
+    // which cannot distinguish "denied" from "never asked" — the social
+    // push state can. Resolves 'undetermined' | 'granted' | 'denied', or
+    // null when the build doesn't expose it (callers fall back to the
+    // boolean). Tolerates both notDetermined / not_determined spellings.
+    async _iosPushPermissionStatus() {
+      if (!(await NativeChrome.has('getSocialPushState'))) return null;
+      const bridge = window.usernode;
+      if (!bridge || typeof bridge.getSocialPushState !== 'function') {
+        return null;
+      }
+      let state = null;
+      try { state = await bridge.getSocialPushState(); } catch (_) {
+        return null;
+      }
+      const raw = state && typeof state.permissionStatus === 'string'
+        ? state.permissionStatus.toLowerCase().replace(/[_\s-]/g, '')
+        : '';
+      if (raw === 'notdetermined' || raw === 'undetermined') {
+        return 'undetermined';
+      }
+      if (raw === 'authorized' || raw === 'provisional' ||
+          raw === 'granted') {
+        return 'granted';
+      }
+      if (raw === 'denied') return 'denied';
+      return null;
+    },
+
+    // Triggered from init()'s boot handoff, every `sv:session`, and the
+    // `usernode:auth-status` recovery chain — one shared run so the
+    // trigger storm cannot stack sheets, and a document latch once a
+    // sheet was actually presented.
+    maybeShowFirstRunPermissions() {
+      if (NativeChrome._firstRunPromise) return NativeChrome._firstRunPromise;
+      const tracked = NativeChrome._maybeShowFirstRunPermissions()
+        .finally(() => {
+          if (NativeChrome._firstRunPromise === tracked &&
+              !NativeChrome._firstRunSheetPresented) {
+            NativeChrome._firstRunPromise = null;
+          }
+        });
+      NativeChrome._firstRunPromise = tracked;
+      return tracked;
+    },
+
+    async _maybeShowFirstRunPermissions() {
+      if (NativeChrome._firstRunSheetPresented) return;
+      let marked = false;
       try {
-        if (localStorage.getItem(NativeChrome._FIRST_RUN_KEY) === '1') return;
+        marked = localStorage.getItem(NativeChrome._FIRST_RUN_KEY) === '1';
       } catch (_) {}
+      let pushStatus;
+      if (marked) {
+        // The OS notification prompt on iOS is system-one-shot, so the
+        // only unrecoverable state is "never asked". Old shell/app
+        // versions (and a dismissed sheet) wrote this marker without the
+        // prompt ever being presented — while iOS still reports the
+        // permission as un-prompted, the marker must not be final.
+        // Android keeps its instant-return fast path.
+        const kit = window.unNative;
+        if (!kit || kit.platform !== 'ios') return;
+        pushStatus = await NativeChrome._iosPushPermissionStatus();
+        if (pushStatus !== 'undetermined') return;
+      }
       if (!window.PlatformUI || typeof PlatformUI.sheet !== 'function') return;
       if (!(await NativeChrome.has('getSettingsState'))) return;
 
@@ -588,7 +667,21 @@
       }
       const perms = state.permissions || {};
       const isAndroid = perms.platform === 'android';
-      const needsAlarm = !perms.exactAlarmGranted;
+      let needsAlarm = !perms.exactAlarmGranted;
+      // iOS: the notification permission is the real subject of this
+      // sheet, so when the build exposes the push permission status let
+      // it override the alarm boolean — there are no exact alarms on
+      // iOS, and a build reporting exactAlarmGranted: true must not
+      // swallow a never-shown notification prompt.
+      if (!isAndroid) {
+        if (pushStatus === undefined) {
+          pushStatus = await NativeChrome._iosPushPermissionStatus();
+        }
+        if (pushStatus === 'undetermined') needsAlarm = true;
+        else if (pushStatus === 'granted') needsAlarm = false;
+      } else {
+        pushStatus = null;
+      }
       // Battery optimization is Android-only; iOS never shows that row.
       const needsBattery = isAndroid && perms.batteryOptDisabled !== true;
       if (!needsAlarm && !needsBattery) {
@@ -634,7 +727,11 @@
       let sheet = null;
       const render = (p) => {
         body.textContent = '';
-        const alarmOk = !!p.exactAlarmGranted;
+        // iOS row truth: prefer the push permission status over the
+        // alarm boolean whenever the build reports one (see above).
+        const alarmOk = !isAndroid && pushStatus != null
+          ? pushStatus === 'granted'
+          : !!p.exactAlarmGranted;
         const batteryOk = p.batteryOptDisabled === true;
         body.appendChild(statusRow(
           isAndroid ? 'Exact alarms' : 'Notifications', alarmOk));
@@ -649,7 +746,45 @@
             b.disabled = true;
             try {
               const next = await window.usernode.requestPermissions();
-              if (next && next.permissions) render(next.permissions);
+              const nextPerms = next && next.permissions
+                ? next.permissions
+                : p;
+              let granted = !!(next && next.granted === true);
+              if (isAndroid) {
+                granted = granted || !!nextPerms.exactAlarmGranted;
+              } else {
+                // The native permission caches can lag right after the
+                // OS dialog — and some builds resolve requestPermissions
+                // before the user answers it. Poll briefly for a
+                // determined status instead of trusting one stale read;
+                // a determined answer wins over the grant flag.
+                let status = await NativeChrome._iosPushPermissionStatus();
+                for (let i = 0;
+                  !granted && status === 'undetermined' && i < 4;
+                  i++) {
+                  await new Promise((resolve) => setTimeout(
+                    resolve, NativeChrome._FIRST_RUN_RECHECK_MS));
+                  status = await NativeChrome._iosPushPermissionStatus();
+                }
+                if (status === 'granted') granted = true;
+                else if (status === 'denied') granted = false;
+                pushStatus = granted ? 'granted' : (status || pushStatus);
+                // A fresh grant should start push registration right
+                // away rather than waiting for the next app resume.
+                if (granted && window.SocialPush &&
+                    typeof SocialPush.getState === 'function') {
+                  SocialPush.getState();
+                }
+              }
+              const batteryOk = !isAndroid ||
+                nextPerms.batteryOptDisabled === true;
+              if (granted && batteryOk) {
+                // Nothing left to ask — close (which records first-run
+                // done) instead of re-rendering a sheet with no job.
+                if (sheet && sheet.dismiss) sheet.dismiss();
+                return;
+              }
+              render(nextPerms);
             } catch (e) {
               console.warn('[native-chrome] requestPermissions failed:', e);
             } finally { b.disabled = false; }
@@ -681,9 +816,11 @@
         contentEl: panel,
         onDismiss: () => NativeChrome._markFirstRunDone(),
       });
-      // Kit unavailable (degraded shell) — don't retry every boot; the
-      // permanent Settings rows remain the fallback.
-      if (!sheet) NativeChrome._markFirstRunDone();
+      // Kit unavailable (degraded shell): present nothing and record
+      // nothing — burning the one-shot marker here silenced the iOS
+      // notification prompt forever. A later healthy launch retries;
+      // the permanent Settings rows remain the in-session fallback.
+      if (sheet) NativeChrome._firstRunSheetPresented = true;
     },
 
     _initAuthStatusEvents() {

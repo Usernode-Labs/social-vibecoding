@@ -636,3 +636,76 @@ test('report toolbar offers the AI generate button and staleness hint', () => {
   assert.ok(bar2.includes('Regenerate AI summary'));
   assert.ok(bar2.includes('Data has changed'));
 });
+
+test('AI highlights render as an escaped bullet list above the narrative', () => {
+  const AppView = makeAppView();
+  const html = AppView._renderReportAiHtml({
+    narrative: 'All good.',
+    highlights: ['Shipped <payments>', 'Review queue cleared'],
+    risks: [], owners: [],
+  }, []);
+  assert.match(html, /data-section="ai-highlights"/);
+  assert.match(html, /Progress highlights/);
+  assert.match(html, /Shipped &lt;payments&gt;/);
+  assert.ok(!html.includes('<payments>'));
+  assert.ok(
+    html.indexOf('data-section="ai-highlights"') < html.indexOf('data-section="ai-summary"'),
+    'highlights come before the narrative'
+  );
+});
+
+test('AI highlights section is omitted when empty or absent', () => {
+  const AppView = makeAppView();
+  const none = AppView._renderReportAiHtml({ narrative: 'n', risks: [], owners: [] }, []);
+  assert.ok(!none.includes('ai-highlights'));
+  const empty = AppView._renderReportAiHtml({ narrative: 'n', highlights: [], risks: [], owners: [] }, []);
+  assert.ok(!empty.includes('ai-highlights'));
+});
+
+// ── Locked snapshots (report-lock-share): Lock button, Previous reports ──
+
+test('report toolbar shows Lock report only for managers', () => {
+  const canManage = makeAppView();
+  canManage.appData = { slug: 'demo', can_manage: true };
+  assert.match(canManage._renderReportToolbar(), /id="dev-report-lock"/);
+  assert.match(canManage._renderReportToolbar(), /Lock report/);
+
+  const viewer = makeAppView();
+  viewer.appData = { slug: 'demo', can_manage: false };
+  assert.ok(!viewer._renderReportToolbar().includes('dev-report-lock'));
+});
+
+test('snapshots list renders dates, badges, and admin-only actions', () => {
+  const AppView = makeAppView();
+  const snaps = [
+    { id: 4, lockedAt: '2026-08-11T10:00:00Z', lockedBy: 'ali<ce', shared: true,
+      sharePath: `/reports/${'a'.repeat(32)}`, htmlPath: '/api/apps/demo/report-snapshots/4/html' },
+    { id: 3, lockedAt: '2026-08-01T09:00:00Z', lockedBy: 'bob', shared: false,
+      sharePath: null, htmlPath: '/api/apps/demo/report-snapshots/3/html' },
+  ];
+  const admin = AppView._renderReportSnapshotsHtml(snaps, true);
+  assert.match(admin, /data-section="snapshots"/);
+  assert.match(admin, /Previous reports/);
+  assert.match(admin, /ali&lt;ce/);
+  assert.ok(!admin.includes('ali<ce'));
+  assert.match(admin, /Shared/);
+  assert.match(admin, /data-snap-copy="\/reports\/a{32}"/);
+  assert.match(admin, /data-snap-unshare="4"/);
+  assert.match(admin, /data-snap-share="3"/);
+  assert.match(admin, /href="\/api\/apps\/demo\/report-snapshots\/4\/html"/);
+  // Read-only document rules still hold: no live-card hooks, no inline handlers.
+  assert.ok(!/onclick=/.test(admin));
+  assert.ok(!/data-issue-row|data-proposal-row|data-gov-row|data-session-chip/.test(admin));
+
+  const viewer = AppView._renderReportSnapshotsHtml(snaps, false);
+  assert.ok(!viewer.includes('data-snap-share'));
+  assert.ok(!viewer.includes('data-snap-unshare'));
+  assert.ok(!viewer.includes('data-snap-copy'));
+  assert.match(viewer, /href="\/api\/apps\/demo\/report-snapshots\/3\/html"/);
+});
+
+test('snapshots list renders nothing when empty', () => {
+  const AppView = makeAppView();
+  assert.equal(AppView._renderReportSnapshotsHtml([], true), '');
+  assert.equal(AppView._renderReportSnapshotsHtml(undefined, true), '');
+});

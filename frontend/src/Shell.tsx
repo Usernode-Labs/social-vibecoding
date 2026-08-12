@@ -45,6 +45,10 @@
 //    never by refreshing the baseline.
 
 import { Button } from '@/components/ui/button';
+import { AdminScreen } from './features/admin';
+import { AppViewIsland } from './features/app-frame';
+import { BrowseScreen } from './features/apps/browse-screen';
+import { ProfileScreen } from './features/profile';
 import { LandingScreen } from './features/auth/landing';
 import { LoginScreen } from './features/auth/login';
 import { RegisterScreen } from './features/auth/register';
@@ -52,13 +56,17 @@ import { WaitingScreen } from './features/auth/waiting';
 import { WaitlistScreen } from './features/auth/waitlist';
 import { MoreScreen } from './features/auth/more';
 import { DevConsolePanel } from './features/dev-console';
+import { HomeScreen } from './features/home';
+import { LeaderboardScreen } from './features/leaderboard';
 import { HeaderMenu } from './features/header/header-menu';
 import { PlatformHeader } from './features/header/platform-header';
 import { NotificationsPanel } from './features/notifications';
 import { SettingsScreen } from './features/settings';
 import { WorkDrawerPanel } from './features/work-drawer';
 import { Dialogs } from './features/dialogs';
+import { StagingOverlay, VisualCompareOverlay } from './features/staging';
 import { OfflineBanner, ViewAsNonAdminBanner } from './features/shell/banners';
+import { LegacyPortals } from './lib/legacy-portals';
 
 export function Shell() {
   return (
@@ -106,214 +114,25 @@ export function Shell() {
           tappable "<sha> · reload") or by pull-to-refresh.
       */}
       {/*
-          Home screen: app list. Rendered as a responsive grid of compact
-          tiles — see Home.renderAppCard. The "Create new app" container
-          that Home.render() appends after the tiles uses `col-span-full`
-          so it spans the full grid row at every breakpoint.
-          
-          The whole feed lives in a 1024px-max, viewport-centred column
-          (.home-column, in public/css/app.css) — applied to #home-body and,
-          separately, to the search bar's inner content so the bar's
-          background stays full-bleed. Horizontal gutters stay on the blocks
-          inside it, so narrow screens are unaffected.
+          Home screen: the launcher grid a signed-in viewer lands on — the
+          pull-to-reveal search bar, the iOS widget strip, #app-list itself and
+          the #home-panels fallback stack. A React island since #1083 chunk F
+          step 4; the markup and all three modules that fill it live in
+          frontend/src/features/home/. Still mounted and reloaded by app.js
+          (navigateHome / Home.load()), and shown through the visibility store —
+          it is the first converted root that ships VISIBLE, which is why
+          App._isScreenVisible now falls back to the DOM for an unpublished
+          converted screen.
       */}
-      <main id="home-screen" className="flex-1 overflow-y-auto" style={{ position: "relative" }}>
-        {/*
-            Hidden-until-pulled search bar (iOS idiom). Deliberately the FIRST
-            child of the scroller and NOT sticky: it occupies real scroll space
-            above the content, so Home._searchReveal can park the scroller at
-            scrollTop = <bar height> and a slight pull down (a scroll up on
-            desktop) slides it into view. Keep pulling once it is fully shown
-            and the kit's pull-to-refresh takes over — attachPullToRefresh only
-            engages from scrollTop 0, so the two stages compose with no extra
-            gesture code.
-            Still OUTSIDE #app-list: Home.render() wholesale-replaces the
-            grid's innerHTML on every WS app event and every keystroke, and the
-            input must keep its focus/caret through those re-renders. Wired
-            once by Home._wireSearch().
-        */}
-        <div id="home-search-bar" data-revealed="false" className="bg-white dark:bg-zinc-950">
-          {/*
-              The bar's BACKGROUND stays full-bleed; only its content sits in
-              the 1024px column, and the px-3 gutter lives here (not on the
-              bar) so this column's content edges match #home-body's exactly.
-          */}
-          <div className="home-column px-3 pt-3 pb-2">
-            <div className="relative max-w-xl">
-              <svg
-                className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-                strokeWidth="2"
-                aria-hidden="true"
-              >
-                <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-              </svg>
-              <input
-                id="home-search-input"
-                type="text"
-                autoComplete="off"
-                placeholder="Search your apps…"
-                aria-label="Search your apps"
-                className="w-full rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 pl-9 pr-9 py-2 text-sm text-zinc-800 dark:text-zinc-200 placeholder-zinc-400 focus:outline-none focus:border-violet-400 dark:focus:border-violet-600"
-              />
-              <button
-                id="home-search-clear"
-                className="hidden absolute right-2 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center rounded-full text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 hover:bg-zinc-500/10 text-base leading-none"
-                title="Clear search"
-                aria-label="Clear search"
-              >
-                &times;
-              </button>
-            </div>
-          </div>
-        </div>
-        {/*
-            .home-body-fill (app.css) makes this a min-height:100% flex column:
-            the min-height guarantees the scroller can always be scrolled by at
-            least the search bar's height, even with an empty "Your apps" — a
-            short page would otherwise leave the bar permanently on screen.
-            (It used to do double duty as the flex context for
-            .home-bottom-anchor on the two trailing sections; those are widgets
-            in the grid now, so nothing below the grid is anchored any more.)
-        */}
-        <div id="home-body" className="home-column home-body-fill">
-          {/*
-              iOS in-app only: the "Usernode widget" editing strip, mirroring
-              the pinned grid the homescreen widget renders. It lives ABOVE the
-              launcher grid rather than inside it — a full-width flow item
-              cannot coexist with the explicit cell placement #app-list now
-              uses. Filled + wired by Home.renderWidgetSection /
-              _wireWidgetStrip; empty everywhere but the iOS app.
-          */}
-          <section id="home-widget-strip-section" className="hidden px-3 pt-2">
-          </section>
-          {/*
-              THE LAUNCHER GRID. Every child is placed at an explicit
-              (column, row) cell by Home.render() — app tiles and widgets
-              alike — so a viewer's arrangement can have holes in it, exactly
-              like a phone home screen. Nothing here flows.
-              
-              4 columns on a phone, 5 from `sm` (640px) up, and never more:
-              the canvas is capped at 5 x 8. That 640px boundary is mirrored
-              in HomeLayout.BREAKPOINT_PX (public/js/home-layout.js) — the JS
-              has to lay out against the same column count the CSS renders,
-              and tests/home-layout-model.test.js pins the pair.
-              
-              Tighter gutters and gaps below `sm` than the old 2-column grid
-              had: four 56px icons only read as a home screen at phone
-              density. `grid-auto-rows` and `position: relative` (needed by
-              the drag-time grid overlay) live in app.css.
-          */}
-          <div id="app-list" className="grid grid-cols-4 sm:grid-cols-5 gap-1.5 sm:gap-2 p-2 pt-1.5 sm:p-3 sm:pt-2">
-          </div>
-          {/*
-              Home-screen widgets (#911) — the FALLBACK host.
-              
-              Widgets normally live IN the launcher grid above, each at its own
-              (column, row) cell: home.js plants a `[data-panel-slot]` host per
-              widget for HomePanels.render() to paint into. This section is
-              where they go when there is no grid to ride in — an active search
-              (a transient view with no layout to place against), and the moment
-              before the first grid paint. Without it a widget would vanish
-              whenever the grid did.
-              
-              Deliberately OUTSIDE #app-list, like the search bar above: the
-              grid's innerHTML is replaced on every WS app event and every
-              search keystroke, which would otherwise destroy these blocks and
-              their listeners.
-              
-              HomePanels fills it with a STACK of sibling bordered
-              <article class="home-panel"> blocks — one per widget, each
-              carrying its own title bar and ⋮ menu. The blocks are plain
-              FULL-WIDTH children: .home-column on #home-body bounds and centres
-              the feed, so don't wrap them in a per-box width bound (see
-              app.css .home-column).
-              
-              NOTE "panel" ≠ the "Usernode widget" strip above the grid — that
-              is the iOS home-screen widget's pinned app list.
-          */}
-          <section id="home-panels" className="hidden px-3 pb-3">
-          </section>
-          {/*
-              NOTE: #home-find-more ("Featured apps" + its "Browse all apps"
-              footer) and #home-create-section ("Create an app") used to sit
-              here as fixed, unmovable trailing sections below the grid. Both
-              are WIDGETS in the grid above now — `discover` and `create` — so
-              they can be placed anywhere the viewer likes, alongside their app
-              tiles, instead of being pinned under everything. See
-              PANEL_REGISTRY in src/routes/home-panels.js and the renderers
-              (renderDiscoverPanel / renderCreatePanel) in
-              public/js/home-panels.js.
-          */}
-        </div>
-      </main>
+      <HomeScreen />
       {/*
           Browse-all-apps screen (#apps). Sibling of #home-screen: every app
           this viewer may see, featured first, with per-tile add/remove badges.
-          Owned by public/js/browse.js; mounted by App.navigateToBrowse.
+          A React island since #1083 chunk F — the markup and the module that
+          fills it both live in frontend/src/features/apps/. Still mounted by
+          App.navigateToBrowse, which now shows it through the visibility store.
       */}
-      <main
-        id="browse-screen"
-        className="hidden flex-1 overflow-y-auto platform-safe-scroll"
-        style={{ position: "relative" }}
-      >
-        <div id="browse-search-bar" className="sticky top-0 z-20 px-3 pt-3 pb-2 bg-white dark:bg-zinc-950">
-          <div className="relative max-w-xl">
-            <svg
-              className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-              strokeWidth="2"
-              aria-hidden="true"
-            >
-              <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-            </svg>
-            <input
-              id="browse-search-input"
-              type="text"
-              autoComplete="off"
-              placeholder="Search all apps…"
-              aria-label="Search all apps"
-              className="w-full rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 pl-9 pr-9 py-2 text-sm text-zinc-800 dark:text-zinc-200 placeholder-zinc-400 focus:outline-none focus:border-violet-400 dark:focus:border-violet-600"
-            />
-            <button
-              id="browse-search-clear"
-              className="hidden absolute right-2 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center rounded-full text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 hover:bg-zinc-500/10 text-base leading-none"
-              title="Clear search"
-              aria-label="Clear search"
-            >
-              &times;
-            </button>
-          </div>
-        </div>
-        {/*
-            Level 1: the app-store list. ONE row markup, two layouts, and the
-            switch is pure CSS — no matchMedia, no re-render on resize.
-            Narrow: a hairline-divided vertical list of full-width rows (the
-            App Store idiom). md and up: a 2/3-column grid whose rows pick up
-            a bordered-box treatment from .browse-row in app.css.
-        */}
-        <div id="browse-list-level">
-          {/*
-              Grid only. Every border — the phone hairline AND the desktop box —
-              is .browse-row in app.css; a divide-* utility here would win the
-              cascade against it and strip the boxes' top/bottom edges.
-          */}
-          <div id="browse-list" className="md:grid md:grid-cols-2 lg:grid-cols-3 md:gap-3 md:p-3">
-          </div>
-          <div id="browse-empty" className="hidden px-3 pb-8 text-sm text-zinc-500 dark:text-zinc-400">
-          </div>
-        </div>
-        {/*
-            Level 2: the per-app detail page (#apps/<slug>). Absorbs what the
-            browse rows' "…" menu used to offer — see Browse._renderDetail.
-        */}
-        <div id="browse-detail" className="hidden max-w-2xl mx-auto p-4">
-        </div>
-      </main>
+      <BrowseScreen />
       {/*
           Leaderboard screen (hidden by default): the one place the group's
           shared progress lives — the Topochain standings, the Kudos
@@ -325,99 +144,66 @@ export function Shell() {
           alias onto the standings tab and self-heal to the bare
           #leaderboard; #challenges and #topochain/seasons alias onto the
           challenges tab. Mounted by App.navigateToLeaderboard.
-          
+
+          A React island as of #1083 chunk F, and the chunk's biggest step:
+          all five of its modules moved into frontend/src/features/leaderboard/
+          with the markup, and the SECTION TAB STRIP became the island's one
+          piece of state, rendered from the Tabs primitive. See that folder's
+          index.tsx — including why the three panes stay legacy innerHTML
+          hosts whose visibility the module still toggles.
+
           Three panes, one visible at a time, each owned by its own module:
-          #topochain-leaderboard-root by public/js/topochain-leaderboard.js
-          (the DEFAULT pane, so it and the event bar are the two that ship
-          visible), #leaderboard-root by public/js/leaderboard.js (the Kudos
-          pane — that module also renders the tab strip and owns
-          Leaderboard.section), and #challenges-root by
-          public/js/topochain-challenges.js. The two Topochain-domain panes
-          share one event selection, rendered into #leaderboard-event-bar by
-          public/js/topochain-event-context.js and hidden while the Kudos tab
-          is active.
-          
-          The wrapper is max-w-5xl for the Topochain table's sake; the Kudos
-          pane keeps its narrower max-w-3xl reading column.
+          #topochain-leaderboard-root by topochain-leaderboard.js (the DEFAULT
+          pane, so it and the event bar are the two that ship visible),
+          #leaderboard-root by leaderboard.js (the Kudos pane — that module
+          also owns Leaderboard.section and publishes it to the strip), and
+          #challenges-root by topochain-challenges.js. The two
+          Topochain-domain panes share one event selection, rendered into
+          #leaderboard-event-bar by topochain-event-context.js and hidden
+          while the Kudos tab is active.
       */}
-      <main
-        id="leaderboard-screen"
-        className="hidden flex-1 overflow-y-auto platform-safe-scroll"
-        style={{ position: "relative" }}
-      >
-        <div className="max-w-5xl mx-auto p-4 w-full">
-          <h2 className="text-2xl font-bold text-zinc-900 dark:text-zinc-100 mb-3">
-            Leaderboard
-          </h2>
-          <div id="standings-tabs" className="flex gap-2 border-b border-zinc-200 dark:border-zinc-800 mb-4">
-          </div>
-          <div id="leaderboard-event-bar" className="w-full mb-4">
-          </div>
-          <div id="leaderboard-root" className="hidden max-w-3xl">
-          </div>
-          <div id="topochain-leaderboard-root" className="w-full">
-          </div>
-          <div id="challenges-root" className="hidden w-full">
-          </div>
-        </div>
-      </main>
+      <LeaderboardScreen />
       {/*
           The Challenges screen used to be its own <main> here
           (#challenges-screen, app-as-SV-chrome migration), rendered by the
           now-deleted public/js/challenges.js. It is the third tab of the
           Leaderboard screen above: #challenges-root lives inside
-          #leaderboard-screen and public/js/topochain-challenges.js renders
-          the merged (public grid + your own contributions) view into it.
+          #leaderboard-screen and topochain-challenges.js renders the merged
+          (public grid + your own contributions) view into it.
           The legacy #challenges hash still works — the router replaceStates
           it to #leaderboard/challenges.
       */}
       {/*
           Profile screen (profile-and-settings-to-web migration): the mobile
-          app's native Profile screen rendered by public/js/profile.js from
-          the in-process /challenges-api/me/* routes, scoped to the signed-in
-          platform session server-side (the bridge's getProfileInfo
-          participant id is no longer consulted). Hash route #profile;
-          mounted by App.navigateToProfile.
+          app's native Profile screen rendered from the in-process
+          /challenges-api/me/* routes, scoped to the signed-in platform
+          session server-side (the bridge's getProfileInfo participant id is
+          no longer consulted). Hash route #profile; mounted by
+          App.navigateToProfile.
+
+          A React island as of #1083 chunk F: the renderer moved with it, to
+          frontend/src/features/profile/profile.js, and the island imports it.
+          #profile-root is still that module's to fill.
       */}
-      <main
-        id="profile-screen"
-        className="hidden flex-1 overflow-y-auto platform-safe-scroll"
-        style={{ position: "relative" }}
-      >
-        <div id="profile-root" className="max-w-3xl mx-auto p-4">
-        </div>
-      </main>
+      <ProfileScreen />
       {/*
           Admin & moderation console screen (#818, extended by #860): the
           full-page console behind the header shield icon (#588 shipped the
-          icon), rendered by public/js/admin-console.js plus one module per
-          heavy section (admin-status / admin-node / admin-analytics /
-          admin-merges / admin-gallery / admin-campaigns / admin-topochain).
-          Hash route #admin[/section]; mounted by App.navigateToAdminConsole,
-          which gates on App.user.isAdmin (both full and view-only admins) —
-          every /api/admin/* endpoint the page calls is independently enforced
-          server-side. The two `public` sections (#admin/status, #admin/node)
-          also mount for a signed-in non-admin; see the PUBLIC MODE note in
-          admin-console.js. Ships hidden like its sibling screens.
-          
-          FULL WIDTH (no max-w / mx-auto, unlike every other screen): this is a
-          dense operator console, not a reading surface. The folded-in Health &
-          status and Analytics sections were always the widest thing in the app
-          — a 6-across tile grid, wide SVG charts, and user/limit/code tables
-          that were horizontally scrolling inside a capped column — so the
-          constraint cost information rather than protecting legibility. The
-          gutter stays modest (p-4, a little roomier from lg up) and everything
-          inside is percentage/grid-based, so mobile is byte-for-byte
-          unchanged.
+          icon). Hash route #admin[/section]; mounted by
+          App.navigateToAdminConsole, which gates on App.user.isAdmin (both
+          full and view-only admins) — every /api/admin/* endpoint the page
+          calls is independently enforced server-side. The two `public`
+          sections (#admin/status, #admin/node) also mount for a signed-in
+          non-admin; see the PUBLIC MODE note in features/admin/admin-console.js.
+
+          An island since #1082 chunk E: the chassis markup, the full-width
+          column, the view-only banner and the temporary-password dialog are
+          React's; the nineteen sections' contents still belong to the ten
+          modules the island imports (the retired public/js/admin-*.js). Ships
+          hidden like its sibling screens, but through the visibility store —
+          #admin-screen is in App.REACT_SCREEN_IDS.
       */}
-      <main
-        id="admin-screen"
-        className="hidden flex-1 overflow-y-auto platform-safe-scroll"
-        style={{ position: "relative" }}
-      >
-        <div id="admin-root" className="w-full p-4 lg:px-6">
-        </div>
-      </main>
+      <AdminScreen />
       <SettingsScreen />
       {/*
           The Topochain leaderboard used to be its own <main> screen here
@@ -520,17 +306,16 @@ export function Shell() {
           `platform` so a first paint before any render behaves as before,
           and chromeless needs no special case any more — it always lands on
           an app surface.
+
+          An ISLAND since #1085 chunk H (step 2), and the last region the
+          step-2 migration converts: features/app-frame owns #app-view, keeps
+          #app-content exactly as it was (empty, filled by public/js/** with
+          innerHTML) and adds one sibling, #app-frame-host, which owns the
+          embedded app's <iframe> end to end. That split is what lets the frame
+          survive a tab switch instead of being reloaded by the next
+          #app-content write — see features/app-frame/app-frame.tsx.
       */}
-      <div
-        id="app-view"
-        className="hidden flex flex-col"
-        data-app-surface="platform"
-        style={{ flex: "1", minHeight: "0", height: "0" }}
-      >
-        <div id="app-content" className="flex-1" style={{ minHeight: "0", overflow: "hidden" }}>
-          {/* Tab content renders here */}
-        </div>
-      </div>
+      <AppViewIsland />
       {/* Notifications dropdown (top-right anchored) — an ISLAND since #1079
           chunk B: features/notifications owns the whole subtree and
           public/js/notifications.js is retired. */}
@@ -543,198 +328,40 @@ export function Shell() {
           since #1079 chunk B: features/dev-console owns the whole subtree and
           public/js/dev-console.js is retired. */}
       <DevConsolePanel />
-      {/* Staging preview (fullscreen overlay) */}
-      <div id="staging-overlay" className="hidden fixed inset-0 z-40 bg-zinc-950 flex flex-col">
-        {/*
-            `staging-chrome-bar` is a STYLE HOOK, not decoration: fullscreen,
-            this overlay is `inset: 0` and covers the status bar, so app.css
-            adds the top safe-area inset to this bar (and only in the
-            non-docked state — a docked panel is pinned mid-page and needs
-            none). The bar's bottom edge needs nothing: everything below it
-            is the staging iframe, which reaches the true bottom edge and
-            receives the real insets over the safe-area bridge.
-        */}
-        <div className="staging-chrome-bar flex items-center gap-3 px-4 py-2 border-b border-zinc-800 shrink-0">
-          <button id="staging-back" className="text-zinc-400 hover:text-zinc-100 text-sm flex items-center gap-1">
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 19l-7-7 7-7" />
-            </svg>
-            Back to session
-          </button>
-          <span className="flex-1">
-          </span>
-          {/*
-              #127: bot-generated testing guidance. Hidden unless the session
-              carries testing_md / testing_path; wired in AppView.swapToStaging.
-          */}
-          <button
-            id="staging-test-btn"
-            className="hidden text-xs font-medium px-2.5 py-1 rounded bg-violet-500/15 text-violet-300 hover:bg-violet-500/25 shrink-0"
-          >
-            Test this change
-          </button>
-          {/*
-              #771: docked-mode toggle. In the docked side panel it reads
-              "Full screen" (expand to today's fullscreen overlay); in
-              fullscreen — when the preview was opened from dev chat and can
-              re-dock — it reads "Exit full screen". Same element, same
-              iframe: toggling never reloads the preview. Wired in
-              AppView._updateStagingModeUi.
-          */}
-          <button
-            id="staging-fullscreen-btn"
-            className="hidden text-xs font-medium px-2.5 py-1 rounded bg-zinc-800 text-zinc-300 hover:bg-zinc-700 shrink-0"
-          >
-            Full screen
-          </button>
-          <span id="staging-url-label" className="text-xs text-zinc-500 font-mono truncate">
-          </span>
-          {/*
-              Mirror of the main dev-console button. The overlay covers the
-              global header (z-40), so the original button is obscured —
-              we surface a duplicate inside the overlay's own chrome and
-              delegate its click to DevConsole.toggle().
-          */}
-          <button
-            id="staging-dev-console-btn"
-            className="relative text-zinc-400 hover:text-zinc-200"
-            aria-label="Open developer console"
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M8 9l3 3-3 3m5 0h3M4 6h16a1 1 0 011 1v10a1 1 0 01-1 1H4a1 1 0 01-1-1V7a1 1 0 011-1z"
-              />
-            </svg>
-            <span
-              id="staging-dev-console-badge"
-              className="hidden absolute -top-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-red-500 text-white text-[0.65rem] font-bold flex items-center justify-center"
-            >
-            </span>
-          </button>
-          {/*
-              #771: close button for the docked side panel. CSS shows it only
-              in docked mode (where "Back to session" is hidden — closing the
-              panel IS going back to the session, which never left).
-          */}
-          <button
-            id="staging-dock-close"
-            className="staging-dock-only text-zinc-400 hover:text-zinc-100 text-lg leading-none px-1 shrink-0"
-            aria-label="Close preview"
-          >
-            &times;
-          </button>
-        </div>
-        {/*
-            Explains why this change isn't live yet — a common point of
-            confusion the first time someone previews their own PR.
-        */}
-        <div className="px-4 py-1.5 bg-violet-500/10 border-b border-violet-500/20 text-xs text-zinc-400 shrink-0">
-          Private preview — only you can see this until the app's users vote your change in.
-        </div>
-        <div className="relative flex-1">
-          <iframe
-            id="staging-iframe"
-            className="absolute inset-0 w-full h-full border-0"
-            style={{ background: "#08080f" }}
-            allow="pointer-lock"
-          >
-          </iframe>
-          {/*
-              #127: collapsible "How to test" panel overlaying the top of the
-              preview. Hidden until requested via the "Test this change" button
-              (auto-shown only for that explicit entry path, #237). Content is
-              bot-authored markdown rendered through the escaping markdown
-              pipeline in AppView._renderTestingControls.
-          */}
-          <div
-            id="staging-testing-panel"
-            className="hidden absolute top-2 left-2 right-2 sm:left-auto sm:w-96 z-10 rounded-lg border border-violet-500/30 bg-zinc-900/95 backdrop-blur shadow-xl"
-          >
-            <div className="flex items-center gap-2 px-3 py-2 border-b border-zinc-800">
-              <span className="text-xs font-semibold text-violet-300">
-                How to test
-              </span>
-              <span className="flex-1">
-              </span>
-              <button
-                id="staging-testing-close"
-                className="text-zinc-500 hover:text-zinc-200 text-sm leading-none px-1"
-                aria-label="Dismiss testing instructions"
-              >
-                &times;
-              </button>
-            </div>
-            <div
-              id="staging-testing-content"
-              className="px-3 py-2 text-xs text-zinc-300 leading-relaxed max-h-48 overflow-y-auto"
-            >
-            </div>
-          </div>
-          {/*
-              Spinner shown over the iframe while a preview is being opened, so
-              the load never reads as a black void. app-view.js owns the copy:
-              a neutral "Opening preview…" while ensure-staging is asked,
-              "Loading the preview…" across the iframe's own render, the
-              rebuild estimate ONLY when a rebuild is genuinely running, and a
-              waiting state when the host hasn't answered yet. The defaults
-              below are neutral on purpose (#816) — a first paint before JS
-              sets the text must not promise a wait that isn't happening.
-          */}
-          <div
-            id="staging-loader"
-            className="hidden absolute inset-0 flex flex-col items-center justify-center gap-4 bg-zinc-950 text-center px-6"
-          >
-            <div className="w-9 h-9 border-2 border-zinc-700 border-t-violet-400 rounded-full animate-spin">
-            </div>
-            <div id="staging-loader-title" className="text-sm text-zinc-200 font-medium">
-              Opening preview…
-            </div>
-            <div id="staging-loader-sub" className="text-xs text-zinc-500 max-w-xs leading-relaxed">
-            </div>
-          </div>
-        </div>
-      </div>
+      {/* Staging preview (fullscreen overlay) — an ISLAND since #1085 chunk H:
+          features/staging owns the whole subtree, #staging-iframe included.
+          public/js/app-view.js publishes state through the bridge on
+          window.UsernodeReact.staging (it keeps the file, and every
+          responsibility that is not shell markup). */}
+      <StagingOverlay />
       {/*
           #353: before/after comparison (fullscreen overlay). Opened by
           clicking either tile rendered by AppView.visualsTilesHtml — shows
           the before + after for one capture group side-by-side at full size
           (stacked on narrow screens), instead of dumping the raw asset into
           a new tab. Built dynamically by AppView.openVisualComparison;
-          closed via Back / backdrop / Escape (closeVisualComparison).
+          closed via Back / backdrop / Escape (closeVisualComparison). An
+          ISLAND since #1085 chunk H — it is not one of
+          PlatformUI.STATIC_MODAL_IDS, so nothing lifts its card out at
+          runtime and it may hold state.
       */}
-      <div
-        id="visual-compare-overlay"
-        className="hidden fixed inset-0 z-50 bg-zinc-950/95 flex flex-col"
-        role="dialog"
-        aria-modal="true"
-        aria-label="Before / after comparison"
-      >
-        <div className="flex items-center gap-3 px-4 py-2 border-b border-zinc-800 shrink-0">
-          <button
-            id="visual-compare-back"
-            className="text-zinc-400 hover:text-zinc-100 text-sm flex items-center gap-1"
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 19l-7-7 7-7" />
-            </svg>
-            Close
-          </button>
-          <span className="flex-1">
-          </span>
-          <span id="visual-compare-label" className="text-xs text-zinc-400 font-mono truncate">
-          </span>
-        </div>
-        <div id="visual-compare-body" className="usn-compare-body flex-1 overflow-auto p-4">
-        </div>
-      </div>
+      <VisualCompareOverlay />
       {/*
           Every dialog in the shell (#1078 chunk A). One component per modal
           root, rendered in the same order they were spelled out here — see
           features/dialogs/index.tsx.
       */}
       <Dialogs />
+      {/*
+          #1085 chunk H, step 3: the Dev board's runtime-injected regions.
+          Renders NO DOM of its own — it is the anchor that lets
+          features/dev-board portal React subtrees into hosts the legacy
+          renderers created with innerHTML, inside THIS tree. Chunk G mounted
+          those with a second createRoot; folding them in means one reconciler,
+          no root to leak, and no `createRoot` on a live container. See
+          lib/legacy-portals.tsx.
+      */}
+      <LegacyPortals />
       {/*
           PlatformUI — the platform's single wrapper over the native kit
           (toasts, alerts, confirms, sheets). Loaded FIRST in the bundle:
@@ -743,9 +370,10 @@ export function Shell() {
       {/*
           NavLink (#1036) — the "navigation controls behave like real links"
           seam (cmd/ctrl-click, middle-click and shift-click open a new tab).
-          No dependencies of its own and consumed by app.js, app-view.js,
-          browse.js, dev-chat.js, home.js and leaderboard.js, so it loads
-          ahead of the whole bundle.
+          No dependencies of its own and consumed by app.js, app-view.js and
+          dev-chat.js among the classic scripts, plus features/apps/browse.js,
+          features/home/home.js and features/leaderboard/leaderboard.js from
+          inside the React bundle, so it loads ahead of the whole bundle.
       */}
       <script src="/js/nav-link.js" />
       <script src="/js/platform-ui.js" />
@@ -837,92 +465,112 @@ export function Shell() {
       <script src="/js/streaming-markdown.js" />
       {/*
           #405: canonical merge-lifecycle helper (window.MergeStatus). Loaded
-          before dev-chat.js / app-view.js / home.js so all three derive and
-          label proposal merge states from one place.
+          before dev-chat.js / app-view.js so both derive and label proposal
+          merge states from one place. (This list used to name home.js as a
+          third consumer; it has never read MergeStatus, and it is in the React
+          bundle as of #1083 chunk F either way.)
       */}
       <script src="/js/merge-status.js" />
-      <script src="/js/dev-chat.js" />
       {/*
-          Kudos widget (button + budget badge) and leaderboard screen.
-          Loaded BEFORE app-view.js so the panel renderer can use
-          Kudos.renderButton directly.
+          /js/dev-chat.js used to load here, last of the chat cluster, after
+          every pure helper above that it consumes. #1084 chunk G moved it into
+          the React bundle (features/dev-chat/dev-chat.js) and the relative
+          order still holds: the bundle is a deferred module in <head>, so it
+          runs after ALL of these classic tags, which is exactly the position
+          the tag occupied. window.DevChat is published at module scope there,
+          before hydration, so app.js's DOMContentLoaded bootstrap still finds
+          it. Note the eight helpers above are NOT retired — group-chat.js,
+          app-view.js and the session drawer still read them as globals.
       */}
-      <script src="/js/kudos.js" />
       {/*
-          /js/ai-credit.js used to load here, alongside kudos.js above: same
+          /js/kudos.js and /js/ai-credit.js used to load here — same
           status-pane slot pattern, same poll-then-render shape. #1079 chunk B
-          moved it into the React bundle with the drawer rows it renders into
-          (features/header/ai-credit.js). App.init still calls
-          AiCredit.Budget.init() on the same authed-boot tick.
+          moved ai-credit into the React bundle with the drawer rows it renders
+          into (features/header/ai-credit.js), and #1083 chunk F moved kudos
+          with the Leaderboard screen (features/leaderboard/kudos.js). App.init
+          still calls AiCredit.Budget.init() and Kudos.Budget.init() on the
+          same authed-boot tick.
+
+          kudos.js used to be here specifically so it loaded BEFORE
+          app-view.js, whose panel renderer calls Kudos.renderButton. That
+          still holds: every one of app-view.js's twelve call sites reads
+          `window.Kudos` at CALL time behind a truthiness guard, and the bundle
+          entry is a module script in the head, so it evaluates after every
+          classic script below and before DOMContentLoaded — i.e. before
+          App.init and before any PR surface renders.
       */}
-      <script src="/js/leaderboard.js" />
       {/*
           Shared "which event should this screen open on?" rule, consumed by
-          the event-context module and both Topochain-domain panes. Must load
-          before /js/topochain-event-context.js.
+          the event-context module. Pure data + rules with no DOM of its own,
+          so chunk F left it here: it has no region to move WITH, and moving a
+          module that no island renders would be a rewrite rather than the
+          move the migration asks for. Its ordering constraint ("before
+          topochain-event-context.js") is satisfied more strongly than before —
+          that consumer is in the deferred bundle now, and it reads
+          window.TopochainEvents at call time behind a guard either way.
       */}
       <script src="/js/topochain-events.js" />
       {/*
-          Profile screen (#profile hash route — profile-and-settings-to-web
-          migration). Loaded before app.js, whose restoreFromHash calls
-          App.navigateToProfile → Profile.open().
+          The profile screen's renderer (#profile hash route —
+          profile-and-settings-to-web migration) used to be a classic script
+          here. #1083 chunk F moved it into the bundle as
+          frontend/src/features/profile/profile.js, imported by the
+          #profile-screen island. It still publishes `window.Profile`, so
+          app.js's restoreFromHash → App.navigateToProfile → Profile.open()
+          is unchanged: the bundle entry is a module script in the head, so it
+          evaluates after every classic script here and long before any hash
+          route is restored.
       */}
-      <script src="/js/profile.js" />
       {/*
-          Admin & moderation console (#admin hash route, #818). Loaded before
-          app.js, whose restoreFromHash calls App.navigateToAdminConsole →
-          AdminConsole.open().
+          The Topochain-domain panes of the Leaderboard screen (Task 14, public
+          screens; merged into one screen by the leaderboard merge) used to
+          load here as three classic scripts: topochain-event-context.js,
+          topochain-leaderboard.js and topochain-challenges.js. #1083 chunk F
+          moved all three into the React bundle with the screen that hosts
+          them, so they arrive with /shell/assets/shell.js.
+
+          They moved TOGETHER with leaderboard.js because they are one screen:
+          the Leaderboard module mounts them lazily when their tab is first
+          shown — #leaderboard -> TopochainLeaderboard.open() (the default tab,
+          so that one mounts on the screen's first open),
+          #leaderboard/challenges -> TopochainChallenges.open() — and both read
+          the event selection from TopochainEventContext, which owns the shared
+          picker + hero. Inside the bundle that is an ordinary import in
+          features/leaderboard/index.tsx rather than an order implied by these
+          tags. "Loaded before app.js", which this comment used to claim, is
+          still true of what it was protecting: app.js reaches all three
+          through `window.` at call time, from a hash route restored after
+          DOMContentLoaded.
       */}
-      <script src="/js/admin-console.js" />
       {/*
-          Topochain-domain panes of the Leaderboard screen (Task 14, public
-          screens; merged into one screen by the leaderboard merge). The
-          Leaderboard module mounts these lazily when their tab is first
-          shown — #leaderboard -> TopochainLeaderboard.open() (the default
-          tab, so this one mounts on the screen's first open),
-          #leaderboard/challenges -> TopochainChallenges.open() — and both
-          read the event selection from TopochainEventContext, which owns
-          the shared picker + hero. Loaded before app.js.
+          The admin console's ten modules used to load here as classic
+          scripts, between topochain-challenges.js and build-log.js:
+          admin-console.js, admin-topochain.js, and the eight folded-in
+          section modules from #860 (status / node / analytics / estimator /
+          merges / gallery / campaigns / mail). #1082 chunk E moved all ten
+          into the React bundle, imported by the #admin-screen island
+          (frontend/src/features/admin/index.tsx), so they now arrive with
+          /shell/assets/shell.js instead.
+
+          They moved TOGETHER because they were one load-order cluster: the
+          nine section modules read the AdminUI class-string registry that
+          admin-console.js defines, and admin-topochain.js reads it while its
+          own module body evaluates. Inside the bundle that is an ordinary
+          `import`, so the dependency is declared in code rather than implied
+          by the order of these tags.
+
+          The three topochain-* modules above were NOT part of that move —
+          they serve the public Leaderboard screen, not the console, and went
+          into the bundle one chunk later with it (#1083 chunk F).
+          public/js/topochain-events.js, which both halves read, is still a
+          classic script.
       */}
-      <script src="/js/topochain-event-context.js" />
-      <script src="/js/topochain-leaderboard.js" />
-      <script src="/js/topochain-challenges.js" />
       {/*
-          Seasons, Events & Challenges admin console screens (Task 15): the
-          'seasons' entry in AdminConsole.SECTION_MODULES delegates to
-          AdminTopochain.render(), which owns its own sub-nav under
-          #admin/seasons/<sub> (the old #admin/topochain/<sub> address still
-          resolves and is rewritten to the canonical one). The file name and
-          the AdminTopochain global are historical — renaming them would
-          churn the service-worker precache list for no user-visible gain.
-          Loaded after admin-console.js (which it extends) and before app.js.
-      */}
-      <script src="/js/admin-topochain.js" />
-      {/*
-          Folded-in admin console sections (#860): the seven standalone pages
-          (/status, /node-status, /dashboard, /debug, /gallery, /admin,
-          /admin-features) are now sections here, one module each. Same
-          contract as admin-topochain.js — AdminConsole.SECTION_MODULES maps a
-          section key to the global these define, and calls render(host) /
-          destroy(host) on it. Load order is unconstrained: the console
-          resolves each module by name at section-render time (AdminGallery
-          likewise looks up AppView, loaded below, only when it renders).
-      */}
-      <script src="/js/admin-status.js" />
-      <script src="/js/admin-node.js" />
-      <script src="/js/admin-analytics.js" />
-      {/*
-          Estimator accuracy (#898): the platform-analytics card split out of
-          the Analytics section into its own #admin/estimator section.
-      */}
-      <script src="/js/admin-estimator.js" />
-      <script src="/js/admin-merges.js" />
-      <script src="/js/admin-gallery.js" />
-      <script src="/js/admin-campaigns.js" />
-      <script src="/js/admin-mail.js" />
-      {/*
-          Build-failure log panel (#416). Loaded before app-view.js/home.js
-          so both surfaces can reference window.BuildLog.
+          Build-failure log panel (#416). Loaded before app-view.js so that
+          surface can reference window.BuildLog. The home screen's card menu
+          reads it too — that module is in the React bundle as of #1083 chunk F
+          (features/home/home.js), and it reads `window.BuildLog` at click
+          time, long after this script has run.
       */}
       <script src="/js/build-log.js" />
       <script src="/js/app-view.js" />
@@ -934,29 +582,38 @@ export function Shell() {
       */}
       <script src="/js/screenshot-select.js" />
       {/*
-          Home-screen panels (#911): the Challenges card between the launcher
-          grid and "Featured apps". Loaded BEFORE home.js, whose load() /
-          render() call into HomePanels.
+          /js/home-layout.js, /js/home-panels.js and /js/home.js loaded here,
+          in that order — grid geometry first, then the widget renderers the
+          grid calls into, then the grid itself. #1083 chunk F step 4 moved all
+          three into the bundle (features/home/, imported by the #home-screen
+          island in the same order) and the three tags went with them.
+
+          Their ordering is now an import list rather than a tag sequence,
+          which is the whole point: home.js reads `HomeLayout` bare and
+          `window.HomePanels` guarded, home-panels.js reads `window.Home` and
+          `window.HomeLayout` back, and all three publications happen while the
+          bundle evaluates — before DOMContentLoaded, so before App.init().
+
+          /js/browse.js used to load after home.js too, because it reached the
+          shared card markup through `window.Home`. Step 1 of the chunk moved it
+          into the bundle (features/apps/browse.js, imported by the
+          #browse-screen island) and split that markup out as
+          features/apps/app-card.js; step 4 turned home.js's delegation to it
+          into a plain import. Load order stopped mattering for any of them.
       */}
-      {/*
-          Grid geometry (pure functions over the layout model) before the two
-          modules that lay out against it.
-      */}
-      <script src="/js/home-layout.js" />
-      <script src="/js/home-panels.js" />
-      <script src="/js/home.js" />
-      {/*
-          Browse-all-apps screen (#apps). After home.js: it reuses
-          Home.renderAppCard / Home.isYours / Home.matchesQuery so the two
-          launcher grids can't drift apart.
-      */}
-      <script src="/js/browse.js" />
       {/*
           Anonymous shell screens (fold-auth-pages-into-SPA): landing /
           login / register / waiting logic. Must load before app.js so
           window.AuthScreens exists when App.init routes the boot.
       */}
       <script src="/js/auth-screens.js" />
+      {/*
+          Offline feedback outbox (#1054): the durable queue behind the Send
+          Feedback dialog. Loaded before app.js, which calls
+          FeedbackQueue.init() while wiring the dialog and hands it a submit
+          the network refused.
+      */}
+      <script src="/js/feedback-queue.js" />
       <script src="/js/app.js" />
     </>
   );

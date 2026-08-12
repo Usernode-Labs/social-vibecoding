@@ -25,7 +25,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const SRC = fs.readFileSync(
-  path.join(__dirname, '..', 'public', 'js', 'dev-chat.js'),
+  path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'dev-chat.js'),
   'utf8'
 );
 
@@ -275,6 +275,10 @@ test('opening a different idle session resets Stop → Send (busy:false)', async
   assert.equal(btn.getAttribute('aria-label'), 'Send', 'aria-label back to Send');
   assert.notEqual(DevChat._titleStatus, 'thinking', 'live thinking marker cleared');
   assert.ok(!document.title.includes('Thinking'), 'no Thinking marker left in title');
+  // #990: the trailing activity indicator is per-turn state, so it must reset
+  // with the rest of the streaming UI — otherwise an idle transcript inherits
+  // the previous session's dots.
+  assert.equal(DevChat._activity, null, 'activity indicator cleared on idle open');
 });
 
 test('opening a genuinely busy session re-applies Stop/streaming UI (busy:true)', async () => {
@@ -295,6 +299,11 @@ test('opening a genuinely busy session re-applies Stop/streaming UI (busy:true)'
   assert.equal(btn.classList.contains('dc-btn-stop'), true, 'Stop class re-applied');
   assert.equal(btn.getAttribute('aria-label'), 'Stop', 'aria-label is Stop');
   assert.equal(DevChat._titleStatus, 'thinking', 'thinking marker re-applied');
+  // #990: a turn is genuinely in flight, and the events that would have armed
+  // the indicator were emitted before this tab opened the session. Arm it here
+  // so a reload mid-data-tool-phase shows a live cue instead of a frozen
+  // ladder — the reporter's window is long enough for a reload to land in it.
+  assert.ok(DevChat._activity, 'busy session arms the trailing activity indicator');
 });
 
 test('switching sessions aborts the previous session\'s in-flight POST SSE', async () => {

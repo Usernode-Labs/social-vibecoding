@@ -117,14 +117,18 @@ test('busy own card: single-row shell, wrapping title, ⋯ instead of five pills
   AppView._sharedById = {};
   const html = AppView._renderMySessionCard(mySess({ busy: true }));
   assert.match(html, /dev-card-title/, 'title uses the shared title cell');
-  assert.match(html, /dev-card-headline/, 'and its progressive-wrap rule');
+  assert.match(html, /dev-card-head-main/, 'and its wrapping cell in the head');
   assert.ok(html.includes(SHELL), 'uses the standard single-row card shell');
   assert.ok(!html.includes('block w-full rounded-xl'), 'the two-row session shell is gone');
   assert.ok(!html.includes('pl-12'), 'no indented second actions row');
   // The busy tag is a badge beside the title now; the controls that used to
   // sit in the second row are ⋯ descriptors.
   assert.ok(html.includes(SPINNER), 'the working… spinner still renders');
-  assert.ok(menuHas(AppView, html, /Make visible/), 'Make visible in ⋯');
+  // …except the visibility toggle, which the four-band card promotes back onto
+  // the face: the card reserves an action band, and this is the one thing an
+  // owner does to their own session.
+  assert.match(html, /gc-card-actions[\s\S]*?>Make visible</, 'Make visible on the face');
+  assert.ok(!menuHas(AppView, html, /Make visible/), 'and so not also in ⋯');
   assert.ok(menuHas(AppView, html, /Archive/), 'Archive in ⋯');
   assert.doesNotMatch(html, /data-archive-chip/, 'Archive is no longer an inline pill');
 });
@@ -145,7 +149,11 @@ test('shared card: single-row shell; noNav drops nav, chevron and the actions ro
   const nav = AppView._renderSharedSessionCard(s);
   assert.match(nav, /data-shared-session-row="71"/);
   assert.ok(nav.includes(SHELL), 'uses the standard single-row card shell');
-  assertOrder(nav, ['dev-card-title', SPINNER, 'dev-chat-badge', 'gc-vote-btn-preview', CHEVRON]);
+  // The preview eye is no longer a pill in the action band: it is the bottom
+  // of the card's right-edge rail, so it comes AFTER the chevron it is stacked
+  // under (the chevron's auto margins centre it in the space above the eye).
+  assertOrder(nav, ['dev-card-title', SPINNER, 'dev-chat-badge', CHEVRON, 'gc-vote-btn-preview']);
+  assert.match(nav, /dev-card-rail/, 'and the pair share the rail column');
 
   const noNav = AppView._renderSharedSessionCard(s, { noNav: true });
   assert.doesNotMatch(noNav, /data-shared-session-row/, 'noNav variant has no row hook');
@@ -204,7 +212,9 @@ test('the "Open chat" PILL is gone; a visible session offers it from ⋯ with it
   assert.doesNotMatch(html, /data-session-discuss/, 'the delegated discuss pill is gone');
   assert.ok(menuHas(AppView, html, /Open public discussion \(4\)/),
     'the ⋯ row carries the shared-row count');
-  assert.ok(menuHas(AppView, html, /^Hide$/), 'Hide stays available, from ⋯');
+  // Hide is the promoted visibility pill's visible-state label.
+  assert.match(html, /gc-card-actions[\s\S]*?>Hide</, 'Hide stays available, on the face');
+  assert.ok(!menuHas(AppView, html, /^Hide$/), 'not duplicated in ⋯');
 });
 
 test('freshly-visible card (no _sharedById row yet) still offers the discussion at 0', () => {
@@ -221,7 +231,8 @@ test('private own card offers no public discussion and keeps Make visible', () =
   const html = AppView._renderMySessionCard(mySess({}));
   assert.ok(!menuHas(AppView, html, /Open public discussion/),
     'nowhere for a reader to reach an invisible session from');
-  assert.ok(menuHas(AppView, html, /Make visible/), 'Make visible renders, from ⋯');
+  assert.match(html, /_setSessionShared\(51, true[^>]*>Make visible</,
+    'Make visible renders, as the promoted pill');
 });
 
 // ── Transcript sharing: the second, narrower opt-in ─────────────────────────
@@ -258,12 +269,16 @@ test('chat-shared own card flips to the revoke row and says so in the subtitle',
   assert.match(html, /Visible to everyone · chat readable/);
 });
 
-test('the ⋯ rows come in visibility → chat-sharing → discussion → Archive order', () => {
+test('the ⋯ rows come in chat-sharing → discussion → Archive order', () => {
   const AppView = makeAppView();
   AppView._sharedById = { 51: { id: 51, chat_count: 0 } };
   const html = AppView._renderMySessionCard(mySess({ shared_at: '2026-06-01T03:00:00Z' }));
   const labels = menuLabels(AppView, html).join('|');
-  assert.match(labels, /Hide\|Share chat\|Open public discussion\|Archive/);
+  // Visibility used to lead this list; it is the promoted pill now, so the
+  // menu starts at the narrower second opt-in. Archive stays last — it is the
+  // destructive row.
+  assert.match(labels, /^Share chat\|Open public discussion\|Archive$/);
+  assert.match(html, /gc-card-actions[\s\S]*?>Hide</, 'visibility leads the ACTION band');
 });
 
 test('the "Read chat" PILL is gone — the transcript lives on the detail page', () => {

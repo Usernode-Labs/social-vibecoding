@@ -214,7 +214,7 @@ async function runContainer(name, {
 async function runOneShot(name, {
   image, env = {}, memory = '1g', cpus = '1',
   timeoutMs = 240000, maxBuffer = 128 * 1024 * 1024,
-  salvagePartial = false, stdinPayload = null,
+  salvagePartial = false, stdinPayload = null, cmd = null,
 }) {
   const envArgs = Object.entries(env).flatMap(([k, v]) => ['-e', `${k}=${v}`]);
   const args = [
@@ -227,6 +227,10 @@ async function runOneShot(name, {
     '--security-opt', 'no-new-privileges:true',
     ...envArgs,
     image,
+    // Optional command override (argv after the image). Lets a caller run
+    // an ad-hoc script in an existing image (unit-suite check reuses the
+    // worker image) instead of the image's default CMD.
+    ...(Array.isArray(cmd) ? cmd : []),
   ];
   const opts = { timeout: timeoutMs, maxBuffer };
   const start = () => {

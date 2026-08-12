@@ -37,7 +37,7 @@ const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
 const html = read('public/index.html');
 const appJs = read('public/js/app.js');
 const settingsJs = read('frontend/src/features/settings/settings.js');
-const devChatJs = read('public/js/dev-chat.js');
+const devChatJs = read('frontend/src/features/dev-chat/dev-chat.js');
 const platformUiJs = read('public/js/platform-ui.js');
 const cliAuthJs = read('src/routes/cli-auth.js');
 const manifest = JSON.parse(read('dapp.json'));
@@ -463,7 +463,9 @@ test('the credits banner deep-links all three ways to keep building', () => {
 test('the "Settings → Change password" prose is a real link', () => {
   assert.match(html, /href="#settings\/password"/,
     'the account-recovery help text links to the Password section');
-  assert.match(read('public/js/admin-console.js'), /href="#settings\/password"/,
+  // The dialog's markup is React-owned chassis since #1082 chunk E; the copy
+  // and the link inside it are unchanged.
+  assert.match(read('frontend/src/features/admin/index.tsx'), /href="#settings\/password"/,
     'so does the temporary-password dialog');
 });
 
@@ -537,6 +539,93 @@ test('dapp.json covers the settings screen and its deep links', () => {
         `${t.path} needs ?demo=1 — its table is staging:private / not cloned`);
     }
   }
+  // #1102: and one check drives a real history traversal, which is the only
+  // way to produce the duplicate popstate + hashchange pair that used to
+  // repaint inside the transition's uncaptured snapshot window.
+  const back = tests.filter((t) => (t.path || '').includes('shot=settings-back'));
+  assert.equal(back.length, 1,
+    'exactly one declared check drives the ?shot=settings-back traversal');
+  assert.match(back[0].expectSelector || '', /data-settings-route="skipped"/,
+    'it asserts the SECOND dispatch was skipped — the marker is the only way to observe an '
+    + 'ordering that is otherwise visible for one animation frame only');
+  assert.match(back[0].expectSelector || '', /data-settings-section="api-key"/,
+    'and that the traversal landed back on the default section rather than the drilled-in one');
+});
+
+// ── #1102: route() is idempotent, so a duplicate dispatch cannot repaint
+// inside the first dispatch's uncaptured snapshot window ─────────────────
+//
+// A same-document history traversal fires BOTH popstate and hashchange, so
+// App.restoreFromHash() ran twice in one tick and both calls reached
+// Settings.route(). The first started the push/pop transition; the second
+// resolved the identical target, asked for type 'none' — which the kit runs
+// SYNCHRONOUSLY — and re-rendered the level before the browser had captured
+// the outgoing page. The animation then played the incoming level against a
+// copy of itself: two copies on screen.
+
+test('route() returns early when the resolved target is already showing', () => {
+  const at = settingsJs.indexOf('    route(section) {');
+  assert.ok(at > -1, 'settings.js still defines route(section)');
+  const body = settingsJs.slice(at, settingsJs.indexOf('\n    },', at));
+
+  // The target is resolved BEFORE anything mutates.
+  assert.match(body, /const targetLevel = /, 'route() resolves the level it would end on');
+  assert.match(body, /const targetSection = /, 'route() resolves the section it would end on');
+  assert.match(
+    body, /if \(targetLevel === Settings\._level && targetSection === Settings\._section\) \{/,
+    'route() compares the resolved target against current state',
+  );
+  const guardAt = body.search(/if \(targetLevel === Settings\._level/);
+  for (const mutation of ['Settings.setSection(', 'Settings._transition(', 'Settings._level =']) {
+    const mAt = body.indexOf(mutation);
+    assert.ok(mAt > -1, `route() still performs ${mutation}`);
+    assert.ok(guardAt < mAt,
+      `the early-out must precede ${mutation} — below it the duplicate has already repainted`);
+  }
+  assert.match(body.slice(guardAt, body.indexOf('Settings._markRoute(\'applied\')')), /return;/,
+    'the early-out returns rather than falling through');
+});
+
+test('route() stamps what it did, so the ordering is assertable after the fact', () => {
+  // A runtime-only marker, exactly like App._entryTransition's data-entered
+  // (#977): the skip is invisible once the animation is over, so the check
+  // needs something durable to read. Runtime-written, hence deliberately
+  // absent from tests/baselines/shell-markup.json.
+  assert.match(settingsJs, /_markRoute\(state\)\s*\{/, 'the stamp goes through one helper');
+  assert.match(settingsJs, /setAttribute\('data-settings-route', state\)/,
+    'it writes data-settings-route on the screen root');
+  assert.match(settingsJs, /Settings\._markRoute\('skipped'\)/,
+    'the early-out records that it skipped');
+  assert.match(settingsJs, /Settings\._markRoute\('applied'\)/,
+    'and the path that repaints records that it applied');
+  const baseline = JSON.parse(fs.readFileSync(
+    path.join(__dirname, 'baselines', 'shell-markup.json'), 'utf8'));
+  assert.ok(
+    !JSON.stringify(baseline).includes('data-settings-route'),
+    'data-settings-route is written at runtime and must stay out of the static markup baseline',
+  );
+});
+
+test('the ?shot=settings-back driver runs a real traversal from init()', () => {
+  assert.match(appJs, /_applySettingsBackShot\(\)\s*\{/, 'app.js defines the driver');
+  const at = appJs.indexOf('_applySettingsBackShot() {');
+  const body = appJs.slice(at, at + 1200);
+  assert.match(body, /shot !== 'settings-back'/, 'it is gated on its own shot value');
+  assert.match(body, /location\.hash = '#settings\/password'/,
+    'it drills in through a real hash write, so the app routes exactly as a tap would');
+  assert.match(body, /history\.back\(\)/,
+    'and backs out through a history traversal — the dispatch pair a hash write alone cannot produce');
+  assert.doesNotMatch(body, /USERNODE_ENV/,
+    'pure UI state, so the driver is ungated like ?shot=menu');
+  // Wired in the same run of shot drivers, after restoreFromHash() has put
+  // the screen up — the traversal only means anything once #settings is open.
+  const drivers = appJs.slice(
+    appJs.indexOf('App.restoreFromHash();\n    App._applyMenuShot();'),
+    appJs.indexOf('App._applyFeedbackShot();'),
+  );
+  assert.ok(drivers.length, 'app.js still runs its shot drivers together after restoreFromHash()');
+  assert.match(drivers, /App\._applySettingsBackShot\(\);/,
+    'init() wires the driver alongside the other shot drivers');
 });
 
 // ── Usernode-app section: a failed native read is diagnosable ───────────

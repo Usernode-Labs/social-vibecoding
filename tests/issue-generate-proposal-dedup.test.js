@@ -59,13 +59,18 @@ function makeAppView() {
 
 const issue = (headless) => ({ number: 5, title: 'Fix the thing', headless });
 
-// Count the text pills on the card face (the ⋯ trigger and the preview icon
-// both carry .gc-vote-btn-icon, so they don't count).
+// Count the HEADLESS text pills on the card face — this file's subject is that
+// an issue never offers two ways to generate the same proposal at once, so the
+// count must exclude pills that have nothing to do with the run. The ⋯ trigger
+// and the preview icon carry .gc-vote-btn-icon; the in-progress claim toggle is
+// a second, unrelated promoted pill (it names its own handlers, so it filters
+// out by wiring rather than by position).
 function primaryCount(html) {
   const row = html.match(/<div class="gc-card-actions">([\s\S]*?)<\/div>/);
   if (!row) return 0;
   return (row[1].match(/<button[^>]*>/g) || [])
-    .filter((b) => !/gc-vote-btn-icon/.test(b)).length;
+    .filter((b) => !/gc-vote-btn-icon/.test(b))
+    .filter((b) => !/markIssueInProgress|clearIssueClaim/.test(b)).length;
 }
 function menuLabels(AppView, html) {
   const m = html.match(/data-card-menu="([^"]+)"/);
@@ -76,8 +81,11 @@ function menuLabels(AppView, html) {
 test('a question outcome the viewer has NOT cloned: one primary + one ⋯ re-run', () => {
   const AppView = makeAppView();
   const html = AppView._renderIssueRow(issue({ status: 'ready', outcome: 'question', sessionId: 91 }));
-  assert.equal(primaryCount(html), 1, 'exactly one text pill on the card face');
+  assert.equal(primaryCount(html), 1, 'exactly one headless pill on the card face');
   assert.match(html, /Answer &amp; regenerate/, 'the folded primary');
+  // The band's other pill is the promoted claim toggle, which is not a second
+  // way to do this — it is a different action entirely.
+  assert.match(html, /markIssueInProgress\(5\)/);
   const generate = menuLabels(AppView, html).filter((l) => /^Generate proposal$/.test(l));
   assert.equal(generate.length, 1, 'exactly one Generate proposal affordance, in ⋯');
 });

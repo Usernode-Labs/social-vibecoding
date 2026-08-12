@@ -105,22 +105,15 @@ const SHELL_ASSETS = [
   '/usernode-native/v1/native.css',
   '/usernode-native/v1/native.js',
   '/usernode-bridge.js',
-  '/js/admin-console.js',
   '/js/auth-screens.js',
-  '/js/admin-topochain.js',
-  // Folded-in console sections (#860) — one module per section that used to
-  // be a standalone page. The retired page scripts (/js/dashboard.js,
-  // /js/debug.js, /js/gallery.js, /js/admin-features.js) are gone.
-  '/js/admin-status.js',
-  '/js/admin-node.js',
-  '/js/admin-analytics.js',
-  '/js/admin-estimator.js',
-  '/js/admin-merges.js',
-  '/js/admin-gallery.js',
-  '/js/admin-campaigns.js',
-  '/js/admin-mail.js',
+  // The admin console's ten modules (admin-console.js, admin-topochain.js and
+  // the eight folded-in #860 section modules) used to be listed here. #1082
+  // chunk E moved them into the React bundle, so /shell/assets/shell.js above
+  // is what precaches them now.
   '/js/app-secrets.js',
-  '/js/browse.js',
+  // The browse-all-apps screen's module used to be listed here. #1083 chunk F
+  // moved it into the React bundle, so /shell/assets/shell.js above is what
+  // precaches it now.
   // #1036: the real-anchor / new-tab seam. Loads ahead of every other
   // module in index.html, so a cache miss here breaks the whole shell.
   '/js/nav-link.js',
@@ -132,30 +125,42 @@ const SHELL_ASSETS = [
   '/js/topochain-events.js',
   '/js/confirm-modal.js',
   '/js/dev-alerts.js',
-  '/js/dev-chat.js',
+  // '/js/dev-chat.js' — #1084 chunk G moved it into the React bundle
+  // (frontend/src/features/dev-chat/dev-chat.js), which /shell/assets/shell.js
+  // already precaches. Precaching it here as well would 404 the install.
   '/js/dev-flow-select.js',
   '/js/dev-host.js',
+  // #1054: the offline feedback outbox. It has to be precached like any other
+  // shell module — the whole point is that it works on the load where the
+  // network does not.
+  '/js/feedback-queue.js',
   '/js/group-chat.js',
-  '/js/home.js',
-  '/js/home-layout.js',
-  '/js/home-panels.js',
-  '/js/kudos.js',
-  '/js/leaderboard.js',
+  // The home screen's three modules (the grid, its widget renderers and the
+  // layout geometry they share) were listed here. #1083 chunk F moved all
+  // three into the React bundle with the screen they render, so
+  // /shell/assets/shell.js above is what precaches them now — which matters
+  // more here than for the other chunks: home is the offline landing screen,
+  // so a cache miss on it is the whole app.
+  // The Kudos widget and the Leaderboard screen's own renderer were listed
+  // here. #1083 chunk F moved both into the React bundle with the screen, so
+  // /shell/assets/shell.js above is what precaches them now.
   '/js/merge-status.js',
   '/js/native-chrome.js',
   '/js/social-push.js',
   '/js/build-venues.js',
   '/js/credit-options.js',
-  '/js/profile.js',
+  // The profile screen's renderer used to be listed here. #1083 chunk F moved
+  // it into the React bundle, so /shell/assets/shell.js above is what
+  // precaches it now.
   '/js/screenshot-select.js',
   '/js/session-options.js',
   '/js/session-transcript.js',
   '/js/spec-sections.js',
   '/js/streaming-markdown.js',
   '/js/session-state.js',
-  '/js/topochain-event-context.js',
-  '/js/topochain-leaderboard.js',
-  '/js/topochain-challenges.js',
+  // The Leaderboard screen's three Topochain-domain panes were listed here
+  // too, and moved in the same chunk. Only the shared event RULES they read
+  // (topochain-events.js, above) are still a classic script.
   '/manifest.webmanifest',
   '/icons/icon-192.png',
   '/icons/icon-512.png',

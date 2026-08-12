@@ -42,6 +42,7 @@ const { userAgentFilesRoutes } = require('./src/routes/user-agent-files');
 const { topicAttributeRoutes } = require('./src/routes/topic-attributes');
 const { boardOrderRoutes } = require('./src/routes/board-order');
 const { reportAiRoutes } = require('./src/routes/report-ai');
+const { reportSnapshotRoutes, reportShareRoutes } = require('./src/routes/report-snapshots');
 const { homePanelRoutes } = require('./src/routes/home-panels');
 const { homeLayoutRoutes } = require('./src/routes/home-layout');
 const { chatDraftsRoutes } = require('./src/routes/chat-drafts');
@@ -242,6 +243,10 @@ app.use((req, res, next) => {
   // can exceed the 100kb default once JSON-escaped — the route mounts
   // its own 256kb parser (see routes/user-agent-files.js).
   if (req.path === '/api/me/agent-files' && req.method === 'POST') return next();
+  // Locked report snapshots (report-lock-share) carry the full standalone
+  // report HTML, which routinely exceeds 100kb; the route mounts its own
+  // 3mb parser (routes/report-snapshots.js).
+  if (req.method === 'POST' && /^\/api\/apps\/[^/]+\/report-snapshots$/.test(req.path)) return next();
   express.json()(req, res, next);
 });
 app.use(cookieParser());
@@ -450,6 +455,11 @@ app.use(issueImageRoutes(config));
 // is published to other users by design.
 app.use(avatarRoutes(config));
 
+// Publicly shared locked report snapshots (report-lock-share). Mounted
+// before authMiddleware like visuals: access control is the unguessable
+// 32-hex share token, and the HTML is served under a sandbox CSP.
+app.use(reportShareRoutes(config));
+
 // App-stored user files (#752). Public for the same reason as app-icons:
 // app pages load them with plain <img> tags from their own subdomains.
 // visibility='public' rows are guarded by the unguessable 32-hex id;
@@ -536,6 +546,7 @@ app.use(userAgentFilesRoutes(config));
 app.use(topicAttributeRoutes(config));
 app.use(boardOrderRoutes(config));
 app.use(reportAiRoutes(config));
+app.use(reportSnapshotRoutes(config));
 // Home-screen panels (#911): the challenges card's data + its per-user
 // show/hide. Me-scoped reads, so it sits behind authMiddleware like the
 // ordering routes above.
@@ -2985,7 +2996,7 @@ async function finalizeRecoveredTurn({
     // can't satisfy the merge gate while this build runs — or after it
     // fails. The live dev-turn path does this; recovery used to skip it.
     const visuals = require('./src/services/visuals');
-    await visuals.setChecksPending(pool, sessionId, result.sha, 'building')
+    await visuals.setChecksPending(pool, sessionId, result.sha, 'building', 'boot-reconcile')
       .catch((err) => log.warn('server', 'Recovered turn: setChecksPending failed (non-fatal)', {
         sessionId, err: err.message,
       }));
@@ -3000,7 +3011,7 @@ async function finalizeRecoveredTurn({
       });
       await publishRecoveredStaging({ outcome: 'success', stagingUrl: reusedStaging });
       summaryParts.push(`Staging preview is live: ${reusedStaging}`);
-      visuals.captureForSession(config, session, app, result.sha, null, { send: () => {} })
+      visuals.captureForSession(config, session, app, result.sha, null, { send: () => {}, trigger: 'boot-reconcile' })
         .catch((err) => log.warn('server', 'Recovered turn: reused-preview capture failed (non-fatal)', {
           sessionId, err: err.message,
         }));

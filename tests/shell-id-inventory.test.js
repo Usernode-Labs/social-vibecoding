@@ -49,6 +49,30 @@ const ADDED_IDS = {
   'settings-mobile-push-preferences': 'Account-level Social mobile-push category controls in Settings → Alerts.',
   'drawer-row-native-app-version': 'Installed Flutter app version in the drawer footer (#1101).',
   'native-app-version-slot': 'Mobile app version/build rendered through the native bridge (#1101).',
+  'feedback-queue-dot': 'Header dot for feedback saved offline and still waiting to send (#1054).',
+  // #1082 chunk E — the admin console's CHASSIS. These ids are not new to the
+  // running page: admin-console.js._renderShell() has always created them, by
+  // writing #admin-root.innerHTML on every open. They are new to
+  // public/index.html because the chassis is React-owned markup now, so it is
+  // prerendered instead of assembled at mount. Nothing below them moved —
+  // #admin-section-content is still an innerHTML host owned by the module.
+  'admin-nav-desktop': 'Admin console desktop sidebar host, empty until AdminConsole._renderShell fills it (#1082).',
+  'admin-view-only-banner': 'Admin console view-only banner (#311), ships hidden and is toggled through classList (#1082).',
+  'admin-section-content': 'Admin console section host — the phone level-1 menu and every section render into it (#1082).',
+  'admin-temp-pw-modal': 'Admin console temporary-password dialog root (#282), now static React markup (#1082).',
+  'admin-temp-pw-username': 'Recipient name in the temporary-password dialog (#1082).',
+  'admin-temp-pw-value': 'The one-time plaintext temporary password (#1082).',
+  'admin-temp-pw-copy': 'Copy button in the temporary-password dialog (#1082).',
+  'admin-temp-pw-close': 'Done button in the temporary-password dialog (#1082).',
+  // #1085 chunk H, step 2 — the ONE new id in the chunk. #app-content keeps its
+  // id, its classes and its role as a hand-written innerHTML host; the embedded
+  // app's iframe moves out from under it into this React-owned sibling, because a
+  // region may only become stateful when its whole subtree is React-owned and
+  // #app-content is written by half of public/js/**. Ships hidden and empty, so
+  // the prerendered document is unchanged in what it renders. Exactly one of the
+  // two is visible; both are flex-1 + min-height:0 children of #app-view's
+  // column flex, so the visible one gets the box #app-content used to have.
+  'app-frame-host': "React-owned host for the embedded app's #app-iframe, a hidden empty sibling of #app-content (#1085).",
 };
 
 test('the shell still carries every id in the frozen baseline', () => {

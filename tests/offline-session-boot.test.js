@@ -42,7 +42,7 @@ const AUTH_SCREENS_TSX = ['features/auth/landing.tsx', 'features/auth/login.tsx'
 const AUTH_WAITING_TSX = FRONTEND('features/auth/waiting.tsx');
 // Moved into the React bundle with #settings-screen (#1081 chunk D).
 const SETTINGS = FRONTEND('features/settings/settings.js');
-const HOME = read('js/home.js');
+const { HOME_SRC: HOME } = require('./helpers/home-modules');
 const CSS = read('css/app.css');
 const HTML = read('index.html');
 // Copy assertions below match against DECODED text. public/index.html is
@@ -281,6 +281,12 @@ test('the offline shots pin connectivity instead of reading it', () => {
   // forceOffline pins the state so a later probe cannot flip it back.
   assert.match(OFFLINE, /export function forceOffline\(\)/);
   assert.match(OFFLINE, /if \(forced\) return/);
+  // ...including a probe that was ALREADY in flight when the pin went in.
+  // probe() only checks `forced` on entry, so without this guard a nudge()
+  // fired a few milliseconds earlier — the global-events socket opening does
+  // exactly that — resolves afterwards and silently un-pins the capture
+  // (#1054, where ?shot=feedback-queued photographed an online shell).
+  assert.match(OFFLINE, /if \(forced && !next\) return;/);
 });
 
 test('both offline shots are registered as dapp.json checks', () => {

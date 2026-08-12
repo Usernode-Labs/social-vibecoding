@@ -118,7 +118,11 @@ test('my own rename PR proposal renders Withdraw', () => {
 test("someone else's proposal renders the Explore-in-dev-chat card button", () => {
   const AppView = makeAppView(ME);
   const html = AppView._renderProposalCard(baseProposal({ user_id: 999 }));
-  assert.ok(menuHas(AppView, html, /Explore in dev chat/), 'Explore offered from ⋯ on a foreign proposal');
+  // On the FACE now, not in ⋯: the four-band card reserves an action band, and
+  // on a live foreign proposal Explore is what fills it beside Yes/No.
+  assert.match(html, /gc-card-actions[\s\S]*?gc-explore-chat-btn/,
+    'Explore offered as a pill on a foreign proposal');
+  assert.ok(!menuHas(AppView, html, /Explore in dev chat/), 'so not also a ⋯ row');
   assert.equal(html.match(/data-card-menu="([^"]+)"/)[1], 'proposal:7', 'menu keyed by the proposal id');
 });
 
@@ -144,7 +148,7 @@ test('my own IMPORTED proposal DOES render the Explore-in-dev-chat button (#1045
   assert.match(html, /data-proposal-id="7"/, 'wired to the proposal id');
   assert.doesNotMatch(html, /openProposalSession/,
     'still no Open session — an imported PR has no dev session (#687)');
-  assert.match(html, /withdrawProposal\(7\)/, 'Withdraw is unaffected');
+  assert.ok(menuHas(AppView, html, /^Withdraw$/), 'Withdraw is unaffected — a ⋯ row like any own live PR');
 });
 
 // #321/#827: the topic detail view (_renderTopicHead) shows exactly ONE AI

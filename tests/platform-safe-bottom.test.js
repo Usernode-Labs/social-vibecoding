@@ -39,7 +39,8 @@ const APP_CSS = read('public/css/app.css');
 const INDEX = read('public/index.html');
 const APP_JS = read('public/js/app.js');
 const APP_VIEW = read('public/js/app-view.js');
-const DEV_CHAT = read('public/js/dev-chat.js');
+const DEV_CHAT = read('frontend/src/features/dev-chat/dev-chat.js');
+const BOARD_FRAME = read('frontend/src/features/dev-board/board-frame.tsx');
 const GROUP_CHAT = read('public/js/group-chat.js');
 
 // ── 1. The tokens ────────────────────────────────────────────────────
@@ -188,10 +189,16 @@ test('no bare env(safe-area-inset-bottom) survives in app.css', () => {
 // ── 4. Dev-mode surfaces inside #app-view ────────────────────────────
 
 test('the dev scrollers carry platform-safe-scroll', () => {
-  const forum = /<div id="dev-forum-scroll"[^>]*>/.exec(APP_VIEW);
-  assert.ok(forum, '#dev-forum-scroll is missing from app-view.js');
+  // #1084 chunk G: the Dev card list's frame is React
+  // (frontend/src/features/dev-board/board-frame.tsx), so the scroller's
+  // classes are a JSX className rather than an attribute in a template string.
+  const forum = /id="dev-forum-scroll"[\s\S]{0,240}?\/>|<div\s+id="dev-forum-scroll"[\s\S]{0,240}?>/
+    .exec(BOARD_FRAME);
+  assert.ok(forum, '#dev-forum-scroll is missing from board-frame.tsx');
   assert.match(forum[0], /platform-safe-scroll/,
     'the Dev card list must clear the home indicator');
+  assert.ok(!APP_VIEW.includes('id="dev-forum-scroll"'),
+    'the template that used to emit it is retired, not duplicated');
 
   const sessions = /<div id="dc-session-list"[^>]*>/.exec(DEV_CHAT);
   assert.ok(sessions, '#dc-session-list is missing from dev-chat.js');

@@ -136,7 +136,25 @@ async function recordRun(pool, appId, rows) {
       if (!r || !r.checkKey) continue;
       const base = params.length;
       params.push(r.checkKey, String(r.name || ''), String(r.path || ''), !!r.passed);
-      values.push(`($1, $${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}::boolean)`);
+      // EVERY column carries an explicit cast, not just `passed`.
+      //
+      // A bind parameter inside a sub-SELECT's VALUES list has nothing to
+      // infer a type from, so postgres resolves it to `text`. `passed` was
+      // already cast because `CASE WHEN v.passed` on a text column throws
+      // outright — a loud failure. `app_id` failed the quieter way: the
+      // VALUES column came out `text`, the INSERT target is `integer`, and
+      // postgres refused the statement with "column app_id is of type
+      // integer but expression is of type text". recordRun swallows its
+      // errors as non-fatal, so every run logged one warning and wrote
+      // nothing — leaving app_check_history empty, which the earned-gating
+      // rule reads as "no check has ever passed", i.e. nothing blocking.
+      // The check_* columns are varchar; text coerces there, but they are
+      // cast too so the next reader doesn't have to work out which of the
+      // five were load-bearing.
+      values.push(
+        `($1::int, $${base + 1}::text, $${base + 2}::text, `
+        + `$${base + 3}::text, $${base + 4}::boolean)`
+      );
     }
     if (!values.length) return 0;
     await pool.query(

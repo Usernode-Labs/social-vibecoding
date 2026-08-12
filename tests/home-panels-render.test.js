@@ -1,4 +1,5 @@
-// public/js/home-panels.js — the home screen's Challenges card (#911).
+// frontend/src/features/home/home-panels.js — the home screen's Challenges
+// card (#911).
 //
 // The card sits between the "Your apps" grid and "Featured apps", in its
 // OWN static <section id="home-panels"> outside #app-list (the grid's
@@ -32,12 +33,12 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
-const SRC = read('public/js/home-panels.js');
+const { HOME_SRC: HOME, PANELS_SRC: SRC } = require('./helpers/home-modules');
 const INDEX = read('public/index.html');
+const ISLAND = read('frontend/src/features/home/index.tsx');
 const SW = read('public/sw.js');
 const SCHEMA = read('src/db/schema.sql');
 const SETTINGS = read('frontend/src/features/settings/settings.js');
-const HOME = read('public/js/home.js');
 const ROUTE = read('src/routes/home-panels.js');
 const CSS = read('public/css/app.css');
 
@@ -1226,12 +1227,19 @@ test('each block is a full-width child of the section, not separately bounded', 
   assert.doesNotMatch(css, /\.home-section-block\b/, 'the class really is gone');
 });
 
-test('the module is loaded before home.js and precached by the service worker', () => {
-  const panelsTag = INDEX.indexOf('src="/js/home-panels.js"');
-  const homeTag = INDEX.indexOf('src="/js/home.js"');
-  assert.ok(panelsTag > 0 && homeTag > 0);
-  assert.ok(panelsTag < homeTag, 'home.js calls into HomePanels');
-  assert.match(SW, /'\/js\/home-panels\.js'/);
+test('the module is evaluated before home.js and precached with the bundle', () => {
+  // This used to read two <script src> positions out of public/index.html.
+  // #1083 chunk F step 4 moved both modules into the React bundle, so the
+  // order is the home island's import list and the precached asset is the
+  // bundle entry. The contract is the same one: home.js calls into HomePanels.
+  const panels = ISLAND.indexOf("'./home-panels.js'");
+  const home = ISLAND.indexOf("'./home.js'");
+  assert.ok(panels > 0 && home > 0);
+  assert.ok(panels < home, 'home.js calls into HomePanels');
+  assert.match(SW, /'\/shell\/assets\/shell\.js'/);
+  // ...and the retired tag is gone from both halves, not just one.
+  assert.doesNotMatch(INDEX, /\/js\/home-panels\.js/);
+  assert.doesNotMatch(SW, /\/js\/home-panels\.js/);
 });
 
 test('home.js loads the panels once per TTL and paints them on every render', () => {
@@ -1254,13 +1262,19 @@ test('the per-user hidden set defaults to "everything visible"', () => {
 //
 // home-panels.js reads the Home module through `window.Home && …` — the
 // same defensive shape it uses for `window.App`. `const Home = {…}` at the
-// top of a classic script lands in the global LEXICAL scope, which is NOT
-// `window`, so unless home.js publishes itself every one of those guards
-// takes the "not loaded" branch — silently, forever. That shipped: the
-// Discover widget always drew its empty-state note instead of the curated
-// tiles, and the Create widget always drew LOCKED regardless of quota.
+// top of a script lands in the global LEXICAL scope, which is NOT `window`,
+// so unless home.js publishes itself every one of those guards takes the
+// "not loaded" branch — silently, forever. That shipped: the Discover widget
+// always drew its empty-state note instead of the curated tiles, and the
+// Create widget always drew LOCKED regardless of quota.
 //
 // Nothing threw and nothing logged, which is exactly why it needs a test.
+//
+// #1083 chunk F step 4 moved both modules into the React bundle, where the
+// hazard is IDENTICAL but the publication is now conditional
+// (`if (typeof window !== 'undefined')`, for the prerender pass) — so the
+// corpus below has to cover the bundle's feature modules as well as the
+// classic scripts, or this test would go quiet the moment a publisher moved.
 
 test('every window.<global> the widgets read is actually published', () => {
   // Derive the list from the source rather than hard-coding it, so a NEW
@@ -1270,11 +1284,17 @@ test('every window.<global> the widgets read is actually published', () => {
   );
   assert.ok(referenced.has('Home'), 'the module does read window.Home');
 
-  // Every browser module the shell ships, so the publisher can be anywhere.
-  const shell = fs.readdirSync(path.join(__dirname, '..', 'public/js'))
-    .filter((f) => f.endsWith('.js'))
-    .map((f) => read(`public/js/${f}`))
-    .join('\n');
+  // Every browser module the shell ships — the remaining classic scripts AND
+  // the bundle's feature modules — so the publisher can be anywhere.
+  const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+    const full = path.join(dir, e.name);
+    if (e.isDirectory()) return walk(full);
+    return /\.(js|ts|tsx)$/.test(e.name) ? [full] : [];
+  });
+  const shell = [
+    ...walk(path.join(__dirname, '..', 'public', 'js')),
+    ...walk(path.join(__dirname, '..', 'frontend', 'src')),
+  ].map((full) => fs.readFileSync(full, 'utf8')).join('\n');
 
   for (const name of referenced) {
     assert.match(shell, new RegExp(`window\\.${name}\\s*=`),
@@ -1540,9 +1560,8 @@ test('the Discover lanes fit the cells their footprint buys', () => {
   // followed the pixel width and wrapped to a second (clipped) row in a
   // 640-800px window.
   assert.match(css, /\.home-discover-tiles \{[^}]*grid-template-columns: repeat\(6, minmax\(0, 1fr\)\)/);
-  const home = read('public/js/home.js');
-  assert.match(home, /FEATURED_LIMIT: 6/);
-  assert.match(home, /POPULAR_LIMIT: 6/, 'the lane cap equals the track count');
+  assert.match(HOME, /FEATURED_LIMIT: 6/);
+  assert.match(HOME, /POPULAR_LIMIT: 6/, 'the lane cap equals the track count');
   // Both lanes split the leftover height instead of the first one taking it.
   assert.match(css, /\.home-discover-lane \{[^}]*flex: 1 1 0/);
   assert.match(css, /\.home-discover-tiles \{[^}]*align-content: center/);
@@ -1805,11 +1824,10 @@ test('currentCols: unknown width falls back to the COMPACT rendering', () => {
 });
 
 test('fill rows are excluded from the challenges click wiring', () => {
-  const SRC_TEXT = read('public/js/home-panels.js');
   // The row handler must not sweep up leaderboard rows — they go to the
   // Leaderboard screen, not to the Challenges tab.
-  assert.match(SRC_TEXT, /querySelectorAll\('\.home-panel-row:not\(\.home-panel-lb-row\)'\)/);
-  assert.match(SRC_TEXT, /goToLeaderboard/);
+  assert.match(SRC, /querySelectorAll\('\.home-panel-row:not\(\.home-panel-lb-row\)'\)/);
+  assert.match(SRC, /goToLeaderboard/);
 });
 
 // Each board previews a DIFFERENT tab, and every clickable element of the
@@ -1836,7 +1854,7 @@ test('the fill navigates to the tab that shows the board it previewed', () => {
   });
   assert.match(zero.html, /home-panel-lb-open[^>]*data-lb-kind="kudos"/,
     'the zero-state footer follows its rows');
-  assert.match(read('public/js/home-panels.js'),
+  assert.match(SRC,
     /goToLeaderboard\((?:row|btn)\.dataset\.lbKind\)/);
 });
 
@@ -1872,7 +1890,7 @@ test('phone: two rows, the way out in the title bar, and no footer', () => {
   assert.match(html, /home-panel-lb-browse[^>]*aria-label="Open leaderboard"/);
   assert.doesNotMatch(html, /home-panel-open/,
     'and NOT a second violet link beside it — the bar has room for one');
-  assert.match(read('public/js/home-panels.js'),
+  assert.match(SRC,
     /querySelectorAll\('\.home-panel-lb-browse'\)/, 'and that class is wired');
 });
 
@@ -1936,7 +1954,7 @@ test('the search-view host follows the real width, not a hardcoded 4', () => {
     'a desktop search view is not a phone');
   assert.doesNotMatch(renderWith(data).html, /home-panel-footer/,
     'and an unknown width still gets the compact shape');
-  assert.match(read('public/js/home-panels.js'),
+  assert.match(SRC,
     /renderPanel\(p, \{ inGrid: false, cols \}\)/);
 });
 
@@ -1949,7 +1967,7 @@ test('the phone shape fits the one cell its footprint buys', () => {
   const phoneCell = rem(/@media \(max-width: 639\.98px\)[\s\S]*?--home-cell-h: ([\d.]+)rem/);
   const rowPx = rem(/--home-panel-row-h:\s*([\d.]+)rem/);
   const bar = 27;   // py-1 8 + 18 line (the 12px control) + 1px rule
-  const slots = Number(read('public/js/home-panels.js')
+  const slots = Number(SRC
     .match(/PHONE_ROW_SLOTS:\s*(\d+)/)[1]);
   assert.equal(slots, 2);
   assert.ok(2 + bar + slots * rowPx <= phoneCell,
@@ -1970,9 +1988,8 @@ test('the phone shape fits the one cell its footprint buys', () => {
 // use, which is the whole bug this issue is about.
 test('the fit-row floor is the empty block’s own height, not a guess', () => {
   const css = read('public/css/app.css');
-  const home = read('public/js/home.js');
   const rowPx = parseFloat(css.match(/--home-panel-row-h:\s*([\d.]+)rem/)[1]) * 16;
-  const floorPx = parseFloat(home.match(/FIT_ROW_FLOOR: '([\d.]+)rem'/)[1]) * 16;
+  const floorPx = parseFloat(HOME.match(/FIT_ROW_FLOOR: '([\d.]+)rem'/)[1]) * 16;
   // border 2 + title bar 25.5 (the empty state's bar carries no control) +
   // one note row, which is a .home-panel-row like any other.
   const emptyBlock = 2 + 25.5 + rowPx;

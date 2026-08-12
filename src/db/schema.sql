@@ -17,7 +17,8 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS anthropic_key_last4  VARCHAR(8);
 -- Default FALSE; existing admins are backfilled to TRUE on boot.
 -- Enforced server-side on POST /api/apps in src/routes/apps.js;
 -- the home-screen "Create new app" affordance is hidden client-side
--- for users who fail the check (see Home.canCreate in public/js/home.js).
+-- for users who fail the check (see Home.canCreate in
+-- frontend/src/features/home/home.js).
 ALTER TABLE users ADD COLUMN IF NOT EXISTS can_create_apps BOOLEAN NOT NULL DEFAULT FALSE;
 UPDATE users SET can_create_apps = TRUE WHERE is_admin = TRUE AND can_create_apps = FALSE;
 
@@ -88,8 +89,9 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS ai_progress_estimate BOOLEAN NOT NULL
 -- everyone with no backfill. Written only through
 -- POST /api/home-panels/:key/visibility, which validates the key against
 -- the registry, so the array can never accumulate unknown values. Called
--- "panels" and not "widgets" deliberately: public/js/home.js already uses
--- "widget" for the iOS home-screen widget's pinned app grid.
+-- "panels" and not "widgets" deliberately: the client half,
+-- frontend/src/features/home/home.js, already uses "widget" for the iOS
+-- home-screen widget's pinned app grid.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS home_panels_hidden TEXT[] NOT NULL DEFAULT '{}';
 
 -- RETIRED — superseded by the `user_home_layout` table (free-form home-grid
@@ -879,6 +881,20 @@ ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS check_error_notified
 -- to its previous wording for NULL, so nothing regresses on old proposals.
 -- Advisory/display only — the merge gate reads check_state, never this.
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS check_phase VARCHAR(24);
+-- WHY this check run started, alongside check_phase's "which half is it in".
+-- The merge-gate trace recorded trigger='capture' for every run — literally
+-- the name of the function that opened it — so a measurement of "1.81 checks
+-- runs per proposal, 91 of 204 are re-runs" could count the re-runs but could
+-- not say which were a human pressing Re-run, which were a new commit, and
+-- which were the recovery sweeper re-driving a run that had gone quiet. Those
+-- want completely different fixes. Values are visuals.CHECK_TRIGGERS
+-- ('proposal-open', 'commit-push', 'sync-main', 'pr-import',
+-- 'manual-recheck', 'promote-kick', 'boot-reconcile', 'stuck-sweep',
+-- 'fleet-maintenance'); anything else is stored as NULL.
+-- NULL on legacy rows and whenever the writer did not name one — the card
+-- simply shows no trigger caption then. Advisory/display only, exactly like
+-- check_phase: the merge gate reads check_state and nothing else.
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS check_trigger VARCHAR(32);
 -- #11: vote-to-undo a merged PR. When the undo majority is reached we
 -- open a `git revert <merge_commit_sha>` PR and insert a new
 -- chat_sessions row pointing back here via revert_of_session_id.
@@ -1965,6 +1981,21 @@ CREATE INDEX IF NOT EXISTS idx_apps_self_hosted
 -- sessions can never SELECT it. tests/prod-debug-access.test.js
 -- cross-checks the credential-tagged columns below against the lists.
 --
+-- RELATED (#1130): there is a SECOND read-only role, the admin SQL
+-- console's (topochain_console_ro,
+-- src/services/topochain/db-console-scope.js). It denies credential
+-- COLUMNS, never whole tables, because a platform admin who cannot read
+-- a table here just reads it somewhere less redacted. It IMPORTS
+-- DENIED_COLUMNS above (so a new credential column added there covers
+-- both roles) and adds CONSOLE_CREDENTIAL_COLUMNS for the columns inside
+-- the tables debug-access.js denies wholesale. So a new credential
+-- column needs a DENIED_COLUMNS entry; a new credential column on a
+-- table that is denied WHOLESALE for prod-debug needs a
+-- CONSOLE_CREDENTIAL_COLUMNS entry as well.
+-- tests/topochain-db-tools.test.js cross-checks the credential-tagged
+-- columns below, and sweeps this file for credential-shaped column
+-- names, against the console lists.
+--
 -- Table-level: every row is sensitive in its entirety.
 COMMENT ON TABLE sessions               IS 'staging:private';
 COMMENT ON TABLE activation_codes       IS 'staging:private';
@@ -2166,7 +2197,7 @@ ALTER TABLE app_favorites ADD COLUMN IF NOT EXISTS hidden BOOLEAN NOT NULL DEFAU
 CREATE TABLE IF NOT EXISTS user_home_layout (
   user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   -- 4 (phone) or 5 (>= 640px). Kept in step with HomeLayout.columnsForWidth
-  -- in public/js/home-layout.js and the grid classes on #app-list.
+  -- in frontend/src/features/home/home-layout.js and the grid classes on #app-list.
   cols        SMALLINT NOT NULL,
   item_type   TEXT NOT NULL,
   app_id      INTEGER REFERENCES apps(id) ON DELETE CASCADE,
@@ -3983,6 +4014,9 @@ CREATE TABLE IF NOT EXISTS mobile_push_deliveries (
   registration_id   BIGINT REFERENCES mobile_push_registrations(id) ON DELETE SET NULL,
   environment       VARCHAR(32) NOT NULL CHECK (BTRIM(environment) <> ''),
   installation_id   UUID NOT NULL,
+  -- Snapshot the destination platform so a provider-invalidated registration
+  -- can be deleted without turning its durable diagnostic row into "unknown".
+  platform          VARCHAR(16) CHECK (platform IN ('android', 'ios')),
   status            VARCHAR(16) NOT NULL DEFAULT 'pending'
                       CHECK (status IN ('pending', 'sending', 'sent', 'dead', 'cancelled')),
   attempts          INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
@@ -3994,6 +4028,27 @@ CREATE TABLE IF NOT EXISTS mobile_push_deliveries (
   updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE (notification_id, environment, installation_id)
 );
+ALTER TABLE mobile_push_deliveries
+  ADD COLUMN IF NOT EXISTS platform VARCHAR(16);
+UPDATE mobile_push_deliveries delivery
+   SET platform = registration.platform
+  FROM mobile_push_registrations registration
+ WHERE delivery.registration_id = registration.id
+   AND delivery.platform IS NULL;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conname = 'mobile_push_deliveries_platform_check'
+       AND conrelid = 'mobile_push_deliveries'::regclass
+  ) THEN
+    ALTER TABLE mobile_push_deliveries
+      ADD CONSTRAINT mobile_push_deliveries_platform_check
+      CHECK (platform IN ('android', 'ios')) NOT VALID;
+  END IF;
+END $$;
+ALTER TABLE mobile_push_deliveries
+  VALIDATE CONSTRAINT mobile_push_deliveries_platform_check;
 CREATE INDEX IF NOT EXISTS idx_mobile_push_deliveries_claim
   ON mobile_push_deliveries (environment, available_at, id) WHERE status = 'pending';
 CREATE INDEX IF NOT EXISTS idx_mobile_push_deliveries_registration
@@ -4033,7 +4088,7 @@ BEGIN
    FOR KEY SHARE;
 
   WITH eligible AS MATERIALIZED (
-    SELECT r.id, r.environment, r.installation_id
+    SELECT r.id, r.environment, r.installation_id, r.platform
       FROM mobile_push_registrations r
       JOIN mobile_push_deployment_state s ON s.environment = r.environment
      WHERE r.user_id = NEW.user_id
@@ -4046,9 +4101,9 @@ BEGIN
      FOR KEY SHARE OF r
   )
   INSERT INTO mobile_push_deliveries (
-    notification_id, registration_id, environment, installation_id, expires_at
+    notification_id, registration_id, environment, installation_id, platform, expires_at
   )
-  SELECT NEW.id, id, environment, installation_id,
+  SELECT NEW.id, id, environment, installation_id, platform,
          COALESCE(NEW.created_at, NOW()) + INTERVAL '24 hours'
     FROM eligible
   ON CONFLICT (notification_id, environment, installation_id) DO NOTHING;
@@ -5013,3 +5068,30 @@ CREATE TABLE IF NOT EXISTS app_report_ai (
   generated_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
   generated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Bullet-point progress highlights for the AI report summary
+-- (report-lock-share). Additive to the existing app_report_ai row; old
+-- rows default to an empty list and render without the section.
+ALTER TABLE app_report_ai ADD COLUMN IF NOT EXISTS highlights_json JSONB NOT NULL DEFAULT '[]'::jsonb;
+
+-- Locked report snapshots (report-lock-share). Locking freezes the
+-- client's self-contained standalone report document as an immutable
+-- dated row; the draft cache above keeps being overwritten. html is
+-- untrusted user content and is only ever served under a sandbox CSP.
+-- ai_json is the SERVER's own draft summary at lock time — it feeds the
+-- next generation's "previousReport" input, so it must never come from
+-- the client. share_token (32-hex, crypto-random) is the sole access
+-- control on the public /reports/:token route; NULL means not shared,
+-- and unsharing nulls it again so revoked links 404.
+CREATE TABLE IF NOT EXISTS app_report_snapshots (
+  id           SERIAL PRIMARY KEY,
+  app_id       INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  html         TEXT NOT NULL,
+  ai_json      JSONB,
+  locked_by    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  locked_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  share_token  VARCHAR(64) UNIQUE,
+  shared_at    TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_app_report_snapshots_app
+  ON app_report_snapshots (app_id, locked_at DESC);

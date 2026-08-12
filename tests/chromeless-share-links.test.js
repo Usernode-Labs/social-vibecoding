@@ -187,9 +187,15 @@ test('app-view.js builds the iframe src via the URL API with origin check and to
   assert.ok(src.includes('const iframeSrc = AppView.buildAppIframeSrc();'),
     'renderAppTab uses the shared builder');
   // The 45-min token refresh must reuse it too, so a mid-session refresh
-  // does not yank the viewer back to the app root.
-  assert.ok(src.includes('iframe.src = AppView.buildAppIframeSrc();'),
+  // does not yank the viewer back to the app root. Since #1085 chunk H the
+  // refresh reaches the frame through the app-frame seam (which mutates the
+  // live element's src rather than re-rendering it) instead of a
+  // getElementById + assignment, but it must still compose through the
+  // builder — and the builder must be the only source of that url.
+  assert.ok(src.includes('frame.setSrc(AppView.buildAppIframeSrc());'),
     'token refresh reuses the shared builder');
+  assert.ok(!/\.src\s*=\s*(?!AppView\.buildAppIframeSrc)[^;\n]*token/.test(src),
+    'no other code path assigns a token-bearing src to the app iframe');
   assert.ok(!src.includes('?token=${AppView.iframeToken}'),
     'no string-concat token src remains for the production iframe');
   assert.ok(src.includes('AppView.pendingInnerPath = null;'),

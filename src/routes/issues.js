@@ -524,6 +524,117 @@ function issueRoutes(config) {
     }
   });
 
+  // (#1115) Single-governance-proposal-by-id fetch — the recovery path for
+  // opening a governance proposal whose row isn't in the client's cached
+  // lists, and the exact twin of GET /api/apps/:slug/proposals/:id in
+  // votes.js. The list endpoint above returns OPEN rows only, and APPLIED
+  // close-issue proposals live in the keyset-paginated Completed stream
+  // (/merged), of which the client caches just the first page — so clicking
+  // or deep-linking a settled close proposal beyond that page resolved to
+  // nothing and bounced back to the dev board. The FE
+  // (_fetchGovProposalById) calls this when _findTopicItem() comes up empty.
+  //
+  // Serves rows of ANY status (a status transition between list-render and
+  // click still resolves), restricted to the four governance kinds the
+  // client's gov topic view can actually render — anything else 404s, so
+  // this never becomes a read path for other issue kinds' payloads.
+  router.get('/api/apps/:slug/governance/:id', async (req, res) => {
+    try {
+      // View-level (#621): read-only viewers can open a governance
+      // proposal's topic view (my_vote resolves to null for them).
+      const gatedApp = await appAccess.getAppForUser(
+        pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS
+      );
+      if (!gatedApp) return res.status(404).json({ error: 'App not found' });
+
+      const appId = gatedApp.id;
+      const userId = req.user?.id || null;
+      const id = parseInt(req.params.id, 10);
+      if (!Number.isFinite(id)) return res.status(404).json({ error: 'Proposal not found' });
+
+      // Same row shape the list endpoints return (the open-issues subqueries
+      // above and the close-row select in /merged), so the topic header/card
+      // renders identically whether the row came from a list or from here.
+      const { rows } = await pool.query(
+        `SELECT i.*, u.username as created_by_username,
+           (SELECT COUNT(*) FROM issue_votes WHERE issue_id = i.id AND vote = 'up') as up_count,
+           (SELECT COUNT(*) FROM issue_votes WHERE issue_id = i.id AND vote = 'down') as down_count,
+           (SELECT vote FROM issue_votes WHERE issue_id = i.id AND user_id = $3) as my_vote,
+           (SELECT COUNT(*)::int FROM chat_messages cm
+             WHERE cm.app_id = i.app_id AND cm.thread_type = 'governance' AND cm.thread_ref = i.id
+               AND cm.msg_type = 'message') as chat_count,
+           (SELECT MAX(cm.created_at) FROM chat_messages cm
+             WHERE cm.app_id = i.app_id AND cm.thread_type = 'governance' AND cm.thread_ref = i.id) as last_message_at
+         FROM issues i
+         LEFT JOIN users u ON i.created_by = u.id
+         WHERE i.app_id = $1 AND i.id = $2
+           AND i.kind IN ('secret_change', 'rename', 'close_issue', 'maintenance_campaign')
+         LIMIT 1`,
+        [appId, id, userId]
+      );
+
+      let proposal = rows[0] || null;
+      if (proposal) {
+        // Same per-row dynamic gate the list attaches, so an OPEN row's pill
+        // gets its threshold / countdown / Contested treatment here too.
+        // Settled rows carry it harmlessly (the card reads the frozen pill).
+        const governanceSvc = require('../services/governance');
+        const gov = await governanceSvc.getGovernance(pool, appId);
+        const electorate = await governanceSvc.getElectorate(pool, appId, gov);
+        const q = electorate.approverIds
+          ? ((await governanceSvc.qualifiedCountsBatch(
+            pool, 'issue', [proposal.id], electorate.approverIds
+          )).get(proposal.id) || { yes: 0, no: 0 })
+          : { yes: proposal.up_count, no: proposal.down_count };
+        const gate = governanceSvc.computeGate(
+          gov, electorate.active, q.yes, q.no, proposal.created_at
+        );
+        proposal = {
+          ...proposal,
+          votes_required: gate.required,
+          merge_window_ends_at: gate.windowEndsAt,
+          contested: gate.contested,
+          approval_policy: gate.policy,
+          approvals_required: gate.approvalsRequired,
+          qualified_yes_count: gate.qualifiedYes,
+          qualified_no_count: gate.qualifiedNo,
+        };
+        // Never leak a secret_change's ciphertext, exactly as the list does.
+        if (proposal.kind === 'secret_change' && proposal.payload) {
+          const { valueEnc, ...rest } = proposal.payload;
+          proposal.payload = { ...rest, hasValue: !!valueEnc };
+        }
+        // An applied close proposal is a Completed-stream row; stamp the
+        // discriminator so it's interchangeable with the /merged shape for
+        // any consumer that branches on row_type (e.g. _showExplorePill).
+        if (proposal.kind === 'close_issue' && proposal.status === 'closed'
+            && proposal.payload && proposal.payload.appliedAt) {
+          proposal.row_type = 'close_issue';
+        }
+      }
+
+      // Staging demo mode (?demo=1): the mock governance rows aren't in the
+      // DB, so resolve a mock id straight from the generators. This is what
+      // lets a staging tester deep-link mock close proposal 9100062, which is
+      // deliberately too old to ever reach the demo Completed stream's first
+      // page and is therefore reachable ONLY through this endpoint. The
+      // applied-close mocks live in votes.js (they belong to that stream);
+      // lazy-required here to keep the issues <-> votes load order safe.
+      if (!proposal && IS_STAGING && req.query.demo === '1') {
+        proposal = stagingMockGovernance().find((m) => m.id === id)
+          || require('./votes').stagingMockCompletedCloseIssues()
+            .find((m) => m.id === id)
+          || null;
+      }
+
+      if (!proposal) return res.status(404).json({ error: 'Proposal not found' });
+      res.json({ proposal });
+    } catch (err) {
+      log.error('issues', 'Failed to get governance proposal by id', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   // Create an issue / proposal — kinds per VALID_KINDS above (general is
   // the default). Rate-limited per kind: close_issue proposals draw from
   // their own bucket, everything else from issue-create.

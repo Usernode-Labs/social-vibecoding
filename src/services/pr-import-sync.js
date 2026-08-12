@@ -238,11 +238,11 @@ async function rerunChecksForNewHead({ config, pool, session, newHead }) {
 
   // Stamp 'pending' immediately so the badge stops showing the old-head
   // verdict while the (minutes-long) rebuild runs.
-  await visuals.setChecksPending(pool, session.id, newHead, 'building')
+  await visuals.setChecksPending(pool, session.id, newHead, 'building', 'pr-import')
     .catch((err) => log.warn('pr-import-sync', 'setChecksPending failed (non-fatal)', {
       sessionId: session.id, err: err.message,
     }));
-  visuals.notifyChecksPending(session.id, newHead, 'building');
+  visuals.notifyChecksPending(session.id, newHead, 'building', 'pr-import');
 
   // #687: in mock-GitHub mode (staging previews) there is no real repo to
   // clone against the new head — record a gate-passing 'skipped' verdict
@@ -287,7 +287,7 @@ async function rerunChecksForNewHead({ config, pool, session, newHead }) {
     await staging.verifyStagingEdge(session, result.hostname, result.stagingUrl);
   } catch (_) { /* edge verification is best-effort */ }
 
-  await visuals.captureForSession(config, session, app, newHead || null, result, { send: () => {} })
+  await visuals.captureForSession(config, session, app, newHead || null, result, { send: () => {}, trigger: 'pr-import' })
     .catch((err) => log.warn('pr-import-sync', 'checks capture failed (non-fatal)', {
       sessionId: session.id, err: err.message,
     }));
@@ -384,11 +384,11 @@ async function kickImportedChecks({ config, pool, session, app, headSha }) {
   const visuals = require('./visuals');
   const staging = require('./staging');
   try {
-    await visuals.setChecksPending(pool, session.id, headSha || null, 'building')
+    await visuals.setChecksPending(pool, session.id, headSha || null, 'building', 'pr-import')
       .catch((err) => log.warn('pr-import-sync', 'import setChecksPending failed (non-fatal)', {
         sessionId: session.id, err: err.message,
       }));
-    visuals.notifyChecksPending(session.id, headSha || null, 'building');
+    visuals.notifyChecksPending(session.id, headSha || null, 'building', 'pr-import');
 
     // #687 Slice 6: in mock-GitHub mode there is no real repo to clone, so
     // skip the staging build entirely and record a gate-passing 'skipped'
@@ -473,7 +473,7 @@ async function kickImportedChecks({ config, pool, session, app, headSha }) {
       });
     }
 
-    visuals.captureForSession(config, session, app, headSha || null, result)
+    visuals.captureForSession(config, session, app, headSha || null, result, { trigger: 'pr-import' })
       .catch((err) => log.warn('pr-import-sync', 'import visuals capture failed', {
         sessionId: session.id, err: err.message,
       }));

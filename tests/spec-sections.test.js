@@ -152,14 +152,21 @@ test('no content before the first marker → empty preamble', () => {
 // ── 2. Source guards ─────────────────────────────────────────────────────
 
 const indexHtml = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
-const devChatSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'dev-chat.js'), 'utf8');
+const devChatSrc = fs.readFileSync(path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'dev-chat.js'), 'utf8');
 
-test('index.html loads spec-sections.js before dev-chat.js', () => {
+test('index.html loads spec-sections.js before the dev chat reads it', () => {
+  // #1084 chunk G moved dev-chat.js into the React bundle, so there is no
+  // longer a second <script> tag to compare document positions against. The
+  // ordering guarantee is now the bundle's `type="module"`, which defers it
+  // past every classic /js/** script — so assert the helper tag still exists
+  // and that the entry is still deferred. tests/shell-script-order.test.js
+  // pins the same contract shell-wide.
   const specIdx = indexHtml.indexOf('/js/spec-sections.js');
-  const devChatIdx = indexHtml.indexOf('/js/dev-chat.js');
   assert.ok(specIdx !== -1, 'spec-sections.js script tag missing from index.html');
-  assert.ok(devChatIdx !== -1, 'dev-chat.js script tag missing from index.html');
-  assert.ok(specIdx < devChatIdx, 'spec-sections.js must load before dev-chat.js');
+  assert.ok(!indexHtml.includes('src="/js/dev-chat.js"'),
+    'dev-chat.js is bundled now (chunk G) — it must not come back as a tag');
+  assert.ok(indexHtml.includes('<script type="module" src="/shell/assets/shell.js">'),
+    'the React entry must stay a deferred module so DevChat sees window.splitSpecSections');
 });
 
 test('dev-chat.js spec viewer calls splitSpecSections and wires the tabs', () => {

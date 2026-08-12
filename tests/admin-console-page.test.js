@@ -1,6 +1,6 @@
 // Full-page admin & moderation console (#818) — the second slice behind
 // the #588 header icon: the "Coming soon" placeholder is replaced by a
-// hash-routed #admin screen rendered by public/js/admin-console.js.
+// hash-routed #admin screen rendered by frontend/src/features/admin/admin-console.js.
 //
 // Contract pinned here:
 //  - the icon's click handler navigates to #admin (and still re-checks
@@ -28,7 +28,10 @@ const path = require('node:path');
 const root = path.join(__dirname, '..');
 const html = fs.readFileSync(path.join(root, 'public/index.html'), 'utf8');
 const appJs = fs.readFileSync(path.join(root, 'public/js/app.js'), 'utf8');
-const consoleJs = fs.readFileSync(path.join(root, 'public/js/admin-console.js'), 'utf8');
+const consoleJs = fs.readFileSync(path.join(root, 'frontend/src/features/admin/admin-console.js'), 'utf8');
+// The chassis (#admin-root and the two hosts inside it) is React-owned markup
+// since #1082 chunk E; the module renders only what hangs off it.
+const islandTsx = fs.readFileSync(path.join(root, 'frontend/src/features/admin/index.tsx'), 'utf8');
 const manifest = JSON.parse(fs.readFileSync(path.join(root, 'dapp.json'), 'utf8'));
 
 test('the icon action navigates to the #admin hash route, gate first', () => {
@@ -73,8 +76,37 @@ test('the admin screen ships hidden in the shell like its siblings', () => {
   assert.ok(main, 'index.html carries #admin-screen');
   assert.match(main[0], /class="hidden /, 'ships hidden — revealed only by navigation');
   assert.ok(html.includes('id="admin-root"'), 'the module renders into #admin-root');
-  assert.ok(html.includes('<script src="/js/admin-console.js"></script>'),
-    'admin-console.js is loaded by the shell');
+  // #1082 chunk E: the console's ten modules arrive with the React bundle now,
+  // not as a <script src="/js/admin-console.js"> tag. The chassis they used to
+  // build at mount is prerendered instead — so assert the CHASSIS is in the
+  // document, which is a stronger claim than the tag ever was.
+  assert.ok(!html.includes('/js/admin-console.js'),
+    'the console module is bundled, not loaded as a classic script');
+  for (const id of ['admin-nav-desktop', 'admin-view-only-banner', 'admin-section-content']) {
+    assert.ok(html.includes(`id="${id}"`), `the chassis ships #${id}`);
+  }
+  const banner = html.match(/<div id="admin-view-only-banner"[^>]*>/);
+  assert.ok(banner && /class="hidden /.test(banner[0]),
+    'the view-only banner ships hidden — AdminConsole._renderShell reveals it');
+  assert.match(html, /<div id="admin-section-content" class="pb-8"><\/div>/,
+    'the section host ships EMPTY: sections render into it from the module');
+});
+
+test('the console island imports all eleven admin modules, console first', () => {
+  // The load-order cluster the retired <script> tags used to express. The ten
+  // section modules read the AdminUI registry admin-console.js exports, and
+  // admin-topochain.js reads it while its module body evaluates — so if the
+  // console import ever stops coming first, the prerender pass throws.
+  const island = fs.readFileSync(
+    path.join(root, 'frontend/src/features/admin/index.tsx'), 'utf8');
+  const order = [...island.matchAll(/from '\.\/(admin-[a-z]+)\.js'|import '\.\/(admin-[a-z]+)\.js'/g)]
+    .map((m) => m[1] || m[2]);
+  assert.equal(order[0], 'admin-console', 'admin-console.js is imported first');
+  assert.deepEqual(order.slice(1).sort(), [
+    'admin-analytics', 'admin-campaigns', 'admin-estimator', 'admin-gallery',
+    'admin-mail', 'admin-merges', 'admin-node', 'admin-push', 'admin-status',
+    'admin-topochain',
+  ], 'all ten section modules are imported by the island');
 });
 
 test('every full-screen exit path also exits the admin screen', () => {
@@ -113,7 +145,7 @@ test('the console is not gated on the environment', () => {
 
 test('the menu carries every section, grouped, with no external tools left', () => {
   const KEYS = [
-    'overview', 'status', 'node', 'merges', 'rollover', 'staging-reap',
+    'overview', 'status', 'node', 'push', 'merges', 'rollover', 'staging-reap',
     'users', 'codes', 'limits',
     'analytics', 'estimator', 'gallery', 'features',
     'campaigns', 'db-export', 'mail', 'seasons',
@@ -138,8 +170,11 @@ test('the menu carries every section, grouped, with no external tools left', () 
   const keyCount = (sectionBlock.match(/key: '/g) || []).length;
   const groupCount = (sectionBlock.match(/group: '/g) || []).length;
   assert.equal(keyCount, groupCount, 'every SECTIONS entry carries a group');
-  // Responsive split: sidebar on md+, two-level hierarchy below md.
-  assert.ok(consoleJs.includes('id="admin-nav-desktop"'), 'desktop sidebar renders');
+  // Responsive split: sidebar on md+, two-level hierarchy below md. The
+  // sidebar's HOST is React-owned chassis now (#1082 chunk E) while the module
+  // still fills it — hence the two different files.
+  assert.ok(islandTsx.includes('id="admin-nav-desktop"'), 'the island renders the desktop sidebar host');
+  assert.match(consoleJs, /getElementById\('admin-nav-desktop'\)/, 'the module fills that sidebar');
   assert.ok(consoleJs.includes('id="admin-mobile-menu"'), 'the mobile level-1 menu renders');
   // The horizontally scrolling tab strip it replaced is GONE, not merely
   // hidden — its id and its sideways scroll are what made fifteen
@@ -159,11 +194,15 @@ test('the menu carries every section, grouped, with no external tools left', () 
     'the sidebar groups via the shared helper');
 });
 
-// #860: the six folded-in sections each live in their own module, loaded by
-// the shell and precached by the service worker. Losing any of those three
-// registrations shows "module failed to load" instead of the section.
-test('every folded-in section has a module, a script tag and a precache entry', () => {
+// #860: the six folded-in sections each live in their own module. They were
+// loaded by the shell and precached by the service worker individually until
+// #1082 chunk E moved them into the React bundle — so what has to hold now is
+// that each one exists at its new path and the island imports it. Losing
+// either shows "module failed to load" instead of the section.
+test('every folded-in section has a module, an island import and no stale wiring', () => {
   const sw = fs.readFileSync(path.join(root, 'public/sw.js'), 'utf8');
+  const island = fs.readFileSync(
+    path.join(root, 'frontend/src/features/admin/index.tsx'), 'utf8');
   const MODULES = {
     status: 'admin-status',
     node: 'admin-node',
@@ -173,6 +212,7 @@ test('every folded-in section has a module, a script tag and a precache entry', 
     merges: 'admin-merges',
     gallery: 'admin-gallery',
     campaigns: 'admin-campaigns',
+    push: 'admin-push',
     topochain: 'admin-topochain',
     // Platform outbound mail: configuration, a test send, and the ledger.
     mail: 'admin-mail',
@@ -180,12 +220,16 @@ test('every folded-in section has a module, a script tag and a precache entry', 
   for (const [key, file] of Object.entries(MODULES)) {
     assert.match(consoleJs, new RegExp(`${key}: '`),
       `SECTION_MODULES maps '${key}' to a module global`);
-    assert.ok(fs.existsSync(path.join(root, 'public/js', `${file}.js`)),
-      `public/js/${file}.js exists`);
-    assert.ok(html.includes(`<script src="/js/${file}.js"></script>`),
-      `${file}.js is loaded by the shell`);
-    assert.ok(sw.includes(`'/js/${file}.js'`),
-      `${file}.js is precached by the service worker`);
+    assert.ok(fs.existsSync(path.join(root, 'frontend/src/features/admin', `${file}.js`)),
+      `frontend/src/features/admin/${file}.js exists`);
+    assert.ok(island.includes(`'./${file}.js'`),
+      `${file}.js is imported by the console island`);
+    assert.ok(!html.includes(`/js/${file}.js`),
+      `${file}.js is bundled, so the shell must not still load it as a script`);
+    assert.ok(!sw.includes(`'/js/${file}.js'`),
+      `${file}.js is bundled, so its SHELL_ASSETS entry must be gone (the install would 404)`);
+    assert.ok(!fs.existsSync(path.join(root, 'public/js', `${file}.js`)),
+      `public/js/${file}.js is removed, not merely unreferenced`);
   }
   // The retired page scripts are gone, not merely unreferenced.
   for (const gone of ['dashboard.js', 'debug.js', 'gallery.js', 'admin-features.js']) {
@@ -202,7 +246,8 @@ test('every section module exposes destroy(), and switches call it first', () =>
   for (const file of ['admin-status', 'admin-node', 'admin-analytics',
     'admin-estimator', 'admin-merges', 'admin-gallery', 'admin-campaigns',
     'admin-topochain', 'admin-mail']) {
-    const src = fs.readFileSync(path.join(root, 'public/js', `${file}.js`), 'utf8');
+    const src = fs.readFileSync(
+      path.join(root, 'frontend/src/features/admin', `${file}.js`), 'utf8');
     assert.match(src, /destroy\(\)\s*\{/, `${file}.js implements destroy()`);
     assert.match(src, /render\(\s*\w+\s*\)\s*\{/, `${file}.js implements render(host)`);
   }

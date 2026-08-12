@@ -84,9 +84,10 @@ function menuLabels(AppView, html) {
 const ISSUE = (over) => ({ number: 5, title: 'Fix the thing', ...over });
 
 // Count the badge-row children: the tinted chips plus the composite pill.
+// The chips are their own full-width row (.dev-card-badges) below the head,
+// so everything after the meta line is in scope.
 function badgeCount(html) {
-  const row = html.match(/<div class="flex flex-wrap items-center gap-x-2 gap-y-1">([\s\S]*?)<div class="dev-card-headline">/);
-  const scope = html.slice(html.indexOf('</div>', html.indexOf('dev-card-headline-meta')));
+  const scope = html.slice(html.indexOf('</div>', html.indexOf('dev-card-meta')));
   const chips = (scope.match(/class="attr-chip |class="gc-vote-count |text-\[0\.65rem\]/g) || []).length;
   return chips;
 }
@@ -200,17 +201,20 @@ test('read-only viewers get no attribute rows at all', () => {
 
 // ── The four badges that survive, in order ──────────────────────────────
 
-test('proposal: the pill is its own FULL-WIDTH row, below the badge row', () => {
+test('proposal: the pill LEADS one merged status band, chips beside it', () => {
   const AppView = makeAppView();
   const html = AppView._renderProposalCard(PR({ ...ATTRS, my_vote: 'yes', check_state: 'passing' }));
-  // It used to lead the badge row and count against the cap. A proportional
-  // tally reads as a progress bar at full width and as noise at chip width,
-  // so it now spans the card's content on its own row underneath.
-  assert.match(html, /dev-status-row/);
-  assert.match(html, /dev-status-pill-block/);
-  assert.ok(html.indexOf('dev-status-row') > html.indexOf('Bug'),
-    'the pill row comes AFTER the badge row');
-  // The chips keep their own order within the badge row.
+  // History: the pill first led the badge row and counted against the cap,
+  // then got a full-width row of its own (.dev-status-row) underneath. The
+  // four-band card merges those two rows back into ONE reserved status band,
+  // because two variable rows are what made card heights disagree. The pill
+  // keeps its bar shape — it just flexes to whatever width the chips leave.
+  assert.doesNotMatch(html, /dev-status-row/, '.dev-status-row is retired');
+  assert.match(html, /dev-card-badges dev-card-status/, 'one merged band');
+  assert.match(html, /dev-status-pill-block/, 'the pill keeps its bar treatment');
+  assert.ok(html.indexOf('dev-status-pill-block') < html.indexOf('Bug'),
+    'the pill LEADS the band now — it is the card\'s headline state');
+  // The chips keep their own order within the band.
   assert.ok(html.indexOf('High') < html.indexOf('@maya'));
   assert.ok(html.indexOf('@maya') < html.indexOf('Bug'));
 });
@@ -220,7 +224,9 @@ test('the detail head keeps the INLINE capsule, not a second full-width bar', ()
   const head = AppView._renderProposalCard(PR({ my_vote: 'yes', check_state: 'passing' }), { noNav: true });
   assert.match(head, /gc-vote-count/, 'the pill is still there');
   assert.doesNotMatch(head, /dev-status-pill-block/, 'as a capsule — that page is already full width');
-  assert.doesNotMatch(head, /dev-status-row/);
+  // And no reserved band either: the detail head is the one non-dense caller,
+  // so its rows still collapse when they have nothing to say.
+  assert.doesNotMatch(head, /dev-card-status/);
 });
 
 test('the pill is exempt from the cap, so four chips still fit beside it', () => {
@@ -262,7 +268,7 @@ test('proposal provenance reads on the meta line, not as badges', () => {
     source: 'imported', imported_pr_author: 'octo', external_agent: 'codex',
     pr_title_fallback: true,
   }));
-  const meta = html.slice(html.indexOf('dev-card-headline-meta'), html.indexOf('</div>', html.indexOf('dev-card-headline-meta')) + 6);
+  const meta = html.slice(html.indexOf('dev-card-meta'), html.indexOf('</div>', html.indexOf('dev-card-meta')) + 6);
   assert.match(meta, /imported from GitHub \(octo\)/);
   assert.match(meta, /built with Codex/);
   assert.match(meta, /auto-title pending/);
@@ -281,6 +287,6 @@ test('_proposalProvenanceWords is empty for an ordinary in-platform proposal', (
 test('the issue bounty count reads on the meta line, not as a ★ chip', () => {
   const AppView = makeAppView();
   const html = AppView._renderIssueRow(ISSUE({ bounty_count: 3, title_fallback: true }));
-  assert.match(html, /dev-card-headline-meta[\s\S]*?&#9733; 3/);
+  assert.match(html, /dev-card-meta[\s\S]*?&#9733; 3/);
   assert.match(html, /auto-title pending/);
 });

@@ -26,7 +26,7 @@ const path = require('node:path');
 const root = path.join(__dirname, '..');
 const html = fs.readFileSync(path.join(root, 'public/index.html'), 'utf8');
 const appJs = fs.readFileSync(path.join(root, 'public/js/app.js'), 'utf8');
-const lbJs = fs.readFileSync(path.join(root, 'public/js/leaderboard.js'), 'utf8');
+const lbJs = fs.readFileSync(path.join(root, 'frontend/src/features/leaderboard/leaderboard.js'), 'utf8');
 const appViewJs = fs.readFileSync(path.join(root, 'public/js/app-view.js'), 'utf8');
 const dapp = JSON.parse(fs.readFileSync(path.join(root, 'dapp.json'), 'utf8'));
 

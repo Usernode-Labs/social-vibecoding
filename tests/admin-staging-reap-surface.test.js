@@ -1,6 +1,6 @@
 // Wiring tests for the stale-staging-preview sweep surface — the admin route
 // pair (src/routes/admin.js), the admin-console section
-// (public/js/admin-console.js), the shell's WS routing (public/js/app.js) and
+// (frontend/src/features/admin/admin-console.js), the shell's WS routing (public/js/app.js) and
 // the analytics event type it records.
 //
 // Text-pinning, in the style of tests/admin-rollover-surface.test.js (whose
@@ -37,7 +37,7 @@ const root = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
 
 const adminRoutes = read('src/routes/admin.js');
-const consoleJs = read('public/js/admin-console.js');
+const consoleJs = read('frontend/src/features/admin/admin-console.js');
 const appJs = read('public/js/app.js');
 const eventsJs = read('src/services/events.js');
 const reapJs = read('src/services/staging-reap.js');

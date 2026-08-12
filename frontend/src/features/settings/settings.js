@@ -11,7 +11,7 @@
 // active — and so can any other user viewing over their shoulder
 // (no secrets leak, just the indicator).
 //
-// LAYOUT (mirrors public/js/admin-console.js — read that file's header for
+// LAYOUT (mirrors features/admin/admin-console.js — read that file's header for
 // the reasoning, this is the same shell with different data):
 //
 //   desktop (md+)          a grouped sidebar of sections + the active
@@ -464,19 +464,44 @@
     // Re-entry while the screen is ALREADY mounted (app.js routes here
     // instead of re-running the whole screen swap — see navigateToSettings).
     // Mirrors AdminConsole.route.
+    //
+    // IDEMPOTENT (#1102). A same-document history traversal — the header
+    // chevron's history.back(), the device back gesture, browser back/forward
+    // — fires BOTH popstate and hashchange, so restoreFromHash runs TWICE in
+    // one tick and app.js hands us the SAME section twice. #987 stopped the
+    // duplicate replaying the screen ENTRY, but not the in-screen LEVEL
+    // change, and this screen's level swap mutates an already-VISIBLE root:
+    // the second call resolved the same level, so it asked for 'none', which
+    // the kit runs SYNCHRONOUSLY — landing the level swap before the first
+    // call's still-pending View Transition had captured the outgoing page.
+    // The animation then played the incoming page against a dimmed copy of
+    // itself (two menus on screen, the section gone instantly). So resolve
+    // the whole target FIRST and bail out when it is already on screen —
+    // don't "optimise" this into a repaint, and don't move it below the
+    // _transition() call. Browse.route has the same guard for the same
+    // reason. A late capability change (a section appearing/disappearing)
+    // repaints through refreshMenu(), not through here.
     route(section) {
       const visible = Settings._visibleSections();
       const valid = !!section && visible.some((s) => s.key === section);
-      if (!Settings._isMobile()) {
-        Settings.setSection(
-          valid ? section : (visible[0] ? visible[0].key : 'api-key'),
-          { writeHash: false },
-        );
+      const mobile = Settings._isMobile();
+      // The level and section this call WOULD end on. Level 1 keeps whatever
+      // section sits behind the menu, so there the level is the whole target.
+      const targetLevel = (!mobile || valid) ? 2 : 1;
+      const targetSection = valid
+        ? section
+        : (mobile ? Settings._section : (visible[0] ? visible[0].key : 'api-key'));
+      if (targetLevel === Settings._level && targetSection === Settings._section) {
+        Settings._markRoute('skipped');
+        return;
+      }
+      Settings._markRoute('applied');
+      if (!mobile) {
+        Settings.setSection(targetSection, { writeHash: false });
         Settings._level = 2;
         Settings._syncChrome();
         return;
       }
-      const targetLevel = valid ? 2 : 1;
       // 1→2 push, 2→1 pop, same level (section→section deep link) instant:
       // the kit's fidelity rule is no animation on same-level repaints.
       const type = targetLevel === Settings._level
@@ -752,6 +777,18 @@
     _transition(fn, type) {
       if (window.PlatformUI && PlatformUI.transition) PlatformUI.transition(fn, { type: type || 'none' });
       else fn();
+    },
+
+    // Runtime-only marker recording what the LAST route() call did —
+    // 'applied' (it repainted) or 'skipped' (the idempotence guard above
+    // bailed out). Nothing reads it at runtime: it exists so the dapp.json
+    // checks can assert an ordering that is otherwise only observable
+    // mid-animation, exactly like App._entryTransition's data-entered stamp
+    // (#977). Because it is written at runtime it is deliberately absent
+    // from tests/baselines/shell-markup.json.
+    _markRoute(state) {
+      const el = document.getElementById('settings-screen');
+      if (el) el.setAttribute('data-settings-route', state);
     },
 
     _scrollTop() {

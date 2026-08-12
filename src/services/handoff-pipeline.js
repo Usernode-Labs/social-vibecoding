@@ -202,7 +202,7 @@ async function runStaging(config, pool, session, app, headSha) {
   // captureForSession owns its terminal error verdict and never lets a test
   // runner failure escape. Awaiting it here keeps status honest while still
   // running entirely outside the original HTTP request.
-  await visuals.captureForSession(config, session, app, headSha, result);
+  await visuals.captureForSession(config, session, app, headSha, result, { trigger: 'commit-push' });
   return result;
 }
 
