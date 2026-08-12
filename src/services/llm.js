@@ -149,6 +149,13 @@ async function streamChat({ messages, systemPrompt, model, tools, toolChoice, on
         system: systemPrompt,
         messages,
         stream: true,
+        // #717: Mayor requests repeatedly share the same tools, system
+        // instructions, and growing transcript prefix. Let Anthropic cache
+        // that prefix for the default five-minute window so data-tool loops,
+        // post-agent wrap-ups, and nearby chat turns do not reprocess it at
+        // full input-token price. Top-level automatic caching keeps the
+        // breakpoint moving with the conversation without changing content.
+        cache_control: { type: 'ephemeral' },
       };
       if (Array.isArray(tools) && tools.length) params.tools = tools;
       // toolChoice lets callers force 'none' on wrap-up turns to prevent
@@ -195,6 +202,9 @@ async function streamChat({ messages, systemPrompt, model, tools, toolChoice, on
 
     const inputTokens = finalMessage.usage?.input_tokens || 0;
     const outputTokens = finalMessage.usage?.output_tokens || 0;
+    const cacheCreationInputTokens = finalMessage.usage?.cache_creation_input_tokens || 0;
+    const cacheReadInputTokens = finalMessage.usage?.cache_read_input_tokens || 0;
+    const cacheCreation = finalMessage.usage?.cache_creation || null;
 
     // Walk the assembled content blocks so callers can orchestrate a
     // tool-use loop without having to re-derive text vs. tool_use from
@@ -223,7 +233,13 @@ async function streamChat({ messages, systemPrompt, model, tools, toolChoice, on
       toolUses,
       stopReason,
       rawContent,
-      usage: { input_tokens: inputTokens, output_tokens: outputTokens },
+      usage: {
+        input_tokens: inputTokens,
+        output_tokens: outputTokens,
+        cache_creation_input_tokens: cacheCreationInputTokens,
+        cache_read_input_tokens: cacheReadInputTokens,
+        ...(cacheCreation ? { cache_creation: cacheCreation } : {}),
+      },
       // Fable 5 fallback surface (see module header). servedModel names
       // the model that actually produced the message; fallbackServed is
       // the usage.iterations detection (plus the recommended_model retry
@@ -247,7 +263,37 @@ async function streamChat({ messages, systemPrompt, model, tools, toolChoice, on
 // pricing — a ~3x underestimate that let fable turns slip past the daily
 // budget enforcement. Callers should pass the SERVED model (streamChat's
 // `servedModel`) so a fallback-served turn bills at the fallback's rates.
-function estimateCostCents(usage, model) {
+function usageTokenCount(value) {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+function cacheCreationTokenBreakdown(usage = {}) {
+  const breakdown = usage.cache_creation || {};
+  const fiveMinute = usageTokenCount(breakdown.ephemeral_5m_input_tokens);
+  const oneHour = usageTokenCount(breakdown.ephemeral_1h_input_tokens);
+  const reportedTotal = usageTokenCount(usage.cache_creation_input_tokens);
+  const total = Math.max(reportedTotal, fiveMinute + oneHour);
+  return {
+    fiveMinute,
+    oneHour,
+    // Older/alternate response shapes expose only the aggregate. streamChat
+    // requests the default five-minute TTL, so any unclassified creation
+    // tokens use the five-minute write multiplier.
+    unclassified: Math.max(0, total - fiveMinute - oneHour),
+    total,
+  };
+}
+
+function totalTokenCount(usage = {}) {
+  const creation = cacheCreationTokenBreakdown(usage);
+  return usageTokenCount(usage.input_tokens)
+    + usageTokenCount(usage.cache_read_input_tokens)
+    + creation.total
+    + usageTokenCount(usage.output_tokens);
+}
+
+function estimateCostCents(usage = {}, model) {
   const inputPer1k = model?.includes('fable') ? 0.010
     : model?.includes('opus') ? 0.005
       : model?.includes('sonnet') ? 0.003
@@ -259,9 +305,23 @@ function estimateCostCents(usage, model) {
         : model?.includes('haiku') ? 0.005
           : 0.015;
 
+  const creation = cacheCreationTokenBreakdown(usage);
+  const regularInput = usageTokenCount(usage.input_tokens);
+  const cacheRead = usageTokenCount(usage.cache_read_input_tokens);
+  const fiveMinuteWrite = creation.fiveMinute + creation.unclassified;
+
+  // Anthropic prompt-cache pricing is expressed as a multiplier of the
+  // model's ordinary input price: 5m writes 1.25x, 1h writes 2x, and reads
+  // 0.1x. Output pricing is unchanged. Keeping this in the shared estimator
+  // means daily limits and BYOK display remain aligned with actual spend.
+  const inputCost = regularInput
+    + cacheRead * 0.1
+    + fiveMinuteWrite * 1.25
+    + creation.oneHour * 2;
+
   return (
-    (usage.input_tokens / 1000) * inputPer1k * 100 +
-    (usage.output_tokens / 1000) * outputPer1k * 100
+    (inputCost / 1000) * inputPer1k * 100 +
+    (usageTokenCount(usage.output_tokens) / 1000) * outputPer1k * 100
   );
 }
 
@@ -1131,7 +1191,7 @@ function _setClientForTests(fakeClient) {
 }
 
 module.exports = {
-  init, isEnabled, getSystemPrompt, streamChat, estimateCostCents,
+  init, isEnabled, getSystemPrompt, streamChat, estimateCostCents, totalTokenCount,
   generatePrMetadata, parsePrMetadataText, generateSessionTitle,
   // #1001 quick-reply pills: the forced Mayor continuation, the Haiku
   // backstop, and the compact context both share.

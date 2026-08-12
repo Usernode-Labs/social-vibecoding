@@ -24,7 +24,11 @@ const sessionLifecycle = require('../services/session-lifecycle');
 const stagingRecovery = require('../services/staging-recovery');
 const sessionBus = require('../services/session-bus');
 const { drainGuard } = require('../services/lifecycle');
-const { getAppConventions, getSelfHostedRefuseList } = require('../services/prompts');
+const {
+  getAppConventions,
+  getWorkOrderEssentials,
+  getSelfHostedRefuseList,
+} = require('../services/prompts');
 const { IN_LOOP_BROWSER_GUIDANCE } = require('../services/in-loop-browser');
 const models = require('../services/models');
 const limits = require('../services/limits');
@@ -137,6 +141,19 @@ const {
 // unit-testable without docker (same pattern as services/turn-watchdog).
 const stopPolicy = require('../services/stop-policy');
 const { stopPendingFor } = stopPolicy;
+
+// #717: persisted token_count includes cache reads and cache writes as real
+// context tokens, even though Anthropic prices them differently. The fallback
+// keeps route suites that replace the llm module with a narrow test double
+// working; production always takes the shared helper.
+function usageTotalTokens(usage) {
+  if (!usage) return 0;
+  if (typeof llm.totalTokenCount === 'function') return llm.totalTokenCount(usage);
+  return (usage.input_tokens || 0)
+    + (usage.cache_read_input_tokens || 0)
+    + (usage.cache_creation_input_tokens || 0)
+    + (usage.output_tokens || 0);
+}
 
 // A live request can lose its database connection after the detached worker
 // has already produced a result. In that case the durable active_turn is the
@@ -4200,7 +4217,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
                 `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents)
                  VALUES ($1, 'assistant', $2, $3, $4, $5)`,
                 [session.id, mayor1.text, servedModelIter,
-                  mayor1.usage ? mayor1.usage.input_tokens + mayor1.usage.output_tokens : null,
+                  mayor1.usage ? usageTotalTokens(mayor1.usage) : null,
                   dataCost]
               );
             }
@@ -4512,7 +4529,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           await pool.query(
             `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata)
              VALUES ($1, 'assistant', $2, $3, $4, $5, $6)`,
-            [session.id, mayorText1, servedModel1, mayor1.usage.input_tokens + mayor1.usage.output_tokens, costCents1,
+            [session.id, mayorText1, servedModel1, usageTotalTokens(mayor1.usage), costCents1,
              JSON.stringify({
                ...(suggestions ? { suggestions } : {}),
                ...quickReplyMeta(pills1, { preamble: willDispatch }),
@@ -4983,9 +5000,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         const costCents2 = mayor2.usage
           ? llm.estimateCostCents(mayor2.usage, servedModel2)
           : 0;
-        const tokenCount2 = mayor2.usage
-          ? (mayor2.usage.input_tokens || 0) + (mayor2.usage.output_tokens || 0)
-          : null;
+        const tokenCount2 = mayor2.usage ? usageTotalTokens(mayor2.usage) : null;
         // #1001: the wrap-up is the row the user is left looking at after a
         // build or a spec, so this is where a generic pill set hurt most —
         // and where the tool was skipped most (a plain `end_turn`). Ask the
@@ -6596,7 +6611,7 @@ async function persistHeadlessMayorRow({
     sessionId,
     text,
     model || null,
-    usage ? (usage.input_tokens || 0) + (usage.output_tokens || 0) : 0,
+    usage ? usageTotalTokens(usage) : 0,
     costCents || 0,
     JSON.stringify(metadata || {}),
   ];
@@ -6917,7 +6932,7 @@ async function runHeadlessSession({
       await pool.query(
         `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata)
          VALUES ($1, 'assistant', $2, $3, $4, $5, $6)`,
-        [session.id, mayorText1, servedModel1, mayor1.usage.input_tokens + mayor1.usage.output_tokens, costCents1,
+        [session.id, mayorText1, servedModel1, usageTotalTokens(mayor1.usage), costCents1,
          JSON.stringify(headlessSuggestions ? { suggestions: headlessSuggestions } : {})]
       );
     }
@@ -7534,7 +7549,7 @@ async function runRecoveredWrapUp({
   const persistWrapUp = async (text, quickReplies, { model, usage, costCents, source = 'static', kind } = {}) => {
     const params = [
       sessionId, text, model || null,
-      usage ? (usage.input_tokens || 0) + (usage.output_tokens || 0) : null,
+      usage ? usageTotalTokens(usage) : null,
       costCents || null,
       JSON.stringify({
         ...(quickReplies ? { quickReplies, quickRepliesSource: source } : {}),
@@ -12660,15 +12675,17 @@ When the user explicitly asks you to create, file, open, log, or raise an issue 
     ? `\n\nSTATUS: A coding agent IS currently running for this session — the dispatch_claude_code and dispatch_scout tools are NOT available right now. Just chat with the user; tell them the agent is still working and they can follow up once it finishes.`
     : `\n\nSTATUS: No coding agent is running. You MAY use dispatch_claude_code or dispatch_scout when appropriate (see the rules below). Otherwise just reply in text and do not call any tools.`;
 
-  // Platform conventions are authoritative; app-specific guidance in a
-  // repo CLAUDE.md takes precedence for app-specific matters only. See
-  // src/prompts/app-conventions.md for the source of truth — edit
-  // there, restart, and both Mayor + Claude Code pick up the update.
+  // #717: the Mayor classifies requests and dispatches agents; it never
+  // writes code. Replaying the full developer handbook here cost roughly
+  // 120 KB on every Mayor call, including each autonomous decision/wrap-up
+  // phase. The compact work-order excerpt is derived from that SAME source
+  // file and preserves the cross-cutting rules a planner needs. Dispatched
+  // scout/build agents still receive getAppConventions() in full below.
   const conventionsBlock = `
 
 ==== PLATFORM CONVENTIONS (authoritative) ====
 
-${getAppConventions()}
+${getWorkOrderEssentials()}
 
 ==== END PLATFORM CONVENTIONS ====
 

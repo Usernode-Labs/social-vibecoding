@@ -9,8 +9,10 @@
 //     server-side-fallback opt-in; other models keep the plain path;
 //     a refusal carrying stop_details.recommended_model triggers exactly
 //     one direct retry
+//   - prompt caching: streamed Mayor requests opt in and surface the full
+//     cache usage breakdown
 //   - estimateCostCents: fable priced per models.js ($10/$50 per MTok),
-//     above sonnet and opus
+//     above sonnet and opus; cache reads/writes use Anthropic's multipliers
 //
 // Run with: node --test tests/llm-fallback.test.js
 
@@ -180,6 +182,47 @@ test('streamChat: non-fable models never get the beta path', async () => {
   });
 });
 
+test('streamChat: requests use automatic five-minute prompt caching', async () => {
+  await withStubClient([baseMessage({ model: 'claude-opus-5' })], async (stub) => {
+    await llm.streamChat({
+      messages: [{ role: 'user', content: 'hi' }],
+      systemPrompt: 'sys',
+      model: 'claude-opus-5',
+    });
+    assert.deepEqual(stub.calls[0].params.cache_control, { type: 'ephemeral' });
+  });
+});
+
+test('streamChat: cache usage survives in the normalized result', async () => {
+  const cacheCreation = {
+    ephemeral_5m_input_tokens: 6000,
+    ephemeral_1h_input_tokens: 0,
+  };
+  await withStubClient([baseMessage({
+    model: 'claude-opus-5',
+    usage: {
+      input_tokens: 120,
+      cache_creation_input_tokens: 6000,
+      cache_read_input_tokens: 18000,
+      cache_creation: cacheCreation,
+      output_tokens: 80,
+    },
+  })], async () => {
+    const result = await llm.streamChat({
+      messages: [{ role: 'user', content: 'hi' }],
+      systemPrompt: 'sys',
+      model: 'claude-opus-5',
+    });
+    assert.deepEqual(result.usage, {
+      input_tokens: 120,
+      output_tokens: 80,
+      cache_creation_input_tokens: 6000,
+      cache_read_input_tokens: 18000,
+      cache_creation: cacheCreation,
+    });
+  });
+});
+
 test('streamChat: fallback-served response reports servedModel + fallbackServed', async () => {
   const served = baseMessage({
     model: 'claude-opus-5',
@@ -324,4 +367,36 @@ test('estimateCostCents: fable priced per models.js, above sonnet and opus', () 
   assert.ok(fable > opus, `fable (${fable}) should out-price opus (${opus})`);
   assert.ok(opus > sonnet, `opus (${opus}) should out-price sonnet (${sonnet})`);
   assert.ok(sonnet > haiku, `sonnet (${sonnet}) should out-price haiku (${haiku})`);
+});
+
+test('estimateCostCents: prompt-cache reads and writes use documented multipliers', () => {
+  const regular = llm.estimateCostCents({ input_tokens: 1000 }, 'claude-opus-5');
+  const read = llm.estimateCostCents({ cache_read_input_tokens: 1000 }, 'claude-opus-5');
+  const fiveMinuteWrite = llm.estimateCostCents({
+    cache_creation_input_tokens: 1000,
+  }, 'claude-opus-5');
+  const oneHourWrite = llm.estimateCostCents({
+    cache_creation_input_tokens: 1000,
+    cache_creation: {
+      ephemeral_5m_input_tokens: 0,
+      ephemeral_1h_input_tokens: 1000,
+    },
+  }, 'claude-opus-5');
+
+  assert.equal(read, regular * 0.1);
+  assert.equal(fiveMinuteWrite, regular * 1.25);
+  assert.equal(oneHourWrite, regular * 2);
+});
+
+test('totalTokenCount includes uncached, cached, cache-write, and output tokens once', () => {
+  assert.equal(llm.totalTokenCount({
+    input_tokens: 100,
+    cache_read_input_tokens: 200,
+    cache_creation_input_tokens: 300,
+    cache_creation: {
+      ephemeral_5m_input_tokens: 200,
+      ephemeral_1h_input_tokens: 100,
+    },
+    output_tokens: 400,
+  }), 1000);
 });
