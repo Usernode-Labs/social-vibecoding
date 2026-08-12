@@ -350,10 +350,11 @@ test('groupTestsByDocument shares a document across hashes and caps the cohorts'
     t(0, 'http://s/dev#/a'), t(1, 'http://s/other'), t(2, 'http://s/dev#/b'),
     t(3, 'http://s/dev#/a'), t(4, 'http://s/dev'),
   ], { cap: 6 });
-  assert.deepEqual(groups.map((g) => g.map((x) => x.index)), [[0, 3, 2, 4], [1]],
+  assert.deepEqual(groups.map((g) => g.map((x) => x.index)), [[4, 0, 3, 2], [1]],
     'one group per document, ordered cohort-major (each hash\'s checks stay '
     + 'adjacent so the page is visited once per cohort), first-appearance '
-    + 'order across both levels');
+    + 'order within and between cohorts — except the hash-less cohort (4), '
+    + 'which leads because it is the one the cold load lands on');
 
   // The cap keeps one popular document from serialising into a single lane
   // and becoming the critical path while other workers sit idle.
@@ -381,6 +382,36 @@ test('the hash-less cohort always leads, and the kill-switch restores per-URL gr
   assert.equal(groupTests(tests, {}).length, 1, 'one document, one group');
   assert.equal(groupTests(tests, { TEST_GROUP_BY_DOCUMENT: '0' }).length, 2,
     'the flag restores a group per URL, with no deploy');
+});
+
+test('the BUILDER hoists the bare cohort too, so goto() lands on the leading cohort', () => {
+  // The runner navigates once, to group[0].url, and treats the first cohort as
+  // already loaded. If the builder emitted cohorts in declaration order while
+  // the runner reordered them, a bare cohort declared second would be checked
+  // against the FIRST cohort's fragment — every one of its assertions
+  // evaluated on the wrong screen. The two orderings must be the same one.
+  const groups = groupTests([
+    { index: 0, url: 'http://s/dev#/a' },
+    { index: 1, url: 'http://s/dev' },
+    { index: 2, url: 'http://s/dev#/b' },
+  ], {});
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0][0].index, 1, 'the bare test leads the flattened group');
+  assert.equal(cohortsOf(groups[0])[0].tests[0], groups[0][0],
+    'and the runner agrees: cohort 0 starts at the test goto() will load');
+
+  // Past the cap, the bare cohort must be in the FIRST chunk — chunking after
+  // the hoist is what guarantees it.
+  const many = [];
+  for (let i = 0; i < 9; i += 1) many.push({ index: i, url: `http://s/dev#/h${i}` });
+  many.push({ index: 9, url: 'http://s/dev' });
+  const chunked = groupTests(many, { TEST_HASH_GROUP_CAP: '4' });
+  assert.equal(chunked.length, 3, '10 cohorts at a cap of 4');
+  assert.equal(chunked[0][0].index, 9, 'the bare cohort leads chunk one');
+  for (const g of chunked) {
+    assert.equal(cohortsOf(g)[0].tests[0], g[0],
+      'every chunk leads with the cohort its own goto() lands on');
+  }
 });
 
 // A page whose console output is under the test's control, so attribution can

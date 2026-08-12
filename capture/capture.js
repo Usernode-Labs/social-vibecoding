@@ -915,6 +915,17 @@ function splitDocumentUrl(url) {
 // always the COLD navigation. Sub-navigation writes `location.hash`, and
 // clearing a fragment is not a same-document navigation — it would reload the
 // page mid-group. Leading with it means every switch is to a real fragment.
+//
+// BOTH the builder and the runner order cohorts through this one function.
+// They have to agree: the runner navigates once to `group[0].url` and treats
+// the first cohort as already-loaded, so if the builder emitted a different
+// cohort first, that cohort would be evaluated against someone else's hash.
+function hoistBareCohort(cohorts) {
+  const bare = cohorts.findIndex((c) => !c.hash);
+  if (bare > 0) cohorts.unshift(cohorts.splice(bare, 1)[0]);
+  return cohorts;
+}
+
 function cohortsOf(group) {
   const tests = Array.isArray(group) ? group : [group];
   const byHash = new Map();
@@ -923,10 +934,9 @@ function cohortsOf(group) {
     if (!byHash.has(hash)) byHash.set(hash, []);
     byHash.get(hash).push(t);
   }
-  const cohorts = Array.from(byHash.entries()).map(([hash, members]) => ({ hash, tests: members }));
-  const bare = cohorts.findIndex((c) => !c.hash);
-  if (bare > 0) cohorts.unshift(cohorts.splice(bare, 1)[0]);
-  return cohorts;
+  return hoistBareCohort(
+    Array.from(byHash.entries()).map(([hash, members]) => ({ hash, tests: members }))
+  );
 }
 
 function groupTestsByDocument(tests, opts) {
@@ -943,11 +953,16 @@ function groupTestsByDocument(tests, opts) {
   }
   const groups = [];
   for (const byHash of byDoc.values()) {
-    const cohorts = Array.from(byHash.values());
+    // Hoisted here, not just at run time: the FIRST chunk's first cohort is the
+    // one the group's single goto() lands on, so the bare cohort has to be
+    // ordered before the chunk boundaries are drawn, not after.
+    const cohorts = hoistBareCohort(
+      Array.from(byHash.entries()).map(([hash, members]) => ({ hash, tests: members }))
+    );
     for (let i = 0; i < cohorts.length; i += cap) {
       // Flatten the chunk: a group stays a plain array of tests, which is what
       // the pool's budget/timeout/emit paths already iterate.
-      groups.push([].concat(...cohorts.slice(i, i + cap)));
+      groups.push([].concat(...cohorts.slice(i, i + cap).map((c) => c.tests)));
     }
   }
   return groups;
