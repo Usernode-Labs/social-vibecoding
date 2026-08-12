@@ -35,8 +35,8 @@
  *    AdminConsole._renderShell() through classList — never a rendered
  *    className. Same contract as lib/legacy-dom.ts's useHiddenClass: React
  *    writes the attribute once, at hydration, and never again.
- *  - #admin-temp-pw-modal is static for the same reason. It is NOT one of
- *    PlatformUI.STATIC_MODAL_IDS (the kit never adopts it), and
+ *  - #admin-temp-pw-modal is static for the same reason. It is NOT one of the
+ *    nine dialogs (nothing lifts its card into a kit shell), and
  *    AdminConsole._showTempPasswordModal binds its two buttons with .onclick
  *    (assignment, not addEventListener) at show time, so the nodes may live
  *    here permanently — a repeated show rebinds rather than accumulating.

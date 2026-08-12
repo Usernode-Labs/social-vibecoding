@@ -7,11 +7,19 @@
  * `tests/baselines/shell-markup.json` pins the id inventory that dapp.json's
  * declared checks select against.
  *
- * Every one of these is deliberately static — see any component's header for
- * why (PlatformUI.adoptStaticModal moves their cards out of the DOM at open
- * time, so a React re-render of the subtree would reconcile against the wrong
- * parent). #1078 chunk A converts the markup; the behaviour move needs the
- * adoption seam brought inside React first.
+ * #1078 chunk A converted the markup and left every one of these static,
+ * because `PlatformUI.adoptStaticModal` moved their cards out of the DOM at
+ * open time and a React re-render would have reconciled against the wrong
+ * parent. Chunk I brought that lift inside React
+ * (`frontend/src/lib/static-modal.ts`, driven by `./use-dialog`), so all nine
+ * are stateful now and the open/close/submit behaviour lives here rather than
+ * in app.js, app-view.js and the retired public/js/app-secrets.js.
+ *
+ * Two of them — members and feedback — keep their logic in a sibling
+ * controller module rather than in JSX. That is a deliberate application of
+ * the repo's "a move, not a rewrite" rule, not an exception to the seam: both
+ * still route their whole lifecycle through `useDialog`. Each component's
+ * header gives the reason.
  */
 
 import { CreateAppDialog } from './create-app';

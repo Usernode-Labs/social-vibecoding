@@ -186,9 +186,12 @@ test('version information contains no particular dApp version', () => {
 });
 
 test('the fork row visibility is driven by renderForkBadge', () => {
+  // Anchored on the next member, not on `_forkSource`: that field moved into
+  // the fork dialog's island in #1078 chunk I and survives here only in the
+  // comment explaining where it went.
   const fn = appViewJs.slice(
     appViewJs.indexOf('  renderForkBadge() {'),
-    appViewJs.indexOf('  _forkSource:')
+    appViewJs.indexOf('  promptFork(source) {')
   );
   assert.ok(fn.length > 0, 'renderForkBadge located');
   assert.match(fn, /setRow\(false\)/, 'a non-fork hides the row');

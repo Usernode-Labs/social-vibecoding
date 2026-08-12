@@ -26,6 +26,13 @@ const path = require('node:path');
 const root = path.join(__dirname, '..');
 const html = fs.readFileSync(path.join(root, 'public/index.html'), 'utf8');
 const appJs = fs.readFileSync(path.join(root, 'public/js/app.js'), 'utf8');
+// The dialog's behaviour moved out of app.js in #1078 chunk I, when the Send
+// Feedback modal became a stateful island: the bounty row's reset, the submit
+// path and the open/dismiss halves live in the island's controller now, which
+// the component drives through useDialog. app.js keeps only what is still its
+// own — the ?shot= deep links and the sign-in queue flush.
+const feedbackJs = fs.readFileSync(
+  path.join(root, 'frontend/src/features/dialogs/feedback-controller.js'), 'utf8');
 const lbJs = fs.readFileSync(path.join(root, 'frontend/src/features/leaderboard/leaderboard.js'), 'utf8');
 const appViewJs = fs.readFileSync(path.join(root, 'public/js/app-view.js'), 'utf8');
 const dapp = JSON.parse(fs.readFileSync(path.join(root, 'dapp.json'), 'utf8'));
@@ -64,18 +71,18 @@ test('the checkbox ships unchecked in the markup', () => {
 // ── Open / reset behaviour ───────────────────────────────────────────
 
 test('the row is repainted from the live Kudos budget, not a literal', () => {
-  assert.match(appJs, /const resetBountyRow = \(\) => \{/);
-  assert.match(appJs, /window\.Kudos\?\.Budget\?\.state/);
+  assert.match(feedbackJs, /const resetBountyRow = \(\) => \{/);
+  assert.match(feedbackJs, /window\.Kudos\?\.Budget\?\.state/);
   // Both copy variants interpolate the server's numbers.
-  assert.match(appJs, /\$\{remaining\} of \$\{limit\} kudos left this week/);
-  assert.match(appJs, /You've used all \$\{limit\} kudos this week/);
-  assert.match(appJs, /resets Monday 00:00 UTC/);
+  assert.match(feedbackJs, /\$\{remaining\} of \$\{limit\} kudos left this week/);
+  assert.match(feedbackJs, /You've used all \$\{limit\} kudos this week/);
+  assert.match(feedbackJs, /resets Monday 00:00 UTC/);
 });
 
 test('resetBountyRow unchecks the box and disables it at zero remaining', () => {
-  const fn = appJs.slice(
-    appJs.indexOf('const resetBountyRow = () => {'),
-    appJs.indexOf('const activeTargetClasses')
+  const fn = feedbackJs.slice(
+    feedbackJs.indexOf('const resetBountyRow = () => {'),
+    feedbackJs.indexOf('const activeTargetClasses')
   );
   assert.ok(fn.length > 0, 'found resetBountyRow');
   assert.match(fn, /bountyCheckbox\.checked = false/);
@@ -84,28 +91,33 @@ test('resetBountyRow unchecks the box and disables it at zero remaining', () => 
   assert.match(fn, /bountyRow\.classList\.remove\('hidden'\)/);
 });
 
-test('openFeedbackModal resets the row and refreshes the budget', () => {
-  const open = appJs.slice(
-    appJs.indexOf('App.openFeedbackModal = (opts = {}) => {'),
-    appJs.indexOf("document.getElementById('feedback-btn').addEventListener")
+test('the open half resets the row and refreshes the budget', () => {
+  // `App.openFeedbackModal` is a one-line forward into the island now; the
+  // state half it used to hold is `Feedback._open`, called from useDialog's
+  // onOpen once the root has been revealed and its card lifted.
+  const open = feedbackJs.slice(
+    feedbackJs.indexOf('Feedback._open = (opts = {}) => {'),
+    feedbackJs.indexOf("document.getElementById('feedback-btn').addEventListener")
   );
-  assert.ok(open.length > 0, 'found openFeedbackModal');
+  assert.ok(open.length > 0, 'found the open half');
   assert.match(open, /resetBountyRow\(\)/);
   // A long-lived tab would otherwise show an hour-stale figure.
   assert.match(open, /window\.Kudos\?\.Budget\?\.refresh\?\.\(\)/);
 });
 
 test('cancelling the dialog clears any pledge intent', () => {
-  const cancel = appJs.slice(appJs.indexOf("document.getElementById('feedback-cancel').addEventListener"));
+  // Cancel, the backdrop, a kit dismiss and the two post-submit auto-closes
+  // all land in the same dismiss half now (useDialog's onClose).
+  const cancel = feedbackJs.slice(feedbackJs.indexOf('Feedback._reset = () => {'));
   assert.match(cancel.slice(0, 900), /bountyCheckbox\.checked = false/);
 });
 
 // ── Submit ───────────────────────────────────────────────────────────
 
 test('submitFeedback sends bounty only for a ticked, enabled, visible box', () => {
-  const submit = appJs.slice(
-    appJs.indexOf('const submitFeedback = async () => {'),
-    appJs.indexOf('App.openFeedbackModal = (opts = {}) => {')
+  const submit = feedbackJs.slice(
+    feedbackJs.indexOf('const submitFeedback = async () => {'),
+    feedbackJs.indexOf('Feedback._open = (opts = {}) => {')
   );
   assert.match(submit, /const wantBounty = bountyCheckbox\.checked && !bountyCheckbox\.disabled/);
   assert.match(submit, /if \(wantBounty\) body\.bounty = true/);
@@ -115,9 +127,9 @@ test('submitFeedback sends bounty only for a ticked, enabled, visible box', () =
 });
 
 test('the confirmation reports the bounty outcome and refreshes the meter', () => {
-  const submit = appJs.slice(
-    appJs.indexOf('const submitFeedback = async () => {'),
-    appJs.indexOf('App.openFeedbackModal = (opts = {}) => {')
+  const submit = feedbackJs.slice(
+    feedbackJs.indexOf('const submitFeedback = async () => {'),
+    feedbackJs.indexOf('Feedback._open = (opts = {}) => {')
   );
   assert.match(submit, /and pledged 1 kudos as a bounty/);
   assert.match(submit, /\$\{data\.bounty\.remaining\} left this week/);

@@ -2,8 +2,9 @@
  * `#visual-compare-overlay` — #353's before/after comparison, as a React island
  * (#1085 chunk H, step 1).
  *
- * Not one of `PlatformUI.STATIC_MODAL_IDS`, so unlike the nine dialog roots it
- * may hold state: nothing lifts its card out at runtime. The body is still built
+ * This overlay is not one of the nine dialogs, so it does not go through
+ * `frontend/src/lib/static-modal.ts`: nothing lifts its card into a kit shell,
+ * and it holds state directly. The body is still built
  * as a string by `AppView.openVisualComparison` (server-side capture ids
  * validated against /^[a-f0-9]{32}$/, everything else escaped there) and handed
  * over as HTML — converting that markup generator is not in chunk H's scope.

@@ -2,7 +2,7 @@
 //
 // Every id in public/index.html is an API. public/js/** reaches for them with
 // getElementById (57,799 lines of it, none of which the type checker sees),
-// public/css/app.css styles some of them, and dapp.json's 227 declared tests
+// public/css/app.css styles some of them, and dapp.json's 315 declared tests
 // select against deep chains of them — so a single lost id is a silently
 // broken screen plus a blocked merge, and it is by far the most damaging way
 // a markup conversion can go wrong.

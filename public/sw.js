@@ -110,7 +110,9 @@ const SHELL_ASSETS = [
   // the eight folded-in #860 section modules) used to be listed here. #1082
   // chunk E moved them into the React bundle, so /shell/assets/shell.js above
   // is what precaches them now.
-  '/js/app-secrets.js',
+  // The app-secrets dialog's module used to be listed here. #1078 chunk I
+  // moved it into the React bundle, so /shell/assets/shell.js above is what
+  // precaches it now.
   // The browse-all-apps screen's module used to be listed here. #1083 chunk F
   // moved it into the React bundle, so /shell/assets/shell.js above is what
   // precaches it now.
@@ -152,7 +154,9 @@ const SHELL_ASSETS = [
   // The profile screen's renderer used to be listed here. #1083 chunk F moved
   // it into the React bundle, so /shell/assets/shell.js above is what
   // precaches it now.
-  '/js/screenshot-select.js',
+  // The feedback dialog's screenshot-capture module used to be listed here.
+  // #1078 chunk I moved it into the React bundle, so /shell/assets/shell.js
+  // above is what precaches it now.
   '/js/session-options.js',
   '/js/session-transcript.js',
   '/js/spec-sections.js',

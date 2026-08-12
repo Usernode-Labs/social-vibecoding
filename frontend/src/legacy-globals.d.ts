@@ -95,6 +95,44 @@ declare global {
       _setSection?(section: string): void;
       [key: string]: unknown;
     };
+    /** public/js/app-view.js — the app screen. The dialogs read its appData. */
+    AppView?: {
+      appData?: { slug?: string; name?: string; url?: string; [key: string]: unknown } | null;
+      [key: string]: unknown;
+    };
+    /**
+     * features/dialogs/app-secrets-controller.js — the retired
+     * public/js/app-secrets.js. Still published under this name because five
+     * call sites in app-view.js reach it as `window.Secrets`.
+     */
+    Secrets?: {
+      open(slug: string, opts?: { declare?: boolean }): void;
+      close(): void;
+      [key: string]: unknown;
+    };
+    /**
+     * features/dialogs/screenshot-select.js — the retired
+     * public/js/screenshot-select.js. The feedback dialog gates its attach
+     * button on `isSupported()`, exactly as it did when this was a tag.
+     */
+    ScreenshotSelect?: {
+      isSupported(): boolean;
+      start(opts?: unknown): Promise<{ blob: Blob; contentType: string }>;
+      [key: string]: unknown;
+    };
+    /**
+     * The bridge this bundle publishes for `public/js/**` to call back into.
+     * `dialogs` is #1078 chunk I's addition: one entry per shell dialog,
+     * registered by `useDialog`, so the legacy open/close entry points drive
+     * React state instead of writing `hidden` themselves.
+     */
+    UsernodeReact?: {
+      dialogs?: Record<
+        string,
+        { isOpen(): boolean; open(payload?: unknown): void; close(): void } | undefined
+      >;
+      [key: string]: unknown;
+    };
     /** The inline head-blocking theme module in src/head.html. */
     Theme?: {
       get(): 'light' | 'dark' | 'system';

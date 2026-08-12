@@ -450,11 +450,12 @@
 
   // ── The sheet ──────────────────────────────────────────────────────
   //
-  // Built imperatively, and deliberately NOT as a React island: the nine
-  // roots in PlatformUI.STATIC_MODAL_IDS are lifted out of the document by
-  // adoptStaticModal when they open, so a React subtree there would
-  // reconcile against a parent that no longer holds its child. See
-  // AGENTS.md.
+  // Built imperatively, and deliberately NOT as a React island: this sheet's
+  // content element is handed to the kit, which moves it into its own shell,
+  // so a React subtree here would reconcile against a parent that no longer
+  // holds its child. The nine dialogs solve that by owning the lift from
+  // inside React (frontend/src/lib/static-modal.ts); this venue sheet has no
+  // static root to own, so it stays as it is. See AGENTS.md.
   //
   // `opts`: { anchorEl, state, onPick(preselect), onUnavailable(row) }.
   // Resolves whatever the kit's menu resolves; null when there is no kit.

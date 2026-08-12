@@ -1,43 +1,56 @@
 /**
  * Members, approvers & governance dialog (#members-modal).
  *
- * Members & visibility modal (AppView.openMembersModal). Sections
- * are shown/hidden per viewer: visibility controls for creator/admin,
- * member list + invite typeahead for collab-private apps.
+ * Sections are shown and hidden per viewer: visibility controls for the
+ * creator/admin, member list + invite typeahead for collab-private apps,
+ * proposal-approval governance, the app-admins roster and the approvers
+ * roster.
  *
- * Extracted verbatim from Shell.tsx by #1078 chunk A. The render output is
- * byte-identical to what the shell shipped before — same ids, same class
- * strings, same `hidden` semantics, same data-* attributes — and
- * tests/baselines/shell-markup.json plus the prerendered public/index.html
- * in this commit are the proof.
+ * Markup extracted verbatim from Shell.tsx by #1078 chunk A; #1078 chunk I
+ * gave it a lifecycle. The render output is still byte-identical to what the
+ * shell shipped — same ids, same class strings, same `hidden` semantics, same
+ * data-* attributes — and tests/baselines/shell-markup.json plus the
+ * prerendered public/index.html in this commit are the proof.
  *
- * ── Why this component is STATIC ──────────────────────────────────────
+ * ── What this island owns, and what it does not ───────────────────────
  *
- * #1078 mechanism 1: a region may become stateful only when its ENTIRE
- * subtree is React-owned. This root is not, and cannot be yet, for two
- * independent reasons:
+ * It owns the dialog's LIFECYCLE: `open`/`close`, the reveal, the kit lift
+ * (`useStaticModal`), the backdrop-dismiss rule and the ghost-click guard —
+ * everything `useDialog` provides. It does NOT own anything inside the card.
  *
- *   1. PlatformUI.adoptStaticModal (public/js/platform-ui.js) has this id in
- *      STATIC_MODAL_IDS. It observes the root's class list and, when
- *      `hidden` comes off, LIFTS THE CARD OUT OF THE ROOT — replacing it
- *      with a comment placeholder — into the native kit's presentModal
- *      shell, adding `platform-modal-adopted` to the root and
- *      `platform-modal-card` to the card. A React re-render of this subtree
- *      would then reconcile against a parent that no longer holds its child
- *      (removeChild on the wrong node) and would overwrite the class the kit
- *      just wrote.
- *   2. The legacy open/close/submit paths in public/js/** still write into
- *      these nodes directly (innerHTML, value, dataset, .hidden toggles).
- *
- * So the dialog markup is a React component, but its BEHAVIOUR stays where
- * it is. Making it stateful is a later chunk's job and has a hard
- * prerequisite: the adoption seam has to move inside React first, so that one
- * owner writes to these nodes instead of two.
+ * That split is deliberate and it is why the returned tree is CONSTANT: no
+ * interpolated state anywhere below the root, so React renders these nodes
+ * once at hydration and never reconciles them again. The interior belongs to
+ * members-controller.js, which was moved here from public/js/app-view.js in
+ * this same chunk and still paints its rosters with `innerHTML` and rebinds
+ * its pills with the cloneNode-swap idiom. Converting those ~1,200 lines is a
+ * chunk of its own; the header comment on members-controller.js explains why
+ * in full. One owner per node is the invariant, and this arrangement keeps it
+ * — the same way #admin-section-content and the app-secrets island do.
  */
 
+import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
+import { init as initMembers, MembersDialog as Members } from './members-controller';
+import { useDialog } from './use-dialog';
+
 export function MembersDialog() {
+  const dialog = useDialog('members', {
+    onOpen: () => { void Members._load(); },
+    onClose: () => Members._reset(),
+  });
+
+  // Publishes the block onto window.AppView and takes over
+  // AppView.openMembersModal. A layout effect, not DOMContentLoaded: the
+  // bundle is a deferred module, so that event may already have fired.
+  useIsomorphicLayoutEffect(() => { initMembers(); }, []);
+
   return (
-    <div id="members-modal" className="hidden fixed inset-0 z-50 overflow-y-auto overscroll-contain bg-black/60">
+    <div
+      id="members-modal"
+      ref={dialog.rootRef}
+      className="hidden fixed inset-0 z-50 overflow-y-auto overscroll-contain bg-black/60"
+      {...dialog.backdropProps}
+    >
       <div data-modal-backdrop="" className="flex min-h-full items-center justify-center p-4">
         <div className="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-sm shadow-xl">
           {/*
@@ -370,6 +383,7 @@ export function MembersDialog() {
               type="button"
               id="members-close"
               className="flex-1 rounded-lg border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+              onClick={() => dialog.close()}
             >
               Close
             </button>

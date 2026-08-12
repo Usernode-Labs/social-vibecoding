@@ -430,6 +430,7 @@ const AdminConsole = {
         ? AdminConsole._section
         : (AdminConsole._publicMode() ? (visible[0]?.key || 'status') : 'overview'));
     if (targetLevel === AdminConsole._level && targetSection === AdminConsole._section) {
+      AdminConsole._reapplySectionHash();
       return;
     }
     if (!mobile) {
@@ -459,6 +460,47 @@ const AdminConsole = {
       AdminConsole._syncChrome();
       AdminConsole._restoreScroll();
     }, type);
+  },
+
+  // The address this console last rendered itself from, recorded AFTER the
+  // render so it holds whatever the section module healed the hash to (both
+  // AdminTopochain and AdminCampaigns own a second level below the section
+  // segment and replaceState it back themselves). Compared, not merely
+  // remembered — see _reapplySectionHash.
+  _routedHash: null,
+
+  _markRouted() {
+    AdminConsole._routedHash = location.hash;
+  },
+
+  // #1146: the level+section bail-out above is a guard against ONE dispatch
+  // arriving twice, not a statement that the address hasn't moved. Sections
+  // that own a second hash level are addressed by a tail the comparison
+  // above cannot see — #admin/seasons, #admin/seasons/season-events and
+  // #admin/seasons/season-events/12/new-challenge/3 all resolve to level 2,
+  // section 'seasons' — so a switch BETWEEN two of those siblings used to
+  // return here without repainting, leaving the previous tail's screen up.
+  // Cold loading hid it (the module reads the address in render()); a
+  // sibling-fragment hash switch, which is how the grouped capture runner
+  // reaches every cohort of a document, does not.
+  //
+  // Re-running _renderSection() is exactly the cold-load path: it tears the
+  // section down and calls the module's render(), which re-reads the hash
+  // and resets whatever the tail no longer names. Gated on the address
+  // having actually CHANGED since the last render, which is what preserves
+  // the #1102 guard — a traversal's popstate and hashchange carry the same
+  // hash, so the second of the pair still bails out.
+  _reapplySectionHash() {
+    if (AdminConsole._routedHash === location.hash) return;
+    // Mark before as well as after: the render below replaceStates the
+    // healed address, and a mark-only-after would leave a window in which a
+    // re-entrant call saw the stale value.
+    AdminConsole._markRouted();
+    // Level 1 on mobile is the menu, not a section — nothing below the
+    // #admin segment is addressing anything there.
+    if (AdminConsole._isMobile() && AdminConsole._level === 1) return;
+    AdminConsole._renderSection();
+    AdminConsole._markRouted();
   },
 
   // The on-screen back arrow AND the platform header's back button both
@@ -738,6 +780,9 @@ const AdminConsole = {
     AdminConsole._renderShell();
     if (!opts || opts.writeHash !== false) AdminConsole._writeHash(key);
     AdminConsole._renderSection();
+    // Recorded after the render, so it holds whatever the section module
+    // healed the address to. See _reapplySectionHash.
+    AdminConsole._markRouted();
   },
 
   // Section switches update the address without polluting history —
@@ -805,9 +850,11 @@ const AdminConsole = {
       // the tab — exactly the leak #860's lifecycle work fixed.
       AdminConsole._teardownActiveSection();
       AdminConsole._renderMobileMenu(host);
+      AdminConsole._markRouted();
       return;
     }
     AdminConsole._renderSection();
+    AdminConsole._markRouted();
   },
 
   _renderMobileMenu(host) {
