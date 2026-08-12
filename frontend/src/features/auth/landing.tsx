@@ -460,9 +460,11 @@ export function LandingScreen() {
     const target = st.appsList.find((a) => a && !a.requires_login && a.url);
     if (!target) return;
     for (let cycle = 0; cycle < 2; cycle++) {
-      const tile = landingTileFor(target.slug);
-      if (!tile) return;
-      tile.click();
+      // POLL for the tile: `appsReady` resolves when the FETCH lands, but the
+      // tiles appear one React commit later, so a synchronous lookup here found
+      // nothing and bailed — the reason this shot had never once stamped.
+      if (!(await until(() => !!landingTileFor(target.slug), 5000))) return;
+      landingTileFor(target.slug)?.click();
       if (!(await until(isOpen, 5000))) return;
       // Let the zoom-in settle before backing out, so each cycle exercises a
       // fully-open viewer rather than a mid-transition one.
@@ -472,6 +474,9 @@ export function LandingScreen() {
       // means the guest back path is genuinely broken, so bail WITHOUT
       // stamping rather than start cycle two against an open viewer.
       if (!(await until(() => !isOpen(), 8000))) return;
+      // Let the marker entry's history.back() popstate drain before the next
+      // cycle pushes a fresh entry — a human cannot re-open in under 80ms.
+      await wait(80);
     }
     viewer.setAttribute('data-anon-back', 'done');
   }, [st]);
