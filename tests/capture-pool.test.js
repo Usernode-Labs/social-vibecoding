@@ -510,6 +510,90 @@ test('a cohort that breaks does not fail the cohorts it shares a document with',
     + 'the group-wide freeze this replaced');
 });
 
+// ── Grouping must not change a verdict (#1146) ──────────────────────────
+//
+// A page that renders a sub-route only when the DOCUMENT was loaded at that
+// fragment. That is not a contrived shape: it is what every screen the
+// grouped runner broke looks like — a `?shot=` deep link that scripts its
+// interaction once at boot, an admin section painted from the boot restore,
+// a tab strip that keeps whichever sub-route it was mounted on. Writing
+// `location.hash` moves the URL and re-renders nothing.
+function makeColdOnlyPage() {
+  const page = {
+    gotos: [], hashes: [], rendered: null,
+    on() {},
+    async setViewport() {},
+    async goto(u) {
+      page.gotos.push(u);
+      const i = String(u).indexOf('#');
+      page.rendered = i === -1 ? '' : String(u).slice(i);
+      return { status: () => 200 };
+    },
+    // `#at-<fragment>` stands in for "the markup this sub-route renders".
+    async $(sel) { return sel === `#at-${page.rendered}` ? {} : null; },
+    async evaluate(fn, arg) {
+      if (typeof fn === 'function' && /location\.hash/.test(String(fn))) {
+        page.hashes.push(arg);
+        return undefined;
+      }
+      return true;
+    },
+    async close() {},
+  };
+  return page;
+}
+
+const COLD_ONLY_GROUP = [
+  { index: 0, name: 'a', path: '/dev', url: 'http://s/dev#/a', expectSelector: '#at-#/a' },
+  { index: 1, name: 'b', path: '/dev', url: 'http://s/dev#/b', expectSelector: '#at-#/b' },
+];
+
+test('a cohort the hash switch did not render is re-judged on a real cold load', async () => {
+  const read = collect();
+  const page = makeColdOnlyPage();
+  await runTestGroup({ newPage: async () => page }, COLD_ONLY_GROUP,
+    { settleQuietMs: 20, settleMaxMs: 200 });
+  const { frames } = read();
+  const byIndex = new Map(frames.map((f) => [f.index, f]));
+  assert.equal(byIndex.get(0).status, 'pass', 'cohort 0 is the cold load and was always fine');
+  assert.equal(byIndex.get(1).status, 'pass',
+    'cohort 1 asserted nothing after the hash switch, so it was re-run as the '
+    + 'navigation the ungrouped runner would have made — batching is not '
+    + 'allowed to decide a verdict');
+  assert.deepEqual(page.hashes, ['#/b'], 'the cheap path is still tried first');
+  assert.deepEqual(page.gotos, ['http://s/dev#/a', 'about:blank', 'http://s/dev#/b'],
+    'and the fallback is a genuine cold load — a goto differing only in the '
+    + 'fragment is a same-document navigation and would reload nothing');
+});
+
+test('a cohort that renders on a hash switch never pays for the fallback', async () => {
+  const read = collect();
+  const page = makeEventPage();          // its $() matches anything
+  await runTestGroup({ newPage: async () => page },
+    [
+      { index: 0, name: 'a', path: '/dev', url: 'http://s/dev#/a', expectSelector: '#a' },
+      { index: 1, name: 'b', path: '/dev', url: 'http://s/dev#/b', expectSelector: '#b' },
+    ],
+    { settleQuietMs: 20, settleMaxMs: 200 });
+  const { frames } = read();
+  assert.deepEqual(frames.map((f) => f.status), ['pass', 'pass']);
+  assert.equal(page.gotos.length, 1,
+    'one navigation for the whole document — #1144\'s win is untouched on a '
+    + 'suite that passes, which is every suite that is meant to merge');
+});
+
+test('the cohort fallback can be switched off, and then the hash verdict stands', async () => {
+  const read = collect();
+  const page = makeColdOnlyPage();
+  await runTestGroup({ newPage: async () => page }, COLD_ONLY_GROUP,
+    { settleQuietMs: 20, settleMaxMs: 200, env: { TEST_COHORT_RELOAD_FALLBACK: '0' } });
+  const { frames } = read();
+  const byIndex = new Map(frames.map((f) => [f.index, f]));
+  assert.equal(byIndex.get(1).status, 'fail');
+  assert.match(byIndex.get(1).failureReason, /Expected element "#at-#\/b" was not found/);
+  assert.equal(page.gotos.length, 1, 'no fallback navigation');
+});
+
 test('a page that never goes quiet is cut off at the settle ceiling', async () => {
   // The quiet window is what makes the common case fast; the ceiling is what
   // keeps a chatty page from holding a worker until the group deadline.
