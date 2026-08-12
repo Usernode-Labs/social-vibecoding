@@ -1,5 +1,6 @@
 node_modules/
 /public/css/tailwind.css
+/public/shell/assets/shell.js
 .env
 *.log
 data/

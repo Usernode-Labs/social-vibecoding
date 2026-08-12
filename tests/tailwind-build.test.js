@@ -96,7 +96,7 @@ test('Dockerfile compiles Tailwind in a builder and copies only the output into 
   assert.ok(runtimeCopy > -1 && generatedCopy > runtimeCopy,
     'the generated stylesheet must be copied after the source tree');
 
-  const runtime = dockerfile.slice(dockerfile.indexOf('# Stage 2'));
+  const runtime = dockerfile.slice(dockerfile.indexOf('# Stage 3'));
   assert.match(runtime, /RUN npm ci --production/, 'the runtime must remain production-only');
   assert.doesNotMatch(runtime, /npm run build:css/, 'the runtime must not compile assets');
 });

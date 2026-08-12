@@ -12,17 +12,19 @@
   - `frontend/@/components/ui/` — shadcn primitives, restyled to the
     platform's existing `zinc`/`violet` palette (`cssVariables: false`).
 - **After editing anything under `frontend/`, run `npm run build:shell` and
-  commit `public/index.html` + `public/shell/assets/shell.js` in the same
-  commit.** `tests/shell-build.test.js` stamps and verifies this and fails
-  with "STALE" otherwise. Run `npm install` inside `frontend/` first if you
-  haven't (it is a separate workspace; the root `npm ci --production` never
-  touches it).
+  commit `public/index.html` in the same commit.**
+  `public/shell/assets/shell.js` is generated too, but it is gitignored and
+  built again from the lockfile-pinned frontend sources by every Docker image.
+  `tests/shell-build.test.js` stamps and verifies the tracked HTML fixture and
+  fails with "STALE" otherwise. Run `npm install` inside `frontend/` first if
+  you haven't (it is a separate workspace; the root `npm ci --production`
+  never touches it).
 - When generating CSS locally, **run `build:shell` FIRST, then `build:css`.**
   `public/index.html` is a Tailwind content source *and* a shell-build output,
   so compiling the stylesheet first scans the previous document. The Docker
-  image build naturally has the same ordering because the committed shell
-  artifact is already present before its CSS builder stage runs. There is no
-  loop — `tailwind.css` is not a shell input.
+  image build enforces the same ordering: its shell builder prerenders the
+  current `index.html`, then the CSS builder scans that generated document.
+  There is no loop — `tailwind.css` is not a shell input.
 - **`Shell.tsx` is now hand-maintained; resolve conflicts in it directly.** The
   one-time generators that derived it from the hand-written document
   (`html-to-jsx.cjs`, `apply-step1-edits.cjs`) and the pre-migration fixture

@@ -36,7 +36,10 @@ const path = require('path');
 
 const PUBLIC = path.join(__dirname, '..', 'public');
 const sw = require('../public/sw.js');
-const IMAGE_GENERATED_ASSETS = new Set(['/css/tailwind.css']);
+const IMAGE_GENERATED_ASSETS = new Set([
+  '/css/tailwind.css',
+  '/shell/assets/shell.js',
+]);
 
 function readPublic(rel) {
   return fs.readFileSync(path.join(PUBLIC, rel), 'utf8');
@@ -201,10 +204,9 @@ test('the React bundle registers the service worker at root scope', () => {
   assert.match(entry, /registerServiceWorker\(\)/,
     'main.tsx must call registerServiceWorker() — nothing else does');
 
-  // And the shipped bundle really contains it (the source could be right
-  // while the committed artifact is stale).
-  assert.match(readPublic('shell/assets/shell.js'), /register\("\/sw\.js"\)|register\('\/sw\.js'\)/,
-    'public/shell/assets/shell.js is stale — run npm run build:shell');
+  // tests/shell-build.test.js pins the image builder that compiles this entry
+  // and copies the resulting bundle into the runtime. There is deliberately
+  // no committed shell.js byte fixture to become stale or conflict in Git.
 });
 
 test('the offline engine kept window.Offline and its consumers', () => {
