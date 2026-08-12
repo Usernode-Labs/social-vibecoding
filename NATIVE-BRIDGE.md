@@ -33,11 +33,15 @@ feature-detect with `getBridgeInfo`.
   `capabilities` is for — never assume a method exists because this document
   lists it.
 
-Four additive security/session capabilities extend v4 without changing its
+Five additive security/session capabilities extend v4 without changing its
 version:
 
 - `privilegedBridgeCapability`: privileged top-frame methods require a
-  native-issued capability scoped to the current trusted navigation.
+  native-issued capability scoped to the current trusted JavaScript realm.
+- `privilegedBridgeReady`: after installing native-event listeners, the trusted
+  shell explicitly identifies that exact realm as ready for one atomic state
+  replay. A cached older coordinator falls back on its first authorized bridge
+  call, so the web and app releases remain independently deployable.
 - `beginSessionHandoff`: closes native wallet dispatch before a web-session
   exchange, including raw Android child-frame channel messages.
 - `enterAnonymousSession`: reopens native wallet dispatch after the shell has
@@ -159,6 +163,7 @@ last read succeeded or it was never called.
 | `no-transport` | no channel to the app from this frame at all |
 | `not-native` | called outside the app (or on a build without the method) |
 | `probe-inconclusive` | the privileged handshake could not be negotiated because `getBridgeInfo` itself came back degraded |
+| `page-changed` | the originating page entered navigation/BFCache before its native reply arrived |
 
 The record carries a method name plus native's own error string only — the
 privileged capability lives in a closure and never reaches an error
@@ -185,7 +190,8 @@ native side so 1s-poll flapping between synced/syncing doesn't strobe).
 **Push events:** the app also dispatches a `usernode:node-status`
 `CustomEvent` on `window` with the same snapshot as `detail`:
 
-- once per page load (after `onPageFinished`), and
+- once after the shell explicitly confirms its native-event listeners are
+  ready, and
 - on every pill-state transition.
 
 So chrome renders from the event stream and only calls `getNodeStatus()`
@@ -426,20 +432,31 @@ ready`); `address` is the active wallet address once `ready`. Builds with
 epoch.
 
 **Push events:** the app dispatches a `usernode:auth-status` `CustomEvent`
-on `window` with the same shape as `detail` — once per page load and on
-every identity-phase transition. SV listens and requests `startNode` when
-the phase reaches `ready`.
+on `window` with the same shape as `detail` — once after the shell's explicit
+listener-readiness handshake and on every identity-phase transition. SV
+listens and requests `startNode` when the phase reaches `ready`.
 
 ## Trust model
 
 - The native transaction confirm sheet remains the sole native chrome over
   SV content (Apple Pay model). Nothing in this contract bypasses it.
 - Privileged native methods are gated to the configured SV top-frame origin.
-  On each trusted main-frame navigation, the top-frame bridge privately asks
-  for `getPrivilegedBridgeCapability` and keeps the returned opaque string in
-  its closure. The capability is revoked on navigation and is never exposed
-  as a public `window.usernode` property.
-- The parent bridge refuses both capability bootstrap and privileged relays
+  The top-frame bridge privately asks for `getPrivilegedBridgeCapability` and
+  keeps the returned opaque string in its closure. Native binds it to the
+  executing JavaScript realm rather than to WebView lifecycle callbacks:
+  same-document History API changes retain it, a replacement document gets a
+  different capability, and BFCache restoration revives only its original
+  realm. The capability is never exposed as a public `window.usernode`
+  property.
+- Privileged replies and native-to-page events are delivered only when that
+  exact realm is still executing. Social calls `markPrivilegedBridgeReady`
+  after all native-event listeners exist; native then dispatches the existing
+  auth/node/push events together in one realm-guarded JavaScript evaluation
+  before acknowledging readiness. A failed replay is retryable rather than
+  silently consuming state.
+  `onPageStarted`/`onPageFinished` are intentionally not authority or listener
+  readiness signals because their ordering differs across WebView platforms.
+- The parent bridge refuses both capability bootstraps and privileged relays
   from child frames. Non-privileged dapp reads and transaction methods keep
   their existing relay behavior only while the current web/native session
   handoff is admitted.

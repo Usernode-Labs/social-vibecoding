@@ -57,6 +57,14 @@ test('GET /api/* JSON is network-first-with-cache', () => {
   assert.equal(classify('GET', '/api/version'), 'api');
 });
 
+test('native notification invalidations bypass stale API-cache fallbacks', () => {
+  assert.equal(
+    classify('GET', '/api/notifications?limit=100&native_invalidation=1'),
+    'bypass'
+  );
+  assert.equal(classify('GET', '/api/notifications?limit=100'), 'api');
+});
+
 test('shell assets classify as shell', () => {
   assert.equal(classify('GET', '/js/app.js'), 'shell');
   assert.equal(classify('GET', '/css/app.css'), 'shell');

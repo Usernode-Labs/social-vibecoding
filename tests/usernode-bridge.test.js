@@ -62,6 +62,13 @@ test('hosted bridge relay refuses privileged calls from iframes', () => {
   );
 });
 
+test('hosted bridge exposes the realm-bound readiness handshake', () => {
+  const bridge = readBridge(versionedBridgePath);
+
+  assert.match(bridge, /window\.usernode\.markPrivilegedBridgeReady/);
+  assert.match(bridge, /markPrivilegedBridgeReady: true/);
+});
+
 // Per-appearance widget icons (issue #948) — additive within v1, gated
 // on the shell's `homeScreenShortcutDarkIcon` capability. The wrapper
 // builds an explicit arg object, so a field it doesn't name is dropped

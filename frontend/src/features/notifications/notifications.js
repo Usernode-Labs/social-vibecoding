@@ -38,6 +38,7 @@ const EXPANDED_STORAGE_KEY = 'notif_expanded_groups_v1';
 // Beyond this the group renders an inline pagination button that reveals
 // the next page of already-loaded leaves in place (no navigation away).
 const GROUP_LEAF_CAP = 10;
+const NATIVE_INVALIDATION_TIMEOUT_MS = 10000;
 
 const Notifications = {
   items: [],   // newest-first; the single source of truth
@@ -57,6 +58,10 @@ const Notifications = {
   // that group. Ephemeral (not persisted): resets on reload so the
   // drawer opens compact. An absent key means the default GROUP_LEAF_CAP.
   revealed: new Map(),
+  // Only the newest first-page refresh may replace the authoritative feed.
+  // This prevents an older boot/bell request from completing after a native
+  // network-only invalidation and overwriting its fresher result.
+  _refreshGeneration: 0,
 
   init() {
     Notifications._loadExpanded();
@@ -126,16 +131,42 @@ const Notifications = {
 
   // --- fetching --------------------------------------------------------
 
-  async refresh() {
+  async refresh(options) {
+    const generation = ++Notifications._refreshGeneration;
     try {
       // ?demo=1 forwarding (preserved on the page URL): staging injects
       // mock session-related rows on the first page so the cog drawer's
       // pinned section is reviewable (routes/notifications.js
       // stagingMockNotifications). No-op in production.
       const demo = new URLSearchParams(location.search).get('demo') === '1' ? '&demo=1' : '';
-      const res = await fetch(`/api/notifications?limit=100${demo}`);
-      if (!res.ok) return;
-      const data = await res.json();
+      const networkOnly = options && options.networkOnly === true;
+      const invalidation = networkOnly ? '&native_invalidation=1' : '';
+      let timeout = null;
+      let controller = null;
+      if (networkOnly && typeof AbortController === 'function') {
+        controller = new AbortController();
+        timeout = setTimeout(
+          () => controller.abort(),
+          NATIVE_INVALIDATION_TIMEOUT_MS
+        );
+      }
+      let res;
+      let data;
+      try {
+        res = await fetch(
+          `/api/notifications?limit=100${demo}${invalidation}`,
+          networkOnly ? {
+            credentials: 'same-origin',
+            cache: 'no-store',
+            ...(controller ? { signal: controller.signal } : {}),
+          } : undefined
+        );
+        if (!res.ok) return false;
+        data = await res.json();
+      } finally {
+        if (timeout) clearTimeout(timeout);
+      }
+      if (generation !== Notifications._refreshGeneration) return false;
       Notifications.items = Array.isArray(data.notifications) ? data.notifications : [];
       Notifications.invites = Array.isArray(data.pendingInvites) ? data.pendingInvites : [];
       Notifications.unread = data.unread || 0;
@@ -147,8 +178,10 @@ const Notifications = {
         Notifications._renderInvites();
         Notifications._renderList();
       }
+      return true;
     } catch (err) {
       console.warn('[notifications] refresh failed', err);
+      return false;
     }
   },
 
@@ -157,8 +190,7 @@ const Notifications = {
   // WebView bridge.
   async refreshAfterInvalidation() {
     if (!window.App || !App.user) return false;
-    await Notifications.refresh();
-    return true;
+    return Notifications.refresh({ networkOnly: true });
   },
 
   // Resolve a native push's opaque id through the current Social session,

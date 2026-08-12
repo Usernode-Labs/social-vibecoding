@@ -75,11 +75,11 @@
   var _useIframeRelay = false;
   window.usernode.isNative = _hasNativeChannel;
 
-  // Privileged chrome methods use a native-issued, per-navigation capability.
-  // The token is kept in this top-frame closure: child frames cannot read it,
-  // and the relay below refuses both the bootstrap method and privileged
-  // calls. Old app builds do not advertise the capability and keep using the
-  // legacy wire shape, so the web half can deploy first.
+  // Privileged chrome methods use a native-issued, per-realm capability. The
+  // token is kept in this top-frame closure: child frames cannot read it, and
+  // the relay below refuses both the bootstrap method and privileged calls.
+  // Old app builds do not advertise the capability and keep using the legacy
+  // wire shape, so the web half can deploy first.
   var _PRIVILEGED_CAPABILITY_METHOD = "getPrivilegedBridgeCapability";
   var _PRIVILEGED_NATIVE_METHODS = {
     addHomeScreenShortcut: true,
@@ -95,6 +95,9 @@
     resetZkChallenge: true,
     requestPermissions: true,
     openBatterySettings: true,
+    requestNotificationPermission: true,
+    requestAlarmPermissions: true,
+    openNotificationSettings: true,
     // Removed in bridge v4, but old v3 iOS builds still accept it. Keep the
     // legacy action fenced so an embedded app cannot borrow the top frame's
     // trusted origin through the relay.
@@ -106,6 +109,7 @@
     startNode: true,
     stopNode: true,
     getAuthStatus: true,
+    markPrivilegedBridgeReady: true,
     getSocialPushState: true,
     setSocialPushEnabled: true,
     claimPendingSocialNotification: true,
@@ -212,6 +216,24 @@
     return err;
   }
 
+  // A BFCache entry preserves this JavaScript realm and its pending Promises.
+  // Native deliberately drops privileged realm-bound replies after the top
+  // frame changes, so reject those calls as the page leaves instead of
+  // restoring a Promise that can never receive its old response. Ordinary
+  // embedded-dapp calls retain their existing lifecycle contract.
+  window.addEventListener("pagehide", function () {
+    var pending = window.__usernodeBridge.pending;
+    Object.keys(pending).forEach(function (id) {
+      var entry = pending[id];
+      if (!entry || entry.privileged !== true) return;
+      delete pending[id];
+      entry.reject(taggedNativeError(
+        "Usernode request was cancelled because the page changed",
+        "page-changed"
+      ));
+    });
+  });
+
   // 15 s is well above the Flutter confirm-screen turnaround (single
   // digits of ms in the relay leg + however long the user takes to
   // approve), so a timeout firing means the parent never picked up the
@@ -221,7 +243,12 @@
   function postNative(method, args, privilegedCapability) {
     var id = String(Date.now()) + "-" + Math.random().toString(16).slice(2);
     return new Promise(function (resolve, reject) {
-      window.__usernodeBridge.pending[id] = { resolve: resolve, reject: reject };
+      window.__usernodeBridge.pending[id] = {
+        resolve: resolve,
+        reject: reject,
+        privileged: method === _PRIVILEGED_CAPABILITY_METHOD ||
+          !!privilegedCapability,
+      };
       var payload = { method: method, id: id, args: args || {} };
       if (privilegedCapability) {
         payload.privilegedCapability = privilegedCapability;
@@ -246,6 +273,7 @@
         window.__usernodeBridge.pending[id] = {
           resolve: function (v) { clearTimeout(timer); origEntry.resolve(v); },
           reject: function (e) { clearTimeout(timer); origEntry.reject(e); },
+          privileged: origEntry.privileged,
         };
         try {
           console.log(_BRIDGE_TAG, "relay → parent:", method, "id", id);
@@ -4003,6 +4031,11 @@
   // — callers can always `await` and render "unavailable".
 
   var _CHROME_PROBE_TIMEOUT_MS = 4000;
+  // Readiness includes realm authorization, same-realm revalidation, and one
+  // guarded state replay. A cold WebView can legitimately consume several
+  // probe windows, so do not let the web wrapper time out and enqueue a second
+  // replay while the first native request is still completing.
+  var _BRIDGE_READINESS_TIMEOUT_MS = 20000;
   // getWalletState may legitimately take ~10s on a fresh app start (the
   // native wallet provider waits for the node); don't cut it off early.
   var _WALLET_STATE_TIMEOUT_MS = 12000;
@@ -4116,8 +4149,9 @@
   // getNodeStatus() → { status: "synced"|"syncing"|"connecting"|"offline",
   //   localBestHeight, networkBestHeight, connectedPeers, totalPeers }
   // or null. The app also pushes the same snapshot as a
-  // `usernode:node-status` CustomEvent on window (once per page load and
-  // on pill-state transitions) — prefer the event stream over polling.
+  // `usernode:node-status` CustomEvent on window (once after the explicit
+  // listener-readiness handshake and on pill-state transitions) — prefer the
+  // event stream over polling.
   window.usernode.getNodeStatus = function () {
     if (!window.usernode.isNative) return Promise.resolve(null);
     return callNativeChromeRead(
@@ -4433,11 +4467,34 @@
     );
   };
 
+  // markPrivilegedBridgeReady() → { ready: true }. Social calls this only
+  // after every native-event listener is installed. Native binds readiness to
+  // this exact JavaScript realm and replays current auth/node/push state; it
+  // deliberately does not infer listener readiness from WebView callbacks.
+  window.usernode.markPrivilegedBridgeReady = function () {
+    if (!window.usernode.isNative) return Promise.resolve({ ready: false });
+    return window.usernode.getBridgeInfo().then(function (info) {
+      if (info && info.degraded === true) {
+        throw taggedNativeError(
+          "Native bridge probe was inconclusive", "probe-inconclusive"
+        );
+      }
+      var capabilities = info && info.capabilities;
+      if (!Array.isArray(capabilities) ||
+          capabilities.indexOf("privilegedBridgeReady") === -1) {
+        return { ready: false };
+      }
+      return callNativeChromeAction(
+        "markPrivilegedBridgeReady", {}, _BRIDGE_READINESS_TIMEOUT_MS
+      );
+    });
+  };
+
   // =====================================================================
   //  Public API: Social activity notifications
   // =====================================================================
   // These methods are available only to the trusted top-level Social shell
-  // and use the same per-navigation capability as the other native settings
+  // and use the same per-realm capability as the other native settings
   // actions. Push content and credentials never cross this bridge; a tap
   // exposes one opaque notification id after the normal v4 session admission.
 
