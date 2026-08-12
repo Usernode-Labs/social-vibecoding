@@ -268,6 +268,18 @@ their web replacements and are rejected like any other value. Rejected
 entirely unless the top frame is the trusted SV origin (sub-apps cannot
 drive native navigation).
 
+#### `captureScreenshot()` → `{ contentType, base64 }`
+
+Additive bridge-v4 capability: `captureScreenshot`. Captures the currently
+visible Usernode app window on Android or iOS and returns a JPEG as base64.
+The native encoder bounds the image to the feedback endpoint's 4 MB limit.
+SV hides its feedback dialog before calling so the returned pixels show the
+underlying screen, then restores the unchanged draft and presents a preview.
+
+This is a privileged trusted-top-frame action. Child dapps cannot request a
+capture of surrounding app chrome. Callers must feature-detect the capability;
+older app builds continue to use the feedback dialog's Photos/file fallback.
+
 ### Profile & settings (v3 — profile-and-settings-to-web migration)
 
 All v3 methods are trusted-SV-origin gated like `openNativeScreen`. They

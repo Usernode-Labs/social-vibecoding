@@ -261,17 +261,23 @@ export function init() {
       titleDirty = feedbackTitle.value.trim().length > 0;
     });
 
-    // ── #683: drag-to-select screenshot attachment ─────────────────
-    // The button only renders where the Screen Capture API exists
-    // (ScreenshotSelect.isSupported()); capture is real screen pixels
-    // via public/js/screenshot-select.js. One screenshot per issue: the
-    // button is swapped for the thumbnail row while one is attached.
+    // ── #683/#824: screenshot attachment ───────────────────────────
+    // Desktop keeps drag-to-select. The mobile app can capture its visible
+    // native window, and every surface keeps a PNG/JPEG picker as fallback.
+    // All three sources converge here so preview/upload/offline semantics stay
+    // exactly the same. One screenshot per issue.
     const screenshotBtn = document.getElementById('feedback-screenshot-btn');
+    const screenshotLabel = screenshotBtn.querySelector('[data-screenshot-label]');
+    const screenshotPickerBtn = document.getElementById('feedback-screenshot-picker-btn');
+    const screenshotInput = document.getElementById('feedback-screenshot-input');
     const screenshotPreview = document.getElementById('feedback-screenshot-preview');
     const screenshotImg = document.getElementById('feedback-screenshot-img');
     const screenshotState = document.getElementById('feedback-screenshot-state');
     const screenshotRemove = document.getElementById('feedback-screenshot-remove');
-    const screenshotSupported = typeof ScreenshotSelect !== 'undefined' && ScreenshotSelect.isSupported();
+    const screenshotTools = window.ScreenshotSelect;
+    const displayCaptureSupported = !!screenshotTools && screenshotTools.isSupported();
+    let nativeCaptureSupported = false;
+    let screenshotProbeSequence = 0;
     let screenshotId = null;          // server row id, set once uploaded
     let screenshotUploading = false;  // blocks submit while in flight
     let screenshotObjectUrl = null;
@@ -287,6 +293,19 @@ export function init() {
       feedbackStatus.classList.remove('hidden');
     };
 
+    const paintScreenshotActions = () => {
+      const attached = !!screenshotBlob;
+      const canCapture = nativeCaptureSupported || displayCaptureSupported;
+      screenshotLabel.textContent = nativeCaptureSupported ? 'Take screenshot' : 'Attach screenshot';
+      screenshotBtn.classList.toggle('hidden', attached || !canCapture);
+      screenshotPickerBtn.classList.toggle('hidden', attached);
+    };
+
+    const setScreenshotActionsDisabled = (disabled) => {
+      screenshotBtn.disabled = disabled;
+      screenshotPickerBtn.disabled = disabled;
+    };
+
     const resetScreenshotState = () => {
       screenshotId = null;
       screenshotUploading = false;
@@ -296,68 +315,137 @@ export function init() {
       screenshotPreview.classList.remove('flex');
       screenshotImg.removeAttribute('src');
       screenshotState.textContent = '';
-      screenshotBtn.classList.toggle('hidden', !screenshotSupported);
-      screenshotBtn.disabled = false;
+      screenshotInput.value = '';
+      setScreenshotActionsDisabled(false);
+      paintScreenshotActions();
+    };
+
+    const attachScreenshotBlob = async (blob) => {
+      // Thumbnail immediately; upload in the background with Submit blocked
+      // (screenshotUploading) until the id lands.
+      screenshotBlob = blob;
+      screenshotObjectUrl = URL.createObjectURL(blob);
+      screenshotImg.src = screenshotObjectUrl;
+      paintScreenshotActions();
+      screenshotPreview.classList.remove('hidden');
+      screenshotPreview.classList.add('flex');
+      screenshotState.textContent = 'Uploading…';
+      screenshotUploading = true;
+      try {
+        const res = await fetch('/api/feedback/screenshot', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/octet-stream' },
+          body: blob,
+        });
+        const data = res.ok ? await res.json() : await res.json().catch(() => ({}));
+        if (res.ok && data.id) {
+          screenshotId = data.id;
+          screenshotState.textContent = '';
+        } else {
+          resetScreenshotState();
+          showFeedbackNotice(data.error || 'Screenshot upload failed', true);
+        }
+      } catch {
+        // #1054: keep the bytes when the network fails. The outbox uploads
+        // them at flush time, and an online submit retries first.
+        screenshotState.textContent = "Saved with your feedback — it'll upload when you're back online";
+        showFeedbackNotice("Couldn't upload the screenshot yet — it'll be sent along with your feedback.", false);
+      } finally {
+        screenshotUploading = false;
+      }
+    };
+
+    const waitForHiddenDialogPaint = () => new Promise((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(resolve));
+    });
+
+    const probeNativeCaptureSupport = async (sequence, retryOnDegraded) => {
+      const bridge = window.usernode;
+      if (!bridge?.isNative || typeof bridge.getBridgeInfo !== 'function'
+          || typeof bridge.captureScreenshot !== 'function') return;
+      try {
+        const info = await bridge.getBridgeInfo();
+        if (sequence !== screenshotProbeSequence) return;
+        if (info?.degraded === true) {
+          // A cold-start timeout is inconclusive, not a permanent "old app".
+          if (retryOnDegraded) {
+            setTimeout(() => probeNativeCaptureSupport(sequence, false), 750);
+          }
+          return;
+        }
+        nativeCaptureSupported = Array.isArray(info?.capabilities)
+          && info.capabilities.includes('captureScreenshot');
+        paintScreenshotActions();
+      } catch { /* Photos remains available; the next open probes again. */ }
     };
 
     screenshotBtn.addEventListener('click', async () => {
       if (screenshotBtn.disabled) return;
-      screenshotBtn.disabled = true;
+      setScreenshotActionsDisabled(true);
+      const nativeAttempt = nativeCaptureSupported;
       let modalHidden = false;
+      const restoreDialog = () => {
+        if (!modalHidden) return;
+        modalHidden = false;
+        resumeDialog();
+      };
       try {
-        // getDisplayMedia is called synchronously inside start() so the
-        // click's transient activation is preserved; the modal hides only
-        // once the browser grants the stream (a denied prompt costs the
-        // user nothing).
-        const { blob } = await ScreenshotSelect.start({
-          onCaptureStart: () => { suspendDialog(); modalHidden = true; },
-        });
-        if (modalHidden) resumeDialog();
-        // Thumbnail immediately; upload in the background with Submit
-        // blocked (screenshotUploading) until the id lands.
-        screenshotBlob = blob;
-        screenshotObjectUrl = URL.createObjectURL(blob);
-        screenshotImg.src = screenshotObjectUrl;
-        screenshotBtn.classList.add('hidden');
-        screenshotPreview.classList.remove('hidden');
-        screenshotPreview.classList.add('flex');
-        screenshotState.textContent = 'Uploading…';
-        screenshotUploading = true;
-        try {
-          const res = await fetch('/api/feedback/screenshot', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/octet-stream' },
-            body: blob,
-          });
-          const data = res.ok ? await res.json() : await res.json().catch(() => ({}));
-          if (res.ok && data.id) {
-            screenshotId = data.id;
-            screenshotState.textContent = '';
-          } else {
-            resetScreenshotState();
-            showFeedbackNotice(data.error || 'Screenshot upload failed', true);
-          }
-        } catch {
-          // #1054: this used to throw the capture away — at the worst
-          // possible moment, since a flaky network is usually WHY someone is
-          // filing. Keep the blob and the thumbnail instead: the outbox
-          // carries the bytes and uploads them at flush time, and a submit
-          // that goes through online retries the upload first.
-          screenshotState.textContent = "Saved with your feedback — it'll upload when you're back online";
-          showFeedbackNotice("Couldn't upload the screenshot yet — it'll be sent along with your feedback.", false);
-        } finally {
-          screenshotUploading = false;
+        let blob;
+        if (nativeAttempt) {
+          suspendDialog();
+          modalHidden = true;
+          await waitForHiddenDialogPaint();
+          const payload = await window.usernode.captureScreenshot();
+          blob = screenshotTools.blobFromNativeCapture(payload);
+        } else {
+          // getDisplayMedia is called synchronously inside start() so the
+          // click's transient activation is preserved; hide only after grant.
+          ({ blob } = await screenshotTools.start({
+            onCaptureStart: () => { suspendDialog(); modalHidden = true; },
+          }));
         }
+        restoreDialog();
+        await attachScreenshotBlob(blob);
       } catch (err) {
-        if (modalHidden) resumeDialog();
-        screenshotBtn.disabled = false;
+        restoreDialog();
         if (err && err.code === 'denied') {
           showFeedbackNotice('Screen capture was declined — nothing was attached.', false);
         } else if (err && err.code === 'register_failed') {
           showFeedbackNotice("Couldn't locate this page in the shared window — keep it fully visible and try again.", true);
+        } else if (err && err.code === 'too-large') {
+          showFeedbackNotice('That screenshot is larger than 4 MB.', true);
+        } else if (nativeAttempt) {
+          showFeedbackNotice("Couldn't take a screenshot — choose one from Photos instead.", true);
         } else if (err && err.code !== 'cancelled') {
           showFeedbackNotice('Screenshot capture failed — please try again.', true);
         }
+      } finally {
+        if (!screenshotBlob) setScreenshotActionsDisabled(false);
+      }
+    });
+
+    screenshotPickerBtn.addEventListener('click', () => {
+      if (!screenshotPickerBtn.disabled) screenshotInput.click();
+    });
+
+    screenshotInput.addEventListener('change', async () => {
+      const file = screenshotInput.files && screenshotInput.files[0];
+      screenshotInput.value = '';
+      if (!file) return;
+      setScreenshotActionsDisabled(true);
+      try {
+        const blob = await screenshotTools.prepareFile(file);
+        await attachScreenshotBlob(blob);
+      } catch (err) {
+        if (err && err.code === 'invalid-type') {
+          showFeedbackNotice('Choose a PNG or JPEG image.', true);
+        } else if (err && err.code === 'too-large') {
+          showFeedbackNotice('That image is larger than 4 MB.', true);
+        } else {
+          showFeedbackNotice("Couldn't attach that image — please try another.", true);
+        }
+      } finally {
+        if (!screenshotBlob) setScreenshotActionsDisabled(false);
       }
     });
 
@@ -767,9 +855,12 @@ export function init() {
       feedbackBtn.disabled = false; feedbackBtn.textContent = 'Submit';
       feedbackStatus.classList.add('hidden');
       resetTitleGenState();
-      // #683: each open starts screenshot-less; the attach button shows
-      // only where the Screen Capture API exists.
+      // #683/#824: each open starts screenshot-less. Photos is immediately
+      // available; native capture appears after a fresh capability probe.
+      const screenshotSession = ++screenshotProbeSequence;
+      nativeCaptureSupported = false;
       resetScreenshotState();
+      void probeNativeCaptureSupport(screenshotSession, true);
 
       // "This app" is only selectable when an app with a real repo is
       // open. Otherwise the button stays visible but grayed-out/disabled
@@ -886,6 +977,8 @@ export function init() {
       resetTitleGenState();
       // #683: cancelling discards the attachment client-side; an already
       // uploaded (now orphaned) row is GC'd server-side after 24h.
+      screenshotProbeSequence += 1;
+      nativeCaptureSupported = false;
       resetScreenshotState();
       // #964: drop any pledge intent with the rest of the draft.
       bountyCheckbox.checked = false;

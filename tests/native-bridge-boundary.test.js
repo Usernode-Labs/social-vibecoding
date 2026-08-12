@@ -58,6 +58,10 @@ function loadBridge({
       deliveryActive: true,
     },
     claimPendingSocialNotification: { notificationId: 42 },
+    captureScreenshot: {
+      contentType: 'image/jpeg',
+      base64: '/9j/2Q==',
+    },
     markPrivilegedBridgeReady: { ready: true },
   };
   const sandbox = {
@@ -504,6 +508,24 @@ test('notification permission actions require the top-frame capability',
       assert.match(reply.value.error, /top-level page/);
     }
   });
+
+test('native screenshot capture is a top-frame privileged action', async () => {
+  const loaded = loadBridge({
+    capabilities: ['privilegedBridgeCapability', 'captureScreenshot'],
+  });
+
+  const payload = await loaded.sandbox.usernode.captureScreenshot();
+  assert.equal(payload.contentType, 'image/jpeg');
+  assert.equal(payload.base64, '/9j/2Q==');
+  assert.deepEqual(
+    loaded.nativePosts.map((post) => post.method),
+    ['getBridgeInfo', 'getPrivilegedBridgeCapability', 'captureScreenshot']
+  );
+  assert.equal(
+    loaded.nativePosts[2].privilegedCapability,
+    'navigation-capability'
+  );
+});
 
 test('legacy shortcut management gets a full request budget after probing',
   async () => {
