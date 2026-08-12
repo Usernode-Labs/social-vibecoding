@@ -3186,11 +3186,19 @@ const AppView = {
   // Cached check of whether any LLM path is usable (platform key or the
   // user's BYOK key). Resolves to a boolean; the promise is memoized so
   // repeated topic renders don't refetch /api/budget every time.
+  // ?demo=1 is forwarded like every other demo-aware fetch on this view:
+  // staging previews run without the platform LLM key (it's on the
+  // platform-secrets denylist), so the real branch reports aiEnabled:false
+  // and _applyExploreChatAvailability rewrites the Explore buttons' titles
+  // moments after the board paints — which made the card-menu check a race
+  // against that rewrite. The demo branch of GET /api/budget answers
+  // aiEnabled:true, keeping demo-preview chrome in its configured state.
+  // A no-op in production, where _demoQS() is ''.
   _ensureAiAvailability() {
     if (AppView._aiAvailabilityPromise) return AppView._aiAvailabilityPromise;
     AppView._aiAvailabilityPromise = (async () => {
       try {
-        const res = await fetch('/api/budget');
+        const res = await fetch(`/api/budget${AppView._demoQS()}`);
         if (!res.ok) return true; // optimistic — the endpoint itself 503s if truly off
         const data = await res.json();
         return data.aiEnabled !== false;
