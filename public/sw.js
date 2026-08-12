@@ -243,6 +243,12 @@ function classifyRequest(method, url, acceptHeader, mode, selfOrigin) {
   // so the SPA's boot check succeeds offline for a logged-in user.
   if (p.startsWith('/api/auth/') && p !== '/api/auth/me') return 'bypass';
 
+  // A native foreground push is an explicit freshness signal. Its feed read
+  // must reach the network: returning the ordinary offline API-cache fallback
+  // would consume the invalidation while still omitting the new activity.
+  if (p === '/api/notifications' &&
+      u.searchParams.get('native_invalidation') === '1') return 'bypass';
+
   if (p.startsWith('/api/')) return 'api';
 
   // Content-addressed, already served with a year-long immutable header.

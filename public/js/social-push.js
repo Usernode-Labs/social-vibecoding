@@ -7,6 +7,15 @@
 (function () {
   'use strict';
 
+  // Native's mixed-cache fallback probes this marker, not merely the bridge
+  // method: /usernode-bridge.js and this coordinator can be restored from
+  // different service-worker cache generations. Only this script promises it
+  // will actually send the explicit readiness handshake below.
+  window.__usernodeExplicitReadinessClient = !!(
+    window.usernode &&
+    typeof window.usernode.markPrivilegedBridgeReady === 'function'
+  );
+
   const REQUIRED_CAPABILITIES = [
     'getSocialPushState',
     'setSocialPushEnabled',
@@ -24,6 +33,12 @@
     _admissionGeneration: 0,
     _drainPromise: null,
     _drainRerunRequested: false,
+    _foregroundInvalidationDirty: false,
+    _foregroundInvalidationGeneration: 0,
+    _foregroundRefreshPromise: null,
+    _foregroundRetryTimer: null,
+    _foregroundRetryAttempt: 0,
+    _foregroundPageActive: true,
 
     _sessionAdmitted() {
       return !window.NativeChrome ||
@@ -33,20 +48,37 @@
 
     async isSupported() {
       if (SocialPush._supportPromise) return SocialPush._supportPromise;
-      SocialPush._supportPromise = (async () => {
+      let conclusive = false;
+      const probe = (async () => {
         if (!window.usernode || window.usernode.isNative !== true ||
-            !window.NativeChrome) return false;
+            !window.NativeChrome) {
+          conclusive = true;
+          return false;
+        }
         const info = await NativeChrome.getInfo();
+        if (info && info.degraded === true) {
+          throw new Error('Native bridge capability probe was inconclusive');
+        }
         const capabilities = Array.isArray(info && info.capabilities)
           ? info.capabilities
           : [];
         const supported = REQUIRED_CAPABILITIES.every((name) =>
           capabilities.includes(name) && typeof window.usernode[name] === 'function'
         );
+        conclusive = true;
         SocialPush._supported = supported;
         return supported;
-      })().catch(() => false);
-      return SocialPush._supportPromise;
+      })();
+      const tracked = probe.catch(() => false).then((supported) => {
+        // A rejection/degraded probe is inconclusive and must remain
+        // retryable; conclusive supported/unsupported results stay cached.
+        if (!conclusive && SocialPush._supportPromise === tracked) {
+          SocialPush._supportPromise = null;
+        }
+        return supported;
+      });
+      SocialPush._supportPromise = tracked;
+      return tracked;
     },
 
     _normalizeState(value) {
@@ -205,10 +237,89 @@
       return SocialPush._drainPromise;
     },
 
-    async refreshAfterForegroundPush() {
-      if (!window.App || !App.user || !window.Notifications ||
-          !await SocialPush.isSupported()) return false;
-      return Notifications.refreshAfterInvalidation();
+    _clearForegroundRetryTimer() {
+      if (!SocialPush._foregroundRetryTimer) return;
+      clearTimeout(SocialPush._foregroundRetryTimer);
+      SocialPush._foregroundRetryTimer = null;
+    },
+
+    _scheduleForegroundRetry() {
+      if (!SocialPush._foregroundPageActive ||
+          !SocialPush._foregroundInvalidationDirty ||
+          SocialPush._foregroundRetryTimer ||
+          SocialPush._foregroundRefreshPromise) return;
+      const delays = [500, 2000, 5000, 15000, 30000];
+      const delay = delays[Math.min(
+        SocialPush._foregroundRetryAttempt, delays.length - 1
+      )];
+      SocialPush._foregroundRetryAttempt += 1;
+      SocialPush._foregroundRetryTimer = setTimeout(() => {
+        SocialPush._foregroundRetryTimer = null;
+        SocialPush._runForegroundRefresh();
+      }, delay);
+    },
+
+    _runForegroundRefresh() {
+      if (!SocialPush._foregroundInvalidationDirty) {
+        return Promise.resolve(true);
+      }
+      if (!SocialPush._foregroundPageActive) return Promise.resolve(false);
+      if (SocialPush._foregroundRefreshPromise) {
+        return SocialPush._foregroundRefreshPromise;
+      }
+      const generation = SocialPush._foregroundInvalidationGeneration;
+      let attempted = false;
+      const refresh = (async () => {
+        if (!window.App || !App.user || !window.Notifications ||
+            !SocialPush._sessionAdmitted()) return false;
+        // The foreground event is itself the content-free invalidation signal.
+        // Refreshing the authenticated inbox needs no native push read/action
+        // capability, which also keeps mixed cached bridge versions working.
+        attempted = true;
+        try {
+          return await Notifications.refreshAfterInvalidation() === true;
+        } catch (err) {
+          console.warn('[social-push] foreground refresh failed:',
+            err && err.message ? err.message : err);
+          return false;
+        }
+      })();
+      const tracked = refresh.then((refreshed) => {
+        if (refreshed &&
+            generation === SocialPush._foregroundInvalidationGeneration) {
+          SocialPush._foregroundInvalidationDirty = false;
+          SocialPush._foregroundRetryAttempt = 0;
+          SocialPush._clearForegroundRetryTimer();
+        }
+        return refreshed;
+      }).finally(() => {
+        if (SocialPush._foregroundRefreshPromise !== tracked) return;
+        SocialPush._foregroundRefreshPromise = null;
+        if (!SocialPush._foregroundInvalidationDirty ||
+            !SocialPush._foregroundPageActive) return;
+        if (generation !== SocialPush._foregroundInvalidationGeneration) {
+          // A newer native invalidation arrived after this fetch began. Run a
+          // trailing fetch so the older response cannot consume newer work.
+          Promise.resolve().then(() => SocialPush._runForegroundRefresh());
+        } else if (attempted) {
+          SocialPush._scheduleForegroundRetry();
+        }
+      });
+      SocialPush._foregroundRefreshPromise = tracked;
+      return tracked;
+    },
+
+    refreshAfterForegroundPush() {
+      SocialPush._foregroundInvalidationDirty = true;
+      SocialPush._foregroundInvalidationGeneration += 1;
+      SocialPush._clearForegroundRetryTimer();
+      return SocialPush._runForegroundRefresh();
+    },
+
+    retryForegroundInvalidation() {
+      if (!SocialPush._foregroundInvalidationDirty) return Promise.resolve(true);
+      SocialPush._clearForegroundRetryTimer();
+      return SocialPush._runForegroundRefresh();
     },
 
     async init() {
@@ -230,6 +341,7 @@
   // Retry it when an offline launch regains connectivity.
   window.addEventListener('online', () => {
     SocialPush.drainPending();
+    SocialPush.retryForegroundInvalidation();
   });
   // The native shell refreshes registration/delivery status when it resumes.
   // Treat its state event as an invalidation and read through the admitted
@@ -246,8 +358,76 @@
     }
     SocialPush.getState();
     SocialPush.drainPending();
+    SocialPush.retryForegroundInvalidation();
   });
-  document.addEventListener('DOMContentLoaded', () => SocialPush.init());
+  // Native state must not be replayed until both the classic scripts and the
+  // deferred React shell have installed their listeners. DOMContentLoaded is
+  // the first ordering point after both; native then binds the acknowledgement
+  // to this exact realm instead of inferring readiness from WebView callbacks.
+  let bridgeReady = false;
+  let bridgeReadyInFlight = false;
+  let bridgePageActive = true;
+  let bridgeReadyTimer = null;
+  let bridgeReadyAttempt = 0;
+  const bridgeReadyRetryMs = [100, 500, 2000, 5000, 15000, 30000];
+
+  function announceBridgeReady() {
+    if (!bridgePageActive || bridgeReady || bridgeReadyInFlight ||
+        bridgeReadyTimer || !window.usernode ||
+        window.usernode.isNative !== true ||
+        typeof window.usernode.markPrivilegedBridgeReady !== 'function') {
+      return;
+    }
+    bridgeReadyInFlight = true;
+    window.usernode.markPrivilegedBridgeReady().then((result) => {
+      if (!bridgePageActive) return;
+      if (result && result.ready === true) {
+        bridgeReady = true;
+        return;
+      }
+      // A conclusive unsupported result belongs to an older app build.
+      bridgeReady = true;
+    }).catch((err) => {
+      if (!bridgePageActive) return;
+      console.warn('[social-push] native bridge readiness failed:',
+        err && err.message ? err.message : err);
+      const delay = bridgeReadyRetryMs[Math.min(
+        bridgeReadyAttempt, bridgeReadyRetryMs.length - 1
+      )];
+      bridgeReadyAttempt += 1;
+      bridgeReadyTimer = setTimeout(() => {
+        bridgeReadyTimer = null;
+        announceBridgeReady();
+      }, delay);
+    }).finally(() => {
+      bridgeReadyInFlight = false;
+      if (bridgePageActive && !bridgeReady && !bridgeReadyTimer) {
+        announceBridgeReady();
+      }
+    });
+  }
+
+  window.addEventListener('pagehide', () => {
+    SocialPush._foregroundPageActive = false;
+    SocialPush._clearForegroundRetryTimer();
+    bridgePageActive = false;
+    // A BFCache restore resumes this same realm, but native may have admitted
+    // another realm while it was away. Re-announce on pageshow so readiness is
+    // rebound even though the per-realm capability itself remains valid.
+    bridgeReady = false;
+    if (bridgeReadyTimer) clearTimeout(bridgeReadyTimer);
+    bridgeReadyTimer = null;
+  });
+  window.addEventListener('pageshow', () => {
+    SocialPush._foregroundPageActive = true;
+    bridgePageActive = true;
+    SocialPush.retryForegroundInvalidation();
+    announceBridgeReady();
+  });
+  document.addEventListener('DOMContentLoaded', () => {
+    SocialPush.init();
+    announceBridgeReady();
+  });
 
   window.SocialPush = SocialPush;
 })();
