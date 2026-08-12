@@ -111,7 +111,7 @@ export function Shell() {
           (#1008) keep the live color serving until the new one is
           health-gated and cut over, so there is nothing to announce and no
           reason to pause writes. A tab running an older build is caught up
-          by the drawer's "Platform version" row (which turns into a
+          by the drawer's "Web revision" row (which turns into a
           tappable "<sha> · reload") or by pull-to-refresh.
       */}
       {/*

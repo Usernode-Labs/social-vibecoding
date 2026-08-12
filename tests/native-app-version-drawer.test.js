@@ -1,6 +1,6 @@
-// #1101: the hamburger footer displays the installed Usernode application
-// version/build (for example 0.4.0/1223) without confusing it with either the
-// deployed web platform SHA or the currently-open dApp SHA.
+// #1101: the hamburger footer requests the installed Flutter app's
+// version/build (for example 0.4.0/1223), distinguishes the web revision, and
+// never substitutes the currently-open dApp SHA.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -28,23 +28,32 @@ function element({ hidden = false } = {}) {
 
 function loadRenderer({
   isNative = true,
-  supported = true,
+  settingsSupported = true,
+  bridgeInfos = [],
   snapshots = [],
 } = {}) {
   const row = element({ hidden: true });
   const slot = element();
   const listeners = {};
-  let capabilityReads = 0;
+  let infoReads = 0;
   let settingsReads = 0;
+  let infoIndex = 0;
   let snapshotIndex = 0;
 
   const sandbox = {
     console: { log() {}, warn() {}, error() {} },
     NativeChrome: {
-      async has(capability) {
-        capabilityReads += 1;
-        assert.equal(capability, 'getSettingsState');
-        return supported;
+      async getInfo() {
+        infoReads += 1;
+        if (bridgeInfos.length) {
+          const at = Math.min(infoIndex, bridgeInfos.length - 1);
+          infoIndex += 1;
+          return bridgeInfos[at];
+        }
+        return {
+          version: 4,
+          capabilities: settingsSupported ? ['getSettingsState'] : [],
+        };
       },
     },
     usernode: {
@@ -77,7 +86,7 @@ function loadRenderer({
   return {
     row,
     slot,
-    get capabilityReads() { return capabilityReads; },
+    get infoReads() { return infoReads; },
     get settingsReads() { return settingsReads; },
     dispatch(type, detail) {
       for (const listener of listeners[type] || []) listener({ detail });
@@ -96,17 +105,51 @@ test('the drawer island imports and initializes the native version renderer afte
     'layout-effect init prevents a pre-hydration class/text mutation');
 });
 
-test('the footer reserves distinct platform, native app, and dApp rows', () => {
-  const platformAt = html.indexOf('id="drawer-row-platform-version"');
-  const nativeAt = html.indexOf('id="drawer-row-native-app-version"');
-  const dappAt = html.indexOf('id="drawer-row-app-version"');
-  assert.ok(platformAt > -1 && nativeAt > platformAt && dappAt > nativeAt,
-    'footer order is platform → installed app → opened dApp');
-  assert.match(html.slice(nativeAt, dappAt), /App version/);
-  assert.match(html.slice(dappAt, html.indexOf('id="drawer-row-app-fork"')), /dApp version/);
+test('the footer separates the mobile app version from the web revision', () => {
+  const revisionAt = html.indexOf('id="drawer-row-platform-version"');
+  const versionAt = html.indexOf('id="drawer-row-native-app-version"');
+  const forkAt = html.indexOf('id="drawer-row-app-fork"');
+  assert.ok(revisionAt > -1 && versionAt > revisionAt && forkAt > versionAt,
+    'footer order is web revision → mobile app version → optional fork lineage');
+  assert.match(html.slice(revisionAt, versionAt), /Web revision/);
+  assert.match(html.slice(versionAt, forkAt), /Mobile app version/);
+  assert.doesNotMatch(html, /drawer-row-app-version|app-version-pill-slot|dApp version/,
+    'no particular dApp SHA appears in platform information');
 });
 
-test('a native settings snapshot renders the requested version/build format', async () => {
+test('public bridge info renders the installed Flutter version/build', async () => {
+  const loaded = loadRenderer({
+    bridgeInfos: [{
+      version: 4,
+      capabilities: ['getSettingsState'],
+      appVersion: '0.4.0',
+      buildNumber: '1223',
+    }],
+  });
+  await settle();
+
+  assert.equal(loaded.slot.textContent, '0.4.0/1223');
+  assert.equal(loaded.row.classList.contains('hidden'), false);
+  assert.equal(loaded.infoReads, 1);
+  assert.equal(loaded.settingsReads, 0,
+    'the public probe avoids a privileged settings read');
+});
+
+test('a missing build number falls back to the semantic version alone', async () => {
+  const loaded = loadRenderer({
+    bridgeInfos: [{
+      version: 4,
+      capabilities: [],
+      appVersion: '0.4.0',
+      buildNumber: '',
+    }],
+  });
+  await settle();
+  assert.equal(loaded.slot.textContent, '0.4.0');
+  assert.equal(loaded.row.classList.contains('hidden'), false);
+});
+
+test('existing app builds fall back to their settings snapshot', async () => {
   const loaded = loadRenderer({
     snapshots: [{ buildInfo: { appVersion: '0.4.0', buildNumber: '1223' } }],
   });
@@ -114,36 +157,32 @@ test('a native settings snapshot renders the requested version/build format', as
 
   assert.equal(loaded.slot.textContent, '0.4.0/1223');
   assert.equal(loaded.row.classList.contains('hidden'), false);
-  assert.equal(loaded.capabilityReads, 1);
+  assert.equal(loaded.infoReads, 1);
   assert.equal(loaded.settingsReads, 1);
 });
 
-test('a missing build number falls back to the semantic version alone', async () => {
-  const loaded = loadRenderer({
-    snapshots: [{ buildInfo: { appVersion: '0.4.0', buildNumber: '' } }],
-  });
-  await settle();
-  assert.equal(loaded.slot.textContent, '0.4.0');
-  assert.equal(loaded.row.classList.contains('hidden'), false);
-});
-
-test('desktop and unsupported native builds keep the device-only row hidden', async () => {
+test('browser and unsupported native builds keep the device-only row hidden', async () => {
   const desktop = loadRenderer({ isNative: false });
-  const oldNative = loadRenderer({ supported: false });
+  const oldNative = loadRenderer({ settingsSupported: false });
   await settle();
 
   assert.equal(desktop.row.classList.contains('hidden'), true);
-  assert.equal(desktop.capabilityReads, 0);
+  assert.equal(desktop.infoReads, 0);
   assert.equal(desktop.settingsReads, 0);
   assert.equal(oldNative.row.classList.contains('hidden'), true);
   assert.equal(oldNative.settingsReads, 0);
 });
 
-test('an inconclusive cold read retries on drawer open and caches success', async () => {
+test('an inconclusive bridge probe retries on drawer open and caches success', async () => {
   const loaded = loadRenderer({
-    snapshots: [
-      null,
-      { buildInfo: { appVersion: '0.4.0', buildNumber: 1223 } },
+    bridgeInfos: [
+      { version: 0, capabilities: [], degraded: true },
+      {
+        version: 4,
+        capabilities: ['getSettingsState'],
+        appVersion: '0.4.0',
+        buildNumber: 1223,
+      },
     ],
   });
   await settle();
@@ -153,21 +192,22 @@ test('an inconclusive cold read retries on drawer open and caches success', asyn
   await settle();
   assert.equal(loaded.slot.textContent, '0.4.0/1223');
   assert.equal(loaded.row.classList.contains('hidden'), false);
-  assert.equal(loaded.settingsReads, 2);
+  assert.equal(loaded.infoReads, 2);
+  assert.equal(loaded.settingsReads, 0);
 
   loaded.dispatch('usernode:header-menu-open');
   await settle();
-  assert.equal(loaded.settingsReads, 2, 'a successful device-local read is reused');
+  assert.equal(loaded.infoReads, 2, 'a successful device-local read is reused');
 });
 
 test('native values are assigned as text and bounded before rendering', async () => {
   const longBuild = '1'.repeat(80);
   const loaded = loadRenderer({
-    snapshots: [{
-      buildInfo: {
-        appVersion: '<img src=x onerror=alert(1)>',
-        buildNumber: longBuild,
-      },
+    bridgeInfos: [{
+      version: 4,
+      capabilities: [],
+      appVersion: '<img src=x onerror=alert(1)>',
+      buildNumber: longBuild,
     }],
   });
   await settle();

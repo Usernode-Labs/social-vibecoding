@@ -31,7 +31,12 @@ function loadBridge({
   const nativePosts = [];
   const messageListeners = [];
   const responses = {
-    getBridgeInfo: { version: 4, capabilities },
+    getBridgeInfo: {
+      version: 4,
+      capabilities,
+      appVersion: '0.4.0',
+      buildNumber: '1223',
+    },
     getPrivilegedBridgeCapability: 'navigation-capability',
     beginSessionHandoff: { blocked: true },
     enterAnonymousSession: { admitted: true },
@@ -406,6 +411,8 @@ test('a failed bridge probe is marked degraded, a real one is not', async () => 
   const answered = loadBridge({ capabilities: ['getSettingsState'] });
   const info = await answered.sandbox.usernode.getBridgeInfo();
   assert.equal(info.version, 4);
+  assert.equal(info.appVersion, '0.4.0');
+  assert.equal(info.buildNumber, '1223');
   assert.equal(info.degraded, undefined,
     'a conclusive probe must not look degraded, or callers would re-probe forever');
 

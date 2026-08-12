@@ -39,13 +39,16 @@ const baseline = require('./baselines/shell-markup.json');
 const after = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
 
 // Ids a conversion chunk deliberately removed, each with the reason.
-const RETIRED_IDS = Object.create(null);
+const RETIRED_IDS = {
+  'drawer-row-app-version': 'Per-dApp SHA removed from platform information; app versions remain on app cards.',
+  'app-version-pill-slot': 'Drawer-only per-dApp SHA renderer removed with its row.',
+};
 
 // Ids a conversion chunk deliberately added, each with the reason.
 const ADDED_IDS = {
   'settings-mobile-push-preferences': 'Account-level Social mobile-push category controls in Settings → Alerts.',
-  'drawer-row-native-app-version': 'Native-only installed Usernode app version in the drawer footer (#1101).',
-  'native-app-version-slot': 'Device-local app version/build value rendered through the native bridge (#1101).',
+  'drawer-row-native-app-version': 'Installed Flutter app version in the drawer footer (#1101).',
+  'native-app-version-slot': 'Mobile app version/build rendered through the native bridge (#1101).',
   'feedback-queue-dot': 'Header dot for feedback saved offline and still waiting to send (#1054).',
   // #1082 chunk E — the admin console's CHASSIS. These ids are not new to the
   // running page: admin-console.js._renderShell() has always created them, by
