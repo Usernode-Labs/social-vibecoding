@@ -39,7 +39,7 @@ const assert = require('node:assert/strict');
 
 const {
   runTests, runTestGroup, groupTestsByUrl, groupTestsByDocument, groupTests, cohortsOf,
-  hashGroupCap, poolSize, testTimeoutMs, testsDeadlineMs, setFrameSink,
+  hashGroupCap, poolSize, testTimeoutMs, testsDeadlineMs, setFrameSink, assertMaxMs,
 } = require('../capture/capture');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -261,7 +261,11 @@ test('checks on the same URL share one navigation but keep their own verdicts', 
     { index: 2, name: 'c', path: '/shared', url: 'http://staging/shared', expectText: 'welcome' },
     { index: 3, name: 'd', path: '/other', url: 'http://staging/other' },
   ];
-  const result = await runTests(browser, tests, { concurrency: 4, testTimeoutMs: 20000 });
+  const result = await runTests(browser, tests, {
+    concurrency: 4, testTimeoutMs: 20000,
+    // #gone never appears; a tight ceiling keeps this dispatch-shape test fast.
+    assertMaxMs: 100, assertPollMs: 25,
+  });
   const { frames, done } = read();
   const gotos = log.filter((e) => e.call === 'goto');
   assert.equal(gotos.length, 2, 'two distinct URLs, two navigations — not four');
@@ -631,6 +635,137 @@ test('a quiet page settles well inside the ceiling', async () => {
   const { frames } = read();
   assert.equal(frames[0].status, 'pass');
   assert.ok(elapsed < 900, `a silent page should not wait out the ceiling, took ${elapsed}ms`);
+});
+
+// ── Assertion polling (#1147 follow-up) ─────────────────────────────────
+//
+// The quiet-window settle judges a page as soon as it stops EMITTING —
+// console output, page errors, request lifecycle. But timers, rAF work,
+// IndexedDB reads and service-worker-served fetches emit none of those, so a
+// screen can be "quiet" while it is still rendering. Under the flat 2s settle
+// this was masked; the adaptive settle surfaced it as a wave of "Expected
+// element was not found" failures on exactly the data-driven routes (#1147
+// broke 20 of the repo's own declared checks this way). The fix: presence
+// assertions POLL until they hold or a bounded deadline expires, instead of
+// being evaluated once.
+
+test('an element that renders after the quiet window still passes: assertions poll', async () => {
+  const read = collect();
+  let ready = false;
+  let timer = null;
+  const page = makeEventPage({
+    // Nothing here bumps the activity clock — the page looks quiet while a
+    // timer-driven render is still pending, exactly the failure mode.
+    onGoto: () => { timer = setTimeout(() => { ready = true; }, 250); },
+  });
+  page.$ = async () => (ready ? {} : null);
+  try {
+    await runTestGroup({ newPage: async () => page },
+      [{ index: 0, name: 'a', path: '/p', url: 'http://s/p', expectSelector: '#late' }],
+      { settleQuietMs: 50, settleMaxMs: 100, assertMaxMs: 2000, assertPollMs: 25 });
+  } finally {
+    clearTimeout(timer);
+  }
+  const { frames } = read();
+  assert.equal(frames[0].status, 'pass',
+    'a render that lands after the settle but inside the assertion deadline passes');
+});
+
+test('a hash cohort whose screen renders async still passes, selector and text', async () => {
+  // Cohort switches are the tighter race: a hash write costs no navigation,
+  // so the quiet window can close ~quietMs after the switch while the target
+  // screen is still fetching and rendering.
+  const read = collect();
+  let ready = false;
+  let timer = null;
+  const page = makeEventPage({
+    onHash: () => { timer = setTimeout(() => { ready = true; }, 200); },
+  });
+  const origEval = page.evaluate;
+  page.evaluate = async (fn, arg) => {
+    if (typeof fn === 'function' && /location\.hash/.test(String(fn))) return origEval(fn, arg);
+    return ready; // the innerText probe: true only once the screen rendered
+  };
+  page.$ = async () => (ready ? {} : null);
+  const group = [
+    { index: 0, name: 'cold', path: '/dev', url: 'http://s/dev' },
+    { index: 1, name: 'late', path: '/dev', url: 'http://s/dev#/late',
+      expectSelector: '#table', expectText: 'Whole-season standings' },
+  ];
+  try {
+    await runTestGroup({ newPage: async () => page }, group,
+      { settleQuietMs: 50, settleMaxMs: 100, assertMaxMs: 2000, assertPollMs: 25 });
+  } finally {
+    clearTimeout(timer);
+  }
+  const { frames } = read();
+  const byIndex = new Map(frames.map((f) => [f.index, f]));
+  assert.equal(byIndex.get(0).status, 'pass');
+  assert.equal(byIndex.get(1).status, 'pass',
+    'the cohort judged after a hash switch waits for its screen too');
+});
+
+test('a selector that never appears still fails, inside the assertion ceiling', async () => {
+  const read = collect();
+  const page = makeEventPage();
+  page.$ = async () => null;
+  const started = Date.now();
+  await runTestGroup({ newPage: async () => page },
+    [{ index: 0, name: 'a', path: '/p', url: 'http://s/p', expectSelector: '#never' }],
+    { settleQuietMs: 50, settleMaxMs: 100, assertMaxMs: 300, assertPollMs: 50 });
+  const elapsed = Date.now() - started;
+  const { frames } = read();
+  assert.equal(frames[0].status, 'fail');
+  assert.match(frames[0].failureReason, /Expected element "#never" was not found/,
+    'the failure message keeps its historical shape');
+  assert.ok(elapsed < 1500, `polling is bounded by the ceiling, took ${elapsed}ms`);
+});
+
+test('the assertion deadline is shared by a cohort, not paid per failing check', async () => {
+  // Ten missing selectors on one screen must not cost ten deadlines — the
+  // group budget only grows per cohort, so the poll budget has to as well.
+  const read = collect();
+  const page = makeEventPage();
+  page.$ = async () => null;
+  const group = Array.from({ length: 10 }, (_, i) => ({
+    index: i, name: `m${i}`, path: '/p', url: 'http://s/p', expectSelector: `#m${i}`,
+  }));
+  const started = Date.now();
+  await runTestGroup({ newPage: async () => page }, group,
+    { settleQuietMs: 50, settleMaxMs: 100, assertMaxMs: 300, assertPollMs: 50 });
+  const elapsed = Date.now() - started;
+  const { frames } = read();
+  assert.equal(frames.length, 10);
+  assert.ok(frames.every((f) => f.status === 'fail'));
+  assert.ok(elapsed < 1500,
+    `ten failing checks share one 300ms deadline, took ${elapsed}ms`);
+});
+
+test('a console error that fires while assertions poll still counts', async () => {
+  // The flat 2s settle would have heard this error; the shorter settle must
+  // not let it slip past just because it fired during the poll window.
+  const read = collect();
+  let timer = null;
+  const page = makeEventPage({
+    onGoto: (p) => { timer = setTimeout(() => p.emitError('late boom'), 250); },
+  });
+  page.$ = async () => null;
+  try {
+    await runTestGroup({ newPage: async () => page },
+      [{ index: 0, name: 'a', path: '/p', url: 'http://s/p', expectSelector: '#x' }],
+      { settleQuietMs: 50, settleMaxMs: 100, assertMaxMs: 600, assertPollMs: 50 });
+  } finally {
+    clearTimeout(timer);
+  }
+  const { frames } = read();
+  assert.deepEqual(frames[0].consoleErrors.map((e) => e.message), ['late boom'],
+    'the error that fired during polling is attributed to the cohort');
+});
+
+test('the assertion ceiling comes from env with a sane default', () => {
+  assert.equal(assertMaxMs({}), 5000, 'the default ceiling');
+  assert.equal(assertMaxMs({ TEST_ASSERT_MAX_MS: '900' }), 900);
+  assert.equal(assertMaxMs({ TEST_ASSERT_MAX_MS: 'lots' }), 5000, 'garbage falls back');
 });
 
 test('pool bounds come from env with sane defaults and a hard ceiling', () => {
