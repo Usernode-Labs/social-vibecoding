@@ -89,6 +89,17 @@ function subscribe(listener: () => void): () => void {
 export function mountLegacyPortal(host: Element | null, node: ReactNode): void {
   if (!host) return;
   const existing = entries.get(host);
+  // First mount into this host: replace whatever the previous surface left in
+  // it. Chunk G's interim `createRoot(host).render()` did this implicitly —
+  // React documents that a root's first render replaces the container's
+  // existing content — and the Dev surface swaps rely on it: the topic
+  // sub-view is still a hand-written innerHTML template, so its markup is
+  // what occupies #app-content when the user navigates Back to the board. A
+  // portal only APPENDS to its container, so without this clear the new
+  // surface mounts BELOW the stale one and the navigation looks dead. On a
+  // re-mount (live entry) the children are React-owned — leave them to the
+  // reconciler.
+  if (!existing) host.replaceChildren();
   entries.set(host, { host, node, seq: existing ? existing.seq : ++seqCounter });
   commit();
 }

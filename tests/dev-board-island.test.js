@@ -60,12 +60,35 @@ test('one portal per host: the registry is keyed by the host node', () => {
   // a second one — so no container is ever rendered into twice.
   assert.match(
     PORTALS,
-    /const existing = entries\.get\(host\);\s*\n\s*entries\.set\(host, \{ host, node, seq: existing \? existing\.seq : \+\+seqCounter \}\);/,
+    /const existing = entries\.get\(host\);[\s\S]{0,1200}?entries\.set\(host, \{ host, node, seq: existing \? existing\.seq : \+\+seqCounter \}\);/,
     'mounting an already-mounted host updates its single entry'
   );
   // …and keeps its key, so React reconciles rather than remounting; a host that
   // comes back AFTER an unmount gets a new seq and therefore a fresh subtree.
   assert.match(PORTALS, /`legacy-portal-\$\{entry\.seq\}`/, 'seq is the portal key');
+});
+
+test('a FIRST mount replaces the host\'s existing content, like createRoot did', () => {
+  // Chunk G's interim `createRoot(host).render()` cleared the container's
+  // pre-existing children on its first render — documented React behaviour —
+  // and the Dev surface swaps relied on it: the topic sub-view is still a
+  // hand-written innerHTML template, so its markup is what sits in
+  // #app-content when the user presses Back to the board. `createPortal`
+  // APPENDS to its container instead, so without an explicit clear the board
+  // mounts BELOW the stale topic markup and the Back button looks dead.
+  const fn = PORTALS.slice(
+    PORTALS.indexOf('export function mountLegacyPortal'),
+    PORTALS.indexOf('export function unmountLegacyPortal')
+  );
+  assert.match(fn, /if \(!existing\) host\.replaceChildren\(\);/,
+    'a first mount clears whatever the previous legacy surface left in the host');
+  // …but ONLY a first mount: on a re-mount the children are React-owned, and
+  // ripping them out from under the reconciler is the torn-tree failure the
+  // whole mechanism exists to prevent.
+  const clear = fn.indexOf('host.replaceChildren()');
+  const set = fn.indexOf('entries.set(host,');
+  assert.ok(clear !== -1 && set !== -1 && clear < set,
+    'the clear happens before the entry is created, so the commit renders into an empty host');
 });
 
 test('#1085 chunk H: there is exactly ONE React root in the bundle', () => {
