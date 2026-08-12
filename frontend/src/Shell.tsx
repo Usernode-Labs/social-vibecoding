@@ -8,8 +8,9 @@
 // ── Three constraints this component must keep ─────────────────────────
 //
 // 1. A REGION MAY BECOME STATEFUL ONLY WHEN ITS ENTIRE SUBTREE IS
-//    REACT-OWNED. This component itself has no state: it renders 57,000 lines
-//    of public/js/**'s containers, and React reconciling over DOM another
+//    REACT-OWNED. This component itself has no state: it renders the
+//    containers that public/js/**'s remaining 32,000 lines write into, and
+//    React reconciling over DOM another
 //    owner writes into is the failure mode the whole migration is designed to
 //    avoid. So statefulness arrives one island at a time, and only for a
 //    region whose legacy module is retired in the SAME change — after which
@@ -38,7 +39,7 @@
 // 3. CONVERSION IS LIKE-FOR-LIKE. Component boundaries, props and state are
 //    free; rendered output is not. Same ids, same class strings, same `hidden`
 //    semantics, same data-*/aria-* attributes — public/js/** looks these up by
-//    getElementById and dapp.json's 227 declared tests select against these
+//    getElementById and dapp.json's 315 declared tests select against these
 //    exact structures. tests/baselines/shell-markup.json is the frozen
 //    inventory; deliberate changes are recorded in the RETIRED_*/ADDED_* maps
 //    in tests/shell-id-inventory.test.js and tests/shell-script-order.test.js,
@@ -472,6 +473,19 @@ export function Shell() {
       */}
       <script src="/js/merge-status.js" />
       {/*
+          #1038's live session working-state store (window.SessionState). It is
+          a leaf — it reads window.App only at call time — but it must load
+          before app-view.js, whose MODULE SCOPE calls
+          SessionState.onEvent(...) / SessionState.subscribe(...) behind a
+          `if (window.SessionState)` guard. That guard is why the missing tag
+          was silent rather than loud: the module was precached in sw.js's
+          SHELL_ASSETS but rendered by nobody, so every consumer here and in
+          app.js took its fallback path and the live store never ran. See the
+          reverse SHELL_ASSETS assertion in tests/pwa-shell-wiring.test.js,
+          which now fails on a precached-but-unloaded /js/** entry.
+      */}
+      <script src="/js/session-state.js" />
+      {/*
           /js/dev-chat.js used to load here, last of the chat cluster, after
           every pure helper above that it consumes. #1084 chunk G moved it into
           the React bundle (features/dev-chat/dev-chat.js) and the relative
@@ -479,8 +493,10 @@ export function Shell() {
           runs after ALL of these classic tags, which is exactly the position
           the tag occupied. window.DevChat is published at module scope there,
           before hydration, so app.js's DOMContentLoaded bootstrap still finds
-          it. Note the eight helpers above are NOT retired — group-chat.js,
-          app-view.js and the session drawer still read them as globals.
+          it. Note the eight pure helpers it consumes are NOT retired —
+          group-chat.js, app-view.js and the session drawer still read them as
+          globals. Seven load above; build-log.js loads further down, next to
+          app-view.js, the other surface that reads it.
       */}
       {/*
           /js/kudos.js and /js/ai-credit.js used to load here — same

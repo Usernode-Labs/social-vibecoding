@@ -11,7 +11,7 @@
 //
 // ── 1. The legacy classic scripts ──────────────────────────────────────
 //
-// public/js/** is 53 files of global-scope script with no module system:
+// public/js/** is 28 files of global-scope script with no module system:
 // each defines a global (App, Home, AppView, DevChat, AuthScreens, …) and
 // several depend on an earlier one already existing. app.js is LAST on
 // purpose — it registers its DOMContentLoaded handler after every other
@@ -22,7 +22,7 @@
 // ── 2. The React entry's position ──────────────────────────────────────
 //
 // The entry must be a `type="module"` script (therefore deferred) so it
-// executes AFTER all 50 classic scripts have defined their globals and
+// executes AFTER all 26 classic scripts have defined their globals and
 // BEFORE DOMContentLoaded runs their init()s. See frontend/src/main.tsx.
 //
 // ── 3. The stylesheet cascade ──────────────────────────────────────────
@@ -64,6 +64,12 @@ const ADDED_SCRIPTS = [
   '/js/session-options.js', // #1055 — the composer's session/billing menu
   '/js/build-venues.js', // the six build venues, shared by every picker
   '/js/feedback-queue.js', // #1054 — the offline feedback outbox, before app.js
+  // #1038 — the live session working-state store. It shipped with a
+  // SHELL_ASSETS entry but no <script> tag, so window.SessionState was
+  // undefined at runtime and every consumer silently took its guarded
+  // fallback; the tag was restored in the chat-helper cluster, before
+  // app-view.js. It post-dates the baseline like the rest of this list.
+  '/js/session-state.js',
 ];
 
 // Modules a conversion chunk RETIRED, with the reason. Each one's behaviour
@@ -111,11 +117,15 @@ const RETIRED_SCRIPTS = {
   // changed — init() now runs from the island's layout effect.
   //
   // It is the ONLY module chunk D retires. The issue also named
-  // dev-flow-select.js, credit-options.js, cli-authorize.js and
-  // connect-authorize.js as candidates; the first two are consumed by
-  // dev-chat.js and app-view.js and cannot go, and the last two are not shell
-  // scripts at all (they are IIFEs for the server-rendered /cli/authorize and
-  // connector-consent pages, in neither Shell.tsx nor SHELL_ASSETS).
+  // dev-flow-select.js and credit-options.js as candidates; both are consumed
+  // by dev-chat.js and app-view.js and cannot go.
+  //
+  // (The issue's list also named cli-authorize.js and connect-authorize.js.
+  // Those two are not shell scripts and were never candidates for any chunk:
+  // they are page IIFEs for the server-rendered /cli/authorize and
+  // connector-consent documents, in neither Shell.tsx nor SHELL_ASSETS, and
+  // this migration does not reach them. They are dropped from the candidate
+  // list here rather than carried forward as perpetual not-yet work.)
   '/js/settings.js': 'settings screen converted to a React island (chunk D)',
   // #1082 chunk E — #admin-screen became an island
   // (frontend/src/features/admin/), and all ten admin modules moved verbatim
@@ -254,7 +264,12 @@ const RETIRED_SCRIPTS = {
   // load before it (session-state, merge-status, build-log,
   // session-transcript, spec-sections, cc-progress-summary, dev-alerts,
   // streaming-markdown) all have consumers outside these two screens and keep
-  // their tags. Their relative order still holds for a stronger reason — the
+  // their tags. (This comment claimed that of all eight from the start, but
+  // session-state.js had no tag to keep — it was precached in SHELL_ASSETS and
+  // rendered by nobody, so window.SessionState was undefined at runtime. The
+  // tag is restored now, and it is the reverse SHELL_ASSETS assertion in
+  // tests/pwa-shell-wiring.test.js, not this prose, that keeps it true.)
+  // Their relative order still holds for a stronger reason — the
   // bundle entry is a deferred module, so it evaluates after every classic tag.
   '/js/dev-chat.js': 'dev session chat module moved into the React bundle (chunk G)',
 };
@@ -283,7 +298,7 @@ test('every legacy script is loaded, in exactly the baseline order', () => {
 });
 
 test('the shell still loads the expected number of legacy scripts', () => {
-  // 25 /js/** tags, ALL at the end of <body> — the head has none left. The
+  // 26 /js/** tags, ALL at the end of <body> — the head has none left. The
   // count moves whenever main adds a module — it was 48 at the chassis swap
   // (plus theme.js in the head), main's mail console and credit-options
   // screens brought it to 50, #1036's nav-link.js made 51, #1049's
@@ -301,12 +316,14 @@ test('the shell still loads the expected number of legacy scripts', () => {
   // (35), profile.js (34), the leaderboard screen's five together (29), and
   // finally the home screen's three (26). #1084 chunk G retires dev-chat.js
   // (25) — the eight pure chat helpers keep their tags, because group-chat.js,
-  // app-view.js and the session drawer still read them as globals.
+  // app-view.js and the session drawer still read them as globals. Restoring
+  // #1038's session-state.js tag — one of those eight, precached in
+  // SHELL_ASSETS but rendered by nobody since it shipped — makes 26.
   const bodyScripts = scriptsOf(after.slice(after.indexOf('</head>')))
     .filter((s) => s.src && s.src.startsWith('/js/'));
   assert.equal(
-    bodyScripts.length, 25,
-    `expected the 25 legacy /js/** scripts at the end of <body>, found ${bodyScripts.length}. `
+    bodyScripts.length, 26,
+    `expected the 26 legacy /js/** scripts at the end of <body>, found ${bodyScripts.length}. `
     + 'Adding or removing one is fine, but it also needs a matching SHELL_ASSETS entry in '
     + 'public/sw.js (tests/pwa-shell-wiring.test.js enforces that) — so update this count '
     + 'deliberately rather than loosening the check.',
@@ -454,6 +471,31 @@ test('build-venues.js loads ahead of the modules that consume it', () => {
     const idx = srcs.indexOf(consumer);
     assert.ok(idx === -1 || at < idx,
       `build-venues.js must load before ${consumer}, which reads window.BuildVenues`);
+  }
+});
+
+test('session-state.js loads ahead of the modules that consume it', () => {
+  // Excluded from the baseline comparison above for the same reason as the
+  // four modules before it, so its position is pinned here. #1038: a pure
+  // leaf store — it touches window.App only at call time — but app-view.js
+  // registers SessionState.onEvent / SessionState.subscribe at MODULE SCOPE,
+  // behind a `if (window.SessionState)` guard, so a tag that loads late (or
+  // not at all) makes the live store silently inert instead of throwing.
+  // That is exactly what shipped: SHELL_ASSETS precached the module and no
+  // <script> tag rendered it. tests/pwa-shell-wiring.test.js now fails on
+  // that shape directly; this check keeps the ORDER honest once it loads.
+  const srcs = scriptsOf(after).filter((s) => s.src && s.src.startsWith('/js/')).map((s) => s.src);
+  const at = srcs.indexOf('/js/session-state.js');
+  assert.notEqual(at, -1,
+    'the shell must load /js/session-state.js — without the tag window.SessionState is '
+    + 'undefined and every consumer in app.js / app-view.js takes its guarded fallback');
+  // dev-chat.js keeps its entry despite #1084 chunk G retiring its tag (the
+  // `idx === -1` arm covers it — the bundle is deferred past every classic
+  // script either way).
+  for (const consumer of ['/js/dev-chat.js', '/js/app-view.js', '/js/app.js']) {
+    const idx = srcs.indexOf(consumer);
+    assert.ok(idx === -1 || at < idx,
+      `session-state.js must load before ${consumer}, which reads window.SessionState`);
   }
 });
 

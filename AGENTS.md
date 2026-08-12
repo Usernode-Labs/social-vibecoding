@@ -5,7 +5,9 @@
 - The shell's markup is React now. **Do not edit `public/index.html`** — it is
   built from `frontend/` and any hand edit is overwritten by the next build.
   The sources are:
-  - `frontend/src/Shell.tsx` — the whole `<body>`, as one static component.
+  - `frontend/src/Shell.tsx` — the whole `<body>`: a static tree that composes
+    the converted screens' island components (see the statefulness rule
+    below). It holds no state itself.
   - `frontend/src/head.html` — the `<head>`, carried over verbatim.
   - `frontend/@/components/ui/` — shadcn primitives, restyled to the
     platform's existing `zinc`/`violet` palette (`cssVariables: false`).
@@ -32,7 +34,7 @@
   original order (`app.js` must stay last), and **converted markup is
   like-for-like** — same ids, class strings, `hidden` semantics and `data-*`
   attributes as the hand-written shell, because `public/js/**` looks those up
-  by `getElementById` and `dapp.json`'s 227 declared tests select on deep
+  by `getElementById` and `dapp.json`'s 315 declared tests select on deep
   chains of them. The structural baseline is
   `tests/baselines/shell-markup.json` (ids, `data-*` names, script order,
   stylesheet order), enforced by `tests/shell-id-inventory.test.js`,
