@@ -29,7 +29,7 @@ const github = require('../src/services/github');
 
 const root = path.join(__dirname, '..');
 const appsJs = fs.readFileSync(path.join(root, 'src/routes/apps.js'), 'utf8');
-const secretsUiJs = fs.readFileSync(path.join(root, 'public/js/app-secrets.js'), 'utf8');
+const secretsUiJs = fs.readFileSync(path.join(root, 'frontend/src/features/dialogs/app-secrets-controller.js'), 'utf8');
 
 // A stub octokit whose request() answers the Actions-secrets endpoint.
 // `pages` is a list of { secrets, total_count } responses.

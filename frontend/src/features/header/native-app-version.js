@@ -1,12 +1,11 @@
-// Installed Usernode app version in the hamburger drawer footer (#1101).
+// Installed Flutter mobile-app version in the hamburger drawer footer (#1101).
 //
-// The drawer already distinguishes the deployed web platform SHA from the
-// currently-open dApp SHA. Inside the native Usernode WebView there is a third
-// independently released layer: the installed app binary. The native bridge's
-// existing getSettingsState snapshot already carries exactly the two fields we
-// need (`buildInfo.appVersion` + `buildInfo.buildNumber`), so this renderer is
-// deliberately device-local — it never asks the platform server to guess which
-// app build is hosting the page.
+// A Git SHA identifies the deployed web revision, while this value identifies
+// the independently released binary hosting the WebView. New app builds put
+// `appVersion` + `buildNumber` on the public getBridgeInfo response, which is
+// readable from staging as well as production. Existing builds fall back to
+// the same fields in their privileged getSettingsState snapshot. Neither path
+// ever substitutes the currently-open dApp's commit hash.
 //
 // Like node-pill.js and wallet-sheet.js, this module owns a static, initially
 // hidden row inside the React drawer island. It evaluates as part of the bundle
@@ -30,7 +29,7 @@
       if (!NativeAppVersion._bound) {
         NativeAppVersion._bound = true;
 
-        // A cold native start can make the first settings read inconclusive.
+        // A cold native start can make the first bridge read inconclusive.
         // Retry when the user next opens the only surface that displays the
         // value, without repeating a successful device-local read.
         window.addEventListener('usernode:header-menu-open', () => {
@@ -67,9 +66,20 @@
 
     async _read() {
       try {
-        if (!(await NativeChrome.has('getSettingsState'))) return null;
-        const state = await window.usernode.getSettingsState();
-        const value = NativeAppVersion._format(state && state.buildInfo);
+        const info = await NativeChrome.getInfo();
+        let value = NativeAppVersion._format(info);
+
+        // Compatibility for installed app builds that predate build metadata
+        // on getBridgeInfo. Production SV can read the older privileged
+        // settings snapshot; staging cannot, and will begin rendering once the
+        // paired Flutter change reaches the installed binary.
+        const capabilities = info && Array.isArray(info.capabilities)
+          ? info.capabilities : [];
+        if (!value && capabilities.includes('getSettingsState') &&
+            typeof window.usernode.getSettingsState === 'function') {
+          const state = await window.usernode.getSettingsState();
+          value = NativeAppVersion._format(state && state.buildInfo);
+        }
         if (!value) return null;
         NativeAppVersion._value = value;
         NativeAppVersion._render(value);

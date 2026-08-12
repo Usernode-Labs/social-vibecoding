@@ -1,7 +1,18 @@
 // Tests for the pure geometry / detection / solve functions behind the
 // feedback modal's drag-to-select screenshot capture (#683) —
-// public/js/screenshot-select.js exports them via its module.exports
-// branch (same convention as public/sw.js's classifyRequest).
+// frontend/src/features/dialogs/screenshot-select.js exports them via its
+// module.exports branch (same convention as public/sw.js's classifyRequest).
+//
+// The module moved out of public/js/ in #1078 chunk I, when the feedback
+// dialog became stateful and its capture flow became an import of the shell
+// bundle rather than a <script> tag. It is still the same plain IIFE, and its
+// tail still ends with a `module.exports = pure` branch guarded by
+// `typeof window === 'undefined'` so nothing browser-side is touched here.
+// What changed is only WHERE it lives: frontend/package.json declares
+// "type": "module", so Node resolves any .js under frontend/ as ESM and a
+// bare require() of it throws ERR_REQUIRE_ESM. Evaluating the source in a
+// CommonJS wrapper is the equivalent load — same file, same branch, no build
+// step and no frontend/node_modules dependency (the root suite never has one).
 //
 // Covered:
 //   - directMapping / applyMapping: identity, 2x DPR, non-integer scale
@@ -19,6 +30,20 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
+const fs = require('node:fs');
+const path = require('node:path');
+
+const SRC = path.join(
+  __dirname, '..', 'frontend', 'src', 'features', 'dialogs', 'screenshot-select.js',
+);
+
+function loadScreenshotSelect() {
+  const mod = { exports: {} };
+  // eslint-disable-next-line no-new-func
+  new Function('module', 'exports', fs.readFileSync(SRC, 'utf8'))(mod, mod.exports);
+  return mod.exports;
+}
+
 const {
   MARKER,
   markerCssCenters,
@@ -27,7 +52,7 @@ const {
   detectMarkers,
   classifyCorners,
   solveRegistration,
-} = require('../public/js/screenshot-select.js');
+} = loadScreenshotSelect();
 
 // ── Mapping ──────────────────────────────────────────────────────────
 

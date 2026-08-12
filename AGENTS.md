@@ -5,7 +5,9 @@
 - The shell's markup is React now. **Do not edit `public/index.html`** — it is
   built from `frontend/` and any hand edit is overwritten by the next build.
   The sources are:
-  - `frontend/src/Shell.tsx` — the whole `<body>`, as one static component.
+  - `frontend/src/Shell.tsx` — the whole `<body>`: a static tree that composes
+    the converted screens' island components (see the statefulness rule
+    below). It holds no state itself.
   - `frontend/src/head.html` — the `<head>`, carried over verbatim.
   - `frontend/@/components/ui/` — shadcn primitives, restyled to the
     platform's existing `zinc`/`violet` palette (`cssVariables: false`).
@@ -32,7 +34,7 @@
   original order (`app.js` must stay last), and **converted markup is
   like-for-like** — same ids, class strings, `hidden` semantics and `data-*`
   attributes as the hand-written shell, because `public/js/**` looks those up
-  by `getElementById` and `dapp.json`'s 227 declared tests select on deep
+  by `getElementById` and `dapp.json`'s 315 declared tests select on deep
   chains of them. The structural baseline is
   `tests/baselines/shell-markup.json` (ids, `data-*` names, script order,
   stylesheet order), enforced by `tests/shell-id-inventory.test.js`,
@@ -52,18 +54,22 @@
   and screen visibility must be published through
   `frontend/src/lib/visibility-store.ts` rather than by toggling `.hidden` from
   outside React.
-- **The nine modal roots in `PlatformUI.STATIC_MODAL_IDS` cannot host state
-  yet** — that is the one place the rule above bites hardest, so it is worth
-  stating outright. `adoptStaticModal` (`public/js/platform-ui.js`) watches each
-  root's class list and, when `hidden` comes off, **lifts the card element out
-  of the root** — leaving a comment placeholder — into the native kit's
-  `presentModal` shell, adding `platform-modal-adopted` to the root and
-  `platform-modal-card` to the card. So a React re-render of one of those
-  subtrees would reconcile against a parent that no longer holds its child and
-  would overwrite a class the kit just wrote. Their markup lives in
-  `frontend/src/features/dialogs/` as static components; **the open/close/submit
-  behaviour stays in `public/js/**` until the adoption seam itself moves inside
-  React**, which is the hard prerequisite for making any dialog stateful. The
+- **The nine dialogs present themselves through
+  `frontend/src/lib/static-modal.ts` — nothing outside React lifts their
+  cards.** That seam used to be `PlatformUI.adoptStaticModal`, which watched
+  each root in `STATIC_MODAL_IDS` and, when `hidden` came off, lifted the card
+  element out of the root — leaving a comment placeholder — into the native
+  kit's `presentModal` shell. Two owners wrote to those nodes, so the dialogs
+  had to stay markup-only. #1078 chunk I moved the lift inside React
+  (`useStaticModal`, driven by `features/dialogs/use-dialog.ts`) and retired the
+  `public/js/**` copy, which is what made all nine stateful. **Drive a dialog
+  only through `useDialog`** — it owns `hidden`, the kit hand-off, the
+  backdrop-dismiss rule and the ghost-click guard, and it publishes the
+  controller on `window.UsernodeReact.dialogs.<name>` for the legacy callers.
+  Two things it does not relax: the root's `className` is still rendered once,
+  as a constant, because the kit writes `platform-modal-adopted` to that node;
+  and anything a controller module fills by `innerHTML` (the members roster,
+  the secrets rows, the feedback status line) stays that module's host. The
   same applies to any element the kit or `app.css` writes classes to at runtime
   — use the `useHiddenClass` / `useClassToggle` refs in
   `frontend/src/lib/legacy-dom.ts`, never a rendered `className`.
@@ -84,6 +90,45 @@
   chunk at a time, strictly like-for-like:** component boundaries, props and
   state are free; rendered output is not. No restyling, no
   information-architecture changes, no drive-by fixes.
+
+### Step 2 closeout (#1040)
+
+- **All eight chunks A–H landed with the like-for-like contract intact.** All
+  32 regions render from components, and the structural baseline came through
+  the whole run without a single loss: `tests/baselines/shell-markup.json`
+  still carries its original 444 ids and **`RETIRED_IDS` is still empty**
+  (`ADDED_IDS` holds the deliberate additions, each with a reason). The
+  acceptance criterion was zero visual change with that baseline intact, and
+  it was met exactly.
+- Three things landed differently from the original plan — read them before
+  taking a step-3 instruction from it literally:
+  - **No Radix.** `frontend/package.json` depends only on
+    `class-variance-authority`, `clsx`, `react`/`react-dom` and
+    `tailwind-merge`; all nine primitives under `frontend/@/components/ui/`
+    are hand-rolled, each with a "── Why this is NOT @radix-ui/react-\* ──"
+    header. **The plan's "add `@radix-ui/*` in step 3" instruction is moot as
+    written** — there is no Radix to build on, and the modal seam below is
+    what a real `Dialog` primitive would have to be reconciled with.
+  - **"Retirement" mostly meant relocation, not deletion.** Only `offline.js`,
+    `settings.js`, `dev-chat.js` and (in chunk I) `app-secrets.js` /
+    `screenshot-select.js` genuinely left the page; the rest of the relocated
+    lines are the same imperative code, moved into the bundle and still
+    publishing their `window.X` globals. "Converted to React" in the chunk
+    issues means "wrapped in a component", not "rewritten".
+  - **The dialogs are done.** They shipped markup-only in chunk A because
+    `PlatformUI.adoptStaticModal` lifted each card out of its root. Chunk I
+    brought that lift inside React (`frontend/src/lib/static-modal.ts` +
+    `features/dialogs/use-dialog.ts`), which is what let all nine become
+    stateful and let the two scripts above retire — see the dialogs bullet
+    above for the rules that still apply.
+- **The deep `innerHTML` hosts are step-3 work and are deliberately still
+  legacy.** Each is a container a `public/js/**` or relocated module writes
+  HTML into, so the region around it may not become stateful (the rule above):
+  `#app-content`, `#dc-view`, `#dev-body`, `#app-list`, `#home-panels`,
+  `#settings-nav-desktop`, `#settings-mobile-menu-host`,
+  `#admin-section-content`, the three leaderboard panes, `#profile-root`, and
+  the notification and work-drawer list containers. Convert them one screen at
+  a time, not as a sweep.
 
 ## Shell CSS is generated by the image build — do not commit it
 

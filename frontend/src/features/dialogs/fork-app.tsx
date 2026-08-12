@@ -1,42 +1,104 @@
 /**
  * Fork-app dialog (#fork-modal).
  *
- * Fork modal (AppView.promptFork). Stands up an independent copy of
- * the current app owned by the forker.
+ * Stands up an independent copy of an app — its own repo, database and web
+ * address.
  *
- * Extracted verbatim from Shell.tsx by #1078 chunk A. The render output is
- * byte-identical to what the shell shipped before — same ids, same class
- * strings, same `hidden` semantics, same data-* attributes — and
- * tests/baselines/shell-markup.json plus the prerendered public/index.html
- * in this commit are the proof.
+ * Markup extracted verbatim from Shell.tsx by #1078 chunk A; #1078 chunk I
+ * moved the behaviour in and made it stateful. The render output is still
+ * byte-identical to what the shell shipped — same ids, same class strings,
+ * same `hidden` semantics, same data-* attributes — and
+ * tests/baselines/shell-markup.json plus the prerendered public/index.html in
+ * this commit are the proof.
  *
- * ── Why this component is STATIC ──────────────────────────────────────
+ * ── What moved, and from where ────────────────────────────────────────
  *
- * #1078 mechanism 1: a region may become stateful only when its ENTIRE
- * subtree is React-owned. This root is not, and cannot be yet, for two
- * independent reasons:
- *
- *   1. PlatformUI.adoptStaticModal (public/js/platform-ui.js) has this id in
- *      STATIC_MODAL_IDS. It observes the root's class list and, when
- *      `hidden` comes off, LIFTS THE CARD OUT OF THE ROOT — replacing it
- *      with a comment placeholder — into the native kit's presentModal
- *      shell, adding `platform-modal-adopted` to the root and
- *      `platform-modal-card` to the card. A React re-render of this subtree
- *      would then reconcile against a parent that no longer holds its child
- *      (removeChild on the wrong node) and would overwrite the class the kit
- *      just wrote.
- *   2. The legacy open/close/submit paths in public/js/** still write into
- *      these nodes directly (innerHTML, value, dataset, .hidden toggles).
- *
- * So the dialog markup is a React component, but its BEHAVIOUR stays where
- * it is. Making it stateful is a later chunk's job and has a hard
- * prerequisite: the adoption seam has to move inside React first, so that one
- * owner writes to these nodes instead of two.
+ * `AppView._forkSource`, `.promptFork`, `.closeForkModal` and `.submitFork`
+ * were public/js/app-view.js:12838-12918; the cancel, backdrop and submit
+ * listeners were public/js/app.js's `bindEvents`. `AppView.promptFork(source)`
+ * survives as a one-line forward because it has TWO callers with different
+ * arguments: the app-view header's "+" menu passes nothing (fork the open
+ * app) and the home-screen card dropdown passes an arbitrary `{slug, name}`
+ * with no app open. That argument is now the island's open payload, which is
+ * why `_forkSource` no longer needs to exist as shared state.
  */
 
+import { useRef, useState, type FormEvent } from 'react';
+
+import { useHiddenClass } from '../../lib/legacy-dom';
+import { useDialog } from './use-dialog';
+
+export interface ForkSource {
+  slug: string;
+  name?: string;
+}
+
 export function ForkAppDialog() {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const errorRef = useRef<HTMLDivElement>(null);
+  const sourceRef = useRef<ForkSource | null>(null);
+  const [sourceName, setSourceName] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const dialog = useDialog<ForkSource>('fork', {
+    onOpen: (payload) => {
+      const src = payload || null;
+      sourceRef.current = src;
+      setSourceName(src?.name || '');
+      setError('');
+      if (inputRef.current) inputRef.current.value = `${src?.name || 'App'} (fork)`;
+      setTimeout(() => {
+        inputRef.current?.focus();
+        inputRef.current?.select();
+      }, 0);
+    },
+    onClose: () => {
+      setError('');
+      if (inputRef.current) inputRef.current.value = '';
+    },
+  });
+
+  useHiddenClass(errorRef, !error);
+
+  // Verbatim from AppView.submitFork.
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    const source = sourceRef.current;
+    if (!source?.slug) return;
+    const name = (inputRef.current?.value || '').trim();
+    if (name.length < 3) return setError('Name must be at least 3 characters.');
+
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/apps/${encodeURIComponent(source.slug)}/fork`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(data.error || 'Fork failed.');
+        return;
+      }
+      dialog.close();
+      // Land the user on the home feed where the new fork tile shows its
+      // "Spinning up…" state (identical to creating a new app).
+      (window.App?.navigateHome as (() => void) | undefined)?.();
+    } catch {
+      setError('Network error — please try again.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
-    <div id="fork-modal" className="hidden fixed inset-0 z-50 overflow-y-auto overscroll-contain bg-black/60">
+    <div
+      id="fork-modal"
+      ref={dialog.rootRef}
+      className="hidden fixed inset-0 z-50 overflow-y-auto overscroll-contain bg-black/60"
+      {...dialog.backdropProps}
+    >
       <div data-modal-backdrop="" className="flex min-h-full items-center justify-center p-4">
         <div className="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-sm shadow-xl">
           <h2 className="text-lg font-bold mb-1">
@@ -45,10 +107,11 @@ export function ForkAppDialog() {
           <p className="text-xs text-zinc-500 mb-4">
             Forking
             <span id="fork-source-name" className="font-mono text-zinc-300">
+              {sourceName}
             </span>
             stands up your own independent copy — its own repo, database, and web address.
           </p>
-          <form id="fork-form" className="space-y-4">
+          <form id="fork-form" className="space-y-4" onSubmit={submit}>
             <div>
               <label
                 htmlFor="fork-input"
@@ -58,6 +121,7 @@ export function ForkAppDialog() {
               </label>
               <input
                 id="fork-input"
+                ref={inputRef}
                 type="text"
                 required={true}
                 minLength={3}
@@ -98,13 +162,15 @@ export function ForkAppDialog() {
                 data (DMs, per-user rows). You'll be asked to re-enter required secrets before your fork goes live.
               </p>
             </div>
-            <div id="fork-error" className="text-red-400 text-sm hidden">
+            <div id="fork-error" ref={errorRef} className="text-red-400 text-sm hidden">
+              {error}
             </div>
             <div className="flex gap-3">
               <button
                 type="button"
                 id="fork-cancel"
                 className="flex-1 rounded-lg border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+                onClick={() => dialog.close()}
               >
                 Cancel
               </button>
@@ -112,8 +178,9 @@ export function ForkAppDialog() {
                 type="submit"
                 id="fork-submit"
                 className="flex-1 rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors"
+                disabled={busy}
               >
-                Fork
+                {busy ? 'Forking…' : 'Fork'}
               </button>
             </div>
           </form>

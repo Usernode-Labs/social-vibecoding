@@ -643,5 +643,18 @@
     }
   }
 
-  window.ScreenshotSelect = Object.assign({ isSupported, start }, pure);
+  // ── Moved into the React bundle by #1078 chunk I ────────────────
+  //
+  // This file was public/js/screenshot-select.js, a classic <script> tag
+  // loaded just before app.js so the feedback modal could gate its attach
+  // button on isSupported(). It is a MOVE: the IIFE above is unchanged, and
+  // the publication stays, because the feedback dialog still reads
+  // `window.ScreenshotSelect` by name.
+  //
+  // The `typeof window` guard is for the SSG prerender pass, which evaluates
+  // this module in Node (FeedbackDialog imports it). Nothing else in here
+  // touches a browser global at module scope.
+  if (typeof window !== 'undefined') {
+    window.ScreenshotSelect = Object.assign({ isSupported, start }, pure);
+  }
 })();

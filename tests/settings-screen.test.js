@@ -90,9 +90,18 @@ test('the modal is gone — markup, close button and modal registration', () => 
   assert.doesNotMatch(html, /id="settings-close"/,
     'the modal close button is deleted');
   assert.doesNotMatch(platformUiJs, /'settings-modal'/,
-    "'settings-modal' is out of platform-ui's STATIC_MODAL_IDS");
-  assert.match(platformUiJs, /'app-secrets-modal'/,
-    'the other static modals still register');
+    'settings is not a modal any more — nothing in platform-ui.js names it');
+  // It used to be a member of platform-ui's STATIC_MODAL_IDS, and this test
+  // checked that the list still held the other nine. #1078 chunk I moved that
+  // whole seam into frontend/src/lib/static-modal.ts, driven by the dialog
+  // islands' own state, so the equivalent check is that settings is not one of
+  // them — the dialogs directory renders no settings root.
+  const dialogsDir = path.join(root, 'frontend', 'src', 'features', 'dialogs');
+  for (const file of fs.readdirSync(dialogsDir)) {
+    if (!file.endsWith('.tsx')) continue;
+    assert.doesNotMatch(fs.readFileSync(path.join(dialogsDir, file), 'utf8'), /id="settings-modal"/,
+      `${file} should not render a settings modal`);
+  }
   assert.doesNotMatch(settingsJs, /AppView\.revealModal\(/,
     'settings.js no longer reveals itself as a modal');
   assert.doesNotMatch(settingsJs, /modalDismissGuarded\(/,
@@ -619,13 +628,17 @@ test('the ?shot=settings-back driver runs a real traversal from init()', () => {
     'pure UI state, so the driver is ungated like ?shot=menu');
   // Wired in the same run of shot drivers, after restoreFromHash() has put
   // the screen up — the traversal only means anything once #settings is open.
-  const drivers = appJs.slice(
-    appJs.indexOf('App.restoreFromHash();\n    App._applyMenuShot();'),
-    appJs.indexOf('App._applyFeedbackShot();'),
-  );
-  assert.ok(drivers.length, 'app.js still runs its shot drivers together after restoreFromHash()');
+  const bootAt = appJs.indexOf('App.restoreFromHash();\n    // The fragment-scoped');
+  assert.ok(bootAt > -1, 'app.js still runs its shot drivers after restoreFromHash()');
+  const drivers = appJs.slice(bootAt, bootAt + 900);
   assert.match(drivers, /App\._applySettingsBackShot\(\);/,
     'init() wires the driver alongside the other shot drivers');
+  // …and ONLY from there. #1146 made the state-PAINTING shots re-apply on
+  // every fragment change; this one drives a navigation, so re-running it
+  // from the handler for the hashchange it just caused would loop.
+  const routed = appJs.slice(appJs.indexOf('  _routeFromHash() {'), appJs.indexOf('  restoreFromHash() {'));
+  assert.doesNotMatch(routed, /_applySettingsBackShot/,
+    'the per-fragment re-apply deliberately leaves the traversal driver out');
 });
 
 // ── Usernode-app section: a failed native read is diagnosable ───────────

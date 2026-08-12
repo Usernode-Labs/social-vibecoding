@@ -19,7 +19,8 @@ feature-detect with `getBridgeInfo`.
 
 ## Versioning
 
-- `getBridgeInfo()` → `{ version: number, capabilities: string[] }`
+- `getBridgeInfo()` → `{ version: number, capabilities: string[],
+  appVersion?: string, buildNumber?: string }`
 - `version` bumps only on breaking changes. New methods are additive and
   appear in `capabilities`.
 - Feature-detect with `capabilities.includes('<method>')`, not `version`.
@@ -108,11 +109,19 @@ have given up the repaint-on-flip fallback for nothing.
 
 ### Chrome data (v2 — the app-as-SV-chrome surface)
 
-#### `getBridgeInfo()` → `{ version, capabilities }`
+#### `getBridgeInfo()` → `{ version, capabilities, appVersion?, buildNumber? }`
 
 Instant, side-effect free. The bridge wrapper resolves
 `{ version: 0, capabilities: [] }` on old builds / outside the app, so
 callers can always `await` it and gate UI on capabilities.
+
+`appVersion` and `buildNumber` identify the installed Flutter binary (for
+example `0.4.0` and `1223`). They are public release identifiers on the
+unprivileged probe so a Social Vibecoding staging build can display the app
+hosting its WebView without receiving access to native settings or account
+state. App builds predating these optional fields omit them; production SV
+falls back to the same pair under `getSettingsState().buildInfo` while those
+older builds remain installed.
 
 **A probe that FAILS inside the app resolves that same empty shape plus
 `degraded: true`** (the wrapper's own marker — native never sends it).

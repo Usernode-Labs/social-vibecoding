@@ -9,9 +9,9 @@
 //
 // #profile-edit-sheet (#982) is NOT part of this markup, and that is
 // deliberate rather than an omission. profile.js creates the sheet on demand
-// and presents it through PlatformUI, and it is not one of
-// PlatformUI.STATIC_MODAL_IDS — there is no static root for the native kit to
-// adopt a card out of, so there is nothing here for a re-render to fight.
+// and presents it through PlatformUI, and it is not one of the nine dialogs
+// that go through frontend/src/lib/static-modal.ts — there is no static root
+// whose card gets lifted, so there is nothing here for a re-render to fight.
 //
 // Visibility comes from the store; `false` is the shipped state. See
 // browse-screen.tsx for why it has to be useVisibilityHiddenClass and not

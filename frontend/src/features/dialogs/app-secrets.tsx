@@ -7,44 +7,68 @@
  * values directly; non-admins propose changes via the existing
  * issues vote machinery.
  *
- * Extracted verbatim from Shell.tsx by #1078 chunk A. The render output is
- * byte-identical to what the shell shipped before — same ids, same class
- * strings, same `hidden` semantics, same data-* attributes — and
- * tests/baselines/shell-markup.json plus the prerendered public/index.html
- * in this commit are the proof.
+ * Markup extracted verbatim from Shell.tsx by #1078 chunk A; #1078 chunk I
+ * made it stateful. The render output is still byte-identical to what the
+ * shell shipped — same ids, same class strings, same `hidden` semantics, same
+ * data-* attributes — and tests/baselines/shell-markup.json plus the
+ * prerendered public/index.html in this commit are the proof.
  *
- * ── Why this component is STATIC ──────────────────────────────────────
+ * ── What this island owns, and what it does not ───────────────────────
  *
- * #1078 mechanism 1: a region may become stateful only when its ENTIRE
- * subtree is React-owned. This root is not, and cannot be yet, for two
- * independent reasons:
+ * OWNS: the open/close lifecycle. `useDialog` holds the `open` state,
+ * `useStaticModal` performs the kit lift that `PlatformUI.adoptStaticModal`
+ * used to do from outside React, and the close button and backdrop click are
+ * rendered handlers rather than listeners `Secrets.init()` attached.
  *
- *   1. PlatformUI.adoptStaticModal (public/js/platform-ui.js) has this id in
- *      STATIC_MODAL_IDS. It observes the root's class list and, when
- *      `hidden` comes off, LIFTS THE CARD OUT OF THE ROOT — replacing it
- *      with a comment placeholder — into the native kit's presentModal
- *      shell, adding `platform-modal-adopted` to the root and
- *      `platform-modal-card` to the card. A React re-render of this subtree
- *      would then reconcile against a parent that no longer holds its child
- *      (removeChild on the wrong node) and would overwrite the class the kit
- *      just wrote.
- *   2. The legacy open/close/submit paths in public/js/** still write into
- *      these nodes directly (innerHTML, value, dataset, .hidden toggles).
+ * DOES NOT OWN: the rows. `#app-secrets-list`, `#app-secrets-declare`,
+ * `#app-secrets-footer`, `#app-secrets-title`/`-subtitle` and
+ * `#app-secrets-status` are innerHTML hosts that `./app-secrets-controller`
+ * writes — the same arrangement `#admin-section-content` has. React renders
+ * them empty and never reconciles inside them, which is what keeps the two
+ * owners from colliding.
  *
- * So the dialog markup is a React component, but its BEHAVIOUR stays where
- * it is. Making it stateful is a later chunk's job and has a hard
- * prerequisite: the adoption seam has to move inside React first, so that one
- * owner writes to these nodes instead of two.
+ * The controller is the retired public/js/app-secrets.js, moved into the
+ * bundle by this chunk (see its header). This island is what replaced its
+ * `DOMContentLoaded` bootstrap.
  */
 
+import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
+import { Secrets, init as initSecrets } from './app-secrets-controller';
+import { useDialog } from './use-dialog';
+
+interface OpenPayload {
+  slug: string;
+  opts?: { declare?: boolean };
+}
+
 export function AppSecretsDialog() {
+  const dialog = useDialog<OpenPayload>('appSecrets', {
+    onOpen: (payload) => {
+      if (payload?.slug) void Secrets._load(payload.slug, payload.opts || {});
+    },
+    onClose: () => Secrets._reset(),
+  });
+
+  // Was `document.addEventListener('DOMContentLoaded', () => Secrets.init())`
+  // at the bottom of public/js/app-secrets.js. Layout effect, so the redeploy
+  // button is live before the first paint that could show it.
+  useIsomorphicLayoutEffect(() => {
+    initSecrets();
+  }, []);
+
   return (
-    <div id="app-secrets-modal" className="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+    <div
+      id="app-secrets-modal"
+      ref={dialog.rootRef}
+      className="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+      {...dialog.backdropProps}
+    >
       <div className="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-lg mx-4 shadow-xl relative max-h-[80vh] flex flex-col">
         <button
           id="app-secrets-close"
           className="absolute top-4 right-4 text-zinc-400 hover:text-zinc-200 transition-colors"
           aria-label="Close"
+          onClick={() => Secrets.close()}
         >
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
             <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />

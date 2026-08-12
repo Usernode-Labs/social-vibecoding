@@ -918,6 +918,45 @@ function groupByDocument(env) {
   return (env || {}).TEST_GROUP_BY_DOCUMENT !== '0';
 }
 
+// The cold-load fallback for a hash cohort whose assertions did not hold (see
+// the long comment in runTestGroup). On by default: without it, grouping can
+// change a check's verdict, which is not something a batching optimisation is
+// allowed to do. TEST_COHORT_RELOAD_FALLBACK=0 turns it off for measuring what
+// grouping alone costs or saves.
+function cohortReloadFallback(env) {
+  return (env || process.env || {}).TEST_COHORT_RELOAD_FALLBACK !== '0';
+}
+
+// A check's presence assertions against whatever is rendered right now.
+// Returns '' when they hold, else the failure reason. Extracted from the emit
+// loop so the cohort fallback can re-run exactly the same judgement against a
+// reloaded document.
+async function assertPresence(page, t) {
+  if (t.expectSelector) {
+    let found = false;
+    try { found = !!(await page.$(t.expectSelector)); } catch { found = false; }
+    if (!found) return `Expected element "${t.expectSelector}" was not found`;
+  }
+  if (t.expectText) {
+    let found = false;
+    try {
+      // innerText reflects RENDERED text, including CSS text-transform — a
+      // `text-transform: uppercase` header turns "Your apps" into "YOUR APPS"
+      // and a case-sensitive includes() can never match the human-written
+      // expectation. Compare case-insensitively: keeps the "visible on the
+      // page" semantics (hidden text still fails) while making the assertion
+      // robust to styling-only casing.
+      found = await page.evaluate(
+        (text) => (document.body ? document.body.innerText : '')
+          .toLowerCase().includes(String(text).toLowerCase()),
+        t.expectText
+      );
+    } catch { found = false; }
+    if (!found) return `Expected text "${t.expectText}" was not found on the page`;
+  }
+  return '';
+}
+
 // Split a resolved URL into its document half and its fragment. Kept as plain
 // string surgery rather than `new URL()` so a malformed url (which resolveTests
 // tolerates) degrades to "its own document" instead of throwing.
@@ -1157,34 +1196,6 @@ async function runTestGroup(browser, group, opts) {
         await waitForQuiet(activity, { quietMs, maxMs });
       }
 
-      // One probe of a test's presence assertions against the currently
-      // rendered view. Returns '' when they hold, else the failure reason.
-      const probePresence = async (t) => {
-        if (t.expectSelector) {
-          let found = false;
-          try { found = !!(await page.$(t.expectSelector)); } catch { found = false; }
-          if (!found) return `Expected element "${t.expectSelector}" was not found`;
-        }
-        if (t.expectText) {
-          let found = false;
-          try {
-            // innerText reflects RENDERED text, including CSS text-transform —
-            // a `text-transform: uppercase` header turns "Your apps" into
-            // "YOUR APPS" and a case-sensitive includes() can never match the
-            // human-written expectation. Compare case-insensitively: keeps the
-            // "visible on the page" semantics (hidden text still fails) while
-            // making the assertion robust to styling-only casing.
-            found = await page.evaluate(
-              (text) => (document.body ? document.body.innerText : '')
-                .toLowerCase().includes(String(text).toLowerCase()),
-              t.expectText
-            );
-          } catch { found = false; }
-          if (!found) return `Expected text "${t.expectText}" was not found on the page`;
-        }
-        return '';
-      };
-
       // Poll the cohort's assertions until every one holds or the shared
       // deadline expires (see ASSERT_MAX_MS). The settle above only waited
       // for the page to stop EMITTING; a screen rendered by timers, rAF or
@@ -1192,21 +1203,76 @@ async function runTestGroup(browser, group, opts) {
       // one-shot probe here judged those screens mid-render. A check whose
       // element is present pays a single probe; only a cohort with a check
       // still failing keeps waiting, and never past its one shared ceiling.
-      const presenceReasons = new Map();
+      // Evaluated BEFORE the console errors are frozen so the cold-load
+      // fallback below can re-run them on a reloaded document.
+      const presence = new Map();
       if (!loadFailure) {
         const assertDeadlineAt = Date.now() + assertMax;
         let pending = cohort.tests;
         for (;;) {
           const still = [];
           for (const t of pending) {
-            const reason = await probePresence(t);
-            presenceReasons.set(t.index, reason);
+            const reason = await assertPresence(page, t);
+            presence.set(t, reason);
             if (reason) still.push(t);
           }
           pending = still;
           const leftMs = assertDeadlineAt - Date.now();
           if (!pending.length || leftMs <= 0) break;
           await sleep(Math.min(assertPoll, leftMs));
+        }
+      }
+
+      // ── A hash switch is not always equivalent to a cold load (#1146) ──
+      //
+      // Grouping was introduced as a pure speed optimisation, but writing
+      // `location.hash` on a loaded document cannot reproduce every cold load,
+      // and where it cannot it does not merely MISS a bug — it invents one.
+      // Three shapes of that were failing in this repo's own suite:
+      //
+      //   * A screen already mounted on a sub-route keeps it. Cohort
+      //     `#leaderboard/challenges` runs before cohort `#leaderboard`, and
+      //     the bare fragment means "the board" rather than "reset to the
+      //     standings tab" — so the two standings checks judged the challenges
+      //     tab and reported the standings markup missing.
+      //   * `#admin/seasons/*` renders its section from the boot restore; the
+      //     five sub-route cohorts after the cold one never repainted
+      //     `#admin-section-content`, so all seven admin checks failed while
+      //     their cold-loaded sibling in cohort 0 passed.
+      //   * A `?shot=`/`?flow=` deep link scripts a one-time interaction at
+      //     boot. Every cohort after the first shares the document but not the
+      //     script's effect, so the sheet those checks assert on was never
+      //     opened for them.
+      //
+      // Waiting longer fixes none of it — the render is not late, it is not
+      // coming. So an unmet assertion after a hash switch is not taken as a
+      // verdict: the cohort is re-run as the real cold navigation the
+      // ungrouped runner would have made, and judged on that. Cost is paid
+      // only where grouping was NOT equivalent, which keeps the whole win on
+      // a green suite while making the verdict independent of how the checks
+      // happened to be batched. `about:blank` first because a goto that
+      // differs only in the fragment is a same-document navigation and would
+      // not reload anything.
+      if (ci > 0 && !loadFailure && cohortReloadFallback(o.env)
+        && [...presence.values()].some(Boolean)) {
+        try {
+          await page.goto('about:blank', { timeout: NAV_TIMEOUT_MS });
+          const resp = await page.goto(cohort.tests[0].url, {
+            waitUntil: 'networkidle2', timeout: NAV_TIMEOUT_MS,
+          });
+          const reloadStatus = resp ? resp.status() : status;
+          activity.bump();
+          await waitForQuiet(activity, { quietMs, maxMs, minMs: Math.min(SETTLE_MIN_MS, maxMs) });
+          if (reloadStatus >= 400) {
+            pushErr('load', `page returned HTTP ${reloadStatus}`, cohort.tests[0].url);
+            for (const t of cohort.tests) presence.set(t, `Page returned HTTP ${reloadStatus}`);
+          } else {
+            for (const t of cohort.tests) presence.set(t, await assertPresence(page, t));
+          }
+        } catch (err) {
+          // The hash-switch verdict stands. A fallback that cannot navigate
+          // must not turn a real assertion failure into a load error.
+          pushErr('load', `cohort reload of ${cohort.hash} failed: ${err.message}`, cohort.tests[0].url);
         }
       }
 
@@ -1221,8 +1287,9 @@ async function runTestGroup(browser, group, opts) {
         : consoleErrors.slice(0, sharedErrorCount).concat(consoleErrors.slice(cohortFrom));
       const errorCount = cohortErrors.length;
 
+      // The presence verdicts settled above, plus the console-error rule.
       for (const t of cohort.tests) {
-        let failureReason = loadFailure || presenceReasons.get(t.index) || '';
+        let failureReason = loadFailure || presence.get(t) || '';
         // Console errors fail the check unless it opted out. A failed load /
         // missing assertion already set failureReason.
         if (!failureReason && !t.allowConsoleErrors && errorCount > 0) {
@@ -1255,11 +1322,17 @@ const GROUP_EXTRA_CHECK_MS = 1000;
 
 // Extra allowance for each hash cohort past the first. A cohort costs a hash
 // write plus one settle, not a navigation — but a settle can run to
-// SETTLE_MAX_MS and a cohort with failing checks polls its assertions up to
+// SETTLE_MAX_MS, and a cohort with failing checks polls its assertions up to
 // ASSERT_MAX_MS more, so the budget has to grow with cohort count or a full
 // six-cohort group with one broken screen per cohort would be timed out for
 // doing exactly what it was told to.
-const GROUP_EXTRA_COHORT_MS = 8000;
+//
+// It also has to cover the cold-load fallback (#1146), which is a real
+// navigation plus a second settle — otherwise a group of genuinely-failing
+// cohorts would be reported as "did not finish" rather than as the failures
+// it found, which is the less useful of the two answers. Only cohorts whose
+// assertions did not hold pay it, so a green suite never reaches this ceiling.
+const GROUP_EXTRA_COHORT_MS = 13000;
 
 // Run the whole declared suite through a bounded worker pool, each group in
 // its own browser context. Two layers of batching:
@@ -1317,6 +1390,8 @@ async function runTests(browser, tests, opts) {
     settleMaxMs: Number.isFinite(o.settleMaxMs) ? o.settleMaxMs : settleMaxMs(env),
     assertMaxMs: Number.isFinite(o.assertMaxMs) ? o.assertMaxMs : assertMaxMs(env),
     assertPollMs: Number.isFinite(o.assertPollMs) ? o.assertPollMs : ASSERT_POLL_MS,
+    // Carried so the cohort fallback reads the same env the grouping did.
+    env,
   };
   const startedAt = now();
   let ran = 0;

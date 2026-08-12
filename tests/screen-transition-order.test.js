@@ -181,8 +181,14 @@ test('every screen entry is guarded against a duplicate dispatch', () => {
   // even with every mutation correctly inside the callback. Verified in a
   // real browser: without these guards the leaderboard/profile entries
   // snapshot themselves as the "previous page".
-  assert.match(appJs, /window\.addEventListener\('popstate', \(\) => App\.restoreFromHash\(\)\);/);
-  assert.match(appJs, /window\.addEventListener\('hashchange', \(\) => App\.restoreFromHash\(\)\);/);
+  // Both listeners go through _routeFromHash, which is restoreFromHash plus
+  // the fragment-scoped `?shot=` re-apply (#1146). The duplicate-dispatch
+  // hazard below is unchanged by that: the appliers dedupe on the hash, so
+  // the pair still paints once. See tests/hash-route-idempotence.test.js.
+  assert.match(appJs, /window\.addEventListener\('popstate', \(\) => App\._routeFromHash\(\)\);/);
+  assert.match(appJs, /window\.addEventListener\('hashchange', \(\) => App\._routeFromHash\(\)\);/);
+  assert.match(methodBody('_routeFromHash'), /App\.restoreFromHash\(\);/,
+    'and _routeFromHash is still the router, not a replacement for it');
   const guards = {
     navigateToLeaderboard: /if \(App\._inLeaderboard && window\.Leaderboard\?\.isOpen\?\.\(\)\)/,
     navigateToProfile: /if \(App\._inProfile && window\.Profile\?\.isOpen\?\.\(\)\)/,
