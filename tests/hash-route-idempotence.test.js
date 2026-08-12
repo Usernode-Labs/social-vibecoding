@@ -165,12 +165,19 @@ test('dev chat\'s shot latches key on the address, not on the document', () => {
   assert.doesNotMatch(devChat, /_shotOptionsDone|_shotVenueSheetDone/,
     'the once-per-document booleans are gone');
   const venue = body(devChat, '  _maybeOpenShotVenueSheet(');
-  assert.match(venue, /if \(DevChat\._shotVenueSheetHash === location\.hash\) return;/);
-  assert.match(venue, /DevChat\._shotVenueSheetHash = location\.hash;/);
+  assert.match(venue, /if \(DevChat\._shotVenueSheetHash === addr\) return;/);
+  assert.match(venue, /DevChat\._shotVenueSheetHash = addr;/);
   const options = body(devChat, '  _maybeOpenShotOptions(');
-  assert.match(options, /if \(DevChat\._shotOptionsHash === location\.hash && !restore\) return;/,
+  assert.match(options, /if \(DevChat\._shotOptionsHash === addr && !restore\) return;/,
     'an explicit restore still re-opens at the same address');
-  assert.match(options, /DevChat\._shotOptionsHash = location\.hash;/);
+  assert.match(options, /DevChat\._shotOptionsHash = addr;/);
+  // Both read the address through the same defensive accessor the `?shot=`
+  // reads already use — the composer's unit tests evaluate this module in a
+  // sandbox with a document but no `location`.
+  assert.match(body(devChat, '  _addressKey() {'), /try \{ return location\.hash; \} catch \{ return ''; \}/);
+  for (const fn of [venue, options]) {
+    assert.match(fn, /const addr = DevChat\._addressKey\(\);/);
+  }
 });
 
 test('the venue-sheet and session-options cohorts are sibling fragments of one document', () => {

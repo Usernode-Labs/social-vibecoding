@@ -628,13 +628,17 @@ test('the ?shot=settings-back driver runs a real traversal from init()', () => {
     'pure UI state, so the driver is ungated like ?shot=menu');
   // Wired in the same run of shot drivers, after restoreFromHash() has put
   // the screen up — the traversal only means anything once #settings is open.
-  const drivers = appJs.slice(
-    appJs.indexOf('App.restoreFromHash();\n    App._applyMenuShot();'),
-    appJs.indexOf('App._applyFeedbackShot();'),
-  );
-  assert.ok(drivers.length, 'app.js still runs its shot drivers together after restoreFromHash()');
+  const bootAt = appJs.indexOf('App.restoreFromHash();\n    // The fragment-scoped');
+  assert.ok(bootAt > -1, 'app.js still runs its shot drivers after restoreFromHash()');
+  const drivers = appJs.slice(bootAt, bootAt + 900);
   assert.match(drivers, /App\._applySettingsBackShot\(\);/,
     'init() wires the driver alongside the other shot drivers');
+  // …and ONLY from there. #1146 made the state-PAINTING shots re-apply on
+  // every fragment change; this one drives a navigation, so re-running it
+  // from the handler for the hashchange it just caused would loop.
+  const routed = appJs.slice(appJs.indexOf('  _routeFromHash() {'), appJs.indexOf('  restoreFromHash() {'));
+  assert.doesNotMatch(routed, /_applySettingsBackShot/,
+    'the per-fragment re-apply deliberately leaves the traversal driver out');
 });
 
 // ── Usernode-app section: a failed native read is diagnosable ───────────

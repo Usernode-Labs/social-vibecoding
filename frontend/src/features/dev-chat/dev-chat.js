@@ -1210,6 +1210,15 @@ const DevChat = {
   _shotOptionsHash: null,
   _shotVenueSheetHash: null,
 
+  // Read defensively, like the `?shot=` reads themselves: the composer's
+  // unit tests evaluate this module in a bare sandbox that has a document
+  // but no `location`. Falling back to '' rather than null keeps the
+  // latches' original once-per-document meaning there — '' is still a key,
+  // it just never changes.
+  _addressKey() {
+    try { return location.hash; } catch { return ''; }
+  },
+
   // Everything the menu needs, read from the places that already own each
   // fact: Settings mirrors /api/auth/me's BYOK state, App.user carries the
   // two deployment capabilities, and _localAgent is the #907 lease as of
@@ -1392,13 +1401,14 @@ const DevChat = {
   // on screen, exactly like the options menu below — a re-render must not
   // pop it open under the user.
   _maybeOpenShotVenueSheet() {
-    if (DevChat._shotVenueSheetHash === location.hash) return;
+    const addr = DevChat._addressKey();
+    if (DevChat._shotVenueSheetHash === addr) return;
     let shot = null;
     try { shot = new URLSearchParams(location.search).get('shot'); } catch { return; }
     if (shot !== 'venue-sheet') return;
     const btn = document.querySelector('#dc-venue-slot [data-venue-change]');
     if (!btn || btn.offsetParent === null) return;
-    DevChat._shotVenueSheetHash = location.hash;
+    DevChat._shotVenueSheetHash = addr;
     requestAnimationFrame(() => DevChat.openVenueSheet(btn));
   },
 
@@ -1414,13 +1424,14 @@ const DevChat = {
   // state across a re-render. Both are still gated on a `?shot=` URL, so a
   // real session never reaches either path.
   _maybeOpenShotOptions(restore) {
-    if (DevChat._shotOptionsHash === location.hash && !restore) return;
+    const addr = DevChat._addressKey();
+    if (DevChat._shotOptionsHash === addr && !restore) return;
     let shot = null;
     try { shot = new URLSearchParams(location.search).get('shot'); } catch { /* ignore */ }
     if (shot !== 'session-options' && shot !== 'session-options-instructions') return;
     const btn = document.getElementById('dc-budget-options');
     if (!btn || btn.offsetParent === null) return;
-    DevChat._shotOptionsHash = location.hash;
+    DevChat._shotOptionsHash = addr;
     // Deferred a frame: the composer was written synchronously just above
     // and the kit's flip/clamp placement needs the button's settled rect.
     requestAnimationFrame(() => {
