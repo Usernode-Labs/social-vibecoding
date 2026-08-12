@@ -152,6 +152,14 @@ COPY usernode-attachments /usr/local/bin/usernode-attachments
 # Platform-side dedup + rate limit bound the spam. See
 # src/routes/internal.js + src/routes/sessions.js (confirm route).
 COPY usernode-report-platform-issue /usr/local/bin/usernode-report-platform-issue
+# usernode-run-checks runs the app's declared dapp.json checks against the
+# in-loop app (build turns boot it on $INLOOP_PORT) with the SAME
+# semantics as the capture container — navigate, console errors,
+# wait-based selector/text assertions — so the agent sees its proposal
+# checks fail BEFORE committing instead of after the turn ends. Purely
+# local: drives the image's pinned Playwright chromium against loopback,
+# needs no JWT, writes nothing back.
+COPY usernode-run-checks /usr/local/bin/usernode-run-checks
 # usernode-debug (#616) is read-only production debugging for ADMIN
 # sessions on the self-edit app. It calls the platform's prod-debug
 # internal API (deny-listed read-only SQL role, allowlisted container
@@ -171,6 +179,7 @@ RUN chmod +x /usr/local/bin/worker-run.sh \
               /usr/local/bin/usernode-issues \
               /usr/local/bin/usernode-attachments \
               /usr/local/bin/usernode-report-platform-issue \
+              /usr/local/bin/usernode-run-checks \
               /usr/local/bin/usernode-debug \
   && mkdir -p /home/node/workspace /home/node/.claude \
   && chown -R node:node /home/node
