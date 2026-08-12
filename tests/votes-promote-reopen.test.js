@@ -6,7 +6,7 @@
 //   - reopen refused → 409 with an actionable error, session NOT promoted;
 //   - already-merged PR → 409 (nothing left to vote on);
 //   - open PR → its immutable head is captured and promotion proceeds;
-//   - imported active PR → current head is captured and GitHub is marked ready;
+//   - imported active PR → current head is captured without mutating GitHub;
 //   - imported closed PR → refused without reopening someone else's PR;
 //   - transient GET failure → promotion fails closed (nothing can be reviewed
 //     or checked against an unknown revision).
@@ -204,6 +204,8 @@ test('promote: an open PR captures its head and promotes (no reopen call)', asyn
       'session promoted with a reviewed head');
     const update = ctx.pool.queries.find((q) => /reviewed_head_sha/.test(q.sql));
     assert.equal(update.params[1], HEAD, 'live PR head persisted as the reviewed revision');
+    assert.equal(ctx.octokitRequests.length, 1, 'a native draft is marked ready at promotion');
+    assert.equal(ctx.octokitRequests[0].params.draft, false);
   });
 });
 
@@ -262,7 +264,7 @@ test('promote: a closed-unmerged PR is reopened, then promoted', async () => {
   });
 });
 
-test('promote: an active imported PR captures its head and becomes ready for voting', async () => {
+test('promote: an active imported PR captures its head without publishing its draft', async () => {
   const imported = {
     ...sessionRow,
     source: 'imported',
@@ -280,8 +282,8 @@ test('promote: an active imported PR captures its head and becomes ready for vot
     assert.ok(update);
     assert.match(update.sql, /imported_pr_head_sha = CASE WHEN source = 'imported'/);
     assert.equal(update.params[1], HEAD, 'the live imported head is the reviewed revision');
-    assert.equal(ctx.octokitRequests.length, 1, 'the PR is marked ready only at promotion');
-    assert.equal(ctx.octokitRequests[0].params.draft, false);
+    assert.equal(ctx.octokitRequests.length, 0,
+      'local promotion must not change an externally owned PR on GitHub');
   });
 });
 

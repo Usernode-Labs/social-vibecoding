@@ -1544,13 +1544,14 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         throw err;
       }
 
-      // The GLOBAL ceiling has no admin tier — it's a host-resource
-      // bound (warm workers + staging containers on one box), not a
-      // per-user policy budget, so full admins queue behind it exactly
-      // like everyone else. Don't "complete the pattern" by exempting
-      // them here.
+      // The GLOBAL ceiling has no admin tier — it's the host's coding-worker
+      // budget, not a policy privilege, so full admins queue behind it like
+      // everyone else. Imported PRs are produced externally and own no
+      // Usernode worker, so they do not spend this budget.
       const { rows: globalRows } = await pool.query(
-        `SELECT COUNT(*) as cnt FROM chat_sessions WHERE status IN ('active', 'promoted')`
+        `SELECT COUNT(*) as cnt FROM chat_sessions
+          WHERE status IN ('active', 'promoted')
+            AND source IS DISTINCT FROM 'imported'`
       );
       if (parseInt(globalRows[0].cnt) >= config.maxGlobalSessions) {
         // At the global cap: try to reclaim a slot from a globally idle
@@ -1713,7 +1714,9 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // /sessions), but they consume a real worker slot, so the global cap
       // still applies.
       const { rows: globalRows } = await pool.query(
-        `SELECT COUNT(*) as cnt FROM chat_sessions WHERE status IN ('active', 'promoted')`
+        `SELECT COUNT(*) as cnt FROM chat_sessions
+          WHERE status IN ('active', 'promoted')
+            AND source IS DISTINCT FROM 'imported'`
       );
       if (parseInt(globalRows[0].cnt) >= config.maxGlobalSessions) {
         const { freed } = await sessionLifecycle.freeGlobalSlot({
@@ -1852,7 +1855,9 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         return res.status(429).json({ error: `You already have ${caps.activeSessions} running sessions. Pause or archive one first.` });
       }
       const { rows: globalRows } = await pool.query(
-        `SELECT COUNT(*) as cnt FROM chat_sessions WHERE status IN ('active', 'promoted')`
+        `SELECT COUNT(*) as cnt FROM chat_sessions
+          WHERE status IN ('active', 'promoted')
+            AND source IS DISTINCT FROM 'imported'`
       );
       if (parseInt(globalRows[0].cnt) >= config.maxGlobalSessions) {
         const { freed } = await sessionLifecycle.freeGlobalSlot({
@@ -2975,7 +2980,9 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         return res.status(429).json({ error: `You already have ${caps.activeSessions} running sessions. Pause or archive one first.` });
       }
       const { rows: globalRows } = await pool.query(
-        `SELECT COUNT(*) as cnt FROM chat_sessions WHERE status IN ('active', 'promoted')`
+        `SELECT COUNT(*) as cnt FROM chat_sessions
+          WHERE status IN ('active', 'promoted')
+            AND source IS DISTINCT FROM 'imported'`
       );
       if (parseInt(globalRows[0].cnt) >= config.maxGlobalSessions) {
         const { freed } = await sessionLifecycle.freeGlobalSlot({
@@ -3205,7 +3212,9 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       if (!ownRows.length) return res.status(404).json({ error: 'Session not found or not paused' });
 
       const { rows: globalRows } = await pool.query(
-        `SELECT COUNT(*) as cnt FROM chat_sessions WHERE status IN ('active', 'promoted')`
+        `SELECT COUNT(*) as cnt FROM chat_sessions
+          WHERE status IN ('active', 'promoted')
+            AND source IS DISTINCT FROM 'imported'`
       );
       if (parseInt(globalRows[0].cnt) >= config.maxGlobalSessions) {
         // At the global cap: reclaim a slot from a globally idle session

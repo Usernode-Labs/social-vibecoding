@@ -102,6 +102,8 @@ function makeDispatcher({
       return { rows: [{ cnt: String(userActiveCount) }] };
     }
     if (/COUNT\(\*\) as cnt/.test(sql) && /status IN \('active', 'promoted'\)/.test(sql)) {
+      assert.match(sql, /source IS DISTINCT FROM 'imported'/,
+        'the worker cap must exclude externally produced imports');
       return { rows: [{ cnt: String(globalCount) }] };
     }
     if (/INSERT INTO chat_sessions/.test(sql)) return { rows: [insertedSession] };

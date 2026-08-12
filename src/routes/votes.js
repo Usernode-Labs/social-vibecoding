@@ -1736,22 +1736,24 @@ function voteRoutes(config) {
             });
           }
 
-          // Mark PR as ready for review on GitHub. We deliberately DO NOT
-          // touch the title here — previously this overwrote the LLM-
-          // generated title back to "<user>'s changes" every time a PR
-          // was promoted, wiping the more descriptive title.
-          try {
-            // octokit.request rather than .rest.pulls.update —
-            // @octokit/app's installation Octokit is a bare core
-            // instance without the rest-endpoint-methods plugin, so
-            // .rest is undefined.
-            const octokit = await github.getInstallationOctokit(owner);
-            await octokit.request(
-              'PATCH /repos/{owner}/{repo}/pulls/{pull_number}',
-              { owner, repo, pull_number: session.pr_number, draft: false }
-            );
-          } catch (err) {
-            log.warn('votes', 'Failed to update PR on GitHub', { err: err.message });
+          // Native proposals are platform-owned drafts, so crossing the local
+          // review boundary also marks them ready on GitHub. Imported PRs are
+          // externally owned: promotion changes only Usernode's local state
+          // and must not publish an external author's draft.
+          if (!imported) {
+            try {
+              // octokit.request rather than .rest.pulls.update —
+              // @octokit/app's installation Octokit is a bare core
+              // instance without the rest-endpoint-methods plugin, so
+              // .rest is undefined.
+              const octokit = await github.getInstallationOctokit(owner);
+              await octokit.request(
+                'PATCH /repos/{owner}/{repo}/pulls/{pull_number}',
+                { owner, repo, pull_number: session.pr_number, draft: false }
+              );
+            } catch (err) {
+              log.warn('votes', 'Failed to update PR on GitHub', { err: err.message });
+            }
           }
         }
       }
@@ -2201,24 +2203,6 @@ function voteRoutes(config) {
       const imported = await importedPrNumbers(app.id);
       if (imported.has(prNumber)) {
         return res.status(409).json({ error: `PR #${prNumber} has already been imported.` });
-      }
-
-      // An active import owns no dev worker, but it immediately builds and
-      // retains a staging preview. Keep it outside the per-user worker cap
-      // while still respecting the platform-wide host-resource ceiling used
-      // by ordinary sessions and promoted proposals.
-      const { rows: globalRows } = await pool.query(
-        `SELECT COUNT(*) AS cnt FROM chat_sessions WHERE status IN ('active', 'promoted')`
-      );
-      if (Number(globalRows[0]?.cnt || 0) >= Number(config.maxGlobalSessions || 100)) {
-        const { freed } = await require('../services/session-lifecycle').freeGlobalSlot({
-          pool, graceMs: config.sessionPressureGraceMs,
-        });
-        if (!freed) {
-          return res.status(429).json({
-            error: 'Platform is at capacity right now. Try importing this pull request again in a few minutes.',
-          });
-        }
       }
 
       let pr;
