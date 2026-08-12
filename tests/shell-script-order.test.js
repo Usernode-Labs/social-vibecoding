@@ -11,7 +11,9 @@
 //
 // ── 1. The legacy classic scripts ──────────────────────────────────────
 //
-// public/js/** is 28 files of global-scope script with no module system:
+// public/js/** is 26 files of global-scope script with no module system (24
+// of them shell tags; cli-authorize.js and connect-authorize.js are page IIFEs
+// for server-rendered documents and were never in the shell):
 // each defines a global (App, Home, AppView, DevChat, AuthScreens, …) and
 // several depend on an earlier one already existing. app.js is LAST on
 // purpose — it registers its DOMContentLoaded handler after every other
@@ -22,7 +24,7 @@
 // ── 2. The React entry's position ──────────────────────────────────────
 //
 // The entry must be a `type="module"` script (therefore deferred) so it
-// executes AFTER all 26 classic scripts have defined their globals and
+// executes AFTER all 24 classic scripts have defined their globals and
 // BEFORE DOMContentLoaded runs their init()s. See frontend/src/main.tsx.
 //
 // ── 3. The stylesheet cascade ──────────────────────────────────────────
@@ -272,6 +274,31 @@ const RETIRED_SCRIPTS = {
   // Their relative order still holds for a stronger reason — the
   // bundle entry is a deferred module, so it evaluates after every classic tag.
   '/js/dev-chat.js': 'dev session chat module moved into the React bundle (chunk G)',
+  // #1078 chunk I — the dialogs chunk. It brought modal adoption inside React
+  // (frontend/src/lib/static-modal.ts replaces PlatformUI.adoptStaticModal),
+  // which is the prerequisite that let all nine shell dialogs stop being
+  // markup-only. Two of their modules came into the bundle with them:
+  //
+  // app-secrets.js is frontend/src/features/dialogs/app-secrets-controller.js
+  // now — a MOVE, keeping its `window.Secrets` publication for the Dev screen's
+  // "App secrets" row and the platform-variables entry point, with its
+  // DOMContentLoaded bootstrap replaced by the island's init() call. Its rows
+  // are still innerHTML, so the island renders a constant tree and owns only
+  // the open/close lifecycle.
+  //
+  // screenshot-select.js is frontend/src/features/dialogs/screenshot-select.js,
+  // imported by the feedback island — its only consumer. Its ordering claim
+  // ("before app.js, so the modal wiring can gate the attach button on
+  // isSupported()") is satisfied more directly now: the import is evaluated
+  // before feedback-controller.js reads window.ScreenshotSelect. The pure
+  // geometry/detection functions keep their module.exports branch for
+  // tests/screenshot-select.test.js.
+  //
+  // The other seven dialogs retired no tag: their behaviour lived inside
+  // app.js and app-view.js, which stay.
+  '/js/app-secrets.js': 'app-secrets dialog converted to a React island (chunk I)',
+  '/js/screenshot-select.js':
+    "the feedback dialog's screenshot capture moved into the bundle (chunk I)",
 };
 
 // public/js/topochain-events.js is deliberately NOT in that map, and now stays
@@ -298,7 +325,7 @@ test('every legacy script is loaded, in exactly the baseline order', () => {
 });
 
 test('the shell still loads the expected number of legacy scripts', () => {
-  // 26 /js/** tags, ALL at the end of <body> — the head has none left. The
+  // 24 /js/** tags, ALL at the end of <body> — the head has none left. The
   // count moves whenever main adds a module — it was 48 at the chassis swap
   // (plus theme.js in the head), main's mail console and credit-options
   // screens brought it to 50, #1036's nav-link.js made 51, #1049's
@@ -318,12 +345,14 @@ test('the shell still loads the expected number of legacy scripts', () => {
   // (25) — the eight pure chat helpers keep their tags, because group-chat.js,
   // app-view.js and the session drawer still read them as globals. Restoring
   // #1038's session-state.js tag — one of those eight, precached in
-  // SHELL_ASSETS but rendered by nobody since it shipped — makes 26.
+  // SHELL_ASSETS but rendered by nobody since it shipped — makes 26. #1078
+  // chunk I retires app-secrets.js and screenshot-select.js together (24):
+  // they are the only two modules the nine dialogs owned outright.
   const bodyScripts = scriptsOf(after.slice(after.indexOf('</head>')))
     .filter((s) => s.src && s.src.startsWith('/js/'));
   assert.equal(
-    bodyScripts.length, 26,
-    `expected the 26 legacy /js/** scripts at the end of <body>, found ${bodyScripts.length}. `
+    bodyScripts.length, 24,
+    `expected the 24 legacy /js/** scripts at the end of <body>, found ${bodyScripts.length}. `
     + 'Adding or removing one is fine, but it also needs a matching SHELL_ASSETS entry in '
     + 'public/sw.js (tests/pwa-shell-wiring.test.js enforces that) — so update this count '
     + 'deliberately rather than loosening the check.',

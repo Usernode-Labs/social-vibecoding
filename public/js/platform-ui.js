@@ -62,7 +62,8 @@
         by the deprecated document.execCommand('copy') — covers contexts
         where navigator.clipboard is missing or rejects (an insecure
         http: origin, a permission-blocked webview); see the same
-        rationale at AppView.copyShareUrl. */
+        rationale at the share dialog's copy handler, which is
+        frontend/src/features/dialogs/share.tsx as of #1078 chunk I. */
     async copyText(text) {
       const value = text == null ? '' : String(text);
       if (!value) return false;
@@ -302,110 +303,25 @@
     },
   };
 
-  // ── Static-modal adoption ────────────────────────────────────────
-  // index.html's full-screen modals (create, rename, fork, share, …)
-  // all follow one pattern: a `hidden` fixed overlay root containing a
-  // [data-modal-backdrop] wrapper and a centered card, toggled by
-  // per-modal open/close JS. Rather than rewriting every open/close
-  // path, we watch each root's class list: when `hidden` is removed we
-  // lift the card into a kit presentModal (fade + scale-settle, kit
-  // backdrop, Escape); when legacy close paths re-add `hidden` we
-  // dismiss it. A kit-initiated dismissal (backdrop tap / Escape) is
-  // routed back through the modal's own backdrop click handler so its
-  // close function still runs (form resets, state cleanup).
-  function adoptStaticModal(root) {
-    let handle = null;
-    let placeholder = null;
-    let card = null;
-
-    const restore = () => {
-      if (card) card.classList.remove('platform-modal-card');
-      if (placeholder && card && placeholder.parentNode) {
-        placeholder.parentNode.replaceChild(card, placeholder);
-      }
-      placeholder = null;
-      card = null;
-      root.classList.remove('platform-modal-adopted');
-    };
-
-    const present = () => {
-      if (handle) return;
-      const un = kit();
-      if (!un) return;
-      const backdrop = root.querySelector('[data-modal-backdrop]');
-      card = (backdrop && backdrop.firstElementChild) || root.firstElementChild;
-      if (!card) return;
-      // The kit modal draws the card chrome (surface, radius, shadow,
-      // 20/16 padding). The legacy card's own bg/radius/shadow/padding
-      // would stack on top of it — double borders, double whitespace —
-      // so it is neutralized while presented (class removed on restore).
-      // Measure the card's design width first so the kit shell can hug
-      // it instead of the kit's default 480px.
-      let designWidth = null;
-      try {
-        const mw = getComputedStyle(card).maxWidth;
-        if (mw && mw.endsWith('px')) designWidth = mw;
-      } catch {}
-      card.classList.add('platform-modal-card');
-      placeholder = document.createComment('platform-modal-home');
-      card.parentNode.replaceChild(placeholder, card);
-      // Hide the legacy scrim while the kit owns presentation.
-      root.classList.add('platform-modal-adopted');
-      handle = un.presentModal({
-        contentEl: card,
-        onDismiss: () => {
-          handle = null;
-          restore();
-          if (!root.classList.contains('hidden')) {
-            // Kit-initiated dismissal: run the legacy close path via
-            // the backdrop handler so per-modal cleanup executes.
-            const target = root.querySelector('[data-modal-backdrop]') || root;
-            target.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-            // Modals with no backdrop-dismiss wiring: force-hide.
-            if (!root.classList.contains('hidden')) root.classList.add('hidden');
-          }
-        },
-      });
-      if (!handle) restore();
-      else if (handle.el && designWidth) {
-        handle.el.style.width = `min(${designWidth}, calc(100vw - 32px))`;
-      }
-    };
-
-    const sync = () => {
-      const hidden = root.classList.contains('hidden');
-      if (!hidden && !handle) present();
-      else if (hidden && handle) {
-        const h = handle;
-        handle = null;
-        restore();
-        h.dismiss();
-      }
-    };
-
-    new MutationObserver(sync).observe(root, { attributes: true, attributeFilter: ['class'] });
-    sync();
-  }
-
-  const STATIC_MODAL_IDS = [
-    'create-modal', 'rename-modal', 'close-issue-modal', 'fork-modal',
-    'import-pr-modal', 'members-modal', 'feedback-modal', 'share-modal',
-    'app-secrets-modal',
-  ];
-
-  function adoptAll() {
-    if (!kit()) return; // no kit → legacy modals keep working as-is
-    for (const id of STATIC_MODAL_IDS) {
-      const el = document.getElementById(id);
-      if (el) adoptStaticModal(el);
-    }
-  }
-
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', adoptAll);
-  } else {
-    adoptAll();
-  }
+  // ── Static-modal adoption: RETIRED (#1078 chunk I) ───────────────
+  //
+  // What was here: an `adoptStaticModal(root)` that put a MutationObserver on
+  // each of nine hard-coded modal roots (`STATIC_MODAL_IDS`) and, when
+  // `hidden` came off, lifted the card out of the root into a kit
+  // `presentModal`. It existed so the kit could present dialogs whose
+  // open/close paths lived in app.js and app-view.js, without rewriting them.
+  //
+  // Its cost was that it made those dialogs permanently markup-only: two
+  // owners wrote to the same nodes, and the one React did not control moved
+  // React's DOM out from under it. The lift is frontend/src/lib/static-modal.ts
+  // now, driven by React state from the dialog islands, so there is exactly
+  // one owner and all nine dialogs are stateful. Nothing in public/js/**
+  // called `adoptStaticModal` or read `STATIC_MODAL_IDS` — the whole seam was
+  // self-contained here, which is why it could go in one piece.
+  //
+  // `PlatformUI.modal()` above is untouched: that is the kit entry point the
+  // hook calls, and the rest of the shell (confirm dialogs, sheets, the
+  // compare overlay) still uses it directly.
 
   window.PlatformUI = PlatformUI;
 })();

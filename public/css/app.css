@@ -206,7 +206,7 @@ html.un-kb .platform-safe-bar {
 }
 
 /* Full-screen modal roots whose card is currently riding inside a kit
-   presentModal (see platform-ui.js adoptStaticModal): the legacy fixed
+   presentModal (see frontend/src/lib/static-modal.ts): the legacy fixed
    overlay/scrim must not paint a second backdrop. */
 .platform-modal-adopted {
   display: none !important;
@@ -5772,7 +5772,7 @@ a.drawer-ver--fork:hover {
    attribute so app.js only has to flip a single attribute to change modes
    (no per-button class juggling, no race with the form-reset path).
    It must be the CARD, not #create-modal: the native-kit modal adoption
-   (platform-ui.js adoptStaticModal) lifts the card out of #create-modal
+   (frontend/src/lib/static-modal.ts) lifts the card out of #create-modal
    while presented, so selectors rooted at the modal stop matching. */
 #create-card .create-mode-pill {
   color: var(--text-muted);

@@ -90,9 +90,18 @@ test('the modal is gone — markup, close button and modal registration', () => 
   assert.doesNotMatch(html, /id="settings-close"/,
     'the modal close button is deleted');
   assert.doesNotMatch(platformUiJs, /'settings-modal'/,
-    "'settings-modal' is out of platform-ui's STATIC_MODAL_IDS");
-  assert.match(platformUiJs, /'app-secrets-modal'/,
-    'the other static modals still register');
+    'settings is not a modal any more — nothing in platform-ui.js names it');
+  // It used to be a member of platform-ui's STATIC_MODAL_IDS, and this test
+  // checked that the list still held the other nine. #1078 chunk I moved that
+  // whole seam into frontend/src/lib/static-modal.ts, driven by the dialog
+  // islands' own state, so the equivalent check is that settings is not one of
+  // them — the dialogs directory renders no settings root.
+  const dialogsDir = path.join(root, 'frontend', 'src', 'features', 'dialogs');
+  for (const file of fs.readdirSync(dialogsDir)) {
+    if (!file.endsWith('.tsx')) continue;
+    assert.doesNotMatch(fs.readFileSync(path.join(dialogsDir, file), 'utf8'), /id="settings-modal"/,
+      `${file} should not render a settings modal`);
+  }
   assert.doesNotMatch(settingsJs, /AppView\.revealModal\(/,
     'settings.js no longer reveals itself as a modal');
   assert.doesNotMatch(settingsJs, /modalDismissGuarded\(/,

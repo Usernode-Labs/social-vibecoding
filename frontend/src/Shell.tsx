@@ -342,9 +342,10 @@ export function Shell() {
           (stacked on narrow screens), instead of dumping the raw asset into
           a new tab. Built dynamically by AppView.openVisualComparison;
           closed via Back / backdrop / Escape (closeVisualComparison). An
-          ISLAND since #1085 chunk H — it is not one of
-          PlatformUI.STATIC_MODAL_IDS, so nothing lifts its card out at
-          runtime and it may hold state.
+          ISLAND since #1085 chunk H — it presents itself through
+          PlatformUI.modal() directly rather than through the dialogs' lift
+          seam (frontend/src/lib/static-modal.ts), so nothing moves its card
+          out from under React and it may hold state.
       */}
       <VisualCompareOverlay />
       {/*
@@ -590,13 +591,14 @@ export function Shell() {
       */}
       <script src="/js/build-log.js" />
       <script src="/js/app-view.js" />
-      <script src="/js/app-secrets.js" />
       {/*
-          Drag-to-select screenshot capture for the feedback modal (#683).
-          Loaded before app.js so the modal wiring can gate the attach
-          button on ScreenshotSelect.isSupported().
+          /js/app-secrets.js and /js/screenshot-select.js loaded here, in that
+          order. #1078 chunk I moved both into the React bundle — the first as
+          features/dialogs/app-secrets-controller.js behind the #app-secrets-modal
+          island, the second as features/dialogs/screenshot-select.js, imported
+          by the feedback island that is its only consumer — and the two tags
+          went with them.
       */}
-      <script src="/js/screenshot-select.js" />
       {/*
           /js/home-layout.js, /js/home-panels.js and /js/home.js loaded here,
           in that order — grid geometry first, then the widget renderers the

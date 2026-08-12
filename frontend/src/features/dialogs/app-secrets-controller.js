@@ -38,6 +38,15 @@
 //   row.githubSecret        — an existing row whose name exactly matches
 //                             one of those secrets; annotated rather than
 //                             duplicated.
+// The island's open/close controller, or null before hydration. Registered by
+// `useDialog('appSecrets')` — see use-dialog.ts. Looked up on every call
+// rather than captured, because the island unregisters on unmount.
+function dialogController() {
+  if (typeof window === 'undefined') return null;
+  const dialogs = window.UsernodeReact && window.UsernodeReact.dialogs;
+  return (dialogs && dialogs.appSecrets) || null;
+}
+
 const Secrets = {
   currentSlug: null,
   // Last payload from GET /secrets — the declare form reads the scope, the
@@ -46,18 +55,18 @@ const Secrets = {
   declareOpen: false,
 
   init() {
-    const close = document.getElementById('app-secrets-close');
     const modal = document.getElementById('app-secrets-modal');
     const redeploy = document.getElementById('app-secrets-redeploy');
     // Modal is the only piece this module hard-requires now. The entry-
     // point button moved to the dev-chat tab; AppView wires its click
     // to Secrets.openForCurrentApp() when that tab renders.
-    if (!close || !modal) return;
+    if (!modal) return;
 
-    close.addEventListener('click', () => Secrets.close());
-    modal.addEventListener('click', (e) => {
-      if (e.target === modal) Secrets.close();
-    });
+    // #1078 chunk I: the close button and the backdrop click are React's
+    // now — AppSecretsDialog renders onClick on both, and closing is a
+    // state update rather than a class write. Only the redeploy shortcut,
+    // which is a plain action with no bearing on presentation, still binds
+    // imperatively here.
     redeploy?.addEventListener('click', async () => {
       if (!Secrets.currentSlug) return;
       Secrets.setStatus('Triggering redeploy…', 'info');
@@ -108,13 +117,24 @@ const Secrets = {
   // the screenshot-state deep link (`?shot=secrets-new`) uses it, since a
   // form behind a click is invisible to the capture pipeline and to a
   // dapp.json test.
+  //
+  // #1078 chunk I: `open` no longer reveals anything. It asks the island to
+  // open — React flips its state, `useStaticModal` drops `hidden` and lifts
+  // the card into the kit shell, and the island then calls `_load` below with
+  // the same arguments. Every legacy caller (`Secrets.open(slug)` from five
+  // places in app-view.js) is unchanged; only who owns the reveal moved.
   async open(slug, opts = {}) {
+    const island = dialogController();
+    if (!island) return Secrets._load(slug, opts);
+    island.open({ slug, opts });
+  },
+
+  /** The data half of the old `open`, run by the island once it is presented. */
+  async _load(slug, opts = {}) {
     Secrets.currentSlug = slug;
     Secrets.declareOpen = !!opts.declare;
-    const modal = document.getElementById('app-secrets-modal');
     const list = document.getElementById('app-secrets-list');
-    if (!modal || !list) return;
-    modal.classList.remove('hidden');
+    if (!list) return;
     list.innerHTML = '<p class="text-sm text-zinc-500">Loading…</p>';
     Secrets.setStatus('', '');
     try {
@@ -135,9 +155,17 @@ const Secrets = {
     }
   },
 
+  // Mirror of `open`: ask the island to close and let its `onClose` run the
+  // reset. Callers that arrive before hydration (there are none today, but
+  // `AppView.close()` calls this on every app teardown) still get the reset.
   close() {
-    const modal = document.getElementById('app-secrets-modal');
-    modal?.classList.add('hidden');
+    const island = dialogController();
+    if (!island) return Secrets._reset();
+    island.close();
+  },
+
+  /** The state half of the old `close`, run by the island once it is hidden. */
+  _reset() {
     Secrets.currentSlug = null;
     Secrets.currentData = null;
     Secrets.declareOpen = false;
@@ -760,5 +788,35 @@ const Secrets = {
   },
 };
 
-document.addEventListener('DOMContentLoaded', () => Secrets.init());
-window.Secrets = Secrets;
+// ── Moved into the React bundle by #1078 chunk I ──────────────────
+//
+// This file was public/js/app-secrets.js, a classic <script> tag at the end
+// of <body>. It is a MOVE, not a rewrite: everything above this line is the
+// module as it shipped, byte for byte. Only the bootstrap changed, and only
+// in the two ways AGENTS.md prescribes for a module that joins the bundle.
+//
+//   1. The `window.Secrets` publication STAYS. app-view.js still calls
+//      `Secrets.open(slug)`, `Secrets.hide()`, `Secrets.openForCurrentApp()`
+//      and `Secrets.applyMissingBadge(...)` from five places, all behind
+//      `if (window.Secrets)` guards, and those callers are untouched. The
+//      guard below is `typeof window !== 'undefined'` because the SSG
+//      prerender pass (frontend/scripts/build-shell.mjs) evaluates this
+//      module's whole graph in Node, where there is no window to publish onto.
+//   2. The `DOMContentLoaded` bootstrap is GONE, replaced by the exported
+//      `init` below, which AppSecretsDialog calls from its layout effect.
+//      That runs EARLIER than the listener did — hydration is flushSync'd in
+//      main.tsx and finishes before DOMContentLoaded — so every legacy caller
+//      still finds an initialized module, with more margin than before.
+//
+// The dialog's open/close lifecycle is NOT in here anymore: `Secrets.open`
+// and `Secrets.hide` route through the island's controller, so React owns the
+// `hidden` toggle and the kit lift. See app-secrets.tsx.
+
+if (typeof window !== 'undefined') window.Secrets = Secrets;
+
+/** Called once from AppSecretsDialog's layout effect (was DOMContentLoaded). */
+export function init() {
+  Secrets.init();
+}
+
+export { Secrets };

@@ -7,33 +7,54 @@
  * tests/baselines/shell-markup.json plus the prerendered public/index.html
  * in this commit are the proof.
  *
- * ── Why this component is STATIC ──────────────────────────────────────
+ * ── What this island owns, and what it does not ───────────────────────
  *
- * #1078 mechanism 1: a region may become stateful only when its ENTIRE
- * subtree is React-owned. This root is not, and cannot be yet, for two
- * independent reasons:
+ * OWNS: the open/close lifecycle. `useDialog` holds the `open` state,
+ * `useStaticModal` performs the kit lift that `PlatformUI.adoptStaticModal`
+ * used to do from outside React, and Cancel and the backdrop click are
+ * rendered handlers rather than listeners `App.bindEvents` attached.
  *
- *   1. PlatformUI.adoptStaticModal (public/js/platform-ui.js) has this id in
- *      STATIC_MODAL_IDS. It observes the root's class list and, when
- *      `hidden` comes off, LIFTS THE CARD OUT OF THE ROOT — replacing it
- *      with a comment placeholder — into the native kit's presentModal
- *      shell, adding `platform-modal-adopted` to the root and
- *      `platform-modal-card` to the card. A React re-render of this subtree
- *      would then reconcile against a parent that no longer holds its child
- *      (removeChild on the wrong node) and would overwrite the class the kit
- *      just wrote.
- *   2. The legacy open/close/submit paths in public/js/** still write into
- *      these nodes directly (innerHTML, value, dataset, .hidden toggles).
+ * DOES NOT OWN: anything inside the card. The target pills, the title and
+ * description fields, the screenshot row, the two opt-in rows and the status
+ * line are written by `./feedback-controller` — the retired ~810-line block
+ * from `App.bindEvents`, whose header explains why it is still imperative.
+ * React renders this tree once and never reconciles inside it, which is what
+ * keeps the two owners from colliding.
  *
- * So the dialog markup is a React component, but its BEHAVIOUR stays where
- * it is. Making it stateful is a later chunk's job and has a hard
- * prerequisite: the adoption seam has to move inside React first, so that one
- * owner writes to these nodes instead of two.
+ * That controller is also why the fields below stay UNCONTROLLED: a rendered
+ * `value` would both fight the controller and put a `value` attribute into
+ * the prerendered public/index.html that the hand-written shell never had.
  */
 
+import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
+import { Feedback, init as initFeedback } from './feedback-controller';
+import { useDialog } from './use-dialog';
+
+/** Reserved for callers that still pass `{ fromDev: true }` — see #226/#312. */
+interface OpenOptions {
+  fromDev?: boolean;
+}
+
 export function FeedbackDialog() {
+  const dialog = useDialog<OpenOptions>('feedback', {
+    onOpen: (opts) => Feedback._open(opts || {}),
+    onClose: () => Feedback._reset(),
+  });
+
+  // Was the middle of `App.bindEvents`. Layout effect, so the header's
+  // speech-bubble button and the ?shot=feedback deep link are both live
+  // before the first paint that could act on them.
+  useIsomorphicLayoutEffect(() => {
+    initFeedback();
+  }, []);
+
   return (
-    <div id="feedback-modal" className="hidden fixed inset-0 z-50 overflow-y-auto overscroll-contain bg-black/60">
+    <div
+      id="feedback-modal"
+      ref={dialog.rootRef}
+      className="hidden fixed inset-0 z-50 overflow-y-auto overscroll-contain bg-black/60"
+      {...dialog.backdropProps}
+    >
       <div data-modal-backdrop="" className="flex min-h-full items-center justify-center p-4">
         <div className="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-sm shadow-xl">
           <h2 className="text-lg font-bold mb-4">
@@ -43,7 +64,7 @@ export function FeedbackDialog() {
               Target toggle: file this feedback against the app being viewed
               or against the Social Vibecoding platform. The "This app" button
               is always visible but rendered disabled/grayed-out when no app
-              with a repo is open (see app.js).
+              with a repo is open (see ./feedback-controller).
           */}
           <div id="feedback-target" className="flex gap-2 mb-3" role="radiogroup" aria-label="Feedback target">
             <div className="flex-1 flex flex-col items-center">
@@ -57,7 +78,7 @@ export function FeedbackDialog() {
               >
                 This app
               </button>
-              {/* Caret indicating the selected option; shown/hidden in app.js. */}
+              {/* Caret indicating the selected option; shown/hidden by the controller. */}
               <div
                 id="feedback-caret-app"
                 className="hidden mt-1 w-0 h-0 border-l-4 border-r-4 border-b-4 border-l-transparent border-r-transparent border-b-violet-600"
@@ -84,7 +105,7 @@ export function FeedbackDialog() {
           </div>
           {/*
               #556: editable title, auto-filled live from the description
-              (app.js debounces POST /api/feedback/title as the user types).
+              (the controller debounces POST /api/feedback/title as you type).
               Left blank at submit, the server names the issue as before.
           */}
           <input
@@ -104,8 +125,8 @@ export function FeedbackDialog() {
           </textarea>
           {/*
               #683: drag-to-select screenshot attachment. The button only
-              renders where the Screen Capture API exists (app.js gates it
-              via ScreenshotSelect.isSupported()); while a screenshot is
+              renders where the Screen Capture API exists (the controller gates
+              it via ScreenshotSelect.isSupported()); while a screenshot is
               attached the button is swapped for the thumbnail row.
           */}
           <div className="mt-2">
@@ -149,7 +170,7 @@ export function FeedbackDialog() {
           {/*
               #685: opt-in app state snapshot. Hidden unless the open app has
               registered a state provider via usernode.issueState.register()
-              AND the feedback target is "This app" (wired in app.js).
+              AND the feedback target is "This app" (wired in the controller).
           */}
           <div id="feedback-state-row" className="hidden mt-2">
             <label className="flex items-start gap-2 cursor-pointer select-none">
@@ -169,7 +190,7 @@ export function FeedbackDialog() {
           </div>
           {/*
               #964: opt-in kudos bounty on the issue this dialog is about to
-              file. Starts UNCHECKED on every open (app.js openFeedbackModal) —
+              file. Starts UNCHECKED on every open (the controller's _open) —
               filing feedback must never quietly spend someone's weekly
               allowance. The note under it carries the viewer's live remaining
               figure, and the checkbox is disabled at zero; the server is the
@@ -194,9 +215,18 @@ export function FeedbackDialog() {
           <div id="feedback-status" className="text-sm mt-2 hidden">
           </div>
           <div className="flex gap-3 mt-4">
+            {/*
+                The controller's success and save-for-later paths still close
+                the dialog by clicking this button after their 1500 ms grace
+                window (`setTimeout(() => …('feedback-cancel').click(), 1500)`).
+                That keeps working through a rendered handler: a programmatic
+                click dispatches a real event, and React 19 delegates its
+                listeners at document.body.
+            */}
             <button
               id="feedback-cancel"
               className="flex-1 rounded-lg border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+              onClick={() => dialog.close()}
             >
               Cancel
             </button>
