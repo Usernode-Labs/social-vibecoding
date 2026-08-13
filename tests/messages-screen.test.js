@@ -21,11 +21,14 @@ const composer = read('frontend/src/features/messages/composer.tsx');
 const row = read('frontend/src/features/messages/message-row.tsx');
 const markdown = read('frontend/src/features/messages/format.tsx');
 const devChat = read('frontend/src/features/dev-chat/dev-chat.js');
+const dapp = JSON.parse(read('dapp.json'));
 
 test('Messages is a hidden React-owned top-level screen with global navigation', () => {
   assert.match(html, /<main id="messages-screen" class="hidden /);
   assert.match(html, /id="drawer-row-messages" href="#messages"/);
   assert.match(html, /id="drawer-messages-badge" class="hidden /);
+  assert.ok(dapp.tests.some((entry) => entry.expectSelector
+    === '#drawer-row-profile + #drawer-row-messages + #drawer-row-leaderboard + #drawer-row-settings + #drawer-row-admin'));
   assert.match(screen, /useVisibilityHiddenClass\(screenRef, 'messages-screen', false\)/);
   assert.match(app, /REACT_SCREEN_IDS:[\s\S]*?'messages-screen'/);
   assert.match(app, /parts\[0\] === 'messages'[\s\S]{0,300}navigateToMessages/);
