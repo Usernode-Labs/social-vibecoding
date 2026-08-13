@@ -166,7 +166,7 @@ test('browser navigation remains the fallback when native logout is not admitted
       'sw-cache',
       'navigate',
     ]);
-    assert.equal(loaded.href, '/#login');
+    assert.equal(loaded.href, '/');
   });
 
 test('failed web logout keeps native identity and the current document alive',
@@ -216,7 +216,7 @@ test('a refused native latch confirms, then still clears the web session',
       'note-incomplete',
       'navigate',
     ]);
-    assert.equal(loaded.href, '/#login');
+    assert.equal(loaded.href, '/');
   });
 
 test('an inconclusive native probe takes the same confirmed fallback',
@@ -307,7 +307,7 @@ test('a hung best-effort native logout cannot block leaving the app',
 
     await loaded.sandbox.Settings.logout();
 
-    assert.equal(loaded.href, '/#login');
+    assert.equal(loaded.href, '/');
     assert.equal(loaded.store.get('sv:native_signout_incomplete'), '1');
   });
 
@@ -319,7 +319,7 @@ test('a rejecting best-effort native logout is swallowed and noted',
 
     await loaded.sandbox.Settings.logout();
 
-    assert.equal(loaded.href, '/#login');
+    assert.equal(loaded.href, '/');
     assert.equal(loaded.store.get('sv:native_signout_incomplete'), '1');
   });
 
