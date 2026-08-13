@@ -398,6 +398,10 @@ const HomePanels = {
   // the registry minus what they've hidden. This — NOT the built `panels`
   // array — is what HomeLayout places, because `discover` and `create` are
   // marker entries with no payload and would otherwise never get a cell.
+  hasLayoutRegistry() {
+    return !!(HomePanels._data && Array.isArray(HomePanels._data.registry));
+  },
+
   gridSlotKeys() {
     const data = HomePanels._data;
     if (!data) return [];

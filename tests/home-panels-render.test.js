@@ -890,7 +890,10 @@ test('only a stored layout is repaired in place; a derivation is not persisted',
   const cur = HOME.match(/currentLayout\(cols\) \{[\s\S]*?\n {2}\},/)[0];
   assert.match(cur, /HomeLayout\.reflow\(otherStored, other, cols\)/, 'other width seeds it');
   assert.match(cur, /HomeLayout\.deriveDefault\(/, 'flow order is the last resort');
-  assert.match(cur, /if \(changed && Array\.isArray\(stored\) && stored\.length\)/);
+  assert.match(cur, /const widgetsReady = !!window\.HomePanels\?\.hasLayoutRegistry\?\.\(\)/,
+    'a partial widget catalog cannot authorize a repair write');
+  assert.match(cur, /if \(changed && widgetsReady && Array\.isArray\(stored\) && stored\.length\)/,
+    'only a stored width with authoritative widget membership is repaired in place');
 });
 
 test('the drag overlay draws the whole canvas and doubles as the hit-test', () => {

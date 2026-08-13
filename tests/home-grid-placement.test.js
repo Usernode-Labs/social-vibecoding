@@ -136,6 +136,8 @@ function makeHome({ width = 1280, canCreateApps = true } = {}) {
   HomeLayout.setRegistry(REGISTRY);
   // The widget registry Home reads placement keys from.
   sandbox.HomePanels = {
+    _data: { registry: REGISTRY, hidden: [], panels: [] },
+    hasLayoutRegistry() { return !!(this._data && Array.isArray(this._data.registry)); },
     gridSlotKeys: () => REGISTRY.map((r) => r.key),
     render: () => {},
     ensureLoaded: () => Promise.resolve(),
@@ -153,10 +155,103 @@ function makeHome({ width = 1280, canCreateApps = true } = {}) {
 
 const flush = () => new Promise((r) => setImmediate(r));
 
+const deferred = () => {
+  let resolve;
+  const promise = new Promise((done) => { resolve = done; });
+  return { promise, resolve };
+};
+
 const app = (slug, over = {}) => ({
   slug, name: slug, status: 'running',
   is_collaborator: true, is_favorited: false, your_apps_hidden: false,
   favorite_order: null, featured: false, ...over,
+});
+
+test('a saved Challenges position survives layout → apps → panels response order', async () => {
+  const { Home, setFetch, fetchCalls, sandbox } = makeHome();
+  const appsResponse = deferred();
+  const panelsResponse = deferred();
+  const stored = {
+    4: [],
+    5: [
+      { type: 'app', slug: 'a', col: 4, row: 0 },
+      { type: 'widget', key: 'discover', col: 0, row: 1 },
+      { type: 'widget', key: 'challenges', col: 3, row: 1 },
+      { type: 'widget', key: 'create', col: 2, row: 4 },
+    ],
+  };
+  let renders = 0;
+  let renderedLayout = null;
+  Home.render = () => {
+    renders += 1;
+    renderedLayout = Home.currentLayout(5);
+  };
+  sandbox.HomePanels._data = null;
+  sandbox.HomePanels.gridSlotKeys = () => (
+    sandbox.HomePanels._data ? REGISTRY.map((entry) => entry.key) : []
+  );
+  sandbox.HomePanels.ensureLoaded = () => panelsResponse.promise.then((data) => {
+    sandbox.HomePanels._data = data;
+  });
+  setFetch(async (url) => {
+    if (url.startsWith('/api/home-layout')) {
+      return { ok: true, json: async () => ({ layouts: stored, widgets: REGISTRY }) };
+    }
+    if (url.startsWith('/api/apps')) return appsResponse.promise;
+    return { ok: true, json: async () => ({}) };
+  });
+
+  const loading = Home.load();
+  await flush();
+  await flush();
+
+  assert.equal(Home._appsLoaded, false);
+  assert.equal(renders, 0, 'the early layout/panel callbacks do not paint an empty catalog');
+  assert.equal(fetchCalls.filter((c) => c.method === 'PUT').length, 0,
+    'stored app cells are not repaired away and written back');
+
+  appsResponse.resolve({ ok: true, json: async () => ({ apps: [app('a')] }) });
+  await loading;
+
+  assert.equal(Home._appsLoaded, true);
+  assert.equal(renders, 1, 'apps may paint while the widget payload is still in flight');
+  assert.equal(renderedLayout.some((entry) => entry.key === 'challenges'), false,
+    'the incomplete transient paint does not invent widget membership');
+  assert.ok(Home._layouts['5'].some((entry) => entry.key === 'challenges'),
+    'the cached server layout keeps the saved Challenges cell');
+  assert.equal(fetchCalls.filter((c) => c.method === 'PUT').length, 0,
+    'the incomplete widget catalog cannot be persisted as a repair');
+
+  panelsResponse.resolve({ registry: REGISTRY, hidden: [], panels: [] });
+  await flush();
+  await flush();
+
+  assert.equal(renders, 2, 'the authoritative widget registry triggers the restoring paint');
+  const restored = renderedLayout;
+  const at = (id) => {
+    const item = restored.find((entry) => HomeLayoutIdsOf([entry])[0] === id);
+    return [item.col, item.row];
+  };
+  assert.deepEqual(at('app:a'), [4, 0]);
+  assert.deepEqual(at('widget:discover'), [0, 1]);
+  assert.deepEqual(at('widget:challenges'), [3, 1]);
+  assert.equal(fetchCalls.filter((c) => c.method === 'PUT').length, 0,
+    'an intact stored layout needs no repair write');
+
+  // The readiness gate is first-load-only. Once both catalogs exist, normal
+  // TTL callbacks may repaint from cache while a later apps refresh is in
+  // flight.
+  renders = 0;
+  const laterAppsResponse = deferred();
+  setFetch(async (url) => {
+    if (url.startsWith('/api/apps')) return laterAppsResponse.promise;
+    return { ok: true, json: async () => ({}) };
+  });
+  const reloading = Home.load();
+  await flush();
+  assert.ok(renders > 0, 'later layout/panel callbacks still repaint from a ready catalog');
+  laterAppsResponse.resolve({ ok: true, json: async () => ({ apps: [app('a')] }) });
+  await reloading;
 });
 
 // ── The attach contract ───────────────────────────────────────────────
