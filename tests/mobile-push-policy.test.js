@@ -68,29 +68,44 @@ const CONTEXT = {
 test('each kind renders its own title and body from send-time context', () => {
   const cases = [
     ['mention', CONTEXT,
-      '@alice mentioned you · MyPage', 'hey can you look at the header'],
+      '@alice mentioned you in "Fix login redirect loop" · MyPage',
+      'hey can you look at the header'],
     ['reply', CONTEXT,
-      '@alice replied to you · MyPage', 'hey can you look at the header'],
+      '@alice replied in "Fix login redirect loop" · MyPage',
+      'hey can you look at the header'],
     ['reaction', { ...CONTEXT, detail: '👍' },
-      '@alice reacted 👍 · MyPage', 'hey can you look at the header'],
+      '@alice reacted 👍 to your message · MyPage',
+      'You said: hey can you look at the header'],
     ['kudos', CONTEXT,
-      '@alice gave you kudos · MyPage', '"Fix login redirect loop"'],
+      '@alice gave you kudos for "Fix login redirect loop" · MyPage',
+      'Your work is getting noticed'],
     ['collab_invite', CONTEXT,
-      '@alice invited you to collaborate · MyPage', 'Accept or decline in the app'],
+      '@alice wants to build MyPage with you',
+      'Join as a collaborator — accept or decline in the app'],
+    ['collab_invite_accepted', CONTEXT,
+      '@alice is in! · MyPage',
+      'Your invite was accepted — you can start building together'],
     ['approver_invite', CONTEXT,
-      '@alice invited you as an approver · MyPage', 'Accept or decline in the app'],
+      '@alice asked you to be an approver · MyPage',
+      "You'd review and vote on proposals — accept in the app"],
+    ['approver_invite_accepted', CONTEXT,
+      '@alice is now an approver · MyPage',
+      'They can review and vote on proposals from now on'],
     ['spec_shared', { ...CONTEXT, detail: '3' },
-      '@alice shared a spec with you · MyPage', '"Fix login redirect loop" (v3)'],
+      '@alice shared "Fix login redirect loop" with you · MyPage',
+      'Spec v3 — take a look and leave feedback'],
     ['session_done', CONTEXT,
-      'Session finished · MyPage', '"Fix login redirect loop" is ready to review'],
-    ['auto_solve_done', { ...CONTEXT, detail: 'spec_code' },
-      'Auto-solve finished · MyPage', '"Fix login redirect loop" — spec and code ready'],
+      'Your build is ready · MyPage',
+      '"Fix login redirect loop" finished — review it while it\'s fresh'],
     ['pr_proposed', { ...CONTEXT, prTitle: 'Fix login redirect loop', sessionTitle: null },
-      '@alice proposed "Fix login redirect loop" · MyPage', 'Ready for your vote'],
+      '@alice proposed "Fix login redirect loop" · MyPage',
+      'Take a look — your vote decides'],
     ['check_failed', CONTEXT,
-      'Proposal checks failed · MyPage', '"Fix login redirect loop"'],
+      'Checks failed on "Fix login redirect loop" · MyPage',
+      'Needs a fix before it can merge'],
     ['stale_pr', CONTEXT,
-      'Your proposal needs attention · MyPage', '"Fix login redirect loop" has no votes yet'],
+      '"Fix login redirect loop" is waiting for votes · MyPage',
+      'Nudge collaborators or share the preview'],
   ];
   for (const [kind, context, title, body] of cases) {
     const message = buildMessage({ ...INPUT, kind, context });
@@ -98,14 +113,77 @@ test('each kind renders its own title and body from send-time context', () => {
   }
 });
 
-test('accepted-invite kinds render a title with no body', () => {
-  assert.deepEqual(
-    buildMessage({ ...INPUT, kind: 'collab_invite_accepted', context: CONTEXT }).notification,
-    { title: '@alice accepted your invite · MyPage' }
+test('auto-solve outcomes surface urgency in the title, next step in the body', () => {
+  const cases = [
+    ['spec', 'Auto-solve finished "Fix login redirect loop" · MyPage',
+      'Spec ready — review it in the app'],
+    ['code', 'Auto-solve finished "Fix login redirect loop" · MyPage',
+      "Code ready — review and promote when you're happy"],
+    ['spec_code', 'Auto-solve finished "Fix login redirect loop" · MyPage',
+      "Spec and code ready — review and promote when you're happy"],
+    ['question', 'Auto-solve is waiting on you · MyPage',
+      '"Fix login redirect loop" needs an answer before it can continue'],
+    ['failed', 'Auto-solve hit a wall · MyPage',
+      '"Fix login redirect loop" failed — open the log to see what happened'],
+  ];
+  for (const [detail, title, body] of cases) {
+    const message = buildMessage({
+      ...INPUT, kind: 'auto_solve_done', context: { ...CONTEXT, detail },
+    });
+    assert.deepEqual(message.notification, { title, body }, detail);
+  }
+});
+
+test('a stale proposal names how long it has been waiting when the promotion time is known', () => {
+  const day = 24 * 60 * 60 * 1000;
+  const bodyAfter = (ms) => buildMessage({
+    ...INPUT, kind: 'stale_pr',
+    context: { ...CONTEXT, promotedAt: new Date(Date.now() - ms) },
+  }).notification.body;
+  assert.equal(
+    bodyAfter(3 * day + 60_000),
+    'No votes in 3 days — nudge collaborators or share the preview'
   );
+  assert.equal(
+    bodyAfter(day + 60_000),
+    'No votes in 1 day — nudge collaborators or share the preview'
+  );
+  // Under a day, or promoted_at missing entirely: the nudge stands alone.
+  assert.equal(bodyAfter(60_000), 'Nudge collaborators or share the preview');
+});
+
+test('machine-generated branch names never appear as a label', () => {
+  const context = {
+    ...CONTEXT, sessionTitle: null, prTitle: null, branchName: 'dev/evan-1786562509265',
+  };
+  assert.equal(
+    buildMessage({ ...INPUT, kind: 'pr_proposed', context }).notification.title,
+    '@alice proposed a change · MyPage'
+  );
+  // A human-named branch still earns the label slot.
+  assert.equal(
+    buildMessage({
+      ...INPUT, kind: 'pr_proposed', context: { ...context, branchName: 'fix-header-contrast' },
+    }).notification.title,
+    '@alice proposed "fix-header-contrast" · MyPage'
+  );
+});
+
+test('a mention with no message text still locates the conversation', () => {
+  // The label already anchors the title, so the body is simply omitted.
   assert.deepEqual(
-    buildMessage({ ...INPUT, kind: 'approver_invite_accepted', context: CONTEXT }).notification,
-    { title: '@alice accepted your approver invite · MyPage' }
+    buildMessage({
+      ...INPUT, kind: 'mention', context: { ...CONTEXT, messageContent: null },
+    }).notification,
+    { title: '@alice mentioned you in "Fix login redirect loop" · MyPage' }
+  );
+  // No label either: the copy falls back to the plain form.
+  assert.deepEqual(
+    buildMessage({
+      ...INPUT, kind: 'mention',
+      context: { ...CONTEXT, messageContent: null, sessionTitle: null },
+    }).notification,
+    { title: '@alice mentioned you · MyPage' }
   );
 });
 
@@ -133,6 +211,9 @@ test('titles and bodies are sanitized, collapsed, and truncated', () => {
   });
   assert.ok(embedded.notification.title.includes('…'));
   assert.ok(embedded.notification.title.length <= 80);
+  // Title-embedded labels get a tighter cap than body embeds, so the app
+  // suffix survives instead of being eaten by the 80-char truncation.
+  assert.ok(embedded.notification.title.endsWith(' · MyPage'));
 });
 
 test('missing context degrades to the generic notification, never a throw', () => {
@@ -145,7 +226,7 @@ test('missing context degrades to the generic notification, never a throw', () =
   // System kinds keep their kind-specific title even without app/session data.
   assert.deepEqual(
     buildMessage({ ...INPUT, kind: 'session_done', context: {} }).notification,
-    { title: 'Session finished' }
+    { title: 'Your build is ready' }
   );
 });
 
