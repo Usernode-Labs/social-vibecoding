@@ -460,12 +460,14 @@ const App = {
     // The fragment-scoped `?shot=` states, applied for whatever fragment is
     // live now and re-applied whenever it changes — see _applyRouteShots.
     App._applyRouteShots();
-    // The two that DRIVE a navigation instead of painting a state stay
+    // The three that DRIVE something instead of painting a state stay
     // once-per-document: _applyMenuNavShot clicks a drawer row and
     // _applySettingsBackShot assigns a hash and traverses back out of it, so
-    // re-running either on the hashchange it just caused would loop.
+    // re-running either on the hashchange it just caused would loop, and
+    // _applyNotifPermissionsShot presents an overlay that would stack.
     App._applyMenuNavShot();
     App._applySettingsBackShot();
+    App._applyNotifPermissionsShot();
     // #1054: a verified session is the first moment a queued submit can
     // actually be filed — /api/feedback is session-gated, so flushing any
     // earlier would only burn 401s. Everything after this is event- and
@@ -640,6 +642,51 @@ const App = {
       setTimeout(() => {
         try { history.back(); } catch (err) { /* ignore */ }
       }, 200);
+    }, 50);
+  },
+
+  // Screenshot-state deep link `?shot=notif-permissions`: present the real
+  // device-permissions sheet — the one whose primary button is literally
+  // "Allow notifications" — and then fire the trailing ghost click a touch
+  // tap leaves behind on the backdrop a few hundred milliseconds later.
+  //
+  // Before the kit's backdrop guard (decideBackdropDismiss in
+  // public/usernode-native/v1/native.js) that click dismissed the sheet the
+  // same tap had just opened: it rose from the bottom for a fraction of a
+  // second and then there was nothing left to tap to grant. The defect
+  // lived entirely inside those few hundred milliseconds, which no still
+  // frame and no plain route can reach, so the dapp.json check asserts the
+  // resulting state instead — the sheet still present, carrying the
+  // data-un-ghost-click marker that proves the click was really delivered
+  // (without it the check would pass on a sheet nothing ever tried to
+  // close).
+  //
+  // The sheet renders from a fixed "nothing granted yet" snapshot and calls
+  // no bridge method, so this is pure UI state with no writes — ungated for
+  // the same reason as ?shot=menu-nav above, and on the same timing budget
+  // (well inside the checks runner's 500ms settle).
+  _applyNotifPermissionsShot() {
+    let shot = null;
+    try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
+    if (shot !== 'notif-permissions') return;
+    setTimeout(() => {
+      if (!window.NativeChrome ||
+          typeof NativeChrome.presentPermissionsSheet !== 'function') return;
+      const sheet = NativeChrome.presentPermissionsSheet({
+        perms: { platform: 'ios', exactAlarmGranted: false },
+        isAndroid: false,
+      });
+      if (!sheet) return;
+      // After the entrance spring has settled — a ghost arrives at a
+      // presented sheet, not one still sliding in — and still well inside
+      // the kit's guard window. A bare .click() with no preceding
+      // pointerdown is exactly the shape of the real thing.
+      setTimeout(() => {
+        const backdrop = document.querySelector('.un-backdrop');
+        if (backdrop) backdrop.click();
+        const el = document.querySelector('.un-sheet');
+        if (el) el.setAttribute('data-un-ghost-click', 'dispatched');
+      }, 150);
     }, 50);
   },
 

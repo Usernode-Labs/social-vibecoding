@@ -251,6 +251,39 @@
     return projectDisplacement(input.y, input.v, input.horizonMs) >= 0.5 * input.sheetHeight;
   }
 
+  // ── Backdrop dismissal vs. the opening gesture's ghost click ─────────
+  //
+  // On touch, the tap that PRESENTS an overlay also emits a trailing
+  // synthesized `click` roughly 300ms after touchend. It is hit-tested at
+  // dispatch time against whatever is under the finger by then — which is
+  // the full-screen backdrop this present() just appended. Every backdrop
+  // below dismisses on the first click it sees, so a single tap opened
+  // and closed the surface again: "it pops up from the bottom for a
+  // fraction of a second, then goes away, and I can't click anything".
+  //
+  // The platform's React dialog layer already documents and guards this
+  // exact failure (MODAL_GESTURE_GUARD_MS in
+  // frontend/src/lib/static-modal.ts). The kit never got the guard —
+  // GHOST_CLICK_MS is deliberately the same 450ms window so the two
+  // layers agree about how long a ghost can arrive late.
+  var GHOST_CLICK_MS = 450;
+
+  // Whether a backdrop `click` is a real dismissal.
+  // input: { pressed: bool, elapsedMs: number } — `pressed` is true when a
+  // pointerdown/touchstart landed on the backdrop itself first (see
+  // onBackdropDismiss: the ghost sequence is compatibility MOUSE events
+  // synthesized from a touch that landed elsewhere, so it never brings
+  // one), `elapsedMs` is the age of the presentation.
+  //
+  // Only the un-pressed click inside the window is a ghost. That keeps a
+  // deliberate early backdrop tap instant, and keeps a programmatic
+  // backdrop.click() working once the window has passed.
+  function decideBackdropDismiss(input) {
+    if (!input) return true;
+    if (input.pressed) return true;
+    return input.elapsedMs >= GHOST_CLICK_MS;
+  }
+
   // Top-edge-preserving offset after a presenting/presented bottom-anchored
   // sheet is re-measured (issue #742). A height change of
   // Δ = newHeight - oldHeight instantly moves the sheet's top edge by Δ;
@@ -556,6 +589,8 @@
     decideSwipeRelease: decideSwipeRelease,
     decidePtrRelease: decidePtrRelease,
     decideSheetRelease: decideSheetRelease,
+    GHOST_CLICK_MS: GHOST_CLICK_MS,
+    decideBackdropDismiss: decideBackdropDismiss,
     remeasuredSheetY: remeasuredSheetY,
     KB_MIN_INSET: KB_MIN_INSET,
     keyboardInset: keyboardInset,
@@ -2850,6 +2885,44 @@
     return function () { cancelAnimationFrame(raf); };
   }
 
+  // Wire "click the backdrop to dismiss" WITHOUT eating the opening
+  // gesture's ghost click — see decideBackdropDismiss above for why that
+  // click exists and why it lands here. Every presented surface with a
+  // dismissible backdrop goes through this; none of them binds 'click'
+  // directly (tests/native-kit.test.js pins that).
+  //
+  // A real press is only ever signalled by pointerdown / touchstart: the
+  // ghost is a compatibility MOUSE sequence (mousedown → mouseup → click)
+  // synthesized from a touch that landed on the opener, so it arrives
+  // with neither. `mousedown` therefore does NOT count as a press —
+  // except on the one class of browser that has no pointer events and no
+  // touch at all, where it is the only signal there is and cannot be a
+  // ghost.
+  function onBackdropDismiss(backdrop, dismiss) {
+    var openedAt = Date.now();
+    var pressed = false;
+    function press() { pressed = true; }
+    backdrop.addEventListener('pointerdown', press);
+    backdrop.addEventListener('touchstart', press, { passive: true });
+    if (typeof window.PointerEvent === 'undefined' &&
+        !('ontouchstart' in window)) {
+      backdrop.addEventListener('mousedown', press);
+    }
+    backdrop.addEventListener('click', function (e) {
+      if (decideBackdropDismiss({
+        pressed: pressed,
+        elapsedMs: Date.now() - openedAt,
+      })) {
+        dismiss();
+        return;
+      }
+      // Swallow it whole: letting the ghost bubble on would re-fire
+      // whatever opened this surface, under a backdrop that is still up.
+      e.stopPropagation();
+      e.preventDefault();
+    });
+  }
+
   // presentSheet({ content | contentEl, onDismiss }) — content is an HTML
   // string, contentEl an Element to adopt. Returns { dismiss(), el }.
   function presentSheet(options) {
@@ -2903,7 +2976,7 @@
       springTo(height, velocity || 0, teardown);
     }
 
-    backdrop.addEventListener('click', function () { dismiss(0); });
+    onBackdropDismiss(backdrop, function () { dismiss(0); });
 
     function onPointerDown(e) {
       if (closed || e.button > 0) return;
@@ -3068,7 +3141,7 @@
       setTimeout(finish, 300); // safety if transitionend never fires
     }
 
-    if (dismissible) backdrop.addEventListener('click', function () { dismiss(); });
+    if (dismissible) onBackdropDismiss(backdrop, function () { dismiss(); });
 
     // Commit the initial (hidden) style before the entrance class lands.
     // Without this reflow the browser can coalesce append + class-add
@@ -3190,7 +3263,7 @@
       springTo(width, teardown);
     }
 
-    backdrop.addEventListener('click', function () { dismiss(); });
+    onBackdropDismiss(backdrop, function () { dismiss(); });
 
     // Rotation / viewport resize changes --un-panel-width, which feeds the
     // backdrop denominator and the exit travel.
@@ -3295,7 +3368,7 @@
         springTo(height, 0, finishSettle);
       }
 
-      backdrop.addEventListener('click', function () { settle(null); });
+      onBackdropDismiss(backdrop, function () { settle(null); });
 
       // Same present-time height assumption as the bottom sheet (issue
       // #742). The API can't receive late content, but a re-measure (e.g.

@@ -350,3 +350,109 @@ test('Android: an unmarked device still gets the sheet', async () => {
   await sandbox.NativeChrome.maybeShowFirstRunPermissions();
   assert.equal(sheets.length, 1);
 });
+
+// ── The sheet must survive its own opening tap ─────────────────────────
+//
+// A tap that presents an overlay leaves a synthesized click behind
+// ~300ms later, and it lands on the backdrop that tap just put on screen.
+// The kit now refuses that click (decideBackdropDismiss in
+// public/usernode-native/v1/native.js), but this marker is one-shot and
+// silences the iOS notification prompt FOREVER, so it must not depend on
+// the kit alone: a dismissal nobody could have read, from a user who
+// pressed nothing on the sheet, is not an answer.
+
+test('a dismissal too fast to have been read leaves the marker unwritten', async () => {
+  const { sandbox, sheets, stored } = boot({
+    permissions: IOS_PERMS,
+    socialPushState: IOS_UNPROMPTED,
+  });
+  await sandbox.NativeChrome.maybeShowFirstRunPermissions();
+  // The ghost: nothing on the sheet was touched, and it arrives at once.
+  sheets[0].handle.dismiss();
+  assert.notEqual(stored[MARKER], '1',
+    'a ghost-click dismissal must not burn the one-shot iOS prompt');
+});
+
+test('a dismissal the user could have read records first-run done', async () => {
+  const { sandbox, sheets, stored } = boot({
+    permissions: IOS_PERMS,
+    socialPushState: IOS_UNPROMPTED,
+  });
+  sandbox.NativeChrome._FIRST_RUN_MIN_SEEN_MS = 5;
+  await sandbox.NativeChrome.maybeShowFirstRunPermissions();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  sheets[0].handle.dismiss();
+  assert.equal(stored[MARKER], '1',
+    'a real "not now" is still an answer and still one-shot');
+});
+
+test('pressing Skip records first-run done however fast it happens', async () => {
+  // Interaction, not elapsed time, is what makes a dismissal an answer —
+  // otherwise the guard would eat a decisive tap made in under 450ms.
+  const { sandbox, sheets, stored } = boot({
+    permissions: IOS_PERMS,
+    socialPushState: IOS_UNPROMPTED,
+  });
+  await sandbox.NativeChrome.maybeShowFirstRunPermissions();
+  const skip = findButton(sheets[0].contentEl, 'Skip for now');
+  assert.ok(skip, 'the sheet renders its dismiss affordance');
+  skip.listeners.click();
+  assert.equal(stored[MARKER], '1');
+});
+
+// ── Completing the grant (shared with Settings → Usernode app) ─────────
+
+test('settleIosPushGrant polls past a lagging status and kicks push registration', async () => {
+  const { sandbox } = boot({ permissions: IOS_PERMS });
+  let reads = 0;
+  sandbox.usernode.getSocialPushState = async () => {
+    reads += 1;
+    return {
+      ...IOS_UNPROMPTED,
+      permissionStatus: reads >= 3 ? 'authorized' : 'notDetermined',
+    };
+  };
+  sandbox.NativeChrome._FIRST_RUN_RECHECK_MS = 1;
+  let kicked = 0;
+  sandbox.SocialPush = { getState() { kicked += 1; } };
+  // requestPermissions resolved with granted:false — the OS dialog had not
+  // been answered yet. The settled status is the answer, not that flag.
+  const settled = await sandbox.NativeChrome.settleIosPushGrant(false);
+  assert.equal(settled.granted, true);
+  assert.equal(settled.status, 'granted');
+  assert.equal(kicked, 1,
+    'a fresh grant starts push registration now, not on the next app resume');
+});
+
+test('settleIosPushGrant reports a denial and starts no registration', async () => {
+  const { sandbox } = boot({ permissions: IOS_PERMS });
+  sandbox.usernode.getSocialPushState = async () => ({
+    ...IOS_UNPROMPTED, permissionStatus: 'denied',
+  });
+  let kicked = 0;
+  sandbox.SocialPush = { getState() { kicked += 1; } };
+  const settled = await sandbox.NativeChrome.settleIosPushGrant(true);
+  assert.equal(settled.granted, false, 'a determined denial beats the grant flag');
+  assert.equal(settled.status, 'denied');
+  assert.equal(kicked, 0);
+});
+
+test('Settings’ Allow notifications completes the grant the same way', () => {
+  // The Settings row used to be a bare
+  // _unApply(usernode.requestPermissions()) — one read, no polling, no
+  // SocialPush kick — so on iOS it repainted "Not granted" moments after a
+  // real grant. Both screens go through settleIosPushGrant now.
+  const settingsJs = fs.readFileSync(
+    path.join(root, 'frontend', 'src', 'features', 'settings', 'settings.js'), 'utf8');
+  assert.match(settingsJs, /_unRequestPermissions\(isAndroid\)/,
+    'the button routes through the completing path');
+  const at = settingsJs.indexOf('async _unRequestPermissions(');
+  assert.ok(at > -1, 'settings.js defines _unRequestPermissions');
+  const fn = settingsJs.slice(at, settingsJs.indexOf('\n    // Awaits a bridge setter', at));
+  assert.match(fn, /settleIosPushGrant/,
+    'iOS grants settle through the shared native-chrome helper');
+  assert.match(fn, /_renderUsernodeBody\(\)/,
+    'the row repaints from the settled answer');
+  assert.ok(!/_unApply\(window\.usernode\.requestPermissions\(\)\)/.test(settingsJs),
+    'the old single-read path must not survive anywhere');
+});
