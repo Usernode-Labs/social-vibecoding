@@ -515,6 +515,82 @@ async function loadSessionSpec(pool, sessionId) {
   return (rows[0] && rows[0].spec_md) || '';
 }
 
+// ── Failing proposal checks → next-turn context ──────────────────────────
+//
+// The coding agent never sees its own proposal-check verdicts: checks run
+// in the capture container AFTER the turn ends, against staging, and no
+// signal flows back into the session. Production proposal 3284 showed the
+// result — a PR added a born-failing check, four more checks were failing
+// for unrelated reasons, and the agent (whose `npm test` run was green)
+// finished the turn believing everything passed.
+//
+// These two pieces close the loop from the platform side: when the
+// session's LAST staging run left checks failing, the next build turn's
+// prompt carries the failing rows (name, route, failure reason, first
+// console error) with instructions to treat them as part of the task.
+// Pure block builder + tiny loader, same shape as the spec block above.
+// Advisory only — every caller fails open, an empty block costs nothing.
+const FAILING_CHECKS_MAX = 12;
+
+async function loadSessionCheckContext(pool, sessionId) {
+  const { rows } = await pool.query(
+    'SELECT check_state, test_results FROM chat_sessions WHERE id = $1',
+    [sessionId]
+  );
+  if (!rows[0]) return { checkState: '', testResults: [] };
+  let results = rows[0].test_results;
+  if (typeof results === 'string') {
+    try { results = JSON.parse(results); } catch { results = []; }
+  }
+  return {
+    checkState: rows[0].check_state || '',
+    testResults: Array.isArray(results) ? results : [],
+  };
+}
+
+function buildFailingChecksBlock(checkState, testResults) {
+  if (checkState !== 'failing') return '';
+  const failing = (Array.isArray(testResults) ? testResults : [])
+    .filter((r) => r && r.status !== 'pass');
+  if (!failing.length) return '';
+
+  const blocking = failing.filter((r) => !r.advisory);
+  const lines = failing.slice(0, FAILING_CHECKS_MAX).map((r) => {
+    const name = String(r.name || 'unnamed check').slice(0, 160);
+    const p = String(r.path || '').slice(0, 160);
+    const reason = String(r.failureReason || 'failed').slice(0, 300);
+    const firstConsole = Array.isArray(r.consoleErrors) && r.consoleErrors[0]
+      ? ` · first console error: ${String(r.consoleErrors[0].message || '').slice(0, 200)}`
+      : '';
+    return `- [${r.advisory ? 'advisory' : 'BLOCKING'}] "${name}"${p ? ` (path: ${p})` : ''} — ${reason}${firstConsole}`;
+  });
+  const more = failing.length > FAILING_CHECKS_MAX
+    ? `\n(+${failing.length - FAILING_CHECKS_MAX} more failing)` : '';
+
+  return `
+
+==== PROPOSAL CHECKS — CURRENTLY FAILING ====
+
+After the previous commit, the platform ran this proposal's declared
+checks (dapp.json \`tests\`) against its staging build. ${failing.length} of them are
+FAILING${blocking.length ? ` and ${blocking.length} of those are MERGE-BLOCKING` : ' (all advisory for now)'}:
+
+${lines.join('\n')}${more}
+
+A proposal with failing merge-blocking checks CANNOT MERGE. Advisory
+failures don't block yet, but a failing check that THIS session added
+means the feature it covers does not actually render on staging —
+usually missing staging seed data, a wrong selector, or a JS error.
+
+Treat fixing these as part of this turn's task unless the user's request
+explicitly says otherwise. Reproduce them locally first: boot the app
+(see the in-loop browser instructions) and run \`usernode-run-checks\`
+against the exact \`path:\` routes above, then fix the app (or the check,
+if the check itself is wrong) and commit the fix with your other work.
+
+==== END PROPOSAL CHECKS ====`;
+}
+
 // Build the inline spec-preview snippet (F8): cap length but cut on a
 // whitespace boundary so we don't slice through a word or an inline
 // markdown construct, then append an ellipsis.
@@ -5947,13 +6023,22 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     // Strictly a no-op in production. `demo: true` is what the client keys
     // its one-off card injection off (public/js/dev-chat.js).
     if (process.env.USERNODE_ENV === 'staging' && req.query.demo === '1') {
+      // The reset instant is computed inline rather than through the
+      // dailyResetAt() helper the real branch below uses: this branch must
+      // stay provably free of any service call (tests/budget-demo.test.js
+      // pins that), and midnight UTC is the same two lines either way.
+      const reset = new Date();
+      reset.setUTCHours(24, 0, 0, 0);
       return res.json({
         spentCents: 2000,
         limitCents: 2000,
+        remainingCents: 0,
         globalSpentCents: 4000,
         globalLimitCents: 100000,
         byokSpentCents: 0,
         aiEnabled: true,
+        resetsAt: reset.toISOString(),
+        lowBalancePct: 80,
         demo: true,
       });
     }
@@ -5978,10 +6063,17 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       res.json({
         spentCents: userSpent,
         limitCents: userLimit,
+        // #593: the two figures the composer's meter has to state out loud
+        // — what is left, and when it comes back. Both were derivable from
+        // the pair above plus a hardcoded "midnight UTC" on the client,
+        // which is how the reset boundary ended up living in three places.
+        remainingCents: Math.max(0, userLimit - userSpent),
         globalSpentCents: globalSpent,
         globalLimitCents: globalLimit,
         byokSpentCents,
         aiEnabled: llm.isEnabled() || !!userApiKey,
+        resetsAt: limits.dailyResetAt(),
+        lowBalancePct: limits.LOW_BALANCE_PCT,
       });
     } catch (err) {
       log.error('sessions', 'Budget check failed', { message: err.message });
@@ -11189,6 +11281,18 @@ async function runClaudeCodeTool({
   // from scratch. The platform-conventions block still overrides if
   // anything in the spec contradicts a platform-wide rule.
   const currentSpec = await loadSessionSpec(pool, session.id);
+
+  // Failing proposal checks from the LAST staging run ride into this
+  // turn's prompt so the agent stops flying blind on its own merge gate
+  // (see buildFailingChecksBlock). Fails open: any load error just means
+  // no block this turn.
+  let failingChecksBlock = '';
+  try {
+    const { checkState, testResults } = await loadSessionCheckContext(pool, session.id);
+    failingChecksBlock = buildFailingChecksBlock(checkState, testResults);
+  } catch (err) {
+    log.warn('sessions', 'Failing-checks context load failed (continuing without)', { sessionId: session.id, err: err.message });
+  }
   const specTaskReference = directSessionTurn
     ? 'The DIRECT USER TURN above'
     : 'The "CODING TASK (from the Mayor)" line above';
@@ -11270,7 +11374,7 @@ or the repo's own \`CLAUDE.md\` on app-specific matters.`
 ${getAppConventions()}
 
 ==== END PLATFORM CONVENTIONS ====
-${specBlock}
+${specBlock}${failingChecksBlock}
 
 A \`CLAUDE.md\` at the repo root, if present, contains **app-specific**
 guidance: product intent, domain terms, opt-in policies, style. Follow
@@ -13094,4 +13198,4 @@ CMD ["node", "server.js"]
   return { containerId, stagingUrl, hostname };
 }
 
-module.exports = { runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, advanceSharedReviewAfterSync, advanceReviewAfterPlatformSync, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, stripFakeCompletionMarker, buildMayorMessages, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError };
+module.exports = { runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, advanceSharedReviewAfterSync, advanceReviewAfterPlatformSync, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, stripFakeCompletionMarker, buildMayorMessages, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError };

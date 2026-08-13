@@ -590,3 +590,43 @@ test('merged card: my own NATIVE completed proposal still renders no pill', () =
   assert.doesNotMatch(html, /gc-explore-chat-btn/);
   assert.ok(!menuHas(AppView, html, /Explore in dev chat/), 'no ⋯ row on my own native merged PR');
 });
+
+// ── The availability probe forwards ?demo=1 ─────────────────────────────────
+//
+// Staging previews run without the platform LLM key (it's on the
+// platform-secrets denylist), so the real branch of GET /api/budget answers
+// aiEnabled:false there and _applyExploreChatAvailability rewrites every
+// Explore button's title to "AI chat isn't configured…" one fetch round-trip
+// after the board paints. The card-menu dapp.json check matches on
+// title^="Open a dev chat…", so before demo forwarding it was a race against
+// that rewrite (~50ms window). The demo branch answers aiEnabled:true, which
+// keeps demo-preview chrome in its configured state — same idiom as every
+// other _demoQS() forward on this view.
+
+function probeHarness(search, budget) {
+  const h = makeHarness();
+  // _demoQS reads location.search through URLSearchParams — a Node global,
+  // not a JS intrinsic, so the vm context doesn't have it by default.
+  h.sandbox.URLSearchParams = URLSearchParams;
+  h.sandbox.location = { search, hash: '' };
+  h.calls.fetched = [];
+  h.sandbox.fetch = async (url) => {
+    h.calls.fetched.push(String(url));
+    return { ok: true, json: async () => budget };
+  };
+  return h;
+}
+
+test('availability probe: ?demo=1 pages hit the demo branch of /api/budget', async () => {
+  const { AppView, calls } = probeHarness('?demo=1', { aiEnabled: true, demo: true });
+  assert.equal(await AppView._ensureAiAvailability(), true);
+  assert.deepEqual(calls.fetched, ['/api/budget?demo=1'],
+    'the probe forwards ?demo=1 like every other demo-aware fetch');
+});
+
+test('availability probe: production pages fetch /api/budget unadorned', async () => {
+  const { AppView, calls } = probeHarness('', { aiEnabled: false });
+  assert.equal(await AppView._ensureAiAvailability(), false,
+    'a real aiEnabled:false still disables the pill outside demo mode');
+  assert.deepEqual(calls.fetched, ['/api/budget']);
+});
