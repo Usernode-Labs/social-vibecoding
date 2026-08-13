@@ -543,10 +543,34 @@
       "expectSelector": "#dev-body .gc-vote-item .dev-card-status > .dev-status-pill-block ~ .dev-badge"
     },
     {
-      "name": "Dev board: an issue card offers its in-progress toggle as a pill, not only in ⋯",
+      "name": "Dev board: an issue card offers its claim toggle as a pill, not only in ⋯",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#dev-body [data-issue-row] .gc-card-actions .gc-vote-btn[onclick*=\"markIssueInProgress\"]",
-      "expectText": "Mark in progress"
+      "expectText": "Claim this issue"
+    },
+    {
+      "name": "Dev board: the Underway column names the exact state — a paused session says \"Paused\", not \"In progress\" (#1112)",
+      "path": "/?demo=1&view=kanban&col=inprogress#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-kanban-col-inprogress [data-issue-row=\"900014\"] .dev-card-status .dev-badge[data-work-state=\"paused\"]",
+      "expectText": "Paused"
+    },
+    {
+      "name": "Dev board: an auto-solve run that asked a question says so (#1112)",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-body [data-issue-row=\"900015\"] .dev-badge[data-work-state=\"answer_needed\"]",
+      "expectText": "Needs an answer"
+    },
+    {
+      "name": "Dev board: a finished auto-solve draft says it is ready to review (#1112)",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-body [data-issue-row=\"900005\"] .dev-badge[data-work-state=\"draft_ready\"]",
+      "expectText": "Draft ready to review"
+    },
+    {
+      "name": "Issue detail: the topic head explains the work state in a plain dated sentence (#1112)",
+      "path": "/?demo=1#app/usernode-2d5619/dev/issues/900014",
+      "expectSelector": "#gc-thread-head [data-work-note=\"paused\"]",
+      "expectText": "paused"
     },
     {
       "name": "Dev board: your own session card offers its visibility toggle as a pill",

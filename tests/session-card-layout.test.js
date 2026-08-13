@@ -469,6 +469,38 @@ test('kanban In progress: no visible sessions → nothing below the archived tog
   assertOrder(html, ['Yours · private', 'data-session-chip="1"', 'Show archived (1)']);
 });
 
+// ── #1112: the work-state chip belongs to issue cards only ─────────────────
+// Sessions and issues share the Underway column, and a session already says
+// what it is doing through _sessionStatusTagHtml ("working…" / "paused"). The
+// new chip must not double up on those rows — the issue rows are the ones that
+// previously said only "In progress".
+
+test('kanban Underway: only the issue row carries the work-state chip', () => {
+  const AppView = makeAppView();
+  AppView._sharedById = {};
+  AppView._archivedSessions = [];
+  const entries = [
+    { kind: 'my-session', item: mySess({ id: 1, busy: true }) },
+    issueEntry(),
+    { kind: 'shared-session', item: sharedSess({ id: 71, status: 'paused' }) },
+  ];
+  const html = AppView._inProgressCardsHtml(entries, false);
+
+  // Exactly one work-state chip in the whole column, on the issue.
+  const chips = html.match(/data-work-state="[a-z_]+"/g) || [];
+  assert.deepEqual(chips, ['data-work-state="auto_solving"']);
+  assert.match(html, /Auto-solving…/);
+
+  // The session rows keep their own status tags, untouched by #1112.
+  assert.match(html, /working…/, 'the busy session still says working…');
+  assert.match(html, /paused/, 'the shared paused session still says paused');
+  // …and none of the seven issue-state labels leaked onto a session row.
+  for (const label of ['Being worked on', 'In review', 'Claimed', 'Needs an answer',
+    'Draft ready to review']) {
+    assert.ok(!html.includes(label), `session rows must not say "${label}"`);
+  }
+});
+
 test('list view pinned block mirrors the split', () => {
   const AppView = makeAppView();
   AppView._sharedById = {};

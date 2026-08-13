@@ -17,6 +17,10 @@ const { placeBounty } = require('../services/bounties');
 const appAccess = require('../services/app-access');
 const appAdmins = require('../services/app-admins');
 const topicAttrs = require('../services/topic-attributes');
+// #1112: the same in-process "a turn is running" predicate /api/sessions
+// reports as `busy`, so an issue's work-state chip and the session card it
+// points at can never disagree about whether an agent is actually running.
+const { isSessionBusy } = require('../services/active-workers');
 const { FEEDBACK_FALLBACK_TITLE } = require('../services/llm');
 
 // Pull owner/repo out of a stored repo_url. Same shape used across the
@@ -221,6 +225,24 @@ function stagingMockIssues(repoUrl) {
       + 'state. Its mock close proposal passed long enough ago that the '
       + 'spinner has timed out, so the card reads "Close pending — will '
       + 'retry automatically" instead of spinning forever.', 8),
+    // #1112: the two work-states that no other mock row can show, because
+    // both need a session in a state the other rows never sit in. The
+    // in-progress enrichment below attaches a 5-day-old PAUSED session to
+    // this one, so the chip reads "Paused · maya-builder" in the grey tone
+    // and the topic head prints the self-clear date.
+    mk(900014, '[Mock] Someone started this and paused',
+      'Staging-only mock issue for previewing the #1112 "Paused" work '
+      + 'state. A dev session on this row was last touched five days ago '
+      + 'and is paused, so the card carries the grey "Paused" chip rather '
+      + 'than the old catch-all "In progress" one, and the topic head '
+      + 'explains in a sentence when the mark clears itself.', 26),
+    // #1112: the amber "Needs an answer" state — a headless auto-solve run
+    // that finished with the `question` outcome and is waiting on a human.
+    mk(900015, '[Mock] Auto-solve run asked a question',
+      'Staging-only mock issue for previewing the #1112 "Needs an answer" '
+      + 'work state: the synthetic headless run below reports the '
+      + '`question` outcome, so the card asks for a reply instead of '
+      + 'claiming that work is happening right now.', 19),
   ];
 }
 
@@ -401,14 +423,47 @@ function composeInProgress(sessions, claims, viewerId) {
   const sess = sessions || [];
   const live = claims || [];
   if (!sess.length && !live.length) return null;
-  const users = [];
+  // Distinct session owners, in the order the query returned them. The
+  // loop visits every session (#1112 — it used to `break` at 3, which is
+  // how a five-person issue read "In progress · 3"); only the DISPLAY
+  // list is capped, and the true headcount rides on peopleTotal below.
+  const allUsers = [];
   for (const s of sess) {
-    if (s.username && !users.includes(s.username)) users.push(s.username);
-    if (users.length >= 3) break;
+    if (s.username && !allUsers.includes(s.username)) allUsers.push(s.username);
   }
+  const users = allUsers.slice(0, 5);
+  // #1112: the true distinct headcount over every session owner AND every
+  // claimer, computed before any cap. The FE's "+N" suffix reads this, so
+  // the chip can no longer understate a crowded issue.
+  const everyone = new Set(allUsers);
+  for (const c of live) if (c.username) everyone.add(c.username);
+  // #1112: per-session detail so the FE can name WHICH work state an issue
+  // is in (a proposal up for vote / a live chat / a paused chat) instead of
+  // collapsing all of them into one "In progress" label. Most-recent
+  // activity first, capped at 5 — the label names at most a couple, and the
+  // tooltip enumerates roles rather than every row.
+  const activityTs = (s) => {
+    const t = Date.parse(s.last_activity_at || s.created_at || '');
+    return Number.isFinite(t) ? t : 0;
+  };
+  const detail = [...sess]
+    .sort((a, b) => activityTs(b) - activityTs(a))
+    .slice(0, 5)
+    .map((s) => ({
+      sessionId: s.id,
+      username: s.username || null,
+      mine: s.user_id === viewerId,
+      status: s.status || null,
+      // In-process only: a multi-process platform would under-report this,
+      // in which case switch to `active_turn IS NOT NULL` on the query.
+      busy: isSessionBusy(s.id),
+      lastActivityAt: s.last_activity_at || null,
+    }));
   return {
     count: sess.length,
     users,
+    peopleTotal: everyone.size,
+    sessions: detail,
     mine: sess.some((s) => s.user_id === viewerId) || live.some((c) => c.user_id === viewerId),
     // Oldest-first, capped at 10 — beyond that only the names matter less
     // than the count, which the FE derives from the list it gets.
@@ -1351,6 +1406,10 @@ function issueRoutes(config) {
         const mockHeadless = new Map([
           [900003, { status: 'generating', outcome: null }],
           [900005, { status: 'ready', outcome: 'spec' }],
+          // #1112: the `question` outcome — a finished run that is waiting on
+          // a human answer, which the work-state chip reports as amber
+          // "Needs an answer" rather than as work in flight.
+          [900015, { status: 'ready', outcome: 'question' }],
         ]);
         for (const issue of issues) {
           const m = mockHeadless.get(issue.number);
@@ -1433,34 +1492,55 @@ function issueRoutes(config) {
           username, userId: mine ? req.user.id : 0, mine,
           claimedAt: hoursAgoIso(hrs), expiresAt: hoursAheadIso(7 * 24 - hrs),
         });
+        const mkMockSession = (sessionId, username, status, hrs, busy) => ({
+          sessionId, username, mine: false, status, busy: !!busy,
+          lastActivityAt: hoursAgoIso(hrs),
+        });
         const mockInProgress = new Map([
-          // Single-worker session chip, CLICKABLE styling (synthetic
-          // proposal target — clicking lands on the topic view's
+          // #1112 `in_review`: the session was promoted, so the work is
+          // waiting on reviewers rather than on an agent. CLICKABLE styling
+          // (synthetic proposal target — clicking lands on the topic view's
           // not-found fallback, same visual-review-only caveat as the
           // synthetic myPrSessionId above).
           [900007, {
-            count: 1, users: ['staging-tester'], mine: false, claims: [],
+            count: 1, users: ['staging-tester'], peopleTotal: 1, mine: false, claims: [],
+            sessions: [mkMockSession(900007, 'staging-tester', 'promoted', 4, false)],
             target: { kind: 'proposal', sessionId: 900007 },
           }],
-          // Plural "In progress · 2" with a multi-name tooltip, in the
-          // NON-clickable (private-work) styling.
+          // #1112 `working` with a live turn: two active sessions, the
+          // most-recent one busy, so the chip renders emerald with its
+          // spinner and a "+1" for the second person. NON-clickable
+          // (private-work) styling.
           [900006, {
-            count: 2, users: ['maya-builder', 'staging-tester'], mine: false,
-            claims: [], target: null,
+            count: 2, users: ['maya-builder', 'staging-tester'], peopleTotal: 2, mine: false,
+            claims: [],
+            sessions: [
+              mkMockSession(900106, 'maya-builder', 'active', 0.2, true),
+              mkMockSession(900206, 'staging-tester', 'active', 3, false),
+            ],
+            target: null,
           }],
-          // Two claims incl. the VIEWER's own — reviews the multi-claimer
-          // chip plus the "Clear in progress" button state.
+          // #1112 `claimed`, with the VIEWER among the claimers — reviews
+          // the multi-claimer "+1" plus the "Release my claim" button state.
           [900004, {
-            count: 0, users: [], mine: true,
+            count: 0, users: [], peopleTotal: 2, mine: true, sessions: [],
             claims: [mkMockClaim(req.user.username, true, 2), mkMockClaim('maya-builder', false, 5)],
             target: null,
           }],
-          // One claim by someone else — the viewer's button stays "Mark
-          // in progress" and the admin per-claim clear is reviewable in
-          // the topic view.
+          // #1112 `claimed` by someone else — the viewer's button stays
+          // "Claim this issue" and the admin per-claim clear is reviewable
+          // in the topic view.
           [900008, {
-            count: 0, users: [], mine: false,
+            count: 0, users: [], peopleTotal: 1, mine: false, sessions: [],
             claims: [mkMockClaim('maya-builder', false, 8)],
+            target: null,
+          }],
+          // #1112 `paused`: one session, paused, last touched 5 days ago —
+          // two days short of the 7-day self-clear, which is exactly the
+          // case the topic head's dated sentence exists to explain.
+          [900014, {
+            count: 1, users: ['maya-builder'], peopleTotal: 1, mine: false, claims: [],
+            sessions: [mkMockSession(900114, 'maya-builder', 'paused', 5 * 24, false)],
             target: null,
           }],
         ]);
@@ -1893,7 +1973,11 @@ function issueRoutes(config) {
         // On-the-record note in the issue's own discussion thread (which
         // also freshens the thread clock every claim keys off).
         await sendSystemMessage(pool, app.id,
-          `${req.user.username} marked this issue in progress`,
+          // #1112: "claimed" rather than "marked this issue in progress" —
+          // a claim is one of seven things the board used to call "In
+          // progress", and it is the only one this route creates. Rows
+          // already written keep their old wording; not worth a migration.
+          `${req.user.username} claimed this issue`,
           'system', null, { type: 'issue', ref: issueNumber }
         ).catch((err) => log.warn('issues', 'Claim chat message failed', { err: err.message }));
       }
@@ -1953,8 +2037,11 @@ function issueRoutes(config) {
 
       if (cleared) {
         const content = targetUserId === req.user.id
-          ? `${req.user.username} cleared their in-progress mark`
-          : `${req.user.username} cleared an in-progress mark on this issue`;
+          // #1112: "released their claim" — the DELETE only ever removes one
+          // person's claim, never the derived state the board used to call
+          // "In progress".
+          ? `${req.user.username} released their claim on this issue`
+          : `${req.user.username} released someone else's claim on this issue`;
         await sendSystemMessage(pool, app.id, content,
           'system', null, { type: 'issue', ref: issueNumber }
         ).catch((err) => log.warn('issues', 'Claim-clear chat message failed', { err: err.message }));

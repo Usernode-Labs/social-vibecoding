@@ -301,7 +301,7 @@ test('issue: the full demoted set, and Open on GitHub last', () => {
   assert.equal(labels[0], 'Generate proposal');
   assert.ok(labels.some((l) => /Pledge kudos/.test(l)));
   // The claim toggle is PROMOTED to the action band, so it left the menu.
-  assert.ok(!labels.some((l) => /Mark in progress/.test(l)), 'promoted onto the face');
+  assert.ok(!labels.some((l) => /Claim this issue/.test(l)), 'promoted onto the face');
   assert.match(AppView._renderIssueRow(ISSUE()), /gc-card-actions[\s\S]*?markIssueInProgress/);
   assert.ok(labels.some((l) => /Propose to close/.test(l)));
   assert.equal(labels[labels.length - 1], 'Open on GitHub');

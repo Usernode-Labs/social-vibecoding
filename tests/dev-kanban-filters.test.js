@@ -536,3 +536,46 @@ test('priority / category / assignee are a VISIBLE no-op on session cards', () =
     true
   );
 });
+
+// ── #1112: the column is titled "Underway", keyed `inprogress` ─────────────
+// "In progress" was the column title, the chip on every card in it, and the
+// label on the button that put a card there — three different meanings of one
+// phrase. The title changed; the KEY did not, because it is the stored kanban
+// column_key, the element id and the `?col=` deep-link value.
+
+test('the second column reads "Underway" but keeps its inprogress key and id', () => {
+  const AppView = makeAppView();
+  AppView._ghIssues = [
+    issue({ number: 5, title: 'beta bug', headless: { status: 'generating' } }),
+  ];
+  AppView._envIssueNumbers = new Set();
+  AppView._proposals = [];
+  AppView._govProposals = [];
+  AppView._merged = [];
+  AppView._mergedCtx = { majority: 1, activeUsers: 1 };
+  AppView._mergedTotal = 0;
+  AppView._mergedHasMore = false;
+  AppView._mySessions = [];
+  AppView._sharedSessions = [];
+  AppView._archivedSessions = [];
+  AppView._kanbanFilters = { q: '', priority: null, category: null, assignee: null, needsVote: false };
+  const html = AppView._renderKanbanInner();
+
+  assert.match(html, /Underway <span[^>]*>· 1<\/span>/, 'column head retitled');
+  assert.ok(!/In progress <span/.test(html), 'the old title is gone');
+  // Load-bearing and unchanged: the key, the id and the tab wiring.
+  assert.match(html, /id="dev-kanban-col-inprogress"/);
+  assert.match(html, /data-kanban-col="inprogress"/);
+  assert.match(html, /aria-controls="dev-kanban-col-inprogress"/);
+  // The tab strip reads the same title, so the two surfaces cannot drift.
+  const tab = html.match(/id="dev-kanban-tab-inprogress"[\s\S]*?<\/button>/);
+  assert.ok(tab && /Underway/.test(tab[0]), 'the mobile tab is retitled too');
+  // One-line hover explanation on the column head — the column name alone
+  // still cannot say what the five underway states have in common.
+  const head = html.match(/id="dev-kanban-col-inprogress"[\s\S]*?dev-kanban-col-head[^>]*title="([^"]+)"/);
+  assert.ok(head, 'the column head carries a title attribute');
+  assert.match(head[1], /auto-solving/i);
+  assert.match(head[1], /paused/i);
+  // …and only that column has one, so the other three heads are unchanged.
+  assert.equal((html.match(/dev-kanban-col-head[^>]*title="/g) || []).length, 1);
+});

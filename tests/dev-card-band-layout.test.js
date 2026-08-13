@@ -229,7 +229,7 @@ test('#1139: any single visible pill keeps the band reserved', () => {
     'a state bar': { pill: '<div class="dev-status-pill-block">2/3</div>' },
     'a Closes-#N pill': { linkedHtml: '<span class="dev-badge">Closes #4</span>' },
     'one metadata chip': { badges: ['<span class="dev-badge">High</span>'] },
-    'an In progress chip': { badges: ['', '<span class="dev-badge">In progress</span>'] },
+    'a work-state chip': { badges: ['', '<span class="dev-badge" data-work-state="paused">Paused · maya</span>'] },
   };
   for (const [what, opts] of Object.entries(cases)) {
     const html = AppView._cardContentHtml({ titleHtml: 'x', ...opts });
