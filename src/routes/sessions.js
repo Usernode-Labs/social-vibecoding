@@ -6023,13 +6023,22 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     // Strictly a no-op in production. `demo: true` is what the client keys
     // its one-off card injection off (public/js/dev-chat.js).
     if (process.env.USERNODE_ENV === 'staging' && req.query.demo === '1') {
+      // The reset instant is computed inline rather than through the
+      // dailyResetAt() helper the real branch below uses: this branch must
+      // stay provably free of any service call (tests/budget-demo.test.js
+      // pins that), and midnight UTC is the same two lines either way.
+      const reset = new Date();
+      reset.setUTCHours(24, 0, 0, 0);
       return res.json({
         spentCents: 2000,
         limitCents: 2000,
+        remainingCents: 0,
         globalSpentCents: 4000,
         globalLimitCents: 100000,
         byokSpentCents: 0,
         aiEnabled: true,
+        resetsAt: reset.toISOString(),
+        lowBalancePct: 80,
         demo: true,
       });
     }
@@ -6054,10 +6063,17 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       res.json({
         spentCents: userSpent,
         limitCents: userLimit,
+        // #593: the two figures the composer's meter has to state out loud
+        // — what is left, and when it comes back. Both were derivable from
+        // the pair above plus a hardcoded "midnight UTC" on the client,
+        // which is how the reset boundary ended up living in three places.
+        remainingCents: Math.max(0, userLimit - userSpent),
         globalSpentCents: globalSpent,
         globalLimitCents: globalLimit,
         byokSpentCents,
         aiEnabled: llm.isEnabled() || !!userApiKey,
+        resetsAt: limits.dailyResetAt(),
+        lowBalancePct: limits.LOW_BALANCE_PCT,
       });
     } catch (err) {
       log.error('sessions', 'Budget check failed', { message: err.message });

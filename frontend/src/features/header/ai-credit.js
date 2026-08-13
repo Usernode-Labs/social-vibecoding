@@ -130,22 +130,30 @@
         var byok = Number(s.byokCents) || 0;
         var exhausted = remaining <= 0;
 
+        // #593: the same normalised state the composer's meter and the
+        // low-balance banner read, resolved lazily (credit-options.js is a
+        // classic script; this module is in the bundle that runs after it,
+        // but a bare unit sandbox may have neither). Everything below
+        // degrades to the pre-#593 rendering when it is absent.
+        var CO = (typeof window !== 'undefined' && window.CreditOptions) || null;
+        var state = CO ? CO.creditState(s) : null;
+        // The reset boundary, worded once (CreditOptions.resetSentence) so
+        // this row and the dev chat cannot describe it differently.
+        var resetText = state ? CO.resetSentence(state) : 'Free credits reset at midnight UTC.';
+
         // "limit $spent/$limit" — spend-first, exactly like the dev chat.
-        // The remaining figure is what the tooltip carries, because the
-        // number people compare against a cap is the one they've spent.
         var pct = limit > 0 ? Math.min(100, (spent / limit) * 100) : 0;
         var spentTone = pct > 80 ? SPENT_TONE.high : pct > 50 ? SPENT_TONE.mid : SPENT_TONE.low;
 
         var tip;
         if (exhausted && s.hasByokKey) {
           tip = 'Your ' + money(limit) + ' daily allowance is used up — AI turns are now '
-            + 'billed to the Anthropic key you saved in Settings. Resets at midnight UTC.';
+            + 'billed to the Anthropic key you saved in Settings. ' + resetText;
         } else if (exhausted) {
-          tip = 'You have used all ' + money(limit) + ' of today’s AI allowance. '
-            + 'Resets at midnight UTC.';
+          tip = 'You have used all ' + money(limit) + ' of today’s AI allowance. ' + resetText;
         } else {
           tip = money(spent) + ' of your ' + money(limit) + ' daily AI allowance used ('
-            + money(remaining) + ' left). Resets at midnight UTC.';
+            + money(remaining) + ' left). ' + resetText;
         }
         if (byok > 0) {
           tip += ' A further ' + money(byok)
@@ -158,6 +166,20 @@
           + '<span class="' + spentTone + '">' + escapeHtml(money(spent)) + '</span>'
           + '<span class="drawer-meter-dim">/' + escapeHtml(money(limit)) + '</span>'
           + '</span>';
+        // #593: what is LEFT, rendered rather than tooltip-only. The whole
+        // point of the row is to answer "can I start another dev session?"
+        // before opening one, and a tooltip answers that for nobody on a
+        // phone — which is where the drawer is used most.
+        var leftLabel = exhausted
+          ? (s.hasByokKey ? '' : 'none left')
+          : money(remaining) + ' left';
+        if (leftLabel) {
+          html += ' <span class="drawer-meter-part" data-credits-remaining="1">'
+            + '<span class="drawer-meter-dim">· </span>'
+            + '<span class="' + (exhausted ? SPENT_TONE.high
+              : (state && state.level === 'low') ? SPENT_TONE.mid : 'drawer-meter-dim') + '">'
+            + escapeHtml(leftLabel) + '</span></span>';
+        }
         if (byok > 0) {
           // Own .drawer-meter-part so the two figures break apart at the
           // "·" rather than either of them splitting mid-number — and the

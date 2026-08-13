@@ -24,6 +24,21 @@ const KEY_SYSTEM = 'system_tokens_daily_limit_cents';
 const CACHE_TTL_MS = 10_000;
 const cache = new Map();
 
+// #593: the point at which the UI starts saying "you're nearly out" instead
+// of just showing a number. One definition, sent to the client in the budget
+// payloads below so the meter, the drawer row and the warning banner cannot
+// disagree with each other — or with a later change here.
+const LOW_BALANCE_PCT = 80;
+
+// Every user-facing sentence about the daily allowance names the same
+// boundary, so the boundary itself is computed in one place. Midnight UTC:
+// llm_usage is keyed on CURRENT_DATE, which is what actually rolls over.
+function dailyResetAt() {
+  const reset = new Date();
+  reset.setUTCHours(24, 0, 0, 0);
+  return reset.toISOString();
+}
+
 function fromCache(key) {
   const entry = cache.get(key);
   if (!entry) return null;
@@ -124,7 +139,10 @@ async function checkBudget(pool, userId) {
   );
   const globalSpent = parseFloat(globalRows[0]?.total || 0);
   if (globalSpent >= globalLimit) {
-    return { error: 'Global daily limit reached. Try again tomorrow.' };
+    // #593: says WHEN, like the per-user message above. "Try again
+    // tomorrow" left the reader guessing at the boundary — and guessing
+    // wrong, since it is a UTC one and most readers are not on UTC.
+    return { error: 'Global daily limit reached — the platform\'s shared AI budget for today is spent. Resets at midnight UTC.' };
   }
 
   return {
@@ -170,16 +188,15 @@ async function getBudgetSnapshot(pool, userId) {
     // spent" — the limit itself is still accurate.
     log.warn('limits', 'budget snapshot read failed', { userId, err: err.message });
   }
-  // Midnight UTC, matching the boundary checkBudget's message promises.
-  const reset = new Date();
-  reset.setUTCHours(24, 0, 0, 0);
   return {
     limitCents,
     spentCents,
     remainingCents: Math.max(0, limitCents - spentCents),
     byokCents,
     hasByokKey,
-    resetsAt: reset.toISOString(),
+    // Midnight UTC, matching the boundary checkBudget's message promises.
+    resetsAt: dailyResetAt(),
+    lowBalancePct: LOW_BALANCE_PCT,
   };
 }
 
@@ -419,6 +436,8 @@ module.exports = {
   recordSystemSpend,
   getEffectiveUserLimitCents,
   getBudgetSnapshot,
+  dailyResetAt,
+  LOW_BALANCE_PCT,
   checkBudget,
   loadUserApiKey,
   resolveBillingPath,
