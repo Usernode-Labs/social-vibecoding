@@ -3732,6 +3732,36 @@
       return fallback;
     },
 
+    // iOS only: the settled notification-permission status, once this
+    // screen has asked for it. Null means "no answer of our own yet", and
+    // the row falls back to the snapshot boolean.
+    _unPushStatus: null,
+
+    // "Allow notifications" / "Request permissions".
+    //
+    // Android's returned snapshot IS the answer, so it re-renders straight
+    // from it. iOS's is not: the native permission caches settle
+    // asynchronously after the OS dialog and some builds resolve
+    // requestPermissions() before the user has even answered, so trusting
+    // that one read repainted the row as "Not granted" moments after a
+    // real grant — and nothing started push registration. Defer to
+    // NativeChrome.settleIosPushGrant, which polls for a determined status
+    // and kicks SocialPush, so this screen and the first-run sheet
+    // complete a grant identically.
+    async _unRequestPermissions(isAndroid) {
+      const next = await window.usernode.requestPermissions();
+      if (next && typeof next === 'object') this._usernodeState = next;
+      if (!isAndroid) {
+        const nc = window.NativeChrome;
+        if (nc && typeof nc.settleIosPushGrant === 'function') {
+          const settled = await nc.settleIosPushGrant(
+            !!(next && next.granted === true));
+          this._unPushStatus = settled.status || this._unPushStatus;
+        }
+      }
+      this._renderUsernodeBody();
+    },
+
     // Awaits a bridge setter and re-renders the section from the refreshed
     // snapshot it resolves with.
     async _unApply(promise) {
@@ -3882,12 +3912,20 @@
           isAndroid
             ? 'Block production needs the app to wake your device at exact slot times.'
             : 'Notifications let Usernode alert you about node and account activity.');
+        // iOS row truth: `exactAlarmGranted` is a lagging proxy for the
+        // notification permission (there are no exact alarms on iOS), so
+        // once a request has settled through NativeChrome.settleIosPushGrant
+        // that answer is the authority — the same rule the first-run sheet
+        // in public/js/native-chrome.js applies.
+        const notifOk = !isAndroid && this._unPushStatus != null
+          ? this._unPushStatus === 'granted'
+          : !!perms.exactAlarmGranted;
         this._unStatusRow(permBox, isAndroid ? 'Exact alarms' : 'Notifications',
-          !!perms.exactAlarmGranted, 'Granted', 'Not granted');
-        if (!perms.exactAlarmGranted) {
+          notifOk, 'Granted', 'Not granted');
+        if (!notifOk) {
           this._unButton(permBox,
-            isAndroid ? 'Request permissions' : 'Allow notifications', () =>
-              this._unApply(window.usernode.requestPermissions()));
+            isAndroid ? 'Request permissions' : 'Allow notifications',
+            () => this._unRequestPermissions(isAndroid));
         }
         if (isAndroid) {
           this._unStatusRow(permBox, 'Battery optimization',

@@ -1634,6 +1634,12 @@
       "expectText": "Force-close the app and reopen it"
     },
     {
+      "name": "The Allow notifications sheet survives its own opening tap's ghost click",
+      "path": "/?shot=notif-permissions#settings/usernode",
+      "expectSelector": ".un-sheet[data-un-ghost-click=\"dispatched\"] .un-sheet-body button",
+      "expectText": "Allow notifications"
+    },
+    {
       "name": "A settings history traversal routes once, so nothing pre-empts the transition snapshot (#1102)",
       "path": "/?shot=settings-back#settings",
       "expectSelector": "#settings-screen:not(.hidden)[data-settings-route=\"skipped\"] #settings-section-content [data-settings-section=\"api-key\"]:not(.hidden)"
