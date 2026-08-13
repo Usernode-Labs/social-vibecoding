@@ -13,9 +13,13 @@
  * The markup is like-for-like: same class strings, same `data-notif-id` /
  * `data-invite-app` / `data-group-toggle` attributes, same between-apps
  * divider (between entries only — never before the first or after the last).
- * The attributes stay because they are how the rows were addressed, and
- * because #work-drawer-list still renders the identical HTML flavour of these
- * rows until slice 6's fourth conversion.
+ * The attributes stay because they are how the rows were addressed.
+ *
+ * `Row` is exported as `NotificationRow` because the cog drawer's pinned
+ * "Needs attention" section renders these same four session kinds. Conversion
+ * 4 converted that host too, and rather than a second renderer it now imports
+ * this component and feeds it descriptors from `Notifications._rowView` — one
+ * row, one implementation, for the first time since the two drawers split.
  *
  * ── stopPropagation, everywhere ────────────────────────────────────────
  *
@@ -45,7 +49,7 @@ import { notificationsStore } from './notifications-store.js';
 
 type Segment = { t: 'who' | 'strong' | 'text'; v: string };
 
-type RowView = {
+export type NotificationRowView = {
   id: number;
   unread: boolean;
   unreadCls: string;
@@ -68,7 +72,7 @@ type GroupView = {
   appName: string;
   count: number;
   preview: string;
-  leaves: RowView[];
+  leaves: NotificationRowView[];
   more: { key: string; label: string } | null;
 };
 
@@ -83,7 +87,7 @@ type InviteView = {
   time: string;
 };
 
-type Entry = { type: 'row'; row: RowView } | { type: 'group'; group: GroupView };
+type Entry = { type: 'row'; row: NotificationRowView } | { type: 'group'; group: GroupView };
 
 // The controller is a classic-script-shaped global; this island reads it the
 // same way app.js does rather than importing it, because ./notifications.js
@@ -120,7 +124,7 @@ function UnreadDot({ unread }: { unread: boolean }): ReactNode {
   );
 }
 
-function metaClass(v: RowView): string {
+function metaClass(v: NotificationRowView): string {
   return 'text-xs text-zinc-500 dark:text-zinc-400'
     + (v.mb ? ' mb-1' : '')
     + (v.metaFlex ? ' flex items-center gap-1' : '')
@@ -147,7 +151,7 @@ function mentionParts(text: string): Array<{ text: string; at: boolean }> {
   return out.filter((p) => p.text !== '');
 }
 
-function Body({ body }: { body: RowView['body'] }): ReactNode {
+function Body({ body }: { body: NotificationRowView['body'] }): ReactNode {
   if (!body) return null;
   const cls = 'text-sm text-zinc-700 dark:text-zinc-300 line-clamp-2'
     + (body.medium ? ' font-medium' : '');
@@ -177,7 +181,7 @@ function Body({ body }: { body: RowView['body'] }): ReactNode {
  *    That is safe here because a non-flex row's segments always alternate —
  *    two text segments never touch.
  */
-function Meta({ view }: { view: RowView }): ReactNode {
+function Meta({ view }: { view: NotificationRowView }): ReactNode {
   const flex = view.metaFlex;
   const nodes: ReactNode[] = [<UnreadDot key="dot" unread={view.unread} />];
   if (view.icon) nodes.push(<span key="icon" aria-hidden="true">{view.icon}</span>);
@@ -209,8 +213,14 @@ function Meta({ view }: { view: RowView }): ReactNode {
  * One leaf row. Clicking marks it read and routes (see
  * `Notifications._onItemClick`); on touch it also carries the kit's
  * swipe-to-mark-read tray, which only makes sense while it is unread.
+ *
+ * Exported as `NotificationRow` for the cog drawer, which renders the four
+ * session kinds through this very component. It passes `touch={false}`: the
+ * HTML flavour this replaced carried no swipe tray, and the drawer's rows sit
+ * inside a kit bottom sheet on touch, where a second horizontal gesture would
+ * fight the sheet's own.
  */
-function Row({ view, touch }: { view: RowView; touch: boolean }): ReactNode {
+function Row({ view, touch }: { view: NotificationRowView; touch: boolean }): ReactNode {
   const ref = useRef<HTMLButtonElement | null>(null);
   useEffect(() => {
     const el = ref.current;
@@ -243,6 +253,8 @@ function Row({ view, touch }: { view: RowView; touch: boolean }): ReactNode {
     </button>
   );
 }
+
+export { Row as NotificationRow };
 
 /** The collapsed/expanded app header, plus its leaves when expanded. */
 function Group({ view, touch }: { view: GroupView; touch: boolean }): ReactNode {

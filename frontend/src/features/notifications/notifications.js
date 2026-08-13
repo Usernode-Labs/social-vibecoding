@@ -900,16 +900,6 @@ function isSessionNotif(n) {
 }
 if (typeof window !== 'undefined') window.SESSION_NOTIF_KINDS = SESSION_NOTIF_KINDS;
 
-// Unread indicator dot. When unread it's a solid violet dot carrying an
-// accessible "Unread" label; when read it's an equal-width invisible
-// spacer so read/unread rows stay horizontally aligned (no jitter when a
-// row is marked read live).
-function unreadDot(isUnread) {
-  return isUnread
-    ? '<span role="img" aria-label="Unread" class="inline-block w-1.5 h-1.5 rounded-full bg-violet-500 align-middle mr-1.5 shrink-0"></span>'
-    : '<span aria-hidden="true" class="inline-block w-1.5 h-1.5 align-middle mr-1.5 shrink-0"></span>';
-}
-
 // PlatformUI is a classic-script global. The vm harnesses that evaluate this
 // file don't define it, and neither does the SSG prerender pass.
 function isTouchNow() {
@@ -1044,12 +1034,12 @@ function previewText(n) {
   }
 }
 
-// One notification row, as data. BOTH renderers read this: the React rows in
-// ./notifications-list.tsx, and the HTML string `rowHtml` below, which exists
-// only because WorkDrawer.renderPendingSection still splices these same rows
-// into #work-drawer-list through `Notifications._renderRow`. Slice 6's fourth
-// conversion converts that host and deletes `rowHtml`; until then, the per-kind
-// copy has one source and two renderers rather than two copies.
+// One notification row, as data. It has ONE renderer again — NotificationRow in
+// ./notifications-list.tsx — which both drawers use: the bell's own list, and
+// the cog drawer's pinned "Needs attention" section, which reaches this builder
+// through `Notifications._rowView` (see the publication at the bottom). Until
+// #1191 slice 6's fourth conversion there was a second, HTML-string renderer
+// here for the cog, because that host was still built by `innerHTML`.
 //
 // `segments` is the meta line after the leading unread dot, in order:
 //   { t: 'who' }    → @username, in the strong ink
@@ -1305,71 +1295,6 @@ function rowView(n) {
   };
 }
 
-/** The meta line's class string, from the three per-kind layout flags. */
-function metaClass(v) {
-  return 'text-xs text-zinc-500 dark:text-zinc-400'
-    + (v.mb ? ' mb-1' : '')
-    + (v.metaFlex ? ' flex items-center gap-1' : '')
-    + (v.wrap ? ' flex-wrap' : '');
-}
-
-/** The second line's class string. */
-function bodyClass(body) {
-  return 'text-sm text-zinc-700 dark:text-zinc-300 line-clamp-2'
-    + (body.medium ? ' font-medium' : '');
-}
-
-/** The row's own class string, minus the per-state left accent. */
-const ROW_CLASS = 'w-full text-left px-3 py-2.5 border-b border-zinc-200 '
-  + 'dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 transition-colors';
-
-// The HTML renderer. LEGACY — see the note on rowView: its only remaining
-// consumer is WorkDrawer.renderPendingSection, which still builds
-// #work-drawer-list by innerHTML. It renders the same four session kinds the
-// cog drawer pins, and it goes away with that host.
-function rowHtml(v) {
-  const meta = [unreadDot(v.unread)];
-  if (v.icon) meta.push(`<span aria-hidden="true">${escapeHtml(v.icon)}</span>`);
-  for (const s of v.segments) {
-    if (s.t === 'who') {
-      meta.push(`<span class="font-medium text-zinc-800 dark:text-zinc-200">@${escapeHtml(s.v)}</span>`);
-    } else if (s.t === 'strong') {
-      meta.push(`<span class="font-medium text-zinc-700 dark:text-zinc-300">${escapeHtml(s.v)}</span>`);
-    } else {
-      meta.push(v.metaFlex ? `<span>${escapeHtml(s.v)}</span>` : escapeHtml(s.v));
-    }
-  }
-  meta.push(`<span class="text-zinc-500">· ${escapeHtml(v.time)}</span>`);
-  const body = v.body
-    ? `<div class="${bodyClass(v.body)}">${v.body.mention
-      ? renderMentionSnippet(v.body.text)
-      : escapeHtml(v.body.text)}</div>`
-    : '';
-  return `<button data-notif-id="${v.id}" class="${ROW_CLASS} ${v.unreadCls}">
-    <div class="${metaClass(v)}">${meta.join('\n      ')}</div>
-    ${body}
-  </button>`;
-}
-
-function renderRow(n) {
-  return rowHtml(rowView(n));
-}
-
-function escapeHtml(str) {
-  const div = document.createElement('div');
-  div.textContent = str;
-  return div.innerHTML;
-}
-
-// Highlight @tokens inline even in the notification preview so context
-// matches what the user will see when they click through.
-function renderMentionSnippet(text) {
-  const escaped = escapeHtml(text);
-  return escaped.replace(/(^|[^\w])@([A-Za-z0-9_]{1,32})/g, (_m, pre, name) => {
-    return `${pre}<span class="text-violet-400 font-medium">@${name}</span>`;
-  });
-}
-
 function relativeTime(ts) {
   if (!ts) return '';
   const then = new Date(ts).getTime();
@@ -1382,12 +1307,18 @@ function relativeTime(ts) {
 }
 
 // #1079 chunk B: the cog drawer's "Needs attention" section renders these very
-// same per-kind rows (WorkDrawer.renderPendingSection). While both files were
-// classic <script>s they shared one global scope and it simply called
-// renderRow; inside the bundle each module has its own scope, so the row
-// builder has to be published on the object work-drawer already reaches
-// through (Notifications.items, ._onItemClick, ._renderBadge, …).
-Notifications._renderRow = renderRow;
+// same per-kind rows (WorkDrawer.pendingSection). While both files were classic
+// <script>s they shared one global scope and it simply called the row builder;
+// inside the bundle each module has its own scope, so it has to be published on
+// the object work-drawer already reaches through (Notifications.items,
+// ._onItemClick, ._renderBadge, …).
+//
+// #1191 slice 6 conversion 4 converted that host too, so what crosses here is
+// the DESCRIPTOR rather than an HTML string: both drawers render these rows
+// with the same React component (NotificationRow in ./notifications-list.tsx),
+// which is why the HTML flavour of the row — `rowHtml`, its four class-string
+// helpers, `escapeHtml` and `renderMentionSnippet` — is gone from this file.
+Notifications._rowView = rowView;
 
 // Published exactly where the classic <script> published it: at module
 // evaluation, which for the React entry is still before DOMContentLoaded. The
