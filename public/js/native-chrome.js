@@ -729,6 +729,122 @@
       return null;
     },
 
+    // Public alias. Settings (frontend/src/features/settings/settings.js)
+    // must read the same truth this file's first-run sheet reads, and it
+    // has no business reaching into an underscore-private.
+    iosPushPermissionStatus() {
+      return NativeChrome._iosPushPermissionStatus();
+    },
+
+    // ── The notification-permission tap ──────────────────────────────
+    //
+    // Pure, so it is unit-testable without a WebView (same discipline as
+    // the kit's decideBackdropDismiss). Given everything knowable BEFORE
+    // the tap, say what the tap must do. The one verdict this must never
+    // return is "call requestPermissions and hope": on iOS that method
+    // resolves immediately and shows NO dialog once the permission is
+    // determined, so a screen that always calls it is a tap that does
+    // nothing at all — for good, however many times it is pressed.
+    //
+    // `verdict` is one of:
+    //   "request"      ask the app to present the OS prompt
+    //   "already"      it is already granted; repaint, don't ask
+    //   "settings"     determined-denied — only the OS settings app can
+    //                  change it now, so send the user there
+    //   "unsupported"  this build does not advertise requestPermissions
+    //   "no-bridge"    there is no app-side channel at all
+    // Every non-"request" verdict carries a `reason` for the log line and
+    // `settings: true` when the OS settings page is the way out.
+    decideNotificationTap(state) {
+      const s = state || {};
+      if (s.isNative !== true || s.hasRequestMethod !== true) {
+        return {
+          verdict: 'no-bridge',
+          settings: false,
+          reason: s.isNative !== true
+            ? 'not running inside the Usernode app'
+            : 'the bridge exposes no requestPermissions()',
+        };
+      }
+      // `supported` is tri-state: false only when the build positively
+      // advertised a capability list without this method. An unknown
+      // (degraded probe, old build with no list) must still try — a
+      // cold-start hiccup must not disable the only control there is.
+      if (s.supported === false) {
+        return {
+          verdict: 'unsupported',
+          settings: s.canOpenSettings === true,
+          reason: 'this app build does not advertise requestPermissions',
+        };
+      }
+      if (s.isAndroid === true) return { verdict: 'request', settings: false };
+      if (s.pushStatus === 'granted') {
+        return {
+          verdict: 'already',
+          settings: false,
+          reason: 'the notification permission is already granted',
+        };
+      }
+      if (s.pushStatus === 'denied') {
+        return {
+          verdict: 'settings',
+          settings: s.canOpenSettings === true,
+          reason: 'the notification permission is denied — iOS shows no ' +
+            'prompt for a determined permission',
+        };
+      }
+      return { verdict: 'request', settings: false };
+    },
+
+    // What the tap ends up as AFTER the app answered. Same purity, same
+    // vocabulary, minus the pre-flight verdicts. "silent" is the one that
+    // matters: the app answered, nothing was granted, and the permission
+    // is STILL un-determined — i.e. the OS prompt was never presented, so
+    // from the user's seat the tap did nothing. That is a defect to
+    // report, not a decline to accept quietly.
+    decideNotificationOutcome(state) {
+      const s = state || {};
+      if (s.isAndroid === true) {
+        return s.granted === true
+          ? { verdict: 'granted', settings: false }
+          : {
+              verdict: 'declined',
+              settings: false,
+              reason: 'the alarm permission was not granted',
+            };
+      }
+      if (s.granted === true) return { verdict: 'granted', settings: false };
+      if (s.pushStatus === 'denied') {
+        return {
+          verdict: 'settings',
+          settings: s.canOpenSettings === true,
+          reason: 'the notification permission was denied',
+        };
+      }
+      return {
+        verdict: 'silent',
+        settings: s.canOpenSettings === true,
+        reason: 'the app answered without granting and the permission is ' +
+          'still un-determined — no OS prompt was presented',
+      };
+    },
+
+    // Whether this build advertises a chrome method. Tri-state on
+    // purpose: `null` means "the probe could not say" (a degraded
+    // getBridgeInfo answers with an empty capability list, which is not
+    // the same as a build that has none — issue #978), and callers must
+    // treat that as "try anyway", never as "unsupported".
+    async supports(method) {
+      const bridge = window.usernode;
+      if (!bridge || typeof bridge.getBridgeInfo !== 'function') return null;
+      let info = null;
+      try { info = await NativeChrome.getInfo(); } catch (_) { return null; }
+      if (!info || info.degraded === true) return null;
+      const caps = info.capabilities;
+      if (!Array.isArray(caps) || caps.length === 0) return null;
+      return caps.indexOf(method) !== -1;
+    },
+
     // Triggered from init()'s boot handoff, every `sv:session`, and the
     // `usernode:auth-status` recovery chain — one shared run so the
     // trigger storm cannot stack sheets, and a document latch once a

@@ -4594,6 +4594,45 @@
     );
   };
 
+  // openNotificationSettings() → true. Opens the OS notification settings
+  // page for the app.
+  //
+  // This is the ONLY way back from a determined-denied iOS notification
+  // permission: once the user has said no, requestPermissions() resolves
+  // immediately and presents no dialog at all, so a screen offering only
+  // "request" is a tap that does nothing forever. Settings → Usernode app
+  // routes there through NativeChrome.decideNotificationTap.
+  //
+  // Capability-gated and fails FAST — a build that positively advertises
+  // a capability list without this method rejects with usernodeKind
+  // "unsupported" rather than pending on the probe ceiling, so the caller
+  // can render manual instructions instead of a spinner nobody can clear.
+  // An inconclusive probe (degraded, or a build with no list) still calls
+  // through: "don't know" must not disable the only way out.
+  window.usernode.openNotificationSettings = function () {
+    if (!window.usernode.isNative) {
+      var offMessage =
+        "openNotificationSettings is only available inside the Usernode mobile app.";
+      recordNativeReadError("openNotificationSettings", "not-native", offMessage);
+      return Promise.reject(new Error(offMessage));
+    }
+    return window.usernode.getBridgeInfo().then(function (info) {
+      var caps = info && info.capabilities;
+      if (info && info.degraded !== true && Array.isArray(caps) &&
+          caps.length > 0 && caps.indexOf("openNotificationSettings") === -1) {
+        var message =
+          "openNotificationSettings is not supported by this app build";
+        var err = new Error(message);
+        err.usernodeKind = "unsupported";
+        recordNativeReadError("openNotificationSettings", "unsupported", message);
+        return Promise.reject(err);
+      }
+      return callNativeChromeAction(
+        "openNotificationSettings", {}, _CHROME_PROBE_TIMEOUT_MS
+      );
+    });
+  };
+
   // logout() → true. Confirm web-side; native owns the hard stop/drain and
   // credential cleanup, then SV clears the web session and returns the user
   // to the platform login page.
