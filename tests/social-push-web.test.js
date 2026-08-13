@@ -192,6 +192,109 @@ test('current coordinator does not claim readiness with an older bridge',
     );
   });
 
+// Zero-scaled backoff timers still need wall-clock milliseconds to fire,
+// which setImmediate alone does not spend.
+async function drainRetries(ticks = 24) {
+  for (let i = 0; i < ticks; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 2));
+  }
+}
+
+// The backoff table used to clamp its index, so a device whose privileged
+// handshake was refused reissued markPrivilegedBridgeReady every 30 s for
+// the life of the document — forever, silently, and never once winning.
+test('a refused readiness handshake stops after the backoff table is spent',
+  async () => {
+    const loaded = loadCoordinator({
+      timeoutScale: 0,
+      bridgeReadyImpl() {
+        const err = new Error('Privileged bridge is unavailable for this main frame');
+        err.usernodeCode = 'privileged_frame_unauthorized';
+        throw err;
+      },
+    });
+
+    loaded.fireDocument('DOMContentLoaded');
+    await drainRetries();
+
+    const attempts = loaded.calls.filter(([n]) => n === 'bridge-ready').length;
+    assert.equal(attempts, 6, 'the whole table is the budget, and it is finite');
+
+    const state = loaded.sandbox.SocialPush.readinessState();
+    assert.equal(state.ready, false);
+    assert.equal(state.exhausted, true);
+    assert.equal(state.pending, false);
+    assert.match(state.lastError, /main frame/i);
+
+    // And it stays stopped without a real signal.
+    await drainRetries();
+    assert.equal(
+      loaded.calls.filter(([n]) => n === 'bridge-ready').length, 6
+    );
+  });
+
+test('the user can spend a fresh readiness budget from Settings', async () => {
+  let failing = true;
+  const loaded = loadCoordinator({
+    timeoutScale: 0,
+    bridgeReadyImpl() {
+      if (failing) throw new Error('refused');
+      return { ready: true };
+    },
+  });
+
+  loaded.fireDocument('DOMContentLoaded');
+  await drainRetries();
+  assert.equal(loaded.sandbox.SocialPush.readinessState().exhausted, true);
+
+  failing = false;
+  const state = loaded.sandbox.SocialPush.retryBridgeReadiness();
+  assert.equal(state.exhausted, false);
+  await settle();
+  assert.equal(loaded.sandbox.SocialPush.readinessState().ready, true);
+  assert.equal(loaded.calls.filter(([n]) => n === 'bridge-ready').length, 7);
+});
+
+test('a native auth-status of ready re-arms a spent readiness budget',
+  async () => {
+    let failing = true;
+    const loaded = loadCoordinator({
+      timeoutScale: 0,
+      bridgeReadyImpl() {
+        if (failing) throw new Error('refused');
+        return { ready: true };
+      },
+    });
+
+    loaded.fireDocument('DOMContentLoaded');
+    await drainRetries();
+    assert.equal(loaded.sandbox.SocialPush.readinessState().exhausted, true);
+
+    // A non-ready phase is not the signal; only "ready" is.
+    loaded.fire('usernode:auth-status', { phase: 'transitioning' });
+    await settle();
+    assert.equal(loaded.calls.filter(([n]) => n === 'bridge-ready').length, 6);
+
+    failing = false;
+    loaded.fire('usernode:auth-status', { phase: 'ready' });
+    await settle();
+    assert.equal(loaded.sandbox.SocialPush.readinessState().ready, true);
+  });
+
+test('a successful readiness handshake reports a clean state', async () => {
+  const loaded = loadCoordinator();
+
+  loaded.fireDocument('DOMContentLoaded');
+  await settle();
+
+  const state = loaded.sandbox.SocialPush.readinessState();
+  assert.deepEqual(
+    { ready: state.ready, attempts: state.attempts, exhausted: state.exhausted },
+    { ready: true, attempts: 0, exhausted: false }
+  );
+  assert.equal(state.lastError, null);
+});
+
 test('transient support probes retry instead of disabling Social push',
   async () => {
     let probes = 0;

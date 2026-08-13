@@ -87,6 +87,47 @@
       }
     },
 
+    // ── Session-admission failure record ─────────────────────────────
+    //
+    // The admission paths below fail by console.warn + clean exit, which
+    // is right for the shell (it keeps working without the native side)
+    // but leaves the user staring at "Finishing secure app sign-in…"
+    // forever with nothing to report. Park the last reason here so the
+    // Settings diagnostics panel can name it. Same discipline and same
+    // shape as lastReadError(): a stage, the message, an optional
+    // machine-readable code from the app, and when.
+    _lastSessionFailure: null,
+
+    _recordSessionFailure(stage, error) {
+      const message = (error && error.message)
+        ? String(error.message)
+        : (typeof error === 'string' ? error : null);
+      NativeChrome._lastSessionFailure = {
+        stage,
+        message,
+        code: (error && typeof error.usernodeCode === 'string')
+          ? error.usernodeCode : null,
+        kind: (error && typeof error.usernodeKind === 'string')
+          ? error.usernodeKind : null,
+        at: Date.now(),
+      };
+      return NativeChrome._lastSessionFailure;
+    },
+
+    // { stage, message, code, kind, at } or null when the last admission
+    // attempt succeeded (or none has run). Copied on the way out.
+    lastSessionFailure() {
+      const rec = NativeChrome._lastSessionFailure;
+      if (!rec) return null;
+      return {
+        stage: rec.stage,
+        message: rec.message,
+        code: rec.code,
+        kind: rec.kind,
+        at: rec.at,
+      };
+    },
+
     async _initDrawerRows() {
       // The Profile row is a plain #profile anchor; hash navigation
       // drives the screen (App.navigateToProfile), the click handler
@@ -237,14 +278,19 @@
           if (!isCurrentAnonymous()) return false;
           if (typeof bridge.enterAnonymousSession !== 'function') {
             console.warn('[native-chrome] anonymous-session admission is unavailable');
+            NativeChrome._recordSessionFailure('anonymous-admission',
+              'Anonymous-session admission is unavailable on this app build');
             return false;
           }
           const admission = await bridge.enterAnonymousSession();
           if (!admission || admission.admitted !== true) {
             console.warn('[native-chrome] anonymous session was not admitted');
+            NativeChrome._recordSessionFailure('anonymous-admission',
+              'The Usernode app did not admit the anonymous session');
             return false;
           }
           if (!isCurrentAnonymous()) return false;
+          NativeChrome._lastSessionFailure = null;
           NativeChrome._setAuthenticatedSessionAdmission(true);
           NativeChrome._setSessionWalletRelayAdmission(true);
           return true;
@@ -273,6 +319,7 @@
       }).catch((error) => {
         console.warn('[native-chrome] anonymous-session admission failed:',
           error && error.message ? error.message : error);
+        NativeChrome._recordSessionFailure('anonymous-admission', error);
         return false;
       });
     },
@@ -367,11 +414,15 @@
         if (capabilities.includes('beginSessionHandoff')) {
           if (typeof window.usernode.beginSessionHandoff !== 'function') {
             console.warn('[native-chrome] session handoff latch is unavailable');
+            NativeChrome._recordSessionFailure('login-handoff',
+              'The session handoff latch is unavailable on this app build');
             return null;
           }
           const admission = await window.usernode.beginSessionHandoff();
           if (!admission || admission.blocked !== true) {
             console.warn('[native-chrome] native wallet handoff was not blocked');
+            NativeChrome._recordSessionFailure('login-handoff',
+              'The Usernode app did not block its wallet for the handoff');
             return null;
           }
           if (!NativeChrome._isCurrentWebParticipant(
@@ -451,6 +502,7 @@
       } catch (e) {
         console.warn('[native-chrome] login handoff failed:',
           e && e.message ? e.message : e);
+        NativeChrome._recordSessionFailure('login-handoff', e);
         return null;
       }
     },
@@ -521,6 +573,21 @@
 
     // Close every local/native wallet admission path before the first web
     // logout await. This preflight does not tear down the WebView.
+    //
+    // It RESOLVES a report and no longer throws:
+    //   { nativeTerminal, latch, reason, code }
+    // with `latch` one of
+    //   'acknowledged'  the native wallet latch closed for this logout
+    //   'unsupported'   this build has no latch to close (pre-v4)
+    //   'unavailable'   the app refused or could not answer the latch call
+    //   'inconclusive'  two probes running and we still cannot tell
+    //
+    // Rejecting is what stranded a device whose privileged handshake was
+    // refused: Settings aborted before POST /api/auth/logout, so the web
+    // session survived and there was no way out of the app at all. The
+    // admission-closing above is unchanged and still synchronous — a
+    // refused latch means the caller must confirm with the user before
+    // clearing the web session, NOT that it may not.
     prepareWebLogout() {
       NativeChrome._logoutRunning = true;
       NativeChrome._setAuthenticatedSessionAdmission(false);
@@ -529,31 +596,74 @@
       NativeChrome._handoffRerunRequested = false;
       NativeChrome._nodeStartKey = null;
       return (async () => {
-        const info = await NativeChrome.getInfo();
+        const report = (nativeTerminal, latch, reason, error) => {
+          if (latch !== 'acknowledged' && latch !== 'unsupported') {
+            NativeChrome._recordSessionFailure('logout-preflight',
+              error || reason);
+          }
+          return {
+            nativeTerminal,
+            latch,
+            reason: reason || null,
+            code: (error && typeof error.usernodeCode === 'string')
+              ? error.usernodeCode : null,
+          };
+        };
+        const isNative = () => {
+          const bridge = window.usernode;
+          return !!bridge && bridge.isNative === true;
+        };
+        const conclusive = (info) => Number.isInteger(info.version) &&
+          info.version > 0;
+
+        let info = await NativeChrome.getInfo();
+        if (isNative() && !conclusive(info)) {
+          // One cached probe may merely have timed out, so re-probe ONCE in
+          // place rather than making the user click again — that retry loop
+          // is exactly what a stuck device cannot escape.
+          NativeChrome._infoPromise = null;
+          info = await NativeChrome.getInfo();
+        }
+        if (isNative() && !conclusive(info)) {
+          NativeChrome._infoPromise = null;
+          return report(false, 'inconclusive',
+            'Native bridge probe was inconclusive');
+        }
+
         const capabilities = Array.isArray(info.capabilities)
           ? info.capabilities
           : [];
-        const bridge = window.usernode;
-        const conclusiveVersion = Number.isInteger(info.version) &&
-          info.version > 0;
-        if (bridge && bridge.isNative === true && !conclusiveVersion) {
-          // Do not clear the web session from an actually-native shell when
-          // the one cached probe may merely have timed out. Keep this attempt
-          // fail-closed and let the next click perform a fresh probe.
-          NativeChrome._infoPromise = null;
-          throw new Error('Native bridge probe was inconclusive');
-        }
         if (capabilities.includes('beginSessionHandoff')) {
           if (typeof window.usernode.beginSessionHandoff !== 'function') {
-            throw new Error('Native session handoff latch is unavailable');
+            return report(false, 'unavailable',
+              'Native session handoff latch is unavailable');
           }
-          const admission = await window.usernode.beginSessionHandoff();
+          let admission = null;
+          try {
+            admission = await window.usernode.beginSessionHandoff();
+          } catch (error) {
+            // The privileged handshake being refused lands here, and is the
+            // whole reason this resolves instead of throwing.
+            return report(false, 'unavailable',
+              (error && error.message)
+                ? String(error.message)
+                : 'Native session handoff latch failed',
+              error);
+          }
           if (!admission || admission.blocked !== true) {
-            throw new Error('Native wallet handoff was not blocked');
+            return report(false, 'unavailable',
+              'Native wallet handoff was not blocked');
           }
         }
-        return capabilities.includes('logout') &&
+
+        const nativeTerminal = capabilities.includes('logout') &&
           !!window.usernode && typeof window.usernode.logout === 'function';
+        NativeChrome._lastSessionFailure = null;
+        return report(nativeTerminal,
+          capabilities.includes('beginSessionHandoff')
+            ? 'acknowledged'
+            : 'unsupported',
+          null);
       })();
     },
 
