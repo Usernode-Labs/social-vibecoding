@@ -29,6 +29,7 @@
 import type { ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
+import { ArrowRightShortIcon, ChevronRightIcon } from '@/components/ui/icons';
 
 import { AppIconContent, AppPills, appIconKind, hasAppPills } from './app-card-view';
 
@@ -81,36 +82,6 @@ function controller(): any {
 
 const NOTE_CLASS = 'px-3 py-3 text-sm text-zinc-500 dark:text-zinc-400';
 const CARD_CLASS = 'mt-5 rounded-xl border border-zinc-200 dark:border-zinc-800 overflow-hidden';
-
-function OpenArrow(): ReactNode {
-  return (
-    <svg
-      className="w-4 h-4"
-      fill="none"
-      stroke="currentColor"
-      viewBox="0 0 24 24"
-      strokeWidth="2"
-      aria-hidden="true"
-    >
-      <path strokeLinecap="round" strokeLinejoin="round" d="M13 7l5 5m0 0l-5 5m5-5H6" />
-    </svg>
-  );
-}
-
-function ActionChevron(): ReactNode {
-  return (
-    <svg
-      className="w-4 h-4 shrink-0 opacity-40"
-      fill="none"
-      stroke="currentColor"
-      viewBox="0 0 24 24"
-      strokeWidth="2"
-      aria-hidden="true"
-    >
-      <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-    </svg>
-  );
-}
 
 function ContributorRow({ row }: { row: ContributorRowView }): ReactNode {
   return (
@@ -230,7 +201,7 @@ function Ready({ view }: { view: Extract<DetailView, { state: 'ready' }> }): Rea
           onPointerDown={view.canOpen ? warm : undefined}
           onMouseEnter={view.canOpen ? warm : undefined}
         >
-          {view.canOpen ? <OpenArrow /> : null}
+          {view.canOpen ? <ArrowRightShortIcon className="w-4 h-4" aria-hidden="true" /> : null}
           {view.openLabel}
         </Button>
         <button
@@ -261,7 +232,7 @@ function Ready({ view }: { view: Extract<DetailView, { state: 'ready' }> }): Rea
               onClick={(e) => controller()?._runDetailAction(a.index, e.currentTarget)}
             >
               <span>{a.label}</span>
-              <ActionChevron />
+              <ChevronRightIcon className="w-4 h-4 shrink-0 opacity-40" aria-hidden="true" />
             </button>
           ))}
         </div>

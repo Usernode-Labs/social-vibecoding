@@ -27,6 +27,14 @@ const swJs = read('public/js/../sw.js');
 const appJs = read('public/js/app.js');
 const appViewJs = read('public/js/app-view.js');
 const browseJs = read('frontend/src/features/apps/browse.js');
+// #1191 slice 6 conversion 3 split the browse screen the same way chunk G
+// split the dev chat: browse.js still decides where a row or the back link
+// GOES, and the two components below are what carry the anchor and the
+// NavLink wiring. Both halves are read here, and the browse entries that used
+// to ride the shared ANCHORS / ROWS tables are hand-written below instead —
+// one table row cannot span two files.
+const browseListTsx = read('frontend/src/features/apps/browse-list.tsx');
+const browseDetailTsx = read('frontend/src/features/apps/browse-detail.tsx');
 const devChatJs = read('frontend/src/features/dev-chat/dev-chat.js');
 const chatFrameTsx = read('frontend/src/features/dev-board/chat-frame.tsx');
 const { HOME_SRC: homeJs } = require('./helpers/home-modules');
@@ -124,7 +132,8 @@ test('no converted control opts into target=_blank', () => {
   assert.ok(!/id="back-btn"[^>]*target=/.test(html),
     'the header control must not carry target — see NavLink\'s header comment');
   for (const [name, src] of [['app-view.js', appViewJs], ['dev-chat.js', devChatJs],
-    ['browse.js', browseJs], ['leaderboard.js', leaderboardJs]]) {
+    ['browse.js', browseJs], ['browse-list.tsx', browseListTsx],
+    ['browse-detail.tsx', browseDetailTsx], ['leaderboard.js', leaderboardJs]]) {
     for (const id of ['dc-back', 'dev-chat-back', 'dev-topic-back',
       'browse-detail-back', 'data-lb-back']) {
       const at = src.indexOf(`${id}"`) !== -1 ? src.indexOf(`${id}"`) : src.indexOf(id);
@@ -240,14 +249,6 @@ const ANCHORS = [
     handler: "document.getElementById('dev-topic-back').addEventListener",
   },
   {
-    label: 'back to all apps',
-    src: () => browseJs, file: 'browse.js',
-    markup: /<a id="browse-detail-back" href="#apps"/,
-    oldTag: /<button type="button" id="browse-detail-back"/,
-    href: /id="browse-detail-back" href="#apps"/,
-    handler: "host.querySelector('#browse-detail-back')",
-  },
-  {
     label: 'back to the top-users leaderboard',
     src: () => leaderboardJs, file: 'leaderboard.js',
     markup: /<a data-lb-back href="#leaderboard\/users"/,
@@ -320,8 +321,36 @@ test('[data-lb-back] keeps its bottom margin as an anchor', () => {
     + 'without this the button-to-anchor swap silently collapses the gap');
 });
 
+// The browse detail page's back link, JSX in browse-detail.tsx since #1191
+// slice 6. Same three properties the ANCHORS loop asserts for every other
+// control — a real <a>, a resolvable target, and a guard that runs before
+// preventDefault — written out because the control is a component now.
+test('"back to all apps" is a real anchor with a real target', () => {
+  const at = browseDetailTsx.indexOf('id="browse-detail-back"');
+  assert.ok(at !== -1, 'browse-detail.tsx: #browse-detail-back went missing');
+  const tag = browseDetailTsx.slice(browseDetailTsx.lastIndexOf('<', at), at + 400);
+  assert.match(tag, /^<a\b/, 'browse-detail.tsx: the control must be an <a>');
+  assert.match(tag, /href="#apps"/, 'it must carry a resolvable href');
+  assert.ok(!/<button[^>]*id="browse-detail-back"/.test(browseDetailTsx + browseJs),
+    'the old <button> tag is gone from both halves');
+});
+
+test('"back to all apps" leaves a modified click to the browser', () => {
+  const at = browseDetailTsx.indexOf('id="browse-detail-back"');
+  const body = browseDetailTsx.slice(at, at + 700);
+  // `e` is React's SyntheticEvent here, so the guard reads the native one out
+  // of it — the same NavLink call, one hop further in.
+  const guard = body.indexOf('isNativeClick(e.nativeEvent)');
+  const prevent = body.indexOf('e.preventDefault()');
+  assert.ok(guard !== -1, 'browse-detail.tsx: the modified-click guard went missing');
+  assert.ok(prevent !== -1, 'browse-detail.tsx: a plain click must still be intercepted');
+  assert.ok(guard < prevent,
+    'browse-detail.tsx: preventDefault ahead of the guard swallows the new tab');
+});
+
 test('#browse-detail-back keeps its own layout as an anchor', () => {
-  const tag = browseJs.match(/<a id="browse-detail-back"[^>]*>/)[0];
+  const at = browseDetailTsx.indexOf('id="browse-detail-back"');
+  const tag = browseDetailTsx.slice(at, at + 400);
   assert.match(tag, /\binline-block\b/, 'same inline-vs-inline-block trap');
 });
 
@@ -358,14 +387,6 @@ const ROWS = [
     guards: ['card-add-btn', 'card-menu-btn', "card.dataset.demo === 'true'", 'awaiting_secrets'],
   },
   {
-    label: 'browse list rows',
-    src: () => browseJs, file: 'browse.js',
-    anchor: ".querySelectorAll('.browse-row')",
-    wire: /NavLink\.wireModified\(row, hrefFor, activate\)/,
-    href: /#apps\/\$\{encodeURIComponent\(slug\)\}/,
-    guards: ['browse-add-btn', "row.dataset.demo === 'true'"],
-  },
-  {
     label: 'dev-chat session rows',
     src: () => devChatJs, file: 'dev-chat.js',
     anchor: ".querySelectorAll('.dc-active-item')",
@@ -394,6 +415,36 @@ for (const r of ROWS) {
       `${r.file}: a guarded-out row must resolve to no href, i.e. stay inert`);
   });
 }
+
+// The browse list rows, split across the same two files as the back link: the
+// wiring is an effect in browse-list.tsx (the row is a component now, so there
+// is no querySelectorAll pass to hang it off), and the route plus the inert-row
+// guards are Browse.rowHref.
+test('browse list rows open in a new tab under a modifier', () => {
+  const at = browseListTsx.indexOf('const nav = (window as any).NavLink;');
+  assert.ok(at !== -1, 'browse-list.tsx: the NavLink wiring went missing');
+  const body = browseListTsx.slice(at, at + 1200);
+  assert.match(body, /nav\.wireModified\(node, hrefFor, activate\)/,
+    'browse-list.tsx: must route through NavLink.wireModified');
+  const hrefFor = body.slice(body.indexOf('const hrefFor'), body.indexOf('const activate'));
+  assert.ok(hrefFor.includes('browse-add-btn'),
+    'browse-list.tsx: hrefFor must repeat the Add-button guard — otherwise '
+    + 'cmd-click drills into a row a plain click refuses');
+  assert.ok(hrefFor.includes('return null'),
+    'browse-list.tsx: a guarded-out row must resolve to no href, i.e. stay inert');
+  // The row's own route and its demo guard are the controller's, and hrefFor
+  // and the plain click reach them through the SAME method, so they cannot
+  // disagree the way two copies of the guard could.
+  assert.match(hrefFor, /rowHref\(view\)/);
+  const rowHref = browseJs.slice(browseJs.indexOf('rowHref(view) {'),
+    browseJs.indexOf('openRow(view) {'));
+  assert.match(rowHref, /#apps\/\$\{encodeURIComponent\(view\.slug\)\}/,
+    'the new tab must open the row\'s own route');
+  assert.match(rowHref, /view\.demo/, 'a staging demo row has no page to open');
+  assert.match(rowHref, /return null/);
+  assert.match(browseJs, /openRow\(view\) \{\s*\n\s*const href = Browse\.rowHref\(view\);/,
+    'the plain click resolves through the same guard');
+});
 
 // ── The drawer's delegated handler ─────────────────────────────────────
 

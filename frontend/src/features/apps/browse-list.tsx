@@ -25,6 +25,7 @@
 import { useEffect, useRef } from 'react';
 import type { ReactNode } from 'react';
 
+import { CheckIcon } from '@/components/ui/icons';
 import { AppIconContent, AppPills, appIconKind, hasAppPills } from './app-card-view';
 
 type RowView = {
@@ -49,21 +50,6 @@ const ADD_BASE = 'browse-add-btn shrink-0 inline-flex items-center gap-1 rounded
 const ADD_ON = 'bg-emerald-500 border-emerald-500 text-white';
 const ADD_OFF = 'border-violet-500 dark:border-violet-400 text-violet-600 '
   + 'dark:text-violet-400 bg-white dark:bg-zinc-900 hover:bg-violet-50 dark:hover:bg-violet-950';
-
-function CheckIcon(): ReactNode {
-  return (
-    <svg
-      className="w-3.5 h-3.5"
-      fill="none"
-      stroke="currentColor"
-      viewBox="0 0 24 24"
-      strokeWidth="3"
-      aria-hidden="true"
-    >
-      <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-    </svg>
-  );
-}
 
 function Row({ view }: { view: RowView }): ReactNode {
   const rowRef = useRef<HTMLDivElement | null>(null);
@@ -132,7 +118,7 @@ function Row({ view }: { view: RowView }): ReactNode {
           controller()?.toggleRowAdded(view);
         }}
       >
-        {view.added ? <CheckIcon /> : null}
+        {view.added ? <CheckIcon className="w-3.5 h-3.5" strokeWidth="3" aria-hidden="true" /> : null}
         {view.added ? 'Added' : 'Add'}
       </button>
     </div>

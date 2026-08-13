@@ -17,6 +17,8 @@
 
 import type { ReactNode } from 'react';
 
+import { Glyph } from '@/components/ui/icons';
+
 import {
   appPillsFor,
   iconViewFor,
@@ -77,16 +79,10 @@ export function AppPills({ app }: { app: AppRecord }): ReactNode {
       ))}
       {vis ? (
         <span className={VIS_CHIP_CLS} title={vis.tip}>
-          <svg
-            className="w-3 h-3 shrink-0"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-            strokeWidth="2"
-            aria-hidden="true"
-          >
-            <path strokeLinecap="round" strokeLinejoin="round" d={VIS_CHIP_PATHS[vis.icon]} />
-          </svg>
+          {/* <Glyph>, not a named export: the two visibility paths live in
+              app-card.js's VIS_CHIP_PATHS because the string renderer there
+              interpolates the same table, and one table beats two copies. */}
+          <Glyph className="w-3 h-3 shrink-0" aria-hidden="true" d={VIS_CHIP_PATHS[vis.icon]} />
           {` ${vis.label}`}
         </span>
       ) : null}
