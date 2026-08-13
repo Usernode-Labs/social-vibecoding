@@ -2,7 +2,7 @@
 //
 // Generated once from the pre-migration public/index.html and maintained here
 // by hand ever since. This file is the SOURCE OF TRUTH for the shell's markup;
-// public/index.html is a committed build artifact produced from it (see
+// public/index.html is an ignored build artifact produced from it (see
 // frontend/scripts/build-shell.mjs).
 //
 // ── Three constraints this component must keep ─────────────────────────

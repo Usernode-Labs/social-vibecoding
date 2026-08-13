@@ -11,7 +11,7 @@
  * made it stateful. The render output is still byte-identical to what the
  * shell shipped — same ids, same class strings, same `hidden` semantics, same
  * data-* attributes — and tests/baselines/shell-markup.json plus the
- * prerendered public/index.html in this commit are the proof.
+ * image-prerendered public/index.html are the proof.
  *
  * ── What this island owns, and what it does not ───────────────────────
  *

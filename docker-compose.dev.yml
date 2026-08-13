@@ -73,7 +73,7 @@ services:
       MINIO_ENDPOINT: http://vibecoding-minio-dev:9000
       MINIO_ROOT_USER: localdev
       MINIO_ROOT_PASSWORD: localdev-minio-secret
-    command: node --watch --watch-path=server.js --watch-path=src server.js
+    command: sh -c "node scripts/restore-image-assets.js && exec node --watch --watch-path=server.js --watch-path=src server.js"
     volumes:
       - ./public:/app/public
       - ./src:/app/src

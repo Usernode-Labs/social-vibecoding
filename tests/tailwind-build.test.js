@@ -69,11 +69,14 @@ const VENDOR_FILES = [
 const HOSTED_TAILWIND = 'public/usernode-tailwind/v1/tailwind.js';
 const HOSTED_TAILWIND_SHA384 = 'igm5BeiBt36UU4gqwWS7imYmelpTsZlQ45FZf+XBn9MuJbn4nQr7yx1yFydocC/K';
 
-test('the build script compiles the current sources without a committed artifact', () => {
+test('the build script compiles the current sources without committed artifacts', () => {
   assert.ok(css.length > 20000, `${OUTPUT_FILE} is only ${css.length} bytes`);
 
   const gitignore = fs.readFileSync(path.join(ROOT, '.gitignore'), 'utf8').split(/\r?\n/);
   const dockerignore = fs.readFileSync(path.join(ROOT, '.dockerignore'), 'utf8').split(/\r?\n/);
+  assert.ok(gitignore.includes('/public/index.html'), 'public/index.html must be gitignored');
+  assert.ok(dockerignore.includes('public/index.html'),
+    'public/index.html must be excluded from the Docker context');
   assert.ok(gitignore.includes(`/${OUTPUT_FILE}`), `${OUTPUT_FILE} must be gitignored`);
   assert.ok(dockerignore.includes(OUTPUT_FILE), `${OUTPUT_FILE} must be excluded from the Docker context`);
 });
@@ -96,7 +99,7 @@ test('Dockerfile compiles Tailwind in a builder and copies only the output into 
   assert.ok(runtimeCopy > -1 && generatedCopy > runtimeCopy,
     'the generated stylesheet must be copied after the source tree');
 
-  const runtime = dockerfile.slice(dockerfile.indexOf('# Stage 2'));
+  const runtime = dockerfile.slice(dockerfile.indexOf('# Stage 3'));
   assert.match(runtime, /RUN npm ci --production/, 'the runtime must remain production-only');
   assert.doesNotMatch(runtime, /npm run build:css/, 'the runtime must not compile assets');
 });
