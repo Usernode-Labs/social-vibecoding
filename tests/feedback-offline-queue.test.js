@@ -341,6 +341,42 @@ test('seedDisplayOnly: shows a queued message but never sends one', async () => 
   assert.equal((await FQ.pending()).length, 1, 'the pinned state survives a flush attempt');
 });
 
+test('seedDisplayOnly: an earlier IndexedDB open cannot replace the screenshot store', async () => {
+  let openRequest;
+  const previousWindow = global.window;
+  global.window = {
+    App: { user: { id: 7 } },
+    indexedDB: {
+      open() {
+        openRequest = {};
+        return openRequest;
+      },
+    },
+    localStorage: {},
+  };
+  try {
+    const FQ = load();
+    // Matches browser boot: the dialog controller starts opening the durable
+    // store, then enterAuthed applies ?shot=feedback-queued before that open
+    // has completed.
+    const openingRead = FQ.pending();
+    assert.ok(openRequest, 'the IndexedDB open is pending');
+    FQ.seedDisplayOnly([{ payload: { description: 'seed wins', target: 'platform' } }]);
+
+    openRequest.result = {};
+    openRequest.onsuccess();
+
+    assert.equal((await openingRead).length, 1,
+      'the read that started before the seed is redirected to the seeded adapter');
+    assert.equal(FQ.storage, 'memory');
+    assert.equal((await FQ.pending())[0].payload.description, 'seed wins');
+  } finally {
+    delete require.cache[MODULE_PATH];
+    if (previousWindow === undefined) delete global.window;
+    else global.window = previousWindow;
+  }
+});
+
 test('storage: reports which adapter is backing the queue', async () => {
   const FQ = load();
   assert.equal(FQ.storage, 'none', 'nothing is opened until the queue is used');

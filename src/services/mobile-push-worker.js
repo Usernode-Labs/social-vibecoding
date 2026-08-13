@@ -25,7 +25,10 @@ function deadline(promise, timeoutMs) {
       err.code = 'provider_timeout';
       reject(err);
     }, timeoutMs);
-    timer.unref?.();
+    // This is part of an in-flight send, not an idle background poll. It must
+    // keep the runtime alive because it is the only thing that can settle a
+    // provider promise that never resolves. Unref'ing it made isolated test
+    // workers exit with a pending promise and cancel the rest of their file.
   });
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
