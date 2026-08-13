@@ -111,11 +111,27 @@ export function fx(fn: () => void, type?: string): void {
  * fallback / after). Zoom callers split their mutation into fn (reveal the
  * incoming element) + after (conceal the outgoing one), so the no-kit path has
  * to run BOTH halves.
+ *
+ * Under a `?shot=` deep link the kit is skipped and the cut is instant. Shots
+ * assert settled END-states (`?shot=anon-back` needs two full open/close
+ * cycles stamped inside capture.js's shared ASSERT_MAX_MS window), and the
+ * kit's zoom-out alone runs ~2s — cinematics would spend the whole assertion
+ * budget. Real navigation never carries a shot param, so users always get the
+ * kit path.
  */
+function isShotUrl(): boolean {
+  try {
+    return new URLSearchParams(location.search).has('shot');
+  } catch {
+    return false;
+  }
+}
+
 export function zoomFx(fn: () => void, opts: ZoomOpts): void {
   const ui = legacy().PlatformUI;
-  if (ui) ui.transition(fn, opts as unknown as { type?: string } & Record<string, unknown>);
-  else {
+  if (ui && !isShotUrl()) {
+    ui.transition(fn, opts as unknown as { type?: string } & Record<string, unknown>);
+  } else {
     fn();
     if (typeof opts.after === 'function') opts.after();
   }

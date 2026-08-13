@@ -423,8 +423,11 @@ test('_syncChrome drives the header through App, not the DOM', () => {
 
 test('the menu re-resolves when gate state lands after first paint', () => {
   assert.match(settingsJs, /_renderNavIfOpen\(\)\s*\{/, 'the re-resolve helper exists');
+  // Bounded at the method's own closing brace rather than a character count:
+  // the call sits in the last statement of refresh(), so any comment added
+  // above it walked a fixed window off the end and failed for no reason.
   const refresh = settingsJs.slice(settingsJs.indexOf('    async refresh() {'));
-  assert.match(refresh.slice(0, 1800), /_renderNavIfOpen\(\)/,
+  assert.match(refresh.slice(0, refresh.indexOf('\n    },\n')), /_renderNavIfOpen\(\)/,
     'walletLinkEnabled arrives with /api/auth/me — re-render the menu');
   const usernode = settingsJs.slice(settingsJs.indexOf('    async _renderUsernodeSection() {'));
   assert.match(usernode.slice(0, 1200), /_renderNavIfOpen\(\)/,

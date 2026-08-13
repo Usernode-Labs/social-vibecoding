@@ -16,6 +16,7 @@ const registry = require('../agents/registry');
 const agentModels = require('./agent-models');
 const log = require('./logger');
 const turnLifecycle = require('./turn-lifecycle');
+const llmTelemetry = require('./llm-telemetry');
 
 // Resolve the backend for a turn from the session row (pinned at session
 // creation). Falls back to claude_code for legacy sessions.
@@ -175,6 +176,7 @@ async function resolveCodexRuntimeContext({ pool, session, userId, model, reason
 async function startCodexAttempt({
   pool, session, userId, logicalTurnId, attemptNumber, model,
   reasoningEffort, resumeThreadId, runtimeContext, mode = 'build',
+  telemetryComponent = null,
   // A missing-thread retry deliberately keeps attempt one's active_turn
   // until attempt two is durably registered. Only that exact transition
   // may replace an existing record; every ordinary dispatch still fails
@@ -185,6 +187,10 @@ async function startCodexAttempt({
   const turnId = crypto.randomUUID();
   const durableTurnId = logicalTurnId || crypto.randomUUID();
   const journal = turnLifecycle.journalPathForAttempt(turnId);
+  const measuredComponent = llmTelemetry.collectionComponent(
+    telemetryComponent,
+    mode === 'scout' ? 'coding_agent_scout' : 'coding_agent_build',
+  );
   const expectedConfigVersion = ctx.agentConfigVersion || session.agent_config_version || 1;
   // plan 8.5 (Commit 6): dispatch-side config-version validation. Lock the
   // session row and verify the backend is still Codex and the config
@@ -264,6 +270,7 @@ async function startCodexAttempt({
       turnUuid: turnId,
       logicalTurnId: durableTurnId,
       attemptNumber: attemptNumber || 1,
+      ...(measuredComponent ? { telemetryComponent: measuredComponent } : {}),
       model: model || '',
       startedAt: new Date().toISOString(),
       byok: false,
@@ -346,7 +353,10 @@ async function lockAttempt(client, turnUuid) {
 // changing its status or double-counting.
 // One physical invocation = one attempt; a retry writes a NEW attempt row
 // and never overwrites the prior attempt's usage (plan 6.1, 6.5).
-async function completeCodexAttempt({ pool, turnUuid, status = 'completed', threadId = null, usageTotal = null, errorCode = null, errorDetail = null }) {
+async function completeCodexAttempt({
+  pool, turnUuid, status = 'completed', threadId = null, usageTotal = null,
+  errorCode = null, errorDetail = null, telemetryComponent = null,
+}) {
   if (!turnUuid) return { updated: false, alreadyTerminal: true };
   const client = await pool.connect();
   try {
@@ -381,6 +391,7 @@ async function completeCodexAttempt({ pool, turnUuid, status = 'completed', thre
       && !!current
       && !providerUsageAlreadyRecorded
       && !tokenDeltaAlreadyRecorded;
+    const measuredComponent = llmTelemetry.collectionComponent(telemetryComponent);
     if (row.status !== 'running' && !reconcileTerminalUsage) {
       await client.query('COMMIT');
       return { updated: false, alreadyTerminal: true };
@@ -396,6 +407,7 @@ async function completeCodexAttempt({ pool, turnUuid, status = 'completed', thre
       ? estimateRequestedModelCost(delta, row.metadata?.pricing)
       : { costSource: 'unavailable', estimatedCostUsd: null };
     const metadata = row.metadata || {};
+    if (measuredComponent) metadata.telemetry_component = measuredComponent;
     if (previous && resetDetected) {
       metadata.usageReset = {
         previous: previous,
@@ -637,6 +649,7 @@ async function resolveCodexTurn(args) {
     resumeThreadId: ctx.resumeThreadId,
     runtimeContext: ctx,
     mode: args.mode || 'build',
+    telemetryComponent: args.telemetryComponent || null,
   });
   return { ...ctx, ...attempt };
 }
@@ -693,6 +706,9 @@ async function settleRecoveredAgentAttempt({
         outputTokens: result?.outputTokens != null ? result.outputTokens : null,
         reasoningOutputTokens: result?.reasoningOutputTokens != null ? result.reasoningOutputTokens : null,
       },
+      telemetryComponent: result?.providerDispatched === true
+        ? activeTurn.telemetryComponent || null
+        : null,
       errorCode: result?.agentRetryFresh === true ? 'resume_thread_missing' : null,
     });
   }

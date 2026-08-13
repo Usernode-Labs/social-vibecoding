@@ -2276,6 +2276,13 @@ CREATE TABLE IF NOT EXISTS events (
 CREATE INDEX IF NOT EXISTS idx_events_type_created ON events(event_type, created_at);
 CREATE INDEX IF NOT EXISTS idx_events_user_created ON events(user_id, created_at);
 
+-- #717: restart/recovery-safe receipt for provider-neutral invocation rows.
+-- Ordinary product analytics events do not carry invocation_key and are
+-- unaffected. The key is an opaque platform id, never provider/user content.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_events_llm_invocation_key
+  ON events ((metadata->>'invocation_key'))
+  WHERE event_type = 'llm_invocation' AND metadata ? 'invocation_key';
+
 -- Tagged staging:private so the analytics log (which is derived from
 -- chat_sessions / pr_kudos, both already private) is TRUNCATEd in staging
 -- clones rather than leaking social history into previews.

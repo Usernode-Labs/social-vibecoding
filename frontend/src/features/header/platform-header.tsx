@@ -28,7 +28,7 @@
 import { useRef } from 'react';
 
 import { useHiddenClass } from '../../lib/legacy-dom';
-import { useVisibility } from '../../lib/visibility-store';
+import { useVisibility, useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { ChromelessPill } from './chromeless-pill';
 import { useHeaderLayout } from './use-header-layout';
 
@@ -47,6 +47,16 @@ export function PlatformHeader() {
   // its place; App.setChromeless publishes the flag, this reads it.
   const visible = useVisibility('platform-header', true);
   useHiddenClass(headerRef, !visible);
+
+  // #1054: the feedback outbox dot. Its writer (paintQueueDot in
+  // features/dialogs/feedback-controller.js) publishes through the
+  // visibility store instead of toggling the class by id, because a
+  // pre-hydration classList write is a mismatch React 19 patches back to
+  // the constant `className="hidden …"`. This subscription applies the
+  // published state synchronously with each publish AND once on mount, so
+  // a publish that lands before hydration still paints. Ships hidden.
+  const feedbackDotRef = useRef<HTMLSpanElement>(null);
+  useVisibilityHiddenClass(feedbackDotRef, 'feedback-queue-dot', false);
 
   return (
     <>
@@ -259,7 +269,7 @@ export function PlatformHeader() {
                 #dev-console-badge uses: the actionable figure is "any", and a
                 second red badge two icons apart would read as an error.
             */}
-            <span id="feedback-queue-dot" className="hidden absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-violet-500" />
+            <span ref={feedbackDotRef} id="feedback-queue-dot" className="hidden absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-violet-500" />
           </button>
           {/*
               Header cog: the "your work" drawer

@@ -9,6 +9,7 @@ const models = require('./models');
 const inLoopBrowser = require('./in-loop-browser');
 const registry = require('../agents/registry');
 const turnLifecycle = require('./turn-lifecycle');
+const llmTelemetry = require('./llm-telemetry');
 
 const WORKER_IMAGE = 'usernode-worker:latest';
 // Per-session worker container resource limits. Read from env (mirrored
@@ -293,6 +294,12 @@ function applyStreamEvent(event, onProgress, state) {
     }
   } else if (event.type === 'result') {
     state.lastResultText = event.result || state.lastResultText;
+    if (event.cost_usd != null || event.total_cost_usd != null) {
+      state.providerCostSeen = true;
+    }
+    // Keep the pre-telemetry billing precedence exactly unchanged. The
+    // separate flag above is enough to distinguish an explicitly reported
+    // zero from this state's legacy zero default.
     state.costUsd = event.cost_usd || event.total_cost_usd || state.costUsd;
     state.sessionId = event.session_id || state.sessionId;
     if (event.is_error) state.ccIsError = true;
@@ -415,6 +422,14 @@ function newWatchState() {
     turnId: null,
     lastResultText: '',
     costUsd: 0,
+    // Claude's result event is the evidence that a zero cost is known rather
+    // than the legacy state default. Telemetry reads this flag only; billing
+    // continues to consume costUsd exactly as before.
+    providerCostSeen: false,
+    // Set only after docker accepted the detached provider process. Codex's
+    // ledger intent exists before that boundary, so the aggregate report
+    // needs this evidence to exclude a stop/failure during spin-up.
+    providerDispatched: false,
     // Retained Codex usage (review #3) for direct attribution to agent_turns.
     inputTokens: null,
     cachedInputTokens: null,
@@ -472,6 +487,71 @@ function newWatchState() {
     // tool_result can be annotated with the same label.
     toolUses: new Map(),
   };
+}
+
+function codingRunOutcome(state) {
+  if (state && (state.exitCode === 143 || state.agentExit === 143 || state.ccExit === 143)) {
+    return { outcome: 'cancelled', stopReason: 'cancelled' };
+  }
+  const failed = !state || !!(state.fatalError || state.ccIsError
+    || (state.agentExit != null && state.agentExit !== 0)
+    || (state.ccExit != null && state.ccExit !== 0)
+    || (state.exitCode != null && state.exitCode !== 0));
+  return failed
+    ? { outcome: 'error', stopReason: 'agent_error' }
+    : { outcome: 'success', stopReason: 'end_turn' };
+}
+
+function claudeBillingPath({ directByok, byokCents, costUsd }) {
+  if (directByok) return 'anthropic_byok';
+  const observedByok = Number(byokCents || 0);
+  if (observedByok <= 0) return 'platform';
+  const totalCents = Number(costUsd) * 100;
+  if (Number.isFinite(totalCents) && totalCents > 0
+      && observedByok >= totalCents - 0.5) return 'anthropic_byok';
+  // A proxy-routed run may cross the allowance boundary mid-turn. The
+  // provider reports one total cost, so one event cannot truthfully assign
+  // that mixed total to either payer.
+  return 'unknown';
+}
+
+function recordClaudeCodingRun({
+  sessionId, turnId, result, requestedModel, component, startedAt, durationMs,
+  directByok = false, byokCents = 0, attemptNumber = 1, correlationId = null,
+}) {
+  if (!component || !turnId) return;
+  const { outcome, stopReason } = codingRunOutcome(result);
+  const knownCost = Number(result && result.costUsd);
+  const costWasReported = !!(result && result.providerCostSeen)
+    || (Number.isFinite(knownCost) && knownCost > 0);
+  const costUsd = costWasReported && Number.isFinite(knownCost) && knownCost >= 0
+    ? knownCost
+    : null;
+  void llmTelemetry.record(_getPoolSafe(), {
+    invocationKey: `claude_code:${turnId}`,
+    timestamp: startedAt,
+    sessionId,
+    provider: 'anthropic',
+    backend: 'coding_agent',
+    component,
+    requestedModel,
+    servedModel: (result && result.agentModel) || requestedModel || null,
+    billingPath: claudeBillingPath({ directByok, byokCents, costUsd }),
+    // Claude Code currently gives this boundary a total cost only. Do not
+    // infer token counts from cost or turn duration.
+    inputTokens: null,
+    cacheReadInputTokens: null,
+    cacheWriteInputTokens: null,
+    outputTokens: null,
+    reasoningOutputTokens: null,
+    costUsd,
+    costSource: costUsd == null ? 'unavailable' : 'provider_reported',
+    durationMs,
+    outcome,
+    stopReason,
+    attemptNumber,
+    correlationId: correlationId || String(turnId),
+  });
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -1220,6 +1300,11 @@ async function execInWorker(sessionId, {
   turnUuid = null,
   logicalTurnId = null,
   attemptNumber = null,
+  // Content-free component attribution for #717. Persisted in active_turn
+  // so restart recovery records the same physical invocation exactly once.
+  telemetryComponent = null,
+  telemetryCorrelationId = null,
+  telemetryAttemptNumber = null,
   // Optional preselected journal path. Codex attempt registration can supply
   // a deterministic path once attempt creation moves into the same DB
   // transaction; ordinary callers leave it null.
@@ -1307,6 +1392,13 @@ async function execInWorker(sessionId, {
   // plan 3.1): all runner/token/env/active-turn choices derive from it.
   const { backend: resolvedBackend, isCodex, isClaude } = resolveTurnBackend(agentBackend);
   const useAnthropicProxy = isClaude && !anthropicApiKey;
+  const measuredTelemetryComponent = llmTelemetry.collectionComponent(telemetryComponent);
+  const measuredTelemetryCorrelationId = isClaude && measuredTelemetryComponent
+    ? (telemetryCorrelationId || durableTurnId)
+    : null;
+  const measuredTelemetryAttemptNumber = isClaude && measuredTelemetryComponent
+    ? (Number(telemetryAttemptNumber) || Number(attemptNumber) || 1)
+    : null;
 
   // Backend-specific capability minting (plan 3.2). Crucially,
   // mintWorkerJwt() (general worker:session) NEVER runs for a Codex turn —
@@ -1473,6 +1565,9 @@ async function execInWorker(sessionId, {
     // recovery can terminalize the correct agent_turns row idempotently.
     logicalTurnId: logicalTurnId || undefined,
     attemptNumber: attemptNumber || undefined,
+    telemetryComponent: measuredTelemetryComponent || undefined,
+    telemetryCorrelationId: measuredTelemetryCorrelationId || undefined,
+    telemetryAttemptNumber: measuredTelemetryAttemptNumber || undefined,
     model: persistedModel,
     startedAt: new Date().toISOString(),
     // #174: billing context for restart-resume — the resume paths debit
@@ -1495,14 +1590,21 @@ async function execInWorker(sessionId, {
   // Visible to the `finally` below, which stamps the tail's seed
   // milestones (sha / pushOk) from whatever the exec established.
   let execState = null;
+  let providerStartedAt = null;
+  let providerStartedMs = null;
+  let providerDispatched = false;
+  let providerTerminalObserved = false;
   try {
     // Dispatch. `docker exec -d` returns as soon as the exec is created;
     // secrets travel via the docker CLI's env (bare `-e KEY`), same as
     // the attached transport did.
+    providerStartedAt = new Date();
+    providerStartedMs = Date.now();
     await docker.execFileAsync('docker', args, {
       timeout: 30000,
       env: { ...process.env, ...secretEnv },
     });
+    providerDispatched = true;
     // The durable dispatch record was committed before docker exec. Advancing
     // the phase is required for normal operation, but after the process has
     // started a transient DB error cannot safely be turned into a second
@@ -1536,6 +1638,7 @@ async function execInWorker(sessionId, {
 
     const state = newWatchState();
     state.turnId = durableTurnId;
+    state.providerDispatched = true;
     // Seed the backend BEFORE consuming the journal (review P4): parseLine
     // routes JSON events to the Codex adapter only when
     // state.agentBackend === 'codex_openrouter'. The runner emits
@@ -1545,6 +1648,7 @@ async function execInWorker(sessionId, {
     execState = state;
     const progress = typeof onProgress === 'function' ? onProgress : () => {};
     await _consumeJournal(containerName, journal, progress, state, { sessionId });
+    providerTerminalObserved = true;
 
     // Successful, complete turns don't need their journal anymore; failed
     // or markerless ones keep it on disk for debugging (the next turn's
@@ -1560,6 +1664,21 @@ async function execInWorker(sessionId, {
     }
     return state;
   } finally {
+    if (providerDispatched && providerTerminalObserved && isClaude && measuredTelemetryComponent) {
+      recordClaudeCodingRun({
+        sessionId,
+        turnId: durableTurnId,
+        result: execState,
+        requestedModel: persistedModel,
+        component: measuredTelemetryComponent,
+        startedAt: providerStartedAt,
+        durationMs: providerStartedMs == null ? null : Date.now() - providerStartedMs,
+        directByok: !!anthropicApiKey,
+        byokCents: getTurnByokCents(sessionId),
+        attemptNumber: measuredTelemetryAttemptNumber,
+        correlationId: measuredTelemetryCorrelationId,
+      });
+    }
     // #937: `stopRequestedAt` deliberately survives this teardown. The
     // turn's own tail (post-run stopped-check, force-stop bookkeeping)
     // still needs to know a stop was requested; clearPendingStop() at the
@@ -2003,6 +2122,14 @@ async function resumeTurnFromJournal(sessionId, {
   onProgress,
   byokCentsSoFar = 0,
   agentBackend = 'claude_code',
+  telemetryComponent = null,
+  telemetryCorrelationId = null,
+  telemetryAttemptNumber = null,
+  requestedModel = null,
+  startedAt = null,
+  attemptNumber = 1,
+  billingByok = false,
+  providerWasDispatched = false,
 } = {}) {
   if (!journal) throw new Error('resumeTurnFromJournal: journal path required');
   const meta = _registryGet(sessionId);
@@ -2020,20 +2147,47 @@ async function resumeTurnFromJournal(sessionId, {
     activeTurnId: turnId || null,
     turnByokCents: seedCents, turnByokSwitched: seedCents > 0,
   });
+  const state = newWatchState();
+  state.turnId = turnId || null;
+  // An executing/tail phase proves dispatch. A legacy dispatch_pending row
+  // is ambiguous after a crash; for that shape the consumed journal below
+  // must provide evidence before telemetry may count an invocation.
+  state.providerDispatched = providerWasDispatched === true;
+  // Seed the backend so parseLine routes Codex JSONL correctly on
+  // recovery too (review P4). The caller passes the persisted
+  // session.agent_backend.
+  state.agentBackend = agentBackend;
+  const physicalStartedAt = new Date(startedAt || Date.now());
+  const safeStartedAt = Number.isFinite(physicalStartedAt.getTime())
+    ? physicalStartedAt
+    : new Date();
+  let providerTerminalObserved = false;
   try {
-    const state = newWatchState();
-    state.turnId = turnId || null;
-    // Seed the backend so parseLine routes Codex JSONL correctly on
-    // recovery too (review P4). The caller passes the persisted
-    // session.agent_backend.
-    state.agentBackend = agentBackend;
     const progress = typeof onProgress === 'function' ? onProgress : () => {};
     await _consumeJournal(containerName, journal, progress, state, { sessionId });
+    if (state.rawStdout || state.execExitSeen) state.providerDispatched = true;
+    providerTerminalObserved = true;
     // The recovery caller owns required persistence (thread id + ledger)
     // and calls finishTurn only after it succeeds. Deleting here used to
     // destroy the sole replay source before those writes had landed.
     return state;
   } finally {
+    if (providerTerminalObserved && state.providerDispatched
+        && resolveTurnBackend(agentBackend).isClaude && telemetryComponent && turnId) {
+      recordClaudeCodingRun({
+        sessionId,
+        turnId,
+        result: state,
+        requestedModel,
+        component: telemetryComponent,
+        startedAt: safeStartedAt,
+        durationMs: Math.max(0, Date.now() - safeStartedAt.getTime()),
+        directByok: !!billingByok,
+        byokCents: getTurnByokCents(sessionId),
+        attemptNumber: Number(telemetryAttemptNumber) || Number(attemptNumber) || 1,
+        correlationId: telemetryCorrelationId || String(turnId),
+      });
+    }
     _registryUpsert(sessionId, { inFlight: false, lastUsedMs: Date.now() });
   }
 }
@@ -2428,6 +2582,7 @@ module.exports = {
   parseClaudeResponse,
   // exposed for unit tests (watchdog strike policy + line parsing)
   newWatchState,
+  _recordClaudeCodingRunForTests: recordClaudeCodingRun,
   parseLine,
   newWatchdogCounters,
   recordWatchdogProbe,

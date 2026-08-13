@@ -285,6 +285,7 @@ async function generateForApp({ pool, config, app, userId }) {
         appName: app.name || app.slug,
         knownUsernames,
         apiKey: billing.apiKey,
+        telemetryContext: { pool, appId: app.id },
       });
     } catch (err) {
       if (/LLM not initialized/.test(err.message)) {

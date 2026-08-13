@@ -33,6 +33,11 @@ function loadCoordinator({
   getStateImpl,
   isSessionAdmittedImpl,
   caps = capabilities,
+  bridgeReadyImpl,
+  getInfoImpl,
+  refreshImpl,
+  includeBridgeReadyMethod = true,
+  timeoutScale = 1,
 } = {}) {
   const windowListeners = new Map();
   const documentListeners = new Map();
@@ -46,14 +51,18 @@ function loadCoordinator({
   const sandbox = {
     console: { warn() {} },
     Promise,
-    setTimeout,
+    setTimeout(fn, delay) { return setTimeout(fn, delay * timeoutScale); },
     clearTimeout,
     CustomEvent: class CustomEvent {
       constructor(type, init) { this.type = type; this.detail = init && init.detail; }
     },
     App: { user: { id: 7 } },
     NativeChrome: {
-      async getInfo() { return { version: 4, capabilities: caps }; },
+      async getInfo() {
+        return getInfoImpl
+          ? getInfoImpl()
+          : { version: 4, capabilities: caps };
+      },
       isSessionAdmitted() {
         return isSessionAdmittedImpl ? isSessionAdmittedImpl() : true;
       },
@@ -63,7 +72,10 @@ function loadCoordinator({
         calls.push(['open', id]);
         return openImpl ? openImpl(id) : openResult;
       },
-      async refreshAfterInvalidation() { calls.push(['refresh']); return true; },
+      async refreshAfterInvalidation() {
+        calls.push(['refresh']);
+        return refreshImpl ? refreshImpl() : true;
+      },
     },
     DevAlerts: {
       setRemoteDeliveryActive(active) { calls.push(['remote', active]); },
@@ -103,6 +115,12 @@ function loadCoordinator({
       },
     },
   };
+  if (includeBridgeReadyMethod) {
+    sandbox.usernode.markPrivilegedBridgeReady = async () => {
+      calls.push(['bridge-ready']);
+      return bridgeReadyImpl ? bridgeReadyImpl() : { ready: true };
+    };
+  }
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
@@ -115,6 +133,11 @@ function loadCoordinator({
         listener({ type, detail });
       }
     },
+    fireDocument(type) {
+      for (const listener of documentListeners.get(type) || []) {
+        listener({ type });
+      }
+    },
   };
 }
 
@@ -122,6 +145,82 @@ async function settle() {
   await new Promise((resolve) => setImmediate(resolve));
   await new Promise((resolve) => setImmediate(resolve));
 }
+
+test('realm readiness waits for deferred shell listeners', async () => {
+  const loaded = loadCoordinator();
+
+  assert.equal(loaded.sandbox.__usernodeExplicitReadinessClient, true);
+
+  await settle();
+  assert.equal(
+    loaded.calls.some(([name]) => name === 'bridge-ready'),
+    false,
+    'the parser-time script must not request replay before React hydrates'
+  );
+
+  loaded.fireDocument('DOMContentLoaded');
+  await settle();
+  assert.equal(
+    loaded.calls.filter(([name]) => name === 'bridge-ready').length,
+    1
+  );
+});
+
+test('current coordinator does not claim readiness with an older bridge',
+  async () => {
+    const loaded = loadCoordinator({ includeBridgeReadyMethod: false });
+
+    assert.equal(loaded.sandbox.__usernodeExplicitReadinessClient, false);
+    loaded.fireDocument('DOMContentLoaded');
+    await settle();
+    assert.equal(
+      loaded.calls.some(([name]) => name === 'bridge-ready'),
+      false
+    );
+  });
+
+test('transient support probes retry instead of disabling Social push',
+  async () => {
+    let probes = 0;
+    const loaded = loadCoordinator({
+      getInfoImpl() {
+        probes += 1;
+        return probes === 1
+          ? { version: 0, capabilities: [], degraded: true }
+          : { version: 4, capabilities };
+      },
+    });
+
+    assert.equal(await loaded.sandbox.SocialPush.isSupported(), false);
+    await settle();
+    assert.equal(await loaded.sandbox.SocialPush.isSupported(), true);
+    assert.equal(probes, 2);
+  });
+
+test('BFCache restore rebinds readiness without duplicate in-flight calls',
+  async () => {
+    let resolveFirst;
+    const firstReady = new Promise((resolve) => { resolveFirst = resolve; });
+    let attempts = 0;
+    const loaded = loadCoordinator({
+      bridgeReadyImpl() {
+        attempts += 1;
+        return attempts === 1 ? firstReady : { ready: true };
+      },
+    });
+
+    loaded.fireDocument('DOMContentLoaded');
+    loaded.fire('pageshow');
+    await settle();
+    assert.equal(attempts, 1, 'pageshow must share the active handshake');
+    resolveFirst({ ready: true });
+    await settle();
+
+    loaded.fire('pagehide');
+    loaded.fire('pageshow');
+    await settle();
+    assert.equal(attempts, 2, 'the restored realm must rebind native readiness');
+  });
 
 test('pending id is opened through Notifications before native acknowledgement', async () => {
   const loaded = loadCoordinator({ claims: [{ notificationId: 42 }] });
@@ -183,6 +282,96 @@ test('foreground event refreshes authenticated notifications without content', a
 
   assert.deepEqual(loaded.calls, [['refresh']]);
 });
+
+test('failed foreground refresh remains dirty and retries online', async () => {
+  let attempts = 0;
+  const loaded = loadCoordinator({
+    refreshImpl() {
+      attempts += 1;
+      return attempts > 1;
+    },
+  });
+  await loaded.sandbox.SocialPush.init();
+  loaded.calls.length = 0;
+
+  loaded.fire('usernode:social-push-foreground');
+  await settle();
+  assert.equal(loaded.sandbox.SocialPush._foregroundInvalidationDirty, true);
+
+  loaded.fire('online');
+  await settle();
+  assert.equal(attempts, 2);
+  assert.equal(loaded.sandbox.SocialPush._foregroundInvalidationDirty, false);
+  assert.equal(
+    loaded.calls.filter(([name]) => name === 'refresh').length,
+    2
+  );
+});
+
+test('a foreground invalidation arriving during refresh gets a trailing fetch',
+  async () => {
+    let releaseFirst;
+    const first = new Promise((resolve) => { releaseFirst = resolve; });
+    let attempts = 0;
+    const loaded = loadCoordinator({
+      refreshImpl() {
+        attempts += 1;
+        return attempts === 1 ? first : true;
+      },
+    });
+    await loaded.sandbox.SocialPush.init();
+    loaded.calls.length = 0;
+
+    loaded.fire('usernode:social-push-foreground');
+    await settle();
+    loaded.fire('usernode:social-push-foreground');
+    releaseFirst(true);
+    await settle();
+
+    assert.ok(attempts >= 2);
+    assert.equal(loaded.sandbox.SocialPush._foregroundInvalidationDirty, false);
+  });
+
+test('failed foreground refresh retries while the page stays active',
+  async () => {
+    let attempts = 0;
+    const loaded = loadCoordinator({
+      timeoutScale: 0.001,
+      refreshImpl() {
+        attempts += 1;
+        return attempts > 1;
+      },
+    });
+    await loaded.sandbox.SocialPush.init();
+
+    loaded.fire('usernode:social-push-foreground');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await settle();
+
+    assert.equal(attempts, 2);
+    assert.equal(loaded.sandbox.SocialPush._foregroundInvalidationDirty, false);
+  });
+
+test('foreground invalidation does not depend on a native capability probe',
+  async () => {
+    let probes = 0;
+    const loaded = loadCoordinator({
+      getInfoImpl() {
+        probes += 1;
+        return { version: 0, capabilities: [], degraded: true };
+      },
+    });
+
+    loaded.fire('usernode:social-push-foreground');
+    await settle();
+
+    assert.equal(probes, 0);
+    assert.equal(
+      loaded.calls.filter(([name]) => name === 'refresh').length,
+      1
+    );
+    assert.equal(loaded.sandbox.SocialPush._foregroundInvalidationDirty, false);
+  });
 
 test('native state change refreshes delivery status through the admitted bridge', async () => {
   let deliveryActive = true;
@@ -456,3 +645,228 @@ test('opaque id lookup reuses the existing notification click router', async () 
   assert.equal(requests[0].options.cache, 'no-store');
   assert.equal(requests[1].url, '/api/notifications/read');
 });
+
+test('native invalidation refresh bypasses the service-worker API cache',
+  async () => {
+    const requests = [];
+    const sandbox = {
+      console: { warn() {} },
+      Date,
+      Promise,
+      URLSearchParams,
+      setTimeout,
+      clearTimeout,
+      location: { search: '', hash: '' },
+      localStorage: { getItem() { return null; }, setItem() {} },
+      document: {
+        title: 'Social',
+        addEventListener() {},
+        getElementById() { return null; },
+      },
+      App: { user: { id: 7 } },
+      async fetch(url, options) {
+        requests.push({ url, options });
+        return {
+          ok: true,
+          async json() {
+            return { notifications: [], pendingInvites: [], unread: 0 };
+          },
+        };
+      },
+    };
+    sandbox.window = sandbox;
+    sandbox.globalThis = sandbox;
+    vm.createContext(sandbox);
+    vm.runInContext(notificationsSource, sandbox);
+
+    assert.equal(await sandbox.Notifications.refreshAfterInvalidation(), true);
+    assert.equal(
+      requests[0].url,
+      '/api/notifications?limit=100&native_invalidation=1'
+    );
+    assert.equal(requests[0].options.cache, 'no-store');
+    assert.equal(requests[0].options.credentials, 'same-origin');
+  });
+
+test('an older ordinary refresh cannot overwrite a newer invalidation result',
+  async () => {
+    const responses = [];
+    const sandbox = {
+      console: { warn() {} },
+      Date,
+      Promise,
+      URLSearchParams,
+      setTimeout,
+      clearTimeout,
+      location: { search: '', hash: '' },
+      localStorage: { getItem() { return null; }, setItem() {} },
+      document: {
+        title: 'Social',
+        addEventListener() {},
+        getElementById() { return null; },
+      },
+      App: { user: { id: 7 } },
+      fetch() {
+        return new Promise((resolve) => responses.push(resolve));
+      },
+    };
+    sandbox.window = sandbox;
+    sandbox.globalThis = sandbox;
+    vm.createContext(sandbox);
+    vm.runInContext(notificationsSource, sandbox);
+
+    const ordinary = sandbox.Notifications.refresh();
+    const invalidation = sandbox.Notifications.refreshAfterInvalidation();
+    responses[1]({
+      ok: true,
+      async json() {
+        return { notifications: [{ id: 2 }], unread: 1 };
+      },
+    });
+    assert.equal(await invalidation, true);
+    responses[0]({
+      ok: true,
+      async json() {
+        return { notifications: [{ id: 1 }], unread: 0 };
+      },
+    });
+    assert.equal(await ordinary, false);
+    assert.equal(sandbox.Notifications.items[0].id, 2);
+    assert.equal(sandbox.Notifications.unread, 1);
+  });
+
+test('a hung native invalidation fetch aborts so a later retry can run',
+  async () => {
+    const timers = [];
+    const requests = [];
+    class FakeAbortController {
+      constructor() {
+        this.signal = {
+          aborted: false,
+          listeners: [],
+          addEventListener(_type, listener) { this.listeners.push(listener); },
+        };
+      }
+      abort() {
+        this.signal.aborted = true;
+        for (const listener of this.signal.listeners) listener();
+      }
+    }
+    const sandbox = {
+      console: { warn() {} },
+      Date,
+      Promise,
+      URLSearchParams,
+      AbortController: FakeAbortController,
+      setTimeout(fn) { timers.push(fn); return timers.length; },
+      clearTimeout() {},
+      location: { search: '', hash: '' },
+      localStorage: { getItem() { return null; }, setItem() {} },
+      document: {
+        title: 'Social',
+        addEventListener() {},
+        getElementById() { return null; },
+      },
+      App: { user: { id: 7 } },
+      fetch(_url, options) {
+        requests.push(options);
+        if (requests.length > 1) {
+          return Promise.resolve({
+            ok: true,
+            async json() {
+              return { notifications: [{ id: 2 }], unread: 1 };
+            },
+          });
+        }
+        return new Promise((resolve, reject) => {
+          options.signal.addEventListener('abort', () => {
+            const error = new Error('aborted');
+            error.name = 'AbortError';
+            reject(error);
+          });
+        });
+      },
+    };
+    sandbox.window = sandbox;
+    sandbox.globalThis = sandbox;
+    vm.createContext(sandbox);
+    vm.runInContext(notificationsSource, sandbox);
+
+    const first = sandbox.Notifications.refreshAfterInvalidation();
+    timers.shift()();
+    assert.equal(await first, false);
+    assert.equal(await sandbox.Notifications.refreshAfterInvalidation(), true);
+    assert.equal(requests.length, 2);
+    assert.equal(sandbox.Notifications.items[0].id, 2);
+  });
+
+test('a stalled invalidation response body is covered by the same deadline',
+  async () => {
+    const timers = [];
+    let calls = 0;
+    class FakeAbortController {
+      constructor() {
+        this.signal = {
+          aborted: false,
+          listeners: [],
+          addEventListener(_type, listener) {
+            if (this.aborted) listener();
+            else this.listeners.push(listener);
+          },
+        };
+      }
+      abort() {
+        this.signal.aborted = true;
+        for (const listener of this.signal.listeners) listener();
+      }
+    }
+    const sandbox = {
+      console: { warn() {} },
+      Date,
+      Promise,
+      URLSearchParams,
+      AbortController: FakeAbortController,
+      setTimeout(fn) { timers.push(fn); return timers.length; },
+      clearTimeout() {},
+      location: { search: '', hash: '' },
+      localStorage: { getItem() { return null; }, setItem() {} },
+      document: {
+        title: 'Social',
+        addEventListener() {},
+        getElementById() { return null; },
+      },
+      App: { user: { id: 7 } },
+      async fetch(_url, options) {
+        calls += 1;
+        if (calls > 1) {
+          return {
+            ok: true,
+            async json() { return { notifications: [{ id: 3 }], unread: 1 }; },
+          };
+        }
+        return {
+          ok: true,
+          json() {
+            return new Promise((resolve, reject) => {
+              options.signal.addEventListener('abort', () => {
+                const error = new Error('aborted body');
+                error.name = 'AbortError';
+                reject(error);
+              });
+            });
+          },
+        };
+      },
+    };
+    sandbox.window = sandbox;
+    sandbox.globalThis = sandbox;
+    vm.createContext(sandbox);
+    vm.runInContext(notificationsSource, sandbox);
+
+    const first = sandbox.Notifications.refreshAfterInvalidation();
+    await Promise.resolve();
+    timers.shift()();
+    assert.equal(await first, false);
+    assert.equal(await sandbox.Notifications.refreshAfterInvalidation(), true);
+    assert.equal(sandbox.Notifications.items[0].id, 3);
+  });

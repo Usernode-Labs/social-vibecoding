@@ -1,0 +1,335 @@
+#!/usr/bin/env node
+'use strict';
+
+// Run this app's declared dapp.json checks IN-LOOP, before commit — the
+// same checks the platform's capture container will run against staging
+// after the turn ends (and whose graduated rows block the merge).
+//
+// Why this exists: the coding agent's only automated signal used to be
+// `npm test`. The proposal checks ran AFTER the turn, in a container the
+// agent never hears from — so an agent could add a born-failing check,
+// commit, and end the turn convinced everything was green (production
+// proposal 3284). This script closes that gap: boot the app locally
+// (see the in-loop browser instructions in the build prompt), run
+// `usernode-run-checks`, and the declared suite is exercised with the
+// SAME semantics the capture container uses:
+//
+//   * navigate the route, settle, collect console errors
+//   * console errors fail the check unless `allowConsoleErrors`
+//   * `expectSelector` / `expectText` are POLLED presence assertions with
+//     a shared per-route deadline — the same shape as capture/capture.js
+//     (its assertion polling + shared cohort ceiling; this runner uses a
+//     fixed settle instead of the activity clock, which is close enough
+//     for a loopback app with no CDN or SW in the way)
+//   * checks sharing a URL share one navigation
+//
+// Usage (from the app repo root, app already listening on $INLOOP_PORT):
+//   usernode-run-checks                      run every declared check
+//   usernode-run-checks --changed            only checks added/changed vs origin/main
+//   usernode-run-checks --filter <substr>    only checks whose name/path matches
+//   usernode-run-checks --base-url <url>     override http://127.0.0.1:$INLOOP_PORT
+//
+// Exit codes: 0 all ran checks passed (or nothing to run), 1 at least one
+// failed, 2 setup error (no dapp.json, app unreachable, no browser).
+//
+// The worker image has no `playwright` npm root install — the pinned copy
+// lives inside the Playwright MCP package (see worker/Dockerfile, #688:
+// browsers are installed against THAT package's playwright version, so
+// using any other copy risks a chromium-revision mismatch).
+
+const fs = require('fs');
+const path = require('path');
+const { execSync } = require('child_process');
+
+const SETTLE_MS = 500;
+const CONSOLE_SETTLE_MS = 1000;
+// Same knob and default as the capture container (TEST_ASSERT_MAX_MS /
+// assertMaxMs in capture/capture.js), so in-loop and staging agree on how
+// long a late-rendering screen gets.
+const ASSERT_WAIT_MS = (() => {
+  const raw = parseInt(process.env.TEST_ASSERT_MAX_MS, 10);
+  return (Number.isFinite(raw) && raw >= 0) ? raw : 5000;
+})();
+const ASSERT_POLL_MS = 100;
+const NAV_TIMEOUT_MS = 30000;
+const CONCURRENCY = 4;
+const MAX_NAME = 120;
+const MAX_SELECTOR = 256;
+const MAX_TEXT = 256;
+
+function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
+
+// ── dapp.json test normalization ─────────────────────────────────────────
+// Mirrors src/services/app-manifest.js readTests (platform side): entries
+// need a relative single-slash path; name falls back to the path;
+// duplicate (name+path) pairs collapse. Kept minimal on purpose — this
+// script runs inside ANY app's checkout and carries no platform code.
+function validatePath(p) {
+  if (typeof p !== 'string') return null;
+  const s = p.trim();
+  if (!s.startsWith('/') || s.startsWith('//')) return null;
+  if (/[\s<>"'`]/.test(s) || s.includes('://')) return null;
+  return s.slice(0, 512);
+}
+
+function readTests(manifest) {
+  const raw = Array.isArray(manifest && manifest.tests) ? manifest.tests : [];
+  const out = [];
+  const seen = new Set();
+  for (const t of raw) {
+    if (!t || typeof t !== 'object') continue;
+    const p = validatePath(t.path);
+    if (!p) continue;
+    const name = (typeof t.name === 'string' && t.name.trim())
+      ? t.name.trim().slice(0, MAX_NAME) : p;
+    const key = `${name}\n${p}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({
+      name,
+      path: p,
+      expectSelector: (typeof t.expectSelector === 'string' && t.expectSelector.trim())
+        ? t.expectSelector.trim().slice(0, MAX_SELECTOR) : null,
+      expectText: (typeof t.expectText === 'string' && t.expectText.trim())
+        ? t.expectText.trim().slice(0, MAX_TEXT) : null,
+      allowConsoleErrors: !!t.allowConsoleErrors,
+    });
+  }
+  return out;
+}
+
+// Identity of a check INCLUDING its assertions, so `--changed` re-runs a
+// check whose selector/text was edited, not only brand-new names.
+function checkFingerprint(t) {
+  return [t.name, t.path, t.expectSelector || '', t.expectText || '', t.allowConsoleErrors ? '1' : ''].join('\n');
+}
+
+// The set of check fingerprints on the merge base — everything NOT in this
+// set was added or changed by the current branch. Fails open to "run all"
+// (returns null) when the base manifest can't be resolved.
+function baseFingerprints(manifestPath) {
+  const rel = path.relative(process.cwd(), manifestPath) || 'dapp.json';
+  for (const ref of ['origin/main', 'origin/master', 'main']) {
+    try {
+      const raw = execSync(`git show ${ref}:${rel}`, { stdio: ['ignore', 'pipe', 'ignore'] }).toString();
+      return new Set(readTests(JSON.parse(raw)).map(checkFingerprint));
+    } catch { /* try the next ref */ }
+  }
+  return null;
+}
+
+function parseArgs(argv) {
+  const args = { baseUrl: '', filter: '', changed: false, manifest: 'dapp.json' };
+  for (let i = 0; i < argv.length; i += 1) {
+    const a = argv[i];
+    if (a === '--changed') args.changed = true;
+    else if (a === '--base-url') args.baseUrl = String(argv[++i] || '');
+    else if (a === '--filter') args.filter = String(argv[++i] || '');
+    else if (a === '--manifest') args.manifest = String(argv[++i] || 'dapp.json');
+    else if (a === '--help' || a === '-h') args.help = true;
+    else { process.stderr.write(`usernode-run-checks: unknown argument ${a}\n`); process.exit(2); }
+  }
+  return args;
+}
+
+function loadPlaywright() {
+  const candidates = [
+    'playwright',
+    '/usr/local/lib/node_modules/@playwright/mcp/node_modules/playwright',
+  ];
+  for (const c of candidates) {
+    try { return require(c); } catch { /* next */ }
+  }
+  return null;
+}
+
+// One URL group: navigate once, settle, then wait-based assertions with a
+// shared budget — the capture-container semantics (capture/capture.js).
+async function runGroup(context, url, tests) {
+  const consoleErrors = [];
+  const page = await context.newPage();
+  const results = [];
+  try {
+    page.on('console', (msg) => {
+      try { if (msg.type() === 'error' && consoleErrors.length < 20) consoleErrors.push(String(msg.text()).slice(0, 500)); } catch { /* ignore */ }
+    });
+    page.on('pageerror', (err) => {
+      if (consoleErrors.length < 20) consoleErrors.push(String((err && err.message) || err).slice(0, 500));
+    });
+
+    let status = 0;
+    try {
+      const resp = await page.goto(url, { waitUntil: 'networkidle', timeout: NAV_TIMEOUT_MS });
+      status = resp ? resp.status() : 200;
+    } catch (err) {
+      for (const t of tests) results.push({ ...t, pass: false, reason: `Page failed to load: ${err.message}` });
+      return results;
+    }
+    await sleep(SETTLE_MS + CONSOLE_SETTLE_MS);
+    const loadFailure = status >= 400 ? `Page returned HTTP ${status}` : '';
+    const errorCount = consoleErrors.length; // frozen, like the capture container
+
+    const assertDeadline = Date.now() + ASSERT_WAIT_MS;
+    const waitFor = async (probe) => {
+      let ok = await probe();
+      while (!ok && Date.now() < assertDeadline) {
+        await sleep(Math.min(ASSERT_POLL_MS, Math.max(1, assertDeadline - Date.now())));
+        ok = await probe();
+      }
+      return ok;
+    };
+
+    for (const t of tests) {
+      let reason = loadFailure;
+      if (!reason && t.expectSelector) {
+        const found = await waitFor(async () => {
+          try { return !!(await page.$(t.expectSelector)); } catch { return false; }
+        });
+        if (!found) reason = `Expected element "${t.expectSelector}" was not found`;
+      }
+      if (!reason && t.expectText) {
+        const found = await waitFor(async () => {
+          try {
+            return await page.evaluate(
+              (text) => (document.body ? document.body.innerText : '')
+                .toLowerCase().includes(String(text).toLowerCase()),
+              t.expectText
+            );
+          } catch { return false; }
+        });
+        if (!found) reason = `Expected text "${t.expectText}" was not found on the page`;
+      }
+      if (!reason && !t.allowConsoleErrors && errorCount > 0) {
+        reason = `${errorCount} console error${errorCount === 1 ? '' : 's'} on load: ${consoleErrors[0]}`;
+      }
+      results.push({ ...t, pass: !reason, reason });
+    }
+    return results;
+  } finally {
+    await page.close().catch(() => {});
+  }
+}
+
+async function main() {
+  const args = parseArgs(process.argv.slice(2));
+  if (args.help) {
+    process.stdout.write('usernode-run-checks [--changed] [--filter <substr>] [--base-url <url>] [--manifest <path>]\n');
+    return 0;
+  }
+
+  const manifestPath = path.resolve(args.manifest);
+  let manifest;
+  try {
+    manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+  } catch (err) {
+    process.stderr.write(`usernode-run-checks: cannot read ${manifestPath}: ${err.message}\n`);
+    return 2;
+  }
+  let tests = readTests(manifest);
+  if (!tests.length) {
+    process.stdout.write('No declared tests in dapp.json — nothing to run. (Every proposal still gets the baseline "loads with no console errors" check.)\n');
+    return 0;
+  }
+
+  if (args.changed) {
+    const base = baseFingerprints(manifestPath);
+    if (!base) {
+      process.stderr.write('usernode-run-checks: could not resolve the base dapp.json (origin/main) — running ALL declared checks instead.\n');
+    } else {
+      tests = tests.filter((t) => !base.has(checkFingerprint(t)));
+      if (!tests.length) {
+        process.stdout.write('No checks added or changed vs origin/main — nothing to run.\n');
+        return 0;
+      }
+    }
+  }
+  if (args.filter) {
+    const f = args.filter.toLowerCase();
+    tests = tests.filter((t) => t.name.toLowerCase().includes(f) || t.path.toLowerCase().includes(f));
+    if (!tests.length) {
+      process.stdout.write(`No declared checks match --filter "${args.filter}".\n`);
+      return 0;
+    }
+  }
+
+  const baseUrl = (args.baseUrl || `http://127.0.0.1:${process.env.INLOOP_PORT || 3100}`).replace(/\/+$/, '');
+
+  const playwright = loadPlaywright();
+  if (!playwright) {
+    process.stderr.write('usernode-run-checks: playwright is not available in this environment.\n');
+    return 2;
+  }
+
+  // Group by URL: checks on the same route share one navigation, exactly
+  // like the capture container.
+  const groups = new Map();
+  for (const t of tests) {
+    const url = baseUrl + t.path;
+    if (!groups.has(url)) groups.set(url, []);
+    groups.get(url).push(t);
+  }
+
+  process.stdout.write(`Running ${tests.length} declared check${tests.length === 1 ? '' : 's'} over ${groups.size} route${groups.size === 1 ? '' : 's'} against ${baseUrl} ...\n`);
+
+  let browser;
+  try {
+    browser = await playwright.chromium.launch({
+      channel: 'chromium',
+      headless: true,
+      args: ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'],
+    });
+  } catch (err) {
+    process.stderr.write(`usernode-run-checks: could not launch chromium: ${err.message}\n`);
+    return 2;
+  }
+
+  const all = [];
+  try {
+    const entries = Array.from(groups.entries());
+    let cursor = 0;
+    const worker = async () => {
+      for (;;) {
+        if (cursor >= entries.length) return;
+        const [url, groupTests] = entries[cursor];
+        cursor += 1;
+        // Fresh context per group: own window, own cookie jar — mirrors the
+        // capture container's isolation (and self-app token exchanges).
+        const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+        try {
+          const results = await runGroup(context, url, groupTests);
+          for (const r of results) {
+            all.push(r);
+            process.stdout.write(r.pass
+              ? `  ok    ${r.name} (${r.path})\n`
+              : `  FAIL  ${r.name} (${r.path}) — ${r.reason}\n`);
+          }
+        } finally {
+          await context.close().catch(() => {});
+        }
+      }
+    };
+    const lanes = Math.min(CONCURRENCY, entries.length);
+    await Promise.all(Array.from({ length: lanes }, () => worker()));
+  } finally {
+    await browser.close().catch(() => {});
+  }
+
+  const failed = all.filter((r) => !r.pass);
+  process.stdout.write(`\n${all.length - failed.length}/${all.length} checks passed${failed.length ? ` — ${failed.length} FAILING` : ''}.\n`);
+  if (failed.length) {
+    process.stdout.write('Failing checks block the merge once graduated. Fix the app (or the check, if the check itself is wrong) before committing.\n');
+    return 1;
+  }
+  return 0;
+}
+
+if (require.main === module) {
+  main().then(
+    (code) => process.exit(code),
+    (err) => { process.stderr.write(`usernode-run-checks: fatal ${err.message}\n`); process.exit(2); }
+  );
+}
+
+// Exported for the platform's unit tests (tests/run-checks-cli.test.js);
+// the worker container only ever executes this file directly.
+module.exports = { readTests, checkFingerprint, validatePath, parseArgs, runGroup };
