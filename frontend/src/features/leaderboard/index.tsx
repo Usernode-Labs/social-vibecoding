@@ -66,7 +66,9 @@ import { useLeaderboardSection } from './section-store';
 import './kudos.js';
 import './leaderboard.js';
 import './topochain-event-context.js';
-import './topochain-leaderboard.js';
+// ./mount imports ./topochain-leaderboard.js and plants its store on it.
+import './mount';
+import { TopochainStandingsPane } from './topochain-standings';
 import './topochain-challenges.js';
 
 // The strip, in TAB ORDER. Moved here verbatim from the template that
@@ -138,8 +140,16 @@ export function LeaderboardScreen() {
         {/* The Kudos pane, rendered by ./leaderboard.js. */}
         <div id="leaderboard-root" className="hidden max-w-3xl">
         </div>
-        {/* The standings pane, rendered by ./topochain-leaderboard.js. */}
+        {/*
+            The standings pane. STATEFUL as of #1191 slice 6 conversion 5:
+            ./topochain-standings.tsx is the only writer below this root now,
+            driven by the descriptors ./topochain-leaderboard.js pushes into
+            ./topochain-standings-store.js. The root's own `className` is still
+            a CONSTANT — `_applySection()` keeps toggling `hidden` on it, per
+            the note above.
+        */}
         <div id="topochain-leaderboard-root" className="w-full">
+          <TopochainStandingsPane />
         </div>
         {/* The challenges pane, rendered by ./topochain-challenges.js. */}
         <div id="challenges-root" className="hidden w-full">

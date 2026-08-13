@@ -31,6 +31,8 @@ const leaderboardJs = fs.readFileSync(path.join(root, 'frontend/src/features/lea
 const challengesJs = fs.readFileSync(path.join(root, 'frontend/src/features/leaderboard/topochain-challenges.js'), 'utf8');
 const contextJs = fs.readFileSync(path.join(root, 'frontend/src/features/leaderboard/topochain-event-context.js'), 'utf8');
 const island = fs.readFileSync(path.join(root, 'frontend/src/features/leaderboard/index.tsx'), 'utf8');
+const mount = fs.readFileSync(path.join(root, 'frontend/src/features/leaderboard/mount.ts'), 'utf8');
+const standingsTsx = fs.readFileSync(path.join(root, 'frontend/src/features/leaderboard/topochain-standings.tsx'), 'utf8');
 const manifest = JSON.parse(fs.readFileSync(path.join(root, 'dapp.json'), 'utf8'));
 
 // ─── index.html: script registration + screen hosts ─────────────────────
@@ -47,11 +49,20 @@ test('all three modules arrive with the leaderboard island, and the shared rule 
     assert.ok(!html.includes(`<script src="${src}">`),
       `${src} is in the bundle now — a classic tag would load it twice`);
   }
-  for (const spec of ['./topochain-leaderboard.js', './topochain-challenges.js',
-    './topochain-event-context.js']) {
+  for (const spec of ['./topochain-challenges.js', './topochain-event-context.js']) {
     assert.ok(island.includes(`import '${spec}';`),
       `the island must import ${spec}, or nothing publishes its global`);
   }
+  // The standings module arrives one hop further out as of #1191 slice 6
+  // conversion 5: ./mount imports it AND plants the store its render methods
+  // push into, so importing the module directly here would publish the global
+  // without the store and leave the pane permanently blank.
+  assert.ok(island.includes("import './mount';"),
+    'the island must import ./mount, which is what loads the standings module');
+  assert.ok(mount.includes("import './topochain-leaderboard.js';"),
+    'and ./mount must still import the module, or nothing publishes its global');
+  assert.match(mount, /TopochainLeaderboard\._store = topochainStandingsStore/,
+    'and plant its store — the render methods are no-ops without it');
   // The shared pickDefault rule is still a classic script: it has no DOM of its
   // own, so chunk F had no region to move it with.
   const evTag = '<script src="/js/topochain-events.js"></script>';
@@ -178,9 +189,15 @@ test('the three folded-in surfaces have no screen state of their own', () => {
 test('TopochainLeaderboard defines the expected surface', () => {
   assert.match(leaderboardJs, /const TopochainLeaderboard = \{/, 'the global object literal is defined');
   assert.match(leaderboardJs, /window\.TopochainLeaderboard = TopochainLeaderboard;/, 'mirrored onto window');
+  // `esc(` became `str(` in #1191 slice 6 conversion 5 — the module returns
+  // descriptors and React does the escaping, but the null→'' coercion is still
+  // load-bearing (React prints String(null) as the word "null"). The two view
+  // builders are named here so the split between "decides" and "renders"
+  // cannot quietly collapse back.
   for (const member of [
-    'open()', 'close()', 'esc(', 'fetchJson(', '_eventId()', 'loadLeaderboard()',
-    '_renderShell()', '_renderBody()', '_openDrill(', '_renderDrill()',
+    'open()', 'close()', 'str(', 'fetchJson(', '_eventId()', 'loadLeaderboard()',
+    '_renderShell()', '_renderBody()', 'bodyView()', '_openDrill(',
+    '_renderDrill()', 'drillView()',
   ]) {
     assert.ok(leaderboardJs.includes(member), `TopochainLeaderboard defines ${member}`);
   }
@@ -251,16 +268,16 @@ test('display_leaderboard=false and API errors are handled without throwing', ()
 // ─── esc() discipline — every interpolated API value must pass through it ─
 
 test('every module escapes interpolated values with the established esc() idiom', () => {
-  for (const src of [leaderboardJs, challengesJs, contextJs]) {
+  // The standings module is NOT in this list any more. #1191 slice 6
+  // conversion 5 took its innerHTML away entirely: it returns descriptors and
+  // ./topochain-standings.tsx renders them, so escaping is React's job and an
+  // esc() here would double-encode. Its own discipline is asserted below.
+  for (const src of [challengesJs, contextJs]) {
     assert.match(src, /esc\(s\) \{\s*\n\s*return String\(s == null \? '' : s\)/,
       'esc() mirrors the admin-console.js helper shape');
   }
   // Spot-check: a sampling of API-sourced fields actually gets passed
   // through esc(...) rather than interpolated raw into template literals.
-  for (const field of ['r.display_name', 'r.total_points', 'row.wallet_address']) {
-    assert.ok(new RegExp(`esc\\(${field.replace('.', '\\.')}`).test(leaderboardJs),
-      `${field} passes through esc() in topochain-leaderboard.js`);
-  }
   for (const field of ['cp.goal', 'p.display_name', 'e.display_name']) {
     assert.ok(new RegExp(`esc\\(${field.replace('.', '\\.')}`).test(challengesJs),
       `${field} passes through esc() in topochain-challenges.js`);
@@ -271,11 +288,37 @@ test('every module escapes interpolated values with the established esc() idiom'
   }
 });
 
+// The standings pane's replacement for the two tests above. It has no escaping
+// discipline to keep because it has no HTML: the safety property is now
+// "produces no markup at all", which is a stronger statement than "escapes
+// correctly" and is what the island rule requires of a React-owned host.
+test('the standings module builds descriptors, not HTML — so there is nothing to escape', () => {
+  const code = leaderboardJs.replace(/\/\/[^\n]*/g, '');
+  assert.ok(!code.includes('innerHTML'),
+    'the pane writes no markup; ./topochain-standings.tsx owns the subtree');
+  assert.ok(!code.includes('getElementById'),
+    'and reaches into no node below its React-owned root');
+  assert.ok(!/\besc\(/.test(code),
+    'the escaping helper is gone with the strings it served — an esc() call '
+    + 'surviving into a descriptor would double-encode in the renderer');
+  // The coercion that outlived it, and why: React renders String(null) as the
+  // four-character word "null", so a nullable API field still has to land as ''.
+  assert.match(leaderboardJs, /str\(s\) \{\s*\n\s*return String\(s == null \? '' : s\)/,
+    'str() keeps esc()\'s null→empty coercion');
+  for (const field of ['r.display_name', 'r.total_points', 'row.wallet_address']) {
+    assert.ok(new RegExp(`str\\(${field.replace('.', '\\.')}`).test(leaderboardJs),
+      `${field} passes through str() in topochain-leaderboard.js`);
+  }
+  // And the renderer must not reintroduce raw HTML by the back door.
+  assert.ok(!standingsTsx.includes('dangerouslySetInnerHTML'),
+    'the pane component renders text nodes, never raw HTML');
+});
+
 test('esc() escapes quotes too, not just & < >', () => {
   // Attribute-value breakout (`<option value="` / `data-*="`, ...) needs
   // both quote characters escaped, not just the text-node-unsafe three —
   // stopping-XSS review, task 14 fix.
-  for (const src of [leaderboardJs, challengesJs, contextJs]) {
+  for (const src of [challengesJs, contextJs]) {
     const fn = src.slice(src.indexOf('esc(s) {'), src.indexOf('esc(s) {') + 300);
     assert.match(fn, /\.replace\(\/"\/g, '&quot;'\)/, 'esc() escapes double quotes');
     assert.match(fn, /\.replace\(\/'\/g, '&#39;'\)/, 'esc() escapes single quotes');

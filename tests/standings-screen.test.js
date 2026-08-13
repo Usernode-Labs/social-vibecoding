@@ -37,6 +37,10 @@ const appJs = fs.readFileSync(path.join(root, 'public/js/app.js'), 'utf8');
 const lbJs = fs.readFileSync(path.join(root, 'frontend/src/features/leaderboard/leaderboard.js'), 'utf8');
 const island = fs.readFileSync(path.join(root, 'frontend/src/features/leaderboard/index.tsx'), 'utf8');
 const topoJs = fs.readFileSync(path.join(root, 'frontend/src/features/leaderboard/topochain-leaderboard.js'), 'utf8');
+// #1191 slice 6 conversion 5: the pane's markup lives here now — the module
+// above returns descriptors. Assertions about what the pane RENDERS moved with
+// it; assertions about what it DECIDES stayed above.
+const standingsTsx = fs.readFileSync(path.join(root, 'frontend/src/features/leaderboard/topochain-standings.tsx'), 'utf8');
 const chJs = fs.readFileSync(path.join(root, 'frontend/src/features/leaderboard/topochain-challenges.js'), 'utf8');
 const ctxJs = fs.readFileSync(path.join(root, 'frontend/src/features/leaderboard/topochain-event-context.js'), 'utf8');
 const manifest = JSON.parse(fs.readFileSync(path.join(root, 'dapp.json'), 'utf8'));
@@ -396,7 +400,10 @@ test('the standings pane cross-links to the challenges tab without ever painting
     'a failed tally must never paint a banner over the standings table');
   assert.match(load, /_eventId\(\) !== eventId/,
     'and a fast event switch must not paint one event\'s tally over another');
-  assert.match(topoJs, /id="tc-lb-challenge-link"/);
+  assert.match(standingsTsx, /id="tc-lb-challenge-link"/,
+    'the line itself is rendered by the pane component');
+  assert.match(standingsTsx, /id="tc-lb-to-challenges"/,
+    'and carries the id the dapp.json check selects on');
   assert.match(topoJs, /counts\.total > 0/,
     'no line at all when the event has no challenges (never "0 of 0")');
   assert.match(topoJs, /window\.location\.hash = '#leaderboard\/challenges'/,
@@ -412,29 +419,40 @@ test('the standings pane cross-links to the challenges tab without ever painting
 // the server hard-codes event_success_rate and friends to 0 — so a "Success
 // rate" column there can only print "0%", indistinguishable from a real zero.
 //
-// Behavioural, not regex: render the real _renderBody against both payloads
-// with a stub host and diff the HTML it produces.
+// Behavioural, not regex: run the real _renderBody against both payloads and
+// diff the DESCRIPTOR it publishes. #1191 slice 6 conversion 5 moved the
+// markup into ./topochain-standings.tsx, so what this reads changed from a
+// host's innerHTML to the store's `body` — the decision under test (which
+// columns exist for which board) is unchanged and still lives here.
+//
+// The module is still evaluated as a CLASSIC SCRIPT, which is the whole reason
+// its store is planted rather than imported: an `import` line would make this
+// harness a syntax error. Keep it that way.
 function renderStandings(payload) {
-  const host = { innerHTML: '', querySelectorAll: () => [] };
+  // A stand-in for lib/plain-store.js — set() is the only method the
+  // controller calls, and a fresh one per call keeps the two payloads apart.
+  const store = {
+    state: { mounted: false, body: null, drill: null },
+    set(patch) { store.state = { ...store.state, ...patch }; },
+    get: () => store.state,
+    subscribe: () => () => {},
+    setFlush: () => {},
+  };
   const sandbox = {
     window: {},
-    document: {
-      getElementById: (id) => (id === 'tc-lb-body' ? host : null),
-    },
+    document: { getElementById: () => null },
     console,
   };
   sandbox.window.document = sandbox.document;
-  // Classic script: evaluate it with the globals it closes over, then drive
-  // the real object. A fresh evaluation per call keeps the module's own
-  // state from leaking between the two payloads.
   const TL = new Function('window', 'document', 'module',
     `${topoJs}\nreturn TopochainLeaderboard;`)(sandbox.window, sandbox.document, undefined);
+  TL._store = store;
   TL._open = true;
   TL._loading = false;
   TL._data = payload;
   TL._meta = { page: 1, per_page: 25, total: 1, total_pages: 1 };
   TL._renderBody();
-  return host.innerHTML;
+  return store.state.body;
 }
 
 const SEASON_ROW = {
@@ -444,44 +462,55 @@ const SEASON_ROW = {
 };
 
 test('the standings table drops the Success rate column on a season board', () => {
-  const seasonHtml = renderStandings({
+  const view = renderStandings({
     event: { id: 7, name: 'Season 1', display_leaderboard: true, type: 'season' },
     leaderboard: [SEASON_ROW],
   });
-  assert.doesNotMatch(seasonHtml, /Success rate/,
-    'the season aggregate has no per-event success rate to report');
-  assert.doesNotMatch(seasonHtml, /0%/,
-    'and must not print the hard-coded 0 as if it were measured');
+  assert.equal(view.state, 'table');
+  assert.ok(!view.columns.includes('success'),
+    'the season aggregate has no per-event success rate to report, so the '
+    + 'column does not exist — it cannot print the hard-coded 0 as if measured');
   // The points and blocks columns are real on both paths and must survive.
-  assert.match(seasonHtml, /67973\.66/, 'the season total is the headline number');
-  assert.match(seasonHtml, /Blocks produced/, 'blocks IS a real season-wide sum');
-  assert.match(seasonHtml, /Season points/, 'the column says which total it is');
+  assert.deepEqual(view.columns, ['rank', 'user', 'points', 'blocks']);
+  assert.equal(view.rows[0].points, '67973.66', 'the season total is the headline number');
+  assert.equal(view.headers.blocks, 'Blocks produced', 'blocks IS a real season-wide sum');
+  assert.equal(view.headers.points, 'Season points', 'the column says which total it is');
+  assert.equal(view.isSeason, true);
 });
 
 test('the standings table keeps the Success rate column on a per-event board', () => {
-  const eventHtml = renderStandings({
+  const view = renderStandings({
     event: { id: 8, name: 'Season 1 Beta', display_leaderboard: true, type: 'regular' },
     leaderboard: [{ ...SEASON_ROW, total_points: 1900, event_success_rate: 80 }],
   });
-  assert.match(eventHtml, /Success rate/, 'a single event measures it');
-  assert.match(eventHtml, /80%/);
-  assert.match(eventHtml, />Points</, 'and the points column is unqualified');
-  // Header cell count must match the body cell count, or the table skews.
-  const headers = (eventHtml.match(/<th /g) || []).length;
-  const cells = (eventHtml.match(/<td /g) || []).length;
-  assert.equal(headers, 5);
-  assert.equal(cells, 5, 'a dropped <th> without its <td> misaligns every row');
+  assert.equal(view.state, 'table');
+  assert.deepEqual(view.columns, ['rank', 'user', 'points', 'blocks', 'success'],
+    'a single event measures it');
+  assert.equal(view.headers.success, 'Success rate');
+  assert.equal(view.rows[0].success, '80');
+  assert.equal(view.headers.points, 'Points', 'and the points column is unqualified');
+  assert.equal(view.isSeason, false);
 });
 
 test('the season board and the per-event board stay column-aligned', () => {
-  const seasonHtml = renderStandings({
+  // This used to count <th> against <td> in the rendered HTML, because the
+  // string renderer dropped the success cell with TWO independent
+  // conditionals and one could be edited without the other. The descriptor
+  // makes that unrepresentable: there is a single `columns` list, and the
+  // renderer maps over it once for the header row and once per body row. The
+  // assertion is therefore structural — both maps read the same list.
+  const view = renderStandings({
     event: { id: 7, name: 'Season 1', display_leaderboard: true, type: 'season' },
     leaderboard: [SEASON_ROW],
   });
-  const headers = (seasonHtml.match(/<th /g) || []).length;
-  const cells = (seasonHtml.match(/<td /g) || []).length;
-  assert.equal(headers, 4, 'rank, user, season points, blocks');
-  assert.equal(cells, 4, 'header and body must drop the SAME column');
+  assert.equal(view.columns.length, 4, 'rank, user, season points, blocks');
+  for (const c of view.columns) {
+    assert.ok(view.headers[c], `every rendered column has a header (${c})`);
+  }
+  const maps = (standingsTsx.match(/view\.columns\.map\(/g) || []).length;
+  assert.equal(maps, 2,
+    'exactly two maps over the one column list — the header row and the body row; '
+    + 'a third source of truth is how the table skewed before');
 });
 
 test('the season caption replaces the "nothing is running" caption', () => {
