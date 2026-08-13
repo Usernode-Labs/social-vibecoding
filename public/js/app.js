@@ -696,6 +696,24 @@ const App = {
     // written to the device and nothing is ever filed.
     const offline = shot === 'feedback-offline' || shot === 'feedback-queued';
     const queued = shot === 'feedback-queued';
+    // Seed and pin synchronously, BEFORE enterAuthed() reaches its
+    // FeedbackQueue.flush('signin') call below. Delaying all of this with the
+    // modal used to leave a 50 ms window where the real persisted queue could
+    // start opening/flushing before seedDisplayOnly() swapped in the inert
+    // memory store. The resulting race made the queued dot/offline class
+    // depend on boot timing in proposal checks. Only presentation needs the
+    // delay; the address-driven state does not.
+    if (queued) {
+      window.FeedbackQueue?.seedDisplayOnly?.([{
+        payload: {
+          description: 'Dragging a card scrolls the board back to the top.',
+          target: 'platform',
+        },
+      }]);
+    }
+    if (offline) {
+      try { window.Offline?.forceOffline(); } catch (err) { /* ignore */ }
+    }
     // One tick after restoreFromHash so the screen it navigated to has
     // painted and the dialog opens over a settled shell.
     setTimeout(() => {
@@ -706,21 +724,6 @@ const App = {
           // replacing it mid-screenshot with the real (unspent) budget.
           Kudos.Budget.state = { given_this_week: limit, remaining: 0, limit };
           Kudos.Budget.refresh = () => Promise.resolve();
-        }
-        // Seed BEFORE forcing offline: forceOffline() dispatches
-        // usernode:offline-change, which reads the queue count, and that read
-        // has to see the seeded store rather than the device's real (empty)
-        // one.
-        if (queued) {
-          window.FeedbackQueue?.seedDisplayOnly?.([{
-            payload: {
-              description: 'Dragging a card scrolls the board back to the top.',
-              target: 'platform',
-            },
-          }]);
-        }
-        if (offline) {
-          try { window.Offline?.forceOffline(); } catch (err) { /* ignore */ }
         }
         App.openFeedbackModal();
       } catch (err) { /* ignore */ }
