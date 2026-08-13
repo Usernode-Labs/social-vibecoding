@@ -49,6 +49,26 @@ test('FCM data payload keeps the opaque, environment-bound contract', () => {
   assert.doesNotMatch(JSON.stringify(message.data), /session_done|user_id|token/);
 });
 
+test('a notification collapses to one alert per id on both platforms', () => {
+  // #1078 UX contract: re-sends of the same notification replace the visible
+  // alert (collapse id per notification), and all social pushes group into
+  // one thread/channel rather than scattering across the lock screen.
+  const now = new Date('2026-08-13T12:00:00Z');
+  const message = buildMessage({ ...INPUT, now, expiresAt: new Date(now.getTime() + 60_000) });
+  assert.equal(message.android.collapseKey, 'usernode-social-42');
+  assert.equal(message.android.notification.tag, 'usernode-social-42');
+  assert.equal(message.apns.headers['apns-collapse-id'], 'usernode-social-42');
+  assert.equal(message.apns.headers['apns-push-type'], 'alert');
+  assert.equal(message.apns.headers['apns-priority'], '10');
+  assert.deepEqual(message.apns.payload.aps, {
+    category: 'USERNODE_SOCIAL', threadId: 'usernode-social',
+  });
+  // The APNs expiration mirrors the delivery TTL exactly (unix seconds).
+  assert.equal(message.android.ttl, 60_000);
+  assert.equal(message.apns.headers['apns-expiration'],
+    String(Math.floor((now.getTime() + 60_000) / 1000)));
+});
+
 test('reviewed interaction kinds build and unknown kinds stay closed', () => {
   assert.equal(buildMessage({ ...INPUT, kind: 'mention' }).data.notification_id, '42');
   assert.throws(() => buildMessage({ ...INPUT, kind: 'future_kind' }), /kind_not_allowed/);
