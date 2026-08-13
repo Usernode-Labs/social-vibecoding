@@ -41,6 +41,16 @@ const profileJs = read('frontend/src/features/profile/profile.js');
 // describing where the screen's data comes from, above the <ProfileScreen /> it
 // renders in the region's place — so the comment assertions below read both.
 const profileIsland = read('frontend/src/features/profile/index.tsx');
+// #1191 slice 6 finished the conversion: #profile-root is React-owned end to
+// end now, so this module's DOM builders are gone. What it decides — which of
+// the six load states the screen is in, how a completed row reads, what goes in
+// the fallback circle — moved into profile-store.js, which is plain JS on
+// purpose so this suite can still read it. The markup moved into three .tsx
+// files. Assertions follow the code.
+const profileStoreJs = read('frontend/src/features/profile/profile-store.js');
+const profileViewTsx = read('frontend/src/features/profile/profile-view.tsx');
+const profileSheetTsx = read('frontend/src/features/profile/profile-edit-sheet.tsx');
+const profilePublicTsx = read('frontend/src/features/profile/public-profile-card.tsx');
 
 // ─── The drawer row ships visible ───────────────────────────────────────
 
@@ -138,18 +148,25 @@ test('a 401 replaces stale data rather than leaving the last user on screen', ()
 });
 
 test('the signed-out render offers a sign-in link, not the connection error', () => {
-  const fn = profileJs.slice(profileJs.indexOf('_render() {'));
-  const branch = fn.slice(fn.indexOf('d.signedOut'), fn.indexOf('if (d.error)'));
+  const branch = profileViewTsx.slice(
+    profileViewTsx.indexOf("view.kind === 'signedOut'"),
+    profileViewTsx.indexOf("view.kind === 'error'")
+  );
   assert.match(branch, /Sign in to see your profile/);
   assert.match(branch, /#login/, 'links to the in-SPA login route');
   // The generic copy must survive for REAL failures.
-  assert.match(fn, /Could not load your profile/);
+  assert.match(profileViewTsx, /Could not load your profile/);
 });
 
 test('the signed-out branch is checked before the generic error branch', () => {
-  const fn = profileJs.slice(profileJs.indexOf('_render() {'));
-  assert.ok(fn.indexOf('d.signedOut') < fn.indexOf('if (d.error)'),
+  // Twice over: in buildProfileView, which decides the kind, and in the
+  // component, which renders it. Either order flipping puts the
+  // connection-error copy in front of a visitor who is merely logged out.
+  const build = profileStoreJs.slice(profileStoreJs.indexOf('export function buildProfileView'));
+  assert.ok(build.indexOf('d.signedOut') < build.indexOf('d.error'),
     'otherwise a signed-out visitor still sees the connection-error copy');
+  assert.ok(profileViewTsx.indexOf("view.kind === 'signedOut'")
+    < profileViewTsx.indexOf("view.kind === 'error'"));
 });
 
 // ─── The editable profile (issue #982) ──────────────────────────────────
@@ -159,44 +176,53 @@ test('the signed-out branch is checked before the generic error branch', () => {
 // refactor could quietly undo.
 
 test('the identity card renders picture, name and the way in to editing', () => {
-  const fn = profileJs.slice(
-    profileJs.indexOf('_renderIdentityCard() {'),
-    profileJs.indexOf('// ── completed challenges')
+  const fn = profileViewTsx.slice(
+    profileViewTsx.indexOf('function IdentityCard('),
+    profileViewTsx.indexOf('function PublicControls(')
   );
-  assert.ok(fn.length, '_renderIdentityCard must exist');
+  assert.ok(fn.length, 'IdentityCard must exist');
+  assert.match(fn, /IdentityAvatar/, 'the picture, or the initial-in-a-circle fallback');
   assert.match(fn, /profile-edit-btn/);
   assert.match(fn, /Profile\.showEditSheet\(\)/);
-  assert.match(fn, /Your builder profile/);
-  assert.match(fn, /#leaderboard\/users\//, 'the builder-profile link goes to the kudos page');
+  const chips = profileStoreJs.slice(profileStoreJs.indexOf('export function identityView'));
+  assert.match(chips, /Your builder profile/);
+  assert.match(chips, /#leaderboard\/users\//, 'the builder-profile link goes to the kudos page');
 });
 
 test('the bio is a text node, never innerHTML', () => {
   // It is deliberately plain text, not markdown — nothing renders it
   // through marked/DOMPurify, so it must never reach innerHTML.
-  const code = profileJs.replace(/^\s*\/\/.*$/gm, '');
-  assert.doesNotMatch(code, /innerHTML/,
-    'this module builds DOM with _el()/textContent only');
-  assert.match(profileJs, /whitespace-pre-line/, 'newlines in a bio still render');
+  // dangerouslySetInnerHTML is the React spelling of the same mistake.
+  for (const [name, src] of [
+    ['profile.js', profileJs],
+    ['profile-store.js', profileStoreJs],
+    ['profile-view.tsx', profileViewTsx],
+    ['profile-edit-sheet.tsx', profileSheetTsx],
+    ['public-profile-card.tsx', profilePublicTsx],
+  ]) {
+    const code = src.replace(/^\s*\/\/.*$/gm, '');
+    assert.doesNotMatch(code, /innerHTML/, `${name} must render text as text`);
+  }
+  assert.match(profileViewTsx, /whitespace-pre-line/, 'newlines in a bio still render');
 });
 
 test('outbound handle links are scheme-guarded and rel-protected', () => {
-  const fn = profileJs.slice(
-    profileJs.indexOf('_renderIdentityCard() {'),
-    profileJs.indexOf('// ── completed challenges')
-  );
-  assert.match(fn, /Profile\._safeHref\(/,
+  const fn = profileStoreJs.slice(profileStoreJs.indexOf('export function identityView'));
+  assert.match(fn, /safeHref\(href\)/,
     'escaping alone would not stop a javascript: href');
-  assert.match(fn, /rel = 'noopener noreferrer'/);
   assert.match(fn, /encodeURIComponent\(links\.github\)/);
-  assert.match(profileJs, /\^https\?:\\\/\\\//, '_safeHref pins http(s) only');
+  assert.match(profileStoreJs, /\^https\?:\\\/\\\//, 'safeHref pins http(s) only');
+  // Only the chips built from a user-supplied handle are external; the
+  // in-app builder link is not, which is why the flag rides on the chip.
+  assert.match(fn, /external: true/);
+  assert.match(profileViewTsx, /rel: 'noopener noreferrer'/);
 });
 
 test('the username is shown read-only, with the reason', () => {
-  const fn = profileJs.slice(profileJs.indexOf('showEditSheet() {'));
-  assert.match(fn, /profile-edit-username/);
-  assert.match(fn, /userInput\.readOnly = true/);
-  assert.match(fn, /userInput\.disabled = true/);
-  assert.match(fn, /can’t be changed/,
+  assert.match(profileSheetTsx, /id="profile-edit-username"/);
+  assert.match(profileSheetTsx, /\breadOnly\b/);
+  assert.match(profileSheetTsx, /\bdisabled\b/);
+  assert.match(profileSheetTsx, /can’t be changed/,
     'a greyed-out field with no explanation reads as a bug');
   // Nothing may ever PATCH it.
   const save = profileJs.slice(profileJs.indexOf('async _save('));
@@ -204,12 +230,21 @@ test('the username is shown read-only, with the reason', () => {
 });
 
 test('the edit sheet degrades when the native sheet kit is absent', () => {
-  const fn = profileJs.slice(profileJs.indexOf('showEditSheet() {'));
-  // Same `|| null` shape Settings.showTermsSheet handles — but the editor
-  // must still be reachable, so it falls back to rendering inline.
-  assert.match(fn, /window\.PlatformUI && PlatformUI\.sheet/);
-  assert.match(fn, /if \(!Profile\._sheet\)/);
-  assert.match(fn, /insertBefore\(panel, root\.firstChild\)/);
+  // The lift goes through lib/kit-surface.ts now, which returns null when the
+  // kit is missing or refuses — the same `|| null` shape
+  // Settings.showTermsSheet handles. The editor must still be reachable, so
+  // the panel simply stays where React rendered it: inside #profile-root.
+  assert.match(profileSheetTsx, /adoptKitSurface\(\{/);
+  assert.match(profileSheetTsx, /kind: 'sheet'/);
+  assert.match(profileSheetTsx, /home: 'placeholder'/,
+    'its home is #profile-root — that IS the no-kit presentation');
+  assert.match(profileSheetTsx, /setAdopted\(!!adoption\)/);
+  // And the card chrome the kit shell would have drawn goes on by hand when
+  // it did not, through classList — never a rendered className, which would
+  // drop platform-sheet-adopted on the next render.
+  assert.match(profileSheetTsx, /useClassToggle\(panelRef, 'rounded-xl', !adopted\)/);
+  assert.match(profileViewTsx, /<ProfileEditSheet/,
+    'rendered inside #profile-root, above the identity card');
 });
 
 test('the photo is downscaled client-side before upload', () => {
@@ -253,8 +288,12 @@ test('nothing is written until Save, and the avatar goes first', () => {
 test('field-level server errors keep the sheet open', () => {
   const fn = profileJs.slice(profileJs.indexOf('async _save('));
   assert.match(fn, /body\.details/);
-  assert.match(fn, /if \(pinned\) \{ saveBtn\.disabled = false; return; \}/,
+  assert.match(fn, /if \(pinned\) return \{ fieldErrors \};/,
     'losing the user’s other edits to one bad handle would be its own bug');
+  // The sheet pins them per field and stays mounted — _dismissSheet is only
+  // reached on the success path.
+  assert.match(profileSheetTsx, /setFieldErrors\(result\.fieldErrors\)/);
+  assert.match(profileSheetTsx, /if \(result\.ok\) return;/);
 });
 
 test('the completed list is the viewer’s own, and every row links out', () => {
@@ -262,11 +301,12 @@ test('the completed list is the viewer’s own, and every row links out', () => 
     'c.completed is an ORGANISER flag — that filter showed 28 of production’s '
     + '34 live challenges to every signed-in person as their own completions');
   assert.match(profileJs, /\/api\/me\/challenges\/completed/);
-  const fn = profileJs.slice(
-    profileJs.indexOf('_renderCompleted(root, payload) {'),
-    profileJs.indexOf('_relativeDate(iso) {')
+  const shaping = profileStoreJs.slice(profileStoreJs.indexOf('export function completedView'));
+  assert.match(shaping, /href: '#leaderboard\/challenges\/'/);
+  const fn = profileViewTsx.slice(
+    profileViewTsx.indexOf('function Completed('),
+    profileViewTsx.indexOf('function TokenCard(')
   );
-  assert.match(fn, /card\.href = '#leaderboard\/challenges\/'/);
   assert.match(fn, /See all challenges/);
   assert.match(fn, /No completed challenges yet/);
   assert.match(fn, /Browse challenges/, 'the empty state offers a way forward');
@@ -297,7 +337,7 @@ test('the drawer row can show the viewer’s picture', () => {
 test('?shot=profile-edit opens the sheet for the screenshot capture', () => {
   const fn = profileJs.slice(
     profileJs.indexOf('_maybeOpenShot() {'),
-    profileJs.indexOf('showEditSheet() {')
+    profileJs.indexOf('async _prepareAvatar(')
   );
   assert.match(fn, /shot !== 'profile-edit'/);
   assert.match(fn, /Profile\._shotFired = true/, 'one-shot, so a refresh does not reopen it');
@@ -356,9 +396,9 @@ test('spending profile slots did not evict a still-needed check', () => {
 test('the fallback circle picks a letter, not whatever character is first', () => {
   // A display name is free text: "[Staging demo] admin" or "…hello" would
   // otherwise put a bracket or an ellipsis in the circle.
-  const fn = profileJs.slice(
-    profileJs.indexOf('_initial() {'),
-    profileJs.indexOf('_avatarEl(')
+  const fn = profileStoreJs.slice(
+    profileStoreJs.indexOf('export function initialOf('),
+    profileStoreJs.indexOf('export function avatarUrlOf(')
   );
   assert.match(fn, /\[\\p\{L\}\\p\{N\}\]/u,
     'match the first letter-or-digit');
