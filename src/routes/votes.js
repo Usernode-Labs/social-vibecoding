@@ -2244,10 +2244,10 @@ function voteRoutes(config) {
            (app_id, user_id, branch_name, pr_number, pr_url, pr_title, status,
             source, imported_pr_head_sha, imported_pr_author, promoted_at, shared_at, created_at,
             testing_md, testing_path, testing_paths)
-         VALUES ($1, $2, $3, $4, $5, $6, $7,
+         VALUES ($1, $2, $3, $4, $5, $6, $7::text,
             'imported', $8, $9,
-            CASE WHEN $7 = 'promoted' THEN NOW() END,
-            CASE WHEN $7 = 'active' THEN NOW() END,
+            CASE WHEN $7::text = 'promoted' THEN NOW() END,
+            CASE WHEN $7::text = 'active' THEN NOW() END,
             NOW(), $10, $11, $12::jsonb)
          RETURNING id, status`,
         [

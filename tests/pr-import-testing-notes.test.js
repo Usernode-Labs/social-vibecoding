@@ -169,7 +169,10 @@ test('the import writes parsed notes and defaults browser imports to active', ()
   assert.match(insert, /importTesting\.testingPath\b/);
   assert.match(insert, /const promote = req\.body\?\.promote === true/);
   assert.match(insert, /const initialStatus = promote \? 'promoted' : 'active'/);
-  assert.match(insert, /CASE WHEN \$7 = 'active' THEN NOW\(\) END/,
+  // The ::text casts are load-bearing (#1176): $7 also feeds the VARCHAR(32)
+  // status column, and postgres rejects the statement at prepare time unless
+  // every use of the parameter deduces the same type.
+  assert.match(insert, /CASE WHEN \$7::text = 'active' THEN NOW\(\) END/,
     'an active import is shared onto the In-progress board');
   assert.doesNotMatch(route, /maxGlobalSessions|freeGlobalSlot/,
     'an externally produced PR owns no coding worker and spends no worker-cap slot');
