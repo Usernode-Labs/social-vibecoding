@@ -99,6 +99,8 @@ const buttonVariants = cva('', {
       tapFull: 'w-full px-4 min-h-[44px]',
       // The profile's publish/unpublish button, beside a bordered sibling.
       tap: 'px-3 min-h-[44px]',
+      // #browse-detail-open, whose label is an arrow glyph beside a word.
+      iconRow: 'inline-flex items-center gap-2',
     },
     /** Radius + surface. Radius leads the box in every shell button. */
     variant: {
@@ -115,6 +117,10 @@ const buttonVariants = cva('', {
       // #agent-files-save — the same action inside a `text-xs` inline card,
       // where the smaller radius matches the card.
       compact: 'rounded bg-violet-600 hover:bg-violet-500',
+      // #browse-detail-open. Radius only: the browse detail page writes its
+      // transition BEFORE the fill, so on that one button the surface travels
+      // in `ink` instead — see `fillLate` / `unavailableLate` below.
+      roundedFull: 'rounded-full',
       // #agent-files-cancel — the neutral bordered sibling of `compact`.
       outline: 'rounded border border-zinc-300 dark:border-zinc-700',
       // #settings-remove — the bordered destructive button.
@@ -178,6 +184,15 @@ const buttonVariants = cva('', {
       solidText: 'text-white text-sm font-medium',
       // The auth screens' spelling of the same pair — see the header.
       solidLate: 'transition-colors text-white',
+      // #browse-detail-open's two states. The browse detail page is the one
+      // place that writes the whole surface after the transition, because the
+      // button swaps its ENTIRE fill (violet action ↔ inert grey) on
+      // `canOpen` and the shared run in front of it never changes. Carrying
+      // the fill in `variant` would put the swap two groups earlier and move
+      // the rendered class attribute.
+      fillLate: 'transition-colors bg-violet-600 hover:bg-violet-500 text-white',
+      unavailableLate:
+        'transition-colors bg-zinc-200 dark:bg-zinc-800 text-zinc-500 cursor-not-allowed',
       // #agent-files-cancel.
       muted:
         'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors',

@@ -1,0 +1,282 @@
+/**
+ * The browse screen's level-2 page (#1191 slice 6, conversion 3).
+ *
+ * The only writer of the DOM below #browse-detail. ./browse.js decides what
+ * the page says — which of loading / missing / ready it is in, which action
+ * rows survive the Home.menuItemsFor filter, what state the contributors card
+ * is in — and this file renders that descriptor, class string for class
+ * string.
+ *
+ * Two things ride across the seam rather than being re-derived here:
+ *
+ *  - `versionPillHtml`. AppView.renderAppVersionPillHTML is a pure string
+ *    builder in the still-legacy app view: it reads no DOM and mutates
+ *    nothing, so rendering its output as markup keeps ONE owner for the build
+ *    chip instead of a second implementation that would drift the day the
+ *    deploy states change. It is the app's own version metadata, not user
+ *    prose.
+ *  - the action rows' `run` closures, which stay on Browse._detailActions.
+ *    The descriptor carries an index; the click hands the clicked BUTTON back
+ *    to Browse._runDetailAction, so a keepOpen item (Check for updates) can
+ *    flip its label in place exactly as it does inside the home card's
+ *    popover.
+ *
+ * INITIAL RENDER: `detail === null` until the detail level is entered, and
+ * that renders nothing — the empty, hidden #browse-detail the hand-written
+ * shell shipped and the SSG prerender has to reproduce.
+ */
+
+import type { ReactNode } from 'react';
+
+import { Button } from '@/components/ui/button';
+
+import { AppIconContent, AppPills, appIconKind, hasAppPills } from './app-card-view';
+
+type ContributorRowView = {
+  who: string;
+  rank: number;
+  initial: string;
+  merged: number;
+  meta: string | null;
+  pillTint: string;
+};
+
+type ContributorsView = {
+  state: string;
+  count: number | null;
+  rows: ContributorRowView[];
+  toggle: string | null;
+  note: string | null;
+};
+
+type ActionView = {
+  index: number;
+  label: string;
+  title: string | null;
+  danger: boolean;
+  disabled: boolean;
+};
+
+export type DetailView =
+  | { state: 'loading' }
+  | { state: 'missing' }
+  | {
+    state: 'ready';
+    app: Record<string, any>;
+    name: string;
+    slug: string;
+    versionPillHtml: string;
+    updatedRel: string | null;
+    canOpen: boolean;
+    openLabel: string;
+    isAdded: boolean;
+    favLabel: string;
+    actions: ActionView[];
+    contributors: ContributorsView;
+  };
+
+function controller(): any {
+  return (typeof window !== 'undefined' ? (window as any).Browse : null) || null;
+}
+
+const NOTE_CLASS = 'px-3 py-3 text-sm text-zinc-500 dark:text-zinc-400';
+const CARD_CLASS = 'mt-5 rounded-xl border border-zinc-200 dark:border-zinc-800 overflow-hidden';
+
+function OpenArrow(): ReactNode {
+  return (
+    <svg
+      className="w-4 h-4"
+      fill="none"
+      stroke="currentColor"
+      viewBox="0 0 24 24"
+      strokeWidth="2"
+      aria-hidden="true"
+    >
+      <path strokeLinecap="round" strokeLinejoin="round" d="M13 7l5 5m0 0l-5 5m5-5H6" />
+    </svg>
+  );
+}
+
+function ActionChevron(): ReactNode {
+  return (
+    <svg
+      className="w-4 h-4 shrink-0 opacity-40"
+      fill="none"
+      stroke="currentColor"
+      viewBox="0 0 24 24"
+      strokeWidth="2"
+      aria-hidden="true"
+    >
+      <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+    </svg>
+  );
+}
+
+function ContributorRow({ row }: { row: ContributorRowView }): ReactNode {
+  return (
+    <button
+      type="button"
+      className="browse-contrib-row w-full text-left flex items-center gap-3 px-3 py-2.5 transition-colors hover:bg-zinc-500/5"
+      data-username={row.who}
+      title={`View @${row.who}’s proposals`}
+      onClick={() => controller()?.openContributor(row.who)}
+    >
+      <div className="w-5 shrink-0 text-center text-xs font-mono text-zinc-400 dark:text-zinc-500">{row.rank}</div>
+      <div className="w-8 h-8 shrink-0 rounded-full bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 flex items-center justify-center font-semibold text-xs">{row.initial}</div>
+      <div className="min-w-0 flex-1">
+        <div className="text-sm font-medium text-zinc-900 dark:text-zinc-100 truncate">{`@${row.who}`}</div>
+        {row.meta ? (
+          <div className="text-xs text-zinc-500 dark:text-zinc-400 truncate">{row.meta}</div>
+        ) : null}
+      </div>
+      <div
+        className={`shrink-0 inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-semibold ${row.pillTint}`}
+        title="Proposals merged into this app"
+      >{`${row.merged} merged`}</div>
+    </button>
+  );
+}
+
+function Contributors({ view }: { view: ContributorsView }): ReactNode {
+  return (
+    <div id="browse-detail-contributors" className={CARD_CLASS}>
+      {/* The heading paints in every state (including loading) so the page
+          doesn't jump when the fetch lands. */}
+      <h3
+        className="px-3 py-2.5 text-sm font-semibold text-zinc-900 dark:text-zinc-100 border-b border-zinc-200 dark:border-zinc-800"
+        title="The app&rsquo;s creator, its members, and everyone whose proposal has been merged into it"
+      >
+        Contributors
+        {view.count == null ? null : (
+          <span className="text-zinc-400 dark:text-zinc-500 font-normal">{` · ${view.count}`}</span>
+        )}
+      </h3>
+      {view.note ? <p className={NOTE_CLASS}>{view.note}</p> : null}
+      {view.rows.length ? (
+        <div className="divide-y divide-zinc-200 dark:divide-zinc-800">
+          {view.rows.map((row) => <ContributorRow key={row.who} row={row} />)}
+        </div>
+      ) : null}
+      {view.toggle ? (
+        <button
+          type="button"
+          id="browse-contrib-toggle"
+          className="w-full px-3 py-2.5 text-sm font-medium text-violet-600 dark:text-violet-400 text-left transition-colors hover:bg-zinc-500/5 border-t border-zinc-200 dark:border-zinc-800"
+          onClick={() => controller()?.toggleContributors()}
+        >{view.toggle}</button>
+      ) : null}
+    </div>
+  );
+}
+
+function Missing(): ReactNode {
+  return (
+    <div className="text-sm text-zinc-500 dark:text-zinc-400">
+      <p className="mb-3">That app isn&rsquo;t available.</p>
+      {/* #1036: a real anchor, so a modified click stays the browser's. */}
+      <a
+        id="browse-detail-back"
+        href="#apps"
+        className="inline-block text-violet-500 hover:text-violet-400"
+        onClick={(e) => {
+          const nav = (window as any).NavLink;
+          if (nav && nav.isNativeClick(e.nativeEvent)) return;
+          e.preventDefault();
+          location.hash = '#apps';
+        }}
+      >&larr; Back to all apps</a>
+    </div>
+  );
+}
+
+function Ready({ view }: { view: Extract<DetailView, { state: 'ready' }> }): ReactNode {
+  const warm = () => controller()?.warmDetailApp(view.slug);
+  return (
+    <>
+      <div className="flex items-start gap-4">
+        <div
+          className="app-icon-tile w-16 h-16 shrink-0 rounded-2xl overflow-hidden flex items-center justify-center font-bold text-2xl"
+          data-icon={appIconKind(view.app)}
+        >
+          <AppIconContent app={view.app} />
+        </div>
+        <div className="min-w-0 flex-1">
+          <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100 break-words">{view.name}</h2>
+          <p className="text-xs font-mono text-zinc-400 dark:text-zinc-500 break-all">{view.slug}</p>
+          {view.versionPillHtml ? (
+            <div className="mt-2" dangerouslySetInnerHTML={{ __html: view.versionPillHtml }} />
+          ) : null}
+          {view.updatedRel ? (
+            <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">{`Updated ${view.updatedRel}`}</p>
+          ) : null}
+          {hasAppPills(view.app) ? (
+            <div className="flex flex-wrap items-center gap-1 mt-2">
+              <AppPills app={view.app} />
+            </div>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2 mt-4">
+        <Button
+          type="button"
+          id="browse-detail-open"
+          layout="iconRow"
+          variant="roundedFull"
+          size="lg"
+          ink={view.canOpen ? 'fillLate' : 'unavailableLate'}
+          disabled={!view.canOpen}
+          onClick={() => controller()?.openDetailApp(view.slug)}
+          onPointerDown={view.canOpen ? warm : undefined}
+          onMouseEnter={view.canOpen ? warm : undefined}
+        >
+          {view.canOpen ? <OpenArrow /> : null}
+          {view.openLabel}
+        </Button>
+        <button
+          type="button"
+          id="browse-detail-fav"
+          className={`inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-medium transition-colors ${
+            view.isAdded
+              ? 'border-emerald-500 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950'
+              : 'border-violet-500 dark:border-violet-400 text-violet-600 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-950'
+          }`}
+          data-added={String(view.isAdded)}
+          onClick={() => controller()?.toggleDetailAdded(view.app)}
+        >{view.favLabel}</button>
+      </div>
+
+      {view.actions.length ? (
+        <div className="mt-5 rounded-xl border border-zinc-200 dark:border-zinc-800 overflow-hidden divide-y divide-zinc-200 dark:divide-zinc-800">
+          {view.actions.map((a) => (
+            <button
+              key={a.index}
+              type="button"
+              className={`browse-detail-action w-full flex items-center justify-between gap-2 px-3 py-3 text-sm text-left transition-colors hover:bg-zinc-500/5 ${
+                a.danger ? 'text-red-500' : 'text-zinc-700 dark:text-zinc-200'
+              }`}
+              data-action-index={a.index}
+              title={a.title || undefined}
+              disabled={a.disabled}
+              onClick={(e) => controller()?._runDetailAction(a.index, e.currentTarget)}
+            >
+              <span>{a.label}</span>
+              <ActionChevron />
+            </button>
+          ))}
+        </div>
+      ) : null}
+
+      <Contributors view={view.contributors} />
+    </>
+  );
+}
+
+export function BrowseDetail({ detail }: { detail: DetailView | null }): ReactNode {
+  if (!detail) return null;
+  if (detail.state === 'loading') {
+    return <p className="text-sm text-zinc-500 dark:text-zinc-400">Loading&hellip;</p>;
+  }
+  if (detail.state === 'missing') return <Missing />;
+  return <Ready view={detail} />;
+}
