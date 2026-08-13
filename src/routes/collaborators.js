@@ -56,9 +56,13 @@ function collaboratorRoutes(config) {
   // live in services/user-directory.js, which the app-facing directory
   // endpoints (#1195) read too — so a change to how the platform
   // resolves handles lands on every surface at once. The wire shape here
-  // is unchanged: { users: [...] }, no has_more.
+  // is unchanged: { users: [...] }, no has_more. Messages uses the same
+  // matching helpers but adds its access-specific self/block exclusions.
   router.get('/api/users/search', async (req, res) => {
-    const q = userDirectory.normalizeQuery(req.query.q);
+    const messageScope = req.query.scope === 'messages';
+    const q = typeof req.query.q === 'string'
+      ? req.query.q.trim().slice(0, messageScope ? 255 : 32)
+      : '';
     if (!q) return res.json({ users: [] });
     try {
       let excludeAppId = null;
@@ -68,8 +72,33 @@ function collaboratorRoutes(config) {
         );
         excludeAppId = rows[0]?.id || null;
       }
-      const { users } = await userDirectory.searchPrefix(pool, q, 10, { excludeAppId });
-      res.json({ users });
+      if (!messageScope) {
+        const { users } = await userDirectory.searchPrefix(pool, q, 10, { excludeAppId });
+        return res.json({ users });
+      }
+
+      // Messages must exclude the current user and either direction of a
+      // block before applying the result limit. Keep escaping and projection
+      // on the shared directory helpers so their public-user contract cannot
+      // drift from the other username search surfaces.
+      const escaped = userDirectory.escapeLike(q);
+      const { rows } = await pool.query(
+        `SELECT id, username FROM users
+          WHERE LOWER(username) LIKE LOWER($1) || '%' ESCAPE '\\'
+            AND ($2::int IS NULL OR id NOT IN (
+              SELECT user_id FROM app_collaborators WHERE app_id = $2
+            ))
+            AND (NOT $3::boolean OR id <> $4)
+            AND (NOT $3::boolean OR NOT EXISTS (
+              SELECT 1 FROM user_blocks b
+               WHERE (b.blocker_id = $4 AND b.blocked_user_id = users.id)
+                  OR (b.blocker_id = users.id AND b.blocked_user_id = $4)
+            ))
+          ORDER BY LOWER(username), id
+          LIMIT 10`,
+        [escaped, excludeAppId, messageScope, req.user.id]
+      );
+      res.json({ users: rows.map(userDirectory.projectUser) });
     } catch (err) {
       log.error('collab', 'user search failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });

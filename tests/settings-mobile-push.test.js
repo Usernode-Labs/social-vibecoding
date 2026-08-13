@@ -14,6 +14,7 @@ const ALERTS_SOURCE = fs.readFileSync(
   path.join(ROOT, 'frontend/src/features/settings/sections/alerts.tsx'), 'utf8');
 
 const CATEGORIES = [
+  ['messages', 'Messages', true],
   ['direct_interactions', 'Direct interactions', true],
   ['invitations', 'Invitations', true],
   ['shared_work', 'Shared work', true],
@@ -36,6 +37,7 @@ test('settings renders clear user-facing category labels and descriptions', () =
     assert.match(block, new RegExp(`>${label}<`));
   }
   assert.match(block, /Mentions and replies to your messages/);
+  assert.match(block, /Conversation invitations, messages, mentions, replies, and reactions/);
   assert.match(block, /Reactions and kudos on your work/);
   assert.doesNotMatch(block, />\s*(mention|reply|stale_pr|check_failed|pr_proposed|spec_shared)\s*</,
     'internal notification identifiers never become visible labels');
@@ -105,11 +107,13 @@ test('settings reflects saved state and persists a changed category', async () =
     [key, defaultEnabled]
   )));
   saved.direct_interactions = false;
+  saved.messages = false;
   saved.lightweight_activity = true;
   const { Settings, inputs, status, calls } = harness(saved);
 
   await Settings._loadMobilePushPreferences();
   assert.equal(inputs.get('direct_interactions').checked, false);
+  assert.equal(inputs.get('messages').checked, false);
   assert.equal(inputs.get('lightweight_activity').checked, true);
   assert.ok([...inputs.values()].every((input) => input.disabled === false));
   assert.equal(status.textContent, 'Saved to your account.');

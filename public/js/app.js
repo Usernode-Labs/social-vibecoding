@@ -42,6 +42,9 @@ const App = {
   // apps" only, every other app lives there) — set by
   // navigateToBrowse() / _exitBrowse() / navigateHome().
   _inBrowse: false,
+  // Platform-wide direct and group conversations (#488). The screen itself
+  // is React-owned; this flag only coordinates the classic shell router.
+  _inMessages: false,
 
   // Chromeless full-screen mode (#app/<slug>/full): the App tab with the
   // platform header + tab bar hidden, so the embedded app fills the
@@ -1095,6 +1098,16 @@ const App = {
               }
             }
             break;
+          case 'conversation_message_created':
+          case 'conversation_message_updated':
+          case 'conversation_reaction_updated':
+          case 'conversation_read':
+          case 'conversation_membership_changed':
+          case 'conversation_typing':
+            // The global socket is transport only. The React-owned Messages
+            // store applies member-scoped events without a legacy DOM write.
+            window.UsernodeReact?.messages?.handleEvent?.(data);
+            break;
           case 'app_version_changed':
             // #21: a PR just merged and prod was rebuilt. Re-pull the home
             // list so the app card's commit pill picks up the new SHA.
@@ -1162,6 +1175,9 @@ const App = {
     }
     if (window.Notifications) Notifications.refresh?.();
     if (window.WorkDrawer) WorkDrawer.refresh?.();
+    // Messages owns a global drawer unread badge even while its screen is
+    // closed, so reconcile its summary after a disconnect in every view.
+    window.UsernodeReact?.messages?.refresh?.();
     // #1038: `session_state` is fire-and-forget like every other broadcast,
     // so anything that transitioned during the disconnect window was lost.
     // The reconcile endpoint is the authority — it also clears overrides for
@@ -1901,6 +1917,7 @@ const App = {
       e.preventDefault();
       if (App._inAdmin && window.AdminConsole?.handleBack?.()) return;
       if (App._inSettings && window.Settings?.handleBack?.()) return;
+      if (App._inMessages && window.UsernodeReact?.messages?.handleBack?.()) return;
       // Browse's detail level (#apps/<slug>) claims the button as "up to
       // the list"; on the list itself it declines and we leave the screen.
       if (App._inBrowse && window.Browse?.handleBack?.()) return;
@@ -2072,6 +2089,7 @@ const App = {
         else if (App._inAdmin) App.navigateHome();
         else if (App._inSettings) App.navigateHome();
         else if (App._inBrowse) App.navigateHome();
+        else if (App._inMessages) App.navigateHome();
         else {
           // Already on home (no app, no leaderboard). Don't call
           // navigateHome() — that would pushState, AppView.close(),
@@ -2094,7 +2112,8 @@ const App = {
         // home feed. Doubles as the addressable route the dapp.json
         // regression test for the mode toggle uses (#748).
         App.setChromeless(false);
-        if (App.currentApp || App._inLeaderboard) {
+        if (App.currentApp || App._inLeaderboard || App._inProfile
+          || App._inAdmin || App._inSettings || App._inBrowse || App._inMessages) {
           App.navigateHome();
         } else {
           App.setHeaderTitle('dApps');
@@ -2211,6 +2230,13 @@ const App = {
         App.navigateToSettings(parts[1] || null);
         return;
       }
+      if (parts[0] === 'messages') {
+        // Platform-wide conversations. A malformed/oversized id degrades to
+        // the list without ever reaching a fetch URL.
+        App.setChromeless(false);
+        App.navigateToMessages(App._numericSegment(parts[1]));
+        return;
+      }
       if (parts[0] === 'topochain') {
         // Topochain public screens (Task 14): #topochain/leaderboard and
         // #topochain/seasons. Both are public reads under /api/v4 — no
@@ -2307,6 +2333,7 @@ const App = {
         if (App._inProfile) App._exitProfile();
         if (App._inAdmin) App._exitAdminConsole();
         if (App._inSettings) App._exitSettings();
+        if (App._inMessages) App._exitMessages();
         App.setChromeless(chromeless);
         // Stash the validated inner path where renderAppTab / the token
         // refresh read it. Set on EVERY pass (null when absent) so
@@ -2343,6 +2370,7 @@ const App = {
         if (App._inProfile) App._exitProfile();
         if (App._inAdmin) App._exitAdminConsole();
         if (App._inSettings) App._exitSettings();
+        if (App._inMessages) App._exitMessages();
         if (App._inBrowse) App._exitBrowse();
         App._showOnlyScreen('home-screen');
         document.getElementById('back-btn').classList.add('hidden');
@@ -2457,7 +2485,7 @@ const App = {
   // the zoom transition).
   SCREEN_IDS: ['app-view', 'home-screen', 'browse-screen',
     'leaderboard-screen', 'profile-screen', 'admin-screen',
-    'settings-screen'],
+    'settings-screen', 'messages-screen'],
 
   // Reveal `revealId`, hide every other screen root (except any id in
   // `keepAlso`), and hand the header's back chevron back to its default
@@ -2509,6 +2537,8 @@ const App = {
     'browse-screen',
     'profile-screen',
     'leaderboard-screen',
+    // #488 — the fully React-owned platform Messages screen.
+    'messages-screen',
     // ...and home last. This is the first converted root that ships
     // VISIBLE, which is why _isScreenVisible below grew a DOM fallback.
     'home-screen',
@@ -2610,7 +2640,7 @@ const App = {
   _numericSegment(raw) {
     if (!raw) return null;
     const n = Number(raw);
-    return Number.isInteger(n) && n > 0 ? n : null;
+    return Number.isInteger(n) && n > 0 && n <= 2147483647 ? n : null;
   },
 
   navigateToLeaderboard(sub, profileUser, challengeTarget) {
@@ -2642,6 +2672,7 @@ const App = {
     if (App._inProfile) App._exitProfile();
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inSettings) App._exitSettings();
+    if (App._inMessages) App._exitMessages();
     if (App._inBrowse) App._exitBrowse();
     // Screen reveal + chrome, all inside the transition callback so the
     // outgoing page is snapshotted as it actually looked (#979).
@@ -2734,6 +2765,7 @@ const App = {
     if (App._inLeaderboard) App._exitLeaderboard();
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inSettings) App._exitSettings();
+    if (App._inMessages) App._exitMessages();
     if (App._inBrowse) App._exitBrowse();
     const screen = document.getElementById('profile-screen');
     PlatformUI.transition(() => {
@@ -2788,6 +2820,7 @@ const App = {
     if (App._inProfile) App._exitProfile();
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inSettings) App._exitSettings();
+    if (App._inMessages) App._exitMessages();
     const screen = document.getElementById('browse-screen');
     App._inBrowse = true;
     // Renders into the still-hidden screen; `chrome: false` holds back its
@@ -2859,6 +2892,7 @@ const App = {
     if (App._inLeaderboard) App._exitLeaderboard();
     if (App._inProfile) App._exitProfile();
     if (App._inSettings) App._exitSettings();
+    if (App._inMessages) App._exitMessages();
     if (App._inBrowse) App._exitBrowse();
     const screen = document.getElementById('admin-screen');
     App._inAdmin = true;
@@ -2907,6 +2941,7 @@ const App = {
     if (App._inLeaderboard) App._exitLeaderboard();
     if (App._inProfile) App._exitProfile();
     if (App._inAdmin) App._exitAdminConsole();
+    if (App._inMessages) App._exitMessages();
     if (App._inBrowse) App._exitBrowse();
     const screen = document.getElementById('settings-screen');
     App._inSettings = true;
@@ -2934,6 +2969,43 @@ const App = {
   _exitSettings() {
     App._inSettings = false;
     if (window.Settings?.close) Settings.close();
+  },
+
+  // Show the platform Messages screen (#messages[/conversationId]). The
+  // bridge owns all in-screen state; this classic method coordinates only
+  // mutually-exclusive screen visibility, chrome and transition ordering.
+  navigateToMessages(conversationId) {
+    const messages = window.UsernodeReact?.messages;
+    if (App._inMessages && messages?.isOpen?.()) {
+      messages.route?.(conversationId || null);
+      return;
+    }
+    const fromIframe = !!(App.currentApp && App.currentTab === 'app');
+    const leavingApp = !!App.currentApp;
+    App.currentApp = null;
+    if (App._inLeaderboard) App._exitLeaderboard();
+    if (App._inProfile) App._exitProfile();
+    if (App._inAdmin) App._exitAdminConsole();
+    if (App._inSettings) App._exitSettings();
+    if (App._inBrowse) App._exitBrowse();
+    const screen = document.getElementById('messages-screen');
+    App._inMessages = true;
+    // Route the still-hidden island first. It renders no remote data until its
+    // effects resolve, and chrome remains suspended until the callback below.
+    messages?.route?.(conversationId || null);
+    PlatformUI.transition(() => {
+      if (leavingApp) AppView.close();
+      App._showOnlyScreen('messages-screen');
+      App._enterScreenChrome();
+      App.setHeaderTitle('Messages');
+      messages?.syncChrome?.();
+    }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
+  },
+
+  // State-only teardown; the incoming transition hides the root.
+  _exitMessages() {
+    App._inMessages = false;
+    window.UsernodeReact?.messages?.close?.();
   },
 
   // navigateToTopochainLeaderboard / _exitTopochainLeaderboard used to
@@ -3175,6 +3247,7 @@ const App = {
     if (App._inProfile) App._exitProfile();
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inSettings) App._exitSettings();
+    if (App._inMessages) App._exitMessages();
     // Real screen navigation. From a launcher grid (home's "Your apps" /
     // featured row, or the #apps browse screen) the app view expands out
     // of the clicked tile (kit 'zoom-in'); from anywhere else (deep link,
@@ -3288,6 +3361,7 @@ const App = {
     if (App._inProfile) App._exitProfile();
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inSettings) App._exitSettings();
+    if (App._inMessages) App._exitMessages();
     if (App._inBrowse) App._exitBrowse();
     // Preferred: shrink the app view back into its home tile (kit
     // 'zoom-out': fn reveals home beneath the pinned overlay, `after`

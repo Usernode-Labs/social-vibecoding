@@ -62,6 +62,7 @@ import { LeaderboardScreen } from './features/leaderboard';
 import { HeaderMenu } from './features/header/header-menu';
 import { PlatformHeader } from './features/header/platform-header';
 import { NotificationsPanel } from './features/notifications';
+import { MessagesScreen } from './features/messages';
 import { SettingsScreen } from './features/settings';
 import { WorkDrawerPanel } from './features/work-drawer';
 import { Dialogs } from './features/dialogs';
@@ -206,6 +207,14 @@ export function Shell() {
       */}
       <AdminScreen />
       <SettingsScreen />
+      {/*
+          Platform-wide direct and group messaging (#488). This is a fully
+          React-owned sibling screen: unlike app-scoped GroupChat, no legacy
+          module writes inside it. It ships hidden and empty for prerender and
+          hydration parity; the hash router publishes visibility and the
+          feature loads authenticated data only after #messages opens.
+      */}
+      <MessagesScreen />
       {/*
           The Topochain leaderboard used to be its own <main> screen here
           (#topochain-leaderboard-screen, Task 14). The header slim-down

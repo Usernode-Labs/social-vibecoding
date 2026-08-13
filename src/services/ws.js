@@ -1044,6 +1044,45 @@ function pushToUser(userId, payload) {
   return sent;
 }
 
+// Platform conversations have no app room. Their service resolves a fresh
+// active-member audience inside the same mutation and hands that snapshot to
+// this helper, which fans out only through each member's authenticated global
+// event sockets. Keeping this separate from broadcast()/broadcastGlobal()
+// makes an accidental private-message app/global broadcast review-visible.
+const CONVERSATION_EVENT_TYPES = new Set([
+  'conversation_message_created',
+  'conversation_message_updated',
+  'conversation_reaction_updated',
+  'conversation_read',
+  'conversation_membership_changed',
+  'conversation_typing',
+]);
+
+function pushConversationEvent(memberUserIds, payload, { excludeUserId = null } = {}) {
+  if (!Array.isArray(memberUserIds) || !payload || typeof payload !== 'object'
+      || Array.isArray(payload) || !CONVERSATION_EVENT_TYPES.has(payload.type)) {
+    return 0;
+  }
+  const conversationId = Number(payload.conversationId);
+  if (!Number.isSafeInteger(conversationId) || conversationId <= 0
+      || conversationId > 2147483647) {
+    return 0;
+  }
+  const excluded = Number(excludeUserId);
+  let sent = 0;
+  const seen = new Set();
+  for (const value of memberUserIds) {
+    const userId = Number(value);
+    if (!Number.isSafeInteger(userId) || userId <= 0 || userId > 2147483647
+        || userId === excluded || seen.has(userId)) {
+      continue;
+    }
+    seen.add(userId);
+    sent += pushToUser(userId, payload);
+  }
+  return sent;
+}
+
 const pushNotificationToUser = pushToUser;
 
-module.exports = { attach, broadcast, broadcastGlobal, broadcastGlobalScoped, broadcastToAdmins, sendSystemMessage, getOnlineUsers, pushAppStatusUpdate, pushSessionUpdate, pushSessionState, sessionStateAudience, pushVoteUpdate, pushKudosUpdate, pushAppUpdate, pushIssueUpdate, pushBoardOrderUpdate, pushToUser, pushNotificationToUser, getReactionsForMessages, validateThread, handleMessage, MAX_CHAT_LEN };
+module.exports = { attach, broadcast, broadcastGlobal, broadcastGlobalScoped, broadcastToAdmins, sendSystemMessage, getOnlineUsers, pushAppStatusUpdate, pushSessionUpdate, pushSessionState, sessionStateAudience, pushVoteUpdate, pushKudosUpdate, pushAppUpdate, pushIssueUpdate, pushBoardOrderUpdate, pushToUser, pushConversationEvent, pushNotificationToUser, getReactionsForMessages, validateThread, handleMessage, MAX_CHAT_LEN };

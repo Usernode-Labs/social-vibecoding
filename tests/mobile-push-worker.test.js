@@ -38,6 +38,11 @@ function delivery(overrides = {}) {
     registration_user_id: 7,
     registration_session_expires_at: new Date(Date.now() + 60_000),
     app_name: 'MyPage',
+    conversation_id: null,
+    conversation_title: null,
+    conversation_status: null,
+    conversation_message_content: null,
+    conversation_member_status: null,
     source_username: null,
     message_content: null,
     session_title: 'Fix login redirect loop',
@@ -114,6 +119,51 @@ test('a delivery with no context fields still sends with the generic fallback', 
   assert.deepEqual(calls.sent[0].notification, {
     title: 'Usernode', body: 'You have new activity',
   });
+});
+
+test('conversation delivery uses conversation context and rechecks current membership', async () => {
+  const row = delivery({
+    kind: 'conversation_mention',
+    push_category: 'messages',
+    conversation_id: 81,
+    conversation_title: 'Design crew',
+    conversation_status: 'active',
+    conversation_message_content: 'please review the latest mock',
+    conversation_member_status: 'member',
+    source_username: 'alice',
+    app_name: 'must-not-render',
+    message_content: 'must-not-render',
+  });
+  let result = harness({ row });
+  await result.worker.processDelivery(JOB);
+  assert.deepEqual(result.calls.sent[0].notification, {
+    title: '@alice mentioned you · Design crew',
+    body: 'please review the latest mock',
+  });
+  assert.doesNotMatch(JSON.stringify(result.calls.sent[0]), /must-not-render/);
+
+  for (const change of [
+    { conversation_member_status: 'invited' },
+    { conversation_member_status: null },
+    { conversation_id: null },
+    { conversation_status: 'archived' },
+  ]) {
+    result = harness({ row: delivery({ ...row, ...change }) });
+    await result.worker.processDelivery(JOB);
+    assert.equal(result.calls.sent.length, 0);
+    assert.equal(result.calls.finished[0].code, 'conversation_access_revoked');
+  }
+
+  result = harness({ row: delivery({
+    ...row, kind: 'conversation_invite', conversation_member_status: 'invited',
+  }) });
+  await result.worker.processDelivery(JOB);
+  assert.equal(result.calls.sent.length, 1, 'an invited recipient may receive only the invitation');
+
+  result = harness({ row: delivery({ conversation_id: 81 }) });
+  await result.worker.processDelivery(JOB);
+  assert.equal(result.calls.sent.length, 0, 'legacy app kinds cannot carry conversation refs');
+  assert.equal(result.calls.finished[0].code, 'conversation_access_revoked');
 });
 
 test('pre-send revalidation cancels ineligible recipient and deployment state', async () => {
@@ -207,9 +257,14 @@ test('delivery reload includes the current deployment state and activation times
   assert.match(seen.sql, /LEFT JOIN users su ON su\.id = n\.source_user_id/);
   assert.match(seen.sql, /LEFT JOIN chat_messages cm ON cm\.id = n\.chat_message_id/);
   assert.match(seen.sql, /LEFT JOIN chat_sessions cs ON cs\.id = n\.session_id/);
+  assert.match(seen.sql, /LEFT JOIN conversations c ON c\.id = n\.conversation_id/);
+  assert.match(seen.sql, /LEFT JOIN conversation_messages conversation_message/);
+  assert.match(seen.sql, /LEFT JOIN conversation_members conversation_member/);
   assert.match(seen.sql, /a\.name AS app_name/);
   assert.match(seen.sql, /su\.username AS source_username/);
   assert.match(seen.sql, /cm\.content AS message_content/);
+  assert.match(seen.sql, /c\.title AS conversation_title/);
+  assert.match(seen.sql, /conversation_message\.content AS conversation_message_content/);
   assert.match(seen.sql, /cs\.session_title, cs\.pr_title, cs\.branch_name/);
   assert.match(seen.sql, /n\.detail/);
   assert.deepEqual(seen.params, [JOB.id]);
