@@ -42,6 +42,9 @@ const topoJs = fs.readFileSync(path.join(root, 'frontend/src/features/leaderboar
 // it; assertions about what it DECIDES stayed above.
 const standingsTsx = fs.readFileSync(path.join(root, 'frontend/src/features/leaderboard/topochain-standings.tsx'), 'utf8');
 const chJs = fs.readFileSync(path.join(root, 'frontend/src/features/leaderboard/topochain-challenges.js'), 'utf8');
+// #1191 slice 6 conversion 7 split the challenges pane the same way conversion
+// 5 split the standings pane: chJs decides, this renders.
+const chTsx = fs.readFileSync(path.join(root, 'frontend/src/features/leaderboard/challenges-pane.tsx'), 'utf8');
 const ctxJs = fs.readFileSync(path.join(root, 'frontend/src/features/leaderboard/topochain-event-context.js'), 'utf8');
 const manifest = JSON.parse(fs.readFileSync(path.join(root, 'dapp.json'), 'utf8'));
 
@@ -342,7 +345,7 @@ test('the challenges pane decorates the public grid with your own points', () =>
   const load = chJs.slice(chJs.indexOf('  async _loadMine(eventId) {'), chJs.indexOf('  // ── Challenge grid'));
   assert.ok(!/_challengesError/.test(load),
     'a personalization failure never paints an error — the public grid stands');
-  assert.match(chJs, /See where the season stands/,
+  assert.match(chTsx, /See where the season stands/,
     'the retired season-leaderboard block is replaced by a link to the standings tab');
   assert.match(chJs, /window\.location\.hash = '#leaderboard\/topochain'/,
     'and that link goes through the router, so the shared event selection survives');
@@ -377,18 +380,25 @@ test('the challenges grid sorts unfinished challenges ahead of completed ones', 
 });
 
 test('the challenges grid summarises and groups the completed set', () => {
-  assert.match(chJs, /id="tc-se-challenge-summary"/,
+  // The tally is composed in the shaping module and the id that carries it is
+  // in the renderer — assert both halves, since either one alone would let the
+  // declared dapp.json check lose its anchor.
+  assert.match(chTsx, /id="tc-se-challenge-summary"/,
     'the summary line carries a stable id the dapp.json check anchors on');
   assert.match(chJs, /challenges completed/, 'and states the tally in words');
-  assert.match(chJs, />Completed<\/div>/,
-    'the grouping subheading exists');
+  assert.match(chTsx, /\{g\.heading\}/,
+    'the grouping subheading renders');
+  assert.match(chJs, /heading: 'Completed'/,
+    'and the module is what names it');
   // Suppressed when everything (or nothing) is finished — every public event
   // in production is currently 100% completed, where the heading says nothing.
-  const fn = chJs.slice(chJs.indexOf('const GRID_CLASS'),
-    chJs.indexOf('id="tc-se-challenge-summary"'));
+  const fn = chJs.slice(chJs.indexOf('  gridView(ordered) {'), chJs.indexOf('  cardView(c, i) {'));
+  assert.ok(fn.length > 0, 'gridView located');
   assert.match(fn, /firstDone > 0 && doneCount > 0/,
     'the subheading is gated on BOTH groups being non-empty');
-  assert.match(chJs, /opacity-60/, 'completed cards are dimmed');
+  assert.match(chJs, /done: TopochainChallenges\._isDone\(c\)/,
+    'the card descriptor carries the completed flag');
+  assert.match(chTsx, /opacity-60/, 'and completed cards are dimmed');
 });
 
 test('the standings pane cross-links to the challenges tab without ever painting an error', () => {

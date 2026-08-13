@@ -33,6 +33,7 @@ const contextJs = fs.readFileSync(path.join(root, 'frontend/src/features/leaderb
 const island = fs.readFileSync(path.join(root, 'frontend/src/features/leaderboard/index.tsx'), 'utf8');
 const mount = fs.readFileSync(path.join(root, 'frontend/src/features/leaderboard/mount.ts'), 'utf8');
 const standingsTsx = fs.readFileSync(path.join(root, 'frontend/src/features/leaderboard/topochain-standings.tsx'), 'utf8');
+const challengesPaneTsx = fs.readFileSync(path.join(root, 'frontend/src/features/leaderboard/challenges-pane.tsx'), 'utf8');
 const manifest = JSON.parse(fs.readFileSync(path.join(root, 'dapp.json'), 'utf8'));
 
 // ─── index.html: script registration + screen hosts ─────────────────────
@@ -49,20 +50,24 @@ test('all three modules arrive with the leaderboard island, and the shared rule 
     assert.ok(!html.includes(`<script src="${src}">`),
       `${src} is in the bundle now — a classic tag would load it twice`);
   }
-  for (const spec of ['./topochain-challenges.js', './topochain-event-context.js']) {
-    assert.ok(island.includes(`import '${spec}';`),
-      `the island must import ${spec}, or nothing publishes its global`);
-  }
-  // The standings module arrives one hop further out as of #1191 slice 6
-  // conversion 5: ./mount imports it AND plants the store its render methods
-  // push into, so importing the module directly here would publish the global
-  // without the store and leave the pane permanently blank.
+  assert.ok(island.includes("import './topochain-event-context.js';"),
+    'the island must import the shared event bar, or nothing publishes its global');
+  // The two PANE modules arrive one hop further out — the standings module as
+  // of #1191 slice 6 conversion 5, the challenges module as of conversion 7.
+  // ./mount imports each one AND plants the store its render methods push
+  // into, so importing either directly here would publish the global without
+  // the store and leave that pane permanently blank.
   assert.ok(island.includes("import './mount';"),
-    'the island must import ./mount, which is what loads the standings module');
-  assert.ok(mount.includes("import './topochain-leaderboard.js';"),
-    'and ./mount must still import the module, or nothing publishes its global');
-  assert.match(mount, /TopochainLeaderboard\._store = topochainStandingsStore/,
-    'and plant its store — the render methods are no-ops without it');
+    'the island must import ./mount, which is what loads the two pane modules');
+  for (const [spec, plant] of [
+    ["import './topochain-leaderboard.js';", /TopochainLeaderboard\._store = topochainStandingsStore/],
+    ["import './topochain-challenges.js';", /TopochainChallenges\._store = topochainChallengesStore/],
+  ]) {
+    assert.ok(mount.includes(spec),
+      `./mount must still ${spec.trim()} or nothing publishes its global`);
+    assert.match(mount, plant,
+      'and plant its store — the render methods are no-ops without it');
+  }
   // The shared pickDefault rule is still a classic script: it has no DOM of its
   // own, so chunk F had no region to move it with.
   const evTag = '<script src="/js/topochain-events.js"></script>';
@@ -210,10 +215,17 @@ test('TopochainLeaderboard defines the expected surface', () => {
 test('TopochainChallenges defines the expected surface', () => {
   assert.match(challengesJs, /const TopochainChallenges = \{/, 'the global object literal is defined');
   assert.match(challengesJs, /window\.TopochainChallenges = TopochainChallenges;/, 'mirrored onto window');
+  // `esc(` became `str(` in #1191 slice 6 conversion 7, for the same reason it
+  // did in the standings module two conversions earlier: this file returns
+  // descriptors and ./challenges-pane.tsx renders them. The four view builders
+  // are named here so the split between "decides" and "renders" cannot quietly
+  // collapse back.
   for (const member of [
-    'open()', 'close()', 'esc(', 'fetchJson(', '_eventId()', 'loadChallenges()',
-    '_renderGrid()', 'openChallengeDetail(', 'closeChallengeDetail()',
-    'openUserProfile(', 'closeUserProfile()',
+    'open()', 'close()', 'str(', 'fetchJson(', '_eventId()', 'loadChallenges()',
+    '_renderGrid()', 'gridView(', 'cardView(', 'openChallengeDetail(',
+    'closeChallengeDetail()', '_renderDetailOverlay()', 'detailView()',
+    'openUserProfile(', 'closeUserProfile()', '_renderProfileOverlay()',
+    'profileView()',
   ]) {
     assert.ok(challengesJs.includes(member), `TopochainChallenges defines ${member}`);
   }
@@ -268,19 +280,14 @@ test('display_leaderboard=false and API errors are handled without throwing', ()
 // ─── esc() discipline — every interpolated API value must pass through it ─
 
 test('every module escapes interpolated values with the established esc() idiom', () => {
-  // The standings module is NOT in this list any more. #1191 slice 6
-  // conversion 5 took its innerHTML away entirely: it returns descriptors and
-  // ./topochain-standings.tsx renders them, so escaping is React's job and an
-  // esc() here would double-encode. Its own discipline is asserted below.
-  for (const src of [challengesJs, contextJs]) {
+  // Only the event bar is left in this list. #1191 slice 6 took the innerHTML
+  // away from the standings pane (conversion 5) and the challenges pane
+  // (conversion 7) entirely: both return descriptors their .tsx renders, so
+  // escaping is React's job and an esc() there would double-encode. Their own
+  // discipline is asserted below.
+  for (const src of [contextJs]) {
     assert.match(src, /esc\(s\) \{\s*\n\s*return String\(s == null \? '' : s\)/,
       'esc() mirrors the admin-console.js helper shape');
-  }
-  // Spot-check: a sampling of API-sourced fields actually gets passed
-  // through esc(...) rather than interpolated raw into template literals.
-  for (const field of ['cp.goal', 'p.display_name', 'e.display_name']) {
-    assert.ok(new RegExp(`esc\\(${field.replace('.', '\\.')}`).test(challengesJs),
-      `${field} passes through esc() in topochain-challenges.js`);
   }
   for (const field of ['ev.name', 'ev.description', 'ev.users_count']) {
     assert.ok(new RegExp(`esc\\(${field.replace('.', '\\.')}`).test(contextJs),
@@ -318,34 +325,68 @@ test('esc() escapes quotes too, not just & < >', () => {
   // Attribute-value breakout (`<option value="` / `data-*="`, ...) needs
   // both quote characters escaped, not just the text-node-unsafe three —
   // stopping-XSS review, task 14 fix.
-  for (const src of [challengesJs, contextJs]) {
+  for (const src of [contextJs]) {
     const fn = src.slice(src.indexOf('esc(s) {'), src.indexOf('esc(s) {') + 300);
     assert.match(fn, /\.replace\(\/"\/g, '&quot;'\)/, 'esc() escapes double quotes');
     assert.match(fn, /\.replace\(\/'\/g, '&#39;'\)/, 'esc() escapes single quotes');
   }
 });
 
+// The challenges pane's replacement for the two tests above, and the same
+// statement the standings pane's makes: it has no escaping discipline to keep
+// because it has no HTML. What it does still keep is safeHref, which is the
+// one guard React does not make redundant.
+test('the challenges module builds descriptors, not HTML — so there is nothing to escape', () => {
+  const code = challengesJs.replace(/\/\/[^\n]*/g, '');
+  assert.ok(!code.includes('innerHTML'),
+    'the pane writes no markup; ./challenges-pane.tsx owns the subtree');
+  assert.ok(!code.includes('getElementById'),
+    'and reaches into no node below its React-owned root');
+  assert.ok(!/\besc\(/.test(code),
+    'the escaping helper is gone with the strings it served — an esc() call '
+    + 'surviving into a descriptor would double-encode in the renderer');
+  assert.match(challengesJs, /str\(s\) \{\s*\n\s*return String\(s == null \? '' : s\)/,
+    'str() keeps esc()\'s null→empty coercion');
+  for (const field of ['cp.goal', 'p.display_name', 'e.display_name']) {
+    assert.ok(new RegExp(`str\\(${field.replace('.', '\\.')}`).test(challengesJs),
+      `${field} passes through str() in topochain-challenges.js`);
+  }
+  assert.ok(!challengesPaneTsx.includes('dangerouslySetInnerHTML'),
+    'the pane component renders text nodes, never raw HTML');
+});
+
 test('the challenge CTA link is scheme-guarded before it ever reaches an href', () => {
   // stopping-XSS review, task 14 fix: a `javascript:` (or any non-http[s])
-  // cta_link must never become a clickable anchor — only escaping the
-  // string is not enough, the scheme itself must be validated.
+  // cta_link must never become a clickable anchor. Rendering through a
+  // component stops attribute breakout for free — it does NOT validate a
+  // scheme, so this guard outlived the escaping helper next to it.
   const safeHrefFn = challengesJs.slice(challengesJs.indexOf('safeHref(url) {'), challengesJs.indexOf('async fetchJson(url) {'));
   assert.ok(safeHrefFn.length > 0, 'safeHref located');
   assert.ok(safeHrefFn.includes('/^https?:\\/\\//i.test(url)'),
     'safeHref validates the URL scheme with an http(s)-only regex');
-  const ctaFn = challengesJs.slice(challengesJs.indexOf('_ctaHtml(dm) {'), challengesJs.indexOf('_renderDetailOverlay() {'));
-  assert.ok(ctaFn.length > 0, '_ctaHtml located');
+  const ctaFn = challengesJs.slice(challengesJs.indexOf('ctaView(dm) {'), challengesJs.indexOf('_renderDetailOverlay() {'));
+  assert.ok(ctaFn.length > 0, 'ctaView located');
   assert.match(ctaFn, /TopochainChallenges\.safeHref\(dm\.cta_link\)/,
     'the cta_link is run through safeHref before being used as an href');
-  assert.match(ctaFn, /if \(!href\)/,
-    'a link that fails the scheme check never reaches an <a href>');
-  // The only href in any of the three files is this one, scheme-guarded —
-  // assert there is no OTHER raw href="${...}" interpolation anywhere that
-  // bypasses safeHref.
+  assert.match(ctaFn, /if \(!href\) return \{ kind: 'text', label \};/,
+    'a link that fails the scheme check becomes a different descriptor kind, '
+    + 'with no href field at all for the renderer to reach for');
+  // The decision must stay in the shaping module. #1191 slice 6 conversion 7
+  // moved the <a> into ./challenges-pane.tsx, and the way that stays safe is
+  // that the component has exactly ONE href and it is the descriptor's — no
+  // second site, and no fallback branch that reconstitutes a rejected link.
+  const hrefProps = (challengesPaneTsx.match(/href=\{/g) || []).length;
+  assert.equal(hrefProps, 1,
+    'exactly one href in the challenges pane component — the safeHref-guarded cta_link');
+  assert.match(challengesPaneTsx, /href=\{view\.href\}/,
+    'and it reads the descriptor field, not the raw API value');
+  // No template-literal href survives in any of the three modules either.
   const hrefSites = (challengesJs.match(/href="\$\{/g) || []).length
     + (leaderboardJs.match(/href="\$\{/g) || []).length
     + (contextJs.match(/href="\$\{/g) || []).length;
-  assert.equal(hrefSites, 1, 'exactly one interpolated href exists across the three files — the safeHref-guarded cta_link');
+  assert.equal(hrefSites, 0,
+    'no interpolated href is left across the three modules — the one that '
+    + 'remains is a React prop fed by safeHref');
 });
 
 // ─── dapp.json ────────────────────────────────────────────────────────────

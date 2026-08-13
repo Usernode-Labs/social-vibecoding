@@ -10,9 +10,16 @@
 // has to survive a mount and a fetch, and then be spent exactly once.
 //
 // Three layers:
-//   1. Behavioural — the shipped topochain-challenges.js IIFE runs in a vm
-//      with a DOM shim (same idiom as tests/estimator-card-render.test.js),
-//      driven through the real openFromHash/_renderGrid path.
+//   1. Behavioural — the shipped topochain-challenges.js runs in a vm with a
+//      DOM shim (same idiom as tests/estimator-card-render.test.js), driven
+//      through the real openFromHash/_renderGrid path.
+//
+//      #1191 slice 6 conversion 7 made #challenges-root a React island, so
+//      the pane no longer touches the DOM: the overlay it opens is a
+//      descriptor pushed into topochain-challenges-store.js, and this file
+//      plants a minimal stand-in for that store and reads `detail` off it.
+//      That is why the module must stay import-free — vm.runInContext has no
+//      module loader, and running the REAL file is the whole point of layer 1.
 //   2. Static — the router in app.js parses the segments and hands them
 //      over before the section mounts.
 //   3. Static — the profile anchors point at the shape all of the above
@@ -39,7 +46,7 @@ const profileStoreJs = fs.readFileSync(
 const profileViewTsx = fs.readFileSync(
   path.join(root, 'frontend/src/features/profile/profile-view.tsx'), 'utf8');
 
-// ── DOM shim: enough for the grid + the two overlays, no more ───────────
+// ── Shims: a store stand-in, and just enough DOM for what is left ──────
 
 function makeElement(id) {
   const el = {
@@ -70,8 +77,6 @@ function loadPane({ challenges, eventId = null }) {
     if (!elements.has(id)) elements.set(id, makeElement(id));
     return elements.get(id);
   };
-  // The detail overlay ships hidden, like the real markup.
-  byId('tc-se-detail-overlay').classList.add('hidden');
 
   const subs = [];
   const context = {
@@ -129,11 +134,20 @@ function loadPane({ challenges, eventId = null }) {
   vm.runInContext(CHALLENGES_SRC, sandbox, { filename: 'topochain-challenges.js' });
 
   const pane = sandbox.window.TopochainChallenges;
+  // What ./mount.ts plants in the browser, reduced to the two methods the
+  // controller uses. `detail: null` is the shipped state — an overlay that has
+  // never been opened — which is what the real store's initial value says too.
+  const state = { mounted: false, grid: null, detail: null, profile: null };
+  const store = {
+    get: () => state,
+    set: (patch) => Object.assign(state, typeof patch === 'function' ? patch(state) : patch),
+  };
+  pane._store = store;
   pane._open = true;
   pane._challenges = challenges;
   pane._challengesLoading = false;
   pane._loadedEventId = eventId;
-  return { pane, context, byId, subs };
+  return { pane, context, byId, subs, store };
 }
 
 const CH = [
@@ -142,8 +156,11 @@ const CH = [
   { id: 900514, completed: true, card_preview: { goal: 'Vote five times' } },
 ];
 
-const overlayOpen = (byId) =>
-  !byId('tc-se-detail-overlay').classList.contains('hidden');
+// The detail overlay's visibility IS its descriptor since conversion 7: the
+// component renders the root with `hidden` exactly when `detail` is null, so
+// there is one source of truth instead of a class and a field that could
+// disagree.
+const overlayOpen = (store) => store.get().detail !== null;
 
 // A pending link the PANE built was constructed inside the vm, so its
 // prototype is the sandbox's Object.prototype and deepStrictEqual — which
@@ -158,18 +175,18 @@ const pending = (pane) =>
 test('a deep link opens that challenge once the grid paints', () => {
   // eventId already matches: select() no-ops, so nothing re-renders and the
   // request must be resolved against the grid as it already stands.
-  const { pane, byId } = loadPane({ challenges: CH, eventId: 900500 });
+  const { pane, store } = loadPane({ challenges: CH, eventId: 900500 });
   pane._renderGrid();
-  assert.equal(overlayOpen(byId), false, 'nothing opens unprompted');
+  assert.equal(overlayOpen(store), false, 'nothing opens unprompted');
 
   pane.openFromHash(900500, 900514);
   assert.equal(pane._detailChallenge?.id, 900514);
-  assert.equal(overlayOpen(byId), true);
+  assert.equal(overlayOpen(store), true);
   assert.equal(pane._pendingDeepLink, null, 'the request is spent');
 });
 
 test('a deep link registered before the pane loads survives until it does', () => {
-  const { pane, context, byId } = loadPane({ challenges: [], eventId: null });
+  const { pane, context, store } = loadPane({ challenges: [], eventId: null });
   // The router resolves the address while the pane is still unmounted —
   // exactly what App._routeLeaderboard does before Leaderboard._setSection.
   pane._open = false;
@@ -182,7 +199,7 @@ test('a deep link registered before the pane loads survives until it does', () =
   pane._challenges = CH;
   pane._renderGrid();
   assert.equal(pane._detailChallenge?.id, 900511);
-  assert.equal(overlayOpen(byId), true);
+  assert.equal(overlayOpen(store), true);
 });
 
 test('a mid-reload render cannot spend the link on the previous event’s grid', () => {
@@ -190,7 +207,7 @@ test('a mid-reload render cannot spend the link on the previous event’s grid',
   // event's rows are still in _challenges. Matching against those could open
   // a challenge from the wrong event — or burn the request on a list the
   // target was never in.
-  const { pane, byId } = loadPane({ challenges: CH, eventId: 900500 });
+  const { pane, store } = loadPane({ challenges: CH, eventId: 900500 });
   pane._open = false;
   pane.openFromHash(900502, 900777);
   pane._open = true;
@@ -199,7 +216,7 @@ test('a mid-reload render cannot spend the link on the previous event’s grid',
   pane._renderGrid();
   assert.deepEqual(pending(pane), { eventId: 900502, challengeId: 900777 },
     'still pending — that grid was not the one it asked for');
-  assert.equal(overlayOpen(byId), false);
+  assert.equal(overlayOpen(store), false);
 });
 
 test('a grid for a DIFFERENT event leaves the link armed', () => {
@@ -208,20 +225,20 @@ test('a grid for a DIFFERENT event leaves the link armed', () => {
   // flight. State is set directly here because the sequence — request for
   // 900502, bar back on 900500 — is a race no public call reproduces in
   // order.
-  const { pane, context, byId } = loadPane({ challenges: CH, eventId: 900500 });
+  const { pane, context, store } = loadPane({ challenges: CH, eventId: 900500 });
   pane._pendingDeepLink = { eventId: 900502, challengeId: 900514 };
   context.eventId = 900500;
   pane._challengesLoading = false;
   pane._renderGrid();
   assert.deepEqual(pending(pane), { eventId: 900502, challengeId: 900514 });
-  assert.equal(overlayOpen(byId), false,
+  assert.equal(overlayOpen(store), false,
     '900514 exists in THIS grid — resolving here would open the wrong event’s copy');
 });
 
 test('an unknown challenge id lands silently on the grid', () => {
-  const { pane, byId } = loadPane({ challenges: CH, eventId: 900500 });
+  const { pane, store } = loadPane({ challenges: CH, eventId: 900500 });
   pane.openFromHash(900500, 424242);
-  assert.equal(overlayOpen(byId), false, 'no overlay');
+  assert.equal(overlayOpen(store), false, 'no overlay');
   assert.equal(pane._pendingDeepLink, null,
     'spent anyway — a missing id must not fire later against another event');
   assert.equal(pane._challengesError, null, 'and no error state');
@@ -235,11 +252,11 @@ test('an event with no challenges retires the link instead of holding it', () =>
 });
 
 test('a bare event id selects the event and opens nothing', () => {
-  const { pane, context, byId } = loadPane({ challenges: CH, eventId: 900500 });
+  const { pane, context, store } = loadPane({ challenges: CH, eventId: 900500 });
   pane.openFromHash(900502, null);
   assert.equal(context.eventId, 900502);
   assert.equal(pane._pendingDeepLink, null);
-  assert.equal(overlayOpen(byId), false);
+  assert.equal(overlayOpen(store), false);
 });
 
 test('closing the pane drops an unresolved link', () => {

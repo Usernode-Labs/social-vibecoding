@@ -65,13 +65,13 @@ import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { useLeaderboardSection } from './section-store';
 import './kudos.js';
 import './topochain-event-context.js';
-// ./mount imports ./leaderboard.js and ./topochain-leaderboard.js, and plants
-// each one's store on it. Importing either directly here would publish its
-// global without a store and leave that pane permanently blank.
+// ./mount imports all three pane controllers and plants each one's store on
+// it. Importing any of them directly here would publish its global without a
+// store and leave that pane permanently blank.
 import './mount';
 import { KudosPane } from './kudos-pane';
 import { TopochainStandingsPane } from './topochain-standings';
-import './topochain-challenges.js';
+import { ChallengesPane } from './challenges-pane';
 
 // The strip, in TAB ORDER. Moved here verbatim from the template that
 // _renderSectionTabs used to hold, labels included: the standings tab is
@@ -161,8 +161,17 @@ export function LeaderboardScreen() {
         <div id="topochain-leaderboard-root" className="w-full">
           <TopochainStandingsPane />
         </div>
-        {/* The challenges pane, rendered by ./topochain-challenges.js. */}
+        {/*
+            The challenges pane. STATEFUL as of #1191 slice 6 conversion 7:
+            ./challenges-pane.tsx is the only writer below this root now,
+            driven by the descriptors ./topochain-challenges.js pushes into
+            ./topochain-challenges-store.js. With this one the screen has no
+            innerHTML host left. The root's own `className` is still a
+            CONSTANT — `_applySection()` keeps toggling `hidden` on it, per the
+            note above.
+        */}
         <div id="challenges-root" className="hidden w-full">
+          <ChallengesPane />
         </div>
       </div>
     </main>
