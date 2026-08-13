@@ -642,7 +642,8 @@ async function respond(pool, user, conversationId, action) {
     const status = action === 'accept' ? 'member' : 'declined';
     await db.query(
       `UPDATE conversation_members
-          SET status = $1, responded_at = NOW(), joined_at = CASE WHEN $1 = 'member' THEN NOW() ELSE joined_at END
+          SET status = $1::varchar, responded_at = NOW(),
+              joined_at = CASE WHEN $1::varchar = 'member' THEN NOW() ELSE joined_at END
         WHERE conversation_id = $2 AND user_id = $3`,
       [status, conversationId, user.id]
     );
@@ -1118,14 +1119,14 @@ async function setBlock(pool, userId, targetId, blocked) {
       `SELECT DISTINCT conversation_id FROM (
          SELECT p.conversation_id
            FROM conversation_direct_pairs p
-          WHERE p.user_low_id = LEAST($1, $2)
-            AND p.user_high_id = GREATEST($1, $2)
+          WHERE p.user_low_id = LEAST($1::int, $2::int)
+            AND p.user_high_id = GREATEST($1::int, $2::int)
          UNION ALL
          SELECT cm.conversation_id
            FROM conversation_members cm
           WHERE cm.status = 'invited'
-            AND ((cm.user_id = $1 AND cm.invited_by = $2)
-              OR (cm.user_id = $2 AND cm.invited_by = $1))
+            AND ((cm.user_id = $1::int AND cm.invited_by = $2::int)
+              OR (cm.user_id = $2::int AND cm.invited_by = $1::int))
        ) affected_pair`,
       [userId, targetId]
     );
@@ -1180,14 +1181,14 @@ async function setBlock(pool, userId, targetId, blocked) {
           SET status = 'archived', updated_at = NOW()
          FROM conversation_direct_pairs p
         WHERE p.conversation_id = c.id
-          AND p.user_low_id = LEAST($1, $2)
-          AND p.user_high_id = GREATEST($1, $2)
+          AND p.user_low_id = LEAST($1::int, $2::int)
+          AND p.user_high_id = GREATEST($1::int, $2::int)
           AND EXISTS (
             SELECT 1 FROM conversation_members cm
              WHERE cm.conversation_id = c.id
                AND cm.status = 'declined'
-               AND ((cm.user_id = $1 AND cm.invited_by = $2)
-                 OR (cm.user_id = $2 AND cm.invited_by = $1))
+               AND ((cm.user_id = $1::int AND cm.invited_by = $2::int)
+                 OR (cm.user_id = $2::int AND cm.invited_by = $1::int))
           )`,
       [userId, targetId]
     );
@@ -1210,8 +1211,8 @@ async function setBlock(pool, userId, targetId, blocked) {
       `DELETE FROM notifications n
         USING conversation_direct_pairs p
         WHERE n.conversation_id = p.conversation_id
-          AND p.user_low_id = LEAST($1, $2)
-          AND p.user_high_id = GREATEST($1, $2)`,
+          AND p.user_low_id = LEAST($1::int, $2::int)
+          AND p.user_high_id = GREATEST($1::int, $2::int)`,
       [userId, targetId]
     );
     return outcome;

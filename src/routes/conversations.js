@@ -143,7 +143,7 @@ function demoMessages(user, conversationId) {
     reply: null, reactions: [], attachments: [{
       id: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', name: 'launch-checklist.md', size: 842,
       contentType: 'text/markdown', kind: 'markdown',
-      url: `/api/conversations/${conversationId}/attachments/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`,
+      url: `/api/conversations/${conversationId}/attachments/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa?demo=1`,
       viewUrl: null,
     }], objects: [],
   }];
@@ -303,11 +303,13 @@ function conversationRoutes(config) {
       if (!result) return sendNotFound(res);
       if (!result.duplicate) {
         await pushNotifications(pool, result.notifications);
-        pushAudience(result.memberIds, {
-          // Object cards are hydrated against one viewer. Never broadcast
-          // the sender-authorized card payload to other members; recipients
-          // refetch the thread through their own membership/object gates.
-          type: 'conversation_message_created', conversationId: id, messageId: result.message.id,
+        await conversations.withLockedAudience(pool, req.user, id, (memberIds) => {
+          pushAudience(memberIds, {
+            // Object cards are hydrated against one viewer. Never broadcast
+            // the sender-authorized card payload to other members; recipients
+            // refetch the thread through their own membership/object gates.
+            type: 'conversation_message_created', conversationId: id, messageId: result.message.id,
+          });
         });
       }
       return res.status(result.duplicate ? 200 : 201).json({ message: result.message, duplicate: result.duplicate });
@@ -324,8 +326,10 @@ function conversationRoutes(config) {
     try {
       const result = await conversations.editMessage(pool, req.user, id, messageId, req.body?.content);
       if (!result) return sendNotFound(res);
-      pushAudience(result.memberIds, {
-        type: 'conversation_message_updated', conversationId: id, messageId: result.message.id,
+      await conversations.withLockedAudience(pool, req.user, id, (memberIds) => {
+        pushAudience(memberIds, {
+          type: 'conversation_message_updated', conversationId: id, messageId: result.message.id,
+        });
       });
       return res.json({ message: result.message });
     } catch (err) {
@@ -361,8 +365,11 @@ function conversationRoutes(config) {
     try {
       const result = await conversations.markRead(pool, req.user, id, messageId);
       if (!result) return sendNotFound(res);
-      pushAudience(result.memberIds, {
-        type: 'conversation_read', conversationId: id, userId: req.user.id, messageId: result.messageId,
+      await conversations.withLockedAudience(pool, req.user, id, (memberIds) => {
+        pushAudience(memberIds, {
+          type: 'conversation_read', conversationId: id,
+          userId: req.user.id, messageId: result.messageId,
+        });
       });
       return res.json({ ok: true });
     } catch (err) {
@@ -484,6 +491,14 @@ function conversationRoutes(config) {
     const id = conversations.strictId(req.params.id);
     const attachmentId = String(req.params.attachmentId || '');
     if (!id || !/^[a-f0-9]{32}$/.test(attachmentId)) return null;
+    if (isDemo(req) && id === 910002
+        && attachmentId === 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' && !htmlOnly) {
+      return {
+        id: attachmentId, kind: 'markdown', filename: 'launch-checklist.md',
+        content_type: 'text/markdown', message_id: 9100201, user_id: 910001,
+        data: Buffer.from('# Launch checklist\n\n- Verify consent states\n- Verify private cards\n'),
+      };
+    }
     const membership = await conversations.loadMembership(pool, id, req.user.id);
     if (!membership || !(await conversations.canDirectInteract(pool, membership, req.user.id))) return null;
     const { rows } = await pool.query(
