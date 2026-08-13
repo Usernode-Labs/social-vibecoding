@@ -631,6 +631,78 @@ test('a proposal states where its head lives and whether the author can push the
   assert.match(SRC, /require\('\.\/proposal-update'\)/);
 });
 
+// ── #1196: an imported head is not automatically a fork ───────────────────
+//
+// Proposal 3140 is the shape this is about: submit_work could not open a
+// cross-fork pull request, so Usernode MIRRORED the agent's fork branch into
+// `usernode/from-es92-t3-8510c5ac` in the app repository and imported the
+// same-repo pull request it opened from there. get_proposal read
+// `source='imported'`, called the head a fork, and told the agent to push to
+// that branch name in its own fork — where no such branch exists. submit_work,
+// applying the real ownership check, then refused with `not_your_fork`. Both
+// answers came from one helper, so both are asserted here.
+
+test('a mirrored proposal reports the app repository, not the author\'s fork', () => {
+  const mirrored = tools.shapeProposal({
+    id: 3140, app_slug: 'recipe-box', source: 'imported', status: 'promoted',
+    branch_name: 'usernode/from-es92-t3-8510c5ac',
+    imported_pr_head_repo: 'Usernode-Labs/recipe-box',
+    repo_url: 'https://github.com/Usernode-Labs/recipe-box',
+    imported_pr_head_sha: 'd'.repeat(40),
+    viewer_github_login: 'es92',
+    check_state: 'failing',
+    test_results: [{ name: 'Board shows the snap toggle', status: 'fail' }],
+  }, ORIGIN);
+  assert.equal(mirrored.branch.home, 'app_repo');
+  assert.equal(mirrored.branch.repo, 'the app repository');
+  assert.equal(mirrored.branch.youCanPush, false,
+    'the agent whose fork it was copied from still cannot push it');
+  assert.equal(mirrored.branch.headSha, 'd'.repeat(40),
+    'an imported row pins its votes and checks to imported_pr_head_sha, whichever repo the head is in');
+  assert.match(mirrored.branch.updateWith, /push to a branch in your own fork/);
+
+  // The instruction that could not land: the branch name is named as a push
+  // target nowhere, because it exists only in the app repository.
+  assert.doesNotMatch(mirrored.nextStep, /usernode\/from-es92/);
+  assert.match(mirrored.nextStep, /push\s+to a branch in your OWN fork/);
+  assert.match(mirrored.nextStep, /pushing to your fork alone does not move it/);
+});
+
+test('a fork-home proposal answers the ownership question submit_work will ask', () => {
+  const base = {
+    id: 3141, app_slug: 'recipe-box', source: 'imported', status: 'promoted',
+    branch_name: 'add-a-button',
+    imported_pr_head_repo: 'es92/recipe-box',
+    repo_url: 'https://github.com/Usernode-Labs/recipe-box',
+    imported_pr_head_sha: 'e'.repeat(40),
+    check_state: 'failing',
+    test_results: [{ name: 'Board shows the snap toggle', status: 'fail' }],
+  };
+
+  const mine = tools.shapeProposal({ ...base, viewer_github_login: 'es92' }, ORIGIN);
+  assert.equal(mine.branch.home, 'user_fork');
+  assert.equal(mine.branch.repo, 'your fork');
+  assert.equal(mine.branch.youCanPush, true);
+  assert.match(mine.nextStep, /add-a-button/, 'the branch to push to is named, because it is theirs');
+
+  // The same proposal read by somebody else. `advanceForkHead` compares the
+  // head repository's owner against the caller's freshly-read linked login and
+  // refuses when they differ, so reporting "your fork" here would send them
+  // pushing at a repository they cannot write.
+  const theirs = tools.shapeProposal({ ...base, viewer_github_login: 'other-account' }, ORIGIN);
+  assert.equal(theirs.branch.home, 'user_fork');
+  assert.equal(theirs.branch.repo, "es92's fork");
+  assert.equal(theirs.branch.youCanPush, false);
+  assert.match(theirs.nextStep, /your linked GitHub account does not own/);
+  assert.doesNotMatch(theirs.nextStep, /app's own repository/,
+    'the reason it cannot be pushed has to be the true one');
+
+  // No linked login to compare against is not evidence of a refusal: the
+  // answer stays what it was, and the gate does the refusing.
+  const unknown = tools.shapeProposal(base, ORIGIN);
+  assert.equal(unknown.branch.youCanPush, true);
+});
+
 test('a failing check tells the author how to actually land the fix', () => {
   const failing = {
     id: 63, app_slug: 'recipe-box', status: 'promoted', check_state: 'failing',
@@ -666,13 +738,43 @@ test('list_my_proposals carries branch home, so a list is enough to decide', () 
   assert.match(block, /youCanPush: z\.boolean\(\)/);
   assert.match(block, /branchHome: shaped\.branch\.home/);
   assert.match(block, /youCanPush: shaped\.branch\.youCanPush/);
-  // The route it reads from has to actually return `source`, or every listed
-  // proposal would report app_repo.
+  // The route it reads from has to actually return `source`, and the head
+  // repository beside it — comparing that against the app's own repo_url is
+  // the only thing that separates a mirrored head from a fork (#1196).
   const SESSIONS_SRC = fs.readFileSync(
     path.join(__dirname, '../src/routes/sessions.js'), 'utf8'
   );
   const route = SESSIONS_SRC.slice(SESSIONS_SRC.indexOf("'/api/me/active-sessions'"));
-  assert.match(route.slice(0, 2500), /cs\.source/);
+  assert.match(route.slice(0, 3000), /cs\.source/);
+  assert.match(route.slice(0, 3000), /cs\.imported_pr_head_repo/);
+  assert.match(route.slice(0, 3000), /a\.repo_url/);
+});
+
+// The second half of #1196: an agent that had just opened a proposal asked
+// for its own open proposals and was told it had none.
+test('list_my_proposals asks for imported proposals, which is what it opens', () => {
+  const block = SRC.slice(
+    SRC.indexOf("server.registerTool('list_my_proposals'"),
+    SRC.indexOf("server.registerTool('prepare_work'")
+  );
+  assert.match(block, /'\/api\/me\/active-sessions\?include_imported=1'/);
+
+  // Why the flag is load-bearing rather than tidy: the route's own SQL drops
+  // `source='imported'` rows without it, and submit_work records every
+  // connector proposal as exactly that — an imported pull request.
+  const SESSIONS_SRC = fs.readFileSync(
+    path.join(__dirname, '../src/routes/sessions.js'), 'utf8'
+  );
+  const route = SESSIONS_SRC.slice(SESSIONS_SRC.indexOf("'/api/me/active-sessions'"));
+  assert.match(route.slice(0, 3000), /cs\.source IS DISTINCT FROM 'imported'/);
+  assert.match(SRC.slice(SRC.indexOf("server.registerTool('submit_work'")), /pr-import/);
+
+  // And the connector allowlist matches on the PATH, so the query string
+  // needs no policy change — asserted rather than assumed, because a
+  // fail-closed allowlist that silently stopped matching would turn this into
+  // a 403 on the tool that reads the user's own work.
+  const policy = require('../src/services/cli-api-policy');
+  assert.equal(policy.isConnectorApiRequest('GET', '/api/me/active-sessions'), true);
 });
 
 test('prepare_work can be aimed at a proposal, and says which one it produced', () => {

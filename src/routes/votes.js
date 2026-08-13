@@ -2241,6 +2241,14 @@ function voteRoutes(config) {
       if (!headBranch) {
         return res.status(409).json({ error: 'Could not determine the PR head branch.' });
       }
+      // WHICH REPOSITORY that branch is in (#1196). An imported PR usually
+      // comes from the author's fork, but not always: the connector's mirror
+      // rung copies a verified fork branch into THIS repository and opens a
+      // same-repo pull request, and a proposal whose head only the platform
+      // bot can write has to be reported — and advanced — as such. Recorded
+      // once, here, because it is a fact about the pull request that never
+      // changes while it is open; `branchHomeOf` reads it.
+      const headRepoFullName = pr.head?.repo?.full_name || null;
 
       // Optional testing metadata (#945 follow-up). A connector submission
       // can carry the same two things a build turn's "==== TESTING ===="
@@ -2264,18 +2272,19 @@ function voteRoutes(config) {
       const { rows: inserted } = await pool.query(
         `INSERT INTO chat_sessions
            (app_id, user_id, branch_name, pr_number, pr_url, pr_title, status,
-            source, imported_pr_head_sha, imported_pr_author, promoted_at, shared_at, created_at,
+            source, imported_pr_head_sha, imported_pr_author, imported_pr_head_repo,
+            promoted_at, shared_at, created_at,
             testing_md, testing_path, testing_paths)
          VALUES ($1, $2, $3, $4, $5, $6, $7::text,
-            'imported', $8, $9,
+            'imported', $8, $9, $10,
             CASE WHEN $7::text = 'promoted' THEN NOW() END,
             CASE WHEN $7::text = 'active' THEN NOW() END,
-            NOW(), $10, $11, $12::jsonb)
+            NOW(), $11, $12, $13::jsonb)
          RETURNING id, status`,
         [
           app.id, req.user.id, headBranch, prNumber, pr.html_url || null,
           pr.title || `PR #${prNumber}`, initialStatus,
-          headSha, pr.user?.login || null,
+          headSha, pr.user?.login || null, headRepoFullName,
           importTesting.testingMd, importTesting.testingPath,
           importTesting.testingPaths ? JSON.stringify(importTesting.testingPaths) : null,
         ]
@@ -2286,6 +2295,7 @@ function voteRoutes(config) {
         branch_name: headBranch, pr_number: prNumber, pr_title: pr.title || null,
         repo_url: app.repo_url, staging_url: null, source: 'imported',
         status: initialStatus, imported_pr_head_sha: headSha,
+        imported_pr_head_repo: headRepoFullName,
       };
 
       if (promote) {

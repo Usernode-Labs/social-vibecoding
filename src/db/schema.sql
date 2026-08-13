@@ -1024,6 +1024,20 @@ CREATE INDEX IF NOT EXISTS chat_sessions_created_from_issue_idx
 --                          exactly this SHA. NULL for native rows.
 --   imported_pr_author   = display handle of the external PR author, shown
 --                          beside the badge. NULL for native rows.
+--   imported_pr_head_repo= 'owner/repo' of the repository the PR's HEAD
+--                          branch lives in, as GitHub reported it at import
+--                          time (#1196). NOT the same question as `source`:
+--                          the connector's mirror rung copies an agent's
+--                          verified fork branch into the APP repository and
+--                          opens a same-repo pull request, which is then
+--                          imported here — so an 'imported' row's head is
+--                          sometimes a branch only the platform bot can
+--                          write. Recorded because it decides which update
+--                          path a revision takes (services/proposal-update.js
+--                          `branchHomeOf`) and what get_proposal tells an
+--                          agent to push to. NULL for native rows and for
+--                          rows imported before this column existed; that
+--                          fallback is documented at `branchHomeOf`.
 -- NOTE: a partial UNIQUE index on (app_id, pr_number) WHERE source='imported'
 -- is intentionally DEFERRED (see spec Considerations) — Slice 1 relies on
 -- the read-only boot audit in db/migrate.js instead of a hard constraint,
@@ -1031,6 +1045,7 @@ CREATE INDEX IF NOT EXISTS chat_sessions_created_from_issue_idx
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS source               TEXT;
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS imported_pr_head_sha VARCHAR(40);
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS imported_pr_author   VARCHAR(255);
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS imported_pr_head_repo TEXT;
 -- Exact revision approved for a native proposal. Imported proposals keep
 -- imported_pr_head_sha as their existing source of truth; native votes,
 -- checks, and merges are bound to this live GitHub PR head instead.

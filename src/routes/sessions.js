@@ -1069,14 +1069,19 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // not by creation order.
       //
       // `source` is carried so a caller can tell where a proposal's head lives
-      // (#1054) — an imported pull request follows a branch in its author's own
-      // fork, everything else a branch only the platform can write — without a
-      // second read per row.
+      // (#1054) — an imported pull request usually follows a branch in its
+      // author's own fork, everything else a branch only the platform can
+      // write — without a second read per row. `imported_pr_head_repo` and
+      // `a.repo_url` are carried with it because "usually" is not good enough
+      // (#1196): the connector's mirror rung imports a pull request whose head
+      // is a branch in the APP repository, and only comparing the two repos
+      // separates that from a genuine fork.
       const { rows } = await pool.query(
         `SELECT cs.id, cs.branch_name, cs.pr_number, cs.pr_url, cs.pr_title,
                 cs.session_title, cs.status, cs.linked_issues, cs.shared_at,
                 cs.transcript_shared_at, cs.created_at, cs.source,
-                cs.staging_url, cs.imported_pr_author,
+                cs.staging_url, cs.imported_pr_author, cs.imported_pr_head_repo,
+                cs.imported_pr_head_sha, cs.reviewed_head_sha, a.repo_url,
                 cs.agent_backend, cs.agent_model,
                 GREATEST(cs.created_at, COALESCE(m.last_message_at, cs.created_at)) AS last_activity_at,
                 a.slug AS app_slug, a.name AS app_name
@@ -1093,10 +1098,17 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
          ORDER BY last_activity_at DESC`,
         [req.user.id, includeImported]
       );
+      // #1196: the same login /api/sessions/:id carries, read once for the
+      // whole list rather than per row. It is what makes "can you push this
+      // proposal's head" the answer the update path will actually give.
+      const viewerLogin = rows.some((s) => s.source === 'imported')
+        ? (await require('../services/github-link').linkStatus(pool, req.user.id)).login || null
+        : null;
       const sessions = rows.map((s) => {
         const live = workerProgress.get(s.id);
         return {
           ...s,
+          ...(s.source === 'imported' ? { viewer_github_login: viewerLogin } : {}),
           busy: isSessionBusy(s.id),
           // Keep the pinned snake_case fields untouched. Camel-case fields
           // describe the runtime actually producing progress right now, so a
@@ -2163,7 +2175,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   router.get('/api/sessions/:id', async (req, res) => {
     try {
       const { rows } = await pool.query(
-        `SELECT cs.*, a.slug as app_slug, a.name as app_name,
+        `SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url,
                 (SELECT COUNT(*)::int FROM pr_votes pv
                   WHERE pv.session_id = cs.id AND pv.vote = 'yes'
                     AND ${currentVotePredicateSql('pv', 'cs')}) AS yes_count,
@@ -2176,6 +2188,20 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         [req.params.id, req.user.id, !!req.user?.isAdmin]
       );
       if (!rows.length) return res.status(404).json({ error: 'Session not found' });
+
+      // #1196: whether this caller can push the proposal's head is not a
+      // property of the row on its own. For a head that lives in somebody's
+      // fork it is the comparison services/proposal-update.js's
+      // `advanceForkHead` makes when a revision arrives — that fork's owner
+      // against the GitHub account linked to the CALLER's profile — so the
+      // login is carried here and readers report what submit_work will
+      // actually do instead of approximating it. Imported rows only: a native
+      // proposal's head is a branch in the app repository by definition, and
+      // nobody can push that.
+      if (rows[0].source === 'imported') {
+        const link = await require('../services/github-link').linkStatus(pool, req.user.id);
+        rows[0].viewer_github_login = link && link.linked ? link.login : null;
+      }
 
       // #405: the session view's merge-lifecycle pill needs the vote tally to
       // resolve the In-vote / "Passed — merging shortly" states exactly as

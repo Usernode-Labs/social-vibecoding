@@ -226,8 +226,11 @@ test('every route the tools call is on the allowlist', () => {
   assert.ok(calls.length >= 6, 'found the tool call sites');
   for (const [, method, rawPath] of calls) {
     // Template literals interpolate the slug / proposal id; substitute a
-    // concrete segment so the pattern matcher sees a real path.
-    const target = rawPath.replace(/\$\{[^}]*\}/g, 'x');
+    // concrete segment so the pattern matcher sees a real path. The query
+    // string is dropped for the same reason the middleware never sees one:
+    // routes/cli-auth.js matches on `req.path`, which express has already
+    // stripped it from (#1196 added `?include_imported=1` to one call).
+    const target = rawPath.replace(/\$\{[^}]*\}/g, 'x').split('?')[0];
     assert.equal(
       policy.isConnectorApiRequest(method, target), true,
       `${method} ${target} (called by a tool) is on the allowlist`
