@@ -394,6 +394,8 @@ test('schema, routing and bundled profile UI pin privacy and current-shell integ
   assert.doesNotMatch(route, /profile_(display_name|bio|avatar_url)/);
   assert.match(profile, /textContent = text/);
   assert.match(profile, /img\.referrerPolicy = 'no-referrer'/);
+  assert.match(profile, /App\.user\.hasPlatformAccess === false/);
+  assert.match(profile, /absolute inset-0 w-full h-full object-cover/);
   assert.doesNotMatch(profile, /innerHTML\s*=/);
   assert.match(app, /publicProfileRoute/);
   assert.match(app, /Profile\.open\(username\)/);

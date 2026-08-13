@@ -444,13 +444,15 @@ const Profile = {
     const source = String(profile.displayName || profile.username || '?');
     const match = source.match(/[\p{L}\p{N}]/u);
     const wrap = Profile._el('div',
-      `${sizeClass} rounded-full overflow-hidden bg-violet-100 ` +
+      `${sizeClass} relative rounded-full overflow-hidden bg-violet-100 ` +
       'dark:bg-violet-950 flex items-center justify-center text-violet-700 ' +
       'dark:text-violet-300 text-2xl font-bold shrink-0',
       match ? match[0].toUpperCase() : '?');
     if (typeof profile.avatarUrl === 'string'
         && /^\/avatars\/[a-f0-9]{32}$/.test(profile.avatarUrl)) {
-      const img = Profile._el('img', 'w-full h-full object-cover');
+      // Keep the initial behind an absolute image so a failed load can
+      // remove the image and reveal the fallback without shifting layout.
+      const img = Profile._el('img', 'absolute inset-0 w-full h-full object-cover');
       img.alt = '';
       img.loading = 'lazy';
       img.referrerPolicy = 'no-referrer';
@@ -482,6 +484,7 @@ const Profile = {
     root.appendChild(card);
 
     if (!allowReport || !window.App?.user
+        || App.user.hasPlatformAccess === false
         || App.user.username === profile.username) return;
 
     const details = Profile._el('details', 'mt-4 text-sm');
