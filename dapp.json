@@ -1558,9 +1558,9 @@
       "expectSelector": "#header-menu-rows > #drawer-footer.mt-auto > #drawer-row-share:last-child"
     },
     {
-      "name": "Main nav order is Profile, Leaderboard, Settings, Admin & moderation",
+      "name": "Main nav order is Profile, Messages, Leaderboard, Settings, Admin & moderation",
       "path": "/?shot=menu",
-      "expectSelector": "#drawer-row-profile + #drawer-row-leaderboard + #drawer-row-settings + #drawer-row-admin"
+      "expectSelector": "#drawer-row-profile + #drawer-row-messages + #drawer-row-leaderboard + #drawer-row-settings + #drawer-row-admin"
     },
     {
       "name": "Leaderboard drawer row replaces the header trophy",
