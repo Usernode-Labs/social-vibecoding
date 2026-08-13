@@ -109,6 +109,9 @@ const buttonVariants = cva('', {
       // it; normalising them to `default` would be a visual change, and this
       // slice's contract is that there are none.
       tapPrimary: 'rounded-lg bg-violet-600 hover:bg-violet-700',
+      // The bell drawer's invite Accept button — a `text-xs` action row inside
+      // the notifications panel, one radius step up from `compact`.
+      pill: 'rounded-md bg-violet-600 hover:bg-violet-500',
       // #agent-files-save — the same action inside a `text-xs` inline card,
       // where the smaller radius matches the card.
       compact: 'rounded bg-violet-600 hover:bg-violet-500',
@@ -147,6 +150,9 @@ const buttonVariants = cva('', {
       sm: 'px-3 py-1.5 text-sm font-medium',
       // #agent-files-save / #agent-files-cancel.
       xs: 'px-3 py-1 font-medium',
+      // The same box, with the text size the bell drawer's invite buttons
+      // spell out rather than inherit.
+      xsText: 'px-3 py-1 text-xs font-medium',
       // The landing page and waitlist call to action.
       lg: 'px-5 py-2 text-sm font-medium',
       // #more-submit.

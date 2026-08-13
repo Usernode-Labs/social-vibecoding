@@ -1,17 +1,14 @@
 /**
  * #notifications-panel — the bell dropdown, as a React island (#1079 chunk B).
  *
- * The chassis (root, header row, the three leaf containers) is rendered here;
- * everything inside the containers is rendered by ./notifications.js, which is
- * the retired public/js/notifications.js moved into this bundle unchanged. See
- * the note at the top of that file for why it is a move rather than a rewrite.
+ * The chassis (root, header row) is rendered here; the three leaf containers
+ * and everything in them are rendered by ./notifications-list.tsx from the
+ * descriptor tree ./notifications.js pushes into ./notifications-store.js.
  *
- * The division of labour is the same one the rest of the shell already has —
- * React renders the container, one module owns its contents — with the
- * difference that the module is now INSIDE the island. No public/js/** file
- * writes into this subtree any more, which is what the migration's "a region
- * may become stateful only when its entire subtree is React-owned" rule is
- * actually asking for.
+ * #1191 slice 6 finished this island. Chunk B moved the module into the bundle
+ * and left it writing the containers by `innerHTML`; conversion 2 turned those
+ * three `innerHTML` sites into store pushes, so React is now the only writer
+ * below #notifications-invites and #notifications-list.
  *
  * `hidden` on the root is therefore still toggled by notifications.js
  * (show/hide, and the kit's sheet adoption on touch). React never re-renders
@@ -21,7 +18,8 @@
 import { AnchoredPanel, AnchoredPanelHeader } from '@/components/ui/anchored-panel';
 
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
-import './notifications.js';
+import { NotificationsBody } from './notifications-list';
+import './mount';
 
 export function NotificationsPanel() {
   // A LAYOUT effect, not a passive one: it runs inside main.tsx's
@@ -57,18 +55,7 @@ export function NotificationsPanel() {
           Mark all read
         </button>
       </AnchoredPanelHeader>
-      {/*
-          Pinned collaborator-invites section: rendered above the grouped
-          notification list, driven by the authoritative pendingInvites
-          payload (see ./notifications.js renderInvites).
-      */}
-      <div id="notifications-invites" className="shrink-0 overflow-y-auto max-h-48">
-      </div>
-      <div id="notifications-list" className="flex-1 overflow-y-auto">
-      </div>
-      <div id="notifications-empty" className="hidden px-4 py-6 text-sm text-zinc-500 text-center">
-        You'll get pinged here when someone proposes a change to an app you use.
-      </div>
+      <NotificationsBody />
     </AnchoredPanel>
   );
 }
