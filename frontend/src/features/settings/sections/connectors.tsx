@@ -5,16 +5,13 @@ import { Label } from '@/components/ui/label';
 /**
  * Hosted MCP connector: connect Claude.ai / ChatGPT so their built-in coding
  * agent (Claude Code on the web, Codex) can do the work on the user's own
- * subscription. Also holds the verified GitHub account link, because that link
- * exists only to serve this flow: it is IDENTITY ONLY (no OAuth scope, no
- * stored token) and its whole job is attributing a submitted pull request to
- * the account that verified it. The fork the agent pushes to is made by that
- * agent, not by the platform.
+ * subscription. Also holds GitHub/X ownership proofs for the Layer-1 daily
+ * credit tier. These are IDENTITY ONLY: immutable provider id + display handle
+ * and verification timestamps, with no provider token retained.
  *
  * Rendered by Settings._renderConnectors() / _renderGithubLink() from
- * GET /api/me/connectors and GET /api/me/github (?demo=1 passthrough in
- * staging — mcp_tokens is staging:private and the link needs a real OAuth
- * round-trip, so a staging clone has neither).
+ * GET /api/me/connectors and GET /api/me/social-identities (deterministic
+ * staging fixtures make every credit state reviewable without OAuth).
  */
 export function ConnectorsSection() {
   return (
@@ -59,12 +56,12 @@ export function ConnectorsSection() {
         <StatusLine id="connectors-status" size="xs" />
       </div>
       <div id="github-link-section" className="mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800">
-        <SectionHeading title="GitHub account">
-          Linking GitHub proves which GitHub account is yours, so work built by your own coding agent can be submitted under your name. Usernode asks for
+        <SectionHeading title="Social accounts &amp; daily credits">
+          Connect GitHub or X to prove that you control that provider account. Either one unlocks the same $10/day Layer-1 credit tier when identity credits are active; connecting both does not stack credits. This is an account-control proof, not proof of unique humanity. For GitHub, Usernode asks for
           <strong className="font-semibold text-zinc-600 dark:text-zinc-400">
             no access to your repositories
           </strong>
-          &mdash; read-only public profile information only &mdash; and stores no GitHub token. Your coding agent (Claude Code or Codex) makes your fork of an app using its own GitHub connection.
+          &mdash; identity-only profile information &mdash; and stores no provider token. GitHub can also attribute proposals built by your own coding agent to the account you verified.
         </SectionHeading>
         <div id="github-link-body" className="space-y-2">
         </div>

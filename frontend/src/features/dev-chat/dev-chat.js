@@ -998,6 +998,7 @@ const DevChat = {
         error: 'Daily limit reached ($20.00). Resets at midnight UTC.',
         hasApiKey: !!(window.Settings && Settings.state && Settings.state.hasApiKey),
         globalOut: DevChat._globalBudgetOut(),
+        verificationRequired: false,
         externalFlowsAvailable: DevChat._externalFlowsAvailable(),
       },
       created_at: new Date().toISOString(),
@@ -1058,6 +1059,22 @@ const DevChat = {
     // actually looking for.
     const state = DevChat._creditState();
     const CO = typeof window !== 'undefined' && window.CreditOptions;
+    const hasApiKey = !!window.Settings?.state?.hasApiKey;
+    if (state && state.level === 'locked') {
+      if (hasApiKey) {
+        const last4 = window.Settings.state.keyLast4 || '••••';
+        el.innerHTML = `<span title="Platform credits are locked until you connect GitHub or X. Your own Anthropic key remains available."><a href="#settings/connectors" class="text-amber-400 hover:underline">platform credits locked</a><span class="text-zinc-600"> · </span><span class="text-emerald-400">your key · ${escapeHtml(last4)}</span></span>`;
+      } else {
+        el.innerHTML = '<a href="#settings/connectors" class="text-amber-400 font-medium hover:underline" title="Connect GitHub or X to unlock $10/day">verify account · unlock $10/day</a>';
+      }
+      return;
+    }
+    if (state && state.level === 'unavailable') {
+      el.innerHTML = hasApiKey
+        ? '<span class="text-emerald-400" title="Platform credit eligibility is temporarily unavailable; your own key remains available.">your key available</span>'
+        : '<span class="text-amber-400" title="Platform credit eligibility could not be verified. Try again shortly.">credits temporarily unavailable</span>';
+      return;
+    }
     const leftPart = state && CO
       ? (CO.meterParts(state).find((p) => p.key === 'remaining') || null)
       : null;
@@ -1148,6 +1165,34 @@ const DevChat = {
   _renderCreditsBannerHtml() {
     if (!DevChat._creditsExhausted()) return '';
     const b = DevChat.budget;
+    const state = DevChat._creditState();
+    if (state && state.level === 'locked') {
+      return `
+        <div id="dc-credits-banner" class="flex flex-wrap items-center gap-2 px-3 py-2 bg-amber-50 dark:bg-amber-950/30 border-b border-amber-200 dark:border-amber-900/50 text-xs">
+          <svg class="w-4 h-4 text-amber-500 dark:text-amber-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z"/>
+          </svg>
+          <span class="text-amber-900 dark:text-amber-200 flex-1 min-w-[14rem]"><span class="font-semibold">Connect GitHub or X to unlock $10/day of Usernode credits.</span> Either account unlocks the same tier; connecting both does not stack credits.</span>
+          ${window.CreditOptions ? CreditOptions.bannerActionsHtml({
+            hasApiKey: false,
+            verificationRequired: true,
+            globalOut: false,
+            externalFlowsAvailable: DevChat._externalFlowsAvailable(),
+          }) : ''}
+        </div>`;
+    }
+    if (state && state.level === 'unavailable') {
+      return `
+        <div id="dc-credits-banner" class="flex flex-wrap items-center gap-2 px-3 py-2 bg-amber-50 dark:bg-amber-950/30 border-b border-amber-200 dark:border-amber-900/50 text-xs">
+          <span class="text-amber-900 dark:text-amber-200 flex-1 min-w-[14rem]"><span class="font-semibold">Credit eligibility could not be verified.</span> Try again shortly, or use your own API key or another build venue.</span>
+          ${window.CreditOptions ? CreditOptions.bannerActionsHtml({
+            hasApiKey: false,
+            verificationRequired: false,
+            globalOut: false,
+            externalFlowsAvailable: DevChat._externalFlowsAvailable(),
+          }) : ''}
+        </div>`;
+    }
     const userOut = b.spentCents >= b.limitCents;
     const lead = userOut
       ? 'You&rsquo;ve used up today&rsquo;s free AI credits.'
@@ -3122,6 +3167,7 @@ const DevChat = {
               error: data.error || 'They reset at midnight UTC.',
               hasApiKey: !!(window.Settings && Settings.state && Settings.state.hasApiKey),
               globalOut: DevChat._globalBudgetOut(),
+              verificationRequired: !!data.verificationRequired,
               externalFlowsAvailable: DevChat._externalFlowsAvailable(),
             },
             created_at: new Date().toISOString(),

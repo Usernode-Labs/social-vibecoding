@@ -66,6 +66,7 @@ const {
   mcpPreAuthRoutes,
   mcpBrowserRoutes,
 } = require('./src/routes/mcp-remote');
+const { socialIdentityRoutes } = require('./src/routes/social-identities');
 // Topochain v4 (plan Task 3): public/partner/ingest/mobile carry their own
 // auth and mount BEFORE authMiddleware; admin reuses the platform's own
 // admin auth and mounts AFTER it (architecture decision #2 — see the mount
@@ -509,10 +510,13 @@ app.use(topochainMobileRoutes(config));
 app.use(cliApiBearerAuth(config));
 app.use(authMiddleware(config));
 app.use(cliBrowserRoutes(config));
-// Connector consent decision + Settings management (connected chat
-// products, GitHub account link). These need a real platform session, so
-// they mount after authMiddleware — the consent POST must never be
-// satisfiable by a bearer token approving itself.
+// Social identity proofs are a platform account surface, independent of
+// the hosted MCP connector. They remain reviewable (with fixtures only) in
+// staging even when connector credential minting is disabled there.
+app.use(socialIdentityRoutes(config));
+// Connector consent decision + connected-chat-product management. These
+// need a real platform session, so they mount after authMiddleware — the
+// consent POST must never be satisfiable by a bearer token approving itself.
 app.use(mcpBrowserRoutes(config));
 app.use(authRoutes(config));
 app.use(credentialRoutes(config));
@@ -2751,10 +2755,30 @@ async function finalizeRecoveredTurn({
       session.testing_path = recoveredTesting.testingPath;
     }
 
-    // Recovery has no plaintext user key. A completed/pending live receipt
-    // carries its original payer; only a genuinely unclaimed recovery call
-    // uses this platform-billed default.
-    const prMetadataBillingByok = false;
+    // Resolve a payer for a genuinely new recovery-side metadata call. A
+    // completed/pending live receipt still carries and replays its original
+    // payer; if this effect was never started and no payer is available, the
+    // PR is completed with deterministic metadata instead of hidden spend.
+    let prMetadataApiKey = null;
+    let prMetadataGenerationAllowed = false;
+    try {
+      const billing = await limits.resolveBillingPath(
+        pool, config.dataEncryptionKey, session.user_id,
+      );
+      if (!billing.error) {
+        prMetadataApiKey = billing.apiKey;
+        prMetadataGenerationAllowed = true;
+      } else {
+        log.info('server', 'Recovered turn using deterministic PR metadata', {
+          sessionId, reason: billing.reason || null,
+        });
+      }
+    } catch (err) {
+      log.warn('server', 'Recovered PR metadata billing resolve failed', {
+        sessionId, err: err.message,
+      });
+    }
+    const prMetadataBillingByok = prMetadataGenerationAllowed && !!prMetadataApiKey;
 
     const wasNewPR = !session.pr_number;
     const prMetadata = require('./src/services/pr-metadata');
@@ -2764,10 +2788,12 @@ async function finalizeRecoveredTurn({
       ccSummary: recoveredCcSummary,
       username: session.username,
       broadcast: (event, data) => emit(event, data),
+      apiKey: prMetadataApiKey,
       userId: session.user_id,
       effectTurnId: activeTurn?.turnId || null,
       effectSessionId: sessionId,
       effectBillingByok: prMetadataBillingByok,
+      allowModelGeneration: prMetadataGenerationAllowed,
     });
     // Live-path parity: a freshly opened PR gets its own transcript row,
     // so the recovered turn reads "PR #N created" like any other.

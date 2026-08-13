@@ -13,8 +13,8 @@
 // back: PR rows re-run the full applyPrMetadata pipeline (which clears the
 // flag and updates GitHub + the session title on success); issue rows get
 // a fresh Haiku title PATCHed onto the GitHub issue, then the queue row is
-// deleted. All spend here is platform-paid (no user debit): the user
-// already "paid" a normal request that the platform failed to title.
+// deleted. PR retries re-resolve the owner's current payer before making a
+// new model call, so the sweeper cannot bypass their daily tier.
 //
 // Bounded per pass (a handful of Haiku calls), never overlapping, and a
 // no-op while llm.isEnabled() is false — no point hammering a dead API.
@@ -23,6 +23,7 @@ const log = require('./logger');
 const llm = require('./llm');
 const github = require('./github');
 const prMetadata = require('./pr-metadata');
+const limits = require('./limits');
 const { getPool } = require('../db/pool');
 const { pushVoteUpdate, pushIssueUpdate } = require('./ws');
 
@@ -44,8 +45,9 @@ function parseRepo(repoUrl) {
 // Retry PR title generation for sessions still marked pr_title_fallback.
 // applyPrMetadata owns the whole pipeline (context gather, generation,
 // GitHub update, DB persist, flag clear), so this is just "find flagged
-// rows and re-drive it". userId: null → platform-paid, no debit.
-async function healPrTitles(pool, { limit = 5 } = {}) {
+// rows and re-drive it". Production passes dataKey and enforces the current
+// payer; omitting it preserves the direct unit-helper contract.
+async function healPrTitles(pool, { limit = 5, dataKey } = {}) {
   const { rows } = await pool.query(
     `SELECT cs.*, a.id AS heal_app_id, a.slug AS heal_app_slug, a.repo_url AS heal_repo_url,
             u.username AS heal_username
@@ -64,11 +66,25 @@ async function healPrTitles(pool, { limit = 5 } = {}) {
     const repo = parseRepo(session.heal_repo_url);
     if (!repo) continue;
     try {
+      let apiKey = null;
+      let billedUserId = null;
+      if (dataKey !== undefined) {
+        const billing = await limits.resolveBillingPath(pool, dataKey, session.user_id);
+        if (billing.error) {
+          log.info('title-heal', 'PR title heal deferred: no payer available', {
+            sessionId: session.id, reason: billing.reason || null,
+          });
+          continue;
+        }
+        apiKey = billing.apiKey;
+        billedUserId = session.user_id;
+      }
       await prMetadata.applyPrMetadata({
         pool, session,
         repoOwner: repo.owner, repoName: repo.repo,
         username: session.heal_username,
-        userId: null,
+        apiKey,
+        userId: billedUserId,
       });
       // applyPrMetadata mutates session in place; the flag flips to false
       // only when generation actually succeeded (fallback keeps it TRUE).
@@ -91,7 +107,7 @@ async function healPrTitles(pool, { limit = 5 } = {}) {
 // Retry title generation for feedback issues in title_heal_queue. Success
 // deletes the row; failure bumps attempts with exponential backoff and
 // abandons the row past MAX_ISSUE_ATTEMPTS.
-async function healIssueTitles(pool, { limit = 10 } = {}) {
+async function healIssueTitles(pool, { limit = 10, dataKey } = {}) {
   const { rows } = await pool.query(
     `SELECT * FROM title_heal_queue
       WHERE next_attempt_at <= NOW()
@@ -102,7 +118,24 @@ async function healIssueTitles(pool, { limit = 10 } = {}) {
   let healed = 0;
   for (const row of rows) {
     try {
-      const { title } = await llm.generateIssueTitle({ description: row.description });
+      let apiKey = null;
+      let billedUserId = null;
+      if (dataKey !== undefined) {
+        if (!row.user_id) throw new Error('queued title has no attributable user');
+        const billing = await limits.resolveBillingPath(pool, dataKey, row.user_id);
+        if (billing.error) throw new Error(`title billing unavailable: ${billing.error}`);
+        apiKey = billing.apiKey;
+        billedUserId = row.user_id;
+      }
+      const generated = await llm.generateIssueTitle({
+        description: row.description,
+        apiKey: apiKey || undefined,
+      });
+      const { title } = generated;
+      if (generated.usage && billedUserId != null) {
+        const costCents = llm.estimateCostCents(generated.usage, generated.model);
+        await limits.recordSpend(pool, billedUserId, costCents, { byok: !!apiKey });
+      }
       // PAT-first PATCH with installation fallback — lives in github.js
       // since #556 shares it with the author-rename route.
       await github.patchIssueTitle(row.owner, row.repo, row.issue_number, title);
@@ -160,8 +193,8 @@ async function healIssueTitles(pool, { limit = 10 } = {}) {
 async function sweep(config) {
   if (!llm.isEnabled()) return { skipped: true };
   const pool = getPool(config);
-  const pr = await healPrTitles(pool);
-  const issues = await healIssueTitles(pool);
+  const pr = await healPrTitles(pool, { dataKey: config.dataEncryptionKey });
+  const issues = await healIssueTitles(pool, { dataKey: config.dataEncryptionKey });
   if (pr.healed || issues.healed) {
     log.info('title-heal', 'Sweep pass healed titles', { pr, issues });
   }

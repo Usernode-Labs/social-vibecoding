@@ -139,6 +139,22 @@ test('sessions route gates the estimator on the flag and emits cc_estimate', () 
   );
 });
 
+test('each estimator tick re-resolves its payer and records spend in that payer bucket', () => {
+  const sessions = read('src/routes/sessions.js');
+  const start = sessions.indexOf('const IDLE_REFRESH_MS = 180_000');
+  const end = sessions.indexOf('// One progress sink for both runners', start);
+  assert.ok(start > 0 && end > start, 'estimator interval must be locatable');
+  const estimator = sessions.slice(start, end);
+  assert.match(estimator, /limits\.resolveBillingPath\(/,
+    'every tick must check whether platform credit or BYOK pays now');
+  assert.match(estimator, /apiKey: estimateBilling\.apiKey \|\| undefined/,
+    'the current payer key must reach the estimator call');
+  assert.match(estimator, /byok: estimateBilling\.byok/,
+    'the debit must use the same payer decision as the call');
+  assert.match(estimator, /stopEstimator\('budget_exhausted'\)/,
+    'an estimator with no payer must stop instead of spending past the gate');
+});
+
 test('estimateRunProgress uses Haiku', () => {
   const src = read('src/services/llm.js');
   const fnStart = src.indexOf('async function estimateRunProgress');

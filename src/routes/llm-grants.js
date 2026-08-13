@@ -15,19 +15,36 @@ const log = require('../services/logger');
 
 const DEFAULT_CAP_CENTS = 100;
 
+async function grantCapacity(pool, userId) {
+  const entitlement = await limits.getUserCreditEntitlement(pool, userId);
+  const { rows } = await pool.query(
+    'SELECT anthropic_key_enc FROM users WHERE id = $1',
+    [userId]
+  );
+  const hasApiKey = !!rows[0]?.anthropic_key_enc;
+  // An unverified user can still opt an app into their own key. Give that
+  // path a conservative $10/day per-app ceiling even though their shared
+  // platform allowance is zero. The proxy continues to require allowByok
+  // and never exposes the key to the app.
+  const maxCapCents = entitlement.limitCents > 0
+    ? entitlement.limitCents
+    : (hasApiKey ? limits.TIER_ONE_LIMIT_CENTS : 0);
+  return { entitlement, hasApiKey, maxCapCents };
+}
+
 // Cap validation shared by create + update: a positive integer no
 // larger than the user's own effective daily limit (there is
 // deliberately no separate "app cap ceiling" — the user's daily
 // budget is the sane upper bound).
-async function validateCap(pool, userId, raw) {
+async function validateCap(pool, userId, raw, capacity = null) {
   if (raw == null) return { capCents: null };
   const n = Number(raw);
   if (!Number.isInteger(n) || n <= 0) {
     return { error: 'dailyCapCents must be a positive integer (cents).' };
   }
-  const userLimit = await limits.getEffectiveUserLimitCents(pool, userId);
-  if (n > userLimit) {
-    return { error: `dailyCapCents cannot exceed your daily limit ($${(userLimit / 100).toFixed(2)}).` };
+  const resolved = capacity || await grantCapacity(pool, userId);
+  if (n > resolved.maxCapCents) {
+    return { error: `dailyCapCents cannot exceed your available app limit ($${(resolved.maxCapCents / 100).toFixed(2)}).` };
   }
   return { capCents: n };
 }
@@ -123,9 +140,27 @@ function llmGrantsRoutes(config) {
       const app = appRows[0];
       if (!app) return res.status(404).json({ error: 'App not found' });
 
-      const v = await validateCap(pool, req.user.id, dailyCapCents);
+      const capacity = await grantCapacity(pool, req.user.id);
+      if (!capacity.entitlement.entitlementAvailable && !capacity.hasApiKey) {
+        return res.status(503).json({ error: 'Credit eligibility could not be verified. Try again shortly.' });
+      }
+      if (capacity.entitlement.limitCents === 0) {
+        if (!capacity.hasApiKey) {
+          const error = capacity.entitlement.verificationRequired
+            ? 'Connect GitHub or X to use platform-funded AI, or add your own Anthropic API key.'
+            : 'No AI credit is available. Add your own Anthropic API key to continue.';
+          return res.status(400).json({ error, code: 'credit_required' });
+        }
+        if (allowByok !== true) {
+          return res.status(400).json({
+            error: 'Enable access to your own Anthropic API key for this app.',
+            code: 'byok_required',
+          });
+        }
+      }
+      const v = await validateCap(pool, req.user.id, dailyCapCents, capacity);
       if (v.error) return res.status(400).json({ error: v.error });
-      const capCents = v.capCents ?? DEFAULT_CAP_CENTS;
+      const capCents = v.capCents ?? Math.min(DEFAULT_CAP_CENTS, capacity.maxCapCents);
 
       const { rows } = await pool.query(
         `INSERT INTO app_llm_grants (app_id, user_id, status, daily_cap_cents, allow_byok)
@@ -158,7 +193,41 @@ function llmGrantsRoutes(config) {
     const { dailyCapCents, allowByok } = req.body || {};
 
     try {
-      const v = await validateCap(pool, req.user.id, dailyCapCents);
+      const capacity = await grantCapacity(pool, req.user.id);
+      if (!capacity.entitlement.entitlementAvailable && !capacity.hasApiKey) {
+        return res.status(503).json({ error: 'Credit eligibility could not be verified. Try again shortly.' });
+      }
+      if (capacity.maxCapCents === 0) {
+        return res.status(400).json({
+          error: capacity.entitlement.verificationRequired
+            ? 'Connect GitHub or X to unlock platform-funded AI for apps.'
+            : 'No AI credit is available for this app.',
+          code: 'credit_required',
+        });
+      }
+      if (capacity.entitlement.limitCents === 0) {
+        // A cap-only PATCH normally leaves allow_byok untouched. Check the
+        // stored value before accepting it: after a user disconnects their
+        // last social account, an old platform-only grant must not become a
+        // confusing active-but-unpayable permission. We also never turn
+        // BYOK on implicitly because that is a separate user consent.
+        let effectiveAllowByok = allowByok;
+        if (typeof effectiveAllowByok !== 'boolean') {
+          const { rows: existing } = await pool.query(
+            'SELECT allow_byok FROM app_llm_grants WHERE app_id = $1 AND user_id = $2',
+            [appId, req.user.id]
+          );
+          if (!existing[0]) return res.status(404).json({ error: 'No grant for this app' });
+          effectiveAllowByok = !!existing[0].allow_byok;
+        }
+        if (!effectiveAllowByok) {
+          return res.status(400).json({
+            error: 'Your own Anthropic API key is the only available payer for this app. Enable it before changing this permission.',
+            code: 'byok_required',
+          });
+        }
+      }
+      const v = await validateCap(pool, req.user.id, dailyCapCents, capacity);
       if (v.error) return res.status(400).json({ error: v.error });
 
       const sets = ['updated_at = NOW()'];
@@ -241,7 +310,7 @@ function llmGrantsRoutes(config) {
         [app.id, req.user.id]
       );
 
-      const userLimit = await limits.getEffectiveUserLimitCents(pool, req.user.id);
+      const capacity = await grantCapacity(pool, req.user.id);
 
       // Manifest llm block — deploy-time-snapshotted consent metadata.
       // Sanitize defensively even though app-manifest.js already
@@ -254,20 +323,17 @@ function llmGrantsRoutes(config) {
         ? llmBlock.purpose.trim() : null;
       const rawSuggested = llmBlock.suggested_daily_cap_cents;
       const suggestedCapCents = Number.isInteger(rawSuggested) && rawSuggested > 0
-        ? Math.min(rawSuggested, userLimit) : null;
-
-      const { rows: keyRows } = await pool.query(
-        'SELECT anthropic_key_enc FROM users WHERE id = $1',
-        [req.user.id]
-      );
+        && capacity.maxCapCents > 0
+        ? Math.min(rawSuggested, capacity.maxCapCents) : null;
 
       res.json({
         app: { id: app.id, name: app.name, slug: app.slug },
         grant: grantRows[0] ? grantJson(grantRows[0]) : null,
         llm: { purpose, suggestedCapCents },
-        defaultCapCents: DEFAULT_CAP_CENTS,
-        maxCapCents: userLimit,
-        hasApiKey: !!keyRows[0]?.anthropic_key_enc,
+        defaultCapCents: Math.min(DEFAULT_CAP_CENTS, capacity.maxCapCents),
+        maxCapCents: capacity.maxCapCents,
+        hasApiKey: capacity.hasApiKey,
+        entitlement: capacity.entitlement,
       });
     } catch (err) {
       log.error('llm-grants', 'Bootstrap failed', {

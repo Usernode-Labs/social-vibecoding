@@ -11188,7 +11188,9 @@ const AppView = {
             PlatformUI.toast(data.error || 'The OpenRouter run could not start.');
             return;
           }
-          AppView._showCreditOptionsModal(data.error);
+          AppView._showCreditOptionsModal(data.error, {
+            verificationRequired: !!data.verificationRequired,
+          });
           return;
         }
         PlatformUI.toast(data.error || `Couldn't start generating the proposal (HTTP ${resp.status}).`);
@@ -11218,7 +11220,7 @@ const AppView = {
   // destinations are identical to the dev-chat card and the red banner.
   // Choosing a route is a hash navigation, which unmounts this screen —
   // so the modal only has to handle explicit dismissal.
-  _showCreditOptionsModal(errorText) {
+  _showCreditOptionsModal(errorText, billingState) {
     const existing = document.getElementById('credit-options-modal');
     if (existing) existing.remove();
     if (!window.CreditOptions) {
@@ -11235,6 +11237,7 @@ const AppView = {
       // the chat does; the shared-budget wording is reachable through the
       // budget meter, which this modal doesn't read.
       globalOut: false,
+      verificationRequired: !!(billingState && billingState.verificationRequired),
       // #1049: whether to lead with the Claude Code / Codex hand-offs. From
       // /api/auth/me, so the card offers only what this deployment supports.
       externalFlowsAvailable: !!(typeof App !== 'undefined' && App.user
@@ -14879,7 +14882,15 @@ const AppView = {
       const appName = info.app?.name || info.app?.slug || 'This app';
       const suggested = info.llm?.suggestedCapCents ?? null;
       const prefillCents = suggested ?? info.defaultCapCents ?? 100;
-      const maxCents = info.maxCapCents || 2500;
+      // Zero is intentional for an unverified account with no BYOK key;
+      // never coerce it to the historical $25 fallback.
+      const parsedMax = Number(info.maxCapCents);
+      const maxCents = Number.isFinite(parsedMax) && parsedMax >= 0 ? parsedMax : 0;
+      const noCapacity = maxCents === 0;
+      const eligibilityUnavailable = info.entitlement?.entitlementAvailable === false;
+      const byokOnly = !noCapacity
+        && Number(info.entitlement?.limitCents) === 0
+        && !!info.hasApiKey;
       const purposeLine = info.llm?.purpose
         ? `<p class="text-sm text-zinc-600 dark:text-zinc-400 mb-3 italic">&ldquo;${escapeHtml(info.llm.purpose)}&rdquo;</p>`
         : '';
@@ -14888,10 +14899,24 @@ const AppView = {
         : `<p class="text-xs text-zinc-500 dark:text-zinc-500 mt-1">You can change this anytime in Settings.</p>`;
       const byokBlock = info.hasApiKey
         ? `<label class="flex items-start gap-2 cursor-pointer select-none mt-4">
-             <input id="llm-consent-byok" type="checkbox" class="accent-violet-500 w-4 h-4 mt-0.5" />
-             <span class="text-xs text-zinc-700 dark:text-zinc-300">If my daily platform budget runs out, let this app keep going on my own API key (still limited by the cap above).</span>
+             <input id="llm-consent-byok" type="checkbox" ${byokOnly ? 'checked' : ''} class="accent-violet-500 w-4 h-4 mt-0.5" />
+             <span class="text-xs text-zinc-700 dark:text-zinc-300">${byokOnly
+               ? 'Use my own API key for this app (required until platform credits are unlocked; still limited by the cap above).'
+               : 'If my daily platform budget runs out, let this app keep going on my own API key (still limited by the cap above).'}</span>
            </label>`
         : '';
+      const capacityBlock = noCapacity
+        ? `<div class="rounded-lg border border-amber-300/70 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30 p-3 text-sm text-amber-900 dark:text-amber-200">
+             ${eligibilityUnavailable
+               ? 'Credit eligibility could not be checked. Close this dialog and try again shortly.'
+               : 'No AI payer is available yet. <a class="underline font-medium" href="#settings/connectors">Connect GitHub or X</a> to unlock $10/day, or <a class="underline font-medium" href="#settings/api-key">add your own Anthropic API key</a>.'}
+           </div>`
+        : `<label class="block text-xs font-medium text-zinc-700 dark:text-zinc-300 mb-1" for="llm-consent-cap">Daily cap for this app ($ per day)</label>
+           <input id="llm-consent-cap" type="number" min="0.01" step="0.01"
+             value="${(prefillCents / 100).toFixed(2)}"
+             class="w-32 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500 font-mono" />
+           ${suggestedNote}
+           ${byokBlock}`;
 
       root.innerHTML = `
         <div data-modal-backdrop class="flex min-h-full items-center justify-center p-4">
@@ -14899,20 +14924,18 @@ const AppView = {
             <h2 class="text-lg font-bold mb-2 text-zinc-900 dark:text-zinc-100">Allow ${escapeHtml(appName)} to use AI?</h2>
             ${purposeLine}
             <p class="text-sm text-zinc-600 dark:text-zinc-400 mb-3">
-              This lets <strong>${escapeHtml(appName)}</strong> spend from your daily AI budget &mdash; the same one your dev chats use &mdash; up to the daily cap below.
+              ${byokOnly
+                ? `This lets <strong>${escapeHtml(appName)}</strong> use your own Anthropic API key, without exposing the key to the app.`
+                : `This lets <strong>${escapeHtml(appName)}</strong> spend from your daily AI budget &mdash; the same one your dev chats use &mdash; up to the daily cap below.`}
             </p>
-            <label class="block text-xs font-medium text-zinc-700 dark:text-zinc-300 mb-1" for="llm-consent-cap">Daily cap for this app ($ per day)</label>
-            <input id="llm-consent-cap" type="number" min="0.01" step="0.01"
-              value="${(prefillCents / 100).toFixed(2)}"
-              class="w-32 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500 font-mono" />
-            ${suggestedNote}
-            ${byokBlock}
+            ${capacityBlock}
             <div id="llm-consent-error" class="hidden text-sm text-red-500 mt-3"></div>
             <div class="flex justify-end gap-2 mt-5">
               <button id="llm-consent-decline" type="button"
                 class="rounded-lg border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">Not now</button>
               <button id="llm-consent-allow" type="button"
-                class="rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors">Allow</button>
+                ${noCapacity ? 'disabled' : ''}
+                class="rounded-lg bg-violet-600 hover:bg-violet-500 disabled:opacity-40 disabled:cursor-not-allowed px-4 py-2 text-sm font-medium text-white transition-colors">${noCapacity ? 'Unavailable' : 'Allow'}</button>
             </div>
           </div>
         </div>`;
@@ -14932,6 +14955,7 @@ const AppView = {
       }, { once: false });
       root.querySelector('#llm-consent-decline').addEventListener('click', () => done(null));
       root.querySelector('#llm-consent-allow').addEventListener('click', () => {
+        if (noCapacity) return;
         const errEl = root.querySelector('#llm-consent-error');
         const dollars = parseFloat(root.querySelector('#llm-consent-cap').value);
         const cents = Math.round(dollars * 100);
@@ -14946,6 +14970,11 @@ const AppView = {
           return;
         }
         const byokInput = root.querySelector('#llm-consent-byok');
+        if (byokOnly && !(byokInput && byokInput.checked)) {
+          errEl.textContent = 'Your own API key must be enabled while platform credits are locked.';
+          errEl.classList.remove('hidden');
+          return;
+        }
         done({ dailyCapCents: cents, allowByok: !!(byokInput && byokInput.checked) });
       });
 

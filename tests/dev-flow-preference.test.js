@@ -52,8 +52,8 @@ const { authRoutes, DEV_FLOWS } = require('../src/routes/auth');
 // no-credentials case gets its own server below.
 const LINKED_CONFIG = {
   jwtSecret: 'test-secret',
-  waitlistGithubClientId: 'client-id',
-  waitlistGithubClientSecret: 'client-secret',
+  githubLinkClientId: 'client-id',
+  githubLinkClientSecret: 'client-secret',
 };
 
 let server, base, bareServer, bareBase;

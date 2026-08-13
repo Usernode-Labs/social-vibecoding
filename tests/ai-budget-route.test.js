@@ -62,10 +62,18 @@ test.before(async () => {
   app.use(authRoutes({ jwtSecret: 'test', dataEncryptionKey: 'x'.repeat(64) }));
   server = app.listen(0);
   await new Promise((r) => server.once('listening', r));
+  server.unref();
   base = `http://127.0.0.1:${server.address().port}`;
 });
 
-test.after(() => server && server.close());
+test.after(() => {
+  if (!server) return;
+  // Node's global fetch keeps HTTP/1.1 sockets alive. Close them explicitly
+  // so server close cannot strand the test runner after all
+  // assertions have passed.
+  server.close();
+  if (typeof server.closeAllConnections === 'function') server.closeAllConnections();
+});
 
 test.beforeEach(() => {
   limits.invalidate();
@@ -132,8 +140,9 @@ test('the payload carries no global spend or global cap', async () => {
   // LOW_BALANCE_PCT) rather than a number retyped in the browser. It is a
   // constant, not a fact about this user, so it discloses nothing.
   assert.deepEqual(Object.keys(r).sort(), [
-    'byokCents', 'hasByokKey', 'limitCents', 'lowBalancePct', 'remainingCents',
-    'resetsAt', 'spentCents',
+    'byokCents', 'creditPolicy', 'entitlementAvailable', 'hasByokKey',
+    'limitCents', 'limitSource', 'lowBalancePct', 'remainingCents', 'resetsAt',
+    'spentCents', 'tier', 'tierLimitCents', 'verificationRequired',
   ]);
 });
 

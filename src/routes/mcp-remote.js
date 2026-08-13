@@ -15,8 +15,8 @@
 //                                 Mounts BEFORE the cookie middleware.
 //   mcpBrowserRoutes(config)    — the parts that need a platform session:
 //                                 the consent decision, the connected-apps
-//                                 list, disconnect, and the GitHub link
-//                                 round-trip. Mounts AFTER authMiddleware.
+//                                 list and disconnect. Mounts AFTER
+//                                 authMiddleware.
 //
 // The split matters: /mcp must never fall back to an ambient cookie (that
 // would let a logged-in browser tab drive the connector), and the consent
@@ -43,7 +43,6 @@ const {
 } = require('../services/mcp-connect-constants');
 const mcpOauth = require('../services/mcp-oauth');
 const mcpTools = require('../services/mcp-tools');
-const githubLink = require('../services/github-link');
 const { consumeSharedTokenBucket } = require('../services/cli-auth');
 
 const CONSENT_CSP = [
@@ -74,8 +73,8 @@ function mcpConnectGate(config) {
   return (req, res, next) => {
     if (!isConnectorSurface(req)) return next();
     const staging = process.env.USERNODE_ENV === 'staging';
-    // The two read-only Settings status reads survive on staging so the
-    // section is reviewable there from its ?demo=1 fixture; they never
+    // The read-only Settings connector status survives on staging so the
+    // section is reviewable there from its ?demo=1 fixture; it never
     // touch real credential state (see the staging branches in their
     // handlers). Everything else — minting, presenting, revoking — is
     // dead. `!cliAuthEnabled` still 404s the whole surface.
@@ -233,8 +232,6 @@ function mcpPreAuthRoutes(config) {
     '/api/connect/*',
     '/api/me/connectors',
     '/api/me/connectors/*',
-    '/api/me/github',
-    '/api/me/github/*',
     '/.well-known/oauth-authorization-server',
     '/.well-known/oauth-protected-resource',
     '/.well-known/oauth-protected-resource/*',
@@ -624,8 +621,6 @@ function mcpBrowserRoutes(config) {
     '/api/connect/oauth/authorize',
     '/api/me/connectors',
     '/api/me/connectors/*',
-    '/api/me/github',
-    '/api/me/github/*',
   ], noStore);
 
   const userRate = async (req, res, next) => {
@@ -821,78 +816,6 @@ function mcpBrowserRoutes(config) {
       return found ? res.status(204).end() : res.status(404).json({ error: 'not_found' });
     } catch (err) {
       log.error('mcp-remote', 'disconnect failed', { message: err.message });
-      return res.status(503).json({ error: 'temporarily_unavailable' });
-    }
-  });
-
-  // ── GitHub account link ──────────────────────────────────────────────
-
-  function githubRedirectUri() {
-    return `${config.cliAuthOrigin}/api/me/github/callback`;
-  }
-
-  router.get('/api/me/github', userRate, async (req, res) => {
-    if (!req.user) return res.status(401).json({ error: 'not_authenticated' });
-    // Same staging fixture reasoning as the connector list: the token
-    // column is staging:private, so the connected layout would never be
-    // reviewable there. Never reads the real column on staging.
-    if (process.env.USERNODE_ENV === 'staging') {
-      return res.json(
-        req.query.demo === '1'
-          ? { ...githubLink.demoLinkStatus(), available: true }
-          : { linked: false, login: null, linkedAt: null, available: true }
-      );
-    }
-    const status = await githubLink.linkStatus(pool, req.user.id);
-    return res.json({ ...status, available: githubLink.isEnabled(config) });
-  });
-
-  router.get('/api/me/github/connect', userRate, (req, res) => {
-    if (!req.user) return res.status(401).json({ error: 'not_authenticated' });
-    if (!githubLink.isEnabled(config)) return res.status(404).json({ error: 'not_found' });
-    const url = githubLink.authorizeUrl(config, {
-      userId: req.user.id,
-      redirectUri: githubRedirectUri(),
-    });
-    if (!url) return res.status(404).json({ error: 'not_found' });
-    res.setHeader('Referrer-Policy', 'no-referrer');
-    return res.redirect(302, url);
-  });
-
-  router.get('/api/me/github/callback', userRate, async (req, res) => {
-    if (!req.user) return res.status(401).json({ error: 'not_authenticated' });
-    if (!githubLink.isEnabled(config)) return res.status(404).json({ error: 'not_found' });
-    const backTo = `${config.cliAuthOrigin}/#settings/connectors`;
-    // The state binds this callback to the session that STARTED the flow;
-    // failure lands back in Settings with a flag rather than reflecting
-    // GitHub's error text into the page.
-    const state = githubLink.verifyState(config, req.query.state, req.user.id);
-    if (!state || typeof req.query.code !== 'string') {
-      return res.redirect(302, `${backTo}?github=error`);
-    }
-    try {
-      const linked = await githubLink.exchangeCode(config, {
-        code: req.query.code,
-        redirectUri: githubRedirectUri(),
-      });
-      if (!linked) return res.redirect(302, `${backTo}?github=error`);
-      await githubLink.saveLink(pool, config, req.user.id, linked);
-      log.info('mcp-remote', 'GitHub account linked', { userId: req.user.id });
-      return res.redirect(302, `${backTo}?github=linked`);
-    } catch (err) {
-      log.error('mcp-remote', 'GitHub link failed', { message: err.message });
-      return res.redirect(302, `${backTo}?github=error`);
-    }
-  });
-
-  router.delete('/api/me/github', userRate, async (req, res) => {
-    if (!req.user) return res.status(401).json({ error: 'not_authenticated' });
-    if (!browserCsrf(config, req, res)) return undefined;
-    try {
-      await githubLink.clearLink(pool, req.user.id);
-      return res.status(204).end();
-    } catch (err) {
-      log.error('mcp-remote', 'GitHub unlink failed', { message: err.message });
       return res.status(503).json({ error: 'temporarily_unavailable' });
     }
   });

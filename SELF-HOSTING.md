@@ -1328,17 +1328,19 @@ ordinary imported proposal. The platform spends no model credits on it.
 Everything is served in-process at `POST /mcp` plus the OAuth routes
 under `/api/connect/`; there is no sidecar.
 
-**The connector is production-only.** Every route 404s when
-`config.cliAuthEnabled` is false, which is exactly `USERNODE_ENV=staging`
-— the same gate the CLI device flow uses. Review the consent page and the
-GitHub round-trip in local mode (`USERNODE_LOCAL_DEV=1`), never in a
-staging preview.
+**Connector credential issuance and social OAuth mutations are
+production-only.** The connector routes 404 when `config.cliAuthEnabled`
+is false, and social-account connect/callback/disconnect routes 404 when
+`USERNODE_ENV=staging`. Social identity status is deliberately a separate
+account surface: deterministic `?demo=identity-unverified`,
+`?demo=identity-legacy`, and `?demo=1` fixtures keep all Settings states
+reviewable in a staging preview without exposing credentials or real
+identity rows.
 
 ### Configuration
 
-Three settings, all `required: false`, all declared in `dapp.json`'s
-`platform_env` under the **Chat connectors** group. None blocks boot or a
-merge; each disables exactly one thing. Set them in the platform's
+The connector allowlist lives under **Chat connectors**; account proofs and
+their rollout switch live under **Social identity & credits**. Set them in the platform's
 **Platform variables** panel (a full admin sets directly; anyone else
 proposes by vote), and note they take effect on the platform's **next
 deploy**, not immediately.
@@ -1348,52 +1350,81 @@ deploy**, not immediately.
   chat product or to narrow the surface; an explicit value **replaces**
   the default rather than extending it, so re-list the hosts you still
   want. Loopback is added automatically in local mode only.
-- `GITHUB_LINK_CLIENT_ID` / `GITHUB_LINK_CLIENT_SECRET` — the GitHub
-  OAuth app used for account linking. Both fall back to
-  `WAITLIST_GITHUB_CLIENT_ID` / `_SECRET` (see
-  [Waitlist social connect](#waitlist-social-connect-github--x) below), so
-  one OAuth app can serve both flows if its callback list carries this
-  one's URL. Both halves must be set together: an id without a secret
-  counts as unconfigured.
+- `GITHUB_LINK_CLIENT_ID` / `GITHUB_LINK_CLIENT_SECRET` — a **dedicated**
+  GitHub OAuth app for account proof. GitHub OAuth apps permit one callback
+  URL, so this pair never falls back to the waitlist app.
+- `X_LINK_CLIENT_ID` / `X_LINK_CLIENT_SECRET` — the X confidential client
+  for account proof. When this pair is unset, the waitlist X pair may be
+  reused if that app has both exact callback URLs registered.
+- `IDENTITY_CREDIT_POLICY` — `legacy` (the deploy-safe default) preserves
+  the current platform allowance. `tiered` makes unverified accounts
+  $0/day and either verified GitHub **or** X $10/day. Providers replace,
+  never stack; an explicit per-user admin override still wins; BYOK works
+  in both modes. Any other value fails boot.
 
-**Unset is a supported state, not a broken one.** With no OAuth app:
-`GET /api/me/github/connect` and `/callback` return 404, Settings →
-*Claude & ChatGPT connectors* says "GitHub linking is not configured on
-this deployment" instead of offering a dead button, and `prepare_work` /
-`submit_work` answer `github_link_unavailable` naming
-`start_platform_build` — the platform-billed fallback, which needs no
-GitHub link — rather than sending the user to Settings. The connector
-itself, every read-only tool and the out-of-credits card are unaffected.
-`tests/connector-config-unset.test.js` pins all of that.
+**Unset provider credentials are supported.** Settings names that provider
+as unavailable and never offers a dead button; the other provider can still
+unlock the tier. Existing connector attribution behavior remains: without
+the dedicated GitHub app, external-agent work that requires a verified
+GitHub login reports `github_link_unavailable` and names the platform-build
+fallback. Keep `IDENTITY_CREDIT_POLICY=legacy` until at least one provider
+is configured and the production end-to-end checks below pass.
 
 ### Creating the GitHub OAuth app
 
-An **OAuth app** (Settings → Developer settings → OAuth Apps → New),
-*not* a GitHub App — this flow uses the classic authorize/token
-round-trip, same shape as `src/routes/waitlist-connect.js`.
+Create an **OAuth app** (Settings → Developer settings → OAuth Apps → New),
+not a GitHub App. It must be separate from the waitlist GitHub app because
+GitHub OAuth apps have one callback URL.
 
 - **Authorization callback URL:** `https://<your-domain>/api/me/github/callback`
-  — exactly what `githubRedirectUri()` in `src/routes/mcp-remote.js` builds from
-  `config.cliAuthOrigin`. A mismatch fails at GitHub's own redirect check,
+  — exactly what `callbackUri()` in `src/routes/social-identities.js` builds from
+  `config.cliAuthOrigin`. A mismatch fails at GitHub's redirect check,
   before any platform code runs.
+- **PKCE:** the route sends `code_challenge_method=S256`; the verifier is
+  stored server-side with a hashed, single-use OAuth state and consumed
+  before token exchange.
 - **Scope: none.** `githubLink.SCOPE` is the empty string and
-  `authorizeUrl` omits the parameter entirely, so GitHub issues a token with
-  no scopes — its consent screen says "public data only" and the token can do
-  nothing but read public information. Never add one back (see below).
+  `authorizeUrl` omits the parameter entirely. Because GitHub grants can be
+  cumulative for a reused OAuth app, the callback also rejects a missing or
+  non-empty returned scope and revokes that grant. This is why a dedicated
+  app is an enforced requirement, not just setup advice.
 - **No token is stored.** The token is used once, for the `GET /user` read
-  that resolves the login, then handed back with
+  that resolves the immutable numeric account id plus login, then handed back with
   `DELETE /applications/{client_id}/token` and dropped.
   `users.github_oauth_token_enc` is written NULL on every link and exists
   only as a legacy column; `migrate.js` revokes and clears any value a
   previous release left behind.
-- The link's **only** purpose is the verified login, which the attribution
-  gate in `services/external-agent-tasks.js` compares against the head owner
-  of a submitted pull request. The fork and the branch are created by the
-  user's own coding agent; every GitHub read the connector makes about them
-  is public (`gh.publicApiHeaders`), and the pull request is opened with the
-  platform's own bot credentials against the base repo.
+- The immutable id is the uniqueness and credit authority; the changeable
+  login is presentation and proposal-attribution metadata. One GitHub
+  account can belong to one Usernode account. Linking X as well does not
+  increase the tier.
 - Store the client secret as `GITHUB_LINK_CLIENT_SECRET`; it is declared
   `private: true`, so it is encrypted at rest and never returned by any API.
+
+### Creating or reusing the X app
+
+Use an OAuth 2.0 **Web App / confidential client** with Read permission.
+Register `https://<your-domain>/api/me/x/callback`; if reusing the waitlist
+client, keep its `/waitlist/connect/x/callback` registered as well. The
+account-proof flow uses PKCE S256, requests `tweet.read users.read` (the
+minimum X requires for `GET /2/users/me`), stores the immutable id + current
+username, calls `/2/oauth2/revoke`, and discards the token. Set the dedicated
+`X_LINK_*` pair, or leave both unset to use a complete `WAITLIST_X_*` pair.
+
+### Activating the tiered policy
+
+1. Deploy the schema and provider configuration with
+   `IDENTITY_CREDIT_POLICY=legacy`.
+2. In production, connect and disconnect each configured provider, confirm
+   the provider's authorization page shows the documented read-only access,
+   and confirm Settings reports that Usernode retained no token.
+3. Verify an existing legacy GitHub attribution row is shown as
+   **reconnect required**, not silently counted for credits.
+4. Set `IDENTITY_CREDIT_POLICY=tiered` and deploy. Test one unverified account
+   ($0 and an actionable connect prompt), one verified account ($10/day), an
+   explicit admin override, and a BYOK-only account.
+5. Roll back instantly by restoring `legacy`; identity proofs remain stored
+   and no schema rollback is required.
 
 #### Why not `public_repo`, and why not a GitHub App
 
@@ -1439,7 +1470,7 @@ whole path and each step has a distinguishable failure.
 2. **Approve on the consent page** at `/connect/authorize`. Check that it
    names the client *and* the redirect origin — the origin is the
    load-bearing fact, since a client name is attacker-chosen.
-3. **Link GitHub.** Settings → *Claude & ChatGPT connectors* → Connect
+3. **Link GitHub.** Settings → *Social accounts & connectors* → Connect
    GitHub. GitHub's consent screen must say **public data only** and list no
    repository access; if it names public repositories, an older release is
    still running. If the row says "not configured", the values did not reach
@@ -1529,11 +1560,13 @@ either order. A value pasted before its declaration deploys simply shows
 as an "orphan" row until the deploy catches up.
 
 - `WAITLIST_GITHUB_CLIENT_ID` / `WAITLIST_GITHUB_CLIENT_SECRET` — the
-  GitHub OAuth app that verifies a signer's GitHub account.
-  `GITHUB_LINK_CLIENT_ID` / `_SECRET` fall back to these, so one OAuth app
-  can serve both flows if its callback list carries both URLs.
+  GitHub OAuth app that verifies a signer's GitHub account. It is
+  waitlist-only: GitHub OAuth apps permit one callback, so account linking
+  needs the separate `GITHUB_LINK_*` app above.
 - `WAITLIST_X_CLIENT_ID` / `WAITLIST_X_CLIENT_SECRET` — the X app that
-  verifies a signer's X account.
+  verifies a signer's X account. X supports multiple registered callbacks,
+  so this pair may also serve account linking when `/api/me/x/callback` is
+  registered and the dedicated `X_LINK_*` pair is unset.
 - `WAITLIST_OAUTH_ORIGIN` — overrides the origin both callback URLs are
   built from (`connectOrigin()`). Unset it is the production origin in
   production and `http://localhost:<PORT>` in dev. Change it and you must
@@ -1567,8 +1600,9 @@ Contributed by **snait** on issue #880, who set up the GitHub side.
 
 1. **Get a developer account.** Go to `developer.x.com` and sign in with
    the X account that should own the app — that account's project hosts
-   it, and **the app name you pick is what waitlist users see on the
-   consent screen**. The Free tier covers this use case.
+   it, and **the app name you pick is what users see on the consent
+   screen**. X API access is pay-per-use; confirm the current billing and
+   credit requirements in the developer portal before rollout.
 2. **Create a Project, then an App inside it.** X requires apps to live
    inside a project. Name the project anything (e.g. "Social Vibecoding")
    and the app something user-visible (e.g. "Social Vibecoding Waitlist").
@@ -1587,6 +1621,8 @@ Contributed by **snait** on issue #880, who set up the GitHub side.
      `https://<your-domain>/waitlist/connect/x/callback` — on the
      canonical deployment,
      `https://social-vibecoding.usernodelabs.org/waitlist/connect/x/callback`.
+     To reuse the same app for daily-credit identity, also register
+     `https://<your-domain>/api/me/x/callback`.
      It must match exactly what `callbackUrl()` builds; X validates it at
      the authorize redirect, before any platform code runs.
    - **Website URL:** `https://<your-domain>` — also part of the consent
@@ -1621,9 +1657,8 @@ is a separate GitHub App and is unrelated.
 - Client ID → `WAITLIST_GITHUB_CLIENT_ID`, generated client secret →
   `WAITLIST_GITHUB_CLIENT_SECRET` (declared `private: true`, so encrypted
   at rest and never returned by any API).
-- To let the same OAuth app also serve connector account-linking, add
-  `/api/me/github/callback` to its callback list and leave
-  `GITHUB_LINK_CLIENT_ID` / `_SECRET` unset so they fall back to these.
+- GitHub permits only one callback URL per OAuth app. Do not reuse this app
+  for account linking; create the dedicated `GITHUB_LINK_*` app above.
 
 ## Cross-references
 

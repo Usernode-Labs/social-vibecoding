@@ -37,8 +37,13 @@ const MANIFEST = JSON.parse(fs.readFileSync(path.join(ROOT, 'dapp.json'), 'utf8'
 const ENTRIES = appManifest.readPlatformEnv(MANIFEST);
 const BY_KEY = new Map(ENTRIES.map((e) => [e.key, e]));
 
-// The three variables this change taught the platform to read.
-const NEW_KEYS = ['MCP_CONNECTOR_REDIRECT_HOSTS', 'GITHUB_LINK_CLIENT_ID', 'GITHUB_LINK_CLIENT_SECRET'];
+// Variables introduced by the connector and social-identity surfaces.
+const NEW_KEYS = [
+  'MCP_CONNECTOR_REDIRECT_HOSTS',
+  'GITHUB_LINK_CLIENT_ID', 'GITHUB_LINK_CLIENT_SECRET',
+  'X_LINK_CLIENT_ID', 'X_LINK_CLIENT_SECRET',
+  'IDENTITY_CREDIT_POLICY',
+];
 
 // ── the declaration side ───────────────────────────────────────────────
 
@@ -47,8 +52,11 @@ test('every env var the connector introduced is declared in platform_env', () =>
     assert.ok(BY_KEY.has(key), `${key} is read by the platform but not declared in dapp.json`);
     assert.ok(BY_KEY.get(key).description.length > 40,
       `${key}'s description has to tell an admin what setting it does`);
-    assert.equal(BY_KEY.get(key).group, 'Chat connectors',
-      'all three belong to one panel heading so they are set together');
+    assert.equal(
+      BY_KEY.get(key).group,
+      key === 'MCP_CONNECTOR_REDIRECT_HOSTS' ? 'Chat connectors' : 'Social identity & credits',
+      `${key} must appear under the operator panel that owns it`
+    );
   }
 });
 
@@ -107,21 +115,30 @@ test('the redirect-host default is the committed allowlist, verbatim', () => {
   }
 });
 
-test('the OAuth client secret is declared private; the other two are not', () => {
+test('OAuth secrets are private while public client ids and policy are readable', () => {
   // private:true means encrypted at rest and never returned by any API —
   // right for a value that can mint GitHub authorizations for this
   // deployment, and wrong for a host list and a public client id.
   assert.equal(BY_KEY.get('GITHUB_LINK_CLIENT_SECRET').private, true);
+  assert.equal(BY_KEY.get('X_LINK_CLIENT_SECRET').private, true);
   assert.equal(BY_KEY.get('GITHUB_LINK_CLIENT_ID').private, false);
+  assert.equal(BY_KEY.get('X_LINK_CLIENT_ID').private, false);
+  assert.equal(BY_KEY.get('IDENTITY_CREDIT_POLICY').private, false);
   assert.equal(BY_KEY.get('MCP_CONNECTOR_REDIRECT_HOSTS').private, false);
   // No committed default for either credential: there is no sane real
   // value to commit, and unset is a supported state.
   assert.equal(BY_KEY.get('GITHUB_LINK_CLIENT_SECRET').default, null);
   assert.equal(BY_KEY.get('GITHUB_LINK_CLIENT_ID').default, null);
+  assert.equal(BY_KEY.get('X_LINK_CLIENT_SECRET').default, null);
+  assert.equal(BY_KEY.get('X_LINK_CLIENT_ID').default, null);
+  assert.equal(BY_KEY.get('IDENTITY_CREDIT_POLICY').default, 'legacy');
   // Both are settable from the panel — they are NOT deploy-owned
   // credentials, and an operator has no other way to turn linking on.
   assert.equal(BY_KEY.get('GITHUB_LINK_CLIENT_SECRET').unwritable, false);
   assert.equal(BY_KEY.get('GITHUB_LINK_CLIENT_ID').unwritable, false);
+  assert.equal(BY_KEY.get('X_LINK_CLIENT_SECRET').unwritable, false);
+  assert.equal(BY_KEY.get('X_LINK_CLIENT_ID').unwritable, false);
+  assert.equal(BY_KEY.get('IDENTITY_CREDIT_POLICY').unwritable, false);
 });
 
 test('no connector module reads an undeclared new variable', () => {
@@ -132,6 +149,8 @@ test('no connector module reads an undeclared new variable', () => {
     'src/services/mcp-tools.js',
     'src/services/mcp-connect-constants.js',
     'src/services/github-link.js',
+    'src/services/x-link.js',
+    'src/services/limits.js',
     'src/services/external-agent-tasks.js',
     'src/services/connector-limits.js',
     'src/routes/mcp-remote.js',

@@ -141,6 +141,29 @@
         // this row and the dev chat cannot describe it differently.
         var resetText = state ? CO.resetSentence(state) : 'Free credits reset at midnight UTC.';
 
+        // A zero tier is a real state, not an unknown cap. Render the
+        // unlock action without doing spend/limit division (which used to
+        // produce a misleading $0/$0 meter and NaN percentages).
+        if (state && state.level === 'locked') {
+          var lockedHtml = '<span class="text-amber-600 dark:text-amber-400">verify account · unlock $10/day</span>';
+          if (s.hasByokKey) {
+            lockedHtml += ' <span class="drawer-meter-part"><span class="drawer-meter-dim">· </span>'
+              + '<span class="' + BYOK_TONE + '">your key available</span></span>';
+          }
+          slot.innerHTML = '<span class="ai-budget-meter drawer-meter" title="'
+            + escapeAttr('Connect GitHub or X in Settings to unlock $10/day. '
+              + (s.hasByokKey ? 'Your own Anthropic key remains available.' : ''))
+            + '">' + lockedHtml + '</span>';
+          setRowVisible('drawer-row-ai-budget', true);
+          return;
+        }
+        if (state && state.level === 'unavailable') {
+          slot.innerHTML = '<span class="ai-budget-meter drawer-meter text-amber-600 dark:text-amber-400" '
+            + 'title="Credit eligibility could not be verified. Try again shortly.">credits temporarily unavailable</span>';
+          setRowVisible('drawer-row-ai-budget', true);
+          return;
+        }
+
         // "limit $spent/$limit" — spend-first, exactly like the dev chat.
         var pct = limit > 0 ? Math.min(100, (spent / limit) * 100) : 0;
         var spentTone = pct > 80 ? SPENT_TONE.high : pct > 50 ? SPENT_TONE.mid : SPENT_TONE.low;
