@@ -2,6 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { spawnSync } = require('node:child_process');
 const { encrypt } = require('../src/services/secrets');
 const {
   MobilePushWorker,
@@ -160,6 +161,18 @@ test('a hung provider send hits the deadline and retries as provider_timeout', a
   assert.equal(finished.code, 'provider_timeout');
   assert.ok(finished.availableAt instanceof Date && finished.availableAt.getTime() > Date.now(),
     'the retry is deferred by the backoff delay');
+});
+
+test('the provider deadline keeps an otherwise-idle worker alive until it settles', () => {
+  const modulePath = require.resolve('../src/services/mobile-push-worker');
+  const script = [
+    `const { deadline } = require(${JSON.stringify(modulePath)});`,
+    "deadline(new Promise(() => {}), 20).catch((err) => process.stdout.write(err.code));",
+  ].join(' ');
+  const result = spawnSync(process.execPath, ['-e', script], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, 'provider_timeout',
+    'the deadline timer must remain referenced while the provider is hung');
 });
 
 test('delivery reload includes the current deployment state and activation timestamps', async () => {

@@ -242,6 +242,11 @@
 
   let store = null;
   let storePromise = null;
+  // Incremented whenever a caller deliberately replaces the storage adapter.
+  // In particular, seedDisplayOnly() must outrank an IndexedDB open that init()
+  // started earlier: that request can finish after the screenshot seed and
+  // must not replace the seeded memory store with the device's real queue.
+  let storeGeneration = 0;
   let flushing = null;
   let flushDisabled = false;   // set by the display-only ?shot= seeds
   let onChange = null;
@@ -270,20 +275,25 @@
   function ensureStore() {
     if (store) return Promise.resolve(store);
     if (storePromise) return storePromise;
+    const generation = storeGeneration;
     storePromise = (async () => {
+      let selected = null;
       if (hasWindow && window.indexedDB) {
         const idb = idbStorage();
         try {
           await idb.probe();
-          store = idb;
-          return store;
+          selected = idb;
         } catch (err) { /* private mode, blocked, unsupported — fall back */ }
       }
-      if (hasWindow && window.localStorage) {
-        store = localStorageStorage();
-        return store;
+      if (!selected && hasWindow && window.localStorage) {
+        selected = localStorageStorage();
       }
-      store = memoryStorage([]);
+      if (!selected) selected = memoryStorage([]);
+      // A display-only seed installed while the async probe was pending is
+      // the newer fact. Return that adapter to this original caller too, so
+      // its pending count cannot repaint from the stale device store.
+      if (generation !== storeGeneration) return store;
+      store = selected;
       return store;
     })();
     return storePromise;
@@ -542,6 +552,7 @@
     // is photographable without writing to the device or filing anything.
     seedDisplayOnly(entries) {
       const t = nowMs();
+      storeGeneration += 1;
       store = memoryStorage((entries || []).map((e, i) => Object.assign({
         id: `shot-${i}`,
         userId: currentUserId(),
