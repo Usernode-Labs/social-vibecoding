@@ -38,6 +38,7 @@ function makeCtx(over) {
   const sandbox = {
     matchMedia: o.matchMedia,
     console,
+    MergeStatus: require('../public/js/merge-status.js'),
     relTime: () => 'just now',
     escapeHtml: (s) => String(s == null ? '' : s),
     escapeAttr: (s) => String(s == null ? '' : s),
@@ -558,6 +559,36 @@ test('status tag: falls back to the fetched row when the store knows nothing', (
   const AppView = makeAppView();
   assert.match(AppView._sessionStatusTagHtml(mySess({ busy: true })), /working…/);
   assert.doesNotMatch(AppView._sessionStatusTagHtml(mySess({ busy: false })), /working…/);
+});
+
+test('status tag: an underway build names its preview/check phase and terminal verdict', () => {
+  const AppView = makeAppView();
+  const building = AppView._sessionStatusTagHtml(mySess({
+    check_state: 'pending', check_phase: 'building',
+  }));
+  assert.match(building, /Preparing the staging preview…/);
+  assert.match(building, /dc-status-spinner-arc/);
+
+  const testing = AppView._sessionStatusTagHtml(mySess({
+    check_state: 'pending', check_phase: 'testing',
+  }));
+  assert.match(testing, /Running the automated tests…/);
+
+  const passed = AppView._sessionStatusTagHtml(mySess({ check_state: 'passing' }));
+  assert.match(passed, /Checks passed/);
+  assert.match(passed, /ms-badge-green/);
+
+  const failing = AppView._sessionStatusTagHtml(mySess({ check_state: 'failing' }));
+  assert.match(failing, /Checks failing/);
+});
+
+test('shared underway cards show the same checks state', () => {
+  const AppView = makeAppView();
+  const html = AppView._renderSharedSessionCard(sharedSess({
+    check_state: 'pending', check_phase: 'testing',
+  }));
+  assert.match(html, /Running the automated tests…/);
+  assert.match(html, /dc-status-spinner-arc/);
 });
 
 test('status tag: a live busy event beats a fetched row that said idle', () => {

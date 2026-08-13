@@ -6798,8 +6798,8 @@ const DevChat = {
 
   // #405: the session header's merge-lifecycle pill. Mirrors the canonical
   // state shown on the proposal feed card / home strip so the user no longer
-  // has to leave the session to learn where it is — Draft → In vote →
-  // Checks running → Behind → Resolving → Passed → Merging… → ✓ Merged. The
+  // has to leave the session to learn where it is — Draft → Checks running /
+  // passed → In vote → Behind → Resolving → Passed → Merging… → ✓ Merged. The
   // session payload (GET /api/sessions/:id) carries status / check_state /
   // merge_conflict_state / behind_main, plus yes_count + majority (added for
   // this feature) so the in-vote tally and the "Passed — merging shortly"
