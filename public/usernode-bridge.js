@@ -87,6 +87,7 @@
     removeHomeScreenShortcut: true,
     reorderHomeScreenShortcuts: true,
     openNativeScreen: true,
+    captureScreenshot: true,
     getProfileInfo: true,
     getSettingsState: true,
     setNodeSleepEnabled: true,
@@ -4496,6 +4497,15 @@
       );
     });
   }
+
+  // captureScreenshot() → { contentType: "image/jpeg", base64 }. Captures
+  // the currently visible native app window after the feedback dialog hides.
+  // The app enforces the same 4 MB ceiling as the feedback upload endpoint.
+  // This is a privileged top-frame action: embedded dapps cannot photograph
+  // the surrounding app chrome.
+  window.usernode.captureScreenshot = function () {
+    return callNativeChromeAction("captureScreenshot", {}, 15000);
+  };
 
   // getProfileInfo() → { participantId } or null (old build / outside
   // the app). participantId is null when this install hasn't registered

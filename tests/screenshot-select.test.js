@@ -52,7 +52,29 @@ const {
   detectMarkers,
   classifyCorners,
   solveRegistration,
+  MAX_UPLOAD_BYTES,
+  validateNativeCapturePayload,
 } = loadScreenshotSelect();
+
+test('native capture payload validation accepts one bounded JPEG', () => {
+  assert.equal(validateNativeCapturePayload({
+    contentType: 'image/jpeg',
+    base64: Buffer.from([0xff, 0xd8, 0xff, 0xd9]).toString('base64'),
+  }), null);
+});
+
+test('native capture payload validation rejects bad types, base64 and size', () => {
+  assert.equal(validateNativeCapturePayload({
+    contentType: 'image/gif', base64: 'AAAA',
+  }), 'invalid-type');
+  assert.equal(validateNativeCapturePayload({
+    contentType: 'image/jpeg', base64: 'not base64',
+  }), 'invalid');
+  const encodedLength = Math.ceil((MAX_UPLOAD_BYTES + 1) / 3) * 4;
+  assert.equal(validateNativeCapturePayload({
+    contentType: 'image/png', base64: 'A'.repeat(encodedLength),
+  }), 'too-large');
+});
 
 // ── Mapping ──────────────────────────────────────────────────────────
 

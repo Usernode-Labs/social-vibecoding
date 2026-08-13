@@ -50,6 +50,8 @@ const ADDED_IDS = {
   'drawer-row-native-app-version': 'Installed Flutter app version in the drawer footer (#1101).',
   'native-app-version-slot': 'Mobile app version/build rendered through the native bridge (#1101).',
   'feedback-queue-dot': 'Header dot for feedback saved offline and still waiting to send (#1054).',
+  'feedback-screenshot-picker-btn': 'Photos fallback for mobile feedback screenshots (#824).',
+  'feedback-screenshot-input': 'PNG/JPEG picker backing the mobile feedback fallback (#824).',
   // #1082 chunk E — the admin console's CHASSIS. These ids are not new to the
   // running page: admin-console.js._renderShell() has always created them, by
   // writing #admin-root.innerHTML on every open. They are new to

@@ -19,9 +19,8 @@
 //     Any detection/validation failure FAILS CLOSED — a coded error, no
 //     degraded capture.
 //
-// Where getDisplayMedia is absent (iOS Safari, Android Chrome, Flutter
-// WebViews) the feature is not offered at all (app.js hides the button
-// via isSupported()).
+// Where getDisplayMedia is absent, the feedback controller can instead use
+// this module's native-payload decoder or PNG/JPEG file preparation helpers.
 //
 // The geometry/detection/solve functions are PURE and exported for Node
 // tests (tests/screenshot-select.test.js) via the module.exports branch
@@ -301,14 +300,44 @@
     };
   }
 
+  const MAX_UPLOAD_BYTES = 4 * 1024 * 1024; // mirrors the server cap
+  const SUPPORTED_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/jpg'];
+
+  function isSupportedImageType(contentType) {
+    return SUPPORTED_IMAGE_TYPES.includes(String(contentType || '').toLowerCase());
+  }
+
+  function isSupportedPickedFile(file) {
+    if (!file) return false;
+    if (isSupportedImageType(file.type)) return true;
+    const genericType = !file.type || file.type === 'application/octet-stream';
+    return genericType && /\.(png|jpe?g)$/i.test(String(file.name || ''));
+  }
+
+  // Validate the native bridge shape before decoding an attacker-controlled
+  // string into a browser allocation. Returns a short reason or null.
+  function validateNativeCapturePayload(payload) {
+    if (!payload || typeof payload !== 'object') return 'invalid';
+    if (!isSupportedImageType(payload.contentType)) return 'invalid-type';
+    const encoded = payload.base64;
+    if (typeof encoded !== 'string' || !encoded.length || encoded.length % 4 !== 0) return 'invalid';
+    if (!/^[A-Za-z0-9+/]*={0,2}$/.test(encoded)) return 'invalid';
+    const padding = encoded.endsWith('==') ? 2 : (encoded.endsWith('=') ? 1 : 0);
+    const decodedBytes = (encoded.length / 4) * 3 - padding;
+    if (decodedBytes > MAX_UPLOAD_BYTES) return 'too-large';
+    return null;
+  }
+
   const pure = {
     MARKER,
+    MAX_UPLOAD_BYTES,
     markerCssCenters,
     directMapping,
     applyMapping,
     detectMarkers,
     classifyCorners,
     solveRegistration,
+    validateNativeCapturePayload,
   };
 
   // Node test import — no browser globals touched beyond this point at
@@ -319,8 +348,6 @@
   if (typeof window === 'undefined') return;
 
   // ── Browser orchestration ─────────────────────────────────────────
-
-  const MAX_UPLOAD_BYTES = 4 * 1024 * 1024; // mirrors the server cap
 
   function isSupported() {
     return !!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia);
@@ -383,6 +410,86 @@
     }
     if (!blob || blob.size > MAX_UPLOAD_BYTES) throw fail('capture_failed', 'Screenshot too large');
     return blob;
+  }
+
+  function blobFromNativeCapture(payload) {
+    const invalid = validateNativeCapturePayload(payload);
+    if (invalid === 'too-large') throw fail('too-large', 'Screenshot is larger than 4 MB');
+    if (invalid) throw fail('capture_failed', 'Native screenshot data is invalid');
+    try {
+      const binary = atob(payload.base64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      const blob = new Blob([bytes], { type: payload.contentType.toLowerCase() });
+      if (!blob.size || blob.size > MAX_UPLOAD_BYTES) throw fail('too-large');
+      return blob;
+    } catch (err) {
+      if (err && err.code) throw err;
+      throw fail('capture_failed', 'Native screenshot data could not be decoded');
+    }
+  }
+
+  async function loadPickedImage(file) {
+    if (typeof createImageBitmap === 'function') {
+      try {
+        const bitmap = await createImageBitmap(file);
+        return {
+          image: bitmap,
+          width: bitmap.width,
+          height: bitmap.height,
+          cleanup: () => bitmap.close(),
+        };
+      } catch { /* fall through to the broadly-supported image element */ }
+    }
+
+    const url = URL.createObjectURL(file);
+    try {
+      const image = new Image();
+      image.decoding = 'async';
+      image.src = url;
+      await new Promise((resolve, reject) => {
+        image.onload = resolve;
+        image.onerror = () => reject(new Error('Image decode failed'));
+      });
+      return {
+        image,
+        width: image.naturalWidth,
+        height: image.naturalHeight,
+        cleanup: () => URL.revokeObjectURL(url),
+      };
+    } catch (err) {
+      URL.revokeObjectURL(url);
+      throw err;
+    }
+  }
+
+  // The native Android file selector and WKWebView's iOS picker both feed
+  // this path. Small JPEG/PNG files stay byte-for-byte intact; larger photos
+  // reuse the screenshot encoder so phone-camera images still fit the 4 MB
+  // upload contract instead of failing after the user has selected one.
+  async function prepareFile(file) {
+    if (!isSupportedPickedFile(file)) {
+      throw fail('invalid-type', 'Choose a PNG or JPEG image');
+    }
+    if (file.size > 0 && file.size <= MAX_UPLOAD_BYTES) return file;
+
+    let source;
+    try {
+      source = await loadPickedImage(file);
+      if (!(source.width > 0) || !(source.height > 0)) throw new Error('Empty image');
+      const maxEdge = 2560;
+      const scale = Math.min(1, maxEdge / Math.max(source.width, source.height));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(source.width * scale));
+      canvas.height = Math.max(1, Math.round(source.height * scale));
+      canvas.getContext('2d').drawImage(source.image, 0, 0, canvas.width, canvas.height);
+      return await exportBlob(canvas);
+    } catch (err) {
+      if (err && err.code) throw err;
+      throw fail('capture_failed', 'Could not prepare the selected image');
+    } finally {
+      if (source) source.cleanup();
+    }
   }
 
   // One nested-squares finder pattern as DOM (crisper than a scaled
@@ -655,6 +762,11 @@
   // this module in Node (FeedbackDialog imports it). Nothing else in here
   // touches a browser global at module scope.
   if (typeof window !== 'undefined') {
-    window.ScreenshotSelect = Object.assign({ isSupported, start }, pure);
+    window.ScreenshotSelect = Object.assign({
+      isSupported,
+      start,
+      blobFromNativeCapture,
+      prepareFile,
+    }, pure);
   }
 })();
