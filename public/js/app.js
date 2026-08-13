@@ -2674,8 +2674,10 @@ const App = {
     // apply its mutation before the first run's View Transition captured
     // the outgoing page (#979).
     if (App._inProfile && window.Profile?.isOpen?.()) {
-      App.setHeaderTitle(username ? `@${username}` : 'Profile');
-      if (window.Profile?.open) Profile.open(username);
+      PlatformUI.transition(() => {
+        App.setHeaderTitle(username ? `@${username}` : 'Profile');
+        if (window.Profile?.open) Profile.open(username);
+      }, { type: 'none' });
       return;
     }
     const fromIframe = !!(App.currentApp && App.currentTab === 'app');

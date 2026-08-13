@@ -112,7 +112,10 @@ const DENIED_CONSOLE_TABLES = new Set([]);
 // entry at all and is fully readable: `mobile_push_deliveries`,
 // `mobile_push_deployment_state`, `mobile_push_installation_mutations`,
 // `cli_auth_audit_events`, `cli_auth_rate_limits`, `mcp_clients`,
-// `mcp_auth_audit_events`, `user_agent_files`.
+// `mcp_auth_audit_events`, `user_agent_files`, `profile_reports`. The last is
+// moderation material rather than a credential: a full admin can already read
+// the same reporter/reason/detail rows through /api/admin/profile-reports, so
+// masking them here would only push that admin onto the less flexible route.
 //
 // Column names are checked against `src/db/schema.sql` by a test in
 // `tests/topochain-db-tools.test.js`, which also sweeps every
