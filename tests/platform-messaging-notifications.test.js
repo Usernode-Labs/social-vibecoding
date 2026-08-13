@@ -180,4 +180,3 @@ test('conversation realtime accepts only reviewed member-scoped event shapes', (
     type: 'conversation_message_created', conversationId: 2147483648,
   }), 0);
 });
-
