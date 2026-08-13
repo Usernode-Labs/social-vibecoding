@@ -53,9 +53,46 @@
 // of which held while the flag arrived only with the session-authed pass.
 // (`featured` still comes from that pass, so the featured lift can still
 // re-sort once it lands — pre-existing behaviour, deliberately unchanged.)
+//
+// ── #1191 slice 6, conversion 7: this file builds DESCRIPTORS ────────────
+//
+// `#challenges-root` was the Leaderboard screen's last innerHTML host. It is
+// React-owned now: ./challenges-pane.tsx is the only writer below it, and the
+// four render methods below push view descriptors into
+// ./topochain-challenges-store.js instead of assembling markup. That is a
+// change of OUTPUT TYPE, not of behaviour — the ordering, the completed
+// split, the deep-link resolution and every id are the ones this file already
+// shipped, and each is still decided here.
+//
+// Three consequences worth stating, because each replaced something visible
+// in the diff:
+//
+//   * `esc()` is gone, replaced by `str()`. There is no markup left to escape
+//     — React escapes the text when it renders it, and an esc() surviving
+//     into a descriptor would double-encode. What outlived it is the
+//     null→'' coercion, which is still load-bearing: React prints
+//     String(null) as the four-character word "null". `safeHref()` did NOT
+//     retire with it, because it guards a real `href` attribute and React
+//     does not validate schemes.
+//   * The four `addEventListener` sweeps that were re-bound after every
+//     render (the cards, the see-the-standings link, the two overlay
+//     backdrops, the close buttons, the breakdown's Load more and its
+//     participant rows) are named methods now — `_openIdx`, `_toStandings`,
+//     `_moreBreakdown` — and the component calls them. The behaviour stayed
+//     here; only the wiring moved.
+//   * The overlays' `hidden` class retired into their descriptors: `detail`
+//     and `profile` are null when closed. Only the PANE ROOT's visibility is
+//     still `Leaderboard._applySection()`'s `classList.toggle`, which is why
+//     #challenges-root keeps a constant `className` in ./index.tsx.
 'use strict';
 
 const TopochainChallenges = {
+  // ./topochain-challenges-store.js, planted by ./mount.ts rather than
+  // imported — see that store's header for why this file can take no import
+  // at all. Null during the SSG prerender pass and until the bundle mounts,
+  // so every write below goes through `?.set(...)`.
+  _store: null,
+
   _open: false,
 
   _challenges: [],
@@ -98,26 +135,24 @@ const TopochainChallenges = {
 
   isOpen() { return TopochainChallenges._open; },
 
-  // Escapes every character that is dangerous in EITHER text-node context
-  // OR a double-quoted attribute-value context (this module interpolates
-  // into both). `&`/`<`/`>` alone is not enough for an attribute value —
-  // an unescaped `"` lets an admin-supplied string (challenge/template
-  // copy, a cta_link, ...) break out of `href="..."` and inject new
-  // attributes (e.g. `onclick=`). Escaping `'` too covers single-quoted
-  // attributes, in case this template literal style is ever copied into
-  // one.
-  esc(s) {
-    return String(s == null ? '' : s)
-      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  // What is left of esc() after conversion 7 took the markup away: the
+  // null→empty coercion, with none of the escaping. React escapes every text
+  // node and every attribute value it renders, so escaping here would
+  // double-encode — a challenge goal reading `Ship & tell` would paint as
+  // `Ship &amp; tell`. The coercion is NOT redundant: React renders
+  // String(null) as the four-character word "null", so a nullable API field
+  // still has to land as ''.
+  str(s) {
+    return String(s == null ? '' : s);
   },
 
   // href-safe URL: only http(s) links are ever rendered as a real anchor.
-  // `esc()` alone stops attribute breakout but does NOT stop a
+  // This is the ONE guard React does not make redundant. Rendering through a
+  // component stops attribute breakout for free, but it does NOT stop a
   // `javascript:`-scheme href, which executes on click with no markup
   // injection needed at all. Every cta/mobile_cta link in this file must
   // go through this before it can reach an `href`; anything that isn't
-  // http(s) renders as plain (escaped) text instead of a clickable link.
+  // http(s) renders as plain text instead of a clickable link.
   safeHref(url) {
     return typeof url === 'string' && /^https?:\/\//i.test(url) ? url : null;
   },
@@ -186,26 +221,14 @@ const TopochainChallenges = {
   // No title and no event picker of its own: the Leaderboard screen shell
   // titles the page, the tab strip above says "Challenges", and the shared
   // event bar (TopochainEventContext) owns the picker + hero.
+  //
+  // The grid host and the two overlay roots are ./challenges-pane.tsx's
+  // markup now, so all this does is announce that the pane is open. It still
+  // clears both overlays, exactly as re-writing the root's innerHTML did:
+  // close() leaves `_detailChallenge` null but never took the `hidden` class
+  // off, and it was this rebuild that re-hid them on the next open.
   _renderShell() {
-    const root = document.getElementById('challenges-root');
-    if (!root) return;
-    root.innerHTML = `
-      <div id="tc-se-grid"></div>
-      <!-- Challenge detail overlay -->
-      <div id="tc-se-detail-overlay" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-        <div id="tc-se-detail-panel" class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-lg max-h-[85vh] overflow-y-auto shadow-xl border border-zinc-200 dark:border-zinc-800"></div>
-      </div>
-      <!-- User profile overlay -->
-      <div id="tc-se-profile-overlay" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-        <div id="tc-se-profile-panel" class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-md max-h-[85vh] overflow-y-auto shadow-xl border border-zinc-200 dark:border-zinc-800"></div>
-      </div>`;
-
-    document.getElementById('tc-se-detail-overlay').addEventListener('click', (e) => {
-      if (e.target.id === 'tc-se-detail-overlay') TopochainChallenges.closeChallengeDetail();
-    });
-    document.getElementById('tc-se-profile-overlay').addEventListener('click', (e) => {
-      if (e.target.id === 'tc-se-profile-overlay') TopochainChallenges.closeUserProfile();
-    });
+    TopochainChallenges._store?.set({ mounted: true, detail: null, profile: null });
   },
 
   // ── Data loading ─────────────────────────────────────────────────────
@@ -304,12 +327,10 @@ const TopochainChallenges = {
   },
 
   _renderGrid() {
-    const host = document.getElementById('tc-se-grid');
-    if (!host) return;
-    const esc = TopochainChallenges.esc;
+    const store = TopochainChallenges._store;
 
     if (TopochainChallenges._challengesLoading && !TopochainChallenges._challenges.length) {
-      host.innerHTML = '<p class="text-sm text-zinc-500">Loading challenges…</p>';
+      store?.set({ grid: { kind: 'loading' } });
       return;
     }
     // Both terminal empty states retire a pending deep link (#982) on the
@@ -319,87 +340,99 @@ const TopochainChallenges = {
     // picks next.
     if (TopochainChallenges._challengesError) {
       TopochainChallenges._maybeDeepLink([]);
-      host.innerHTML = `
-        <div class="rounded-lg bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900 text-red-700 dark:text-red-300 px-4 py-3 text-sm">
-          ${esc(TopochainChallenges._challengesError)}
-        </div>`;
+      store?.set({
+        grid: {
+          kind: 'error',
+          message: TopochainChallenges.str(TopochainChallenges._challengesError),
+        },
+      });
       return;
     }
     if (!TopochainChallenges._challenges.length) {
       TopochainChallenges._maybeDeepLink([]);
-      host.innerHTML = '<p class="text-sm text-zinc-500 py-8 text-center">No challenges for this event yet.</p>';
+      store?.set({ grid: { kind: 'empty' } });
       return;
     }
 
     const ordered = TopochainChallenges._ordered();
-    // `ordered` stays ONE flat array whatever the grouping below does: both
-    // the cards' `data-idx` and _maybeShot index into it, so splitting it in
-    // two would desynchronise every click from the card it was made for.
+    store?.set({ grid: TopochainChallenges.gridView(ordered) });
+    TopochainChallenges._maybeShot(ordered);
+    TopochainChallenges._maybeDeepLink(ordered);
+  },
+
+  // The populated grid, as a descriptor. `ordered` stays ONE flat array
+  // whatever the grouping does: both the cards' `idx` and _maybeShot index
+  // into it, so splitting it in two would desynchronise every click from the
+  // card it was made for. The groups below therefore carry SLICES of the same
+  // numbering, not a re-numbering.
+  gridView(ordered) {
     const firstDone = ordered.findIndex((c) => TopochainChallenges._isDone(c));
     const doneCount = firstDone === -1 ? 0 : ordered.length - firstDone;
+    const cards = ordered.map((c, i) => TopochainChallenges.cardView(c, i));
 
-    const cards = ordered.map((c, i) => {
-      const cp = c.card_preview || {};
-      const m = TopochainChallenges._mine.get(Number(c.id)) || null;
-      const featured = !!(m && m.featured === true);
-      const done = TopochainChallenges._isDone(c);
-      const mineTotal = m && Number(m.activities_total) > 0
-        ? Number(m.activities_total) : 0;
-      const doneChip = done
-        ? `<span class="shrink-0 inline-block px-2 py-0.5 rounded-full text-[0.65rem] font-semibold bg-emerald-500/15 text-emerald-600 dark:text-emerald-400">Completed</span>`
-        : '';
+    // The "Completed" subheading only earns its row when there is something
+    // on BOTH sides of it. Every public event in production is currently
+    // 100% completed, and a heading over the entire grid says nothing.
+    const groups = (firstDone > 0 && doneCount > 0)
+      ? [
+        { key: 'open', heading: null, cards: cards.slice(0, firstDone) },
+        { key: 'done', heading: 'Completed', cards: cards.slice(firstDone) },
+      ]
+      : [{ key: 'all', heading: null, cards }];
+
+    return {
+      kind: 'cards',
+      // Always present when the grid has rows (including "0 of 8" and
+      // "8 of 8"), so the declared dapp.json check can anchor on
+      // #tc-se-challenge-summary whatever the selected event's data happens
+      // to be.
+      summary: `${doneCount} of ${ordered.length} challenges completed`,
+      groups,
+    };
+  },
+
+  // One card. `idx` is this challenge's position in the flat `ordered` array
+  // — the component hands it straight back to _openIdx, which is what the
+  // retired `data-idx` attribute did.
+  cardView(c, i) {
+    const str = TopochainChallenges.str;
+    const cp = c.card_preview || {};
+    const m = TopochainChallenges._mine.get(Number(c.id)) || null;
+    const mineTotal = m && Number(m.activities_total) > 0
+      ? Number(m.activities_total) : 0;
+    return {
+      key: `${c.id}|${i}`,
+      idx: i,
+      featured: !!(m && m.featured === true),
       // A finished challenge is DIMMED, not hidden: its detail overlay and
       // participant breakdown are the interesting part of it, so the card
       // stays fully clickable — the opacity only takes it out of the way of
       // whatever is still open.
-      return `
-        <div class="tc-se-card bg-zinc-50 dark:bg-zinc-900 rounded-lg border border-zinc-200 dark:border-zinc-800 p-4 cursor-pointer hover:border-violet-400 dark:hover:border-violet-600 transition-colors${featured ? ' ring-1 ring-violet-500/40' : ''}${done ? ' opacity-60' : ''}" data-idx="${esc(i)}">
-          <div class="flex items-start justify-between gap-2 mb-1">
-            <div class="text-[10px] uppercase tracking-wide text-violet-600 dark:text-violet-400 font-semibold">${esc(cp.label || '')}</div>
-            ${doneChip}
-          </div>
-          <div class="text-sm font-medium text-zinc-900 dark:text-zinc-100 mb-1">${esc(cp.goal || '')}</div>
-          <p class="text-xs text-zinc-500 line-clamp-2">${esc(cp.task || '')}</p>
-          ${cp.reward ? `<p class="text-xs text-violet-500 mt-2 font-medium">${esc(cp.reward)}</p>` : ''}
-          ${mineTotal ? `<p class="text-xs text-emerald-600 dark:text-emerald-400 mt-2 font-medium">You&rsquo;ve contributed ${esc(mineTotal)} pts</p>` : ''}
-        </div>`;
-    });
+      done: TopochainChallenges._isDone(c),
+      label: str(cp.label || ''),
+      goal: str(cp.goal || ''),
+      task: str(cp.task || ''),
+      reward: cp.reward ? str(cp.reward) : null,
+      // Composed here rather than in the renderer so the number and its unit
+      // stay one text node — see the header of ./challenges-pane.tsx.
+      mineNote: mineTotal ? `You’ve contributed ${mineTotal} pts` : null,
+    };
+  },
 
-    const GRID_CLASS = 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3';
-    // The "Completed" subheading only earns its row when there is something
-    // on BOTH sides of it. Every public event in production is currently
-    // 100% completed, and a heading over the entire grid says nothing.
-    const gridsHtml = (firstDone > 0 && doneCount > 0)
-      ? `<div class="${GRID_CLASS}">${cards.slice(0, firstDone).join('')}</div>
-        <div class="text-sm font-semibold text-zinc-500 dark:text-zinc-400 mt-6 mb-2">Completed</div>
-        <div class="${GRID_CLASS}">${cards.slice(firstDone).join('')}</div>`
-      : `<div class="${GRID_CLASS}">${cards.join('')}</div>`;
+  // A card click, by its index in the flat ordered array. Recomputed rather
+  // than closed over: the only thing that can change `_ordered()` is a new
+  // `_mine` or a new `_challenges`, and either of those has already pushed a
+  // fresh grid descriptor, so the index the component is holding belongs to
+  // the array this returns.
+  _openIdx(idx) {
+    const ordered = TopochainChallenges._ordered();
+    TopochainChallenges.openChallengeDetail(ordered[idx]);
+  },
 
-    // Always rendered when the grid has rows (including "0 of 8" and
-    // "8 of 8"), so the declared dapp.json check can anchor on it whatever
-    // the selected event's data happens to be.
-    host.innerHTML = `
-      <p id="tc-se-challenge-summary" class="text-sm text-zinc-500 dark:text-zinc-400 mb-3">${esc(doneCount)} of ${esc(ordered.length)} challenges completed</p>
-      ${gridsHtml}
-      <div class="mt-4 text-center">
-        <button id="tc-se-to-standings"
-          class="text-sm font-medium text-violet-600 dark:text-violet-400 hover:underline">See where the season stands &rarr;</button>
-      </div>`;
-
-    host.querySelectorAll('.tc-se-card').forEach((card) => {
-      card.addEventListener('click', () => {
-        const idx = parseInt(card.dataset.idx, 10);
-        TopochainChallenges.openChallengeDetail(ordered[idx]);
-      });
-    });
-    // Real hash navigation so the section switch goes through the router
-    // (and the shared event selection is untouched).
-    document.getElementById('tc-se-to-standings')?.addEventListener('click', () => {
-      window.location.hash = '#leaderboard/topochain';
-    });
-
-    TopochainChallenges._maybeShot(ordered);
-    TopochainChallenges._maybeDeepLink(ordered);
+  // Real hash navigation so the section switch goes through the router
+  // (and the shared event selection is untouched).
+  _toStandings() {
+    window.location.hash = '#leaderboard/topochain';
   },
 
   // Screenshot-state deep link (`?shot=challenge-detail`): the detail overlay
@@ -476,14 +509,16 @@ const TopochainChallenges = {
     TopochainChallenges._breakdown = null;
     TopochainChallenges._breakdownError = null;
     TopochainChallenges._breakdownLoading = true;
-    document.getElementById('tc-se-detail-overlay')?.classList.remove('hidden');
+    // The overlay's visibility IS its descriptor now — _renderDetailOverlay
+    // publishing a non-null `detail` is what used to be the
+    // classList.remove('hidden') on this line.
     TopochainChallenges._renderDetailOverlay();
     TopochainChallenges._loadBreakdown(0);
   },
 
   closeChallengeDetail() {
     TopochainChallenges._detailChallenge = null;
-    document.getElementById('tc-se-detail-overlay')?.classList.add('hidden');
+    TopochainChallenges._store?.set({ detail: null });
   },
 
   async _loadBreakdown(offset) {
@@ -513,96 +548,89 @@ const TopochainChallenges = {
     TopochainChallenges._renderDetailOverlay();
   },
 
-  // Renders a `detail_modal` CTA, scheme-guarded: only an http(s) link
+  // Describes a `detail_modal` CTA, scheme-guarded: only an http(s) link
   // (per safeHref) becomes a real, clickable anchor. Anything else
   // (missing, `javascript:`, a bare string, ...) renders the label as
-  // plain escaped text with no href at all — never an anchor whose href
-  // an attacker-controlled scheme could turn into script execution.
-  _ctaHtml(dm) {
-    const esc = TopochainChallenges.esc;
-    const label = esc(dm.cta_label || dm.cta_button || 'Go');
-    if (!dm.cta_link) return '';
+  // plain text with no href at all — never an anchor whose href
+  // an attacker-controlled scheme could turn into script execution. The
+  // decision stays here, in the shaping module, precisely so that the
+  // renderer has no branch to get wrong: it is handed either a href or not
+  // one, and `kind: 'text'` has no href field at all to reach for.
+  ctaView(dm) {
+    const label = TopochainChallenges.str(dm.cta_label || dm.cta_button || 'Go');
+    if (!dm.cta_link) return null;
     const href = TopochainChallenges.safeHref(dm.cta_link);
-    if (!href) {
-      return `<p class="mb-3 text-xs text-zinc-500">${label} <span class="italic">(link unavailable)</span></p>`;
-    }
-    return `<a href="${esc(href)}" target="_blank" rel="noopener" class="inline-block mb-3 rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors">${label}</a>`;
+    if (!href) return { kind: 'text', label };
+    return { kind: 'link', href, label };
   },
 
   _renderDetailOverlay() {
-    const panel = document.getElementById('tc-se-detail-panel');
-    if (!panel) return;
+    if (!TopochainChallenges._detailChallenge) return;
+    TopochainChallenges._store?.set({ detail: TopochainChallenges.detailView() });
+  },
+
+  detailView() {
     const challenge = TopochainChallenges._detailChallenge;
-    if (!challenge) return;
-    const esc = TopochainChallenges.esc;
+    if (!challenge) return null;
+    const str = TopochainChallenges.str;
     const dm = challenge.detail_modal || {};
     const cp = challenge.card_preview || {};
 
     const bd = TopochainChallenges._breakdown;
-    let entriesHtml;
+    let entries;
     if (TopochainChallenges._breakdownLoading && !bd) {
-      entriesHtml = '<p class="text-xs text-zinc-500">Loading participants…</p>';
+      entries = { kind: 'loading' };
     } else if (TopochainChallenges._breakdownError) {
-      entriesHtml = `<p class="text-xs text-zinc-500">${esc(TopochainChallenges._breakdownError)}</p>`;
+      entries = { kind: 'error', message: str(TopochainChallenges._breakdownError) };
     } else if (bd && bd.entries.length) {
-      entriesHtml = `
-        <ul class="space-y-1">
-          ${bd.entries.map((e) => `
-            <li class="tc-se-entry flex items-center justify-between gap-3 text-xs p-1.5 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 cursor-pointer" data-user-id="${esc(e.user_id)}">
-              <span class="text-zinc-700 dark:text-zinc-200">${esc(e.display_name)}${e.is_non_podium ? ' <span class="text-zinc-400">(non-podium)</span>' : ''}</span>
-              <span class="font-mono text-zinc-400">${esc(e.points)}${e.rate != null ? ` · ${esc(e.rate)}%` : ''}</span>
-            </li>`).join('')}
-        </ul>
-        ${bd.has_more ? '<button id="tc-se-breakdown-more" class="mt-2 text-xs text-violet-500 hover:text-violet-400">Load more</button>' : ''}`;
+      entries = {
+        kind: 'list',
+        hasMore: !!bd.has_more,
+        rows: bd.entries.map((e, i) => ({
+          key: `${e.user_id}|${i}`,
+          userId: e.user_id,
+          name: str(e.display_name),
+          nonPodium: !!e.is_non_podium,
+          // Points and the optional rate are ONE string, composed here: they
+          // shared a single <span> in the markup this replaces, and two
+          // sibling expressions in JSX are two text nodes.
+          points: e.rate != null ? `${str(e.points)} · ${str(e.rate)}%` : str(e.points),
+        })),
+      };
     } else {
-      entriesHtml = '<p class="text-xs text-zinc-500">No participants yet.</p>';
+      entries = { kind: 'empty' };
     }
-
-    const totalsHtml = bd
-      ? `<p class="text-xs text-zinc-500 mb-2">${esc(bd.totals.participants)} participants · ${esc(bd.totals.total_points)} points total</p>`
-      : '';
 
     // Your own contribution on this challenge, when the personalization pass
     // has it — the same number the card shows, repeated where the detail is.
     const mine = TopochainChallenges._mine.get(Number(challenge.id)) || null;
     const mineTotal = mine && Number(mine.activities_total) > 0
       ? Number(mine.activities_total) : 0;
-    const mineHtml = mineTotal
-      ? `<p class="text-xs text-emerald-600 dark:text-emerald-400 mb-2 font-medium">You&rsquo;ve contributed ${esc(mineTotal)} pts to this.</p>`
-      : '';
 
-    panel.innerHTML = `
-      <div class="flex items-start justify-between gap-3 mb-2">
-        <div>
-          <div class="text-[10px] uppercase tracking-wide text-violet-600 dark:text-violet-400 font-semibold">${esc(cp.label || '')}</div>
-          <h2 class="text-lg font-bold text-zinc-900 dark:text-zinc-100">${esc(cp.goal || '')}</h2>
-        </div>
-        <button id="tc-se-detail-close" class="text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 text-xl leading-none" aria-label="Close">&times;</button>
-      </div>
-      ${dm.description ? `<p class="text-sm text-zinc-600 dark:text-zinc-300 mb-2">${esc(dm.description)}</p>` : ''}
-      ${mineHtml}
-      ${dm.requirements ? `<p class="text-xs text-zinc-500 mb-2"><span class="font-medium">Requirements:</span> ${esc(dm.requirements)}</p>` : ''}
-      ${dm.reward_logic ? `<p class="text-xs text-zinc-500 mb-3"><span class="font-medium">Reward logic:</span> ${esc(dm.reward_logic)}</p>` : ''}
-      ${TopochainChallenges._ctaHtml(dm)}
-      <div class="border-t border-zinc-200 dark:border-zinc-800 pt-3">
-        <div class="text-xs uppercase tracking-wide text-zinc-500 mb-1">Participants</div>
-        ${totalsHtml}
-        ${entriesHtml}
-      </div>`;
+    return {
+      label: str(cp.label || ''),
+      goal: str(cp.goal || ''),
+      description: dm.description ? str(dm.description) : null,
+      mineNote: mineTotal ? `You’ve contributed ${mineTotal} pts to this.` : null,
+      requirements: dm.requirements ? str(dm.requirements) : null,
+      rewardLogic: dm.reward_logic ? str(dm.reward_logic) : null,
+      cta: TopochainChallenges.ctaView(dm),
+      totals: bd
+        ? `${str(bd.totals.participants)} participants · ${str(bd.totals.total_points)} points total`
+        : null,
+      entries,
+    };
+  },
 
-    document.getElementById('tc-se-detail-close')
-      ?.addEventListener('click', () => TopochainChallenges.closeChallengeDetail());
-    document.getElementById('tc-se-breakdown-more')?.addEventListener('click', () => {
-      TopochainChallenges._breakdownLoading = true;
-      TopochainChallenges._renderDetailOverlay();
-      TopochainChallenges._loadBreakdown(bd.next_offset);
-    });
-    panel.querySelectorAll('.tc-se-entry').forEach((el) => {
-      el.addEventListener('click', () => {
-        const userId = parseInt(el.dataset.userId, 10);
-        if (Number.isInteger(userId)) TopochainChallenges.openUserProfile(userId);
-      });
-    });
+  // The breakdown's "Load more". `next_offset` is read off the CURRENT
+  // breakdown rather than a captured one, so a page that landed between the
+  // render and the click cannot make this re-request a page already in hand.
+  _moreBreakdown() {
+    const bd = TopochainChallenges._breakdown;
+    if (!bd) return;
+    TopochainChallenges._breakdownLoading = true;
+    TopochainChallenges._renderDetailOverlay();
+    TopochainChallenges._loadBreakdown(bd.next_offset);
   },
 
   // ── User profile overlay ─────────────────────────────────────────────
@@ -612,7 +640,8 @@ const TopochainChallenges = {
     TopochainChallenges._profile = null;
     TopochainChallenges._profileError = null;
     TopochainChallenges._profileLoading = true;
-    document.getElementById('tc-se-profile-overlay')?.classList.remove('hidden');
+    // As with the detail overlay: publishing a non-null `profile` is what the
+    // classList.remove('hidden') on this line used to be.
     TopochainChallenges._renderProfileOverlay();
 
     const eventId = TopochainChallenges._eventId();
@@ -632,50 +661,46 @@ const TopochainChallenges = {
 
   closeUserProfile() {
     TopochainChallenges._profileUserId = null;
-    document.getElementById('tc-se-profile-overlay')?.classList.add('hidden');
+    TopochainChallenges._store?.set({ profile: null });
   },
 
   _renderProfileOverlay() {
-    const panel = document.getElementById('tc-se-profile-panel');
-    if (!panel) return;
     if (TopochainChallenges._profileUserId == null) return;
-    const esc = TopochainChallenges.esc;
+    TopochainChallenges._store?.set({ profile: TopochainChallenges.profileView() });
+  },
 
-    let body;
-    if (TopochainChallenges._profileLoading) {
-      body = '<p class="text-sm text-zinc-500">Loading…</p>';
-    } else if (TopochainChallenges._profileError) {
-      body = `<p class="text-sm text-zinc-500">${esc(TopochainChallenges._profileError)}</p>`;
-    } else {
-      const p = TopochainChallenges._profile;
-      body = `
-        <h2 class="text-lg font-bold text-zinc-900 dark:text-zinc-100 mb-3">${esc(p.display_name)}</h2>
-        <div class="grid grid-cols-2 gap-2 text-xs mb-4">
-          <div><span class="text-zinc-500">Rank</span><div class="font-mono">${esc(p.rank ?? '—')}</div></div>
-          <div><span class="text-zinc-500">Total points</span><div class="font-mono">${esc(p.total_points)}</div></div>
-          <div><span class="text-zinc-500">Extra points</span><div class="font-mono">${esc(p.extra_points)}</div></div>
-          <div><span class="text-zinc-500">Produced blocks</span><div class="font-mono">${esc(p.produced_blocks)}</div></div>
-          <div><span class="text-zinc-500">VRF won slots</span><div class="font-mono">${esc(p.vrf_won_slots)}</div></div>
-          <div><span class="text-zinc-500">Success rate</span><div class="font-mono">${esc(p.success_rate)}%</div></div>
-        </div>
-        <div class="text-xs uppercase tracking-wide text-zinc-500 mb-1">Activities</div>
-        ${p.activities && p.activities.length
-          ? `<ul class="space-y-1">${p.activities.map((a) => `
-              <li class="flex items-center justify-between gap-3 text-xs">
-                <span class="text-zinc-600 dark:text-zinc-300">${esc(a.description || a.activity_type)}</span>
-                <span class="font-mono text-zinc-400">+${esc(a.points)}</span>
-              </li>`).join('')}</ul>`
-          : '<p class="text-xs text-zinc-500">No activities recorded.</p>'}`;
+  profileView() {
+    if (TopochainChallenges._profileUserId == null) return null;
+    const str = TopochainChallenges.str;
+    if (TopochainChallenges._profileLoading) return { kind: 'loading' };
+    if (TopochainChallenges._profileError) {
+      return { kind: 'error', message: str(TopochainChallenges._profileError) };
     }
-
-    panel.innerHTML = `
-      <div class="flex items-start justify-between gap-3">
-        <div class="flex-1 min-w-0">${body}</div>
-        <button id="tc-se-profile-close" class="text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 text-xl leading-none shrink-0" aria-label="Close">&times;</button>
-      </div>`;
-
-    document.getElementById('tc-se-profile-close')
-      ?.addEventListener('click', () => TopochainChallenges.closeUserProfile());
+    const p = TopochainChallenges._profile;
+    return {
+      kind: 'profile',
+      name: str(p.display_name),
+      // The stats grid was six hand-written cells in the same shape; one
+      // ordered list of label/value pairs is the same six, and a label can no
+      // longer drift away from the field it sits over.
+      stats: [
+        { label: 'Rank', value: str(p.rank ?? '—') },
+        { label: 'Total points', value: str(p.total_points) },
+        { label: 'Extra points', value: str(p.extra_points) },
+        { label: 'Produced blocks', value: str(p.produced_blocks) },
+        { label: 'VRF won slots', value: str(p.vrf_won_slots) },
+        { label: 'Success rate', value: `${str(p.success_rate)}%` },
+      ],
+      // null, not [], so the renderer's "No activities recorded." branch is
+      // the same explicit choice the template's ternary was.
+      activities: (p.activities && p.activities.length)
+        ? p.activities.map((a, i) => ({
+          key: `${i}`,
+          text: str(a.description || a.activity_type),
+          points: `+${str(a.points)}`,
+        }))
+        : null,
+    };
   },
 };
 

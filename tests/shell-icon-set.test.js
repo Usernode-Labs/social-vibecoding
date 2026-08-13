@@ -104,7 +104,7 @@ test('every path the shell prerenders is one the module exports', () => {
     + 'so something stopped rendering');
 });
 
-test('the glyphs that do NOT prerender are the three that render behind state', () => {
+test('the glyphs that do NOT prerender are the ones that render behind state', () => {
   // Not every export lands in the static document, and that is fine — but it
   // has to be a KNOWN list, or "my new icon is missing from index.html" reads
   // as normal instead of as the hydration bug it usually is.
@@ -119,6 +119,12 @@ test('the glyphs that do NOT prerender are the three that render behind state', 
     // so it is not part of the prerender at all.
     'M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z',
     'M9 5l7 7-7 7',
+    // CheckIcon and ArrowRightShortIcon — the browse screen's Add button and
+    // its detail page's Open pill (#1191 slice 6). Both render from row/detail
+    // descriptors that are null until the first fetch lands, so the prerendered
+    // #browse-list and #browse-detail are empty by contract, not by accident.
+    'M5 13l4 4L19 7',
+    'M13 7l5 5m0 0l-5 5m5-5H6',
   ];
   assert.deepEqual(absent.sort(), expected.sort());
 });

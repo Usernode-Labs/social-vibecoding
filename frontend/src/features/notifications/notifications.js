@@ -42,6 +42,18 @@ const NATIVE_INVALIDATION_TIMEOUT_MS = 10000;
 const NATIVE_INVALIDATION_REFRESH_VERSION = 1;
 
 const Notifications = {
+  // #1191 slice 6: the drawer's two innerHTML hosts are React now. This module
+  // still owns the fetches, the mark-read discipline, the click routing and
+  // the badges; what it no longer does is build DOM. `_renderList` and
+  // `_renderInvites` compute a descriptor tree and push it here, and
+  // ./notifications-list.tsx renders it.
+  //
+  // Planted by ./mount.ts, which is the only module in this feature that may
+  // import React. It stays null in the vm harnesses that evaluate this file as
+  // a classic script (see ./notifications-store.js for why that matters), and
+  // both render methods no-op when it is — exactly as they used to when
+  // getElementById came back null.
+  _store: null,
   // social-push.js is cached independently from the React shell bundle. It
   // must not trust the older refreshAfterInvalidation implementation, which
   // reported success even when its ordinary cacheable refresh failed.
@@ -682,77 +694,17 @@ const Notifications = {
 
   // --- pinned invites section -------------------------------------------
 
+  // The pinned section is a descriptor list now; ./notifications-list.tsx
+  // renders it and owns the stopPropagation, the swipe tray and the header.
+  // Empty stays empty — an invite-less drawer renders no "Invites" header,
+  // exactly as `box.innerHTML = ''` did.
   _renderInvites() {
-    const box = document.getElementById('notifications-invites');
-    if (!box) return;
-    if (!Notifications.invites.length) {
-      box.innerHTML = '';
-      return;
-    }
-    const rows = Notifications.invites.map((inv) => {
-      const who = inv.invitedBy ? `@${escapeHtml(inv.invitedBy)}` : 'Someone';
-      // #646: approver invites share the pinned section, with distinct
-      // copy and their own accept/decline endpoints.
-      const isApprover = inv.kind === 'approver';
-      const verb = isApprover ? 'invited you to be an approver on' : 'invited you to collaborate on';
-      return `<div class="px-3 py-2.5 border-b border-zinc-200 dark:border-zinc-800 bg-violet-500/5 border-l-2 border-l-violet-500" data-invite-app="${inv.appId}">
-        <div class="text-xs text-zinc-500 dark:text-zinc-400 mb-1.5">
-          <span aria-hidden="true">${isApprover ? '🗳️' : '✉️'}</span>
-          <span class="font-medium text-zinc-800 dark:text-zinc-200">${who}</span>
-          ${verb}
-          <span class="font-medium text-zinc-700 dark:text-zinc-300">${escapeHtml(inv.appName || inv.appSlug || 'an app')}</span>
-          <span class="text-zinc-500">· ${relativeTime(inv.createdAt)}</span>
-        </div>
-        <div class="flex gap-2">
-          <button data-invite-accept="${inv.appId}" data-invite-slug="${escapeHtml(inv.appSlug || '')}" data-invite-kind="${isApprover ? 'approver' : 'collab'}"
-            class="rounded-md bg-violet-600 hover:bg-violet-500 px-3 py-1 text-xs font-medium text-white transition-colors">Accept</button>
-          <button data-invite-decline="${inv.appId}" data-invite-kind="${isApprover ? 'approver' : 'collab'}"
-            class="rounded-md border border-zinc-300 dark:border-zinc-700 px-3 py-1 text-xs font-medium text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">Decline</button>
-        </div>
-      </div>`;
+    const store = Notifications._store;
+    if (!store) return;
+    store.set({
+      invites: Notifications.invites.map(inviteView),
+      touch: isTouchNow(),
     });
-    const header = `<div class="px-3 py-1.5 text-[0.7rem] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400 border-b border-zinc-200 dark:border-zinc-800">Invites</div>`;
-    box.innerHTML = header + rows.join('');
-
-    // stopPropagation on both buttons: the handlers re-render this
-    // section (detaching the clicked node), after which the bubbled
-    // click's target is outside the panel and the document-level
-    // outside-click handler would wrongly dismiss the drawer.
-    box.querySelectorAll('[data-invite-accept]').forEach((el) => {
-      el.addEventListener('click', (e) => {
-        e.stopPropagation();
-        Notifications._acceptInvite(
-          Number(el.getAttribute('data-invite-accept')),
-          el.getAttribute('data-invite-slug'),
-          el.getAttribute('data-invite-kind') || 'collab'
-        );
-      });
-    });
-    box.querySelectorAll('[data-invite-decline]').forEach((el) => {
-      el.addEventListener('click', (e) => {
-        e.stopPropagation();
-        Notifications._declineInvite(
-          Number(el.getAttribute('data-invite-decline')),
-          el.getAttribute('data-invite-kind') || 'collab'
-        );
-      });
-    });
-    // Touch: swipe an invite row left for Accept / Decline directly
-    // (buttons remain for desktop and as the tap path everywhere).
-    // Rows render in Notifications.invites order, so index-match.
-    if (PlatformUI.isTouch()) {
-      box.querySelectorAll('[data-invite-app]').forEach((el, i) => {
-        const inv = Notifications.invites[i];
-        if (!inv) return;
-        const kind = inv.kind === 'approver' ? 'approver' : 'collab';
-        PlatformUI.swipeActions(el, {
-          actions: [
-            { label: 'Accept', handler: () => Notifications._acceptInvite(inv.appId, inv.appSlug || '', kind) },
-            { label: 'Decline', destructive: true, handler: () => Notifications._declineInvite(inv.appId, kind) },
-          ],
-        });
-      });
-    }
   },
 
   _removeInviteLocal(appId, kind) {
@@ -856,28 +808,31 @@ const Notifications = {
     return groups;
   },
 
+  // One descriptor per top-level entry (an app group or a single-notif leaf
+  // row). The list component joins them with the stronger between-apps
+  // divider — never before the first or after the last — and owns every
+  // handler this method used to attach by querySelectorAll: the leaf clicks,
+  // the group toggle, per-group "Mark read", inline "Show more" and the touch
+  // swipe tray. All of them still stopPropagation, for the reason they always
+  // did: a re-render detaches the clicked node, and the document-level
+  // outside-click handler would then see a target outside the panel and
+  // wrongly dismiss the drawer.
   _renderList() {
-    const list = document.getElementById('notifications-list');
-    const empty = document.getElementById('notifications-empty');
-    if (!list || !empty) return;
+    const store = Notifications._store;
+    if (!store) return;
+    const touch = isTouchNow();
 
     if (Notifications._bellItems().length === 0) {
-      list.innerHTML = '';
       // The pinned invites section may still have content — only show
       // the empty hint when there's truly nothing in the drawer.
-      empty.classList.toggle('hidden', Notifications.invites.length > 0);
+      store.set({ list: [], empty: Notifications.invites.length === 0, touch });
       return;
     }
-    empty.classList.add('hidden');
 
     const groups = Notifications._groupByApp();
     // Keep persisted expansion tidy: drop apps that have no notifs now.
     Notifications._pruneExpanded(new Set(groups.map((g) => g.key)));
 
-    // One HTML chunk per top-level entry (an app group or a single-notif
-    // leaf row), joined by a stronger divider so apps are easy to tell
-    // apart. The divider only goes *between* entries — never before the
-    // first or after the last.
     const entries = [];
     for (const g of groups) {
       // App-associated notifications ALWAYS render under their app group
@@ -886,76 +841,12 @@ const Notifications = {
       // regardless of count. Only app-less ("general") notifications fall
       // back to a plain leaf row when there's a single one.
       if (g.items.length === 1 && g.appId == null) {
-        entries.push(renderRow(g.items[0]));
+        entries.push({ type: 'row', row: rowView(g.items[0]) });
         continue;
       }
-      entries.push(renderGroup(g, Notifications.expanded.has(g.key)));
+      entries.push({ type: 'group', group: groupView(g, Notifications.expanded.has(g.key)) });
     }
-    const APP_DIVIDER = '<div role="separator" class="border-t-2 border-zinc-200 dark:border-zinc-700"></div>';
-    list.innerHTML = entries.join(APP_DIVIDER);
-
-    // Leaf-row clicks (standalone single-item rows + leaves inside an
-    // expanded group). stopPropagation so the document-level outside-click
-    // handler doesn't see this click: _onItemClick marks the item read and
-    // re-renders the list (detaching this row), after which the bubbled
-    // click's target is no longer inside the panel and the drawer would
-    // otherwise be wrongly dismissed.
-    list.querySelectorAll('[data-notif-id]').forEach((el) => {
-      const id = Number(el.getAttribute('data-notif-id'));
-      el.addEventListener('click', (e) => {
-        e.stopPropagation();
-        Notifications._onItemClick(id);
-      });
-    });
-    // Group header expand/collapse toggles. stopPropagation so the
-    // document-level outside-click handler doesn't see this click: the
-    // toggle re-renders the list (detaching this button), after which the
-    // bubbled click's target is no longer inside the panel and the panel
-    // would otherwise be wrongly dismissed.
-    list.querySelectorAll('[data-group-toggle]').forEach((el) => {
-      const key = el.getAttribute('data-group-toggle');
-      el.addEventListener('click', (e) => {
-        e.stopPropagation();
-        Notifications._toggleGroup(key);
-      });
-    });
-    // Per-group "Mark read".
-    list.querySelectorAll('[data-group-markread]').forEach((el) => {
-      el.addEventListener('click', (e) => {
-        e.stopPropagation();
-        Notifications._markGroupRead(
-          el.getAttribute('data-group-markread'),
-          el.getAttribute('data-app-id')
-        );
-      });
-    });
-    // Inline "Show more" → reveal the next page of leaves for this group
-    // in place (no navigation away). stopPropagation so the outside-click
-    // dismiss doesn't fire when the re-render detaches this button.
-    list.querySelectorAll('[data-group-showmore]').forEach((el) => {
-      el.addEventListener('click', (e) => {
-        e.stopPropagation();
-        Notifications._showMoreGroup(el.getAttribute('data-group-showmore'));
-      });
-    });
-    // Touch: swipe an unread leaf row left to mark it read (kit
-    // ride-along tray). Desktop keeps click-through + group buttons.
-    if (PlatformUI.isTouch()) {
-      list.querySelectorAll('[data-notif-id]').forEach((el) => {
-        const id = Number(el.getAttribute('data-notif-id'));
-        const item = Notifications.items.find((n) => n.id === id);
-        if (!item || item.readAt) return;
-        PlatformUI.swipeActions(el, {
-          actions: [{
-            label: 'Mark read',
-            handler: () => {
-              Notifications._markOneRead(id);
-              Notifications._renderList();
-            },
-          }],
-        });
-      });
-    }
+    store.set({ list: entries, empty: false, touch });
   },
 
   // Reveal one more page (GROUP_LEAF_CAP) of leaves for a group. If every
@@ -1009,72 +900,68 @@ function isSessionNotif(n) {
 }
 if (typeof window !== 'undefined') window.SESSION_NOTIF_KINDS = SESSION_NOTIF_KINDS;
 
-// Unread indicator dot. When unread it's a solid violet dot carrying an
-// accessible "Unread" label; when read it's an equal-width invisible
-// spacer so read/unread rows stay horizontally aligned (no jitter when a
-// row is marked read live).
-function unreadDot(isUnread) {
-  return isUnread
-    ? '<span role="img" aria-label="Unread" class="inline-block w-1.5 h-1.5 rounded-full bg-violet-500 align-middle mr-1.5 shrink-0"></span>'
-    : '<span aria-hidden="true" class="inline-block w-1.5 h-1.5 align-middle mr-1.5 shrink-0"></span>';
+// PlatformUI is a classic-script global. The vm harnesses that evaluate this
+// file don't define it, and neither does the SSG prerender pass.
+function isTouchNow() {
+  return typeof PlatformUI !== 'undefined' && !!PlatformUI.isTouch && PlatformUI.isTouch();
 }
 
-// Collapsed/expanded group header + (when expanded) its leaf rows.
-function renderGroup(g, isExpanded) {
-  const appLine = escapeHtml(g.appName || 'General');
+// #646: approver invites share the pinned section, with distinct copy and
+// their own accept/decline endpoints. The descriptor carries the endpoint
+// discriminator (`kind`) as well as the copy, because the component's
+// buttons and its swipe tray both need it.
+function inviteView(inv) {
+  const isApprover = inv.kind === 'approver';
+  return {
+    appId: inv.appId,
+    slug: inv.appSlug || '',
+    kind: isApprover ? 'approver' : 'collab',
+    icon: isApprover ? '🗳️' : '✉️',
+    who: inv.invitedBy ? `@${inv.invitedBy}` : 'Someone',
+    verb: isApprover ? 'invited you to be an approver on' : 'invited you to collaborate on',
+    appName: inv.appName || inv.appSlug || 'an app',
+    time: relativeTime(inv.createdAt),
+  };
+}
+
+// Collapsed/expanded group header + (when expanded) its leaf rows, as data.
+// `count` is the unread count on an unread group and the total on a fully
+// read one — two different pills, which is why `hasUnread` travels with it.
+function groupView(g, isExpanded) {
   const hasUnread = g.unreadCount > 0;
-  const accent = hasUnread ? 'bg-violet-500/5 border-l-2 border-violet-500' : 'border-l-2 border-transparent';
-  const chevron = isExpanded ? '▾' : '▸'; // ▾ / ▸
-  // Just the number, centered in a fixed-size pill (no "new" wording).
-  // Unread groups show the unread count in the violet accent pill; fully
-  // read groups show the total in a muted pill.
-  const countBadge = hasUnread
-    ? `<span class="inline-flex items-center justify-center min-w-[1.1rem] h-[1.1rem] px-1 text-[0.65rem] font-bold leading-none text-white bg-violet-500 rounded-full">${g.unreadCount}</span>`
-    : `<span class="inline-flex items-center justify-center min-w-[1.1rem] h-[1.1rem] px-1 text-[0.65rem] font-medium leading-none text-zinc-500 dark:text-zinc-400 bg-zinc-200 dark:bg-zinc-800 rounded-full">${g.items.length}</span>`;
-  // Unread dot next to the app name, matching the per-leaf dot.
-  const headerDot = hasUnread ? unreadDot(true) : '';
-
   const latest = g.items[0];
-  const preview = `${previewText(latest)} · ${relativeTime(latest.createdAt)}`;
-
-  const markReadBtn = hasUnread
-    ? `<button data-group-markread="${escapeHtml(g.key)}" data-app-id="${g.appId != null ? g.appId : ''}"
-         class="shrink-0 text-[0.7rem] text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200 px-1.5 py-1">Mark read</button>`
-    : '';
-
-  const header = `<div class="flex items-stretch border-b border-zinc-200 dark:border-zinc-800 ${accent}">
-    <button data-group-toggle="${escapeHtml(g.key)}" aria-expanded="${isExpanded}"
-      class="flex-1 min-w-0 text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 transition-colors">
-      <div class="flex items-center gap-1.5 mb-0.5">
-        <span aria-hidden="true" class="text-zinc-400 dark:text-zinc-500">${chevron}</span>
-        ${headerDot}
-        <span class="font-medium text-zinc-800 dark:text-zinc-200 truncate">${appLine}</span>
-        ${countBadge}
-      </div>
-      <div class="text-xs text-zinc-500 dark:text-zinc-400 truncate pl-5">${escapeHtml(preview)}</div>
-    </button>
-    ${markReadBtn}
-  </div>`;
-
-  if (!isExpanded) return header;
 
   // Expanded: reveal up to `visible` leaves (default GROUP_LEAF_CAP, grown
   // by inline "Show more" clicks), then an inline pagination button.
   const visible = Notifications.revealed.get(g.key) || GROUP_LEAF_CAP;
-  const shown = g.items.slice(0, visible);
-  const leaves = shown.map((n) => renderRow(n)).join('');
-  let more = '';
+  const shown = isExpanded ? g.items.slice(0, visible) : [];
   const localRemaining = g.items.length - shown.length;
-  const btnCls = 'w-full text-left px-3 py-2 text-xs text-violet-500 hover:text-violet-400 border-b border-zinc-200 dark:border-zinc-800';
-  if (localRemaining > 0) {
-    // More already-loaded leaves to reveal in place.
-    const next = Math.min(GROUP_LEAF_CAP, localRemaining);
-    more = `<button data-group-showmore="${escapeHtml(g.key)}" class="${btnCls}">Show ${next} more →</button>`;
-  } else if (Notifications.hasMore) {
-    // All loaded leaves shown, but older pages may add more to this group.
-    more = `<button data-group-showmore="${escapeHtml(g.key)}" class="${btnCls}">Show more →</button>`;
+  let more = null;
+  if (isExpanded) {
+    if (localRemaining > 0) {
+      // More already-loaded leaves to reveal in place.
+      more = { key: g.key, label: `Show ${Math.min(GROUP_LEAF_CAP, localRemaining)} more →` };
+    } else if (Notifications.hasMore) {
+      // All loaded leaves shown, but older pages may add more to this group.
+      more = { key: g.key, label: 'Show more →' };
+    }
   }
-  return `${header}<div class="pl-2 bg-zinc-50/50 dark:bg-zinc-950/30">${leaves}${more}</div>`;
+
+  return {
+    key: g.key,
+    appId: g.appId != null ? g.appId : '',
+    expanded: isExpanded,
+    hasUnread,
+    accent: hasUnread
+      ? 'bg-violet-500/5 border-l-2 border-violet-500'
+      : 'border-l-2 border-transparent',
+    chevron: isExpanded ? '▾' : '▸', // ▾ / ▸
+    appName: g.appName || 'General',
+    count: hasUnread ? g.unreadCount : g.items.length,
+    preview: `${previewText(latest)} · ${relativeTime(latest.createdAt)}`,
+    leaves: shown.map(rowView),
+    more,
+  };
 }
 
 // #138: derive the title/body + deep-link fields for a completion alert
@@ -1147,53 +1034,76 @@ function previewText(n) {
   }
 }
 
-function renderRow(n) {
+// One notification row, as data. It has ONE renderer again — NotificationRow in
+// ./notifications-list.tsx — which both drawers use: the bell's own list, and
+// the cog drawer's pinned "Needs attention" section, which reaches this builder
+// through `Notifications._rowView` (see the publication at the bottom). Until
+// #1191 slice 6's fourth conversion there was a second, HTML-string renderer
+// here for the cog, because that host was still built by `innerHTML`.
+//
+// `segments` is the meta line after the leading unread dot, in order:
+//   { t: 'who' }    → @username, in the strong ink
+//   { t: 'strong' } → an app name / issue label, in the slightly softer strong
+//   { t: 'text' }   → ordinary copy
+// Every value is RAW text. Escaping is the renderer's job, and React does it
+// by construction — which is the point of moving the rows there.
+function rowView(n) {
   // #103: keep the violet left line on every row, read or unread, so a
   // notification never "loses its line" when read. Only the background
   // tint stays unread-conditional (the unread dot below is the other cue).
-  const unreadCls = n.readAt ? 'border-l-2 border-violet-500' : 'bg-violet-500/5 border-l-2 border-violet-500';
-  const appLine = n.appName ? escapeHtml(n.appName) : 'app';
-  const who = n.sourceUsername ? escapeHtml(n.sourceUsername) : 'someone';
-  // Leading unread dot (or an equal-width spacer when read) on the meta
-  // line, so unread rows are unmistakable beyond the background accent.
-  const dot = unreadDot(!n.readAt);
+  const unreadCls = n.readAt
+    ? 'border-l-2 border-violet-500'
+    : 'bg-violet-500/5 border-l-2 border-violet-500';
+  const appLine = n.appName ? n.appName : 'app';
+  const who = n.sourceUsername ? n.sourceUsername : 'someone';
+  const base = {
+    id: n.id,
+    unread: !n.readAt,
+    unreadCls,
+    time: relativeTime(n.createdAt),
+    // The meta line's own layout. `mb` and `wrap` differ per kind, and the
+    // plain mention/reply row is the only one that is not a flex row at all.
+    mb: true,
+    metaFlex: true,
+    wrap: false,
+    icon: null,
+    segments: [],
+    body: null,
+  };
 
   // Kudos rows have no chat-message body; they show the PR title (or
   // "PR #N" if the PR has no LLM-generated title yet) and a small 👏
   // icon to distinguish from mention rows at a glance.
   if (n.kind === 'kudos') {
-    const prLabel = n.prTitle
-      ? escapeHtml(n.prTitle)
-      : (n.prNumber ? `PR #${n.prNumber}` : 'your PR');
-    return `<button data-notif-id="${n.id}" class="w-full text-left px-3 py-2.5 border-b border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 transition-colors ${unreadCls}">
-      <div class="text-xs text-zinc-500 dark:text-zinc-400 mb-1 flex items-center gap-1">
-        ${dot}
-        <span aria-hidden="true">\u{1F44F}</span>
-        <span class="font-medium text-zinc-800 dark:text-zinc-200">@${who}</span>
-        <span>gave kudos to your PR in</span>
-        <span class="font-medium text-zinc-700 dark:text-zinc-300">${appLine}</span>
-        <span class="text-zinc-500">· ${relativeTime(n.createdAt)}</span>
-      </div>
-      <div class="text-sm text-zinc-700 dark:text-zinc-300 line-clamp-2 font-medium">${prLabel}</div>
-    </button>`;
+    return {
+      ...base,
+      icon: '\u{1F44F}',
+      segments: [
+        { t: 'who', v: who },
+        { t: 'text', v: 'gave kudos to your PR in' },
+        { t: 'strong', v: appLine },
+      ],
+      body: {
+        text: n.prTitle || (n.prNumber ? `PR #${n.prNumber}` : 'your PR'),
+        medium: true,
+        mention: false,
+      },
+    };
   }
 
   // Reaction rows lead with the emoji someone reacted with, then preview
   // the message they reacted to.
   if (n.kind === 'reaction') {
-    const emoji = n.detail || '❤️';
-    const reactSnippet = (n.messageContent || '').slice(0, 140);
-    return `<button data-notif-id="${n.id}" class="w-full text-left px-3 py-2.5 border-b border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 transition-colors ${unreadCls}">
-      <div class="text-xs text-zinc-500 dark:text-zinc-400 mb-1 flex items-center gap-1">
-        ${dot}
-        <span aria-hidden="true">${escapeHtml(emoji)}</span>
-        <span class="font-medium text-zinc-800 dark:text-zinc-200">@${who}</span>
-        <span>reacted to your message in</span>
-        <span class="font-medium text-zinc-700 dark:text-zinc-300">${appLine}</span>
-        <span class="text-zinc-500">· ${relativeTime(n.createdAt)}</span>
-      </div>
-      <div class="text-sm text-zinc-700 dark:text-zinc-300 line-clamp-2">${renderMentionSnippet(reactSnippet)}</div>
-    </button>`;
+    return {
+      ...base,
+      icon: n.detail || '❤️',
+      segments: [
+        { t: 'who', v: who },
+        { t: 'text', v: 'reacted to your message in' },
+        { t: 'strong', v: appLine },
+      ],
+      body: { text: (n.messageContent || '').slice(0, 140), medium: false, mention: true },
+    };
   }
 
   // Stale-PR rows are system warnings (no source user): the author's
@@ -1202,22 +1112,20 @@ function renderRow(n) {
   // rows are about a PROPOSAL, so the PR title still leads; the session
   // title is only a fallback ahead of the bare "PR #N".
   if (n.kind === 'stale_pr') {
-    const prLabel = n.prTitle
-      ? escapeHtml(n.prTitle)
-      : (n.sessionTitle
-        ? escapeHtml(n.sessionTitle)
-        : (n.prNumber ? `PR #${n.prNumber}` : 'your PR'));
-    return `<button data-notif-id="${n.id}" class="w-full text-left px-3 py-2.5 border-b border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 transition-colors ${unreadCls}">
-      <div class="text-xs text-zinc-500 dark:text-zinc-400 mb-1 flex items-center gap-1">
-        ${dot}
-        <span aria-hidden="true">⏳</span>
-        <span>Your PR in</span>
-        <span class="font-medium text-zinc-700 dark:text-zinc-300">${appLine}</span>
-        <span>is going stale — it'll auto-archive soon without votes</span>
-        <span class="text-zinc-500">· ${relativeTime(n.createdAt)}</span>
-      </div>
-      <div class="text-sm text-zinc-700 dark:text-zinc-300 line-clamp-2 font-medium">${prLabel}</div>
-    </button>`;
+    return {
+      ...base,
+      icon: '⏳',
+      segments: [
+        { t: 'text', v: 'Your PR in' },
+        { t: 'strong', v: appLine },
+        { t: 'text', v: "is going stale — it'll auto-archive soon without votes" },
+      ],
+      body: {
+        text: n.prTitle || n.sessionTitle || (n.prNumber ? `PR #${n.prNumber}` : 'your PR'),
+        medium: true,
+        mention: false,
+      },
+    };
   }
 
   // Check-failed rows are system warnings (no source user): the owner's
@@ -1227,42 +1135,40 @@ function renderRow(n) {
   // title leads (this is a proposal row); the session title is a fallback
   // ahead of the bare "PR #N".
   if (n.kind === 'check_failed') {
-    const prLabel = n.prTitle
-      ? escapeHtml(n.prTitle)
-      : (n.sessionTitle
-        ? escapeHtml(n.sessionTitle)
-        : (n.prNumber ? `PR #${n.prNumber}` : 'your proposal'));
-    return `<button data-notif-id="${n.id}" class="w-full text-left px-3 py-2.5 border-b border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 transition-colors ${unreadCls}">
-      <div class="text-xs text-zinc-500 dark:text-zinc-400 mb-1 flex items-center gap-1">
-        ${dot}
-        <span aria-hidden="true">⚠️</span>
-        <span>Your proposal in</span>
-        <span class="font-medium text-zinc-700 dark:text-zinc-300">${appLine}</span>
-        <span>can't merge — its preview won't boot, so checks can't run</span>
-        <span class="text-zinc-500">· ${relativeTime(n.createdAt)}</span>
-      </div>
-      <div class="text-sm text-zinc-700 dark:text-zinc-300 line-clamp-2 font-medium">${prLabel}</div>
-    </button>`;
+    return {
+      ...base,
+      icon: '⚠️',
+      segments: [
+        { t: 'text', v: 'Your proposal in' },
+        { t: 'strong', v: appLine },
+        { t: 'text', v: "can't merge — its preview won't boot, so checks can't run" },
+      ],
+      body: {
+        text: n.prTitle || n.sessionTitle || (n.prNumber ? `PR #${n.prNumber}` : 'your proposal'),
+        medium: true,
+        mention: false,
+      },
+    };
   }
 
   // PR-proposed (vote-request) rows: someone promoted a PR and we're
   // nudging this user to come vote. Lead with a ballot box and show the
   // PR title; clicking lands on the app's group-chat vote panel.
   if (n.kind === 'pr_proposed') {
-    const prLabel = n.prTitle
-      ? escapeHtml(n.prTitle)
-      : (n.prNumber ? `PR #${n.prNumber}` : 'a PR');
-    return `<button data-notif-id="${n.id}" class="w-full text-left px-3 py-2.5 border-b border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 transition-colors ${unreadCls}">
-      <div class="text-xs text-zinc-500 dark:text-zinc-400 mb-1 flex items-center gap-1">
-        ${dot}
-        <span aria-hidden="true">\u{1F5F3}️</span>
-        <span class="font-medium text-zinc-800 dark:text-zinc-200">@${who}</span>
-        <span>proposed a PR to vote on in</span>
-        <span class="font-medium text-zinc-700 dark:text-zinc-300">${appLine}</span>
-        <span class="text-zinc-500">· ${relativeTime(n.createdAt)}</span>
-      </div>
-      <div class="text-sm text-zinc-700 dark:text-zinc-300 line-clamp-2 font-medium">${prLabel}</div>
-    </button>`;
+    return {
+      ...base,
+      icon: '\u{1F5F3}️',
+      segments: [
+        { t: 'who', v: who },
+        { t: 'text', v: 'proposed a PR to vote on in' },
+        { t: 'strong', v: appLine },
+      ],
+      body: {
+        text: n.prTitle || (n.prNumber ? `PR #${n.prNumber}` : 'a PR'),
+        medium: true,
+        mention: false,
+      },
+    };
   }
 
   // #161: dev-session completion — the owner left mid-turn and it
@@ -1273,22 +1179,21 @@ function renderRow(n) {
   // exactly as it did before; a pre-PR session now shows its real title
   // instead of `dev/<user>-<epoch>`.
   if (n.kind === 'session_done') {
-    const sessionLabel = n.sessionTitle
-      ? escapeHtml(n.sessionTitle)
-      : (n.prTitle
-        ? escapeHtml(n.prTitle)
-        : (n.branchName ? escapeHtml(n.branchName) : 'your session'));
-    return `<button data-notif-id="${n.id}" class="w-full text-left px-3 py-2.5 border-b border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 transition-colors ${unreadCls}">
-      <div class="text-xs text-zinc-500 dark:text-zinc-400 mb-1 flex items-center gap-1 flex-wrap">
-        ${dot}
-        <span aria-hidden="true">✅</span>
-        <span>Your dev session in</span>
-        <span class="font-medium text-zinc-700 dark:text-zinc-300">${appLine}</span>
-        <span>finished</span>
-        <span class="text-zinc-500">· ${relativeTime(n.createdAt)}</span>
-      </div>
-      <div class="text-sm text-zinc-700 dark:text-zinc-300 line-clamp-2 font-medium">${sessionLabel}</div>
-    </button>`;
+    return {
+      ...base,
+      wrap: true,
+      icon: '✅',
+      segments: [
+        { t: 'text', v: 'Your dev session in' },
+        { t: 'strong', v: appLine },
+        { t: 'text', v: 'finished' },
+      ],
+      body: {
+        text: n.sessionTitle || n.prTitle || n.branchName || 'your session',
+        medium: true,
+        mention: false,
+      },
+    };
   }
 
   // #161: headless proposal-run completion. Clicking lands on the app's
@@ -1296,12 +1201,10 @@ function renderRow(n) {
   // proposal" lives).
   if (n.kind === 'auto_solve_done') {
     const failed = n.detail === 'failed';
-    const icon = failed ? '⚠️' : '\u{1F916}';
     // #150: a question outcome isn't "ready" work product — it's the run
     // asking the reporter for input, so say so in the headline.
     const verb = failed ? 'failed'
       : (n.detail === 'question' ? 'has questions for you' : 'is ready');
-    const issueLabel = n.headlessIssueNumber ? `issue #${n.headlessIssueNumber}` : 'an issue';
     const outcomeText = {
       spec: 'drafted a spec',
       code: 'pushed code',
@@ -1309,19 +1212,19 @@ function renderRow(n) {
       question: 'replied with a question',
       failed: 'failed — you can retry',
     }[n.detail] || 'finished';
-    return `<button data-notif-id="${n.id}" class="w-full text-left px-3 py-2.5 border-b border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 transition-colors ${unreadCls}">
-      <div class="text-xs text-zinc-500 dark:text-zinc-400 mb-1 flex items-center gap-1 flex-wrap">
-        ${dot}
-        <span aria-hidden="true">${icon}</span>
-        <span>Proposal for</span>
-        <span class="font-medium text-zinc-700 dark:text-zinc-300">${escapeHtml(issueLabel)}</span>
-        <span>in</span>
-        <span class="font-medium text-zinc-700 dark:text-zinc-300">${appLine}</span>
-        <span>${verb}</span>
-        <span class="text-zinc-500">· ${relativeTime(n.createdAt)}</span>
-      </div>
-      <div class="text-sm text-zinc-700 dark:text-zinc-300 line-clamp-2 font-medium">${escapeHtml(outcomeText)}</div>
-    </button>`;
+    return {
+      ...base,
+      wrap: true,
+      icon: failed ? '⚠️' : '\u{1F916}',
+      segments: [
+        { t: 'text', v: 'Proposal for' },
+        { t: 'strong', v: n.headlessIssueNumber ? `issue #${n.headlessIssueNumber}` : 'an issue' },
+        { t: 'text', v: 'in' },
+        { t: 'strong', v: appLine },
+        { t: 'text', v: verb },
+      ],
+      body: { text: outcomeText, medium: true, mention: false },
+    };
   }
 
   // (#86) Private spec share: someone sent this user a spec version.
@@ -1330,22 +1233,21 @@ function renderRow(n) {
   // the session's title / PR title / branch name (already joined
   // server-side); the spec's own H1 appears as soon as the panel loads.
   if (n.kind === 'spec_shared') {
-    const specLabel = n.sessionTitle
-      ? escapeHtml(n.sessionTitle)
-      : (n.prTitle
-        ? escapeHtml(n.prTitle)
-        : (n.branchName ? escapeHtml(n.branchName) : `Spec v${escapeHtml(n.detail || '?')}`));
-    return `<button data-notif-id="${n.id}" class="w-full text-left px-3 py-2.5 border-b border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 transition-colors ${unreadCls}">
-      <div class="text-xs text-zinc-500 dark:text-zinc-400 mb-1 flex items-center gap-1 flex-wrap">
-        ${dot}
-        <span aria-hidden="true">\u{1F4CB}</span>
-        <span class="font-medium text-zinc-800 dark:text-zinc-200">@${who}</span>
-        <span>shared a spec with you in</span>
-        <span class="font-medium text-zinc-700 dark:text-zinc-300">${appLine}</span>
-        <span class="text-zinc-500">· ${relativeTime(n.createdAt)}</span>
-      </div>
-      <div class="text-sm text-zinc-700 dark:text-zinc-300 line-clamp-2 font-medium">${specLabel}</div>
-    </button>`;
+    return {
+      ...base,
+      wrap: true,
+      icon: '\u{1F4CB}',
+      segments: [
+        { t: 'who', v: who },
+        { t: 'text', v: 'shared a spec with you in' },
+        { t: 'strong', v: appLine },
+      ],
+      body: {
+        text: n.sessionTitle || n.prTitle || n.branchName || `Spec v${n.detail || '?'}`,
+        medium: true,
+        mention: false,
+      },
+    };
   }
 
   // Collab-invite history rows (the actionable Accept/Decline buttons
@@ -1360,49 +1262,37 @@ function renderRow(n) {
         : n.kind === 'approver_invite'
           ? 'invited you to be an approver on'
           : 'accepted your approver invite on';
-    const icon = n.kind === 'collab_invite' ? '✉️'
-      : n.kind === 'approver_invite' ? '🗳️' : '✅';
-    return `<button data-notif-id="${n.id}" class="w-full text-left px-3 py-2.5 border-b border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 transition-colors ${unreadCls}">
-      <div class="text-xs text-zinc-500 dark:text-zinc-400 flex items-center gap-1 flex-wrap">
-        ${dot}
-        <span aria-hidden="true">${icon}</span>
-        <span class="font-medium text-zinc-800 dark:text-zinc-200">@${who}</span>
-        <span>${verb}</span>
-        <span class="font-medium text-zinc-700 dark:text-zinc-300">${appLine}</span>
-        <span class="text-zinc-500">· ${relativeTime(n.createdAt)}</span>
-      </div>
-    </button>`;
+    return {
+      ...base,
+      mb: false,
+      wrap: true,
+      icon: n.kind === 'collab_invite' ? '✉️'
+        : n.kind === 'approver_invite' ? '🗳️' : '✅',
+      segments: [
+        { t: 'who', v: who },
+        { t: 'text', v: verb },
+        { t: 'strong', v: appLine },
+      ],
+      body: null,
+    };
   }
 
-  const snippet = (n.messageContent || '').slice(0, 140);
-  const kindText = n.kind === 'mention'
-    ? 'mentioned you in'
-    : (n.kind === 'reply' ? 'replied to you in' : 'in');
-  return `<button data-notif-id="${n.id}" class="w-full text-left px-3 py-2.5 border-b border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 transition-colors ${unreadCls}">
-    <div class="text-xs text-zinc-500 dark:text-zinc-400 mb-1">
-      ${dot}
-      <span class="font-medium text-zinc-800 dark:text-zinc-200">@${who}</span>
-      ${kindText}
-      <span class="font-medium text-zinc-700 dark:text-zinc-300">${appLine}</span>
-      <span class="text-zinc-500">· ${relativeTime(n.createdAt)}</span>
-    </div>
-    <div class="text-sm text-zinc-700 dark:text-zinc-300 line-clamp-2">${renderMentionSnippet(snippet)}</div>
-  </button>`;
-}
-
-function escapeHtml(str) {
-  const div = document.createElement('div');
-  div.textContent = str;
-  return div.innerHTML;
-}
-
-// Highlight @tokens inline even in the notification preview so context
-// matches what the user will see when they click through.
-function renderMentionSnippet(text) {
-  const escaped = escapeHtml(text);
-  return escaped.replace(/(^|[^\w])@([A-Za-z0-9_]{1,32})/g, (_m, pre, name) => {
-    return `${pre}<span class="text-violet-400 font-medium">@${name}</span>`;
-  });
+  // Mentions and replies. The only row whose meta line is NOT a flex row,
+  // so its copy sits inline between the spans rather than in one.
+  return {
+    ...base,
+    metaFlex: false,
+    segments: [
+      { t: 'who', v: who },
+      {
+        t: 'text',
+        v: n.kind === 'mention' ? 'mentioned you in'
+          : (n.kind === 'reply' ? 'replied to you in' : 'in'),
+      },
+      { t: 'strong', v: appLine },
+    ],
+    body: { text: (n.messageContent || '').slice(0, 140), medium: false, mention: true },
+  };
 }
 
 function relativeTime(ts) {
@@ -1417,12 +1307,18 @@ function relativeTime(ts) {
 }
 
 // #1079 chunk B: the cog drawer's "Needs attention" section renders these very
-// same per-kind rows (WorkDrawer.renderPendingSection). While both files were
-// classic <script>s they shared one global scope and it simply called
-// renderRow; inside the bundle each module has its own scope, so the row
-// builder has to be published on the object work-drawer already reaches
-// through (Notifications.items, ._onItemClick, ._renderBadge, …).
-Notifications._renderRow = renderRow;
+// same per-kind rows (WorkDrawer.pendingSection). While both files were classic
+// <script>s they shared one global scope and it simply called the row builder;
+// inside the bundle each module has its own scope, so it has to be published on
+// the object work-drawer already reaches through (Notifications.items,
+// ._onItemClick, ._renderBadge, …).
+//
+// #1191 slice 6 conversion 4 converted that host too, so what crosses here is
+// the DESCRIPTOR rather than an HTML string: both drawers render these rows
+// with the same React component (NotificationRow in ./notifications-list.tsx),
+// which is why the HTML flavour of the row — `rowHtml`, its four class-string
+// helpers, `escapeHtml` and `renderMentionSnippet` — is gone from this file.
+Notifications._rowView = rowView;
 
 // Published exactly where the classic <script> published it: at module
 // evaluation, which for the React entry is still before DOMContentLoaded. The

@@ -19,7 +19,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
-const { runModules } = require('./helpers/bundle-module');
+const { runModules, workDrawerImports } = require('./helpers/bundle-module');
 
 const APP_VIEW_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'app-view.js'),
@@ -166,7 +166,7 @@ test("detail: a 'failed' snapshot renders the red 'resolution failed' detail box
   assert.match(html, /Sync with main/, 'keeps the manual-resolve guidance');
 });
 
-// ── Cog-drawer compact badge (WorkDrawer.renderProposalsSection) ────────
+// ── Cog-drawer compact badge (WorkDrawer.proposalsSection) ─────────────
 // (The section lived on the home screen as "Your proposals" until it
 // moved into the header cog's drawer — public/js/work-drawer.js.)
 
@@ -180,16 +180,23 @@ function makeWorkDrawer() {
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
-  // work-drawer.js is a bundle module and imports the kit-surface seam, which
-  // a classic-script `runInContext` cannot compile — runModules rewrites the
-  // import into a read of the stub table and leaves the rest of the source
+  // work-drawer.js is a bundle module and imports the kit-surface seam and
+  // (since #1191 slice 6 conversion 4) its own store, neither of which a
+  // classic-script `runInContext` can compile — runModules rewrites the
+  // imports into reads of the stub table and leaves the rest of the source
   // alone. See tests/helpers/bundle-module.js.
   return runModules(
     sandbox,
     [['merge-status.js', MERGE_STATUS_SRC], ['work-drawer.js', WORK_DRAWER_SRC]],
-    { tail: 'return WorkDrawer;' },
+    { imports: workDrawerImports(), tail: 'return WorkDrawer;' },
   );
 }
+
+// The row is a descriptor now, but the lifecycle chip is deliberately still
+// MergeStatus.badgeHtml's string — one owner of that badge across the four
+// surfaces that draw it — so these assertions read exactly what they did.
+const chipsOf = (section) =>
+  Array.from(section.rows, (r) => r.lifeChipHtml || '').join(' ');
 
 const drawerProposal = (over) => ({
   id: 7, app_slug: 'demo', app_name: 'Demo', pr_number: 700,
@@ -202,17 +209,17 @@ test("cog drawer: a 'conflict' proposal shows the red 'Merge failed' chip", () =
   const WorkDrawer = makeWorkDrawer();
   WorkDrawer.proposals = [drawerProposal({ merge_conflict_state: 'conflict', behind_main: 2 })];
   WorkDrawer.governance = [];
-  const html = WorkDrawer.renderProposalsSection();
-  assert.match(html, /Merge failed — conflict/, 'red merge-failed chip after a real attempt');
-  assert.doesNotMatch(html, /Behind main/, 'merge-failed outranks the neutral behind chip');
-  assert.doesNotMatch(html, /Conflict resolution failed/, "the 'failed' affordance stays distinct");
+  const chips = chipsOf(WorkDrawer.proposalsSection());
+  assert.match(chips, /Merge failed — conflict/, 'red merge-failed chip after a real attempt');
+  assert.doesNotMatch(chips, /Behind main/, 'merge-failed outranks the neutral behind chip');
+  assert.doesNotMatch(chips, /Conflict resolution failed/, "the 'failed' affordance stays distinct");
 });
 
 test("cog drawer: a 'failed' proposal shows the red Failed chip", () => {
   const WorkDrawer = makeWorkDrawer();
   WorkDrawer.proposals = [drawerProposal({ merge_conflict_state: 'failed', behind_main: 1 })];
   WorkDrawer.governance = [];
-  const html = WorkDrawer.renderProposalsSection();
   // #405: canonical red "Conflict resolution failed" label (was "⚠ Failed").
-  assert.match(html, /Conflict resolution failed/, 'red failed chip present after a failed attempt');
+  assert.match(chipsOf(WorkDrawer.proposalsSection()), /Conflict resolution failed/,
+    'red failed chip present after a failed attempt');
 });

@@ -37,6 +37,20 @@ const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
 const html = read('public/index.html');
 const appJs = read('public/js/app.js');
 const settingsJs = read('frontend/src/features/settings/settings.js');
+// The halves the two nav hosts were split into by #1191 slice 6, conversion 8.
+const navTsx = read('frontend/src/features/settings/settings-nav.tsx');
+const navStoreJs = read('frontend/src/features/settings/settings-nav-store.js');
+const mountTs = read('frontend/src/features/settings/mount.ts');
+const kitSurfaceTs = read('frontend/src/lib/kit-surface.ts');
+
+/**
+ * Source with its comments removed. Several assertions below are absence
+ * proofs — "this module no longer writes innerHTML", "the listener sweep is
+ * gone" — and prose that NAMES the retired thing must not read as the thing
+ * still being there.
+ */
+const code = (src) => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+const settingsCode = code(settingsJs);
 const devChatJs = read('frontend/src/features/dev-chat/dev-chat.js');
 const platformUiJs = read('public/js/platform-ui.js');
 const cliAuthJs = read('src/routes/cli-auth.js');
@@ -201,11 +215,23 @@ test('no section container is ever innerHTML-written', () => {
   assert.doesNotMatch(settingsJs, /data-settings-section[^\n]*innerHTML/,
     'no wrapper is ever rebuilt');
 
+  // #1191 slice 6, conversion 8: the two nav hosts are React now
+  // (frontend/src/features/settings/settings-nav.tsx), so _renderNav pushes
+  // descriptors instead of writing markup. The property it must keep is the
+  // one this test always cared about — that settings.js writes NO html on
+  // this screen — and it is now true of the whole module.
   const renderNav = settingsJs.slice(settingsJs.indexOf('    _renderNav() {'));
-  assert.match(renderNav.slice(0, 900), /getElementById\('settings-nav-desktop'\)/,
+  const renderNavBody = renderNav.slice(0, renderNav.indexOf('\n    },\n'));
+  assert.match(renderNavBody, /_store\?\.set\(\{/,
+    '_renderNav publishes to the nav store');
+  assert.match(renderNavBody, /desktop: Settings\._navView\(\)/,
     '_renderNav paints the desktop sidebar');
-  assert.match(renderNav.slice(0, 900), /getElementById\('settings-mobile-menu-host'\)/,
-    '_renderNav paints the mobile menu host');
+  assert.match(renderNavBody, /mobile: showMenu \? Settings\._menuView\(\) : null/,
+    '_renderNav paints the mobile menu host, and clears it at level 2');
+  assert.doesNotMatch(code(renderNavBody), /innerHTML|getElementById/,
+    '_renderNav no longer touches the DOM at all');
+  assert.doesNotMatch(settingsJs, /innerHTML\s*=\s*[^;]*_navView|innerHTML\s*=\s*[^;]*_menuView/,
+    'neither view builder is ever fed back into an innerHTML write');
   // The section container is only ever class-toggled.
   const renderContent = settingsJs.slice(settingsJs.indexOf('    _renderContent() {'));
   assert.match(renderContent.slice(0, 900), /classList\.toggle\('hidden'/,
@@ -216,12 +242,35 @@ test('no section container is ever innerHTML-written', () => {
 
 test('the log-out footer is MOVED between columns, never rebuilt', () => {
   const fn = settingsJs.slice(settingsJs.indexOf('    _syncFooter() {'));
-  assert.match(fn.slice(0, 700), /appendChild\(footer\)/,
+  const body = fn.slice(0, fn.indexOf('\n    },\n'));
+  assert.match(body, /appendChild\(footer\)/,
     'the real footer node is re-parented');
-  assert.doesNotMatch(fn.slice(0, 700), /innerHTML|createElement/,
+  assert.doesNotMatch(code(body), /innerHTML|createElement\(/,
     'no rebuild — #settings-logout keeps the handler bound in init()');
   assert.match(html, /id="settings-footer"[\s\S]{0,400}?id="settings-logout"/,
     'Log out lives in the footer, outside the section list');
+});
+
+test('the footer move leaves its React slot open — no portal', () => {
+  // #1191 slice 6, conversion 8. The footer is rendered by the island but
+  // moved out of it by _syncFooter, so the position it came from has to stay
+  // open or React's picture of #settings-sidebar-col stops describing the
+  // document. That seam is the dialogs' seam, reused: a comment placeholder.
+  const fn = settingsJs.slice(settingsJs.indexOf('    _syncFooter() {'));
+  const body = fn.slice(0, fn.indexOf('\n    },\n'));
+  assert.match(body, /Settings\._footerHome\?\.lift\(\)/,
+    'moving to the content column lifts the node out of its slot');
+  assert.match(body, /Settings\._footerHome\.restore\(\)/,
+    'moving back restores it where the comment sits');
+  assert.match(body, /getElementById\('settings-sidebar-col'\)/,
+    'and there is still a plain fallback for the vm harnesses, which have no seam');
+
+  assert.match(mountTs, /createPlaceholderHome\(el, 'settings-footer-home'\)/,
+    'the seam is planted by mount.ts, not imported by the classic script');
+  assert.match(kitSurfaceTs, /export function createPlaceholderHome/,
+    'and it is the same helper adoptKitSurface uses for home: placeholder');
+  assert.doesNotMatch(kitSurfaceTs, /createPortal/);
+  assert.doesNotMatch(navTsx, /createPortal/);
 });
 
 // ── app.js wiring ──────────────────────────────────────────────────────
@@ -400,11 +449,51 @@ test('a menu tap is a real hash navigation', () => {
 });
 
 test('the sidebar and the mobile menu share one grouping', () => {
-  const nav = settingsJs.slice(settingsJs.indexOf('    _navItemsHtml() {'));
+  const nav = settingsJs.slice(settingsJs.indexOf('    _navView() {'));
   assert.match(nav.slice(0, 1200), /_groupedSections\(\)/);
-  const menu = settingsJs.slice(settingsJs.indexOf('    _mobileMenuHtml() {'));
+  const menu = settingsJs.slice(settingsJs.indexOf('    _menuView() {'));
   assert.match(menu.slice(0, 1600), /_groupedSections\(\)/);
-  assert.match(menu.slice(0, 1600), /min-h-\[44px\]/, 'menu rows keep the 44px target');
+  // The row classes moved to the component with the markup; the 44px target
+  // moved with them.
+  assert.match(navTsx, /min-h-\[44px\]/, 'menu rows keep the 44px target');
+});
+
+test('the nav components render what the module shapes, and nothing else', () => {
+  // The active row's class string is the one thing on this screen that varies
+  // with state, so it stays in the module — which is also what keeps
+  // settings.js loadable by the vm harnesses (see settings-mobile-push).
+  const nav = settingsJs.slice(settingsJs.indexOf('    _navView() {'));
+  assert.match(nav.slice(0, 1200), /bg-violet-600\/10 text-violet-600 dark:text-violet-400/,
+    'the active sidebar row keeps its tint, character for character');
+  assert.match(navTsx, /className=\{item\.className\}/,
+    'the component renders that string rather than recomputing it');
+
+  // A tab set on desktop, a LIST on mobile. dapp.json line 1660 selects on
+  // [data-settings-nav="cli"][aria-selected="true"], so the first half is a
+  // declared check, and the second half is what makes the two differ.
+  assert.match(navTsx, /role="tab"/, 'the sidebar is a tab set');
+  assert.match(navTsx, /aria-selected=\{item\.active \? 'true' : 'false'\}/);
+  const menuFn = navTsx.slice(navTsx.indexOf('export function SettingsMobileMenu'));
+  assert.doesNotMatch(menuFn, /role="tab"|aria-selected/,
+    'the level-1 menu is a list of rows, not a second tab set');
+
+  // Both hosts route through one handler; neither re-binds listeners.
+  assert.equal((navTsx.match(/onClick=\{\(\) => navClick\(item\.key\)\}/g) || []).length, 2);
+  assert.doesNotMatch(settingsCode, /_wireNavButtons/,
+    'the per-repaint listener sweep is gone — React binds onClick');
+  assert.match(settingsJs, /_navClick\(key\) \{/, 'the handler survived as a method');
+});
+
+test('the nav hosts still ship EMPTY, so the prerender is unchanged', () => {
+  // The island rule's second corollary: an island's initial render must emit
+  // exactly the empty markup the hand-written shell shipped, or hydration
+  // console.errors and the proposal checks fail.
+  assert.match(html, /id="settings-nav-desktop" aria-label="Settings sections" class="space-y-1"><\/nav>/,
+    '#settings-nav-desktop prerenders empty');
+  assert.match(html, /id="settings-mobile-menu-host" class="md:hidden"><\/div>/,
+    '#settings-mobile-menu-host prerenders empty');
+  assert.match(navStoreJs, /desktop: null/, 'both descriptors start null');
+  assert.match(navStoreJs, /mobile: null/);
 });
 
 test('_syncChrome drives the header through App, not the DOM', () => {

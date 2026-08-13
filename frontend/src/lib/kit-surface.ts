@@ -133,6 +133,48 @@ export interface KitAdoption {
   dismiss(): void;
 }
 
+/**
+ * A node's original position, held open by a comment while the node is
+ * somewhere else.
+ *
+ * Extracted from `adoptKitSurface`'s `home: 'placeholder'` branch (#1191 slice
+ * 6, conversion 8) because a second caller needs exactly this and nothing else
+ * around it: `#settings-footer` is re-parented between the two settings
+ * columns by `Settings._syncFooter()`, which is a real DOM move with no kit
+ * involved at all. The rule it has to satisfy is the same one the dialogs'
+ * cards satisfy — a node React rendered may leave its parent, but the slot it
+ * came from must stay open, so React's picture of that parent's children still
+ * describes the document.
+ *
+ * `lift()` and `restore()` are both idempotent, and `restore()` puts the node
+ * back where the comment SITS rather than where it was: the comment is a real
+ * child, so anything inserted around it in the meantime is respected.
+ */
+export interface PlaceholderHome {
+  lift(): void;
+  restore(): void;
+  readonly lifted: boolean;
+}
+
+export function createPlaceholderHome(el: HTMLElement, label: string): PlaceholderHome {
+  let placeholder: Comment | null = null;
+  return {
+    lift() {
+      if (placeholder) return;
+      placeholder = document.createComment(label);
+      el.parentNode?.replaceChild(placeholder, el);
+    },
+    restore() {
+      if (!placeholder) return;
+      if (placeholder.parentNode) placeholder.parentNode.replaceChild(el, placeholder);
+      placeholder = null;
+    },
+    get lifted() {
+      return placeholder !== null;
+    },
+  };
+}
+
 function designWidthOf(el: HTMLElement): string | null {
   try {
     const mw = getComputedStyle(el).maxWidth;
@@ -171,10 +213,10 @@ export function adoptKitSurface(options: AdoptKitSurfaceOptions): KitAdoption | 
   // the card's own on top gave double borders and doubled whitespace.
   if (options.kind === 'modal') contentEl.classList.add('platform-modal-card');
 
-  let placeholder: Comment | null = null;
+  let home: PlaceholderHome | null = null;
   if (options.home === 'placeholder') {
-    placeholder = document.createComment(`platform-${options.kind}-home`);
-    contentEl.parentNode?.replaceChild(placeholder, contentEl);
+    home = createPlaceholderHome(contentEl, `platform-${options.kind}-home`);
+    home.lift();
   }
   flagEl.classList.add(adoptedClass);
 
@@ -186,8 +228,8 @@ export function adoptKitSurface(options: AdoptKitSurfaceOptions): KitAdoption | 
     if (undone) return;
     undone = true;
     if (options.kind === 'modal') contentEl.classList.remove('platform-modal-card');
-    if (placeholder) {
-      if (placeholder.parentNode) placeholder.parentNode.replaceChild(contentEl, placeholder);
+    if (home) {
+      home.restore();
     } else if (presented) {
       document.body.appendChild(contentEl);
     }
