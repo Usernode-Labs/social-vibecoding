@@ -25,22 +25,38 @@
 //
 // Still deliberately thin on the shared pieces, so this screen and the home
 // grid cannot drift — but the pieces now come from two places rather than
-// one (#1083 chunk F). The pure MARKUP builders are an explicit import from
-// ./app-card.js, shared with the home grid and the app view. The rest is
-// still Home's, reached through the global, because each one reads Home's
-// loaded-app list or the viewer's permissions: isYours, matchesQuery,
-// toggleAdded, menuItemsFor.
+// one (#1083 chunk F). The shared tile/chip decisions come from
+// ./app-card.js, and as of #1191 slice 6 this file no longer touches them at
+// all: ./browse-list.tsx and ./browse-detail.tsx render them through
+// ./app-card-view.tsx, off the same descriptor functions the home grid's strings
+// are built from. The rest is still Home's, reached through the global,
+// because each one reads Home's loaded-app list or the viewer's permissions:
+// isYours, matchesQuery, toggleAdded, menuItemsFor.
+//
+// WHAT THIS FILE DOES NOW (#1191 slice 6, conversion 3): every decision, and
+// no markup. The sort, the search filter, the level derivation, the two
+// fetches, the contributor cache, the action-list filtering and the
+// screenshot deep link are all unchanged; where they used to end in an
+// `innerHTML =`, they now end in a `Browse._store.set(…)` of a plain
+// descriptor. It stays a plain .js module (not .ts, no JSX) because
+// tests/browse-screen.test.js compiles this exact source in a vm context.
 //
 // Mounted by App.navigateToBrowse; PTR is wired once by
 // App._wirePullToRefresh and covers both levels.
 
-import { iconTileFor, renderAppPillsHtml } from './app-card.js';
-
 const Browse = {
+  // The rendered-state store, planted by ./mount.ts (#1191 slice 6, conv. 3).
+  // Reached through the object rather than imported for the same reason
+  // Notifications._store is: tests/browse-screen.test.js evaluates this file's
+  // real source in a vm context, which runs classic script text and strips the
+  // imports, so a second import would be a binding that resolves to nothing at
+  // call time. Every render method no-ops without it — which is the state the
+  // pure sort/filter/derive tests run in.
+  _store: null,
+
   _open: false,
   _apps: [],
   _query: '',
-  _searchWired: false,
   _searchDebounce: null,
   // Slug of the app whose detail page is showing; null = the list level.
   _slug: null,
@@ -59,6 +75,10 @@ const Browse = {
   //            pops the hash entry home returned from — so this only
   //            teaches the header button to agree with it.)
   _detailOrigin: 'list',
+  // The current detail page's action items, as returned by detailActionsFor.
+  // They carry `run` closures, so the descriptor the store publishes holds
+  // only their labels and an index back into this array.
+  _detailActions: [],
   // Set by the opener BEFORE it writes the hash, consumed when the detail
   // level actually opens. A separate field from _detailOrigin so a stale
   // note can't relabel a later, differently-entered page.
@@ -66,7 +86,7 @@ const Browse = {
 
   // ── Contributors section state (#919) ─────────────────────────────
   //
-  // _renderDetail rebuilds the whole page's innerHTML on EVERY render(),
+  // _renderDetail republishes the whole page descriptor on EVERY render(),
   // and render() fires often — syncFrom on each /api/apps refresh, and
   // after every favourite toggle. So the fetched list has to live out here
   // or each repaint would refetch and flash. Keyed by slug, cleared on
@@ -199,16 +219,13 @@ const Browse = {
 
   // Container + chrome for the current level. Borrows the admin console's
   // arrow-vs-house back icon convention for a drill-in.
+  // The level is a store field now, not three classList.toggle calls: all
+  // three nodes are rendered by ./browse-screen.tsx, and the migration's rule
+  // is that nothing outside React writes into a React-owned subtree. The
+  // search bar rides along because searching the directory is a level-1
+  // affordance — on a detail page the field would filter a list nobody sees.
   _syncLevel() {
-    const onDetail = !!Browse._slug;
-    const listLevel = document.getElementById('browse-list-level');
-    const detail = document.getElementById('browse-detail');
-    const searchBar = document.getElementById('browse-search-bar');
-    if (listLevel) listLevel.classList.toggle('hidden', onDetail);
-    if (detail) detail.classList.toggle('hidden', !onDetail);
-    // Searching the directory is a level-1 affordance; on a detail page the
-    // field would filter a list nobody can see.
-    if (searchBar) searchBar.classList.toggle('hidden', onDetail);
+    if (Browse._store) Browse._store.set({ level: Browse._slug ? 'detail' : 'list' });
     Browse._syncChrome();
   },
 
@@ -287,9 +304,8 @@ const Browse = {
       Browse.render();
       if (Browse._slug) Browse._syncLevel();
     } catch (err) {
-      const listEl = document.getElementById('browse-list');
-      if (listEl && !Browse._slug) {
-        listEl.innerHTML = '<div class="p-4 text-red-400 text-sm">Failed to load apps</div>';
+      if (Browse._store && !Browse._slug) {
+        Browse._store.set({ rows: [], empty: null, error: true });
       }
     }
   },
@@ -349,41 +365,31 @@ const Browse = {
     return bits.join(' · ');
   },
 
-  // One app-store row: icon · name + meta + status pills · Add button.
-  // The same markup is the desktop box — see .browse-row in app.css.
-  renderAppRow(app) {
-    const isAdded = Home.isYours(app);
-    const icon = iconTileFor(app);
-    const pills = renderAppPillsHtml(app);
+  // One app-store row, as DATA: icon · name + meta + status pills · Add
+  // button. ./browse-list.tsx renders it; the same descriptor is the desktop
+  // box, because the layout switch is pure CSS (.browse-row in app.css).
+  //
+  // `app` travels on the descriptor because the shared card primitives take
+  // the record, not a pre-rendered fragment — see ./app-card-view.tsx.
+  // Pure — unit-tested in tests/browse-screen.test.js.
+  rowView(app) {
     const isDemo = !!app.demo;
-    // Staging ?demo=1 rows are inert: their slugs have no DB row, so the
-    // detail page would 404 and the favorite POST would too.
-    const openable = !isDemo;
-    return `
-      <div class="browse-row flex items-center gap-3 px-3 py-2.5 ${openable ? 'cursor-pointer' : 'cursor-default'}" data-slug="${escapeHtml(app.slug)}"${isDemo ? ' data-demo="true"' : ''}>
-        <div class="app-icon-tile w-11 h-11 shrink-0 rounded-xl overflow-hidden flex items-center justify-center font-bold text-lg" data-icon="${icon.kind}">
-          ${icon.html}
-        </div>
-        <div class="min-w-0 flex-1">
-          <div class="flex items-center gap-1.5 min-w-0">
-            <span class="font-medium text-sm truncate">${escapeHtml(app.name || app.slug)}</span>
-            <span class="status-dot ${app.status === 'running' ? 'running' : app.status === 'error' ? 'error' : 'creating'} shrink-0" title="${escapeHtml(app.status || '')}"></span>
-          </div>
-          <div class="text-xs text-zinc-500 dark:text-zinc-400 truncate">${escapeHtml(Browse.metaLine(app))}</div>
-          ${pills ? `<div class="flex flex-wrap items-center gap-1 mt-1">${pills}</div>` : ''}
-        </div>
-        <button class="browse-add-btn shrink-0 inline-flex items-center gap-1 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
-          isAdded
-            ? 'bg-emerald-500 border-emerald-500 text-white'
-            : 'border-violet-500 dark:border-violet-400 text-violet-600 dark:text-violet-400 bg-white dark:bg-zinc-900 hover:bg-violet-50 dark:hover:bg-violet-950'
-        }" data-slug="${escapeHtml(app.slug)}" data-added="${isAdded}" aria-pressed="${isAdded}" title="${
-          isAdded ? 'Added — tap to remove from Your apps' : 'Add to Your apps'
-        }">${
-          isAdded
-            ? '<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>Added'
-            : 'Add'
-        }</button>
-      </div>`;
+    const isAdded = Home.isYours(app);
+    return {
+      app,
+      slug: app.slug,
+      name: app.name || app.slug,
+      meta: Browse.metaLine(app),
+      status: app.status || '',
+      statusDot: app.status === 'running' ? 'running'
+        : app.status === 'error' ? 'error' : 'creating',
+      // Staging ?demo=1 rows are inert: their slugs have no DB row, so the
+      // detail page would 404 and the favorite POST would too.
+      demo: isDemo,
+      openable: !isDemo,
+      added: isAdded,
+      addTitle: isAdded ? 'Added — tap to remove from Your apps' : 'Add to Your apps',
+    };
   },
 
   // ── Render (dispatches to the level that is showing) ──────────────
@@ -394,71 +400,57 @@ const Browse = {
   },
 
   _renderList() {
-    const listEl = document.getElementById('browse-list');
-    const emptyEl = document.getElementById('browse-empty');
-    if (!listEl) return;
-    Browse._wireSearch();
+    if (!Browse._store) return;
     const apps = Browse.visibleApps();
     const query = (Browse._query || '').trim();
+    const rows = apps.map((a) => Browse.rowView(a));
 
-    listEl.innerHTML = apps.map((a) => Browse.renderAppRow(a)).join('');
-    Browse._wireRows(listEl);
+    Browse._store.set({
+      rows,
+      error: false,
+      empty: rows.length
+        ? null
+        : (query ? `No apps match “${query}”.` : 'No apps to show yet.'),
+    });
 
-    if (emptyEl) {
-      if (apps.length) {
-        emptyEl.classList.add('hidden');
-        emptyEl.textContent = '';
-      } else {
-        emptyEl.classList.remove('hidden');
-        emptyEl.textContent = query
-          ? `No apps match “${query}”.`
-          : 'No apps to show yet.';
-      }
-    }
-
-    Browse._maybeShotDetail(listEl);
+    Browse._maybeShotDetail(rows);
   },
 
-  // Row taps route through the hash so the browser/OS back gesture works;
-  // the Add button is the one part of the row that doesn't drill in.
-  _wireRows(listEl) {
-    listEl.querySelectorAll('.browse-row').forEach((row) => {
-      // #1036: the row can't BE an anchor (it wraps its own "Add"
-      // button), so cmd/middle-click is intercepted instead. hrefFor
-      // repeats the same guards the plain click applies, so an inert row
-      // (a demo tile, the Add button) stays inert under a modifier too.
-      const hrefFor = (e) => {
-        if (e.target.closest('.browse-add-btn')) return null;
-        if (row.dataset.demo === 'true') return null;
-        const slug = row.dataset.slug;
-        return slug ? `#apps/${encodeURIComponent(slug)}` : null;
-      };
-      const activate = (e) => {
-        if (e.target.closest('.browse-add-btn')) return;
-        if (row.dataset.demo === 'true') return;
-        const slug = row.dataset.slug;
-        if (!slug) return;
-        // Back from here means up to this list.
-        Browse.noteDetailOrigin('list');
-        location.hash = `#apps/${encodeURIComponent(slug)}`;
-      };
-      if (window.NavLink) NavLink.wireModified(row, hrefFor, activate);
-      else row.addEventListener('click', activate);
-      // #931: a row tap lands on the detail page, not in the app, so this is
-      // a warm-up for the "Open" button one screen later — by then the token
-      // is minted and the connection to the app's origin is open.
-      if (row.dataset.slug && row.dataset.demo !== 'true') {
-        const warm = () => { try { App.prewarmApp(row.dataset.slug); } catch (err) { /* ignore */ } };
-        row.addEventListener('pointerdown', warm, { passive: true });
-        row.addEventListener('mouseenter', warm);
-      }
-    });
-    listEl.querySelectorAll('.browse-add-btn').forEach((btn) => {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        Home.toggleAdded(btn.dataset.slug, btn.dataset.added !== 'true', () => Browse.render());
-      });
-    });
+  // ── Row intents ───────────────────────────────────────────────────
+  //
+  // ./browse-list.tsx binds the listeners now (the rows are its children),
+  // so what used to be _wireRows is these three intents. The GUARDS stay
+  // here, unchanged and still unit-tested: a demo row is inert, and the Add
+  // button never drills in.
+
+  // #1036: the row can't BE an anchor (it wraps its own "Add" button), so
+  // cmd/middle-click is intercepted instead — NavLink.wireModified takes this
+  // as its hrefFor, and it repeats the same guards openRow applies so an inert
+  // row stays inert under a modifier too.
+  rowHref(view) {
+    if (!view || view.demo || !view.slug) return null;
+    return `#apps/${encodeURIComponent(view.slug)}`;
+  },
+
+  openRow(view) {
+    const href = Browse.rowHref(view);
+    if (!href) return;
+    // Back from here means up to this list.
+    Browse.noteDetailOrigin('list');
+    location.hash = href;
+  },
+
+  // #931: a row tap lands on the detail page, not in the app, so this is a
+  // warm-up for the "Open" button one screen later — by then the token is
+  // minted and the connection to the app's origin is open.
+  warmRow(view) {
+    if (!view || view.demo || !view.slug) return;
+    try { App.prewarmApp(view.slug); } catch (err) { /* ignore */ }
+  },
+
+  toggleRowAdded(view) {
+    if (!view || !view.slug) return;
+    Home.toggleAdded(view.slug, !view.added, () => Browse.render());
   },
 
   // Screenshot-state deep link (?shot=browse-detail): the detail page is
@@ -476,15 +468,18 @@ const Browse = {
   // same level instead of undoing it.
   _shotDetailDone: false,
 
-  _maybeShotDetail(listEl) {
+  _maybeShotDetail(rows) {
     if (Browse._shotDetailDone || Browse._slug) return;
     let shot = null;
     try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
     if (shot !== 'browse-detail') return;
-    const row = listEl.querySelector('.browse-row:not([data-demo])');
-    if (!row || !row.dataset.slug) return;
+    // Reads the descriptor array rather than querying the painted DOM: the
+    // rows are React's children now and this runs in the same tick that
+    // publishes them, before they have been reconciled.
+    const row = (rows || []).find((r) => r && !r.demo && r.slug);
+    if (!row) return;
     Browse._shotDetailDone = true;
-    const slug = row.dataset.slug;
+    const slug = row.slug;
     try {
       history.replaceState(null, '', `${location.search}#apps/${encodeURIComponent(slug)}`);
     } catch (err) { /* non-fatal: the level change below still happens */ }
@@ -525,8 +520,13 @@ const Browse = {
 
   // The card, as a pure function of the cached entry + expanded flag.
   // Pure so tests/browse-screen.test.js can pin every state without a
-  // DOM or a fetch, exactly like sortApps / metaLine / renderAppRow.
-  contributorsSectionHtml(entry, opts) {
+  // DOM or a fetch, exactly like sortApps / metaLine / rowView.
+  //
+  // Returns a DESCRIPTOR now (#1191 slice 6, conversion 3);
+  // ./browse-detail.tsx renders it. Every decision this function ever made —
+  // which of the four body states shows, where the count chip appears, how
+  // the fold is computed, what the toggle is labelled — is still made here.
+  contributorsView(entry, opts) {
     const expanded = !!(opts && opts.expanded);
     const state = (entry && entry.state) || 'loading';
     const items = (entry && Array.isArray(entry.items)) ? entry.items : [];
@@ -537,39 +537,35 @@ const Browse = {
 
     // The heading paints in every state (including loading) so the page
     // doesn't jump when the fetch lands.
-    const countChip = (state === 'ready' && total > 0)
-      ? `<span class="text-zinc-400 dark:text-zinc-500 font-normal"> · ${total}</span>`
-      : '';
-    const head = `
-      <h3 class="px-3 py-2.5 text-sm font-semibold text-zinc-900 dark:text-zinc-100 border-b border-zinc-200 dark:border-zinc-800" title="The app&rsquo;s creator, its members, and everyone whose proposal has been merged into it">Contributors${countChip}</h3>`;
+    const view = {
+      state,
+      // null hides the chip entirely, rather than rendering an empty span.
+      count: (state === 'ready' && total > 0) ? total : null,
+      rows: [],
+      toggle: null,
+      note: null,
+    };
 
-    let body;
     if (state === 'loading') {
-      body = '<p class="px-3 py-3 text-sm text-zinc-500 dark:text-zinc-400">Loading contributors…</p>';
+      view.note = 'Loading contributors…';
     } else if (state === 'error') {
-      body = '<p class="px-3 py-3 text-sm text-zinc-500 dark:text-zinc-400">Couldn&rsquo;t load contributors.</p>';
+      view.note = 'Couldn’t load contributors.';
     } else if (!items.length) {
-      body = '<p class="px-3 py-3 text-sm text-zinc-500 dark:text-zinc-400">No contributors yet.</p>';
+      view.note = 'No contributors yet.';
     } else {
       const shown = expanded ? items : items.slice(0, Browse.CONTRIB_FOLD);
-      const rows = shown
-        .map((c, i) => Browse.contributorRowHtml(c, i + 1))
-        .join('');
+      view.rows = shown.map((c, i) => Browse.contributorRowView(c, i + 1));
       // The fold is decided by what ARRIVED (items.length), not by total —
       // a capped list has nothing more to reveal locally. The label still
       // quotes `total` so the number matches the heading.
-      const toggle = items.length > Browse.CONTRIB_FOLD
-        ? `<button type="button" id="browse-contrib-toggle" class="w-full px-3 py-2.5 text-sm font-medium text-violet-600 dark:text-violet-400 text-left transition-colors hover:bg-zinc-500/5 border-t border-zinc-200 dark:border-zinc-800">${
-            expanded ? 'Show fewer' : `Show all ${total} contributor${total === 1 ? '' : 's'}`
-          }</button>`
-        : '';
-      body = `<div class="divide-y divide-zinc-200 dark:divide-zinc-800">${rows}</div>${toggle}`;
+      if (items.length > Browse.CONTRIB_FOLD) {
+        view.toggle = expanded
+          ? 'Show fewer'
+          : `Show all ${total} contributor${total === 1 ? '' : 's'}`;
+      }
     }
 
-    return `
-      <div id="browse-detail-contributors" class="mt-5 rounded-xl border border-zinc-200 dark:border-zinc-800 overflow-hidden">
-        ${head}${body}
-      </div>`;
+    return view;
   },
 
   // One contributor row. Deliberately mirrors the Top-users leaderboard's
@@ -577,9 +573,8 @@ const Browse = {
   // initial-avatar circle, @username, a muted meta line, a count pill on the
   // right — so the platform's two ranked people-lists read as one system. A
   // <button> so it is keyboard-focusable like those rows are. Pure.
-  contributorRowHtml(c, rank) {
+  contributorRowView(c, rank) {
     const who = (c && c.username) || 'unknown';
-    const initial = (who[0] || '?').toUpperCase();
     const merged = parseInt(c && c.merged_count, 10) || 0;
     const votes = parseInt(c && c.votes_count, 10) || 0;
     // Role first (it says what they ARE on this app), then the vote count.
@@ -589,24 +584,35 @@ const Browse = {
     if (c && c.is_creator) bits.push('Creator');
     else if (c && c.is_member) bits.push('Member');
     if (votes > 0) bits.push(`${votes} vote${votes === 1 ? '' : 's'}`);
-    const meta = bits.length
-      ? `<div class="text-xs text-zinc-500 dark:text-zinc-400 truncate">${escapeHtml(bits.join(' · '))}</div>`
-      : '';
-    // A zero stays visible in muted grey rather than vanishing, so every
-    // row keeps the same shape and the column doesn't ragged out.
-    const pillTint = merged > 0
-      ? 'bg-violet-50 dark:bg-violet-900/30 border-violet-200 dark:border-violet-700 text-violet-700 dark:text-violet-300'
-      : 'bg-zinc-100 dark:bg-zinc-800 border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400';
-    return `
-      <button type="button" class="browse-contrib-row w-full text-left flex items-center gap-3 px-3 py-2.5 transition-colors hover:bg-zinc-500/5" data-username="${browseEscapeAttr(who)}" title="View @${browseEscapeAttr(who)}&rsquo;s proposals">
-        <div class="w-5 shrink-0 text-center text-xs font-mono text-zinc-400 dark:text-zinc-500">${rank}</div>
-        <div class="w-8 h-8 shrink-0 rounded-full bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 flex items-center justify-center font-semibold text-xs">${escapeHtml(initial)}</div>
-        <div class="min-w-0 flex-1">
-          <div class="text-sm font-medium text-zinc-900 dark:text-zinc-100 truncate">@${escapeHtml(who)}</div>
-          ${meta}
-        </div>
-        <div class="shrink-0 inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-semibold ${pillTint}" title="Proposals merged into this app">${merged} merged</div>
-      </button>`;
+    return {
+      who,
+      rank,
+      initial: (who[0] || '?').toUpperCase(),
+      merged,
+      // null rather than '' so the renderer drops the line instead of
+      // drawing an empty one, exactly as the string version did.
+      meta: bits.length ? bits.join(' · ') : null,
+      // A zero stays visible in muted grey rather than vanishing, so every
+      // row keeps the same shape and the column doesn't ragged out.
+      pillTint: merged > 0
+        ? 'bg-violet-50 dark:bg-violet-900/30 border-violet-200 dark:border-violet-700 text-violet-700 dark:text-violet-300'
+        : 'bg-zinc-100 dark:bg-zinc-800 border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400',
+    };
+  },
+
+  // A contributor row opens that person's existing profile page (every
+  // proposal they've proposed) — the leaderboard's own drill-in route, so this
+  // screen owns no profile rendering of its own. An unresolvable username
+  // lands on that pane's "User not found" state.
+  openContributor(who) {
+    if (who) location.hash = `#leaderboard/users/${encodeURIComponent(who)}`;
+  },
+
+  // The fold toggle is purely local — the full list is already in hand, so
+  // this repaints and never refetches.
+  toggleContributors() {
+    Browse._contribExpanded = !Browse._contribExpanded;
+    Browse.render();
   },
 
   // Read one app's ranked contributors. Mirrors _fetchDetail: single-flight
@@ -638,35 +644,21 @@ const Browse = {
   },
 
   _renderDetail() {
-    const host = document.getElementById('browse-detail');
-    if (!host) return;
+    if (!Browse._store) return;
     const slug = Browse._slug;
     const app = Browse.appBySlug(slug);
 
     if (!app) {
       if (Browse._detailMissing) {
-        host.innerHTML = `
-          <div class="text-sm text-zinc-500 dark:text-zinc-400">
-            <p class="mb-3">That app isn&rsquo;t available.</p>
-            <a id="browse-detail-back" href="#apps" class="inline-block text-violet-500 hover:text-violet-400">&larr; Back to all apps</a>
-          </div>`;
-        host.querySelector('#browse-detail-back')
-          ?.addEventListener('click', (e) => {
-            // #1036: real anchor — a modified click is the browser's.
-            if (window.NavLink && NavLink.isNativeClick(e)) return;
-            e.preventDefault();
-            location.hash = '#apps';
-          });
+        Browse._store.set({ detail: { state: 'missing' } });
         return;
       }
-      host.innerHTML = '<p class="text-sm text-zinc-500 dark:text-zinc-400">Loading…</p>';
+      Browse._store.set({ detail: { state: 'loading' } });
       Browse._fetchDetail(slug);
       return;
     }
 
     const isAdded = Home.isYours(app);
-    const icon = iconTileFor(app);
-    const pills = renderAppPillsHtml(app);
     const canOpen = app.status === 'running' || app.status === 'awaiting_secrets';
     // Same build-info block the "…" menu header assembles, so the version
     // chip looks identical everywhere and shows a live deploying state.
@@ -689,93 +681,67 @@ const Browse = {
       contribEntry = { state: 'loading', items: [], total: 0 };
       Browse._fetchContributors(slug);
     }
-    const contribHtml = Browse.contributorsSectionHtml(contribEntry, {
-      expanded: Browse._contribExpanded,
-    });
+    // The action list is kept on the instance as well as on the descriptor:
+    // each item carries a `run` closure that the store has no business
+    // serialising, and _runDetailAction hands the clicked BUTTON to it so a
+    // keepOpen item (Check for updates) can flip its label in place exactly
+    // as it does inside the popover.
+    Browse._detailActions = actions;
 
-    host.innerHTML = `
-      <div class="flex items-start gap-4">
-        <div class="app-icon-tile w-16 h-16 shrink-0 rounded-2xl overflow-hidden flex items-center justify-center font-bold text-2xl" data-icon="${icon.kind}">
-          ${icon.html}
-        </div>
-        <div class="min-w-0 flex-1">
-          <h2 class="text-xl font-semibold text-zinc-900 dark:text-zinc-100 break-words">${escapeHtml(app.name || app.slug)}</h2>
-          <p class="text-xs font-mono text-zinc-400 dark:text-zinc-500 break-all">${escapeHtml(app.slug)}</p>
-          ${pillHtml ? `<div class="mt-2">${pillHtml}</div>` : ''}
-          ${updatedRel ? `<p class="mt-1 text-xs text-zinc-500 dark:text-zinc-400">Updated ${escapeHtml(updatedRel)}</p>` : ''}
-          ${pills ? `<div class="flex flex-wrap items-center gap-1 mt-2">${pills}</div>` : ''}
-        </div>
-      </div>
-
-      <div class="flex flex-wrap items-center gap-2 mt-4">
-        <button type="button" id="browse-detail-open" class="inline-flex items-center gap-2 rounded-full px-5 py-2 text-sm font-medium transition-colors ${
-          canOpen
-            ? 'bg-violet-600 hover:bg-violet-500 text-white'
-            : 'bg-zinc-200 dark:bg-zinc-800 text-zinc-500 cursor-not-allowed'
-        }"${canOpen ? '' : ' disabled'}>
-          ${canOpen
-            ? '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M13 7l5 5m0 0l-5 5m5-5H6"/></svg>Open'
-            : escapeHtml(app.status === 'creating' ? 'Spinning up…' : app.status === 'error' ? 'Not running' : (app.status || 'Unavailable'))}
-        </button>
-        <button type="button" id="browse-detail-fav" class="inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-medium transition-colors ${
-          isAdded
-            ? 'border-emerald-500 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950'
-            : 'border-violet-500 dark:border-violet-400 text-violet-600 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-950'
-        }" data-added="${isAdded}">${isAdded ? 'Remove from Your apps' : 'Add to Your apps'}</button>
-      </div>
-
-      ${actions.length ? `
-      <div class="mt-5 rounded-xl border border-zinc-200 dark:border-zinc-800 overflow-hidden divide-y divide-zinc-200 dark:divide-zinc-800">
-        ${actions.map((a, i) => `
-          <button type="button" class="browse-detail-action w-full flex items-center justify-between gap-2 px-3 py-3 text-sm text-left transition-colors hover:bg-zinc-500/5 ${
-            a.danger ? 'text-red-500' : 'text-zinc-700 dark:text-zinc-200'
-          }" data-action-index="${i}"${a.title ? ` title="${escapeHtml(a.title).replace(/"/g, '&quot;')}"` : ''}${a.disabled ? ' disabled' : ''}>
-            <span>${escapeHtml(a.label)}</span>
-            <svg class="w-4 h-4 shrink-0 opacity-40" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
-          </button>`).join('')}
-      </div>` : ''}
-
-      ${contribHtml}`;
-
-    if (canOpen) {
-      const openBtn = host.querySelector('#browse-detail-open');
-      openBtn?.addEventListener('click', () => App.navigateToApp(app.slug));
-      // #931: warm the mint + origin connection on press/hover, so the tap
-      // can point the app frame at the app in its own tick.
-      if (openBtn) {
-        const warm = () => { try { App.prewarmApp(app.slug); } catch (err) { /* ignore */ } };
-        openBtn.addEventListener('pointerdown', warm, { passive: true });
-        openBtn.addEventListener('mouseenter', warm);
-      }
-    }
-    host.querySelector('#browse-detail-fav')?.addEventListener('click', () => {
-      Home.toggleAdded(app.slug, !Home.isYours(app), () => Browse.render());
+    Browse._store.set({
+      detail: {
+        state: 'ready',
+        app,
+        name: app.name || app.slug,
+        slug: app.slug,
+        // AppView.renderAppVersionPillHTML is a pure string builder in the
+        // (still legacy) app view — it reads nothing and mutates nothing — so
+        // the hero renders its output as markup rather than re-deriving a
+        // chip that would then have two owners. '' draws no wrapper at all.
+        versionPillHtml: pillHtml,
+        updatedRel,
+        canOpen,
+        openLabel: canOpen
+          ? 'Open'
+          : (app.status === 'creating' ? 'Spinning up…'
+            : app.status === 'error' ? 'Not running'
+            : (app.status || 'Unavailable')),
+        isAdded,
+        favLabel: isAdded ? 'Remove from Your apps' : 'Add to Your apps',
+        actions: actions.map((a, i) => ({
+          index: i,
+          label: a.label,
+          title: a.title || null,
+          danger: !!a.danger,
+          disabled: !!a.disabled,
+        })),
+        contributors: Browse.contributorsView(contribEntry, {
+          expanded: Browse._contribExpanded,
+        }),
+      },
     });
-    // Each row runs the menu item's own handler, and is handed its button
-    // element so a keepOpen item (Check for updates) can flip its label in
-    // place exactly as it does inside the popover.
-    host.querySelectorAll('.browse-detail-action').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const item = actions[parseInt(btn.dataset.actionIndex, 10)];
-        if (item && typeof item.run === 'function') item.run(btn);
-      });
-    });
-    // A contributor row opens that person's existing profile page (every
-    // proposal they've proposed) — the leaderboard's own drill-in route, so
-    // this screen owns no profile rendering of its own. An unresolvable
-    // username lands on that pane's "User not found" state.
-    host.querySelectorAll('.browse-contrib-row').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const who = btn.dataset.username;
-        if (who) location.hash = `#leaderboard/users/${encodeURIComponent(who)}`;
-      });
-    });
-    // The fold toggle is purely local — the full list is already in hand,
-    // so this repaints and never refetches.
-    host.querySelector('#browse-contrib-toggle')?.addEventListener('click', () => {
-      Browse._contribExpanded = !Browse._contribExpanded;
-      Browse.render();
-    });
+  },
+
+  // ── Detail intents ────────────────────────────────────────────────
+
+  openDetailApp(slug) {
+    App.navigateToApp(slug);
+  },
+
+  // #931: warm the mint + origin connection on press/hover, so the tap can
+  // point the app frame at the app in its own tick.
+  warmDetailApp(slug) {
+    try { App.prewarmApp(slug); } catch (err) { /* ignore */ }
+  },
+
+  toggleDetailAdded(app) {
+    if (!app) return;
+    Home.toggleAdded(app.slug, !Home.isYours(app), () => Browse.render());
+  },
+
+  _runDetailAction(index, btnEl) {
+    const item = (Browse._detailActions || [])[index];
+    if (item && typeof item.run === 'function') item.run(btnEl);
   },
 
   // Cold deep link (#apps/<slug> on a fresh load, or a link from
@@ -811,56 +777,42 @@ const Browse = {
 
   // ── Search (level 1) ──────────────────────────────────────────────
   //
-  // Bound once, lazily — the input is static markup in index.html, so
-  // there is no per-render listener churn and no focus loss (the same
-  // discipline as Home._wireSearch).
-  _wireSearch() {
-    if (Browse._searchWired) return;
-    const input = document.getElementById('browse-search-input');
-    const clearBtn = document.getElementById('browse-search-clear');
-    if (!input) return;
-    Browse._searchWired = true;
+  // The listeners moved to ./browse-screen.tsx (the field and its clear
+  // button are its children now), but the DEBOUNCE and what a query means
+  // stayed here. The component reports keystrokes; setQuery coalesces them on
+  // the same 100ms timer the input listener used to, so a fast typist still
+  // gets one re-filter per pause rather than one per character. The clear
+  // button's own visibility is a store field for the same reason the level is
+  // — it used to be a classList.toggle into a node React renders.
+  //
+  // The field itself stays UNCONTROLLED: nothing re-renders it, so the caret
+  // cannot jump mid-word, which is the same "no focus loss" property the
+  // wire-once discipline bought before.
+  SEARCH_DEBOUNCE_MS: 100,
+
+  setQuery(value, opts) {
+    const immediate = !!(opts && opts.immediate);
+    clearTimeout(Browse._searchDebounce);
     const apply = () => {
-      Browse._query = input.value;
-      if (clearBtn) clearBtn.classList.toggle('hidden', !input.value);
+      Browse._query = value;
+      if (Browse._store) Browse._store.set({ showClear: !!value });
       Browse.render();
     };
-    input.addEventListener('input', () => {
-      clearTimeout(Browse._searchDebounce);
-      Browse._searchDebounce = setTimeout(apply, 100);
-    });
-    input.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && input.value) {
-        e.preventDefault();
-        input.value = '';
-        clearTimeout(Browse._searchDebounce);
-        apply();
-      }
-    });
-    if (clearBtn) {
-      clearBtn.addEventListener('click', () => {
-        input.value = '';
-        clearTimeout(Browse._searchDebounce);
-        apply();
-        input.focus();
-      });
-    }
+    if (immediate) apply();
+    else Browse._searchDebounce = setTimeout(apply, Browse.SEARCH_DEBOUNCE_MS);
   },
 };
 
-// escapeHtml and formatRelativeTime used to be AMBIENT here: as classic
-// scripts, home.js's top-level function declarations were window properties
-// and this file just called them. Inside the bundle a module's identifiers
-// are its own, so both are now module-local — same bodies, copied rather
-// than imported for the reason app-card.js gives for its own copy. (home.js
-// is still a classic script until step 4, so its copies stay too; three
-// lines of formatter is not worth a cross-module dependency that would then
-// have to survive that move.)
-function escapeHtml(str) {
-  const div = document.createElement('div');
-  div.textContent = str;
-  return div.innerHTML;
-}
+// formatRelativeTime used to be AMBIENT here: as classic scripts, home.js's
+// top-level function declarations were window properties and this file just
+// called them. Inside the bundle a module's identifiers are its own, so it is
+// module-local — same body, copied rather than imported for the reason
+// app-card.js gives for its own copy. (home.js is still a classic script
+// until step 4, so its copy stays too; three lines of formatter is not worth
+// a cross-module dependency that would then have to survive that move.)
+//
+// escapeHtml and browseEscapeAttr went with the markup (#1191 slice 6): this
+// file emits descriptors, and React escapes its own text.
 
 // Compact "Nx ago" formatter for the row and detail meta lines. Returns null
 // for unparseable input so callers can drop the segment rather than render
@@ -876,14 +828,6 @@ function formatRelativeTime(input) {
   if (seconds < 86400 * 30) return `${Math.floor(seconds / 86400)}d ago`;
   if (seconds < 86400 * 365) return `${Math.floor(seconds / (86400 * 30))}mo ago`;
   return `${Math.floor(seconds / (86400 * 365))}y ago`;
-}
-
-// Attribute-safe escape. escapeHtml above goes through textContent, which
-// covers & < > but NOT the double quote that would break out of an
-// attribute — the same `.replace` the detail page's action rows already do
-// inline, named so the contributor rows can reuse it.
-function browseEscapeAttr(str) {
-  return escapeHtml(str).replace(/"/g, '&quot;');
 }
 
 // Still published as a global: App.navigateToBrowse, app.js's hash router and

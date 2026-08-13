@@ -39,6 +39,21 @@
 // section instead of writing DOM (see ./section-store.ts). Everything else is
 // unchanged — the three panes are still innerHTML hosts this module and its two
 // guest modules own, and a trigger's click still calls _setSection().
+//
+// #1191 slice 6 conversion 6 finished the KUDOS pane. #leaderboard-root is
+// React-owned now: ./kudos-pane.tsx is its only writer, and this module builds
+// DESCRIPTORS for it (chromeView / bodyView and the *RowViews helpers) instead
+// of HTML strings. Everything that decides WHAT to show still lives here — the
+// caches, the fetches, the tab state, the labels and the class strings — so
+// this was a change of output type, not of behaviour. What genuinely retired
+// is the four addEventListener sweeps that re-bound the pane after each render
+// (their handlers are now named methods the renderer calls: _setSub,
+// _setWindow, _toggleHistoryFilter, _openUser, _routeToPr, _loadMore) and the
+// escapeHtml/escapeAttr pair at the foot of the file.
+//
+// The two remaining panes are unchanged by that: #topochain-leaderboard-root
+// went stateful in conversion 5, #challenges-root is conversion 7, and pane
+// VISIBILITY still belongs to _applySection's classList.toggle for all three.
 
 // The section store's accessor, duplicated identically from
 // ./section-store.ts — see that file's header for why this module publishes
@@ -55,6 +70,11 @@ function leaderboardSectionStore() {
 }
 
 const Leaderboard = {
+  // ./kudos-pane-store.js, planted by ./mount.ts rather than imported — see
+  // that store's header for why this file takes no import. Null during the
+  // SSG prerender pass and until the bundle mounts, so every write goes
+  // through `?.set(...)`.
+  _store: null,
   _open: false,
   // Top-level section of the Leaderboard screen. 'kudos' is everything
   // this module renders itself; 'topochain' and 'challenges' defer to the
@@ -410,59 +430,35 @@ const Leaderboard = {
     }
   },
 
+  // Publish the pane's CHROME — the profile header, or the sub-tab strip and
+  // window pills. ./kudos-pane.tsx renders it. #1191 slice 6 conversion 6 took
+  // the innerHTML and the three addEventListener sweeps; the branching, the
+  // labels and the class strings are unchanged, they just travel as data now.
   _render() {
-    const root = document.getElementById('leaderboard-root');
-    if (!root) return;
+    Leaderboard._store?.set({ mounted: true, chrome: Leaderboard.chromeView() });
+    Leaderboard._renderBody();
+  },
+
+  chromeView() {
     // Profile drill-in replaces the whole tab chrome while open; the
     // body (stats + PR list) renders via _renderBody once data lands.
     if (Leaderboard.profileUser) {
       const who = Leaderboard.profileUser;
-      const initial = (who[0] || '?').toUpperCase();
-      root.innerHTML = `
-        <header class="mb-4">
-          <a data-lb-back href="#leaderboard/users" class="inline-block text-sm font-medium text-violet-600 dark:text-violet-400 hover:underline mb-3">← Top users</a>
-          <div class="flex items-center gap-3">
-            <div class="w-12 h-12 rounded-full bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 flex items-center justify-center font-semibold text-lg">${escapeHtml(initial)}</div>
-            <div class="min-w-0">
-              <h2 class="text-2xl font-bold text-zinc-900 dark:text-zinc-100 truncate">@${escapeHtml(who)}</h2>
-              <p class="text-sm text-zinc-500 dark:text-zinc-400">All PRs this user has proposed, newest first.</p>
-            </div>
-          </div>
-        </header>
-        <div id="leaderboard-body" class="mt-2"></div>
-      `;
-      root.querySelector('[data-lb-back]').addEventListener('click', (e) => {
-        // #1036: real anchor — a modified click is the browser's.
-        // `inline-block` on it is load-bearing: an <a> is inline, and an
-        // inline element silently drops the mb-3 the <button> honoured.
-        if (window.NavLink && NavLink.isNativeClick(e)) return;
-        e.preventDefault();
-        // Real hash navigation so browser/WebView back behaves; the
-        // hashchange route clears profileUser via _setSub('users').
-        window.location.hash = '#leaderboard/users';
-      });
-      Leaderboard._renderBody();
-      return;
+      return { kind: 'profile', who, initial: (who[0] || '?').toUpperCase() };
     }
     const isHistory = Leaderboard.sub === 'history';
-    const subTabs = ['prs', 'users', 'history'].map((s) => {
-      const active = s === Leaderboard.sub;
-      const label = s === 'prs' ? 'Top PRs' : s === 'users' ? 'Top users' : 'My history';
-      const cls = active
-        ? 'border-violet-500 text-violet-700 dark:text-violet-300'
-        : 'border-transparent text-zinc-500 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200';
-      return `<button data-lb-sub="${s}" class="px-3 py-2 text-sm font-medium border-b-2 ${cls}">${label}</button>`;
-    }).join('');
+    const subTabs = ['prs', 'users', 'history'].map((s) => ({
+      key: s,
+      active: s === Leaderboard.sub,
+      label: s === 'prs' ? 'Top PRs' : s === 'users' ? 'Top users' : 'My history',
+    }));
     // The All-time / This week pills only apply to the leaderboard
     // tabs — history is always everything, newest first.
-    const winTabs = isHistory ? '' : ['all', 'week'].map((w) => {
-      const active = w === Leaderboard.window;
-      const label = w === 'all' ? 'All-time' : 'This week';
-      const cls = active
-        ? 'bg-violet-600 text-white'
-        : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700';
-      return `<button data-lb-win="${w}" class="px-3 py-1 text-xs font-medium rounded-full ${cls}">${label}</button>`;
-    }).join('');
+    const winTabs = isHistory ? [] : ['all', 'week'].map((w) => ({
+      key: w,
+      active: w === Leaderboard.window,
+      label: w === 'all' ? 'All-time' : 'This week',
+    }));
 
     const subtitle = isHistory
       ? 'Everything you’ve given — kudos, bounty pledges, and votes — newest first. Only you can see this.'
@@ -476,298 +472,214 @@ const Leaderboard = {
     // No <h2> of our own: the Leaderboard screen shell already titles the
     // page and the section tab above says "Kudos". The subtitle stays —
     // it's the one line explaining the weekly kudos budget.
-    root.innerHTML = `
-      <header class="mb-4">
-        <p class="text-sm text-zinc-500 dark:text-zinc-400">${subtitle}</p>
-      </header>
-      <div class="flex items-center justify-between border-b border-zinc-200 dark:border-zinc-800 mb-3">
-        <div class="flex gap-4">${subTabs}</div>
-        <div class="flex gap-2 pb-1">${winTabs}</div>
-      </div>
-      <div id="leaderboard-body" class="mt-2"></div>
-    `;
-    root.querySelectorAll('[data-lb-sub]').forEach((btn) => {
-      btn.addEventListener('click', () => Leaderboard._setSub(btn.dataset.lbSub));
-    });
-    root.querySelectorAll('[data-lb-win]').forEach((btn) => {
-      btn.addEventListener('click', () => Leaderboard._setWindow(btn.dataset.lbWin));
-    });
-    Leaderboard._renderBody();
+    return { kind: 'tabs', subtitle, subTabs, winTabs };
   },
 
+  // Publish the pane's BODY. Separate from the chrome for the reason
+  // ./kudos-pane-store.js's header gives: this runs on every load, cache hit
+  // and load-more toggle, and must not re-key the tab strip.
   _renderBody() {
-    const body = document.getElementById('leaderboard-body');
-    if (!body) return;
-    if (Leaderboard.profileUser) {
-      Leaderboard._renderProfileBody(body);
-      return;
-    }
-    if (Leaderboard.sub === 'history') {
-      Leaderboard._renderHistoryBody(body);
-      return;
-    }
+    Leaderboard._store?.set({ body: Leaderboard.bodyView() });
+  },
+
+  bodyView() {
+    if (Leaderboard.profileUser) return Leaderboard.profileBodyView();
+    if (Leaderboard.sub === 'history') return Leaderboard.historyBodyView();
+
     const key = Leaderboard._key(Leaderboard.sub, Leaderboard.window);
     const data = Leaderboard._cache.get(key);
 
-    if (!data) {
-      body.innerHTML = `<div class="py-8 text-center text-sm text-zinc-500">Loading…</div>`;
-      return;
-    }
+    if (!data) return { kind: 'loading' };
     if (data.error) {
-      body.innerHTML = `<div class="py-8 text-center text-sm text-red-500">Couldn’t load leaderboard. Try again later.</div>`;
-      return;
+      return { kind: 'error', message: 'Couldn’t load leaderboard. Try again later.' };
     }
     const items = Array.isArray(data.items) ? data.items : [];
     if (!items.length) {
-      body.innerHTML = `<div class="py-8 text-center text-sm text-zinc-500">
-        No kudos ${Leaderboard.window === 'week' ? 'this week ' : ''}yet.
-        ${Leaderboard.sub === 'prs' ? 'When someone gives a PR kudos, it shows up here.' : 'When a user gets kudos on a PR they authored, they show up here.'}
-      </div>`;
-      return;
+      // Assembled here rather than in the renderer so the two variable bits
+      // stay next to the sentence they belong to.
+      return {
+        kind: 'empty',
+        message: `No kudos ${Leaderboard.window === 'week' ? 'this week ' : ''}yet. `
+          + (Leaderboard.sub === 'prs'
+            ? 'When someone gives a PR kudos, it shows up here.'
+            : 'When a user gets kudos on a PR they authored, they show up here.'),
+      };
     }
-    body.innerHTML = Leaderboard.sub === 'prs'
-      ? Leaderboard._renderPrRows(items)
-      : Leaderboard._renderUserRows(items);
-    Leaderboard._wireRouteButtons(body);
-    Leaderboard._wireUserRows(body);
+    return Leaderboard.sub === 'prs'
+      ? { kind: 'prs', rows: Leaderboard.prRowViews(items) }
+      : { kind: 'users', rows: Leaderboard.userRowViews(items) };
   },
 
   // (#60) Profile pane body: stat chips + the user's proposed-PR list,
   // with the same Load-more keyset flow as My history.
-  _renderProfileBody(body) {
+  profileBodyView() {
     const key = Leaderboard._key();
     const data = Leaderboard._cache.get(key);
 
-    if (!data) {
-      body.innerHTML = `<div class="py-8 text-center text-sm text-zinc-500">Loading…</div>`;
-      return;
-    }
+    if (!data) return { kind: 'loading' };
     if (data.error) {
-      body.innerHTML = data.notFound
-        ? `<div class="py-8 text-center text-sm text-zinc-500">User not found.</div>`
-        : `<div class="py-8 text-center text-sm text-red-500">Couldn’t load this profile. Try again later.</div>`;
-      return;
+      return data.notFound
+        ? { kind: 'empty', message: 'User not found.' }
+        : { kind: 'error', message: 'Couldn’t load this profile. Try again later.' };
     }
 
     const s = data.stats || {};
-    const chip = (label, title) =>
-      `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 text-xs font-medium" ${title ? `title="${escapeAttr(title)}"` : ''}>${label}</span>`;
-    const stats = `
-      <div class="flex items-center gap-2 mb-3 flex-wrap">
-        <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-violet-50 dark:bg-violet-900/30 border border-violet-200 dark:border-violet-700 text-violet-700 dark:text-violet-300 text-xs font-semibold" title="Kudos earned on merged PRs — the leaderboard ranking score">
-          <span aria-hidden="true">\u{1F44F}</span><span>${s.kudos_merged || 0} on merged</span>
-        </span>
-        ${chip(`${s.prs_merged || 0} merged`, 'PRs of theirs that landed')}
-        ${chip(`${s.prs_total || 0} PR${(s.prs_total || 0) === 1 ? '' : 's'} proposed`, 'Everything they put up for the group, including open and closed PRs')}
-      </div>`;
+    const prsTotal = s.prs_total || 0;
+    const stats = {
+      kudosMerged: `${s.kudos_merged || 0} on merged`,
+      chips: [
+        { label: `${s.prs_merged || 0} merged`, title: 'PRs of theirs that landed' },
+        {
+          label: `${prsTotal} PR${prsTotal === 1 ? '' : 's'} proposed`,
+          title: 'Everything they put up for the group, including open and closed PRs',
+        },
+      ],
+    };
 
     const items = Array.isArray(data.items) ? data.items : [];
-    let listHtml;
-    if (!items.length) {
-      listHtml = `<div class="py-8 text-center text-sm text-zinc-500">No PRs proposed yet.</div>`;
-    } else {
-      const more = data.nextBefore
-        ? `<div class="mt-3 text-center">
-             <button data-lb-more class="px-4 py-1.5 text-sm font-medium rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-900" ${Leaderboard._moreLoading ? 'disabled' : ''}>
-               ${Leaderboard._moreLoading ? 'Loading…' : 'Load more'}
-             </button>
-           </div>`
-        : '';
-      listHtml = Leaderboard._renderProfilePrRows(items) + more;
-    }
-
-    body.innerHTML = stats + listHtml;
-    const moreBtn = body.querySelector('[data-lb-more]');
-    if (moreBtn) moreBtn.addEventListener('click', () => Leaderboard._loadMore());
-    Leaderboard._wireRouteButtons(body);
-    // The GitHub icon is a real anchor INSIDE the routed row — stop the
-    // click from also triggering the row navigation.
-    body.querySelectorAll('[data-lb-ext]').forEach((a) => {
-      a.addEventListener('click', (e) => e.stopPropagation());
-    });
+    return {
+      kind: 'profile',
+      stats,
+      rows: items.length ? Leaderboard.profilePrRowViews(items) : null,
+      // Load-more belongs to the list, so an empty profile doesn't grow one.
+      more: items.length ? Leaderboard.moreView(data) : null,
+    };
   },
 
-  _renderProfilePrRows(items) {
-    const rows = items.map((row) => {
-      const title = row.pr_title || `PR #${row.pr_number || row.session_id}`;
-      const appName = row.app_name || row.app_slug || 'app';
-      const badge = Leaderboard._statusBadge(row.status);
-      const when = Leaderboard._fmtDate(row.created_at);
+  // The Load-more control, shared by the profile and history panes: present
+  // only while the keyset cursor has somewhere left to go, disabled (and
+  // relabelled) while a page is in flight.
+  moreView(data) {
+    if (!data || !data.nextBefore) return null;
+    return { loading: !!Leaderboard._moreLoading };
+  },
+
+  profilePrRowViews(items) {
+    return items.map((row, i) => ({
+      key: `${row.app_slug}|${row.session_id}|${i}`,
+      title: row.pr_title || `PR #${row.pr_number || row.session_id}`,
+      appName: row.app_name || row.app_slug || 'app',
+      badge: Leaderboard._statusBadge(row.status),
+      when: Leaderboard._fmtDate(row.created_at),
       // External GitHub link, when the PR has one. The row itself is a
       // div[role=button] (not <button>) because an <a> may not nest
       // inside a <button>.
-      const ext = row.pr_url
-        ? `<a href="${escapeAttr(row.pr_url)}" target="_blank" rel="noopener" data-lb-ext
-              title="Open on GitHub"
-              class="shrink-0 px-1.5 py-0.5 rounded text-sm text-zinc-400 hover:text-violet-600 dark:hover:text-violet-400"><span aria-hidden="true">↗</span><span class="sr-only">Open on GitHub</span></a>`
-        : '';
-      return `
-        <div role="button" tabindex="0"
-             data-lb-pr-route="${escapeAttr(row.app_slug)}" data-lb-pr-session="${row.session_id}"
-             class="w-full text-left flex items-center gap-3 px-3 py-2.5 rounded-lg border border-zinc-200 dark:border-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-900 transition-colors cursor-pointer">
-          <div class="flex-1 min-w-0">
-            <div class="text-sm font-medium text-zinc-900 dark:text-zinc-100 truncate">${escapeHtml(title)}</div>
-            <div class="text-xs text-zinc-500 mt-0.5 flex items-center gap-1.5 flex-wrap">
-              ${badge}
-              <span>${escapeHtml(appName)}</span>
-              <span class="text-zinc-400">·</span>
-              <span>${escapeHtml(when)}</span>
-            </div>
-          </div>
-          ${ext}
-          <div class="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-violet-50 dark:bg-violet-900/30 border border-violet-200 dark:border-violet-700 text-violet-700 dark:text-violet-300 text-sm font-semibold">
-            <span aria-hidden="true">\u{1F44F}</span>
-            <span>${row.kudos_count}</span>
-          </div>
-        </div>`;
-    }).join('');
-    return `<div class="space-y-2">${rows}</div>`;
+      extUrl: row.pr_url || null,
+      slug: row.app_slug,
+      sessionId: row.session_id,
+      kudos: row.kudos_count,
+    }));
   },
 
   // Status → badge for the profile PR list. Same palette as the Top PRs
   // badges, plus 'closed' (archived-after-promotion) in the zinc tone
-  // the voided-bounty chip uses.
+  // the voided-bounty chip uses. A {tone,label} pair now; ./kudos-pane.tsx
+  // holds the one class table both this and the Top-PRs badge read from.
   _statusBadge(status) {
-    if (status === 'merged') {
-      return '<span class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">merged</span>';
-    }
-    if (status === 'merging') {
-      return '<span class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">merging</span>';
-    }
-    if (status === 'archived') {
-      return '<span class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">closed</span>';
-    }
-    return '<span class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300">open</span>';
+    if (status === 'merged') return { tone: 'emerald', label: 'merged' };
+    if (status === 'merging') return { tone: 'amber', label: 'merging' };
+    if (status === 'archived') return { tone: 'zinc', label: 'closed' };
+    return { tone: 'violet', label: 'open' };
   },
 
   // Top-users rows route to the user's profile via a real hash change
   // (pushes a history entry, so back returns to the tab).
-  _wireUserRows(body) {
-    body.querySelectorAll('[data-lb-user]').forEach((el) => {
-      el.addEventListener('click', () => {
-        const who = el.dataset.lbUser;
-        if (!who) return;
-        window.location.hash = `#leaderboard/users/${encodeURIComponent(who)}`;
-      });
-    });
+  _openUser(who) {
+    if (!who) return;
+    window.location.hash = `#leaderboard/users/${encodeURIComponent(who)}`;
   },
 
-  _renderHistoryBody(body) {
+  historyBodyView() {
     const key = Leaderboard._key('history');
     const data = Leaderboard._cache.get(key);
 
-    const chip = (which, label, on) => {
-      const cls = on
-        ? 'bg-violet-600 text-white border-violet-600'
-        : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 border-zinc-200 dark:border-zinc-700 hover:bg-zinc-200 dark:hover:bg-zinc-700';
-      return `<button data-lb-hfilter="${which}" class="px-3 py-1 text-xs font-medium rounded-full border ${cls}">${label}</button>`;
+    // The chips render in every state — they are how you get OUT of a filter
+    // that returned nothing, so a load failure must not take them with it.
+    const view = {
+      kind: 'history',
+      chips: [
+        { key: 'kudos', label: '\u{1F44F} Kudos', on: Leaderboard._histKudos },
+        { key: 'votes', label: '\u{1F5F3}️ Votes', on: Leaderboard._histVotes },
+      ],
+      list: null,
+      more: null,
     };
-    const chips = `
-      <div class="flex items-center gap-2 mb-3">
-        ${chip('kudos', '\u{1F44F} Kudos', Leaderboard._histKudos)}
-        ${chip('votes', '\u{1F5F3}️ Votes', Leaderboard._histVotes)}
-      </div>`;
 
-    let listHtml;
     if (!data) {
-      listHtml = `<div class="py-8 text-center text-sm text-zinc-500">Loading…</div>`;
+      view.list = { kind: 'loading' };
     } else if (data.error) {
-      listHtml = `<div class="py-8 text-center text-sm text-red-500">Couldn’t load your history. Try again later.</div>`;
+      view.list = { kind: 'error', message: 'Couldn’t load your history. Try again later.' };
     } else {
       const items = Array.isArray(data.items) ? data.items : [];
       if (!items.length) {
-        listHtml = `<div class="py-8 text-center text-sm text-zinc-500">
-          Nothing here yet. Kudos, bounty pledges, and votes you give will appear here.
-        </div>`;
+        view.list = {
+          kind: 'empty',
+          message: 'Nothing here yet. Kudos, bounty pledges, and votes you give will appear here.',
+        };
       } else {
-        const more = data.nextBefore
-          ? `<div class="mt-3 text-center">
-               <button data-lb-more class="px-4 py-1.5 text-sm font-medium rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-900" ${Leaderboard._moreLoading ? 'disabled' : ''}>
-                 ${Leaderboard._moreLoading ? 'Loading…' : 'Load more'}
-               </button>
-             </div>`
-          : '';
-        listHtml = Leaderboard._renderHistoryRows(items) + more;
+        view.list = { kind: 'rows', rows: Leaderboard.historyRowViews(items) };
+        view.more = Leaderboard.moreView(data);
       }
     }
-
-    body.innerHTML = chips + listHtml;
-    body.querySelectorAll('[data-lb-hfilter]').forEach((btn) => {
-      btn.addEventListener('click', () => Leaderboard._toggleHistoryFilter(btn.dataset.lbHfilter));
-    });
-    const moreBtn = body.querySelector('[data-lb-more]');
-    if (moreBtn) moreBtn.addEventListener('click', () => Leaderboard._loadMore());
-    Leaderboard._wireRouteButtons(body);
+    return view;
   },
 
-  _renderHistoryRows(items) {
-    const rows = items.map((it) => {
+  historyRowViews(items) {
+    return items.map((it, i) => {
       // Absolute dates — the list is historical and relative times age
       // poorly in a permanent record.
       const when = Leaderboard._fmtDate(it.created_at);
-      let marker = '';
+      let marker = null;
       let title = '';
-      let metaBits = [];
+      const metaBits = [];
       const appName = it.app?.name || it.app?.slug || 'app';
 
       if (it.type === 'kudos') {
-        marker = `<span class="text-base" aria-hidden="true">\u{1F44F}</span>`;
+        marker = { kind: 'kudos' };
         title = it.pr?.title || `PR #${it.pr?.number ?? it.pr?.sessionId ?? '?'}`;
-        metaBits.push(`by @${escapeHtml(it.pr?.author || 'deleted user')}`);
-        metaBits.push(escapeHtml(appName));
+        metaBits.push({ kind: 'text', text: `by @${it.pr?.author || 'deleted user'}` });
+        metaBits.push({ kind: 'text', text: appName });
       } else if (it.type === 'bounty') {
-        marker = `<span class="inline-flex items-center gap-1"><span class="text-base" aria-hidden="true">\u{1F44F}</span><span class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">bounty</span></span>`;
+        marker = { kind: 'bounty' };
         title = `Pledged kudos on issue #${it.issue?.number ?? '?'}`;
-        metaBits.push(escapeHtml(appName));
+        metaBits.push({ kind: 'text', text: appName });
         if (it.status === 'awarded') {
           const to = it.awarded?.username ? `@${it.awarded.username}` : 'deleted user';
           const at = it.awarded?.at ? ` ${Leaderboard._fmtDate(it.awarded.at)}` : '';
-          metaBits.push(`<span class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">awarded to ${escapeHtml(to)}${escapeHtml(at)}</span>`);
+          metaBits.push({ kind: 'badge', tone: 'emerald', text: `awarded to ${to}${at}` });
         } else if (it.status === 'voided') {
-          metaBits.push(`<span class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400" title="Your own PR closed this issue, so the pledge was returned to your weekly allowance">voided</span>`);
+          metaBits.push({
+            kind: 'badge', tone: 'zinc', text: 'voided',
+            title: 'Your own PR closed this issue, so the pledge was returned to your weekly allowance',
+          });
         } else {
-          metaBits.push(`<span class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300">open</span>`);
+          metaBits.push({ kind: 'badge', tone: 'violet', text: 'open' });
         }
       } else if (it.type === 'pr_vote') {
-        const yes = it.vote === 'yes';
-        marker = yes
-          ? `<span class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">yes</span>`
-          : `<span class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300">no</span>`;
+        marker = { kind: 'pr_vote', yes: it.vote === 'yes' };
         title = it.pr?.title || `PR #${it.pr?.number ?? it.pr?.sessionId ?? '?'}`;
-        metaBits.push(`by @${escapeHtml(it.pr?.author || 'deleted user')}`);
-        metaBits.push(escapeHtml(appName));
+        metaBits.push({ kind: 'text', text: `by @${it.pr?.author || 'deleted user'}` });
+        metaBits.push({ kind: 'text', text: appName });
         // pr_votes keeps only the standing vote; the timestamp is the
         // last cast/flip, not the first.
-        metaBits.push('<span class="italic">current vote</span>');
+        metaBits.push({ kind: 'italic', text: 'current vote' });
       } else if (it.type === 'proposal_vote') {
-        const up = it.vote === 'up';
-        marker = up
-          ? `<span class="text-emerald-600 dark:text-emerald-400 font-bold" aria-hidden="true">▲</span>`
-          : `<span class="text-red-600 dark:text-red-400 font-bold" aria-hidden="true">▼</span>`;
+        marker = { kind: 'proposal_vote', up: it.vote === 'up' };
         title = it.issue?.title || `Proposal #${it.issue?.number ?? '?'}`;
         if (it.issue?.kind && it.issue.kind !== 'general') {
-          metaBits.push(`<span class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300">${escapeHtml(it.issue.kind)}</span>`);
+          metaBits.push({ kind: 'badge', tone: 'sky', text: it.issue.kind });
         }
-        metaBits.push(escapeHtml(appName));
-        metaBits.push('<span class="italic">current vote</span>');
+        metaBits.push({ kind: 'text', text: appName });
+        metaBits.push({ kind: 'italic', text: 'current vote' });
       } else {
-        return '';
+        // An unknown row type rendered as the empty string before, i.e. it
+        // took up no space in the list. null is the descriptor spelling of
+        // that, and the renderer drops it.
+        return null;
       }
 
-      const meta = metaBits.join('<span class="text-zinc-400"> · </span>');
-      const slug = it.app?.slug || '';
-      return `
-        <button data-lb-pr-route="${escapeAttr(slug)}"
-                class="w-full text-left flex items-center gap-3 px-3 py-2.5 rounded-lg border border-zinc-200 dark:border-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-900 transition-colors">
-          <div class="w-12 shrink-0 flex items-center justify-center">${marker}</div>
-          <div class="flex-1 min-w-0">
-            <div class="text-sm font-medium text-zinc-900 dark:text-zinc-100 truncate">${escapeHtml(title)}</div>
-            <div class="text-xs text-zinc-500 mt-0.5 flex items-center gap-1.5 flex-wrap">${meta}</div>
-          </div>
-          <div class="shrink-0 text-xs text-zinc-400 dark:text-zinc-500">${escapeHtml(when)}</div>
-        </button>`;
-    }).join('');
-    return `<div class="space-y-2">${rows}</div>`;
+      return { key: `${it.type}|${it.created_at}|${i}`, marker, title, meta: metaBits, when, slug: it.app?.slug || '' };
+    }).filter(Boolean);
   },
 
   _fmtDate(ts) {
@@ -776,159 +688,104 @@ const Leaderboard = {
     return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
   },
 
-  // Buttons that carry data-lb-pr-route route to that app's group chat
-  // — the PR card / Open Issues panel lives there. Wired lazily after
-  // each body render so we don't fight with the rerender.
-  _wireRouteButtons(body) {
-    body.querySelectorAll('[data-lb-pr-route]').forEach((el) => {
-      // Profile rows are div[role=button] (they nest an <a>), which
-      // doesn't get native Enter/Space activation — emulate it.
-      if (el.tagName !== 'BUTTON') {
-        el.addEventListener('keydown', (e) => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            el.click();
-          }
-        });
-      }
-      el.addEventListener('click', () => {
-        const slug = el.dataset.lbPrRoute;
-        if (!slug) return;
-        // Land on the app's Proposals tab. The PR appears in the
-        // open/merged list there; the user can hit kudos right
-        // from the card. Deep-link to the session when we have it.
-        const sid = el.dataset.lbPrSession || '';
-        window.location.hash = sid
-          ? `#app/${slug}/dev/proposals/${sid}`
-          : `#app/${slug}/dev/proposals`;
-      });
-    });
+  // Rows that carry a slug route to that app's group chat — the PR card /
+  // Open Issues panel lives there. This was three DOM sweeps
+  // (_wireRouteButtons' click + keydown, and _wireUserRows' click) re-run
+  // after every body render; the renderer calls it by name now, so the
+  // behaviour stays here and only the wiring moved.
+  _routeToPr(slug, sessionId) {
+    if (!slug) return;
+    // Land on the app's Proposals tab. The PR appears in the
+    // open/merged list there; the user can hit kudos right
+    // from the card. Deep-link to the session when we have it.
+    const sid = sessionId || '';
+    window.location.hash = sid
+      ? `#app/${slug}/dev/proposals/${sid}`
+      : `#app/${slug}/dev/proposals`;
   },
 
-  _renderPrRows(items) {
-    const rows = items.map((row, i) => {
-      const rank = i + 1;
-      const title = row.pr_title || `PR #${row.pr_number || row.session_id}`;
-      const author = row.author_username || 'unknown';
-      const appName = row.app_name || row.app_slug || 'app';
-      const status = row.status || '';
-      const statusBadge = status === 'merged'
-        ? '<span class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">merged</span>'
-        : status === 'merging'
-          ? '<span class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">merging</span>'
-          : '<span class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300">open</span>';
-      return `
-        <button data-lb-pr-route="${escapeAttr(row.app_slug)}" data-lb-pr-session="${row.session_id}"
-                class="w-full text-left flex items-center gap-3 px-3 py-2.5 rounded-lg border border-zinc-200 dark:border-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-900 transition-colors">
-          <div class="w-7 text-center text-sm font-mono text-zinc-500">${rank}</div>
-          <div class="flex-1 min-w-0">
-            <div class="text-sm font-medium text-zinc-900 dark:text-zinc-100 truncate">${escapeHtml(title)}</div>
-            <div class="text-xs text-zinc-500 mt-0.5 flex items-center gap-1.5 flex-wrap">
-              ${statusBadge}
-              <span>by @${escapeHtml(author)}</span>
-              <span class="text-zinc-400">·</span>
-              <span>${escapeHtml(appName)}</span>
-            </div>
-          </div>
-          <div class="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-violet-50 dark:bg-violet-900/30 border border-violet-200 dark:border-violet-700 text-violet-700 dark:text-violet-300 text-sm font-semibold">
-            <span aria-hidden="true">\u{1F44F}</span>
-            <span>${row.kudos_count}</span>
-          </div>
-        </button>`;
-    }).join('');
-    return `<div class="space-y-2">${rows}</div>`;
+  prRowViews(items) {
+    return items.map((row, i) => ({
+      key: `${row.app_slug}|${row.session_id}|${i}`,
+      rank: i + 1,
+      title: row.pr_title || `PR #${row.pr_number || row.session_id}`,
+      author: row.author_username || 'unknown',
+      appName: row.app_name || row.app_slug || 'app',
+      // The Top-PRs strip has no 'archived' case — an archived PR is not on
+      // this board at all — so it reads the same table minus that row.
+      badge: Leaderboard._statusBadge(row.status === 'merged' || row.status === 'merging'
+        ? row.status : ''),
+      slug: row.app_slug,
+      sessionId: row.session_id,
+      kudos: row.kudos_count,
+    }));
   },
 
-  _renderUserRows(items) {
-    const rows = items.map((row, i) => {
-      const rank = i + 1;
+  userRowViews(items) {
+    return items.map((row, i) => {
       const who = row.username || 'unknown';
-      const initial = (who[0] || '?').toUpperCase();
       const prsMerged = row.prs_merged || 0;
       const kudosOnUnmerged = row.kudos_received_prs_unmerged || 0;
-      // Headline score = kudos earned on MERGED PRs. This is what the
-      // leaderboard now ranks by (issue #59), so the big badge shows it
-      // rather than total kudos across all PRs.
-      const mergedKudos = row.kudos_received_prs_merged || 0;
+      // The detail line is a list of bits with a "·" between them, so the
+      // separators can't drift out of step with the bits they separate.
+      // First bit is unconditional; each later one carries its own.
+      const meta = [{ text: `${row.prs_kudosed} PR${row.prs_kudosed === 1 ? '' : 's'} kudosed` }];
       // prs_merged is all-time (no merge timestamp to window by), so only
       // show it in the all-time view to avoid implying a weekly figure.
       // Kept as a secondary detail now that ranking is by kudos, not
       // merge count.
-      const mergedMeta = (Leaderboard.window === 'all' && prsMerged > 0)
-        ? `<span class="text-zinc-400">·</span><span>${prsMerged} merged</span>`
-        : '';
+      if (Leaderboard.window === 'all' && prsMerged > 0) {
+        meta.push({ text: `${prsMerged} merged` });
+      }
       // Issues this user filed (issues.created_by). Correctly windowed by
       // created_at, so — unlike prs_merged — it's shown in both windows.
       // Hidden at 0 to match the other optional detail chips.
       const issuesCreated = row.issues_created || 0;
-      const issuesMeta = issuesCreated > 0
-        ? `<span class="text-zinc-400">·</span><span>${issuesCreated} issue${issuesCreated === 1 ? '' : 's'}</span>`
-        : '';
+      if (issuesCreated > 0) {
+        meta.push({ text: `${issuesCreated} issue${issuesCreated === 1 ? '' : 's'}` });
+      }
       // Apps this user is currently active on (active_apps: [{slug, name}]).
       // Show a count chip with the app names on hover; hidden at 0 to match
       // the other optional detail chips. This is the same 10-day "active"
       // window used for voting and the group-chat active-users tile.
       const activeApps = Array.isArray(row.active_apps) ? row.active_apps : [];
-      const activeAppsCount = activeApps.length;
-      const activeAppsTitle = activeAppsCount > 0
-        ? 'Active on: ' + activeApps
+      if (activeApps.length > 0) {
+        meta.push({
+          text: `active on ${activeApps.length} app${activeApps.length === 1 ? '' : 's'}`,
+          title: 'Active on: ' + activeApps
             .map((a) => (a && a.name) ? a.name : (a && a.slug) || '')
             .filter(Boolean)
-            .join(', ')
-        : '';
-      const activeAppsMeta = activeAppsCount > 0
-        ? `<span class="text-zinc-400">·</span><span title="${escapeAttr(activeAppsTitle)}">active on ${activeAppsCount} app${activeAppsCount === 1 ? '' : 's'}</span>`
-        : '';
-      // Footnote on the kudos badge: how many additional kudos sit on
-      // PRs that haven't landed yet (and so don't count toward the
-      // ranking score). Only meaningful when > 0.
-      const unmergedKudosNote = kudosOnUnmerged > 0
-        ? `<span class="shrink-0 text-[11px] text-amber-600 dark:text-amber-400" title="Kudos on PRs that haven’t merged yet — not counted toward ranking">+${kudosOnUnmerged} on unmerged</span>`
-        : '';
-      return `
-        <button data-lb-user="${escapeAttr(who)}"
-                class="w-full text-left flex items-center gap-3 px-3 py-2.5 rounded-lg border border-zinc-200 dark:border-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-900 transition-colors">
-          <div class="w-7 text-center text-sm font-mono text-zinc-500">${rank}</div>
-          <div class="w-9 h-9 rounded-full bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 flex items-center justify-center font-semibold text-sm">${escapeHtml(initial)}</div>
-          <div class="flex-1 min-w-0">
-            <div class="text-sm font-medium text-zinc-900 dark:text-zinc-100 truncate">@${escapeHtml(who)}</div>
-            <div class="text-xs text-zinc-500 mt-0.5 flex items-center gap-1.5 flex-wrap">
-              <span>${row.prs_kudosed} PR${row.prs_kudosed === 1 ? '' : 's'} kudosed</span>
-              ${mergedMeta}
-              ${issuesMeta}
-              ${activeAppsMeta}
-            </div>
-          </div>
-          ${unmergedKudosNote}
-          <div class="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-violet-50 dark:bg-violet-900/30 border border-violet-200 dark:border-violet-700 text-violet-700 dark:text-violet-300 text-sm font-semibold" title="Kudos earned on merged PRs">
-            <span aria-hidden="true">\u{1F44F}</span>
-            <span>${mergedKudos}</span>
-          </div>
-        </button>`;
-    }).join('');
-    return `<div class="space-y-2">${rows}</div>`;
+            .join(', '),
+        });
+      }
+      return {
+        key: `${who}|${i}`,
+        rank: i + 1,
+        who,
+        initial: (who[0] || '?').toUpperCase(),
+        meta,
+        // Footnote on the kudos badge: how many additional kudos sit on
+        // PRs that haven't landed yet (and so don't count toward the
+        // ranking score). Only meaningful when > 0.
+        unmergedNote: kudosOnUnmerged > 0 ? `+${kudosOnUnmerged} on unmerged` : null,
+        // Headline score = kudos earned on MERGED PRs. This is what the
+        // leaderboard now ranks by (issue #59), so the big badge shows it
+        // rather than total kudos across all PRs.
+        mergedKudos: row.kudos_received_prs_merged || 0,
+      };
+    });
   },
 };
 
-// These two used to be AMBIENT: as a classic script this file's top-level
-// function declarations were window properties, so they joined the shell's
-// last-writer-wins chain of identically-named escape helpers (group-chat.js,
-// app-view.js and home.js each declare their own). Inside the bundle a
-// module's identifiers are its own, which is strictly better — this file now
-// provably calls THESE bodies. Nothing regressed by dropping out of the chain:
-// the four scripts that read escapeHtml/escapeAttr ambiently (app-secrets.js,
-// dev-chat.js, home-panels.js, streaming-markdown.js) were resolving to
-// app-view.js's and home.js's copies, both of which load later and are still
-// classic scripts.
-function escapeHtml(str) {
-  const div = document.createElement('div');
-  div.textContent = String(str == null ? '' : str);
-  return div.innerHTML;
-}
-
-function escapeAttr(str) {
-  return escapeHtml(str).replace(/"/g, '&quot;');
-}
+// The file's escapeHtml/escapeAttr pair retired with the strings in #1191
+// slice 6 conversion 6. There is no markup left here to escape: every method
+// above returns a descriptor and React escapes the text when it renders it.
+// Nothing else read them — they were ambient window properties while this was
+// a classic script, but chunk F moved the file into the bundle, where a
+// module's identifiers are its own; the four scripts that still read
+// escapeHtml/escapeAttr ambiently (app-secrets.js, dev-chat.js,
+// home-panels.js, streaming-markdown.js) have been resolving to app-view.js's
+// and home.js's copies since then.
 
 // Still published as a global. This module rides in the React bundle as of
 // #1083 chunk F, but app.js's #leaderboard hash branch,

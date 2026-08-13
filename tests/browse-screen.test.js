@@ -26,19 +26,25 @@ const { installAppCard } = require('./helpers/app-card');
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 const { HOME_SRC } = require('./helpers/home-modules');
-// browse.js is a bundle module since #1083 chunk F, so its source starts with
-// an `import` — a SyntaxError to a vm context, which runs classic script text.
-// Strip the import and supply what it imported through installAppCard below:
-// running app-card.js's classic form declares iconTileFor /
-// renderAppPillsHtml in the same global lexical scope the bare calls in
-// browse.js resolve against. Nothing else about the source is rewritten.
+// browse.js is a bundle module since #1083 chunk F, but it is deliberately
+// still a valid CLASSIC script: this test compiles the real source in a vm
+// context, which is why the store arrives by the `_store` plant ./mount.ts
+// does rather than by an `import`. The strip below is kept as a guard — if a
+// future edit does add an import, it drops out here instead of turning every
+// test in this file into one SyntaxError. installAppCard is still run because
+// these tests read app-card.js's shared chip decision directly.
 const BROWSE_SRC = read('frontend/src/features/apps/browse.js')
   .replace(/^import .*;$/gm, '');
 const APP_SRC = read('public/js/app.js');
 const INDEX = read('public/index.html');
 
 // Load home.js + browse.js into one context (Browse leans on Home) with a
-// minimal DOM: #browse-list / #browse-empty capture what render() writes.
+// minimal DOM plus a store stub: since #1191 slice 6 conversion 3 the screen
+// renders in React, so render() ends in `Browse._store.set(descriptor)` rather
+// than an `innerHTML =`. The stub below is what ./mount.ts plants in the
+// browser, and `state` is exactly what browse-list.tsx / browse-detail.tsx
+// receive — so these tests still pin every decision this file makes, one step
+// earlier than the markup.
 function makeBrowse(opts = {}) {
   const nodes = {};
   const mkEl = (id) => {
@@ -55,21 +61,12 @@ function makeBrowse(opts = {}) {
         contains: (c) => el._classes.has(c),
       },
       addEventListener: () => {},
-      // Mostly a null stub — the detail page wires its Open / Add / action
-      // rows by querying its own host and nothing here needs the elements
-      // back. The ONE selector that must really resolve is the shot deep
-      // link's first-real-row lookup, so answer that from the rendered
-      // markup: find the first `.browse-row` div that carries no
-      // data-demo attribute and hand back just its slug.
-      querySelector: (sel) => {
-        if (id !== 'browse-list' || !/browse-row/.test(String(sel))) return null;
-        for (const tag of el.innerHTML.match(/<div class="browse-row[^>]*>/g) || []) {
-          if (/data-demo="true"/.test(tag)) continue;
-          const m = tag.match(/data-slug="([^"]*)"/);
-          if (m) return { dataset: { slug: m[1] } };
-        }
-        return null;
-      },
+      // A null stub, and it can stay one: nothing in browse.js queries the
+      // painted DOM any more. The last holdout was the shot deep link's
+      // first-real-row lookup, and _maybeShotDetail reads the row
+      // descriptors it just published instead — the same list, one tick
+      // before React would have rendered it.
+      querySelector: () => null,
       querySelectorAll: () => ({ forEach: () => {} }),
       offsetHeight: 52,
       scrollTop: 0,
@@ -159,11 +156,25 @@ function makeBrowse(opts = {}) {
   // the point) but never as a sandbox property — hence the explicit hoist.
   vm.runInContext(`${HOME_SRC}\n;globalThis.__Home = Home;`, sandbox);
   vm.runInContext(BROWSE_SRC, sandbox);
+  // The store ./mount.ts plants, with the same initial value browse-store.js
+  // ships (which is also the shell's prerendered empty state).
+  const state = { level: 'list', rows: null, empty: null, error: false, detail: null };
+  sandbox.Browse._store = {
+    get: () => state,
+    set: (patch) => Object.assign(state, patch),
+    subscribe: () => () => {},
+    setFlush: () => {},
+  };
   return {
-    Browse: sandbox.Browse, Home: sandbox.__Home,
-    nodes, fetchCalls, chrome, history, location: sandbox.location,
+    Browse: sandbox.Browse, Home: sandbox.__Home, AppCard: sandbox.AppCard,
+    state, nodes, fetchCalls, chrome, history, location: sandbox.location,
   };
 }
+
+// The descriptor helpers the assertions below read through. `rows` is null
+// until the first render, so every one of these is null-safe.
+const slugs = (state) => (state.rows || []).map((r) => r.slug);
+const rowFor = (state, slug) => (state.rows || []).find((r) => r.slug === slug) || null;
 
 const app = (over) => ({
   slug: 'some-app',
@@ -271,29 +282,31 @@ test('visibleApps: filters on Home.matchesQuery over the whole list', () => {
 
 // ── render ───────────────────────────────────────────────────────
 
-test('renderAppRow: an app-store row — icon, name, meta, Add button', () => {
-  const { Browse, nodes } = makeBrowse();
+test('rowView: an app-store row — icon, name, meta, Add state', () => {
+  const { Browse, state } = makeBrowse();
   Browse._apps = [
     app({ slug: 'fresh', name: 'Fresh App', active_users: 3 }),
     app({ slug: 'mine', name: 'My App', is_favorited: true }),
   ];
   Browse.render();
-  const html = nodes['browse-list'].innerHTML;
-  assert.match(html, /class="browse-row/, 'rows, not launcher tiles');
-  assert.match(html, /data-slug="fresh"/);
-  assert.match(html, /app-icon-tile/, 'reuses the shared icon tile');
-  assert.match(html, /Fresh App/);
-  assert.match(html, /3 users/, 'the derived meta line');
-  assert.match(html, /browse-add-btn/);
-  // Added rows read "Added", fresh ones "Add".
-  assert.match(html, /data-added="true"[\s\S]*?Added/);
-  assert.match(html, /data-added="false"/);
+  assert.deepEqual(slugs(state), ['fresh', 'mine'], 'rows, not launcher tiles');
+  const fresh = rowFor(state, 'fresh');
+  assert.equal(fresh.name, 'Fresh App');
+  assert.match(fresh.meta, /3 users/, 'the derived meta line');
+  // The whole app record rides the descriptor, because the icon tile and the
+  // chip strip are shared decisions (app-card.js) the row does not re-make.
+  assert.equal(fresh.app.slug, 'fresh');
+  // Added rows read "Added", fresh ones "Add" — the flag is the descriptor's,
+  // the two labels are browse-list.tsx's.
+  assert.equal(fresh.added, false);
+  assert.equal(rowFor(state, 'mine').added, true);
+  assert.match(rowFor(state, 'mine').addTitle, /tap to remove/);
   // The "…" menu is gone from this screen — the detail page absorbed it.
-  assert.doesNotMatch(html, /card-menu-btn/);
-  assert.doesNotMatch(html, /card-add-btn/, 'the corner badge is a real button now');
+  assert.doesNotMatch(BROWSE_SRC, /card-menu-btn/);
+  assert.doesNotMatch(BROWSE_SRC, /card-add-btn/, 'the corner badge is a real button now');
 });
 
-test('renderAppRow: the layout switch is pure CSS on the container', () => {
+test('browse rows: the layout switch is pure CSS on the container', () => {
   // Narrow: a hairline-divided vertical list. md+: a 2/3-column grid whose
   // rows pick up a box treatment from .browse-row in app.css. No
   // matchMedia, so nothing re-renders on resize.
@@ -327,18 +340,22 @@ test('renderAppRow: the layout switch is pure CSS on the container', () => {
   assert.match(css, /\.dark \.browse-row \{ --browse-border/);
 });
 
-test('renderAppRow: status pills and the status word ride the row', () => {
-  const { Browse, nodes } = makeBrowse();
+test('rowView: status pills and the status word ride the row', () => {
+  const { Browse, AppCard, state } = makeBrowse();
   Browse._apps = [app({
     slug: 'busy', status: 'awaiting_secrets', open_prs: 2, open_issues: 1,
     missingSecrets: ['API_KEY'], view_visibility: 'private',
   })];
   Browse.render();
-  const html = nodes['browse-list'].innerHTML;
-  assert.match(html, /Awaiting secrets/, 'non-running status in the meta line');
-  assert.match(html, /2 to vote/, 'reuses Home.renderAppPillsHtml');
-  assert.match(html, /1 issue/);
-  assert.match(html, /Private/);
+  const row = rowFor(state, 'busy');
+  assert.match(row.meta, /Awaiting secrets/, 'non-running status in the meta line');
+  assert.equal(row.statusDot, 'creating', 'awaiting_secrets is still spinning up');
+  // The chips are not the row's decision — the descriptor carries the record
+  // and app-card.js's appPillsFor answers for every app surface at once.
+  const pills = AppCard.appPillsFor(row.app);
+  assert.deepEqual(Array.from(pills.chips, (c) => c.label),
+    ['Missing secrets', '2 to vote', '1 issue']);
+  assert.equal(pills.vis.label, 'Private');
 });
 
 test('metaLine: users · updated · status, pluralised, missing bits skipped', () => {
@@ -354,29 +371,31 @@ test('metaLine: users · updated · status, pluralised, missing bits skipped', (
   assert.match(Browse.metaLine({ status: 'running' }), /^0 users$/);
 });
 
-test('renderAppRow: staging demo rows are inert (no detail page to open)', () => {
-  const { Browse, nodes } = makeBrowse();
+test('rowView: staging demo rows are inert (no detail page to open)', () => {
+  const { Browse, state } = makeBrowse();
   Browse._apps = [app({ slug: 'staging-demo-featured', demo: true })];
   Browse.render();
-  const html = nodes['browse-list'].innerHTML;
-  assert.match(html, /data-demo="true"/);
-  assert.match(html, /cursor-default/, 'not presented as tappable');
-  assert.doesNotMatch(html, /cursor-pointer/);
-  assert.match(html, /browse-add-btn/, 'the (inert) Add button still renders');
+  const row = rowFor(state, 'staging-demo-featured');
+  assert.equal(row.demo, true);
+  assert.equal(row.openable, false, 'not presented as tappable');
+  // Both the row tap and the cmd-click href re-check it, so a demo row is
+  // inert under every activation path.
+  assert.equal(Browse.rowHref(row), null);
+  Browse.openRow(row);
+  assert.equal(Browse._slug, null, 'the tap went nowhere');
 });
 
 test('syncFrom adopts an externally-fetched payload and repaints', () => {
   // Home.load() is where every detail-page action settles (add/remove,
   // retry, lock, delete), so this is how those land on this screen.
-  const { Browse, nodes } = makeBrowse();
+  const { Browse, state } = makeBrowse();
   Browse._apps = [app({ slug: 'before' })];
   Browse.render();
-  assert.match(nodes['browse-list'].innerHTML, /data-slug="before"/);
+  assert.deepEqual(slugs(state), ['before']);
   Browse.syncFrom([app({ slug: 'after' })]);
-  assert.match(nodes['browse-list'].innerHTML, /data-slug="after"/);
-  assert.doesNotMatch(nodes['browse-list'].innerHTML, /data-slug="before"/);
+  assert.deepEqual(slugs(state), ['after']);
   Browse.syncFrom(undefined);
-  assert.match(nodes['browse-list'].innerHTML, /data-slug="after"/, 'garbage is ignored');
+  assert.deepEqual(slugs(state), ['after'], 'garbage is ignored');
 });
 
 test('Home.load hands its fresh payload to an open browse screen', () => {
@@ -438,8 +457,8 @@ test('detailActionsFor: derives from Home.menuItemsFor, never re-derived', () =>
   assert.doesNotMatch(BROWSE_SRC, /is_collaborator/);
 });
 
-test('the detail page renders Open, Add/Remove and the action rows', () => {
-  const { Browse, Home, nodes } = makeBrowse();
+test('the detail page describes Open, Add/Remove and the action rows', () => {
+  const { Browse, Home, state } = makeBrowse();
   Home.menuItemsFor = () => ([
     { key: 'favorite', label: 'Add to Your apps', run: () => {} },
     { key: 'fork', label: 'Fork this app', run: () => {} },
@@ -447,50 +466,72 @@ test('the detail page renders Open, Add/Remove and the action rows', () => {
   ]);
   Browse._apps = [app({ slug: 'detail-me', name: 'Detail Me', status: 'running' })];
   Browse.showDetail('detail-me');
-  const html = nodes['browse-detail'].innerHTML;
-  assert.match(html, /Detail Me/, 'full untruncated name');
-  assert.match(html, /detail-me/, 'the slug');
-  assert.match(html, /id="browse-detail-open"[\s\S]*?Open/, 'Open is the primary action');
-  assert.match(html, /id="browse-detail-fav"/);
-  assert.match(html, /Add to Your apps/);
-  assert.match(html, /browse-detail-action[\s\S]*?Fork this app/);
-  assert.match(html, /Delete app/);
-  assert.match(html, /text-red-500/, 'the danger row is tinted');
-  // Favorite is NOT duplicated as an action row.
-  assert.equal((html.match(/browse-detail-action/g) || []).length, 2);
+  const d = state.detail;
+  assert.equal(d.state, 'ready');
+  assert.equal(d.name, 'Detail Me', 'full untruncated name');
+  assert.equal(d.slug, 'detail-me');
+  assert.equal(d.canOpen, true, 'Open is the primary action');
+  assert.equal(d.openLabel, 'Open');
+  assert.equal(d.favLabel, 'Add to Your apps');
+  assert.deepEqual(d.actions.map((a) => a.label), ['Fork this app', 'Delete app'],
+    'favorite is NOT duplicated as an action row');
+  assert.equal(d.actions[1].danger, true, 'the danger row is flagged');
+  assert.deepEqual(d.actions.map((a) => a.index), [0, 1],
+    'the index is the handle back to the run closure');
 });
 
 test('the detail page disables Open when the app cannot be opened', () => {
-  const { Browse, Home, nodes } = makeBrowse();
+  const { Browse, Home, state } = makeBrowse();
   Home.menuItemsFor = () => [];
   Browse._apps = [app({ slug: 'broken', status: 'error' })];
   Browse.showDetail('broken');
-  const html = nodes['browse-detail'].innerHTML;
-  assert.match(html, /id="browse-detail-open"[^>]*disabled/);
-  assert.match(html, /Not running/);
+  assert.equal(state.detail.canOpen, false);
+  assert.equal(state.detail.openLabel, 'Not running');
   // awaiting_secrets IS openable (the user goes there to fill them in).
   Browse._apps = [app({ slug: 'secrets', status: 'awaiting_secrets' })];
   Browse.showDetail('secrets');
-  assert.doesNotMatch(nodes['browse-detail'].innerHTML, /disabled/);
+  assert.equal(state.detail.canOpen, true);
 });
 
-test('showDetail / showList toggle both containers plus the search bar', () => {
-  const { Browse, Home, nodes, chrome } = makeBrowse();
+test('the detail page keeps its action closures off the store, reachable by index', () => {
+  // The store carries plain data (it crosses into React); the `run` closures
+  // stay on the controller. The click hands the clicked BUTTON back, so a
+  // keepOpen item can still flip its own label in place.
+  const { Browse, Home, state } = makeBrowse();
+  const ran = [];
+  Home.menuItemsFor = () => ([
+    { key: 'retry', label: 'Retry', run: (btn) => ran.push(['retry', btn]) },
+    { key: 'check-updates', label: 'Check for updates', keepOpen: true, run: () => ran.push(['check']) },
+  ]);
+  Browse._apps = [app({ slug: 'act' })];
+  Browse.showDetail('act');
+  assert.equal(JSON.stringify(state.detail.actions).includes('run'), false,
+    'no function leaked into the descriptor');
+  const btn = { id: 'stub' };
+  Browse._runDetailAction(1, btn);
+  Browse._runDetailAction(0, btn);
+  assert.deepEqual(ran.map((r) => r[0]), ['check', 'retry']);
+  assert.equal(ran[1][1], btn, 'the clicked element reaches the item');
+  Browse._runDetailAction(99, btn);
+  assert.equal(ran.length, 2, 'a stale index is inert, never a crash');
+});
+
+test('showDetail / showList publish the level, which drives both containers', () => {
+  // The three nodes _syncLevel used to classList.toggle from outside React
+  // (#browse-list-level, #browse-detail, #browse-search-bar) all read one
+  // store field now — see browse-screen.tsx.
+  const { Browse, Home, state, chrome } = makeBrowse();
   Home.menuItemsFor = () => [];
   Browse._apps = [app({ slug: 'a', name: 'App A' })];
 
   Browse.showDetail('a');
-  assert.equal(nodes['browse-detail'].classList.contains('hidden'), false);
-  assert.equal(nodes['browse-list-level'].classList.contains('hidden'), true);
-  assert.equal(nodes['browse-search-bar'].classList.contains('hidden'), true,
+  assert.equal(state.level, 'detail',
     'searching a list nobody can see is meaningless');
   assert.equal(chrome.backIcon, 'arrow', 'a drill-in borrows the back chevron');
   assert.equal(chrome.title, 'App A');
 
   Browse.showList();
-  assert.equal(nodes['browse-detail'].classList.contains('hidden'), true);
-  assert.equal(nodes['browse-list-level'].classList.contains('hidden'), false);
-  assert.equal(nodes['browse-search-bar'].classList.contains('hidden'), false);
+  assert.equal(state.level, 'list');
   assert.equal(chrome.backIcon, 'home');
   assert.equal(chrome.title, 'All apps');
 });
@@ -550,12 +591,13 @@ test('the origin defaults to the list for a deep link, and never leaks', () => {
 test('a browse row tap declares the list as its origin; the home menu declares home', () => {
   // Both call sites note the origin BEFORE writing the hash — the
   // hashchange lands in a later task, so the note is always in place.
-  const rows = BROWSE_SRC.slice(BROWSE_SRC.indexOf('_wireRows(listEl) {'));
-  // Wide enough for the #1036 hrefFor guard block that now sits above the
-  // plain-click handler as well as the handler itself.
-  const tap = rows.slice(0, 1400);
+  const tap = BROWSE_SRC.slice(BROWSE_SRC.indexOf('openRow(view) {'),
+    BROWSE_SRC.indexOf('warmRow(view) {'));
   assert.match(tap, /noteDetailOrigin\('list'\)/);
   assert.ok(tap.indexOf("noteDetailOrigin('list')") < tap.indexOf('location.hash'));
+  // And the #1036 modified-click href repeats openRow's guard, so a demo row
+  // stays inert under cmd/middle-click too.
+  assert.match(BROWSE_SRC, /rowHref\(view\) \{[\s\S]*?view\.demo/);
 
   const item = HOME_SRC.slice(HOME_SRC.indexOf("key: 'app-details'"));
   const run = item.slice(0, 400);
@@ -577,12 +619,12 @@ test('route animates a drill-in as a push and the way back as a pop', () => {
 });
 
 test('a cold deep link falls back to GET /api/apps/:slug', async () => {
-  const { Browse, Home, nodes, fetchCalls } = makeBrowse({ apps: [] });
+  const { Browse, Home, state, fetchCalls } = makeBrowse({ apps: [] });
   Home.menuItemsFor = () => [];
   // Nothing cached — the detail level has to read the one app itself.
   Browse._slug = 'cold-app';
   Browse.render();
-  assert.match(nodes['browse-detail'].innerHTML, /Loading/);
+  assert.equal(state.detail.state, 'loading');
   await flush();
   await flush();
   assert.ok(fetchCalls.some((c) => c.url === '/api/apps/cold-app'),
@@ -590,14 +632,18 @@ test('a cold deep link falls back to GET /api/apps/:slug', async () => {
 });
 
 test('a deep link to a missing app renders the not-available state', async () => {
-  const { Browse, Home, nodes } = makeBrowse({ fetchOk: false });
+  const { Browse, Home, state } = makeBrowse({ fetchOk: false });
   Home.menuItemsFor = () => [];
   Browse._slug = 'ghost';
   Browse.render();
   await flush();
   await flush();
-  assert.match(nodes['browse-detail'].innerHTML, /isn&rsquo;t available|isn't available/);
-  assert.match(nodes['browse-detail'].innerHTML, /Back to all apps/);
+  assert.equal(state.detail.state, 'missing');
+  // The copy and its escape-hatch anchor are browse-detail.tsx's.
+  const tsx = read('frontend/src/features/apps/browse-detail.tsx');
+  assert.match(tsx, /isn&rsquo;t available/);
+  assert.match(tsx, /id="browse-detail-back"/);
+  assert.match(tsx, /Back to all apps/);
 });
 
 test('syncFrom drops to the list when the open app is deleted away', () => {
@@ -613,7 +659,7 @@ test('syncFrom drops to the list when the open app is deleted away', () => {
 test('?shot=browse-detail drills into the first real row, once', () => {
   // The captures can never click, so the detail page needs a URL that
   // doesn't hard-code a slug (seed data moves).
-  const { Browse, Home, nodes, history } = makeBrowse({ search: '?shot=browse-detail' });
+  const { Browse, Home, state, history } = makeBrowse({ search: '?shot=browse-detail' });
   Home.menuItemsFor = () => [];
   Browse._apps = [
     app({ slug: 'demo-row', demo: true }),
@@ -621,7 +667,7 @@ test('?shot=browse-detail drills into the first real row, once', () => {
   ];
   Browse.render();
   assert.equal(Browse._slug, 'real-row', 'skips the inert demo row');
-  assert.match(nodes['browse-detail'].innerHTML, /Real Row/);
+  assert.equal(state.detail.name, 'Real Row');
   // The URL is aligned with replaceState — NOT by assigning location.hash,
   // which would fire a hashchange that races the rest of boot and loses.
   assert.deepEqual(history.calls, ['?shot=browse-detail#apps/real-row']);
@@ -641,16 +687,20 @@ test('no ?shot=browse-detail means no drill-in', () => {
 });
 
 test('render: empty result explains itself, with the query when there is one', () => {
-  const { Browse, nodes } = makeBrowse();
+  // `empty` is a string-or-null now: the copy AND the note's visibility are
+  // one field, because #browse-empty is React-rendered.
+  const { Browse, state } = makeBrowse();
   Browse._apps = [app({ slug: 'chess', name: 'Chess' })];
   Browse._query = 'nothing-matches';
   Browse.render();
-  assert.equal(nodes['browse-empty'].classList.contains('hidden'), false);
-  assert.match(nodes['browse-empty'].textContent, /No apps match/);
+  assert.match(state.empty, /No apps match/);
+  assert.match(state.empty, /nothing-matches/, 'quotes what was typed');
   Browse._query = '';
   Browse.render();
-  assert.equal(nodes['browse-empty'].classList.contains('hidden'), true,
-    'a populated grid hides the empty note');
+  assert.equal(state.empty, null, 'a populated grid hides the empty note');
+  Browse._apps = [];
+  Browse.render();
+  assert.match(state.empty, /No apps to show yet/, 'and a truly empty directory says so');
 });
 
 // ── Data flow ────────────────────────────────────────────────────
@@ -672,17 +722,18 @@ test('_load forwards ?demo=1 so staging demo tiles show up here too', async () =
 });
 
 test('_load failure renders an inline error, never throws', async () => {
-  const { Browse, nodes } = makeBrowse({ fetchOk: false });
+  const { Browse, state } = makeBrowse({ fetchOk: false });
   await Browse._load();
-  assert.match(nodes['browse-list'].innerHTML, /Failed to load apps/);
+  assert.equal(state.error, true);
+  assert.equal(state.rows.length, 0, 'and the stale list is cleared');
+  assert.match(read('frontend/src/features/apps/browse-screen.tsx'), /Failed to load apps/);
 });
 
 test('open seeds first paint from Home._apps, then refetches', async () => {
-  const { Browse, Home, nodes, fetchCalls } = makeBrowse({ apps: [] });
+  const { Browse, Home, state, fetchCalls } = makeBrowse({ apps: [] });
   Home._apps = [app({ slug: 'cached', name: 'Cached App' })];
   Browse.open();
-  assert.match(nodes['browse-list'].innerHTML, /data-slug="cached"/,
-    'instant paint from the home cache');
+  assert.deepEqual(slugs(state), ['cached'], 'instant paint from the home cache');
   await flush();
   assert.equal(fetchCalls.length, 1, 'still reconciles with the server');
   assert.equal(Browse.isOpen(), true);
@@ -767,19 +818,31 @@ test('index.html hosts #browse-screen with its own search field and grid', () =>
 // the React bundle, so both registers change at once: the island imports it,
 // and /shell/assets/shell.js — already in SHELL_ASSETS — is what precaches it.
 test('browse.js is a bundle module the #browse-screen island imports', () => {
+  // Since conversion 3 the island reaches it through ./mount.ts, which is
+  // also what plants the store and publishes the controller for the legacy
+  // callers — the same seam profile and notifications landed on.
   assert.match(
     read('frontend/src/features/apps/browse-screen.tsx'),
+    /from '\.\/mount'/,
+    'the island must import the mount — nothing else pulls the module in'
+  );
+  assert.match(
+    read('frontend/src/features/apps/mount.ts'),
     /import '\.\/browse\.js';/,
-    'the island must import the module — nothing else pulls it into the bundle'
+    'and the mount is what actually loads the controller'
   );
   assert.ok(!INDEX.includes('/js/browse.js'), 'the retired script tag must be gone from the shell');
   assert.ok(!read('public/sw.js').includes('/js/browse.js'), 'and its precache entry with it');
   assert.ok(!fs.existsSync(path.join(__dirname, '..', 'public', 'js', 'browse.js')),
     'and the file itself must be gone from public/js/');
-  // The load-order dependency it had on home.js is gone too: the shared card
-  // markup is an explicit import now, not a `window.Home` read.
-  assert.match(BROWSE_SRC, /iconTileFor\(app\)/);
+  // The load-order dependency it had on home.js is gone too, and so is the
+  // markup: the icon tile and the chip strip are app-card.js's decisions,
+  // rendered by app-card-view.tsx off the row's `app` record.
   assert.doesNotMatch(BROWSE_SRC, /Home\.iconTileFor|Home\.renderAppPillsHtml/);
+  assert.doesNotMatch(BROWSE_SRC, /iconTileFor|renderAppPillsHtml/,
+    'the string builders belong to the surfaces that are still legacy');
+  assert.match(read('frontend/src/features/apps/browse-list.tsx'),
+    /from '\.\/app-card-view'/);
 });
 
 // ── app.js routing ───────────────────────────────────────────────
@@ -918,9 +981,12 @@ test('the browse scroller gets its own pull-to-refresh', () => {
 
 // ── Contributors section (#919) ────────────────────────────────────────
 //
-// The card is rendered by a PURE function of (cache entry, expanded flag),
+// The card is DESCRIBED by a PURE function of (cache entry, expanded flag),
 // so every state is pinned here without a DOM or a fetch — the same
-// discipline sortApps / metaLine / renderAppRow already follow.
+// discipline sortApps / metaLine / rowView already follow. Since #1191 slice
+// 6 that function returns a view object rather than an HTML string;
+// browse-detail.tsx renders it, and the escaping that used to be this file's
+// job is React's.
 
 const contrib = (over) => ({
   user_id: 10,
@@ -940,60 +1006,60 @@ const ready = (items, total) => ({
 
 test('contributors: the heading paints while loading so the page cannot jump', () => {
   const { Browse } = makeBrowse();
-  const html = Browse.contributorsSectionHtml({ state: 'loading', items: [], total: 0 }, {});
-  assert.match(html, /id="browse-detail-contributors"/);
-  assert.match(html, /Contributors/);
-  assert.match(html, /Loading contributors/);
+  const view = Browse.contributorsView({ state: 'loading', items: [], total: 0 }, {});
+  assert.equal(view.state, 'loading');
+  assert.match(view.note, /Loading contributors/);
   // No count chip until there is a real number to show.
-  assert.doesNotMatch(html, /·\s*0/);
-  assert.doesNotMatch(html, /browse-contrib-row/);
+  assert.equal(view.count, null);
+  assert.equal(view.rows.length, 0);
 });
 
 test('contributors: a ready row carries rank, avatar, @username, meta and the merged pill', () => {
   const { Browse } = makeBrowse();
-  const html = Browse.contributorsSectionHtml(
+  const view = Browse.contributorsView(
     ready([contrib({ username: 'alice', merged_count: 12, votes_count: 30, is_creator: true })]),
     {}
   );
-  assert.match(html, /Contributors<span[^>]*>\s*·\s*1<\/span>/, 'the total rides the heading');
-  assert.match(html, /browse-contrib-row[^>]*data-username="alice"/);
-  assert.match(html, />1<\/div>/, 'rank number');
-  assert.match(html, /rounded-full[^>]*>A</, 'initial-avatar circle');
-  assert.match(html, /@alice/);
-  assert.match(html, /Creator · 30 votes/, 'role then vote count');
-  assert.match(html, /12 merged/);
-  assert.match(html, /violet/, 'a non-zero count gets the violet pill');
+  assert.equal(view.count, 1, 'the total rides the heading');
+  const row = view.rows[0];
+  assert.equal(row.who, 'alice');
+  assert.equal(row.rank, 1, 'rank number');
+  assert.equal(row.initial, 'A', 'initial-avatar circle');
+  assert.equal(row.meta, 'Creator · 30 votes', 'role then vote count');
+  assert.equal(row.merged, 12);
+  assert.match(row.pillTint, /violet/, 'a non-zero count gets the violet pill');
 });
 
 test('contributors: creator wins over member on the role label', () => {
   const { Browse } = makeBrowse();
-  const html = Browse.contributorsSectionHtml(
+  const view = Browse.contributorsView(
     ready([contrib({ is_creator: true, is_member: true, votes_count: 0 })]), {}
   );
-  assert.match(html, /Creator/);
-  assert.doesNotMatch(html, /Member/, 'the creator is always a member too — saying both is noise');
+  assert.equal(view.rows[0].meta, 'Creator',
+    'the creator is always a member too — saying both is noise');
 });
 
 test('contributors: a zero-merge row keeps a muted pill, and zero votes drop the meta line', () => {
   const { Browse } = makeBrowse();
-  const html = Browse.contributorsSectionHtml(
+  const view = Browse.contributorsView(
     ready([contrib({ username: 'lurker', merged_count: 0, votes_count: 0 })]), {}
   );
-  assert.match(html, /0 merged/, 'the row still shows a count so the column stays aligned');
-  assert.match(html, /bg-zinc-100/, 'muted rather than violet at zero');
-  assert.doesNotMatch(html, /votes/, 'no vote fragment at zero');
+  assert.equal(view.rows[0].merged, 0,
+    'the row still shows a count so the column stays aligned');
+  assert.match(view.rows[0].pillTint, /bg-zinc-100/, 'muted rather than violet at zero');
+  assert.equal(view.rows[0].meta, null, 'no vote fragment at zero');
   // A votes-only contributor DOES get the fragment.
-  const votesOnly = Browse.contributorsSectionHtml(
+  const votesOnly = Browse.contributorsView(
     ready([contrib({ merged_count: 0, votes_count: 19 })]), {}
   );
-  assert.match(votesOnly, /19 votes/);
-  assert.match(votesOnly, /0 merged/);
+  assert.equal(votesOnly.rows[0].meta, '19 votes');
+  assert.equal(votesOnly.rows[0].merged, 0);
 });
 
 test('contributors: one vote is singular', () => {
   const { Browse } = makeBrowse();
-  const html = Browse.contributorsSectionHtml(ready([contrib({ votes_count: 1 })]), {});
-  assert.match(html, /1 vote(?!s)/);
+  const view = Browse.contributorsView(ready([contrib({ votes_count: 1 })]), {});
+  assert.match(view.rows[0].meta, /1 vote(?!s)/);
 });
 
 test('contributors: the list folds at 5 with a Show-all toggle, and expands in place', () => {
@@ -1001,23 +1067,23 @@ test('contributors: the list folds at 5 with a Show-all toggle, and expands in p
   const seven = Array.from({ length: 7 }, (_, i) =>
     contrib({ user_id: i, username: `u${i}`, merged_count: 7 - i }));
 
-  const folded = Browse.contributorsSectionHtml(ready(seven), {});
-  assert.equal((folded.match(/browse-contrib-row/g) || []).length, 5, 'top 5 only');
-  assert.match(folded, /id="browse-contrib-toggle"[\s\S]*?Show all 7 contributors/);
-  assert.doesNotMatch(folded, /data-username="u5"/);
+  const folded = Browse.contributorsView(ready(seven), {});
+  assert.equal(folded.rows.length, 5, 'top 5 only');
+  assert.equal(folded.toggle, 'Show all 7 contributors');
+  assert.equal(folded.rows.some((r) => r.who === 'u5'), false);
 
-  const open = Browse.contributorsSectionHtml(ready(seven), { expanded: true });
-  assert.equal((open.match(/browse-contrib-row/g) || []).length, 7);
-  assert.match(open, /Show fewer/);
-  assert.match(open, /data-username="u6"/);
+  const open = Browse.contributorsView(ready(seven), { expanded: true });
+  assert.equal(open.rows.length, 7);
+  assert.equal(open.toggle, 'Show fewer');
+  assert.equal(open.rows.some((r) => r.who === 'u6'), true);
 });
 
 test('contributors: exactly 5 rows need no toggle', () => {
   const { Browse } = makeBrowse();
   const five = Array.from({ length: 5 }, (_, i) => contrib({ user_id: i, username: `u${i}` }));
-  const html = Browse.contributorsSectionHtml(ready(five), {});
-  assert.equal((html.match(/browse-contrib-row/g) || []).length, 5);
-  assert.doesNotMatch(html, /browse-contrib-toggle/);
+  const view = Browse.contributorsView(ready(five), {});
+  assert.equal(view.rows.length, 5);
+  assert.equal(view.toggle, null);
 });
 
 test('contributors: a server-capped list quotes the true total but cannot reveal more locally', () => {
@@ -1025,55 +1091,65 @@ test('contributors: a server-capped list quotes the true total but cannot reveal
   // 6 rows arrived, the app really has 40 — the label says 40, and the
   // toggle can still only unfold what is in hand.
   const six = Array.from({ length: 6 }, (_, i) => contrib({ user_id: i, username: `u${i}` }));
-  const html = Browse.contributorsSectionHtml(ready(six, 40), { expanded: true });
-  assert.match(html, /·\s*40<\/span>/);
-  assert.equal((html.match(/browse-contrib-row/g) || []).length, 6);
+  const view = Browse.contributorsView(ready(six, 40), { expanded: true });
+  assert.equal(view.count, 40);
+  assert.equal(view.rows.length, 6);
 });
 
-test('contributors: empty and error states each render their own copy', () => {
+test('contributors: empty and error states each carry their own copy', () => {
   const { Browse } = makeBrowse();
-  const empty = Browse.contributorsSectionHtml(ready([]), {});
-  assert.match(empty, /No contributors yet/);
-  assert.match(empty, /id="browse-detail-contributors"/, 'the card is kept, not hidden');
-  assert.doesNotMatch(empty, /browse-contrib-row/);
+  const empty = Browse.contributorsView(ready([]), {});
+  assert.match(empty.note, /No contributors yet/);
+  assert.equal(empty.rows.length, 0);
+  // The card itself is unconditional in browse-detail.tsx — kept, not hidden.
+  assert.match(read('frontend/src/features/apps/browse-detail.tsx'),
+    /id="browse-detail-contributors"/);
 
-  const errored = Browse.contributorsSectionHtml({ state: 'error', items: [], total: 0 }, {});
-  assert.match(errored, /load contributors/);
-  assert.doesNotMatch(errored, /browse-contrib-row/);
+  const errored = Browse.contributorsView({ state: 'error', items: [], total: 0 }, {});
+  assert.match(errored.note, /load contributors/);
+  assert.equal(errored.rows.length, 0);
 });
 
-test('contributors: a username is escaped in both text and attribute position', () => {
+test('contributors: a hostile username stays DATA all the way to the renderer', () => {
+  // The escaping this file used to do by hand is React's now, so what has to
+  // hold here is that nothing concatenates the name into markup on the way.
   const { Browse } = makeBrowse();
-  const html = Browse.contributorsSectionHtml(
+  const view = Browse.contributorsView(
     ready([contrib({ username: '"><img src=x>&' })]), {}
   );
-  assert.doesNotMatch(html, /<img/, 'no injected markup');
-  assert.match(html, /&quot;/, 'the quote cannot break out of data-username');
-  assert.match(html, /&amp;/);
+  assert.equal(view.rows[0].who, '"><img src=x>&', 'passed through verbatim');
+  assert.equal(view.rows[0].initial, '"');
+  assert.doesNotMatch(BROWSE_SRC, /\.innerHTML\s*=/, 'this module writes no markup at all');
+  const tsx = read('frontend/src/features/apps/browse-detail.tsx');
+  const contribRow = tsx.slice(tsx.indexOf('function ContributorRow'));
+  assert.doesNotMatch(contribRow.slice(0, 1200), /dangerouslySetInnerHTML/);
 });
 
-test('contributors: a missing entry renders the loading card, never a crash', () => {
+test('contributors: a missing entry describes the loading card, never a crash', () => {
   const { Browse } = makeBrowse();
-  assert.match(Browse.contributorsSectionHtml(undefined, {}), /Loading contributors/);
-  assert.match(Browse.contributorsSectionHtml({ state: 'ready' }, {}), /No contributors yet/);
+  assert.match(Browse.contributorsView(undefined, {}).note, /Loading contributors/);
+  assert.match(Browse.contributorsView({ state: 'ready' }, {}).note, /No contributors yet/);
 });
 
 test('the detail page mounts the contributors card BELOW the action rows', async () => {
-  const { Browse, Home, nodes } = makeBrowse({
+  const { Browse, Home, state } = makeBrowse({
     contributors: [contrib({ username: 'alice' })],
   });
   Home.menuItemsFor = () => ([{ key: 'fork', label: 'Fork this app', run: () => {} }]);
   Browse._apps = [app({ slug: 'detail-me', name: 'Detail Me' })];
   Browse.showDetail('detail-me');
-  let html = nodes['browse-detail'].innerHTML;
-  assert.match(html, /Loading contributors/, 'first paint is the loading card');
-  assert.match(html, /Fork this app/, 'the rest of the page is untouched');
+  assert.match(state.detail.contributors.note, /Loading contributors/,
+    'first paint is the loading card');
+  assert.deepEqual(state.detail.actions.map((a) => a.label), ['Fork this app'],
+    'the rest of the page is untouched');
   await flush(); await flush();
-  html = nodes['browse-detail'].innerHTML;
-  assert.match(html, /@alice/);
-  assert.ok(html.indexOf('browse-detail-action') < html.indexOf('browse-detail-contributors'),
-    'the action rows stay above — the page’s primary navigation is not pushed down');
-  assert.ok(html.indexOf('browse-detail-open') < html.indexOf('browse-detail-contributors'));
+  assert.equal(state.detail.contributors.rows[0].who, 'alice');
+  // The ORDER is browse-detail.tsx's: the action rows stay above, so the
+  // page's primary navigation is not pushed down.
+  const tsx = read('frontend/src/features/apps/browse-detail.tsx');
+  const ready2 = tsx.slice(tsx.indexOf('function Ready('));
+  assert.ok(ready2.indexOf('browse-detail-open') < ready2.indexOf('view.actions.map'));
+  assert.ok(ready2.indexOf('view.actions.map') < ready2.indexOf('<Contributors'));
 });
 
 test('the detail page reads contributors once, and a repaint does NOT refetch', async () => {
@@ -1103,14 +1179,14 @@ test('the contributors read carries the ?demo=1 passthrough', async () => {
 });
 
 test('a failed contributors read degrades to the error card, not a broken page', async () => {
-  const { Browse, Home, nodes } = makeBrowse({ fetchOk: false });
+  const { Browse, Home, state } = makeBrowse({ fetchOk: false });
   Home.menuItemsFor = () => [];
   Browse._apps = [app({ slug: 'sad' })];
   Browse.showDetail('sad');
   await flush(); await flush();
-  const html = nodes['browse-detail'].innerHTML;
-  assert.match(html, /load contributors/);
-  assert.match(html, /id="browse-detail-open"/, 'the rest of the detail page still renders');
+  assert.match(state.detail.contributors.note, /load contributors/);
+  assert.equal(state.detail.state, 'ready', 'the rest of the detail page still renders');
+  assert.equal(state.detail.slug, 'sad');
 });
 
 test('every level change resets the expanded fold', () => {
@@ -1149,8 +1225,11 @@ test('leaving the screen drops the contributor cache so counts are re-read', asy
 test('a contributor row routes to the existing leaderboard profile hash', () => {
   // The row is a hash link, so this screen owns no profile rendering; the
   // route is the one app.js already handles (#leaderboard/users/<name>).
-  const fn = BROWSE_SRC.slice(BROWSE_SRC.indexOf('browse-contrib-row\')'));
-  assert.match(fn, /#leaderboard\/users\/\$\{encodeURIComponent\(who\)\}/);
+  const { Browse, location } = makeBrowse();
+  Browse.openContributor('alice');
+  assert.equal(location.hash, '#leaderboard/users/alice');
+  Browse.openContributor('');
+  assert.equal(location.hash, '#leaderboard/users/alice', 'a nameless row is inert');
   assert.match(APP_SRC, /parts\[1\] === 'users' && parts\[2\]/,
     'app.js still routes the third segment as a profile username');
 });
@@ -1159,7 +1238,7 @@ test('the cold deep-link fetch unwraps the { app } envelope the route sends', as
   // Regression: reading the response as a BARE app row made every cold
   // deep link fall through to the "isn't available" state whenever the
   // concurrent /api/apps list didn't happen to carry the slug.
-  const { Browse, Home, nodes } = makeBrowse({
+  const { Browse, Home, state } = makeBrowse({
     apps: [],
     coldApp: { slug: 'cold-app', name: 'Cold App', status: 'running' },
   });
@@ -1167,7 +1246,7 @@ test('the cold deep-link fetch unwraps the { app } envelope the route sends', as
   Browse._slug = 'cold-app';
   Browse.render();
   await flush(); await flush(); await flush();
-  assert.match(nodes['browse-detail'].innerHTML, /Cold App/, 'the app painted');
-  assert.doesNotMatch(nodes['browse-detail'].innerHTML, /isn&rsquo;t available/);
+  assert.equal(state.detail.state, 'ready', 'the app painted');
+  assert.equal(state.detail.name, 'Cold App');
   assert.equal(Browse._detailMissing, false);
 });

@@ -39,6 +39,15 @@
   'use strict';
 
   const Settings = {
+    // Planted by ./mount.ts, never imported: this file is a classic IIFE that
+    // tests/settings-mobile-push.test.js evaluates with vm.runInContext, where
+    // an import statement is a syntax error. `_store` is ./settings-nav-store.js
+    // (the two nav hosts' descriptors) and `_footerHome` is the placeholder
+    // seam #settings-footer leaves behind when _syncFooter moves it. Both stay
+    // null in the vm harnesses and during the SSG prerender pass, and every
+    // use below goes through `?.` for exactly that reason.
+    _store: null,
+    _footerHome: null,
     // `devFlowPreference` is the "remember my option" answer from the
     // dev-chat flow picker (#1049): null = ask every time (the default),
     // otherwise 'platform' | 'claude-code' | 'codex'. `externalFlowsAvailable`
@@ -621,86 +630,77 @@
       return groups;
     },
 
-    esc(s) {
-      return String(s == null ? '' : s)
-        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    str(s) {
+      return String(s == null ? '' : s);
     },
 
     // Desktop sidebar rows, grouped under headings.
-    _navItemsHtml() {
+    //
+    // A DESCRIPTOR, not HTML, since #1191 slice 6 conversion 8 —
+    // ./settings-nav.tsx is the only writer of #settings-nav-desktop now. The
+    // shape is `[{ name, first, items: [{ key, label, active, className }] }]`.
+    //
+    // `className` is computed HERE rather than in the component on purpose:
+    // it is the one class string on this screen that varies with state, it is
+    // carried over from the retired _navItemsHtml() character for character
+    // (so the rendered attribute cannot drift), and the shaping-stays-in-JS
+    // rule is what keeps this module loadable by the vm harnesses. Tailwind's
+    // extractor scans frontend/** including .js, so both spellings still
+    // compile.
+    _navView() {
       const active = Settings._section;
-      const itemHtml = (s) => {
-        const isActive = s.key === active;
-        const cls = 'settings-nav-item block w-full text-left rounded-lg px-3 py-2 text-sm font-medium transition-colors '
-          + (isActive
+      const item = (s) => ({
+        key: s.key,
+        label: Settings.str(s.label),
+        active: s.key === active,
+        className: 'settings-nav-item block w-full text-left rounded-lg px-3 py-2 text-sm font-medium transition-colors '
+          + (s.key === active
             ? 'bg-violet-600/10 text-violet-600 dark:text-violet-400'
-            : 'text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800');
-        return `<button type="button" role="tab" aria-selected="${isActive ? 'true' : 'false'}"
-          data-settings-nav="${s.key}" class="${cls}">${Settings.esc(s.label)}</button>`;
-      };
-      return Settings._groupedSections().map((g, i) => `
-        <div class="${i === 0 ? '' : 'mt-4 pt-3 border-t border-zinc-200 dark:border-zinc-800'}">
-          <div class="px-3 pb-1 text-[11px] uppercase tracking-wide text-zinc-400 dark:text-zinc-500">${Settings.esc(g.name)}</div>
-          ${g.items.map(itemHtml).join('')}
-        </div>`).join('');
+            : 'text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800'),
+      });
+      return Settings._groupedSections().map((g, i) => ({
+        name: Settings.str(g.name),
+        first: i === 0,
+        items: g.items.map(item),
+      }));
     },
 
     // Mobile level 1: the section menu. A list, not a tab set — so plain
     // buttons in a <nav>, no role="tab"/aria-selected, and the drawer-row
     // idiom from index.html (44px minimum, hairline between rows, chevron
-    // on the right), exactly as the admin console's level-1 menu.
-    _mobileMenuHtml() {
-      const chevron = '<svg class="w-4 h-4 shrink-0 text-zinc-400 dark:text-zinc-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>';
-      const rowHtml = (s) => `
-        <button type="button" data-settings-nav="${s.key}"
-                class="settings-menu-row flex items-center gap-3 w-full text-left min-h-[44px] px-4 py-2
-                       border-b border-zinc-100 dark:border-zinc-800
-                       text-zinc-700 dark:text-zinc-200
-                       hover:bg-zinc-50 dark:hover:bg-zinc-800/60 transition-colors">
-          <span class="flex-1 min-w-0 text-sm font-medium truncate">${Settings.esc(s.label)}</span>
-          ${chevron}
-        </button>`;
-      return Settings._groupedSections().map((g) => `
-        <div class="mb-5">
-          <div class="px-4 pb-1.5 text-[11px] uppercase tracking-wide text-zinc-400 dark:text-zinc-500">${Settings.esc(g.name)}</div>
-          <div class="rounded-lg overflow-hidden border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900
-                      [&>button:last-child]:border-b-0">
-            ${g.items.map(rowHtml).join('')}
-          </div>
-        </div>`).join('');
+    // on the right), exactly as the admin console's level-1 menu. The row
+    // classes and the chevron are the component's now (the chevron is
+    // ChevronRightIcon, same 24x24 path); the grouping is still this
+    // module's, shared with _navView through _groupedSections().
+    _menuView() {
+      return Settings._groupedSections().map((g) => ({
+        name: Settings.str(g.name),
+        items: g.items.map((s) => ({ key: s.key, label: Settings.str(s.label) })),
+      }));
     },
 
-    // Paint BOTH nav hosts. These two elements are the only ones this
-    // module ever innerHTML-writes — the section wrappers are static
-    // markup and are only ever hidden/shown.
+    // Paint BOTH nav hosts. These two elements were the only ones this
+    // module ever innerHTML-wrote — the section wrappers are static markup
+    // and are only ever hidden/shown.
     _renderNav() {
-      const side = document.getElementById('settings-nav-desktop');
-      if (side) {
-        side.innerHTML = Settings._navItemsHtml();
-        Settings._wireNavButtons(side);
-      }
-      const menu = document.getElementById('settings-mobile-menu-host');
-      if (menu) {
-        // Level 2 on a phone must not leave the menu rows above the
-        // section; desktop hides the host through its own md:hidden class.
-        const showMenu = Settings._isMobile() && Settings._level === 1;
-        menu.innerHTML = showMenu ? Settings._mobileMenuHtml() : '';
-        if (showMenu) Settings._wireNavButtons(menu);
-      }
+      // Level 2 on a phone must not leave the menu rows above the section;
+      // desktop hides the host through its own md:hidden class. `null` is
+      // what the empty-string innerHTML write used to mean.
+      const showMenu = Settings._isMobile() && Settings._level === 1;
+      Settings._store?.set({
+        desktop: Settings._navView(),
+        mobile: showMenu ? Settings._menuView() : null,
+      });
     },
 
-    // Every [data-settings-nav] control routes through here. On mobile a
-    // press is a DRILL-IN (a real hash navigation that pushes history); on
-    // desktop it's an in-place sidebar switch.
-    _wireNavButtons(root) {
-      if (!root) return;
-      root.querySelectorAll('[data-settings-nav]').forEach((btn) => {
-        btn.addEventListener('click', () => {
-          const key = btn.dataset.settingsNav;
-          if (Settings._isMobile()) Settings._openSection(key);
-          else Settings.setSection(key);
-        });
-      });
+    // Every [data-settings-nav] control routes through here — the component
+    // calls it from onClick, where _wireNavButtons used to re-bind a listener
+    // per button after every repaint. On mobile a press is a DRILL-IN (a real
+    // hash navigation that pushes history); on desktop it's an in-place
+    // sidebar switch.
+    _navClick(key) {
+      if (Settings._isMobile()) Settings._openSection(key);
+      else Settings.setSection(key);
     },
 
     // Drill-in from a level-1 menu row. A REAL hash navigation so the
@@ -774,10 +774,28 @@
       const footer = document.getElementById('settings-footer');
       if (!footer) return;
       const mobile = Settings._isMobile();
-      const parent = document.getElementById(
-        mobile ? 'settings-content-col' : 'settings-sidebar-col',
-      );
-      if (parent && footer.parentElement !== parent) parent.appendChild(footer);
+      if (mobile) {
+        const parent = document.getElementById('settings-content-col');
+        if (parent && footer.parentElement !== parent) {
+          // Leave a comment in the sidebar column where the footer was, so
+          // React's picture of that column's children still describes the
+          // document while the node is away (#1191 slice 6, conversion 8 —
+          // lib/kit-surface.ts's createPlaceholderHome, the same seam the
+          // dialog cards' lift uses). Planted by ./mount.ts; absent in the
+          // vm harnesses, where the plain appendChild below is the whole
+          // behaviour and always was.
+          Settings._footerHome?.lift();
+          parent.appendChild(footer);
+        }
+      } else if (Settings._footerHome) {
+        // restore() puts it back where the comment SITS — after
+        // #settings-nav-desktop in the sidebar column, i.e. its rendered
+        // position — rather than merely inside the right parent.
+        Settings._footerHome.restore();
+      } else {
+        const parent = document.getElementById('settings-sidebar-col');
+        if (parent && footer.parentElement !== parent) parent.appendChild(footer);
+      }
       // On a phone it belongs to the MENU level only — a drilled-in section
       // shouldn't end with a Log out button.
       footer.classList.toggle('hidden', mobile && Settings._level === 2);

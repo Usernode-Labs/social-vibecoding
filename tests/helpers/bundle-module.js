@@ -116,4 +116,52 @@ const DESKTOP_KIT_SURFACE = {
   '../../lib/kit-surface': { adoptKitSurface: () => null },
 };
 
-module.exports = { toClassicScript, classicScriptFor, runModules, DESKTOP_KIT_SURFACE };
+/**
+ * A stand-in for one of lib/plain-store.js's stores.
+ *
+ * #1191 slice 6 conversion 4: work-drawer.js's renderers stopped returning HTML
+ * strings and now push descriptors into ./work-drawer-store.js. The real store
+ * would work here — it is dependency-free plain JS — but it lives behind a
+ * second import, and a harness that reached for it would be asserting through
+ * React's subscription plumbing to read data the controller just computed. The
+ * stub keeps the last pushed value on `.state`, which is what the assertions
+ * want, and `.sets` counts the pushes for the tests that care that a re-render
+ * happened at all.
+ *
+ * Every sandbox needs its OWN store (the state is per-load), so this is a
+ * factory and `workDrawerImports()` below is one too — sharing one table across
+ * `loadAll()` calls would leak one test's rows into the next.
+ */
+function makeStoreStub(initial = {}) {
+  const store = {
+    state: { ...initial },
+    sets: 0,
+    get: () => store.state,
+    set: (patch) => {
+      store.state = { ...store.state, ...patch };
+      store.sets += 1;
+    },
+    subscribe: () => () => {},
+    setFlush: () => {},
+  };
+  return store;
+}
+
+/** The stub table for the four harnesses that load work-drawer.js's real source. */
+function workDrawerImports() {
+  return {
+    ...DESKTOP_KIT_SURFACE,
+    './work-drawer-store.js': {
+      workDrawerStore: makeStoreStub({ sections: null, empty: false, markAll: false }),
+    },
+  };
+}
+
+module.exports = {
+  toClassicScript,
+  classicScriptFor,
+  runModules,
+  DESKTOP_KIT_SURFACE,
+  makeStoreStub,
+  workDrawerImports,
+};

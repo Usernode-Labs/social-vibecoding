@@ -1,0 +1,422 @@
+/**
+ * The contents of `#profile-root` (#1191 slice 6, conversion 1).
+ *
+ * Thin by construction: every branch below reads a field off the view
+ * ./profile-store.js derives, and holds no opinion of its own about what the
+ * screen should say. That split is what keeps the root `node --test` suite able
+ * to assert on this screen's behaviour — it has no JSX transform, so a decision
+ * expressed in this file would be a decision no test could reach.
+ *
+ * The initial store state is `open: false`, whose view is `kind: 'empty'` and
+ * renders nothing at all. That is the empty `#profile-root` the hand-written
+ * shell shipped, so the prerender pass emits it and hydration matches. Data
+ * arrives only from ./profile.js's effects, never from a render.
+ */
+
+import { type ReactNode } from 'react';
+
+import { Button } from '@/components/ui/button';
+import { useStoreState } from '../../lib/use-store-state';
+import {
+  buildProfileView,
+  publicAvatarView,
+  profileStore,
+} from './profile-store.js';
+import { Profile } from './profile.js';
+import { ProfileEditSheet } from './profile-edit-sheet';
+import { PublicProfileCard } from './public-profile-card';
+
+/** The round picture, or the initial-in-a-circle fallback — the idiom the rest
+ *  of the app already uses for people. */
+function IdentityAvatar({ url, initial }: { url: string | null; initial: string }): ReactNode {
+  if (url) {
+    return (
+      <img
+        className="w-20 h-20 rounded-full object-cover bg-zinc-100 dark:bg-zinc-800 shrink-0"
+        src={url}
+        alt=""
+      />
+    );
+  }
+  return (
+    <div
+      className={
+        'w-20 h-20 text-2xl rounded-full shrink-0 flex items-center justify-center '
+        + 'font-bold bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300'
+      }
+      aria-hidden="true"
+    >
+      {initial}
+    </div>
+  );
+}
+
+/** Identity card (#982) — who this profile belongs to, and the way in to
+ *  editing it. Sits above the score header so the screen leads with the person
+ *  rather than the number. */
+function IdentityCard({ identity }: { identity: any }): ReactNode {
+  return (
+    <div
+      id="profile-identity-card"
+      className="rounded-xl border border-zinc-200 dark:border-zinc-800 p-4 mb-5"
+    >
+      <div className="flex items-center gap-4">
+        <IdentityAvatar url={identity.avatarUrl} initial={identity.initial} />
+        <div className="flex-1 min-w-0">
+          <div className="text-xl font-bold truncate">{identity.name}</div>
+          {identity.handle ? (
+            <div className="text-sm text-zinc-500 dark:text-zinc-400 truncate">
+              {identity.handle}
+            </div>
+          ) : null}
+        </div>
+        <button
+          id="profile-edit-btn"
+          className={
+            'shrink-0 px-3 py-1.5 rounded-lg text-sm font-medium border '
+            + 'border-violet-500 text-violet-600 dark:text-violet-400 '
+            + 'hover:bg-violet-50 dark:hover:bg-violet-950'
+          }
+          onClick={() => Profile.showEditSheet()}
+        >
+          Edit profile
+        </button>
+      </div>
+      {/*
+          The bio is deliberately plain text, not markdown: React renders it as
+          a text child, which is the whole safety story — no HTML string is ever
+          built for it, here or anywhere.
+      */}
+      {identity.bio ? (
+        <p className="text-sm text-zinc-600 dark:text-zinc-300 mt-3 whitespace-pre-line">
+          {identity.bio}
+        </p>
+      ) : null}
+      {identity.chips.length ? (
+        <div className="flex flex-wrap items-center gap-2 mt-3">
+          {identity.chips.map((chip: any) => (
+            <a
+              key={chip.key}
+              className={chip.className}
+              href={chip.href}
+              {...(chip.external ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
+            >
+              {chip.label}
+            </a>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** The owner's own controls for the opt-in public profile (#582). */
+function PublicControls({ controls, status, publishing, previewOpen }: {
+  controls: any;
+  status: string;
+  publishing: boolean;
+  previewOpen: boolean;
+}): ReactNode {
+  return (
+    <section
+      id="public-profile-controls"
+      className="rounded-xl border border-zinc-200 dark:border-zinc-800 p-4 mb-5"
+    >
+      <h2 className="font-semibold text-base">Public profile</h2>
+      <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
+        Private by default. The public page includes only your username,
+        display name, bio and Usernode-hosted photo—not social links, wallet,
+        email, roles, memberships or private activity.
+      </p>
+      <div className={`mt-3 text-sm font-medium ${controls.visibilityClass}`}>
+        {controls.visibility}
+      </div>
+      {controls.moderationDisabled ? (
+        <p className="mt-1 text-xs text-red-600 dark:text-red-400">
+          You can keep editing or unpublish, but the public page remains unavailable.
+        </p>
+      ) : null}
+      <div className="flex flex-wrap gap-2 mt-3">
+        <Button
+          type="button"
+          layout="tap"
+          variant="tapPrimary"
+          size="none"
+          ink="solidText"
+          className="disabled:opacity-60"
+          disabled={publishing}
+          onClick={() => { void Profile._setPublished(!controls.published); }}
+        >
+          {controls.publishLabel}
+        </Button>
+        <button
+          type="button"
+          className={
+            'px-3 min-h-[44px] rounded-lg border border-zinc-300 dark:border-zinc-700 '
+            + 'text-sm font-medium'
+          }
+          onClick={() => Profile.togglePreview()}
+        >
+          {previewOpen ? 'Hide preview' : 'Preview'}
+        </button>
+        <a
+          className={
+            'px-3 min-h-[44px] inline-flex items-center rounded-lg border '
+            + 'border-zinc-300 dark:border-zinc-700 text-sm font-medium'
+          }
+          href={controls.openHref}
+        >
+          Open public page
+        </a>
+        <button
+          type="button"
+          className={
+            'px-3 min-h-[44px] rounded-lg border border-zinc-300 dark:border-zinc-700 '
+            + 'text-sm font-medium'
+          }
+          onClick={() => { void Profile.copyPublicLink(controls.openHref); }}
+        >
+          Copy public link
+        </button>
+      </div>
+      <div className="mt-3 text-xs text-zinc-500" role="status" aria-live="polite">{status}</div>
+      <div id="public-profile-preview" className={previewOpen ? 'mt-4' : 'hidden mt-4'}>
+        {previewOpen ? (
+          <PublicProfileCard profile={controls.profile} allowReport={false} />
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
+/** Completed challenges — the viewer's OWN, and every row links out. */
+function Completed({ completed }: { completed: any }): ReactNode {
+  return (
+    <>
+      <div className="flex items-baseline gap-2 mt-6 mb-2">
+        <div className="text-sm font-semibold text-zinc-500 dark:text-zinc-400 flex-1 min-w-0 truncate">
+          {completed.title}
+        </div>
+        {completed.count ? (
+          <div className="shrink-0 text-xs text-zinc-400">{completed.count}</div>
+        ) : null}
+      </div>
+      {completed.rows.length === 0 ? (
+        <div
+          id="profile-completed-empty"
+          className="rounded-xl border border-zinc-200 dark:border-zinc-800 p-4 text-center"
+        >
+          <div className="text-sm text-zinc-500 dark:text-zinc-400 mb-3">
+            No completed challenges yet.
+          </div>
+          <a
+            className={
+              'inline-flex items-center justify-center px-3 min-h-[36px] rounded-lg '
+              + 'text-sm font-medium border border-violet-500 text-violet-600 '
+              + 'dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-950'
+            }
+            href="#leaderboard/challenges"
+          >
+            Browse challenges
+          </a>
+        </div>
+      ) : (
+        <>
+          {completed.rows.map((row: any) => (
+            <a
+              key={row.id}
+              className={
+                'rounded-xl border border-zinc-200 dark:border-zinc-800 p-3 mb-2 '
+                + 'flex items-center gap-3 hover:bg-zinc-50 dark:hover:bg-zinc-900 '
+                + 'transition-colors'
+              }
+              href={row.href}
+              data-completed-challenge={row.id}
+            >
+              <div className="flex-1 min-w-0">
+                <div className="font-medium text-sm truncate">{row.title}</div>
+                {row.meta ? (
+                  <div className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">{row.meta}</div>
+                ) : null}
+              </div>
+              <span
+                className={
+                  'shrink-0 px-2 py-0.5 rounded-full text-[0.65rem] font-semibold '
+                  + 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
+                }
+              >
+                Completed
+              </span>
+            </a>
+          ))}
+          <div className="mt-1 mb-2">
+            <a
+              className="text-sm font-medium text-violet-600 dark:text-violet-400 hover:underline"
+              href="#leaderboard/challenges"
+            >
+              See all challenges
+            </a>
+          </div>
+        </>
+      )}
+    </>
+  );
+}
+
+/** The token allocation card. The backend zeroes total_tokens until terms are
+ *  accepted, so a gated allocation shows the terms notice and never a fake 0. */
+function TokenCard({ token }: { token: any }): ReactNode {
+  if (token.gated) {
+    return (
+      <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 p-4">
+        <div className="font-semibold mb-1">Token allocation withheld</div>
+        <div className="text-sm text-zinc-500 dark:text-zinc-400 mb-3">
+          Review and accept the terms to see your token allocation.
+        </div>
+        <button
+          className={
+            'px-3 py-1.5 rounded-lg text-sm font-medium border '
+            + 'border-violet-500 text-violet-600 dark:text-violet-400 '
+            + 'hover:bg-violet-50 dark:hover:bg-violet-950'
+          }
+          onClick={() => Profile.reviewTerms()}
+        >
+          Review terms
+        </button>
+      </div>
+    );
+  }
+  return (
+    <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 p-4">
+      <div className="text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400 mb-1">
+        Token allocation
+      </div>
+      <div
+        className={token.revealed ? 'text-2xl font-bold' : 'text-2xl font-bold blur-md select-none'}
+        aria-hidden={token.revealed ? 'false' : 'true'}
+      >
+        {token.amount}
+      </div>
+      <div className="text-xs text-zinc-500 dark:text-zinc-400 mt-2">
+        Allocations are provisional and subject to the program terms.
+      </div>
+      {token.revealed ? null : (
+        <button
+          className={
+            'mt-3 px-3 py-1.5 rounded-lg text-sm font-medium border '
+            + 'border-violet-500 text-violet-600 dark:text-violet-400 '
+            + 'hover:bg-violet-50 dark:hover:bg-violet-950'
+          }
+          onClick={() => Profile.revealTokens()}
+        >
+          Reveal
+        </button>
+      )}
+    </div>
+  );
+}
+
+export function ProfileRoot(): ReactNode {
+  const state = useStoreState(profileStore);
+  const view = buildProfileView(state);
+
+  if (view.kind === 'empty') return null;
+  if (view.kind === 'loading') {
+    return <div className="text-sm text-zinc-400 py-8 text-center">Loading profile…</div>;
+  }
+  // signedOut is checked BEFORE error — see buildProfileView. A lapsed session
+  // is a normal state, and the connection-error copy blames the network for it.
+  if (view.kind === 'signedOut') {
+    return (
+      <div className="py-12 text-center">
+        <div className="text-sm text-zinc-500 dark:text-zinc-400 mb-4">
+          Sign in to see your profile.
+        </div>
+        <a
+          className={
+            'inline-flex items-center justify-center px-4 min-h-[44px] rounded-lg '
+            + 'bg-violet-600 hover:bg-violet-700 text-white text-sm font-medium'
+          }
+          href="#login"
+        >
+          Sign in
+        </a>
+      </div>
+    );
+  }
+  if (view.kind === 'error') {
+    return (
+      <div className="text-sm text-zinc-400 py-8 text-center">
+        Could not load your profile — check your connection and try again.
+      </div>
+    );
+  }
+  if (view.kind === 'publicNotFound') {
+    return (
+      <div className="text-sm text-zinc-400 py-12 text-center">This profile is unavailable.</div>
+    );
+  }
+  if (view.kind === 'public') {
+    return <PublicProfileCard profile={view.profile} allowReport={view.allowReport} />;
+  }
+
+  return (
+    <>
+      {state.sheetOpen ? (
+        <ProfileEditSheet
+          avatarUrl={view.identity.avatarUrl}
+          initial={view.identity.initial}
+        />
+      ) : null}
+      <IdentityCard identity={view.identity} />
+      {view.publicControls ? (
+        <PublicControls
+          controls={view.publicControls}
+          status={state.publicStatus}
+          publishing={state.publishing}
+          previewOpen={state.previewOpen}
+        />
+      ) : null}
+
+      {/* Rank + points header (native ScoreHeader equivalent). */}
+      <div className="text-center mb-5">
+        <div className="text-4xl font-extrabold tracking-tight">{view.points}</div>
+        <div className="text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400 mt-1">
+          points
+        </div>
+        {view.sub ? (
+          <div className="text-sm text-zinc-500 dark:text-zinc-400 mt-2">{view.sub}</div>
+        ) : null}
+      </div>
+
+      <TokenCard token={view.token} />
+
+      {view.breakdown.length > 0 ? (
+        <>
+          <div className="text-sm font-semibold text-zinc-500 dark:text-zinc-400 mt-6 mb-2">
+            Points breakdown
+          </div>
+          <div
+            className={
+              'rounded-xl border border-zinc-200 dark:border-zinc-800 '
+              + 'divide-y divide-zinc-100 dark:divide-zinc-800'
+            }
+          >
+            {view.breakdown.map((row: any, index: number) => (
+              <div key={`${row.label}:${index}`} className="flex items-center gap-3 px-3 py-2 text-sm">
+                <span className="flex-1 min-w-0 truncate">{row.label}</span>
+                <span className="shrink-0 font-semibold text-violet-600 dark:text-violet-400">
+                  {`${Number(row.points || 0).toLocaleString()} pts`}
+                </span>
+              </div>
+            ))}
+          </div>
+        </>
+      ) : null}
+
+      <Completed completed={view.completed} />
+    </>
+  );
+}
+
+export { publicAvatarView };

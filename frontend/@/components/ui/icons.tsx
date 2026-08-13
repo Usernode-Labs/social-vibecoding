@@ -110,6 +110,14 @@ export const ChevronRightIcon = stroked('ChevronRightIcon', 'M9 5l7 7-7 7');
 
 export const ArrowRightIcon = stroked('ArrowRightIcon', 'M14 5l7 7m0 0l-7 7m7-7H3');
 
+/**
+ * The SHORT right arrow, drawn on a tighter inset than ArrowRightIcon. Not a
+ * duplicate: this one is the go-into-the-app arrow on #browse-detail-open,
+ * where it sits beside a word inside a pill and the long arrow's 3→21 span
+ * would crowd the label. Two spellings on purpose, each with one caller.
+ */
+export const ArrowRightShortIcon = stroked('ArrowRightShortIcon', 'M13 7l5 5m0 0l-5 5m5-5H6');
+
 export const XIcon = stroked('XIcon', 'M6 18L18 6M6 6l12 12');
 
 export const Bars3Icon = stroked('Bars3Icon', 'M4 6h16M4 12h16M4 18h16');
@@ -142,6 +150,15 @@ export const TrophyIcon = stroked(
   'TrophyIcon',
   'M16 11V3H8v8M5 7H3v4a2 2 0 002 2h3M19 7h2v4a2 2 0 01-2 2h-3M8 15a4 4 0 008 0h-8z M12 15v3m-3 3h6',
 );
+
+/**
+ * The bare tick. Every "added / done" affordance on the platform draws this
+ * one path — the home launcher's Added badge, the home panels' checklist, the
+ * app view's step list — and the browse row's Add button is the first of them
+ * to render from the module. Its callers differ only in `strokeWidth`, which
+ * is why this is a `stroked` glyph rather than a `strokedPath` one.
+ */
+export const CheckIcon = stroked('CheckIcon', 'M5 13l4 4L19 7');
 
 export const ShieldCheckIcon = stroked(
   'ShieldCheckIcon',
@@ -220,9 +237,12 @@ export const GitHubIcon = filled(
 );
 
 /**
- * The escape hatch, for one call site: the dev board's view switcher picks its
- * `d` out of a table at render time (`VIEW_ICON_PATHS[mode]`), so there is no
- * named glyph to export. Same `stroked` shape as everything above.
+ * The escape hatch, for the two call sites that pick their `d` out of a table
+ * at render time rather than naming a glyph: the dev board's view switcher
+ * (`VIEW_ICON_PATHS[mode]`) and the app card's visibility chip
+ * (`VIS_CHIP_PATHS[vis.icon]`, whose table app-card.js also interpolates into
+ * the string renderer, so the path data has to stay there). Same `stroked`
+ * shape as everything above.
  */
 export const Glyph = ({
   id,

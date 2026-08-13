@@ -59,6 +59,14 @@
 const TopochainLeaderboard = {
   _open: false,
 
+  // ./topochain-standings-store.js, planted by ./mount.ts (#1191 slice 6,
+  // conversion 5). Planted rather than imported because this file is still
+  // evaluated as a CLASSIC SCRIPT by tests/standings-screen.test.js, which
+  // renders the real season and per-event boards through `new Function(src)`.
+  // Null in that harness until it plants its own; every write below tolerates
+  // that, which is also what makes the SSG prerender pass a no-op here.
+  _store: null,
+
   // Unsubscribe handle from TopochainEventContext.onChange.
   _unsub: null,
   _page: 1,
@@ -90,16 +98,18 @@ const TopochainLeaderboard = {
 
   isOpen() { return TopochainLeaderboard._open; },
 
-  // Escapes every character that is dangerous in EITHER text-node context
-  // OR a double-quoted attribute-value context (this module interpolates
-  // into both — e.g. row data inside data-* attributes). `&`/`<`/`>`
-  // alone is not enough for an attribute value: an unescaped `"` lets an
-  // interpolated string break out of the attribute and inject new ones.
-  // Escaping `'` too covers single-quoted attributes.
-  esc(s) {
-    return String(s == null ? '' : s)
-      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  // Was the module's escaper, for a time when every value here was
+  // interpolated into an HTML string — into text nodes AND into `data-*`
+  // attribute values, which is why it escaped quotes too. Conversion 5 made
+  // ./topochain-standings.tsx the only writer of this pane, so React escapes
+  // both contexts on write and nothing calls this any more.
+  //
+  // It stays as `str()` because the COERCION was load-bearing independently of
+  // the escaping: the payload's numeric fields are rendered straight, and
+  // `null`/`undefined` had to read as an empty string rather than as the word
+  // "null" — which is exactly what React would print for a `String(null)`.
+  str(s) {
+    return String(s == null ? '' : s);
   },
 
   // Safe fetch+parse, ported from admin-console.js's fetchJson: never
@@ -163,17 +173,13 @@ const TopochainLeaderboard = {
 
   // ── Shell ────────────────────────────────────────────────────────────
 
+  // The pane's two hosts (#tc-lb-body, #tc-lb-drill) used to be written here
+  // as an innerHTML string on every open. They are ./topochain-standings.tsx's
+  // now; all this does is flip the pane on and seed the "Loading…" body the
+  // string carried, which is what the very next line of open() replaces once
+  // loadLeaderboard() starts. Same one-shot semantics, no DOM.
   _renderShell() {
-    const root = document.getElementById('topochain-leaderboard-root');
-    if (!root) return;
-    // No title and no event picker of our own: the Leaderboard screen shell
-    // titles the page, the section tab above says "Topochain", and the
-    // shared event bar (TopochainEventContext) owns the picker + hero.
-    root.innerHTML = `
-      <div id="tc-lb-body">
-        <p class="text-sm text-zinc-500">Loading…</p>
-      </div>
-      <div id="tc-lb-drill" class="hidden mt-4"></div>`;
+    TopochainLeaderboard._store?.set({ mounted: true, body: { state: 'loading' }, drill: null });
   },
 
   // ── Data loading ─────────────────────────────────────────────────────
@@ -256,43 +262,38 @@ const TopochainLeaderboard = {
 
   // ── Rendering ────────────────────────────────────────────────────────
 
+  // Every branch below used to end in an `innerHTML` assignment plus a sweep
+  // that re-attached the row / pagination / cross-link listeners it had just
+  // destroyed. It builds a DESCRIPTOR now and pushes it into the store;
+  // ./topochain-standings.tsx renders it and carries its own handlers, which
+  // is why the three `addEventListener` sweeps and _wireChallengeLink are
+  // gone. The BRANCHING is untouched — the states, their order and their copy
+  // are exactly what the string version produced.
   _renderBody() {
-    const host = document.getElementById('tc-lb-body');
-    if (!host) return;
-    const esc = TopochainLeaderboard.esc;
+    TopochainLeaderboard._store?.set({ body: TopochainLeaderboard.bodyView() });
+  },
+
+  bodyView() {
+    const str = TopochainLeaderboard.str;
 
     if (TopochainLeaderboard._loading && !TopochainLeaderboard._data) {
-      host.innerHTML = '<p class="text-sm text-zinc-500">Loading…</p>';
-      return;
+      return { state: 'loading' };
     }
     if (TopochainLeaderboard._error) {
-      host.innerHTML = `
-        <div class="rounded-lg bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900 text-red-700 dark:text-red-300 px-4 py-3 text-sm">
-          ${esc(TopochainLeaderboard._error)}
-        </div>`;
-      return;
+      return { state: 'error', message: str(TopochainLeaderboard._error) };
     }
     if (TopochainLeaderboard._empty) {
-      host.innerHTML = `
-        <p class="text-sm text-zinc-500 py-8 text-center">
-          ${esc(TopochainLeaderboard._empty)}
-        </p>`;
-      return;
+      return { state: 'empty', message: str(TopochainLeaderboard._empty) };
     }
     const payload = TopochainLeaderboard._data;
-    if (!payload) {
-      host.innerHTML = '<p class="text-sm text-zinc-500">No data.</p>';
-      return;
-    }
+    if (!payload) return { state: 'none' };
     const { event, leaderboard } = payload;
 
     // The event name / status / dates / "nothing is running" caption all
     // render once, in the shared event bar above. The only header this pane
     // keeps is the disclaimer, which is standings-specific copy and only
     // exists on THIS endpoint's event object.
-    const disclaimer = event.disclaimer
-      ? `<p id="tc-lb-disclaimer" class="text-xs text-zinc-500 mb-3">${esc(event.disclaimer)}</p>`
-      : '';
+    const disclaimer = event.disclaimer ? str(event.disclaimer) : null;
 
     // The challenge tally + cross-link (#981) — the mirror of the challenges
     // pane's "See where the season stands →". Omitted entirely when the event
@@ -300,30 +301,18 @@ const TopochainLeaderboard = {
     // or failed tally is invisible rather than a "0 of 0" line.
     const counts = TopochainLeaderboard._challengeCounts || { total: 0, completed: 0 };
     const challengeLine = counts.total > 0
-      ? `<p id="tc-lb-challenge-link" class="text-sm text-zinc-500 dark:text-zinc-400 mb-3">
-          ${esc(counts.completed)} of ${esc(counts.total)} challenges completed
-          <span class="text-zinc-400 dark:text-zinc-600">·</span>
-          <button id="tc-lb-to-challenges"
-            class="font-medium text-violet-600 dark:text-violet-400 hover:underline">View challenges &rarr;</button>
-        </p>`
-      : '';
+      ? { completed: str(counts.completed), total: str(counts.total) }
+      : null;
 
     if (!event.display_leaderboard) {
-      host.innerHTML = `${disclaimer}
-        <p class="text-sm text-zinc-500 py-8 text-center">
-          The leaderboard for this event isn't public yet.
-        </p>`;
-      return;
+      return { state: 'private', disclaimer };
     }
 
     // The cross-link DOES belong here: an event can have challenges before
     // anyone has scored on it, and that is exactly when "go look at the
     // challenges" is the most useful thing this pane can say.
     if (!leaderboard.length) {
-      host.innerHTML = `${challengeLine}${disclaimer}
-        <p class="text-sm text-zinc-500 py-8 text-center">No leaderboard entries yet.</p>`;
-      TopochainLeaderboard._wireChallengeLink();
-      return;
+      return { state: 'noentries', challengeLine, disclaimer };
     }
 
     // The season aggregate (`event.type === 'season'`) is resolved through
@@ -335,76 +324,80 @@ const TopochainLeaderboard = {
     // `event_total_produced_blocks` is NOT in that bucket: the season path
     // maps it from the aggregate's real SUM, so it stays.
     const isSeason = event.type === 'season';
-    const rows = leaderboard.map((r, i) => {
-      const rankDisplay = r.is_non_podium ? '—' : String(r.rank);
-      const nonPodiumTag = r.is_non_podium
-        ? ' <span class="text-[10px] uppercase tracking-wide text-zinc-400" title="Excluded from podium ranking">non-podium</span>'
-        : '';
-      return `
-        <tr class="tc-lb-row border-b border-zinc-100 dark:border-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-800/60 cursor-pointer" data-row-index="${esc(i)}">
-          <td class="px-3 py-2 text-sm font-mono text-zinc-500">${esc(rankDisplay)}</td>
-          <td class="px-3 py-2 text-sm">
-            <span class="font-medium text-zinc-900 dark:text-zinc-100">${esc(r.display_name)}</span>${nonPodiumTag}
-          </td>
-          <td class="px-3 py-2 text-sm font-mono text-right">${esc(r.total_points)}<span class="text-zinc-400"> +${esc(r.extra_points)}</span></td>
-          <td class="px-3 py-2 text-sm font-mono text-right">${esc(r.event_total_produced_blocks)}</td>
-          ${isSeason ? '' : `<td class="px-3 py-2 text-sm font-mono text-right">${esc(r.event_success_rate)}%</td>`}
-        </tr>`;
-    }).join('');
+    // ONE list drives both the header row and every body row — the renderer
+    // maps over it twice. The string version spelled the two out separately
+    // and dropped the success-rate cell with a second, matching conditional,
+    // which is a skewed table one edit away; here a column cannot exist in the
+    // head without existing in the body.
+    const columns = isSeason
+      ? ['rank', 'user', 'points', 'blocks']
+      : ['rank', 'user', 'points', 'blocks', 'success'];
+    const headers = {
+      rank: 'Rank',
+      user: 'User',
+      points: isSeason ? 'Season points' : 'Points',
+      blocks: 'Blocks produced',
+      success: 'Success rate',
+    };
+
+    const rows = leaderboard.map((r, i) => ({
+      index: i,
+      rank: r.is_non_podium ? '—' : String(r.rank),
+      nonPodium: !!r.is_non_podium,
+      user: str(r.display_name),
+      points: str(r.total_points),
+      extra: str(r.extra_points),
+      blocks: str(r.event_total_produced_blocks),
+      success: str(r.event_success_rate),
+    }));
 
     const meta = TopochainLeaderboard._meta;
-    const pagination = meta ? `
-      <div class="flex items-center justify-between mt-3 text-sm">
-        <span class="text-zinc-500">Page ${meta.page} of ${Math.max(meta.total_pages, 1)} · ${meta.total} total</span>
-        <div class="flex gap-2">
-          <button id="tc-lb-prev" class="rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-1 text-xs font-medium disabled:opacity-40" ${meta.page <= 1 ? 'disabled' : ''}>Prev</button>
-          <button id="tc-lb-next" class="rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-1 text-xs font-medium disabled:opacity-40" ${meta.page >= meta.total_pages ? 'disabled' : ''}>Next</button>
-        </div>
-      </div>` : '';
+    const pagination = meta ? {
+      page: meta.page,
+      totalPages: Math.max(meta.total_pages, 1),
+      total: meta.total,
+      prevDisabled: meta.page <= 1,
+      nextDisabled: meta.page >= meta.total_pages,
+    } : null;
 
-    host.innerHTML = `${challengeLine}${disclaimer}
-      <div class="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
-        <table class="w-full">
-          <thead class="bg-zinc-50 dark:bg-zinc-900 text-xs uppercase tracking-wide text-zinc-500">
-            <tr>
-              <th class="px-3 py-2 text-left">Rank</th>
-              <th class="px-3 py-2 text-left">User</th>
-              <th class="px-3 py-2 text-right">${isSeason ? 'Season points' : 'Points'}</th>
-              <th class="px-3 py-2 text-right">Blocks produced</th>
-              ${isSeason ? '' : '<th class="px-3 py-2 text-right">Success rate</th>'}
-            </tr>
-          </thead>
-          <tbody>${rows}</tbody>
-        </table>
-      </div>
-      ${pagination}`;
+    return {
+      state: 'table',
+      challengeLine,
+      disclaimer,
+      isSeason,
+      columns,
+      headers,
+      rows,
+      pagination,
+    };
+  },
 
-    TopochainLeaderboard._wireChallengeLink();
-    host.querySelectorAll('.tc-lb-row').forEach((tr) => {
-      tr.addEventListener('click', () => {
-        const idx = parseInt(tr.dataset.rowIndex, 10);
-        TopochainLeaderboard._openDrill(leaderboard[idx]);
-      });
-    });
-    document.getElementById('tc-lb-prev')?.addEventListener('click', () => {
-      if (TopochainLeaderboard._page > 1) {
-        TopochainLeaderboard._page -= 1;
-        TopochainLeaderboard.loadLeaderboard();
-      }
-    });
-    document.getElementById('tc-lb-next')?.addEventListener('click', () => {
-      TopochainLeaderboard._page += 1;
+  // The three things a rendered body can DO. They were closures over the
+  // innerHTML'd nodes; the renderer calls them by name now, so the behaviour
+  // stays in this module and only the wiring moved.
+  _openRowAt(index) {
+    const rows = TopochainLeaderboard._data?.leaderboard;
+    if (!Array.isArray(rows) || !rows[index]) return;
+    TopochainLeaderboard._openDrill(rows[index]);
+  },
+
+  _prevPage() {
+    if (TopochainLeaderboard._page > 1) {
+      TopochainLeaderboard._page -= 1;
       TopochainLeaderboard.loadLeaderboard();
-    });
+    }
+  },
+
+  _nextPage() {
+    TopochainLeaderboard._page += 1;
+    TopochainLeaderboard.loadLeaderboard();
   },
 
   // Real hash navigation, so the section switch goes through the router and
   // the shared event selection survives it — same reasoning as the challenges
   // pane's `#tc-se-to-standings` link in the opposite direction.
-  _wireChallengeLink() {
-    document.getElementById('tc-lb-to-challenges')?.addEventListener('click', () => {
-      window.location.hash = '#leaderboard/challenges';
-    });
+  _goToChallenges() {
+    window.location.hash = '#leaderboard/challenges';
   },
 
   // ── Drill-down panel ─────────────────────────────────────────────────
@@ -502,93 +495,75 @@ const TopochainLeaderboard = {
     TopochainLeaderboard._renderDrill();
   },
 
+  // Same shape as _renderBody: a descriptor, not markup. `null` is the closed
+  // panel — the renderer emits #tc-lb-drill with its `hidden` class, which is
+  // what the `classList.add('hidden')` + `innerHTML = ''` pair did.
   _renderDrill() {
-    const host = document.getElementById('tc-lb-drill');
-    if (!host) return;
-    const row = TopochainLeaderboard._drillRow;
-    if (!row) {
-      host.classList.add('hidden');
-      host.innerHTML = '';
-      return;
-    }
-    host.classList.remove('hidden');
-    const esc = TopochainLeaderboard.esc;
+    TopochainLeaderboard._store?.set({ drill: TopochainLeaderboard.drillView() });
+  },
 
+  drillView() {
+    const str = TopochainLeaderboard.str;
+    const row = TopochainLeaderboard._drillRow;
+    if (!row) return null;
+
+    // The three sections load independently, so each keeps its own
+    // loading/error/data triple all the way to the renderer rather than being
+    // collapsed here — one failing must not blank the other two.
     const act = TopochainLeaderboard._drillActivities;
-    const activitiesHtml = act.loading
-      ? '<p class="text-xs text-zinc-500">Loading activities…</p>'
-      : act.error
-        ? `<p class="text-xs text-zinc-500">${esc(act.error)}</p>`
-        : (act.data && act.data.length
-          ? `<ul class="space-y-1">${act.data.map((a) => `
-              <li class="flex items-center justify-between gap-3 text-xs">
-                <span class="text-zinc-600 dark:text-zinc-300">${esc(a.description || a.activity_type)}</span>
-                <span class="font-mono text-zinc-400">+${esc(a.points)}</span>
-              </li>`).join('')}</ul>`
-          : '<p class="text-xs text-zinc-500">No activities recorded for this event.</p>');
+    const activities = {
+      loading: !!act.loading,
+      error: act.error ? str(act.error) : null,
+      items: (!act.loading && !act.error && Array.isArray(act.data))
+        ? act.data.map((a) => ({
+          label: str(a.description || a.activity_type),
+          points: str(a.points),
+        }))
+        : null,
+    };
 
     const epoch = TopochainLeaderboard._drillEpoch;
-    const epochHtml = epoch.loading
-      ? '<p class="text-xs text-zinc-500">Loading epoch breakdown…</p>'
-      : epoch.error
-        ? `<p class="text-xs text-zinc-500">${esc(epoch.error)}</p>`
-        : (epoch.data && epoch.data.breakdown && epoch.data.breakdown.length
-          ? `<div class="overflow-x-auto">
-              <table class="w-full text-xs">
-                <thead class="text-zinc-500"><tr>
-                  <th class="text-left py-1">Epoch</th>
-                  <th class="text-right py-1">Won slots</th>
-                  <th class="text-right py-1">Produced</th>
-                  <th class="text-right py-1">Success rate</th>
-                </tr></thead>
-                <tbody>${epoch.data.breakdown.map((e) => `
-                  <tr class="border-t border-zinc-100 dark:border-zinc-800">
-                    <td class="py-1 font-mono">${esc(e.epoch)}</td>
-                    <td class="py-1 font-mono text-right">${esc(e.total_won_slots)}</td>
-                    <td class="py-1 font-mono text-right">${esc(e.chain_total_produced_blocks)}</td>
-                    <td class="py-1 font-mono text-right">${esc(e.success_rate)}%</td>
-                  </tr>`).join('')}</tbody>
-              </table>
-            </div>`
-          : '<p class="text-xs text-zinc-500">No epoch data for this event.</p>');
+    const breakdown = epoch.data && epoch.data.breakdown;
+    const epochView = {
+      loading: !!epoch.loading,
+      error: epoch.error ? str(epoch.error) : null,
+      rows: (!epoch.loading && !epoch.error && Array.isArray(breakdown))
+        ? breakdown.map((e) => ({
+          epoch: str(e.epoch),
+          wonSlots: str(e.total_won_slots),
+          produced: str(e.chain_total_produced_blocks),
+          successRate: str(e.success_rate),
+        }))
+        : null,
+    };
 
     const prof = TopochainLeaderboard._drillProfile;
-    const profileHtml = prof.loading
-      ? '<p class="text-xs text-zinc-500">Loading your profile…</p>'
-      : prof.error
-        ? `<p class="text-xs text-zinc-500">${esc(prof.error)}</p>`
-        : (prof.data
-          ? `<div class="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
-              <div><span class="text-zinc-500">Rank</span><div class="font-mono">${esc(prof.data.rank ?? '—')}</div></div>
-              <div><span class="text-zinc-500">Total points</span><div class="font-mono">${esc(prof.data.total_points)}</div></div>
-              <div><span class="text-zinc-500">Produced blocks</span><div class="font-mono">${esc(prof.data.produced_blocks)}</div></div>
-              <div><span class="text-zinc-500">Client success rate</span><div class="font-mono">${prof.data.client_success_rate == null ? '—' : `${esc(prof.data.client_success_rate)}%`}</div></div>
-              <div><span class="text-zinc-500">Canonical success rate</span><div class="font-mono">${prof.data.canonical_success_rate == null ? '—' : `${esc(prof.data.canonical_success_rate)}%`}</div></div>
-            </div>`
-          : '');
+    // `shown` is the string version's `prof.data || prof.loading || prof.error`
+    // gate on the whole "Your profile" block: it only exists for the viewer's
+    // OWN row (see the file header), and on every other row all three are
+    // falsy, so the block is absent rather than empty.
+    const profile = {
+      shown: !!(prof.data || prof.loading || prof.error),
+      loading: !!prof.loading,
+      error: prof.error ? str(prof.error) : null,
+      stats: prof.data ? {
+        rank: str(prof.data.rank ?? '—'),
+        totalPoints: str(prof.data.total_points),
+        producedBlocks: str(prof.data.produced_blocks),
+        clientSuccessRate: prof.data.client_success_rate == null
+          ? null : str(prof.data.client_success_rate),
+        canonicalSuccessRate: prof.data.canonical_success_rate == null
+          ? null : str(prof.data.canonical_success_rate),
+      } : null,
+    };
 
-    host.innerHTML = `
-      <div class="bg-zinc-50 dark:bg-zinc-900 rounded-lg border border-zinc-200 dark:border-zinc-800 p-4">
-        <div class="flex items-center justify-between mb-3">
-          <h3 class="text-sm font-semibold text-zinc-900 dark:text-zinc-100">${esc(row.display_name)}</h3>
-          <button id="tc-lb-drill-close" class="text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 text-lg leading-none" aria-label="Close">&times;</button>
-        </div>
-        ${row.wallet_address ? `<p class="text-xs font-mono text-zinc-400 mb-3 break-all">${esc(row.wallet_address)}</p>` : ''}
-        ${prof.data || prof.loading || prof.error ? `<div class="mb-4"><div class="text-xs uppercase tracking-wide text-zinc-500 mb-1">Your profile</div>${profileHtml}</div>` : ''}
-        <div class="grid sm:grid-cols-2 gap-4">
-          <div>
-            <div class="text-xs uppercase tracking-wide text-zinc-500 mb-1">Activities</div>
-            ${activitiesHtml}
-          </div>
-          <div>
-            <div class="text-xs uppercase tracking-wide text-zinc-500 mb-1">Epoch breakdown</div>
-            ${epochHtml}
-          </div>
-        </div>
-      </div>`;
-
-    document.getElementById('tc-lb-drill-close')
-      ?.addEventListener('click', () => TopochainLeaderboard._closeDrill());
+    return {
+      displayName: str(row.display_name),
+      walletAddress: row.wallet_address ? str(row.wallet_address) : null,
+      profile,
+      activities,
+      epoch: epochView,
+    };
   },
 };
 

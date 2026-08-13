@@ -89,9 +89,15 @@ test('the lift is reversible: the card goes home before the root re-hides', () =
   // would break the NEXT render of the dialog, not this one.
   assert.match(STATIC_MODAL, /home: 'placeholder'/,
     "the card goes back to its own backdrop, not to <body> like the drawers' panels");
-  assert.match(KIT_SURFACE, /createComment\(/, 'a placeholder marks where the card belongs');
-  assert.match(KIT_SURFACE, /replaceChild\(contentEl, placeholder\)/,
+  // The lift/restore pair itself is createPlaceholderHome since #1191 slice 6
+  // conversion 8, which gave #settings-footer's move the same seam. Same two
+  // operations, one implementation — adoptKitSurface's `home: 'placeholder'`
+  // branch is now a caller of it.
+  assert.match(KIT_SURFACE, /createComment\(label\)/, 'a placeholder marks where the card belongs');
+  assert.match(KIT_SURFACE, /replaceChild\(el, placeholder\)/,
     'restore puts the card back at its original position');
+  assert.match(KIT_SURFACE, /home = createPlaceholderHome\(contentEl, `platform-\$\{options\.kind\}-home`\)/,
+    'and the dialogs still get theirs from the kind, so the comment names the surface');
   assert.match(KIT_SURFACE, /flagEl\.classList\.remove\(adoptedClass\)/);
   // The restore has to be idempotent, because both the close path and the
   // kit's own onDismiss run it — and it must be reachable without telling the

@@ -2,8 +2,8 @@
 // app-tile surface on the platform draws the same way (#1083 chunk F).
 //
 // Four surfaces render an app: the home launcher grid (Home.renderAppCard),
-// the browse screen's list rows and detail hero (Browse.renderAppRow /
-// _renderDetail), and the app view's header tile (app-view.js). They render at
+// the browse screen's list rows and detail hero (./browse-list.tsx /
+// ./browse-detail.tsx), and the app view's header tile (app-view.js). They render at
 // four different SIZES, so the tile BOX is each caller's own — what they must
 // agree on is the tile's CONTENT (which of image / emoji / letter to draw, and
 // the `data-icon` kind that goes with it) and the activity/visibility chip
@@ -45,6 +45,16 @@ function escapeHtml(str) {
 // hero) and the border box is what draws the hairline. The one exception is
 // the emoji's `text-3xl`, which is the launcher tile's size; the two browse
 // surfaces override it on the wrapper.
+// The same decision as iconTileFor, as DATA rather than markup (#1191 slice 6
+// conversion 3). The browse screen renders its tiles in React now, so it needs
+// the choice without the string; iconTileFor below is built on top of this, so
+// the priority order has one source and the two renderers cannot drift.
+export function iconViewFor(app) {
+  if (app.icon_url) return { kind: 'image', src: app.icon_url };
+  if (app.icon_emoji) return { kind: 'emoji', emoji: app.icon_emoji };
+  return { kind: 'letter', letter: (app.name || '?').charAt(0).toUpperCase() };
+}
+
 export function iconTileFor(app) {
   if (app.icon_url) {
     return {
@@ -73,7 +83,12 @@ export function iconTileFor(app) {
 // no GitHub calls); zero-count chips are dropped. The missing-secrets chip
 // deliberately omits the key NAMES — those live in the app view's Secrets
 // panel.
-export function renderAppPillsHtml(app) {
+//
+// #1191 slice 6 conversion 3 split this in two: appPillsFor decides WHICH
+// chips a record earns, renderAppPillsHtml turns that decision into the string
+// the launcher grid and the app view still splice in. One decision, two
+// renderers — the same shape the notifications rows landed in.
+export function appPillsFor(app) {
   const openPrs = parseInt(app.open_prs || 0);
   const activeSessions = parseInt(app.active_sessions || 0);
   const openIssues = parseInt(app.open_issues || 0);
@@ -108,30 +123,50 @@ export function renderAppPillsHtml(app) {
       tip: `${openIssues} open issue${openIssues === 1 ? '' : 's'}`,
     });
   }
-  const chipBaseCls = 'activity-chip inline-flex items-center px-1.5 py-0.5 rounded-full text-[0.65rem] font-medium';
-  const chipsHtml = chipDefs.map((c) =>
-    `<span class="${chipBaseCls} ${c.cls}" title="${c.tip}">${c.label}</span>`
-  ).join('');
-
   // Visibility chip for non-default settings. View-private dominates (it
   // implies collab-private); collab-private alone reads as "invite-only
-  // build" since anyone can still see/use the app. Inline currentColor SVGs
-  // (Heroicons v1 outline) instead of emoji so the glyphs tint violet with
-  // the chip in both themes.
-  const visChipCls = 'inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[0.65rem] font-medium bg-violet-500/10 text-violet-500 dark:text-violet-400';
-  const visChipIcon = (d) => `<svg class="w-3 h-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="${d}"/></svg>`;
-  const lockIcon = visChipIcon('M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z');
-  const mailIcon = visChipIcon('M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z');
-  const visChipHtml = app.view_visibility === 'private'
-    ? `<span class="${visChipCls}" title="Only collaborators can see and use this app">${lockIcon} Private</span>`
+  // build" since anyone can still see/use the app.
+  const vis = app.view_visibility === 'private'
+    ? {
+      icon: 'lock',
+      label: 'Private',
+      tip: 'Only collaborators can see and use this app',
+    }
     : (app.collab_visibility === 'private'
-      ? `<span class="${visChipCls}" title="Anyone can use this app; only invited collaborators can build it">${mailIcon} Invite-only build</span>`
-      : '');
+      ? {
+        icon: 'mail',
+        label: 'Invite-only build',
+        tip: 'Anyone can use this app; only invited collaborators can build it',
+      }
+      : null);
 
+  return { chips: chipDefs, vis };
+}
+
+// The chip classes, shared by both renderers so a restyle lands on all four
+// app surfaces at once.
+export const CHIP_BASE_CLS = 'activity-chip inline-flex items-center px-1.5 py-0.5 rounded-full text-[0.65rem] font-medium';
+export const VIS_CHIP_CLS = 'inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[0.65rem] font-medium bg-violet-500/10 text-violet-500 dark:text-violet-400';
+// Heroicons v1 outline paths, drawn as inline currentColor SVGs (rather than
+// emoji) so the glyphs tint violet with the chip in both themes.
+export const VIS_CHIP_PATHS = {
+  lock: 'M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z',
+  mail: 'M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z',
+};
+
+export function renderAppPillsHtml(app) {
+  const { chips, vis } = appPillsFor(app);
+  const chipsHtml = chips.map((c) =>
+    `<span class="${CHIP_BASE_CLS} ${c.cls}" title="${c.tip}">${c.label}</span>`
+  ).join('');
+  const visChipIcon = (d) => `<svg class="w-3 h-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="${d}"/></svg>`;
+  const visChipHtml = vis
+    ? `<span class="${VIS_CHIP_CLS}" title="${vis.tip}">${visChipIcon(VIS_CHIP_PATHS[vis.icon])} ${vis.label}</span>`
+    : '';
   return `${chipsHtml}${visChipHtml}`;
 }
 
-export const AppCard = { iconTileFor, renderAppPillsHtml };
+export const AppCard = { iconTileFor, renderAppPillsHtml, iconViewFor, appPillsFor };
 
 // Published for the legacy half of the split. Both in-bundle consumers
 // (features/apps/browse.js and features/home/home.js, whose two card methods

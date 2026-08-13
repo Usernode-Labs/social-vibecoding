@@ -25,7 +25,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
-const { runModules } = require('./helpers/bundle-module');
+const { runModules, workDrawerImports } = require('./helpers/bundle-module');
 
 const read = (f) => fs.readFileSync(path.join(__dirname, '..', 'public', 'js', f), 'utf8');
 const MERGE_STATUS_SRC = read('merge-status.js');
@@ -98,20 +98,46 @@ function makeSandbox() {
 // and `runInContext` compiles a classic script, so each one goes through
 // tests/helpers/bundle-module.js first — its imports become reads of an
 // explicit stub table, and nothing else about the source changes.
-function loadIsolated(sandbox, src, label) {
-  runModules(sandbox, [[label, src]]);
+function loadIsolated(sandbox, src, label, imports) {
+  runModules(sandbox, [[label, src]], { imports });
 }
 
 function loadAll() {
   const sandbox = makeSandbox();
+  // One table per load: it carries the work-drawer store stub, whose `.state`
+  // is this sandbox's rendered output (#1191 slice 6 conversion 4).
+  const imports = workDrawerImports();
+  sandbox.__imports = imports;
   const stack = [
     ['notifications.js', NOTIFICATIONS_SRC],
     ['merge-status.js', MERGE_STATUS_SRC],
     ['session-state.js', SESSION_STATE_SRC],
     ['work-drawer.js', WORK_DRAWER_SRC],
   ];
-  for (const [label, src] of stack) loadIsolated(sandbox, src, label);
+  for (const [label, src] of stack) loadIsolated(sandbox, src, label, imports);
   return sandbox;
+}
+
+// The store the drawer pushes its sections into, for the tests that assert on
+// what a full _renderList() produced rather than calling one builder directly.
+const storeOf = (sb) => sb.__imports['./work-drawer-store.js'].workDrawerStore;
+
+// A pinned "Needs attention" row is a notifications.js rowView descriptor, not
+// markup, so the text assertions below need its words flattened out of the
+// segment list. Everything React would place as a text node, joined — which is
+// exactly the string the retired `rowHtml` used to produce, minus the tags.
+function rowText(row) {
+  const parts = [];
+  for (const seg of Array.from(row.segments || [])) parts.push(String(seg.v));
+  if (row.body) parts.push(String(row.body.text));
+  if (row.time) parts.push(String(row.time));
+  return parts.join(' ');
+}
+
+/** Every rendered word of a section, header included. */
+function sectionText(section) {
+  if (!section) return '';
+  return [section.label, ...Array.from(section.rows, rowText)].join(' ');
 }
 
 const SESSION_KINDS = ['session_done', 'auto_solve_done', 'stale_pr', 'check_failed'];
@@ -159,16 +185,35 @@ test('bell rendering excludes session kinds; the cog pinned section holds exactl
   assert.deepEqual(pendingIds, [2, 3, 6], 'cog pins unread session kinds only (read stale_pr dropped)');
 });
 
-test('renderPendingSection renders the shared per-kind rows under a "Needs attention" header', () => {
+// #1191 slice 6 conversion 4: this section is DATA now. The shared-row claim is
+// stronger than it was — the rows are literally the descriptors the bell hands
+// its own React component, so "reuses the bell row" is checked by identity of
+// the builder rather than by a matching `data-notif-id` in two HTML strings.
+test('pendingSection returns the shared per-kind rows under a "Needs attention" header', () => {
   const sb = loadAll();
   sb.window.Notifications.items = [
     { id: 2, kind: 'session_done', appId: 5, appName: 'Demo App', prTitle: 'Fix the header', createdAt: new Date().toISOString(), readAt: null },
   ];
-  const html = sb.WorkDrawer.renderPendingSection();
-  assert.match(html, /Needs attention/);
-  assert.match(html, /data-notif-id="2"/, 'reuses the bell row markup (clickable, markable)');
-  assert.match(html, /Your dev session in/);
-  assert.match(html, /Fix the header/);
+  const section = sb.WorkDrawer.pendingSection();
+  assert.equal(section.key, 'pending');
+  assert.equal(section.label, 'Needs attention');
+  const ids = Array.from(section.rows, (r) => r.id);
+  assert.deepEqual(ids, [2], 'carries the row id the click handler marks read by');
+  assert.match(sectionText(section), /Your dev session in/);
+  assert.match(sectionText(section), /Fix the header/);
+});
+
+test('pendingSection is absent when nothing is pinned, and _renderList drops it', () => {
+  const sb = loadAll();
+  sb.window.Notifications.items = [
+    { id: 1, kind: 'mention', appId: 5, appName: 'A', createdAt: '2026-01-01', readAt: null },
+  ];
+  assert.equal(sb.WorkDrawer.pendingSection(), null, 'a bell-only inbox pins nothing');
+  sb.WorkDrawer._renderList();
+  const state = storeOf(sb).state;
+  assert.deepEqual(Array.from(state.sections, (s) => s.key), [], 'no sections at all');
+  assert.equal(state.empty, true, 'so the "nothing in flight" hint shows');
+  assert.equal(state.markAll, false, 'and "Mark all read" stays hidden');
 });
 
 // #971: the label ladder for the pinned "needs attention" session rows —
@@ -201,17 +246,17 @@ test('#971 session_done rows prefer the session title over the dev name', () => 
       createdAt: now, readAt: null,
     },
   ];
-  const html = sb.WorkDrawer.renderPendingSection();
+  const text = sectionText(sb.WorkDrawer.pendingSection());
 
-  assert.match(html, /Web UI app proposals implementation/, 'titled row shows its title');
+  assert.match(text, /Web UI app proposals implementation/, 'titled row shows its title');
   assert.doesNotMatch(
-    html, /dev\/evan-1785951671234/,
+    text, /dev\/evan-1785951671234/,
     'the titled row must NOT fall back to its branch name'
   );
-  assert.match(html, /Make Topochain standings primary/, 'promoted row unchanged');
-  assert.doesNotMatch(html, /dev\/evan-1785946387499/, 'promoted row shows no dev name');
+  assert.match(text, /Make Topochain standings primary/, 'promoted row unchanged');
+  assert.doesNotMatch(text, /dev\/evan-1785946387499/, 'promoted row shows no dev name');
   assert.match(
-    html, /dev\/evan-1785999999999/,
+    text, /dev\/evan-1785999999999/,
     'a genuinely untitled session still falls back to the dev name'
   );
 });
@@ -233,11 +278,11 @@ test('#971 stale_pr / check_failed keep the PR title first, session title as fal
       prNumber: 42, createdAt: now, readAt: null,
     },
   ];
-  const html = sb.WorkDrawer.renderPendingSection();
-  assert.match(html, /The PR title/, 'PR title still leads on proposal rows');
-  assert.doesNotMatch(html, /The session title/, 'session title not preferred there');
-  assert.match(html, /Session title fallback/, 'but it beats a bare "PR #N"');
-  assert.doesNotMatch(html, /PR #42/, 'so the number placeholder is not reached');
+  const text = sectionText(sb.WorkDrawer.pendingSection());
+  assert.match(text, /The PR title/, 'PR title still leads on proposal rows');
+  assert.doesNotMatch(text, /The session title/, 'session title not preferred there');
+  assert.match(text, /Session title fallback/, 'but it beats a bare "PR #N"');
+  assert.doesNotMatch(text, /PR #42/, 'so the number placeholder is not reached');
 });
 
 // #971: the OS-notification body (DevAlerts.onCompletion payload) reads from
@@ -605,7 +650,14 @@ const mkProposal = (over = {}) => ({
   yes_count: 1, no_count: 0, majority: 3, check_state: 'passing', ...over,
 });
 
-test('renderSessionsSection drops a session whose id appears in the proposals list', () => {
+// The section builders return descriptors since #1191 slice 6 conversion 4, so
+// the de-dup below is asserted on the rows themselves — `hrefs()` reads the
+// same `#app/<slug>/dev/sessions/<id>` values the old HTML carried, and the
+// "no orphan header" case is now a literal `null` section rather than an
+// empty string that _renderList happened to concatenate away.
+const hrefs = (section) => (section ? Array.from(section.rows, (r) => r.href) : []);
+
+test('sessionsSection drops a session whose id appears in the proposals list', () => {
   const sb = loadAll();
   const W = drawerWith(sb, {
     sessions: [
@@ -614,20 +666,21 @@ test('renderSessionsSection drops a session whose id appears in the proposals li
     ],
     proposals: [mkProposal({ id: 7, pr_title: 'Promoted dup' })],
   });
-  const html = W.renderSessionsSection();
-  assert.match(html, /Your sessions/);
-  assert.match(html, /Plain active/, 'non-promoted session still renders');
-  assert.doesNotMatch(html, /dev\/sessions\/7/, 'duplicated promoted session is dropped');
-  assert.match(html, /dev\/sessions\/8/);
+  const section = W.sessionsSection();
+  assert.equal(section.label, 'Your sessions');
+  const titles = Array.from(section.rows, (r) => r.title);
+  assert.deepEqual(titles, ['Plain active'], 'non-promoted session still renders');
+  assert.deepEqual(hrefs(section), ['#app/demo/dev/sessions/8'],
+    'duplicated promoted session is dropped');
 });
 
-test('renderSessionsSection returns "" when every session is filtered out (no orphan header)', () => {
+test('sessionsSection returns null when every session is filtered out (no orphan header)', () => {
   const sb = loadAll();
   const W = drawerWith(sb, {
     sessions: [mkSession({ id: 7, status: 'promoted' })],
     proposals: [mkProposal({ id: 7 })],
   });
-  assert.equal(W.renderSessionsSection(), '');
+  assert.equal(W.sessionsSection(), null);
 });
 
 test('a session matching a governance row id is NOT filtered (PR proposals only)', () => {
@@ -639,11 +692,11 @@ test('a session matching a governance row id is NOT filtered (PR proposals only)
   // Governance ids come from the issues table — same numeric space as
   // nothing session-related; a collision must not hide the session.
   W.governance = [{ id: 42, title: 'Secret change', app_slug: 'demo', app_name: 'Demo App', up_count: 0 }];
-  const html = W.renderSessionsSection();
-  assert.match(html, /dev\/sessions\/42/, 'session survives a governance id collision');
+  assert.deepEqual(hrefs(W.sessionsSection()), ['#app/demo/dev/sessions/42'],
+    'session survives a governance id collision');
 });
 
-test('renderProposalsSection carries the "working…" tag from a busy matching session', () => {
+test('proposalsSection carries the "working…" tag from a busy matching session', () => {
   const sb = loadAll();
   const W = drawerWith(sb, {
     sessions: [
@@ -655,12 +708,11 @@ test('renderProposalsSection carries the "working…" tag from a busy matching s
       mkProposal({ id: 9, pr_title: 'Idle proposal' }),
     ],
   });
-  const html = W.renderProposalsSection();
-  const rows = html.split('<a ');
-  const busyRow = rows.find((r) => r.includes('dev/proposals/7'));
-  const idleRow = rows.find((r) => r.includes('dev/proposals/9'));
-  assert.ok(busyRow && busyRow.includes('working…'), 'busy session\'s proposal row shows the spinner tag');
-  assert.ok(idleRow && !idleRow.includes('working…'), 'idle proposal row has no spinner tag');
+  const rows = Array.from(W.proposalsSection().rows, (r) => ({ id: r.id, busy: r.busy }));
+  const busyRow = rows.find((r) => r.id === 7);
+  const idleRow = rows.find((r) => r.id === 9);
+  assert.equal(busyRow.busy, true, 'busy session\'s proposal row shows the spinner tag');
+  assert.equal(idleRow.busy, false, 'idle proposal row has no spinner tag');
 });
 
 test('isWorking stays true for a busy promoted session filtered from the rendered list', () => {
@@ -670,6 +722,30 @@ test('isWorking stays true for a busy promoted session filtered from the rendere
     sessions: [mkSession({ id: 7, status: 'promoted', busy: true })],
     proposals: [mkProposal({ id: 7, check_state: 'passing' })],
   });
-  assert.equal(W.renderSessionsSection(), '', 'row hidden from Your sessions');
+  assert.equal(W.sessionsSection(), null, 'row hidden from Your sessions');
   assert.equal(W.isWorking(), true, 'cog spin still driven by the unfiltered data array');
+});
+
+// The three-way status tag: mutually exclusive with "working…", which is what
+// made it a single `status` field rather than two independent flags.
+test('a session row carries at most one status tag, and never beside "working…"', () => {
+  const sb = loadAll();
+  const W = drawerWith(sb, {
+    sessions: [
+      mkSession({ id: 1, status: 'paused' }),
+      mkSession({ id: 2, status: 'promoted' }),
+      mkSession({ id: 3, status: 'active' }),
+      mkSession({ id: 4, status: 'paused', busy: true }),
+    ],
+    proposals: [],
+  });
+  const rows = Array.from(W.sessionsSection().rows, (r) => ({
+    id: r.id, busy: r.busy, label: r.status ? r.status.label : null,
+  }));
+  const byId = (id) => rows.find((r) => r.id === id);
+  assert.equal(byId(1).label, 'paused');
+  assert.equal(byId(2).label, 'in vote');
+  assert.equal(byId(3).label, null, 'an ordinary active session is untagged');
+  assert.equal(byId(4).label, null, '"working…" wins over the paused tag');
+  assert.equal(byId(4).busy, true);
 });
