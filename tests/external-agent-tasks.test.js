@@ -2979,6 +2979,68 @@ test('an update is submitted through the platform route, and its answer is passe
   assert.equal(result.unchanged, false);
 });
 
+// #1199. The testing metadata is what the group's screenshots are shot on. It
+// travelled with an IMPORT from the day submit_work took it, and an UPDATE
+// dropped it here — so a revised proposal kept whatever routes its first
+// submission named, or none, and the vote happened over home-page screenshots.
+test('an update carries the testing metadata it was given, and omits what it was not', async () => {
+  const testing = {
+    testingPaths: [{ path: '/?shot=invite', viewport: 'desktop' }],
+    testingSteps: '1. Open the invite dialog.',
+  };
+  const { calls } = await submitUpdateWork({ testing });
+  assert.deepEqual(calls[0].payload, {
+    branch: 'my-fix',
+    forkRepo: null,
+    expectedHeadSha: null,
+    testingPaths: testing.testingPaths,
+    testingSteps: '1. Open the invite dialog.',
+  });
+
+  // Omitted stays omitted rather than being sent as null: the route reads an
+  // absent field as "leave the proposal's stored routes alone", and a null
+  // would be a different instruction.
+  const bare = await submitUpdateWork({});
+  assert.deepEqual(Object.keys(bare.calls[0].payload).sort(), ['branch', 'expectedHeadSha', 'forkRepo']);
+  const stepsOnly = await submitUpdateWork({ testing: { testingSteps: 'Just steps.' } });
+  assert.equal('testingPaths' in stepsOnly.calls[0].payload, false);
+  assert.equal(stepsOnly.calls[0].payload.testingSteps, 'Just steps.');
+});
+
+test('a resubmit that moved no commit reports what it DID do', async () => {
+  // `unchanged: true` alone cannot tell an agent whether its correction took —
+  // which is what made a wrong-screenshot proposal unfixable.
+  const { result } = await submitUpdateWork({}, {
+    updateProposal: async () => ({
+      ok: true,
+      status: 200,
+      body: {
+        ...UPDATE_OK.body,
+        updated: false,
+        unchanged: true,
+        votesCleared: 0,
+        checksRerun: true,
+        testingUpdated: true,
+        testingPaths: ['/?shot=invite', '/?shot=members @mobile'],
+        captureRerun: true,
+      },
+    }),
+  });
+  assert.equal(result.unchanged, true);
+  assert.equal(result.updated, false);
+  assert.equal(result.votesCleared, 0, 'a resubmit that moves no code clears no votes');
+  assert.equal(result.testingUpdated, true);
+  assert.equal(result.captureRerun, true);
+  assert.deepEqual(result.testingPaths, ['/?shot=invite', '/?shot=members @mobile']);
+
+  // And an ordinary update that carried no testing metadata says so plainly
+  // rather than leaving the three fields undefined.
+  const { result: plain } = await submitUpdateWork({});
+  assert.equal(plain.testingUpdated, false);
+  assert.equal(plain.captureRerun, false);
+  assert.equal(plain.testingPaths, null);
+});
+
 test('the update path opens nothing and asks GitHub for nothing itself', async () => {
   const ghCalls = [];
   const gh = baseGh({

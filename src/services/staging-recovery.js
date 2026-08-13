@@ -74,6 +74,12 @@ async function stagingNeedsRebuild(session, { config = null } = {}) {
 const CHECK_TRIGGER_BY_REASON = {
   'manual-recheck': 'manual-recheck',
   'preview-click': 'manual-recheck',
+  // #1199: a same-commit resubmit that corrected the proposal's capture
+  // routes. It reads as a manual re-run because that is what it is — an
+  // author asking for a fresh verdict on code that has not changed — and a
+  // new trigger string would need a value in visuals.CHECK_TRIGGERS and
+  // reviewer-facing copy in public/js/app-view.js to render as anything.
+  'testing-update': 'manual-recheck',
   startup: 'boot-reconcile',
   'stuck-checks-boot': 'boot-reconcile',
   tail_worker_gone: 'boot-reconcile',
@@ -84,6 +90,13 @@ const CHECK_TRIGGER_BY_REASON = {
 function checkTriggerForReason(reason) {
   return CHECK_TRIGGER_BY_REASON[reason] || 'stuck-sweep';
 }
+
+// The reasons that mean "produce a FRESH verdict", so captureForSession's
+// redundant-run skip is bypassed. Keyed on the reason rather than on the
+// trigger it maps to: 'preview-click' also reads as a manual re-run to a
+// reviewer, but it is a page load rather than a request for new screenshots
+// and must stay skippable.
+const FORCED_RECHECK_REASONS = new Set(['manual-recheck', 'testing-update']);
 
 // Rebuild the staging preview for a single session that has a branch +
 // commits ahead of main but a NULL/dead staging_url. Shared by the
@@ -620,9 +633,10 @@ async function recheckSessionChecks({ config, pool, session, reason }) {
   visuals.captureForSession(config, session, app, session.checks_commit_sha || null, null, {
     send: () => {},
     trigger: checkTriggerForReason(reason),
-    // A human pressing "Re-run checks" is asking for a FRESH verdict, so
-    // this one path forces the run even when the row already reads passing.
-    force: reason === 'manual-recheck',
+    // A human pressing "Re-run checks" — or an agent correcting the capture
+    // routes (#1199) — is asking for a FRESH verdict, so these paths force
+    // the run even when the row already reads passing.
+    force: FORCED_RECHECK_REASONS.has(reason),
   })
     .catch((err) => log.warn('staging-recovery', 'Direct checks re-run failed (non-fatal)', {
       sessionId: session.id, reason, err: err.message,

@@ -811,6 +811,40 @@ test('submit_work reaches the update through the platform route, not around it',
   assert.match(block, /submittedVia/);
 });
 
+// #1199. The screenshots a proposal is voted on are shot from its stored
+// capture routes. submit_work took `testingPaths` and passed them to the
+// IMPORT only — an update computed the same shaped object and then sent a
+// three-field payload without it, so every revision kept the routes its first
+// submission named (or none, and the capture fell back to the home page).
+test('an update carries the testing routes too, and reports what a resubmit did', () => {
+  const block = SRC.slice(
+    SRC.indexOf("server.registerTool('submit_work'"),
+    SRC.indexOf("server.registerTool('start_platform_build'")
+  );
+  // ONE shaped object, reaching both submissions — not a second parse for the
+  // update path, which is how the two would drift.
+  assert.match(block, /const testing = shapeTestingNotes\(/);
+  assert.match(block, /\n\s+testing,\n/, 'the update path is handed the same shaped notes');
+
+  // The three fields a resubmit is judged by, declared and returned. Without
+  // them `unchanged: true` is the whole answer, and an agent correcting its
+  // capture routes cannot tell a correction from a no-op.
+  for (const field of ['testingPaths', 'testingUpdated', 'captureRerun']) {
+    assert.match(block, new RegExp(`${field}: `), `${field} is reported`);
+  }
+  assert.match(block, /testingPaths: z\.array\(z\.string\(\)\)\.nullable\(\)/);
+  assert.match(block, /testingUpdated: z\.boolean\(\)\.nullable\(\)/);
+  assert.match(block, /captureRerun: z\.boolean\(\)\.nullable\(\)/);
+
+  // And the words the agent acts on: a resubmit that changed the routes says
+  // the screenshots are being re-shot, one that changed nothing says so, and
+  // neither claims votes were cleared — nothing moved.
+  assert.match(block, /result\.testingUpdated\s*\n?\s*\?/);
+  assert.match(block, /re-shot against them/);
+  assert.match(block, /no code moved and no votes were affected/);
+  assert.match(block, /the testing routes you passed are the ones it already had/);
+});
+
 test('the server instructions tell the model to update a proposal, not to open a second one', () => {
   assert.match(tools.SERVER_INSTRUCTIONS, /update that same proposal instead of opening a second one/);
   assert.match(tools.SERVER_INSTRUCTIONS, /branch\.youCanPush/);

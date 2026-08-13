@@ -1073,7 +1073,7 @@ function registerTools(server, ctx) {
       taskId: z.number().int().positive().optional()
         .describe('The task id from prepare_work — or printed in the work order text you were handed, which is the usual source when you are the coding agent. It belongs to the user’s Usernode account, not to the chat that gave it to you, so you can submit it yourself.'),
       proposalId: z.number().int().positive().optional()
-        .describe('The id of one of the user’s own proposals that is already up for a vote, to UPDATE it with the branch you pushed rather than open a new proposal. Usernode checks the branch is in their own fork and builds on the proposal’s current commit, then moves the proposal onto it — get_proposal reports where a proposal’s head lives and whether you can push to it directly. Every update clears the proposal’s votes and re-runs its checks, so submit a finished change rather than each attempt. Cannot be combined with prNumber or patch.'),
+        .describe('The id of one of the user’s own proposals that is already up for a vote, to UPDATE it with the branch you pushed rather than open a new proposal. Usernode checks the branch is in their own fork and builds on the proposal’s current commit, then moves the proposal onto it — get_proposal reports where a proposal’s head lives and whether you can push to it directly. Every update clears the proposal’s votes and re-runs its checks, so submit a finished change rather than each attempt. The one exception is resubmitting the SAME commit with corrected testingPaths: no code moves, no votes are cleared, and the screenshots are simply re-shot on the routes you name. Cannot be combined with prNumber or patch.'),
       slug: z.string().optional().describe('The app slug. Needed when submitting an already-open pull request by number, or a branch without a taskId.'),
       prNumber: z.number().int().positive().optional()
         .describe('An already-open pull request to submit instead. It must come from the user’s own fork. This is also the recovery when submitting a branch returns pr_open_failed: open the pull request from the compareUrl that error returns, then call again with slug + prNumber.'),
@@ -1088,7 +1088,7 @@ function registerTools(server, ctx) {
       title: z.string().optional().describe('A short title for the proposal. Defaults to the task description.'),
       description: z.string().optional().describe('What changed and why, for the people voting on it.'),
       testingPaths: z.array(z.string()).optional()
-        .describe('The in-app routes this change is visible on, most important first — e.g. ["/board?demo=1", "/settings"]. Usernode shoots a before/after screenshot pair of each one for the people voting. Point them at the SCREEN YOU CHANGED, never the home page; a route may carry " @mobile" to be shot in a phone-sized viewport. Up to 3 are used. Omit only if the change has no visible screen — otherwise the voters see screenshots of the app\'s home page, which show nothing of your change.'),
+        .describe('The in-app routes this change is visible on, most important first — e.g. ["/board?demo=1", "/settings"]. Usernode shoots a before/after screenshot pair of each one for the people voting. Point them at the SCREEN YOU CHANGED, never the home page; a route may carry " @mobile" to be shot in a phone-sized viewport. Up to 3 are used. Omit only if the change has no visible screen — otherwise the voters see screenshots of the app\'s home page, which show nothing of your change. On an UPDATE these replace the proposal\'s stored routes and the screenshots are re-shot on them; omit them there to keep the ones it already has.'),
       testingSteps: z.string().optional()
         .describe('A few short numbered lines telling a person what to click to see the change, shown beside the staging preview. Markdown.'),
       expectedHeadSha: z.string().optional()
@@ -1110,6 +1110,14 @@ function registerTools(server, ctx) {
       headSha: z.string().nullable(),
       votesCleared: z.number().nullable(),
       submittedVia: z.string().nullable(),
+      // Set only by an UPDATE (#1199): the capture routes this revision's
+      // screenshots are shot against, whether this call changed them, and —
+      // for a resubmit that moved no commit — whether that re-ran the
+      // capture. Without these, a correction is indistinguishable from a
+      // no-op in the answer the agent reads.
+      testingPaths: z.array(z.string()).nullable(),
+      testingUpdated: z.boolean().nullable(),
+      captureRerun: z.boolean().nullable(),
       nextStep: z.string(),
     },
     annotations: writeAnnotations,
@@ -1196,6 +1204,11 @@ function registerTools(server, ctx) {
       agent,
       title,
       body: testing.description,
+      // The same shaped metadata the import above carries. An UPDATE used to
+      // drop it (#1199), so every revised proposal kept the routes its FIRST
+      // submission named — or, when it named none, '/' — and the group voted
+      // on home-page screenshots of a change to somewhere else entirely.
+      testing,
       importProposal,
       updateProposal,
     });
@@ -1211,6 +1224,21 @@ function registerTools(server, ctx) {
     // and that the votes it had collected are gone.
     if (updating) {
       const cleared = Number.isFinite(result.votesCleared) ? result.votesCleared : 0;
+      const shotOn = result.testingPaths && result.testingPaths.length
+        ? ` The screenshots the group votes on are shot on ${result.testingPaths.join(', ')}.`
+        : '';
+      // A resubmit that moved no commit is reported by what it DID, not by
+      // what it did not (#1199) — three outcomes, and the agent acts on a
+      // different one in each.
+      const resubmitStep = result.testingUpdated
+        ? 'The proposal was already at that commit, so no code moved and no votes were affected — but the testing '
+          + `routes you passed were different, so they are now this proposal's.${shotOn}`
+          + (result.captureRerun
+            ? ' Its checks and screenshots are being re-shot against them right now; use get_proposal to follow them.'
+            : ' It is paused, so the new screenshots are taken when it is reopened.')
+        : 'The proposal was already at that commit and the testing routes you passed are the ones it already had, '
+          + `so nothing changed and no votes were affected.${shotOn} If you meant to change the code, commit and `
+          + 'push first, then submit again.';
       return toolResult({
         proposalId: result.proposalId,
         appSlug: result.appSlug,
@@ -1220,17 +1248,19 @@ function registerTools(server, ctx) {
         headSha: result.headSha || null,
         votesCleared: cleared,
         submittedVia: result.submittedVia || null,
+        testingPaths: result.testingPaths || null,
+        testingUpdated: result.testingUpdated === true,
+        captureRerun: result.captureRerun === true,
         webPath: result.proposalId
           ? `${origin}/#app/${result.appSlug}/dev/sessions/${result.proposalId}`
           : `${origin}/#app/${result.appSlug}`,
         nextStep: result.unchanged
-          ? 'The proposal was already at that commit, so nothing moved and no votes were affected. '
-            + 'If you meant to change it, commit and push first, then submit again.'
+          ? resubmitStep
           : `The proposal now points at your new commit.${cleared > 0
             ? ` The ${cleared} vote${cleared === 1 ? '' : 's'} it had collected were cleared, because they were cast on the old code`
             : ' Any votes it had collected were cleared, because they were cast on the old code'}`
             + ' — reviewers have been asked to look again. Checks and the staging preview rebuild automatically; '
-            + 'use get_proposal to follow them.',
+            + `use get_proposal to follow them.${shotOn}`,
       });
     }
 
@@ -1247,6 +1277,9 @@ function registerTools(server, ctx) {
         headSha: null,
         votesCleared: null,
         submittedVia: null,
+        testingPaths: null,
+        testingUpdated: null,
+        captureRerun: null,
         webPath: result.proposalId
           ? `${origin}/#app/${result.appSlug}/dev/sessions/${result.proposalId}`
           : `${origin}/#app/${result.appSlug}`,
@@ -1264,6 +1297,9 @@ function registerTools(server, ctx) {
       headSha: null,
       votesCleared: null,
       submittedVia: null,
+      testingPaths: null,
+      testingUpdated: null,
+      captureRerun: null,
       webPath: result.proposalId
         ? `${origin}/#app/${result.appSlug}/dev/sessions/${result.proposalId}`
         : `${origin}/#app/${result.appSlug}`,
