@@ -295,7 +295,7 @@ async function hydrateAndPush(pool, row) {
   if (!row || !row.id) return;
   try {
     const { rows } = await pool.query(
-      `SELECT n.id, n.user_id, n.kind, n.read_at, n.created_at,
+      `SELECT n.id, n.kind, n.user_id, n.read_at, n.created_at,
               n.app_id, a.slug AS app_slug, a.name AS app_name,
               n.chat_message_id,
               cm.content AS message_content,
@@ -610,8 +610,7 @@ async function getForUser(pool, userId, id) {
 
 async function countUnread(pool, userId) {
   const { rows } = await pool.query(
-    `SELECT COUNT(*)::int AS c
-       FROM notifications n
+    `SELECT COUNT(*)::int AS c FROM notifications AS n
       WHERE n.user_id = $1 AND n.read_at IS NULL
         AND ${CONVERSATION_ACCESS_SQL}`,
     [userId]

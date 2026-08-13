@@ -263,21 +263,10 @@ test('db-console-scope: the console table deny list is deliberately EMPTY while 
   // half-covered. `user_ai_credentials` is the one exception: it lives in
   // the `credentials` schema, which the console's inventory query
   // (`table_schema = 'public'`) cannot see and its role has no USAGE on.
-  const FULLY_READABLE = new Set([
-    'mobile_push_deliveries',
-    'mobile_push_deployment_state',
-    'mobile_push_installation_mutations',
-    'cli_auth_audit_events',
-    'cli_auth_rate_limits',
-    'mcp_clients',
-    'mcp_auth_audit_events',
-    'user_agent_files',
-    'profile_reports',
-  ]);
   const OUT_OF_SCHEMA = new Set(['user_ai_credentials']);
   for (const table of DENIED_TABLES) {
     if (OUT_OF_SCHEMA.has(table)) continue;
-    const covered = FULLY_READABLE.has(table)
+    const covered = scopeMod.FULLY_READABLE_CONSOLE_TABLES.has(table)
       || Array.isArray(scopeMod.CONSOLE_CREDENTIAL_COLUMNS[table]);
     assert.ok(
       covered,
