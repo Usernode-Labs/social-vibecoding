@@ -552,7 +552,7 @@ function devFlowRoutes(config) {
               // proposal is attributed to them rather than to the platform.
               cookie,
             },
-            body: JSON.stringify({ pr: prNumber }),
+            body: JSON.stringify({ pr: prNumber, promote: true }),
           });
           const text = await resp.text();
           let parsed = null;

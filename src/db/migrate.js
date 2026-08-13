@@ -275,7 +275,7 @@ async function auditDuplicatePrSessions(pool) {
     `SELECT app_id, pr_number, array_agg(id ORDER BY id) AS session_ids, COUNT(*)
        FROM chat_sessions
       WHERE pr_number IS NOT NULL AND source = 'imported'
-        AND status IN ('promoted', 'merging', 'merged')
+        AND status IN ('active', 'promoted', 'merging', 'merged')
       GROUP BY app_id, pr_number
      HAVING COUNT(*) > 1`
   );

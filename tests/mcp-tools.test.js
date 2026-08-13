@@ -249,6 +249,8 @@ test('the build tools delegate rather than reimplement', () => {
   assert.match(SRC, /externalAgentTasks\.prepareWork\(taskDeps\(\)/);
   assert.match(SRC, /externalAgentTasks\.submitWork\(taskDeps\(\)/);
   assert.match(SRC, /'POST', `\/api\/apps\/\$\{targetSlug\}\/pr-import`/);
+  assert.match(SRC, /pr,\s*promote: true/,
+    'connector submission opts into straight-to-vote explicitly');
   // Still true after the write half: no direct database or GitHub access.
   assert.doesNotMatch(SRC, /pool\.query\(/);
   assert.doesNotMatch(SRC, /api\.github\.com/);

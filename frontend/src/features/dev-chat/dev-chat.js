@@ -959,6 +959,16 @@ const DevChat = {
       DevChat.renderBudget();
       return;
     }
+    // ?shot=credits-low answers this read from a fixture instead of the
+    // network (see _shotCreditsLowBudget) — the low-balance warning is a
+    // property of how much the viewer has spent, which no seeded row can
+    // stand in for.
+    const shotBudget = DevChat._shotCreditsLowBudget();
+    if (shotBudget) {
+      DevChat.budget = shotBudget;
+      DevChat.renderBudget();
+      return;
+    }
     try {
       // ?demo=1 passthrough so a staging reviewer can see the exhausted
       // state (red meter + three-route banner) without burning a real
@@ -1005,18 +1015,58 @@ const DevChat = {
       && b.globalSpentCents >= b.globalLimitCents;
   },
 
+  // #593: the state behind the meter, normalised by CreditOptions so the
+  // composer, the header drawer and the warning banner cannot disagree
+  // about what "low" means or how the figures are formatted. Returns null
+  // when that module isn't loaded (a bare unit sandbox), and every caller
+  // treats null as "say nothing".
+  _creditState() {
+    const CO = typeof window !== 'undefined' && window.CreditOptions;
+    if (!CO) return null;
+    return CO.creditState(DevChat.budget);
+  },
+
+  // The one sentence that answers "when do I get them back?", shared with
+  // every other credits surface. '' when the state is unknown.
+  _creditResetSentence() {
+    const CO = typeof window !== 'undefined' && window.CreditOptions;
+    const state = DevChat._creditState();
+    if (!CO || !state) return '';
+    return CO.resetSentence(state);
+  },
+
   renderBudget() {
     // #463: budget data just changed (usage event, chat open, key
     // save/remove) — sync the credits-exhausted banner alongside the
     // meter. Runs before the meter's own element guard so the banner
     // clears/appears even when the meter isn't mounted.
     DevChat._applyCreditsBanner();
+    // #593: and the proactive low-balance warning, which is the same
+    // mechanism one step earlier. Mutually exclusive with the red one —
+    // see _creditsLow().
+    DevChat._applyCreditsLowBanner();
     const el = document.getElementById('dc-budget');
     if (!el) return;
     if (DevChat._isOpenRouterSession()) {
       el.innerHTML = '';
       return;
     }
+    // #593: what is LEFT, rendered rather than hidden in a tooltip. The
+    // remainder and the reset time were both title-only, which means
+    // invisible on touch and absent from every screenshot — and they are
+    // the two figures someone deciding whether to start another turn is
+    // actually looking for.
+    const state = DevChat._creditState();
+    const CO = typeof window !== 'undefined' && window.CreditOptions;
+    const leftPart = state && CO
+      ? (CO.meterParts(state).find((p) => p.key === 'remaining') || null)
+      : null;
+    const leftHtml = leftPart
+      ? `<span class="text-zinc-600"> · </span><span class="dc-budget-left${
+        state.level === 'exhausted' ? ' text-red-400' : state.level === 'low' ? ' text-yellow-400' : ' text-zinc-400'
+      }" data-credits-remaining="1">${escapeHtml(leftPart.text)}</span>`
+      : '';
+    const resetTip = DevChat._creditResetSentence();
     // BYOK (#30/#119/#212): billing is limit-first — the daily platform
     // allowance is consumed before any spend hits the user's own key —
     // so key-holders see the limit progress first (same red/yellow
@@ -1038,12 +1088,17 @@ const DevChat = {
       const color = pct > 80 ? 'text-red-400' : pct > 50 ? 'text-yellow-400' : 'text-emerald-400';
       const tip = `Today: $${spent} of your $${limit} platform daily limit`
         + (byokCents > 0 ? ` + $${byok} billed to your Anthropic key (…${last4})` : '')
-        + `. The daily limit is used first; your key (…${last4}) takes over once it runs out. Resets at midnight UTC.`;
+        + `. The daily limit is used first; your key (…${last4}) takes over once it runs out. `
+        + (resetTip || 'Resets at midnight UTC.');
       let html = `<span class="text-zinc-600">limit </span><span class="${color}">$${spent}</span><span class="text-zinc-600">/$${limit}</span>`;
+      // A key-holder whose allowance is spent is not out of anything — the
+      // key took over — so the remainder is only worth stating while there
+      // is a remainder. The tooltip explains the hand-over either way.
+      if (state && state.level !== 'exhausted') html += leftHtml;
       if (byokCents > 0) {
         html += `<span class="text-zinc-600"> · </span><span class="text-emerald-400">your key $${byok}</span>`;
       }
-      el.innerHTML = `<span title="${tip}">${html}</span>`;
+      el.innerHTML = `<span title="${escapeHtml(tip)}">${html}</span>`;
       return;
     }
     if (!DevChat.budget) return;
@@ -1053,12 +1108,16 @@ const DevChat = {
     // pair — just unmistakably red, with the tooltip pointing at the
     // BYOK escape hatch. The banner carries the wordy explanation.
     if (DevChat._creditsExhausted()) {
-      el.innerHTML = `<span title="Your free daily AI credits are used up. Resets at midnight UTC — or add your own Anthropic API key in Settings to keep working."><span class="text-red-500 font-semibold">$${spent}</span><span class="text-red-400">/$${limit}</span></span>`;
+      const tip = `Your free daily AI credits are used up. ${
+        resetTip || 'Resets at midnight UTC.'} Or add your own Anthropic API key in Settings to keep working now.`;
+      el.innerHTML = `<span title="${escapeHtml(tip)}"><span class="text-red-500 font-semibold">$${spent}</span><span class="text-red-400">/$${limit}</span></span>${leftHtml}`;
       return;
     }
     const pct = Math.min(100, (DevChat.budget.spentCents / DevChat.budget.limitCents) * 100);
     const color = pct > 80 ? 'text-red-400' : pct > 50 ? 'text-yellow-400' : 'text-emerald-400';
-    el.innerHTML = `<span class="${color}">$${spent}</span><span class="text-zinc-600">/$${limit}</span>`;
+    const tip = `Today: $${spent} of your $${limit} free daily AI credits. ${
+      resetTip || 'Resets at midnight UTC.'}`;
+    el.innerHTML = `<span title="${escapeHtml(tip)}"><span class="${color}">$${spent}</span><span class="text-zinc-600">/$${limit}</span>${leftHtml}</span>`;
   },
 
   // #463: true when the signed-in user is out of free credits AND has no
@@ -1098,7 +1157,7 @@ const DevChat = {
         <svg class="w-4 h-4 text-red-500 dark:text-red-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
           <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"/>
         </svg>
-        <span class="text-red-800 dark:text-red-200 flex-1 min-w-[14rem]"><span class="font-semibold">${lead}</span> Resets at midnight UTC &mdash; or keep working right now ${DevChat._externalFlowsAvailable()
+        <span class="text-red-800 dark:text-red-200 flex-1 min-w-[14rem]"><span class="font-semibold">${lead}</span> <span data-credits-reset="1">${escapeHtml(DevChat._creditResetSentence() || 'Free credits reset at midnight UTC.')}</span> Or keep working right now ${DevChat._externalFlowsAvailable()
           ? 'on your own Claude or ChatGPT plan, with your own API key, or with a coding tool on your computer.'
           : 'with your own API key, a coding tool on your computer, or your Claude.ai / ChatGPT subscription.'}</span>
         ${window.CreditOptions ? CreditOptions.bannerActionsHtml({
@@ -1130,6 +1189,116 @@ const DevChat = {
         DevChat._wireCreditsBanner();
       }
     }
+  },
+
+  // ── The proactive low-balance warning (#593) ───────────────────────
+  //
+  // The whole complaint behind the issue is that the allowance runs out
+  // mid-flow: the first signal a builder got was a refused turn, three
+  // quarters of the way through a change. This is that signal, one step
+  // earlier — at CreditOptions' lowPct of the cap (the server sends the
+  // threshold on the budget payload, see limits.LOW_BALANCE_PCT).
+  //
+  // Deliberately NOT shown to a key-holder: their allowance running out
+  // spills over to their own key and changes nothing about the turn they
+  // are about to send, so warning them would be noise. Same reason
+  // _creditsExhausted() ignores them.
+  _creditsLow() {
+    if (DevChat._isOpenRouterSession()) return false;
+    if (!DevChat.budget) return false;
+    if (window.Settings?.state?.hasApiKey) return false;
+    // Mutually exclusive with the red banner: once the allowance is
+    // actually gone, "running low" is the wrong tense and two stacked
+    // banners is the wrong amount of chrome.
+    if (DevChat._creditsExhausted()) return false;
+    const state = DevChat._creditState();
+    return !!state && state.level === 'low';
+  },
+
+  // Amber sibling of the red banner, same slot and the same route buttons
+  // — nothing has been refused yet, so the copy states the headroom and
+  // the boundary instead of announcing a failure.
+  _renderCreditsLowBannerHtml() {
+    if (!DevChat._creditsLow()) return '';
+    const CO = window.CreditOptions;
+    if (!CO) return '';
+    const state = DevChat._creditState();
+    return `
+      <div id="dc-credits-low-banner" class="flex flex-wrap items-center gap-2 px-3 py-2 bg-amber-50 dark:bg-amber-950/30 border-b border-amber-200 dark:border-amber-900/50 text-xs">
+        <svg class="w-4 h-4 text-amber-500 dark:text-amber-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z"/>
+        </svg>
+        <span class="text-amber-900 dark:text-amber-200 flex-1 min-w-[14rem]"><span class="font-semibold" data-credits-low-lead="1">${escapeHtml(CO.lowLead(state))}</span> <span data-credits-reset="1">${escapeHtml(CO.resetSentence(state))}</span> Set up another way to keep building before it runs out mid-change.</span>
+        ${CO.bannerActionsHtml({
+    hasApiKey: false,
+    globalOut: false,
+    externalFlowsAvailable: DevChat._externalFlowsAvailable(),
+  })}
+      </div>`;
+  },
+
+  // Same insert/swap/remove dance as _applyCreditsBanner, and the same
+  // reason for it: the slot sits directly above .dc-session-body, so the
+  // banner can appear mid-session without re-rendering the transcript
+  // under an in-flight stream.
+  _applyCreditsLowBanner() {
+    const existing = document.getElementById('dc-credits-low-banner');
+    const html = DevChat.currentSession ? DevChat._renderCreditsLowBannerHtml() : '';
+    if (existing) {
+      if (html) {
+        existing.outerHTML = html;
+        DevChat._wireCreditsLowBanner();
+      } else {
+        existing.remove();
+      }
+    } else if (html) {
+      const body = document.querySelector('.dc-session-body');
+      if (body) {
+        body.insertAdjacentHTML('beforebegin', html);
+        DevChat._wireCreditsLowBanner();
+      }
+    }
+  },
+
+  _wireCreditsLowBanner() {
+    const banner = document.getElementById('dc-credits-low-banner');
+    if (banner && window.CreditOptions) {
+      CreditOptions.wire(banner, { onFlow: (flow) => DevChat._devFlowFromCredits(flow) });
+    }
+  },
+
+  // Screenshot-state deep link `?shot=credits-low` (#593).
+  //
+  // The warning is a function of how much of today's allowance this
+  // viewer has spent, and no fixture row can express that: llm_usage is
+  // real accounting, and seeding a staging row would mean writing spend
+  // the reviewer's account did not incur. So the URL names the state and
+  // the client answers the budget read from a fixed snapshot instead of
+  // the network — 80% of a $25 cap, which is exactly the threshold.
+  //
+  // Ungated by environment, like ?shot=menu and ?shot=venue-fallback: it
+  // paints a client-side sentence about the session already on screen,
+  // reads nothing and writes nothing, and any other ?shot= value leaves
+  // the real budget read alone. That is what keeps a production "before"
+  // shot of this banner obtainable.
+  _shotCreditsLowBudget() {
+    let shot = null;
+    try { shot = new URLSearchParams(location.search).get('shot'); } catch { return null; }
+    if (shot !== 'credits-low') return null;
+    const reset = new Date();
+    reset.setUTCHours(24, 0, 0, 0);
+    return {
+      spentCents: 2000,
+      limitCents: 2500,
+      remainingCents: 500,
+      globalSpentCents: 4000,
+      globalLimitCents: 100000,
+      byokSpentCents: 0,
+      aiEnabled: true,
+      resetsAt: reset.toISOString(),
+      lowBalancePct: 80,
+      shot: true,
+    };
   },
 
   // #1049: whether the out-of-credits routes may lead with the Claude Code /
@@ -7062,6 +7231,7 @@ const DevChat = {
       ${DevChat._renderSyncBannerHtml(DevChat.currentSession)}
       ${DevChat._renderNewChangeBannerHtml(DevChat.currentSession)}
       ${DevChat._renderCreditsBannerHtml()}
+      ${DevChat._renderCreditsLowBannerHtml()}
       <div class="dc-session-body flex-1 flex min-h-0">
         <div id="dc-tab-chat" class="dc-chat-pane flex-1 flex flex-col min-h-0">
           <div id="dc-messages" class="dc-messages-container flex-1 overflow-y-auto py-2"></div>
@@ -7171,6 +7341,7 @@ const DevChat = {
     // the cached budget — wire its button now; refreshBudget() re-syncs
     // banner + meter once fresh figures land.
     DevChat._wireCreditsBanner();
+    DevChat._wireCreditsLowBanner();
     DevChat.refreshBudget();
     // Attach tracker first so the scroll set below is observed, then
     // restore the session's last known position (or fall through to

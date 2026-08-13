@@ -59,7 +59,8 @@ test('GET /api/* JSON is network-first-with-cache', () => {
 
 test('native notification invalidations bypass stale API-cache fallbacks', () => {
   assert.equal(
-    classify('GET', '/api/notifications?limit=100&native_invalidation=1'),
+    classify('GET',
+      '/api/notifications?limit=100&native_invalidation=1&native_invalidation_nonce=abc'),
     'bypass'
   );
   assert.equal(classify('GET', '/api/notifications?limit=100'), 'api');

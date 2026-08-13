@@ -66,7 +66,12 @@ async function connect() {
     await client.connect();
   } catch (err) {
     try { await client.end(); } catch { /* never connected */ }
-    return { error: err.message };
+    // A refused loopback connection surfaces as an AggregateError whose
+    // `message` is EMPTY — a falsy `error` here read as "connected", the
+    // skip was bypassed, and the test crashed on `client.end()` in every
+    // environment without a local postgres (including the unit-suite
+    // merge-gate container). Always return something truthy.
+    return { error: err.message || err.code || String(err) };
   }
   return { client };
 }

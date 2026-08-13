@@ -161,6 +161,36 @@ test('shared card: single-row shell; noNav drops nav, chevron and the actions ro
   assert.doesNotMatch(noNav, /gc-card-actions/, 'noNav variant has no actions row');
 });
 
+test('an owned imported PR is an In-progress discussion card with one promotion action', () => {
+  const AppView = makeAppView();
+  AppView._sharedById = {};
+  const html = AppView._renderMySessionCard(mySess({
+    id: 88,
+    source: 'imported',
+    imported_pr_author: 'octo-contributor',
+    pr_number: 1165,
+    shared_at: '2026-06-01T03:00:00Z',
+  }));
+  assert.match(html, /data-shared-session-row="88"/,
+    'the card opens its public discussion, never a dev chat');
+  assert.doesNotMatch(html, /data-session-chip=/);
+  assert.match(html, /Imported PR/);
+  assert.match(html, /Imported pull request by octo-contributor · not up for vote yet/);
+  assert.match(html, /promoteImportedSession\(88, this\)[^>]*>Put up for vote</);
+  assert.doesNotMatch(html, /Make visible|>Hide<|Share chat/);
+  assert.equal(menuKeyOf(html), null, 'no archive or dev-session menu is exposed');
+});
+
+test('another user’s imported PR names author and importer without owner controls', () => {
+  const AppView = makeAppView();
+  const html = AppView._renderSharedSessionCard(sharedSess({
+    source: 'imported', imported_pr_author: 'octo-contributor', username: 'maya',
+  }));
+  assert.match(html, /Imported PR/);
+  assert.match(html, /Imported pull request by octo-contributor · imported by maya/);
+  assert.doesNotMatch(html, /Put up for vote|is working on this/);
+});
+
 // ── Preview pill gating (#689) ──────────────────────────────────────────────
 
 test('shared card: can_preview without a live staging_url still gets the icon (empty fallback)', () => {

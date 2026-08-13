@@ -39,8 +39,13 @@ const EXPANDED_STORAGE_KEY = 'notif_expanded_groups_v1';
 // the next page of already-loaded leaves in place (no navigation away).
 const GROUP_LEAF_CAP = 10;
 const NATIVE_INVALIDATION_TIMEOUT_MS = 10000;
+const NATIVE_INVALIDATION_REFRESH_VERSION = 1;
 
 const Notifications = {
+  // social-push.js is cached independently from the React shell bundle. It
+  // must not trust the older refreshAfterInvalidation implementation, which
+  // reported success even when its ordinary cacheable refresh failed.
+  nativeInvalidationRefreshVersion: NATIVE_INVALIDATION_REFRESH_VERSION,
   items: [],   // newest-first; the single source of truth
   // Pending collaborator invites (authoritative, from the first-page
   // /api/notifications payload). Rendered as a pinned section above the
@@ -62,6 +67,12 @@ const Notifications = {
   // This prevents an older boot/bell request from completing after a native
   // network-only invalidation and overwriting its fresher result.
   _refreshGeneration: 0,
+  // Once a native invalidation starts, this document must never replace its
+  // feed with the service worker's older API-cache fallback. Raise the floor
+  // before the request awaits so a later overlapping ordinary refresh is also
+  // network-only. Failed reads preserve the last rendered snapshot while the
+  // Social coordinator retains and retries the invalidation.
+  _networkFreshnessFloor: false,
 
   init() {
     Notifications._loadExpanded();
@@ -139,8 +150,24 @@ const Notifications = {
       // pinned section is reviewable (routes/notifications.js
       // stagingMockNotifications). No-op in production.
       const demo = new URLSearchParams(location.search).get('demo') === '1' ? '&demo=1' : '';
-      const networkOnly = options && options.networkOnly === true;
-      const invalidation = networkOnly ? '&native_invalidation=1' : '';
+      const explicitlyNetworkOnly = options && options.networkOnly === true;
+      if (explicitlyNetworkOnly) Notifications._networkFreshnessFloor = true;
+      const networkOnly = explicitlyNetworkOnly ||
+        Notifications._networkFreshnessFloor;
+      // The previous service worker classifies this request as an ordinary
+      // cacheable API read. A per-attempt URL prevents that worker from
+      // replaying an earlier invalidation response while a new page is waiting
+      // for the updated worker to take control.
+      const invalidationNonce = networkOnly
+        ? (typeof crypto !== 'undefined' &&
+            typeof crypto.randomUUID === 'function'
+          ? crypto.randomUUID()
+          : `${Date.now().toString(36)}-${generation.toString(36)}-` +
+            Math.random().toString(36).slice(2))
+        : null;
+      const invalidation = networkOnly
+        ? `&native_invalidation=1&native_invalidation_nonce=${encodeURIComponent(invalidationNonce)}`
+        : '';
       let timeout = null;
       let controller = null;
       if (networkOnly && typeof AbortController === 'function') {

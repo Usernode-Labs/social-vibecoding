@@ -2,7 +2,7 @@
 //
 // The audit must enforce the SAME invariant the import guard enforces
 // (importedPrNumbers in routes/votes.js): at most one LIVE
-// ('promoted'/'merging'/'merged') imported session per (app_id, pr_number).
+// ('active'/'promoted'/'merging'/'merged') imported session per (app_id, pr_number).
 // Archived imports are deliberately excluded — withdrawing an import and
 // re-importing the reopened PR is a documented flow, and it leaves the
 // withdrawn session behind with its pr_number intact.
@@ -43,7 +43,7 @@ test('the audit scopes to live statuses, mirroring the import guard', async () =
   assert.ok(scan, 'the duplicate-group scan ran');
   assert.match(scan, /source = 'imported'/, 'imported rows only');
   assert.match(
-    scan, /status IN \('promoted', 'merging', 'merged'\)/,
+    scan, /status IN \('active', 'promoted', 'merging', 'merged'\)/,
     'withdraw → re-import (an archived row beside a live one) must not brick the boot'
   );
 });

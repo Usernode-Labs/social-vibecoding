@@ -483,6 +483,8 @@ test('pauseSession: only targets status=active rows (promoted are refused)', asy
     // guarantee the cap predicate relies on.
     const upd = pool.calls.find((c) => /SET status = 'paused'/.test(c.sql));
     assert.ok(/status = 'active'/.test(upd.sql), "pause UPDATE must be scoped to status = 'active'");
+    assert.match(upd.sql, /source IS DISTINCT FROM 'imported'/,
+      'worker lifecycle must not pause worker-less imported rows');
   } finally {
     restore();
   }
@@ -504,6 +506,9 @@ test('freeGlobalSlot skips non-worker proposal pipelines that own the session', 
     const pause = pool.calls.find((call) => /SET status = 'paused'/.test(call.sql));
     assert.equal(pause.params[0], 8,
       'capacity eviction leaves the in-flight CLI staging/check pipeline alone');
+    const candidates = pool.calls.find((call) => /SELECT id FROM chat_sessions/.test(call.sql));
+    assert.match(candidates.sql, /source IS DISTINCT FROM 'imported'/,
+      'worker capacity eviction ignores worker-less imported rows');
   } finally { restore(); }
 });
 
