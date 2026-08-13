@@ -187,9 +187,15 @@ test('app-view.js builds the iframe src via the URL API with origin check and to
   assert.ok(src.includes('const iframeSrc = AppView.buildAppIframeSrc();'),
     'renderAppTab uses the shared builder');
   // The 45-min token refresh must reuse it too, so a mid-session refresh
-  // does not yank the viewer back to the app root.
-  assert.ok(src.includes('iframe.src = AppView.buildAppIframeSrc();'),
+  // does not yank the viewer back to the app root. Since #1085 chunk H the
+  // refresh reaches the frame through the app-frame seam (which mutates the
+  // live element's src rather than re-rendering it) instead of a
+  // getElementById + assignment, but it must still compose through the
+  // builder — and the builder must be the only source of that url.
+  assert.ok(src.includes('frame.setSrc(AppView.buildAppIframeSrc());'),
     'token refresh reuses the shared builder');
+  assert.ok(!/\.src\s*=\s*(?!AppView\.buildAppIframeSrc)[^;\n]*token/.test(src),
+    'no other code path assigns a token-bearing src to the app iframe');
   assert.ok(!src.includes('?token=${AppView.iframeToken}'),
     'no string-concat token src remains for the production iframe');
   assert.ok(src.includes('AppView.pendingInnerPath = null;'),
@@ -204,23 +210,53 @@ test('app.js screenIdOf treats ?path= as the same screen and re-dispatches on a 
     'a chromeless hash with a different inner path forces a re-render');
 });
 
-test('app.js setChromeless toggles the header, the bottom inset and the pill', () => {
+test('app.js setChromeless toggles the header and the pill', () => {
   const src = read('public/js/app.js');
-  assert.ok(src.includes("document.getElementById('platform-header')"));
+  const pill = read('frontend/src/features/header/chromeless-pill.tsx');
+  const header = read('frontend/src/features/header/platform-header.tsx');
+  // #1079 chunk B: #platform-header is a React island and the pill is a
+  // component beside it, so setChromeless PUBLISHES both flags through the
+  // shell's visibility store instead of writing the DOM — a classList toggle
+  // from outside React is exactly what that store exists to replace. The two
+  // subscribers produce the same DOM the imperative version did.
+  assert.ok(src.includes("App.Visibility.publish('platform-header', !enable)"),
+    'the header hide must go through the visibility store');
+  assert.ok(src.includes("App.Visibility.publish('chromeless-pill', enable)"),
+    'and so must the pill');
+  assert.ok(header.includes("useVisibility('platform-header', true)"),
+    'the header island subscribes, defaulting to the visible markup it ships');
+  assert.ok(header.includes('useHiddenClass(headerRef, !visible)'),
+    'and applies it imperatively — PlatformUI.attachScreenFx writes to this '
+    + 'element, so a rendered className would clobber the kit');
+  assert.ok(pill.includes("useVisibility('chromeless-pill', false)"),
+    'the pill subscribes, defaulting to absent — the shipped markup has none');
   // The App/Dev switch needs no line of its own: it lives inside
   // #platform-header now (it used to be the separate #app-tabs bar), so
   // hiding the header hides it too.
   assert.ok(!src.includes("document.getElementById('app-tabs')"),
     'setChromeless still reaches for the deleted tab bar');
-  // What DOES need handling is the safe-area inset that moved onto
-  // #app-view — chromeless must render edge-to-edge.
-  assert.ok(src.includes("classList.toggle('un-safe-bottom', !enable)"),
-    'chromeless must strip the bottom inset from #app-view');
-  assert.ok(src.includes('_mountChromelessPill'));
-  assert.ok(src.includes('_unmountChromelessPill'));
+  // #970: the bottom safe-area inset needs no line of its own EITHER any
+  // more. It used to: #app-view carried `un-safe-bottom` for every surface,
+  // so chromeless had to strip the class to render edge-to-edge. The inset
+  // is now surface-dependent (`data-app-surface`, set by
+  // AppView._setSurface) and chromeless always lands on the app surface,
+  // which reserves nothing. Re-adding the toggle would double-manage it.
+  assert.ok(!src.includes("classList.toggle('un-safe-bottom'"),
+    'setChromeless must not hand-manage the bottom inset any more (#970)');
+  // Hiding/showing the header changes #app-view's rect, so the per-frame
+  // insets forwarded into the app have to be recomputed.
+  assert.ok(src.includes('AppView.scheduleSafeAreaBroadcast()'),
+    'toggling chromeless must re-broadcast the frame safe-area insets');
+  // The pill renders nothing at all until the flag flips — that is what keeps
+  // the prerendered markup and the first hydrating render identical.
+  assert.ok(pill.includes('if (!chromeless) return null;'));
+  assert.ok(pill.includes("id=\"chromeless-pill\""));
+  assert.ok(pill.includes("aria-label=\"Open this app on Usernode\""));
   // The pill's exit target is the regular App-tab view, which clears the
-  // mode via restoreFromHash.
-  assert.ok(src.includes('location.hash = `#app/${App.currentApp}/app`;'));
+  // mode via restoreFromHash. The slug is read at CLICK time, so the pill
+  // survives app-to-app hash navigation without a remount.
+  assert.ok(pill.includes('const slug = window.App?.currentApp;'));
+  assert.ok(pill.includes('location.hash = `#app/${slug}/app`;'));
 });
 
 test('index.html carries the ids setChromeless toggles', () => {

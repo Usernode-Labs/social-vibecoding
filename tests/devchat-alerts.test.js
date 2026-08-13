@@ -22,13 +22,17 @@ const vm = require('node:vm');
 const PUBLIC = path.join(__dirname, '..', 'public');
 const read = (...p) => fs.readFileSync(path.join(PUBLIC, ...p), 'utf8');
 const DEV_ALERTS_SRC = read('js', 'dev-alerts.js');
-const NOTIF_SRC = read('js', 'notifications.js');
+// #1079 chunk B moved this module into the React bundle (it is the same
+// file — see the note at the top of it); only the path changed here.
+const NOTIF_SRC = fs.readFileSync(
+  path.join(__dirname, '..', 'frontend', 'src', 'features', 'notifications', 'notifications.js'), 'utf8');
 
 // Minimal fake DOM element tracking class list + text for the badge tests.
 class FakeEl {
   constructor() {
     this.textContent = '';
     this.disabled = false;
+    this.dataset = {};
     this._cls = new Set(['hidden']);
     const self = this;
     this.classList = {
@@ -245,7 +249,7 @@ test('playDoneTone stays silent while the audio context is still suspended', () 
 // ── static wiring assertions ─────────────────────────────────────────────
 
 test('notifications.js routes completions through DevAlerts.onCompletion', () => {
-  const src = read('js', 'notifications.js');
+  const src = NOTIF_SRC;
   assert.match(src, /DevAlerts\.onCompletion\(completionAlertInfo\(notif\)\)/);
   assert.match(src, /function completionAlertInfo\(n\)/);
   // Both completion kinds are covered.
@@ -254,7 +258,11 @@ test('notifications.js routes completions through DevAlerts.onCompletion', () =>
 });
 
 test('dev-chat.js no longer plays the tone directly (chime is arrival-driven)', () => {
-  const src = read('js', 'dev-chat.js');
+  // #1084 chunk G moved this module into the React bundle (same file, new
+  // path — see the note at the top of it); only the path changed here.
+  const src = fs.readFileSync(
+    path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'dev-chat.js'), 'utf8',
+  );
   // #138: the redundant foreground-tone hook is removed — the chime is now
   // fired solely from Notifications.handleIncoming → DevAlerts.onCompletion
   // on the WS notification's arrival. dev-chat.js must not call playDoneTone.
@@ -271,7 +279,8 @@ test('DevAlerts.TEST_DELAY_MS is a whole number of seconds (clean countdown)', (
 });
 
 test('settings.js runs a ticking countdown for the test-alert button', () => {
-  const src = read('js', 'settings.js');
+  const src = fs.readFileSync(
+    path.join(__dirname, '..', 'frontend', 'src', 'features', 'settings', 'settings.js'), 'utf8');
   // A real interval that rewrites the status text each second, plus cleanup.
   assert.match(src, /setInterval\(/);
   assert.match(src, /_clearAlertsTestCountdown/);
@@ -282,7 +291,8 @@ test('settings.js runs a ticking countdown for the test-alert button', () => {
 });
 
 test('settings.js wires the toggle and the test-alert button', () => {
-  const src = read('js', 'settings.js');
+  const src = fs.readFileSync(
+    path.join(__dirname, '..', 'frontend', 'src', 'features', 'settings', 'settings.js'), 'utf8');
   assert.match(src, /devchat-alerts-toggle/);
   assert.match(src, /DevAlerts\.setEnabled\(/);
   assert.match(src, /devchat-alerts-test/);
@@ -324,12 +334,20 @@ test('each bell badge hides when its own count is zero', () => {
   assert.equal(elements['notifications-badge'].hidden, true);
 });
 
-test('index.html loads dev-alerts.js before notifications.js and ships the settings UI', () => {
+test('dev-alerts.js still loads before notifications, and index.html ships the settings UI', () => {
   const html = read('index.html');
+  // #1079 chunk B moved notifications.js into the React bundle, so this is no
+  // longer two classic tags to order. The guarantee got STRONGER rather than
+  // weaker: /shell/assets/shell.js is a module (deferred), so everything it
+  // imports runs after every classic /js/** tag has executed. What still has to
+  // hold is that dev-alerts.js is one of those classic tags — if it ever moved
+  // into the bundle too, the relative order would stop being decided for us.
   const alertsIdx = html.indexOf('src="/js/dev-alerts.js"');
-  const notifIdx = html.indexOf('src="/js/notifications.js"');
+  const bundleIdx = html.indexOf('src="/shell/assets/shell.js"');
   assert.ok(alertsIdx > 0, 'dev-alerts.js script tag present');
-  assert.ok(alertsIdx < notifIdx, 'dev-alerts.js loads before notifications.js');
+  assert.ok(bundleIdx > 0, 'the React shell bundle is what carries notifications.js now');
+  assert.ok(!html.includes('src="/js/notifications.js"'),
+    'a surviving classic tag would load a second copy of the module');
   assert.match(html, /id="devchat-alerts-toggle"/);
   assert.match(html, /id="devchat-alerts-test"/);
   // #138: the distinct green AI-completion badge on the bell.

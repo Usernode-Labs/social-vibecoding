@@ -171,6 +171,134 @@ const MAX_CONSOLE_ERRORS = 20;
 const MAX_CONSOLE_MSG_LEN = 500;
 const CONSOLE_ONLY_SETTLE_MS = 1500;
 
+// ── Settle: a bounded QUIET WINDOW, not a fixed sleep (#1144) ──
+//
+// The declared suite used to pay SETTLE_MS + CONSOLE_ONLY_SETTLE_MS = 2000ms
+// of unconditional sleep per navigation, whatever the page did. Production
+// measured 158 navigations over 8 lanes for this repo's own manifest — ~20
+// waves, so ~40s of a 72s capture was spent asleep on pages that had already
+// gone quiet the instant `networkidle2` resolved.
+//
+// The safety property those sleeps existed for is real and is preserved: a
+// page that is STILL emitting deferred async errors keeps getting waited on,
+// right up to SETTLE_MAX_MS. What changes is the common case — a page with
+// nothing left to say proceeds after one quiet window instead of two full
+// seconds. `lastAt` is bumped by console output, page errors and request
+// lifecycle events, so "quiet" means the document is genuinely idle rather
+// than merely past a timer.
+//
+// SETTLE_MIN_MS is the floor after a cold navigation. `networkidle2` already
+// resolves 500ms after the last request, so a page whose deferred error fires
+// a few hundred ms into idle would be judged before it spoke if the only bound
+// were the quiet window. The floor keeps a guaranteed listening period; any
+// error inside it re-arms the window, so the noisy case still runs long.
+const SETTLE_QUIET_MS = 250;
+const SETTLE_MIN_MS = 500;
+const SETTLE_MAX_MS = 1500;
+const SETTLE_POLL_MS = 50;
+
+function settleQuietMs(env) {
+  const raw = parseInt((env || {}).TEST_SETTLE_QUIET_MS, 10);
+  return (Number.isFinite(raw) && raw >= 0) ? raw : SETTLE_QUIET_MS;
+}
+
+function settleMaxMs(env) {
+  const raw = parseInt((env || {}).TEST_SETTLE_MAX_MS, 10);
+  return (Number.isFinite(raw) && raw >= 0) ? raw : SETTLE_MAX_MS;
+}
+
+// ── Assertion polling ──
+//
+// The quiet window judges the page by what it EMITS — console output, page
+// errors, request lifecycle. Timers, rAF work, IndexedDB reads and
+// service-worker-served fetches emit none of those, so a screen can read as
+// "quiet" while it is still rendering. The flat 2s settle this replaced
+// masked that gap; shrinking it surfaced a wave of "Expected element was not
+// found" failures on exactly the data-driven routes (20 of this repo's own
+// declared checks in the first post-#1147 run). So presence assertions POLL:
+// a check whose element is already there passes on the first probe and pays
+// nothing; one whose screen is mid-render keeps being re-asked until it holds
+// or the cohort's shared deadline expires. The deadline is per COHORT, not
+// per check — ten missing selectors on one broken screen cost one ceiling,
+// which is what lets the group budget stay proportional to cohort count.
+const ASSERT_POLL_MS = 100;
+const ASSERT_MAX_MS = 5000;
+
+function assertMaxMs(env) {
+  const raw = parseInt((env || {}).TEST_ASSERT_MAX_MS, 10);
+  return (Number.isFinite(raw) && raw >= 0) ? raw : ASSERT_MAX_MS;
+}
+
+// An activity clock a page's listeners bump. Created per group and shared by
+// every cohort's settle, so a late error from cohort 1 still holds cohort 2's
+// window open — the page is one document either way.
+function makeActivityClock(now) {
+  const clock = now || (() => Date.now());
+  return { lastAt: clock(), now: clock, bump() { this.lastAt = this.now(); } };
+}
+
+// Wait until the page has been quiet for `quietMs` — but never less than
+// `minMs`, and never more than `maxMs`. Returns the elapsed wait.
+async function waitForQuiet(activity, opts) {
+  const o = opts || {};
+  const quietMs = Number.isFinite(o.quietMs) ? o.quietMs : SETTLE_QUIET_MS;
+  const maxMs = Number.isFinite(o.maxMs) ? o.maxMs : SETTLE_MAX_MS;
+  const minMs = Math.min(Number.isFinite(o.minMs) ? o.minMs : 0, maxMs);
+  const now = typeof o.now === 'function' ? o.now : (activity && activity.now) || (() => Date.now());
+  const nap = typeof o.sleep === 'function' ? o.sleep : sleep;
+  const pollMs = Number.isFinite(o.pollMs) && o.pollMs > 0 ? o.pollMs : SETTLE_POLL_MS;
+  const startedAt = now();
+  for (;;) {
+    const elapsed = now() - startedAt;
+    if (elapsed >= maxMs) return elapsed;
+    const quietFor = now() - (activity ? activity.lastAt : 0);
+    if (elapsed >= minMs && quietFor >= quietMs) return elapsed;
+    await nap(Math.max(1, Math.min(pollMs, maxMs - elapsed)));
+  }
+}
+
+// ── Test-suite pool bounds (every declared check now runs, see runTests) ──
+//
+// The suite used to be at most 12 checks run strictly one after another.
+// It is now every declared check — 240-odd for this repo — which at the
+// measured ~3.9s marginal cost per sequential check would be ~16 minutes,
+// four times the container's own timeout. Two mechanisms bring that down:
+// checks that share a URL share one navigation (groupTestsByUrl — this
+// repo's 241 checks hit ~110 distinct routes, and a benchmark against the
+// real manifest halved suite wall clock, 96s → 47s), and the groups run
+// through a bounded pool of concurrent pages.
+//
+// 8: production timings put a navigation at ~3.9s sequential, so ~110
+// groups at pool 8 is ~54s of ideal work; the staging preview (2 CPUs) is
+// the real serialising resource, so budget 55-70% efficiency → ~80-100s,
+// well inside the deadlines below. Raising this past ~16 buys nothing
+// while the preview is the bottleneck, and each live page costs 80-150 MB
+// against the container's 4g.
+function poolSize(env) {
+  const raw = parseInt((env || {}).TEST_CONCURRENCY, 10);
+  if (!Number.isFinite(raw) || raw < 1) return 8;
+  return Math.min(16, raw);
+}
+
+// Per-check wall clock. NAV_TIMEOUT_MS only bounds page.goto — the settle
+// sleeps and the selector/text assertions are unbounded, so one wedged page
+// could previously eat the whole run's budget. A check that blows this is
+// reported as an ordinary failed frame and the pool moves on.
+function testTimeoutMs(env) {
+  const raw = parseInt((env || {}).TEST_TIMEOUT_MS, 10);
+  return (Number.isFinite(raw) && raw > 0) ? raw : 25000;
+}
+
+// Whole-suite deadline. On expiry the pool stops dispatching and abandons
+// what is in flight; undispatched checks simply produce no frame and the
+// platform derives the missing set from the sentinel. Sits below the
+// orchestrator's 600s docker timeout so the container always gets to emit
+// its sentinel rather than being killed mid-suite.
+function testsDeadlineMs(env) {
+  const raw = parseInt((env || {}).TESTS_DEADLINE_MS, 10);
+  return (Number.isFinite(raw) && raw > 0) ? raw : 420000;
+}
+
 // Whether this run also produces the before/after media artifacts. The
 // orchestrator sets MEDIA=0 for the always-on console-only check on a
 // non-UI-affecting proposal (visuals.js) — the page is still navigated
@@ -206,7 +334,10 @@ function parseCookie(raw) {
 // collect frames without monkey-patching process.stdout, which would also
 // swallow the test runner's own output.
 let _sink = (s) => process.stdout.write(s);
-function setFrameSink(fn) { _sink = fn || ((s) => process.stdout.write(s)); }
+function setFrameSink(fn) {
+  _sink = fn || ((s) => process.stdout.write(s));
+  _emittedTests.clear();
+}
 
 function emit(kind, media, status, buf, index, fellback) {
   _sink(
@@ -242,13 +373,38 @@ function emitConsole(index, errors, loadStatus) {
 //   __USERNODE_TEST__ index=<n> status=<pass|fail> loadStatus=<n>
 //   <base64 JSON { name, path, consoleErrors:[{kind,message,source}], failureReason }>
 //   __USERNODE_TEST_END__
+//
+// Exactly one frame per index, whatever happens. runTests races each check
+// against a per-check deadline, so the pool can write a "timed out" frame
+// while the original runTest is still mid-navigation and finishes later.
+// First writer wins and the straggler is dropped, so a slow check can never
+// contradict its own recorded verdict.
+const _emittedTests = new Set();
 function emitTest(index, status, loadStatus, payload) {
+  const key = Number(index) || 0;
+  if (_emittedTests.has(key)) return false;
+  _emittedTests.add(key);
   const json = JSON.stringify(payload || {});
   _sink(
     `__USERNODE_TEST__ index=${index || 0} status=${status === 'pass' ? 'pass' : 'fail'} loadStatus=${loadStatus || 0}\n`
   );
   _sink(Buffer.from(json, 'utf8').toString('base64'));
   _sink('\n__USERNODE_TEST_END__\n');
+  return true;
+}
+
+// Completion sentinel for the test suite. With a pool, "fewer frames than
+// dispatched" is no longer self-evidently a crash — it can also be the
+// suite's own deadline stopping dispatch — so the container states plainly
+// how far it got. The platform reads it to decide whether a missing check
+// is a partial run it must fail closed on.
+//
+// parseTests ignores any line that isn't a `__USERNODE_TEST__ ` header, so
+// an OLDER platform reading a NEWER image is unaffected by this line. The
+// other direction (new platform, old image) sees no sentinel at all and
+// falls back to comparing frame count against dispatched count.
+function emitTestsDone(ran, expected, deadline) {
+  _sink(`__USERNODE_TESTS_DONE__ ran=${ran || 0} expected=${expected || 0} deadline=${deadline ? 1 : 0}\n`);
 }
 
 function execFileAsync(cmd, args, opts = {}) {
@@ -664,8 +820,24 @@ function resolveTargets(env) {
 // unset / empty / unparseable TESTS yields [] — the run then falls back to
 // the legacy console-only behaviour on the "after" target (rolling-deploy
 // safety, same shape as resolveTargets' TARGETS-vs-scalar fallback).
-function resolveTests(env) {
-  const raw = (env.TESTS || '').trim();
+//
+// TESTS='@stdin' means the payload was too large to ride in a single env
+// string — a Linux exec caps any one argv/env string at 128KB
+// (MAX_ARG_STRLEN), and a manifest-scale suite (200+ checks, each with a
+// tokenized staging URL) blows through that: the platform's own proposals
+// died with `spawn E2BIG` before the container even started. The
+// orchestrator pipes the JSON through the container's stdin instead
+// (docker run -i), which has no such cap.
+function resolveTests(env, readStdin) {
+  let raw = (env.TESTS || '').trim();
+  if (raw === '@stdin') {
+    try {
+      raw = (readStdin ? readStdin() : fs.readFileSync(0, 'utf8')).trim();
+    } catch (err) {
+      process.stderr.write(`capture: failed to read TESTS from stdin: ${err.message}\n`);
+      return [];
+    }
+  }
   if (!raw) return [];
   let parsed;
   try { parsed = JSON.parse(raw); } catch { return []; }
@@ -688,15 +860,227 @@ function resolveTests(env) {
   return out;
 }
 
-// #47: run one declared test against the staging build. Navigates the
-// test's route, collects console errors / uncaught exceptions / failed
-// loads (the #381 baseline, now per-test), then evaluates the optional
-// presence assertions. Emits exactly one __USERNODE_TEST__ frame. Never
-// throws — an unexpected error is itself reported as a failed test.
-// `browser` may be a Browser or a BrowserContext (both expose newPage) —
-// main() passes the tests-only context so screenshot cookies can't bleed
-// into test navigations (see the isolation comment at the call site).
-async function runTest(browser, test) {
+// Group the declared suite by resolved URL, preserving first-appearance
+// order (and, within a group, declaration order). The manifest's checks
+// cluster heavily — this repo's 234 checks hit only ~106 distinct routes,
+// with 46 on the dev screen alone — and the navigation + settle sleeps are
+// where a check's wall clock actually goes. One navigation per URL, with
+// every assertion for that URL evaluated against the single loaded page,
+// halves the suite's real cost without touching what each check means:
+// every check still gets its own frame, verdict, and failure reason.
+//
+// The key is the RESOLVED url (route + token), not the declared path — two
+// checks only share a page when they'd have loaded byte-identical URLs.
+function groupTestsByUrl(tests) {
+  const byUrl = new Map();
+  for (const t of (Array.isArray(tests) ? tests : [])) {
+    if (!byUrl.has(t.url)) byUrl.set(t.url, []);
+    byUrl.get(t.url).push(t);
+  }
+  return Array.from(byUrl.values());
+}
+
+// ── Document grouping (#1144) ──
+//
+// groupTestsByUrl keys on the fully resolved URL, so two checks share a page
+// load only if they'd request byte-identical URLs. For a hash-routed SPA that
+// is the wrong unit: this repo's 314 checks resolve to 158 distinct URLs but
+// only 73 distinct DOCUMENTS — 231 of them differ from a sibling by the
+// `#hash` alone. Each of those paid a full cold load of the same document.
+//
+// So the key is the document (origin + pathname + search) and the members are
+// ordered into HASH COHORTS. runTestGroup loads the document once and moves
+// between cohorts by writing `location.hash`, which is the app's own supported
+// navigation path (public/js/app.js wires popstate/hashchange →
+// restoreFromHash) rather than a simulation of one.
+//
+// THE COHORT CAP KEEPS THE POOL FED. One group holding 28 cohorts would
+// serialise into a single lane and become the critical path however many
+// workers are idle, so a document's cohorts are chunked and each chunk becomes
+// its own group (its own navigation, its own context). Measured navigation
+// counts for this repo's manifest by cap: 4 → 92, 6 → 85, 8 → 82, 12 → 79,
+// against 158 ungrouped. 6 takes nearly all the win while leaving ≥8 groups
+// for the pool at all times.
+//
+// A HASH SWITCH IS NOT A COLD LOAD — module-level init runs once per group
+// instead of once per check — so a bug that only reproduces on first paint of
+// a sub-route would be missed. TEST_GROUP_BY_DOCUMENT=0 restores per-URL
+// grouping with one env flip on the host, no deploy.
+const HASH_GROUP_CAP = 6;
+
+function hashGroupCap(env) {
+  const raw = parseInt((env || {}).TEST_HASH_GROUP_CAP, 10);
+  if (!Number.isFinite(raw) || raw < 1) return HASH_GROUP_CAP;
+  return Math.min(64, raw);
+}
+
+function groupByDocument(env) {
+  return (env || {}).TEST_GROUP_BY_DOCUMENT !== '0';
+}
+
+// The cold-load fallback for a hash cohort whose assertions did not hold (see
+// the long comment in runTestGroup). On by default: without it, grouping can
+// change a check's verdict, which is not something a batching optimisation is
+// allowed to do. TEST_COHORT_RELOAD_FALLBACK=0 turns it off for measuring what
+// grouping alone costs or saves.
+function cohortReloadFallback(env) {
+  return (env || process.env || {}).TEST_COHORT_RELOAD_FALLBACK !== '0';
+}
+
+// A check's presence assertions against whatever is rendered right now.
+// Returns '' when they hold, else the failure reason. Extracted from the emit
+// loop so the cohort fallback can re-run exactly the same judgement against a
+// reloaded document.
+async function assertPresence(page, t) {
+  if (t.expectSelector) {
+    let found = false;
+    try { found = !!(await page.$(t.expectSelector)); } catch { found = false; }
+    if (!found) return `Expected element "${t.expectSelector}" was not found`;
+  }
+  if (t.expectText) {
+    let found = false;
+    try {
+      // innerText reflects RENDERED text, including CSS text-transform — a
+      // `text-transform: uppercase` header turns "Your apps" into "YOUR APPS"
+      // and a case-sensitive includes() can never match the human-written
+      // expectation. Compare case-insensitively: keeps the "visible on the
+      // page" semantics (hidden text still fails) while making the assertion
+      // robust to styling-only casing.
+      found = await page.evaluate(
+        (text) => (document.body ? document.body.innerText : '')
+          .toLowerCase().includes(String(text).toLowerCase()),
+        t.expectText
+      );
+    } catch { found = false; }
+    if (!found) return `Expected text "${t.expectText}" was not found on the page`;
+  }
+  return '';
+}
+
+// Split a resolved URL into its document half and its fragment. Kept as plain
+// string surgery rather than `new URL()` so a malformed url (which resolveTests
+// tolerates) degrades to "its own document" instead of throwing.
+function splitDocumentUrl(url) {
+  const s = String(url == null ? '' : url);
+  const i = s.indexOf('#');
+  if (i === -1) return { doc: s, hash: '' };
+  return { doc: s.slice(0, i), hash: s.slice(i) };
+}
+
+// The hash cohorts of an already-built group, in order. Members are adjacent
+// by construction (groupTestsByDocument emits them that way), but this reads
+// them back from the URLs so a hand-built group — the unit-test fakes, or a
+// per-URL group under the kill-switch — behaves identically.
+//
+// The hash-less cohort, if the group has one, is hoisted to the front so it is
+// always the COLD navigation. Sub-navigation writes `location.hash`, and
+// clearing a fragment is not a same-document navigation — it would reload the
+// page mid-group. Leading with it means every switch is to a real fragment.
+//
+// BOTH the builder and the runner order cohorts through this one function.
+// They have to agree: the runner navigates once to `group[0].url` and treats
+// the first cohort as already-loaded, so if the builder emitted a different
+// cohort first, that cohort would be evaluated against someone else's hash.
+function hoistBareCohort(cohorts) {
+  const bare = cohorts.findIndex((c) => !c.hash);
+  if (bare > 0) cohorts.unshift(cohorts.splice(bare, 1)[0]);
+  return cohorts;
+}
+
+function cohortsOf(group) {
+  const tests = Array.isArray(group) ? group : [group];
+  const byHash = new Map();
+  for (const t of tests) {
+    const { hash } = splitDocumentUrl(t && t.url);
+    if (!byHash.has(hash)) byHash.set(hash, []);
+    byHash.get(hash).push(t);
+  }
+  return hoistBareCohort(
+    Array.from(byHash.entries()).map(([hash, members]) => ({ hash, tests: members }))
+  );
+}
+
+function groupTestsByDocument(tests, opts) {
+  const cap = Math.max(1, Number((opts || {}).cap) || HASH_GROUP_CAP);
+  // doc -> Map(hash -> tests[]). Both levels are insertion-ordered, so the
+  // suite's declaration order survives into the dispatch order.
+  const byDoc = new Map();
+  for (const t of (Array.isArray(tests) ? tests : [])) {
+    const { doc, hash } = splitDocumentUrl(t.url);
+    if (!byDoc.has(doc)) byDoc.set(doc, new Map());
+    const byHash = byDoc.get(doc);
+    if (!byHash.has(hash)) byHash.set(hash, []);
+    byHash.get(hash).push(t);
+  }
+  const groups = [];
+  for (const byHash of byDoc.values()) {
+    // Hoisted here, not just at run time: the FIRST chunk's first cohort is the
+    // one the group's single goto() lands on, so the bare cohort has to be
+    // ordered before the chunk boundaries are drawn, not after.
+    const cohorts = hoistBareCohort(
+      Array.from(byHash.entries()).map(([hash, members]) => ({ hash, tests: members }))
+    );
+    for (let i = 0; i < cohorts.length; i += cap) {
+      // Flatten the chunk: a group stays a plain array of tests, which is what
+      // the pool's budget/timeout/emit paths already iterate.
+      groups.push([].concat(...cohorts.slice(i, i + cap).map((c) => c.tests)));
+    }
+  }
+  return groups;
+}
+
+// The dispatch-time entry point: document grouping unless the kill-switch is
+// set, in which case the historical per-URL grouping.
+function groupTests(tests, env) {
+  if (!groupByDocument(env)) return groupTestsByUrl(tests);
+  return groupTestsByDocument(tests, { cap: hashGroupCap(env) });
+}
+
+// #47: run the declared tests for ONE route against the staging build.
+// Navigates once, collects console errors / uncaught exceptions / failed
+// loads (the #381 baseline) for that load, then evaluates each check's
+// presence assertions against the same page. Emits exactly one
+// __USERNODE_TEST__ frame per check. Never throws — an unexpected error is
+// reported as a failed frame for every check that hasn't produced one yet.
+//
+// THE PAGE MUST BE A WINDOW, NOT A TAB. Concurrent newPage() calls on one
+// context open tabs of one window, and Chromium reports every non-active
+// tab's document as `visibilityState: 'hidden'`. Hidden documents are not
+// an inert copy of visible ones: startViewTransition() skips itself and
+// rejects `ready` (which surfaces as an unhandled-rejection pageerror —
+// "InvalidStateError: Transition was aborted" failed every route that
+// animates its entry, including 4 checks that had already graduated to
+// blocking; the platform kit now swallows that rejection — #1035 — but
+// any app code outside the kit still hits it), requestAnimationFrame
+// never fires (so rAF-driven UI — the platform kit's popovers, action
+// sheets, springs — never presents, and its selectors "aren't found"),
+// and timers are throttled. Giving each group its OWN browser context
+// gives it its own window, which Chromium keeps visible regardless of how
+// many run concurrently — verified against real Chromium: 8 concurrent
+// context-pages all report 'visible' with rAF firing, while 7 of 8
+// same-context tabs report 'hidden'.
+//
+// The fresh context also means a fresh cookie jar, which is what makes the
+// per-group `?token=` exchange deterministic — see runTests.
+//
+// `browser` may be a Browser (per-group context, the production shape) or
+// anything else exposing newPage (the unit-test fakes; also tolerates
+// being handed a BrowserContext).
+//
+// A group may now span several HASH COHORTS of one document (#1144). The
+// document is loaded once, for the first cohort; every later cohort is reached
+// by writing `location.hash`, which is the app's own navigation path. Console
+// errors are attributed per cohort — see the comment on `sharedErrorCount`.
+async function runTestGroup(browser, group, opts) {
+  const o = opts || {};
+  const tests = Array.isArray(group) ? group : [group];
+  const cohorts = cohortsOf(tests);
+  const lead = tests[0];
+  const quietMs = Number.isFinite(o.settleQuietMs) ? o.settleQuietMs : SETTLE_QUIET_MS;
+  const maxMs = Number.isFinite(o.settleMaxMs) ? o.settleMaxMs : SETTLE_MAX_MS;
+  const assertMax = Number.isFinite(o.assertMaxMs) ? o.assertMaxMs : ASSERT_MAX_MS;
+  const assertPoll = Number.isFinite(o.assertPollMs) && o.assertPollMs > 0
+    ? o.assertPollMs : ASSERT_POLL_MS;
   const consoleErrors = [];
   const pushErr = (errKind, message, source) => {
     if (consoleErrors.length >= MAX_CONSOLE_ERRORS) return;
@@ -709,14 +1093,36 @@ async function runTest(browser, test) {
       source: source ? String(source).slice(0, MAX_CONSOLE_MSG_LEN) : '',
     });
   };
+  const emitAll = (status, reasonFor) => {
+    for (const t of tests) {
+      const failureReason = reasonFor(t);
+      const pass = !failureReason;
+      emitTest(t.index, pass ? 'pass' : 'fail', status, {
+        name: t.name, path: t.path,
+        consoleErrors: t.allowConsoleErrors ? [] : consoleErrors,
+        failureReason: pass ? '' : failureReason,
+      });
+    }
+  };
 
+  let context = null;
   let page;
   let status = 0;
-  let failureReason = '';
   try {
-    page = await browser.newPage();
+    if (typeof browser.createBrowserContext === 'function') {
+      context = await browser.createBrowserContext();
+    }
+    page = await (context || browser).newPage();
     await page.setViewport(VIEWPORT);
-    page.on('console', (msg) => {
+
+    // The settle's activity clock. Every signal that the document is still
+    // doing something bumps it; `waitForQuiet` returns once nothing has.
+    const activity = makeActivityClock();
+    const on = (event, handler) => {
+      try { page.on(event, handler); } catch { /* fake pages may not emit it */ }
+    };
+    on('console', (msg) => {
+      activity.bump();
       try {
         if (msg.type() !== 'error') return;
         const loc = typeof msg.location === 'function' ? msg.location() : null;
@@ -726,72 +1132,331 @@ async function runTest(browser, test) {
         pushErr('console', msg.text(), src);
       } catch { /* ignore a single malformed console message */ }
     });
-    page.on('pageerror', (err) => {
+    on('pageerror', (err) => {
+      activity.bump();
       try { pushErr('pageerror', (err && (err.stack || err.message)) || String(err), ''); }
       catch { /* ignore */ }
     });
+    // Request lifecycle: a route that is still fetching is not quiet, however
+    // silent its console is. This is what keeps a lazily-hydrating sub-route
+    // from being judged before it renders.
+    for (const ev of ['request', 'response', 'requestfinished', 'requestfailed']) {
+      on(ev, () => activity.bump());
+    }
 
     try {
-      const resp = await page.goto(test.url, { waitUntil: 'networkidle2', timeout: NAV_TIMEOUT_MS });
+      const resp = await page.goto(lead.url, { waitUntil: 'networkidle2', timeout: NAV_TIMEOUT_MS });
       status = resp ? resp.status() : 200;
     } catch (err) {
-      pushErr('load', `navigation failed: ${err.message}`, test.url);
-      emitTest(test.index, 'fail', 0, {
-        name: test.name, path: test.path, consoleErrors,
-        failureReason: `Page failed to load: ${err.message}`,
-      });
+      pushErr('load', `navigation failed: ${err.message}`, lead.url);
+      emitAll(0, () => `Page failed to load: ${err.message}`);
       await page.close().catch(() => {});
+      if (context) await context.close().catch(() => {});
       return;
     }
 
-    await sleep(SETTLE_MS);
+    let loadFailure = '';
     if (status >= 400) {
-      pushErr('load', `page returned HTTP ${status}`, test.url);
-      failureReason = `Page returned HTTP ${status}`;
+      pushErr('load', `page returned HTTP ${status}`, lead.url);
+      loadFailure = `Page returned HTTP ${status}`;
     }
-    // Give deferred async errors a moment to fire before we judge.
-    await sleep(CONSOLE_ONLY_SETTLE_MS);
 
-    // Presence assertions (only when the page loaded OK).
-    if (!failureReason && test.expectSelector) {
-      let found = false;
-      try { found = !!(await page.$(test.expectSelector)); } catch { found = false; }
-      if (!found) failureReason = `Expected element "${test.expectSelector}" was not found`;
-    }
-    if (!failureReason && test.expectText) {
-      let found = false;
-      try {
-        // innerText reflects RENDERED text, including CSS text-transform —
-        // a `text-transform: uppercase` header turns "Your apps" into
-        // "YOUR APPS" and a case-sensitive includes() can never match the
-        // human-written expectation. Compare case-insensitively: keeps the
-        // "visible on the page" semantics (hidden text still fails) while
-        // making the assertion robust to styling-only casing.
-        found = await page.evaluate(
-          (text) => (document.body ? document.body.innerText : '')
-            .toLowerCase().includes(String(text).toLowerCase()),
-          test.expectText
-        );
-      } catch { found = false; }
-      if (!found) failureReason = `Expected text "${test.expectText}" was not found on the page`;
+    // Errors seen during the cold load belong to EVERY cohort in the group —
+    // they are a property of the document all of them share, and before this
+    // change each cohort was its own navigation and would have observed them
+    // itself. Errors after a hash switch belong to that cohort alone, which is
+    // strictly better attribution than the old group-wide freeze: a broken
+    // sub-route no longer fails its siblings.
+    let sharedErrorCount = 0;
+
+    for (let ci = 0; ci < cohorts.length; ci += 1) {
+      const cohort = cohorts[ci];
+      let cohortFrom = 0;
+      if (ci === 0) {
+        // Stamp the clock so the cold load always gets a listening window,
+        // then wait it out.
+        activity.bump();
+        await waitForQuiet(activity, { quietMs, maxMs, minMs: Math.min(SETTLE_MIN_MS, maxMs) });
+      } else {
+        cohortFrom = consoleErrors.length;
+        try {
+          await page.evaluate((h) => {
+            if (window.location.hash === h) {
+              // Already there (the app normalised the fragment itself) — poke
+              // the router anyway so this cohort gets a fresh render.
+              window.dispatchEvent(new HashChangeEvent('hashchange'));
+              return;
+            }
+            window.location.hash = h;
+          }, cohort.hash);
+        } catch (err) {
+          pushErr('load', `hash navigation to ${cohort.hash} failed: ${err.message}`, lead.url);
+        }
+        activity.bump();
+        await waitForQuiet(activity, { quietMs, maxMs });
+      }
+
+      // Poll the cohort's assertions until every one holds or the shared
+      // deadline expires (see ASSERT_MAX_MS). The settle above only waited
+      // for the page to stop EMITTING; a screen rendered by timers, rAF or
+      // service-worker-served fetches goes quiet before it is done, and a
+      // one-shot probe here judged those screens mid-render. A check whose
+      // element is present pays a single probe; only a cohort with a check
+      // still failing keeps waiting, and never past its one shared ceiling.
+      // Evaluated BEFORE the console errors are frozen so the cold-load
+      // fallback below can re-run them on a reloaded document.
+      const presence = new Map();
+      if (!loadFailure) {
+        const assertDeadlineAt = Date.now() + assertMax;
+        let pending = cohort.tests;
+        for (;;) {
+          const still = [];
+          for (const t of pending) {
+            const reason = await assertPresence(page, t);
+            presence.set(t, reason);
+            if (reason) still.push(t);
+          }
+          pending = still;
+          const leftMs = assertDeadlineAt - Date.now();
+          if (!pending.length || leftMs <= 0) break;
+          await sleep(Math.min(assertPoll, leftMs));
+        }
+      }
+
+      // ── A hash switch is not always equivalent to a cold load (#1146) ──
+      //
+      // Grouping was introduced as a pure speed optimisation, but writing
+      // `location.hash` on a loaded document cannot reproduce every cold load,
+      // and where it cannot it does not merely MISS a bug — it invents one.
+      // Three shapes of that were failing in this repo's own suite:
+      //
+      //   * A screen already mounted on a sub-route keeps it. Cohort
+      //     `#leaderboard/challenges` runs before cohort `#leaderboard`, and
+      //     the bare fragment means "the board" rather than "reset to the
+      //     standings tab" — so the two standings checks judged the challenges
+      //     tab and reported the standings markup missing.
+      //   * `#admin/seasons/*` renders its section from the boot restore; the
+      //     five sub-route cohorts after the cold one never repainted
+      //     `#admin-section-content`, so all seven admin checks failed while
+      //     their cold-loaded sibling in cohort 0 passed.
+      //   * A `?shot=`/`?flow=` deep link scripts a one-time interaction at
+      //     boot. Every cohort after the first shares the document but not the
+      //     script's effect, so the sheet those checks assert on was never
+      //     opened for them.
+      //
+      // Waiting longer fixes none of it — the render is not late, it is not
+      // coming. So an unmet assertion after a hash switch is not taken as a
+      // verdict: the cohort is re-run as the real cold navigation the
+      // ungrouped runner would have made, and judged on that. Cost is paid
+      // only where grouping was NOT equivalent, which keeps the whole win on
+      // a green suite while making the verdict independent of how the checks
+      // happened to be batched. `about:blank` first because a goto that
+      // differs only in the fragment is a same-document navigation and would
+      // not reload anything.
+      if (ci > 0 && !loadFailure && cohortReloadFallback(o.env)
+        && [...presence.values()].some(Boolean)) {
+        try {
+          await page.goto('about:blank', { timeout: NAV_TIMEOUT_MS });
+          const resp = await page.goto(cohort.tests[0].url, {
+            waitUntil: 'networkidle2', timeout: NAV_TIMEOUT_MS,
+          });
+          const reloadStatus = resp ? resp.status() : status;
+          activity.bump();
+          await waitForQuiet(activity, { quietMs, maxMs, minMs: Math.min(SETTLE_MIN_MS, maxMs) });
+          if (reloadStatus >= 400) {
+            pushErr('load', `page returned HTTP ${reloadStatus}`, cohort.tests[0].url);
+            for (const t of cohort.tests) presence.set(t, `Page returned HTTP ${reloadStatus}`);
+          } else {
+            for (const t of cohort.tests) presence.set(t, await assertPresence(page, t));
+          }
+        } catch (err) {
+          // The hash-switch verdict stands. A fallback that cannot navigate
+          // must not turn a real assertion failure into a load error.
+          pushErr('load', `cohort reload of ${cohort.hash} failed: ${err.message}`, cohort.tests[0].url);
+        }
+      }
+
+      // Frozen per cohort, for the same reason it used to be frozen per group:
+      // a straggling async error must not split one render into contradictory
+      // verdicts across the checks judging it. Frozen AFTER the poll, so an
+      // error that fires while assertions wait is still heard — the flat
+      // settle this replaced would have been listening through that window.
+      if (ci === 0) sharedErrorCount = consoleErrors.length;
+      const cohortErrors = ci === 0
+        ? consoleErrors.slice(0, sharedErrorCount)
+        : consoleErrors.slice(0, sharedErrorCount).concat(consoleErrors.slice(cohortFrom));
+      const errorCount = cohortErrors.length;
+
+      // The presence verdicts settled above, plus the console-error rule.
+      for (const t of cohort.tests) {
+        let failureReason = loadFailure || presence.get(t) || '';
+        // Console errors fail the check unless it opted out. A failed load /
+        // missing assertion already set failureReason.
+        if (!failureReason && !t.allowConsoleErrors && errorCount > 0) {
+          failureReason = `${errorCount} console error${errorCount === 1 ? '' : 's'} on load`;
+        }
+        const pass = !failureReason;
+        emitTest(t.index, pass ? 'pass' : 'fail', status, {
+          name: t.name, path: t.path,
+          consoleErrors: t.allowConsoleErrors ? [] : cohortErrors,
+          failureReason: pass ? '' : failureReason,
+        });
+      }
     }
   } catch (err) {
-    failureReason = failureReason || `Test run error: ${err.message}`;
+    // emitTest de-duplicates by index, so checks that already reported are
+    // untouched and only the unreported remainder is failed.
+    emitAll(status, () => `Test run error: ${err.message}`);
+  }
+  if (page) await page.close().catch(() => {});
+  if (context) await context.close().catch(() => {});
+}
+
+// Extra per-group deadline allowance for each check past the first. The
+// navigation + settle sleeps (the expensive part, ~2s+) are paid once per
+// group; each additional check is one page.$ and at most one evaluate —
+// milliseconds normally, so a second per check is generous headroom, and
+// keeping the allowance small preserves "one wedged page can't hold a
+// worker long" from the ungrouped design.
+const GROUP_EXTRA_CHECK_MS = 1000;
+
+// Extra allowance for each hash cohort past the first. A cohort costs a hash
+// write plus one settle, not a navigation — but a settle can run to
+// SETTLE_MAX_MS, and a cohort with failing checks polls its assertions up to
+// ASSERT_MAX_MS more, so the budget has to grow with cohort count or a full
+// six-cohort group with one broken screen per cohort would be timed out for
+// doing exactly what it was told to.
+//
+// It also has to cover the cold-load fallback (#1146), which is a real
+// navigation plus a second settle — otherwise a group of genuinely-failing
+// cohorts would be reported as "did not finish" rather than as the failures
+// it found, which is the less useful of the two answers. Only cohorts whose
+// assertions did not hold pay it, so a green suite never reaches this ceiling.
+const GROUP_EXTRA_COHORT_MS = 13000;
+
+// Run the whole declared suite through a bounded worker pool, each group in
+// its own browser context. Two layers of batching:
+//
+//   * DOCUMENT GROUPS (groupTests): checks on the same document share one
+//     navigation and one settled page, sub-navigating by hash within it —
+//     this repo's suite is 314 checks over 158 resolved URLs but only 73
+//     documents, and navigation + settle is where nearly all of a check's
+//     wall clock goes. TEST_GROUP_BY_DOCUMENT=0 falls back to the older
+//     per-URL grouping.
+//   * THE POOL: groups run through `concurrency` workers. Replaces the
+//     sequential loop that made a 241-check suite a ~16-minute job.
+//
+// Three shapes matter here:
+//
+//  1. ONE CONTEXT PER GROUP (see runTestGroup). Each group gets its own
+//     window — so its document stays 'visible' however many run at once —
+//     and its own empty cookie jar. Every test URL carries the view-only-
+//     admin `?token=` (visuals.js appends it per test), the exchange is a
+//     stateless JWT that mints a session per exchange, and an empty jar
+//     means the exchange happens deterministically on the group's own
+//     navigation. This replaced the shared-context design, which needed a
+//     sequential "primer" navigation to seed the shared jar (concurrent
+//     exchanges into one jar raced, and the losers rendered the "Admins
+//     only" gate) and still left every non-active tab hidden.
+//  2. PER-GROUP DEADLINE. runTestGroup bounds its navigation, but the
+//     settle sleeps and assertion evaluation are not bounded, and a page
+//     that keeps a socket open can hang `networkidle2` past its own
+//     timeout. A group that overruns has its unreported checks recorded as
+//     failures and its slot released, so one bad route can't hold a worker
+//     forever. The budget scales gently with group size (see
+//     GROUP_EXTRA_CHECK_MS) because assertions are cheap but not free.
+//  3. GLOBAL DEADLINE. Workers stop PULLING new groups once the suite
+//     budget is spent (in-flight groups are allowed to finish). Whatever
+//     was never dispatched simply has no frame, and the sentinel says so —
+//     the platform reads `deadline=1` and reports those checks as unrun
+//     rather than as a crashed container.
+async function runTests(browser, tests, opts) {
+  const list = Array.isArray(tests) ? tests : [];
+  const o = opts || {};
+  const concurrency = Math.max(1, Number(o.concurrency) || 8);
+  const perTestMs = Number(o.testTimeoutMs) > 0 ? Number(o.testTimeoutMs) : 25000;
+  const budgetMs = Number(o.deadlineMs) > 0 ? Number(o.deadlineMs) : 420000;
+  const now = typeof o.now === 'function' ? o.now : () => Date.now();
+
+  if (!list.length) {
+    emitTestsDone(0, 0, false);
+    return { ran: 0, expected: 0, deadline: false };
   }
 
-  // Console errors fail the test unless the test opted out. A failed load
-  // / missing assertion already set failureReason.
-  const consoleFails = !test.allowConsoleErrors && consoleErrors.length > 0;
-  if (!failureReason && consoleFails) {
-    failureReason = `${consoleErrors.length} console error${consoleErrors.length === 1 ? '' : 's'} on load`;
-  }
-  const pass = !failureReason;
-  emitTest(test.index, pass ? 'pass' : 'fail', status, {
-    name: test.name, path: test.path,
-    consoleErrors: test.allowConsoleErrors ? [] : consoleErrors,
-    failureReason: pass ? '' : failureReason,
-  });
-  if (page) await page.close().catch(() => {});
+  const env = o.env || process.env;
+  const groups = typeof o.groupTests === 'function' ? o.groupTests(list) : groupTests(list, env);
+  const settleOpts = {
+    settleQuietMs: Number.isFinite(o.settleQuietMs) ? o.settleQuietMs : settleQuietMs(env),
+    settleMaxMs: Number.isFinite(o.settleMaxMs) ? o.settleMaxMs : settleMaxMs(env),
+    assertMaxMs: Number.isFinite(o.assertMaxMs) ? o.assertMaxMs : assertMaxMs(env),
+    assertPollMs: Number.isFinite(o.assertPollMs) ? o.assertPollMs : ASSERT_POLL_MS,
+    // Carried so the cohort fallback reads the same env the grouping did.
+    env,
+  };
+  const startedAt = now();
+  let ran = 0;
+  let hitDeadline = false;
+
+  const runOne = async (group) => {
+    const cohortCount = cohortsOf(group).length;
+    const groupBudgetMs = perTestMs
+      + GROUP_EXTRA_CHECK_MS * (group.length - 1)
+      + GROUP_EXTRA_COHORT_MS * Math.max(0, cohortCount - 1);
+    let timer = null;
+    const timeout = new Promise((resolve) => {
+      timer = setTimeout(() => resolve('timeout'), groupBudgetMs);
+      if (timer && typeof timer.unref === 'function') timer.unref();
+    });
+    let outcome;
+    try {
+      outcome = await Promise.race([
+        Promise.resolve()
+          .then(() => runTestGroup(browser, group, settleOpts))
+          .then(() => 'done', (err) => `error:${(err && err.message) || err}`),
+        timeout,
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+    // emitTest de-duplicates by index, so these are no-ops for any check in
+    // the group whose frame was already written before the overrun.
+    if (outcome === 'timeout') {
+      for (const t of group) {
+        emitTest(t.index, 'fail', 0, {
+          name: t.name, path: t.path, consoleErrors: [],
+          failureReason: `Check did not finish within ${Math.round(groupBudgetMs / 1000)}s`,
+        });
+      }
+    } else if (outcome !== 'done') {
+      for (const t of group) {
+        emitTest(t.index, 'fail', 0, {
+          name: t.name, path: t.path, consoleErrors: [],
+          failureReason: `Test run error: ${String(outcome).slice(6) || 'unknown'}`,
+        });
+      }
+    }
+    ran += group.length;
+  };
+
+  // Every group straight through the pool — with per-group contexts there
+  // is no shared cookie jar to seed, so no primer (shape 1 above).
+  let cursor = 0;
+  const worker = async () => {
+    for (;;) {
+      if (cursor >= groups.length) return;
+      if ((now() - startedAt) >= budgetMs) { hitDeadline = true; return; }
+      const group = groups[cursor];
+      cursor += 1;
+      await runOne(group);
+    }
+  };
+  const lanes = Math.min(concurrency, groups.length);
+  const workers = [];
+  for (let i = 0; i < lanes; i += 1) workers.push(worker());
+  await Promise.all(workers);
+
+  emitTestsDone(ran, list.length, hitDeadline);
+  return { ran, expected: list.length, deadline: hitDeadline };
 }
 
 async function main() {
@@ -836,22 +1501,24 @@ async function main() {
       }
     }
     // #47: run the declared test suite (assertions + per-test console
-    // check). Sequential, one page each; per-test failures stay independent
+    // check). Checks are grouped by URL (one navigation per route) and the
+    // groups run through a bounded pool; per-test failures stay independent
     // and a thrown test is reported as a failed frame, never aborts the run.
     //
-    // Tests get their OWN browser context, isolated from the screenshot
-    // pages above. The screenshot pass navigates with the NON-admin capture
-    // token, and the self-app's staging auth exchanges that query token for
-    // a session COOKIE in the shared default context; the platform's auth
-    // is cookie-first, so a test navigation carrying the view-only-admin
-    // ?token= was silently downgraded to the non-admin identity — the
-    // admin-gated check pages rendered their "Admins only" gate instead of
-    // the content under test (the /debug "PR closed" badge check failed
-    // exactly this way). A fresh context starts with an empty cookie jar,
-    // so the first test navigation exchanges the admin token as intended.
-    const testContext = tests.length ? await browser.createBrowserContext() : null;
-    for (const test of tests) {
-      await runTest(testContext || browser, test);
+    // runTests creates a fresh browser context per URL group (see its
+    // comment): each starts with an empty cookie jar, so the screenshot
+    // pass's NON-admin session cookie (exchanged into the default context
+    // above) can never downgrade a test navigation carrying the view-only-
+    // admin ?token= — the failure mode that once rendered the "Admins only"
+    // gate on the /debug badge check — and each group's page is its own
+    // window, so its document stays visible under concurrency.
+    if (tests.length) {
+      await runTests(browser, tests, {
+        concurrency: poolSize(process.env),
+        testTimeoutMs: testTimeoutMs(process.env),
+        deadlineMs: testsDeadlineMs(process.env),
+        env: process.env,
+      });
     }
   } finally {
     await browser.close().catch(() => {});
@@ -872,4 +1539,4 @@ if (require.main === module) {
 // file whose BEHAVIOUR (how many navigations it makes, whether it starts a
 // recording) is the thing under test, and it takes its page from the browser
 // it is handed, so a fake browser exercises it without Chromium.
-module.exports = { parseCookie, resolveTargets, resolveDeviceScaleFactor, parseTargetViewport, parseCompanion, mediaEnabled, resolveTests, captureTarget, setFrameSink, CHROMIUM_LAUNCH_ARGS };
+module.exports = { parseCookie, resolveTargets, resolveDeviceScaleFactor, parseTargetViewport, parseCompanion, mediaEnabled, resolveTests, captureTarget, runTests, runTestGroup, groupTestsByUrl, groupTestsByDocument, groupTests, cohortsOf, hashGroupCap, waitForQuiet, makeActivityClock, settleQuietMs, settleMaxMs, assertMaxMs, poolSize, testTimeoutMs, testsDeadlineMs, setFrameSink, CHROMIUM_LAUNCH_ARGS };

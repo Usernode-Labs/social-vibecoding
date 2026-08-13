@@ -185,7 +185,7 @@ function startStagingServer() {
   });
 }
 
-test('staging ?demo=1 attaches synthetic headless to mocks 900003/900005 only', async () => {
+test('staging ?demo=1 attaches synthetic headless to mocks 900003/900005/900015/900016 only', async () => {
   const server = await startStagingServer();
   try {
     const port = server.address().port;
@@ -194,9 +194,15 @@ test('staging ?demo=1 attaches synthetic headless to mocks 900003/900005 only', 
     const body = await res.json();
     const byNumber = new Map(body.issues.map((i) => [i.number, i]));
 
-    // 5 live issues + 10 appended mocks (900008 joined in #556, 900009 in
-    // #617, 900010 in #683).
-    assert.strictEqual(body.issues.length, 15);
+    // 5 live issues + 16 appended mocks (900008 joined in #556, 900009 in
+    // #617, 900010 in #683, 900011/900012 in #1010 as the targets of the
+    // applying / retry-pending mock close proposals, 900013 with the
+    // card-as-pointer revision — the deliberately BARE row, which the
+    // staging attribute-enrichment block leaves alone so the 'no grey
+    // placeholder chips' rule is reviewable — and 900014/900015/900016 in
+    // #1112 to make the paused / answer-needed / draft-ready work states
+    // independently reviewable).
+    assert.strictEqual(body.issues.length, 21);
 
     const generating = byNumber.get(900003).headless;
     assert.ok(generating, '900003 carries synthetic headless state');
@@ -213,8 +219,25 @@ test('staging ?demo=1 attaches synthetic headless to mocks 900003/900005 only', 
     assert.strictEqual(ready.outcome, 'spec');
     assert.strictEqual(ready.sessionId, 900005);
 
+    // #1112: 900015 is the run that came back with a QUESTION rather than a
+    // draft — the board's `answer_needed` state, which needs its own seed
+    // because `ready` alone reads as "draft ready to review".
+    const asked = byNumber.get(900015).headless;
+    assert.ok(asked, '900015 carries synthetic headless state');
+    assert.strictEqual(asked.status, 'ready');
+    assert.strictEqual(asked.outcome, 'question');
+    assert.strictEqual(asked.sessionId, 900015);
+
+    // #1112: the finished draft has a dedicated number that no persisted
+    // staging fixture uses, so its `draft_ready` check cannot be shadowed.
+    const draft = byNumber.get(900016).headless;
+    assert.ok(draft, '900016 carries synthetic headless state');
+    assert.strictEqual(draft.status, 'ready');
+    assert.strictEqual(draft.outcome, 'spec');
+    assert.strictEqual(draft.sessionId, 900016);
+
     // The other mocks — and the live issues — stay plain.
-    for (const n of [900001, 900002, 900004, 900006, 1, 2, 3, 4, 5]) {
+    for (const n of [900001, 900002, 900004, 900006, 900014, 1, 2, 3, 4, 5]) {
       assert.strictEqual(byNumber.get(n).headless, null, `#${n} has no headless`);
     }
   } finally {
@@ -571,6 +594,16 @@ test('in_progress serializes count/users/mine and targets the viewer\'s own sess
     assert.strictEqual(ip.mine, true);
     assert.deepStrictEqual(ip.claims, []);
     assert.deepStrictEqual(ip.target, { kind: 'session-own', sessionId: 50 });
+    // #1112: per-session detail, so the FE can say WHICH of the seven work
+    // states this is rather than the old catch-all "In progress".
+    assert.strictEqual(ip.peopleTotal, 1);
+    assert.strictEqual(ip.sessions.length, 1);
+    assert.strictEqual(ip.sessions[0].sessionId, 50);
+    assert.strictEqual(ip.sessions[0].username, 'tester');
+    assert.strictEqual(ip.sessions[0].mine, true);
+    assert.strictEqual(ip.sessions[0].status, 'active');
+    assert.strictEqual(ip.sessions[0].busy, false);
+    assert.strictEqual(ip.sessions[0].lastActivityAt, '2026-06-12T00:00:00Z');
 
     for (const n of [1, 3, 4, 5]) {
       assert.strictEqual(byNumber.get(n).in_progress, null, `#${n} not in progress`);
@@ -732,28 +765,85 @@ test('composeInProgress dedupes nothing it should not and caps serialized claims
   const ip = composeInProgress([], claims, 7);
   assert.strictEqual(ip.claims.length, 10);
   assert.strictEqual(ip.count, 0);
+  assert.deepStrictEqual(ip.sessions, []);
+  // #1112: peopleTotal is the TRUE headcount, uncapped — 12 claimers, not 10.
+  assert.strictEqual(ip.peopleTotal, 12);
   // Null when neither sessions nor claims exist.
   assert.strictEqual(composeInProgress([], [], 7), null);
 });
 
-test('staging ?demo=1 seeds in_progress mock states on 900004/900006/900007/900008 only', async () => {
+// #1112: `users` used to `break` at three, so a five-person issue reported
+// "In progress · 3" and there was no way to tell it from a real three. The
+// display list is capped at five; the truth rides on peopleTotal.
+test('composeInProgress reports the true headcount and caps only the display list', () => {
+  const sess = Array.from({ length: 7 }, (_, i) => ({
+    id: 500 + i, user_id: 200 + i, username: `w${i}`, status: 'active',
+    shared_at: null, last_activity_at: `2026-06-${12 + i}T00:00:00Z`,
+    created_at: '2026-06-01T00:00:00Z',
+  }));
+  const ip = composeInProgress(sess, [
+    { user_id: 900, username: 'claimer', claimed_at: '2026-06-12T00:00:00Z', expires_at: '2026-06-19T00:00:00Z' },
+  ], 7);
+  assert.strictEqual(ip.count, 7);
+  assert.strictEqual(ip.users.length, 5, 'display list capped at five');
+  assert.strictEqual(ip.peopleTotal, 8, 'seven session owners plus one claimer');
+  // Session detail is most-recent-first and capped at five.
+  assert.strictEqual(ip.sessions.length, 5);
+  assert.deepStrictEqual(ip.sessions.map((s) => s.username), ['w6', 'w5', 'w4', 'w3', 'w2']);
+  assert.strictEqual(ip.sessions[0].lastActivityAt, '2026-06-18T00:00:00Z');
+  // A repeated owner is one person in both lists.
+  const dup = composeInProgress([
+    { id: 1, user_id: 5, username: 'solo', status: 'active', shared_at: null, last_activity_at: '2026-06-12T00:00:00Z', created_at: null },
+    { id: 2, user_id: 5, username: 'solo', status: 'paused', shared_at: null, last_activity_at: '2026-06-11T00:00:00Z', created_at: null },
+  ], [], 7);
+  assert.deepStrictEqual(dup.users, ['solo']);
+  assert.strictEqual(dup.peopleTotal, 1);
+  assert.strictEqual(dup.sessions.length, 2, 'both sessions are reported even though it is one person');
+  assert.deepStrictEqual(dup.sessions.map((s) => s.status), ['active', 'paused']);
+});
+
+test('staging ?demo=1 seeds in_progress mock states on 900004/900006/900007/900008/900014 only', async () => {
   const server = await startStagingServer();
   try {
     const port = server.address().port;
     const body = await (await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues?demo=1`)).json();
     const byNumber = new Map(body.issues.map((i) => [i.number, i]));
 
-    // 900007: single-worker session chip, clickable (synthetic proposal target).
+    // 900007: promoted session → the `in_review` state, clickable (synthetic
+    // proposal target).
     const p7 = byNumber.get(900007).in_progress;
     assert.strictEqual(p7.count, 1);
     assert.deepStrictEqual(p7.users, ['staging-tester']);
     assert.deepStrictEqual(p7.target, { kind: 'proposal', sessionId: 900007 });
+    assert.strictEqual(p7.sessions[0].status, 'promoted');
 
-    // 900006: plural (2 workers), non-clickable.
+    // 900006: two active sessions, the most recent one busy → the `working`
+    // state in its emerald mid-turn variant. Non-clickable.
     const p6 = byNumber.get(900006).in_progress;
     assert.strictEqual(p6.count, 2);
     assert.deepStrictEqual(p6.users, ['maya-builder', 'staging-tester']);
     assert.strictEqual(p6.target, null);
+    assert.strictEqual(p6.peopleTotal, 2);
+    assert.strictEqual(p6.sessions.length, 2);
+    assert.strictEqual(p6.sessions[0].busy, true);
+    assert.ok(p6.sessions.every((s) => s.status === 'active'));
+
+    // #1112 900014: a paused session five days old → the `paused` state and
+    // the topic head's dated self-clear sentence.
+    const p14 = byNumber.get(900014).in_progress;
+    assert.strictEqual(p14.count, 1);
+    assert.strictEqual(p14.sessions.length, 1);
+    assert.strictEqual(p14.sessions[0].status, 'paused');
+    assert.strictEqual(p14.sessions[0].busy, false);
+    const pausedAgeDays = (Date.now() - Date.parse(p14.sessions[0].lastActivityAt)) / 86400000;
+    assert.ok(pausedAgeDays > 4.9 && pausedAgeDays < 5.1, `paused ~5 days ago, got ${pausedAgeDays}`);
+
+    // #1112 900015: a finished auto-solve run asking a question → the
+    // `answer_needed` state. It rides on `headless`, not `in_progress`.
+    const h15 = byNumber.get(900015).headless;
+    assert.strictEqual(h15.status, 'ready');
+    assert.strictEqual(h15.outcome, 'question');
+    assert.strictEqual(byNumber.get(900015).in_progress, null);
 
     // 900004: two claims incl. the VIEWER's own (mine → Clear button state).
     const p4 = byNumber.get(900004).in_progress;
@@ -768,6 +858,8 @@ test('staging ?demo=1 seeds in_progress mock states on 900004/900006/900007/9000
     assert.strictEqual(p8.mine, false);
     assert.strictEqual(p8.claims.length, 1);
     assert.strictEqual(p8.claims[0].username, 'maya-builder');
+    assert.strictEqual(byNumber.get(900008).created_by_username, 'tester',
+      'the dedicated mock is authored by the actual capture viewer, not its synthetic GitHub login');
 
     // The kanban-demo anchors and live issues stay untouched.
     for (const n of [900001, 900002, 900009, 1, 2, 3, 4, 5]) {

@@ -2,8 +2,15 @@ FROM node:22-bookworm-slim
 
 # unzip backs `usernode-attachments <id> --unzip <dir>` — extracting
 # user-attached reference zips inside this disposable container.
+# python3/make/g++ are node-gyp's toolchain: native npm deps (bcrypt et al)
+# normally install a prebuilt binding, but node-pre-gyp falls back to
+# building from source whenever the prebuilt download misses (new node ABI,
+# transient GitHub-releases failure) — and on the slim base that fallback
+# died with a raw gyp stack, failing the unit-suite check's `npm ci` for
+# any repo with a native dep. The toolchain makes the fallback actually
+# work, for the unit-suite one-shot and for agent build turns alike.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git curl wget ca-certificates unzip \
+    git curl wget ca-certificates unzip python3 make g++ \
   && rm -rf /var/lib/apt/lists/*
 
 # ── Local Postgres for the in-loop browser (build turns only, #659) ────
@@ -63,6 +70,33 @@ ARG CLAUDE_CODE_CACHE_BUST=unset
 RUN echo "claude-code cache bust: ${CLAUDE_CODE_CACHE_BUST}" \
   && npm install -g @anthropic-ai/claude-code
 
+# ── Codex CLI (codex_openrouter backend; plan.md PR5) ─────────────────
+# PINNED (not day-bumped) — bump deliberately. Codex runs non-interactively
+# (codex exec --json), DIRECTLY against the user's OpenRouter key, which is
+# injected per-turn as OPENROUTER_API_KEY into the specific
+# that needs it. The key is NOT placed in the warm-container bootstrap
+# environment (see worker.js buildTurnSecretEnv). There is NO OpenRouter
+# platform relay. Codex holds only narrow worker capabilities. Keep the pin
+# aligned with the JSONL event shapes src/agents/codex-openrouter.js parses.
+ARG CODEX_VERSION=0.146.0
+RUN npm install -g @openai/codex@${CODEX_VERSION}
+# Preserve the pinned CLI's own full coding-agent instructions as the base for
+# custom OpenRouter model entries. The per-turn builder copies only that text
+# into its one-model catalog; it does not inherit OpenAI-only tool modes or
+# capabilities from the bundled models. Codex requires an explicitly selected
+# CODEX_HOME to exist before startup; otherwise `codex debug models` exits 1.
+# (This layer sits after the day-bumped claude-code layer, so it re-runs on
+# every cache-bust rollover — the 2026-08-11 rollover broke every worker
+# image build until the dir was pre-created; see #1096/#1097.)
+# Keep it outside /tmp because Codex deliberately refuses to create its PATH
+# helper aliases beneath temporary directories.
+RUN install -d -m 700 /var/lib/usernode-codex-bootstrap \
+  && CODEX_HOME=/var/lib/usernode-codex-bootstrap \
+       codex debug models --bundled > /usr/local/share/usernode-codex-bundled-models.json \
+  && node -e "const c=require('/usr/local/share/usernode-codex-bundled-models.json');if(!Array.isArray(c.models)||!c.models.some(m=>typeof m.base_instructions==='string'&&m.base_instructions.trim()))throw new Error('Codex model catalog has no base instructions')" \
+  && chmod 444 /usr/local/share/usernode-codex-bundled-models.json \
+  && rm -rf /var/lib/usernode-codex-bootstrap
+
 # ── Optional in-loop browser (build-mode turns only) ───────────────────
 # The Playwright MCP server + a matching Chromium give the build-mode
 # agent first-class browser_navigate / browser_console / screenshot
@@ -93,6 +127,9 @@ RUN npm install -g @playwright/mcp@${PLAYWRIGHT_MCP_VERSION} \
 
 COPY worker-run.sh   /usr/local/bin/worker-run.sh
 COPY run-cc.sh       /usr/local/bin/run-cc.sh
+COPY run-codex-agent.sh /usr/local/bin/run-codex-agent.sh
+COPY classify-codex-resume.js /usr/local/bin/classify-codex-resume.js
+COPY build-codex-model-catalog.js /usr/local/bin/build-codex-model-catalog.js
 # usernode-push is the worker's only path to writing anything back to
 # GitHub: it POSTs to the platform's internal push proxy, which runs
 # the actual `git push` from the host side with the bot token injected
@@ -122,6 +159,14 @@ COPY usernode-attachments /usr/local/bin/usernode-attachments
 # Platform-side dedup + rate limit bound the spam. See
 # src/routes/internal.js + src/routes/sessions.js (confirm route).
 COPY usernode-report-platform-issue /usr/local/bin/usernode-report-platform-issue
+# usernode-run-checks runs the app's declared dapp.json checks against the
+# in-loop app (build turns boot it on $INLOOP_PORT) with the SAME
+# semantics as the capture container — navigate, console errors,
+# wait-based selector/text assertions — so the agent sees its proposal
+# checks fail BEFORE committing instead of after the turn ends. Purely
+# local: drives the image's pinned Playwright chromium against loopback,
+# needs no JWT, writes nothing back.
+COPY usernode-run-checks /usr/local/bin/usernode-run-checks
 # usernode-debug (#616) is read-only production debugging for ADMIN
 # sessions on the self-edit app. It calls the platform's prod-debug
 # internal API (deny-listed read-only SQL role, allowlisted container
@@ -136,10 +181,12 @@ COPY usernode-debug /usr/local/bin/usernode-debug
 # volume with node ownership instead of defaulting to root.
 RUN chmod +x /usr/local/bin/worker-run.sh \
               /usr/local/bin/run-cc.sh \
+              /usr/local/bin/run-codex-agent.sh \
               /usr/local/bin/usernode-push \
               /usr/local/bin/usernode-issues \
               /usr/local/bin/usernode-attachments \
               /usr/local/bin/usernode-report-platform-issue \
+              /usr/local/bin/usernode-run-checks \
               /usr/local/bin/usernode-debug \
   && mkdir -p /home/node/workspace /home/node/.claude \
   && chown -R node:node /home/node
@@ -169,13 +216,14 @@ RUN cd /usr/local/lib/node_modules/@playwright/mcp \
 # Bootstrap env via -e on `docker run`:
 #   CLONE_URL          plain HTTPS, no embedded token (public repos only)
 #   BRANCH             session's canonical dev branch
-#   ANTHROPIC_API_KEY  forwarded to claude
-#   WORKER_JWT         session-scoped JWT for usernode-push
 #   SESSION_ID         used in the platform API URL
 #   PLATFORM_URL       internal endpoint of the platform server
 # Per-exec env via -e on `docker exec`:
 #   PROMPT_FILE, MODE, MODEL, COMMIT_MSG, CLAUDE_RESUME_SESSION_ID,
-#   WORKER_JWT (re-minted each turn), SESSION_ID, PLATFORM_URL
+#   SESSION_ID, PLATFORM_URL, plus only the turn's required secrets:
+#   ANTHROPIC_API_KEY, ISSUES_JWT, optional PROD_DEBUG_JWT, and
+#   WORKER_JWT for mutation-capable modes. Scout receives no general
+#   worker:session token under any alias.
 # (The dispatch prompt itself is materialized into the CC volume at
 # PROMPT_FILE before the exec — it must never ride argv/env, which Linux
 # caps at 128 KiB per string. See run-cc.sh / worker.js writeTurnPrompt.)

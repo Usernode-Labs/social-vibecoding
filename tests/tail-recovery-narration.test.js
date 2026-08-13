@@ -115,6 +115,41 @@ test('a dead worker with a landed tail reports the commit and heals the preview'
   assert.match(branch, /return;\s*\n\s*\}\s*\n\s*\/\/ #786: pills on the breadcrumb/);
 });
 
+test('a successful mid-exec replay stamps tail_pending before the tail writes milestones', () => {
+  // Session 3180: a journal that detached MID-EXEC leaves active_turn in
+  // 'executing'. execInWorker's finally hands the record to the tail
+  // (markTurnTail → tail_pending), but the resume path had no analogue —
+  // so the recovery tail's first noteTailMilestone hit mergeTailMilestones'
+  // phase guard ('milestone attempted from executing'), the tail aborted
+  // with the turn retained, and the retained-recovery timer replayed the
+  // whole tail (narration included) every minute, forever.
+  const fn = SERVER_SRC.slice(
+    SERVER_SRC.indexOf('async function resumeDetachedTurnInner('),
+    SERVER_SRC.indexOf('// Idle-eviction sweeper for warm worker containers.')
+  );
+  assert.ok(fn.length > 0, 'resumeDetachedTurnInner is still there');
+
+  const resumeAt = fn.indexOf('worker.resumeTurnFromJournal(');
+  const stampGuardAt = fn.indexOf(
+    'turnLifecycle.phaseOf(recoveryActiveTurn) === turnLifecycle.PHASE_EXECUTING'
+  );
+  const stampAt = fn.indexOf('worker.markTurnTail(');
+  const firstTailWorkAt = fn.indexOf('resumeRecoveredCodexFreshRetry');
+
+  assert.ok(stampGuardAt > 0, 'the mid-exec phase guard exists');
+  assert.ok(stampAt > stampGuardAt, 'and it gates the tail_pending stamp');
+  assert.ok(resumeAt > 0 && resumeAt < stampGuardAt,
+    'the stamp happens only after the journal replay succeeded');
+  assert.ok(firstTailWorkAt > stampAt,
+    'and lands before the first tail step that can write a milestone');
+
+  // The guard must stay narrow: an interrupted TAIL is already
+  // tail_pending, and re-stamping would clobber its milestone map with the
+  // fresh seed (redoing non-idempotent tail steps on the next resume).
+  assert.match(fn, /=== turnLifecycle\.PHASE_EXECUTING\) \{/,
+    'only the executing phase is stamped');
+});
+
 test('the warm-idle branch narrates a dangling tail instead of returning silently', () => {
   // This branch is where the 2954 incident landed. It stays (an idle
   // container really is the common case) but no longer swallows a
@@ -279,7 +314,7 @@ test('the announcement runs before the build, and every outcome posts after it',
 // ── 4. The client honours the hint ──────────────────────────────────────
 
 const DEV_CHAT_SRC = fs.readFileSync(
-  path.join(__dirname, '../public/js/dev-chat.js'), 'utf8'
+  path.join(__dirname, '../frontend/src/features/dev-chat/dev-chat.js'), 'utf8'
 );
 
 test('a persisted running-rebuild row re-spins on load, but only while trailing', () => {

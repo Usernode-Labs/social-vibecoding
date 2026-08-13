@@ -120,7 +120,7 @@ test('POST upserts the caller\'s own claim (create) and announces it in the thre
 
     // Fresh claim → on-the-record note in the issue's own thread + push.
     assert.strictEqual(sysMsgs.length, 1);
-    assert.match(sysMsgs[0].content, /tester marked this issue in progress/);
+    assert.strictEqual(sysMsgs[0].content, 'tester claimed this issue');
     assert.deepStrictEqual(sysMsgs[0].thread, { type: 'issue', ref: 2 });
     assert.strictEqual(pushed.length, 1);
     assert.strictEqual(pushed[0].action, 'claimed');
@@ -219,7 +219,9 @@ test('DELETE with no body clears the caller\'s own claim', async () => {
     assert.deepStrictEqual(q.params, [1, 2, 7]);
     assert.strictEqual(pushed.length, 1);
     assert.strictEqual(pushed[0].action, 'unclaimed');
-    assert.match(sysMsgs[0].content, /tester cleared their in-progress mark/);
+    // #1112: the message names the claim, not the derived "in progress" state
+    // the board no longer calls by that name.
+    assert.strictEqual(sysMsgs[0].content, 'tester released their claim on this issue');
   } finally {
     server.close();
   }
@@ -280,7 +282,7 @@ test('DELETE with a foreign userId succeeds for a write-admin (per-claim clear)'
     assert.strictEqual(res.status, 200);
     const q = capturedQueries.find((c) => /DELETE FROM issue_claims/.test(c.sql));
     assert.deepStrictEqual(q.params, [1, 2, 8], 'clears the TARGET user\'s claim');
-    assert.match(sysMsgs[0].content, /admin cleared an in-progress mark/);
+    assert.strictEqual(sysMsgs[0].content, 'admin released someone else\'s claim on this issue');
   } finally {
     server.close();
   }

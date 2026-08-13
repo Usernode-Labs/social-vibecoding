@@ -44,7 +44,7 @@ const SESSIONS_SRC = fs.readFileSync(
   'utf8'
 );
 const DEVCHAT_SRC = fs.readFileSync(
-  path.join(__dirname, '..', 'public', 'js', 'dev-chat.js'),
+  path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'dev-chat.js'),
   'utf8'
 );
 
@@ -120,42 +120,69 @@ test('turnFallbackQuickReplies materialises a fresh, non-empty array', () => {
 // ── 2. Server wiring ─────────────────────────────────────────────────
 
 test('the chat handler imports the fallback policy', () => {
-  assert.match(SESSIONS_SRC, /turnFallbackQuickReplies\s*}\s*=\s*require\('\.\.\/services\/recovery-pills'\)/,
+  assert.match(SESSIONS_SRC, /turnFallbackQuickReplies,[\s\S]{0,300}?}\s*=\s*require\('\.\.\/services\/recovery-pills'\)/,
     'sessions.js must import turnFallbackQuickReplies from the policy module rather than inlining pill strings');
 });
 
-test('phase-1 routes its substitution through the shared predicate', () => {
-  // The rule itself (which turns opt out) is unit-tested against the
-  // exported shouldFallbackQuickReplies in tests/quick-replies.test.js;
-  // this only pins the call site so the handler can't drift into its own
-  // inline copy of the co-occurrence rules.
-  const m = SESSIONS_SRC.match(/const quickReplies1 = shouldFallbackQuickReplies\(([\s\S]{0,200}?)\n/);
-  assert.ok(m, 'found the phase-1 substitution');
-  assert.match(m[1], /quickReplies, suggestions, mayor1\.toolUses/,
-    'the predicate sees the resolved pills, the answer chips and the turn s tool calls');
-  assert.match(SESSIONS_SRC, /shouldFallbackQuickReplies\(quickReplies, suggestions, mayor1\.toolUses\)\s*\n\s*\? turnPills\('chat'\)\s*\n\s*: quickReplies;/,
-    "a fallback-eligible turn gets the 'chat' set; everything else keeps the model's own value");
+// #1001 replaced the phase-1 / phase-2 substitutions below with the
+// resolveTurnPills ladder, which asks the Mayor for its OWN pills before
+// reaching for any fixed set. These tests moved with the call sites: they
+// still pin "the fixed set is reached through the shared policy, never
+// inlined", but the shape they pin is now the ladder.
+test('phase-1 routes its pills through the resolution ladder', () => {
+  const m = SESSIONS_SRC.match(/pills1 = await resolvePills\('chat', \{([\s\S]{0,400}?)\}\);/);
+  assert.ok(m, 'found the phase-1 pill resolution');
+  assert.match(m[1], /modelPills: quickReplies/,
+    "the Mayor's own set is offered as rung 1");
+  assert.match(m[1], /model: servedModel1/,
+    'the enforcement call runs on the model that actually served this turn');
+  assert.match(m[1], /replyText: mayorText1/,
+    'the enforcement context carries the reply the pills sit under');
+  // The clarifying-question exclusion is the one case that must produce NO
+  // pills and make NO extra model call.
+  assert.match(SESSIONS_SRC, /const chipsOwnTurn = Array\.isArray\(suggestions\) && suggestions\.length > 0;/,
+    'answer chips still suppress the pill row entirely');
+  assert.match(SESSIONS_SRC, /if \(!chipsOwnTurn\) \{/,
+    'the resolution is skipped outright on a clarifying-question turn');
 });
 
-test('phase-1 persists and broadcasts the substituted set, not the raw one', () => {
+test('phase-1 streams the reply text before doing any pill work', () => {
+  // The whole latency argument for enforcement rests on this ordering: the
+  // user reads the reply while the pill call is still in flight.
+  const body = SESSIONS_SRC.slice(SESSIONS_SRC.indexOf('if (mayorText1.trim()) {'));
+  const reasoningAt = body.indexOf("send('mayor_reasoning', { text: mayorText1 })");
+  const resolveAt = body.indexOf('await resolvePills(');
+  assert.ok(reasoningAt >= 0 && resolveAt >= 0, 'found both the emit and the resolution');
+  assert.ok(reasoningAt < resolveAt,
+    'mayor_reasoning must be emitted BEFORE the pill ladder runs');
+});
+
+test('phase-1 persists and broadcasts the resolved set, not the raw one', () => {
   // The row metadata and the live 'quick_replies' event must both use the
   // resolved value, or the pills exist in exactly one of DB / open UI.
-  assert.match(SESSIONS_SRC, /quickReplies1 \? \{ quickReplies: quickReplies1 \} : \{\}/,
-    'the phase-1 assistant row persists quickReplies1');
-  assert.match(SESSIONS_SRC, /if \(quickReplies1\) send\('quick_replies', \{ replies: quickReplies1 \}\)/,
-    'the phase-1 SSE/WS event carries quickReplies1');
+  assert.match(SESSIONS_SRC, /\.\.\.quickReplyMeta\(pills1, \{ preamble: willDispatch \}\)/,
+    'the phase-1 assistant row persists the resolved set plus its telemetry');
+  assert.match(SESSIONS_SRC, /if \(pills1 && pills1\.replies\) send\('quick_replies', \{ replies: pills1\.replies \}\)/,
+    'the phase-1 SSE/WS event carries the resolved replies');
 });
 
-test('the phase-2 wrap-up falls back by dispatch outcome', () => {
-  const m = SESSIONS_SRC.match(/const wrapUpPills = quickReplies2 \|\| turnPills\(([\s\S]{0,200}?)\);/);
-  assert.ok(m, 'found the phase-2 substitution');
+test('the phase-2 wrap-up resolves by dispatch outcome', () => {
+  const m = SESSIONS_SRC.match(/const wrapUpOutcome = ([\s\S]{0,200}?);/);
+  assert.ok(m, 'found the phase-2 outcome mapping');
   const arg = m[1];
-  assert.match(arg, /toolResult\.isError\s*\?\s*'failed'/, 'a failed dispatch gets the retry pills');
-  assert.match(arg, /toolKind === 'scout'\s*\?\s*'spec_done'/, 'a scout wrap-up gets the spec pills');
+  assert.match(arg, /toolResult\.isError\s*\n?\s*\?\s*'failed'/, 'a failed dispatch gets the retry pills');
+  assert.match(arg, /toolKind === 'scout' \? 'spec_done'/, 'a scout wrap-up gets the spec pills');
   assert.match(arg, /'build_done'/, 'a build wrap-up gets the post-build pills');
 
-  assert.match(SESSIONS_SRC, /wrapUpPills \? \{ quickReplies: wrapUpPills \} : \{\}/,
-    'the wrap-up row persists wrapUpPills');
+  const r = SESSIONS_SRC.match(/const resolveLiveWrapUpPills = \(\) => resolvePills\(wrapUpOutcome, \{([\s\S]{0,400}?)\}\);/);
+  assert.ok(r, 'the wrap-up routes through the ladder');
+  assert.match(r[1], /modelPills: quickReplies2/, "the wrap-up's own tool call is rung 1");
+  assert.match(r[1], /replyText: mayorText2/, 'the enforcement context carries the wrap-up text');
+  assert.match(SESSIONS_SRC,
+    /effectKey: TURN_WRAPUP_EFFECT_KEYS\.pills[\s\S]{0,200}?run: resolveLiveWrapUpPills/,
+    'durable wrap-ups run the ladder behind the at-most-once pill receipt');
+  assert.match(SESSIONS_SRC, /JSON\.stringify\(quickReplyMeta\(wrapUpResolved\)\)/,
+    'the wrap-up row persists the resolved set plus its telemetry');
   assert.match(SESSIONS_SRC, /if \(wrapUpPills\) send\('quick_replies', \{ replies: wrapUpPills \}\)/,
     'the wrap-up SSE/WS event carries wrapUpPills');
 });
@@ -164,7 +191,7 @@ test('every status-only turn end carries pills on its status row', () => {
   // These paths never persist an assistant row, so the status line is the
   // only thing the client's backward scan can find.
   const sites = [
-    [/Claude Code is already running for this session[\s\S]{0,200}?turnPills\('worker_busy'\)/,
+    [/\$\{busyAgent\.agentName\} is already running for this session[\s\S]{0,300}?turnPills\('worker_busy'\)/,
       'worker-busy race'],
     [/refusalText\(selectedModel, refusalCategory\)[\s\S]{0,300}?turnPills\('failed'\)/,
       'whole-chain model refusal'],
@@ -172,7 +199,7 @@ test('every status-only turn end carries pills on its status row', () => {
       'provider/turn error catch'],
     [/Scout stopped\$\{byStr\}[\s\S]{0,300}?turnFallbackQuickReplies\(\{ outcome: 'stopped' \}\)/,
       'scout stopped mid-run'],
-    [/Claude Code stopped\$\{byStr\}[\s\S]{0,300}?turnFallbackQuickReplies\(\{ outcome: 'stopped' \}\)/,
+    [/\$\{executionAgentName\} stopped\$\{byStr\}[\s\S]{0,400}?turnFallbackQuickReplies\(\{ outcome: 'stopped' \}\)/,
       'build stopped mid-run'],
   ];
   for (const [re, label] of sites) {
@@ -202,6 +229,186 @@ test('the Mayor prompt requires suggest_replies rather than suggesting it', () =
     'GENERAL RULES cross-references it, where the one-tool limit is stated');
 });
 
+// ── 2b. #1001: the prompt must not teach by literal example ──────────
+//
+// Half of all production pill sets were byte-identical to the example
+// triples the prompt and the tool description used to list. These two tests
+// are what stop that from being reintroduced by a future prompt edit: (a)
+// the literal triples are gone from the prompt surfaces, and (b) every
+// static string the platform ships is on the banned list, so a model that
+// echoes ANY of them is detected as generic rather than trusted.
+
+test('no prompt surface lists a boilerplate pill triple verbatim', () => {
+  // The Mayor system prompt + the tool description are the two surfaces the
+  // model reads. QUICK_REPLY_RULES_TEXT deliberately DOES name these
+  // strings — as forbidden output — so the check is scoped to the prompt
+  // text in sessions.js and excludes the rules constant itself.
+  const forbidden = [
+    ['Preview the change', 'Propose it to the group', 'Make another tweak'],
+    // #1046: both the current spec triple and its pre-#1046 wording — the
+    // prompt must not offer either as a run to copy, even though the
+    // build pill alone IS a required literal now (see the next test).
+    ['Build the spec', 'Revise the spec', 'What will this change?'],
+    ['Build it', 'Revise the spec', 'What will this change?'],
+    ['Propose it to the group', 'Make a tweak', 'What did it change?'],
+    ["How's it going?", 'Stop this build'],
+  ];
+  for (const triple of forbidden) {
+    // The old shape was `e.g. "A", "B", "C".` on one line — a quoted,
+    // comma-separated run of the exact strings. Match that shape only, so a
+    // prose mention ("do not send 'Build it' verbatim") stays legal.
+    const run = triple.map((s) => `"${s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`).join(', ');
+    assert.doesNotMatch(SESSIONS_SRC, new RegExp(`e\\.g\\.\\s*${run}`),
+      `the prompt must not offer ${JSON.stringify(triple)} as an example to copy`);
+  }
+});
+
+test('QUICK_REPLY_RULES_TEXT is shared, not duplicated', () => {
+  const LLM_SRC = fs.readFileSync(
+    path.join(__dirname, '..', 'src', 'services', 'llm.js'), 'utf8'
+  );
+  // One definition...
+  const defs = recoveryPills.QUICK_REPLY_RULES_TEXT;
+  assert.ok(defs && defs.length > 200, 'the rules constant carries real guidance');
+  assert.match(defs, /COMPOSITION RULE/, 'it states the at-most-one-generic rule');
+  assert.match(defs, /NEVER emit/, 'it names the boilerplate sets as forbidden output');
+  assert.match(defs, /SAME LANGUAGE/,
+    'it tells the model to match the conversation language, not default to English');
+
+  // ...interpolated into all four surfaces.
+  assert.match(SESSIONS_SRC, /\+ QUICK_REPLY_RULES_TEXT,/,
+    'SUGGEST_REPLIES_TOOL.description appends the shared rules');
+  assert.match(SESSIONS_SRC, /\$\{QUICK_REPLY_RULES_TEXT\}/,
+    'the Mayor system prompt interpolates the shared rules');
+  const ruleUses = SESSIONS_SRC.match(/rules: QUICK_REPLY_RULES_TEXT,/g);
+  assert.equal(ruleUses && ruleUses.length, 2,
+    'both the forced call and the Haiku backstop are handed the same rules');
+  assert.match(LLM_SRC, /\$\{rules \|\| ''\}/,
+    'llm.js renders the rules it is handed rather than carrying its own copy');
+});
+
+// ── 2c. #1046: the post-spec build pill names the WHOLE spec ─────────
+//
+// The composition rule, read literally, asked for a concrete subject in
+// every pill — and production obliged with "Build the collapsible left
+// sidebar" / "Build the seasons API and CRUD" on specs that covered far
+// more than the component named. The rule now carves the build pill out
+// as a required literal occupying the one generic slot. These tests pin
+// both halves so a later prompt edit can't quietly undo either.
+
+test('the rules require a whole-spec build pill, not a component name', () => {
+  const defs = recoveryPills.QUICK_REPLY_RULES_TEXT;
+  assert.match(defs, /POST-SPEC BUILD PILL/,
+    'the rules carve the post-spec build pill out as its own clause');
+  assert.match(defs, /Build the spec/,
+    'the required literal is stated');
+  assert.match(defs, /WHOLE spec/,
+    'the clause says the pill refers to the whole spec');
+  assert.match(defs, /Do NOT name a single component/,
+    'naming one component as the build target is explicitly forbidden');
+  // The carve-out must not cancel the specificity pressure on the rest.
+  assert.match(defs, /remaining 1-2 pills must still name something specific/,
+    'the other pills still have to be specific to this spec');
+  // ...and the whole-set ban must not read as a ban on the pill itself.
+  assert.match(defs, /"Build the spec" is meant to be sent verbatim/,
+    'the set-level ban is reconciled with the required literal');
+});
+
+test('the Mayor prompt\'s post-spec guidance says the whole spec', () => {
+  const bullet = SESSIONS_SRC.match(/^- After a spec \(dispatch_scout\):.*$/m);
+  assert.ok(bullet, 'found the post-spec situational guidance bullet');
+  assert.match(bullet[0], /WHOLE spec/,
+    'the situational list agrees with the shared rule');
+  assert.doesNotMatch(bullet[0], /building it,/,
+    'the pre-#1046 "building it" wording is gone');
+});
+
+test('a whole-spec build pill still passes only alongside specific pills', () => {
+  const { isGenericPillSet } = recoveryPills;
+  assert.equal(
+    isGenericPillSet(['Build the spec', 'Drop the crop step from the plan',
+      'What does this add to the database?']),
+    false,
+    'the intended shape — required literal plus two specific pills — is accepted');
+  assert.equal(
+    isGenericPillSet(['Build the spec', 'Revise the spec', 'What will this change?']),
+    true,
+    'an all-boilerplate set still escalates, the literal notwithstanding');
+  // The near-variants must not be a loophole around that.
+  assert.equal(
+    isGenericPillSet(['Build the whole spec', 'Build the spec as written']),
+    true,
+    'rephrasing the required literal does not make a set specific');
+});
+
+test('BANNED_GENERIC_PILLS covers every static pill the platform ships', () => {
+  const { BANNED_GENERIC_PILLS, normalizePill, RECOVERY_PILLS: SETS } = recoveryPills;
+
+  // Server policy sets.
+  for (const [kind, pills] of Object.entries(SETS)) {
+    for (const pill of pills) {
+      assert.ok(BANNED_GENERIC_PILLS.has(normalizePill(pill)),
+        `RECOVERY_PILLS.${kind} pill ${JSON.stringify(pill)} must be on the banned list`);
+    }
+  }
+  // Client starter set (parsed out of the browser source — it can't be
+  // required, which is exactly why drift needs asserting).
+  const starters = DEVCHAT_SRC.match(/STARTER_QUICK_REPLIES:\s*\[([\s\S]*?)\],/);
+  assert.ok(starters, 'found STARTER_QUICK_REPLIES');
+  for (const m of starters[1].matchAll(/'((?:[^'\\]|\\.)*)'/g)) {
+    const pill = m[1].replace(/\\'/g, "'");
+    assert.ok(BANNED_GENERIC_PILLS.has(normalizePill(pill)),
+      `starter pill ${JSON.stringify(pill)} must be on the banned list`);
+  }
+  // Fork follow-up set.
+  const { FORK_FOLLOWUP_REPLIES } = require('../src/services/transcript-share.js');
+  for (const pill of FORK_FOLLOWUP_REPLIES) {
+    assert.ok(BANNED_GENERIC_PILLS.has(normalizePill(pill)),
+      `fork follow-up pill ${JSON.stringify(pill)} must be on the banned list`);
+  }
+});
+
+test('every model-backed call site goes through the ladder', () => {
+  const sites = [
+    [/pills1 = await resolvePills\('chat'/, 'phase-1 reply and dispatch preamble'],
+    [/const resolveLiveWrapUpPills = \(\) => resolvePills\(wrapUpOutcome/, 'phase-2 wrap-up'],
+    [/phase: 'recovered-wrapup'/, 'restart-recovered wrap-up'],
+    [/phase: 'clone-followup'/, 'auto-session clone follow-up'],
+    [/phase: 'fork-followup'/, 'shared-chat fork follow-up'],
+  ];
+  for (const [re, label] of sites) {
+    assert.match(SESSIONS_SRC, re, `${label} must resolve pills through resolveTurnPills`);
+  }
+  // Exactly one retry, ever — the ladder must not loop.
+  assert.match(SESSIONS_SRC, /There is no second retry\./,
+    'the no-second-retry rule is stated at the enforcement site');
+});
+
+test('headless wrap-up rows carry pills', () => {
+  // The single biggest no-pills hole measured in production: every headless
+  // final row wrote no metadata at all.
+  assert.match(SESSIONS_SRC, /function headlessWrapUpMeta\(outcome/,
+    'a helper exists for headless final-row metadata');
+  const uses = SESSIONS_SRC.match(/headlessWrapUpMeta\(/g);
+  assert.ok(uses && uses.length >= 5,
+    'the helper is defined and applied at every headless final-row persist');
+  const { headlessWrapUpMeta } = require('../src/routes/sessions.js');
+  // The question outcome stays pill-free (its chips own the turn), and so
+  // does any outcome whose row already carries answer chips.
+  assert.deepEqual(headlessWrapUpMeta('question'), {},
+    'a question outcome persists no pills');
+  assert.deepEqual(
+    headlessWrapUpMeta('spec', { suggestions: [{ question: 'Which?', answers: ['a'] }] }),
+    { suggestions: [{ question: 'Which?', answers: ['a'] }] },
+    'answer chips suppress the pill row here too');
+  assert.equal(headlessWrapUpMeta('spec').quickRepliesKind, 'spec_done');
+  assert.equal(headlessWrapUpMeta('code').quickRepliesKind, 'code_done');
+  assert.equal(headlessWrapUpMeta('spec_code').quickRepliesKind, 'code_done');
+  assert.equal(headlessWrapUpMeta('failed').quickRepliesKind, 'turn_failed');
+  assert.equal(headlessWrapUpMeta('spec').quickRepliesSource, 'static',
+    'a headless row is honestly recorded as the static set, not as authored');
+});
+
 // ── 3. Client wiring ─────────────────────────────────────────────────
 
 function sliceBetween(src, startMarker, endMarker, label) {
@@ -225,8 +432,8 @@ test('the client falls back instead of returning null when no row has pills', ()
     'still hidden while a turn streams');
   assert.match(currentQuickRepliesBody, /status === 'active' \|\| session\.status === 'promoted'/,
     'still hidden on a read-only/finished session');
-  assert.match(currentQuickRepliesBody, /if \(!sawNonSystem\) return DevChat\.STARTER_QUICK_REPLIES;/,
-    'a brand-new session still gets the starter set');
+  assert.match(currentQuickRepliesBody, /if \(!sawNonSystem\) return DevChat\._starterQuickReplies\(\);/,
+    'a brand-new session still gets the starter set (#1001: issue-aware when known)');
 });
 
 test('the client fallback is gated to a pill-less assistant reply', () => {
@@ -271,6 +478,54 @@ test('the client picks its fallback set the same way the server does', () => {
     'neither → the generic ways-in set');
 });
 
+// #1001: the starter set is the ONE pill row that is legitimately generic —
+// a fresh session has no conversation to be specific about. But a session
+// started from an issue already knows what it is for.
+test('starters lead with the issue when the session was started from one', () => {
+  const body = sliceBetween(
+    DEVCHAT_SRC, '_starterQuickReplies() {', '\n  },', 'DevChat._starterQuickReplies'
+  );
+  const compiled = new Function('DevChat', body.slice(body.indexOf('{') + 1, body.lastIndexOf('}')));
+  const run = (session) => compiled({
+    currentSession: session,
+    STARTER_QUICK_REPLIES: ['What issues are open right now?', 'Change the colors', 'Add a new feature'],
+    _starterQuickReplies: () => compiled({ currentSession: session }),
+  });
+
+  assert.deepEqual(run({ id: 1, created_from_issue_number: 1001 }),
+    ['What does issue #1001 ask for?', 'Change the colors', 'Add a new feature'],
+    'the open-issues question is replaced by one naming THIS issue');
+
+  // Every shape that means "we do not know an issue" keeps the plain set.
+  for (const session of [
+    { id: 1 },
+    { id: 1, created_from_issue_number: null },
+    { id: 1, created_from_issue_number: 'nope' },
+    null,
+  ]) {
+    assert.deepEqual(run(session),
+      ['What issues are open right now?', 'Change the colors', 'Add a new feature'],
+      `plain starters for ${JSON.stringify(session)}`);
+  }
+});
+
+test('the session list serializes created_from_issue_number', () => {
+  // Without it the client cannot name the issue; the column already existed
+  // (#287) and simply was not sent.
+  // Matched against the one SELECT that feeds the list, not against the
+  // file: `created_from_issue_number` appears in several statements, and a
+  // bare file-wide match would go on passing after the list stopped
+  // selecting it. The trailing columns beside it are free to change (the
+  // venue pair joined them) — that this list carries the issue number is
+  // the invariant.
+  const list = SESSIONS_SRC.slice(SESSIONS_SRC.indexOf('SELECT id, branch_name, pr_number'));
+  const select = list.slice(0, list.indexOf('FROM chat_sessions'));
+  assert.match(select, /created_from_issue_number/,
+    'the dev-chat session list SELECT carries the issue number');
+  assert.match(select, /\(spec_md IS NOT NULL AND spec_md <> ''\) AS has_spec/,
+    'and still reports whether a spec exists');
+});
+
 // ── 4. Staging fixtures ──────────────────────────────────────────────
 
 test('staging seeds cover each fallback shape', () => {
@@ -285,9 +540,35 @@ test('staging seeds cover each fallback shape', () => {
     'staging-fixture/fallback-after-spec',
     'staging-fixture/fallback-plain-chat',
     'staging-fixture/fallback-suppressed-by-chips',
+    // #1001: the other side of the before/after — pills the assistant
+    // authored, the enforced variant, and the preamble-vs-wrap-up
+    // supersession rule.
+    'staging-fixture/pills-assistant-authored',
+    'staging-fixture/pills-after-forced-retry',
+    'staging-fixture/pills-dispatch-preamble',
   ]) {
     assert.ok(MIGRATE_SRC.includes(branch), `fixture seeded: ${branch}`);
   }
+  // The #1001 fixtures must demonstrate the change, so their pills have to
+  // be specific — a fixture carrying boilerplate would show the old
+  // behaviour while claiming to show the new one.
+  const authored = MIGRATE_SRC.slice(
+    MIGRATE_SRC.indexOf('staging-fixture/pills-assistant-authored'),
+    MIGRATE_SRC.indexOf('staging-fixture/pills-after-forced-retry')
+  );
+  const set = authored.match(/quickReplies: \[([^\]]*)\]/);
+  assert.ok(set, 'the authored fixture carries a pill set');
+  const pills = [...set[1].matchAll(/'((?:[^'\\]|\\.)*)'/g)].map((m) => m[1].replace(/\\'/g, "'"));
+  assert.equal(recoveryPills.isGenericPillSet(pills), false,
+    `the assistant-authored fixture must not be boilerplate: ${JSON.stringify(pills)}`);
+  // And each of the four sources must appear somewhere in the seeds, so a
+  // reviewer can see every telemetry value rendering identically.
+  for (const source of ['model', 'enforced', 'static']) {
+    assert.ok(MIGRATE_SRC.includes(`quickRepliesSource: '${source}'`),
+      `a fixture demonstrates the '${source}' source`);
+  }
+  assert.ok(MIGRATE_SRC.includes('quickRepliesPreamble: true'),
+    'a fixture demonstrates a superseded dispatch-preamble row');
   // The fixtures must survive BOTH boot-time healers, or they demonstrate
   // the healer instead of the fallback: 'promoted' dodges the auto-pause
   // sweeper (a paused session hides the bar entirely) and the 30-day age
@@ -304,11 +585,16 @@ test('dapp.json checks the pill bar on the seeded fixture routes', () => {
     path.join(__dirname, '..', 'src', 'db', 'migrate.js'),
     'utf8'
   );
-  for (const id of [900801, 900802, 900803]) {
+  for (const id of [900801, 900802, 900803, 900805, 900806, 900807]) {
     assert.ok(MIGRATE_SRC.includes(`id: ${id},`), `fixture ${id} has a fixed id in the seed`);
     const t = (dapp.tests || []).find((x) => x.path && x.path.includes(`/sessions/${id}`));
     assert.ok(t, `dapp.json has a proposal check for session ${id}`);
     assert.equal(t.expectSelector, '#dc-quick-replies.dc-quick-replies-active .dc-quick-pill',
       `check ${id} asserts the pill bar actually rendered pills`);
   }
+  // #1001: the preamble fixture's check must assert the WRAP-UP's pill, not
+  // the preamble's — that is the supersession rule it exists to demonstrate.
+  const preambleCheck = (dapp.tests || []).find((x) => x.path && x.path.includes('/sessions/900807'));
+  assert.equal(preambleCheck.expectText, 'Preview the half-height rows',
+    'the newest pill-bearing row wins, so the wrap-up pill is what renders');
 });

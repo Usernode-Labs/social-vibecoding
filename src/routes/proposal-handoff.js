@@ -6,9 +6,15 @@ const { getPool } = require('../db/pool');
 const appAccess = require('../services/app-access');
 const github = require('../services/github');
 const staging = require('../services/staging');
-const stagingRecovery = require('../services/staging-recovery');
 const visuals = require('../services/visuals');
 const sessionLifecycle = require('../services/session-lifecycle');
+const proposalUpdate = require('../services/proposal-update');
+// The connector-error → HTTP status map. It lives in routes/dev-flow.js
+// because tests/dev-flow-routes.test.js scrapes the services' emitted codes
+// against it in both directions; importing it here rather than restating it is
+// what keeps the connector's loopback and the browser's twin from drifting
+// apart on what a refusal means.
+const { STATUS_BY_CODE: UPDATE_STATUS_BY_CODE } = require('./dev-flow');
 const { beginSessionOperation, isSessionBusy } = require('../services/active-workers');
 const { effectiveSessionCaps } = require('../services/session-caps');
 const { drainGuard } = require('../services/lifecycle');
@@ -36,55 +42,18 @@ const MAX_TESTS = 50;
 const COMMIT_UPLOAD_JSON_LIMIT = '12mb';
 const RFC3339_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
 
-// A user can submit a newer local commit while an earlier HTTP request is
-// still proving ancestry/updating GitHub. Serialize that adoption per session
-// so an older request can never persist its SHA after the newer request and
-// regress the durable reviewed head. This matches staging.js's process model;
-// deployments run one platform process, while different sessions still move
-// independently.
-const handoffSubmissionTails = new Map();
-const handoffPipelines = new Set();
-
-function serializeHandoffSubmission(sessionId, fn) {
-  const key = String(sessionId);
-  const previous = handoffSubmissionTails.get(key) || Promise.resolve();
-  const run = previous.then(fn, fn);
-  const tail = run.then(() => {}, () => {});
-  handoffSubmissionTails.set(key, tail);
-  tail.then(() => {
-    if (handoffSubmissionTails.get(key) === tail) handoffSubmissionTails.delete(key);
-  });
-  return run;
-}
-
-function hasInFlightHandoffPipeline(sessionId) {
-  return handoffPipelines.has(String(sessionId));
-}
-
-function beginHandoffPipeline(sessionId) {
-  const key = String(sessionId);
-  handoffPipelines.add(key);
-  const releaseOperation = beginSessionOperation(sessionId);
-  let released = false;
-  return () => {
-    if (released) return;
-    released = true;
-    handoffPipelines.delete(key);
-    releaseOperation();
-  };
-}
-
-function startHandoffPipeline(config, pool, session, app, headSha, releasePipeline) {
-  const run = runStaging(config, pool, session, app, headSha);
-  run.catch((err) => {
-    log.error('proposal-handoff', 'Unexpected handoff run rejection', {
-      sessionId: session.id, err: err.message,
-    });
-  }).finally(() => {
-    releasePipeline();
-  });
-  return run;
-}
+// The staging/visuals tail and its per-session serialization moved to
+// services/handoff-pipeline.js in #907, so a local coding agent attached to
+// an ordinary native session finishes through exactly the same code path this
+// route has always used. Re-exported below for existing importers and tests.
+const {
+  serializeHandoffSubmission,
+  hasInFlightHandoffPipeline,
+  beginHandoffPipeline,
+  startHandoffPipeline,
+  discardHandoffStaging,
+  runStaging,
+} = require('../services/handoff-pipeline');
 
 class ValidationError extends Error {}
 class HandoffConflictError extends Error {}
@@ -317,6 +286,24 @@ function requireCliMiddleware(req, res, next) {
   if (requireCli(req, res)) next();
 }
 
+// The update route's body: the fork branch that carries the new work, and two
+// optional refinements. Same `exactKeys` discipline as every other body in
+// this file — an unrecognised field is a 400 rather than a silently ignored
+// intention. The VALUES are validated by services/proposal-update.js against
+// the same git-ref and repository-name predicates the submit path uses; this
+// only bounds their size so nothing enormous reaches them.
+function parseUpdateFromForkBody(body) {
+  exactKeys(body, ['branch', 'forkRepo', 'expectedHeadSha'], 'body');
+  const branch = boundedText(body.branch, { label: 'branch', min: 1, max: 255, trim: true });
+  const forkRepo = body.forkRepo == null
+    ? null
+    : boundedText(body.forkRepo, { label: 'forkRepo', min: 1, max: 100, trim: true });
+  const expectedHeadSha = body.expectedHeadSha == null
+    ? null
+    : parseSha(body.expectedHeadSha, 'expectedHeadSha');
+  return { branch, forkRepo, expectedHeadSha };
+}
+
 function repoCoordinates(app) {
   return github.parseGithubUrl(app && app.repo_url);
 }
@@ -532,128 +519,86 @@ async function loadOwnedHandoff(pool, sessionId, userId) {
   return rows[0] || null;
 }
 
-async function discardHandoffStaging(pool, session, app, result, expectedHeadSha) {
-  try {
-    const removed = await staging.teardownStaging(
-      { ...session, staging_container_id: result.containerId, staging_url: result.stagingUrl },
-      { slug: app.slug }
-    );
-    if (removed?.leaked) {
-      // teardownStaging deliberately leaves a durable pointer on failure so
-      // the staging reaper can retry. This result was never attached to the
-      // row, so establish that pointer only after removal actually leaked.
-      await pool.query(
-        `UPDATE chat_sessions
-            SET staging_container_id = $1, staging_url = $2
-          WHERE id = $3 AND source = $4
-            AND (status <> 'active'
-                 OR checks_commit_sha IS NOT DISTINCT FROM $5)`,
-        [result.containerId, result.stagingUrl, session.id, SOURCE, expectedHeadSha]
-      ).catch((err) => log.warn('proposal-handoff', 'Failed to retain leaked staging pointer', {
-        sessionId: session.id, err: err.message,
-      }));
-    }
-  } catch (err) {
-    log.warn('proposal-handoff', 'Failed to discard superseded staging build', {
-      sessionId: session.id, err: err.message,
-    });
-  }
-}
-
-async function runStaging(config, pool, session, app, headSha) {
-  let result;
-  try {
-    result = await staging.buildAndDeployStaging(config, session, app, headSha);
-  } catch (err) {
-    // A newer submission may have queued while this build was running. Its
-    // pending verdict must not be overwritten by a late failure from the old
-    // head.
-    const { rows } = await pool.query(
-      `SELECT status, checks_commit_sha FROM chat_sessions WHERE id = $1`,
-      [session.id]
-    ).catch(() => ({ rows: [] }));
-    if (rows[0]?.status !== 'active' || rows[0]?.checks_commit_sha !== headSha) {
-      log.info('proposal-handoff', 'Ignoring stale staging failure', {
-        sessionId: session.id, headSha,
-      });
-      return;
-    }
-    log.error('proposal-handoff', 'Staging build failed', {
-      sessionId: session.id, headSha, err: err.message,
-    });
-    await stagingRecovery.recordStagingBootFailure({
-      config, pool, session, commitHash: headSha, err,
-    }).catch((recordErr) => log.warn('proposal-handoff', 'Failed to record staging failure', {
-      sessionId: session.id, err: recordErr.message,
-    }));
-    return;
-  }
-
-  try {
-    const persisted = await pool.query(
-      `UPDATE chat_sessions
-          SET staging_container_id = $1, staging_url = $2, last_activity_at = NOW()
-        WHERE id = $3 AND checks_commit_sha = $4
-          AND status = 'active' AND source = $5`,
-      [result.containerId, result.stagingUrl, session.id, headSha, SOURCE]
-    );
-    // A newer accepted head now owns the session. Its serialized build will
-    // replace this container; do not let the stale capture overwrite the
-    // newer head's pending check state in the meantime.
-    if (!persisted.rowCount) {
-      const { rows } = await pool.query(
-        `SELECT status, checks_commit_sha FROM chat_sessions WHERE id = $1`,
-        [session.id]
-      ).catch(() => ({ rows: [] }));
-      const current = rows[0];
-      if (!current || current.status !== 'active') {
-        await discardHandoffStaging(pool, session, app, result, headSha);
-      }
-      return;
-    }
-  } catch (err) {
-    log.error('proposal-handoff', 'Failed to persist staging result', {
-      sessionId: session.id, headSha, err: err.message,
-    });
-    // The container and cloned DB already exist, but no durable row points at
-    // them. Best-effort removal is safer than leaving an undiscoverable
-    // preview behind after a transient persistence failure.
-    await discardHandoffStaging(pool, session, app, result, headSha);
-    return;
-  }
-
-  await staging.warmStagingCert(session, result.hostname, result.stagingUrl)
-    .catch((err) => log.warn('proposal-handoff', 'Staging certificate warm failed (non-fatal)', {
-      sessionId: session.id, err: err.message,
-    }));
-  // The CLI has no open SSE response, so use the global/session buses to make
-  // an optionally-open web Dev page learn that its preview is live.
-  try {
-    const { broadcastGlobal, pushSessionUpdate } = require('../services/ws');
-    broadcastGlobal({
-      type: 'session_event', sessionId: session.id,
-      event: 'staging_ready', url: result.stagingUrl,
-    });
-    pushSessionUpdate({
-      action: 'staging_ready', sessionId: session.id, appSlug: app.slug,
-    });
-  } catch (err) {
-    log.warn('proposal-handoff', 'Staging-ready notify failed (non-fatal)', {
-      sessionId: session.id, err: err.message,
-    });
-  }
-
-  // captureForSession owns its terminal error verdict and never lets a test
-  // runner failure escape. Awaiting it here keeps status honest while still
-  // running entirely outside the original HTTP request.
-  await visuals.captureForSession(config, session, app, headSha, result);
-}
-
 function proposalHandoffRoutes(config) {
   const router = express.Router();
   const pool = getPool(config);
   const proposalJson = express.json({ limit: '512kb' });
   const commitUploadJson = express.json({ limit: COMMIT_UPLOAD_JSON_LIMIT });
+
+  // ── Advancing a proposal from its author's fork (#1054) ──────────────
+  //
+  // The connector's loopback target for submit_work's `proposalId` + `branch`
+  // shape, and the browser twin's target too — one route, one set of gates,
+  // whichever surface asks.
+  //
+  // Deliberately NOT behind `requireCli`: a connector access token is exactly
+  // the credential this is for, and the CLI-only gate would 404 it. It is
+  // instead on the connector allowlist in services/cli-api-policy.js, so a
+  // connector token reaches this path and nothing else it was not granted.
+  //
+  // The route's whole job is authorization and shape: `collab` access to the
+  // app, the proposal belonging to this app, and a body of at most three
+  // fields. Every decision about whose fork it is, whether the work sits on
+  // the proposal's head and what a moved branch means lives in
+  // services/proposal-update.js, which the browser twin and the connector
+  // share.
+  router.post('/api/apps/:slug/proposals/:id/update-from-fork', proposalJson, drainGuard, async (req, res) => {
+    const sessionId = parseSessionId(req.params.id);
+    if (!sessionId) return res.status(404).json({ error: 'not_found' });
+    let input;
+    try {
+      input = parseUpdateFromForkBody(req.body);
+    } catch (err) {
+      if (err instanceof ValidationError) return res.status(400).json({ error: 'invalid_request', message: err.message });
+      log.error('proposal-handoff', 'Update validation failed unexpectedly', { err: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+    try {
+      const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'collab', '*');
+      if (!app) return res.status(404).json({ error: 'App not found' });
+      const { rows } = await pool.query(
+        `SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url,
+                a.collab_visibility, a.view_visibility
+           FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
+          WHERE cs.id = $1 AND cs.app_id = $2`,
+        [sessionId, app.id]
+      );
+      const session = rows[0] || null;
+      if (!session) return res.status(404).json({ error: 'not_found', message: 'That proposal is not on this app.' });
+
+      const result = await proposalUpdate.updateProposalFromForkBranch(
+        { pool, config },
+        {
+          user: req.user,
+          session,
+          branch: input.branch,
+          forkRepo: input.forkRepo,
+          expectedHeadSha: input.expectedHeadSha,
+          origin: config.cliAuthOrigin || null,
+        }
+      );
+      if (!result.ok) {
+        // One shared code→status map, in routes/dev-flow.js, so the connector
+        // and the browser cannot disagree about what a refusal means.
+        const status = UPDATE_STATUS_BY_CODE[result.code] || 400;
+        return res.status(status).json({
+          error: result.code,
+          message: result.message,
+          ...(result.retryable ? { retryable: true } : {}),
+          ...(result.expectedBase ? { expectedBase: result.expectedBase } : {}),
+          ...(result.headSha ? { headSha: result.headSha } : {}),
+          ...(result.settingsUrl ? { settingsUrl: result.settingsUrl } : {}),
+        });
+      }
+      return res.json({
+        ...result,
+        webPath: `/#app/${session.app_slug}/dev/sessions/${session.id}`,
+      });
+    } catch (err) {
+      log.error('proposal-handoff', 'Proposal update failed', { sessionId, err: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
 
   router.post('/api/apps/:slug/proposal-handoffs', proposalJson, drainGuard, async (req, res) => {
     if (!requireCli(req, res)) return;
@@ -693,14 +638,17 @@ function proposalHandoffRoutes(config) {
       const caps = effectiveSessionCaps(config, req.user);
       const { rows: ownCounts } = await pool.query(
         `SELECT COUNT(*) AS cnt FROM chat_sessions
-          WHERE user_id = $1 AND status = 'active' AND is_headless = FALSE`,
+          WHERE user_id = $1 AND status = 'active' AND is_headless = FALSE
+            AND source IS DISTINCT FROM 'imported'`,
         [req.user.id]
       );
       if (Number(ownCounts[0].cnt) >= caps.activeSessions) {
         return res.status(429).json({ error: `You already have ${caps.activeSessions} running sessions. Pause or archive one first.` });
       }
       const { rows: globalCounts } = await pool.query(
-        `SELECT COUNT(*) AS cnt FROM chat_sessions WHERE status IN ('active', 'promoted')`
+        `SELECT COUNT(*) AS cnt FROM chat_sessions
+          WHERE status IN ('active', 'promoted')
+            AND source IS DISTINCT FROM 'imported'`
       );
       if (Number(globalCounts[0].cnt) >= Number(config.maxGlobalSessions || 100)) {
         const { freed } = await sessionLifecycle.freeGlobalSlot({
@@ -727,11 +675,20 @@ function proposalHandoffRoutes(config) {
         try {
           await client.query('BEGIN');
           const { rows } = await client.query(
+            // external_agent = 'external': this session's turns run on the
+            // caller's own machine, in whatever tool they chose — Usernode
+            // never dispatched an agent for it. Without the stamp the
+            // resulting proposal card was indistinguishable from one built
+            // by the platform's own backend, which is the provenance
+            // question the card exists to answer. 'external' is the
+            // deliberately unspecific member of the closed AGENTS
+            // vocabulary (external-agent-tasks.js): the handoff protocol
+            // does not know, and must not guess, which tool it was.
             `INSERT INTO chat_sessions
                (app_id, user_id, branch_name, status, source, handoff_request_id,
                 handoff_base_sha, handoff_request_fingerprint,
-                session_title, spec_md, linked_issues)
-             VALUES ($1, $2, $3, 'active', $4, $5, $6, $7, $8, $9, $10)
+                session_title, spec_md, linked_issues, external_agent)
+             VALUES ($1, $2, $3, 'active', $4, $5, $6, $7, $8, $9, $10, 'external')
              RETURNING *`,
             [app.id, req.user.id, branchName, SOURCE, input.requestId,
               input.baseSha, startRequestFingerprint(app, input),
@@ -1102,11 +1059,11 @@ function proposalHandoffRoutes(config) {
           if (!adopted.rowCount) {
             return res.status(409).json({ error: 'session_state_changed' });
           }
-          const pending = await visuals.setChecksPending(pool, session.id, input.headSha);
+          const pending = await visuals.setChecksPending(pool, session.id, input.headSha, 'building', 'commit-push');
           if (pending === false) {
             return res.status(409).json({ error: 'session_state_changed' });
           }
-          visuals.notifyChecksPending(session.id, input.headSha);
+          visuals.notifyChecksPending(session.id, input.headSha, 'building', 'commit-push');
 
           const freshSession = {
             ...session,
@@ -1245,5 +1202,6 @@ module.exports = {
   currentCheckedHead,
   serializeHandoffSubmission,
   hasInFlightHandoffPipeline,
+  ValidationError,
   SOURCE,
 };

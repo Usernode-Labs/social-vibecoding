@@ -35,23 +35,54 @@ const wildcardSite = sliceBetween(
   caddyfile, '\n*.{$USERNODE_DOMAIN} {', '\n:8999 {', 'wildcard site'
 );
 
-test('apex platform proxy holds and retries across restarts', () => {
-  const proxy = sliceBetween(
-    apexSite, 'reverse_proxy usernode:3000 {', 'encode gzip', 'apex proxy'
-  );
-  assert.match(proxy, /lb_try_duration 30s/, 'apex proxy must hold requests across the restart window');
-  assert.match(proxy, /lb_try_interval 250ms/, 'apex proxy must re-dial frequently within the hold');
-  assert.match(proxy, /dial_timeout 2s/, 'apex proxy must fail dials fast so retries re-resolve DNS');
+// Blue-green: the apex proxy and the access gate live in snippets defined
+// by the active-color file (rewritten by scripts/platform-rollout.sh on
+// every flip). The hold-and-retry directives (#711) therefore get pinned
+// in BOTH copies of that snippet content: the committed bootstrap file and
+// the rollout script's write_active() heredoc.
+const activeFile = fs.readFileSync(
+  path.join(root, 'caddy', 'active', 'platform-upstream.caddy'), 'utf8'
+);
+const rolloutSh = fs.readFileSync(
+  path.join(root, 'scripts', 'platform-rollout.sh'), 'utf8'
+);
+
+test('apex site + gate import the blue-green active-color snippets', () => {
+  assert.match(caddyfile, /^import \/etc\/caddy\/active\/platform-upstream\.caddy$/m,
+    'Caddyfile must import the rollout-managed active-color file');
+  assert.match(apexSite, /^\timport platform_upstream$/m,
+    'apex site must proxy via the active-color snippet');
+  assert.match(wildcardSite, /^\timport platform_gate$/m,
+    'wildcard gate must forward_auth via the active-color snippet');
+  assert.doesNotMatch(apexSite, /reverse_proxy usernode:3000/,
+    'apex must not pin a single-container upstream any more');
+  assert.doesNotMatch(wildcardSite, /forward_auth usernode:3000/,
+    'gate must not pin a single-container upstream any more');
 });
 
-test('wildcard forward_auth gate holds and retries across restarts', () => {
-  const gate = sliceBetween(
-    wildcardSite, 'forward_auth usernode:3000 {', 'reverse_proxy {upstream}:3000', 'forward_auth'
-  );
-  assert.match(gate, /lb_try_duration 30s/, 'app-subdomain gate must not 502 during platform restarts');
-  assert.match(gate, /lb_try_interval 250ms/);
-  assert.match(gate, /dial_timeout 2s/);
-});
+for (const [label, src] of [
+  ['committed bootstrap file', activeFile],
+  ['platform-rollout.sh write_active()', rolloutSh],
+]) {
+  test(`apex platform proxy holds and retries across restarts (${label})`, () => {
+    const proxy = sliceBetween(
+      src, 'reverse_proxy usernode-', '(platform_gate)', `apex proxy (${label})`
+    );
+    assert.match(proxy, /lb_try_duration 30s/, 'apex proxy must hold requests across the restart window');
+    assert.match(proxy, /lb_try_interval 250ms/, 'apex proxy must re-dial frequently within the hold');
+    assert.match(proxy, /dial_timeout 2s/, 'apex proxy must fail dials fast so retries re-resolve DNS');
+  });
+
+  test(`wildcard forward_auth gate holds and retries across restarts (${label})`, () => {
+    const gate = sliceBetween(
+      src, 'forward_auth usernode-', null, `forward_auth (${label})`
+    );
+    assert.match(gate, /uri \/__caddy\/access/, 'gate snippet must target the access route');
+    assert.match(gate, /lb_try_duration 30s/, 'app-subdomain gate must not 502 during platform restarts');
+    assert.match(gate, /lb_try_interval 250ms/);
+    assert.match(gate, /dial_timeout 2s/);
+  });
+}
 
 test('app-container proxy stays fail-fast (no retry hold)', () => {
   const appProxy = sliceBetween(
@@ -152,27 +183,37 @@ test('app stop grace stays above the drain deadline the conventions prescribe', 
     `(${graceMs}ms) or a draining app is force-killed`);
 });
 
-test('deploy workflow no longer rebuilds caddy on routine deploys', () => {
-  const deploy = fs.readFileSync(
+test('the deploy no longer rebuilds caddy on routine deploys', () => {
+  // The remote deploy logic lives in scripts/deploy.sh (shared by the
+  // Deploy workflow and the host deployer), so the compose-command pins
+  // point there; the paths-filter that feeds CADDY_FILES_CHANGED is
+  // still the workflow's.
+  const deploy = fs.readFileSync(path.join(root, 'scripts', 'deploy.sh'), 'utf8');
+  const workflow = fs.readFileSync(
     path.join(root, '.github', 'workflows', 'deploy.yml'), 'utf8'
   );
   // The build and the recreate are two commands rather than one
-  // `up -d --build usernode`: the platform-env materializer has to run
-  // off the freshly built image, before the long-running container is
-  // recreated with the resolved .env. Both halves stay scoped to
-  // `usernode`, which is the property #711 actually cares about.
-  assert.match(deploy, /^\s*docker compose build usernode\s*$/m,
-    'the routine build must name the platform service, not the whole stack');
-  assert.match(deploy, /^\s*docker compose up -d usernode\s*$/m,
-    'final up must scope the recreate to the platform service');
+  // `up -d --build`: the platform-env materializer has to run off the
+  // freshly built image, before any color is recreated with the resolved
+  // .env. Everything stays scoped to named services — under blue-green an
+  // unscoped `up` is doubly wrong (it would also start BOTH colors).
+  assert.match(deploy, /^\s*docker compose build usernode-blue\s*$/m,
+    'the routine build must name a platform color (shared image tag), not the whole stack');
+  assert.match(deploy, /^\s*docker compose up -d usernode-db usernode-node usernode-minio acme-dns caddy\s*$/m,
+    'infra up must list services explicitly — never the platform colors');
+  assert.match(deploy, /platform-rollout\.sh(?!.*--ensure-active-file)/m,
+    'the platform cutover must go through the blue-green rollout script');
   assert.doesNotMatch(deploy, /^\s*docker compose build\s*$/m,
     'an unscoped `build` rebuilds the caddy image on every deploy');
-  assert.doesNotMatch(deploy, /^\s*docker compose up -d --build( --remove-orphans)?\s*$/m,
-    'the old unscoped `up -d --build` rebuilt the caddy image on every deploy');
-  assert.match(deploy, /^\s*docker compose up -d --remove-orphans\s*$/m,
-    'the unscoped no-build up must still ensure the rest of the stack is running');
+  assert.doesNotMatch(deploy, /^\s*docker compose up -d( --build)?( --remove-orphans)?\s*$/m,
+    'an unscoped `up` would start both colors (and --build would rebuild caddy)');
+  const rollout = fs.readFileSync(path.join(root, 'scripts', 'platform-rollout.sh'), 'utf8');
+  assert.match(rollout, /docker compose up -d --no-deps --force-recreate "usernode-\$(IDLE|LIVE)"/,
+    'the rollout must start exactly one color at a time, without bouncing deps');
+  assert.doesNotMatch(rollout, /^\s*docker compose up -d\s*$/m,
+    'the rollout must never do an unscoped up');
   assert.match(deploy, /CADDY_FILES_CHANGED/,
     'caddy rebuilds must be gated on the caddy paths-filter');
-  assert.match(deploy, /caddy:\n\s+- 'caddy\.Dockerfile'/,
+  assert.match(workflow, /caddy:\n\s+- 'caddy\.Dockerfile'/,
     'paths-filter must watch caddy.Dockerfile');
 });

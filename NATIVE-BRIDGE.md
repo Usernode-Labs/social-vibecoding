@@ -19,7 +19,8 @@ feature-detect with `getBridgeInfo`.
 
 ## Versioning
 
-- `getBridgeInfo()` → `{ version: number, capabilities: string[] }`
+- `getBridgeInfo()` → `{ version: number, capabilities: string[],
+  appVersion?: string, buildNumber?: string }`
 - `version` bumps only on breaking changes. New methods are additive and
   appear in `capabilities`.
 - Feature-detect with `capabilities.includes('<method>')`, not `version`.
@@ -32,17 +33,34 @@ feature-detect with `getBridgeInfo`.
   `capabilities` is for — never assume a method exists because this document
   lists it.
 
-Four additive security/session capabilities extend v4 without changing its
+Six additive security/session capabilities extend v4 without changing its
 version:
 
 - `privilegedBridgeCapability`: privileged top-frame methods require a
-  native-issued capability scoped to the current trusted navigation.
+  native-issued capability scoped to the current trusted JavaScript realm.
+- `privilegedBridgeReady`: after installing native-event listeners, the trusted
+  shell explicitly identifies that exact realm as ready for one atomic state
+  replay. A cached older coordinator falls back on its first authorized bridge
+  call, so the web and app releases remain independently deployable.
 - `beginSessionHandoff`: closes native wallet dispatch before a web-session
   exchange, including raw Android child-frame channel messages.
 - `enterAnonymousSession`: reopens native wallet dispatch after the shell has
   confirmed that no web participant is signed in.
 - `sessionBoundAuthStatus`: auth snapshots include `participantId` and
   identity `epoch`, and node starts can be bound to both values.
+- `privilegedErrorCodes`: every privileged refusal carries a stable
+  machine-readable `code` alongside its human message, so the page never has
+  to pattern-match English. Optional in both directions — see "Privileged
+  refusal codes" below.
+
+One additive **widget** capability extends v4 the same way:
+
+- `homeScreenShortcutDarkIcon`: the shell stores a SECOND icon per
+  homescreen shortcut and the iOS widget selects between them per system
+  appearance. Advertise it only once that is true end to end — SV reads
+  it as "sending a dark icon has a visible effect" and re-sends every
+  pinned canvas tile the first time it appears. See the homescreen
+  shortcuts section below for the contract it unlocks.
 
 ## Methods
 
@@ -62,13 +80,197 @@ version:
 `getHomeScreenShortcuts`, `removeHomeScreenShortcut`,
 `reorderHomeScreenShortcuts` — see the comments in `usernode-bridge.js`.
 
+#### Per-appearance icons (additive; `homeScreenShortcutDarkIcon`)
+
+`addHomeScreenShortcut` takes
+`{ name, url, icon_url, icon_url_dark?, silent? }`:
+
+- `icon_url` — required-in-practice primary asset. When a pair is sent it
+  is the **light**-appearance asset.
+- `icon_url_dark` — **optional** dark-appearance asset. Absent, null or
+  empty means "single icon", i.e. exactly the pre-existing behaviour. A
+  re-add without it **clears** the dark slot (a re-add of the same URL is
+  an in-place refresh — that is what `silent: true` is for).
+- Either field may be an `https` URL **or** a `data:image/png;base64,…`
+  URI. SV sends data URIs for its canvas-rendered emoji/letter tiles, so
+  both fields must go through the same fetch/decode path.
+- `version` stays **4**: this is purely additive, and shells that don't
+  know the field ignore it like any other unknown key in `args`.
+
+`getHomeScreenShortcuts()` items carry `{ id, name, url, pinnedAtMs }`
+plus two icon-presence flags: `has_icon` (SV treats `false` as "the PNG
+never landed" and silently re-sends) and `has_icon_dark` (same, for the
+second asset). Report `has_icon_dark: true` only once the dark asset is
+actually stored; SV tests it with a strict `=== false`, so a build that
+omits the key entirely is safe.
+
+**Why this exists, and why the flag must not be advertised early.** A
+stored PNG cannot restyle itself, and SV cannot repaint one while the app
+is closed — which is exactly when the system flips light/dark (#948).
+Without the capability, SV bakes the single face matching the current
+system appearance and re-sends it when it notices a flip, so the
+correction always waits for the next app open. With it, SV sends both
+faces and the widget flips natively with SV closed. A shell that accepts
+and stores `icon_url_dark` but does not select on `colorScheme` must NOT
+advertise the capability: SV would send an asset nobody renders and would
+have given up the repaint-on-flip fallback for nothing.
+
 ### Chrome data (v2 — the app-as-SV-chrome surface)
 
-#### `getBridgeInfo()` → `{ version, capabilities }`
+#### `getBridgeInfo()` → `{ version, capabilities, appVersion?, buildNumber? }`
 
 Instant, side-effect free. The bridge wrapper resolves
 `{ version: 0, capabilities: [] }` on old builds / outside the app, so
 callers can always `await` it and gate UI on capabilities.
+
+`appVersion` and `buildNumber` identify the installed Flutter binary (for
+example `0.4.0` and `1223`). They are public release identifiers on the
+unprivileged probe so a Social Vibecoding staging build can display the app
+hosting its WebView without receiving access to native settings or account
+state. App builds predating these optional fields omit them; production SV
+falls back to the same pair under `getSettingsState().buildInfo` while those
+older builds remain installed.
+
+**A probe that FAILS inside the app resolves that same empty shape plus
+`degraded: true`** (the wrapper's own marker — native never sends it).
+Reading `capabilities` needs no change; **a caller that CACHES or LATCHES
+a negative conclusion from a probe MUST check `degraded` and re-probe
+instead.** `version: 0` from inside the app means "don't know", not "this
+build has no capabilities": treating a 4s timeout as the latter is how one
+cold-start hiccup disabled every privileged call for a whole document and
+made Settings → Usernode app unloadable until the app was force-closed
+(issue #978). The two in-repo consumers of this rule are the bridge's own
+privileged-capability negotiation and `NativeChrome.getInfo()`, which
+shares its in-flight promise but never memoises a degraded answer.
+
+#### Why a read came back empty — `getLastNativeReadError(method)`
+
+Every chrome read **resolves a safe fallback rather than rejecting**, so
+callers can `await` and render "unavailable" (see the note at the top of
+this section). That deliberately loses the reason, so the wrapper parks it
+beside the read: `usernode.getLastNativeReadError("getSettingsState")`
+returns the most recent FAILED read of that method, or `null` when its
+last read succeeded or it was never called.
+
+```json
+{ "method": "getSettingsState", "kind": "timeout",
+  "message": "getSettingsState did not respond within 12000ms",
+  "at": 1780000000000 }
+```
+
+`kind` is one of:
+
+| `kind` | Meaning |
+|---|---|
+| `timeout` | the app did not answer inside the wrapper's budget for that method |
+| `rejected` | the app answered with an error (`message` is native's own text) |
+| `no-transport` | no channel to the app from this frame at all |
+| `not-native` | called outside the app (or on a build without the method) |
+| `probe-inconclusive` | the privileged handshake could not be negotiated because `getBridgeInfo` itself came back degraded |
+| `privileged-unavailable` | the app refused (or never answered) this realm's privileged handshake, so a privileged method could not be called at all — see "Privileged refusal codes" below |
+| `page-changed` | the originating page entered navigation/BFCache before its native reply arrived |
+
+The record carries a method name plus native's own error string only — the
+privileged capability lives in a closure and never reaches an error
+message — and each frame keeps its own map, so a frame can only read
+failures of calls it made itself. `NativeChrome.lastReadError(method)`
+forwards to it for SV chrome; SV's Settings screen renders the mapped
+reason instead of a bare "could not load".
+
+Privileged **actions** (setters, `openNativeScreen`, the session methods)
+still reject rather than resolving a fallback — that part is unchanged —
+but they now leave the same record behind, so a refused action is as
+diagnosable as a failed read.
+
+#### Privileged refusal codes
+
+When the app refuses a privileged call, the human message is written for a
+person and may be reworded at any time. Consumers must not pattern-match
+English to decide what happened, so the app may send a stable machine-readable
+code alongside it.
+
+**Transport — a 4th argument to `__usernodeResolve`, additive in both
+directions.** The page already resolves a request with
+`window.__usernodeResolve(id, value, error)` where `error` is a **string**
+that the wrapper turns into `new Error(error)`. A build that has a code
+passes one more argument:
+
+```js
+window.__usernodeResolve(id, null,
+  "Privileged bridge is unavailable for this main frame",
+  { code: "privileged_frame_unauthorized" });
+```
+
+Both halves of this stay compatible on purpose:
+
+- **Old app, new page.** Three arguments arrive, `errorInfo` is `undefined`,
+  and the page behaves byte-for-byte as it does today — no code is invented.
+- **New app, old page.** Older installed wrappers ignore extra arguments.
+- `error` **must stay a string.** Moving the code into that slot would make
+  every installed build render `[object Object]` to the user.
+- A missing, empty, non-string or malformed `code` is ignored, never trusted.
+
+The wrapper puts a valid code on the rejected error as
+`err.usernodeCode`, tags it `err.usernodeKind = "privileged-unavailable"`
+and `err.usernodePrivileged = true`, and classifies it:
+
+| `code` | Classified state | What the user is told |
+|---|---|---|
+| `privileged_frame_unauthorized` | `blocked-frame` | the app is refusing this screen's secure connection |
+| `privileged_unsupported_version` | `unsupported` | this app build predates the connection this screen uses |
+| `privileged_bootstrap_timeout` | `unattached` | the app never answered the connection request |
+
+An **unrecognised** code still classifies (as `blocked-frame`) rather than
+falling through — a code the page has never seen is still positive evidence
+that the app refused deliberately. With **no** code at all, the page falls
+back to matching native's prose, which is why the classification keeps
+working against every build shipped so far.
+
+A build that always sends a code should advertise `privilegedErrorCodes` in
+`capabilities`. Nothing on the SV side depends on that capability or on the
+codes landing at all — this is a paired change owned by the Flutter repo, and
+the consumer half shipped first, degrading to prose matching.
+
+**Codes carry no secrets.** A code is a fixed identifier from the table
+above, never a token, path, account identifier or free-form detail: the page
+renders it and offers it as copyable text.
+
+#### `getBridgeDiagnostics()` → connection snapshot (synchronous)
+
+Everything the current frame knows about its own bridge, copied, with no
+`await`:
+
+```json
+{ "isNative": true, "isTopFrame": true, "inIframe": false,
+  "usesIframeRelay": false, "hasNativeChannel": true,
+  "origin": "https://social.usernode.com",
+  "bridgeVersion": 4, "capabilities": ["..."],
+  "appVersion": "0.4.0", "buildNumber": "1223",
+  "privileged": { "state": "blocked-frame",
+                  "code": "privileged_frame_unauthorized",
+                  "kind": "privileged-unavailable",
+                  "message": "…native's own text…",
+                  "at": 1780000000000, "attempts": 3 },
+  "lastErrors": { "getSettingsState": { "method": "…", "kind": "…",
+                                        "message": "…", "at": 0 } },
+  "collectedAt": 1780000000000 }
+```
+
+`privileged.state` is one of `ready`, `blocked-frame`, `unsupported`,
+`inconclusive`, `unattached`, `unknown`. `bridgeVersion`, `capabilities`,
+`appVersion` and `buildNumber` come from the last **conclusive**
+`getBridgeInfo` — which is unprivileged, and therefore still answers on a
+device whose privileged handshake is refused. That is what makes such a
+device diagnosable at all.
+
+It carries **no capability token** (the token lives in a closure and never
+reaches a message) and no user data, and each frame reads only its own
+records. In a child frame the privileged record is reported as
+`blocked-frame` / `no-transport` regardless of what that frame last tried,
+so an embedded dapp learns nothing about the top frame.
+
+SV renders it as Settings → Usernode app → "Usernode app — connection", with
+**Try again** and **Copy diagnostics**.
 
 #### `getNodeStatus()` → snapshot object
 
@@ -88,7 +290,8 @@ native side so 1s-poll flapping between synced/syncing doesn't strobe).
 **Push events:** the app also dispatches a `usernode:node-status`
 `CustomEvent` on `window` with the same snapshot as `detail`:
 
-- once per page load (after `onPageFinished`), and
+- once after the shell explicitly confirms its native-event listeners are
+  ready, and
 - on every pill-state transition.
 
 So chrome renders from the event stream and only calls `getNodeStatus()`
@@ -102,13 +305,32 @@ for an initial value; no polling needed.
   "balance": "1284",        // base units, string (BigInt-safe)
   "tokenAmount": 1284.0,    // display units, number
   "tokenSymbol": "UT",
-  "lastUpdatedMs": 1714672193412
+  "lastUpdatedMs": 1714672193412,
+  "staking": {
+    "delegate": null,
+    "delegated_since": null
+  }
 }
 ```
 
 Fields other than `address` are `null` while the native wallet provider
 hasn't produced a value yet (fresh app start, node still syncing). The app
 answers within ~10s worst-case; the bridge wrapper adds its own timeout.
+
+`staking` is `null` while wallet setup or backend reconciliation is not yet
+available. Within a staking snapshot, `delegate` alone is authoritative:
+`null` means phone block production is active, while a non-null address means
+delegation is active. `delegated_since` is optional display metadata and must
+never be used to infer whether delegation is enabled.
+
+#### `manageStaking()` → `{ delegate, delegated_since }`
+
+Bridge v4 capability: `manageStaking`. This privileged top-frame method takes
+no arguments, opens the native delegation screen, and resolves with the latest
+staking snapshot after that screen closes, including when the user makes no
+change. Native owns the fixed delegation target, confirmation, backend
+synchronization, persistence and node reconfiguration. Social Vibecoding must
+not submit a target address or requested delegation state itself.
 
 #### `getTransactionRecords()` → `{ items: [...] }`
 
@@ -145,6 +367,18 @@ The former `settings`, `profile`, and `terms` screens were deleted with
 their web replacements and are rejected like any other value. Rejected
 entirely unless the top frame is the trusted SV origin (sub-apps cannot
 drive native navigation).
+
+#### `captureScreenshot()` → `{ contentType, base64 }`
+
+Additive bridge-v4 capability: `captureScreenshot`. Captures the currently
+visible Usernode app window on Android or iOS and returns a JPEG as base64.
+The native encoder bounds the image to the feedback endpoint's 4 MB limit.
+SV hides its feedback dialog before calling so the returned pixels show the
+underlying screen, then restores the unchanged draft and presents a preview.
+
+This is a privileged trusted-top-frame action. Child dapps cannot request a
+capture of surrounding app chrome. Callers must feature-detect the capability;
+older app builds continue to use the feedback dialog's Photos/file fallback.
 
 ### Profile & settings (v3 — profile-and-settings-to-web migration)
 
@@ -200,6 +434,14 @@ foreground keep-alive service was deleted; iOS block production is off).
 Permission probes can take a few seconds on a fresh app start; the bridge
 wrapper uses a longer (12s) timeout for this method.
 
+Like every chrome read it resolves `null` rather than rejecting on failure,
+and the reason is available from
+`getLastNativeReadError("getSettingsState")` (see above). SV's Settings →
+Usernode app section renders that reason with a retry, and keeps the blocks
+that don't need this snapshot (activity notifications, block production,
+terms, FAQ, the native diagnostics screens) on screen, so a failed read is
+recoverable rather than a dead end.
+
 #### Setters — each resolves the refreshed settings snapshot
 
 | Method | Args | Effect |
@@ -239,6 +481,18 @@ wallet dispatch before `/from-session`, so Android child frames cannot bypass
 the JavaScript wrapper with a raw channel message. A verified current-user
 handoff reopens both gates; failures stay closed. Pre-v4 builds reopen the
 local gate after their older bridge version confirms that no handoff exists.
+
+**Sign-out never depends on the app answering.** `prepareWebLogout()` closes
+every admission gate synchronously and then **resolves a report** —
+`{ nativeTerminal, latch, reason, code }`, where `latch` is `acknowledged`,
+`unsupported`, `unavailable` or `inconclusive` — instead of rejecting. It
+used to reject, which aborted SV's sign-out *before* `POST /api/auth/logout`:
+a device whose privileged handshake was refused kept its web session with no
+way out of the app at all. A refused latch now means SV asks the user and
+then clears the web session anyway, attempts `usernode.logout()` best-effort
+inside a short budget, and says so on the login screen if the app kept its
+own session. The fail-closed wallet gate is unchanged — the fallback loosens
+the exit, never the gate.
 
 #### `beginSessionHandoff()` → `{ blocked: true }`
 
@@ -302,20 +556,31 @@ ready`); `address` is the active wallet address once `ready`. Builds with
 epoch.
 
 **Push events:** the app dispatches a `usernode:auth-status` `CustomEvent`
-on `window` with the same shape as `detail` — once per page load and on
-every identity-phase transition. SV listens and requests `startNode` when
-the phase reaches `ready`.
+on `window` with the same shape as `detail` — once after the shell's explicit
+listener-readiness handshake and on every identity-phase transition. SV
+listens and requests `startNode` when the phase reaches `ready`.
 
 ## Trust model
 
 - The native transaction confirm sheet remains the sole native chrome over
   SV content (Apple Pay model). Nothing in this contract bypasses it.
 - Privileged native methods are gated to the configured SV top-frame origin.
-  On each trusted main-frame navigation, the top-frame bridge privately asks
-  for `getPrivilegedBridgeCapability` and keeps the returned opaque string in
-  its closure. The capability is revoked on navigation and is never exposed
-  as a public `window.usernode` property.
-- The parent bridge refuses both capability bootstrap and privileged relays
+  The top-frame bridge privately asks for `getPrivilegedBridgeCapability` and
+  keeps the returned opaque string in its closure. Native binds it to the
+  executing JavaScript realm rather than to WebView lifecycle callbacks:
+  same-document History API changes retain it, a replacement document gets a
+  different capability, and BFCache restoration revives only its original
+  realm. The capability is never exposed as a public `window.usernode`
+  property.
+- Privileged replies and native-to-page events are delivered only when that
+  exact realm is still executing. Social calls `markPrivilegedBridgeReady`
+  after all native-event listeners exist; native then dispatches the existing
+  auth/node/push events together in one realm-guarded JavaScript evaluation
+  before acknowledging readiness. A failed replay is retryable rather than
+  silently consuming state.
+  `onPageStarted`/`onPageFinished` are intentionally not authority or listener
+  readiness signals because their ordering differs across WebView platforms.
+- The parent bridge refuses both capability bootstraps and privileged relays
   from child frames. Non-privileged dapp reads and transaction methods keep
   their existing relay behavior only while the current web/native session
   handoff is admitted.

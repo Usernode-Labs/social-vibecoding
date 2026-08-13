@@ -13,9 +13,14 @@ const { encrypt, decrypt } = require('../services/secrets');
 const { issueKindLimiter } = require('../middleware/rate-limits');
 const events = require('../services/events');
 const { weekStartUtc, countWeeklyAllowanceUsed, WEEKLY_KUDOS_LIMIT } = require('./kudos');
+const { placeBounty } = require('../services/bounties');
 const appAccess = require('../services/app-access');
 const appAdmins = require('../services/app-admins');
 const topicAttrs = require('../services/topic-attributes');
+// #1112: the same in-process "a turn is running" predicate /api/sessions
+// reports as `busy`, so an issue's work-state chip and the session card it
+// points at can never disagree about whether an agent is actually running.
+const { isSessionBusy } = require('../services/active-workers');
 const { FEEDBACK_FALLBACK_TITLE } = require('../services/llm');
 
 // Pull owner/repo out of a stored repo_url. Same shape used across the
@@ -184,6 +189,17 @@ function stagingMockIssues(repoUrl) {
       + 'the most recent and is NOT part of the saved drag order, so it '
       + 'must appear at the top of the Issues column, above the manually '
       + 'ordered cards.', 1),
+    // Card-as-pointer revision: a deliberately BARE issue — no attributes,
+    // no bounty, no claim, no headless run — so the "a card with no metadata
+    // carries no grey Set-priority / Set-category / Unassigned chips" rule is
+    // visible in a preview. Every other mock row is enriched by the
+    // staging-attributes block in GET /github-issues; this number is
+    // deliberately absent from that map (as is 900002, which keeps its own
+    // unset-dropdown demo).
+    mk(900013, '[Mock] Bare issue — no priority, no category, nobody assigned',
+      'Staging-only mock issue with NO community-voted attributes, so the '
+      + 'card renders with just its icon, title, meta line and one primary '
+      + 'action. Compare it against #900001, which has all three chips set.', 6),
     // #683: dedicated row for reviewing the inline screenshot embed in
     // the topic view. Real filed issues embed the public
     // /issue-images/:id URL; the mock points at an existing same-origin
@@ -195,6 +211,46 @@ function stagingMockIssues(repoUrl) {
       + 'same way a reporter-captured screenshot attached from the '
       + 'feedback modal does.\n\n'
       + '**Screenshot:**\n![Screenshot](/icons/icon-192.png)', 4),
+    // #1010: the two targets of the applying / retry-pending mock close
+    // proposals below (stagingMockGovernance 9100005 / 9100006), so the
+    // ?demo=1 preview shows the governance card's spinner state AND the
+    // matching "Closing…" state on the target issue's own row.
+    mk(900011, '[Mock] Close vote passed — issue is being closed',
+      'Staging-only mock issue for previewing the #1010 in-progress close '
+      + 'indicator. A mock close proposal for this issue has passed its '
+      + 'vote and its window has just elapsed, so both the governance card '
+      + 'and this row render the "Closing…" spinner state.', 6),
+    mk(900012, '[Mock] Close vote passed a while ago — retry pending',
+      'Staging-only mock issue for previewing the #1010 stalled-apply '
+      + 'state. Its mock close proposal passed long enough ago that the '
+      + 'spinner has timed out, so the card reads "Close pending — will '
+      + 'retry automatically" instead of spinning forever.', 8),
+    // #1112: the two work-states that no other mock row can show, because
+    // both need a session in a state the other rows never sit in. The
+    // in-progress enrichment below attaches a 5-day-old PAUSED session to
+    // this one, so the chip reads "Paused · maya-builder" in the grey tone
+    // and the topic head prints the self-clear date.
+    mk(900014, '[Mock] Someone started this and paused',
+      'Staging-only mock issue for previewing the #1112 "Paused" work '
+      + 'state. A dev session on this row was last touched five days ago '
+      + 'and is paused, so the card carries the grey "Paused" chip rather '
+      + 'than the old catch-all "In progress" one, and the topic head '
+      + 'explains in a sentence when the mark clears itself.', 26),
+    // #1112: the amber "Needs an answer" state — a headless auto-solve run
+    // that finished with the `question` outcome and is waiting on a human.
+    mk(900015, '[Mock] Auto-solve run asked a question',
+      'Staging-only mock issue for previewing the #1112 "Needs an answer" '
+      + 'work state: the synthetic headless run below reports the '
+      + '`question` outcome, so the card asks for a reply instead of '
+      + 'claiming that work is happening right now.', 19),
+    // #1112: keep the finished-draft state on its own row. Reusing 900005
+    // made the check depend on older staging fixtures that already use that
+    // number for the failed-run demo, so the synthetic state could be
+    // shadowed by seed history instead of rendering `draft_ready`.
+    mk(900016, '[Mock] Auto-solve draft ready to review',
+      'Staging-only mock issue for previewing the #1112 "Draft ready to '
+      + 'review" work state. Its synthetic headless run finished with a '
+      + 'draft, and no other staging fixture shares this issue number.', 17),
   ];
 }
 
@@ -206,6 +262,7 @@ function stagingMockIssues(repoUrl) {
 function stagingMockGovernance() {
   const hoursAgo = (h) => new Date(Date.now() - h * 3600 * 1000).toISOString();
   const hoursAhead = (h) => new Date(Date.now() + h * 3600 * 1000).toISOString();
+  const secsAgo = (s) => new Date(Date.now() - s * 1000).toISOString();
   const mk = (id, kind, title, payload, hours, up, down, gate = {}) => ({
     id,
     app_id: 0,
@@ -225,6 +282,10 @@ function stagingMockGovernance() {
     votes_required: gate.required ?? Math.max(up, 1),
     merge_window_ends_at: gate.windowEndsAt ?? null,
     contested: gate.contested ?? false,
+    // Request-time staging fixture marker. The client uses this only to
+    // keep the synthetic apply-state examples visible even when the cloned
+    // self-app is locked; real governance rows never carry it.
+    demo: true,
   });
   return [
     // Unopposed rename, threshold met, window still running → countdown.
@@ -259,6 +320,49 @@ function stagingMockGovernance() {
       approvals_required: 1,
       qualified_yes_count: 0,
       qualified_no_count: 0,
+    },
+    // #1010: the two DERIVED "being applied" states. Both have passed their
+    // gate (up_count >= required, uncontested) with the visibility window
+    // already elapsed — the shape a proposal has in the seconds between the
+    // deciding vote and the apply landing. They differ only in HOW LONG ago
+    // the window ended, which is what selects the state:
+    //   9100005 — 30s ago  → inside the 120s grace → spinner, "Closing issue #900011…"
+    //   9100006 — 10m ago  → past the grace        → "Close pending — will retry automatically"
+    mk(9100005, 'close_issue',
+      '[Mock] Close issue #900011: "Close vote passed — issue is being closed"',
+      {
+        issueNumber: 900011,
+        issueTitle: 'Close vote passed — issue is being closed',
+        reason: 'Fixed by the theme rework — closing.',
+      }, 5, 2, 0,
+      { required: 2, windowEndsAt: secsAgo(30) }),
+    mk(9100006, 'close_issue',
+      '[Mock] Close issue #900012: "Close vote passed a while ago — retry pending"',
+      {
+        issueNumber: 900012,
+        issueTitle: 'Close vote passed a while ago — retry pending',
+        reason: 'Duplicate of an older report.',
+      }, 7, 2, 0,
+      { required: 2, windowEndsAt: secsAgo(600) }),
+    // Card-as-pointer revision: a SETTLED governance row. The vote is
+    // history, so it renders the frozen pill and — with nothing left to
+    // demote — no ⋯ trigger at all. Every other mock here is 'open', so
+    // without this row the "no dead ⋯ button" rule is invisible in a
+    // preview. (The Done column's own applied close-issue cards come from
+    // stagingMockCompletedCloseIssues in votes.js; this one exercises the
+    // gov card renderer's settled branch in the In-review column's shape.)
+    {
+      ...mk(9100007, 'close_issue',
+        '[Mock] Settled: closed issue #900003 by vote — pill only, no ⋯',
+        {
+          issueNumber: 900003,
+          issueTitle: '[Mock] Topic cards overflow on narrow phones',
+          reason: 'Fixed by the responsive rework.',
+          appliedAt: hoursAgo(2),
+          appliedBy: 'group-vote',
+          required: 2,
+        }, 20, 2, 0, { required: 2 }),
+      status: 'closed',
     },
   ];
 }
@@ -327,14 +431,47 @@ function composeInProgress(sessions, claims, viewerId) {
   const sess = sessions || [];
   const live = claims || [];
   if (!sess.length && !live.length) return null;
-  const users = [];
+  // Distinct session owners, in the order the query returned them. The
+  // loop visits every session (#1112 — it used to `break` at 3, which is
+  // how a five-person issue read "In progress · 3"); only the DISPLAY
+  // list is capped, and the true headcount rides on peopleTotal below.
+  const allUsers = [];
   for (const s of sess) {
-    if (s.username && !users.includes(s.username)) users.push(s.username);
-    if (users.length >= 3) break;
+    if (s.username && !allUsers.includes(s.username)) allUsers.push(s.username);
   }
+  const users = allUsers.slice(0, 5);
+  // #1112: the true distinct headcount over every session owner AND every
+  // claimer, computed before any cap. The FE's "+N" suffix reads this, so
+  // the chip can no longer understate a crowded issue.
+  const everyone = new Set(allUsers);
+  for (const c of live) if (c.username) everyone.add(c.username);
+  // #1112: per-session detail so the FE can name WHICH work state an issue
+  // is in (a proposal up for vote / a live chat / a paused chat) instead of
+  // collapsing all of them into one "In progress" label. Most-recent
+  // activity first, capped at 5 — the label names at most a couple, and the
+  // tooltip enumerates roles rather than every row.
+  const activityTs = (s) => {
+    const t = Date.parse(s.last_activity_at || s.created_at || '');
+    return Number.isFinite(t) ? t : 0;
+  };
+  const detail = [...sess]
+    .sort((a, b) => activityTs(b) - activityTs(a))
+    .slice(0, 5)
+    .map((s) => ({
+      sessionId: s.id,
+      username: s.username || null,
+      mine: s.user_id === viewerId,
+      status: s.status || null,
+      // In-process only: a multi-process platform would under-report this,
+      // in which case switch to `active_turn IS NOT NULL` on the query.
+      busy: isSessionBusy(s.id),
+      lastActivityAt: s.last_activity_at || null,
+    }));
   return {
     count: sess.length,
     users,
+    peopleTotal: everyone.size,
+    sessions: detail,
     mine: sess.some((s) => s.user_id === viewerId) || live.some((c) => c.user_id === viewerId),
     // Oldest-first, capped at 10 — beyond that only the names matter less
     // than the count, which the FE derives from the list it gets.
@@ -450,6 +587,117 @@ function issueRoutes(config) {
     }
   });
 
+  // (#1115) Single-governance-proposal-by-id fetch — the recovery path for
+  // opening a governance proposal whose row isn't in the client's cached
+  // lists, and the exact twin of GET /api/apps/:slug/proposals/:id in
+  // votes.js. The list endpoint above returns OPEN rows only, and APPLIED
+  // close-issue proposals live in the keyset-paginated Completed stream
+  // (/merged), of which the client caches just the first page — so clicking
+  // or deep-linking a settled close proposal beyond that page resolved to
+  // nothing and bounced back to the dev board. The FE
+  // (_fetchGovProposalById) calls this when _findTopicItem() comes up empty.
+  //
+  // Serves rows of ANY status (a status transition between list-render and
+  // click still resolves), restricted to the four governance kinds the
+  // client's gov topic view can actually render — anything else 404s, so
+  // this never becomes a read path for other issue kinds' payloads.
+  router.get('/api/apps/:slug/governance/:id', async (req, res) => {
+    try {
+      // View-level (#621): read-only viewers can open a governance
+      // proposal's topic view (my_vote resolves to null for them).
+      const gatedApp = await appAccess.getAppForUser(
+        pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS
+      );
+      if (!gatedApp) return res.status(404).json({ error: 'App not found' });
+
+      const appId = gatedApp.id;
+      const userId = req.user?.id || null;
+      const id = parseInt(req.params.id, 10);
+      if (!Number.isFinite(id)) return res.status(404).json({ error: 'Proposal not found' });
+
+      // Same row shape the list endpoints return (the open-issues subqueries
+      // above and the close-row select in /merged), so the topic header/card
+      // renders identically whether the row came from a list or from here.
+      const { rows } = await pool.query(
+        `SELECT i.*, u.username as created_by_username,
+           (SELECT COUNT(*) FROM issue_votes WHERE issue_id = i.id AND vote = 'up') as up_count,
+           (SELECT COUNT(*) FROM issue_votes WHERE issue_id = i.id AND vote = 'down') as down_count,
+           (SELECT vote FROM issue_votes WHERE issue_id = i.id AND user_id = $3) as my_vote,
+           (SELECT COUNT(*)::int FROM chat_messages cm
+             WHERE cm.app_id = i.app_id AND cm.thread_type = 'governance' AND cm.thread_ref = i.id
+               AND cm.msg_type = 'message') as chat_count,
+           (SELECT MAX(cm.created_at) FROM chat_messages cm
+             WHERE cm.app_id = i.app_id AND cm.thread_type = 'governance' AND cm.thread_ref = i.id) as last_message_at
+         FROM issues i
+         LEFT JOIN users u ON i.created_by = u.id
+         WHERE i.app_id = $1 AND i.id = $2
+           AND i.kind IN ('secret_change', 'rename', 'close_issue', 'maintenance_campaign')
+         LIMIT 1`,
+        [appId, id, userId]
+      );
+
+      let proposal = rows[0] || null;
+      if (proposal) {
+        // Same per-row dynamic gate the list attaches, so an OPEN row's pill
+        // gets its threshold / countdown / Contested treatment here too.
+        // Settled rows carry it harmlessly (the card reads the frozen pill).
+        const governanceSvc = require('../services/governance');
+        const gov = await governanceSvc.getGovernance(pool, appId);
+        const electorate = await governanceSvc.getElectorate(pool, appId, gov);
+        const q = electorate.approverIds
+          ? ((await governanceSvc.qualifiedCountsBatch(
+            pool, 'issue', [proposal.id], electorate.approverIds
+          )).get(proposal.id) || { yes: 0, no: 0 })
+          : { yes: proposal.up_count, no: proposal.down_count };
+        const gate = governanceSvc.computeGate(
+          gov, electorate.active, q.yes, q.no, proposal.created_at
+        );
+        proposal = {
+          ...proposal,
+          votes_required: gate.required,
+          merge_window_ends_at: gate.windowEndsAt,
+          contested: gate.contested,
+          approval_policy: gate.policy,
+          approvals_required: gate.approvalsRequired,
+          qualified_yes_count: gate.qualifiedYes,
+          qualified_no_count: gate.qualifiedNo,
+        };
+        // Never leak a secret_change's ciphertext, exactly as the list does.
+        if (proposal.kind === 'secret_change' && proposal.payload) {
+          const { valueEnc, ...rest } = proposal.payload;
+          proposal.payload = { ...rest, hasValue: !!valueEnc };
+        }
+        // An applied close proposal is a Completed-stream row; stamp the
+        // discriminator so it's interchangeable with the /merged shape for
+        // any consumer that branches on row_type (e.g. _showExplorePill).
+        if (proposal.kind === 'close_issue' && proposal.status === 'closed'
+            && proposal.payload && proposal.payload.appliedAt) {
+          proposal.row_type = 'close_issue';
+        }
+      }
+
+      // Staging demo mode (?demo=1): the mock governance rows aren't in the
+      // DB, so resolve a mock id straight from the generators. This is what
+      // lets a staging tester deep-link mock close proposal 9100062, which is
+      // deliberately too old to ever reach the demo Completed stream's first
+      // page and is therefore reachable ONLY through this endpoint. The
+      // applied-close mocks live in votes.js (they belong to that stream);
+      // lazy-required here to keep the issues <-> votes load order safe.
+      if (!proposal && IS_STAGING && req.query.demo === '1') {
+        proposal = stagingMockGovernance().find((m) => m.id === id)
+          || require('./votes').stagingMockCompletedCloseIssues()
+            .find((m) => m.id === id)
+          || null;
+      }
+
+      if (!proposal) return res.status(404).json({ error: 'Proposal not found' });
+      res.json({ proposal });
+    } catch (err) {
+      log.error('issues', 'Failed to get governance proposal by id', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   // Create an issue / proposal — kinds per VALID_KINDS above (general is
   // the default). Rate-limited per kind: close_issue proposals draw from
   // their own bucket, everything else from issue-create.
@@ -476,7 +724,17 @@ function issueRoutes(config) {
       if (kind === 'secret_change') {
         const key = typeof payload?.key === 'string' ? payload.key.trim() : '';
         const action = typeof payload?.action === 'string' ? payload.action : 'set';
-        const value = typeof payload?.value === 'string' ? payload.value : '';
+        // Trimmed HERE, at proposal creation, not at apply. The apply path
+        // for a child app writes app_secrets with raw SQL (see
+        // maybeApplySecretChangeProposal below) and never reaches
+        // appSecrets.setValue, so creation is the only boundary that covers
+        // both stores — and normalizing before encrypt/valueLast4 keeps the
+        // proposal card's preview identical to what will actually be stored.
+        // Both DAOs implement the identical rule, so either normalizeValue
+        // serves both scopes.
+        const value = platformEnv.normalizeValue(
+          typeof payload?.value === 'string' ? payload.value : ''
+        );
         if (!appManifest.KEY_RE.test(key)) {
           return res.status(400).json({ error: 'payload.key must be UPPER_SNAKE_CASE' });
         }
@@ -832,6 +1090,15 @@ function issueRoutes(config) {
         { type: 'governance', ref: issue.id }
       );
 
+      // #1010: broadcast the VOTE before the apply, not after. A deciding
+      // up-vote on a governance proposal runs the whole apply (GitHub close
+      // + comment for close_issue — seconds of latency) inside this request,
+      // and the old ordering held this event behind all of it, so every other
+      // client's tally sat stale for the duration and none of them could
+      // derive the "being applied" state. The apply pushes its own events
+      // when it settles, so this one is purely "a vote landed".
+      pushIssueUpdate({ action: 'voted', appSlug: issue.app_slug, appId: issue.app_id, issueId: issue.id, vote });
+
       let renamed = null;
       let secretChanged = null;
       let issueClosed = null;
@@ -845,8 +1112,6 @@ function issueRoutes(config) {
       } else if (vote === 'up' && issue.kind === 'maintenance_campaign') {
         campaignStarted = await maybeApplyMaintenanceCampaignProposal(config, pool, issue);
       }
-
-      pushIssueUpdate({ action: 'voted', appSlug: issue.app_slug, appId: issue.app_id, issueId: issue.id, vote });
 
       res.json({ ok: true, renamed, secretChanged, issueClosed, campaignStarted });
     } catch (err) {
@@ -1149,6 +1414,14 @@ function issueRoutes(config) {
         const mockHeadless = new Map([
           [900003, { status: 'generating', outcome: null }],
           [900005, { status: 'ready', outcome: 'spec' }],
+          // #1112: the `question` outcome — a finished run that is waiting on
+          // a human answer, which the work-state chip reports as amber
+          // "Needs an answer" rather than as work in flight.
+          [900015, { status: 'ready', outcome: 'question' }],
+          // #1112: dedicated row for the finished-draft state. Unlike the
+          // older 900005 ranking fixture, this number is not also used by a
+          // persisted staging headless seed.
+          [900016, { status: 'ready', outcome: 'spec' }],
         ]);
         for (const issue of issues) {
           const m = mockHeadless.get(issue.number);
@@ -1184,9 +1457,38 @@ function issueRoutes(config) {
         // by the viewer — only where no real creator resolved — so the
         // affordance is reviewable. Saving still fails (no real GitHub
         // issue behind the mock); purely visual. No-op in production.
+        //
+        // "No real creator resolved" has to include the mock's OWN author
+        // sentinel: stagingMockIssues stamps every row `user:
+        // 'staging-tester'`, and the enrichment above promotes that to
+        // created_by_username as a GitHub login — so the `!created_by_username`
+        // guard never fired and the pencil never rendered. Only the sentinel
+        // is treated as unresolved; a genuinely prod-cloned row that happens
+        // to be numbered 900008 keeps its real author.
         for (const issue of issues) {
-          if (issue.number === 900008 && !issue.created_by_username) {
+          if (issue.number === 900008
+            && (!issue.created_by_username || issue.created_by_username === 'staging-tester')) {
             issue.created_by_username = req.user.username;
+          }
+        }
+        // #964: `issue_bounties` is staging:private, so it arrives
+        // schema-only and EVERY row in a preview shows a bounty count of 0 —
+        // the ★ pill and the "★ Bountied" button state would be unreviewable,
+        // and the Send Feedback dialog's new create-with-bounty checkbox
+        // couldn't be seen to have done anything (staging also has no
+        // GITHUB_BOT_TOKEN, so no issue is really filed there). Attach
+        // synthetic bounty state to two dedicated [Mock] rows — only where no
+        // real row already claimed the number, so prod-cloned data is never
+        // overridden. Request-time, read-only, no-op in production.
+        const mockBounties = new Map([
+          [900002, { bounty_count: 2, my_bounty: false }],
+          [900004, { bounty_count: 1, my_bounty: true }],
+        ]);
+        for (const issue of issues) {
+          const b = mockBounties.get(issue.number);
+          if (b && !issue.bounty_count) {
+            issue.bounty_count = b.bounty_count;
+            issue.my_bounty = b.my_bounty;
           }
         }
         // "In progress" chip states on dedicated [Mock] rows, so every
@@ -1202,34 +1504,55 @@ function issueRoutes(config) {
           username, userId: mine ? req.user.id : 0, mine,
           claimedAt: hoursAgoIso(hrs), expiresAt: hoursAheadIso(7 * 24 - hrs),
         });
+        const mkMockSession = (sessionId, username, status, hrs, busy) => ({
+          sessionId, username, mine: false, status, busy: !!busy,
+          lastActivityAt: hoursAgoIso(hrs),
+        });
         const mockInProgress = new Map([
-          // Single-worker session chip, CLICKABLE styling (synthetic
-          // proposal target — clicking lands on the topic view's
+          // #1112 `in_review`: the session was promoted, so the work is
+          // waiting on reviewers rather than on an agent. CLICKABLE styling
+          // (synthetic proposal target — clicking lands on the topic view's
           // not-found fallback, same visual-review-only caveat as the
           // synthetic myPrSessionId above).
           [900007, {
-            count: 1, users: ['staging-tester'], mine: false, claims: [],
+            count: 1, users: ['staging-tester'], peopleTotal: 1, mine: false, claims: [],
+            sessions: [mkMockSession(900007, 'staging-tester', 'promoted', 4, false)],
             target: { kind: 'proposal', sessionId: 900007 },
           }],
-          // Plural "In progress · 2" with a multi-name tooltip, in the
-          // NON-clickable (private-work) styling.
+          // #1112 `working` with a live turn: two active sessions, the
+          // most-recent one busy, so the chip renders emerald with its
+          // spinner and a "+1" for the second person. NON-clickable
+          // (private-work) styling.
           [900006, {
-            count: 2, users: ['maya-builder', 'staging-tester'], mine: false,
-            claims: [], target: null,
+            count: 2, users: ['maya-builder', 'staging-tester'], peopleTotal: 2, mine: false,
+            claims: [],
+            sessions: [
+              mkMockSession(900106, 'maya-builder', 'active', 0.2, true),
+              mkMockSession(900206, 'staging-tester', 'active', 3, false),
+            ],
+            target: null,
           }],
-          // Two claims incl. the VIEWER's own — reviews the multi-claimer
-          // chip plus the "Clear in progress" button state.
+          // #1112 `claimed`, with the VIEWER among the claimers — reviews
+          // the multi-claimer "+1" plus the "Release my claim" button state.
           [900004, {
-            count: 0, users: [], mine: true,
+            count: 0, users: [], peopleTotal: 2, mine: true, sessions: [],
             claims: [mkMockClaim(req.user.username, true, 2), mkMockClaim('maya-builder', false, 5)],
             target: null,
           }],
-          // One claim by someone else — the viewer's button stays "Mark
-          // in progress" and the admin per-claim clear is reviewable in
-          // the topic view.
+          // #1112 `claimed` by someone else — the viewer's button stays
+          // "Claim this issue" and the admin per-claim clear is reviewable
+          // in the topic view.
           [900008, {
-            count: 0, users: [], mine: false,
+            count: 0, users: [], peopleTotal: 1, mine: false, sessions: [],
             claims: [mkMockClaim('maya-builder', false, 8)],
+            target: null,
+          }],
+          // #1112 `paused`: one session, paused, last touched 5 days ago —
+          // two days short of the 7-day self-clear, which is exactly the
+          // case the topic head's dated sentence exists to explain.
+          [900014, {
+            count: 1, users: ['maya-builder'], peopleTotal: 1, mine: false, claims: [],
+            sessions: [mkMockSession(900114, 'maya-builder', 'paused', 5 * 24, false)],
             target: null,
           }],
         ]);
@@ -1510,9 +1833,14 @@ function issueRoutes(config) {
   //
   // Place a "Give kudos" bounty on a GitHub issue. A bounty is a symbolic
   // off-chain pledge (no tokens) that debits the giver's SHARED weekly kudos
-  // allowance (the same 5/week cap PR kudos uses, counted across both
-  // ledgers). When a merged PR closes this issue, the open bounty is awarded
-  // to that PR's author (see routes/votes.js checkAndMerge).
+  // allowance (the same WEEKLY_KUDOS_LIMIT cap PR kudos uses, counted across
+  // both ledgers). When a merged PR closes this issue, the open bounty is
+  // awarded to that PR's author (see routes/votes.js checkAndMerge).
+  //
+  // The same pledge can also be made at issue-CREATION time, from the Send
+  // Feedback dialog's "Put a kudos bounty on this" checkbox — both surfaces
+  // run services/bounties.js placeBounty, so the ledger row, the chat posts
+  // and the WS broadcast are identical whichever one was used.
   //
   // Status codes:
   //   200 ok        — bounty recorded; body carries { remaining, limit }
@@ -1561,67 +1889,32 @@ function issueRoutes(config) {
         });
       }
 
-      const weekStart = weekStartUtc();
-
-      // Shared weekly allowance check. Same bounded race as the PR-kudos
-      // give path (two parallel POSTs could each pass and overshoot by ≤1);
-      // not security-critical, documented there.
-      const used = await countWeeklyAllowanceUsed(pool, req.user.id, weekStart);
-      if (used >= WEEKLY_KUDOS_LIMIT) {
-        return res.status(429).json({
-          error: `Weekly kudos quota exceeded (${WEEKLY_KUDOS_LIMIT}/week). Resets every Monday 00:00 UTC.`,
-          remaining: 0,
-          limit: WEEKLY_KUDOS_LIMIT,
-        });
-      }
-
-      let inserted;
-      try {
-        const { rows } = await pool.query(
-          `INSERT INTO issue_bounties (app_id, github_issue_number, giver_user_id, week_start, status)
-           VALUES ($1, $2, $3, $4, 'open')
-           RETURNING id, created_at`,
-          [app.id, issueNumber, req.user.id, weekStart]
-        );
-        inserted = rows[0];
-      } catch (err) {
-        // Partial unique index on open bounties → already pledged.
-        if (err.code === '23505') {
-          return res.status(409).json({ error: 'You already placed a bounty on this issue' });
+      // Ledger + side effects live in services/bounties.js, shared with the
+      // Send Feedback dialog's create-with-bounty path (POST /api/feedback).
+      // This route keeps what is ITS OWN: the collab gate and the
+      // open-issue verification above, plus the status-code mapping below.
+      const result = await placeBounty(pool, {
+        app, user: req.user, issueNumber,
+      });
+      if (!result.ok) {
+        const status = result.code === 'quota' ? 429 : 409;
+        const body = { error: result.error };
+        // The quota response has always carried the budget figures; the
+        // duplicate one never did. Keep both shapes exactly as they were.
+        if (result.code === 'quota') {
+          body.remaining = result.remaining;
+          body.limit = result.limit;
         }
-        throw err;
+        return res.status(status).json(body);
       }
 
-      events.record(pool, {
-        type: events.EVENT_TYPES.BOUNTY_CREATED,
-        userId: req.user.id,
-        appId: app.id,
-        metadata: { issueNumber },
+      res.json({
+        ok: true,
+        bountyId: result.bountyId,
+        bountyCount: result.bountyCount,
+        remaining: result.remaining,
+        limit: result.limit,
       });
-
-      // Open-bounty count for this issue after the insert, for live FE update.
-      const { rows: countRows } = await pool.query(
-        `SELECT COUNT(*)::int AS c FROM issue_bounties
-          WHERE app_id = $1 AND github_issue_number = $2 AND status = 'open'`,
-        [app.id, issueNumber]
-      );
-      const bountyCount = countRows[0]?.c || 0;
-
-      const bountyMsg = `${req.user.username} placed a bounty (kudos) on issue #${issueNumber}`;
-      await sendSystemMessage(pool, app.id, bountyMsg, 'system')
-        .catch((err) => log.warn('issues', 'Bounty chat message failed', { err: err.message }));
-      // Dual-post into the issue's thread (lifecycle in context).
-      await sendSystemMessage(pool, app.id, bountyMsg, 'system',
-        null, { type: 'issue', ref: issueNumber }).catch(() => {});
-
-      pushIssueUpdate({
-        action: 'bounty', appSlug: app.slug, appId: app.id,
-        issueNumber, bountyCount,
-      });
-
-      const remaining = Math.max(0, WEEKLY_KUDOS_LIMIT - (used + 1));
-      log.info('issues', 'Bounty created', { appId: app.id, issueNumber, giverId: req.user.id, remaining });
-      res.json({ ok: true, bountyId: inserted.id, bountyCount, remaining, limit: WEEKLY_KUDOS_LIMIT });
     } catch (err) {
       log.error('issues', 'Bounty create failed', { issueNumber, message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -1692,7 +1985,11 @@ function issueRoutes(config) {
         // On-the-record note in the issue's own discussion thread (which
         // also freshens the thread clock every claim keys off).
         await sendSystemMessage(pool, app.id,
-          `${req.user.username} marked this issue in progress`,
+          // #1112: "claimed" rather than "marked this issue in progress" —
+          // a claim is one of seven things the board used to call "In
+          // progress", and it is the only one this route creates. Rows
+          // already written keep their old wording; not worth a migration.
+          `${req.user.username} claimed this issue`,
           'system', null, { type: 'issue', ref: issueNumber }
         ).catch((err) => log.warn('issues', 'Claim chat message failed', { err: err.message }));
       }
@@ -1752,8 +2049,11 @@ function issueRoutes(config) {
 
       if (cleared) {
         const content = targetUserId === req.user.id
-          ? `${req.user.username} cleared their in-progress mark`
-          : `${req.user.username} cleared an in-progress mark on this issue`;
+          // #1112: "released their claim" — the DELETE only ever removes one
+          // person's claim, never the derived state the board used to call
+          // "In progress".
+          ? `${req.user.username} released their claim on this issue`
+          : `${req.user.username} released someone else's claim on this issue`;
         await sendSystemMessage(pool, app.id, content,
           'system', null, { type: 'issue', ref: issueNumber }
         ).catch((err) => log.warn('issues', 'Claim-clear chat message failed', { err: err.message }));
@@ -2567,6 +2867,26 @@ async function maybeApplyCloseIssueProposal(pool, issue, options = {}) {
   }
 
   // ---- Side effects: best-effort, outside the txn. ----
+
+  // #1010: announce the decision the moment it is DURABLE, ahead of the
+  // bounty/chat/GitHub tail below. Two reasons the old single broadcast at
+  // the very end wasn't enough: (1) it sat behind the GitHub close+comment
+  // round-trips, so every open card kept rendering the proposal as live for
+  // seconds after it was decided, and (2) it lived inside the
+  // `github.isEnabled() && parsed` branch — an app with GitHub off or an
+  // unparsable repo_url got NO event at all and its cards lingered until a
+  // manual reload. Same event shape the withdraw path emits, so clients need
+  // no new handling; the trailing `github_synced` push stays where it is
+  // (it additionally means "the open-issues cache is now correct").
+  try {
+    pushIssueUpdate({
+      action: 'closed', appSlug, appId: issue.app_id, issueId: locked.id,
+    });
+  } catch (err) {
+    log.warn('issues', 'Close-issue applied broadcast failed', {
+      issueId: locked.id, err: err.message,
+    });
+  }
 
   // Void open bounties on the target: the issue is closing without a merged
   // PR, so no one earns the kudos — and an 'open' row would linger forever

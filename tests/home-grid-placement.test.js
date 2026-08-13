@@ -34,16 +34,16 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { installAppCard } = require('./helpers/app-card');
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
-const HOME_SRC = read('public/js/home.js');
-const LAYOUT_SRC = read('public/js/home-layout.js');
+const { HOME_SRC, LAYOUT_SRC } = require('./helpers/home-modules');
 
 // The registry the server serves, as the client sees it.
 const REGISTRY = [
-  { key: 'challenges', title: 'Challenges', removable: true, sizes: { 4: [4, 2], 5: [2, 2] } },
-  { key: 'discover', title: 'Discover', removable: false, sizes: { 4: [4, 2], 5: [2, 2] } },
-  { key: 'create', title: 'Create app', removable: true, sizes: { 4: [1, 1], 5: [1, 1] } },
+  { key: 'challenges', title: 'Challenges', removable: true, sizes: { 4: [4, 1], 5: [2, 2] } },
+  { key: 'discover', title: 'Discover', removable: false, sizes: { 4: [4, 1], 5: [2, 2] } },
+  { key: 'create', title: 'Create app', removable: true, sizes: { 4: [4, 1], 5: [1, 1] } },
 ];
 
 // Returns { Home, HomeLayout, fetchCalls, toasts, setFetch, sandbox,
@@ -127,12 +127,17 @@ function makeHome({ width = 1280, canCreateApps = true } = {}) {
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
+  // home.js delegates iconTileFor / renderAppPillsHtml to window.AppCard
+  // (frontend/src/features/apps/app-card.js) since #1083 chunk F.
+  installAppCard(sandbox);
   vm.runInContext(`${LAYOUT_SRC}\n${HOME_SRC}\n;globalThis.__Home = Home;`, sandbox);
   const Home = sandbox.__Home;
   const HomeLayout = sandbox.HomeLayout;
   HomeLayout.setRegistry(REGISTRY);
   // The widget registry Home reads placement keys from.
   sandbox.HomePanels = {
+    _data: { registry: REGISTRY, hidden: [], panels: [] },
+    hasLayoutRegistry() { return !!(this._data && Array.isArray(this._data.registry)); },
     gridSlotKeys: () => REGISTRY.map((r) => r.key),
     render: () => {},
     ensureLoaded: () => Promise.resolve(),
@@ -150,10 +155,103 @@ function makeHome({ width = 1280, canCreateApps = true } = {}) {
 
 const flush = () => new Promise((r) => setImmediate(r));
 
+const deferred = () => {
+  let resolve;
+  const promise = new Promise((done) => { resolve = done; });
+  return { promise, resolve };
+};
+
 const app = (slug, over = {}) => ({
   slug, name: slug, status: 'running',
   is_collaborator: true, is_favorited: false, your_apps_hidden: false,
   favorite_order: null, featured: false, ...over,
+});
+
+test('a saved Challenges position survives layout → apps → panels response order', async () => {
+  const { Home, setFetch, fetchCalls, sandbox } = makeHome();
+  const appsResponse = deferred();
+  const panelsResponse = deferred();
+  const stored = {
+    4: [],
+    5: [
+      { type: 'app', slug: 'a', col: 4, row: 0 },
+      { type: 'widget', key: 'discover', col: 0, row: 1 },
+      { type: 'widget', key: 'challenges', col: 3, row: 1 },
+      { type: 'widget', key: 'create', col: 2, row: 4 },
+    ],
+  };
+  let renders = 0;
+  let renderedLayout = null;
+  Home.render = () => {
+    renders += 1;
+    renderedLayout = Home.currentLayout(5);
+  };
+  sandbox.HomePanels._data = null;
+  sandbox.HomePanels.gridSlotKeys = () => (
+    sandbox.HomePanels._data ? REGISTRY.map((entry) => entry.key) : []
+  );
+  sandbox.HomePanels.ensureLoaded = () => panelsResponse.promise.then((data) => {
+    sandbox.HomePanels._data = data;
+  });
+  setFetch(async (url) => {
+    if (url.startsWith('/api/home-layout')) {
+      return { ok: true, json: async () => ({ layouts: stored, widgets: REGISTRY }) };
+    }
+    if (url.startsWith('/api/apps')) return appsResponse.promise;
+    return { ok: true, json: async () => ({}) };
+  });
+
+  const loading = Home.load();
+  await flush();
+  await flush();
+
+  assert.equal(Home._appsLoaded, false);
+  assert.equal(renders, 0, 'the early layout/panel callbacks do not paint an empty catalog');
+  assert.equal(fetchCalls.filter((c) => c.method === 'PUT').length, 0,
+    'stored app cells are not repaired away and written back');
+
+  appsResponse.resolve({ ok: true, json: async () => ({ apps: [app('a')] }) });
+  await loading;
+
+  assert.equal(Home._appsLoaded, true);
+  assert.equal(renders, 1, 'apps may paint while the widget payload is still in flight');
+  assert.equal(renderedLayout.some((entry) => entry.key === 'challenges'), false,
+    'the incomplete transient paint does not invent widget membership');
+  assert.ok(Home._layouts['5'].some((entry) => entry.key === 'challenges'),
+    'the cached server layout keeps the saved Challenges cell');
+  assert.equal(fetchCalls.filter((c) => c.method === 'PUT').length, 0,
+    'the incomplete widget catalog cannot be persisted as a repair');
+
+  panelsResponse.resolve({ registry: REGISTRY, hidden: [], panels: [] });
+  await flush();
+  await flush();
+
+  assert.equal(renders, 2, 'the authoritative widget registry triggers the restoring paint');
+  const restored = renderedLayout;
+  const at = (id) => {
+    const item = restored.find((entry) => HomeLayoutIdsOf([entry])[0] === id);
+    return [item.col, item.row];
+  };
+  assert.deepEqual(at('app:a'), [4, 0]);
+  assert.deepEqual(at('widget:discover'), [0, 1]);
+  assert.deepEqual(at('widget:challenges'), [3, 1]);
+  assert.equal(fetchCalls.filter((c) => c.method === 'PUT').length, 0,
+    'an intact stored layout needs no repair write');
+
+  // The readiness gate is first-load-only. Once both catalogs exist, normal
+  // TTL callbacks may repaint from cache while a later apps refresh is in
+  // flight.
+  renders = 0;
+  const laterAppsResponse = deferred();
+  setFetch(async (url) => {
+    if (url.startsWith('/api/apps')) return laterAppsResponse.promise;
+    return { ok: true, json: async () => ({}) };
+  });
+  const reloading = Home.load();
+  await flush();
+  assert.ok(renders > 0, 'later layout/panel callbacks still repaint from a ready catalog');
+  laterAppsResponse.resolve({ ok: true, json: async () => ({ apps: [app('a')] }) });
+  await reloading;
 });
 
 // ── The attach contract ───────────────────────────────────────────────
@@ -387,6 +485,35 @@ test('canPlace accepts occupied targets and self-overlap', () => {
 const CELL_W = 100;
 const CELL_H = 120;
 
+// THE ROW TABLE (#968). Rows are uniform CELL_H unless a test says otherwise:
+// `setRowHeights([120, 60, 120, …])` installs a canvas with a short row in it,
+// the way a phone with a fit row actually renders. Everything that resolves a
+// row — the fake cell rects, the elementFromPoint stub, the assertions — reads
+// this one table, so a test can't accidentally describe two different grids.
+// No gap: tops are the running sum, which keeps the uniform case exactly the
+// arithmetic every existing test in this file was written against.
+let ROW_HEIGHTS = null;
+function setRowHeights(heights) { ROW_HEIGHTS = heights ? heights.slice() : null; }
+function rowHeight(row) {
+  return ROW_HEIGHTS && ROW_HEIGHTS[row] != null ? ROW_HEIGHTS[row] : CELL_H;
+}
+function rowTop(row) {
+  let top = 0;
+  for (let r = 0; r < row; r++) top += rowHeight(r);
+  return top;
+}
+// Which row contains this y, or -1 above/below the canvas.
+function rowAt(y) {
+  for (let r = 0; r < 8; r++) {
+    const top = rowTop(r);
+    if (y >= top && y < top + rowHeight(r)) return r;
+  }
+  return -1;
+}
+// Every test starts on the uniform canvas; a test that installs a table is
+// responsible for nothing else.
+test.beforeEach(() => { setRowHeights(null); });
+
 function makeGridDom(items) {
   const cells = new Map();
   const nodes = new Map();
@@ -408,7 +535,19 @@ function makeGridDom(items) {
         remove: (c) => cell._cls.delete(c),
         contains: (c) => cell._cls.has(c),
       };
-      cell.getBoundingClientRect = () => ({ left: col * CELL_W, top: row * CELL_H });
+      // Rows read their geometry from the table so a NON-UNIFORM canvas can
+      // be exercised (#968): a fit row is as tall as the widget in it, and
+      // _targetCellFor now measures rows rather than assuming one pitch.
+      // `height`/`bottom` are what it measures; the default table is the
+      // uniform grid every other test in this file was written against.
+      cell.getBoundingClientRect = () => {
+        const top = rowTop(row);
+        const height = rowHeight(row);
+        return {
+          left: col * CELL_W, top, height, bottom: top + height,
+          width: CELL_W, right: col * CELL_W + CELL_W,
+        };
+      };
       cells.set(`${col},${row}`, cell);
     }
   }
@@ -456,9 +595,11 @@ function makeGridDom(items) {
 }
 
 // Wire a Home with a known layout and a measurable overlay, then hover.
-function makePreview(layout) {
-  const h = makeHome();
-  h.Home._layouts = { 5: layout, 4: [] };
+// `cols` picks the breakpoint the layout is stored at (5 = desktop, 4 = phone,
+// where the big widgets go full-width).
+function makePreview(layout, { cols = 5, width = cols === 4 ? 390 : 1280 } = {}) {
+  const h = makeHome({ width });
+  h.Home._layouts = cols === 4 ? { 4: layout, 5: [] } : { 5: layout, 4: [] };
   h.Home._layoutFetchedAt = Date.now();
   h.Home._layoutCache = layout;
   const dom = makeGridDom(layout);
@@ -724,6 +865,496 @@ test('cellFromPoint reads the overlay’s own cells, never grid arithmetic', () 
   assert.equal(Home._cellFromPoint(10, 10), null);
   sandbox.document.elementFromPoint = () => null;
   assert.equal(Home._cellFromPoint(10, 10), null);
+});
+
+// ── The target cell: the TILE's centroid, not the finger ──────────────
+//
+// The ghost tracks the finger from wherever the tile was grabbed, so the
+// pointer sits a grab-offset away from the tile's own box. Resolving the
+// target from the pointer put the tile's TOP-LEFT under the finger: grab a
+// 2x2 widget by its bottom-right and the highlight appeared two cells right
+// and two rows down from the block being held, and the drop landed there.
+// These pin the centroid rule that replaced it.
+
+// Point the sandbox's elementFromPoint at the fake overlay: a point resolves
+// to the cell containing it, or to nothing outside the canvas — the same
+// gate the real overlay provides through its own cell elements.
+function hitTestCells(h, cols = 5) {
+  h.sandbox.document.elementFromPoint = (x, y) => {
+    const col = Math.floor(x / CELL_W);
+    // Not `Math.floor(y / CELL_H)`: with a fit row on the canvas the rows are
+    // not one pitch apart, so the boundary walk in rowAt IS the hit test.
+    const row = rowAt(y);
+    const cell = (col >= 0 && col < cols && row >= 0 && row < 8)
+      ? h.dom.cells.get(`${col},${row}`) : null;
+    return { closest: (sel) => (sel === '[data-cell]' && cell ? cell : null) };
+  };
+}
+
+// The kit's third argument: the dragged tile's live viewport geometry. `grab`
+// is where inside the tile the finger is holding it — the whole point being
+// that it must not change the answer.
+function ghostInfo(el, { left, top, w, h: rows, grabX = 0, grabY = 0 }) {
+  const width = w * CELL_W;
+  const height = rows * CELL_H;
+  return {
+    item: el,
+    rect: { left, top, width, height },
+    centerX: left + width / 2,
+    centerY: top + height / 2,
+    pointerX: left + grabX * width,
+    pointerY: top + grabY * height,
+  };
+}
+
+// The recognizer's own options, so these exercise the wired callback rather
+// than the internals.
+function wiredOpts(h) {
+  h.Home._apps = [app('a')];
+  h.Home._wireCards({ querySelectorAll: () => [] }, true, 1);
+  return h.attachCalls[h.attachCalls.length - 1].opts;
+}
+
+test('where the tile was grabbed does not move the target', () => {
+  const layout = [{ type: 'widget', key: 'discover', col: 0, row: 0 }];
+  const h = makePreview(layout);
+  hitTestCells(h);
+  const el = h.dom.nodes.get('widget:discover');
+  // A 2x2 ghost sitting exactly over cells (1,1)-(2,2).
+  const place = { left: CELL_W, top: CELL_H, w: 2, h: 2 };
+
+  for (const [grabX, grabY] of [[0, 0], [0.5, 0.5], [1, 1], [0.9, 0.1]]) {
+    const info = ghostInfo(el, { ...place, grabX, grabY });
+    assert.deepEqual({ ...h.Home._targetCellFor(info.pointerX, info.pointerY, info, 5) },
+      { col: 1, row: 1 }, `grab at ${grabX},${grabY} must not move the block`);
+  }
+});
+
+test('a 2x2 widget grabbed at its bottom-right lands under the TILE, not the finger', () => {
+  const layout = [{ type: 'widget', key: 'discover', col: 0, row: 0 }];
+  const h = makePreview(layout);
+  hitTestCells(h);
+  const el = h.dom.nodes.get('widget:discover');
+  const info = ghostInfo(el, { left: CELL_W, top: CELL_H, w: 2, h: 2, grabX: 1, grabY: 1 });
+
+  // The finger is two cells right and two rows down of the tile's own corner —
+  // which is exactly what the old pointer hit-test answered.
+  assert.deepEqual({ ...h.Home._cellFromPoint(info.pointerX, info.pointerY) }, { col: 3, row: 3 });
+  assert.deepEqual({ ...h.Home._targetCellFor(info.pointerX, info.pointerY, info, 5) },
+    { col: 1, row: 1 });
+});
+
+test('a phone-width widget follows the tile’s row, not the finger’s', () => {
+  // 4 columns: Challenges is full-width and one row tall (#968), so only the
+  // ROW is a real choice — and dropping a row lower than the tile is the whole
+  // bug report. The finger holds the tile's bottom edge, which is inside the
+  // row BELOW the one the tile is sitting in.
+  const layout = [{ type: 'widget', key: 'challenges', col: 0, row: 1 }];
+  const h = makePreview(layout, { cols: 4, width: 390 });
+  hitTestCells(h, 4);
+  const el = h.dom.nodes.get('widget:challenges');
+  const info = ghostInfo(el, { left: 0, top: CELL_H, w: 4, h: 1, grabX: 0.5, grabY: 1 });
+
+  assert.equal(h.Home._cellFromPoint(info.pointerX, info.pointerY).row, 2,
+    'the finger is in the tile’s lower row');
+  assert.deepEqual({ ...h.Home._targetCellFor(info.pointerX, info.pointerY, info, 4) },
+    { col: 0, row: 1 }, 'the block stays where the tile is');
+});
+
+// ── The row template (#968, #975) ─────────────────────────────────────
+//
+// The tracks Home.render writes onto #app-list. Everything about the model is
+// unchanged — this is purely how many pixels one row is given.
+
+// A stand-in for #app-list, which makeHome's document does not have (every
+// other test here drives the geometry directly). Permissive on purpose: the
+// subject is `style.gridTemplateRows`, not the rest of the render.
+function installListEl(h) {
+  const el = {
+    dataset: {}, style: {}, innerHTML: '',
+    classList: { add: () => {}, remove: () => {}, toggle: () => {}, contains: () => false },
+    querySelector: () => null,
+    querySelectorAll: () => [],
+    appendChild: () => {},
+    removeChild: () => {},
+    getBoundingClientRect: () => ({ left: 0, top: 0, width: 390, height: 800 }),
+  };
+  h.sandbox.document.getElementById = (id) => (id === 'app-list' ? el : null);
+  return el;
+}
+
+test('the phone template fits the challenges row and leaves the rest alone', () => {
+  const { Home } = makeHome({ width: 390 });
+  const layout = [
+    { type: 'widget', key: 'challenges', col: 0, row: 0 },
+    { type: 'app', slug: 'a', col: 0, row: 1 },
+    { type: 'app', slug: 'b', col: 1, row: 1 },
+  ];
+  const tracks = Home.rowTemplate(layout, 4).split(' ');
+  assert.equal(tracks.length, 2, 'one entry per OCCUPIED row, and no more');
+  assert.match(tracks[0], /^minmax\(4\.25rem,auto\)$|^minmax\(4\.25rem, auto\)$/);
+  assert.equal(tracks[1], 'var(--home-cell-h)', 'the app row keeps its cell');
+});
+
+test('the template stops at the last occupied row, not at the canvas', () => {
+  // Eight entries would make the rows EXPLICIT, and an explicit grid exists
+  // whether or not anything is in it: a three-app home screen would grow a
+  // ~950px tail of empty rows.
+  const { Home } = makeHome({ width: 390 });
+  const layout = [
+    { type: 'widget', key: 'challenges', col: 0, row: 0 },
+    { type: 'app', slug: 'a', col: 0, row: 2 },
+  ];
+  assert.equal(Home.rowTemplate(layout, 4).split(' ').length, 3);
+});
+
+test('no template on desktop or for a canvas with no short row at all', () => {
+  const { Home } = makeHome({ width: 390 });
+  const withWidget = [{ type: 'widget', key: 'challenges', col: 0, row: 0 }];
+  assert.equal(Home.rowTemplate(withWidget, 5), '', 'five columns is untouched');
+  assert.equal(Home.rowTemplate([{ type: 'app', slug: 'a', col: 0, row: 0 }], 4), '',
+    'one full row: nothing to fit, nothing blank, so no template at all');
+  assert.equal(Home.rowTemplate([], 4), '');
+  // A blank row at 5 columns is not short either — the whole rule is phone-only.
+  const gapped = [{ type: 'app', slug: 'a', col: 0, row: 0 },
+    { type: 'app', slug: 'b', col: 0, row: 2 }];
+  assert.equal(Home.rowTemplate(gapped, 5), '');
+});
+
+test('an empty row gets the half-cell track (#975)', () => {
+  const { Home } = makeHome({ width: 390 });
+  const layout = [
+    { type: 'widget', key: 'challenges', col: 0, row: 0 },
+    { type: 'app', slug: 'a', col: 0, row: 1 },
+    { type: 'app', slug: 'b', col: 0, row: 3 },
+  ];
+  assert.deepEqual(Home.rowTemplate(layout, 4).split(' '), [
+    'minmax(4.25rem,auto)',   // the fit widget's own row
+    'var(--home-cell-h)',     // an app tile keeps its whole cell
+    'var(--home-blank-row-h)', // row 2 holds nothing
+    'var(--home-cell-h)',
+  ]);
+});
+
+test('a blank row alone produces a template where there used to be none', () => {
+  // The one behaviour reversal: before #975 a phone layout with no Challenges
+  // widget got no inline template at all, so its gaps were full cells.
+  const { Home } = makeHome({ width: 390 });
+  const layout = [{ type: 'app', slug: 'a', col: 0, row: 0 },
+    { type: 'app', slug: 'b', col: 0, row: 2 }];
+  assert.equal(Home.rowTemplate(layout, 4),
+    'var(--home-cell-h) var(--home-blank-row-h) var(--home-cell-h)');
+});
+
+test('trailing empty rows are not tracks, so they cannot be shrunk', () => {
+  // The grid ends at the last placed item; declaring the whole eight-row canvas
+  // would pad a small home screen out with a tail of empty tracks.
+  const { Home } = makeHome({ width: 390 });
+  const layout = [{ type: 'app', slug: 'a', col: 0, row: 0 },
+    { type: 'app', slug: 'b', col: 0, row: 1 }];
+  assert.equal(Home.rowTemplate(layout, 4), '', 'nothing between them, nothing after');
+  const gapped = [{ type: 'app', slug: 'a', col: 0, row: 0 },
+    { type: 'app', slug: 'b', col: 0, row: 2 }];
+  assert.equal(Home.rowTemplate(gapped, 4).split(' ').length, 3,
+    'three entries — rows 3..7 stay implicit');
+});
+
+test('the default phone arrangement halves both of its gaps', () => {
+  // The shape most accounts actually see (Challenges, one app row, two empty
+  // rows, Discover, Create app) — the ~116px this issue is about.
+  const { Home } = makeHome({ width: 390 });
+  const layout = [
+    { type: 'widget', key: 'challenges', col: 0, row: 0 },
+    { type: 'app', slug: 'a', col: 0, row: 1 },
+    { type: 'widget', key: 'discover', col: 0, row: 4 },
+    { type: 'widget', key: 'create', col: 0, row: 5 },
+  ];
+  const tracks = Home.rowTemplate(layout, 4).split(' ');
+  assert.equal(tracks.length, 6);
+  assert.deepEqual(tracks.slice(2, 4),
+    ['var(--home-blank-row-h)', 'var(--home-blank-row-h)']);
+  assert.deepEqual(tracks.slice(4), ['var(--home-cell-h)', 'var(--home-cell-h)'],
+    'Discover and Create app keep their cells');
+});
+
+test('every track stays a single space-free token', () => {
+  // The overlay's mirror and these tests split the template on whitespace, so
+  // a track containing a space (an inline `calc(a / 2)`, say) would be read as
+  // two rows. That is why the half height is a CSS variable.
+  const { Home } = makeHome({ width: 390 });
+  const layout = [
+    { type: 'widget', key: 'challenges', col: 0, row: 0 },
+    { type: 'app', slug: 'a', col: 0, row: 2 },
+  ];
+  const template = Home.rowTemplate(layout, 4);
+  assert.equal(template.split(' ').length, 3);
+  for (const track of template.split(' ')) assert.doesNotMatch(track, /\s/);
+});
+
+test('the half-cell token is declared and derived from the cell', () => {
+  // Derived, so 116px phone cell → 58px empty row with no second literal to
+  // drift. rowTemplate emits the name; app.css has to define it.
+  const CSS = read('public/css/app.css');
+  assert.match(CSS, /--home-blank-row-h:\s*calc\(var\(--home-cell-h\)\s*\/\s*2\)/);
+});
+
+test('render writes the template at 4 columns and clears it otherwise', () => {
+  const h = makeHome({ width: 390 });
+  const { Home } = h;
+  const listEl = installListEl(h);
+  Home._apps = [app('a')];
+  Home._layouts = {
+    4: [{ type: 'widget', key: 'challenges', col: 0, row: 0 },
+      { type: 'app', slug: 'a', col: 0, row: 1 }],
+    5: [],
+  };
+  Home._layoutFetchedAt = Date.now();
+  Home.render();
+  assert.match(listEl.style.gridTemplateRows, /minmax\(4\.25rem,\s*auto\) var\(--home-cell-h\)/);
+
+  // The search view is a flat list with no placement: a stale template would
+  // give its "N results" header a fit row's height.
+  Home._query = 'a';
+  Home.render();
+  assert.equal(listEl.style.gridTemplateRows, '');
+});
+
+// ── The overlay mirrors the tracks (#968, #975) ───────────────────────
+
+test('the overlay copies the grid’s used row sizes and pads to the canvas', () => {
+  const h = makeHome({ width: 390 });
+  const { Home, sandbox } = h;
+  const listEl = installListEl(h);
+  sandbox.getComputedStyle = () => ({ gridTemplateRows: '116px 67.5px 116px' });
+  assert.equal(Home._overlayRowTemplate(listEl),
+    ['116px', '67.5px', '116px', ...Array(5).fill('var(--home-cell-h)')].join(' '),
+    'the real rows, then the cell token for the rest of the eight-row canvas');
+});
+
+test('a half-height blank row is mirrored too, and the padding stays full', () => {
+  // The used value of var(--home-blank-row-h) is plain pixels by the time
+  // getComputedStyle reports it, so the mirror needs no knowledge of the token.
+  // The rows PAST the template are empty as well but keep the full cell: they
+  // are below the content, so they cost the page nothing and a big drop target
+  // is worth more there.
+  const h = makeHome({ width: 390 });
+  const { Home, sandbox } = h;
+  const listEl = installListEl(h);
+  sandbox.getComputedStyle = () => ({ gridTemplateRows: '116px 58px 116px' });
+  assert.equal(Home._overlayRowTemplate(listEl),
+    ['116px', '58px', '116px', ...Array(5).fill('var(--home-cell-h)')].join(' '));
+});
+
+test('a grid with no template leaves the overlay’s own row sizing alone', () => {
+  // Desktop and the search view: `none` is what getComputedStyle reports for a
+  // grid whose rows are all implicit, and the overlay must fall back to its
+  // stylesheet grid-auto-rows rather than writing "none" over it.
+  const h = makeHome();
+  const { Home, sandbox } = h;
+  const listEl = installListEl(h);
+  sandbox.getComputedStyle = () => ({ gridTemplateRows: 'none' });
+  assert.equal(Home._overlayRowTemplate(listEl), '');
+  sandbox.getComputedStyle = () => ({ gridTemplateRows: '' });
+  assert.equal(Home._overlayRowTemplate(listEl), '');
+});
+
+// ── Non-uniform rows (#968) ───────────────────────────────────────────
+//
+// A phone row a fit widget owns is as tall as the widget draws, so the canvas
+// no longer has one row pitch. _targetCellFor used to derive the row by
+// dividing by the 0→1 pitch, which stops describing row 5 the moment row 1 is
+// short; it measures the rows now. These pin that it lands on the right one —
+// the uniform cases above go through the same code path, so they are the other
+// half of this guard.
+//
+// The table: row 1 is a ~68px fit row (an empty Challenges widget), the rest
+// are full 120px cells. Tops: 0, 120, 188, 308, 428…
+const FIT_TABLE = [CELL_H, 68, CELL_H, CELL_H, CELL_H, CELL_H, CELL_H, CELL_H];
+
+test('a tile centred over a SHORT row lands in it, not one derived from pitch', () => {
+  setRowHeights(FIT_TABLE);
+  const layout = [{ type: 'app', slug: 'a', col: 0, row: 4 }];
+  const h = makePreview(layout, { cols: 4, width: 390 });
+  hitTestCells(h, 4);
+  const el = h.dom.nodes.get('app:a');
+  // The ghost sits squarely over row 1 — top 120, height 68, so centre 154.
+  const info = ghostInfo(el, { left: 0, top: 120, w: 1, h: 1, grabX: 0.5, grabY: 0.5 });
+  info.rect.height = 68;
+  info.centerY = 154;
+
+  assert.equal(rowAt(info.centerY), 1, 'the centre really is in the short row');
+  assert.deepEqual({ ...h.Home._targetCellFor(info.pointerX, info.pointerY, info, 4) },
+    { col: 0, row: 1 });
+});
+
+test('a short row shifts the rows under it, and the target follows', () => {
+  // The regression the pitch arithmetic actually had. Row 1 is 52px short, so
+  // every row below it sits 52px higher than a uniform canvas would put it.
+  // Row 3's real band is 308–428 (centre 368); a ghost centred at 310 is
+  // inside it and nearest its centre, but dividing by the 0→1 pitch gives
+  // round(310/120 - 0.5) = 2 and drops the tile a row short.
+  setRowHeights(FIT_TABLE);
+  const layout = [{ type: 'app', slug: 'a', col: 0, row: 0 }];
+  const h = makePreview(layout, { cols: 4, width: 390 });
+  hitTestCells(h, 4);
+  const el = h.dom.nodes.get('app:a');
+  const info = ghostInfo(el, { left: 0, top: 250, w: 1, h: 1, grabX: 0.5, grabY: 0.5 });
+
+  assert.equal(info.centerY, 310);
+  assert.equal(rowAt(info.centerY), 3, 'the centre really is in row 3');
+  assert.equal(Math.round(info.centerY / CELL_H - 0.5), 2,
+    'and a single pitch would have said row 2 — this is the bug');
+  assert.deepEqual({ ...h.Home._targetCellFor(info.pointerX, info.pointerY, info, 4) },
+    { col: 0, row: 3 });
+});
+
+test('a multi-row footprint spanning a short row centres on the real rectangle', () => {
+  setRowHeights(FIT_TABLE);
+  // A 2x2 widget at five columns, over rows 1-2: that rectangle runs from
+  // 120 to 308, so its centre is 214 — NOT the 240 a uniform grid would give.
+  const layout = [{ type: 'widget', key: 'challenges', col: 0, row: 3 }];
+  const h = makePreview(layout, { cols: 5 });
+  hitTestCells(h);
+  const el = h.dom.nodes.get('widget:challenges');
+  const info = ghostInfo(el, { left: 0, top: 120, w: 2, h: 2 });
+  info.centerY = 214;
+
+  assert.deepEqual({ ...h.Home._targetCellFor(info.pointerX, info.pointerY, info, 5) },
+    { col: 0, row: 1 }, 'the span starts at the short row');
+});
+
+// A blank row is the second source of short rows (#975): 58px against the
+// 116px phone cell. Same measured code path as a fit row, so what this pins is
+// that a HALF-height row is still hittable and still the nearest target when
+// the ghost is over it — a tile can be dropped into a gap exactly as before.
+const BLANK_TABLE = [CELL_H, 58, CELL_H, CELL_H, CELL_H, CELL_H, CELL_H, CELL_H];
+
+test('a tile centred over a half-height blank row lands in that row', () => {
+  setRowHeights(BLANK_TABLE);
+  // Row 1 is the empty one: top 120, height 58, so its band is 120–178.
+  const layout = [{ type: 'app', slug: 'a', col: 0, row: 0 },
+    { type: 'app', slug: 'b', col: 0, row: 2 }];
+  const h = makePreview(layout, { cols: 4, width: 390 });
+  hitTestCells(h, 4);
+  const el = h.dom.nodes.get('app:a');
+  const info = ghostInfo(el, { left: 0, top: 120, w: 1, h: 1, grabX: 0.5, grabY: 0.5 });
+  info.rect.height = CELL_H;
+  info.centerY = 149; // the blank row's own centre
+
+  assert.equal(rowAt(info.centerY), 1, 'the centre really is in the blank row');
+  assert.deepEqual({ ...h.Home._targetCellFor(info.pointerX, info.pointerY, info, 4) },
+    { col: 0, row: 1 }, 'so the gap is a drop target, not a row to skip over');
+});
+
+test('a blank row shifts the rows under it, and the target follows', () => {
+  // The same guard as the fit-row case: row 1 is 58px short, so row 3's real
+  // band is 294–414 (centre 354) while a single 0→1 pitch would put the ghost
+  // a row short.
+  setRowHeights(BLANK_TABLE);
+  const layout = [{ type: 'app', slug: 'a', col: 0, row: 0 }];
+  const h = makePreview(layout, { cols: 4, width: 390 });
+  hitTestCells(h, 4);
+  const el = h.dom.nodes.get('app:a');
+  const info = ghostInfo(el, { left: 0, top: 240, w: 1, h: 1, grabX: 0.5, grabY: 0.5 });
+
+  assert.equal(info.centerY, 300);
+  assert.equal(rowAt(info.centerY), 3, 'the centre really is in row 3');
+  assert.equal(Math.round(info.centerY / CELL_H - 0.5), 2,
+    'and a single pitch would have said row 2');
+  assert.deepEqual({ ...h.Home._targetCellFor(info.pointerX, info.pointerY, info, 4) },
+    { col: 0, row: 3 });
+});
+
+test('_rowNearest falls back to the pitch when a rect reports no height', () => {
+  // A host that mocks only { left, top } must degrade to the uniform
+  // assumption rather than treating every row as zero-tall and collapsing
+  // every answer to row 0.
+  const h = makePreview([{ type: 'app', slug: 'a', col: 0, row: 0 }]);
+  for (const cell of h.dom.cells.values()) {
+    const { left, top } = cell.getBoundingClientRect();
+    cell.getBoundingClientRect = () => ({ left, top });
+  }
+  assert.equal(h.Home._rowNearest(h.dom.overlay, 3 * CELL_H + CELL_H / 2, 1, CELL_H), 3);
+  assert.equal(h.Home._rowNearest(h.dom.overlay, CELL_H / 2, 1, CELL_H), 0);
+});
+
+test('a tile snaps once it is more than halfway into the next column', () => {
+  const layout = [{ type: 'app', slug: 'a', col: 0, row: 0 }];
+  const h = makePreview(layout);
+  hitTestCells(h);
+  const el = h.dom.nodes.get('app:a');
+  const at = (left) => h.Home._targetCellFor(0, 0,
+    ghostInfo(el, { left, top: 0, w: 1, h: 1 }), 5).col;
+
+  assert.equal(at(CELL_W), 1, 'aligned with column 1');
+  assert.equal(at(CELL_W + 40), 1, 'not yet halfway');
+  assert.equal(at(CELL_W + 60), 2, 'past halfway — snaps on');
+});
+
+test('the target is clamped to the canvas, so the token IS the landing cell', () => {
+  const layout = [{ type: 'widget', key: 'discover', col: 2, row: 2 }];
+  const h = makePreview(layout);
+  hitTestCells(h);
+  const el = h.dom.nodes.get('widget:discover');
+
+  // A 2x2 tile centred in the very first cell wants a top-left of (-1,-1).
+  const corner = ghostInfo(el, { left: -CELL_W / 2, top: -CELL_H / 2, w: 2, h: 2 });
+  assert.deepEqual({ ...h.Home._targetCellFor(0, 0, corner, 5) }, { col: 0, row: 0 });
+
+  // ...and one pushed at the last column is nudged in to where it fits, which
+  // is the same cell _rectForCell measures, so the glide can't disagree.
+  const edge = ghostInfo(el, { left: 3.9 * CELL_W, top: CELL_H, w: 2, h: 2 });
+  const cell = h.Home._targetCellFor(0, 0, edge, 5);
+  assert.deepEqual({ ...cell }, { col: 3, row: 1 });
+  assert.deepEqual({ ...h.Home._rectForCell(el, cell, 5) },
+    { left: 3 * CELL_W, top: 1 * CELL_H });
+});
+
+test('a tile whose CENTRE leaves the canvas has no target, finger or not', () => {
+  const layout = [{ type: 'app', slug: 'a', col: 0, row: 0 }];
+  const h = makePreview(layout);
+  hitTestCells(h);
+  const el = h.dom.nodes.get('app:a');
+  // Dragged up off the grid: the finger is still over a cell (it is holding
+  // the tile's bottom edge), the tile is not.
+  const info = ghostInfo(el, { left: 0, top: -0.75 * CELL_H, w: 1, h: 1, grabY: 1 });
+  assert.deepEqual({ ...h.Home._cellFromPoint(info.pointerX, info.pointerY) }, { col: 0, row: 0 });
+  assert.equal(h.Home._targetCellFor(info.pointerX, info.pointerY, info, 5), null);
+});
+
+test('no tile geometry (an older kit) falls back to the pointer hit-test', () => {
+  const layout = [{ type: 'app', slug: 'a', col: 0, row: 0 }];
+  const h = makePreview(layout);
+  hitTestCells(h);
+  const opts = wiredOpts(h);
+  h.Home._overlayEl = h.dom.overlay; // _wireCards doesn't touch it; be explicit
+
+  assert.deepEqual({ ...opts.cellFromPoint(250, 250) }, { col: 2, row: 2 },
+    'degrades to today’s behaviour rather than breaking the drag');
+  assert.deepEqual({ ...opts.cellFromPoint(250, 250, { item: null }) }, { col: 2, row: 2 });
+});
+
+test('the wired hover tints the block the TILE covers, and the glide agrees', () => {
+  const layout = [
+    { type: 'widget', key: 'discover', col: 0, row: 0 },
+    { type: 'app', slug: 'a', col: 4, row: 0 },
+  ];
+  const h = makePreview(layout);
+  hitTestCells(h);
+  const opts = wiredOpts(h);
+  h.Home._overlayEl = h.dom.overlay;
+  const el = h.dom.nodes.get('widget:discover');
+
+  // The tile is sitting over cells (2,1)-(3,2), held by its top-left corner.
+  const info = ghostInfo(el, { left: 2 * CELL_W, top: CELL_H, w: 2, h: 2 });
+  const cell = opts.cellFromPoint(info.pointerX, info.pointerY, info);
+  assert.deepEqual({ ...cell }, { col: 2, row: 1 });
+
+  assert.equal(opts.canPlace(el, cell), true);
+  opts.onHover(el, cell, true);
+  assert.deepEqual(h.tinted().sort(), ['2,1', '2,2', '3,1', '3,2'],
+    'exactly the block under the tile');
+  assert.deepEqual({ ...opts.rectForCell(el, cell) }, { left: 2 * CELL_W, top: CELL_H });
 });
 
 // ── Where the release glide lands ──────────────────────────────────────
@@ -998,7 +1629,8 @@ test('each width keeps its OWN arrangement across a resize', () => {
     '4': [{ type: 'app', slug: 'a', col: 3, row: 5 }, { type: 'app', slug: 'b', col: 0, row: 0 },
       { type: 'widget', key: 'challenges', col: 0, row: 1 },
       { type: 'widget', key: 'discover', col: 0, row: 3 },
-      { type: 'widget', key: 'create', col: 1, row: 0 }],
+      // Full-width at four columns, so column 0 and a row of its own.
+      { type: 'widget', key: 'create', col: 0, row: 6 }],
     '5': [{ type: 'app', slug: 'a', col: 0, row: 0 }, { type: 'app', slug: 'b', col: 4, row: 4 },
       { type: 'widget', key: 'challenges', col: 1, row: 0 },
       { type: 'widget', key: 'discover', col: 3, row: 0 },
@@ -1079,10 +1711,17 @@ test('the row-height token switches at the SAME 640px boundary', () => {
   assert.match(CSS, /--home-cell-h: 7\.75rem;/, 'the desktop row height is a token');
   // The phone override and the overlay's phone gap share one block, keyed
   // to the same boundary (639.98 is the standard non-overlapping spelling
-  // of "below 640").
-  assert.match(CSS, /@media \(max-width: 639\.98px\) \{[\s\S]{0,400}--home-cell-h: 7\.25rem;/,
+  // of "below 640"). Sliced to that block rather than matched within a
+  // character window of its opening brace: the window made the assertion a
+  // function of how much PROSE the block carries, so a comment growing by a
+  // line failed a test about geometry.
+  const at = CSS.indexOf('@media (max-width: 639.98px)');
+  assert.ok(at > -1, 'the phone block exists');
+  const end = CSS.indexOf('@media (min-width: 640px)', at);
+  const phoneBlock = CSS.slice(at, end > -1 ? end : CSS.length);
+  assert.match(phoneBlock, /--home-cell-h: 7\.25rem;/,
     'the row height flips at 640px, the same boundary as grid-cols-4 sm:grid-cols-5');
-  assert.match(CSS, /@media \(max-width: 639\.98px\) \{[\s\S]{0,600}\.home-grid-overlay \{ gap: 0\.375rem; \}/,
+  assert.match(phoneBlock, /\.home-grid-overlay \{ gap: 0\.375rem; \}/,
     'and the drag overlay flips with it, so its cells stay aligned to the tiles');
   assert.equal(HomeLayoutBreakpoint(), 640,
     'and the JS agrees, or it lays out against a count the CSS is not rendering');
@@ -1146,7 +1785,7 @@ test('the demo layout survives repair for a viewer with no apps of their own', (
       { type: 'app', slug: 'staging-demo-image-icon', col: 3, row: 0 },
       { type: 'widget', key: 'discover', col: 0, row: 1 },
       { type: 'widget', key: 'challenges', col: 0, row: 4 },
-      { type: 'widget', key: 'create', col: 3, row: 6 },
+      { type: 'widget', key: 'create', col: 0, row: 6 },
     ],
     5: [],
   };

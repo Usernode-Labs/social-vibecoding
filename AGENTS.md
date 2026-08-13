@@ -1,23 +1,172 @@
 # Coding-agent project guidance
 
-## Shell CSS is a committed build artifact — rebuild it
+## `public/index.html` is a GENERATED artifact — edit `frontend/`, never commit outputs
+
+- The shell's markup is React now. **Do not edit `public/index.html`** — it is
+  built from `frontend/` and any hand edit is overwritten by the next build.
+  The sources are:
+  - `frontend/src/Shell.tsx` — the whole `<body>`: a static tree that composes
+    the converted screens' island components (see the statefulness rule
+    below). It holds no state itself.
+  - `frontend/src/head.html` — the `<head>`, carried over verbatim.
+  - `frontend/@/components/ui/` — shadcn primitives, restyled to the
+    platform's existing `zinc`/`violet` palette (`cssVariables: false`).
+- **Never add or commit `public/index.html` or
+  `public/shell/assets/shell.js`.** Both are gitignored and rebuilt from the
+  lockfile-pinned frontend sources by every Docker image. For local browser
+  work run `npm run ensure:shell` (or `npm run build:shell` after installing
+  `frontend/`); `npm test`, `npm start`, and `npm run dev` ensure the ignored
+  outputs they need automatically. `tests/shell-build.test.js` pins that
+  lifecycle instead of comparing a committed fixture.
+- `npm run ensure:shell` generates the shell and then its CSS in the required
+  order. If invoking the low-level commands directly, **run `build:shell`
+  FIRST, then `build:css`.**
+  `public/index.html` is a Tailwind content source *and* a shell-build output,
+  so compiling the stylesheet first scans the previous document. The Docker
+  image build enforces the same ordering: its shell builder prerenders the
+  current `index.html`, then the CSS builder scans that generated document.
+  There is no loop — `tailwind.css` is not a shell input.
+- **`Shell.tsx` is now hand-maintained; resolve conflicts in it directly.** The
+  one-time generators that derived it from the hand-written document
+  (`html-to-jsx.cjs`, `apply-step1-edits.cjs`) and the pre-migration fixture
+  they read are gone — step 2 changes the markup on purpose, so re-deriving it
+  from main would throw the conversion away. Merge `Shell.tsx` like any other
+  source file.
+- Two constraints in `frontend/src/Shell.tsx` are load-bearing, and its header
+  comment explains each: it **renders the legacy `<script>` tags** in their
+  original order (`app.js` must stay last), and **converted markup is
+  like-for-like** — same ids, class strings, `hidden` semantics and `data-*`
+  attributes as the hand-written shell, because `public/js/**` looks those up
+  by `getElementById` and `dapp.json`'s 315 declared tests select on deep
+  chains of them. The structural baseline is
+  `tests/baselines/shell-markup.json` (ids, `data-*` names, script order,
+  stylesheet order), enforced by `tests/shell-id-inventory.test.js`,
+  `tests/dapp-selectors-resolve.test.js` and
+  `tests/shell-script-order.test.js`. **Never refresh the baseline to go
+  green** — record each deliberate change in that chunk's commit in the
+  `RETIRED_IDS`/`ADDED_IDS` and `RETIRED_SCRIPTS`/`ADDED_SCRIPTS` maps, with a
+  reason. `scripts/derive-shell-baseline.js` exists for a reviewed wholesale
+  refresh only.
+- **A region may become stateful only when its entire subtree is React-owned**
+  — no `public/js/**` module may write into any node inside it. The shell is a
+  static tree containing stateful islands; React reconciling over DOM that a
+  legacy module also mutates is the failure this rule prevents. Two corollaries:
+  an island's *initial* render must emit exactly the empty/hidden markup the
+  hand-written shell shipped (data loads in effects, never in initial render —
+  otherwise hydration mismatches `console.error`, which fails proposal checks),
+  and screen visibility must be published through
+  `frontend/src/lib/visibility-store.ts` rather than by toggling `.hidden` from
+  outside React.
+- **The nine dialogs present themselves through
+  `frontend/src/lib/static-modal.ts` — nothing outside React lifts their
+  cards.** That seam used to be `PlatformUI.adoptStaticModal`, which watched
+  each root in `STATIC_MODAL_IDS` and, when `hidden` came off, lifted the card
+  element out of the root — leaving a comment placeholder — into the native
+  kit's `presentModal` shell. Two owners wrote to those nodes, so the dialogs
+  had to stay markup-only. #1078 chunk I moved the lift inside React
+  (`useStaticModal`, driven by `features/dialogs/use-dialog.ts`) and retired the
+  `public/js/**` copy, which is what made all nine stateful. **Drive a dialog
+  only through `useDialog`** — it owns `hidden`, the kit hand-off, the
+  backdrop-dismiss rule and the ghost-click guard, and it publishes the
+  controller on `window.UsernodeReact.dialogs.<name>` for the legacy callers.
+  Two things it does not relax: the root's `className` is still rendered once,
+  as a constant, because the kit writes `platform-modal-adopted` to that node;
+  and anything a controller module fills by `innerHTML` (the members roster,
+  the secrets rows, the feedback status line) stays that module's host. The
+  same applies to any element the kit or `app.css` writes classes to at runtime
+  — use the `useHiddenClass` / `useClassToggle` refs in
+  `frontend/src/lib/legacy-dom.ts`, never a rendered `className`.
+- Adding or removing a `public/js/**` script means updating `SHELL_ASSETS` in
+  `public/sw.js` and the count in `tests/shell-script-order.test.js` too.
+- **Moving a `public/js/**` module into the bundle is a move, not a rewrite.**
+  When a chunk converts the markup a legacy module owns, `git mv` the module to
+  `frontend/src/features/<area>/`, keep its `window.X = X` publication (its
+  remaining legacy callers are untouched), drop its `DOMContentLoaded`
+  bootstrap in favour of an `init()` call from the island's
+  `useIsomorphicLayoutEffect`, and guard the publication with
+  `if (typeof window !== 'undefined')` — the SSG prerender pass evaluates the
+  island's whole module graph in Node. Re-point every test that reads the old
+  path **in the same commit that deletes it**, and record the retirement in
+  `RETIRED_SCRIPTS` and `SHELL_ASSETS`.
+- Step 1 of the React + shadcn migration was a scaffolding-only chassis swap
+  with zero visual change. **Step 2 converts screens to real components one
+  chunk at a time, strictly like-for-like:** component boundaries, props and
+  state are free; rendered output is not. No restyling, no
+  information-architecture changes, no drive-by fixes.
+
+### Step 2 closeout (#1040)
+
+- **All eight chunks A–H landed with the like-for-like contract intact.** All
+  32 regions render from components, and the structural baseline came through
+  the whole run without a single loss: `tests/baselines/shell-markup.json`
+  still carries its original 444 ids and **`RETIRED_IDS` is still empty**
+  (`ADDED_IDS` holds the deliberate additions, each with a reason). The
+  acceptance criterion was zero visual change with that baseline intact, and
+  it was met exactly.
+- Three things landed differently from the original plan — read them before
+  taking a step-3 instruction from it literally:
+  - **No Radix.** `frontend/package.json` depends only on
+    `class-variance-authority`, `clsx`, `react`/`react-dom` and
+    `tailwind-merge`; all nine primitives under `frontend/@/components/ui/`
+    are hand-rolled, each with a "── Why this is NOT @radix-ui/react-\* ──"
+    header. **The plan's "add `@radix-ui/*` in step 3" instruction is moot as
+    written** — there is no Radix to build on, and the modal seam below is
+    what a real `Dialog` primitive would have to be reconciled with.
+  - **"Retirement" mostly meant relocation, not deletion.** Only `offline.js`,
+    `settings.js`, `dev-chat.js` and (in chunk I) `app-secrets.js` /
+    `screenshot-select.js` genuinely left the page; the rest of the relocated
+    lines are the same imperative code, moved into the bundle and still
+    publishing their `window.X` globals. "Converted to React" in the chunk
+    issues means "wrapped in a component", not "rewritten".
+  - **The dialogs are done.** They shipped markup-only in chunk A because
+    `PlatformUI.adoptStaticModal` lifted each card out of its root. Chunk I
+    brought that lift inside React (`frontend/src/lib/static-modal.ts` +
+    `features/dialogs/use-dialog.ts`), which is what let all nine become
+    stateful and let the two scripts above retire — see the dialogs bullet
+    above for the rules that still apply.
+- **The deep `innerHTML` hosts are step-3 work and are deliberately still
+  legacy.** Each is a container a `public/js/**` or relocated module writes
+  HTML into, so the region around it may not become stateful (the rule above):
+  `#app-content`, `#dc-view`, `#dev-body`, `#app-list`, `#home-panels`,
+  `#settings-nav-desktop`, `#settings-mobile-menu-host`,
+  `#admin-section-content`, the three leaderboard panes, `#profile-root`, and
+  the notification and work-drawer list containers. Convert them one screen at
+  a time, not as a sweep.
+
+## Shell CSS is generated by the image build — do not commit it
 
 - The platform shell's Tailwind is **compiled**, not loaded from a CDN:
   `tailwind.config.js` + `styles/tailwind-input.css` build to
-  `public/css/tailwind.css` via `npm run build:css`, and that output is
-  committed (the runtime image installs with `npm ci --production`, so there
-  is no tailwindcss and no build step at deploy time).
-- **After editing `public/index.html`, anything under `public/js/`, the
-  usernode-native demo page, or the Tailwind config — run `npm run build:css`
-  and commit the result in the same commit.** A new utility class that isn't
-  in the compiled stylesheet simply has no styles.
-- `tests/tailwind-build.test.js` stamps and verifies this: the suite fails
-  with "public/css/tailwind.css is STALE" when the artifact predates the
-  sources, so don't hand-edit the generated CSS.
+  `public/css/tailwind.css` via `npm run build:css`. The Dockerfile runs that
+  command in a disposable builder stage on every production/staging image and
+  copies only the result into the production-only runtime stage.
+- `public/css/tailwind.css` is gitignored and excluded from the Docker build
+  context. **Never add or commit it.** For local browser work, run
+  `npm run build:css` (or `npm run watch:css`); the ignored output is only a
+  convenience for that checkout.
+- The compiler scans `public/index.html`, `public/js/**`, the usernode-native
+  demo, and `frontend/**`. The frontend tree is scanned because shadcn variant
+  tables hold classes that appear in no static markup.
+- Tailwind stays pinned at **v3.4.17**. v4 changes utility semantics (default
+  border colour, ring width, opacity utilities, the `space-*` selector) and
+  would silently restyle the whole shell — it is a deliberate later decision
+  with its own before/after evidence, not a free upgrade.
+- `tests/tailwind-build.test.js` performs a fresh compile into a temporary
+  directory, validates representative utilities and palette semantics, and
+  pins the Docker builder/copy contract. Its `public/index.html` input is the
+  ignored output materialized by the test preflight, never a committed
+  artifact.
 - The shell loads **no cross-origin assets**. marked, DOMPurify and qrcodejs
   are vendored under `public/vendor/` by `npm run vendor:assets` (provenance
   in `public/vendor/README.md`). Don't add a CDN `<script>`/`<link>` to
-  `public/index.html` — vendor or compile it instead; two tests enforce this.
+  `frontend/src/head.html` — vendor or compile it instead; three tests
+  enforce this.
+- The three stylesheet links must stay in the order `native.css` → `app.css`
+  → `tailwind.css`, with the compiled utilities **last**. `app.css` was
+  written against a cascade where Tailwind wins equal-specificity conflicts;
+  inverting it silently restyled the whole dev screen once (#938). The head
+  also probes this at runtime and `console.error`s when it breaks — which
+  fails proposal checks, since a console error on any route does.
 
 ## Codex promotion-hook readiness
 

@@ -5,7 +5,9 @@ const log = require('../services/logger');
 const llm = require('../services/llm');
 const limits = require('../services/limits');
 const github = require('../services/github');
-const { announceIssueCreated } = require('../services/issue-announce');
+const { announceIssueCreated, findAppByRepo } = require('../services/issue-announce');
+const appAccess = require('../services/app-access');
+const { placeBounty } = require('../services/bounties');
 const { getPool } = require('../db/pool');
 const { sniffImageType } = require('../services/attachments');
 const { feedbackTitleLimiter, issueScreenshotLimiter } = require('../middleware/rate-limits');
@@ -60,6 +62,40 @@ function buildPageStateEmbed(pageState, truncated) {
   return `\n\n<details>\n<summary>${summary}</summary>\n\n\`\`\`\`json\n${pageState}\n\`\`\`\`\n</details>`;
 }
 
+// #1054: an offline-queued submit says when it was written. The client's
+// outbox (public/js/feedback-queue.js) may hold a message for minutes or
+// days, so "opened 3 minutes ago" on the GitHub issue would be a lie about
+// when the bug was seen — and a maintainer reading a report about a screen
+// that has since changed needs to know that.
+//
+// Client-asserted and therefore never trusted as data: it only ever adds one
+// cosmetic body line, and anything implausible is SILENTLY dropped rather
+// than failing the request. Losing the line costs a nicety; rejecting the
+// request would lose the feedback the queue exists to protect.
+//
+// Pure (exported for tests). Returns the ISO-8601 UTC string to print, or
+// null to print nothing:
+//   * not a short string / unparseable    → null (garbage)
+//   * in the future                       → null (clock skew ahead)
+//   * less than a minute old              → null (a live submit; the issue's
+//                                           own timestamp already says this)
+//   * older than 90 days                  → null (a clock stuck in 1970, or a
+//                                           queue nobody can still act on)
+const MAX_QUEUED_AT_CHARS = 40;
+const MIN_QUEUED_AT_AGE_MS = 60 * 1000;
+const MAX_QUEUED_AT_AGE_MS = 90 * 24 * 60 * 60 * 1000;
+
+function normalizeQueuedAt(raw, nowMs) {
+  if (typeof raw !== 'string' || !raw || raw.length > MAX_QUEUED_AT_CHARS) return null;
+  const t = Date.parse(raw);
+  if (!Number.isFinite(t)) return null;
+  const now = Number.isFinite(nowMs) ? nowMs : Date.now();
+  const age = now - t;
+  if (age < MIN_QUEUED_AT_AGE_MS) return null;
+  if (age > MAX_QUEUED_AT_AGE_MS) return null;
+  return new Date(t).toISOString();
+}
+
 // Derive `owner/repo` from a github.com URL. We do this at module
 // load (well, at route-factory load) so a malformed
 // USERNODE_PLATFORM_REPO fails the platform fast at startup rather
@@ -79,6 +115,61 @@ function parseGitHubRepo(url) {
 // #125 announce (cache seed + issue_update broadcast) lives in
 // services/issue-announce.js — shared with the platform-issue draft
 // confirm path in routes/sessions.js.
+
+// #964: attach a kudos bounty to the issue this request just filed.
+//
+// Never throws and never rejects: the GitHub issue already exists by the time
+// this runs, so a bounty problem must cost the user their pledge, never their
+// written feedback. Every failure mode comes back as `{ placed: false, error }`
+// for the modal to show beside the "Thanks! Filed against…" line.
+//
+// Deliberately skips the open-issue re-verification the standalone bounty
+// route performs (routes/issues.js): the platform created this issue
+// microseconds ago, so it is open by construction — asking GitHub again would
+// only add a round-trip and a failure mode.
+//
+// `app` is the resolved target row for app-targeted feedback, or null for
+// platform-targeted feedback (looked up by repo here, exactly as
+// announceIssueCreated does, so the bounty and the issue_update address the
+// same app).
+async function attachBounty(pool, { app, owner, repo, issueNumber, user }) {
+  try {
+    const target = app || await findAppByRepo(pool, owner, repo);
+    if (!target) {
+      return { placed: false, issueNumber, error: "this repository isn't an app on this platform" };
+    }
+    // Bounties are a build-surface action, so they carry the same collab gate
+    // the standalone route applies. Feedback itself has no such gate — a
+    // collab-private app still accepts your issue, it just won't take your
+    // pledge. checkAppAccess throws if the visibility columns are missing,
+    // hence the ACCESS_COLUMNS re-select below/above at both call sites.
+    const allowed = await appAccess.checkAppAccess(pool, target, user, 'collab');
+    if (!allowed) {
+      return { placed: false, issueNumber, error: 'you need collaborator access on this app to place a bounty' };
+    }
+    const result = await placeBounty(pool, { app: target, user, issueNumber });
+    if (!result.ok) {
+      return {
+        placed: false,
+        issueNumber,
+        error: result.code === 'quota'
+          ? 'weekly kudos allowance is spent'
+          : result.error,
+        remaining: result.remaining,
+        limit: result.limit,
+      };
+    }
+    return {
+      placed: true,
+      issueNumber,
+      remaining: result.remaining,
+      limit: result.limit,
+    };
+  } catch (err) {
+    log.warn('feedback', 'Bounty attach failed', { issueNumber, message: err.message });
+    return { placed: false, issueNumber, error: "couldn't place the bounty just now" };
+  }
+}
 
 function feedbackRoutes(config) {
   const router = Router();
@@ -221,6 +312,20 @@ function feedbackRoutes(config) {
       pageStateTruncated = req.body.pageStateTruncated === true;
     }
 
+    // #1054: when an offline-queued message was actually written. Never a
+    // 400 — see normalizeQueuedAt: an unusable value just prints nothing.
+    const queuedAt = normalizeQueuedAt(req.body.queuedAt, Date.now());
+
+    // #964: optional kudos bounty on the issue about to be filed. Validated
+    // up front (like title / screenshotId / pageState) so a malformed flag
+    // fails fast rather than after an issue exists. Strict boolean: a
+    // truthy string would make "false" pledge, which is exactly the kind of
+    // accident that spends someone's allowance without their say-so.
+    if (req.body.bounty !== undefined && typeof req.body.bounty !== 'boolean') {
+      return res.status(400).json({ error: 'bounty must be a boolean' });
+    }
+    const wantsBounty = req.body.bounty === true;
+
     // Normalise the feedback target. Anything other than the explicit
     // 'app' opt-in falls back to platform feedback (today's behaviour).
     const target = req.body.target === 'app' ? 'app' : 'platform';
@@ -236,6 +341,10 @@ function feedbackRoutes(config) {
     let issueOwner = feedbackOwner;
     let issueRepo = feedbackRepo;
     let appContext = null;
+    // The app row a bounty would attach to, carrying appAccess.ACCESS_COLUMNS.
+    // Non-null only for app-targeted feedback that asked for a bounty; the
+    // platform target resolves its app by repo at placement time instead.
+    let bountyApp = null;
     if (target === 'app') {
       if (!appSlug || typeof appSlug !== 'string') {
         return res.status(400).json({ error: 'appSlug is required for app feedback' });
@@ -245,7 +354,15 @@ function feedbackRoutes(config) {
       }
       let appRow;
       try {
-        const { rows } = await pool.query('SELECT id, slug, name, repo_url FROM apps WHERE slug = $1', [appSlug]);
+        // #964: the visibility columns ride along ONLY when a bounty was
+        // asked for — checkAppAccess throws on a row whose access columns
+        // were projected away, and the plain feedback path has no use for
+        // them. `name` / `repo_url` are not in ACCESS_COLUMNS, so both sets
+        // are selected together for that case.
+        const columns = wantsBounty
+          ? `name, repo_url, ${appAccess.ACCESS_COLUMNS}`
+          : 'id, slug, name, repo_url';
+        const { rows } = await pool.query(`SELECT ${columns} FROM apps WHERE slug = $1`, [appSlug]);
         appRow = rows[0];
       } catch (err) {
         log.error('feedback', 'App lookup failed', { message: err.message });
@@ -261,6 +378,10 @@ function feedbackRoutes(config) {
       issueOwner = owner;
       issueRepo = repo;
       appContext = { id: appRow.id, slug: appRow.slug, name: appRow.name };
+      // Keep the full row (access columns included) for the bounty's collab
+      // check; appContext stays the narrow shape announceIssueCreated and
+      // the issue body already expect.
+      bountyApp = wantsBounty ? appRow : null;
     }
 
     // #140: include the admin's actual username so the issues panel can show
@@ -325,6 +446,9 @@ function feedbackRoutes(config) {
       const screenshotSuffix = screenshotId
         ? buildScreenshotEmbed(screenshotId, require('../services/caddy').USERNODE_DOMAIN)
         : '';
+      // #1054: one header line for an offline-queued message, empty for a
+      // live submit (whose filing time IS its writing time).
+      const queuedLine = queuedAt ? `**Saved offline:** ${queuedAt}\n` : '';
       // Stamp the row with the filed issue so the orphan GC skips it.
       // Best-effort: the issue is already on GitHub by the time this
       // runs, so a failure only risks the image 404ing after the 24h
@@ -353,7 +477,10 @@ function feedbackRoutes(config) {
         const pageStateSuffix = pageState
           ? buildPageStateEmbed(pageState, pageStateTruncated)
           : '';
-        const body = `**Source:** ${source}\n**App:** ${appContext.name} (${appContext.slug})\n\n${description.trim()}${screenshotSuffix}${pageStateSuffix}`;
+        // #1054: the "written while offline" line sits with the other header
+        // lines, above the description — it is context for reading the report,
+        // not part of it.
+        const body = `**Source:** ${source}\n**App:** ${appContext.name} (${appContext.slug})\n${queuedLine}\n${description.trim()}${screenshotSuffix}${pageStateSuffix}`;
         let issue;
         try {
           issue = await github.createIssue(issueOwner, issueRepo, { title, body });
@@ -371,7 +498,19 @@ function feedbackRoutes(config) {
         await queueTitleHeal(issueOwner, issueRepo, issue.number);
         await linkScreenshot(issueOwner, issueRepo, issue.number);
         await announceIssueCreated(pool, issueOwner, issueRepo, issue, appContext);
-        return res.json({ url: issue.html_url, title, titleFallback });
+        // #964: the pledge goes last — after the issue exists and after the
+        // announce — and can only ever add a `bounty` field to the response.
+        // The filed issue is never at risk from it.
+        const bounty = wantsBounty
+          ? await attachBounty(pool, {
+            app: bountyApp, owner: issueOwner, repo: issueRepo,
+            issueNumber: issue.number, user: req.user,
+          })
+          : null;
+        return res.json({
+          url: issue.html_url, title, titleFallback,
+          ...(bounty ? { bounty } : {}),
+        });
       }
 
       const ghRes = await fetch(`https://api.github.com/repos/${issueOwner}/${issueRepo}/issues`, {
@@ -386,7 +525,7 @@ function feedbackRoutes(config) {
         // free-form text that could carry live @mentions (#723).
         body: JSON.stringify({
           title: github.safeMention(title),
-          body: github.safeMention(`**Source:** ${source}\n\n${description.trim()}${screenshotSuffix}`),
+          body: github.safeMention(`**Source:** ${source}\n${queuedLine}\n${description.trim()}${screenshotSuffix}`),
           labels: ['usernode'],
         }),
       });
@@ -417,7 +556,20 @@ function feedbackRoutes(config) {
       // too. announceIssueCreated resolves the app row by repo (no-op
       // when none matches).
       await announceIssueCreated(pool, issueOwner, issueRepo, issue, null);
-      res.json({ url: issue.html_url, title, titleFallback });
+      // #964: same placement as the app branch. `app: null` sends
+      // attachBounty to findAppByRepo, which resolves the platform repo to
+      // the self-hosted platform app — the same row announceIssueCreated
+      // just broadcast against, so the pill and the broadcast agree.
+      const bounty = wantsBounty
+        ? await attachBounty(pool, {
+          app: null, owner: issueOwner, repo: issueRepo,
+          issueNumber: issue.number, user: req.user,
+        })
+        : null;
+      res.json({
+        url: issue.html_url, title, titleFallback,
+        ...(bounty ? { bounty } : {}),
+      });
     } catch (err) {
       log.error('feedback', 'Error filing issue', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -436,4 +588,6 @@ module.exports = {
   // #685: pure helpers exported for tests/feedback-page-state.test.js.
   buildPageStateEmbed,
   MAX_PAGE_STATE_CHARS,
+  normalizeQueuedAt,
+  MAX_QUEUED_AT_CHARS,
 };

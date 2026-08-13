@@ -45,7 +45,7 @@ const { PANEL_KEYS, panelRegistryPublic, widgetSize } = require('./home-panels')
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 
 // The canvas. Kept in step with HomeLayout.MAX_COLS / MAX_ROWS in
-// public/js/home-layout.js and with the CHECK constraints on
+// frontend/src/features/home/home-layout.js and with the CHECK constraints on
 // user_home_layout — tests/home-layout-api.test.js pins all three.
 const MAX_COLS = 5;
 const MAX_ROWS = 8;
@@ -195,14 +195,19 @@ function demoLayouts() {
   return {
     // Phone: 4 columns, the two full-width widgets stacked with an app row
     // between them, and the create widget alone in a row of its own.
+    // Discover is ONE row tall at this breakpoint (#949), so the app row and
+    // Challenges are pulled up to sit under it — the holes that remain (the
+    // middles of rows 0 and 2) are the deliberate ones, not a gap left
+    // behind by the resize.
     '4': [
       { type: 'app', slug: 'staging-demo-emoji-icon', col: 0, row: 0 },
       { type: 'app', slug: 'staging-demo-image-icon', col: 3, row: 0 },
       { type: 'widget', key: 'discover', col: 0, row: 1 },
-      { type: 'app', slug: 'staging-demo-chess-arena', col: 0, row: 3 },
-      { type: 'app', slug: 'staging-demo-pixel-racer', col: 3, row: 3 },
-      { type: 'widget', key: 'challenges', col: 0, row: 4 },
-      { type: 'widget', key: 'create', col: 3, row: 6 },
+      { type: 'app', slug: 'staging-demo-chess-arena', col: 0, row: 2 },
+      { type: 'app', slug: 'staging-demo-pixel-racer', col: 3, row: 2 },
+      { type: 'widget', key: 'challenges', col: 0, row: 3 },
+      // 4 wide at this breakpoint, so column 0 is its only legal start.
+      { type: 'widget', key: 'create', col: 0, row: 5 },
     ],
     // Desktop: 5 columns. Chess Arena alone top-left, Pixel Racer alone at
     // the far end of the same row, both widgets side by side under them.
@@ -261,6 +266,18 @@ function homeLayoutRoutes() {
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
+        // Serialize concurrent replaces of the same (user, cols) set. Two
+        // racing PUTs — e.g. several freshly-opened tabs each persisting
+        // the same layout repair on load — otherwise interleave under READ
+        // COMMITTED: the second DELETE cannot see the first's uncommitted
+        // inserts, so its own inserts die on idx_user_home_layout_* and a
+        // last-write-wins write 500s instead of simply taking turns
+        // (session 3193's checks run). Same keyed-lock convention as
+        // mobile-push-registration.js.
+        await client.query(
+          "SELECT pg_advisory_xact_lock(hashtextextended('home-layout:' || $1 || ':' || $2, 0))",
+          [req.user.id, cols]
+        );
         await client.query(
           'DELETE FROM user_home_layout WHERE user_id = $1 AND cols = $2',
           [req.user.id, cols]

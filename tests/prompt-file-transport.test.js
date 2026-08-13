@@ -124,8 +124,19 @@ test('execInWorker writes the prompt file before the detached dispatch and never
   assert.ok(writeIdx < dispatchIdx, 'prompt file is written before the dispatch args are built');
 
   // The detached wrapper removes the consumed prompt file when the turn
-  // ends (after run-cc.sh, so mid-turn reads are unaffected).
-  assert.match(src, /__USERNODE_EXIT__ \$\?" >> "\$TURN_JOURNAL"; '\s*\n\s*\+ 'rm -f "\$PROMPT_FILE"/);
+  // ends, except for the structured missing-thread hand-off: attempt two
+  // (including restart recovery) still needs the exact original prompt.
+  // This decision must finish before the exit marker releases the host to
+  // launch attempt two; otherwise the old wrapper can delete its prompt.
+  assert.match(src, /grep -qE [^\n]*agent_retry_fresh=1/);
+  assert.match(src, /rm -f "\$PROMPT_FILE" 2>\/dev\/null; fi/);
+  const retryDecisionIdx = src.indexOf('if ! grep -qE');
+  const exitMarkerIdx = src.indexOf('__USERNODE_EXIT__ $TURN_EXIT');
+  const promptCleanupIdx = src.indexOf('rm -f "$PROMPT_FILE" 2>/dev/null; fi');
+  assert.ok(retryDecisionIdx !== -1 && retryDecisionIdx < promptCleanupIdx,
+    'the retry marker is inspected before cleanup');
+  assert.ok(promptCleanupIdx < exitMarkerIdx,
+    'all prompt retention work finishes before the host-visible exit marker');
 });
 
 // ── 3b. Source guards — run-cc.sh consumption ───────────────────────────

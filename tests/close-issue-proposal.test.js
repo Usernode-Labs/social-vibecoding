@@ -611,6 +611,141 @@ test('admin-apply: accepts close_issue with force (gates bypassed); non-admin 40
   } finally { restore(); }
 });
 
+// ── #1010: apply-progress broadcasts ─────────────────────────────────────
+//
+// The client renders a "Closing issue #N…" spinner for the window between a
+// deciding vote and the close landing, and drops it when the proposal is
+// decided. Both halves of that depend on WS events arriving at the right
+// TIME, so the ordering below is a contract, not an implementation detail.
+
+test('#1010 apply: the decided broadcast fires as soon as the txn commits, before the GitHub tail', async () => {
+  const proposal = CLOSE_PROPOSAL();
+  const pool = applyPool({ up: 2, down: 0, lockedRow: proposal });
+  const { subject, spies, restore } = loadIssues(pool, {
+    active: 2,
+    gh: { fetchPublicIssues: async () => OPEN_LIST },
+  });
+  try {
+    const r = await subject.maybeApplyCloseIssueProposal(pool, proposal);
+    assert.equal(r.applied, true);
+
+    const closed = spies.issueUpdates.find((u) => u.action === 'closed');
+    assert.ok(closed, 'applied outcome broadcast');
+    assert.equal(closed.issueId, 61);
+    assert.equal(closed.appId, 9);
+    assert.equal(closed.appSlug, 'cool-app');
+
+    // It must land BEFORE the GitHub close — otherwise every open card keeps
+    // rendering the proposal as live for the length of those round-trips.
+    const closedIdx = spies.issueUpdates.indexOf(closed);
+    const syncedIdx = spies.issueUpdates.findIndex((u) => u.action === 'github_synced');
+    assert.ok(syncedIdx > closedIdx, 'github_synced follows the decided broadcast');
+  } finally { restore(); }
+});
+
+test('#1010 apply: the decided broadcast fires even when GitHub is disabled', async () => {
+  const proposal = CLOSE_PROPOSAL();
+  const pool = applyPool({ up: 2, down: 0, lockedRow: proposal });
+  const { subject, spies, restore } = loadIssues(pool, {
+    active: 2,
+    gh: { isEnabled: () => false },
+  });
+  try {
+    const r = await subject.maybeApplyCloseIssueProposal(pool, proposal);
+    assert.equal(r.applied, true);
+    // The old code's only broadcast lived inside the GitHub branch, so this
+    // app's clients were never told and their cards lingered until a reload.
+    assert.ok(spies.issueUpdates.find((u) => u.action === 'closed'),
+      'decided broadcast is not gated on GitHub being wired up');
+    assert.ok(!spies.issueUpdates.find((u) => u.action === 'github_synced'),
+      'no cache-sync event when there is no GitHub to sync with');
+  } finally { restore(); }
+});
+
+test('#1010 apply: an unparsable repo_url still broadcasts the decision', async () => {
+  const proposal = CLOSE_PROPOSAL();
+  const pool = makePool([
+    [/SELECT slug, repo_url FROM apps/, [{ slug: APP.slug, repo_url: 'not-a-github-url' }]],
+    [/vote = 'up'/, [{ cnt: '2' }]],
+    [/vote = 'down'/, [{ cnt: '0' }]],
+    [/SELECT \* FROM issues WHERE id = \$1 FOR UPDATE/, [proposal]],
+    [/UPDATE issues SET status = 'closed', payload = \$1/, []],
+    [/UPDATE issues SET status = 'closed'\s+WHERE app_id/, []],
+    [/UPDATE issue_bounties SET status = 'voided'/, [{ id: 1 }]],
+  ]);
+  const { subject, spies, restore } = loadIssues(pool, { active: 2 });
+  try {
+    const r = await subject.maybeApplyCloseIssueProposal(pool, proposal);
+    assert.equal(r.applied, true);
+    assert.ok(spies.issueUpdates.find((u) => u.action === 'closed'));
+  } finally { restore(); }
+});
+
+test('#1010 vote route: the voted broadcast precedes the apply, and the response shape is unchanged', async () => {
+  const proposal = CLOSE_PROPOSAL();
+  const pool = makePool([
+    [/SELECT i\.\*, a\.slug AS app_slug/, [proposal]],
+    [/SELECT vote FROM issue_votes/, []],
+    [/INSERT INTO issue_votes/, []],
+    [/SELECT slug, repo_url FROM apps/, [{ slug: APP.slug, repo_url: APP.repo_url }]],
+    [/vote = 'up'/, [{ cnt: '2' }]],
+    [/vote = 'down'/, [{ cnt: '0' }]],
+    [/SELECT \* FROM issues WHERE id = \$1 FOR UPDATE/, [proposal]],
+    [/UPDATE issues SET status = 'closed', payload = \$1/, []],
+    [/UPDATE issues SET status = 'closed'\s+WHERE app_id/, []],
+    [/UPDATE issue_bounties SET status = 'voided'/, [{ id: 1 }]],
+    [/SELECT username FROM users/, [{ username: 'maker' }]],
+  ]);
+  const { router, spies, restore } = loadIssues(pool, {
+    active: 2,
+    gh: { fetchPublicIssues: async () => OPEN_LIST },
+  });
+  try {
+    const handler = routeHandler(router, '/api/issues/:id/vote');
+    const res = mockRes();
+    await handler({
+      params: { id: '61' },
+      user: { id: 7, username: 'voter' },
+      body: { vote: 'up' },
+    }, res);
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.body.ok, true);
+    assert.equal(res.body.issueClosed.applied, true, 'apply result still on the response');
+    assert.equal(res.body.secretChanged, null, 'BC alias null for close_issue');
+
+    // The vote event must not be held behind the apply: other clients need
+    // the moved tally (and the derived "applying" state) immediately.
+    const votedIdx = spies.issueUpdates.findIndex((u) => u.action === 'voted');
+    const closedIdx = spies.issueUpdates.findIndex((u) => u.action === 'closed');
+    assert.ok(votedIdx !== -1, 'voted broadcast emitted');
+    assert.ok(closedIdx !== -1, 'decided broadcast emitted');
+    assert.ok(votedIdx < closedIdx, 'voted precedes the apply outcome');
+  } finally { restore(); }
+});
+
+test('#1010 vote route: a toggle-off vote emits only the voted event and no apply', async () => {
+  const proposal = CLOSE_PROPOSAL();
+  const pool = makePool([
+    [/SELECT i\.\*, a\.slug AS app_slug/, [proposal]],
+    [/SELECT vote FROM issue_votes/, [{ vote: 'up' }]],
+    [/DELETE FROM issue_votes/, []],
+  ]);
+  const { router, spies, restore } = loadIssues(pool, { active: 2 });
+  try {
+    const handler = routeHandler(router, '/api/issues/:id/vote');
+    const res = mockRes();
+    await handler({
+      params: { id: '61' },
+      user: { id: 7, username: 'voter' },
+      body: { vote: 'up' },
+    }, res);
+    assert.equal(res.body.toggled, true);
+    assert.deepEqual(spies.issueUpdates.map((u) => u.action), ['voted']);
+    assert.ok(!pool.issued(/FOR UPDATE/), 'no apply attempted on a retraction');
+  } finally { restore(); }
+});
+
 // ── Twin policy ───────────────────────────────────────────────────────────
 
 test('shouldCreateGithubTwin: false for close_issue and secret_change, true otherwise', () => {

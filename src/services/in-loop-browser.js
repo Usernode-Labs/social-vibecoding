@@ -113,8 +113,20 @@ const IN_LOOP_BROWSER_GUIDANCE = `- OPTIONAL in-loop browser (encouraged, NOT re
     free. When you add/change a user-visible screen, add or extend a test for
     it in the same commit, reusing the route(s) you put in the TESTING block's
     \`path:\` lines, and seed any data that route needs (an empty staging DB
-    makes a route fail). Use this in-loop browser to confirm your declared
-    tests pass before you commit — a failing test blocks the merge.`;
+    makes a route fail).
+  - RUN THE DECLARED CHECKS IN-LOOP with \`usernode-run-checks\` (via Bash):
+    with the app booted on \`$INLOOP_PORT\` as above, run
+    \`usernode-run-checks --changed\` to execute exactly the checks you added
+    or changed this branch, with the SAME semantics the platform's capture
+    container uses (console errors, wait-based selector/text assertions).
+    \`--filter <substr>\` narrows by name/path; no flags runs the whole
+    declared suite (fine for small suites, slow for hundreds of checks).
+    This is EXPECTED whenever you touched \`dapp.json\` tests or changed a
+    screen an existing check covers: \`npm test\` does NOT cover these, and a
+    check that fails on staging after your turn ends blocks the merge with
+    no way for you to react. A check that fails in-loop only because the
+    local DB lacks data that REAL staging seeds is worth double-checking
+    against the seed conventions before "fixing".`;
 
 module.exports = {
   INLOOP_PORT,

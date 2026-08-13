@@ -2,6 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { spawnSync } = require('node:child_process');
 const { encrypt } = require('../src/services/secrets');
 const {
   MobilePushWorker,
@@ -21,6 +22,8 @@ function delivery(overrides = {}) {
     notification_user_id: 7,
     kind: 'session_done',
     read_at: null,
+    push_category: 'developer_sessions',
+    push_enabled: true,
     registration_id: 3,
     delivery_environment: 'production',
     delivery_installation_id: '123e4567-e89b-12d3-a456-426614174000',
@@ -34,6 +37,13 @@ function delivery(overrides = {}) {
     permission_status: 'authorized',
     registration_user_id: 7,
     registration_session_expires_at: new Date(Date.now() + 60_000),
+    app_name: 'MyPage',
+    source_username: null,
+    message_content: null,
+    session_title: 'Fix login redirect loop',
+    pr_title: null,
+    branch_name: null,
+    detail: null,
     ...overrides,
   };
 }
@@ -75,19 +85,42 @@ function harness({
   return { worker, calls };
 }
 
-test('eligible delivery sends one generic bound message and marks it sent', async () => {
+test('eligible delivery sends one contextual bound message and marks it sent', async () => {
   const { worker, calls } = harness();
   await worker.processDelivery(JOB);
   assert.equal(calls.sent.length, 1);
   assert.deepEqual(calls.finished, [{ job: JOB, status: 'sent', code: null, availableAt: null }]);
   assert.equal(calls.sent[0].data.notification_id, '42');
   assert.equal(calls.sent[0].data.environment, 'production');
-  assert.equal(calls.sent[0].notification.body, 'You have new activity');
+  assert.deepEqual(calls.sent[0].notification, {
+    title: 'Your build is ready · MyPage',
+    body: '"Fix login redirect loop" finished — review it while it\'s fresh',
+  });
+});
+
+test('a delivery with no context fields still sends with the generic fallback', async () => {
+  const { worker, calls } = harness({
+    row: delivery({
+      kind: 'mention',
+      push_category: 'direct_interactions',
+      app_name: null,
+      source_username: null,
+      message_content: null,
+      session_title: null,
+    }),
+  });
+  await worker.processDelivery(JOB);
+  assert.equal(calls.sent.length, 1);
+  assert.deepEqual(calls.sent[0].notification, {
+    title: 'Usernode', body: 'You have new activity',
+  });
 });
 
 test('pre-send revalidation cancels ineligible recipient and deployment state', async () => {
   for (const [change, reason] of [
     [{ read_at: new Date() }, 'notification_read'],
+    [{ kind: 'future_kind', push_category: null, push_enabled: false }, 'kind_not_allowed'],
+    [{ push_enabled: false }, 'preference_disabled'],
     [{ delivery_environment: 'staging' }, 'environment_mismatch'],
     [{ deployment_send_enabled: false }, 'sender_disabled'],
     [{ deployment_send_enabled: null }, 'sender_disabled'],
@@ -97,6 +130,10 @@ test('pre-send revalidation cancels ineligible recipient and deployment state', 
     [{ registration_user_id: 8 }, 'recipient_mismatch'],
     [{ registration_session_expires_at: new Date(Date.now() - 1000) }, 'session_inactive'],
     [{ permission_status: 'denied' }, 'permission_ineligible'],
+    [{ permission_status: 'not_determined' }, 'permission_ineligible'],
+    [{ registration_id: null }, 'registration_missing'],
+    [{ delivery_installation_id: '223e4567-e89b-12d3-a456-426614174999' }, 'installation_mismatch'],
+    [{ expires_at: new Date(Date.now() - 1000) }, 'expired'],
   ]) {
     const { worker, calls } = harness({ row: delivery(change) });
     await worker.processDelivery(JOB);
@@ -104,6 +141,38 @@ test('pre-send revalidation cancels ineligible recipient and deployment state', 
     assert.equal(calls.finished[0].status, 'cancelled');
     assert.equal(calls.finished[0].code, reason);
   }
+});
+
+test('installation id comparison is case-insensitive, not a cancel', async () => {
+  const { worker, calls } = harness({
+    row: delivery({ delivery_installation_id: '123E4567-E89B-12D3-A456-426614174000' }),
+  });
+  await worker.processDelivery(JOB);
+  assert.equal(calls.sent.length, 1);
+  assert.equal(calls.finished[0].status, 'sent');
+});
+
+test('a hung provider send hits the deadline and retries as provider_timeout', async () => {
+  const { worker, calls } = harness({ send: () => new Promise(() => {}) });
+  await worker.processDelivery(JOB);
+  assert.equal(calls.finished.length, 1);
+  const [finished] = calls.finished;
+  assert.equal(finished.status, 'pending', 'a timeout is retryable, not dead');
+  assert.equal(finished.code, 'provider_timeout');
+  assert.ok(finished.availableAt instanceof Date && finished.availableAt.getTime() > Date.now(),
+    'the retry is deferred by the backoff delay');
+});
+
+test('the provider deadline keeps an otherwise-idle worker alive until it settles', () => {
+  const modulePath = require.resolve('../src/services/mobile-push-worker');
+  const script = [
+    `const { deadline } = require(${JSON.stringify(modulePath)});`,
+    "deadline(new Promise(() => {}), 20).catch((err) => process.stdout.write(err.code));",
+  ].join(' ');
+  const result = spawnSync(process.execPath, ['-e', script], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, 'provider_timeout',
+    'the deadline timer must remain referenced while the provider is hung');
 });
 
 test('delivery reload includes the current deployment state and activation timestamps', async () => {
@@ -125,9 +194,24 @@ test('delivery reload includes the current deployment state and activation times
   assert.equal(await worker.loadDelivery(JOB), null);
   assert.match(seen.sql, /d\.created_at AS delivery_created_at/);
   assert.match(seen.sql, /LEFT JOIN mobile_push_deployment_state state/);
+  assert.match(seen.sql, /LEFT JOIN mobile_push_kind_categories policy/);
+  assert.match(seen.sql, /LEFT JOIN mobile_push_preferences preference/);
+  assert.match(seen.sql, /COALESCE\(preference\.enabled, policy\.default_enabled, FALSE\) AS push_enabled/);
   assert.match(seen.sql, /state\.send_enabled AS deployment_send_enabled/);
   assert.match(seen.sql, /state\.send_not_before AS deployment_send_not_before/);
   assert.match(seen.sql, /state\.firebase_project_id AS deployment_firebase_project_id/);
+  // Send-time context for the contextual notification copy (#3289): the same
+  // joins the in-app dropdown uses, all LEFT so a missing row can never make
+  // an otherwise-valid delivery vanish.
+  assert.match(seen.sql, /LEFT JOIN apps a ON a\.id = n\.app_id/);
+  assert.match(seen.sql, /LEFT JOIN users su ON su\.id = n\.source_user_id/);
+  assert.match(seen.sql, /LEFT JOIN chat_messages cm ON cm\.id = n\.chat_message_id/);
+  assert.match(seen.sql, /LEFT JOIN chat_sessions cs ON cs\.id = n\.session_id/);
+  assert.match(seen.sql, /a\.name AS app_name/);
+  assert.match(seen.sql, /su\.username AS source_username/);
+  assert.match(seen.sql, /cm\.content AS message_content/);
+  assert.match(seen.sql, /cs\.session_title, cs\.pr_title, cs\.branch_name/);
+  assert.match(seen.sql, /n\.detail/);
   assert.deepEqual(seen.params, [JOB.id]);
 });
 

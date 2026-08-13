@@ -149,9 +149,14 @@ const CHALLENGES = [
     cta_button: null, cta_label: null, cta_link: null, enabled: true, display_order: 1, kind: null,
   },
   {
+    // Organiser-FINISHED (#981): the one fixture carrying `completed`, so the
+    // list-item mapper's flag is pinned in both directions — ids 10/12 leave
+    // the key off entirely, which is the "row doesn't carry the column" case
+    // the mapper's `=== true` coercion exists for.
     id: 11, season_event_id: 100, challenge_template_id: 2, goal: 'Produce your first block (overridden)',
     task: null, reward: null, description: null, requirements: null, schedule_start: null, schedule_end: null,
-    reward_logic: null, cta_button: null, cta_label: null, cta_link: null, enabled: true, display_order: 2, kind: null,
+    reward_logic: null, cta_button: null, cta_label: null, cta_link: null, enabled: true, completed: true,
+    display_order: 2, kind: null,
   },
   {
     id: 12, season_event_id: 100, challenge_template_id: 1, goal: null, task: null, reward: null,
@@ -289,12 +294,28 @@ function makeMockPool() {
       return { rows };
     }
 
-    // GET /leaderboard: default active event lookup (temporally ongoing).
-    if (sql.includes('disclaimer, display_leaderboard') && sql.includes('LIMIT 1')) {
+    // GET /leaderboard: default event lookup. Since #999 this is the SHARED
+    // rule (resolveDefaultPublicEvent / DEFAULT_PUBLIC_EVENT_SQL in
+    // src/services/topochain/event-standings.js), not a strict "temporally
+    // ongoing" query of this route's own — so the API's default matches the
+    // home widget's and the screen's, and stops 404ing between events.
+    // Four ordered steps, mirroring that SQL's ORDER BY keys:
+    //   1. a `type = 'season'` event that has STARTED;
+    //   2. the event running right now (is_active + in window);
+    //   3. the most recently STARTED event;
+    //   4. the soonest upcoming one.
+    if (sql.includes('season_id, type, starts_at, ends_at')
+        && sql.includes('display_leaderboard = TRUE') && sql.includes('LIMIT 1')) {
       const now = new Date();
+      const started = (e) => e.starts_at <= now;
       const rows = SEASON_EVENTS
-        .filter((e) => !e.internal && e.is_active && e.starts_at <= now && e.ends_at >= now)
-        .sort((a, b) => b.starts_at - a.starts_at || b.id - a.id);
+        .filter((e) => !e.internal && e.display_leaderboard)
+        .sort((a, b) => (Number(b.type === 'season' && started(b)) - Number(a.type === 'season' && started(a)))
+          || (Number(b.is_active && started(b) && b.ends_at >= now)
+            - Number(a.is_active && started(a) && a.ends_at >= now))
+          || (Number(started(b)) - Number(started(a)))
+          || (started(a) ? b.starts_at - a.starts_at : a.starts_at - b.starts_at)
+          || b.id - a.id);
       return { rows: rows.slice(0, 1) };
     }
     // GET /leaderboard: requested season_event_id lookup.
@@ -508,7 +529,11 @@ function makeMockPool() {
 
 function joinChallengeTemplate(c, t) {
   return {
+    // Mirrors the route's SELECT list, `c.completed` included (#981) — a row
+    // that omits the column in the fixture arrives as `undefined` here, which
+    // is exactly the case buildChallengeListItem's `=== true` coerces.
     id: c.id, season_event_id: c.season_event_id, challenge_template_id: c.challenge_template_id, enabled: c.enabled,
+    completed: c.completed,
     goal: c.goal, task: c.task, reward: c.reward, description: c.description, requirements: c.requirements,
     schedule_start: c.schedule_start, schedule_end: c.schedule_end, reward_logic: c.reward_logic,
     cta_button: c.cta_button, cta_label: c.cta_label, cta_link: c.cta_link,
@@ -647,6 +672,10 @@ test('GET /leaderboard: happy path envelope keys + masking + shared identity fal
     id: 100, name: 'Sprint One', disclaimer: 'Please read the rules.', display_leaderboard: true,
     starts_at: body.data.event.starts_at, ends_at: body.data.event.ends_at,
     has_started: true, has_ended: false, status: 'active',
+    // Additive (#999): tells the standings pane whether these rows are one
+    // event's stored snapshots or the whole season's aggregate, which is
+    // what lets it drop the per-event-only columns.
+    type: 'regular',
   });
   assert.match(body.data.event.starts_at, /\+00:00$/);
   // SPEC 912: default per_page is 50 for this endpoint (not the shared
@@ -945,6 +974,27 @@ test('GET /season-events/:id/challenges: only enabled challenges, override/effec
   assert.equal(overridden.overrides.goal, 'Produce your first block (overridden)');
   assert.equal(overridden.effective.goal, 'Produce your first block (overridden)');
   assert.equal(overridden.detail_modal.cta_type, 'link'); // always from the template, never overridden
+});
+
+test('GET /season-events/:id/challenges: publishes the organiser `completed` flag, coerced to a real boolean', async () => {
+  // #981: the web challenge grid groups/counts finished challenges from THIS
+  // field. Before it was published, the grid's "Completed" chip came only
+  // from the session-authed /challenges-api personalization pass, so an
+  // anonymous visitor saw no completion state and a signed-in one saw it
+  // land a paint late.
+  const res = await get('/api/v4/season-events/100/challenges');
+  assert.equal(res.status, 200);
+  const body = await res.json();
+
+  const done = body.data.find((c) => c.id === 11);
+  assert.equal(done.completed, true);
+
+  // A row that doesn't carry the column at all must report `false`, NOT
+  // `undefined` — an absent key in the payload would leave the client's
+  // grouping ambiguous, which is what the mapper's `=== true` is for.
+  const open = body.data.find((c) => c.id === 10);
+  assert.equal(open.completed, false);
+  assert.ok('completed' in open, 'the key is always present, never omitted');
 });
 
 test('GET /season-events/:id/challenges: internal event -> 404', async () => {

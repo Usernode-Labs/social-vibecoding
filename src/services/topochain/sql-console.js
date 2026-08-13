@@ -55,8 +55,11 @@
 //      write-inside-a-CTE trick a bare SELECT/WITH prefix check misses,
 //      e.g. `WITH x AS (DELETE FROM foo RETURNING *) SELECT * FROM x`);
 //      a deny check for `onchain_accounts.secret_key`/`.registration_code`
-//      by NAME; table references restricted to the topochain allow-list
-//      (now comma-join-aware, see above); a ban on bare wildcard column
+//      by NAME; a table-aware deny check for every OTHER credential
+//      column (`sessions.token`, `mcp_tokens.token_hash`, …); table
+//      references checked against the live `public` inventory and against
+//      the (now-empty) console table deny list, comma-join-aware, see
+//      above; a ban on bare wildcard column
 //      lists (`SELECT *`/`alias.*`, though not `COUNT(*)`); and a
 //      best-effort denylist of whole-row-serialization function names
 //      (`row_to_json`, `to_jsonb`, `to_json`, `hstore`). EVERY check in
@@ -91,7 +94,32 @@
 //      does before calling in here) explain themselves, per SPEC 2889's
 //      400 shape (`{"success": false, "error": "...", "query": "..."}`).
 //
-// ON THE TABLE ALLOW-LIST CHECK, HONESTLY: table references are found by
+// SCOPE (WIDENED TWICE): the console lists and queries EVERY base table
+// in `public` — all ~108 of them, not just the 20 topochain ones, and
+// (since #1130) not minus a table list either. What is withheld is
+// per-COLUMN: the credential columns inside those tables. So
+// `mobile_push_deliveries` is fully readable, `mobile_push_registrations`
+// is readable without `registration_enc`/`registration_hash`, `sessions`
+// without `token`. `db-console-scope.js` resolves that scope (from
+// `debug-access.js`'s shared column deny list, the topochain export's
+// column exclusions, and its own `CONSOLE_CREDENTIAL_COLUMNS` map) and is
+// the single source all three layers below read, so the schema browser,
+// this validator, and the role's grants cannot disagree about what is in
+// scope. Read that file's header before changing anything about which
+// tables reach this console.
+//
+// A CONSEQUENCE FOR THE COLUMN CHECKS BELOW, worth stating outright: the
+// denied column names now include GENERIC ones — `token`, `code`,
+// `user_code`, `value_enc`, `data`. Those must only ever be matched
+// TABLE-AWARELY, via `deniedColumnMatch` + `scope.deniedColumnsForTables`,
+// which asks "is this name denied on a table THIS query references".
+// Never add such a name to `EXCLUDED_SECRET_COLUMN_NAMES`: that list
+// feeds `EXCLUDED_COLUMNS_RE`, a BLANKET regex over the whole statement,
+// and blanket-denying the word `token` or `code` would reject a large
+// share of legitimate queries against unrelated tables (`activation_codes`
+// is not the only table in this database with a `code` column).
+//
+// ON THE TABLE SCOPE CHECK, HONESTLY: table references are found by
 // a regex over identifiers following `FROM`/`JOIN` (Global Constraints #9
 // explicitly permits this: "regex over FROM/JOIN identifiers is
 // acceptable... document the approach"). This is NOT a SQL parser and
@@ -114,7 +142,8 @@
 'use strict';
 
 const log = require('../logger');
-const { QUERYABLE_TABLES_SET, EXCLUDED_SECRET_COLUMN_NAMES } = require('./db-allowlist');
+const { EXCLUDED_SECRET_COLUMN_NAMES } = require('./db-allowlist');
+const scope = require('./db-console-scope');
 const consoleRole = require('./db-console-role');
 
 // SPEC 2872: `limit` is optional int, 1..1000, default 100.
@@ -170,18 +199,39 @@ const MUTATING_KEYWORDS_RE = new RegExp(`\\b(${MUTATING_KEYWORDS.join('|')})\\b`
 
 // db-export.js excludes `onchain_accounts.secret_key`/`.registration_code`
 // at the column level; this console reads the SAME live table, and
-// nothing about the table-allow-list check below would stop
-// `SELECT secret_key FROM onchain_accounts` (it references an allowed
+// nothing about the table-scope check below would stop
+// `SELECT secret_key FROM onchain_accounts` (it references an in-scope
 // table with an allowed verb) — so that redaction is repeated here as a
 // query-time deny check, word-bounded and checked anywhere in the
 // statement (not just the column list), same posture as the mutating-
 // keyword scan above. Both excluded names are specific enough that
 // blanket-denying them regardless of which table a query touches costs
 // nothing real (see `db-allowlist.js` — neither name is used as a column
-// on any OTHER topochain table).
+// on any OTHER table in this schema).
 const EXCLUDED_COLUMNS_RE = EXCLUDED_SECRET_COLUMN_NAMES.length
   ? new RegExp(`\\b(${EXCLUDED_SECRET_COLUMN_NAMES.join('|')})\\b`, 'i')
   : null;
+
+// Every OTHER denied column (`users.password`, `apps.llm_proxy_token`,
+// `chat_session_attachments.data`, …) is checked TABLE-AWARELY rather
+// than blanket: the console's scope now spans the whole platform schema,
+// and some denied names are generic enough (`data`, `ip`, and — since
+// #1130 replaced the table-level denials with column-level ones —
+// `token`, `code`, `user_code`, `value_enc`) that denying them everywhere
+// would reject a pile of perfectly legitimate queries against tables that
+// have no such secret. So the check is built from
+// the deny lists of the tables the query actually references — see
+// `db-console-scope.js`'s `deniedColumnsForTables`. Same caveat as every
+// other regex here: it is the fast-400 layer, and the role's
+// column-level GRANT is what actually refuses the value.
+function deniedColumnMatch(body, tables) {
+  const names = [...scope.deniedColumnsForTables(tables)].filter(
+    (n) => !EXCLUDED_SECRET_COLUMN_NAMES.includes(n)
+  );
+  if (!names.length) return null;
+  const match = body.match(new RegExp(`\\b(${names.join('|')})\\b`, 'i'));
+  return match ? match[1].toLowerCase() : null;
+}
 
 // BEST-EFFORT ONLY — NOT EXHAUSTIVE (see the file header's ⚠ correction).
 // The most common ways to serialize an entire row as one value (dodging
@@ -388,6 +438,45 @@ function validateStatement(query) {
     return { ok: false, reason: `Query contains a disallowed keyword: ${mutatingMatch[1].toUpperCase()}.` };
   }
 
+  // Table scope, checked BEFORE the column rules so an admin gets the
+  // more fundamental reason first ("that table isn't available here"
+  // rather than "that column isn't"). Two distinct failures, because
+  // they mean different things to whoever is typing:
+  //   - DENIED: a table `DENIED_CONSOLE_TABLES` names. DORMANT since
+  //     #1130 — that set is deliberately empty and the credential-bearing
+  //     tables it used to hold (`sessions`, `app_secrets`, the mobile
+  //     push and CLI/MCP auth tables) are now readable with only their
+  //     credential COLUMNS masked, so this branch fires on nothing today.
+  //     It is kept wired up because the escape hatch is still real: see
+  //     `db-console-scope.js`'s header for when a table, rather than a
+  //     column, is the thing to hide.
+  //   - UNKNOWN: an identifier that is not a table in `public` at all.
+  //     Usually a typo, occasionally this regex mistaking a function
+  //     argument for a table (see `EXTRACT(EPOCH FROM created_at)` in the
+  //     file header's blind-spot list).
+  const { tables, cteNames } = extractReferencedTables(body);
+  const referenced = [...tables].filter((t) => !cteNames.has(t));
+  const denied = referenced.filter((t) => scope.isDeniedTable(t));
+  if (denied.length) {
+    return {
+      ok: false,
+      reason: `Query references table(s) that are not available in this console: ${denied.join(', ')}.`,
+    };
+  }
+  // An empty `knownTableSet()` means the live table list has not been
+  // loaded yet (see db-console-scope.js) — fall through on the deny list
+  // alone rather than rejecting every table as "unknown".
+  const known = scope.knownTableSet();
+  if (known.size) {
+    const unknown = referenced.filter((t) => !known.has(t));
+    if (unknown.length) {
+      return {
+        ok: false,
+        reason: `Query references table(s) that do not exist in this database: ${unknown.join(', ')}.`,
+      };
+    }
+  }
+
   if (EXCLUDED_COLUMNS_RE) {
     const columnMatch = body.match(EXCLUDED_COLUMNS_RE);
     if (columnMatch) {
@@ -396,6 +485,13 @@ function validateStatement(query) {
         reason: `Query references a column that is not accessible through this console: ${columnMatch[1].toLowerCase()}.`,
       };
     }
+  }
+  const deniedColumn = deniedColumnMatch(body, referenced);
+  if (deniedColumn) {
+    return {
+      ok: false,
+      reason: `Query references a column that is not accessible through this console: ${deniedColumn}.`,
+    };
   }
 
   // Best-effort only (see this constant's own comment and the file
@@ -407,15 +503,6 @@ function validateStatement(query) {
     return {
       ok: false,
       reason: `Query uses a whole-row serialization function that is not allowed: ${rowFuncMatch[1].toLowerCase()}.`,
-    };
-  }
-
-  const { tables, cteNames } = extractReferencedTables(body);
-  const offenders = [...tables].filter((t) => !QUERYABLE_TABLES_SET.has(t) && !cteNames.has(t));
-  if (offenders.length) {
-    return {
-      ok: false,
-      reason: `Query references table(s) outside the allowed list: ${offenders.join(', ')}.`,
     };
   }
 

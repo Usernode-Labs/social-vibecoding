@@ -3,7 +3,7 @@ const crypto = require('crypto');
 const bcrypt = require('bcrypt');
 const { getPool } = require('../db/pool');
 const { adminMiddleware, requireAdminWrite } = require('../middleware/admin');
-const { dbExportLimiter } = require('../middleware/rate-limits');
+const { dbExportLimiter, mailTestLimiter } = require('../middleware/rate-limits');
 const { clientIp } = require('../services/client-ip');
 const { drainGuard } = require('../services/lifecycle');
 const log = require('../services/logger');
@@ -11,9 +11,12 @@ const limits = require('../services/limits');
 const anthropicCredits = require('../services/anthropic-credits');
 const dbExport = require('../services/db-export');
 const events = require('../services/events');
+const llmTelemetry = require('../services/llm-telemetry');
 const appRollover = require('../services/app-rollover');
 const stagingReap = require('../services/staging-reap');
 const stagingEnv = require('../services/staging-env');
+const mail = require('../services/mail');
+const mobilePushDiagnostics = require('../services/mobile-push-diagnostics');
 const {
   accountRecovery,
   withTransaction,
@@ -39,6 +42,31 @@ function adminRoutes(config) {
   const pool = getPool(config);
 
   router.use('/api/admin', adminMiddleware);
+
+  // #717: content-free usage baseline across Mayor/helper calls and coding
+  // agents. Read-only and aggregate-only; view-only admins may inspect it.
+  router.get('/api/admin/llm-telemetry', async (req, res) => {
+    const rawDays = req.query.days == null ? '14' : String(req.query.days);
+    if (!/^\d+$/.test(rawDays)) {
+      return res.status(400).json({
+        error: `days must be an integer between 1 and ${llmTelemetry.MAX_REPORT_DAYS}`,
+      });
+    }
+    const days = Number(rawDays);
+    if (days < 1 || days > llmTelemetry.MAX_REPORT_DAYS) {
+      return res.status(400).json({
+        error: `days must be an integer between 1 and ${llmTelemetry.MAX_REPORT_DAYS}`,
+      });
+    }
+    try {
+      return res.json(await llmTelemetry.aggregateReport(pool, { days }));
+    } catch (err) {
+      log.warn('admin', 'LLM telemetry aggregate failed', {
+        code: err && err.code ? String(err.code).slice(0, 64) : 'query_failed',
+      });
+      return res.status(500).json({ error: 'Could not load LLM telemetry' });
+    }
+  });
 
   // ── Operations Overview ────────────────────────────────────
   //
@@ -85,6 +113,32 @@ function adminRoutes(config) {
     } catch (err) {
       log.error('admin', 'Overview failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ── Mobile push diagnostics ────────────────────────────────
+  //
+  // Read-only operational visibility over the private push tables. The
+  // response deliberately excludes encrypted registrations, token hashes,
+  // service-account material and APNs credentials. View-only admins may use
+  // it: diagnosing a device is observation, not a provider mutation.
+  router.get('/api/admin/mobile-push/diagnostics', async (req, res) => {
+    try {
+      const data = await mobilePushDiagnostics.gather(pool, req.query.user);
+      res.json({
+        runtime: {
+          enabled: config.mobilePushEnabled === true,
+          environment: config.mobilePushEnvironment || null,
+          firebaseProjectId: config.firebaseProjectId || null,
+        },
+        ...data,
+      });
+    } catch (err) {
+      if (err instanceof mobilePushDiagnostics.MobilePushDiagnosticsInputError) {
+        return res.status(400).json({ error: err.message });
+      }
+      log.error('admin', 'Mobile push diagnostics failed', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
     }
   });
 
@@ -1496,6 +1550,144 @@ function adminRoutes(config) {
       else try { res.destroy(); } catch { /* socket already gone */ }
     }
   });
+
+  // ── Email delivery ─────────────────────────────────────────
+  //
+  // The operator's view of platform outbound mail. Three routes, and the
+  // split between them is the whole point: reads are open to any admin
+  // (including view-only), the one that actually puts a message on the
+  // wire is full-admin-only.
+  //
+  // These live under /api/admin/mail and are ADDITIVE. The older
+  // /api/v4/admin/settings/mail-status and /mail-activity pair that the
+  // Topochain settings card reads is untouched — it is a different
+  // console section with a different audience, and quietly repointing it
+  // would be a second change riding on this one.
+
+  // Conservative single-address check. Deliberately stricter than RFC
+  // 5322: this is an operator typing their own inbox into a console, not
+  // a signup form, so rejecting an exotic-but-legal address costs an
+  // admin one retry while accepting a header-injecting one costs
+  // everybody. No CR/LF anywhere, no comma or semicolon (one recipient,
+  // not a list), and a length the ledger column can hold.
+  const TEST_RECIPIENT_RE = /^[^\s@,;<>"'\\]+@[^\s@,;<>"'\\]+\.[A-Za-z]{2,}$/;
+
+  function validateTestRecipient(raw) {
+    if (typeof raw !== 'string') return { error: 'An email address is required.' };
+    const to = raw.trim();
+    if (!to) return { error: 'An email address is required.' };
+    if (to.length > 255) return { error: 'That address is too long.' };
+    if (/[\r\n]/.test(to)) return { error: 'That address is not a valid email address.' };
+    if (!TEST_RECIPIENT_RE.test(to)) return { error: 'That address is not a valid email address.' };
+    return { to };
+  }
+
+  // Configuration presence only — which provider is active, which keys
+  // are absent, which flows break while it stays that way. describe()
+  // returns no values by construction, so this response can never carry a
+  // credential even though the page that renders it is admin-only.
+  router.get('/api/admin/mail/status', async (req, res) => {
+    try {
+      const status = mail.describe(process.env);
+
+      // Pre-fill the test form with the admin's own address when we have
+      // one. The client session payload doesn't carry an email, so it
+      // comes from here rather than from App.user.
+      let suggestedRecipient = null;
+      try {
+        const { rows } = await pool.query('SELECT email FROM users WHERE id = $1', [req.user.id]);
+        suggestedRecipient = (rows[0] && rows[0].email) || null;
+      } catch (err) {
+        // A missing suggestion is cosmetic; the card still works.
+        log.warn('admin', 'Could not read the admin email for the mail card',
+          { message: err.message });
+      }
+
+      res.json({ ...status, suggestedRecipient, canSendTest: !!req.user?.canAdminWrite });
+    } catch (err) {
+      log.error('admin', 'mail status failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // The delivery ledger, newest first, with the 24-hour tally the card
+  // shows above the table. `kind` filters to one message type (the
+  // console uses it for the "Test emails only" toggle).
+  router.get('/api/admin/mail/activity', async (req, res) => {
+    try {
+      const requested = Number(req.query.limit);
+      const limit = Number.isFinite(requested)
+        ? Math.min(100, Math.max(1, Math.floor(requested)))
+        : 20;
+      const kind = typeof req.query.kind === 'string' && req.query.kind.trim()
+        ? req.query.kind.trim().slice(0, 64)
+        : null;
+
+      const [recent, totals] = await Promise.all([
+        pool.query(
+          `SELECT id, kind, recipient, provider, status, error, created_at
+             FROM mail_deliveries
+            WHERE ($1::text IS NULL OR kind = $1)
+            ORDER BY created_at DESC
+            LIMIT ${limit}`,
+          [kind]
+        ),
+        pool.query(
+          `SELECT status, COUNT(*)::int AS n
+             FROM mail_deliveries
+            WHERE created_at > NOW() - INTERVAL '24 hours'
+              AND ($1::text IS NULL OR kind = $1)
+            GROUP BY status`,
+          [kind]
+        ),
+      ]);
+
+      const last24h = {};
+      for (const row of totals.rows) last24h[row.status] = row.n;
+
+      res.json({ deliveries: recent.rows, last24h, kind, limit });
+    } catch (err) {
+      log.error('admin', 'mail activity failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Send one diagnostic email.
+  //
+  // Full admins only (it spends provider quota and puts a real message in
+  // somebody's inbox) and rate-limited on top of that. The response is
+  // 200 for every outcome the mail service can REPORT — including
+  // `failed` and `no_transport` — because those are answers to the
+  // question the operator asked, not errors in asking it. Only a
+  // malformed request gets a 4xx, and that path never writes a ledger
+  // row: nothing was attempted.
+  router.post('/api/admin/mail/test', requireAdminWrite, mailTestLimiter,
+    async (req, res) => {
+      try {
+        const { to, error } = validateTestRecipient((req.body || {}).to);
+        if (error) return res.status(400).json({ error });
+
+        const outcome = await mail.sendTest(config, { to });
+
+        events.record(pool, {
+          type: events.EVENT_TYPES.MAIL_TEST_SENT,
+          userId: req.user.id,
+          metadata: { status: outcome.status, provider: outcome.provider, recipient: to },
+        });
+
+        log.warn('admin', 'Admin sent a test email', {
+          by: req.user.username,
+          status: outcome.status,
+          provider: outcome.provider,
+          reference: outcome.reference,
+        });
+
+        res.json({ outcome });
+      } catch (err) {
+        log.error('admin', 'mail test failed', { message: err.message });
+        res.status(500).json({ error: 'Internal server error' });
+      }
+    });
 
   return router;
 }

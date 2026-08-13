@@ -8,6 +8,7 @@ const path = require('node:path');
 const schema = fs.readFileSync(path.join(__dirname, '../src/db/schema.sql'), 'utf8');
 const debugAccess = require('../src/services/debug-access');
 const dbExport = require('../src/services/db-export');
+const { CATEGORY_DEFINITIONS } = require('../src/services/mobile-push-preferences');
 
 const PRIVATE_TABLES = [
   'mobile_push_deployment_state',
@@ -27,6 +28,10 @@ test('push schema keeps deployment and user device state private with bounded ex
   assert.match(schema, /session_expires_at TIMESTAMPTZ NOT NULL/);
   assert.doesNotMatch(schema, /mobile_auth_token_id/);
   assert.match(schema, /registration_id[\s\S]*ON DELETE SET NULL/);
+  assert.match(schema, /platform\s+VARCHAR\(16\) CHECK \(platform IN \('android', 'ios'\)\)/,
+    'delivery rows snapshot their platform before invalid registrations are deleted');
+  assert.match(schema, /SET platform = registration\.platform[\s\S]*delivery\.platform IS NULL/,
+    'existing live registrations backfill the diagnostic platform snapshot');
   assert.match(
     schema,
     /idx_mobile_push_deliveries_registration[\s\S]*ON mobile_push_deliveries \(registration_id\)/
@@ -35,20 +40,43 @@ test('push schema keeps deployment and user device state private with bounded ex
   assert.match(schema, /CHECK \(NOT send_enabled OR send_not_before IS NOT NULL\)/);
 });
 
-test('notification trigger enqueues only reviewed completion kinds', () => {
+test('closed database kind registry matches the reviewed service mapping and defaults', () => {
+  const seed = schema.match(
+    /INSERT INTO mobile_push_kind_categories \(kind, category, default_enabled\) VALUES([\s\S]*?)ON CONFLICT \(kind\)/
+  )?.[1];
+  assert.ok(seed, 'closed kind/category seed exists');
+  const rows = [...seed.matchAll(/\('([^']+)', '([^']+)', (TRUE|FALSE)\)/g)].map((match) => ({
+    kind: match[1], category: match[2], defaultEnabled: match[3] === 'TRUE',
+  }));
+  const expected = CATEGORY_DEFINITIONS.flatMap((category) => category.kinds.map((kind) => ({
+    kind, category: category.key, defaultEnabled: category.defaultEnabled,
+  })));
+  assert.deepEqual(rows, expected);
+  assert.equal(new Set(rows.map((row) => row.kind)).size, 14);
+  assert.match(schema, /DELETE FROM mobile_push_kind_categories[\s\S]*kind NOT IN/,
+    'stale policy rows cannot silently keep a removed kind push-enabled');
+});
+
+test('notification trigger checks the current account category before enqueueing', () => {
   const body = schema.match(
     /CREATE OR REPLACE FUNCTION enqueue_mobile_push_deliveries\(\)[\s\S]*?END;\n\$\$;/
   )?.[0];
   assert.ok(body, 'enqueue function exists');
-  assert.match(body, /NEW\.kind NOT IN \('session_done', 'auto_solve_done'\)/);
+  assert.match(body, /FROM mobile_push_kind_categories policy/);
+  assert.match(body, /LEFT JOIN mobile_push_preferences preference/);
+  assert.match(body, /preference\.user_id = NEW\.user_id/);
+  assert.match(body, /preference\.category = policy\.category/);
+  assert.match(body, /policy\.kind = NEW\.kind/);
+  assert.match(body, /COALESCE\(preference\.enabled, policy\.default_enabled\)/);
   assert.match(body, /permission_status IN \('authorized', 'provisional'\)/);
   assert.match(body, /JOIN mobile_push_deployment_state s ON s\.environment = r\.environment/);
   assert.match(body, /s\.send_enabled/);
   assert.match(body, /NEW\.created_at[\s\S]*>= s\.send_not_before/);
   assert.match(body, /r\.user_id = NEW\.user_id/);
   assert.match(body, /r\.session_expires_at > NOW\(\)/);
-  assert.match(body, /notification_id, registration_id, environment, installation_id/);
-  assert.doesNotMatch(body, /mention|reaction|pr_proposed/);
+  assert.match(body, /SELECT r\.id, r\.environment, r\.installation_id, r\.platform/);
+  assert.match(body,
+    /notification_id, registration_id, environment, installation_id, platform, expires_at/);
   assert.match(schema, /AFTER INSERT ON notifications/);
   const stateLock = body.indexOf('FROM mobile_push_deployment_state');
   const registrationLock = body.indexOf('FOR KEY SHARE OF r');

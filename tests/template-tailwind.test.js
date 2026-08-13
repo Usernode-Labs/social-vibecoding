@@ -8,12 +8,11 @@
 // unstyled text. New apps now link a precompiled `/tailwind.css` (~7 KB)
 // built by a stage in their own Dockerfile.
 //
-// The property that makes a compiled stylesheet safe HERE — unlike the
-// platform's own committed artifact, which needs a freshness stamp — is that
-// the compile runs during `docker build`, which the platform performs on a
-// fresh clone for every production deploy and every staging preview. The CSS
-// is therefore regenerated from that commit's markup every time and cannot
-// go stale. These tests pin the pieces that make that true.
+// As with the platform shell itself, the compile runs during `docker build`,
+// which the platform performs on a fresh clone for every production deploy
+// and every staging preview. The CSS is therefore regenerated from that
+// commit's markup every time and cannot go stale. These tests pin the pieces
+// that make that true.
 //
 // Run with: node --test tests/template-tailwind.test.js
 

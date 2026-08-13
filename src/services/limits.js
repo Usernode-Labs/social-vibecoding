@@ -1,6 +1,7 @@
 'use strict';
 
 const log = require('./logger');
+const turnEffects = require('./turn-effects');
 
 // Daily LLM-spend caps. Both values live in `platform_settings` and are
 // admin-tunable from /admin (see src/routes/admin.js endpoints
@@ -22,6 +23,21 @@ const KEY_SYSTEM = 'system_tokens_daily_limit_cents';
 
 const CACHE_TTL_MS = 10_000;
 const cache = new Map();
+
+// #593: the point at which the UI starts saying "you're nearly out" instead
+// of just showing a number. One definition, sent to the client in the budget
+// payloads below so the meter, the drawer row and the warning banner cannot
+// disagree with each other — or with a later change here.
+const LOW_BALANCE_PCT = 80;
+
+// Every user-facing sentence about the daily allowance names the same
+// boundary, so the boundary itself is computed in one place. Midnight UTC:
+// llm_usage is keyed on CURRENT_DATE, which is what actually rolls over.
+function dailyResetAt() {
+  const reset = new Date();
+  reset.setUTCHours(24, 0, 0, 0);
+  return reset.toISOString();
+}
 
 function fromCache(key) {
   const entry = cache.get(key);
@@ -123,7 +139,10 @@ async function checkBudget(pool, userId) {
   );
   const globalSpent = parseFloat(globalRows[0]?.total || 0);
   if (globalSpent >= globalLimit) {
-    return { error: 'Global daily limit reached. Try again tomorrow.' };
+    // #593: says WHEN, like the per-user message above. "Try again
+    // tomorrow" left the reader guessing at the boundary — and guessing
+    // wrong, since it is a UTC one and most readers are not on UTC.
+    return { error: 'Global daily limit reached — the platform\'s shared AI budget for today is spent. Resets at midnight UTC.' };
   }
 
   return {
@@ -169,16 +188,15 @@ async function getBudgetSnapshot(pool, userId) {
     // spent" — the limit itself is still accurate.
     log.warn('limits', 'budget snapshot read failed', { userId, err: err.message });
   }
-  // Midnight UTC, matching the boundary checkBudget's message promises.
-  const reset = new Date();
-  reset.setUTCHours(24, 0, 0, 0);
   return {
     limitCents,
     spentCents,
     remainingCents: Math.max(0, limitCents - spentCents),
     byokCents,
     hasByokKey,
-    resetsAt: reset.toISOString(),
+    // Midnight UTC, matching the boundary checkBudget's message promises.
+    resetsAt: dailyResetAt(),
+    lowBalancePct: LOW_BALANCE_PCT,
   };
 }
 
@@ -256,6 +274,58 @@ async function recordSpend(pool, userId, costCents, { byok = false } = {}) {
   }
 }
 
+async function recordSpendRequired(client, userId, costCents, { byok = false } = {}) {
+  if (!userId || !(costCents > 0)) return;
+  const column = byok ? 'byok_cost_cents' : 'total_cost_cents';
+  await client.query(
+    `INSERT INTO llm_usage (user_id, date, ${column}) VALUES ($1, CURRENT_DATE, $2)
+     ON CONFLICT (user_id, date) DO UPDATE SET ${column} = llm_usage.${column} + EXCLUDED.${column}`,
+    [userId, costCents],
+  );
+}
+
+// #1088: claim the once-per-UTC-day right to TELL this user that their own
+// Anthropic key took over. Returns true for the caller that won the claim and
+// false for everyone after it, until llm_usage rolls to the next `date` — which
+// is exactly when the free allowance resets, so the marker expires by
+// construction and needs no sweeper.
+//
+// It has to be an upsert, not a bare UPDATE: a *global* cap crossing can switch
+// a user who has spent nothing today and so has no llm_usage row yet. The
+// conditional DO UPDATE ... WHERE byok_notice_at IS NULL makes the whole thing
+// one statement, so concurrent proxy calls (or processes) can't both win.
+//
+// Unlike recordSpend, a DB error here fails QUIET rather than open: suppressing
+// a notice is the fix this issue asked for, and the always-visible credit meter
+// still tells the story.
+async function claimByokSwitchNotice(pool, userId) {
+  if (!userId) return false;
+  try {
+    const { rowCount } = await pool.query(
+      `INSERT INTO llm_usage (user_id, date, byok_notice_at) VALUES ($1, CURRENT_DATE, NOW())
+       ON CONFLICT (user_id, date) DO UPDATE SET byok_notice_at = NOW()
+         WHERE llm_usage.byok_notice_at IS NULL
+       RETURNING id`,
+      [userId]
+    );
+    return rowCount === 1;
+  } catch (err) {
+    log.warn('limits', 'Failed to claim BYOK switch notice', { userId, err: err.message });
+    return false;
+  }
+}
+
+function splitTurnSpend(totalCents, { turnByok = false, byokObservedCents = 0 } = {}) {
+  const total = Number(totalCents);
+  if (!Number.isFinite(total) || !(total > 0)) {
+    return { platformCents: 0, byokCents: 0 };
+  }
+  if (turnByok) return { platformCents: 0, byokCents: total };
+  const observed = Number(byokObservedCents);
+  const byokCents = Math.min(Number.isFinite(observed) && observed > 0 ? observed : 0, total);
+  return { platformCents: total - byokCents, byokCents };
+}
+
 // #664: turn-end settlement for a CC turn that may have SWITCHED payers
 // mid-flight. The worker Anthropic proxy falls back to the user's own
 // key per-call once the daily allowance is exhausted, so a single turn
@@ -271,22 +341,46 @@ async function recordSpend(pool, userId, costCents, { byok = false } = {}) {
 //     clamped to the turn total — CC's self-reported costUsd is the
 //     authoritative sum). Remainder is platform spend.
 // Returns { platformCents, byokCents } so call sites can emit per-bucket
-// usage events. Same swallow-and-log tolerance as recordSpend.
-async function settleTurnSpend(pool, userId, totalCents, { turnByok = false, byokObservedCents = 0 } = {}) {
-  const total = Number(totalCents);
-  if (!userId || !Number.isFinite(total) || !(total > 0)) {
+// usage events. New durable turns supply turnId: the debit and its receipt
+// then commit in one transaction and recovery can replay the stored split
+// without incrementing llm_usage twice. Legacy callers keep the tolerant
+// best-effort behavior until their old active_turn records have drained.
+async function settleTurnSpend(pool, userId, totalCents, {
+  turnByok = false,
+  byokObservedCents = 0,
+  turnId = null,
+  sessionId = null,
+  effectKey = 'claude_agent_spend',
+} = {}) {
+  if (!userId) {
     return { platformCents: 0, byokCents: 0 };
   }
-  if (turnByok) {
-    await recordSpend(pool, userId, total, { byok: true });
-    return { platformCents: 0, byokCents: total };
+  const split = splitTurnSpend(totalCents, { turnByok, byokObservedCents });
+  const { platformCents, byokCents } = split;
+  if (!(platformCents > 0) && !(byokCents > 0)) return split;
+
+  if (turnId) {
+    const receipt = await turnEffects.runDbEffect({
+      pool,
+      turnId,
+      effectKey,
+      sessionId,
+      run: async (client) => {
+        if (platformCents > 0) {
+          await recordSpendRequired(client, userId, platformCents, { byok: false });
+        }
+        if (byokCents > 0) {
+          await recordSpendRequired(client, userId, byokCents, { byok: true });
+        }
+        return split;
+      },
+    });
+    return receipt.value || split;
   }
-  const observed = Number(byokObservedCents);
-  const byokCents = Math.min(Number.isFinite(observed) && observed > 0 ? observed : 0, total);
-  const platformCents = total - byokCents;
+
   if (platformCents > 0) await recordSpend(pool, userId, platformCents, { byok: false });
   if (byokCents > 0) await recordSpend(pool, userId, byokCents, { byok: true });
-  return { platformCents, byokCents };
+  return split;
 }
 
 // #361: gate for "may the platform incur another merge-conflict /
@@ -342,10 +436,13 @@ module.exports = {
   recordSystemSpend,
   getEffectiveUserLimitCents,
   getBudgetSnapshot,
+  dailyResetAt,
+  LOW_BALANCE_PCT,
   checkBudget,
   loadUserApiKey,
   resolveBillingPath,
   recordSpend,
+  claimByokSwitchNotice,
   settleTurnSpend,
   invalidate,
   KEY_USER,

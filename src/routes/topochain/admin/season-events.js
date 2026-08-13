@@ -42,6 +42,14 @@ function formatEvent(r, counts = {}) {
     rank_based_on_bp_or_success_rate: r.rank_based_on_bp_or_success_rate,
     display_activities: r.display_activities,
     season_id: r.season_id != null ? Number(r.season_id) : null,
+    // Additive convenience for the admin console, which shows a season's
+    // NAME rather than a bare numeric id. Populated by the index/show
+    // queries' LEFT JOIN on `seasons`; absent (null) on create/update,
+    // which return the bare inserted row per SPEC 2238/2262. `season_id`
+    // above is unchanged, so nothing that already reads it breaks.
+    season: r.season_name != null
+      ? { id: Number(r.season_id), name: r.season_name }
+      : null,
     type: r.type,
     account_inheritance_mode: r.account_inheritance_mode,
     account_source_season_event_id: r.account_source_season_event_id != null
@@ -200,9 +208,30 @@ function seasonEventsAdminRoutes(config) {
       const search = typeof req.query.search === 'string' ? req.query.search.trim() : '';
       const like = search ? `%${search}%` : null;
 
+      // Optional season filter: a positive integer id, or the literal
+      // "none" for events not linked to any season. Anything else is
+      // ignored (same lenient stance as `search`), NOT a 422 — this is a
+      // list-narrowing convenience, not a mutation.
+      //
+      // `seasonFilter` is threaded into both the count and the page query
+      // so pagination stays correct: `NULL` = unfiltered, `0` = the
+      // "no season" sentinel (season_id is BIGSERIAL, so a real id is
+      // never 0), anything else = that exact season.
+      const rawSeason = req.query.season_id;
+      let seasonFilter = null;
+      if (rawSeason === 'none') seasonFilter = 0;
+      else if (typeof rawSeason === 'string' || typeof rawSeason === 'number') {
+        const parsed = toIntId(rawSeason);
+        if (parsed) seasonFilter = parsed;
+      }
+      const seasonWhere = `($2::bigint IS NULL
+             OR ($2 = 0 AND se.season_id IS NULL)
+             OR se.season_id = $2)`;
+
       const { rows: countRows } = await pool.query(
-        `SELECT COUNT(*)::int AS c FROM season_events WHERE ($1::text IS NULL OR name ILIKE $1)`,
-        [like]
+        `SELECT COUNT(*)::int AS c FROM season_events se
+          WHERE ($1::text IS NULL OR se.name ILIKE $1) AND ${seasonWhere}`,
+        [like, seasonFilter]
       );
       const total = countRows[0].c;
 
@@ -210,14 +239,15 @@ function seasonEventsAdminRoutes(config) {
       // (season_event_id = se.id) — the direct analog of the source's
       // phase-scoped pivot counts, not a season-wide fallback.
       const { rows } = await pool.query(
-        `SELECT se.*,
+        `SELECT se.*, s.name AS season_name,
                 (SELECT COUNT(*) FROM user_enrollments ue WHERE ue.season_event_id = se.id)::int AS users_count,
                 (SELECT COUNT(*) FROM onchain_accounts oa WHERE oa.season_event_id = se.id)::int AS onchain_accounts_count
            FROM season_events se
-          WHERE ($1::text IS NULL OR se.name ILIKE $1)
+           LEFT JOIN seasons s ON s.id = se.season_id
+          WHERE ($1::text IS NULL OR se.name ILIKE $1) AND ${seasonWhere}
           ORDER BY se.starts_at DESC, se.id DESC
-          LIMIT $2 OFFSET $3`,
-        [like, perPage, (page - 1) * perPage]
+          LIMIT $3 OFFSET $4`,
+        [like, seasonFilter, perPage, (page - 1) * perPage]
       );
 
       const data = rows.map((r) => formatEvent(r, {
@@ -352,11 +382,13 @@ function seasonEventsAdminRoutes(config) {
       if (!id) return fail(res, 404, 'Event not found.');
 
       const { rows } = await pool.query(
-        `SELECT se.*,
+        `SELECT se.*, s.name AS season_name,
                 (SELECT COUNT(*) FROM user_enrollments ue WHERE ue.season_event_id = se.id)::int AS users_count,
                 (SELECT COUNT(*) FROM onchain_accounts oa WHERE oa.season_event_id = se.id)::int AS onchain_accounts_count,
                 (SELECT COUNT(*) FROM user_activities ua WHERE ua.season_event_id = se.id)::int AS user_activities_count
-           FROM season_events se WHERE se.id = $1`,
+           FROM season_events se
+           LEFT JOIN seasons s ON s.id = se.season_id
+          WHERE se.id = $1`,
         [id]
       );
       const event = rows[0];

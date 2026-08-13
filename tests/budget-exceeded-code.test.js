@@ -42,7 +42,7 @@ test('rate-limit middleware 429s stay code-free (the discriminator the client re
 });
 
 test('dev-chat branches the 429 handler on the budget_exceeded code', () => {
-  const src = read('public/js/dev-chat.js');
+  const src = read('frontend/src/features/dev-chat/dev-chat.js');
   assert.match(src, /data\.code === 'budget_exceeded'/,
     'the chat send path distinguishes budget exhaustion from throttling');
   assert.match(src, /free AI credits/,

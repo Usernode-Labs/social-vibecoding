@@ -25,6 +25,8 @@ let capturedQueries = [];
 let userByPubkey = null;   // row returned for SELECT ... WHERE usernode_pubkey = $1
 let userPasswordRow = null; // row returned for SELECT password ... WHERE id
 let userLinkedPubkeyRow = null; // row for SELECT usernode_pubkey FROM users WHERE id
+let userByEmail = null;     // row for SELECT ... WHERE email = $1 (reset request)
+let userByResetHash = null; // row for SELECT ... WHERE password_reset_token_hash = $1
 let updateReturns = [];     // rows returned for UPDATE ... RETURNING
 
 poolMod.getPool = () => ({
@@ -38,6 +40,12 @@ poolMod.getPool = () => ({
     }
     if (/SELECT password FROM users WHERE id/.test(sql)) {
       return { rows: userPasswordRow ? [userPasswordRow] : [] };
+    }
+    if (/SELECT .*password_reset_token_hash = \$1/s.test(sql)) {
+      return { rows: userByResetHash ? [userByResetHash] : [] };
+    }
+    if (/SELECT .*WHERE email = \$1/s.test(sql)) {
+      return { rows: userByEmail ? [userByEmail] : [] };
     }
     if (/UPDATE users SET password/.test(sql)) {
       return { rows: updateReturns };
@@ -54,6 +62,21 @@ for (const level of ['info', 'warn', 'error', 'debug']) {
   const orig = logger[level];
   logger[level] = (...args) => { logCalls.push(args); if (typeof orig === 'function') { /* swallow */ } };
 }
+
+// ── Pass-through auth limiter ──────────────────────────────────────
+// authLimiter is one shared in-memory 10/15min/IP bucket for the whole
+// process; this file makes enough auth-surface POSTs that later tests
+// would 429 on limiter state left by earlier ones. Throttling isn't under
+// test here, so swap it out BEFORE the route modules destructure it.
+const rateLimits = require('../src/middleware/rate-limits');
+rateLimits.authLimiter = (_req, _res, next) => next();
+
+// ── Spy on the mail door so no real transport is ever consulted ────
+const mailMod = require('../src/services/mail');
+let sentResetMails = []; // { email, token }
+mailMod.sendPasswordResetMail = async (_config, email, token) => {
+  sentResetMails.push({ email, token });
+};
 
 const genesisAccounts = require('../src/services/genesis-accounts');
 const { validatePassword } = require('../src/services/password-policy');
@@ -102,7 +125,10 @@ function reset() {
   userByPubkey = null;
   userPasswordRow = null;
   userLinkedPubkeyRow = null;
+  userByEmail = null;
+  userByResetHash = null;
   updateReturns = [];
+  sentResetMails = [];
   rpcValid = true;
   currentUser = null;
 }
@@ -401,6 +427,162 @@ test('wallet-change: a NON-genesis matching pubkey is accepted (no genesis gate)
     genesisAccounts.isGenesisAddress = origIsGenesis;
     server.close();
     rpc.close();
+  }
+});
+
+// ── POST /api/auth/password-reset/request (email magic link) ───────
+const sha256 = (s) => require('crypto').createHash('sha256').update(s).digest('hex');
+
+test('email-reset request: missing/malformed email is 400', async () => {
+  reset();
+  const server = await startApp(authRoutes, { nodeRpcUrl: 'http://unused' });
+  try {
+    let r = await post(server, '/api/auth/password-reset/request', {});
+    assert.strictEqual(r.res.status, 400);
+    r = await post(server, '/api/auth/password-reset/request', { email: 'not-an-email' });
+    assert.strictEqual(r.res.status, 400);
+    assert.strictEqual(sentResetMails.length, 0);
+  } finally {
+    server.close();
+  }
+});
+
+test('email-reset request: unknown email answers 200 with no token mint and no mail (anti-enumeration)', async () => {
+  reset();
+  userByEmail = null;
+  const server = await startApp(authRoutes, { nodeRpcUrl: 'http://unused' });
+  try {
+    const r = await post(server, '/api/auth/password-reset/request', { email: 'ghost@example.com' });
+    assert.strictEqual(r.res.status, 200);
+    assert.strictEqual(r.body.ok, true);
+    assert.ok(!capturedQueries.some((q) => /UPDATE users SET password_reset_token_hash/.test(q.sql)), 'no token minted');
+    assert.strictEqual(sentResetMails.length, 0, 'no mail sent');
+  } finally {
+    server.close();
+  }
+});
+
+test('email-reset request: eligibility filter excludes admins and unconfirmed emails in SQL', async () => {
+  reset();
+  userByEmail = { id: 7, email: 'dave@example.com' };
+  const server = await startApp(authRoutes, { nodeRpcUrl: 'http://unused' });
+  try {
+    const r = await post(server, '/api/auth/password-reset/request', { email: 'Dave@Example.com' });
+    assert.strictEqual(r.res.status, 200);
+    const sel = capturedQueries.find((q) => /SELECT .*WHERE email = \$1/s.test(q.sql));
+    assert.ok(sel, 'looked the account up by email');
+    assert.match(sel.sql, /email_confirmed = TRUE/, 'only confirmed emails are eligible');
+    assert.match(sel.sql, /is_admin = FALSE/, 'admin accounts are excluded from email reset');
+    assert.strictEqual(sel.params[0], 'dave@example.com', 'email is normalized to lower case');
+  } finally {
+    server.close();
+  }
+});
+
+test('email-reset request: eligible account mints a hashed token, mails the plaintext once, never logs it', async () => {
+  reset();
+  userByEmail = { id: 7, email: 'dave@example.com' };
+  const server = await startApp(authRoutes, { nodeRpcUrl: 'http://unused' });
+  try {
+    const r = await post(server, '/api/auth/password-reset/request', { email: 'dave@example.com' });
+    assert.strictEqual(r.res.status, 200);
+    assert.strictEqual(r.body.ok, true);
+
+    assert.strictEqual(sentResetMails.length, 1, 'exactly one mail sent');
+    const { email, token } = sentResetMails[0];
+    assert.strictEqual(email, 'dave@example.com');
+    assert.match(token, /^[0-9a-f]{64}$/, 'token is 32 random bytes hex');
+
+    const mint = capturedQueries.find((q) => /UPDATE users SET password_reset_token_hash/.test(q.sql));
+    assert.ok(mint, 'token columns written');
+    assert.strictEqual(mint.params[0], sha256(token), 'DB stores the sha256, not the plaintext');
+    assert.ok(mint.params[1] instanceof Date && mint.params[1] > new Date(), 'expiry is in the future');
+    assert.strictEqual(mint.params[2], 7);
+
+    assert.ok(!JSON.stringify(r.body).includes(token), 'plaintext token not in the response');
+    assert.ok(!JSON.stringify(logCalls).includes(token), 'plaintext token never logged');
+  } finally {
+    server.close();
+  }
+});
+
+// ── POST /api/auth/password-reset/confirm ──────────────────────────
+test('email-reset confirm: malformed token is refused before touching the DB', async () => {
+  reset();
+  const server = await startApp(authRoutes, { nodeRpcUrl: 'http://unused' });
+  try {
+    const r = await post(server, '/api/auth/password-reset/confirm', {
+      token: 'nope', newPassword: 'brand-new-pw',
+    });
+    assert.strictEqual(r.res.status, 401);
+    assert.strictEqual(capturedQueries.length, 0, 'no query issued');
+  } finally {
+    server.close();
+  }
+});
+
+test('email-reset confirm: policy rejects a short password before the token lookup', async () => {
+  reset();
+  const server = await startApp(authRoutes, { nodeRpcUrl: 'http://unused' });
+  try {
+    const r = await post(server, '/api/auth/password-reset/confirm', {
+      token: 'a'.repeat(64), newPassword: 'short',
+    });
+    assert.strictEqual(r.res.status, 400);
+    assert.strictEqual(capturedQueries.length, 0, 'no query issued');
+  } finally {
+    server.close();
+  }
+});
+
+test('email-reset confirm: unknown or expired token gets the one generic refusal, no password write', async () => {
+  reset();
+  userByResetHash = null;
+  const server = await startApp(authRoutes, { nodeRpcUrl: 'http://unused' });
+  try {
+    const r = await post(server, '/api/auth/password-reset/confirm', {
+      token: 'a'.repeat(64), newPassword: 'brand-new-pw',
+    });
+    assert.strictEqual(r.res.status, 401);
+    const sel = capturedQueries.find((q) => /SELECT .*password_reset_token_hash = \$1/s.test(q.sql));
+    assert.ok(sel, 'lookup was by token hash');
+    assert.strictEqual(sel.params[0], sha256('a'.repeat(64)), 'lookup uses the hash, never the plaintext');
+    assert.match(sel.sql, /password_reset_expires_at > NOW\(\)/, 'expiry enforced in SQL');
+    assert.ok(!capturedQueries.some((q) => /UPDATE users SET password = \$1/.test(q.sql)), 'no password write');
+  } finally {
+    server.close();
+  }
+});
+
+test('email-reset confirm: valid token writes a fresh hash, clears the token, wipes sessions, mints none', async () => {
+  reset();
+  const token = 'b'.repeat(64);
+  userByResetHash = { id: 7, username: 'dave', is_admin: false, admin_readonly: false };
+  updateReturns = [{ id: 7, username: 'dave', is_admin: false, admin_readonly: false }];
+  const server = await startApp(authRoutes, { nodeRpcUrl: 'http://unused' });
+  try {
+    const r = await post(server, '/api/auth/password-reset/confirm', {
+      token, newPassword: 'brand-new-pw',
+    });
+    assert.strictEqual(r.res.status, 200);
+    assert.strictEqual(r.body.ok, true);
+
+    const upd = capturedQueries.find((q) => /UPDATE users SET password = \$1/.test(q.sql));
+    assert.ok(upd, 'password updated');
+    assert.ok(await bcrypt.compare('brand-new-pw', upd.params[0]), 'stored value is a bcrypt hash of the new password');
+    assert.match(upd.sql, /password_reset_token_hash = NULL/, 'token cleared in the same write (single use)');
+    assert.match(upd.sql, /password_reset_token_hash = \$3/, 'write is guarded on the token still being set');
+    assert.strictEqual(upd.params[2], sha256(token));
+
+    const del = capturedQueries.find((q) => /DELETE FROM sessions WHERE user_id/.test(q.sql));
+    assert.ok(del, 'all sessions wiped');
+    assert.strictEqual(del.params[0], 7);
+    assert.ok(!capturedQueries.some((q) => /INSERT INTO sessions/.test(q.sql)), 'no auto-login session minted');
+
+    assert.ok(!JSON.stringify(logCalls).includes(token), 'plaintext token never logged');
+    assert.ok(!JSON.stringify(logCalls).includes('brand-new-pw'), 'plaintext password never logged');
+  } finally {
+    server.close();
   }
 });
 

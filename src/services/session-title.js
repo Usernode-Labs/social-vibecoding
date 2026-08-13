@@ -39,7 +39,17 @@ function headlessTitle(issueNumber, issueTitle) {
 // session lists update live via the `session_titled` event.
 function generateAndApply({ pool, session, requests, specs, issueTitle, userId, apiKey, send }) {
   return (async () => {
-    const meta = await llm.generateSessionTitle({ requests, specs, issueTitle, apiKey });
+    const meta = await llm.generateSessionTitle({
+      requests,
+      specs,
+      issueTitle,
+      apiKey,
+      telemetryContext: {
+        pool,
+        appId: session.app_id,
+        sessionId: session.id,
+      },
+    });
 
     // Debit the Haiku call to the requesting user — BYOK bucket when
     // their own key paid for it, same as the PR-metadata call.

@@ -120,6 +120,7 @@ test('watchdog: the default budget is unchanged for non-stopped turns', () => {
 test('newWatchState initializes markerlessCause to null', () => {
   const state = worker.newWatchState();
   assert.equal(state.markerlessCause, null);
+  assert.equal(state.agentRetryFresh, false);
 });
 
 // ── __USERNODE_WARN__ forwarding ────────────────────────────────────────
@@ -151,4 +152,46 @@ test('parseLine: non-warn marker lines keep their existing behavior', () => {
   assert.equal(state.execExitSeen, true);
   assert.equal(state.exitCode, 0);
   assert.deepEqual(progressLines, []);
+});
+
+test('parseLine: backend-neutral terminal result fields are captured (plan.md PR1)', () => {
+  const progressLines = [];
+  const state = worker.newWatchState();
+  // A modern codex_openrouter runner (PR5+) emits agent_* fields alongside
+  // the legacy cc_* alias during the migration window.
+  worker.parseLine(
+    '__USERNODE_RESULT__ agent_backend=codex_openrouter agent_provider=openrouter '
+      + 'agent_model=openai/gpt-5.3-codex agent_thread_id=thr-0199 '
+      + 'agent_exit=0 agent_retry_fresh=1 cc_exit=0 ahead=3 behind=0 sha=abc123 push_ok=1 mode=build',
+    (t) => progressLines.push(t),
+    state,
+  );
+  assert.equal(state.resultSeen, true);
+  assert.equal(state.agentBackend, 'codex_openrouter');
+  assert.equal(state.agentProvider, 'openrouter');
+  assert.equal(state.agentModel, 'openai/gpt-5.3-codex');
+  assert.equal(state.agentThreadId, 'thr-0199');
+  assert.equal(state.agentExit, 0);
+  assert.equal(state.agentRetryFresh, true);
+  // Legacy fields still parsed for compatibility.
+  assert.equal(state.ccExit, 0);
+  assert.equal(state.ahead, 3);
+  assert.equal(state.behind, 0);
+  assert.equal(state.sha, 'abc123');
+  assert.equal(state.pushOk, true);
+  assert.deepEqual(progressLines, []);
+});
+
+test('parseLine: backend-neutral result tolerates missing legacy cc_exit', () => {
+  const state = worker.newWatchState();
+  worker.parseLine(
+    '__USERNODE_RESULT__ agent_backend=codex_openrouter agent_exit=1 ahead=0 behind=2 push_ok=0 mode=build',
+    () => {},
+    state,
+  );
+  assert.equal(state.agentExit, 1);
+  assert.equal(state.ccExit, null);
+  assert.equal(state.agentBackend, 'codex_openrouter');
+  assert.equal(state.behind, 2);
+  assert.equal(state.pushOk, false);
 });

@@ -59,7 +59,10 @@ stub(ids.stagingReap, {});
 stub(ids.stagingEnv, {});
 stub(ids.clientIp, { clientIp: () => '127.0.0.1' });
 stub(ids.lifecycle, { drainGuard: (_req, _res, next) => next() });
-stub(ids.rateLimits, { dbExportLimiter: (_req, _res, next) => next() });
+stub(ids.rateLimits, {
+  dbExportLimiter: (_req, _res, next) => next(),
+  mailTestLimiter: (_req, _res, next) => next(),
+});
 stub(ids.status, { snapshot: async () => ({}) });
 
 // The real gates, minus the session plumbing: adminMiddleware requires an
@@ -353,7 +356,7 @@ test('both queries exclude the self-hosted row', () => {
 
 test('the console carries a Featured apps section under Platform', () => {
   const src = fs.readFileSync(
-    path.join(__dirname, '..', 'public/js/admin-console.js'), 'utf8'
+    path.join(__dirname, '..', 'frontend/src/features/admin/admin-console.js'), 'utf8'
   );
   const sections = src.slice(src.indexOf('SECTIONS: ['), src.indexOf('isOpen()'));
   assert.match(sections,
@@ -365,7 +368,7 @@ test('the console carries a Featured apps section under Platform', () => {
 
 test('the section gates its mutating controls on canWrite', () => {
   const src = fs.readFileSync(
-    path.join(__dirname, '..', 'public/js/admin-console.js'), 'utf8'
+    path.join(__dirname, '..', 'frontend/src/features/admin/admin-console.js'), 'utf8'
   );
   const section = src.slice(
     src.indexOf('renderFeaturedAppsSection(host) {'),

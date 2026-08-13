@@ -199,7 +199,23 @@ function makeAppView({ fetchImpl, apps = [RUNNING], offline = false, reduceMotio
     console,
     relTime: () => 'now',
     Date: FakeDate,
-    App: { user: { id: 1 }, currentApp: null },
+    App: {
+      user: { id: 1 },
+      currentApp: null,
+      // The visibility seam (#1078). app-view.js no longer writes
+      // `.hidden` onto a screen root directly — it publishes through
+      // App._setScreenVisible, which either forwards to the React store (for
+      // a root React owns) or does this classList toggle. Nothing in
+      // app-view.js is React-owned yet, so the stub is the legacy branch.
+      REACT_SCREEN_IDS: [],
+      _setScreenVisible(id, visible) {
+        dom.document.getElementById(id)?.classList.toggle('hidden', !visible);
+      },
+      _isScreenVisible(id) {
+        const el = dom.document.getElementById(id);
+        return !!el && !el.classList.contains('hidden');
+      },
+    },
     Home: {
       _apps: apps,
       iconTileFor(app) {
@@ -596,7 +612,7 @@ test('open mints the token alongside the detail fetch instead of after it', asyn
       return new Promise((r) => { detailResolve = () => r({ ok: true, json: async () => ({ app: { ...RUNNING } }) }); });
     },
   });
-  ['startActivityTracking', 'startTokenRefresh', 'refreshVersionPill', 'renderForkBadge']
+  ['startActivityTracking', 'startTokenRefresh', 'renderForkBadge']
     .forEach((m) => { AppView[m] = () => {}; });
 
   const p = AppView.open('notes');

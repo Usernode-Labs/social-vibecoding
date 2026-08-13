@@ -17,6 +17,111 @@
   --accent: #7c3aed;
   --accent-light: #8b5cf6;
   --accent-tint: rgba(124, 58, 237, 0.08);
+
+  /* ── Safe-area tokens ────────────────────────────────────
+     THE single source of truth for the shell's own safe-area
+     arithmetic. Every rule in this file that needs an inset reads one
+     of these two — never bare env() — so there is exactly one place to
+     change if the source ever moves.
+
+     Written as `var(--un-safe-inset-X, env(safe-area-inset-X, 0px))`,
+     the kit's convention (see the "Safe areas" block in
+     public/usernode-native/v1/native.css). The shell is a top-level
+     document, so nothing sets the custom property and env() supplies
+     the real value; writing it this way means the shell would also
+     honour a forwarded inset if it were ever framed, and it is what
+     lets `?shot=safe-bottom` (public/js/app.js) paint the whole shell
+     — kit `.un-safe-*` classes included — as if it were on a notched
+     phone. */
+  --platform-safe-bottom: var(--un-safe-inset-bottom, env(safe-area-inset-bottom, 0px));
+  --platform-safe-top: var(--un-safe-inset-top, env(safe-area-inset-top, 0px));
+
+  /* ── Semantic state tokens (dev board) ───────────────────
+     ONE meaning per hue, so the same lifecycle stage never reads two
+     ways depending on which helper drew it. Every dev-card status
+     badge / pill / composite-pill tone routes through these; nothing
+     in the board's status vocabulary should hard-code a hex again.
+
+       neutral    — not started, skipped, draft, paused, archived
+       progress   — actively happening: merging, resolving, checks
+                    running, in vote. Violet, NOT amber: amber used to
+                    do this job as well as three others.
+       attention  — non-blocking heads-up: behind main, console
+                    errors, advisory votes, explicit approval. Amber
+                    now means ONLY this.
+       blocked    — blocks the merge: checks failing, checks couldn't
+                    run, preview won't boot, conflict. Red. ("Checks
+                    failing" used to be amber, reading like a warning
+                    when it actually blocks.)
+       ok         — done and good: merged, checks passing, passed —
+                    merging shortly, a Yes tally. Green. ("✓ Checks
+                    passing" used to inherit the violet Merged colour.)
+       admin      — an admin bypass. Same amber family as attention
+                    but distinguished by an OUTLINE (see
+                    .gc-vote-btn-admin) so hue alone isn't the signal.
+
+     `-bg` companions are the faint fills; `-fill` the stronger
+     proportional-fill wash used inside the tally pill. */
+  --state-neutral: #6b7280;
+  --state-neutral-bg: rgba(107, 114, 128, 0.12);
+  --state-progress: #7c3aed;
+  --state-progress-bg: rgba(124, 58, 237, 0.12);
+  --state-attention: #b45309;
+  --state-attention-bg: rgba(245, 158, 11, 0.14);
+  --state-blocked: #dc2626;
+  --state-blocked-bg: rgba(239, 68, 68, 0.12);
+  --state-blocked-fill: rgba(239, 68, 68, 0.32);
+  --state-ok: #15803d;
+  --state-ok-bg: rgba(34, 197, 94, 0.12);
+  --state-ok-fill: rgba(34, 197, 94, 0.32);
+  --state-admin: #b45309;
+  --state-admin-bg: rgba(245, 158, 11, 0.10);
+}
+
+/* ── Safe-area utilities ─────────────────────────────────
+   The platform's half of "backgrounds extend into the bottom inset,
+   interactive content insets itself":
+
+   .platform-safe-scroll — a scroll container whose content ends at the
+     bottom of the screen. Block-end padding is part of a scroller's
+     scrollable overflow, so the last row becomes reachable AND the
+     scroller's own background still paints through the strip.
+   .platform-safe-bar — a pinned bottom bar (every composer block) that
+     already carries Tailwind `p-2`. The 8px base gap is preserved and
+     the inset is added below it.
+
+   `!important` is load-bearing, not laziness: /css/tailwind.css is
+   linked AFTER /css/app.css (index.html — and the inline probe there
+   enforces that order), so a plain class here loses the specificity
+   tie against `p-2` / `p-4` on the same element purely on source
+   order. The kit's own `.un-safe-*` helpers carry `!important` for
+   exactly this reason.
+
+   Deliberately NOT the kit's `.un-safe-bottom`: that one REPLACES the
+   element's own bottom padding with the bare inset (a composer would
+   lose its 8px gap) and has no keyboard-up suppression. These wrap the
+   kit's token rather than forking its CSS. */
+.platform-safe-scroll {
+  padding-bottom: var(--platform-safe-bottom) !important;
+}
+
+.platform-safe-bar {
+  padding-bottom: calc(0.5rem + var(--platform-safe-bottom)) !important;
+}
+
+/* Keyboard up: the home-indicator strip sits BEHIND the on-screen
+   keyboard, so reserving it there is pure dead space above the
+   keyboard. Same suppression the kit applies to its own surfaces
+   (`html.un-kb .un-panel-body` / `.un-action-sheet` / `.un-kb-avoid`
+   in native.css). The bar keeps its 8px base gap; a scroller that also
+   carries the kit's `.un-kb-avoid` gets the keyboard inset from the
+   kit instead. */
+html.un-kb .platform-safe-scroll {
+  padding-bottom: 0 !important;
+}
+
+html.un-kb .platform-safe-bar {
+  padding-bottom: 0.5rem !important;
 }
 
 .dark {
@@ -38,6 +143,25 @@
   --accent: #a78bfa;
   --accent-light: #c4b5fd;
   --accent-tint: rgba(167, 139, 250, 0.12);
+
+  /* Dark counterparts of the semantic state tokens. Every --state-*
+     declared on :root has one here — tests/dev-color-tokens.test.js
+     asserts the two lists match, so a token added above without a dark
+     value fails the suite rather than rendering an unreadable badge. */
+  --state-neutral: #9ca3af;
+  --state-neutral-bg: rgba(156, 163, 175, 0.16);
+  --state-progress: #a78bfa;
+  --state-progress-bg: rgba(167, 139, 250, 0.18);
+  --state-attention: #fbbf24;
+  --state-attention-bg: rgba(245, 158, 11, 0.18);
+  --state-blocked: #f87171;
+  --state-blocked-bg: rgba(239, 68, 68, 0.18);
+  --state-blocked-fill: rgba(239, 68, 68, 0.38);
+  --state-ok: #34d399;
+  --state-ok-bg: rgba(34, 197, 94, 0.18);
+  --state-ok-fill: rgba(34, 197, 94, 0.38);
+  --state-admin: #fbbf24;
+  --state-admin-bg: rgba(245, 158, 11, 0.14);
 }
 
 /* ── usernode-native kit theming ─────────────────────────
@@ -82,7 +206,7 @@
 }
 
 /* Full-screen modal roots whose card is currently riding inside a kit
-   presentModal (see platform-ui.js adoptStaticModal): the legacy fixed
+   presentModal (see frontend/src/lib/static-modal.ts): the legacy fixed
    overlay/scrim must not paint a second backdrop. */
 .platform-modal-adopted {
   display: none !important;
@@ -161,6 +285,83 @@
   box-shadow: 0 0.5px 0 var(--un-hairline);
 }
 
+/* ── Native iOS performance baseline (#787) ──────────────────────────
+   The Flutter shell marks the top document with .in-native-webview before
+   first paint (index.html) and the kit independently adds .un-ios.  Together
+   those are a reliable scope for the reported surface; do not guess a phone
+   model from the UA, and do not reduce motion in Safari/PWA or on Android.
+
+   Live backdrop blur is unusually expensive in a WKWebView while the content
+   behind it scrolls or a transition snapshot moves.  These surfaces already
+   own opaque sheet backgrounds, so dropping the blur preserves contrast while
+   avoiding a full-surface filter pass.  The nav tokens are translucent by
+   design, therefore pin them to the platform surface in this scope. */
+html.un-ios.in-native-webview {
+  --un-navbar-bg: var(--bg-primary);
+  --un-toast-bg: #1c1c2a;
+}
+
+html.un-ios.in-native-webview .platform-chat-header.un-scrolled,
+html.un-ios.in-native-webview .un-navbar,
+html.un-ios.in-native-webview .un-action-card,
+html.un-ios.in-native-webview .un-alert,
+html.un-ios.in-native-webview .un-toast {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+/* The kit's default iOS page transition dims its full-page snapshot with a
+   brightness filter while also translating it.  Keep the spatial push/pop
+   cue, but use transform-only keyframes and a shorter capture lifetime in the
+   native shell.  Reduce Motion remains stricter in native.css and disables
+   these animations entirely. */
+html.un-ios.in-native-webview[data-un-vt]::view-transition-old(root),
+html.un-ios.in-native-webview[data-un-vt]::view-transition-new(root) {
+  animation-duration: 260ms;
+}
+html.un-ios.in-native-webview[data-un-vt="push"]::view-transition-old(root) {
+  animation-name: un-vt-native-ios-parallax-out-left;
+}
+html.un-ios.in-native-webview[data-un-vt="pop"]::view-transition-new(root) {
+  animation-name: un-vt-native-ios-parallax-in-left;
+}
+@keyframes un-vt-native-ios-parallax-out-left {
+  from { transform: translateX(0); }
+  to { transform: translateX(-30%); }
+}
+@keyframes un-vt-native-ios-parallax-in-left {
+  from { transform: translateX(-30%); }
+  to { transform: translateX(0); }
+}
+/* app.css loads after native.css, so repeat the accessibility override at
+   this selector's higher specificity. Without this rule, the performance
+   animation-name above would win back one sub-property from the kit's earlier
+   `animation: none` shorthand and accidentally re-enable Reduce Motion. */
+@media (prefers-reduced-motion: reduce) {
+  html.un-ios.in-native-webview[data-un-vt]::view-transition-old(root),
+  html.un-ios.in-native-webview[data-un-vt]::view-transition-new(root) {
+    animation: none;
+  }
+}
+
+/* Infinite decorative effects keep compositing even when the user is idle.
+   Their state must remain legible without motion: lifecycle colors stay in
+   place and busy session dots gain a static ring.  Functional progress
+   spinners are intentionally not selected. */
+html.un-ios.in-native-webview .status-dot.creating,
+html.un-ios.in-native-webview .work-cog-spinning,
+html.un-ios.in-native-webview .app-version-pill--stale .app-version-pill-dot {
+  animation: none;
+}
+html.un-ios.in-native-webview .dc-active-dot-busy.dc-active-dot-active {
+  animation: none;
+  box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.38);
+}
+html.un-ios.in-native-webview .dc-active-dot-busy.dc-active-dot-promoted {
+  animation: none;
+  box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.38);
+}
+
 /* Pressed-state opt-outs: the kit gives every button an instant
    scale-press, which reads wrong on dense strip controls that sit
    flush against siblings (the header App/Dev switch, segmented pills,
@@ -200,6 +401,51 @@ html, body {
 
 .app-card { transition: background-color 150ms; }
 .app-card:hover { background-color: var(--bg-card); }
+
+/* THE TILE LABEL — iOS-homescreen sized (#951).
+   11px on a 13px line, TWO lines, ellipsised on overflow. The old label
+   was one 14px/20px line with `truncate`, which cut most real app names
+   after ~12 characters; at this size and two lines a tile shows roughly
+   three times as much of a long name.
+
+   The lane is a FIXED 26px (2 x 13), not min-height: a one-line title and
+   a two-line title must occupy exactly the same box or the caption below
+   it — and the tile's whole content height — would shift per tile, and
+   the grid's rows are a fixed --home-cell-h with the cards top-aligned
+   (`align-self: start`), so a taller card paints over its neighbour.
+   Together with the tightened caption lane below, the 124px budget in
+   the --home-cell-h derivation is unchanged.
+
+   -webkit-line-clamp is the only cross-browser way to ellipsise at a
+   line COUNT (the standard `line-clamp` is listed alongside it for the
+   engines that have shipped it unprefixed); it needs the -webkit-box
+   display, which is why this is a class rather than Tailwind's
+   `truncate`. overflow-wrap: anywhere keeps a single long unbroken word
+   (a slug-style name) inside the tile instead of overflowing it. */
+.app-card-title {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  width: 100%;
+  height: 1.625rem; /* 26px — exactly two lines */
+  font-size: 0.6875rem; /* 11px */
+  line-height: 0.8125rem; /* 13px */
+  font-weight: 500;
+  text-align: center;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+/* The status caption ("Spinning up…" / "Awaiting secrets" / "Error")
+   steps down with it: 11px on a 12px line, no top margin, so the two
+   text lanes together are 26 + 12 = 38px — the same as the old
+   20 (title) + 16 (caption) + 2 (mt-0.5) budget. */
+.app-card-status {
+  font-size: 0.6875rem; /* 11px */
+  line-height: 0.75rem; /* 12px */
+}
 
 /* ── App icon tiles ────────────────────────────────────────
    The single treatment for every homescreen-style app icon tile:
@@ -333,7 +579,7 @@ html, body {
    card. Each block is a plain full-width child of #home-panels — the
    column above is the only width bound (see .home-column).
 
-   HEIGHT CAP — "about two rows of app icons", derived from the app tile's
+   HEIGHT — "about two rows of app icons", derived from the app tile's
    own tokens rather than measured at runtime. #922 deleted exactly that
    kind of measure-on-render loop (Home.alignSections publishing
    --home-section-indent), so this stays a constant that a reader can
@@ -355,8 +601,46 @@ html, body {
    a drift in one without the other fails rather than silently mis-sizing
    the block.
 
+   WHAT THAT NUMBER MEANS DEPENDS ON THE BREAKPOINT (#947, #968). The
+   challenges widget is the same markup at both widths and two different
+   things:
+
+     PHONE (<640px, 4 columns) — the widget spans the FULL grid width and is
+     ONE CELL TALL (registry `sizes` 4: [4, 1]), so this two-cell constant
+     does not apply there at all: the phone media block at the bottom of this
+     file redefines --home-panel-max-h as one --home-cell-h. #947 made the
+     block draw at its CONTENT height (`.home-panel--fit`, same block) but
+     left the footprint at two rows, so the height it gave up became a band of
+     blank grid between the widget and the first row of app icons — a ~68px
+     box inside a 238px reservation between seasons. #968 cut the footprint
+     to one row and reshaped the CONTENT to fit it:
+
+       border 2 + title bar 27 + 2 rows x --home-panel-row-h (40) = 109px
+
+     against the 116px phone cell — ~7px of headroom. No footer: a
+     .home-panel-footer is 27px more and that IS the second row, so the way
+     off this screen rides in the title bar instead — the leaderboard link of
+     #980, which is Discover's browse control in the same place for the same
+     reason (#949) — the rows themselves still open the Challenges tab, and
+     expand-in-place is a desktop-only state. The empty state is 69px of the
+     same cell. See HomePanels.renderChallengesPanel's compact branch.
+
+     DESKTOP (>=640px, 5 columns) — the widget is a TILE in a grid of app
+     icons. Shrinking it would leave a notch beside the tiles it shares rows
+     with, so the constant is the DRAWN height, always, and the widget fills
+     whatever the challenge rows don't use with a LEADERBOARD section (see
+     .home-panel-fill). Row budget inside the 16rem tile:
+
+       256 - border 2 - title bar 25.5 - footer 27           = 201.5px
+       a row is --home-panel-row-h (40); the fill label is 16
+       => fillRows = 4 - max(challengeRows, 1)
+
+     which is 3 rows at zero or one challenge, 2 at two, 1 at three, and 0 at
+     four — a 40px row plus its 16px label does not fit in the ~41px the
+     four-row state leaves, so that one state keeps its slack.
+
    The cap is enforced by flexbox, not arithmetic: the title bar is
-   flex: none and the rows list takes the remainder with min-height: 0 +
+   flex: none and the body takes the remainder with min-height: 0 +
    overflow: hidden, so content clips at the cap instead of growing the
    block. Budget inside 14rem, counting every band the collapsed block
    actually draws:
@@ -405,11 +689,17 @@ html, body {
      Desktop (>= 640px), from .app-card's own tokens in home.js renderAppCard:
        p-3        0.75rem x 2  = 1.5rem
        w-14 h-14  3.5rem       = 3.5rem
-       gap-2      0.5rem       = 0.5rem
-       text-sm    1.25rem line = 1.25rem
-       caption    1rem line    = 1rem     <- see below
+       gap-1.5    0.375rem     = 0.375rem
+       title      2 x 13px     = 1.625rem  <- .app-card-title, two lines
+       caption    12px line    = 0.75rem   <- .app-card-status, see below
                                 --------
                                 7.75rem   (124px)
+
+     #951 shrank the label from one 14px/20px line to two 11px/13px lines
+     and tightened the icon->label gap and the caption line to match, so
+     the total is UNCHANGED and nothing derived from --home-cell-h moved.
+     Both text lanes are fixed heights, so a one-line and a two-line title
+     produce identical tiles.
      The phone variant is 116px: index.html tightens the tile to `p-2`
      (0.5rem x 2), which is 8px less. Four 56px icons per row only read as a
      home screen at that density.
@@ -423,6 +713,17 @@ html, body {
      Budgeting for it is what keeps an errored app legible instead of
      bleeding into its neighbour. */
   --home-cell-h: 7.75rem; /* 124px — see the derivation above */
+  /* ONE EMPTY ROW on a phone (#975). Half a cell — 58px against the phone's
+     116px — so a row the viewer left empty keeps its place in the arrangement
+     without reserving a whole tile to be empty. DERIVED from the cell rather
+     than written out, so the two can never drift.
+
+     Emitted by Home.rowTemplate for the rows HomeLayout.blankRows names, and
+     only at four columns; the :root value here (62px) is never used, since a
+     desktop grid gets no inline template at all. A variable and not an inline
+     calc() because every track in that template has to stay a single
+     space-free token — see rowTemplate. */
+  --home-blank-row-h: calc(var(--home-cell-h) / 2);
   --home-panel-max-h: 16rem; /* two cells + the gap — see --home-cell-h */
   --home-panel-max-w: 32rem; /* half of .home-column's 64rem */
   --home-panel-row-h: 2.5rem; /* 40px — see the budget above */
@@ -489,6 +790,45 @@ html, body {
   flex: 1 1 auto;
   min-height: 0;
   overflow: hidden;
+}
+
+/* The challenges widget's BODY (#947): the rows list plus, on the desktop
+   tile, the LEADERBOARD fill under it. It is the flex child that takes the
+   article's remaining height and clips — the job .home-panel-rows used to do
+   alone, moved out one level so the two stacked blocks inside it keep their
+   natural heights.
+
+   That is the whole reason this wrapper exists: with `flex: 1 1 auto` still
+   on the rows list, the surplus would be absorbed BETWEEN the challenge rows
+   and the leaderboard label, splitting the tile with a gap down its middle.
+   Pinning both children to their content height collects the leftover at the
+   BOTTOM of the tile, where it reads as ordinary padding.
+
+   Scoped to the challenges panel; discover and create keep their markup, and
+   the existing descendant selectors (`.home-panel .home-panel-rows--metered
+   .home-panel-row`, asserted in dapp.json) still match through it. */
+.home-panel-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+.home-panel-body > .home-panel-rows {
+  flex: 0 0 auto;
+}
+
+/* The LEADERBOARD fill. Its rows carry .home-panel-row too, so they get the
+   same 40px single-line geometry as a challenge row — which is what makes the
+   two lists line up instead of reading as two lists jammed together. They sit
+   OUTSIDE .home-panel-rows, so a metered challenge list never pushes its
+   14px meter lane onto them. */
+.home-panel-fill {
+  flex: 0 0 auto;
+}
+/* 16px including its own hairline — the figure the row budget above spends. */
+.home-panel-fill-label {
+  height: 1rem;
 }
 
 /* 44px rows: the native kit's minimum touch target, and the whole row is
@@ -588,7 +928,37 @@ html, body {
   min-width: 0;
   /* The slot IS its cells: the bordered .home-panel article inside it
      stretches to fill whatever rectangle the layout gave it, rather than
-     sitting at its natural height in the top-left of a 2x2 block. */
+     sitting at its natural height in the top-left of a 2x2 block.
+
+     THAT IS A DESKTOP CONTRACT (#947), not a universal one. At five columns
+     the widget is a tile among app icons and a short block would leave a
+     visible notch beside its neighbours — so it stretches, and the challenges
+     widget fills the surplus with its LEADERBOARD section rather than blank
+     space. At four columns the widget spans the whole width, so there is no
+     neighbour to leave a notch beside and shrinking costs nothing: the phone
+     media block at the bottom of this file releases `.home-panel--fit` from
+     this stretch. Do not move that rule out of the media query — desktop
+     depends on the stretch, and `align-items` here would take the create
+     widget's `h-full` 1x1 tile down with it.
+
+     Releasing the stretch is only half of "shrinks", though (#968), and the
+     half that the reader of this rule cannot see: the slot is a grid item, so
+     what it releases is space INSIDE its own rectangle. Two things size that
+     rectangle, and BOTH had to move before the page got anything back —
+     a short block in a slot that still owns 238px of grid gives its height to
+     whitespace, not to the viewer:
+
+       * the footprint. Every widget's phone `sizes` entry is one row, so the
+         rectangle is one cell rather than two.
+       * the TRACK. Home.rowTemplate gives the row a fit widget owns outright
+         a content-sized track, so the cell is as tall as the widget draws —
+         see #app-list above.
+
+     This rule is what makes the second one visible rather than redundant: in
+     a content-sized track it is a no-op (the track already equals the
+     content), but it is still what keeps the article honest on any row that
+     is NOT a fit row — a hole-adjacent full-height row, the desktop tile's
+     sibling breakpoint, or the frame before a re-render lands. */
   display: flex;
   min-height: 0;
 }
@@ -609,7 +979,38 @@ html, body {
 
    The SEARCH view is exempt: it is a flat, transient list, and its "N
    results" header and empty-state line would each claim a whole tile row
-   under a fixed height. Home.render() stamps data-view on the grid. */
+   under a fixed height. Home.render() stamps data-view on the grid.
+
+   ON A PHONE THIS IS THE DEFAULT ROW HEIGHT, NOT EVERY ROW'S (#968, #975).
+   Home.render() writes an inline `grid-template-rows` below 640px — one
+   entry per occupied row, `var(--home-cell-h)` for most of them plus two
+   exceptions:
+
+     * a content-sized `minmax(floor, auto)` for a row a FIT widget owns
+       outright (HomeLayout.fitRows; challenges only today). Without it the
+       between-seasons widget drew a ~68px box inside a 116px reservation and
+       handed the other ~48px to nobody: a grid item cannot shrink a fixed
+       track, so shrinking the BOX was never going to shrink the PAGE.
+     * `var(--home-blank-row-h)` — half a cell — for a row with NOTHING in it
+       (HomeLayout.blankRows). Same reasoning one step further: an empty row
+       was spending a whole tile's height on nothing, and on the default phone
+       arrangement there are two of them between the app tiles and the lower
+       widgets.
+
+   Note what shrinking a blank row is NOT: nothing re-packs, nothing collapses,
+   nothing is tidied away. The row keeps its index, keeps its place in the
+   arrangement and stays a drop target — a hole is still an arrangement the
+   viewer chose. Only its pixel height changes, and only on a phone.
+
+   Two things the rule deliberately does not do: it never shrinks a row
+   holding an app tile (a card with no status caption is ~100px, and that lane
+   is load-bearing — see --home-cell-h), which is also why a PARTLY empty row
+   stays full; and it never emits more entries than there are occupied rows (an
+   explicit grid exists whether or not anything is in it, so eight entries
+   would pad a three-app home screen out to ~950px — which is likewise why the
+   trailing empty rows below the last tile are not in the template and have
+   nothing to shrink). Desktop gets no template at all and this token is still
+   the whole story there. */
 #app-list {
   position: relative;
   grid-auto-rows: var(--home-cell-h);
@@ -628,6 +1029,20 @@ html, body {
    it is inset by the grid's own padding. That is what makes it align with
    zero arithmetic: it is laid out by the same engine, with the same numbers,
    as the tiles it sits behind.
+
+   The row height below is the DEFAULT and the padding for rows past the
+   content (#968, #975). Since a phone row can now be shorter than a cell —
+   content-sized for a fit widget, half a cell for an empty row —
+   Home._showGridOverlay copies #app-list's USED tracks
+   (getComputedStyle → "116px 67.5px 58px …") onto this element inline and pads
+   them out to the eight-row canvas with this token. The padded rows stay a
+   FULL cell on purpose: they are past the template, so they are the drag-only
+   region below the content, where there is no page height to reclaim and a big
+   drop target is worth more. Copied rather than
+   re-derived on purpose: one element decides the row heights and the other
+   reads its answer, so the two grids cannot disagree. In pixels, too — the
+   cells here are empty divs, so a content-sized track would collapse to
+   nothing.
 
    The inset must track that padding EXACTLY, including the tighter top —
    #app-list is `p-2 pt-1.5 sm:p-3 sm:pt-2`, so a uniform inset sits the whole
@@ -759,19 +1174,110 @@ html, body {
 }
 
 /* ── Discover widget ────────────────────────────────────────
-   The compact featured tiles inside a 2x2 block (~171px wide on a phone,
-   ~397px on desktop). auto-fill rather than a fixed column count: the same
-   markup has to read well at both, and letting the tiles decide how many fit
-   is what keeps a 40px icon from being stranded alone on a wide row. */
+   ONE SHAPE PER BREAKPOINT (#949 — registry sizes 4x1 / 2x2 in
+   src/routes/home-panels.js). The block is ~366px wide on a phone and
+   ~397px on a wide desktop.
+
+   PHONE — one grid row, spent on the title bar and one lane:
+
+     border            1px top + 1px bottom          =   2px
+     title bar         py-1 8 + 18 line + 1 rule     =  27px
+     tile lane         8 + 40 icon + 4 gap + 12 name + 8
+                                                     =  72px
+                                                       -------
+                                                        101px
+
+   against --home-cell-h 7.25rem (116px) — ~15px of headroom, which is what
+   absorbs a larger system text size before the lane starts to clip. That
+   27px title bar is why Discover's browse control lives IN the bar and it
+   draws no footer: a .home-panel-footer is 27px more and the lane has
+   nowhere to give it.
+
+   DESKTOP — two rows, unchanged from before the issue, with the second one
+   earned rather than trimmed:
+
+     border 2 + title bar 27 + lane 72
+     + divider/"Popular" caption (1 rule + ~18)      =  19px
+     + second lane                                   =  72px
+                                                       -------
+                                                        192px
+
+   against --home-panel-max-h 16rem (256px) = two cells plus the gap. The
+   64px of slack is deliberately NOT a void at the bottom: both lanes are
+   `flex: 1 1 0`, so they split it into equal halves and each centres its
+   single row of tiles in its own band.
+
+   tests/home-panels-render.test.js pins both budgets against those tokens,
+   so don't move one number without the other.
+
+   SIX EXPLICIT TRACKS, NOT auto-fill. Each lane must be exactly one row:
+   with a lane budgeted at one row, anything that wraps is clipped by
+   .home-panel-rows' overflow and silently disappears. auto-fill made the
+   track count follow the pixel width — 6 tracks on a phone and on a wide
+   desktop, but only 3-4 in a 640-800px window, where a full six tiles
+   wrapped. Six is Home.FEATURED_LIMIT / Home.POPULAR_LIMIT, so there is
+   exactly one track per tile either lane can ever produce.
+
+   The icon is FLUID for the same reason: the narrowest 5-column lane gives
+   a track ~32px, and a fixed 40px box would overflow it. It fills its track
+   up to the 40px it has always drawn at, so a phone and a wide desktop are
+   unchanged and a narrow desktop window shrinks instead of clipping. */
 .home-discover-tiles {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(3.25rem, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 0.375rem;
   padding: 0.5rem 0.625rem;
-  align-content: start;
+  /* One row inside a band that is taller than it needs: centre it rather
+     than hanging it off the top edge. */
+  align-content: center;
 }
-.home-discover-tile {
+/* Both lanes share the leftover height evenly instead of the first one
+   taking it all — `1 1 0` rather than .home-panel-rows' own `1 1 auto`, so
+   the basis is the band and not the content. */
+.home-discover-lane {
+  flex: 1 1 0;
+}
+/* .app-card buys these tiles their tap/drag behaviour, but NOT its padding:
+   that class is the 56px launcher tile, and its 8px (phone) / 12px (desktop)
+   inset is sized for a card that owns a whole grid cell. Inherited here it
+   added 16px to every tile, which put the phone widget at 116px of a 116px
+   cell — no headroom at all, so the first reader with larger system text
+   would have had the captions clipped. The lane's own padding is the inset;
+   the tile just holds the icon and its name.
+
+   Two classes deep on purpose: .app-card's own padding is declared LATER in
+   this file (in the phone-density block), so an equal-specificity rule here
+   would lose to it at exactly the width where it matters most. */
+.home-discover-tiles .home-discover-tile {
   min-width: 0;
+  padding: 0;
+}
+/* THE CAP LIVES ON THE WRAPPER, NOT THE ICON. The icon's own box is a flex
+   item of a `flex-col items-center` tile, so it is shrink-to-fit: a
+   `width: 100%` on it resolves against a parent whose width comes from its
+   content, which is circular — the icons collapsed to whatever their glyph
+   happened to measure (a 12px emoji, a 30px image) instead of a uniform
+   40px. Giving the WRAPPER a definite width (the track, capped at 40px)
+   breaks the cycle: the icon then fills a box that is already decided, and
+   the +/✓ badge, which is positioned against this wrapper, keeps tracking
+   the icon's real edges at every size. */
+.home-discover-icon-wrap {
+  width: 100%;
+  max-width: 2.5rem;   /* 40px — the size the tile has always drawn at */
+  margin-inline: auto;
+}
+.home-discover-icon {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+}
+/* The "Popular" caption sits on its own hairline row between the lanes. */
+.home-discover-divider {
+  min-height: 1.125rem; /* 18px */
+}
+/* The empty state: no tile lane at all, one centred line in its place, so
+   the block reads as a compact strip rather than a mostly-blank box. */
+.home-discover-empty {
+  padding: 0.5rem 0.625rem;
 }
 
 /* ── Create-app widget ──────────────────────────────────────
@@ -788,12 +1294,14 @@ html, body {
 .home-create-widget {
   min-width: 0;
 }
-/* "Create app" wraps to two lines rather than truncating: at ONE cell wide
-   on a phone (~85px) it does not fit on one, and "Create …" reads as a
-   rendering bug where an app tile's truncated name reads as a long name.
-   Two 16px lines fit the cell's budget (16 padding + 56 icon + 8 gap + 32),
-   which is what the caption lane an app tile spends on its status buys back
-   here — a widget has no status line. */
+/* "Create app" wraps to two lines rather than truncating: in the narrowest
+   shape the tile takes (ONE cell, ~150px on desktop) a truncated "Create …"
+   would read as a rendering bug, the way an app tile's truncated name reads
+   as a long name. Two 16px lines fit the cell's budget (16 padding + 56 icon
+   + 8 gap + 32), which is what the caption lane an app tile spends on its
+   status buys back here — a widget has no status line. Below 640px the
+   widget is a 4x1 full-width row and the label sits BESIDE the icon with
+   room to spare, so the clamp is a backstop there, not the layout. */
 .home-create-label {
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -832,17 +1340,52 @@ html, body {
 
    640px IS the breakpoint: it is Tailwind's `sm` on #app-list's
    `grid-cols-4 sm:grid-cols-5`, and HomeLayout.BREAKPOINT_PX in
-   public/js/home-layout.js. All three must agree or the JS lays out against
-   a column count the CSS isn't rendering. */
+   frontend/src/features/home/home-layout.js. All three must agree or the JS
+   lays out against a column count the CSS isn't rendering. */
 @media (max-width: 639.98px) {
   :root {
-    /* 116px — p-2 (16) + icon 56 + gap-2 (8) + name 20 + caption 16 */
+    /* 116px — p-2 (16) + icon 56 + gap-1.5 (6) + title 26 + caption 12 */
     --home-cell-h: 7.25rem;
-    /* Two cells plus the phone gap: 116 + 6 + 116. */
-    --home-panel-max-h: 14.875rem; /* 238px */
+    /* ONE CELL (#968). Every widget's phone footprint is one row now
+       (PANEL_REGISTRY `sizes` 4: [4, 1] for all three), so the cap is the
+       cell they each own rather than the two rows Challenges used to claim.
+       It is a CEILING, not the drawn height — `.home-panel--fit` below is
+       what lets a block end sooner — and its job is to make an oversized
+       system text size CLIP inside the widget rather than paint the article
+       over the app tiles in the row below, which is what a 238px cap in a
+       116px cell would have allowed. */
+    --home-panel-max-h: var(--home-cell-h);
   }
   .home-grid-overlay { gap: 0.375rem; }
-  .app-card { padding: 0.5rem; }
+  /* The doubled class is deliberate. This rule is what makes the phone
+     cell 116px rather than 124px, but the card element carries Tailwind's
+     own `p-3`, and tailwind.css is linked AFTER app.css in index.html — so
+     at equal specificity the utility won and this tightening never applied
+     (the cell budget above said p-2 while tiles rendered at p-3, which is
+     how a captioned tile came to overflow its row). `.app-card.app-card`
+     is the same element, one specificity step up, so the intended phone
+     padding lands without an !important or a #app-list scope that would
+     miss the landing grid's tiles. It also buys the label 8px of extra
+     line width, which at 11px is roughly two more characters per line. */
+  .app-card.app-card { padding: 0.5rem; }
+
+  /* SIZE TO CONTENT, phone only (#947, #968). The widget is full-width here,
+     so a shorter block just ends sooner — no neighbour to leave a notch
+     beside, nothing to re-pack.
+
+     #947 shrank the drawn box, #968 shrank the FOOTPRINT to one grid row to
+     match, and then shrank the ROW ITSELF: Home.rowTemplate gives the row a
+     fit widget owns a content-sized track (see #app-list), so the height a
+     short block gives up is not reserved anywhere at all. There is no
+     leftover quantization to live with — the between-seasons state costs the
+     page ~68px, not a 116px cell holding a ~68px box.
+
+     Deciding this in CSS rather than JS is deliberate: a window dragged
+     across 640px resizes the block immediately, before the resize listener's
+     re-render lands. --home-panel-max-h stays as the ceiling above. */
+  .home-panel-slot > .home-panel--fit {
+    align-self: flex-start;
+  }
 }
 @media (min-width: 640px) {
   .home-grid-overlay {
@@ -884,7 +1427,7 @@ html, body {
   display: flex;
   flex-direction: column;
   min-height: 100%;
-  padding-bottom: env(safe-area-inset-bottom, 0px);
+  padding-bottom: var(--platform-safe-bottom);
 }
 
 /* NOTE: .home-bottom-anchor is gone with the two trailing sections it
@@ -1011,6 +1554,42 @@ html, body {
 /* ── App iframe ────────────────────────────────────────── */
 
 #app-content { position: relative; }
+
+/* Surface-dependent bottom safe area (#970, extended).
+   #app-view used to carry the kit's `un-safe-bottom` unconditionally, so
+   its padding was subtracted from the flex height of EVERY surface inside
+   #app-content — the running app included. On a phone that left the app
+   ~34px short of the screen's rounded bottom edge, with the body
+   background showing through the gap, while the shell itself painted
+   edge-to-edge. #970 gated that padding on the PLATFORM surface.
+
+   NEITHER SURFACE CARRIES PADDING ANY MORE. Gating it was only half the
+   fix: on a platform surface the padding still sat on the OUTER box, so
+   every Dev-mode surface was shrunk by the inset and the strip below it
+   was dead background — the dev-chat composer floated above an empty
+   band and the chat lost that height. The inset moved INWARD to the
+   innermost thing that needs it (each scroller's content padding, each
+   composer bar's own padding, via .platform-safe-scroll /
+   .platform-safe-bar above), so Dev mode now paints edge-to-edge like
+   the app surface does and only its content is held clear.
+
+   What these two rules do is publish the TOKEN, so the surface contract
+   stays stated where it is read and tested:
+   - platform: restate the real inset (identical to :root — explicit
+     here because this is the boundary the contract is about);
+   - app: ZERO it, so no shared class can ever reserve the strip over an
+     app frame. The frame keeps reaching the true bottom edge and the
+     insets are forwarded INTO the app instead (AppView.broadcastSafeArea
+     → the bridge's --un-safe-inset-*), which is what lets an app inset
+     its own bottom chrome rather than being clipped by ours.
+   No `!important` needed: nothing competes with either rule. */
+#app-view[data-app-surface="platform"] {
+  --platform-safe-bottom: var(--un-safe-inset-bottom, env(safe-area-inset-bottom, 0px));
+}
+
+#app-view[data-app-surface="app"] {
+  --platform-safe-bottom: 0px;
+}
 
 #app-iframe {
   position: absolute;
@@ -1281,6 +1860,336 @@ html, body {
   cursor: pointer;
   border: none;
   transition: background 150ms;
+}
+
+/* ── Out-of-credits card ────────────────────────────────────────────────
+   Rendered in the message stream in place of an assistant bubble when a
+   send is refused with code 'budget_exceeded'. Markup comes from
+   public/js/credit-options.js, which also builds the compact button row
+   inside the red #dc-credits-banner. Deliberately NOT red-alarm styled:
+   it is an offer of three ways forward, not an error. */
+.dc-credits-card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-secondary);
+  padding: 12px 14px;
+  margin: 6px 0;
+}
+
+.dc-credits-card-lead {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.dc-credits-card-detail {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.dc-credits-card-intro {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 8px;
+}
+
+.dc-credits-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.dc-credits-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-primary);
+}
+
+.dc-credits-option-text { flex: 1 1 220px; min-width: 0; }
+
+.dc-credits-option-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.dc-credits-option-blurb {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 2px;
+  line-height: 1.4;
+}
+
+/* The per-option CTA. Shares .dc-pr-btn's geometry; the first option is
+   the primary route so every button reads equally actionable. */
+.dc-credits-go {
+  background: #7c3aed;
+  color: white;
+  flex: 0 0 auto;
+}
+.dc-credits-go:hover { background: #6d28d9; }
+
+/* Banner variant: three small buttons inside the red exhausted banner.
+   The row wraps onto its own line under the message on a phone (the
+   banner itself is flex-wrap, and the message keeps a min-width), rather
+   than squeezing the text into a sliver and running the buttons off the
+   right edge. */
+.dc-credits-banner-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.dc-credits-banner-btn {
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid rgb(252 165 165);
+  background: transparent;
+  color: rgb(153 27 27);
+  transition: background 150ms;
+}
+.dc-credits-banner-btn:hover { background: rgb(254 226 226); }
+.dc-credits-banner-btn-primary {
+  background: rgb(220 38 38);
+  border-color: rgb(220 38 38);
+  color: white;
+}
+.dc-credits-banner-btn-primary:hover { background: rgb(239 68 68); }
+
+.dark .dc-credits-banner-btn {
+  border-color: rgb(153 27 27);
+  color: rgb(254 202 202);
+}
+.dark .dc-credits-banner-btn:hover { background: rgb(69 10 10); }
+.dark .dc-credits-banner-btn-primary {
+  background: rgb(220 38 38);
+  border-color: rgb(220 38 38);
+  color: white;
+}
+
+/* ── Development-flow picker + walkthrough (#1049) ──────────────────────
+   Markup comes from public/js/dev-flow-select.js. Reuses the out-of-credits
+   card's geometry on purpose: both are "here are your routes forward"
+   cards in the message stream, and they render metres apart. */
+.dc-flow-card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-secondary);
+  padding: 12px 14px;
+  margin: 6px 0;
+}
+
+.dc-flow-card-lead {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.dc-flow-card-detail,
+.dc-flow-card-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 4px;
+  line-height: 1.4;
+}
+
+.dc-flow-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.dc-flow-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-primary);
+}
+
+.dc-flow-option-text { flex: 1 1 220px; min-width: 0; }
+
+.dc-flow-option-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.dc-flow-option-blurb {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 2px;
+  line-height: 1.4;
+}
+
+.dc-flow-go {
+  background: #7c3aed;
+  color: white;
+  flex: 0 0 auto;
+}
+.dc-flow-go:hover { background: #6d28d9; }
+
+.dc-flow-remember {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.dc-flow-remember-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+/* Walkthrough. Exactly one step is 'current' at a time — the numbered mark
+   carries that state so the card is scannable without reading it. */
+.dc-flow-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 10px;
+}
+
+.dc-flow-step {
+  display: flex;
+  gap: 10px;
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+}
+.dc-flow-step:first-child { border-top: none; }
+
+.dc-flow-step-mark {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 600;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  background: var(--bg-primary);
+}
+
+.dc-flow-step-body { flex: 1 1 auto; min-width: 0; }
+
+.dc-flow-step-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.dc-flow-step-detail {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 2px;
+  line-height: 1.4;
+}
+
+.dc-flow-step-done .dc-flow-step-mark {
+  background: #059669;
+  border-color: #059669;
+  color: white;
+}
+.dc-flow-step-done .dc-flow-step-title { color: var(--text-muted); }
+
+.dc-flow-step-current .dc-flow-step-mark {
+  background: #7c3aed;
+  border-color: #7c3aed;
+  color: white;
+}
+
+.dc-flow-step-todo { opacity: 0.65; }
+
+.dc-flow-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
+.dc-flow-actions-footer { margin-top: 10px; }
+
+.dc-flow-action {
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+}
+.dc-flow-action:hover { background: var(--bg-tertiary); }
+.dc-flow-action:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.dc-flow-action-primary {
+  background: #7c3aed;
+  border-color: #7c3aed;
+  color: white;
+}
+.dc-flow-action-primary:hover { background: #6d28d9; }
+
+.dc-flow-error {
+  font-size: 12px;
+  color: rgb(185 28 28);
+  margin-top: 6px;
+  line-height: 1.4;
+}
+.dark .dc-flow-error { color: rgb(252 165 165); }
+
+.dc-flow-notice {
+  font-size: 12px;
+  color: rgb(4 120 87);
+  margin-top: 6px;
+}
+.dark .dc-flow-notice { color: rgb(110 231 183); }
+
+.dc-flow-order { margin-top: 10px; }
+
+.dc-flow-order > summary {
+  font-size: 12px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.dc-flow-order-text {
+  margin-top: 6px;
+  max-height: 240px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+/* Modal variant: the same three options rendered by the Generate-proposal
+   flow when the headless route refuses for the same reason. */
+.dc-credits-modal-card .dc-credits-card {
+  border: none;
+  background: transparent;
+  padding: 0;
+  margin: 0;
 }
 
 .dc-pr-btn-preview {
@@ -1913,10 +2822,20 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
  * carry a faint resting tint of their own hue — the same tinted-chip
  * language as the Closes-#N chips, bounty pill, and icon chips. */
 .gc-vote-btn {
-  padding: 3px 10px;
+  /* One fixed height for the whole family so a text pill, the icon Preview
+     and the ⋯ trigger line up exactly rather than each being sized by its
+     own content. box-sizing keeps the 1px border inside that height. */
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 24px;
+  padding: 0 10px;
   border-radius: 9999px;
   font-size: 11px;
   font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
   cursor: pointer;
   border: 1px solid var(--border);
   background: transparent;
@@ -1961,11 +2880,15 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
  * ConfirmModal in castAdminMerge/castAdminUndo is the actual
  * misclick guard; the colour is just the affordance hint. */
 .gc-vote-btn-admin {
-  color: #f59e0b;
-  background: rgba(245, 158, 11, 0.10);
-  border-color: rgba(245, 158, 11, 0.4);
+  color: var(--state-admin);
+  background: var(--state-admin-bg);
+  border-color: var(--state-admin);
+  /* Distinguished by SHAPE as well as hue: a dashed outline, so an
+     admin bypass never reads as just-another-amber-warning. */
+  border-style: dashed;
+  border-width: 1.5px;
 }
-.gc-vote-btn-admin:hover { background: rgba(245, 158, 11, 0.18); border-color: rgba(245, 158, 11, 0.55); color: #f59e0b; }
+.gc-vote-btn-admin:hover { background: rgba(245, 158, 11, 0.2); border-color: var(--state-admin); color: var(--state-admin); }
 /* The viewer's cast vote: stronger tint + bolder text (color comes from
  * the -yes/-no variant it sits on). */
 .gc-vote-active { background: rgba(127, 127, 127, 0.18); font-weight: 600; }
@@ -1980,11 +2903,14 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   font-size: 11px;
   font-weight: 600;
   white-space: nowrap;
-  background: #fff;
+  /* Theme-following. This rule used to hard-code an opaque white with
+     no `.dark` counterpart anywhere in the file, so on a dark card it
+     painted a white slab. */
+  background: var(--bg-primary);
   border: 1.5px solid currentColor;
 }
-.gc-vote-voted-box-yes { color: #22c55e; }
-.gc-vote-voted-box-no { color: #ef4444; }
+.gc-vote-voted-box-yes { color: var(--state-ok); }
+.gc-vote-voted-box-no { color: var(--state-blocked); }
 
 /* #404: a card's action row. Every issue / proposal / governance / merged
  * card routes its buttons through this one container so they all line up the
@@ -1999,6 +2925,334 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   gap: 6px;
   margin-top: 6px;
 }
+/* ── The dense (board) action band: exactly one row ────────
+   Selected as "the action row that follows a dense status band", because
+   .dev-card-status is emitted only by the dense branch of _cardContentHtml
+   and the action band is always its immediate next sibling. The detail
+   view's own .gc-card-actions list is a different surface — it is allowed
+   to wrap to as many rows as it needs and must NOT be capped here.
+
+   Same reserve-and-clip contract as the status band: 24px is .gc-vote-btn's
+   fixed height, the buttons may wrap, and the surplus row is hidden whole
+   rather than showing a strip of half-height pills. The band holds its row
+   open even with no buttons in it (the settled close-issue row has none),
+   which is what keeps a column of cards the same height. */
+.dev-card-status + .gc-card-actions {
+  min-height: 24px;
+  max-height: 24px;
+  overflow: hidden;
+}
+/* The kudos pill arrives wrapped in Kudos.renderButton's positioning span
+   (it anchors the absolute .kudos-popover), and that span is an inline-block:
+   its height is a LINE box, so it measured 25.5px around a 24px button and
+   the extra 1.5px of font descender pushed the button down inside it. In a
+   24px band with zero slack that clipped the button's bottom border — the one
+   half-cut pill on the whole board. inline-flex makes the wrapper hug the
+   button instead of a line box; the popover is absolute, so it stays out of
+   the flex sizing. Scoped to the dense band: the detail view's kudos button
+   sits in an uncapped row where the phantom 1.5px is harmless. */
+.dev-card-status + .gc-card-actions .kudos-wrap {
+  display: inline-flex;
+  align-items: center;
+}
+/* Square icon variant of the action pill — the icon-only Preview
+   affordance and the ⋯ overflow trigger. Same 11px pill family and the
+   same hover behaviour as .gc-vote-btn (which it composes with), but a
+   fixed 24px box so the glyph is centred and the two never drift in
+   height from the text pills beside them. */
+.gc-vote-btn-icon {
+  width: 24px;
+  padding: 0;
+}
+.gc-vote-btn-icon svg { width: 14px; height: 14px; }
+/* Non-interactive preview states (building / unavailable) render as a
+   <span>, so they get the pill's geometry with no pointer affordance. */
+span.gc-vote-btn-icon { cursor: default; }
+
+/* ── The card head: type icon + title, and nothing else ────────────────
+   THE indent lives here, and only here. The title is the one thing that
+   belongs beside the icon; everything else (.dev-card-meta,
+   .dev-card-badges, .gc-card-actions, the issue card's
+   claim list) is a sibling of the head, not of the icon, so it starts at
+   the card's padding edge and gets the card's full width. The gap is
+   12px — the same gap-3 the icon had as a card-level sibling — so the
+   title sits exactly where it always did.
+
+   `center`, not `flex-start`: the head is the title's row now, so the
+   36px icon centres against the title's one or two lines. It only ever
+   floated halfway down the card back when it was a sibling of the whole
+   content column and centred against the pill and action rows too — the
+   fix for that was moving it in here, not top-aligning it, and now that
+   the meta line has moved out there is nothing left below the title for
+   `center` to drift toward.
+
+   The ⋯ trigger is not in here: it lives in the card's TOP-RIGHT rail
+   (.dev-card-rail), because the corner is where "more about this card"
+   belongs and it keeps the action row to the one or two things you'd
+   actually do. Its own flex column means it can never collide with the
+   💬 badge or the drag grip (a gutter outside the card entirely). */
+.dev-card-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+/* The title's cell. flex-basis:auto + min-width:0 is what lets a long
+   title wrap onto extra lines instead of being cut off — it is never
+   truncated, unlike the meta line below it. */
+.dev-card-head-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+/* The right-edge rail: ⋯ pinned to the card's top-right corner, the icon
+   Preview pinned to its bottom-right one, and the chevron centred in whatever
+   height is left between them. One column for all three, because a kanban
+   column only gives a card ~175px of text width and a separate flex slot for
+   the ⋯ cost 30px of it.
+
+   Pinning the eye HERE rather than at the end of the action band is what puts
+   it in one vertical line down a whole column of cards: the band's trailing
+   pill moves left and right with the width of the vote/claim pills before it,
+   the rail's bottom does not. It also keeps the eye out of the band's
+   `max-height: 24px` clip, so a card whose pills already fill that row can no
+   longer hide its preview.
+
+   The centring rule matches `> svg` — i.e. the chevron and nothing else, since
+   the ⋯ trigger is a <button> and the preview a <button>/<span>. So the same
+   two auto margins do all three jobs: with a preview they centre the chevron
+   BETWEEN the two pills, and without one they centre it in the space below the
+   ⋯ exactly as before, reserving no empty slot for a preview that isn't there. */
+.dev-card-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  align-self: stretch;
+  flex: none;
+  gap: 4px;
+}
+.dev-card-rail > svg {
+  margin-top: auto;
+  margin-bottom: auto;
+}
+/* Both pills keep their 24px box in a column that may be shorter than their
+   sum — flex-shrink applies to HEIGHT here, and a squashed eye would clip its
+   own border the way the kudos wrapper once did. */
+.dev-card-rail > .gc-vote-btn-icon {
+  flex: none;
+}
+.dev-card-menu-btn {
+  flex: none;
+  color: var(--text-faint);
+  /* No border: it is a corner affordance, not one of the action pills. */
+  border-color: transparent;
+}
+.dev-card-menu-btn:hover { border-color: var(--accent-light); }
+.dev-card-menu-btn svg { width: 16px; height: 16px; }
+
+/* The card's title and meta lines. Extracted from six copies of the same
+   Tailwind class list so the type scale is edited in one place. */
+.dev-card-title {
+  font-size: 13.5px;
+  line-height: 1.35;
+  color: var(--text-primary);
+  overflow-wrap: break-word;
+}
+/* ── The dense (board) title: exactly two lines ────────────
+   Two lines, always — clamped at two and RESERVING both. A board title used
+   to run to however many lines it needed, which pushed the meta line, the
+   status band and the actions of that one card out of step with every card
+   beside it; a column of cards then had no shared rhythm and the eye had to
+   re-find the status band on every row. Two lines is what the observed
+   titles need (a PR title or an issue title wraps to two at kanban width and
+   very rarely to three), so clamping there loses almost nothing and the
+   `title` attribute on this element carries the full text regardless.
+
+   -webkit-line-clamp is the only mechanism that truncates at a LINE count
+   with an ellipsis; it needs the -webkit-box display and vertical orient to
+   act, and those are still how every current engine implements it. The
+   unprefixed `line-clamp` is listed after it for engines that have shipped
+   the standard property.
+
+   min-height reserves the second line when the title only fills one, so a
+   one-line title and a two-line title put their meta lines at the same y.
+   2 x 1.35 x 13.5px = 36.45px.
+
+   The detail head keeps the unclamped .dev-card-title: it has nothing to
+   align against, and its author-only inline title editor must not be inside
+   a -webkit-box. */
+.dev-card-title-clamp {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  min-height: 36.45px;
+}
+/* ── The meta line, full width ─────────────────────────────
+   "PR#123 · author · 2h ago" — the title's subtitle, and a band of its own
+   below the head rather than a second line inside the icon's indent. It
+   truncates rather than wrapping (single-line ellipsis, unlike the title),
+   so the indent was costing it words it could otherwise show: in a kanban
+   column the 36px chip plus its 12px gap is a fifth of the row. No
+   margin-top — it reads as the title's second line, which is what it was
+   when the two shared a cell.
+
+   The min-height reserves the line even when a card has no subtitle at all:
+   an empty div is 0px tall, and one card in a column silently skipping this
+   band is exactly the misalignment the reserved bands exist to prevent.
+   1.4 x 11.5px = 16.1px.
+
+   max-height pins the other end, the same min===max contract the status and
+   action bands use. A subtitle carrying the `#123` link is a mixed-font line
+   — the mono anchor's ascent/descent differ from the surrounding sans strut,
+   and a line box is the union of both, so those metas measured 17.09px while
+   plain-text ones measured 16.09. One pixel, but it moved the status and
+   action bands of every linked card down relative to its neighbours, which is
+   the entire thing this band exists to prevent. Measured in the browser: the
+   tallest glyph box in the mixed line spans y=2..15, so the clip only ever
+   removes empty descender leading. */
+.dev-card-meta {
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-height: 16.1px;
+  max-height: 16.1px;
+}
+
+/* ── Card overflow (⋯) menu ──────────────────────────────
+   Body-mounted + position:fixed, copying .attr-popover: the kanban
+   columns scroll horizontally (#dev-kanban has overflow-x:auto), so a
+   menu nested inside a card would be clipped by its own column. */
+.dev-card-menu {
+  position: fixed;
+  z-index: 2000;
+  min-width: 208px;
+  max-width: 280px;
+  max-height: 340px;
+  overflow-y: auto;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.28);
+  padding: 4px;
+}
+.dev-card-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+/* The leading icon column. FIXED width rather than intrinsic: the
+   vocabulary mixes one-em emoji with narrower text glyphs (✕, ↗, @), and
+   an intrinsic column would step every label a pixel or two left or right
+   of its neighbours — the exact scanning cost the icons were added to
+   remove. Decorative, so it carries aria-hidden in the markup. */
+.dev-card-menu-icon {
+  flex: none;
+  width: 16px;
+  text-align: center;
+  font-size: 12px;
+  line-height: 1;
+  /* Emoji ignore `color`, but the text glyphs don't — holding them a shade
+     back from the label keeps the icon a signpost rather than a shout,
+     while a danger row's red still reads straight through. */
+  opacity: 0.75;
+}
+.dev-card-menu-label {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.dev-card-menu-item:hover:not(:disabled) { background: var(--accent-tint); color: var(--accent); }
+.dev-card-menu-item:disabled { opacity: 0.45; cursor: default; }
+.dev-card-menu-item-danger { color: var(--state-blocked); }
+.dev-card-menu-item-danger:hover:not(:disabled) { background: var(--state-blocked-bg); color: var(--state-blocked); }
+
+/* ── In-progress column section dividers ─────────────────
+   Replaces the two full grey sentences that used to introduce the
+   session groups. A hairline rule with a small uppercase label; the
+   longer explanation moved to the label's tooltip. */
+.dev-col-divider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 2px 0;
+}
+.dev-col-divider-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+  white-space: nowrap;
+  cursor: help;
+}
+.dev-col-divider::after {
+  content: '';
+  flex: 1 1 auto;
+  height: 1px;
+  background: var(--border-light);
+}
+
+/* A private (not-yet-visible) dev session — the muted/draft treatment
+   that replaces the "Only you can see your active sessions." caption as
+   the signal that nobody else can see this card. */
+.dev-card-muted {
+  border-style: dashed;
+  opacity: 0.82;
+}
+
+/* ── The detail view's actions & state block ──────────────
+   Cards are pointers now, so every action a card demoted needs somewhere
+   to live: this block, between the topic head's card and its body. It is
+   also where a blocked proposal's reasons are enumerated in full rather
+   than inferred from a row of badges. */
+.dev-detail-actions {
+  margin-top: 8px;
+  padding: 0 4px;
+}
+
+.dev-detail-reasons {
+  margin-top: 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: var(--bg-card);
+}
+.dev-detail-reasons-head {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  margin-bottom: 5px;
+}
+.dev-detail-reasons-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+/* The label leads each row in the same tone the pill used, so the reason
+   the pill named is findable at a glance in the list. */
+.dev-detail-reason-label { font-weight: 600; }
+.dev-detail-reason-hard .dev-detail-reason-label { color: var(--state-blocked); }
+.dev-detail-reason-soft .dev-detail-reason-label { color: var(--state-attention); }
 
 /* Inline vote buttons rendered on a "promoted / voted" group-chat
  * activity row. Sits right after the row text; wraps onto its own line
@@ -2013,8 +3267,125 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   vertical-align: middle;
 }
 .gc-vote-inline:empty { display: none; }
+/* ── The status band, full width ───────────────────────────
+   The state bar, the 💬 count, the Closes-#N pills and the metadata chips
+   (priority / assignee / category). These used to ride on the title's own
+   line, which put them inside the icon's indent AND made them compete with
+   the title for width — in a kanban column two chips already forced a wrap.
+   On their own row below the head they start at the card's padding edge like
+   every other band, and the same four chips fit on one line. The gaps are
+   the ones that row carried as Tailwind utilities (gap-x-2 / gap-y-1), so
+   chip spacing is unchanged. */
+.dev-card-badges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  margin-top: 5px;
+}
+/* ── The dense (board) status band: exactly one row ────────
+   Reserved, and clipped rather than shrunk. The band is one row tall, its
+   children may wrap, and the overflow is hidden — so a card with more pills
+   than fit loses the surplus WHOLE (they wrap onto a second row that is
+   simply not shown) instead of showing a strip of half-height pills. That is
+   why the height is fixed rather than a max: an empty band still holds the
+   row open, which is what keeps the action band below it at the same y on
+   every card in a column.
+
+   22px is the state bar's height (.dev-status-pill-block, the tallest thing
+   in the band — .dev-badge chips are 20px and centre inside it), so a full
+   row exactly fills the band with no dead space.
+
+   Not applied to the detail head, which has no neighbour to align with and
+   must show every chip. */
+.dev-card-badges.dev-card-status {
+  min-height: 22px;
+  max-height: 22px;
+  overflow: hidden;
+}
+/* ── …except when it holds nothing at all (#1139) ───────────
+   The reserve above buys inter-card alignment with 27px (22px of row + the
+   5px margin) of blank band on every card that has no state, no linkage, no
+   metadata chip and no messages. On most apps that is EVERY issue card — the
+   metadata chips need someone to have voted, and only a third of apps have
+   any issue-thread messages at all — so the alignment it bought was between
+   uniformly empty rows, and the blank band was the only thing anyone saw.
+
+   The node is RETAINED and hidden rather than omitted from the markup: the
+   action band's own one-row cap is written as `.dev-card-status +
+   .gc-card-actions` (above), and `display: none` leaves sibling adjacency
+   intact where removing the element would silently uncap the action row on
+   exactly these cards. Several dapp.json checks walk the same four-band
+   chain for the same reason.
+
+   _cardContentHtml stamps the flag from its render inputs, not from the
+   emitted HTML — the 💬 badge is present-but-`hidden` at count 0, so neither
+   a string test nor `:empty` would ever fire here. bumpThreadBadge clears the
+   flag when it reveals that badge in place. */
+.dev-card-badges.dev-card-status[data-empty="1"] {
+  display: none;
+}
+/* The two merge-lifecycle text badges predate .dev-badge and size themselves
+   from their own line-height, so inside a clipped band they were the one
+   child that could shrink, wrap its label to a second line and get cut
+   through the middle of the text. Given the chip box here (and ONLY here —
+   they are also used as an icon-sized preview state in the action row, and
+   in the feed and home strips, all of which own their own geometry). */
+.dev-card-status > .gc-merging-badge,
+.dev-card-status > .gc-checks-running-badge {
+  box-sizing: border-box;
+  height: 20px;
+  line-height: 1;
+  flex-shrink: 0;
+}
 /* Live "yes / majority" tally shown ahead of the inline buttons, in a
    little boxed pill to match the buttons / "You voted X" box. */
+/* ── The composite status pill, as a bar ───────────────────
+   On a card the pill is a BAR rather than a capsule: a proportional tally
+   reads as a progress bar, where wedged between chips at thumbnail width it
+   read as noise. The capsule form (.gc-vote-count without -block) is kept
+   for the detail head and for the group-chat / home surfaces that still call
+   voteCountPill.
+
+   It leads the status band and FLEXES instead of taking the whole width, so
+   the chips that used to sit on a row of their own can share that row: it
+   grows into whatever the chips leave, down to a 7rem floor that still fits
+   a tally and its fill. It had a row to itself until the card had four bands
+   to reserve — at which point "state" and "metadata" as separate rows was
+   one band more than the layout could afford, and the pill had never needed
+   the entire width, only more of it than a chip. */
+.dev-status-pill-block {
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  min-width: 7rem;
+  max-width: 100%;
+  height: 22px;
+  padding: 0 9px;
+  border-radius: 7px;
+}
+/* A tier with no proportional fill (settled, in-flight, blocked) would read
+   as an empty outlined bar at full width, so it takes a faint wash of its
+   own tone instead. The tally tiers keep the plain surface — their fill IS
+   the background, and washing it too would flatten the contrast that makes
+   the bar readable. */
+.dev-status-pill-block.gc-vote-count-neutral   { background: var(--state-neutral-bg); }
+.dev-status-pill-block.gc-vote-count-progress  { background: var(--state-progress-bg); }
+.dev-status-pill-block.gc-vote-count-attention { background: var(--state-attention-bg); }
+.dev-status-pill-block.gc-vote-count-blocked   { background: var(--state-blocked-bg); }
+.dev-status-pill-block.gc-vote-count-ok        { background: var(--state-ok-bg); }
+/* Left-aligned in the block form so the label starts at a fixed point and
+   the fill sweeps out from under it, rather than the text shifting as the
+   tally changes. */
+.dev-status-pill-block .gc-vote-count-label {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .gc-vote-count {
   position: relative;
   display: inline-block;
@@ -2023,15 +3394,25 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   border-radius: 999px;
   font-size: 11px;
   font-weight: 600;
-  background: #fff;
+  /* Theme-following. This rule used to hard-code an opaque white with
+     no `.dark` override, so the tally pill sat as a white box on an
+     otherwise dark card. */
+  background: var(--bg-primary);
   border: 1.5px solid currentColor;
   white-space: nowrap;
 }
-/* Outline color by tally state: purple = not enough votes yet,
-   green = Yes reached majority, red = No reached majority. */
-.gc-vote-count-pending { color: #7c3aed; }
-.gc-vote-count-yes { color: #22c55e; }
-.gc-vote-count-no { color: #ef4444; }
+/* Outline color by tally state, via the semantic tokens: progress =
+   not enough votes yet, ok = Yes reached majority, blocked = No did. */
+.gc-vote-count-pending { color: var(--state-progress); }
+.gc-vote-count-yes { color: var(--state-ok); }
+.gc-vote-count-no { color: var(--state-blocked); }
+/* The composite status pill's non-tally tiers (settled / in flight /
+   blocked / contested) reuse this same pill shell, tinted by token. */
+.gc-vote-count-neutral { color: var(--state-neutral); }
+.gc-vote-count-progress { color: var(--state-progress); }
+.gc-vote-count-attention { color: var(--state-attention); }
+.gc-vote-count-blocked { color: var(--state-blocked); }
+.gc-vote-count-ok { color: var(--state-ok); }
 /* Proportional fill stripes: top = Yes share, bottom = No share, each a
    fraction of majority, filling left→right behind the label. */
 .gc-vote-fill {
@@ -2040,13 +3421,44 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   height: 50%;
   pointer-events: none;
 }
-.gc-vote-fill-yes { top: 0; background: rgba(34, 197, 94, 0.40); }
-.gc-vote-fill-no { bottom: 0; background: rgba(239, 68, 68, 0.40); }
+.gc-vote-fill-yes { top: 0; background: var(--state-ok-fill); }
+.gc-vote-fill-no { bottom: 0; background: var(--state-blocked-fill); }
 /* Finalized: one side hit majority, so the whole pill fills with its color. */
 .gc-vote-fill-full { top: 0; width: 100%; height: 100%; }
-.gc-vote-fill-full-yes { background: rgba(34, 197, 94, 0.40); }
-.gc-vote-fill-full-no { background: rgba(239, 68, 68, 0.40); }
-.gc-vote-count-label { position: relative; z-index: 1; color: #1f2937; }
+.gc-vote-fill-full-yes { background: var(--state-ok-fill); }
+.gc-vote-fill-full-no { background: var(--state-blocked-fill); }
+.gc-vote-count-label { position: relative; z-index: 1; color: var(--text-primary); }
+/* The pill absorbed the standalone pulsing "Vote" badge, the advisory
+   chip and the explicit-approval chip. Their glyphs ride inside the
+   label rather than beside the pill. */
+.gc-vote-count-dot {
+  position: relative;
+  display: inline-flex;
+  width: 6px;
+  height: 6px;
+  margin-right: 4px;
+  vertical-align: middle;
+}
+.gc-vote-count-dot-ping {
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  background: var(--state-progress);
+  opacity: 0.75;
+  animation: ping 1s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+.gc-vote-count-dot-core {
+  position: relative;
+  border-radius: 9999px;
+  width: 6px;
+  height: 6px;
+  background: var(--state-progress);
+}
+.gc-vote-count-suffix { opacity: 0.65; font-weight: 500; }
+.gc-vote-count-lock { margin-left: 3px; opacity: 0.8; }
+@keyframes ping {
+  75%, 100% { transform: scale(2); opacity: 0; }
+}
 /* #695: advisory (non-approver) vote chip on invited-approver apps — a
    muted companion rendered AFTER the tally pill, so the headline count
    stays approver-only and the surplus is visibly second-class. */
@@ -2057,8 +3469,8 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   border-radius: 999px;
   font-size: 10px;
   font-weight: 500;
-  color: #6b7280;
-  background: rgba(107, 114, 128, 0.12);
+  color: var(--state-neutral);
+  background: var(--state-neutral-bg);
   white-space: nowrap;
   vertical-align: middle;
 }
@@ -2075,27 +3487,11 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   border-radius: 999px;
   font-size: 10px;
   font-weight: 600;
-  color: #b45309;
-  background: rgba(245, 158, 11, 0.14);
+  color: var(--state-attention);
+  background: var(--state-attention-bg);
   white-space: nowrap;
   vertical-align: middle;
 }
-.dark .gc-vote-explicit { color: #fbbf24; background: rgba(245, 158, 11, 0.18); }
-/* Dev-card headline cell (title + meta, left of the tally / 💬 pills).
-   flex-basis:auto makes the cell's preferred width the title's natural
-   single-line width, so on narrow screens the pills after it wrap to
-   the next flex line one by one (the 💬 discussion badge first, then
-   the vote tally) instead of the title being squeezed into an
-   ellipsis. Only when the title alone is wider than the card does the
-   cell shrink (min-width:0) and the title text wrap onto extra lines —
-   the title is never cut off. */
-.dev-card-headline { flex: 1 1 auto; min-width: 0; }
-/* The meta line under the title routinely overflows (PR# · user · time
-   · pills) and is fine to truncate. Inline-size containment zeroes its
-   intrinsic width contribution so only the *title's* width decides
-   when the pills wrap; without it a long meta line would push the
-   pills down even when the title fits comfortably. */
-.dev-card-headline-meta { contain: inline-size; }
 /* "Merging…" badge shown next to the vote controls while a PR is merging.
    #405: recoloured emerald → amber so every in-flight "working toward a
    merge" stage (Merging…, Resolving conflicts…) reads amber-with-spinner,
@@ -2106,13 +3502,12 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   gap: 4px;
   font-size: 11px;
   font-weight: 600;
-  color: #f59e0b;
+  /* #405 recoloured this emerald -> amber; the semantic-token pass moves
+     it to `progress` (violet): "working toward a merge" is something
+     happening, not a warning. Amber now means non-blocking attention
+     only. */
+  color: var(--state-progress);
   white-space: nowrap;
-}
-/* #239: "Resolving conflicts…" badge — extends .gc-merging-badge (now also
-   amber, so this override is a no-op kept for clarity). */
-.gc-resolving-badge {
-  color: #f59e0b;
 }
 /* #405: "Checks running…" — not-yet-started check reads grey/neutral, not
    amber, so it's visibly distinct from the amber in-flight merge stages. */
@@ -2122,7 +3517,7 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   gap: 4px;
   font-size: 11px;
   font-weight: 600;
-  color: #9ca3af;
+  color: var(--state-neutral);
   white-space: nowrap;
 }
 /* #405: canonical merge-lifecycle badge/pill (see public/js/merge-status.js).
@@ -2137,11 +3532,11 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   font-weight: 600;
   white-space: nowrap;
 }
-.ms-badge-neutral { color: #9ca3af; }
-.ms-badge-violet  { color: #8b5cf6; }
-.ms-badge-amber   { color: #f59e0b; }
-.ms-badge-green   { color: #22c55e; }
-.ms-badge-red     { color: #ef4444; }
+.ms-badge-neutral { color: var(--state-neutral); }
+.ms-badge-violet  { color: var(--state-progress); }
+.ms-badge-amber   { color: var(--state-attention); }
+.ms-badge-green   { color: var(--state-ok); }
+.ms-badge-red     { color: var(--state-blocked); }
 .ms-pill {
   display: inline-flex;
   align-items: center;
@@ -2153,14 +3548,14 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   border-radius: 9999px;
   border: 1px solid transparent;
 }
-.ms-pill-neutral { color: #9ca3af; background: rgba(156, 163, 175, 0.12); }
+.ms-pill-neutral { color: var(--state-neutral); background: var(--state-neutral-bg); }
 /* #695: muted "+N" advisory suffix inside the in-vote pill (dev session
    header) — non-approver votes recorded beside the approver-only tally. */
 .ms-advisory { opacity: 0.65; font-weight: 500; }
-.ms-pill-violet  { color: #8b5cf6; background: rgba(139, 92, 246, 0.12); }
-.ms-pill-amber   { color: #f59e0b; background: rgba(245, 158, 11, 0.12); }
-.ms-pill-green   { color: #22c55e; background: rgba(34, 197, 94, 0.12); }
-.ms-pill-red     { color: #ef4444; background: rgba(239, 68, 68, 0.12); }
+.ms-pill-violet  { color: var(--state-progress); background: var(--state-progress-bg); }
+.ms-pill-amber   { color: var(--state-attention); background: var(--state-attention-bg); }
+.ms-pill-green   { color: var(--state-ok); background: var(--state-ok-bg); }
+.ms-pill-red     { color: var(--state-blocked); background: var(--state-blocked-bg); }
 /* #361: persistent merge-status badges. Mirror .gc-merging-badge's slot
    treatment. Conflict (and conflict-resolution-failed) reads red; behind
    reads amber-neutral so a merely-stale proposal doesn't alarm. */
@@ -2170,16 +3565,7 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   gap: 4px;
   font-size: 11px;
   font-weight: 600;
-  color: #ef4444;
-  white-space: nowrap;
-}
-.gc-behind-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 11px;
-  font-weight: 600;
-  color: #f59e0b;
+  color: var(--state-blocked);
   white-space: nowrap;
 }
 /* #381: advisory "may break the app" / console-error warning. Same slot
@@ -2191,7 +3577,19 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   gap: 4px;
   font-size: 11px;
   font-weight: 600;
-  color: #f59e0b;
+  color: var(--state-attention);
+  white-space: nowrap;
+}
+/* Checks FAILING blocks the merge, so it is `blocked`, not `attention`.
+   It used to share .gc-warning-badge's amber, reading like an advisory
+   heads-up when it is in fact a hard gate. */
+.gc-blocked-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--state-blocked);
   white-space: nowrap;
 }
 /* Settled "✓ Merged" badge — same slot as the merging badge, shown after a
@@ -2202,7 +3600,21 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   gap: 4px;
   font-size: 11px;
   font-weight: 600;
-  color: #8b5cf6;
+  color: var(--state-ok);
+  white-space: nowrap;
+}
+/* "✓ Checks passing" — its own class rather than borrowing
+   .gc-merged-badge, which is what made the passing badge inherit the
+   violet Merged colour. Both are `ok` now, but the classes stay
+   separate so a future tone change to one can't silently move the
+   other. */
+.gc-checks-passing-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--state-ok);
   white-space: nowrap;
 }
 /* Row text tint by the viewer's vote status: faded once they've voted,
@@ -2821,6 +4233,14 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
 .dc-streaming-dots span:nth-child(2) { animation-delay: 0.16s; }
 .dc-streaming-dots span:nth-child(3) { animation-delay: 0.32s; }
 
+/* #990: the trailing activity indicator is the dots on a .dc-status-line row,
+   so it sits flush under the step ladder it belongs to instead of indented
+   like the retired standalone spinner. Only the doubled vertical padding
+   (2px from the row + 4px from the dots) needs trimming. */
+.dc-activity-line { padding: 0 0 4px; }
+.dc-activity-line .dc-streaming-dots { padding: 2px 0; }
+.dc-activity-label { font-size: 11px; color: var(--text-muted); }
+
 @keyframes dc-dot-bounce {
   0%, 80%, 100% { transform: translateY(0); opacity: 0.4; }
   40% { transform: translateY(-6px); opacity: 1; }
@@ -2868,6 +4288,31 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
    it barely moves. */
 .dc-btn-stopping-label { color: var(--text-secondary); font-size: 12px; }
 
+/* Force stop (#937): the escape hatch offered inside the stopping status
+   row once an ordinary stop has been pending ~40s and clearly isn't
+   landing. Red like .dc-btn-stop — this is the same destructive intent,
+   escalated — but sized for a transcript row rather than the composer,
+   and it sits before the row's timestamp span (which claims margin-left:
+   auto), so a plain inline-block with a little breathing room is enough. */
+.dc-force-stop-btn {
+  background: #dc2626;
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  padding: 2px 8px;
+  margin-left: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.dc-force-stop-btn:hover { background: #b91c1c; }
+.dc-force-stop-btn:disabled {
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  cursor: not-allowed;
+}
+
 .dc-send-spinner {
   width: 16px; height: 16px;
   border: 2px solid var(--border);
@@ -2880,7 +4325,7 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
 
 /* ── Header cog ("your work" drawer button) ─────────────── */
 /* Spins while the viewer has work in flight (an AI turn running, or a
-   proposal merging / resolving / running checks — see work-drawer.js
+   proposal merging / resolving / running checks — see frontend/src/features/work-drawer/work-drawer.js
    isWorking). A gear glyph is rotationally symmetric enough that a fast
    spin reads as flicker, so it turns SLOWLY and shifts to the accent
    color — the color carries the state even where the rotation is
@@ -3179,11 +4624,20 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
 
 /* Narrow viewports: fullscreen modal that floats over the chat. The
    inline `width` set by JS from the previous side-panel drag is
-   overridden by `width: auto` so the modal still fills the screen. */
+   overridden by `width: auto` so the modal still fills the screen.
+
+   `inset: 0` means this panel covers the WHOLE screen — it escapes
+   #app-view and the platform header alike — so it owns both insets
+   itself. padding-top keeps the header row (version picker, the two
+   Share buttons, ✕) out from under the status bar and the notch; the
+   bottom half is carried by .dc-spec-viewer-body-wrap /
+   .dc-spec-viewer-build-hint below, which need it in the side-panel
+   layout too. */
 @media (max-width: 1023px) {
   .dc-spec-viewer.dc-spec-viewer-open {
     position: fixed;
     inset: 0;
+    padding-top: var(--platform-safe-top);
     width: auto !important;
     max-width: none;
     z-index: 50;
@@ -3265,6 +4719,14 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   border-left: 1px solid var(--border, rgba(255,255,255,0.12));
 }
 
+/* Fullscreen, the overlay is `inset: 0` — it covers the status bar, so
+   its own chrome bar has to clear the notch. Docked, it is pinned over
+   the in-page slot by the geometry sync and needs no inset at all,
+   hence the :not(). */
+#staging-overlay:not(.staging-overlay-docked) .staging-chrome-bar {
+  padding-top: calc(0.5rem + var(--platform-safe-top));
+}
+
 /* Docked chrome: "Back to session" makes no sense beside the still-
    visible session — the ×-close (.staging-dock-only) replaces it. */
 #staging-overlay.staging-overlay-docked #staging-back { display: none; }
@@ -3334,6 +4796,19 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   padding: 12px;
 }
 
+/* The bottom inset belongs to whichever of these two is LAST — the
+   build hint is conditional (only a non-empty latest version renders
+   it, see _renderSpecViewer), so both need a rule and neither may
+   double up. `:last-child` is what picks the right one: with the footer
+   present the scroller keeps its plain 12px and the footer's own
+   background fills the strip; with no footer the scroller carries it.
+   Unconditional, not inside the fullscreen media query: since #app-view
+   stopped padding, the side-panel layout reaches the true bottom edge
+   too. */
+.dc-spec-viewer-body-wrap:last-child {
+  padding-bottom: calc(12px + var(--platform-safe-bottom));
+}
+
 /* #196: two-half spec tabs (User-facing / Technical). Rendered only
    when the doc contains both marker headings — legacy specs keep the
    single untabbed body (see public/js/spec-sections.js). */
@@ -3381,7 +4856,10 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
    rendered while viewing a non-empty draft (see _renderSpecViewer). */
 .dc-spec-viewer-build-hint {
   flex-shrink: 0;
-  padding: 8px 12px;
+  /* Last element in the panel when it renders, so it owns the bottom
+     inset — and it has a background of its own, which is what makes the
+     strip read as an extension of the footer rather than a gap. */
+  padding: 8px 12px calc(8px + var(--platform-safe-bottom));
   font-size: 12px;
   line-height: 1.4;
   color: var(--text-secondary, #a1a1aa);
@@ -3429,6 +4907,14 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
 .dc-spec-action-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+/* (#1012) The copy button's label swaps to "Copied!" / "Copy failed" for
+   1.5s. Reserve the wider label's width so the flash can't reflow — or
+   re-wrap, on a phone-width header — the row around it. */
+.dc-spec-copy-btn {
+  min-width: 108px;
+  text-align: center;
 }
 
 /* (#86) "Share to user" popover, anchored under the spec-viewer header. */
@@ -3741,10 +5227,32 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
 }
 .gc-spec-panel-close:hover { color: var(--text-primary, #e4e4e7); }
 
+/* (#1012) "Copy markdown" in the shared-spec panel header. Matches
+   .dc-spec-action-btn so the two spec surfaces read as one family; the
+   min-width reserves room for the "Copy failed" label flash. */
+.gc-spec-panel-copy {
+  font-size: 12px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border, rgba(255,255,255,0.12));
+  background: var(--bg-secondary, #18181b);
+  color: var(--text-primary, #e4e4e7);
+  cursor: pointer;
+  flex-shrink: 0;
+  min-width: 108px;
+  text-align: center;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.gc-spec-panel-copy:hover { border-color: rgb(139 92 246); }
+
 .gc-spec-panel-body {
   flex: 1 1 auto;
   min-height: 0;
-  padding: 14px 16px;
+  /* Last (and only) child of the panel, so it carries the bottom inset.
+     Below 1024px the panel is `position: absolute; inset: 0` over
+     .gc-tab-body, whose bottom edge is now the screen's. */
+  padding: 14px 16px calc(14px + var(--platform-safe-bottom));
   overflow-y: auto;
   font-size: 13px;
   line-height: 1.6;
@@ -3966,7 +5474,8 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
    - FLOOR: the lead back-button wrapper (`div.w-5.h-7.shrink-0` — the
      one child present in every state of both headers) carries `h-7` =
      28px, which survives the title being display:none. It stays `w-5`:
-     header-layout.js measures it as the title's left side group.
+     frontend/src/features/header/use-header-layout.ts measures it as the
+     title's left side group.
    - CEILING: no direct child of either header may exceed 28px, and the
      children that could grow past it state their height OUTRIGHT rather
      than adding up to it — #app-mode-switch is `h-7` with
@@ -3990,7 +5499,8 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
    from the right when the right group eats its width). When there's
    enough horizontal room for it to be perfectly viewport-centered
    without overlapping the back-btn area or the right group,
-   public/js/header-layout.js toggles `.is-centered` and the title flips
+   frontend/src/features/header/use-header-layout.ts toggles `.is-centered`
+   (it was public/js/header-layout.js) and the title flips
    to absolute positioning at exactly 50% of the header. The user-facing
    contract is: "centered if room, left-aligned otherwise". No
    in-between state where the title is truncated *while* centered. */
@@ -4024,10 +5534,10 @@ html.in-native-webview #header-title {
    next to the name.
 
    HEADER SLIM-DOWN: this used to also collapse
-   #platform-version-pill-slot / #app-version-pill-slot, because those
-   two sat in the header and shoved the title around. They live in the
-   drawer FOOTER now (as plain .drawer-ver text), where there is room for
-   them at every width, so they are deliberately NOT in the selector
+   #platform-version-pill-slot, because it sat in the header and shoved the
+   title around. It lives in the drawer FOOTER now (as plain .drawer-ver
+   text), where there is room at every width, so it is deliberately NOT in
+   the selector
    below — that collapse was the reason mobile users could never see
    build status at all. Only the home-card class slot still collapses. */
 @media (max-width: 640px) {
@@ -4110,18 +5620,19 @@ a.drawer-meter:hover .drawer-meter-strong {
 }
 
 /* ── Drawer footer (bottom-anchored) ──────────────────────
-   Platform build, app build, fork lineage, then the two app link rows.
+   Web revision, installed mobile-app version, fork lineage, then the two app
+   link rows. A particular dApp's SHA does not belong in this block.
    Version values are TEXT, not pills: the old "usernode · 1a2b3c4"
    pill overflowed the 15rem panel, and the project name was redundant
-   next to a row already labelled "Platform version". A label + a mono
-   version, right-aligned, reads as a footer signature, not a control. */
+   next to an already-labelled row. A label + a mono value, right-aligned,
+   reads as a footer signature, not a control. */
 .drawer-ver-row {
   min-height: 26px;
   padding-top: 3px;
   padding-bottom: 3px;
 }
-/* The label names what the value IS ("Platform version" / "App
-   version") in sentence case, not an uppercase-tracked micro-caption:
+/* The label names what the value IS ("Web revision" / "Mobile app version")
+   in sentence case, not an uppercase-tracked micro-caption:
    at 10px + 0.06em the old "PLATFORM" read as decoration and left the
    value looking like a stray word rather than a version. */
 .drawer-ver-label {
@@ -4338,7 +5849,7 @@ a.drawer-ver--fork:hover {
    attribute so app.js only has to flip a single attribute to change modes
    (no per-button class juggling, no race with the form-reset path).
    It must be the CARD, not #create-modal: the native-kit modal adoption
-   (platform-ui.js adoptStaticModal) lifts the card out of #create-modal
+   (frontend/src/lib/static-modal.ts) lifts the card out of #create-modal
    while presented, so selectors rooted at the modal stop matching. */
 #create-card .create-mode-pill {
   color: var(--text-muted);
@@ -4419,13 +5930,53 @@ a.drawer-ver--fork:hover {
 /* ── Priority / assigned-person chips + dropdown (community-voted) ───── */
 /* Strip the <button> UA chrome so an interactive chip is pixel-identical
    to the sibling <span> badge pills (💬 / ★ / #N): inherit the surrounding
-   font (a <button> otherwise brings its own family + baseline), drop the
-   native appearance/border, and let `items-center` flexbox handle vertical
-   centring (no line-height override — that drifted the chip's height). The
-   utility `bg-…` class supplies the tint, so background stays none here. */
+   font FAMILY (a <button> otherwise brings its own), drop the native
+   appearance/border, and let the shared `.dev-badge` box own the height,
+   padding and type size. The utility `bg-…` class supplies the tint, so
+   background stays none here. */
+/* ── One geometry for every chip in a card's badge row ──────────────
+   The row used to mix three sizes: Tailwind-sized attribute chips, the 💬
+   badge, and the linked-issue pills, each computing its own height from
+   its own padding + line-height. They now share ONE box so a row of them
+   sits on a single baseline. The tint (bg + text colour) still comes from
+   the per-value utility classes; only the geometry lives here. */
+.dev-badge {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 6px;
+  font-size: 10.5px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+button.dev-badge { cursor: pointer; }
+.dev-badge:disabled { cursor: default; }
+/* A long username must not take the whole badge row on its own — a kanban
+   column gives the row about 165px, and "@some-long-username" alone can
+   exceed that, pushing every sibling chip onto its own line. */
+.dev-badge-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 11ch;
+}
+
+/* NOTE the property here is `font-family`, NOT the `font` shorthand. The
+   shorthand resets font-size / font-weight / line-height to their initial
+   values, and this rule sits AFTER `.dev-badge` at equal specificity — so
+   `font: inherit` silently threw away the badge geometry's 10.5px/500/1 and
+   let every attribute chip inherit the card's 14px body text. It went
+   unnoticed for exactly one release because the chips used to carry a
+   Tailwind `text-[0.65rem]` utility, and tailwind.css loads last. Only the
+   <button>'s UA font FAMILY needs overriding; the size, weight and
+   line-height belong to `.dev-badge`. */
 .attr-chip {
   cursor: default;
-  font: inherit;
+  font-family: inherit;
   appearance: none;
   -webkit-appearance: none;
   border: 0;
@@ -4822,23 +6373,22 @@ button.attr-chip { cursor: pointer; }
   white-space: nowrap;
 }
 #admin-status-root .pill .dot { width: 0.5rem; height: 0.5rem; border-radius: 9999px; }
-#admin-status-root .pill-running { background: rgba(34, 197, 94, 0.1); color: #4ade80; }
-#admin-status-root .pill-running .dot { background: #22c55e; box-shadow: 0 0 6px #22c55e; }
-#admin-status-root .pill-stopped { background: rgba(250, 204, 21, 0.1); color: #facc15; }
-#admin-status-root .pill-stopped .dot { background: #facc15; }
+#admin-status-root .pill-running { background: rgba(16, 185, 129, 0.1); color: #34d399; }
+#admin-status-root .pill-running .dot { background: #10b981; box-shadow: 0 0 6px #10b981; }
+#admin-status-root .pill-stopped { background: rgba(245, 158, 11, 0.1); color: #fbbf24; }
+#admin-status-root .pill-stopped .dot { background: #f59e0b; }
 #admin-status-root .pill-missing { background: rgba(239, 68, 68, 0.1); color: #f87171; }
 #admin-status-root .pill-missing .dot { background: #ef4444; }
-#admin-status-root .pill-creating { background: rgba(167, 139, 250, 0.1); color: #a78bfa; }
-#admin-status-root .pill-creating .dot { background: #8b5cf6; }
+#admin-status-root .pill-creating { background: rgba(99, 102, 241, 0.1); color: #818cf8; }
+#admin-status-root .pill-creating .dot { background: #6366f1; }
 
-/* Light-mode pill overrides: the 10%-opacity tint over white is too pale
-   for the bright dark-mode fill colors, so darken the text and slightly
-   strengthen the tint. The shell toggles `.dark` on <html>, so target the
+/* Light-mode pill overrides — topochain's badge tints (50-shade bg,
+   700-shade text). The shell toggles `.dark` on <html>, so target the
    light state via html:not(.dark). Dots stay solid and saturated. */
-html:not(.dark) #admin-status-root .pill-running { background: rgba(34, 197, 94, 0.15); color: #15803d; }
-html:not(.dark) #admin-status-root .pill-stopped { background: rgba(202, 138, 4, 0.15); color: #a16207; }
-html:not(.dark) #admin-status-root .pill-missing { background: rgba(239, 68, 68, 0.15); color: #b91c1c; }
-html:not(.dark) #admin-status-root .pill-creating { background: rgba(139, 92, 246, 0.15); color: #6d28d9; }
+html:not(.dark) #admin-status-root .pill-running { background: #ecfdf5; color: #047857; }
+html:not(.dark) #admin-status-root .pill-stopped { background: #fffbeb; color: #b45309; }
+html:not(.dark) #admin-status-root .pill-missing { background: #fef2f2; color: #b91c1c; }
+html:not(.dark) #admin-status-root .pill-creating { background: #eef2ff; color: #4338ca; }
 
 #admin-status-root .mono,
 #admin-node-root .mono {
@@ -4854,121 +6404,6 @@ html:not(.dark) #admin-status-root .pill-creating { background: rgba(139, 92, 24
    withheld server-side by src/services/status.js redact(); this only hides
    the now-empty headings. */
 #admin-status-root:not(.is-admin) .admin-only { display: none !important; }
-
-/* ── Node & chain (was public/node-status.html) ──────────────────────────
-   Deliberately keeps the dapp-server.js status-page look rather than being
-   restyled into Tailwind, so the two viewers stay comparable. Its palette
-   variables are re-namespaced --un-ns-* and declared on the section root
-   (not :root) so they can't leak into the shell. */
-
-#admin-node-root {
-  --un-ns-fg: #e7edf7;
-  --un-ns-muted: #a8b3c7;
-  --un-ns-card: #141b26;
-  --un-ns-border: rgba(255, 255, 255, 0.12);
-  --un-ns-accent: #6ea8fe;
-  --un-ns-danger: #ff6b6b;
-  --un-ns-ok: #5dd39e;
-  --un-ns-warn: #e6a817;
-  --un-ns-soft: rgba(255, 255, 255, 0.04);
-  color: var(--un-ns-fg);
-  line-height: 1.5;
-}
-html:not(.dark) #admin-node-root {
-  --un-ns-fg: #0b1220;
-  --un-ns-muted: #4b5568;
-  --un-ns-card: #ffffff;
-  --un-ns-border: rgba(15, 23, 42, 0.12);
-  --un-ns-accent: #2563eb;
-  --un-ns-danger: #c81e1e;
-  --un-ns-ok: #0f766e;
-  --un-ns-warn: #b45309;
-  --un-ns-soft: rgba(15, 23, 42, 0.03);
-}
-
-#admin-node-root .header {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 4px;
-}
-#admin-node-root h2 { font-size: 20px; margin: 0; font-weight: 600; }
-#admin-node-root .conn { font-size: 11px; color: var(--un-ns-muted); }
-#admin-node-root .conn .led {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--un-ns-muted);
-  margin-right: 5px;
-  vertical-align: middle;
-}
-#admin-node-root .conn.live .led { background: var(--un-ns-ok); }
-#admin-node-root .conn.dead .led { background: var(--un-ns-danger); }
-#admin-node-root .header-pill { font-size: 13px; color: var(--un-ns-muted); margin-bottom: 24px; }
-#admin-node-root .card {
-  background: var(--un-ns-card);
-  border: 1px solid var(--un-ns-border);
-  border-radius: 12px;
-  padding: 16px 18px;
-  margin: 14px 0;
-}
-#admin-node-root .card h3 {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--un-ns-muted);
-  margin: 0 0 12px;
-  font-weight: 600;
-}
-#admin-node-root .badge {
-  display: inline-block;
-  padding: 2px 8px;
-  border-radius: 999px;
-  font-size: 11px;
-  font-weight: 600;
-  line-height: 1.6;
-  vertical-align: middle;
-}
-#admin-node-root .badge.ok { background: rgba(93, 211, 158, 0.15); color: var(--un-ns-ok); }
-#admin-node-root .badge.warn { background: rgba(230, 168, 23, 0.15); color: var(--un-ns-warn); }
-#admin-node-root .badge.err { background: rgba(255, 107, 107, 0.18); color: var(--un-ns-danger); }
-#admin-node-root .badge.muted { background: var(--un-ns-soft); color: var(--un-ns-muted); }
-#admin-node-root .badge.accent { background: rgba(110, 168, 254, 0.18); color: var(--un-ns-accent); }
-#admin-node-root .kv {
-  display: grid;
-  grid-template-columns: 160px 1fr;
-  gap: 4px 12px;
-  font-size: 13px;
-}
-#admin-node-root .kv .label { color: var(--un-ns-muted); }
-#admin-node-root .kv .val { word-break: break-all; }
-#admin-node-root code {
-  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-  font-size: 12px;
-}
-#admin-node-root .sync-bar {
-  width: 100%;
-  height: 6px;
-  background: var(--un-ns-border);
-  border-radius: 3px;
-  overflow: hidden;
-  margin: 8px 0 4px;
-}
-#admin-node-root .sync-fill { height: 100%; background: var(--un-ns-accent); transition: width 0.4s ease; }
-#admin-node-root .sync-fill.full { background: var(--un-ns-ok); }
-#admin-node-root details { background: var(--un-ns-soft); border-radius: 8px; padding: 6px 12px; margin: 8px 0; }
-#admin-node-root details[open] { padding-bottom: 12px; }
-#admin-node-root summary { cursor: pointer; font-size: 13px; padding: 4px 0; font-weight: 500; user-select: none; }
-#admin-node-root summary::marker { color: var(--un-ns-muted); }
-#admin-node-root .err-text { color: var(--un-ns-danger); font-size: 12px; margin: 8px 0; }
-#admin-node-root .warn-text { color: var(--un-ns-warn); font-size: 12px; margin: 8px 0; }
-#admin-node-root .small { font-size: 11px; color: var(--un-ns-muted); }
-#admin-node-root .empty { color: var(--un-ns-muted); font-size: 12px; padding: 6px 0; font-style: italic; }
-#admin-node-root a { color: var(--un-ns-accent); text-decoration: none; }
-#admin-node-root a:hover { text-decoration: underline; }
 
 /* ── Analytics (was public/dashboard.html) + Estimator accuracy ──────── */
 /* Both console sections share the .dc-* chart idiom: the estimator card was
@@ -5087,4 +6522,326 @@ html:not(.dark) #admin-node-root {
   #app-viewer-frame {
     transition: none;
   }
+}
+
+/* ── Dev-chat "Run on" runner controls (#907) ─────────────────────────────
+   The selector + chip that appear in the composer's status row when a
+   local coding agent has attached to this session. Painted by
+   DevChat._renderRunnerControls(); the host span is always in the markup
+   and is empty (and therefore invisible, no gap, no min-height) for every
+   session that has never had a machine attached. */
+.dc-runner {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.dc-runner:empty { display: none; }
+
+/* Green so it reads as "connected", not as a warning: a turn running on
+   the user's own machine is the state they asked for. */
+.dc-runner-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(34, 197, 94, 0.35);
+  background: rgba(34, 197, 94, 0.12);
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.4;
+}
+.dc-runner-chip::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #22c55e;
+  flex: none;
+}
+
+/* The machine has gone. Same shape, drained of colour, and the dot stops
+   claiming something live is happening. */
+.dc-runner-chip-past {
+  border-color: var(--border);
+  background: var(--bg-code);
+  color: var(--text-muted);
+}
+.dc-runner-chip-past::before { background: var(--text-faint); }
+
+/* ── Dev-chat session and billing options (#1055) ─────────────────────────
+   The "⋯" beside the credit meter. Deliberately quiet: it sits in the
+   composer's status row next to a number, so at rest it is the same muted
+   weight as the meter itself and only gains a surface on hover/focus.
+   Sized past the 44px touch target with padding rather than a box, so the
+   row's height is unchanged for everyone who never presses it. */
+.dc-budget-options {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  min-width: 1.5rem;
+  height: 1.5rem;
+  margin-left: 0.25rem;
+  padding: 0 0.25rem;
+  border-radius: 0.375rem;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 0.12s ease, background-color 0.12s ease, border-color 0.12s ease;
+}
+.dc-budget-options:hover {
+  color: var(--text-primary);
+  background: var(--bg-code);
+  border-color: var(--border);
+}
+.dc-budget-options:focus-visible {
+  outline: none;
+  color: var(--text-primary);
+  border-color: #8b5cf6;
+  box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.35);
+}
+
+/* Rich popover header (SessionOptions.headerHtml). Same role as
+   .card-menu-header on the home grid: it rides inside the kit popover as a
+   headerEl, and the touch action sheet falls back to the plain title. The
+   kit sets item labels with textContent, so any sentence longer than a
+   label lives here. */
+.dc-options-header {
+  max-width: 20rem;
+  padding: 0.5rem 0.875rem 0.55rem;
+  margin-bottom: 0.25rem;
+  border-bottom: 1px solid var(--border-light);
+}
+
+.dc-options-title {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.dc-options-line {
+  margin-top: 0.25rem;
+  font-size: 0.7rem;
+  line-height: 1.45;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+/* ── Offline mode: the visible state (#1021) ──────────────────────────
+   `body.is-offline` is toggled by Offline._set() and is the single hook
+   for every offline affordance. Before this, the only signal was an
+   in-flow amber strip that the auth screens — `fixed inset-0 z-40`,
+   fully opaque — painted straight over, so the exact moment a user most
+   needed to know they were offline (staring at a sign-in form that
+   cannot possibly succeed) was the one moment the strip was invisible. */
+
+/* Height of the strip's text row; body reserves exactly this much so the
+   shell below is not covered. The strip's own safe-area padding then
+   lands on the header's safe-area extension — background over
+   background, no content hidden — instead of shifting the whole shell. */
+body.is-offline {
+  --offline-strip-h: 1.75rem;
+  padding-top: var(--offline-strip-h);
+}
+
+body.is-offline #offline-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  /* Above the auth overlays (z-40) AND the drawer panel (z-50). */
+  z-index: 60;
+  padding-top: calc(var(--platform-safe-top) + 0.375rem);
+  padding-bottom: 0.375rem;
+  /* Opaque: it now floats over content instead of displacing it, and a
+     translucent amber wash over a scrolling form is unreadable. */
+  background-color: #fef3c7;
+  color: #92400e;
+}
+/* darkMode: 'class' — the flag lives on <html>, put there before first paint
+   by the inline window.Theme module in frontend/src/head.html. */
+.dark body.is-offline #offline-banner {
+  background-color: #451a03;
+  color: #fcd34d;
+}
+
+/* The auth screens' corner Back link is pinned with an inline `top`, so
+   clearing the strip needs the override. */
+body.is-offline [data-auth-back] {
+  top: calc(env(safe-area-inset-top, 0px) + 1rem + var(--offline-strip-h)) !important;
+}
+
+/* Blocks that exist only to explain the offline state. Hidden — and
+   inert — the rest of the time. */
+.offline-only {
+  display: none;
+}
+body.is-offline .offline-only {
+  display: block;
+}
+
+/* Controls that cannot work without a network. Greyed and click-through-
+   proof rather than removed, so the form the user already knows stays
+   where they expect it and the reason is obvious. The submit handlers
+   guard independently (auth-screens.js) — this is the visible half. */
+body.is-offline [data-offline-disabled] {
+  opacity: 0.45;
+  pointer-events: none;
+  cursor: not-allowed;
+}
+
+/* ── The venue line above the composer ────────────────────────────────
+   One quiet sentence stating where this session is built, and one button
+   to change it. It replaces three separate prompts that each asked that
+   question before any work existed (the flow picker card, the agent
+   chooser modal at creation, and the composer's own agent dropdown), so
+   it is deliberately not a control that draws the eye: it reads as a
+   caption, and only the verb is clickable.
+
+   It sits ABOVE the composer's status row rather than in it. Inside the
+   row it would have been one more chip among the meter, the runner and
+   the budget menu — which is the arrangement that made it invisible. */
+.dc-venue-slot:empty {
+  display: none;
+}
+
+.dc-venue-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.4rem;
+  padding: 0.25rem 0.1rem 0.35rem;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--text-muted);
+}
+
+.dc-venue-name {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+/* A link, not a button: the row is a sentence, and a second filled
+   control beside the composer's send button competes with it. */
+.dc-venue-change {
+  flex: none;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: #8b5cf6;
+  font-size: 12px;
+  font-family: inherit;
+  line-height: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.dc-venue-change:hover {
+  color: #a78bfa;
+}
+
+.dc-venue-change:focus-visible {
+  outline: none;
+  border-radius: 3px;
+  box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.35);
+}
+
+/* Mid-turn the venue cannot change — the running turn is already in one.
+   Same treatment the composer's other controls get while streaming. */
+.dc-venue-change:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  text-decoration: none;
+}
+
+/* "Your OpenRouter key is not set, so this turn ran on Usernode · Claude"
+   — the one place a venue the user did not choose is confessed. Full
+   width so it wraps under the sentence rather than beside it. */
+.dc-venue-note {
+  flex-basis: 100%;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+/* Provider-specific model controls. Claude renders its chat-model select;
+   OpenRouter renders the one model pinned to both chat and coding. The
+   other four venues have nothing to choose here. */
+.dc-venue-detail {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0 0.1rem 0.25rem;
+}
+
+.dc-openrouter-model {
+  min-width: 0;
+  max-width: min(100%, 30rem);
+  overflow: hidden;
+  color: var(--text-primary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dc-openrouter-model-change {
+  flex: none;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: #8b5cf6;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.dc-openrouter-model-change:hover {
+  color: #a78bfa;
+}
+
+.dc-openrouter-model-change:focus-visible {
+  outline: none;
+  border-radius: 3px;
+  box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.35);
+}
+
+.dc-openrouter-model-change:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  text-decoration: none;
+}
+
+/* The session-card chip on the dev feed (#1087 card actions row). Names
+   the venue a session is being built in, so the answer is visible from
+   the list and not only from inside the chat. Imported proposals carry
+   no chip — they have no session to build in. */
+.dc-venue-chip {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  max-width: 12rem;
+  padding: 0.05rem 0.35rem;
+  border-radius: 0.375rem;
+  background: var(--bg-code);
+  color: var(--text-muted);
+  font-size: 0.65rem;
+  line-height: 1.5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }

@@ -249,7 +249,7 @@ async function hydrateAndPush(pool, row) {
               cm.content AS message_content,
               cm.thread_type, cm.thread_ref,
               n.session_id,
-              cs.pr_title, cs.pr_number, cs.headless_issue_number, cs.branch_name,
+              cs.session_title, cs.pr_title, cs.pr_number, cs.headless_issue_number, cs.branch_name,
               su.username AS source_username,
               n.detail
        FROM notifications n
@@ -493,7 +493,7 @@ async function listForUser(pool, userId, { limit = 100, before = null } = {}) {
             cm.content AS message_content,
             cm.thread_type, cm.thread_ref,
             n.session_id,
-            cs.pr_title, cs.pr_number, cs.headless_issue_number, cs.branch_name,
+            cs.session_title, cs.pr_title, cs.pr_number, cs.headless_issue_number, cs.branch_name,
             su.username AS source_username,
             n.detail
      FROM notifications n
@@ -521,7 +521,7 @@ async function getForUser(pool, userId, id) {
             cm.content AS message_content,
             cm.thread_type, cm.thread_ref,
             n.session_id,
-            cs.pr_title, cs.pr_number, cs.headless_issue_number, cs.branch_name,
+            cs.session_title, cs.pr_title, cs.pr_number, cs.headless_issue_number, cs.branch_name,
             su.username AS source_username,
             n.detail
        FROM notifications n
@@ -709,9 +709,9 @@ async function markRead(pool, userId, { id, all = false, kinds = null, excludeKi
 // Keeps the wire format identical whether the notif is fresh (over WS) or
 // loaded from history (`GET /api/notifications`).
 //
-// Kudos extension: sessionId / prTitle / prNumber ride along whenever the
-// row carries a session reference. The FE renderer keys off `kind` to
-// decide which fields to use — kudos rows ignore chatMessageId /
+// Kudos extension: sessionId / sessionTitle / prTitle / prNumber ride along
+// whenever the row carries a session reference. The FE renderer keys off
+// `kind` to decide which fields to use — kudos rows ignore chatMessageId /
 // messageContent, mention rows ignore sessionId / prTitle.
 function serialize(row) {
   return {
@@ -729,11 +729,16 @@ function serialize(row) {
     threadType: row.thread_type || null,
     threadRef: row.thread_ref != null ? row.thread_ref : null,
     sessionId: row.session_id,
+    // #971: the session's display name (schema.sql #249 — set from the first
+    // interactive message, refreshed pre-PR, mirrored from pr_title once a PR
+    // exists). Session-scoped renderers prefer it so a titled session never
+    // shows its machine-generated branch name.
+    sessionTitle: row.session_title,
     prTitle: row.pr_title,
     prNumber: row.pr_number,
-    // #161: auto_solve_done rows route back to their issue row; the
-    // session_done renderer falls back to the branch name when the
-    // session has no LLM-generated PR title yet.
+    // #161: auto_solve_done rows route back to their issue row. branchName is
+    // the last-resort label for session-scoped rows — only reached when the
+    // session has neither a session title nor a PR title yet.
     headlessIssueNumber: row.headless_issue_number,
     branchName: row.branch_name,
     sourceUsername: row.source_username,

@@ -55,6 +55,11 @@ const METADATA_KEYS = [
   'specVersion',
   'specLines',
   'inheritedFrom',
+  // Safe runtime identity only. These let a shared transcript distinguish
+  // Claude from Codex without exposing credentials, pricing, or billing
+  // details; agentModel is the already-public catalog id pinned to the run.
+  'agentBackend',
+  'agentModel',
 ];
 
 // Attachment entries are reduced to a NAME CHIP: filename/kind/size only.

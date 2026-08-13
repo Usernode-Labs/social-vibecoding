@@ -31,7 +31,17 @@
   const NativeChrome = {
     _infoPromise: null,
 
-    // Resolves { version, capabilities: [...] } — never rejects.
+    // Resolves { version, capabilities: [...], appVersion?, buildNumber? }
+    // — never rejects. The optional pair identifies the installed Flutter
+    // binary on app builds that advertise it through the public probe.
+    //
+    // Concurrent callers share ONE in-flight probe, but a DEGRADED answer
+    // (the bridge's marker for a probe that timed out or errored inside
+    // the app) is never memoised: caching it would hide every
+    // capability-gated row — the Settings → Usernode app section included —
+    // for the rest of the document over one cold-start hiccup (issue #978).
+    // Same discipline prepareWebLogout() already applies to a version-0
+    // probe below.
     getInfo() {
       if (NativeChrome._infoPromise) return NativeChrome._infoPromise;
       const bridge = window.usernode;
@@ -39,18 +49,83 @@
           typeof bridge.getBridgeInfo !== 'function') {
         NativeChrome._infoPromise =
           Promise.resolve({ version: 0, capabilities: [] });
-      } else {
-        NativeChrome._infoPromise = bridge.getBridgeInfo().catch(() => (
-          { version: 0, capabilities: [] }
-        ));
+        return NativeChrome._infoPromise;
       }
-      return NativeChrome._infoPromise;
+      const probe = bridge.getBridgeInfo().catch(() => (
+        { version: 0, capabilities: [], degraded: true }
+      )).then((info) => {
+        if (info && info.degraded === true &&
+            NativeChrome._infoPromise === probe) {
+          NativeChrome._infoPromise = null;
+        }
+        return info;
+      });
+      NativeChrome._infoPromise = probe;
+      return probe;
     },
 
     async has(capability) {
       const info = await NativeChrome.getInfo();
       return Array.isArray(info.capabilities) &&
         info.capabilities.includes(capability);
+    },
+
+    // Why the last native chrome read of `method` came back empty. The
+    // bridge's reads resolve a fallback instead of rejecting (so callers
+    // can always await and render "unavailable"), and park the reason
+    // here: { method, kind, message, at } or null. One accessor so
+    // settings.js and maybeShowFirstRunPermissions report identically.
+    lastReadError(method) {
+      const bridge = window.usernode;
+      if (!bridge || typeof bridge.getLastNativeReadError !== 'function') {
+        return null;
+      }
+      try {
+        return bridge.getLastNativeReadError(method) || null;
+      } catch (_) {
+        return null;
+      }
+    },
+
+    // ── Session-admission failure record ─────────────────────────────
+    //
+    // The admission paths below fail by console.warn + clean exit, which
+    // is right for the shell (it keeps working without the native side)
+    // but leaves the user staring at "Finishing secure app sign-in…"
+    // forever with nothing to report. Park the last reason here so the
+    // Settings diagnostics panel can name it. Same discipline and same
+    // shape as lastReadError(): a stage, the message, an optional
+    // machine-readable code from the app, and when.
+    _lastSessionFailure: null,
+
+    _recordSessionFailure(stage, error) {
+      const message = (error && error.message)
+        ? String(error.message)
+        : (typeof error === 'string' ? error : null);
+      NativeChrome._lastSessionFailure = {
+        stage,
+        message,
+        code: (error && typeof error.usernodeCode === 'string')
+          ? error.usernodeCode : null,
+        kind: (error && typeof error.usernodeKind === 'string')
+          ? error.usernodeKind : null,
+        at: Date.now(),
+      };
+      return NativeChrome._lastSessionFailure;
+    },
+
+    // { stage, message, code, kind, at } or null when the last admission
+    // attempt succeeded (or none has run). Copied on the way out.
+    lastSessionFailure() {
+      const rec = NativeChrome._lastSessionFailure;
+      if (!rec) return null;
+      return {
+        stage: rec.stage,
+        message: rec.message,
+        code: rec.code,
+        kind: rec.kind,
+        at: rec.at,
+      };
     },
 
     async _initDrawerRows() {
@@ -84,7 +159,13 @@
     _nodeStartKey: null,
     _nodeStartInFlight: null,
     _logoutRunning: false,
+    _authenticatedSessionAdmitted: true,
+    _authenticatedSessionKey: null,
     _sessionWalletRelayAdmitted: true,
+
+    isSessionAdmitted() {
+      return NativeChrome._authenticatedSessionAdmitted === true;
+    },
 
     _participantId(value) {
       const id = Number(value);
@@ -112,9 +193,52 @@
       return { address: value.address, participantId, epoch };
     },
 
+    _boundAuthenticatedStatus(value, expectedParticipantId) {
+      if (!value ||
+          (value.phase !== 'reconciling' && value.phase !== 'ready')) {
+        return null;
+      }
+      const participantId = NativeChrome._participantId(value.participantId);
+      const epoch = Number(value.epoch);
+      if (participantId !== expectedParticipantId ||
+          !Number.isSafeInteger(epoch) || epoch < 0) return null;
+      return { phase: value.phase, participantId, epoch };
+    },
+
+    _authenticatedStatusKey(status) {
+      return status
+        ? `${status.participantId}:${status.epoch}`
+        : null;
+    },
+
+    _authenticatedStatusMatches(status) {
+      return NativeChrome._authenticatedSessionAdmitted === true &&
+        NativeChrome._authenticatedSessionKey ===
+          NativeChrome._authenticatedStatusKey(status);
+    },
+
+    _setAuthenticatedSessionAdmission(admitted, status) {
+      const next = admitted === true;
+      const nextKey = next
+        ? NativeChrome._authenticatedStatusKey(status)
+        : null;
+      const changed = NativeChrome._authenticatedSessionAdmitted !== next ||
+        NativeChrome._authenticatedSessionKey !== nextKey;
+      NativeChrome._authenticatedSessionAdmitted = next;
+      NativeChrome._authenticatedSessionKey = nextKey;
+      // Social push is bound to the authenticated participant, not to wallet
+      // readiness. Notify it as soon as native accepts the bearer; wallet
+      // consumers remain behind the separate relay admission below.
+      if (changed && typeof window.dispatchEvent === 'function' &&
+          typeof window.CustomEvent === 'function') {
+        window.dispatchEvent(new CustomEvent(
+          'usernode:native-session-admission', { detail: { admitted: next } }
+        ));
+      }
+    },
+
     _setSessionWalletRelayAdmission(admitted) {
       const next = admitted === true;
-      const changed = NativeChrome._sessionWalletRelayAdmitted !== next;
       NativeChrome._sessionWalletRelayAdmitted = next;
       const bridge = window.usernode;
       if (bridge &&
@@ -126,20 +250,10 @@
           typeof walletSheet._setSessionWalletAdmission === 'function') {
         walletSheet._setSessionWalletAdmission(next);
       }
-      // Consumers of privileged native methods must track the same admission
-      // edge. Closing immediately invalidates any state cached for the prior
-      // web session; reopening lets them safely retry work rejected while the
-      // handoff was in progress. This avoids coupling to private promise /
-      // generation state.
-      if (changed && typeof window.dispatchEvent === 'function' &&
-          typeof window.CustomEvent === 'function') {
-        window.dispatchEvent(new CustomEvent(
-          'usernode:native-session-admission', { detail: { admitted: next } }
-        ));
-      }
     },
 
     enterAnonymous() {
+      NativeChrome._setAuthenticatedSessionAdmission(false);
       NativeChrome._setSessionWalletRelayAdmission(false);
       if (NativeChrome._logoutRunning) return Promise.resolve(false);
       const generation = ++NativeChrome._handoffGeneration;
@@ -151,6 +265,7 @@
         const bridge = window.usernode;
         if (!bridge || bridge.isNative !== true) {
           if (!isCurrentAnonymous()) return false;
+          NativeChrome._setAuthenticatedSessionAdmission(true);
           NativeChrome._setSessionWalletRelayAdmission(true);
           return true;
         }
@@ -163,14 +278,20 @@
           if (!isCurrentAnonymous()) return false;
           if (typeof bridge.enterAnonymousSession !== 'function') {
             console.warn('[native-chrome] anonymous-session admission is unavailable');
+            NativeChrome._recordSessionFailure('anonymous-admission',
+              'Anonymous-session admission is unavailable on this app build');
             return false;
           }
           const admission = await bridge.enterAnonymousSession();
           if (!admission || admission.admitted !== true) {
             console.warn('[native-chrome] anonymous session was not admitted');
+            NativeChrome._recordSessionFailure('anonymous-admission',
+              'The Usernode app did not admit the anonymous session');
             return false;
           }
           if (!isCurrentAnonymous()) return false;
+          NativeChrome._lastSessionFailure = null;
+          NativeChrome._setAuthenticatedSessionAdmission(true);
           NativeChrome._setSessionWalletRelayAdmission(true);
           return true;
         }
@@ -181,13 +302,24 @@
         const confirmedPreV4 = Number.isInteger(info.version) &&
           info.version > 0 && info.version < 4;
         if (confirmedPreV4 && isCurrentAnonymous()) {
+          NativeChrome._setAuthenticatedSessionAdmission(true);
           NativeChrome._setSessionWalletRelayAdmission(true);
           return true;
         }
         return false;
-      })().catch((error) => {
+      })().then((admitted) => {
+        // Device permissions are not account-level: the iOS notification
+        // prompt (and the Android alarm/battery asks) should reach
+        // signed-out users too, so a settled anonymous session is a
+        // first-run trigger just like the post-login handoff. The run is
+        // shared/latched, so a login racing this cannot stack a second
+        // sheet. In a plain browser the capability probe bails it out.
+        if (admitted) NativeChrome.maybeShowFirstRunPermissions();
+        return admitted;
+      }).catch((error) => {
         console.warn('[native-chrome] anonymous-session admission failed:',
           error && error.message ? error.message : error);
+        NativeChrome._recordSessionFailure('anonymous-admission', error);
         return false;
       });
     },
@@ -207,6 +339,7 @@
       // Close synchronously with the `sv:session` listener invocation. No
       // wallet read/sign/send may reach the previous native identity while
       // the new web participant is being exchanged and verified.
+      NativeChrome._setAuthenticatedSessionAdmission(false);
       NativeChrome._setSessionWalletRelayAdmission(false);
       if (NativeChrome._logoutRunning) return Promise.resolve(null);
       if (NativeChrome._handoffPromise) {
@@ -240,6 +373,23 @@
       return tracked;
     },
 
+    // A failed cold-start exchange leaves the native gate closed on purpose,
+    // but the web session may remain healthy and emit no later auth change.
+    // Foreground/network recovery signals therefore need an explicit retry.
+    // Unlike a new `sv:session` signal, these retries do not request a second
+    // pass when an authoritative handoff is already in flight.
+    recoverSessionAdmission() {
+      if (NativeChrome._logoutRunning ||
+          NativeChrome._authenticatedSessionAdmitted) {
+        return Promise.resolve(null);
+      }
+      if (NativeChrome._handoffPromise) return NativeChrome._handoffPromise;
+      if (NativeChrome._webParticipantId() == null) {
+        return NativeChrome.enterAnonymous();
+      }
+      return NativeChrome.runLoginHandoff();
+    },
+
     async _runLoginHandoff(generation) {
       const info = await NativeChrome.getInfo();
       const capabilities = Array.isArray(info.capabilities)
@@ -253,6 +403,7 @@
           info.version > 0 && info.version < 4;
         if (confirmedPreV4 && !NativeChrome._logoutRunning &&
             !NativeChrome._handoffRerunRequested) {
+          NativeChrome._setAuthenticatedSessionAdmission(true);
           NativeChrome._setSessionWalletRelayAdmission(true);
         }
         return null;
@@ -263,11 +414,15 @@
         if (capabilities.includes('beginSessionHandoff')) {
           if (typeof window.usernode.beginSessionHandoff !== 'function') {
             console.warn('[native-chrome] session handoff latch is unavailable');
+            NativeChrome._recordSessionFailure('login-handoff',
+              'The session handoff latch is unavailable on this app build');
             return null;
           }
           const admission = await window.usernode.beginSessionHandoff();
           if (!admission || admission.blocked !== true) {
             console.warn('[native-chrome] native wallet handoff was not blocked');
+            NativeChrome._recordSessionFailure('login-handoff',
+              'The Usernode app did not block its wallet for the handoff');
             return null;
           }
           if (!NativeChrome._isCurrentWebParticipant(
@@ -304,24 +459,35 @@
 
         const sessionBound = await NativeChrome.has('sessionBoundAuthStatus');
         if (sessionBound) {
-          const status = NativeChrome._boundReadyStatus(
+          const authenticatedStatus = NativeChrome._boundAuthenticatedStatus(
             result, webParticipantId
           );
-          if (!status) {
+          if (!authenticatedStatus) {
             console.warn('[native-chrome] native login result did not match '
               + 'the current participant/epoch');
             return null;
           }
-          await NativeChrome._ensureNodeStarted(status, generation);
-          if (!NativeChrome._handoffRerunRequested &&
-              NativeChrome._isCurrentWebParticipant(
-            webParticipantId, generation
-          )) {
-            NativeChrome._setSessionWalletRelayAdmission(true);
+          NativeChrome._setAuthenticatedSessionAdmission(
+            true, authenticatedStatus
+          );
+          const readyStatus = NativeChrome._boundReadyStatus(
+            result, webParticipantId
+          );
+          if (readyStatus) {
+            await NativeChrome._ensureNodeStarted(readyStatus, generation);
+            if (!NativeChrome._handoffRerunRequested &&
+                NativeChrome._isCurrentWebParticipant(
+              webParticipantId, generation
+            ) && NativeChrome._authenticatedStatusMatches(
+              authenticatedStatus
+            )) {
+              NativeChrome._setSessionWalletRelayAdmission(true);
+            }
           }
         } else if (result && result.address) {
           // Compatibility for bridge v4 builds. New builds advertise
           // sessionBoundAuthStatus and take the participant/epoch path above.
+          NativeChrome._setAuthenticatedSessionAdmission(true);
           await NativeChrome._ensureLegacyNodeStarted(
             result.address, webParticipantId, generation
           );
@@ -336,6 +502,7 @@
       } catch (e) {
         console.warn('[native-chrome] login handoff failed:',
           e && e.message ? e.message : e);
+        NativeChrome._recordSessionFailure('login-handoff', e);
         return null;
       }
     },
@@ -406,38 +573,97 @@
 
     // Close every local/native wallet admission path before the first web
     // logout await. This preflight does not tear down the WebView.
+    //
+    // It RESOLVES a report and no longer throws:
+    //   { nativeTerminal, latch, reason, code }
+    // with `latch` one of
+    //   'acknowledged'  the native wallet latch closed for this logout
+    //   'unsupported'   this build has no latch to close (pre-v4)
+    //   'unavailable'   the app refused or could not answer the latch call
+    //   'inconclusive'  two probes running and we still cannot tell
+    //
+    // Rejecting is what stranded a device whose privileged handshake was
+    // refused: Settings aborted before POST /api/auth/logout, so the web
+    // session survived and there was no way out of the app at all. The
+    // admission-closing above is unchanged and still synchronous — a
+    // refused latch means the caller must confirm with the user before
+    // clearing the web session, NOT that it may not.
     prepareWebLogout() {
       NativeChrome._logoutRunning = true;
+      NativeChrome._setAuthenticatedSessionAdmission(false);
       NativeChrome._setSessionWalletRelayAdmission(false);
       NativeChrome._handoffGeneration++;
       NativeChrome._handoffRerunRequested = false;
       NativeChrome._nodeStartKey = null;
       return (async () => {
-        const info = await NativeChrome.getInfo();
+        const report = (nativeTerminal, latch, reason, error) => {
+          if (latch !== 'acknowledged' && latch !== 'unsupported') {
+            NativeChrome._recordSessionFailure('logout-preflight',
+              error || reason);
+          }
+          return {
+            nativeTerminal,
+            latch,
+            reason: reason || null,
+            code: (error && typeof error.usernodeCode === 'string')
+              ? error.usernodeCode : null,
+          };
+        };
+        const isNative = () => {
+          const bridge = window.usernode;
+          return !!bridge && bridge.isNative === true;
+        };
+        const conclusive = (info) => Number.isInteger(info.version) &&
+          info.version > 0;
+
+        let info = await NativeChrome.getInfo();
+        if (isNative() && !conclusive(info)) {
+          // One cached probe may merely have timed out, so re-probe ONCE in
+          // place rather than making the user click again — that retry loop
+          // is exactly what a stuck device cannot escape.
+          NativeChrome._infoPromise = null;
+          info = await NativeChrome.getInfo();
+        }
+        if (isNative() && !conclusive(info)) {
+          NativeChrome._infoPromise = null;
+          return report(false, 'inconclusive',
+            'Native bridge probe was inconclusive');
+        }
+
         const capabilities = Array.isArray(info.capabilities)
           ? info.capabilities
           : [];
-        const bridge = window.usernode;
-        const conclusiveVersion = Number.isInteger(info.version) &&
-          info.version > 0;
-        if (bridge && bridge.isNative === true && !conclusiveVersion) {
-          // Do not clear the web session from an actually-native shell when
-          // the one cached probe may merely have timed out. Keep this attempt
-          // fail-closed and let the next click perform a fresh probe.
-          NativeChrome._infoPromise = null;
-          throw new Error('Native bridge probe was inconclusive');
-        }
         if (capabilities.includes('beginSessionHandoff')) {
           if (typeof window.usernode.beginSessionHandoff !== 'function') {
-            throw new Error('Native session handoff latch is unavailable');
+            return report(false, 'unavailable',
+              'Native session handoff latch is unavailable');
           }
-          const admission = await window.usernode.beginSessionHandoff();
+          let admission = null;
+          try {
+            admission = await window.usernode.beginSessionHandoff();
+          } catch (error) {
+            // The privileged handshake being refused lands here, and is the
+            // whole reason this resolves instead of throwing.
+            return report(false, 'unavailable',
+              (error && error.message)
+                ? String(error.message)
+                : 'Native session handoff latch failed',
+              error);
+          }
           if (!admission || admission.blocked !== true) {
-            throw new Error('Native wallet handoff was not blocked');
+            return report(false, 'unavailable',
+              'Native wallet handoff was not blocked');
           }
         }
-        return capabilities.includes('logout') &&
+
+        const nativeTerminal = capabilities.includes('logout') &&
           !!window.usernode && typeof window.usernode.logout === 'function';
+        NativeChrome._lastSessionFailure = null;
+        return report(nativeTerminal,
+          capabilities.includes('beginSessionHandoff')
+            ? 'acknowledged'
+            : 'unsupported',
+          null);
       })();
     },
 
@@ -451,29 +677,121 @@
     //
     // Replaces the native onboarding permission screens: after the first
     // successful login handoff on a device, offer the exact-alarm /
-    // battery-optimization prompts the node needs for block production.
-    // One-shot per device (localStorage marker, set on dismiss either
-    // way) — the same rows live permanently in Settings → Usernode app,
-    // so skipping here loses nothing.
+    // battery-optimization prompts (Android) or the notification prompt
+    // (iOS) the node needs. One-shot per device via a localStorage
+    // marker set on dismiss — except on iOS while the OS notification
+    // prompt has never been presented (permission still un-determined),
+    // where the marker is not final: the OS prompt itself is one-shot,
+    // so an un-asked device must keep its chance. The same rows live
+    // permanently in Settings → Usernode app.
     _FIRST_RUN_KEY: 'sv:onboarding_permissions_done',
+    _firstRunPromise: null,
+    _firstRunSheetPresented: false,
+    // Delay between post-grant permission-status re-reads (the native
+    // caches settle asynchronously after the OS dialog).
+    _FIRST_RUN_RECHECK_MS: 800,
 
     _markFirstRunDone() {
       try { localStorage.setItem(NativeChrome._FIRST_RUN_KEY, '1'); } catch (_) {}
     },
 
-    async maybeShowFirstRunPermissions() {
+    // iOS: whether the app has ever presented the OS notification prompt.
+    // The settings snapshot only carries the exactAlarmGranted boolean,
+    // which cannot distinguish "denied" from "never asked" — the social
+    // push state can. Resolves 'undetermined' | 'granted' | 'denied', or
+    // null when the build doesn't expose it (callers fall back to the
+    // boolean). Tolerates both notDetermined / not_determined spellings.
+    async _iosPushPermissionStatus() {
+      if (!(await NativeChrome.has('getSocialPushState'))) return null;
+      const bridge = window.usernode;
+      if (!bridge || typeof bridge.getSocialPushState !== 'function') {
+        return null;
+      }
+      let state = null;
+      try { state = await bridge.getSocialPushState(); } catch (_) {
+        return null;
+      }
+      const raw = state && typeof state.permissionStatus === 'string'
+        ? state.permissionStatus.toLowerCase().replace(/[_\s-]/g, '')
+        : '';
+      if (raw === 'notdetermined' || raw === 'undetermined') {
+        return 'undetermined';
+      }
+      if (raw === 'authorized' || raw === 'provisional' ||
+          raw === 'granted') {
+        return 'granted';
+      }
+      if (raw === 'denied') return 'denied';
+      return null;
+    },
+
+    // Triggered from init()'s boot handoff, every `sv:session`, and the
+    // `usernode:auth-status` recovery chain — one shared run so the
+    // trigger storm cannot stack sheets, and a document latch once a
+    // sheet was actually presented.
+    maybeShowFirstRunPermissions() {
+      if (NativeChrome._firstRunPromise) return NativeChrome._firstRunPromise;
+      const tracked = NativeChrome._maybeShowFirstRunPermissions()
+        .finally(() => {
+          if (NativeChrome._firstRunPromise === tracked &&
+              !NativeChrome._firstRunSheetPresented) {
+            NativeChrome._firstRunPromise = null;
+          }
+        });
+      NativeChrome._firstRunPromise = tracked;
+      return tracked;
+    },
+
+    async _maybeShowFirstRunPermissions() {
+      if (NativeChrome._firstRunSheetPresented) return;
+      let marked = false;
       try {
-        if (localStorage.getItem(NativeChrome._FIRST_RUN_KEY) === '1') return;
+        marked = localStorage.getItem(NativeChrome._FIRST_RUN_KEY) === '1';
       } catch (_) {}
+      let pushStatus;
+      if (marked) {
+        // The OS notification prompt on iOS is system-one-shot, so the
+        // only unrecoverable state is "never asked". Old shell/app
+        // versions (and a dismissed sheet) wrote this marker without the
+        // prompt ever being presented — while iOS still reports the
+        // permission as un-prompted, the marker must not be final.
+        // Android keeps its instant-return fast path.
+        const kit = window.unNative;
+        if (!kit || kit.platform !== 'ios') return;
+        pushStatus = await NativeChrome._iosPushPermissionStatus();
+        if (pushStatus !== 'undetermined') return;
+      }
       if (!window.PlatformUI || typeof PlatformUI.sheet !== 'function') return;
       if (!(await NativeChrome.has('getSettingsState'))) return;
 
       let state = null;
       try { state = await window.usernode.getSettingsState(); } catch (_) {}
-      if (!state) return;
+      if (!state) {
+        // Silent skip (the permanent Settings rows are the fallback), but
+        // name the reason from the shared record so this and the Settings
+        // section agree on why the read came back empty.
+        const why = NativeChrome.lastReadError('getSettingsState');
+        console.warn('[native-chrome] first-run permissions skipped:',
+          why ? `${why.kind}: ${why.message || 'no message'}` : 'no settings state');
+        return;
+      }
       const perms = state.permissions || {};
       const isAndroid = perms.platform === 'android';
-      const needsAlarm = !perms.exactAlarmGranted;
+      let needsAlarm = !perms.exactAlarmGranted;
+      // iOS: the notification permission is the real subject of this
+      // sheet, so when the build exposes the push permission status let
+      // it override the alarm boolean — there are no exact alarms on
+      // iOS, and a build reporting exactAlarmGranted: true must not
+      // swallow a never-shown notification prompt.
+      if (!isAndroid) {
+        if (pushStatus === undefined) {
+          pushStatus = await NativeChrome._iosPushPermissionStatus();
+        }
+        if (pushStatus === 'undetermined') needsAlarm = true;
+        else if (pushStatus === 'granted') needsAlarm = false;
+      } else {
+        pushStatus = null;
+      }
       // Battery optimization is Android-only; iOS never shows that row.
       const needsBattery = isAndroid && perms.batteryOptDisabled !== true;
       if (!needsAlarm && !needsBattery) {
@@ -490,10 +808,16 @@
 
       const panel = el('div', 'px-4 pb-5');
       panel.appendChild(el('div', 'text-lg font-bold py-3', 'Set up your device'));
+      // iOS: requestPermissions() maps to the notification prompt, and v4
+      // turned iOS block production off — so the block-production pitch is
+      // Android-only, and the iOS copy names what the OS will actually ask.
       panel.appendChild(el('p', 'text-sm text-zinc-600 dark:text-zinc-400 mb-3',
-        'Your node can produce blocks while the app is in the background. ' +
-        'That needs permission to wake your device at exact slot times' +
-        (isAndroid ? ' and freedom from battery optimization.' : '.')));
+        isAndroid
+          ? 'Your node can produce blocks while the app is in the ' +
+            'background. That needs permission to wake your device at ' +
+            'exact slot times and freedom from battery optimization.'
+          : 'Allow notifications so Usernode can alert you about node ' +
+            'and account activity.'));
 
       const statusRow = (label, ok) => {
         const row = el('div', 'flex items-center gap-2 mt-1 text-sm');
@@ -513,22 +837,64 @@
       let sheet = null;
       const render = (p) => {
         body.textContent = '';
-        const alarmOk = !!p.exactAlarmGranted;
+        // iOS row truth: prefer the push permission status over the
+        // alarm boolean whenever the build reports one (see above).
+        const alarmOk = !isAndroid && pushStatus != null
+          ? pushStatus === 'granted'
+          : !!p.exactAlarmGranted;
         const batteryOk = p.batteryOptDisabled === true;
         body.appendChild(statusRow(
-          isAndroid ? 'Exact alarms' : 'Alarm permissions', alarmOk));
+          isAndroid ? 'Exact alarms' : 'Notifications', alarmOk));
         if (isAndroid) body.appendChild(statusRow('Battery optimization', batteryOk));
 
         const btns = el('div', 'mt-4 space-y-2');
         if (!alarmOk) {
           const b = el('button', 'w-full rounded-lg bg-violet-600 ' +
             'hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white',
-          'Grant permissions');
+          isAndroid ? 'Grant permissions' : 'Allow notifications');
           b.addEventListener('click', async () => {
             b.disabled = true;
             try {
               const next = await window.usernode.requestPermissions();
-              if (next && next.permissions) render(next.permissions);
+              const nextPerms = next && next.permissions
+                ? next.permissions
+                : p;
+              let granted = !!(next && next.granted === true);
+              if (isAndroid) {
+                granted = granted || !!nextPerms.exactAlarmGranted;
+              } else {
+                // The native permission caches can lag right after the
+                // OS dialog — and some builds resolve requestPermissions
+                // before the user answers it. Poll briefly for a
+                // determined status instead of trusting one stale read;
+                // a determined answer wins over the grant flag.
+                let status = await NativeChrome._iosPushPermissionStatus();
+                for (let i = 0;
+                  !granted && status === 'undetermined' && i < 4;
+                  i++) {
+                  await new Promise((resolve) => setTimeout(
+                    resolve, NativeChrome._FIRST_RUN_RECHECK_MS));
+                  status = await NativeChrome._iosPushPermissionStatus();
+                }
+                if (status === 'granted') granted = true;
+                else if (status === 'denied') granted = false;
+                pushStatus = granted ? 'granted' : (status || pushStatus);
+                // A fresh grant should start push registration right
+                // away rather than waiting for the next app resume.
+                if (granted && window.SocialPush &&
+                    typeof SocialPush.getState === 'function') {
+                  SocialPush.getState();
+                }
+              }
+              const batteryOk = !isAndroid ||
+                nextPerms.batteryOptDisabled === true;
+              if (granted && batteryOk) {
+                // Nothing left to ask — close (which records first-run
+                // done) instead of re-rendering a sheet with no job.
+                if (sheet && sheet.dismiss) sheet.dismiss();
+                return;
+              }
+              render(nextPerms);
             } catch (e) {
               console.warn('[native-chrome] requestPermissions failed:', e);
             } finally { b.disabled = false; }
@@ -560,9 +926,11 @@
         contentEl: panel,
         onDismiss: () => NativeChrome._markFirstRunDone(),
       });
-      // Kit unavailable (degraded shell) — don't retry every boot; the
-      // permanent Settings rows remain the fallback.
-      if (!sheet) NativeChrome._markFirstRunDone();
+      // Kit unavailable (degraded shell): present nothing and record
+      // nothing — burning the one-shot marker here silenced the iOS
+      // notification prompt forever. A later healthy launch retries;
+      // the permanent Settings rows remain the in-session fallback.
+      if (sheet) NativeChrome._firstRunSheetPresented = true;
     },
 
     _initAuthStatusEvents() {
@@ -575,7 +943,7 @@
         const d = e && e.detail;
         if (!d || NativeChrome._logoutRunning) return;
         const participantId = NativeChrome._webParticipantId();
-        if (!NativeChrome._sessionWalletRelayAdmitted) {
+        if (!NativeChrome._authenticatedSessionAdmitted) {
           // onPageFinished may be the first signal after the privileged bridge
           // becomes available. Recover the explicit anonymous admission when
           // there is no web participant; otherwise retry the authoritative
@@ -584,6 +952,10 @@
             NativeChrome.enterAnonymous();
             return;
           }
+          // Identity transitions emitted by the completeLogin currently in
+          // flight are progress, not a request to exchange the same web
+          // session again.
+          if (NativeChrome._handoffPromise) return;
           // Preserve the normal post-handoff first-run permissions step on
           // the authenticated recovery path.
           NativeChrome.runLoginHandoff().then((result) =>
@@ -594,12 +966,35 @@
           return;
         }
         if (participantId == null) return;
+        const authenticatedStatus = NativeChrome._boundAuthenticatedStatus(
+          d, participantId
+        );
+        if (!authenticatedStatus ||
+            !NativeChrome._authenticatedStatusMatches(authenticatedStatus)) {
+          NativeChrome._setAuthenticatedSessionAdmission(false);
+          NativeChrome._setSessionWalletRelayAdmission(false);
+          return;
+        }
+        if (d.phase === 'reconciling') {
+          NativeChrome._setSessionWalletRelayAdmission(false);
+          return;
+        }
         if (d.phase !== 'ready' || !d.address) return;
         const generation = NativeChrome._handoffGeneration;
         NativeChrome.has('sessionBoundAuthStatus').then((sessionBound) => {
           if (sessionBound) {
             const status = NativeChrome._boundReadyStatus(d, participantId);
-            if (status) NativeChrome._ensureNodeStarted(status, generation);
+            if (status) {
+              NativeChrome._ensureNodeStarted(status, generation).then(() => {
+                if (NativeChrome._isCurrentWebParticipant(
+                  participantId, generation
+                ) && NativeChrome._authenticatedStatusMatches(
+                  authenticatedStatus
+                )) {
+                  NativeChrome._setSessionWalletRelayAdmission(true);
+                }
+              });
+            }
           } else {
             NativeChrome._ensureLegacyNodeStarted(
               d.address, participantId, generation
@@ -609,13 +1004,24 @@
       });
     },
 
+    _initSessionRecoveryEvents() {
+      const recover = () => {
+        if (document.visibilityState === 'hidden') return;
+        NativeChrome.recoverSessionAdmission();
+      };
+      window.addEventListener('online', recover);
+      document.addEventListener('visibilitychange', recover);
+    },
+
     init() {
       // The bridge loads before wallet-sheet.js and before App resolves its
       // web session. Start closed so native A cannot be cached/rendered while
       // the shell is still deciding whether this document is anonymous or B.
+      NativeChrome._setAuthenticatedSessionAdmission(false);
       NativeChrome._setSessionWalletRelayAdmission(false);
       NativeChrome._initDrawerRows();
       NativeChrome._initAuthStatusEvents();
+      NativeChrome._initSessionRecoveryEvents();
       // Anonymous SPA boot (fold-auth-pages-into-SPA): the login handoff
       // needs a live web session (the from-session exchange 401s without
       // one), so it waits for the session boot stage. `sv:session` fires

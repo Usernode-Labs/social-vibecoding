@@ -303,6 +303,11 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
 
     // 3. Build Docker image
     const imageBuildStartedAt = Date.now();
+    // Everything up to here — the shallow clone, its submodules, and the
+    // manifest/secrets gating — was the one leg of the build half with no
+    // phase of its own. It showed up in the trace only as the gap before the
+    // first step, which is precisely where an unexplained regression hides.
+    timings.sourceFetchMs = imageBuildStartedAt - buildStartedAt;
     await docker.buildImage(cloneDir, imageName);
     timings.imageBuildMs = Date.now() - imageBuildStartedAt;
     await docker.execFileAsync('rm', ['-rf', cloneDir]).catch(() => {});

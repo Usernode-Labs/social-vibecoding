@@ -26,9 +26,26 @@ const vm = require('node:vm');
 
 const analyticsDemo = require('../src/services/analytics-demo.js');
 
-const SRC = fs.readFileSync(
-  path.join(__dirname, '..', 'public', 'js', 'admin-estimator.js'), 'utf8'
-);
+// #1082 chunk E moved the module into the React bundle. Same IIFE, same
+// templates — only the directory changed, plus the AdminUI import at the top,
+// which the extraction below stands in for.
+const ADMIN_DIR = path.join(__dirname, '..', 'frontend', 'src', 'features', 'admin');
+
+const SRC = fs.readFileSync(path.join(ADMIN_DIR, 'admin-estimator.js'), 'utf8')
+  // The one line the vm cannot evaluate: a bare `import` statement. The
+  // registry it names is supplied by ADMIN_UI_SRC below, exactly as the
+  // bundler supplies it in the browser.
+  .replace(/^import \{ AdminUI \} from '\.\/admin-console\.js';$/m, '');
+
+// The module reads AdminUI's recipes from its templates. Mirror the binding the
+// bundler gives it by evaluating the registry block on its own — same
+// extraction as tests/admin-ui-registry.test.js.
+const ADMIN_UI_SRC = (() => {
+  const consoleSrc = fs.readFileSync(path.join(ADMIN_DIR, 'admin-console.js'), 'utf8');
+  const m = consoleSrc.match(/export const AdminUI = Object\.freeze\(\{[\s\S]*?\n\}\);/);
+  assert.ok(m, 'admin-console.js defines the AdminUI registry');
+  return m[0].replace(/^export const/, 'var');
+})();
 
 // ── A DOM shim: enough for the estimator card, no more ──────────────────
 function makeElement(id) {
@@ -79,6 +96,11 @@ function loadCard() {
   };
   sandbox.window.document = document;
   vm.createContext(sandbox);
+  // Bind AdminUI in the module's scope, as the bundler's import does. `var` at
+  // the top level of a vm context IS the sandbox global, so the module body
+  // resolves the bare identifier without any further wiring.
+  vm.runInContext(ADMIN_UI_SRC, sandbox, { filename: 'admin-console.js#AdminUI' });
+  assert.equal(typeof sandbox.AdminUI, 'object', 'the AdminUI registry must be bound');
 
   // The only edit to the shipped source: hoist the private renderer so the
   // test can call it. Everything it touches is the real module's closure.

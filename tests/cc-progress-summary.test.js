@@ -212,6 +212,9 @@ test('summarizeCcProgress: maps phase markers to friendly labels', () => {
   assert.equal(summarizeCcProgress(['[refresh]']).currentLabel, 'Syncing branch');
   assert.equal(summarizeCcProgress(['[claude (mode build)]']).currentLabel, 'Claude is working');
   assert.equal(summarizeCcProgress(['[claude (resume abc123, mode scout)]']).currentLabel, 'Claude is working');
+  assert.equal(summarizeCcProgress(['[codex (mode build)]']).currentLabel, 'Codex is working');
+  assert.equal(summarizeCcProgress(['[codex (resume thr-0199, mode scout)]']).currentLabel, 'Codex is working');
+  assert.equal(summarizeCcProgress(['[agent (mode build)]']).currentLabel, 'Coding agent is working');
   assert.equal(summarizeCcProgress(['[commit]']).currentLabel, 'Committing');
   assert.equal(summarizeCcProgress(['[push]']).currentLabel, 'Pushing');
   assert.equal(summarizeCcProgress(['[sync_merge]']).currentLabel, 'Syncing with main');
@@ -320,18 +323,23 @@ const indexHtml = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'index.html'), 'utf8'
 );
 const devChatSrc = fs.readFileSync(
-  path.join(__dirname, '..', 'public', 'js', 'dev-chat.js'), 'utf8'
+  path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'dev-chat.js'), 'utf8'
 );
 const sessionsSrc = fs.readFileSync(
   path.join(__dirname, '..', 'src', 'routes', 'sessions.js'), 'utf8'
 );
 
-test('index.html loads cc-progress-summary.js before dev-chat.js', () => {
+test('index.html loads cc-progress-summary.js before the dev chat reads it', () => {
+  // #1084 chunk G moved dev-chat.js into the React bundle, so there is no
+  // second tag to compare positions with; the bundle's `type="module"` is what
+  // defers it past every classic /js/** script. Assert the helper tag and that
+  // deferral instead (tests/shell-script-order.test.js pins it shell-wide).
   const helperIdx = indexHtml.indexOf('/js/cc-progress-summary.js');
-  const devChatIdx = indexHtml.indexOf('/js/dev-chat.js');
   assert.ok(helperIdx !== -1, 'cc-progress-summary.js script tag missing');
-  assert.ok(devChatIdx !== -1, 'dev-chat.js script tag missing');
-  assert.ok(helperIdx < devChatIdx, 'cc-progress-summary.js must load before dev-chat.js');
+  assert.ok(!indexHtml.includes('src="/js/dev-chat.js"'),
+    'dev-chat.js is bundled now (chunk G) — it must not come back as a tag');
+  assert.ok(indexHtml.includes('<script type="module" src="/shell/assets/shell.js">'),
+    'the React entry must stay a deferred module so DevChat sees the progress helpers');
 });
 
 test('dev-chat.js actually calls the helpers (not dead code)', () => {
@@ -345,24 +353,30 @@ test('dev-chat.js actually calls the helpers (not dead code)', () => {
 test("sessions.js persists durationMs on the completion status", () => {
   // #358: the completion status text is now outcome-derived (a `statusText`
   // variable that is 'Claude Code finished' only on success), but the
-  // terminal ccOutput row must still carry durationMs.
-  const finishedCall = sessionsSrc.match(
-    /sendStatus\(statusText,\s*\{[^}]*\}/
+  // terminal ccOutput row must still carry durationMs. Durable turns write
+  // that row inside runDbEffect, while legacy turns retain sendStatus.
+  const completionMeta = sessionsSrc.match(
+    /const completionMeta = \{([\s\S]{0,420}?)\};/
   );
-  assert.ok(finishedCall, 'missing sendStatus(statusText, {...}) completion row');
+  assert.ok(completionMeta, 'missing shared completion metadata');
   assert.ok(
-    /durationMs/.test(finishedCall[0]),
+    /durationMs/.test(completionMeta[1]),
     'completion status metadata must include durationMs'
   );
   assert.ok(
-    /ccOutcome/.test(finishedCall[0]),
+    /ccOutcome/.test(completionMeta[1]),
     'completion status metadata must include ccOutcome'
   );
-  // The literal 'Claude Code finished' header is still produced for the
-  // success outcome.
+  assert.match(sessionsSrc,
+    /effectKey: 'completion_row'[\s\S]{0,500}?JSON\.stringify\(completionMeta\)/,
+    'durable completion rows persist the shared metadata in the exact-once effect');
+  assert.match(sessionsSrc, /sendStatus\(statusText, completionMeta\)/,
+    'legacy completion rows use the same metadata');
+  // The provider-specific success header comes from the shared runtime
+  // identity (Claude remains byte-for-byte "Claude Code finished").
   assert.ok(
-    /statusText\s*=\s*ccOutcome === 'success'\s*\?\s*'Claude Code finished'/.test(sessionsSrc),
-    "success outcome must still surface 'Claude Code finished'"
+    /statusText\s*=\s*ccOutcome === 'success'\s*\?\s*`\$\{executionAgentName\} finished`/.test(sessionsSrc),
+    'success outcome must use the actual coding-agent name'
   );
 });
 
@@ -373,7 +387,7 @@ test("sessions.js persists durationMs on the completion status", () => {
 // the cohort hint must only compete with it once past ten minutes.
 
 const devChat = fs.readFileSync(
-  path.join(__dirname, '..', 'public', 'js', 'dev-chat.js'), 'utf8'
+  path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'dev-chat.js'), 'utf8'
 );
 
 test('#892: the countdown span always renders a numeric form', () => {

@@ -4,6 +4,7 @@ const log = require('./logger');
 const llm = require('./llm');
 const limits = require('./limits');
 const github = require('./github');
+const turnEffects = require('./turn-effects');
 
 // Coerce an arbitrary array of "issue numbers" into a clean, deduped,
 // ascending list of positive integers (#75). Defensive against malformed
@@ -237,25 +238,57 @@ function sameIssueSet(a, b) {
 // (services/title-heal.js) can regenerate later and the UI can mark the
 // placeholder. `usage` is undefined on the fallback path (no API call
 // was made) so callers can skip debiting in that case.
-async function generatePrMetadata({ userMessage, ccSummary, requests, summaries, specs, username, apiKey, closingBlock, testingBlock, visualsBlock }) {
-  // `closingBlock` (#75) is the deterministic `Closes #N` text,
-  // `testingBlock` (#127) the deterministic "How to test" section, and
-  // `visualsBlock` (#195) the "Before / after" media table. All are
-  // inserted between the body and the footer (testing first, closing last)
-  // and are deliberately NOT fed into the LLM prompt below, so the model
-  // can never drop, duplicate, or paraphrase them.
-  const suffix = (testingBlock ? `\n\n${testingBlock}` : '')
-    + (visualsBlock ? `\n\n${visualsBlock}` : '')
-    + (closingBlock ? `\n\n${closingBlock}` : '');
-  const fallbackTitle = `${username}'s changes`;
-  const fallbackBody = `Dev session by ${username} via Usernode${suffix}`;
+function fallbackPrMetadataDraft(username) {
+  return {
+    title: `${username}'s changes`,
+    body: '',
+    summary: '',
+    fallback: true,
+  };
+}
+
+// OpenRouter sessions must not buy a hidden Anthropic call just to name a
+// pull request after their selected model has finished. Build stable metadata
+// from the session's own request and model-authored summary instead. The first
+// request owns the title for the life of the PR; later turns refresh the body
+// without renaming the change after whichever follow-up happened last.
+function deterministicPrMetadataDraft({ userMessage, ccSummary, requests, summaries, username }) {
+  const titleSource = (Array.isArray(requests) && requests.find((item) => typeof item === 'string' && item.trim()))
+    || userMessage
+    || ccSummary
+    || `${username || 'User'}'s changes`;
+  const plainTitle = String(titleSource)
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/[#>*_`~\[\]()]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const title = plainTitle.length > 72
+    ? `${plainTitle.slice(0, 71).trimEnd()}…`
+    : (plainTitle || `${username || 'User'}'s changes`);
+  const latestSummary = String(
+    ccSummary
+      || (Array.isArray(summaries) && summaries[summaries.length - 1])
+      || '',
+  ).trim();
+  return {
+    title,
+    body: '',
+    summary: latestSummary,
+    fallback: false,
+  };
+}
+
+// Keep the paid, non-deterministic provider result separate from the suffixes
+// derived from current session state. Durable turns receipt this draft once;
+// recovery can then re-render fresh issue/testing/visual blocks without buying
+// another model call or replaying stale deterministic metadata.
+async function generatePrMetadataDraft({ userMessage, ccSummary, requests, summaries, specs, username, apiKey, telemetryContext }) {
+  const fallback = fallbackPrMetadataDraft(username);
 
   // When the caller passes a user's own key (BYOK, #30) we can hit the
   // Anthropic API even if the server has no admin key configured, so
   // check isEnabled only as a fallback guard.
-  if (!apiKey && !llm.isEnabled()) {
-    return { title: fallbackTitle, body: fallbackBody, summary: '', fallback: true };
-  }
+  if (!apiKey && !llm.isEnabled()) return fallback;
 
   try {
     const meta = await llm.generatePrMetadata({
@@ -266,28 +299,64 @@ async function generatePrMetadata({ userMessage, ccSummary, requests, summaries,
       specs,
       username,
       apiKey,
+      telemetryContext,
     });
-    // Plain-language user-facing summary (optional). Prepend it as the very
-    // first paragraph of the PR body — before the model's bullets and before
-    // the deterministic testing/visuals/closing suffix and the footer — so
-    // the GitHub PR literally leads with the user-facing explanation, and
-    // surface it on the metadata object so applyPrMetadata can persist it to
-    // chat_sessions.pr_summary_md (the in-app proposal view renders it from
-    // there). Empty string when the model omitted it; keeps the body legacy.
-    const summary = typeof meta.summary === 'string' ? meta.summary.trim() : '';
-    const bodyWithSummary = summary ? `${summary}\n\n${meta.body}` : meta.body;
     return {
       title: meta.title,
-      summary,
-      body: `${bodyWithSummary}${suffix}\n\n---\n_Dev session by ${username} via Usernode_`,
+      body: meta.body,
+      summary: typeof meta.summary === 'string' ? meta.summary.trim() : '',
       fallback: false,
       usage: meta.usage,
       model: meta.model,
     };
   } catch (err) {
     log.warn('pr-metadata', 'Generation failed; using fallback', { err: err.message });
-    return { title: fallbackTitle, body: fallbackBody, summary: '', fallback: true };
+    return fallback;
   }
+}
+
+function renderPrMetadataDraft(draft, {
+  username, closingBlock, testingBlock, visualsBlock,
+}) {
+  // `closingBlock` (#75) is the deterministic `Closes #N` text,
+  // `testingBlock` (#127) the deterministic "How to test" section, and
+  // `visualsBlock` (#195) the "Before / after" media table. All are
+  // inserted between the body and the footer (testing first, closing last)
+  // and are deliberately NOT fed into the LLM prompt below, so the model
+  // can never drop, duplicate, or paraphrase them.
+  const suffix = (testingBlock ? `\n\n${testingBlock}` : '')
+    + (visualsBlock ? `\n\n${visualsBlock}` : '')
+    + (closingBlock ? `\n\n${closingBlock}` : '');
+  const safeDraft = draft && typeof draft === 'object'
+    ? draft
+    : fallbackPrMetadataDraft(username);
+  if (safeDraft.fallback) {
+    return {
+      ...safeDraft,
+      title: safeDraft.title || `${username}'s changes`,
+      body: `Dev session by ${username} via Usernode${suffix}`,
+      summary: '',
+      fallback: true,
+    };
+  }
+
+  // Plain-language user-facing summary (optional). Prepend it as the very
+  // first paragraph of the PR body — before the model's bullets and before
+  // the deterministic testing/visuals/closing suffix and the footer — so
+  // the GitHub PR literally leads with the user-facing explanation.
+  const summary = typeof safeDraft.summary === 'string' ? safeDraft.summary.trim() : '';
+  const bodyWithSummary = summary ? `${summary}\n\n${safeDraft.body}` : safeDraft.body;
+  return {
+    ...safeDraft,
+    summary,
+    body: `${bodyWithSummary}${suffix}\n\n---\n_Dev session by ${username} via Usernode_`,
+    fallback: false,
+  };
+}
+
+async function generatePrMetadata(args) {
+  const draft = await generatePrMetadataDraft(args);
+  return renderPrMetadataDraft(draft, args);
 }
 
 // Pull the full per-turn history for a session so the PR title/body can
@@ -457,6 +526,10 @@ async function applyPrMetadata({
   pool, session, repoOwner, repoName,
   userMessage, ccSummary, username,
   broadcast, apiKey, userId,
+  effectTurnId = null,
+  effectSessionId = null,
+  effectBillingByok = !!apiKey,
+  metadataMode = null,
 }) {
   if (!repoOwner || !repoName) return null;
 
@@ -483,9 +556,62 @@ async function applyPrMetadata({
   // directly after each capture instead.
   const visualsBlock = buildVisualsBlock(visuals, require('./caddy').USERNODE_DOMAIN);
 
-  const meta = await generatePrMetadata({
-    userMessage, ccSummary, requests, summaries, specs, username, apiKey, closingBlock, testingBlock, visualsBlock,
-  });
+  const generationArgs = {
+    userMessage, ccSummary, requests, summaries, specs, username, apiKey,
+    telemetryContext: {
+      pool,
+      appId: session && session.app_id,
+      sessionId: session && session.id,
+    },
+  };
+  let meta;
+  let metadataBillingByok = !!effectBillingByok;
+  const deterministic = metadataMode === 'deterministic'
+    || (metadataMode == null && session?.agent_backend === 'codex_openrouter');
+  if (deterministic) {
+    meta = renderPrMetadataDraft(
+      deterministicPrMetadataDraft(generationArgs),
+      { username, closingBlock, testingBlock, visualsBlock },
+    );
+  } else if (effectTurnId) {
+    try {
+      const effect = await turnEffects.runExternalEffectFailClosed({
+        pool,
+        turnId: effectTurnId,
+        effectKey: turnEffects.EFFECT_KEYS.PR_METADATA_GENERATION,
+        sessionId: effectSessionId || session.id,
+        intent: { billingByok: metadataBillingByok },
+        run: async () => ({
+          draft: await generatePrMetadataDraft(generationArgs),
+          billingByok: metadataBillingByok,
+        }),
+        // A pending receipt means an earlier process may already have paid
+        // for generation. Fail closed to the deterministic title template;
+        // the title-heal sweeper can improve it later without double-charging
+        // this logical turn.
+        fallback: (_err, pendingIntent) => ({
+          draft: fallbackPrMetadataDraft(username),
+          billingByok: !!pendingIntent?.billingByok,
+        }),
+      });
+      const settled = effect.value && typeof effect.value === 'object'
+        ? effect.value
+        : {};
+      metadataBillingByok = !!settled.billingByok;
+      meta = renderPrMetadataDraft(settled.draft, {
+        username, closingBlock, testingBlock, visualsBlock,
+      });
+    } catch (err) {
+      // Receipt uncertainty must keep the durable tail owned. Swallowing it
+      // would clear active_turn and make the paid effect unreconcilable.
+      err.retainActiveTurn = true;
+      throw err;
+    }
+  } else {
+    meta = await generatePrMetadata({
+      ...generationArgs, closingBlock, testingBlock, visualsBlock,
+    });
+  }
   const { title: prTitle, body: prBody } = meta;
   // True when the title/body came from the fallback template (LLM
   // unavailable). Persisted to chat_sessions.pr_title_fallback so the
@@ -521,7 +647,21 @@ async function applyPrMetadata({
   // path produces no usage, which recordSpend treats as a no-op.
   if (meta.usage && userId != null && pool) {
     const costCents = llm.estimateCostCents(meta.usage, meta.model);
-    await limits.recordSpend(pool, userId, costCents, { byok: !!apiKey });
+    if (effectTurnId) {
+      try {
+        await limits.settleTurnSpend(pool, userId, costCents, {
+          turnByok: metadataBillingByok,
+          turnId: effectTurnId,
+          sessionId: effectSessionId || session.id,
+          effectKey: turnEffects.EFFECT_KEYS.PR_METADATA_SPEND,
+        });
+      } catch (err) {
+        err.retainActiveTurn = true;
+        throw err;
+      }
+    } else {
+      await limits.recordSpend(pool, userId, costCents, { byok: !!apiKey });
+    }
   }
 
   if (!session.pr_number) {
@@ -663,7 +803,7 @@ async function applyPrMetadata({
 }
 
 module.exports = {
-  generatePrMetadata, applyPrMetadata, sanitizeIssueNumbers,
+  generatePrMetadata, applyPrMetadata, deterministicPrMetadataDraft, sanitizeIssueNumbers,
   buildClosingBlock, buildTestingBlock, parseClosingKeywords,
   buildVisualsBlock, upsertVisualsBlock,
   applyIssueDeclarations, stripClosingLines, sameIssueSet,

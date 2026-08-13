@@ -114,6 +114,10 @@ function makeApp(state = {}, { user } = {}) {
 
 async function req(app, method, url, payload) {
   const server = app.listen(0);
+  // The harness preload (tests/lib/test-net.js) pins hostless listens to
+  // 127.0.0.1, which makes the bind complete on the next tick instead of
+  // synchronously — so wait for it before reading the assigned port.
+  await new Promise((resolve) => server.once('listening', resolve));
   try {
     const { port } = server.address();
     const res = await fetch(`http://127.0.0.1:${port}${url}`, {
@@ -147,7 +151,10 @@ test('GET describes the canvas, the widget registry and both widths', async () =
   // Footprints ride along so the client lays out against the same numbers
   // the overlap check below validates with.
   assert.deepEqual(body.widgets.map((w) => w.key), ['challenges', 'discover', 'create']);
-  assert.deepEqual(body.widgets.find((w) => w.key === 'create').sizes, { 4: [1, 1], 5: [1, 1] });
+  // Create app is a full-width strip on a phone and a single tile on
+  // desktop — the server's numbers, so a client that laid out otherwise
+  // would fail the PUT's own overlap check.
+  assert.deepEqual(body.widgets.find((w) => w.key === 'create').sizes, { 4: [4, 1], 5: [1, 1] });
   // A width with nothing stored is an EMPTY array, not an error: it means
   // "never dragged here", and the client derives that view itself.
   assert.deepEqual(body.layouts['4'], []);
@@ -208,6 +215,30 @@ test('PUT writes the whole width in one transaction', async () => {
   assert.equal(tx[tx.length - 1], 'COMMIT', 'a reader never sees a half-written width');
 });
 
+test('PUT serializes concurrent replaces of the same (user, cols)', async () => {
+  // Two racing PUTs — e.g. several freshly-opened tabs each persisting the
+  // same layout repair on load (session 3193's checks run) — interleave the
+  // delete-then-insert under READ COMMITTED: the second DELETE cannot see
+  // the first's uncommitted inserts, and its own inserts then die on
+  // idx_user_home_layout_*. The advisory lock makes them take turns.
+  const { app, calls } = makeApp({}, { user: USER });
+  await put(app, '/api/home-layout', { cols: 5, items: [A('alpha', 0, 0)] });
+  const inTx = [];
+  let open = false;
+  for (const c of calls) {
+    if (/^BEGIN/i.test(c.sql)) open = true;
+    else if (/^(COMMIT|ROLLBACK)/i.test(c.sql)) open = false;
+    else if (open) inTx.push(c);
+  }
+  assert.match(inTx[0].sql, /pg_advisory_xact_lock/,
+    'the per-(user, cols) lock is the first statement inside the transaction');
+  assert.deepEqual(inTx[0].params, [USER.id, 5], 'keyed on user AND width');
+  assert.match(inTx[1].sql, /^DELETE FROM user_home_layout/,
+    'nothing is deleted before the lock is held');
+  // xact-scoped, so an early throw can never leak a held lock.
+  assert.doesNotMatch(ROUTE, /pg_advisory_lock\(/);
+});
+
 // ── PUT: the create widget is never quota-gated ───────────────────────
 
 // The regression guard for the retired "absent for non-creators" rule. The
@@ -258,9 +289,17 @@ test('PUT rejects a footprint that runs off the canvas', async () => {
     { cols: 5, items: [W('challenges', 4, 0)] })).status, 400);
   assert.equal((await put(app, '/api/home-layout',
     { cols: 5, items: [W('challenges', 3, 0)] })).status, 200);
-  // ...and 4x2 at four columns can only start at 0, on rows 0-6.
+  // ...and the HEIGHT overhang is checked the same way: 2x2 on row 7 needs a
+  // ninth row the canvas does not have.
   assert.equal((await put(app, '/api/home-layout',
-    { cols: 4, items: [W('challenges', 0, 7)] })).status, 400);
+    { cols: 5, items: [W('challenges', 3, 7)] })).status, 400);
+  // At four columns challenges is 4x1 (#968), so column 0 is the only column
+  // it can start in — and the LAST row is now a legal home for it, which the
+  // two-row footprint's own last row never was.
+  assert.equal((await put(app, '/api/home-layout',
+    { cols: 4, items: [W('challenges', 1, 0)] })).status, 400);
+  assert.equal((await put(app, '/api/home-layout',
+    { cols: 4, items: [W('challenges', 0, 7)] })).status, 200);
 });
 
 // The server checks overlap against ITS OWN footprints, so a patched client
@@ -385,4 +424,17 @@ test('staging seeds a layout for every capture identity', () => {
   // Idempotent: a rebuild must not clobber a reviewer's own drags.
   assert.match(seed, /SELECT 1 FROM user_home_layout WHERE user_id = \$1 LIMIT 1/);
   assert.match(seed, /ON CONFLICT DO NOTHING/);
+});
+
+test('staging home fixtures are slug-keyed and visible to capture viewers', () => {
+  const migrate = read('src/db/migrate.js');
+  assert.match(migrate, /seedStagingFailedApp\(pool, config\)/);
+  assert.match(migrate, /seedStagingForkLineage\(pool, config\)/);
+  assert.match(migrate, /ON CONFLICT \(slug\) DO UPDATE/,
+    'fixture slugs, not collision-prone cloned ids, are the stable key');
+  assert.match(migrate, /SELECT id, \$1, 2 FROM apps WHERE slug = 'staging-demo-failed-app'/);
+  assert.match(migrate, /SELECT id, \$1, 1 FROM apps WHERE slug = 'staging-demo-fork'/);
+  assert.match(migrate, /SELECT id, \$1, 0 FROM apps WHERE slug = 'staging-demo-chess-arena'/);
+  assert.match(migrate, /SET hidden = FALSE, sort_order = EXCLUDED\.sort_order/,
+    'a stale hidden preference cannot suppress a deterministic capture fixture');
 });

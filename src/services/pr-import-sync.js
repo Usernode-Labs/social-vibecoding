@@ -2,18 +2,15 @@
 
 // #687 Slice 3 — sync poller for IMPORTED PR proposals.
 //
-// An imported proposal tracks a GitHub PR whose branch the platform does
+// An imported row tracks a GitHub PR whose branch the platform does
 // NOT own; the external author keeps pushing to it. Votes and checks are
 // cast/run against a specific commit (imported_pr_head_sha), so when the
-// author pushes new commits the head moves and everyone approved code that
-// is no longer what would merge. This module notices that on the next
-// sweeper pass and re-opens the proposal against the new head:
+// author pushes new commits the head moves. This module notices that on the
+// next sweeper pass and advances the row to the new head:
 //
 //   - update imported_pr_head_sha to the new head,
-//   - CLEAR the vote tally (votes were cast on the old code),
-//   - post a "the PR was updated — please re-review" note into the
-//     proposal's own thread (same sendSystemMessage channel checkAndMerge
-//     uses),
+//   - once the row is promoted, clear the old-head vote tally and request
+//     re-review,
 //   - refresh behind_main / conflict state from GitHub (the native path's
 //     drift snapshot), and
 //   - re-run the proposal checks against the new head via the SHA-pinned
@@ -118,12 +115,12 @@ async function syncImportedProposal({ config, pool, session }) {
   }
 }
 
-// Apply a head change: advance the stored SHA, reset the tally, post the
-// re-review note, refresh drift, and re-run SHA-pinned checks. Each side
-// effect is best-effort past the first two DB writes so a hiccup in one
-// (e.g. the drift refresh) doesn't skip the others.
+// Apply a head change: advance the stored SHA, refresh drift, and re-run
+// SHA-pinned checks. A promoted row also resets its old-head tally and posts
+// the re-review note; an active import has no votes to invalidate yet.
 async function applyHeadChange({ config, pool, session, pr, repo, newHead, oldHead }) {
   const { sendSystemMessage, pushVoteUpdate } = require('./ws');
+  const upForVote = session.status === 'promoted' || session.status === 'merging';
 
   // 1. Advance the head the checks/votes now describe.
   await pool.query(
@@ -132,42 +129,40 @@ async function applyHeadChange({ config, pool, session, pr, repo, newHead, oldHe
   );
   session.imported_pr_head_sha = newHead;
 
-  // 2. Clear the vote tally — every vote was cast on the superseded code.
-  //    (The gate is also head-scoped, so a vote that raced this reset still
-  //    won't count against the new head; this DELETE keeps the visible pill
-  //    honest and re-arms the stale-PR clock.)
-  await pool.query(`DELETE FROM pr_votes WHERE session_id = $1`, [session.id]);
-  // #788: the new head may have added or removed a name in dapp.json's
-  // `admins` block — re-classify against it now that
-  // imported_pr_head_sha points at the new revision. Best-effort;
-  // checkAndMerge re-verifies authoritatively before merging.
-  await require('./app-admins').refreshExplicitApproval(pool, session, session);
-  await pool.query(
-    `UPDATE chat_sessions SET stale_notified_at = NULL WHERE id = $1`,
-    [session.id]
-  ).catch(() => {});
-
-  // 3. "the PR was updated — please re-review", into the proposal's own
-  //    thread (same channel + thread targeting checkAndMerge uses).
   const label = prLabel(session);
-  // #866: one appended clause rather than a second note — the rebuild is
-  // part of the same "this proposal moved" event, and the Preview slot on
-  // the card goes back to "building…" as a direct consequence of it.
-  await sendSystemMessage(
-    pool, session.app_id,
-    `${label} was updated on GitHub — earlier votes were cleared, please re-review the new changes. `
-      + 'The staging preview and automated checks are being rebuilt against the new commit.',
-    'system',
-    { headChanged: true, prNumber: session.pr_number, headSha: newHead },
-    { type: 'session', ref: session.id }
-  ).catch((err) => log.warn('pr-import-sync', 're-review note failed', {
-    sessionId: session.id, err: err.message,
-  }));
-
-  // 4. Tell open clients the tally reset to zero so the pill refreshes live.
-  try {
-    pushVoteUpdate({ sessionId: session.id, appSlug: session.app_slug || null, merged: false });
-  } catch (_) { /* ws failures are non-fatal */ }
+  if (upForVote) {
+    // Every existing vote describes the superseded code. The gate is also
+    // head-scoped; this cleanup keeps the visible tally honest.
+    await pool.query(`DELETE FROM pr_votes WHERE session_id = $1`, [session.id]);
+    await require('./app-admins').refreshExplicitApproval(pool, session, session);
+    await pool.query(
+      `UPDATE chat_sessions SET stale_notified_at = NULL WHERE id = $1`,
+      [session.id]
+    ).catch(() => {});
+    await sendSystemMessage(
+      pool, session.app_id,
+      `${label} was updated on GitHub — earlier votes were cleared, please re-review the new changes. `
+        + 'The staging preview and automated checks are being rebuilt against the new commit.',
+      'system',
+      { headChanged: true, prNumber: session.pr_number, headSha: newHead },
+      { type: 'session', ref: session.id }
+    ).catch((err) => log.warn('pr-import-sync', 're-review note failed', {
+      sessionId: session.id, err: err.message,
+    }));
+    try {
+      pushVoteUpdate({ sessionId: session.id, appSlug: session.app_slug || null, merged: false });
+    } catch (_) { /* ws failures are non-fatal */ }
+  } else {
+    await sendSystemMessage(
+      pool, session.app_id,
+      `${label} was updated on GitHub. The staging preview and automated checks are being rebuilt against the new commit.`,
+      'system',
+      { headChanged: true, prNumber: session.pr_number, headSha: newHead },
+      { type: 'session', ref: session.id }
+    ).catch((err) => log.warn('pr-import-sync', 'head-change note failed', {
+      sessionId: session.id, err: err.message,
+    }));
+  }
 
   // 5. Refresh behind_main / conflict snapshot the way the native path does.
   await refreshDriftState({ pool, session, pr, repo }).catch((err) =>
@@ -178,8 +173,8 @@ async function applyHeadChange({ config, pool, session, pr, repo, newHead, oldHe
   await rerunChecksForNewHead({ config, pool, session, newHead }).catch((err) =>
     log.warn('pr-import-sync', 'checks re-run failed', { sessionId: session.id, err: err.message }));
 
-  log.info('pr-import-sync', 'Imported PR head changed — reset tally + re-ran checks', {
-    sessionId: session.id, prNumber: session.pr_number, oldHead, newHead,
+  log.info('pr-import-sync', 'Imported PR head changed — refreshed preview and checks', {
+    sessionId: session.id, prNumber: session.pr_number, oldHead, newHead, upForVote,
   });
 }
 
@@ -238,11 +233,11 @@ async function rerunChecksForNewHead({ config, pool, session, newHead }) {
 
   // Stamp 'pending' immediately so the badge stops showing the old-head
   // verdict while the (minutes-long) rebuild runs.
-  await visuals.setChecksPending(pool, session.id, newHead, 'building')
+  await visuals.setChecksPending(pool, session.id, newHead, 'building', 'pr-import')
     .catch((err) => log.warn('pr-import-sync', 'setChecksPending failed (non-fatal)', {
       sessionId: session.id, err: err.message,
     }));
-  visuals.notifyChecksPending(session.id, newHead, 'building');
+  visuals.notifyChecksPending(session.id, newHead, 'building', 'pr-import');
 
   // #687: in mock-GitHub mode (staging previews) there is no real repo to
   // clone against the new head — record a gate-passing 'skipped' verdict
@@ -287,7 +282,7 @@ async function rerunChecksForNewHead({ config, pool, session, newHead }) {
     await staging.verifyStagingEdge(session, result.hostname, result.stagingUrl);
   } catch (_) { /* edge verification is best-effort */ }
 
-  await visuals.captureForSession(config, session, app, newHead || null, result, { send: () => {} })
+  await visuals.captureForSession(config, session, app, newHead || null, result, { send: () => {}, trigger: 'pr-import' })
     .catch((err) => log.warn('pr-import-sync', 'checks capture failed (non-fatal)', {
       sessionId: session.id, err: err.message,
     }));
@@ -305,8 +300,8 @@ async function stillOpenForPreview(pool, session) {
       `SELECT status FROM chat_sessions WHERE id = $1`, [session.id]
     );
     const status = rows[0] ? rows[0].status : null;
-    if (rows.length && status !== 'promoted' && status !== 'merging') {
-      log.info('pr-import-sync', 'Proposal left the vote while its preview was building — discarding the build', {
+    if (rows.length && status !== 'active' && status !== 'promoted' && status !== 'merging') {
+      log.info('pr-import-sync', 'Imported PR is no longer live while its preview was building — discarding the build', {
         sessionId: session.id, status,
       });
       return false;
@@ -384,11 +379,11 @@ async function kickImportedChecks({ config, pool, session, app, headSha }) {
   const visuals = require('./visuals');
   const staging = require('./staging');
   try {
-    await visuals.setChecksPending(pool, session.id, headSha || null, 'building')
+    await visuals.setChecksPending(pool, session.id, headSha || null, 'building', 'pr-import')
       .catch((err) => log.warn('pr-import-sync', 'import setChecksPending failed (non-fatal)', {
         sessionId: session.id, err: err.message,
       }));
-    visuals.notifyChecksPending(session.id, headSha || null, 'building');
+    visuals.notifyChecksPending(session.id, headSha || null, 'building', 'pr-import');
 
     // #687 Slice 6: in mock-GitHub mode there is no real repo to clone, so
     // skip the staging build entirely and record a gate-passing 'skipped'
@@ -473,7 +468,7 @@ async function kickImportedChecks({ config, pool, session, app, headSha }) {
       });
     }
 
-    visuals.captureForSession(config, session, app, headSha || null, result)
+    visuals.captureForSession(config, session, app, headSha || null, result, { trigger: 'pr-import' })
       .catch((err) => log.warn('pr-import-sync', 'import visuals capture failed', {
         sessionId: session.id, err: err.message,
       }));

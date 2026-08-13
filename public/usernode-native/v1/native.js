@@ -24,7 +24,9 @@
  *                                        lingers briefly once onRefresh
  *                                        settles; never throws on bad input)
  *   unNative.attachGridPlacement(listEl, opts) — free-form placement on a
- *     fixed grid (drop anywhere, holes allowed — the homescreen model)
+ *     fixed grid (drop anywhere, holes allowed — the homescreen model;
+ *     cellFromPoint(x, y, info) gets the dragged tile's live rect/centre in
+ *     `info`, so the target can be resolved from the TILE, not the finger)
  *   unNative.attachReorder(listEl, opts) — drag-to-reorder lists (long-press
  *                                        lift on touch, handle/pointer drag on
  *                                        desktop, overlay drop indicator,
@@ -2031,16 +2033,38 @@
   // dragged there.
   //
   // DIVISION OF LABOUR: the kit owns the GESTURE, the host owns the GEOMETRY.
-  // The kit never computes a cell — it asks `cellFromPoint(x, y)`, which for
-  // a host that renders a real grid overlay is a one-line elementFromPoint +
-  // closest('[data-cell]'). That keeps the kit free of any assumption about
+  // The kit never computes a cell — it asks `cellFromPoint(x, y, info)`, which
+  // for a host that renders a real grid overlay is a one-line elementFromPoint
+  // + closest('[data-cell]'). That keeps the kit free of any assumption about
   // row heights, gaps or `grid-template-columns`, and it means the highlight
   // the user sees and the cell the drop commits to are resolved by the same
-  // code path.
+  // code path. `info` is the dragged tile's own live geometry, so the host can
+  // answer from the TILE (its centroid) rather than from the finger — see
+  // below.
   //
-  //   cellFromPoint(x, y)      → any host cell token, or null over deadspace.
+  //   cellFromPoint(x, y, info) → any host cell token, or null over deadspace.
   //                              Compared with `sameCell` below, so it may be
   //                              an object ({ col, row }) or a string.
+  //                              x/y are the POINTER. `info` describes the
+  //                              dragged TILE — { item, rect: {left, top,
+  //                              width, height}, centerX, centerY, pointerX,
+  //                              pointerY }, the ghost's live viewport
+  //                              geometry — and RESOLVING FROM THE TILE IS
+  //                              THE RECOMMENDED ANSWER. The ghost tracks the
+  //                              finger from wherever it was grabbed, so the
+  //                              pointer sits a grab-offset away from the
+  //                              tile's own box: a host that answers from x/y
+  //                              puts the highlight that same offset away
+  //                              from the tile the user is looking at, which
+  //                              for a multi-cell item can be a whole tile's
+  //                              worth. Answer from `centerX`/`centerY` minus
+  //                              half the item's own footprint instead — the
+  //                              CENTROID rule — and the highlight sits under
+  //                              the tile whatever corner it was picked up by.
+  //                              (The centre is also the one point the ghost's
+  //                              1.04 lift scale leaves untouched.) x/y keep
+  //                              their meaning, so a host that ignores `info`
+  //                              behaves exactly as it did before.
   //   canPlace(item, cell)     → false vetoes: no highlight, release springs
   //                              home. Called on every cell CHANGE, not per
   //                              frame.
@@ -2137,13 +2161,31 @@
       try { opts.onHover(drag.item, cell, ok); } catch (err) { /* ignore */ }
     }
 
+    // The dragged TILE's live geometry, for a host that resolves its target
+    // from the tile rather than from the finger (see cellFromPoint's third
+    // argument in the doc block above). Pure arithmetic: the ghost is
+    // position:fixed, so its viewport rect is the lift rect plus the current
+    // translate — no getBoundingClientRect() on a per-move path.
+    function ghostInfo() {
+      var left = drag.ghostLeft + drag.gx;
+      var top = drag.ghostTop + drag.gy;
+      return {
+        item: drag.item,
+        rect: { left: left, top: top, width: drag.ghostW, height: drag.ghostH },
+        centerX: left + drag.ghostW / 2,
+        centerY: top + drag.ghostH / 2,
+        pointerX: drag.lastX,
+        pointerY: drag.lastY,
+      };
+    }
+
     function update() {
       if (!drag || !drag.lifted) return;
       drag.gx = drag.lastX - drag.liftX;
       drag.gy = drag.lastY - drag.liftY;
       drag.ghost.style.transform = 'translate(' + drag.gx + 'px, ' + drag.gy + 'px)';
       var cell = null;
-      try { cell = opts.cellFromPoint(drag.lastX, drag.lastY); } catch (err) { cell = null; }
+      try { cell = opts.cellFromPoint(drag.lastX, drag.lastY, ghostInfo()); } catch (err) { cell = null; }
       if (sameCell(cell, drag.cell)) return;
       drag.cell = cell;
       if (!cell) { drag.ok = false; hover(null, false); return; }
@@ -2192,6 +2234,10 @@
       var rect = drag.item.getBoundingClientRect();
       drag.ghostLeft = rect.left;
       drag.ghostTop = rect.top;
+      // Size is captured here too, so ghostInfo() can report the tile's live
+      // rect on every move without measuring anything mid-gesture.
+      drag.ghostW = rect.width;
+      drag.ghostH = rect.height;
       var ghost = drag.item.cloneNode(true);
       ghost.classList.add('un-reorder-ghost');
       ghost.style.position = 'fixed';
@@ -2438,6 +2484,23 @@
    * Transition. Re-entrant: a navigation during an active transition
    * skips animation, never queues.
    *
+   * PUT THE WHOLE MUTATION IN `fn`. A View Transition captures the OLD
+   * state at the next rendering opportunity, not at the
+   * startViewTransition() call, so DOM changes a caller makes
+   * synchronously AFTER calling transition() — but before `fn` runs —
+   * land in the ::view-transition-old(root) snapshot: the animation then
+   * slides out a "previous page" that already carries the incoming
+   * screen's chrome (or none of the outgoing screen's content at all).
+   *
+   * A DUPLICATE DISPATCH THAT RE-APPLIES THE SAME NAVIGATION MUST BE
+   * SKIPPED BY THE CALLER, NOT ABSORBED BY THE KIT (#1102): the caller is
+   * the only party that can tell "already showing this" from "show this
+   * next". What the kit guarantees is narrower — it will not ANIMATE a
+   * corrupted snapshot. So while a transition is pending but not yet
+   * captured, an immediately-run mutation (type 'none', reduced motion, a
+   * re-entrant navigation) first skips that transition, degrading the
+   * worst case to no animation instead of a two-copies animation.
+   *
    * 'zoom-in'/'zoom-out' play the iOS-homescreen expand/collapse out of
    * a tile ({ el, fromEl | fromRect, after?, fallback?, outEl? }). No
    * View Transition is involved: the LIVE screen element (opts.el) is
@@ -2461,6 +2524,12 @@
    * ──────────────────────────────────────────────────────────────────── */
 
   var vtActive = false;
+  // The transition whose update callback has NOT run yet — i.e. whose old
+  // snapshot has not been captured. Any visible mutation that lands in this
+  // window is baked into that snapshot, which is why the immediate-run path
+  // below skips it first (#1102). Cleared from inside the wrapped callback,
+  // which the browser only calls once the old state is captured.
+  var vtPending = null;
   var zoomCleanup = null; // instant-finish handle for the active zoom
 
   var ZOOM_EASE = 'var(--un-ease-spring-stiff, cubic-bezier(0.3, 1, 0.4, 1))';
@@ -2615,6 +2684,47 @@
     return promise;
   }
 
+  // Has the document painted at least one frame yet?
+  //
+  // A View Transition animates BETWEEN two rendered states, so it needs an
+  // "old" state to snapshot. Start one before the first frame and there is
+  // nothing to capture: the browser aborts it with
+  // `InvalidStateError: Transition was aborted because of invalid state`.
+  //
+  // The shell hits that window on a DEEP-LINK BOOT. Landing directly on
+  // `#profile` / `#leaderboard` / `#settings` means App.init() routes on
+  // DOMContentLoaded and immediately asks for a 'push' — while the very
+  // first paint may still be pending. Whether it lands is a race against
+  // however long the page took to get there, which is why it showed up as
+  // a flaky-looking spray of route failures rather than one reproducible
+  // bug, and why it got measurably worse when the shell started hydrating
+  // React before DOMContentLoaded (more main-thread work inside the same
+  // window, so the paint lands after the transition more often).
+  //
+  // Skipping the animation here is not a behaviour change: an aborted
+  // transition already produced no animation. It just makes the outcome
+  // deterministic instead of timing-dependent — and a boot deep link has
+  // no previous screen to animate away from in the first place.
+  var framePainted = false;
+  function markFramePainted() { framePainted = true; }
+  if (typeof requestAnimationFrame === 'function') {
+    // Two nested rAFs: the callback of the first runs BEFORE that frame is
+    // painted, the second is the earliest point a frame is known to have
+    // reached the screen.
+    requestAnimationFrame(function () { requestAnimationFrame(markFramePainted); });
+  } else {
+    framePainted = true;
+  }
+  function hasRenderedAFrame() {
+    // `visibilityState === 'hidden'` is the other documented abort: a
+    // background tab is not being rendered, so there is no frame to
+    // capture however long the page has been open.
+    if (typeof document.visibilityState === 'string' && document.visibilityState === 'hidden') {
+      return false;
+    }
+    return framePainted;
+  }
+
   function transition(fn, opts) {
     var o = opts || {};
     var type = o.type || 'none';
@@ -2627,25 +2737,70 @@
       ? function () { fn(); o.after(); }
       : fn;
     if (
-      type === 'none' || vtActive || prefersReducedMotion ||
+      type === 'none' || vtActive || prefersReducedMotion || !hasRenderedAFrame() ||
       typeof document.startViewTransition !== 'function'
     ) {
+      // This mutation runs NOW, synchronously — callers of 'none' read the
+      // DOM straight after, so that timing is part of the contract. If a
+      // transition is still waiting to capture its old state, running into
+      // it would put this mutation in the outgoing snapshot and animate the
+      // incoming page against a copy of itself (#1102). skipTransition()
+      // invokes the pending update callback synchronously if it has not run,
+      // so the other navigation's mutation is NOT lost — only its animation
+      // is. Silent by design: the promise rejections it causes are already
+      // absorbed below, and logging here would fail the platform's
+      // console-error baseline on every route.
+      if (vtPending) {
+        var skipping = vtPending;
+        vtPending = null;
+        try { skipping.skipTransition(); } catch (e) { /* already finished */ }
+      }
       run();
       return Promise.resolve();
     }
     vtActive = true;
     document.documentElement.setAttribute('data-un-vt', type);
     var vt;
+    // Clear the pending handle from INSIDE the callback: the browser calls
+    // it only after the old state is captured, which is exactly the end of
+    // the window the guard above protects.
+    var capture = function () { vtPending = null; run(); };
     try {
-      vt = document.startViewTransition(run);
+      vt = document.startViewTransition(capture);
     } catch (e) {
       vtActive = false;
+      vtPending = null;
       document.documentElement.removeAttribute('data-un-vt');
       run();
       return Promise.resolve();
     }
+    vtPending = vt;
+    // A ViewTransition hands back THREE promises, and an aborted transition
+    // rejects two of them. `finished` is handled below, but `ready` and
+    // `updateCallbackDone` were observed by nobody — so when the browser
+    // aborted a transition (`InvalidStateError: Transition was aborted
+    // because of invalid state`), that rejection surfaced as an UNHANDLED
+    // PROMISE REJECTION. Playwright reports one as a `pageerror`, and a
+    // page error on any route fails the platform's proposal checks — so a
+    // transition the browser silently declined to animate became a merge
+    // blocker on dozens of routes.
+    //
+    // Attaching no-op handlers is the whole fix: an aborted transition
+    // already ran its mutation callback (the DOM is correct, it just does
+    // not animate), so there is nothing to recover from and nothing to
+    // report. Do NOT "improve" this by logging — console.error fails the
+    // same checks.
+    if (vt.ready && typeof vt.ready.catch === 'function') vt.ready.catch(function () {});
+    if (vt.updateCallbackDone && typeof vt.updateCallbackDone.catch === 'function') {
+      vt.updateCallbackDone.catch(function () {});
+    }
     return vt.finished.catch(function () {}).then(function () {
       vtActive = false;
+      // Belt and braces: a transition the browser aborted BEFORE calling the
+      // update callback never clears the handle above, and a stale handle
+      // would make the next 'none' mutation skip a transition that is
+      // already over (harmless, but it should never get that far).
+      if (vtPending === vt) vtPending = null;
       document.documentElement.removeAttribute('data-un-vt');
     });
   }

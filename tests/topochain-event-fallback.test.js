@@ -23,6 +23,11 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const PUBLIC_JS = path.join(__dirname, '..', 'public', 'js');
+// The shared helper is still a classic script; its three consumers moved into
+// the React bundle with the Leaderboard screen (#1083 chunk F), so the static
+// half below resolves each side from where it actually lives now.
+const LEADERBOARD_SRC = path.join(
+  __dirname, '..', 'frontend', 'src', 'features', 'leaderboard');
 const { TopochainEvents } = require(path.join(PUBLIC_JS, 'topochain-events.js'));
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -52,6 +57,83 @@ test('pickDefault: prefers the event running right now', () => {
   assert.equal(picked.id, 2);
   assert.equal(TopochainEvents.hasEnded(picked), false,
     'a running event must not trigger the "nothing is running" caption');
+});
+
+// ─── (a2) the season aggregate outranks every single event (#999) ───────
+//
+// The bug: production's public events were Testnet Phase 0/1, the
+// `type='season'` "Season 1" event (started 2026-03-16) and "Season 1 Beta"
+// (started 2026-03-18). With nothing running, step (b) below picked the
+// newest STARTED event — Beta, by a 48-hour margin — so the leaderboard
+// opened on a three-week slice showing 1900.00 for the person the season
+// had at 67973.66. A season's standings are the dataset "the leaderboard"
+// means; individual events stay in the picker.
+
+test('pickDefault: a started season event beats a more recently started regular one', () => {
+  // The exact production shape, in list order (starts_at DESC).
+  const beta = ev(8, -140, -118);                     // "Season 1 Beta"
+  const season = ev(7, -143, -37, { type: 'season' }); // "Season 1"
+  const phase1 = ev(3, -204, -188);
+  const picked = TopochainEvents.pickDefault([beta, season, phase1]);
+  assert.equal(picked.id, 7, 'the season aggregate, not the newest sub-event');
+});
+
+test('pickDefault: the season aggregate outranks an event running right now', () => {
+  // Deliberate: the season board already includes the running event's
+  // latest snapshots, and the picker offers the event-only view one click
+  // away. Landing on the sub-event is what hid the season totals.
+  const running = ev(2, -5, 5);
+  const season = ev(1, -60, 60, { type: 'season' });
+  assert.equal(TopochainEvents.pickDefault([running, season]).id, 1);
+});
+
+test('pickDefault: an UNSTARTED season event does not hijack the board', () => {
+  // An organiser creating next season's wrap-up event in advance must not
+  // move today's default onto a board whose hero reads "upcoming".
+  const future = ev(2, 15, 30, { type: 'season' });
+  const running = ev(1, -5, 5);
+  assert.equal(TopochainEvents.pickDefault([future, running]).id, 1,
+    'falls through to the pre-#999 rule');
+});
+
+test('pickDefault: the season step still respects requireLeaderboard', () => {
+  const hiddenSeason = ev(2, -30, 30, { type: 'season', display_leaderboard: false });
+  const shown = ev(1, -120, -90);
+  assert.equal(TopochainEvents.pickDefault([hiddenSeason, shown], { requireLeaderboard: true }).id, 1,
+    'a season event whose standings are switched off is skipped like any other');
+  assert.equal(TopochainEvents.pickDefault([hiddenSeason, shown]).id, 2,
+    'without the option it wins, and the standings pane shows its own copy');
+});
+
+test('pickDefault: a payload with no `type` key behaves exactly as before', () => {
+  // /challenges-api/seasons carries no `type`, and neither does a server
+  // predating the field — the helper must not read absent as "season".
+  const newest = ev(2, -30, -10);
+  const older = ev(1, -120, -90);
+  assert.equal(TopochainEvents.pickDefault([newest, older]).id, 2);
+  assert.equal(TopochainEvents.isSeasonAggregate(newest), false);
+  assert.equal(TopochainEvents.isSeasonAggregate(null), false);
+  assert.equal(TopochainEvents.isSeasonAggregate({ type: 'season' }), true);
+});
+
+test('the server-side twin orders the season step FIRST and guards on started', () => {
+  // pickDefault (client) and DEFAULT_PUBLIC_EVENT_SQL (server) are two
+  // hand-kept copies of one rule; the home widget resolves its board
+  // through the SQL one, so a drift shows up as the home screen and the
+  // leaderboard disagreeing about which board they mean.
+  const { DEFAULT_PUBLIC_EVENT_SQL } = require('../src/services/topochain/event-standings');
+  const seasonKey = DEFAULT_PUBLIC_EVENT_SQL.indexOf("type = 'season'");
+  const runningKey = DEFAULT_PUBLIC_EVENT_SQL.indexOf('is_active = TRUE');
+  assert.ok(seasonKey > -1, 'the SQL must prefer the season-type event');
+  assert.ok(runningKey > -1, 'and still keep the running-event key');
+  assert.ok(seasonKey < runningKey,
+    'the season key must sort BEFORE the running-event key, or a live sub-event wins');
+  // The guard, on the season key specifically (the ORDER BY's first line).
+  const firstKey = DEFAULT_PUBLIC_EVENT_SQL.slice(seasonKey).split('\n')[0];
+  assert.match(firstKey, /starts_at <= NOW\(\)/,
+    'an unstarted season event must not be preferred');
+  // Scope is unchanged: internal events and switched-off standings never win.
+  assert.match(DEFAULT_PUBLIC_EVENT_SQL, /internal = FALSE AND display_leaderboard = TRUE/);
 });
 
 // ─── (b) none is current → newest ENDED public event ────────────────────
@@ -122,7 +204,10 @@ test('isCurrent: unparseable dates are not current (never throws)', () => {
 
 // ─── Static: the screens actually use the shared rule ───────────────────
 
-const read = (f) => fs.readFileSync(path.join(PUBLIC_JS, f), 'utf8');
+// The three Topochain panes are bundle sources now; topochain-events.js is
+// not. Resolve per file rather than from one directory.
+const read = (f) => fs.readFileSync(
+  path.join(f === 'topochain-events.js' ? PUBLIC_JS : LEADERBOARD_SRC, f), 'utf8');
 
 // Since the leaderboard merge there is exactly ONE consumer of the shared
 // rule: TopochainEventContext, which owns the event selection for both
@@ -206,15 +291,30 @@ test('the helper publishes itself onto window (classic-script scoping)', () => {
 test('the shared helper ships to the browser before its consumers', () => {
   const html = fs.readFileSync(
     path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
-  const idx = (f) => html.indexOf(`/js/${f}"`);
-  const helper = idx('topochain-events.js');
+  const helper = html.indexOf('/js/topochain-events.js"');
   assert.ok(helper > -1, 'topochain-events.js must be loaded by index.html');
+
+  // All four consumers — the profile screen and the three Topochain panes —
+  // are inside the React bundle since #1083 chunk F, so this is no longer a
+  // tag-order comparison, and deliberately not one: the bundle tag sits in
+  // the <head>, ABOVE every classic tag, and is still guaranteed to run after
+  // all of them because `type="module"` is deferred. That is what keeps a
+  // script-scoped `const TopochainEvents`, published onto window by a classic
+  // tag, in place before a bundle consumer's first line. So what has to hold
+  // is the module attribute, not a position — a classic bundle tag anywhere
+  // would race the helper.
+  assert.match(html, /<script type="module" src="\/shell\/assets\/shell\.js"><\/script>/,
+    'the React bundle must be loaded by index.html, as a module script');
   for (const f of ['profile.js', 'topochain-event-context.js',
     'topochain-leaderboard.js', 'topochain-challenges.js']) {
-    assert.ok(helper < idx(f), `topochain-events.js must load before ${f}`);
+    assert.equal(html.indexOf(`/js/${f}"`), -1,
+      `${f} moved into the bundle — a revived classic tag would race the helper`);
   }
+
   // Offline parity: an asset the SPA needs but the SW doesn't cache is a
-  // broken screen on a cold offline load.
-  assert.match(fs.readFileSync(path.join(__dirname, '..', 'public', 'sw.js'), 'utf8'),
-    /'\/js\/topochain-events\.js'/);
+  // broken screen on a cold offline load. The four consumers ride in
+  // /shell/assets/shell.js, which SHELL_ASSETS lists in their place.
+  const sw = fs.readFileSync(path.join(__dirname, '..', 'public', 'sw.js'), 'utf8');
+  assert.match(sw, /'\/js\/topochain-events\.js'/);
+  assert.match(sw, /'\/shell\/assets\/shell\.js'/);
 });

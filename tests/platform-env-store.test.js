@@ -249,6 +249,51 @@ test('missingRequired lists required declarations with no value', async () => {
   assert.equal(missing[0].description, 'why it matters');
 });
 
+// ── normalizeValue ────────────────────────────────────────────────────
+//
+// Surrounding whitespace on a pasted value is invisible in the panel and
+// survives every later hop (the .env line is single-quoted), so it is
+// trimmed at the write boundary. A GitHub OAuth client id stored with a
+// leading space is what motivated this: it made the Connect-GitHub
+// redirect land on GitHub's own 404 page.
+
+test('normalizeValue trims both ends', () => {
+  assert.equal(platformEnv.normalizeValue(' Ov23liAbCd'), 'Ov23liAbCd');
+  assert.equal(platformEnv.normalizeValue('Ov23liAbCd '), 'Ov23liAbCd');
+  assert.equal(platformEnv.normalizeValue('\t Ov23liAbCd \n'), 'Ov23liAbCd');
+});
+
+test('normalizeValue leaves the INSIDE of a value alone', () => {
+  assert.equal(platformEnv.normalizeValue('correct horse battery staple'),
+    'correct horse battery staple',
+    'a passphrase keeps every internal space');
+  assert.equal(platformEnv.normalizeValue('  a,  b , c  '), 'a,  b , c',
+    'interior runs of whitespace are not collapsed, only the ends are cut');
+  assert.equal(platformEnv.normalizeValue('\nline one\nline two\n'), 'line one\nline two',
+    'a multi-line value keeps its interior newlines; only the outer ones go');
+});
+
+test('normalizeValue is idempotent, so re-saving is safe', () => {
+  const once = platformEnv.normalizeValue(' x ');
+  assert.equal(platformEnv.normalizeValue(once), once);
+});
+
+test('normalizeValue passes non-strings through untouched', () => {
+  // So validateValue()/setValue() keep producing their OWN type errors
+  // rather than throwing on null.trim().
+  for (const v of [null, undefined, 7, {}]) {
+    assert.equal(platformEnv.normalizeValue(v), v);
+  }
+});
+
+test('a whitespace-only value normalizes to empty and is then refused', () => {
+  assert.equal(platformEnv.normalizeValue('   '), '');
+  assert.equal(platformEnv.validateValue('   '), null,
+    'validateValue stays PURE — it does not trim, so it still accepts this on its own');
+  assert.match(platformEnv.validateValue(platformEnv.normalizeValue('   ')), /non-empty/,
+    'the refusal comes from normalize-then-validate, which is the order every writer uses');
+});
+
 // ── setValue / deleteValue ────────────────────────────────────────────
 
 test('setValue throws for an unwritable key', async () => {
@@ -293,6 +338,37 @@ test('an undeclared key defaults to private', async () => {
   assert.equal(result.private, true,
     'setting a value before the declaring proposal merges is legitimate; '
     + 'the safe default for an unknown variable is "do not display it"');
+});
+
+test('setValue normalizes before it encrypts, so the STORED value is trimmed', async () => {
+  const { decrypt } = require('../src/services/secrets');
+  const pool = mockPool({ declarations: [{ key: 'LOG_LEVEL', private: false }] });
+  await platformEnv.setValue(pool, 1, 'LOG_LEVEL', '  DEBUG  ', { dataKey: SECRET });
+  const [insert] = find(pool, /INSERT INTO platform_env_values/);
+  assert.equal(decrypt(insert.params[2], SECRET), 'DEBUG',
+    'the ciphertext must decrypt to the trimmed value, not the pasted one');
+  assert.equal(insert.params[3], 'EBUG',
+    'the last-4 preview is computed from the trimmed value, so the panel '
+    + 'cannot disagree with what was stored');
+});
+
+test('setValue refuses a whitespace-only value instead of storing it', async () => {
+  const pool = mockPool({ declarations: [{ key: 'LOG_LEVEL', private: false }] });
+  await assert.rejects(
+    () => platformEnv.setValue(pool, 1, 'LOG_LEVEL', '   ', { dataKey: SECRET }),
+    /non-empty/
+  );
+  assert.equal(find(pool, /INSERT INTO platform_env_values/).length, 0);
+});
+
+test('setValue keeps a multi-line value intact apart from its edges', async () => {
+  const { decrypt } = require('../src/services/secrets');
+  const pool = mockPool({ declarations: [{ key: 'SOME_PEM', private: true }] });
+  await platformEnv.setValue(pool, 1, 'SOME_PEM', '\nline one\nline two\n', { dataKey: SECRET });
+  const [insert] = find(pool, /INSERT INTO platform_env_values/);
+  assert.equal(decrypt(insert.params[2], SECRET), 'line one\nline two',
+    'ordinary newlines still round-trip a single-quoted .env line; '
+    + 'no credential format depends on a leading or trailing blank line');
 });
 
 test('deleteValue reports whether anything was removed', async () => {

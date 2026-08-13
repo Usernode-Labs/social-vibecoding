@@ -42,11 +42,39 @@ const APP_SRC = fs.readFileSync(
   'utf8'
 );
 const SETTINGS_SRC = fs.readFileSync(
-  path.join(__dirname, '..', 'public', 'js', 'settings.js'),
+  path.join(__dirname, '..', 'frontend', 'src', 'features', 'settings', 'settings.js'),
   'utf8'
 );
 const MIGRATE_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'src', 'db', 'migrate.js'),
+  'utf8'
+);
+// #1078 chunk I made all nine dialogs stateful islands. Two pieces of the
+// story above moved as a result, and this file follows them:
+//   - the members dialog's behaviour is in the island's controller now, so
+//     the harness folds it back onto window.AppView the way init() does;
+//   - the reveal + the openedAt stamp belong to useStaticModal, which does
+//     both in ONE layout effect for every dialog — rather than only the open
+//     paths that remembered to call AppView.revealModal. That helper stays in
+//     app-view.js (the staging compare overlay still uses it) and is still
+//     tested here, because the guard semantics are shared by both copies.
+const MEMBERS_RAW = fs.readFileSync(
+  path.join(__dirname, '..', 'frontend', 'src', 'features', 'dialogs', 'members-controller.js'),
+  'utf8'
+);
+// Evaluated as an expression rather than a script: the module's own `let
+// AppView` is a file-local, and app-view.js declares that name at the vm
+// context's top level, so the two would collide in one shared lexical scope.
+// The wrapper is the module boundary a bundler gives it in the browser.
+const MEMBERS_SRC = `(function () {\n${
+  MEMBERS_RAW.replace(/^export \{[^}]*\};$/gm, '').replace(/^export /gm, '')
+}\nreturn { init, MembersDialog };\n})()`;
+const STATIC_MODAL_SRC = fs.readFileSync(
+  path.join(__dirname, '..', 'frontend', 'src', 'lib', 'static-modal.ts'),
+  'utf8'
+);
+const USE_DIALOG_SRC = fs.readFileSync(
+  path.join(__dirname, '..', 'frontend', 'src', 'features', 'dialogs', 'use-dialog.ts'),
   'utf8'
 );
 
@@ -112,8 +140,12 @@ function makeHarness(elements) {
   // app-view.js actually exposes `window.AppView = AppView` (the bug that
   // made the drawer handlers' `if (window.AppView)` check fail on device).
   vm.runInContext(VIEW_SRC, sandbox);
+  // …then the island's controller, exactly as its init() does in the browser:
+  // Object.assign's every MembersDialog method back onto the live AppView, so
+  // `AppView.openMembersModal` and friends resolve for the legacy callers.
+  vm.runInContext(MEMBERS_SRC, sandbox).init();
 
-  return { AppView: sandbox.window.AppView, clock, warnings };
+  return { AppView: sandbox.window.AppView, clock, warnings, sandbox };
 }
 
 // ── the global the drawer handlers depend on is actually exposed ─────────
@@ -136,6 +168,7 @@ test('app-view.js exposes AppView on window (drawer handlers can reach it)', () 
   sandbox.window = sandbox; sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
   vm.runInContext(VIEW_SRC, sandbox);
+  vm.runInContext(MEMBERS_SRC, sandbox).init();
   assert.equal(typeof sandbox.window.AppView, 'object', 'window.AppView is set');
   assert.equal(typeof sandbox.window.AppView.openMembersModal, 'function', 'openMembersModal reachable via window.AppView');
   assert.equal(typeof sandbox.window.AppView.openShareModal, 'function', 'openShareModal reachable via window.AppView');
@@ -145,6 +178,10 @@ test('drawer-row-members handler reaches openMembersModal through the window gat
   // Reproduce the exact guard the app.js handler uses and prove it now fires.
   const modal = makeEl(['hidden']);
   const h = makeHarness({ 'members-modal': modal });
+  // The entry point forwards to the island's controller, which is what
+  // reveals the dialog now — so register one and prove the call lands there.
+  let islandOpens = 0;
+  h.sandbox.UsernodeReact = { dialogs: { members: { open: () => { islandOpens += 1; } } } };
   // `h.AppView` is read off window (see makeHarness) — i.e. what the handler sees.
   let opened = false;
   const realOpen = h.AppView.openMembersModal.bind(h.AppView);
@@ -153,7 +190,7 @@ test('drawer-row-members handler reaches openMembersModal through the window gat
   const win = { AppView: h.AppView };
   if (win.AppView) win.AppView.openMembersModal();
   assert.equal(opened, true, 'handler invoked openMembersModal (window.AppView was truthy)');
-  assert.equal(modal.classList.contains('hidden'), false, 'and the panel was revealed');
+  assert.equal(islandOpens, 1, 'and it opened the dialog through the island');
 });
 
 // ── revealModal: synchronous reveal + open-time stamp ────────────────────
@@ -197,12 +234,29 @@ test('a never-opened modal is not guarded (no false dismiss-suppression)', () =>
 // ── open-and-stays-visible: the end-to-end gesture story ─────────────────
 
 test('opened members modal is visible immediately and survives the ghost click', () => {
+  // The end-to-end story is unchanged; the reveal moved one layer up. The
+  // island's open() stamps openedAt and drops `hidden` in one layout effect
+  // (useStaticModal), so this asserts the two halves separately: the entry
+  // point reaches the island, and a reveal stamped now suppresses the ghost
+  // click for the whole guard window.
   const modal = makeEl(['hidden']);
   const visError = makeEl([]);
   const h = makeHarness({ 'members-modal': modal, 'members-vis-error': visError });
+  let openedThroughIsland = false;
+  h.sandbox.UsernodeReact = {
+    dialogs: {
+      members: {
+        open: () => {
+          openedThroughIsland = true;
+          h.AppView.revealModal(modal); // what useStaticModal's effect does
+        },
+      },
+    },
+  };
 
   h.AppView.appData = { collab_visibility: 'public', view_visibility: 'public', can_manage: true };
   h.AppView.openMembersModal();
+  assert.equal(openedThroughIsland, true, 'the entry point opened the island');
   assert.equal(modal.classList.contains('hidden'), false, 'panel visible right after open (no rAF wait)');
 
   // Simulate the backdrop-dismiss handler's guard check on the ghost click.
@@ -212,32 +266,39 @@ test('opened members modal is visible immediately and survives the ghost click',
   assert.equal(modal.classList.contains('hidden'), false, 'still visible');
 });
 
-test('opened share modal is visible immediately too', () => {
-  const modal = makeEl(['hidden']);
-  const h = makeHarness({ 'share-modal': modal });
+test('the share entry point opens through the island too', () => {
+  // Share became a real component in #1078 chunk I; `AppView.openShareModal`
+  // survives only as the forward the drawer row and the app-view header call
+  // by name, so what is left to pin is that the forward still lands.
+  const h = makeHarness({});
+  let opens = 0;
+  h.sandbox.UsernodeReact = { dialogs: { share: { open: () => { opens += 1; } } } };
   h.AppView.appData = { url: 'https://demo.example' };
   h.AppView.openShareModal();
-  assert.equal(modal.classList.contains('hidden'), false, 'share panel visible right after open');
-  assert.equal(h.AppView.modalDismissGuarded(modal), true, 'share backdrop is guarded against the opening tap');
+  assert.equal(opens, 1, 'share opened through the island');
+  // …and is a safe no-op before hydration registers one.
+  h.sandbox.UsernodeReact = undefined;
+  assert.doesNotThrow(() => h.AppView.openShareModal());
 });
 
 // ── silent-guard replacement: no app loaded surfaces feedback ────────────
 
-test('openMembersModal with no app shows a message instead of doing nothing', () => {
+test('opening with no app shows a message instead of doing nothing', () => {
   const modal = makeEl(['hidden']);
   const visError = makeEl([]);
   const h = makeHarness({ 'members-modal': modal, 'members-vis-error': visError });
 
   h.AppView.appData = null;
+  // With no island registered the entry point falls through to the load half
+  // directly, which is also what the island calls back into from onOpen.
   h.AppView.openMembersModal();
 
   assert.equal(h.warnings.length, 1, 'logged a console.warn for diagnosis');
   assert.match(visError.textContent, /loading/i, 'surfaced a one-line message');
   assert.match(visError.className, /text-red-400/, 'shown as an error');
-  assert.equal(modal.classList.contains('hidden'), false, 'the dialog still opened (visible feedback)');
 });
 
-test('openMembersModal is a hard no-op only when the modal element is absent', () => {
+test('opening is a hard no-op only when the modal element is absent', () => {
   const h = makeHarness({}); // no #members-modal
   h.AppView.appData = null;
   assert.doesNotThrow(() => h.AppView.openMembersModal());
@@ -245,34 +306,53 @@ test('openMembersModal is a hard no-op only when the modal element is absent', (
 
 // ── source wiring: handlers actually consult the guard ───────────────────
 
-test('every header-modal backdrop handler consults modalDismissGuarded', () => {
-  const appGuards = APP_SRC.match(/modalDismissGuarded\(/g) || [];
-  assert.ok(appGuards.length >= 2, 'members + share backdrop handlers guarded in app.js');
-  // Settings is NOT in this set any more: the settings-modal-to-screen
-  // conversion turned it into the #settings screen, so it has no backdrop
-  // to guard. tests/settings-screen.test.js pins that it stays that way.
+test('every dialog backdrop consults the shared dismiss guard', () => {
+  // The per-modal backdrop handlers app.js used to carry are one shared rule
+  // now: useDialog hands every dialog root the same backdropProps, which
+  // consults static-modal.ts's isDismissGuarded before closing. That is why
+  // app.js no longer names the guard at all.
+  assert.doesNotMatch(APP_SRC, /modalDismissGuarded\(/,
+    'the per-dialog backdrop handlers moved into useDialog');
+  assert.match(STATIC_MODAL_SRC, /export function isDismissGuarded\(/,
+    'the guard is exported from the seam');
+  assert.match(USE_DIALOG_SRC, /isDismissGuarded\(/,
+    'and the shared backdropProps consults it');
+  // Settings is NOT in this set: the settings-modal-to-screen conversion
+  // turned it into the #settings screen, so it has no backdrop to guard.
+  // tests/settings-screen.test.js pins that it stays that way.
   assert.doesNotMatch(SETTINGS_SRC, /modalDismissGuarded\(/,
     'settings is a screen now — no backdrop dismissal to guard');
 });
 
-test('every header modal reveals via the shared synchronous helper', () => {
-  // members + share reveal inside app-view.js; settings is a screen now and
-  // is revealed by App.navigateToSettings, not by the modal helper.
-  const viewReveals = VIEW_SRC.match(/revealModal\(/g) || [];
-  assert.ok(viewReveals.length >= 3, 'helper defined + used by members & share');
+test('every dialog reveals through the shared synchronous seam', () => {
+  // One reveal for all nine dialogs, in useStaticModal's layout effect: stamp
+  // openedAt, drop `hidden`, lift the card. It must NOT depend on
+  // requestAnimationFrame — the WebView dropped that frame and left the panel
+  // closed, which is the bug at the top of this file.
+  const effect = STATIC_MODAL_SRC.slice(
+    STATIC_MODAL_SRC.indexOf('    if (open) {'),
+    STATIC_MODAL_SRC.indexOf('  }, [rootRef, open, dismissFromKit]);'),
+  );
+  assert.ok(effect, 'found the reveal effect');
+  assert.doesNotMatch(effect, /requestAnimationFrame|setTimeout/,
+    'reveal is synchronous, no frame/timer dependency');
+  assert.match(effect, /dataset\.openedAt = String\(Date\.now\(\)\)/, 'stamps the open time');
+  assert.match(effect, /classList\.remove\('hidden'\)/, 'removes hidden synchronously');
+  assert.match(STATIC_MODAL_SRC, /useIsomorphicLayoutEffect\(\(\) => \{/,
+    'in a LAYOUT effect — a passive one paints the hidden state for a frame');
   assert.doesNotMatch(SETTINGS_SRC, /AppView\.revealModal\(/,
     'settings no longer reveals as a modal');
-  // The reveal must NOT depend on requestAnimationFrame (the WebView dropped
-  // that frame and left the panel closed). Scope the check to revealModal's
-  // own body — rAF is used elsewhere in the file for unrelated layout work.
+
+  // app-view.js keeps its own copy: the staging visual-compare overlay is not
+  // one of the nine dialogs and still reveals through it. Same semantics.
   const revealBody = (VIEW_SRC.match(/revealModal\(modal\)\s*\{([\s\S]*?)\n  \},/) || [])[1] || '';
   assert.ok(revealBody, 'revealModal body found');
   assert.doesNotMatch(revealBody, /requestAnimationFrame|setTimeout/, 'reveal is synchronous, no frame/timer dependency');
   assert.match(revealBody, /classList\.remove\('hidden'\)/, 'reveal removes hidden synchronously');
-  // The members modal must no longer reveal then bail silently with no app.
+  // The members dialog must not reveal then bail silently with no app.
   assert.doesNotMatch(
-    VIEW_SRC,
-    /openMembersModal\([^)]*\)\s*\{\s*const appData = AppView\.appData;\s*if \(!appData\) return;/,
+    MEMBERS_SRC,
+    /_load\([^)]*\)\s*\{\s*const appData = AppView\.appData;\s*if \(!appData\) return;/,
     'the silent early-return guard is gone',
   );
 });

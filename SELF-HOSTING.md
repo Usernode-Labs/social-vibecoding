@@ -684,51 +684,61 @@ Same guard on the `verify-access` route at
 case) into the import modal produces the explanatory error in
 both the Check and Submit paths.
 
-## Phase 3 — Platform-updating banner (shipped)
+## Phase 3 — Platform-updating banner (retired)
 
-**Goal:** clients display "Platform updating…" during a
-self-app rolling restart instead of seeing dropped WebSockets and
-a blank screen.
+**Retired in #1015.** Shipped as a full-width amber
+`"Platform updating… sit tight, write actions are paused."` bar that
+every signed-in tab latched on the pre-merge
+`vote_update { merging: true, selfHosted: true }` broadcast. Behind it
+sat `App.PlatformUpdating` in [public/js/app.js](./public/js/app.js): a
+`sessionStorage`-persisted latch, a 2s `/api/version` poll, a
+`window.fetch` wrapper that rejected every non-`GET`/`HEAD` request
+(the actual write block), a 5-minute red "stuck — reload manually"
+variant, and a hard `location.reload()` once `/api/version` reported a
+different SHA.
 
-**Wrinkle:** during a self-app rolling restart, the WebSocket
-*itself* drops because the server is restarting. The post-merge
-`app_version_changed` may never reach the original tab — the new
-server raises it but the tab has reconnected past it.
+**Why it is gone.** All of that existed for one reason: a self-app merge
+restarted the *single* `usernode` container, so the server really did
+disappear mid-deploy. Blue-green deploys (#1008,
+[scripts/platform-rollout.sh](./scripts/platform-rollout.sh)) removed
+that premise — a deploy builds the idle color, health-gates it on two
+consecutive `/health` passes, flips
+`caddy/active/platform-upstream.caddy` with a graceful `caddy reload`,
+and only then drains the old color. The live color serves the entire
+build window, so the banner paused writes on a platform that was 100%
+available for the length of a Docker build — routinely past its own
+5-minute "stuck" threshold, telling everyone a healthy deploy had
+failed. And because `/api/version` only reports the new SHA *after*
+traffic has already cut over, the forced reload no longer recovered
+anything; it just interrupted whatever the person was doing.
 
-**Implementation:** the *pre-merge* `vote_update` broadcast in
-[votes.js](./src/routes/votes.js) now carries
-`{ merging: true, selfHosted: <bool> }`. When the client sees
-`merging:true && selfHosted:true` it persists
-`{ fromSha, since }` to `sessionStorage` and renders the banner.
-[public/js/app.js](./public/js/app.js) `App.PlatformUpdating`
-owns the state machine:
-- bumps `/api/version` polling to 2s while the banner is up
-- wraps `window.fetch` to reject all non-`GET`/`HEAD` requests
-  while active (the banner is the signal; this is the actual
-  write block — block-writes-only by design)
-- swaps to a red "stuck — manual reload" variant after 5 min
-- on every poll, dismisses + hard-reloads as soon as
-  `/api/version` returns a SHA different from `fromSha` (and not
-  `'dev'`)
-- `restoreFromSessionStorage()` runs early in `init()` so a
-  page load mid-restart re-renders the banner immediately —
-  the WS-drop case the wrinkle calls out
+**What replaced it.** Nothing platform-wide, by design: with
+zero-downtime deploys there is nothing for the user to wait for or do. A
+tab still running an older build is caught up by the two passive nudges
+that survive:
 
-`/api/version` also now exposes `selfAppSlug` for any future UI
-surface that needs to recognize the platform's own row without
-guessing. The banner lifecycle itself uses the WS payload's
-`selfHosted` boolean rather than slug-matching.
+- the drawer's **Platform version** row
+  (`App.renderPlatformVersionPill`), which becomes a tappable
+  `"<sha> · reload"` when the served SHA differs from the one the
+  document booted with — and still shows the `deployProgress` spinner
+  while a deploy is in flight;
+- **pull-to-refresh** (`App._refreshOrReload` → `App.platformMovedOn`),
+  which upgrades a data refresh to a full reload on a moved-on platform.
+  This is the anonymous shell's only path to new client code.
 
-**Acceptance (verified at deploy):** during a self-app PR merge,
-all open tabs render the amber banner from the moment the merge
-starts through the new container becoming reachable; non-`GET`
-fetches are rejected with a friendly error in between; tabs
-reloaded mid-restart re-render the banner from `sessionStorage`.
+Per-proposal state is unaffected: the `Merging…` /
+`Resolving conflicts…` / `⚠ Conflict resolution failed` badges in
+[merge-status.js](./public/js/merge-status.js), the dev-chat sync
+banner and the group-chat play-by-play all still report what is
+happening to a specific proposal.
 
-**Cost (actual):** ~190 lines client-side
-(`public/js/app.js`), 1 line server-side
-(`src/routes/votes.js`), 1 field on `/api/version`, 1 banner
-element in `public/index.html`.
+**Kept from this phase:** `selfHosted` on the `vote_update` broadcasts,
+`status` on `GET /api/sessions/:id/status`, and `selfAppSlug` on
+`/api/version` — no client reads them now, but each is a cheap, honest
+fact and they stay for admin/debug tooling. The negative contract (no
+banner element, no write-blocking `fetch` wrapper, and the surviving
+stale-version nudge) is pinned by
+[tests/platform-update-nudge.test.js](./tests/platform-update-nudge.test.js).
 
 ## Phase 4 — In-app vote-to-merge for the self-app (code shipped, gated off)
 
@@ -1016,6 +1026,72 @@ clone routinely accessible through dev-chat preview):**
   `/api/teardown-staging`). It cannot escape to the parent prod
   origin.
 
+## Host-side deployer (primary deploy path)
+
+Production deploys used to depend on a GitHub Actions runner picking up
+the push to `main`. During the 2026-08-06 GHA outage, merged self-app
+PRs sat undeployed for hours with the workflow queued — the platform's
+own merge loop was hostage to a third-party CI queue.
+
+The primary path is now a systemd service on the VPS:
+
+- **`scripts/usernode-deployer.sh`** polls `github.com` (git data plane
+  only — the same dependency `rollback.sh` already has, no Actions) for a
+  new head of `main`. Two triggers share one code path: a **nudge** from
+  the platform (after a self-app merge, `src/services/deploy-nudge.js`
+  touches `runtime/deploy-nudge/nudge` through the one writable runtime
+  mount; the poller stats it every 2 s and polls immediately — so
+  on-platform merges deploy within seconds) and a **baseline** interval
+  poll every 2 min that catches direct pushes to `main` and covers a
+  missing nudge mount or a platform crash mid-merge. The nudge is a hint,
+  never an authority: the deploy target still comes only from what
+  `github.com` says `main` points at. On a new sha it checks the commit
+  out into `/opt/usernode-src`, rsyncs it over `/opt/usernode` with the
+  same exclude list the workflow uses (`.env`, `runtime/`,
+  `.platform-env*`, `caddy/active/`, `data/` survive), computes the
+  node/caddy change filters with `git diff`, and runs
+  `scripts/deploy.sh`.
+- **`scripts/deploy.sh`** is the single copy of the deploy logic
+  (formerly inlined in `deploy.yml`'s ssh step): archive-refresh gating,
+  platform-env materialization, pg_dump wait, then the blue-green
+  cutover via `scripts/platform-rollout.sh` (build → start idle color →
+  health gate → flip `caddy/active/platform-upstream.caddy` + graceful
+  Caddy reload → drain old color) and a post-cutover confirmation gate
+  with automatic rollback. A failed rollout leaves the previous color
+  serving and only reverts `GIT_SHA` in `.env`; the full
+  `rollback.sh` path is reserved for the nothing-is-serving case. Both
+  callers serialize on `runtime/deploy.lock`, and `SKIP_IF_CURRENT`
+  turns the loser of a workflow/poller race into a no-op.
+- **The Deploy workflow stays** for two jobs only: rotating secrets
+  (only a runner can read GitHub secrets; it composes `.env` and
+  forwards it as `BASE_ENV_B64` — the poller never touches `.env` beyond
+  patching `GIT_SHA`) and manual force-redeploys via `workflow_dispatch`.
+
+Failure behavior: a sha that fails the health gate is rolled back by
+`deploy.sh`, then the poller backs off on that sha (30 min) instead of
+thrashing build → rollback; any new commit on `main` deploys
+immediately. If `github.com` is unreachable, the poller just keeps
+retrying — the running platform is untouched.
+
+One-time install (as root on the VPS; afterwards every deploy refreshes
+the mirrored copies automatically):
+
+```bash
+install -d -o deploy -g deploy -m 755 /opt/usernode-tools
+install -m 755 /opt/usernode/scripts/usernode-deployer.sh /opt/usernode-tools/
+install -m 644 /opt/usernode/scripts/usernode-deployer.service /etc/systemd/system/
+systemctl daemon-reload && systemctl enable --now usernode-deployer
+```
+
+Operations:
+
+```bash
+systemctl status usernode-deployer          # is it alive
+journalctl -u usernode-deployer -f          # live deploy output
+cat /opt/usernode/runtime/deploy-last.log   # last deploy transcript
+grep ^GIT_SHA= /opt/usernode/.env           # what is deployed
+```
+
 ## Sequencing summary
 
 ```mermaid
@@ -1242,6 +1318,312 @@ the source (row counts per table, plus merge-aware checks). Neither runs
 on deploy; both are operator-invoked. There is no continuous
 topochain→platform replication — writes arrive through the ingest and
 mobile groups above.
+
+## Chat connector (Claude.ai / ChatGPT) operations
+
+The hosted MCP connector lets a user chatting in Claude.ai or ChatGPT
+browse apps, file a request, hand the work to **their own** Claude Code
+on the web / Codex subscription, and turn the pushed branch into an
+ordinary imported proposal. The platform spends no model credits on it.
+Everything is served in-process at `POST /mcp` plus the OAuth routes
+under `/api/connect/`; there is no sidecar.
+
+**The connector is production-only.** Every route 404s when
+`config.cliAuthEnabled` is false, which is exactly `USERNODE_ENV=staging`
+— the same gate the CLI device flow uses. Review the consent page and the
+GitHub round-trip in local mode (`USERNODE_LOCAL_DEV=1`), never in a
+staging preview.
+
+### Configuration
+
+Three settings, all `required: false`, all declared in `dapp.json`'s
+`platform_env` under the **Chat connectors** group. None blocks boot or a
+merge; each disables exactly one thing. Set them in the platform's
+**Platform variables** panel (a full admin sets directly; anyone else
+proposes by vote), and note they take effect on the platform's **next
+deploy**, not immediately.
+
+- `MCP_CONNECTOR_REDIRECT_HOSTS` — defaults to
+  `claude.ai,claude.com,chatgpt.com,openai.com`. Only touch it to *add* a
+  chat product or to narrow the surface; an explicit value **replaces**
+  the default rather than extending it, so re-list the hosts you still
+  want. Loopback is added automatically in local mode only.
+- `GITHUB_LINK_CLIENT_ID` / `GITHUB_LINK_CLIENT_SECRET` — the GitHub
+  OAuth app used for account linking. Both fall back to
+  `WAITLIST_GITHUB_CLIENT_ID` / `_SECRET` (see
+  [Waitlist social connect](#waitlist-social-connect-github--x) below), so
+  one OAuth app can serve both flows if its callback list carries this
+  one's URL. Both halves must be set together: an id without a secret
+  counts as unconfigured.
+
+**Unset is a supported state, not a broken one.** With no OAuth app:
+`GET /api/me/github/connect` and `/callback` return 404, Settings →
+*Claude & ChatGPT connectors* says "GitHub linking is not configured on
+this deployment" instead of offering a dead button, and `prepare_work` /
+`submit_work` answer `github_link_unavailable` naming
+`start_platform_build` — the platform-billed fallback, which needs no
+GitHub link — rather than sending the user to Settings. The connector
+itself, every read-only tool and the out-of-credits card are unaffected.
+`tests/connector-config-unset.test.js` pins all of that.
+
+### Creating the GitHub OAuth app
+
+An **OAuth app** (Settings → Developer settings → OAuth Apps → New),
+*not* a GitHub App — this flow uses the classic authorize/token
+round-trip, same shape as `src/routes/waitlist-connect.js`.
+
+- **Authorization callback URL:** `https://<your-domain>/api/me/github/callback`
+  — exactly what `githubRedirectUri()` in `src/routes/mcp-remote.js` builds from
+  `config.cliAuthOrigin`. A mismatch fails at GitHub's own redirect check,
+  before any platform code runs.
+- **Scope: none.** `githubLink.SCOPE` is the empty string and
+  `authorizeUrl` omits the parameter entirely, so GitHub issues a token with
+  no scopes — its consent screen says "public data only" and the token can do
+  nothing but read public information. Never add one back (see below).
+- **No token is stored.** The token is used once, for the `GET /user` read
+  that resolves the login, then handed back with
+  `DELETE /applications/{client_id}/token` and dropped.
+  `users.github_oauth_token_enc` is written NULL on every link and exists
+  only as a legacy column; `migrate.js` revokes and clears any value a
+  previous release left behind.
+- The link's **only** purpose is the verified login, which the attribution
+  gate in `services/external-agent-tasks.js` compares against the head owner
+  of a submitted pull request. The fork and the branch are created by the
+  user's own coding agent; every GitHub read the connector makes about them
+  is public (`gh.publicApiHeaders`), and the pull request is opened with the
+  platform's own bot credentials against the base repo.
+- Store the client secret as `GITHUB_LINK_CLIENT_SECRET`; it is declared
+  `private: true`, so it is encrypted at rest and never returned by any API.
+
+#### Why not `public_repo`, and why not a GitHub App
+
+Worth recording so it isn't re-litigated. The platform used to fork on the
+user's behalf, which needs `public_repo` — GitHub's own description is
+"read/write access to code, commit statuses, repository projects,
+collaborators, and deployment statuses for **public repositories and
+organizations**". No narrower classic scope can fork (`repo:status`,
+`repo_deployment`, `read:user` cannot), so the only way to shrink the grant
+was to stop forking server-side.
+
+Migrating to a **GitHub App** with fine-grained permissions looks like the
+obvious alternative and is worse:
+
+- `POST /repos/{owner}/{repo}/forks` requires **Administration: write**
+  (plus Contents: read) — a permission that reaches repository settings,
+  transfers and deletion, on the user's **private** repositories too.
+  `public_repo` at least cannot see anything private.
+- GitHub requires the App to be installed on the destination account **with
+  access to all repositories** to create a fork. The fork does not exist at
+  install time, so "only select repositories" cannot cover it — the one
+  benefit of a GitHub App is exactly what this endpoint refuses to allow.
+- User-to-server tokens intersect app access with user access, adding
+  failure modes (org installation restrictions, SSO) for no gain.
+- It costs a new App registration, an installation flow (not the
+  `authorize`/`callback` round-trip in `src/routes/mcp-remote.js`),
+  installation-id storage, token refresh, and re-consent for every linked
+  user.
+- Its one real advantage — expiring user tokens — is moot now that the
+  platform holds no user token at all.
+
+### Verifying end to end
+
+Do this once after the deploy that carries the values. It exercises the
+whole path and each step has a distinguishable failure.
+
+1. **Connect the chat product.** In Claude.ai: Settings → Connectors → Add
+   custom connector, URL `https://<your-domain>/mcp`. The 401 challenge
+   carries `WWW-Authenticate: Bearer resource_metadata=…`, which is what
+   starts the OAuth dance. A redirect host outside the allowlist is
+   rejected at registration — that is `MCP_CONNECTOR_REDIRECT_HOSTS`
+   doing its job, not a bug.
+2. **Approve on the consent page** at `/connect/authorize`. Check that it
+   names the client *and* the redirect origin — the origin is the
+   load-bearing fact, since a client name is attacker-chosen.
+3. **Link GitHub.** Settings → *Claude & ChatGPT connectors* → Connect
+   GitHub. GitHub's consent screen must say **public data only** and list no
+   repository access; if it names public repositories, an older release is
+   still running. If the row says "not configured", the values did not reach
+   the running container: confirm the deploy that picked them up has actually
+   landed.
+4. **Ask the assistant to set up work on an app** (`prepare_work`). Success
+   returns a branch name, a base commit and **two** pieces of text: a
+   `guidance` array — the human's numbered next steps, worded for the
+   client that called (claude.ai/code, chatgpt.com/codex, or a neutral
+   variant) — and the `workOrder` itself, a payload addressed only to the
+   coding agent that it must reproduce character for character in one code
+   block. An assistant that paraphrases the work order — especially the
+   40-character base commit — is the failure mode this split exists to
+   prevent; if you see it summarised, that is worth recording. Also
+   `forkStatus`: `ready` (they already have a fork), `missing`, or
+   `name_conflict` (a same-named repo of theirs is in the way, so the fork
+   is made under `<repo>-usernode`). None of the three is a failure; for
+   the latter two, making the fork is guidance step 1 and GitHub's
+   one-click fork page leads the work order's SETUP section. The refusals
+   worth recognising: `github_not_linked` (this user hasn't pressed
+   Connect — step 3), `github_link_unavailable` (the deployment has no
+   OAuth app — configuration), and `platform_unavailable` (GitHub was
+   unreadable, or it answered with something that is not a 40-hex commit
+   id — retry; nothing was recorded).
+5. **Run the coding agent.** On the hosted web agents the fork must exist
+   *before* a session can be started on it — both start by picking a
+   repository that is already in the user's GitHub account — so the
+   one-click fork page is the first step, not a fallback for when
+   `gh repo fork` is unavailable (that shortcut is for an agent working in
+   a terminal, and it is named inside the work order). Then paste the work
+   order in and let the agent fork, branch, commit and push. The setup
+   commands are the same four in every fork state — clone the fork, add
+   `upstream`, fetch, cut the branch at the recorded commit — with the fork
+   step, when there is one, above them. If git rejects the base commit, the
+   work order tells the agent to `git fetch upstream <sha>` and retry
+   rather than branch from somewhere else; an agent that silently starts
+   from `upstream/main` instead is a finding. It should *not* open a pull
+   request — the platform does that.
+6. **Ask the assistant to submit it** (`submit_work`).
+   Usernode opens the cross-fork PR with bot credentials and runs it
+   through `POST /api/apps/:slug/pr-import`, producing an ordinary
+   `source='imported'` proposal with a SHA-pinned staging preview, proposal
+   checks and a group vote — carrying a "Built with Claude Code" chip.
+   `fork_mismatch` here means the PR is not headed by the caller's own
+   verified fork; the connector is deliberately stricter than the browser's
+   import button, which lets any collaborator import any open PR.
+
+### Caps worth knowing before you debug one
+
+Per user: 5 connector-opened proposals per rolling 24h, 3 `prepare_work`
+work orders per hour, 10 open work orders at once, and the fallback runs
+are capped at 2 in flight / 10 per day (`src/services/connector-limits.js`).
+Rate limits at the `/mcp` edge are 60/min per token and 300/min per IP.
+Every limiter **fails closed** — if it cannot read its own state it
+refuses rather than waving the write through, so a limiter refusal during
+a database incident is expected behaviour, not a stuck cap.
+
+`submit_work` additionally re-checks the promoted-session cap that
+`POST /api/apps/:slug/pr-import` never enforced, with the same bound and
+wording as the promote route. That asymmetry is deliberate: importing used
+to be a one-at-a-time human action, and the browser button's behaviour is
+out of scope here.
+
+## Waitlist social connect (GitHub / X)
+
+The second-stage waitlist form ("Want in sooner?", reached from the
+private link a signer receives) can **verify** a GitHub or an X account
+instead of trusting a handle somebody typed. A verified account renders as
+a green pill and is stored separately from the free-text handles, so
+whoever reads signups can tell a claimed handle from a proven one. The
+round trip lives in `src/routes/waitlist-connect.js` — the classic
+authorize/token shape for GitHub, OAuth 2.0 with mandatory PKCE (S256) and
+an HTTP Basic token exchange for X.
+
+### Configuration
+
+Five settings, all `required: false`, all declared in `dapp.json`'s
+`platform_env` under the **Waitlist** group. None blocks boot or a merge.
+Set them in the platform's **Platform variables** panel (a full admin sets
+directly; anyone else proposes by vote), and note they take effect on the
+platform's **next deploy**, not immediately.
+
+**No pull request can supply these values.** They come out of a developer
+portal that only a human with the owning account can reach, so the
+declaration (this repo) and the value (the panel) land separately and in
+either order. A value pasted before its declaration deploys simply shows
+as an "orphan" row until the deploy catches up.
+
+- `WAITLIST_GITHUB_CLIENT_ID` / `WAITLIST_GITHUB_CLIENT_SECRET` — the
+  GitHub OAuth app that verifies a signer's GitHub account.
+  `GITHUB_LINK_CLIENT_ID` / `_SECRET` fall back to these, so one OAuth app
+  can serve both flows if its callback list carries both URLs.
+- `WAITLIST_X_CLIENT_ID` / `WAITLIST_X_CLIENT_SECRET` — the X app that
+  verifies a signer's X account.
+- `WAITLIST_OAUTH_ORIGIN` — overrides the origin both callback URLs are
+  built from (`connectOrigin()`). Unset it is the production origin in
+  production and `http://localhost:<PORT>` in dev. Change it and you must
+  register the matching callback URL with both providers.
+
+**Each provider is judged on its own, and both halves must be set
+together.** An id without a secret counts as unconfigured, so GitHub can
+be live while X is not.
+
+**Unset is a supported state, not a broken one.** With no credentials for
+a provider, `GET /api/public/waitlist/more/:token` reports that provider
+as unavailable and the form renders **no connect button** for it — the
+free-text handle fields (Farcaster, Discord, Telegram, other) are
+untouched and nothing errors. Somebody who reaches a connect link anyway
+(a stale tab, an old bookmark) is redirected back to the form with
+`?connect=unavailable`, which the form shows as "That sign-in is not
+available yet." `tests/waitlist-connect-config.test.js` pins all of that,
+including the asymmetric GitHub-on / X-off case.
+
+**Staging previews can never exercise the round trip.** `WAITLIST_*` is
+not in `INHERITED_KEYS` (`src/services/staging-env.js`) and
+`platform_env_values` is `staging:private`, so a preview holds no
+credentials by construction — the declarations show up in the panel as
+"not set" and the stage-2 form shows no connect buttons. That is the
+expected preview state; do not seed a fake client id to make a button
+appear, because it would dead-end at the provider.
+
+### Creating the X app
+
+Contributed by **snait** on issue #880, who set up the GitHub side.
+
+1. **Get a developer account.** Go to `developer.x.com` and sign in with
+   the X account that should own the app — that account's project hosts
+   it, and **the app name you pick is what waitlist users see on the
+   consent screen**. The Free tier covers this use case.
+2. **Create a Project, then an App inside it.** X requires apps to live
+   inside a project. Name the project anything (e.g. "Social Vibecoding")
+   and the app something user-visible (e.g. "Social Vibecoding Waitlist").
+   X immediately shows an API Key / API Key Secret / Bearer Token —
+   **ignore all three**; those are the OAuth 1.0a / app-only credentials,
+   not what this flow uses.
+3. **Configure user authentication** (app settings → *User authentication
+   settings* → *Set up*):
+   - **App permissions: Read.** The flow requests
+     `users.read tweet.read`; nothing writes.
+   - **Type of App: "Web App, Automated App or Bot"** — the confidential
+     client. Do **not** pick "Native App / Single page App": that is a
+     public client with no client secret, and the token exchange
+     authenticates with HTTP Basic, so it would fail.
+   - **Callback URI / Redirect URL:**
+     `https://<your-domain>/waitlist/connect/x/callback` — on the
+     canonical deployment,
+     `https://social-vibecoding.usernodelabs.org/waitlist/connect/x/callback`.
+     It must match exactly what `callbackUrl()` builds; X validates it at
+     the authorize redirect, before any platform code runs.
+   - **Website URL:** `https://<your-domain>` — also part of the consent
+     surface the user sees.
+   - Organization / terms / privacy fields are optional; filling them
+     makes the consent screen look more trustworthy.
+   - Save.
+4. **Copy the OAuth 2.0 Client ID and Client Secret** X displays after
+   saving: Client ID → `WAITLIST_X_CLIENT_ID`, Client Secret →
+   `WAITLIST_X_CLIENT_SECRET`. Paste both into the Platform variables
+   panel.
+
+**Brand note.** The app name and Website URL are shown to every person who
+clicks *Connect X*, so the account and name you choose at step 1–2 are a
+public branding decision. Nothing is exposed until the credentials are
+actually set — leaving the pair unset keeps the button hidden and GitHub
+connect working on its own.
+
+### Creating the GitHub OAuth app
+
+A classic **OAuth app** (GitHub → Settings → Developer settings → OAuth
+Apps → New OAuth App), *not* a GitHub App — the repo-hosting integration
+is a separate GitHub App and is unrelated.
+
+- **Authorization callback URL:**
+  `https://<your-domain>/waitlist/connect/github/callback` — on the
+  canonical deployment,
+  `https://social-vibecoding.usernodelabs.org/waitlist/connect/github/callback`.
+- **Scope: none.** The authorize URL omits the parameter, so the token
+  reads public information only; it is used once for `GET /user` to
+  resolve the login and then dropped.
+- Client ID → `WAITLIST_GITHUB_CLIENT_ID`, generated client secret →
+  `WAITLIST_GITHUB_CLIENT_SECRET` (declared `private: true`, so encrypted
+  at rest and never returned by any API).
+- To let the same OAuth app also serve connector account-linking, add
+  `/api/me/github/callback` to its callback list and leave
+  `GITHUB_LINK_CLIENT_ID` / `_SECRET` unset so they fall back to these.
 
 ## Cross-references
 

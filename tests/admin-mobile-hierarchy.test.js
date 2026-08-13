@@ -31,7 +31,8 @@ const path = require('node:path');
 const root = path.join(__dirname, '..');
 const html = fs.readFileSync(path.join(root, 'public/index.html'), 'utf8');
 const appJs = fs.readFileSync(path.join(root, 'public/js/app.js'), 'utf8');
-const consoleJs = fs.readFileSync(path.join(root, 'public/js/admin-console.js'), 'utf8');
+const consoleJs = fs.readFileSync(path.join(root, 'frontend/src/features/admin/admin-console.js'), 'utf8');
+const islandTsx = fs.readFileSync(path.join(root, 'frontend/src/features/admin/index.tsx'), 'utf8');
 
 test('one breakpoint constant, read through matchMedia, in step with the md: classes', () => {
   assert.match(consoleJs, /DESKTOP_MEDIA: '\(min-width: 768px\)'/,
@@ -42,10 +43,12 @@ test('one breakpoint constant, read through matchMedia, in step with the md: cla
   assert.match(isMobile.slice(0, 300), /catch \{ return false; \}/,
     'no matchMedia degrades to the desktop layout, not a phone layout');
   // If the shell stopped using md: the constant would silently disagree
-  // with where the sidebar actually appears.
-  assert.match(consoleJs, /hidden md:block md:w-56/,
+  // with where the sidebar actually appears. Those two class strings are on
+  // the React-owned chassis since #1082 chunk E — same classes, and the
+  // disagreement they guard against is exactly as easy to introduce there.
+  assert.match(islandTsx, /hidden md:block md:w-64/,
     'the sidebar still switches at md — the constant must match it');
-  assert.match(consoleJs, /md:flex md:items-start md:gap-6/,
+  assert.match(islandTsx, /md:flex md:items-start md:gap-6/,
     'the shell row still switches at md');
 });
 
@@ -76,7 +79,7 @@ test('a bare #admin means the MENU on mobile, Overview on desktop', () => {
     /key === 'overview' && !AdminConsole\._isMobile\(\)/,
     'only desktop collapses overview onto bare #admin');
   assert.match(writeHash.slice(0, 500), /location\.hash\.startsWith\(`\$\{target\}\/`\)/,
-    'sections owning a second hash level (topochain, campaigns) are left alone');
+    'sections owning a second hash level (seasons, campaigns) are left alone');
 });
 
 test('a mobile drill-in is a real hash navigation, so device back works', () => {
@@ -113,10 +116,40 @@ test('route() picks the transition direction from the level change', () => {
     '1→2 pushes, 2→1 pops');
   assert.match(body, /targetLevel === AdminConsole\._level\s*\n?\s*\? 'none'/,
     'a same-level repaint is instant — the kit forbids animating those');
-  assert.match(body, /if \(!AdminConsole\._isMobile\(\)\)/,
+  assert.match(body, /const mobile = AdminConsole\._isMobile\(\);[\s\S]*if \(!mobile\) \{/,
     'desktop degenerates to the historical setSection path');
   assert.match(body, /_visibleSections\(\)/,
     'route re-validates the requested key against what this viewer may see');
+});
+
+test('route() is idempotent, so a duplicate dispatch never repaints twice', () => {
+  // #1102, and the reason it is fixed here as well as in settings.js: both
+  // screens are two-level consoles reached through the same hash router, and
+  // a history traversal fires popstate AND hashchange. The second call
+  // resolves the same target, so it asks the kit for type 'none' — which
+  // runs SYNCHRONOUSLY — and repaints the level before the first call's View
+  // Transition has captured the outgoing page, animating the new level
+  // against a copy of itself.
+  const fn = consoleJs.slice(consoleJs.indexOf('  route(section, opts) {'));
+  const body = fn.slice(0, 2000);
+
+  assert.match(
+    body, /if \(targetLevel === AdminConsole\._level && targetSection === AdminConsole\._section\) \{/,
+    'route() compares the resolved (level, section) target against current state',
+  );
+  const guardAt = body.search(/if \(targetLevel === AdminConsole\._level &&/);
+  for (const mutation of ['AdminConsole.setSection(', 'AdminConsole._transition(']) {
+    const at = body.indexOf(mutation);
+    assert.ok(at > -1, `route() still performs ${mutation}`);
+    assert.ok(guardAt < at, `the early-out must precede ${mutation}`);
+  }
+  // The public-mode flag is the exception that has to be applied BEFORE the
+  // comparison: _visibleSections() reads it, so it decides what "the same
+  // target" even means.
+  const publicAt = body.indexOf('AdminConsole._public = ');
+  assert.ok(publicAt > -1 && publicAt < guardAt,
+    'opts.public is applied before the comparison — it changes which sections are visible, '
+    + 'and therefore which section a bare #admin resolves to');
 });
 
 test('the header back button defers to the console, then goes home', () => {
@@ -133,17 +166,28 @@ test('the header back button defers to the console, then goes home', () => {
 test('the back button has both icons and one named toggle', () => {
   assert.ok(html.includes('id="back-icon-home"'), 'the house icon ships');
   assert.ok(html.includes('id="back-icon-arrow"'), 'the chevron ships');
-  assert.match(appJs, /setBackIcon\(mode\)\s*\{/, 'App.setBackIcon owns the toggle');
-  const fn = appJs.slice(appJs.indexOf('  setBackIcon(mode) {'));
-  const body = fn.slice(0, 700);
+  // #1036 widened it to setBackIcon(mode, href): the control is a real
+  // anchor now, so the same choke point that owns which icon shows also
+  // owns where it points.
+  assert.match(appJs, /setBackIcon\(mode, href\)\s*\{/, 'App.setBackIcon owns the toggle');
+  const fn = appJs.slice(appJs.indexOf('  setBackIcon(mode, href) {'));
+  const body = fn.slice(0, 900);
   assert.match(body, /back-icon-home/, 'it toggles the home icon');
   assert.match(body, /back-icon-arrow/, 'it toggles the arrow icon');
   assert.match(body, /aria-label/, 'and relabels the button for screen readers');
+  assert.match(body, /setAttribute\('href'/, 'and retargets the anchor (#1036)');
   // Leaving the console must hand the button back, or every later screen
-  // inherits a chevron that means "home".
+  // inherits a chevron that means "home" — but NOT from _exitAdminConsole
+  // itself: that ran before the outgoing page had been captured by the
+  // View Transition (#979). The shared screen-swap primitive resets it
+  // inside the transition callback instead, so every screen entry (and
+  // going home) hands the chevron back on exactly one code path.
   const exit = appJs.slice(appJs.indexOf('  _exitAdminConsole() {'));
-  assert.match(exit.slice(0, 600), /App\.setBackIcon\('home'\)/,
-    '_exitAdminConsole restores the home icon');
+  assert.ok(!exit.slice(0, exit.indexOf('\n  },')).includes('setBackIcon'),
+    '_exitAdminConsole leaves the icon to _showOnlyScreen');
+  const swap = appJs.slice(appJs.indexOf('  _showOnlyScreen(revealId, keepAlso) {'));
+  assert.match(swap.slice(0, swap.indexOf('\n  },')), /App\.setBackIcon\('home'\)/,
+    '_showOnlyScreen restores the home icon on every screen swap');
 });
 
 test('the admin gate runs before the already-open route() shortcut', () => {
@@ -195,8 +239,11 @@ test('the header becomes the section nav bar on mobile level 2 only', () => {
   const body = fn.slice(0, 900);
   assert.match(body, /AdminConsole\._isMobile\(\) && AdminConsole\._level === 2/,
     'only a mobile section view borrows the header');
-  assert.match(body, /setBackIcon\(inSection \? 'arrow' : 'home'\)/,
-    'the arrow appears exactly there');
+  // #1036: the second argument is the anchor's href — inside a section
+  // the chevron pops to the console's own menu, so that is where it
+  // points; everywhere else it falls through to home.
+  assert.match(body, /setBackIcon\(inSection \? 'arrow' : 'home', inSection \? '#admin' : undefined\)/,
+    'the arrow appears exactly there, and targets the console menu');
   assert.match(body, /App\.setHeaderTitle\(s \? s\.label : /,
     'the title becomes the section label (which also feeds the native AppBar)');
   assert.match(body, /'Platform status'/,

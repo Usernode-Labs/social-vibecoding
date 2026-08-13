@@ -217,6 +217,7 @@ function recordingPool() {
 
 const SESSION = {
   id: 321, app_id: 9, app_slug: 'demo', app_name: 'Demo',
+  status: 'promoted',
   source: 'imported', pr_number: 77, pr_title: 'External work',
   branch_name: 'feature/x', repo_url: 'https://github.com/acme/demo',
   imported_pr_head_sha: 'a'.repeat(40),
@@ -234,6 +235,32 @@ test('syncImportedProposal: unchanged head no-ops (one getPR, no writes)', async
     assert.equal(res, 'unchanged');
     assert.equal(getPrCalls, 1);
     assert.equal(pool.calls.length, 0, 'unchanged head performs no writes');
+  });
+});
+
+test('syncImportedProposal: active imports refresh without vote reset or re-review copy', async () => {
+  const NEW = 'c'.repeat(40);
+  const sysMessages = [];
+  let buildSha = null;
+  await withStubs([
+    [fakeGithub, 'getPR', async () => ({ head: { sha: NEW, ref: 'feature/x' }, base: { ref: 'main' }, mergeable: true })],
+    [fakeWs, 'sendSystemMessage', async (_pool, _appId, content) => { sysMessages.push(content); }],
+    [fakeStaging, 'buildAndDeployStaging', async (_c, _s, _a, sha) => {
+      buildSha = sha;
+      return { containerId: 'cid', stagingUrl: 'https://s', hostname: 'h' };
+    }],
+  ], async () => {
+    const pool = recordingPool();
+    const res = await prImportSync.syncImportedProposal({
+      config: {}, pool, session: { ...SESSION, status: 'active' },
+    });
+    assert.equal(res, 'updated');
+    assert.equal(buildSha, NEW, 'preview follows the new GitHub head');
+    assert.ok(!pool.calls.some((c) => /DELETE FROM pr_votes/.test(c.sql)),
+      'an item not yet up for vote has no tally to clear');
+    assert.equal(sysMessages.length, 1);
+    assert.match(sysMessages[0], /preview and automated checks are being rebuilt/i);
+    assert.doesNotMatch(sysMessages[0], /votes were cleared|re-review/i);
   });
 });
 

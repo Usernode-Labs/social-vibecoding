@@ -47,7 +47,14 @@ test('setChecksPending: every $2 occurrence is explicitly cast (uniform type for
   assert.deepEqual(p3.filter((o) => o === '$3'), [],
     'every $3 must carry an explicit cast, for the same reason as $2');
 
-  assert.deepEqual(params, [42, 'abc123', null]);
+  // $4 (check_trigger, #1144) is the newest parameter spliced into the same
+  // statement and carries the cast for the same reason.
+  const p4 = sql.match(/\$4(::\w+)?/g) || [];
+  assert.ok(p4.length >= 1, 'check_trigger parameter is present');
+  assert.deepEqual(p4.filter((o) => o === '$4'), [],
+    'every $4 must carry an explicit cast, for the same reason as $2');
+
+  assert.deepEqual(params, [42, 'abc123', null, null]);
   assert.match(sql, /check_state = 'pending'/);
 });
 
@@ -56,7 +63,7 @@ test('setChecksPending: null commit sha still passes a typed parameter', async (
   const pool = { query: async (sql, params) => { queries.push({ sql, params }); return { rows: [] }; } };
 
   await visuals.setChecksPending(pool, 42, null);
-  assert.deepEqual(queries[0].params, [42, null, null]);
+  assert.deepEqual(queries[0].params, [42, null, null, null]);
 });
 
 // ── check_phase: which half of the run the card should name ─────────────
@@ -66,10 +73,10 @@ test('setChecksPending records the run phase, and the streak CASE arms are untou
   const pool = { query: async (sql, params) => { queries.push({ sql, params }); return { rows: [] }; } };
 
   await visuals.setChecksPending(pool, 42, 'abc123', 'building');
-  assert.deepEqual(queries[0].params, [42, 'abc123', 'building']);
+  assert.deepEqual(queries[0].params, [42, 'abc123', 'building', null]);
 
   await visuals.setChecksPending(pool, 42, 'abc123', 'testing');
-  assert.deepEqual(queries[1].params, [42, 'abc123', 'testing']);
+  assert.deepEqual(queries[1].params, [42, 'abc123', 'testing', null]);
 
   // The phase is a PLAIN assignment, not another commit-conditional CASE
   // arm: it describes the run happening right now, so a backoff retry of the
@@ -92,6 +99,31 @@ test('setChecksPending stores an unrecognised or absent phase as NULL', async ()
     await visuals.setChecksPending(pool, 42, 'abc123', bad);
     assert.equal(queries[0].params[2], null, `phase ${JSON.stringify(bad)} → NULL`);
   }
+});
+
+// ── check_trigger (#1144): why this run is happening ────────────────────
+
+test('setChecksPending records the trigger, and only from the known vocabulary', async () => {
+  const queries = [];
+  const pool = { query: async (sql, params) => { queries.push({ sql, params }); return { rows: [] }; } };
+
+  for (const trigger of visuals.CHECK_TRIGGERS) {
+    queries.length = 0;
+    await visuals.setChecksPending(pool, 42, 'abc123', 'building', trigger);
+    assert.equal(queries[0].params[3], trigger, `trigger ${trigger} round-trips`);
+  }
+
+  // Same reasoning as the phase: an unrecognised value would render no caption
+  // anyway, so it is stored as NULL rather than kept as a mystery string that
+  // a later reader might try to interpret.
+  for (const bad of [undefined, null, '', 'COMMIT-PUSH', 'capture', 42, {}]) {
+    queries.length = 0;
+    await visuals.setChecksPending(pool, 42, 'abc123', 'building', bad);
+    assert.equal(queries[0].params[3], null, `trigger ${JSON.stringify(bad)} → NULL`);
+  }
+
+  // Display-only, like check_phase: a plain assignment, never a gate input.
+  assert.match(queries[0].sql, /check_trigger = \$4::text/);
 });
 
 test('a terminal verdict clears the phase so a settled card never shows a stage', async () => {

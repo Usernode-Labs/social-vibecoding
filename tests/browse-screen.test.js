@@ -1,12 +1,13 @@
-// The #apps browse-all-apps screen (public/js/browse.js) — the directory
-// half of the home-screen split.
+// The #apps browse-all-apps screen (frontend/src/features/apps/browse.js) —
+// the directory half of the home-screen split.
 //
 // Home is "Your apps" only now, so this screen is the ONLY place the rest
-// of the platform's apps are reachable from. It deliberately borrows Home's
-// tile renderer ('browse' mode), added-state predicate (isYours), search
-// matcher and add/remove write, so the two launcher grids can't drift; what
-// it owns is the screen — its fetch, its always-visible search field, its
-// ordering (featured first) and its empty states.
+// of the platform's apps are reachable from. It deliberately borrows the
+// shared app-card markup builders (features/apps/app-card.js), Home's
+// added-state predicate (isYours), search matcher and add/remove write, so
+// the two launcher grids can't drift; what it owns is the screen — its
+// fetch, its always-visible search field, its ordering (featured first) and
+// its empty states.
 //
 // Also pins the routing this screen needs from app.js: the #apps hash
 // branch, the sibling hide-lists in every navigateTo*, and the zoom
@@ -21,9 +22,18 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
+const { installAppCard } = require('./helpers/app-card');
+
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
-const HOME_SRC = read('public/js/home.js');
-const BROWSE_SRC = read('public/js/browse.js');
+const { HOME_SRC } = require('./helpers/home-modules');
+// browse.js is a bundle module since #1083 chunk F, so its source starts with
+// an `import` — a SyntaxError to a vm context, which runs classic script text.
+// Strip the import and supply what it imported through installAppCard below:
+// running app-card.js's classic form declares iconTileFor /
+// renderAppPillsHtml in the same global lexical scope the bare calls in
+// browse.js resolve against. Nothing else about the source is rewritten.
+const BROWSE_SRC = read('frontend/src/features/apps/browse.js')
+  .replace(/^import .*;$/gm, '');
 const APP_SRC = read('public/js/app.js');
 const INDEX = read('public/index.html');
 
@@ -141,6 +151,9 @@ function makeBrowse(opts = {}) {
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
+  // The shared card builders first: home.js delegates to window.AppCard and
+  // browse.js calls them as bare identifiers (its import is stripped above).
+  installAppCard(sandbox);
   // home.js declares `const Home = {…}` at script top level, which lands
   // in the context's global LEXICAL scope (visible to browse.js, which is
   // the point) but never as a sandbox property — hence the explicit hoist.
@@ -538,14 +551,13 @@ test('a browse row tap declares the list as its origin; the home menu declares h
   // Both call sites note the origin BEFORE writing the hash — the
   // hashchange lands in a later task, so the note is always in place.
   const rows = BROWSE_SRC.slice(BROWSE_SRC.indexOf('_wireRows(listEl) {'));
-  const tap = rows.slice(0, 700);
+  // Wide enough for the #1036 hrefFor guard block that now sits above the
+  // plain-click handler as well as the handler itself.
+  const tap = rows.slice(0, 1400);
   assert.match(tap, /noteDetailOrigin\('list'\)/);
   assert.ok(tap.indexOf("noteDetailOrigin('list')") < tap.indexOf('location.hash'));
 
-  const home = fs.readFileSync(
-    path.join(__dirname, '..', 'public', 'js', 'home.js'), 'utf8'
-  );
-  const item = home.slice(home.indexOf("key: 'app-details'"));
+  const item = HOME_SRC.slice(HOME_SRC.indexOf("key: 'app-details'"));
   const run = item.slice(0, 400);
   assert.match(run, /Browse\?\.noteDetailOrigin\?\.\('home'\)/);
   assert.ok(run.indexOf("noteDetailOrigin?.('home')") < run.indexOf('location.hash'));
@@ -724,7 +736,16 @@ test('toggleAdded ignores staging demo tiles (their slugs have no DB row)', asyn
 // ── index.html shell ─────────────────────────────────────────────
 
 test('index.html hosts #browse-screen with its own search field and grid', () => {
-  assert.match(INDEX, /<main id="browse-screen" class="hidden flex-1 overflow-y-auto"/);
+  // Ships hidden, and is the flex-child scroller its siblings are. Matched
+  // per-class rather than as one closed string so an added utility (e.g.
+  // `platform-safe-scroll`, which reserves the home-indicator strip for
+  // the last row) doesn't fail this on a substring.
+  const openTag = /<main id="browse-screen"[^>]*>/.exec(INDEX);
+  assert.ok(openTag, '#browse-screen is missing from index.html');
+  for (const cls of ['hidden', 'flex-1', 'overflow-y-auto']) {
+    assert.match(openTag[0], new RegExp(`(?:class="|\\s)${cls}(?:\\s|")`),
+      `#browse-screen must keep the ${cls} utility`);
+  }
   const main = INDEX.slice(
     INDEX.indexOf('<main id="browse-screen"'),
     INDEX.indexOf('</main>', INDEX.indexOf('<main id="browse-screen"'))
@@ -741,11 +762,24 @@ test('index.html hosts #browse-screen with its own search field and grid', () =>
   assert.match(main, /id="browse-detail" class="hidden/);
 });
 
-test('browse.js is loaded after home.js and precached by the service worker', () => {
-  const homeAt = INDEX.indexOf('/js/home.js');
-  const browseAt = INDEX.indexOf('/js/browse.js');
-  assert.ok(homeAt > 0 && browseAt > homeAt, 'Browse depends on Home');
-  assert.match(read('public/sw.js'), /'\/js\/browse\.js'/);
+// browse.js used to be a classic <script> loaded after home.js, and this test
+// pinned that order plus its own precache entry. #1083 chunk F moved it into
+// the React bundle, so both registers change at once: the island imports it,
+// and /shell/assets/shell.js — already in SHELL_ASSETS — is what precaches it.
+test('browse.js is a bundle module the #browse-screen island imports', () => {
+  assert.match(
+    read('frontend/src/features/apps/browse-screen.tsx'),
+    /import '\.\/browse\.js';/,
+    'the island must import the module — nothing else pulls it into the bundle'
+  );
+  assert.ok(!INDEX.includes('/js/browse.js'), 'the retired script tag must be gone from the shell');
+  assert.ok(!read('public/sw.js').includes('/js/browse.js'), 'and its precache entry with it');
+  assert.ok(!fs.existsSync(path.join(__dirname, '..', 'public', 'js', 'browse.js')),
+    'and the file itself must be gone from public/js/');
+  // The load-order dependency it had on home.js is gone too: the shared card
+  // markup is an explicit import now, not a `window.Home` read.
+  assert.match(BROWSE_SRC, /iconTileFor\(app\)/);
+  assert.doesNotMatch(BROWSE_SRC, /Home\.iconTileFor|Home\.renderAppPillsHtml/);
 });
 
 // ── app.js routing ───────────────────────────────────────────────
@@ -768,15 +802,31 @@ test('navigateToBrowse / _exitBrowse follow the screen pattern', () => {
   );
   assert.match(nav, /setHeaderTitle\('All apps'\)/);
   assert.match(nav, /App\._inBrowse = true/);
-  assert.match(nav, /Browse\.open\(slug \|\| null\)/);
-  assert.match(nav, /getElementById\('home-screen'\)\.classList\.add\('hidden'\)/);
+  assert.match(nav, /Browse\.open\(slug \|\| null, \{ chrome: false \}\)/);
+  assert.match(nav, /App\._showOnlyScreen\('browse-screen'\)/);
   // Already mounted -> an in-screen LEVEL change, not a screen entry:
   // re-running the swap would replay the entry animation on a drill-in.
   assert.match(nav, /App\._inBrowse && window\.Browse\?\.isOpen\?\.\(\)/);
   assert.match(nav, /Browse\.route\(slug \|\| null\)/);
-  // Leaving the screen hands the back chevron back, like _exitAdminConsole.
+  // #979: the entry's visible mutations live inside the transition
+  // callback, so the outgoing page is snapshotted as it looked. Browse's
+  // own level chrome is deferred with it.
+  const preTransition = nav.slice(0, nav.indexOf('PlatformUI.transition('));
+  for (const forbidden of ['setHeaderTitle', 'setBackIcon', 'classList']) {
+    assert.ok(!preTransition.includes(forbidden),
+      `no ${forbidden} before the transition (it would land in the outgoing snapshot)`);
+  }
+  assert.match(nav, /Browse\.syncChrome\(\)/,
+    'the deferred level chrome is applied inside the callback');
+  // Leaving the screen is state-only now — the back chevron is handed back
+  // by the next screen's _showOnlyScreen.
   const exit = APP_SRC.slice(APP_SRC.indexOf('_exitBrowse() {'));
-  assert.match(exit.slice(0, 800), /App\.setBackIcon\('home'\)/);
+  const exitBody = exit.slice(0, exit.indexOf('\n  },'));
+  assert.ok(!exitBody.includes('setBackIcon'),
+    '_exitBrowse no longer touches the back icon (#979)');
+  assert.ok(!exitBody.includes('classList'),
+    '_exitBrowse no longer hides the screen (#979)');
+  assert.match(exitBody, /Browse\.close\(\)/);
 });
 
 test('the header back button consults Browse.handleBack', () => {
@@ -788,6 +838,12 @@ test('the header back button consults Browse.handleBack', () => {
 });
 
 test('every sibling screen hides #browse-screen and exits the flag', () => {
+  // One list of screen roots, hidden through one primitive (#979) — the
+  // per-navigation hand-rolled hide lists are gone, so what this test
+  // pins is (a) browse is in that list, (b) every sibling entry calls the
+  // primitive, and (c) the flag is still exited.
+  assert.match(APP_SRC, /SCREEN_IDS: \[[^\]]*'browse-screen'/,
+    '#browse-screen is one of the mutually exclusive screen roots');
   for (const fn of ['navigateToProfile', 'navigateToAdminConsole', 'navigateToSettings',
     'navigateToLeaderboard']) {
     // Anchor on the DEFINITION (two-space indent), not the many comment
@@ -796,25 +852,44 @@ test('every sibling screen hides #browse-screen and exits the flag', () => {
     assert.ok(start > 0, `${fn} exists`);
     const body = APP_SRC.slice(start, start + 2600);
     assert.match(body, /App\._inBrowse\) App\._exitBrowse\(\)/, `${fn} exits browse`);
-    assert.match(body, /getElementById\('browse-screen'\)/, `${fn} hides browse-screen`);
+    assert.match(body, /App\._showOnlyScreen\('[a-z-]+'\)/,
+      `${fn} hides every other root through _showOnlyScreen`);
   }
   // navigateHome must exit it too, or the grid stays mounted.
   const home = APP_SRC.slice(APP_SRC.indexOf('navigateHome() {'));
   assert.match(home.slice(0, 1200), /App\._inBrowse\) App\._exitBrowse\(\)/);
+  assert.match(home.slice(0, 2600), /App\._showOnlyScreen\('home-screen', \['app-view'\]\)/,
+    'going home reveals home and hides every root but the shrinking app card');
   // Bare "/" with the browse screen up resolves back home.
   assert.match(APP_SRC, /else if \(App\._inBrowse\) App\.navigateHome\(\);/);
 });
 
-test('the app-view zoom departs from whichever grid was tapped', () => {
+test('the app-view zoom departs from whichever screen was on top', () => {
   // Hard-coding #home-screen here left the browse grid painted behind the
-  // opened app.
+  // opened app. Since the _exitX helpers became state-only (#979) the
+  // settings / admin / profile / leaderboard roots are live at this point
+  // too, so the answer is read off the DOM rather than off _inBrowse.
   assert.match(APP_SRC, /_departingScreen\(\) \{/);
-  assert.match(APP_SRC, /App\._inBrowse \? 'browse-screen' : 'home-screen'/);
+  const dep = APP_SRC.slice(APP_SRC.indexOf('_departingScreen() {'));
+  const depBody = dep.slice(0, dep.indexOf('\n  },'));
+  assert.match(depBody, /for \(const id of App\.SCREEN_IDS\)/,
+    'it scans every screen root');
+  // Through the visibility seam (#1078), not a raw classList read: a root
+  // React owns publishes its state into the store instead of carrying
+  // `.hidden`, so reading the class directly would answer "visible" for a
+  // React screen that is actually down.
+  assert.match(depBody, /App\._isScreenVisible\(id\)/,
+    'and returns the one that is actually visible');
+  assert.match(depBody, /return document\.getElementById\('home-screen'\)/,
+    'home is the fallback');
   const nav = APP_SRC.slice(APP_SRC.indexOf('async navigateToApp('));
-  const zoom = nav.slice(0, nav.indexOf("document.getElementById('back-btn')"));
+  const zoom = nav.slice(0, nav.indexOf('await AppView.open('));
   assert.match(zoom, /const departing = App\._departingScreen\(\)/);
+  assert.ok(zoom.indexOf('const departing') < zoom.indexOf('App._exitLeaderboard()'),
+    'resolved before the _exitX flags are cleared');
   assert.match(zoom, /outEl: departing/);
-  assert.match(zoom, /after: \(\) => \{ if \(departing\) departing\.classList\.add\('hidden'\); \}/);
+  assert.match(zoom, /after: \(\) => \{ App\._showOnlyScreen\('app-view'\); \}/,
+    'the conceal hook hides EVERY other root, not just `departing`');
 });
 
 test('_tileFor resolves tiles in the two grids that still HAVE tiles', () => {

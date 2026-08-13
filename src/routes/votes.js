@@ -21,6 +21,7 @@ const { isCliCredentialManagementSession } = require('../services/cli-api-policy
 const {
   reviewedHeadForSession,
   currentVotePredicateSql,
+  sameSha,
 } = require('../services/pr-vote-revision');
 
 const CLI_CREDENTIAL_MANAGEMENT_ERROR = 'credential_management_not_available_via_cli';
@@ -81,6 +82,10 @@ function stagingMockProposals(viewer) {
     my_kudos: false,
     my_kudos_direct: false,
     revert_of_session_id: null,
+    // #967: which external coding agent wrote it, for the "built with …"
+    // chip. NULL on every native row — the connector-imported mock below is
+    // the one that sets it.
+    external_agent: null,
     original_pr_number: null,
     original_pr_title: null,
     chat_count: chat,
@@ -325,23 +330,37 @@ function stagingMockProposals(viewer) {
     // a mid-flight build was indistinguishable from a wedged one. These two
     // rows are the only way to review both captions in a preview — a real
     // staging clone has no in-flight run to look at. The fixture above keeps
-    // check_phase absent on purpose: it is the NULL/legacy-wording case.
+    // check_phase absent on purpose: it is the NULL/legacy-wording case, and
+    // it carries no check_trigger either — the pre-#1144 rows that predate the
+    // column render with no "why is this running" caption at all.
+    //
+    // #1144: check_trigger is the other half of the pending detail. A run that
+    // the platform started for itself (a boot reconcile, a stuck sweep) used to
+    // be indistinguishable from one the author asked for, which is exactly the
+    // confusion that made re-runs look like flakes. These two rows carry the
+    // two ends of that range — an author's commit, and a platform restart.
     {
       ...mk(9000022, 900122,
         '[Mock] Checks-phase test: preparing the staging preview (build + DB clone)',
         0.06, 1, 0, 0, { required: 2, windowEndsAt: hoursAhead(70) }),
       check_state: 'pending',
       check_phase: 'building',
+      check_trigger: 'commit-push',
       recheckable: true,
       test_results: [],
       checks_checked_at: hoursAgo(0.02),
     },
     {
-      ...mk(9000023, 900123,
+      // 9000026, not 9000023: the "at least N approvals" fixture further
+      // down already owns 9000023, and a duplicate id meant this row won the
+      // render — an approvals proposal that permanently showed
+      // "Checks running…" instead of its approvals pill.
+      ...mk(9000026, 900126,
         '[Mock] Checks-phase test: running the automated tests against the preview',
         0.06, 1, 0, 0, { required: 2, windowEndsAt: hoursAhead(70) }),
       check_state: 'pending',
       check_phase: 'testing',
+      check_trigger: 'stuck-sweep',
       recheckable: true,
       test_results: [],
       checks_checked_at: hoursAgo(0.02),
@@ -447,7 +466,7 @@ function stagingMockProposals(viewer) {
     // card at that mock issue; the inline priority/assignee stand in for what
     // the inheritance query computes (mock rows bypass the DB summarize path).
     {
-      ...mk(9000022, 900122,
+      ...mk(9000027, 900127,
         '[Mock] Inherited-attrs test: promoted from issue #900006 — chips carry over',
         7, 2, 0, 1, { required: 2, windowEndsAt: hoursAhead(50) }),
       linked_issues: [900006],
@@ -518,6 +537,98 @@ function stagingMockProposals(viewer) {
       recheckable: true,
       test_results: [],
     },
+    // A proposal submitted through the hosted MCP connector — Claude Code
+    // wrote it in the user's own fork, and submit_work carried the testing
+    // routes and steps with the import. THREE things only line up on one row:
+    // the "built with Claude Code" chip beside the imported badge, a "How to
+    // test" panel + "Test this change" deep link on an IMPORTED proposal, and
+    // failing checks on work the platform did not build itself.
+    //
+    // Seeded because a staging clone cannot have one: every imported row in
+    // production carries testing_md / testing_path NULL, since until this
+    // change nothing on the import path could set them.
+    {
+      ...mk(9000044, 900144,
+        '[Mock] Connector test: imported from Claude Code with testing notes, checks failing',
+        7, 2, 0, 2, { required: 3, windowEndsAt: hoursAhead(30) }),
+      source: 'imported',
+      imported_pr_author: 'staging-tester',
+      external_agent: 'claude-code',
+      testing_md: '1. Open the board — the new "Snap to grid" toggle sits above the columns.\n'
+        + '2. Turn it on and drag a card: it should snap to the nearest column.\n'
+        + '3. Reload the page — the toggle keeps its setting.',
+      testing_path: '/board?demo-pr=1',
+      check_state: 'failing',
+      recheckable: true,
+      test_results: [
+        { name: 'Home loads', path: '/', status: 'pass', consoleErrors: [], failureReason: '' },
+        {
+          name: 'Board shows the snap toggle', path: '/board?demo-pr=1', status: 'fail',
+          consoleErrors: [],
+          failureReason: 'Expected element ".snap-toggle" was not found',
+        },
+      ],
+    },
+    // ── Card-as-pointer revision fixtures ──
+    // The composite status pill names ONE reason and its tooltip counts the
+    // rest; the detail view enumerates every one. That behaviour needs a row
+    // with several reasons at once, which no existing mock has.
+    {
+      ...mk(9000050, 900150,
+        '[Mock] Multi-reason test: behind main AND checks failing AND console errors',
+        7, 2, 0, 4, { required: 3 }),
+      behind_main: 3,
+      console_check_state: 'errors',
+      console_errors: [
+        { kind: 'pageerror', message: "TypeError: Cannot read properties of null (reading 'id')", source: 'board.js:88' },
+        { kind: 'console', message: 'Failed to load resource: 502 (Bad Gateway)', source: '/api/board:0' },
+      ],
+      check_state: 'failing',
+      recheckable: true,
+      test_results: [
+        { name: 'Home loads', path: '/', status: 'pass', consoleErrors: [], failureReason: '' },
+        { name: 'Board renders', path: '/#/board', status: 'fail', consoleErrors: [], failureReason: 'expected selector .board not found' },
+        { name: 'Settings opens', path: '/#/settings', status: 'fail', consoleErrors: [], failureReason: 'navigation timed out' },
+      ],
+    },
+    // Unset metadata: EVERY other mock carries priority + assignee +
+    // category (the mk factory stamps all three), so without this row the
+    // "no grey Set-priority / Set-category / Unassigned placeholders" rule
+    // is invisible in a preview. The nulls are applied after mk() below.
+    mk(9000051, 900151,
+      '[Mock] Bare-card test: no priority, no category, nobody assigned',
+      9, 1, 0, 0, { required: 2 }),
+    // Provenance overload: four facts that used to be four badges competing
+    // for the four badge slots, now all on the meta line. Proves the badge
+    // cap holds and the provenance still reads.
+    {
+      ...mk(9000052, 900152, "[Mock] staging-tester's changes",
+        6, 2, 0, 2, { required: 3, windowEndsAt: hoursAhead(30) }),
+      source: 'imported',
+      imported_pr_author: 'octo-contributor',
+      external_agent: 'codex',
+      pr_title_fallback: true,
+      staging_url: 'https://mock-preview.invalid',
+    },
+    // Band overload: the worst case for the four-band card, in one row. A
+    // title long enough to need a THIRD line (so the two-line clamp is
+    // visibly doing something), a long meta line, all four metadata chips,
+    // two linked issues AND the widest action set a card can carry (Yes / No
+    // / Explore / Preview) — so a preview shows whether any band clips a
+    // pill through the middle rather than dropping the surplus row whole.
+    // Every other mock exercises one band; this one loads all four at once.
+    {
+      ...mk(9000053, 900153,
+        '[Mock] Band-overload test: a deliberately enormous proposal title that runs '
+        + 'well past two lines in a kanban column so the clamp, the reserved band '
+        + 'heights and the pill clipping can all be judged on one card',
+        2, 2, 1, 7, { required: 4, windowEndsAt: hoursAhead(28) }),
+      linked_issues: [900004, 900005],
+      staging_url: 'https://mock-preview.invalid',
+      priority: { top: 'high', count: 4, myValue: null },
+      assignee: { top: 'maya-builder', count: 2, myValue: null },
+      category: { top: 'staging demo onboarding', count: 3, myValue: null },
+    },
   ];
   // Spread the community-voted priority/assignee across a few rows (the mk
   // factory otherwise stamps every proposal high / staging-tester) so the
@@ -536,6 +647,17 @@ function stagingMockProposals(viewer) {
   for (const row of rows) {
     const o = attrOverrides.get(row.id);
     if (o) { row.priority = o.priority; row.assignee = o.assignee; row.category = o.category; }
+  }
+  // The deliberately BARE card: mk() stamps all three attributes, so the
+  // "unset chips don't render" rule needs one row to opt back out. Kept as
+  // an explicit clear rather than a separate factory so a future field added
+  // to mk() is visibly missing here too.
+  for (const row of rows) {
+    if (row.id === 9000051) {
+      row.priority = null;
+      row.category = null;
+      row.assignee = null;
+    }
   }
   return rows.map((p) => {
     // #600: seed the FIRST mock proposal's assignee as the viewer's own so
@@ -656,7 +778,20 @@ function stagingMockMerged() {
     priority: { top: 'medium', count: 2, myValue: null },
     assignee: { top: 'maya-builder', count: 3, myValue: null },
   };
-  return [autoMerged, inheritedAttrs].concat(titles.map((t, i) => mk(
+  // Card-as-pointer revision: a merged proposal that ALREADY has a revert
+  // in flight. Its "Undone by PR#…" relationship is a FACT about the change,
+  // so it reads on the meta line rather than displacing the Undo action —
+  // and Undo itself is correctly absent from the ⋯ menu (undoing an undo
+  // would be an infinite loop).
+  const undone = {
+    ...mk(9100028, 910128,
+      '[Mock] Completed: this one was undone — revert already merged', 0, 1),
+    revert_session_id: 9100029,
+    revert_pr_number: 910129,
+    revert_pr_url: null,
+    revert_status: 'merged',
+  };
+  return [autoMerged, inheritedAttrs, undone].concat(titles.map((t, i) => mk(
     9100001 + i,
     910101 + i,
     `[Mock] Completed: ${t}`,
@@ -705,6 +840,13 @@ function stagingMockCompletedCloseIssues() {
   return [
     mk(9100060, 'group-vote', 1, 2, 3),
     mk(9100061, 'admin:staging-admin', 4, 5, 0),
+    // (#1115) A DELIBERATELY OLD applied close proposal. The mocks are only
+    // injected on the demo stream's FIRST page and the merged mocks span
+    // 1–26 days, so a 32-day-old row can never appear in any /merged page —
+    // making it reachable ONLY through GET /api/apps/:slug/governance/:id.
+    // That is exactly the regression this mock exists to test: before the
+    // by-id recovery path, deep-linking it bounced back to the board.
+    mk(9100062, 'group-vote', 30, 32, 4),
   ];
 }
 
@@ -740,11 +882,11 @@ function nativeGithubTarget(session) {
 
 async function kickNativeRevisionChecks({ config, pool, session, headSha }) {
   const visuals = require('../services/visuals');
-  await visuals.setChecksPending(pool, session.id, headSha, 'building')
+  await visuals.setChecksPending(pool, session.id, headSha, 'building', 'commit-push')
     .catch((err) => log.warn('votes', 'Native revision setChecksPending failed (non-fatal)', {
       sessionId: session.id, headSha, err: err.message,
     }));
-  try { visuals.notifyChecksPending(session.id, headSha, 'building'); } catch (_) {}
+  try { visuals.notifyChecksPending(session.id, headSha, 'building', 'commit-push'); } catch (_) {}
 
   const prImportSync = require('../services/pr-import-sync');
   prImportSync.rerunChecksForNewHead({
@@ -755,6 +897,124 @@ async function kickNativeRevisionChecks({ config, pool, session, headSha }) {
   }).catch((err) => log.warn('votes', 'Native revision checks re-run failed', {
     sessionId: session.id, headSha, err: err.message,
   }));
+}
+
+// Imported PRs use their GitHub head as the reviewed revision. Stamp that
+// revision pending before returning control to a promotion/vote request, then
+// let the SHA-pinned preview rebuild continue in the background. The merge
+// gate independently compares the verdict SHA, so even a failed pending write
+// cannot let an older green result authorize this head.
+async function kickImportedRevisionChecks({ config, pool, session, headSha }) {
+  const visuals = require('../services/visuals');
+  await visuals.setChecksPending(pool, session.id, headSha, 'building', 'pr-import')
+    .catch((err) => log.warn('votes', 'Imported revision setChecksPending failed (non-fatal)', {
+      sessionId: session.id, headSha, err: err.message,
+    }));
+  try { visuals.notifyChecksPending(session.id, headSha, 'building', 'pr-import'); } catch (_) {}
+
+  const prImportSync = require('../services/pr-import-sync');
+  prImportSync.rerunChecksForNewHead({
+    config,
+    pool,
+    session,
+    newHead: headSha,
+  }).catch((err) => log.warn('votes', 'Imported revision checks re-run failed', {
+    sessionId: session.id, headSha, err: err.message,
+  }));
+}
+
+// #955: how far back the classifier will follow first parents looking for the
+// reviewed revision. Stacked platform syncs are the reason it is more than one
+// (a drain can resolve, fail to merge, and resolve again before anything
+// reconciles); a small cap keeps a pathological history from costing GitHub
+// reads. Anything deeper is treated as an author push — the safe direction.
+const MAX_PLATFORM_CHAIN_HOPS = 5;
+
+// True while the platform itself is moving this branch — either a MODE=sync
+// worker turn or a conflict-resolver drain. Process-local, same
+// single-Node-process assumption the two registries already make.
+function platformSyncInFlight(sessionId) {
+  try {
+    const { getSyncState } = require('../services/sync-main');
+    if (getSyncState(sessionId)) return true;
+  } catch (_) { /* treat an unavailable registry as "not syncing" */ }
+  try {
+    if (isResolving(sessionId)) return true;
+  } catch (_) { /* same */ }
+  return false;
+}
+
+// Walk first parents from the live head back towards the reviewed revision,
+// requiring EVERY commit on the way to be one the platform recorded pushing
+// for this session. Recorded provenance — not the commit's shape — is what
+// makes this safe: an author can trivially craft a "merge main" commit whose
+// first parent is the reviewed SHA, so trusting shape alone would turn vote
+// preservation into a governance bypass.
+async function platformPushChain({ session, pool, liveHead, reviewedHead }) {
+  const chain = [];
+  if (!liveHead) return { platform: false, chain };
+  const syncMain = require('../services/sync-main');
+  const target = nativeGithubTarget(session);
+  let cursor = liveHead;
+
+  for (let hop = 0; hop < MAX_PLATFORM_CHAIN_HOPS; hop++) {
+    const record = await syncMain.findPlatformPush(pool, session.id, cursor);
+    if (!record) return { platform: false, chain };
+    chain.push(record);
+
+    // A row with no pinned revision has no bound votes to protect; a recorded
+    // platform push is provenance enough to bind it (see sync-main).
+    if (!reviewedHead) return { platform: true, chain };
+
+    let parent = normalizedSha(record.first_parent_sha);
+    if (!parent && target && github.isEnabled()) {
+      // The parents read can fail at push time; fill it in now so later passes
+      // stay a pure DB walk.
+      try {
+        const parents = await github.getCommitParents(target.owner, target.repo, cursor);
+        parent = normalizedSha(parents[0]);
+        if (parent) {
+          await syncMain.backfillPlatformPushParent(pool, session.id, cursor, parent);
+        }
+      } catch (err) {
+        log.warn('votes', 'Could not read platform-push parents', {
+          sessionId: session.id, sha: cursor, err: err.message,
+        });
+      }
+    }
+    if (!parent) return { platform: false, chain };
+    if (parent === reviewedHead) return { platform: true, chain };
+    cursor = parent;
+  }
+  return { platform: false, chain };
+}
+
+// #955: decide WHO moved a native proposal's head before deciding what that
+// costs its votes.
+//   same            — the pin already describes this commit (case-insensitive).
+//   platform_advance— our own sync/conflict-resolution commit, sitting on top
+//                     of the reviewed revision: carry the votes across.
+//   pending_sync    — the platform is mid-sync and this commit isn't recorded
+//                     yet; don't decide at all, ask the caller to retry.
+//   author_push     — anything else: the reviewed code changed, clear the tally.
+async function classifyNativeHeadMove({ pool, session, liveHead }) {
+  const live = normalizedSha(liveHead);
+  const reviewed = normalizedSha(session.reviewed_head_sha);
+  if (live && reviewed && live === reviewed) return { kind: 'same' };
+
+  const { platform, chain } = await platformPushChain({
+    session, pool, liveHead: live, reviewedHead: reviewed,
+  });
+  if (platform) {
+    return {
+      kind: 'platform_advance',
+      chain,
+      // Pure git merges carry their verdict; a Claude-resolved tree does not.
+      resolvedTree: chain.some((c) => c.sync_result === 'resolved'),
+    };
+  }
+  if (platformSyncInFlight(session.id)) return { kind: 'pending_sync' };
+  return { kind: 'author_push' };
 }
 
 // Refresh a native proposal's reviewed revision from the live GitHub PR.
@@ -768,6 +1028,10 @@ async function kickNativeRevisionChecks({ config, pool, session, headSha }) {
 // UPDATE makes concurrent voters idempotent: only one caller owns the reset,
 // while `head_sha IS DISTINCT FROM` preserves any vote already cast on the new
 // revision.
+//
+// #955: that reset is for AUTHOR pushes. The platform's own "sync with main"
+// commit changes the branch without changing the patch under review, so it
+// advances the pin and carries the votes with it instead.
 async function reconcileNativeReviewedHead({ config, pool, session, fresh = false, notify = true }) {
   if (!session || session.source === 'imported') {
     return { enforced: false, headSha: reviewedHeadForSession(session) };
@@ -840,32 +1104,86 @@ async function reconcileNativeReviewedHead({ config, pool, session, fresh = fals
       reason: 'GitHub did not return a valid pull-request head commit.',
     };
   }
-  if (liveHead === session.reviewed_head_sha) {
+  if (sameSha(liveHead, session.reviewed_head_sha)) {
+    // Same commit — including a stamp that differs only in letter case. Nothing
+    // about the reviewed code changed, so nothing may be cleared.
     return { enforced: true, headSha: liveHead, unchanged: true };
   }
 
   const oldHead = session.reviewed_head_sha || null;
-  // Install the new head and remove stale approvals in ONE statement. If the
-  // cleanup fails, PostgreSQL rolls the head update back too, so a later retry
+  const move = await classifyNativeHeadMove({ pool, session, liveHead });
+
+  if (move.kind === 'pending_sync') {
+    // The platform is mid-sync and this commit isn't recorded yet: it is either
+    // our own push a moment before it lands in the ledger, or a genuine author
+    // push. Deciding now could destroy an approval that must survive, so defer
+    // — nothing is written, and the next attempt classifies it correctly.
+    log.info('votes', 'Head move deferred: platform sync in flight', {
+      sessionId: session.id, oldHead, liveHead,
+    });
+    return {
+      enforced: true,
+      blocked: true,
+      transient: true,
+      reason: 'This proposal is being synced with main — try again in a moment.',
+    };
+  }
+
+  const platformAdvance = move.kind === 'platform_advance';
+  // Install the new head and reconcile the approvals in ONE statement. If that
+  // half fails, PostgreSQL rolls the head update back too, so a later retry
   // cannot mistake a partially-reconciled row for a clean one.
+  //
+  // Author push  → delete every approval cast against another revision.
+  // Platform sync→ carry the approvals for the previous revision onto the new
+  //                one; approvals for any OTHER revision are still stale.
   const { rows: claimed } = await pool.query(
-    `WITH claimed AS (
-       UPDATE chat_sessions
-          SET reviewed_head_sha = $1, stale_notified_at = NULL
-        WHERE id = $2
-          AND reviewed_head_sha IS NOT DISTINCT FROM $3::varchar
-          AND reviewed_head_sha IS DISTINCT FROM $1
-        RETURNING reviewed_head_sha
-     ), deleted AS (
-       DELETE FROM pr_votes
-        WHERE session_id = $2
-          AND head_sha IS DISTINCT FROM $1
-          AND EXISTS (SELECT 1 FROM claimed)
-        RETURNING 1
-     )
-     SELECT reviewed_head_sha,
-            (SELECT COUNT(*)::int FROM deleted) AS votes_deleted
-       FROM claimed`,
+    platformAdvance
+      ? `WITH claimed AS (
+           UPDATE chat_sessions
+              SET reviewed_head_sha = $1, stale_notified_at = NULL
+            WHERE id = $2
+              AND reviewed_head_sha IS NOT DISTINCT FROM $3::varchar
+              AND reviewed_head_sha IS DISTINCT FROM $1
+            RETURNING reviewed_head_sha
+         ), moved AS (
+           UPDATE pr_votes SET head_sha = $1
+            WHERE session_id = $2
+              AND head_sha IS NOT DISTINCT FROM $3::varchar
+              AND EXISTS (SELECT 1 FROM claimed)
+            RETURNING 1
+         ), deleted AS (
+           DELETE FROM pr_votes
+            WHERE session_id = $2
+              AND head_sha IS DISTINCT FROM $1
+              -- disjoint from the moved set on purpose: two data-modifying
+              -- CTEs touching one row in a statement is undefined behaviour.
+              AND head_sha IS DISTINCT FROM $3::varchar
+              AND EXISTS (SELECT 1 FROM claimed)
+            RETURNING 1
+         )
+         SELECT reviewed_head_sha,
+                (SELECT COUNT(*)::int FROM moved) AS votes_moved,
+                (SELECT COUNT(*)::int FROM deleted) AS votes_deleted
+           FROM claimed`
+      : `WITH claimed AS (
+           UPDATE chat_sessions
+              SET reviewed_head_sha = $1, stale_notified_at = NULL
+            WHERE id = $2
+              AND reviewed_head_sha IS NOT DISTINCT FROM $3::varchar
+              AND reviewed_head_sha IS DISTINCT FROM $1
+            RETURNING reviewed_head_sha
+         ), deleted AS (
+           DELETE FROM pr_votes
+            WHERE session_id = $2
+              AND head_sha IS DISTINCT FROM $1
+              AND EXISTS (SELECT 1 FROM claimed)
+            RETURNING 1
+         )
+         SELECT reviewed_head_sha,
+                0 AS votes_moved,
+                (SELECT COUNT(*)::int FROM deleted) AS votes_deleted
+           FROM claimed`,
     [liveHead, session.id, oldHead]
   );
 
@@ -880,7 +1198,7 @@ async function reconcileNativeReviewedHead({ config, pool, session, fresh = fals
     );
     const storedHead = rows[0]?.reviewed_head_sha || null;
     session.reviewed_head_sha = storedHead;
-    if (storedHead === liveHead) {
+    if (sameSha(storedHead, liveHead)) {
       return { enforced: true, headSha: liveHead, unchanged: true };
     }
     return {
@@ -893,13 +1211,25 @@ async function reconcileNativeReviewedHead({ config, pool, session, fresh = fals
 
   session.reviewed_head_sha = liveHead;
   const votesDeleted = parseInt(claimed[0]?.votes_deleted, 10) || 0;
+  const votesMoved = parseInt(claimed[0]?.votes_moved, 10) || 0;
 
   // A platform-authored push may already have run checks for this exact head.
   // Preserve that verdict; otherwise invalidate the old result synchronously
-  // before launching the exact-SHA rebuild.
-  const needsChecks = session.checks_commit_sha !== liveHead;
+  // before launching the exact-SHA rebuild. A pure `clean` platform merge keeps
+  // its verdict too (git merged tested main into a tested branch), but a tree
+  // Claude edited to resolve conflicts is unverified and must be re-checked.
+  const checksCarry = platformAdvance && !move.resolvedTree;
+  const needsChecks = !sameSha(session.checks_commit_sha, liveHead) && !checksCarry;
   if (needsChecks) {
     await kickNativeRevisionChecks({ config, pool, session, headSha: liveHead });
+  } else if (checksCarry && !sameSha(session.checks_commit_sha, liveHead)) {
+    await pool.query(
+      `UPDATE chat_sessions SET checks_commit_sha = $1 WHERE id = $2`,
+      [liveHead, session.id]
+    ).catch((err) => log.warn('votes', 'Carrying checks stamp failed (non-fatal)', {
+      sessionId: session.id, headSha: liveHead, err: err.message,
+    }));
+    session.checks_commit_sha = liveHead;
   }
 
   if (notify) {
@@ -910,11 +1240,31 @@ async function reconcileNativeReviewedHead({ config, pool, session, fresh = fals
         appSlug: session.app_slug || null,
         merged: false,
         headMoved: oldHead != null,
+        ...(platformAdvance ? { votesKept: true } : {}),
       });
     } catch (_) { /* ws failures are non-fatal */ }
   }
 
-  if (notify && (oldHead || votesDeleted > 0)) {
+  if (notify && platformAdvance && votesMoved > 0) {
+    // Our own commit, not the author's: say what actually happened instead of
+    // asking everyone to re-review code they already approved.
+    const label = session.pr_title
+      ? `PR #${session.pr_number} — ${session.pr_title}`
+      : `PR #${session.pr_number}`;
+    const how = move.resolvedTree
+      ? 'was synced with main and its merge conflicts were resolved automatically'
+      : 'was synced with main';
+    const checksNote = move.resolvedTree
+      ? ' Its checks are re-running against the new commit and it will merge on its own once they pass.'
+      : '';
+    await sendSystemMessage(
+      pool, session.app_id,
+      `${label} ${how} — existing votes were kept (now pinned to commit ${liveHead.slice(0, 8)}).${checksNote}`,
+      'system',
+      { headChanged: true, votesKept: true, prNumber: session.pr_number, headSha: liveHead },
+      { type: 'session', ref: session.id }
+    ).catch(() => {});
+  } else if (notify && !platformAdvance && (oldHead || votesDeleted > 0)) {
     const label = session.pr_title
       ? `PR #${session.pr_number} — ${session.pr_title}`
       : `PR #${session.pr_number}`;
@@ -932,7 +1282,9 @@ async function reconcileNativeReviewedHead({ config, pool, session, fresh = fals
     sessionId: session.id,
     oldHead,
     newHead: liveHead,
+    moveKind: move.kind,
     votesDropped: votesDeleted,
+    votesCarried: votesMoved,
     checksReset: needsChecks,
   });
   return {
@@ -942,6 +1294,9 @@ async function reconcileNativeReviewedHead({ config, pool, session, fresh = fals
     initialized: oldHead == null,
     changed: oldHead != null,
     votesDropped: votesDeleted,
+    votesCarried: votesMoved,
+    platformAdvance,
+    votesKept: platformAdvance,
   };
 }
 
@@ -956,6 +1311,53 @@ function voteMatchesReviewedRevision(expectedHeadSha, revision) {
   const expected = normalizedSha(expectedHeadSha);
   const current = normalizedSha(revision.headSha);
   return !!expected && expected === current;
+}
+
+// Optional testing metadata on a PR import. Returns the three column values
+// the imported session row is created with — all null when the request body
+// carries nothing, which is the browser import button's case and leaves that
+// path byte-identical to before.
+//
+// Every rule here is BORROWED, not restated: services/testing-notes.js owns
+// what a valid capture route is (validatePath), how many are shot
+// (CAPTURE_MAX_PATHS), how the viewport labels are spelled, and how long the
+// markdown may be (TESTING_MD_MAX). A second opinion about any of those is a
+// bug waiting to happen — the same routes then behave differently depending
+// on whether a build turn or a connector submitted them.
+function parseImportTesting(body) {
+  const none = { testingMd: null, testingPath: null, testingPaths: null };
+  if (!body || typeof body !== 'object') return none;
+  const notes = require('../services/testing-notes');
+
+  const paths = [];
+  const seen = new Set();
+  if (Array.isArray(body.testingPaths)) {
+    for (const entry of body.testingPaths) {
+      const normalized = notes.normalizeStoredPath(entry);
+      if (!normalized) continue;
+      // normalizeStoredPath deliberately does not re-validate (stored rows
+      // were validated at write time); this input never was, so it is.
+      const valid = notes.validatePath(normalized.path);
+      if (!valid) continue;
+      const key = `${normalized.viewport} ${valid}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      if (paths.length < notes.CAPTURE_MAX_PATHS) {
+        paths.push({ path: valid, viewport: normalized.viewport });
+      }
+    }
+  }
+
+  let md = typeof body.testingSteps === 'string' ? body.testingSteps.trim() : '';
+  if (md.length > notes.TESTING_MD_MAX) md = md.slice(0, notes.TESTING_MD_MAX);
+
+  if (!paths.length && !md) return none;
+  return {
+    testingMd: md || null,
+    // The PRIMARY path, same convention as the block parser: the first entry.
+    testingPath: paths.length ? paths[0].path : null,
+    testingPaths: paths.length ? paths : null,
+  };
 }
 
 function revisionChangedVoteResponse(res, headSha, message = null) {
@@ -1049,6 +1451,9 @@ function mergedRowSelect() {
            -- GitHub-maintained note (kept visible on merged rows too).
            cs.source, cs.imported_pr_author, cs.imported_pr_head_sha,
            cs.reviewed_head_sha,
+           -- #967: which external coding agent wrote it, for the "built
+           -- with …" chip. Kept on merged rows for the same post-hoc read.
+           cs.external_agent,
            -- #381: console-error check snapshot so the warning + detail
            -- block stay visible on a merged proposal for post-hoc review.
            cs.console_check_state, cs.console_errors, cs.console_checked_at,
@@ -1059,6 +1464,7 @@ function mergedRowSelect() {
            -- 'testing'), so the checks card names the stage instead of
            -- showing one opaque "still running". NULL = legacy wording.
            cs.check_phase,
+           cs.check_trigger,
            -- Platform-variables pre-merge check (display mirror; the merge
            -- gate re-evaluates live).
            cs.platform_env_state, cs.platform_env_detail,
@@ -1144,7 +1550,10 @@ function voteRoutes(config) {
       );
       if (!rows.length) return res.status(404).json({ error: 'Active session not found' });
       const session = rows[0];
-      const previousReviewedHead = session.reviewed_head_sha || null;
+      const imported = session.source === 'imported';
+      const previousReviewedHead = imported
+        ? (session.imported_pr_head_sha || null)
+        : (session.reviewed_head_sha || null);
 
       // Promoted-PR cap: worker-less promoted sessions don't count
       // against the per-user active-session cap (see the create-session
@@ -1281,6 +1690,11 @@ function voteRoutes(config) {
             });
           }
           if (pr && pr.state === 'closed') {
+            if (imported) {
+              return res.status(409).json({
+                error: `PR #${session.pr_number} is closed on GitHub and cannot be put up for vote.`,
+              });
+            }
             try {
               await github.reopenPR(owner, repo, session.pr_number);
               log.info('votes', 'Reopened closed PR at promote time', {
@@ -1322,22 +1736,24 @@ function voteRoutes(config) {
             });
           }
 
-          // Mark PR as ready for review on GitHub. We deliberately DO NOT
-          // touch the title here — previously this overwrote the LLM-
-          // generated title back to "<user>'s changes" every time a PR
-          // was promoted, wiping the more descriptive title.
-          try {
-            // octokit.request rather than .rest.pulls.update —
-            // @octokit/app's installation Octokit is a bare core
-            // instance without the rest-endpoint-methods plugin, so
-            // .rest is undefined.
-            const octokit = await github.getInstallationOctokit(owner);
-            await octokit.request(
-              'PATCH /repos/{owner}/{repo}/pulls/{pull_number}',
-              { owner, repo, pull_number: session.pr_number, draft: false }
-            );
-          } catch (err) {
-            log.warn('votes', 'Failed to update PR on GitHub', { err: err.message });
+          // Native proposals are platform-owned drafts, so crossing the local
+          // review boundary also marks them ready on GitHub. Imported PRs are
+          // externally owned: promotion changes only Usernode's local state
+          // and must not publish an external author's draft.
+          if (!imported) {
+            try {
+              // octokit.request rather than .rest.pulls.update —
+              // @octokit/app's installation Octokit is a bare core
+              // instance without the rest-endpoint-methods plugin, so
+              // .rest is undefined.
+              const octokit = await github.getInstallationOctokit(owner);
+              await octokit.request(
+                'PATCH /repos/{owner}/{repo}/pulls/{pull_number}',
+                { owner, repo, pull_number: session.pr_number, draft: false }
+              );
+            } catch (err) {
+              log.warn('votes', 'Failed to update PR on GitHub', { err: err.message });
+            }
           }
         }
       }
@@ -1349,7 +1765,10 @@ function voteRoutes(config) {
         `UPDATE chat_sessions
             SET status = 'promoted', promoted_at = NOW(),
                 stale_notified_at = NULL,
-                reviewed_head_sha = COALESCE($2, reviewed_head_sha)
+                reviewed_head_sha = CASE WHEN source = 'imported'
+                  THEN reviewed_head_sha ELSE COALESCE($2, reviewed_head_sha) END,
+                imported_pr_head_sha = CASE WHEN source = 'imported'
+                  THEN COALESCE($2, imported_pr_head_sha) ELSE imported_pr_head_sha END
           WHERE id = $1 AND status = 'active'`,
         [session.id, promotedHeadSha]
       );
@@ -1357,7 +1776,8 @@ function voteRoutes(config) {
         return res.status(409).json({ error: 'session_state_changed' });
       }
       if (promotedHeadSha) {
-        session.reviewed_head_sha = promotedHeadSha;
+        if (imported) session.imported_pr_head_sha = promotedHeadSha;
+        else session.reviewed_head_sha = promotedHeadSha;
 
         // A withdrawn proposal may retain votes from its earlier review.
         // Preserve only votes explicitly cast for this exact revision; this
@@ -1385,12 +1805,20 @@ function voteRoutes(config) {
         // still describes the old one, invalidate it immediately and rebuild
         // checks against the captured SHA. A proposal without staging is
         // handled by the ordinary post-response build below.
-        if (previousReviewedHead !== promotedHeadSha
-            && session.staging_url
-            && session.checks_commit_sha !== promotedHeadSha) {
-          await kickNativeRevisionChecks({
-            config, pool, session, headSha: promotedHeadSha,
-          });
+        if (session.checks_commit_sha !== promotedHeadSha) {
+          if (imported) {
+            // Import-time checks may still describe the head captured when
+            // the row entered In progress. Promotion re-read GitHub above;
+            // if that head moved, start a SHA-pinned rebuild even when the
+            // earlier preview has not finished yet.
+            await kickImportedRevisionChecks({
+              config, pool, session, headSha: promotedHeadSha,
+            });
+          } else if (previousReviewedHead !== promotedHeadSha && session.staging_url) {
+            await kickNativeRevisionChecks({
+              config, pool, session, headSha: promotedHeadSha,
+            });
+          }
         }
       }
 
@@ -1451,7 +1879,11 @@ function voteRoutes(config) {
       // the auto session's URL — same content, since the clone branch was
       // forked from it). Build the clone's own staging from its branch head,
       // fire-and-forget; the Pass-3 heal sweeper in server.js is the backstop.
-      if (!session.staging_url) {
+      if (imported) {
+        // Imported rows already start their SHA-pinned preview/check build at
+        // import time. Never fall through to the native branch-name build:
+        // a fork head may not exist in the app repository at all.
+      } else if (!session.staging_url) {
         (async () => {
           // Use the exact revision captured before promotion. The fallback
           // exists only for GitHub-disabled local development.
@@ -1478,7 +1910,7 @@ function voteRoutes(config) {
             ).catch((err) => log.warn('votes', 'promote setChecksPending failed (non-fatal)', {
               sessionId: session.id, err: err.message,
             }));
-            visualsService.notifyChecksPending(session.id, commitHash === 'latest' ? null : commitHash, 'building');
+            visualsService.notifyChecksPending(session.id, commitHash === 'latest' ? null : commitHash, 'building', 'promote-kick');
           }
           let result;
           try {
@@ -1510,7 +1942,10 @@ function voteRoutes(config) {
           // heuristic + all failure handling live inside the service.
           const visualsService = require('../services/visuals');
           visualsService.captureForSession(
-            config, session, app, commitHash === 'latest' ? null : commitHash, result
+            config, session, app, commitHash === 'latest' ? null : commitHash, result,
+            // The promote path must merge on a verdict it just took, so this
+            // one runs even when the row already reads passing for the commit.
+            { trigger: 'promote-kick', force: true }
           ).catch((err) => {
             log.warn('votes', 'Post-promote visuals capture failed', { sessionId: session.id, err: err.message });
           });
@@ -1592,7 +2027,8 @@ function voteRoutes(config) {
   // The three endpoints (candidate list, preview, import) let a collaborator pull an
   // externally-authored PR into the vote flow instead of building it in the
   // platform's AI dev-chat. Preview/candidates are read-only; import creates
-  // a `source='imported'` chat_sessions row promoted straight into voting.
+  // a shared `source='imported'` In-progress row. Automated submission paths
+  // may explicitly request the historical straight-to-vote result.
   //
   // Parse owner/repo from an app's repo_url, or null.
   const parseRepo = (url) => {
@@ -1618,7 +2054,7 @@ function voteRoutes(config) {
     const { rows } = await pool.query(
       `SELECT DISTINCT pr_number FROM chat_sessions
         WHERE app_id = $1 AND source = 'imported' AND pr_number IS NOT NULL
-          AND status IN ('promoted', 'merging', 'merged')`,
+          AND status IN ('active', 'promoted', 'merging', 'merged')`,
       [appId]
     );
     return new Set(rows.map((r) => r.pr_number));
@@ -1746,8 +2182,9 @@ function voteRoutes(config) {
     }
   });
 
-  // POST import a PR as a proposal. Collab access. Creates a promoted
-  // `source='imported'` session and kicks its SHA-pinned checks build.
+  // POST import a PR. Collab access. Creates a shared In-progress
+  // `source='imported'` session by default and kicks its SHA-pinned checks
+  // build; trusted automated callers can request `promote: true`.
   router.post('/api/apps/:slug/pr-import', drainGuard, async (req, res) => {
     try {
       const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'collab', '*');
@@ -1783,17 +2220,42 @@ function voteRoutes(config) {
         return res.status(409).json({ error: 'Could not determine the PR head branch.' });
       }
 
-      // Create the imported proposal row, promoted straight into voting.
+      // Optional testing metadata (#945 follow-up). A connector submission
+      // can carry the same two things a build turn's "==== TESTING ===="
+      // block carries — the routes the change is visible on, and how to see
+      // it — so an imported proposal gets before/after screenshots of the
+      // screen that changed instead of the app's home page.
+      //
+      // Re-validated here rather than trusted from the caller: the route is
+      // reachable by any collaborator, and testing_path is joined onto the
+      // staging origin and loaded in the preview iframe. Same validator, same
+      // caps as the block parser — services/testing-notes.js owns both.
+      // Absent (the browser's import button never sends them) leaves all
+      // three columns NULL, exactly as before.
+      const importTesting = parseImportTesting(req.body);
+      const promote = req.body?.promote === true;
+      const initialStatus = promote ? 'promoted' : 'active';
+
+      // Browser imports join the shared In-progress board first. Automated
+      // submission paths may opt into the historical straight-to-vote flow
+      // with `promote: true`.
       const { rows: inserted } = await pool.query(
         `INSERT INTO chat_sessions
            (app_id, user_id, branch_name, pr_number, pr_url, pr_title, status,
-            source, imported_pr_head_sha, imported_pr_author, promoted_at, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, 'promoted',
-            'imported', $7, $8, NOW(), NOW())
-         RETURNING id`,
+            source, imported_pr_head_sha, imported_pr_author, promoted_at, shared_at, created_at,
+            testing_md, testing_path, testing_paths)
+         VALUES ($1, $2, $3, $4, $5, $6, $7::text,
+            'imported', $8, $9,
+            CASE WHEN $7::text = 'promoted' THEN NOW() END,
+            CASE WHEN $7::text = 'active' THEN NOW() END,
+            NOW(), $10, $11, $12::jsonb)
+         RETURNING id, status`,
         [
           app.id, req.user.id, headBranch, prNumber, pr.html_url || null,
-          pr.title || `PR #${prNumber}`, headSha, pr.user?.login || null,
+          pr.title || `PR #${prNumber}`, initialStatus,
+          headSha, pr.user?.login || null,
+          importTesting.testingMd, importTesting.testingPath,
+          importTesting.testingPaths ? JSON.stringify(importTesting.testingPaths) : null,
         ]
       );
       const sessionId = inserted[0].id;
@@ -1801,35 +2263,39 @@ function voteRoutes(config) {
         id: sessionId, app_id: app.id, app_slug: app.slug, user_id: req.user.id,
         branch_name: headBranch, pr_number: prNumber, pr_title: pr.title || null,
         repo_url: app.repo_url, staging_url: null, source: 'imported',
+        status: initialStatus, imported_pr_head_sha: headSha,
       };
 
-      // Announce it for voting (group chat + the proposal's own thread),
-      // mirroring the native promote path.
-      const label = pr.title ? `PR #${prNumber} — ${pr.title}` : `PR #${prNumber}`;
-      await sendSystemMessage(pool, app.id,
-        `${req.user.username} imported ${label} for voting`,
-        'vote',
-        { vote: { sessionId, prNumber } }
-      ).catch(() => {});
-      await sendSystemMessage(pool, app.id,
-        `${req.user.username} imported ${label} for voting`,
-        'vote',
-        { vote: { sessionId, prNumber } },
-        { type: 'session', ref: sessionId }
-      ).catch(() => {});
+      if (promote) {
+        // Explicit submissions still announce the vote exactly as before.
+        const label = pr.title ? `PR #${prNumber} — ${pr.title}` : `PR #${prNumber}`;
+        await sendSystemMessage(pool, app.id,
+          `${req.user.username} imported ${label} for voting`,
+          'vote',
+          { vote: { sessionId, prNumber } }
+        ).catch(() => {});
+        await sendSystemMessage(pool, app.id,
+          `${req.user.username} imported ${label} for voting`,
+          'vote',
+          { vote: { sessionId, prNumber } },
+          { type: 'session', ref: sessionId }
+        ).catch(() => {});
+      }
 
       const { pushSessionUpdate } = require('../services/ws');
-      pushSessionUpdate({ action: 'promoted', sessionId, appSlug: app.slug });
-      try {
-        events.record(pool, {
-          type: events.EVENT_TYPES.PR_PROMOTED,
-          userId: req.user.id, appId: app.id, sessionId,
-          metadata: { prNumber, source: 'imported' },
-        });
-      } catch { /* events are best-effort */ }
+      pushSessionUpdate({ action: promote ? 'promoted' : 'imported', sessionId, appSlug: app.slug });
+      if (promote) {
+        try {
+          events.record(pool, {
+            type: events.EVENT_TYPES.PR_PROMOTED,
+            userId: req.user.id, appId: app.id, sessionId,
+            metadata: { prNumber, source: 'imported' },
+          });
+        } catch { /* events are best-effort */ }
+      }
 
-      log.info('votes', 'PR imported as proposal', { sessionId, prNumber, appId: app.id });
-      res.json({ ok: true, sessionId, prNumber });
+      log.info('votes', 'PR imported', { sessionId, prNumber, appId: app.id, status: initialStatus });
+      res.json({ ok: true, sessionId, prNumber, status: initialStatus });
 
       // Kick the SHA-pinned staging build + checks after responding.
       const appForBuild = { id: app.id, slug: app.slug, name: app.name, repo_url: app.repo_url };
@@ -2145,7 +2611,7 @@ function voteRoutes(config) {
         `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.status,
                 cs.created_at, cs.promoted_at,
                 cs.merge_conflict_state, cs.behind_main,
-                cs.check_state, cs.check_error_detail, cs.check_phase,
+                cs.check_state, cs.check_error_detail, cs.check_phase, cs.check_trigger,
                 cs.requires_explicit_approval,
                 -- #866: so the home strip can derive the same
                 -- building/unavailable preview state the proposal card
@@ -2339,6 +2805,11 @@ function voteRoutes(config) {
            -- dev-side controls for externally-authored proposals.
            cs.source, cs.imported_pr_author, cs.imported_pr_head_sha,
            cs.reviewed_head_sha,
+           -- #967: which external coding agent wrote it, when the proposal
+           -- came in through the hosted MCP connector ('claude-code' |
+           -- 'codex' | 'external'). NULL for everything else. Drives the
+           -- "built with …" chip beside the imported badge.
+           cs.external_agent,
            -- #361: persisted merge-conflict snapshot for the card badge +
            -- detail block (state, conflicting file paths, last-checked).
            cs.merge_conflict_state, cs.behind_main, cs.conflict_files, cs.conflict_checked_at,
@@ -2353,6 +2824,7 @@ function voteRoutes(config) {
            -- 'testing'), so the checks card names the stage instead of
            -- showing one opaque "still running". NULL = legacy wording.
            cs.check_phase,
+           cs.check_trigger,
            -- Platform-variables pre-merge check (display mirror; the merge
            -- gate re-evaluates live).
            cs.platform_env_state, cs.platform_env_detail,
@@ -2475,7 +2947,8 @@ function voteRoutes(config) {
       // proposals for layout verification. The id check keeps the
       // append idempotent should a mock id ever materialize in the
       // result. See stagingMockProposals above.
-      if (IS_STAGING && req.query.demo === '1') {
+      const demoMode = IS_STAGING && req.query.demo === '1';
+      if (demoMode) {
         const have = new Set(rows.map((r) => r.id));
         rows.push(...stagingMockProposals(req.user?.username).filter((m) => !have.has(m.id)));
       }
@@ -2548,7 +3021,21 @@ function voteRoutes(config) {
         // needs an admin yes)" hint on the Open PRs / Rename proposals
         // sections without a second round-trip. See loadVotePanel in
         // public/js/app-view.js.
-        locked: !!appRows[0].locked,
+        //
+        // FORCED OPEN IN DEMO MODE, staging only. A locked app legitimately
+        // suppresses every DERIVED vote state on the client — a
+        // threshold-met proposal there is waiting on an admin's Yes, not
+        // being applied, so _derivedGovApplying / _govMergeDue in
+        // app-view.js return nothing rather than promise a merge that isn't
+        // happening. The mock rows exist precisely to show those states,
+        // and they carry precomputed gate fields for the same reason (see
+        // stagingMockProposals / stagingMockGovernance): a prod-cloned
+        // staging DB brings the real app row with it, and the platform's own
+        // app row is locked, so ?demo=1 rendered every mock as a plain
+        // waiting card and the states were unreviewable. Only this
+        // fixture-preview mode lies; the ordinary staging board still
+        // reports the clone's real lock state, hint and notice included.
+        locked: !!appRows[0].locked && !demoMode,
         // #646: the app's configured approval settings, for the vote
         // panel context (_proposalsCtx in public/js/app-view.js).
         approverPolicy: gov.approverPolicy,
@@ -3140,11 +3627,12 @@ async function finalizeMerge({ config, pool, session, mergeCommitSha, required, 
       let sha = null;
       // SELF-HOSTING.md sub-step 2g (Guard B): for the self-app,
       // there's no platform-managed prod container to rebuild — the
-      // GitHub Actions deploy workflow rolls the harness when the merge
-      // lands on main. Skip rebuildProduction entirely, but keep the
-      // app_version_changed broadcast firing so Phase 3's banner has its
-      // hook. main_sha is refreshed by seedSelfApp() on the next boot,
-      // which clients pick up via /api/version.
+      // host-side deployer (nudged below) rolls the harness through a
+      // blue-green rollout when the merge lands on main. Skip
+      // rebuildProduction entirely, but keep the app_version_changed
+      // broadcast firing so the app's own commit pills refresh.
+      // main_sha is refreshed by seedSelfApp() on the next boot, which
+      // clients pick up via /api/version.
       if (!app.self_hosted) {
         dstep({ phase: 'prod_rebuild', message: 'Production rebuild started.' });
         const result = await staging.rebuildProduction(config, app);
@@ -3160,16 +3648,25 @@ async function finalizeMerge({ config, pool, session, mergeCommitSha, required, 
           [result.containerId, sha || null, session.pr_number || null, app.id]
         );
       } else {
-        log.info('votes', 'Self-app PR merged; GitHub Actions auto-deploy will roll', {
+        log.info('votes', 'Self-app PR merged; host deployer will roll the harness', {
           appId: app.id, prNumber: session.pr_number,
         });
+        // Skip the deployer's ~2-min baseline poll: tell it main just
+        // moved so it fetches within seconds. Best-effort by design —
+        // if the nudge mount is missing (local dev, pre-deployer host)
+        // the baseline poll still delivers the deploy.
+        try {
+          const { nudgeHostDeployer } = require('../services/deploy-nudge');
+          nudgeHostDeployer({ sha: mergeCommitSha, prNumber: session.pr_number });
+        } catch (_) { /* never fail a merge over a hint */ }
       }
       // Let every tab watching this app refresh its commit pill without
       // polling. The existing vote_update event already fires on merge
       // but is scoped to vote panel refreshes; a dedicated event keeps
       // the concerns separated and avoids over-broadcasting. Fires for
-      // self-hosted too (sha=null) so the future banner can detect
-      // "platform updating" without a sha to anchor to.
+      // self-hosted too (sha=null): the platform's own row refreshes
+      // from /api/version, which has no new SHA to report until the
+      // blue-green rollout cuts over.
       try {
         const { broadcastGlobalScoped } = require('../services/ws');
         broadcastGlobalScoped({
@@ -3443,7 +3940,11 @@ async function checkAndMerge(config, pool, session, options = {}) {
       error: revision.reason,
     };
   }
-  if (revision.updated) {
+  // #955: a revision the PLATFORM advanced (its own sync/conflict-resolution
+  // commit, sitting on the reviewed head) kept its approvals, so there is no
+  // review to return to — carry on and let the real gates decide. The pin now
+  // matches the live head, which is exactly what the merge needs.
+  if (revision.updated && !revision.votesKept) {
     // No approval predating the first immutable stamp may merge. A force
     // request also returns to review here; a second explicit request can merge
     // the now-pinned revision if that is still intended.
@@ -3678,15 +4179,13 @@ async function checkAndMerge(config, pool, session, options = {}) {
          FROM chat_sessions WHERE id = $1`,
       [session.id]
     );
-    const nativeReviewedHead = session.source === 'imported'
-      ? null
-      : (session.reviewed_head_sha || null);
+    const reviewedHead = reviewedHeadForSession(session);
     const returnedChecksSha = checkRows[0]?.checks_commit_sha;
-    const checksRevisionMismatch = !!nativeReviewedHead
+    const checksRevisionMismatch = !!reviewedHead
       // `undefined` exists only in narrow unit-test row adapters that predate
       // the selected column; PostgreSQL returns null for a real unset value.
       && returnedChecksSha !== undefined
-      && returnedChecksSha !== nativeReviewedHead;
+      && !sameSha(returnedChecksSha, reviewedHead);
     // A green verdict for an older commit is not a green verdict for the
     // reviewed code. Treat it as pending and rebuild exactly the pinned SHA.
     const checkState = checksRevisionMismatch
@@ -3707,9 +4206,15 @@ async function checkAndMerge(config, pool, session, options = {}) {
       const stalePending = checkState === null
         || (checkState === 'pending' && (Date.now() - checkedAt) > CHECKS_STALE_MS);
       if (checksRevisionMismatch) {
-        await kickNativeRevisionChecks({
-          config, pool, session, headSha: nativeReviewedHead,
-        });
+        if (session.source === 'imported') {
+          await kickImportedRevisionChecks({
+            config, pool, session, headSha: reviewedHead,
+          });
+        } else {
+          await kickNativeRevisionChecks({
+            config, pool, session, headSha: reviewedHead,
+          });
+        }
       } else if (stalePending) {
         const stagingRecovery = require('../services/staging-recovery');
         stagingRecovery.recheckSessionChecks({
@@ -3853,14 +4358,14 @@ async function checkAndMerge(config, pool, session, options = {}) {
   // in flight"; the final `merged:true` broadcast fires below after the
   // GitHub merge + prod rebuild + staging teardown finish.
   //
-  // SELF-HOSTING.md Phase 3: `selfHosted` rides along so clients
-  // can latch into the "platform updating…" banner state at the moment
-  // the merge starts. We can't rely on the post-merge
-  // `app_version_changed` event for self-hosted apps because the GHA
-  // rolling restart that follows drops the WebSocket — clients persist
-  // the banner in sessionStorage on this event and dismiss it once
-  // /api/version reports a different SHA. See public/js/app.js
-  // (handleVoteUpdate / beginPlatformUpdating).
+  // `selfHosted` rides along as a cheap, honest fact about the merge:
+  // whether this proposal deploys the platform itself. It used to arm
+  // the platform-wide "Platform updating…" banner, which was removed in
+  // #1015 — blue-green deploys (#1008) keep the live color serving
+  // through a platform redeploy, so there is no downtime to announce
+  // and no reason for a client to pause writes. No client branches on
+  // the flag today; it stays on the payload for admin/debug parity and
+  // any future surface that wants to distinguish a platform merge.
   const { pushVoteUpdate } = require('../services/ws');
   pushVoteUpdate({
     sessionId: session.id,
@@ -3992,24 +4497,46 @@ async function checkAndMerge(config, pool, session, options = {}) {
                 selfHosted: !!session.app_self_hosted,
               });
             } catch (_) { /* ws failures non-fatal */ }
+            // #955: the head may have moved because the PLATFORM synced this
+            // branch with main. Those approvals survived the refresh, so this
+            // is a re-pin and an immediate retry — not a return to review.
+            const votesKept = !isImported && !!nativeRefresh?.votesKept;
             const movedLabel = session.pr_title
               ? `PR #${session.pr_number} — ${session.pr_title}`
               : `PR #${session.pr_number}`;
             const movedMessage = isImported
               ? `${movedLabel} wasn't merged — the PR was updated on GitHub since the vote, so GitHub declined to merge the older commit. It'll be re-checked against the new commit and can merge again once it passes.`
-              : `${movedLabel} wasn't merged — its GitHub head changed after review. Earlier-revision votes were cleared and the new commit is being checked; please re-review it.`;
+              : votesKept
+                ? `${movedLabel} wasn't merged on this attempt — it had just been synced with main, so the merge is now pinned to commit ${String(nativeRefresh.headSha).slice(0, 8)}. Existing votes were kept and the merge retries automatically.`
+                : `${movedLabel} wasn't merged — its GitHub head changed after review. Earlier-revision votes were cleared and the new commit is being checked; please re-review it.`;
             await sendSystemMessage(pool, session.app_id,
               movedMessage,
               'system', null, { type: 'session', ref: session.id }
             ).catch(() => {});
             dstep({ phase: 'github_merge', level: 'warn', message: isImported
               ? 'GitHub refused the merge: the PR head moved since the reviewed commit. Released the merge claim; the sync poller will pick up the new head.'
-              : 'GitHub refused the merge: the native PR head moved since review. Released the merge claim and reset the proposal to the new revision.', detail: { headMoved: true, pinnedSha, refreshedHeadSha: nativeRefresh?.headSha || null } });
+              : votesKept
+                ? 'GitHub refused the merge: the pinned commit was superseded by the platform\'s own sync. Re-pinned to it with votes intact and re-queued the merge.'
+                : 'GitHub refused the merge: the native PR head moved since review. Released the merge claim and reset the proposal to the new revision.', detail: { headMoved: true, votesKept, pinnedSha, refreshedHeadSha: nativeRefresh?.headSha || null } });
             dend('deferred', isImported
               ? 'Head moved since the reviewed commit — deferred to the sync poller.'
-              : 'Head moved since review — returned to review on the new commit.');
+              : votesKept
+                ? 'Superseded by the platform\'s own sync commit — re-queued with votes intact.'
+                : 'Head moved since review — returned to review on the new commit.');
+            if (votesKept) {
+              // Re-drive the app drain so the merge is re-attempted against the
+              // corrected pin instead of waiting for the hourly sweeper. It
+              // cannot loop: the pin now equals the live head, so the retry
+              // either merges or blocks on a real gate (usually checks).
+              checkAndResolveConflicts(config, { app_id: session.app_id }).catch((e) => {
+                log.warn('votes', 'Post-sync merge re-kick failed', {
+                  sessionId: session.id, err: e.message,
+                });
+              });
+            }
             return {
               merged: false, headMoved: true, needed: required, yesCount,
+              ...(votesKept ? { votesKept: true } : {}),
               ...(nativeRefresh?.headSha ? { reviewedHeadSha: nativeRefresh.headSha } : {}),
             };
           }
@@ -4184,21 +4711,20 @@ async function checkAndMerge(config, pool, session, options = {}) {
       }
     }
 
-    // Un-latch clients. The `merging:true` broadcast above armed the
-    // Phase 3 "Platform updating…" banner on every tab for self-hosted
-    // apps — and that banner only dismisses on a /api/version SHA flip,
-    // which will never come if the GitHub merge itself failed (no
-    // deploy happens). Without this counter-event, a failed self-app
-    // merge leaves the whole platform read-only for everyone until the
-    // 5-minute stuck timer. mergeFailed:false-positives are harmless:
-    // the client just clears a banner that wasn't armed.
+    // Terminal counter-event to the `merging:true` broadcast above: this
+    // merge attempt is over and nothing merged. Every client surface
+    // that advanced to "Merging…" needs it to fall back — the vote
+    // panel, the session header pill, the proposal's own state badge —
+    // so the shape (`merging:false` + `merged:false`) is the contract,
+    // not an optimization. (It also un-latched the platform-wide
+    // "Platform updating…" banner until #1015 removed it.)
     //
     // #239: `resolving` rides along when the failure is a conflict AND
-    // the auto-resolver is about to be fired below — clients transition
-    // the banner in place (updating → resolving) instead of silently
-    // dismissing it while the resolver spends 1–2 minutes fixing the
-    // branch. The resolver's own start broadcast can lag by a few
-    // seconds (pollMergeable runs first), so this flag closes the gap.
+    // the auto-resolver is about to be fired below, so the proposal's
+    // badge reads "Resolving conflicts…" rather than a bare failure
+    // while the resolver spends 1–2 minutes fixing the branch. The
+    // resolver's own start broadcast can lag by a few seconds
+    // (pollMergeable runs first), so this flag closes the gap.
     try {
       const { pushVoteUpdate } = require('../services/ws');
       pushVoteUpdate({
@@ -4617,7 +5143,16 @@ module.exports = {
   // driving the full HTTP router.
   reconcileNativeReviewedHead,
   reconcilePromotedSweepHead,
+  classifyNativeHeadMove,
   reviewedHeadForSession,
   voteMatchesReviewedRevision,
+  // Connector-submitted testing metadata on an import, unit-tested directly.
+  parseImportTesting,
   recordVote,
+  // (#1115) The applied-close demo rows live here because they belong to the
+  // Completed stream, but GET /api/apps/:slug/governance/:id in issues.js has
+  // to resolve them too for a ?demo=1 deep link. Exported for that handler's
+  // lazy require (issues.js requires this from inside the function, matching
+  // the direction this module already uses for './issues').
+  stagingMockCompletedCloseIssues,
 };

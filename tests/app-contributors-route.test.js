@@ -1,5 +1,5 @@
 // #919: GET /api/apps/:slug/contributors — the ranked list behind the app
-// details page's Contributors section (public/js/browse.js).
+// details page's Contributors section (frontend/src/features/apps/browse.js).
 //
 // What matters here is the GATING and the SHAPE, not the SQL (the ranking
 // and the counts live in Postgres — see src/services/contributors.js):

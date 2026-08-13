@@ -1,6 +1,7 @@
 const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const notifications = require('../services/notifications');
+const mobilePushPreferences = require('../services/mobile-push-preferences');
 const log = require('../services/logger');
 
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
@@ -27,15 +28,21 @@ function stagingMockNotifications() {
     threadType: null,
     threadRef: null,
     sourceUsername: null,
+    sessionTitle: null,
     branchName: null,
     detail: null,
   };
   return [
+    // #971: the issue's exact case — a session that finished BEFORE it was
+    // promoted, so it has a session title but no PR title. The row must show
+    // the title, never the `dev/…` branch name beside it.
     {
       ...base,
       id: 990201, kind: 'session_done',
       createdAt: new Date(now - 4 * 60 * 1000).toISOString(),
-      sessionId: 990101, prTitle: '[Mock] Finished dev session',
+      sessionId: 990101,
+      sessionTitle: '[Mock] Session titled but not yet proposed',
+      prTitle: null, branchName: 'dev/mockuser-1700000000000',
       prNumber: null, headlessIssueNumber: null,
     },
     {
@@ -49,15 +56,31 @@ function stagingMockNotifications() {
       ...base,
       id: 990203, kind: 'stale_pr',
       createdAt: new Date(now - 40 * 60 * 1000).toISOString(),
-      sessionId: 990103, prTitle: '[Mock] Stale proposal going quiet',
+      sessionId: 990103,
+      sessionTitle: '[Mock] Stale proposal going quiet',
+      prTitle: '[Mock] Stale proposal going quiet',
       prNumber: 9901, headlessIssueNumber: null,
     },
     {
       ...base,
       id: 990204, kind: 'check_failed',
       createdAt: new Date(now - 55 * 60 * 1000).toISOString(),
-      sessionId: 990104, prTitle: "[Mock] Proposal whose preview won't boot",
+      sessionId: 990104,
+      sessionTitle: "[Mock] Proposal whose preview won't boot",
+      prTitle: "[Mock] Proposal whose preview won't boot",
       prNumber: 9902, headlessIssueNumber: null,
+    },
+    // #971: the untitled tail of the ladder — a session that finished before
+    // its title was generated still falls back to the branch name, so the row
+    // can never render blank.
+    {
+      ...base,
+      id: 990205, kind: 'session_done',
+      createdAt: new Date(now - 70 * 60 * 1000).toISOString(),
+      sessionId: 990105,
+      sessionTitle: null, prTitle: null,
+      branchName: 'dev/mockuser-1700000000001',
+      prNumber: null, headlessIssueNumber: null,
     },
   ];
 }
@@ -67,6 +90,43 @@ function stagingMockNotifications() {
 function notificationsRoutes(config) {
   const router = Router();
   const pool = getPool(config);
+
+  // Account-level mobile-push policy. This is intentionally a browser-
+  // session surface rather than a phone-registration surface: any signed-in
+  // Social browser may configure the account, while each phone keeps its
+  // independent Activity notifications master switch.
+  router.get('/api/me/mobile-push-preferences', async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+    try {
+      const preferences = await mobilePushPreferences.readPreferences(pool, req.user.id);
+      return res.json({ preferences });
+    } catch (err) {
+      log.error('mobile-push-preferences', 'read failed', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.patch('/api/me/mobile-push-preferences', async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+    const { details, values } = mobilePushPreferences.validatePreferencePatch(req.body);
+    if (Object.keys(details).length) {
+      return res.status(422).json({
+        error: 'The given data was invalid.',
+        details,
+      });
+    }
+    try {
+      const preferences = await mobilePushPreferences.writePreferences(
+        pool, req.user.id, values
+      );
+      return res.json({ preferences });
+    } catch (err) {
+      log.error('mobile-push-preferences', 'update failed', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
 
   // Full dropdown payload: recent notifications (read and unread) + an
   // unread count so the badge and list stay in sync on initial page load.

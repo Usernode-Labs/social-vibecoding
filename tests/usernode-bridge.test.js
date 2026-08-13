@@ -62,6 +62,32 @@ test('hosted bridge relay refuses privileged calls from iframes', () => {
   );
 });
 
+test('hosted bridge exposes the realm-bound readiness handshake', () => {
+  const bridge = readBridge(versionedBridgePath);
+
+  assert.match(bridge, /window\.usernode\.markPrivilegedBridgeReady/);
+  assert.match(bridge, /markPrivilegedBridgeReady: true/);
+});
+
+// Per-appearance widget icons (issue #948) — additive within v1, gated
+// on the shell's `homeScreenShortcutDarkIcon` capability. The wrapper
+// builds an explicit arg object, so a field it doesn't name is dropped
+// on the floor: forwarding icon_url_dark has to be deliberate, and the
+// other four args must survive alongside it.
+test('hosted bridge forwards the paired homescreen-shortcut icons', () => {
+  const bridge = readBridge(versionedBridgePath);
+  const call = bridge.match(
+    /callNative\("addHomeScreenShortcut", \{[\s\S]*?\n    \}\);/
+  );
+  assert.ok(call, 'addHomeScreenShortcut forwards an arg object');
+  assert.match(call[0], /name: opts\.name/);
+  assert.match(call[0], /url: opts\.url/);
+  assert.match(call[0], /icon_url: opts\.icon_url \|\| null/);
+  assert.match(call[0], /icon_url_dark: opts\.icon_url_dark \|\| null/,
+    'the dark companion asset reaches the native side');
+  assert.match(call[0], /silent: opts\.silent === true/);
+});
+
 // User locale (issue #757) — additive within v1. The shell
 // (public/js/app-view.js) answers the `__usernode_locale` message
 // family; these assertions pin the message shape both sides agree on,

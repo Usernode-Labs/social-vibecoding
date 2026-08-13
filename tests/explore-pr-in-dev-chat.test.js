@@ -44,12 +44,18 @@ function makeInput() {
   };
 }
 
-function makeHarness({
-  input = null,
-  coarsePointer = false,
-  drafts = {},
-  createReturns = { id: 77 },
-} = {}) {
+function makeHarness(options = {}) {
+  const {
+    input = null,
+    coarsePointer = false,
+    drafts = {},
+  } = options;
+  // `undefined` is an intentional createSession result: it means the user
+  // cancelled the coding-agent chooser. Do not let a destructuring default
+  // turn that case into a successful fake creation.
+  const createReturns = Object.prototype.hasOwnProperty.call(options, 'createReturns')
+    ? options.createReturns
+    : { id: 77 };
   const calls = {
     createSession: [],
     setDraft: [],
@@ -287,6 +293,21 @@ test('cap fallback: refused creation lands the message in the newest chat + a to
   assert.equal(calls.sendMessage.length, 0);
 });
 
+test('cancelled creation does not redirect the draft into an existing chat', async () => {
+  const { AppView, calls } = makeHarness({ createReturns: undefined });
+  AppView._proposals = [PR];
+  AppView._mySessions = [
+    { ...CLEAN, id: 9, pr_number: 41, session_title: 'Live work' },
+  ];
+
+  await AppView.exploreProposalInDevChat(7);
+
+  assert.deepEqual(calls.createSession, [['test-app']]);
+  assert.equal(calls.setDraft.length, 0, 'cancel means no session receives the draft');
+  assert.equal(calls.switchTab.length, 0, 'cancel leaves the user where they were');
+  assert.equal(calls.toast.length, 0, 'cancel needs no failure or fallback toast');
+});
+
 test('refused creation with no existing chat at all: no draft, no navigation, no throw', async () => {
   const { AppView, calls } = makeHarness({ createReturns: null });
   AppView._proposals = [PR];
@@ -424,4 +445,188 @@ test('read-only viewers get no pill — the dev chat is collab-gated (#621)', ()
   // AppView.readOnly is a getter over appData.can_collaborate (#621).
   AppView.appData = { slug: 'test-app', can_collaborate: false };
   assert.equal(AppView._exploreChatBtnHtml(PR), '');
+});
+
+// ── _showExplorePill — the one shared gate (#1045) ─────────────────────────
+//
+// Three render sites (the feed/board card, the Completed card, the topic
+// head) used to re-derive `!mine` independently. They now all call this, so
+// the truth table is pinned in one place. ME is the viewer (App.user.id is
+// 42 in the harness); 999 is somebody else.
+const ME_ID = 42;
+const OTHER_ID = 999;
+
+test('_showExplorePill: foreign proposals get the pill, native or imported', () => {
+  const { AppView } = makeHarness();
+  assert.equal(AppView._showExplorePill({ id: 1, user_id: OTHER_ID }), true,
+    "someone else's native proposal — unchanged from #313");
+  assert.equal(
+    AppView._showExplorePill({ id: 1, user_id: OTHER_ID, source: 'imported' }), true,
+    "someone else's imported proposal"
+  );
+});
+
+test('_showExplorePill: your own NATIVE proposal still gets none (#313/#348)', () => {
+  const { AppView } = makeHarness();
+  assert.equal(AppView._showExplorePill({ id: 1, user_id: ME_ID }), false,
+    'Open session is the better door to the same dev chat');
+  assert.equal(
+    AppView._showExplorePill({ id: 1, user_id: ME_ID, source: 'maintenance' }), false,
+    'a native provenance marker is not an import'
+  );
+});
+
+test('_showExplorePill: your own IMPORTED proposal DOES get one (#1045)', () => {
+  const { AppView } = makeHarness();
+  // The reported hole: sessionBtn is (mine && !imported) and the pill used
+  // to be (!mine), so an owner of an imported PR got neither.
+  assert.equal(
+    AppView._showExplorePill({ id: 1, user_id: ME_ID, source: 'imported' }), true,
+    'no dev session exists for it, so the pill is the only AI affordance'
+  );
+  assert.equal(
+    AppView._showExplorePill({
+      id: 1, user_id: ME_ID, source: 'imported', external_agent: 'claude-code',
+    }),
+    true,
+    'a connector-authored proposal is an imported row too'
+  );
+  assert.equal(
+    AppView._showExplorePill({ id: 1, user_id: ME_ID, source: 'imported', status: 'merged' }),
+    true,
+    'merged imported proposals stay explorable on the Completed list'
+  );
+});
+
+test('_showExplorePill: governance and close-issue rows never get one (#827)', () => {
+  const { AppView } = makeHarness();
+  // A dev chat cannot act on a rename / secret change / close-issue vote.
+  assert.equal(
+    AppView._showExplorePill({ id: 5, kind: 'secret_change', created_by: OTHER_ID }), false,
+    'governance rows carry `kind`; PR-proposal rows do not'
+  );
+  assert.equal(
+    AppView._showExplorePill({ id: 5, row_type: 'close_issue', kind: 'close_issue' }), false,
+    'an applied close-issue row in the Completed stream'
+  );
+  assert.equal(AppView._showExplorePill(null), false, 'a missing row is a quiet false');
+});
+
+test('_showExplorePill does NOT own the read-only rule — _exploreChatBtnHtml does', () => {
+  const { AppView } = makeHarness();
+  AppView.appData = { slug: 'test-app', can_collaborate: false };
+  // Deliberate: the collab gate stays in exactly one place (#621), so the
+  // predicate answers "does this ROW deserve a pill" and nothing else.
+  assert.equal(AppView._showExplorePill({ id: 1, user_id: OTHER_ID }), true);
+  assert.equal(AppView._exploreChatBtnHtml({ id: 1, user_id: OTHER_ID }), '',
+    'the rendered pill is still empty for a read-only viewer');
+});
+
+// ── The rule as the cards actually render it (#1045) ───────────────────────
+
+// _renderProposalCard / _renderMergedCard need the two render caches the
+// dev view normally fills.
+function cardHarness() {
+  const { AppView } = makeHarness();
+  AppView._proposalsCtx = { majority: 1 };
+  AppView._mergedCtx = { majority: 1 };
+  AppView._visualsOpen = new Set();
+  return AppView;
+}
+
+// The card-as-pointer revision demoted most card actions into the ⋯ menu,
+// whose descriptors live in AppView._cardMenus keyed by the trigger's
+// data-card-menu — so "does this card offer X" is a registry question, not
+// a markup one, for everything except the face pills.
+function menuLabels(AppView, html) {
+  const m = html.match(/data-card-menu="([^"]+)"/);
+  if (!m) return [];
+  return (AppView._cardMenus[m[1]] || []).map((it) => it.label);
+}
+function menuHas(AppView, html, re) {
+  return menuLabels(AppView, html).some((l) => re.test(l));
+}
+
+const MY_IMPORT = {
+  id: 7, pr_number: 9300, pr_url: 'https://github.com/acme/app/pull/9300',
+  pr_title: 'Adjust kanban breakpoint to 640px', username: 'me', user_id: ME_ID,
+  status: 'promoted', source: 'imported', imported_pr_author: 'octo-contributor',
+  created_at: '2026-06-01T00:00:00Z',
+};
+
+test('proposal card: my own IMPORTED proposal renders the pill and no Open session', () => {
+  const AppView = cardHarness();
+  const html = AppView._renderProposalCard(MY_IMPORT);
+  assert.match(html, /gc-explore-chat-btn/, 'the pill is the owner\'s only AI affordance here');
+  assert.match(html, /data-proposal-id="7"/, 'wired to the proposal id');
+  assert.ok(!menuHas(AppView, html, /Open session/),
+    'an imported PR has no dev session to open (#687) — that rule is untouched');
+  assert.ok(!menuHas(AppView, html, /Explore in dev chat/),
+    'on the face, so not also a ⋯ row');
+  assert.ok(menuHas(AppView, html, /^Withdraw$/), 'Withdraw is untouched too — now a ⋯ row');
+});
+
+test('proposal card: my own NATIVE proposal is unchanged — Open session, no pill', () => {
+  const AppView = cardHarness();
+  const html = AppView._renderProposalCard({ ...MY_IMPORT, source: undefined, imported_pr_author: undefined });
+  assert.doesNotMatch(html, /gc-explore-chat-btn/, 'no pill on the face');
+  assert.ok(!menuHas(AppView, html, /Explore in dev chat/), 'and no ⋯ row either');
+  assert.ok(menuHas(AppView, html, /Open session/), 'Open session is the ⋯ door to the same chat');
+});
+
+test('merged card: my own IMPORTED completed proposal renders the pill', () => {
+  const AppView = cardHarness();
+  const html = AppView._renderMergedCard({ ...MY_IMPORT, status: 'merged' }, 1);
+  // On a merged card the action band belongs to kudos, so Explore is a ⋯ row.
+  assert.ok(menuHas(AppView, html, /Explore in dev chat/),
+    'Explore offered from ⋯ on my own imported completed proposal');
+});
+
+test('merged card: my own NATIVE completed proposal still renders no pill', () => {
+  const AppView = cardHarness();
+  const html = AppView._renderMergedCard(
+    { ...MY_IMPORT, source: undefined, imported_pr_author: undefined, status: 'merged' }, 1
+  );
+  assert.doesNotMatch(html, /gc-explore-chat-btn/);
+  assert.ok(!menuHas(AppView, html, /Explore in dev chat/), 'no ⋯ row on my own native merged PR');
+});
+
+// ── The availability probe forwards ?demo=1 ─────────────────────────────────
+//
+// Staging previews run without the platform LLM key (it's on the
+// platform-secrets denylist), so the real branch of GET /api/budget answers
+// aiEnabled:false there and _applyExploreChatAvailability rewrites every
+// Explore button's title to "AI chat isn't configured…" one fetch round-trip
+// after the board paints. The card-menu dapp.json check matches on
+// title^="Open a dev chat…", so before demo forwarding it was a race against
+// that rewrite (~50ms window). The demo branch answers aiEnabled:true, which
+// keeps demo-preview chrome in its configured state — same idiom as every
+// other _demoQS() forward on this view.
+
+function probeHarness(search, budget) {
+  const h = makeHarness();
+  // _demoQS reads location.search through URLSearchParams — a Node global,
+  // not a JS intrinsic, so the vm context doesn't have it by default.
+  h.sandbox.URLSearchParams = URLSearchParams;
+  h.sandbox.location = { search, hash: '' };
+  h.calls.fetched = [];
+  h.sandbox.fetch = async (url) => {
+    h.calls.fetched.push(String(url));
+    return { ok: true, json: async () => budget };
+  };
+  return h;
+}
+
+test('availability probe: ?demo=1 pages hit the demo branch of /api/budget', async () => {
+  const { AppView, calls } = probeHarness('?demo=1', { aiEnabled: true, demo: true });
+  assert.equal(await AppView._ensureAiAvailability(), true);
+  assert.deepEqual(calls.fetched, ['/api/budget?demo=1'],
+    'the probe forwards ?demo=1 like every other demo-aware fetch');
+});
+
+test('availability probe: production pages fetch /api/budget unadorned', async () => {
+  const { AppView, calls } = probeHarness('', { aiEnabled: false });
+  assert.equal(await AppView._ensureAiAvailability(), false,
+    'a real aiEnabled:false still disables the pill outside demo mode');
+  assert.deepEqual(calls.fetched, ['/api/budget']);
 });

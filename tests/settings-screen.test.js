@@ -36,8 +36,8 @@ const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
 
 const html = read('public/index.html');
 const appJs = read('public/js/app.js');
-const settingsJs = read('public/js/settings.js');
-const devChatJs = read('public/js/dev-chat.js');
+const settingsJs = read('frontend/src/features/settings/settings.js');
+const devChatJs = read('frontend/src/features/dev-chat/dev-chat.js');
 const platformUiJs = read('public/js/platform-ui.js');
 const cliAuthJs = read('src/routes/cli-auth.js');
 const manifest = JSON.parse(read('dapp.json'));
@@ -62,11 +62,16 @@ function registrySections() {
 // ── The screen host ────────────────────────────────────────────────────
 
 test('the settings screen ships hidden with its four render slots', () => {
-  assert.match(
-    html,
-    /<main id="settings-screen" class="hidden flex-1 overflow-y-auto"/,
-    'screen container ships hidden like its sibling screens',
-  );
+  // Matched per-class rather than as one closed string so an added
+  // utility (e.g. `platform-safe-scroll`, which reserves the
+  // home-indicator strip for the last row) doesn't fail this on a
+  // substring.
+  const openTag = /<main id="settings-screen"[^>]*>/.exec(html);
+  assert.ok(openTag, '#settings-screen is missing from the shell');
+  for (const cls of ['hidden', 'flex-1', 'overflow-y-auto']) {
+    assert.match(openTag[0], new RegExp(`(?:class="|\\s)${cls}(?:\\s|")`),
+      `screen container must keep ${cls} like its sibling screens`);
+  }
   for (const id of [
     'settings-root', 'settings-sidebar-col', 'settings-content-col',
     'settings-nav-desktop', 'settings-mobile-menu-host',
@@ -85,9 +90,18 @@ test('the modal is gone — markup, close button and modal registration', () => 
   assert.doesNotMatch(html, /id="settings-close"/,
     'the modal close button is deleted');
   assert.doesNotMatch(platformUiJs, /'settings-modal'/,
-    "'settings-modal' is out of platform-ui's STATIC_MODAL_IDS");
-  assert.match(platformUiJs, /'app-secrets-modal'/,
-    'the other static modals still register');
+    'settings is not a modal any more — nothing in platform-ui.js names it');
+  // It used to be a member of platform-ui's STATIC_MODAL_IDS, and this test
+  // checked that the list still held the other nine. #1078 chunk I moved that
+  // whole seam into frontend/src/lib/static-modal.ts, driven by the dialog
+  // islands' own state, so the equivalent check is that settings is not one of
+  // them — the dialogs directory renders no settings root.
+  const dialogsDir = path.join(root, 'frontend', 'src', 'features', 'dialogs');
+  for (const file of fs.readdirSync(dialogsDir)) {
+    if (!file.endsWith('.tsx')) continue;
+    assert.doesNotMatch(fs.readFileSync(path.join(dialogsDir, file), 'utf8'), /id="settings-modal"/,
+      `${file} should not render a settings modal`);
+  }
   assert.doesNotMatch(settingsJs, /AppView\.revealModal\(/,
     'settings.js no longer reveals itself as a modal');
   assert.doesNotMatch(settingsJs, /modalDismissGuarded\(/,
@@ -225,10 +239,24 @@ test('navigateToSettings mounts the screen and routes when already mounted', () 
   const head = fn.slice(0, 2600);
   assert.match(head, /if \(App\._inSettings && window\.Settings\?\.isOpen\?\.\(\)\) \{\s*Settings\.route\(section\);/,
     'an in-screen navigation is handed to the module, not re-mounted');
-  assert.match(head, /getElementById\('settings-screen'\)/, 'reveals #settings-screen');
+  assert.match(head, /App\._showOnlyScreen\('settings-screen'\)/,
+    'reveals #settings-screen (and hides every sibling root) through the shared primitive');
   assert.match(head, /App\.setHeaderTitle\('Settings'\)/, 'sets the header title');
   assert.match(head, /App\._inSettings = true;/, 'records that we are on the screen');
-  assert.match(head, /Settings\.open\(section\)/, 'hands the section to the module');
+  assert.match(head, /Settings\.open\(section, \{ chrome: false \}\)/,
+    'hands the section to the module, holding its header write for the transition');
+  assert.match(head, /Settings\.syncChrome\(\)/,
+    'and applies that header write inside the transition callback');
+  // #979: the reveal, the header title and the module's own chrome sync
+  // all belong INSIDE the transition callback — a View Transition captures
+  // the outgoing page a frame later, so anything mutated before the call
+  // shows up in the snapshot of the page the user is leaving.
+  const beforeTransition = head.slice(0, head.indexOf('PlatformUI.transition('));
+  assert.ok(beforeTransition.length > 0, 'navigateToSettings runs a transition');
+  for (const forbidden of ['setHeaderTitle', 'setBackIcon', 'classList', 'syncChrome']) {
+    assert.ok(!beforeTransition.includes(forbidden),
+      `no ${forbidden} before the transition — it would land in the outgoing snapshot`);
+  }
   // Every sibling screen is torn down on entry. (_exitChallenges and
   // _exitTopochainSeasons dropped off this list in the leaderboard merge:
   // both screens became tabs of the Leaderboard screen, so _exitLeaderboard
@@ -238,13 +266,19 @@ test('navigateToSettings mounts the screen and routes when already mounted', () 
   }
 });
 
-test('_exitSettings hides the screen, hands the back icon back and closes', () => {
+test('_exitSettings is state-only and closes the module', () => {
   const fn = appJs.slice(appJs.indexOf('  _exitSettings() {'), appJs.indexOf('  _exitSettings() {') + 600);
   assert.match(fn, /App\._inSettings = false;/);
-  assert.match(fn, /getElementById\('settings-screen'\)[\s\S]*classList\.add\('hidden'\)/);
-  assert.match(fn, /App\.setBackIcon\('home'\)/,
-    'the arrow is handed back or every later screen inherits it');
   assert.match(fn, /Settings\.close\(\)/);
+  // #979: hiding the screen here would delete the outgoing page before the
+  // View Transition captured it — the incoming navigation's
+  // _showOnlyScreen does it inside the transition callback instead. Same
+  // for the back chevron the mobile section view borrowed.
+  const body = fn.slice(0, fn.indexOf('\n  },'));
+  assert.ok(!body.includes('classList'),
+    'no classList work — the screen is hidden by the next _showOnlyScreen');
+  assert.ok(!body.includes('setBackIcon'),
+    'no setBackIcon — _showOnlyScreen hands the chevron back');
 });
 
 test('every sibling-exit site tears the settings screen down too', () => {
@@ -287,8 +321,11 @@ test('the drawer row is a real anchor to #settings', () => {
   assert.match(html, /<a id="drawer-row-settings" href="#settings"/,
     'navigation rides the anchor hash, like Challenges / Profile');
   assert.match(html, /id="drawer-byok-dot"/, 'the BYOK indicator dot survives');
-  const init = appJs.slice(appJs.indexOf("getElementById('drawer-row-settings')"));
-  assert.match(init.slice(0, 250), /App\.HeaderMenu\.close\(\)/,
+  // #1079 chunk B: the drawer's row handlers moved into the React bundle with
+  // its markup (frontend/src/features/header/header-menu-controller.js).
+  const headerMenuJs = read('frontend/src/features/header/header-menu-controller.js');
+  const init = headerMenuJs.slice(headerMenuJs.indexOf("getElementById('drawer-row-settings')"));
+  assert.match(init.slice(0, 250), /HeaderMenu\.close\(\)/,
     'the click handler just closes the drawer');
   assert.doesNotMatch(init.slice(0, 250), /Settings\.open\(/,
     'it does NOT call Settings.open — the hash does the navigating');
@@ -316,7 +353,7 @@ test('level state and the viewport listener exist', () => {
     'and whether the current level-2 entry was pushed by a menu tap');
   assert.match(settingsJs, /_ensureMediaListener\(\)\s*\{/,
     'a viewport listener re-resolves the layout on a breakpoint crossing');
-  const openFn = settingsJs.slice(settingsJs.indexOf('    open(section) {'));
+  const openFn = settingsJs.slice(settingsJs.indexOf('    open(section, opts) {'));
   assert.match(openFn.slice(0, 900), /_ensureMediaListener\(\)/,
     'the listener is bound lazily on the first open');
   assert.match(openFn.slice(0, 900), /_pushedFromMenu = false/,
@@ -324,7 +361,7 @@ test('level state and the viewport listener exist', () => {
 });
 
 test('a bare #settings means the MENU on mobile, the default on desktop', () => {
-  const openFn = settingsJs.slice(settingsJs.indexOf('    open(section) {'));
+  const openFn = settingsJs.slice(settingsJs.indexOf('    open(section, opts) {'));
   const head = openFn.slice(0, 1800);
   assert.match(head, /if \(Settings\._isMobile\(\) && !valid\)/,
     'mobile + no section segment lands on level 1');
@@ -373,7 +410,9 @@ test('the sidebar and the mobile menu share one grouping', () => {
 test('_syncChrome drives the header through App, not the DOM', () => {
   const fn = settingsJs.slice(settingsJs.indexOf('    _syncChrome() {'));
   const head = fn.slice(0, 800);
-  assert.match(head, /App\.setBackIcon\(inSection \? 'arrow' : 'home'\)/);
+  // #1036: the second argument is the anchor's href — inside a section
+  // the chevron pops to the settings menu, so that is where it points.
+  assert.match(head, /App\.setBackIcon\(inSection \? 'arrow' : 'home', inSection \? '#settings' : undefined\)/);
   assert.match(head, /App\.setHeaderTitle\(/,
     'setHeaderTitle mirrors document.title for the native AppBar');
   assert.doesNotMatch(head, /getElementById\('header-title'\)/,
@@ -384,8 +423,11 @@ test('_syncChrome drives the header through App, not the DOM', () => {
 
 test('the menu re-resolves when gate state lands after first paint', () => {
   assert.match(settingsJs, /_renderNavIfOpen\(\)\s*\{/, 'the re-resolve helper exists');
+  // Bounded at the method's own closing brace rather than a character count:
+  // the call sits in the last statement of refresh(), so any comment added
+  // above it walked a fixed window off the end and failed for no reason.
   const refresh = settingsJs.slice(settingsJs.indexOf('    async refresh() {'));
-  assert.match(refresh.slice(0, 1400), /_renderNavIfOpen\(\)/,
+  assert.match(refresh.slice(0, refresh.indexOf('\n    },\n')), /_renderNavIfOpen\(\)/,
     'walletLinkEnabled arrives with /api/auth/me — re-render the menu');
   const usernode = settingsJs.slice(settingsJs.indexOf('    async _renderUsernodeSection() {'));
   assert.match(usernode.slice(0, 1200), /_renderNavIfOpen\(\)/,
@@ -409,18 +451,33 @@ test('close() tears down the two lifecycle timers', () => {
 
 // ── Other callers ──────────────────────────────────────────────────────
 
-test('the credits banner deep-links the API-key section', () => {
+test('the credits banner deep-links all three ways to keep building', () => {
+  // The banner used to offer BYOK alone and navigate itself. It now
+  // delegates to CreditOptions, which owns the same three routes the
+  // in-chat card and the Generate-proposal modal render — so the wiring
+  // assertion moved with it.
   const fn = devChatJs.slice(devChatJs.indexOf('  _wireCreditsBanner() {'));
-  assert.match(fn.slice(0, 800), /location\.hash = '#settings\/api-key'/,
-    'a real navigation, so back returns to the chat');
+  // #1049 added a second argument: the two hand-off routes are handled in
+  // place (they start the walkthrough in this chat) rather than navigated.
+  assert.match(fn.slice(0, 800), /CreditOptions\.wire\(banner, \{ onFlow:/,
+    'the shared module wires the banner');
   assert.doesNotMatch(fn.slice(0, 800), /Settings\.open\(/,
     'no direct module call any more');
+
+  const creditOptions = read('public/js/credit-options.js');
+  assert.match(creditOptions, /window\.location\.hash = hash/,
+    'a real navigation, so back returns to the chat');
+  for (const hash of ['#settings/api-key', '#settings/cli', '#settings/connectors']) {
+    assert.ok(creditOptions.includes(`'${hash}'`), `offers ${hash}`);
+  }
 });
 
 test('the "Settings → Change password" prose is a real link', () => {
   assert.match(html, /href="#settings\/password"/,
     'the account-recovery help text links to the Password section');
-  assert.match(read('public/js/admin-console.js'), /href="#settings\/password"/,
+  // The dialog's markup is React-owned chassis since #1082 chunk E; the copy
+  // and the link inside it are unchanged.
+  assert.match(read('frontend/src/features/admin/index.tsx'), /href="#settings\/password"/,
     'so does the temporary-password dialog');
 });
 
@@ -444,8 +501,12 @@ test('the CLI credentials list has a staging ?demo=1 injection', () => {
 
 test('settings.js passes ?demo=1 through to the credentials list', () => {
   assert.match(settingsJs, /_cliTokensDemo\(\)\s*\{/, 'the passthrough helper exists');
+  // Scoped to _loadCliTokens, not the whole module — the point is that the
+  // passthrough is on the request this function builds. The window grew
+  // when the capability gate (_cliAuthAvailable — skip the fetch entirely
+  // where the CLI surface is 404'd) landed above the query construction.
   const load = settingsJs.slice(settingsJs.indexOf('    async _loadCliTokens(reset) {'));
-  assert.match(load.slice(0, 1600), /_cliTokensDemo\(\) \? '&demo=1' : ''/,
+  assert.match(load.slice(0, 2600), /_cliTokensDemo\(\) \? '&demo=1' : ''/,
     'the page-level ?demo=1 reaches the endpoint');
   assert.match(settingsJs, /!token\.demo/, 'Revoke is suppressed on demo rows');
 });
@@ -490,4 +551,570 @@ test('dapp.json covers the settings screen and its deep links', () => {
         `${t.path} needs ?demo=1 — its table is staging:private / not cloned`);
     }
   }
+  // #1102: and one check drives a real history traversal, which is the only
+  // way to produce the duplicate popstate + hashchange pair that used to
+  // repaint inside the transition's uncaptured snapshot window.
+  const back = tests.filter((t) => (t.path || '').includes('shot=settings-back'));
+  assert.equal(back.length, 1,
+    'exactly one declared check drives the ?shot=settings-back traversal');
+  assert.match(back[0].expectSelector || '', /data-settings-route="skipped"/,
+    'it asserts the SECOND dispatch was skipped — the marker is the only way to observe an '
+    + 'ordering that is otherwise visible for one animation frame only');
+  assert.match(back[0].expectSelector || '', /data-settings-section="api-key"/,
+    'and that the traversal landed back on the default section rather than the drilled-in one');
+});
+
+// ── #1102: route() is idempotent, so a duplicate dispatch cannot repaint
+// inside the first dispatch's uncaptured snapshot window ─────────────────
+//
+// A same-document history traversal fires BOTH popstate and hashchange, so
+// App.restoreFromHash() ran twice in one tick and both calls reached
+// Settings.route(). The first started the push/pop transition; the second
+// resolved the identical target, asked for type 'none' — which the kit runs
+// SYNCHRONOUSLY — and re-rendered the level before the browser had captured
+// the outgoing page. The animation then played the incoming level against a
+// copy of itself: two copies on screen.
+
+test('route() returns early when the resolved target is already showing', () => {
+  const at = settingsJs.indexOf('    route(section) {');
+  assert.ok(at > -1, 'settings.js still defines route(section)');
+  const body = settingsJs.slice(at, settingsJs.indexOf('\n    },', at));
+
+  // The target is resolved BEFORE anything mutates.
+  assert.match(body, /const targetLevel = /, 'route() resolves the level it would end on');
+  assert.match(body, /const targetSection = /, 'route() resolves the section it would end on');
+  assert.match(
+    body, /if \(targetLevel === Settings\._level && targetSection === Settings\._section\) \{/,
+    'route() compares the resolved target against current state',
+  );
+  const guardAt = body.search(/if \(targetLevel === Settings\._level/);
+  for (const mutation of ['Settings.setSection(', 'Settings._transition(', 'Settings._level =']) {
+    const mAt = body.indexOf(mutation);
+    assert.ok(mAt > -1, `route() still performs ${mutation}`);
+    assert.ok(guardAt < mAt,
+      `the early-out must precede ${mutation} — below it the duplicate has already repainted`);
+  }
+  assert.match(body.slice(guardAt, body.indexOf('Settings._markRoute(\'applied\')')), /return;/,
+    'the early-out returns rather than falling through');
+});
+
+test('route() stamps what it did, so the ordering is assertable after the fact', () => {
+  // A runtime-only marker, exactly like App._entryTransition's data-entered
+  // (#977): the skip is invisible once the animation is over, so the check
+  // needs something durable to read. Runtime-written, hence deliberately
+  // absent from tests/baselines/shell-markup.json.
+  assert.match(settingsJs, /_markRoute\(state\)\s*\{/, 'the stamp goes through one helper');
+  assert.match(settingsJs, /setAttribute\('data-settings-route', state\)/,
+    'it writes data-settings-route on the screen root');
+  assert.match(settingsJs, /Settings\._markRoute\('skipped'\)/,
+    'the early-out records that it skipped');
+  assert.match(settingsJs, /Settings\._markRoute\('applied'\)/,
+    'and the path that repaints records that it applied');
+  const baseline = JSON.parse(fs.readFileSync(
+    path.join(__dirname, 'baselines', 'shell-markup.json'), 'utf8'));
+  assert.ok(
+    !JSON.stringify(baseline).includes('data-settings-route'),
+    'data-settings-route is written at runtime and must stay out of the static markup baseline',
+  );
+});
+
+test('the ?shot=settings-back driver runs a real traversal from init()', () => {
+  assert.match(appJs, /_applySettingsBackShot\(\)\s*\{/, 'app.js defines the driver');
+  const at = appJs.indexOf('_applySettingsBackShot() {');
+  const body = appJs.slice(at, at + 1200);
+  assert.match(body, /shot !== 'settings-back'/, 'it is gated on its own shot value');
+  assert.match(body, /location\.hash = '#settings\/password'/,
+    'it drills in through a real hash write, so the app routes exactly as a tap would');
+  assert.match(body, /history\.back\(\)/,
+    'and backs out through a history traversal — the dispatch pair a hash write alone cannot produce');
+  assert.doesNotMatch(body, /USERNODE_ENV/,
+    'pure UI state, so the driver is ungated like ?shot=menu');
+  // Wired in the same run of shot drivers, after restoreFromHash() has put
+  // the screen up — the traversal only means anything once #settings is open.
+  const bootAt = appJs.indexOf('App.restoreFromHash();\n    // The fragment-scoped');
+  assert.ok(bootAt > -1, 'app.js still runs its shot drivers after restoreFromHash()');
+  const drivers = appJs.slice(bootAt, bootAt + 900);
+  assert.match(drivers, /App\._applySettingsBackShot\(\);/,
+    'init() wires the driver alongside the other shot drivers');
+  // …and ONLY from there. #1146 made the state-PAINTING shots re-apply on
+  // every fragment change; this one drives a navigation, so re-running it
+  // from the handler for the hashchange it just caused would loop.
+  const routed = appJs.slice(appJs.indexOf('  _routeFromHash() {'), appJs.indexOf('  restoreFromHash() {'));
+  assert.doesNotMatch(routed, /_applySettingsBackShot/,
+    'the per-fragment re-apply deliberately leaves the traversal driver out');
+});
+
+// ── Usernode-app section: a failed native read is diagnosable ───────────
+//
+// The bridge's chrome reads resolve null on a timeout, on a native
+// rejection AND on a refused privileged handshake alike, so the section
+// used to collapse all of them into one dead-end line with no reason and
+// no way back (issue #978). What is pinned here:
+//   - the failure REASON is rendered from the bridge's out-of-band record,
+//     mapped per `kind`, with the app's own message beside it;
+//   - "Try again" retries in place;
+//   - the blocks that DON'T need the snapshot still render, so a failed
+//     read is not a dead end;
+//   - the auth-status re-attempt is removed as well as added, and bounded.
+// This section is the sanctioned exception to MOVE, DON'T REWRITE: the
+// #settings-usernode-section node ships EMPTY in index.html and is built
+// entirely by settings.js, so its controls are bound per render.
+
+test('the usernode section renders a reason, not just "could not load"', () => {
+  assert.match(settingsJs, /USERNODE_READ_ERROR_REASONS: \{/,
+    'the kind -> sentence map exists');
+  for (const kind of [
+    'timeout', 'rejected', 'probe-inconclusive', 'no-transport', 'not-native',
+  ]) {
+    assert.match(settingsJs, new RegExp(`'${kind}':`),
+      `${kind} has a plain-language sentence`);
+  }
+  assert.match(settingsJs, /USERNODE_READ_ERROR_FALLBACK: '[^']+'/,
+    'an unknown/absent kind still says something concrete');
+  assert.match(settingsJs, /_usernodeReadError\(\)\s*\{/,
+    'the reason is read through one helper');
+  assert.match(settingsJs, /NativeChrome\.lastReadError\('getSettingsState'\)/,
+    'it comes from the shared bridge record, not a settings-local guess');
+  assert.match(settingsJs, /'Could not load Usernode app settings\.'/,
+    'the headline is unchanged so existing reports stay recognisable');
+  assert.match(settingsJs, /font-mono[^']*', *\n? *readError\.message/,
+    "the app's own message is rendered verbatim");
+});
+
+test('the failed read is recoverable in place', () => {
+  const box = settingsJs.slice(
+    settingsJs.indexOf('    _renderUsernodeError(parent, readError, loading) {'),
+    settingsJs.indexOf('    _renderSocialPushSection(section) {'),
+  );
+  assert.ok(box, '_renderUsernodeError exists');
+  assert.match(box, /box\.id = 'settings-usernode-error'/,
+    'the error box has a stable id');
+  assert.match(box, /retry\.id = 'settings-usernode-retry'/,
+    'the retry button has a stable id');
+  assert.match(box, /'Try again'/, 'the retry is offered on the screen');
+  assert.match(box, /_renderUsernodeBody\(readError, true\)/,
+    'a retry swaps the box for a progress line instead of blanking the section');
+  assert.match(box, /await this\._renderUsernodeSection\(\)/,
+    'the retry re-runs the read');
+  // The JS-built ids must NOT be in the static shell — that is what makes
+  // this section the exception to the id-binding rule.
+  for (const id of ['settings-usernode-error', 'settings-usernode-retry']) {
+    assert.doesNotMatch(html, new RegExp(`id="${id}"`),
+      `#${id} is built by settings.js, never shipped in the markup`);
+  }
+});
+
+test('a failed read still leaves the snapshot-independent blocks up', () => {
+  const body = settingsJs.slice(
+    settingsJs.indexOf('    _renderUsernodeBody(readError, loading) {'),
+    settingsJs.indexOf('    _renderUsernodeError(parent, readError, loading) {'),
+  );
+  assert.ok(body, '_renderUsernodeBody takes the failure record');
+  assert.match(body, /if \(!s\) \{\n\s+this\._renderUsernodeError\(/,
+    'the error box replaces ONLY the snapshot-dependent permissions block');
+  // These need no snapshot, so they must not sit behind an `if (s)`.
+  for (const call of [
+    'this._renderSocialPushSection(section);',
+    'this._renderBpSection(section);',
+    'this._renderUsernodeFaq(aboutBox,',
+    "this._openNativeScreen('benchmark',",
+    "this._openNativeScreen('httpLogs',",
+  ]) {
+    assert.ok(body.includes(call), `${call} runs with or without a snapshot`);
+  }
+  // These read the snapshot, so every one of them must be guarded.
+  for (const guarded of [
+    's.nodeSleepEnabled', 's.facematchStrict', 's.debugMode', 's.authStatus',
+  ]) {
+    const at = body.indexOf(guarded);
+    assert.ok(at > -1, `${guarded} still drives its control`);
+    assert.match(body.slice(0, at), /if \(s\) \{|if \(s && /,
+      `${guarded} is only read behind a snapshot guard`);
+  }
+  assert.match(body, /const perms = \(s && s\.permissions\) \|\| \{\}/,
+    'no snapshot means no permission rows, not a TypeError');
+  assert.match(body, /const bi = \(s && s\.buildInfo\) \|\| \{\}/,
+    'the build line simply goes missing without a snapshot');
+});
+
+test('the usernode read is retried once on readiness and never leaks a listener', () => {
+  assert.match(settingsJs, /_armUsernodeAuthStatusRetry\(\)\s*\{/);
+  assert.match(settingsJs, /_clearUsernodeAuthStatusRetry\(\)\s*\{/);
+  const arm = settingsJs.slice(
+    settingsJs.indexOf('    _armUsernodeAuthStatusRetry() {'),
+    settingsJs.indexOf('    _clearUsernodeAuthStatusRetry() {'),
+  );
+  assert.match(arm, /if \(this\._usernodeAuthStatusListener\) return;/,
+    'never double-registers');
+  assert.match(arm, /if \(this\._usernodeAuthRetryUsed\) return;/,
+    'bounded: one re-attempt per mount, not a retry loop');
+  assert.match(arm, /d\.phase !== 'ready'/,
+    'it waits for a ready identity, the same signal native-chrome.js uses');
+  assert.match(arm,
+    /window\.addEventListener\('usernode:auth-status', listener\)/);
+  const clear = settingsJs.slice(
+    settingsJs.indexOf('    _clearUsernodeAuthStatusRetry() {'),
+    settingsJs.indexOf('    _renderUsernodeBody(readError, loading) {'),
+  );
+  assert.match(clear,
+    /window\.removeEventListener\(\n?\s*'usernode:auth-status'/,
+    'the listener is removed, following the social-push discipline');
+  // Removed on a successful read, on close, and reset per mount.
+  const section = settingsJs.slice(
+    settingsJs.indexOf('    async _renderUsernodeSection() {'),
+    settingsJs.indexOf('    _usernodeReadError() {'),
+  );
+  assert.match(section, /this\._clearUsernodeAuthStatusRetry\(\);\n\s+this\._renderUsernodeBody\(\);/,
+    'a successful read stops listening');
+  const close = settingsJs.slice(settingsJs.indexOf('    close() {'));
+  assert.match(close.slice(0, 500), /_clearUsernodeAuthStatusRetry\(\)/,
+    'leaving Settings stops listening');
+  const openIdx = settingsJs.indexOf('    open(section, opts) {');
+  assert.ok(openIdx >= 0, 'Settings.open(section, opts) exists');
+  const open = settingsJs.slice(openIdx);
+  assert.match(open.slice(0, 900), /_usernodeAuthRetryUsed = false/,
+    'the one re-attempt is offered again on the next visit');
+});
+
+test('activity notifications wait for native admission and surface failures', () => {
+  const section = settingsJs.slice(
+    settingsJs.indexOf('    _renderSocialPushSection(section) {'),
+    settingsJs.indexOf('    // Block production queue')
+  );
+  assert.match(section, /NativeChrome\.isSessionAdmitted\(\)/,
+    'a closed handoff renders recovery instead of a stale toggle');
+  assert.match(section, /NativeChrome\.recoverSessionAdmission\(\)/,
+    'the notification section offers an explicit handoff retry');
+  assert.match(section, /Finishing secure app sign-in/);
+  assert.match(section, /includeErrorDetail: true/,
+    'native storage and admission errors remain visible to the user');
+});
+
+test('only the newest usernode read attempt paints', () => {
+  const section = settingsJs.slice(
+    settingsJs.indexOf('    async _renderUsernodeSection() {'),
+    settingsJs.indexOf('    _usernodeReadError() {'),
+  );
+  assert.match(section, /const token = \+\+this\._usernodeRenderToken;/,
+    'each attempt is tagged');
+  assert.match(section, /if \(token !== this\._usernodeRenderToken\) return;/,
+    'a stale 12s read cannot overwrite a fresher result');
+});
+
+// ── #907: the "Local coding agent" block ───────────────────────────────────
+
+test('the local-agent block lives in Experimental and ships hidden', () => {
+  // Experimental, not the CLI section: this is a preview of the same feature
+  // the dev chat's "Run on" selector exposes, and a lease is not a credential
+  // — revoking a token is a security action, detaching a machine is a
+  // routing one, and putting them side by side would blur that.
+  const experimental = html.slice(
+    html.indexOf('data-settings-section="experimental"'),
+    html.indexOf('data-settings-section="experimental"') + 12000
+  );
+  assert.match(experimental, /id="settings-local-agents-section"/);
+  assert.match(experimental, /id="settings-local-agents-list"/);
+  assert.match(experimental, /id="settings-local-agents-status"/);
+  // Hidden by default and only revealed when the user actually has one,
+  // so it costs nothing for the overwhelming majority who never run the CLI.
+  assert.match(experimental, /id="settings-local-agents-section" class="hidden/);
+  assert.match(experimental, /Local coding agent/);
+  // The copy has to answer "what still happens on Usernode?", because
+  // "runs on your machine" otherwise reads as "Usernode stops working".
+  assert.match(experimental, /Usernode still opens the pull request/);
+});
+
+test('the machine list is built as DOM nodes, never innerHTML', () => {
+  const render = settingsJs.slice(
+    settingsJs.indexOf('_renderLocalAgentsSection()'),
+    settingsJs.indexOf('_detachLocalAgent(')
+  );
+  // The label is free text typed on someone's own laptop and arrives here
+  // verbatim. This section follows the screen's MOVE-DON'T-REWRITE rule too:
+  // it only ever writes into its own list host.
+  assert.ok(!/innerHTML\s*=\s*`/.test(render), 'no template-literal innerHTML');
+  assert.match(render, /createElement\(/);
+  assert.match(render, /\.textContent = /);
+  assert.match(render, /list\.textContent = '';/, 'the list host is emptied, not rewritten');
+});
+
+test('the machine list hides itself when there is nothing to list', () => {
+  const render = settingsJs.slice(
+    settingsJs.indexOf('_renderLocalAgentsSection()'),
+    settingsJs.indexOf('_detachLocalAgent(')
+  );
+  assert.match(render, /section\.classList\.toggle\('hidden', agents\.length === 0\)/);
+  // The status line starts hidden on every pass, so a stale error from a
+  // previous attempt cannot survive a successful one.
+  assert.match(render, /status\.classList\.add\('hidden'\);/);
+  assert.match(render, /status\.classList\.remove\('hidden'/);
+  // A read failure leaves `agents` empty, which hides the block rather than
+  // leaving a half-painted list up.
+  assert.match(render, /\} catch \{\}/);
+});
+
+test('the machine list reads the account route, not the CLI surface', () => {
+  assert.match(settingsJs, /\/api\/me\/local-agents/);
+  // Staging demo rows come from the same request-time ?demo=1 convention the
+  // token list uses, so a staging clone can review this block at all.
+  const render = settingsJs.slice(
+    settingsJs.indexOf('_renderLocalAgentsSection()'),
+    settingsJs.indexOf('_detachLocalAgent(')
+  );
+  assert.match(render, /_cliTokensDemo\(\) \? '\?demo=1' : ''/);
+  assert.match(render, /Demo data/);
+});
+
+test('detaching is confirmed, and an already-gone lease is not an error', () => {
+  const detach = settingsJs.slice(
+    settingsJs.indexOf('_detachLocalAgent('),
+    settingsJs.indexOf('_detachLocalAgent(') + 1800
+  );
+  assert.match(detach, /method: 'DELETE'/);
+  assert.match(detach, /204|404/);
+  assert.match(detach, /confirm/i);
+  // Demo rows have no Detach button at all — there is nothing to detach.
+  const card = settingsJs.slice(
+    settingsJs.indexOf('_localAgentCard('),
+    settingsJs.indexOf('_detachLocalAgent(')
+  );
+  assert.match(card, /!agent\.demo/);
+});
+
+test('the Experimental toggle still gates the whole section', () => {
+  // The block is painted from _renderExperimentalSection, so it inherits the
+  // existing preview gate rather than inventing a second one.
+  assert.match(settingsJs, /_renderExperimentalSection\(\)[\s\S]{0,4000}_renderLocalAgentsSection\(\)/);
+});
+
+// ── "Usernode app — connection" (the diagnostics panel) ─────────────────
+
+test('the usernode section is gated on being in the app, not on a capability', () => {
+  const section = settingsJs.slice(
+    settingsJs.indexOf('    async _renderUsernodeSection() {'),
+    settingsJs.indexOf('    _usernodeReadError() {'),
+  );
+  assert.ok(section, '_renderUsernodeSection exists');
+  assert.match(section, /bridge\.isNative === true/,
+    'the gate reads the unprivileged isNative flag');
+  assert.doesNotMatch(section, /NativeChrome\.has\('getSettingsState'\)/,
+    'a capability probe cannot gate the screen that diagnoses failed probes');
+});
+
+test('the connection panel renders above the failures it explains', () => {
+  const body = settingsJs.slice(
+    settingsJs.indexOf('    _renderUsernodeBody(readError, loading) {'),
+    settingsJs.indexOf('    _renderUsernodeError(parent, readError, loading) {'),
+  );
+  const panelAt = body.indexOf('this._renderUsernodeConnection(section);');
+  const errorAt = body.indexOf('this._renderUsernodeError(');
+  assert.ok(panelAt > -1, 'the panel is rendered from the section body');
+  assert.ok(errorAt > panelAt,
+    'the explanation comes before the "could not load" box, not after it');
+});
+
+test('the panel has stable ids and both actions', () => {
+  const panel = settingsJs.slice(
+    settingsJs.indexOf('    _renderUsernodeConnection(section) {'),
+    settingsJs.indexOf('    async _retryUsernodeConnection() {'),
+  );
+  assert.ok(panel, '_renderUsernodeConnection exists');
+  assert.match(panel, /box\.id = 'settings-usernode-connection'/);
+  assert.match(panel, /retry\.id = 'settings-usernode-connection-retry'/);
+  assert.match(panel, /copy\.id = 'settings-usernode-connection-copy'/);
+  assert.match(panel, /'Try again'/);
+  assert.match(panel, /'Copy diagnostics'/);
+  // PlatformUI.copyText is the real API (async → boolean, never throws).
+  assert.match(panel, /PlatformUI\.copyText\(/);
+  assert.doesNotMatch(panel, /PlatformUI\.copy\(/);
+  // JS-built, so they must not appear in the static shell.
+  for (const id of [
+    'settings-usernode-connection',
+    'settings-usernode-connection-retry',
+    'settings-usernode-connection-copy',
+  ]) {
+    assert.doesNotMatch(html, new RegExp(`id="${id}"`),
+      `#${id} is built by settings.js, never shipped in the markup`);
+  }
+});
+
+test('Try again re-probes, re-admits and re-arms readiness in one press', () => {
+  const retry = settingsJs.slice(
+    settingsJs.indexOf('    async _retryUsernodeConnection() {'),
+    settingsJs.indexOf('    async _renderUsernodeSection() {'),
+  );
+  assert.ok(retry, '_retryUsernodeConnection exists');
+  assert.match(retry, /NativeChrome\._infoPromise = null/,
+    'the cached probe is discarded so the retry actually re-probes');
+  assert.match(retry, /NativeChrome\.getInfo\(\)/);
+  assert.match(retry, /NativeChrome\.recoverSessionAdmission\(\)/);
+  assert.match(retry, /SocialPush\.retryBridgeReadiness\(\)/);
+  assert.match(retry, /await this\._renderUsernodeSection\(\)/);
+});
+
+test('every privileged state has a plain-language reason, remedy-ordered', () => {
+  const table = settingsJs.slice(
+    settingsJs.indexOf('    PRIVILEGED_STATE_REASONS: {'),
+    settingsJs.indexOf('    DEMO_BRIDGE_DIAGNOSTICS: {'),
+  );
+  assert.ok(table, 'PRIVILEGED_STATE_REASONS exists');
+  for (const state of [
+    'ready', 'blocked-frame', 'unsupported', 'inconclusive', 'unattached',
+    'unknown',
+  ]) {
+    assert.match(table, new RegExp(`'${state}':`),
+      `${state} has copy, so no state renders as a blank panel`);
+  }
+  // The remedy order the report asked for: force-close and reopen FIRST,
+  // reinstall only if that does not clear it.
+  for (const key of ['blocked-frame', 'unattached']) {
+    const at = table.indexOf(`'${key}':`);
+    const next = table.indexOf("':", table.indexOf('\n', at) + 1);
+    const copy = table.slice(at, next > at ? next + 200 : table.length);
+    const closeAt = copy.search(/[Ff]orce-close/);
+    const reinstallAt = copy.search(/reinstall/i);
+    assert.ok(closeAt > -1, `${key} tells the user to force-close and reopen`);
+    assert.ok(reinstallAt > closeAt,
+      `${key} offers reinstalling only after the cheaper remedy`);
+  }
+});
+
+test('the read error vocabulary covers a refused privileged bridge', () => {
+  const reasons = settingsJs.slice(
+    settingsJs.indexOf('    USERNODE_READ_ERROR_REASONS: {'),
+    settingsJs.indexOf('    USERNODE_READ_ERROR_FALLBACK:'),
+  );
+  assert.match(reasons, /'privileged-unavailable':/,
+    'the bridge kind added this turn has copy on the consumer side');
+});
+
+test('a refused bridge changes what the dependent messages say', () => {
+  assert.match(settingsJs, /_nativeActionMessage\(err, fallback\) \{/);
+  const helper = settingsJs.slice(
+    settingsJs.indexOf('    _nativeActionMessage(err, fallback) {'),
+  ).slice(0, 500);
+  assert.match(helper, /err\.usernodePrivileged === true/,
+    'it keys off the bridge tag, not English pattern-matching');
+  // Every user-facing failure path that can be caused by a refused bridge.
+  for (const site of [
+    'this._nativeActionMessage(err,\n              `Could not save the setting',
+    "this._nativeActionMessage(err, 'Action failed')",
+    'this._nativeActionMessage(err, failMsg)',
+  ]) {
+    assert.ok(settingsJs.includes(site), `${site} routes through the helper`);
+  }
+});
+
+test('the diagnostics text carries no token and no user data', () => {
+  const text = settingsJs.slice(
+    settingsJs.indexOf('    _bridgeDiagnosticsText(diag) {'),
+    settingsJs.indexOf('    _renderUsernodeConnection(section) {'),
+  );
+  assert.ok(text, '_bridgeDiagnosticsText exists');
+  for (const banned of [
+    'privilegedCapability', 'App.user', 'token', 'cookie', 'localStorage',
+  ]) {
+    assert.ok(!text.includes(banned),
+      `the copyable report must never include ${banned}`);
+  }
+  assert.match(text, /SocialPush\.readinessState\(\)/,
+    'the readiness budget is part of the report');
+  assert.match(text, /NativeChrome\.lastSessionFailure\(\)/,
+    'the last admission failure is part of the report');
+});
+
+// Read-only staging/screenshot hook. It must be incapable of touching a real
+// bridge, a real session, or any state at all.
+test('the bridgediag demo hook is read-only and reads the HASH query', () => {
+  const flag = settingsJs.slice(
+    settingsJs.indexOf('    _bridgeDiagDemo() {'),
+    settingsJs.indexOf('    _bridgeDiagnostics() {'),
+  );
+  assert.ok(flag, '_bridgeDiagDemo exists');
+  // The self-app is hash-routed: #settings?bridgediag=demo puts the query
+  // inside the fragment, not in location.search.
+  assert.match(flag, /window\.location\.hash/,
+    'the fragment query is where a hash-routed deep link puts it');
+  assert.match(flag, /window\.location\.search/,
+    'the ordinary query string is accepted too');
+  assert.match(flag, /'bridgediag'\) === 'demo'/);
+
+  const panel = settingsJs.slice(
+    settingsJs.indexOf('    _renderUsernodeConnection(section) {'),
+    settingsJs.indexOf('    async _retryUsernodeConnection() {'),
+  );
+  assert.match(panel, /'Staging demo — sample data'/,
+    'the demo snapshot is labelled as fake on screen');
+  assert.match(panel, /retry\.disabled = true;\n\s+copy\.disabled = true;/,
+    'the demo may not drive the real bridge');
+
+  const snapshot = settingsJs.slice(
+    settingsJs.indexOf('    DEMO_BRIDGE_DIAGNOSTICS: {'),
+    settingsJs.indexOf('    _bridgeDiagDemo() {'),
+  );
+  assert.match(snapshot, /Staging demo/,
+    'the synthetic values say so in the data itself');
+  assert.match(snapshot, /invalid/,
+    'the demo origin is a reserved non-resolvable name');
+});
+
+test('the demo deep link is a declared test path', () => {
+  const paths = JSON.stringify(manifest.tests || []);
+  assert.ok(paths.includes('bridgediag=demo'),
+    'the screenshot state added this turn is exercised by dapp.json');
+});
+
+// ── Sign-out no longer dead-ends on a refused bridge ────────────────────
+
+test('a refused native latch confirms instead of aborting the sign-out', () => {
+  const logout = settingsJs.slice(
+    settingsJs.indexOf('    async logout() {'),
+    settingsJs.indexOf('    _confirmDegradedSignOut(preflight) {'),
+  );
+  assert.ok(logout, 'logout() and its confirm helper exist');
+  assert.match(logout, /latch === 'unavailable'/);
+  assert.match(logout, /latch === 'inconclusive'/);
+  // The ordering that matters: the confirm happens BEFORE the web logout,
+  // and a refused latch no longer returns early.
+  const confirmAt = logout.indexOf('_confirmDegradedSignOut(preflight)');
+  const fetchAt = logout.indexOf("'/api/auth/logout'");
+  assert.ok(confirmAt > -1 && fetchAt > confirmAt,
+    'the user is asked before the web session is cleared, not instead of it');
+  assert.match(logout, /result === true/,
+    'a legacy boolean preflight is still understood');
+  const helper = settingsJs.slice(
+    settingsJs.indexOf('    _confirmDegradedSignOut(preflight) {'),
+  ).slice(0, 900);
+  assert.match(helper, /typeof PlatformUI\.confirm !== 'function'/);
+  assert.match(helper, /Promise\.resolve\(true\)/,
+    'no dialog to ask with is not a reason to trap someone in a session');
+  assert.match(helper, /danger: true/);
+});
+
+test('an unconfirmed app sign-out is named on the login screen, once', () => {
+  assert.match(settingsJs,
+    /NATIVE_SIGNOUT_NOTICE_KEY: 'sv:native_signout_incomplete'/);
+  const notice = settingsJs.slice(
+    settingsJs.indexOf('    _showIncompleteNativeSignOutNotice() {'),
+  ).slice(0, 900);
+  assert.match(notice, /removeItem\(this\.NATIVE_SIGNOUT_NOTICE_KEY\)/,
+    'one-shot: the flag is cleared as it is read');
+  assert.match(notice, /priority: true/);
+  const init = settingsJs.slice(
+    settingsJs.indexOf('    init() {'),
+    settingsJs.indexOf('    async logout() {'),
+  );
+  assert.match(init, /this\._showIncompleteNativeSignOutNotice\(\);/,
+    'the next document shows it');
+});
+
+test('the best-effort app logout cannot block leaving the app', () => {
+  const best = settingsJs.slice(
+    settingsJs.indexOf('    _bestEffortNativeLogout() {'),
+    settingsJs.indexOf("    NATIVE_SIGNOUT_NOTICE_KEY:"),
+  );
+  assert.ok(best, '_bestEffortNativeLogout exists');
+  assert.match(best, /NATIVE_SIGNOUT_BUDGET_MS/, 'it is time-boxed');
+  assert.match(best, /settle\(false\)/, 'a rejection resolves false, never throws');
+  assert.doesNotMatch(best, /throw /);
 });

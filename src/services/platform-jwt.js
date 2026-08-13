@@ -44,6 +44,17 @@ const AUD_EDGE = 'usernode:edge';
 
 const PUR_IFRAME = 'iframe';
 const PUR_WORKER = 'worker:session';
+// Narrow, purpose-bound worker capabilities (review #2 / #6): the
+// general worker:session token is reserved for build/sync mutations. Agent
+// subprocesses receive only the capabilities their mode needs: proxy auth,
+// issue reads, pushes, or production diagnostics. Keeping these purposes
+// distinct matters for Claude scouts because unrestricted read-only Bash can
+// inspect its own environment; merely renaming a general token would still
+// let it call every endpoint that accepts worker:session.
+const PUR_WORKER_PUSH = 'worker:push';
+const PUR_ISSUES_READ = 'worker:issues-read';
+const PUR_ANTHROPIC_PROXY = 'worker:anthropic-proxy';
+const PUR_PROD_DEBUG = 'worker:prod-debug';
 const PUR_EDGE_GRANT = 'edge:grant';
 const PUR_EDGE_COOKIE = 'edge:cookie';
 
@@ -215,12 +226,11 @@ function verifyAppIdentityToken(token, { appId }) {
 // `scope` is kept alongside `pur` because app-llm-auth /
 // app-storage-auth still use "has a scope claim" as a belt-and-braces
 // rejection of infrastructure tokens presented as user tokens.
-function signWorkerToken({ sessionId, prodDebug = false }) {
+function signWorkerPurpose({ sessionId, purpose }) {
   if (typeof sessionId === 'undefined' || sessionId === null) {
     throw new Error('platform-jwt: sessionId required');
   }
-  const payload = { session_id: sessionId, scope: PUR_WORKER, pur: PUR_WORKER };
-  if (prodDebug) payload.prod_debug = true;
+  const payload = { session_id: sessionId, scope: purpose, pur: purpose };
   return jwt.sign(payload, workerSecret(), {
     algorithm: 'HS256',
     issuer: ISSUER,
@@ -229,12 +239,69 @@ function signWorkerToken({ sessionId, prodDebug = false }) {
   });
 }
 
-function verifyWorkerToken(token) {
-  return verifyWith(token, workerSecret(), {
+function signWorkerToken({ sessionId, prodDebug = false }) {
+  const token = signWorkerPurpose({ sessionId, purpose: PUR_WORKER });
+  if (prodDebug) {
+    // Re-sign with the prodDebug flag (worker:session + prod_debug).
+    if (typeof sessionId === 'undefined' || sessionId === null) {
+      throw new Error('platform-jwt: sessionId required');
+    }
+    return jwt.sign({ session_id: sessionId, scope: PUR_WORKER, pur: PUR_WORKER, prod_debug: true }, workerSecret(), {
+      algorithm: 'HS256', issuer: ISSUER, audience: AUD_WORKER, expiresIn: WORKER_TTL,
+    });
+  }
+  return token;
+}
+
+function verifyWorkerPurpose(token, purpose) {
+  const claims = verifyWith(token, workerSecret(), {
     algorithm: 'HS256',
     audience: AUD_WORKER,
-    purpose: PUR_WORKER,
+    purpose,
   });
+  if (!claims || claims.scope !== purpose || typeof claims.session_id === 'undefined') {
+    throw new Error('invalid worker scope');
+  }
+  return claims;
+}
+
+function verifyWorkerToken(token) {
+  return verifyWorkerPurpose(token, PUR_WORKER);
+}
+
+function signWorkerPushToken({ sessionId }) {
+  return signWorkerPurpose({ sessionId, purpose: PUR_WORKER_PUSH });
+}
+function verifyWorkerPushToken(token) {
+  return verifyWorkerPurpose(token, PUR_WORKER_PUSH);
+}
+function signIssuesReadToken({ sessionId }) {
+  return signWorkerPurpose({ sessionId, purpose: PUR_ISSUES_READ });
+}
+function verifyIssuesReadToken(token) {
+  return verifyWorkerPurpose(token, PUR_ISSUES_READ);
+}
+function signAnthropicProxyToken({ sessionId }) {
+  return signWorkerPurpose({ sessionId, purpose: PUR_ANTHROPIC_PROXY });
+}
+function verifyAnthropicProxyToken(token) {
+  return verifyWorkerPurpose(token, PUR_ANTHROPIC_PROXY);
+}
+function signProdDebugToken({ sessionId }) {
+  if (typeof sessionId === 'undefined' || sessionId === null) {
+    throw new Error('platform-jwt: sessionId required');
+  }
+  return jwt.sign({
+    session_id: sessionId,
+    scope: PUR_PROD_DEBUG,
+    pur: PUR_PROD_DEBUG,
+    prod_debug: true,
+  }, workerSecret(), {
+    algorithm: 'HS256', issuer: ISSUER, audience: AUD_WORKER, expiresIn: WORKER_TTL,
+  });
+}
+function verifyProdDebugToken(token) {
+  return verifyWorkerPurpose(token, PUR_PROD_DEBUG);
 }
 
 // ── Private-app edge gate ─────────────────────────────────────────────
@@ -425,6 +492,10 @@ module.exports = {
   AUD_EDGE,
   PUR_IFRAME,
   PUR_WORKER,
+  PUR_WORKER_PUSH,
+  PUR_ISSUES_READ,
+  PUR_ANTHROPIC_PROXY,
+  PUR_PROD_DEBUG,
   PUR_EDGE_GRANT,
   PUR_EDGE_COOKIE,
   IFRAME_TTL,
@@ -437,6 +508,16 @@ module.exports = {
   verifyAppIdentityToken,
   signWorkerToken,
   verifyWorkerToken,
+  signWorkerPurpose,
+  verifyWorkerPurpose,
+  signWorkerPushToken,
+  verifyWorkerPushToken,
+  signIssuesReadToken,
+  verifyIssuesReadToken,
+  signAnthropicProxyToken,
+  verifyAnthropicProxyToken,
+  signProdDebugToken,
+  verifyProdDebugToken,
   signEdgeGrant,
   verifyEdgeGrant,
   signEdgeCookie,

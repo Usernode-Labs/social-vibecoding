@@ -1,0 +1,98 @@
+#!/usr/bin/env node
+// Materialize ignored shell artifacts for root tests and native local runs.
+// Docker builds the same files in its lockfile-pinned shell/CSS stages and
+// never calls this helper.
+
+'use strict';
+
+const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
+const { execFileSync } = require('child_process');
+
+const ROOT = path.join(__dirname, '..');
+const FRONTEND = path.join(ROOT, 'frontend');
+const FRONTEND_LOCK = path.join(FRONTEND, 'package-lock.json');
+const DEPENDENCY_MARKER = path.join(FRONTEND, 'node_modules', '.usernode-shell-lock');
+
+const {
+  expectedStamp,
+  readHtmlStamp,
+  readJsStamp,
+  HTML_OUTPUT,
+  JS_OUTPUT,
+} = require('./shell-stamp');
+
+const htmlOnly = process.argv.includes('--html-only');
+const runtime = process.argv.includes('--runtime');
+
+function read(pathname) {
+  try {
+    return fs.readFileSync(pathname, 'utf8');
+  } catch (err) {
+    if (err.code === 'ENOENT') return null;
+    throw err;
+  }
+}
+
+function frontendLockDigest() {
+  return crypto.createHash('sha256').update(fs.readFileSync(FRONTEND_LOCK)).digest('hex');
+}
+
+function frontendDependenciesAreCurrent(digest) {
+  if (read(DEPENDENCY_MARKER)?.trim() !== digest) return false;
+  try {
+    require.resolve('vite/package.json', { paths: [FRONTEND] });
+    require.resolve('react/package.json', { paths: [FRONTEND] });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function installFrontendDependencies() {
+  const digest = frontendLockDigest();
+  if (frontendDependenciesAreCurrent(digest)) return;
+
+  console.log('[ensure-shell] installing lockfile-pinned frontend dependencies');
+  const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+  execFileSync(npm, ['ci', '--ignore-scripts', '--include=dev'], {
+    cwd: FRONTEND,
+    stdio: 'inherit',
+  });
+  fs.writeFileSync(DEPENDENCY_MARKER, `${digest}\n`);
+}
+
+function runNode(script) {
+  execFileSync(process.execPath, [path.join(ROOT, script)], {
+    cwd: ROOT,
+    stdio: 'inherit',
+  });
+}
+
+const { stamp } = expectedStamp();
+const htmlPath = path.join(ROOT, HTML_OUTPUT);
+const jsPath = path.join(ROOT, JS_OUTPUT);
+const htmlFresh = readHtmlStamp(read(htmlPath) || '') === stamp;
+const jsFresh = readJsStamp(read(jsPath) || '') === stamp;
+const needsShell = !htmlFresh || (!htmlOnly && !jsFresh);
+
+if (needsShell) {
+  installFrontendDependencies();
+  runNode('frontend/scripts/build-shell.mjs');
+
+  const builtHtmlStamp = readHtmlStamp(read(htmlPath) || '');
+  const builtJsStamp = readJsStamp(read(jsPath) || '');
+  if (builtHtmlStamp !== stamp || builtJsStamp !== stamp) {
+    throw new Error('[ensure-shell] shell build completed without the expected HTML/JS stamp');
+  }
+} else {
+  console.log(`[ensure-shell] ${htmlOnly ? 'HTML is' : 'shell artifacts are'} current`);
+}
+
+// CSS also scans public/js/**, which is outside the shell stamp. Recompile on
+// every runtime preflight so a locally changed legacy module cannot keep a
+// stale utility set just because the React shell itself was unchanged.
+if (runtime) {
+  runNode('scripts/build-tailwind.js');
+}

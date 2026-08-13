@@ -31,6 +31,9 @@ const path = require('node:path');
 const { seedStagingTopochain } = require('../src/db/migrate');
 
 const src = fs.readFileSync(path.join(__dirname, '..', 'src/db/migrate.js'), 'utf8');
+const DAPP_TESTS = JSON.parse(
+  fs.readFileSync(path.join(__dirname, '..', 'dapp.json'), 'utf8')
+).tests || [];
 
 // ─── 1. Behavioural: mock pool records every query(sql, params) call ────
 
@@ -110,6 +113,13 @@ test('seedStagingTopochain is defined with the (pool, config) signature', () => 
   assert.match(src, /async function seedStagingTopochain\(pool, config\)/);
 });
 
+test('the Android inactive rule is applied before the fallible fixture block', () => {
+  const updateAt = body.indexOf("WHERE os = 'android'");
+  const usersAt = body.indexOf('// ─── Users');
+  assert.ok(updateAt > -1 && usersAt > -1 && updateAt < usersAt,
+    'a later fixture collision must not suppress the deterministic admin warning');
+});
+
 test('seedStagingTopochain is a strict no-op outside staging (gate is the first statement)', () => {
   const afterSignature = body.slice(body.indexOf(') {') + 3);
   const firstStatement = afterSignature.split('\n').find((l) => l.trim().length > 0);
@@ -144,23 +154,55 @@ test('every INSERT INTO in the seeder has a matching ON CONFLICT guard (idempote
 });
 
 test('fixed ids used throughout live in the obviously-fake 900500+ range', () => {
-  // Every literal 6-digit numeric id in the body should start with 9005,
-  // matching this platform's staging-demo numbering convention.
+  // Every literal 6-digit numeric id in the body should sit in the 900500+
+  // range this block documents for itself (a slice of the platform-wide
+  // 900xxx staging-demo convention — see seedStagingWalletUsers et al).
+  //
+  // The window is 900500-900999, not 9005xx: the per-viewer id blocks start
+  // at 900520 and reserve 20 EACH with no upper bound, so a fourth tester
+  // identity would take 900580-900599. Fixture blocks added after the
+  // viewers therefore have to sit above 900599 to stay clear of that growth
+  // (the season-event snapshots are at 900600+), and pinning 9005xx would
+  // push them back into the collision they were moved out of.
   const sixDigitIds = body.match(/\b9\d{5}\b/g) || [];
   assert.ok(sixDigitIds.length > 20, 'a substantial number of fixed ids are used');
   for (const id of sixDigitIds) {
-    assert.match(id, /^9005\d\d$/, `id ${id} should be in the 900500-900599 staging-demo range`);
+    assert.match(id, /^900[5-9]\d\d$/, `id ${id} should be in the 900500-900999 staging-demo range`);
   }
 });
 
 // ─── Content spot-checks per the brief's fixture list ──────────────────
 
-test('1 season', () => {
+test('3 seasons in ONE statement: running, closed, and internal-and-empty', () => {
   assert.match(body, /INSERT INTO seasons/);
-  assert.equal((body.match(/INSERT INTO seasons/g) || []).length, 1);
+  assert.equal((body.match(/INSERT INTO seasons/g) || []).length, 1,
+    'all rows belong to the same statement — a second INSERT would be a second failure point');
+  const start = body.indexOf('INSERT INTO seasons');
+  const block = body.slice(start, body.indexOf('ON CONFLICT (id) DO NOTHING', start));
+  assert.match(block, /NOW\(\) - INTERVAL '60 days', NOW\(\) \+ INTERVAL '30 days', TRUE/,
+    'the running season is is_active = TRUE and spans now');
+  // The admin Seasons list renders an active/closed badge and orders by
+  // display_order; with one always-active row neither was reviewable.
+  assert.match(block, /NOW\(\) - INTERVAL '240 days', NOW\(\) - INTERVAL '150 days', FALSE/,
+    'the archive season ended months ago and is is_active = FALSE');
+  assert.match(block, /Staging Demo Season — Archive/);
+  // The third season is internal AND has nothing referencing it, which
+  // makes it the only row whose admin DELETE gets past the 409
+  // `season_in_use` guard — the happy path of the delete flow is
+  // otherwise unreachable without first creating a season by hand.
+  assert.match(block, /Staging Demo Season — Internal Dry Run/);
+  assert.match(block, /NOW\(\) - INTERVAL '5 days', NOW\(\) \+ INTERVAL '25 days', TRUE, TRUE, 2/,
+    'the internal season is active, spans now, and is internal = TRUE');
+  // Nothing may hang off the internal season — being empty is the whole
+  // point of it — so its id must not reach any other statement's params.
+  const eventsIdx = body.indexOf('INSERT INTO season_events');
+  const eventsParams = body.slice(body.indexOf('ON CONFLICT (id) DO NOTHING', eventsIdx),
+    body.indexOf(');', eventsIdx));
+  assert.ok(!eventsParams.includes('SEASON_INTERNAL_ID'),
+    'no season event may hang off the internal season');
 });
 
-test('3 season_events: regular (current), type=\'season\', and a fully-past one', () => {
+test("6 season_events: regular (current), type='season', a fully-past one, an archive-season one, a challenge-free one and a season-less one", () => {
   const start = body.indexOf('INSERT INTO season_events');
   const block = body.slice(start, body.indexOf('ON CONFLICT (id) DO NOTHING', start));
   assert.match(block, /'\{"metrics": \[\], "offchain_weight": 1\}'::jsonb/g);
@@ -168,7 +210,26 @@ test('3 season_events: regular (current), type=\'season\', and a fully-past one'
   assert.match(block, /'regular'/);
   assert.match(block, /'season'/);
   const scoringFormulaCount = (block.match(/::jsonb/g) || []).length;
-  assert.equal(scoringFormulaCount, 3, 'all three season_events rows carry a scoring_formula');
+  assert.equal(scoringFormulaCount, 6, 'all six season_events rows carry a scoring_formula');
+
+  // The sixth row is the only one with season_id = NULL: it is what the
+  // Seasons screen's "not assigned to a season" panel and the events
+  // list's `season_id=none` filter exist to surface.
+  assert.match(block, /\(\$8, NULL, 'Staging Demo Event — Unassigned Sprint'/);
+  assert.equal((block.match(/^\s*\(\$\d+, NULL, 'Staging Demo Event/gm) || []).length, 1,
+    'exactly one season-less event — the rest must stay scoped to a season');
+
+  // The archive event hangs off the CLOSED season ($6), which is what
+  // gives the admin events list two scopes to tell apart; the unfilled
+  // one hangs off the running season ($3) and is the only event with no
+  // challenges, so the per-event "No challenges yet" empty state is
+  // reachable in a preview.
+  assert.match(block, /\(\$5, \$6, 'Staging Demo Event — Archive Sprint'/);
+  assert.match(block, /\(\$7, \$3, 'Staging Demo Event — Unfilled Sprint'/);
+  // Both are is_active = FALSE, so no public surface (the leaderboard's
+  // event picker, the between-events fallback) shifts because of them.
+  assert.match(block, /NOW\(\) - INTERVAL '230 days', NOW\(\) - INTERVAL '200 days', FALSE/);
+  assert.match(block, /NOW\(\) \+ INTERVAL '20 days', NOW\(\) \+ INTERVAL '50 days', FALSE/);
 
   // The third event exists specifically so the between-events fallback
   // (public/js/topochain-events.js) is reachable in a staging preview: the
@@ -177,6 +238,56 @@ test('3 season_events: regular (current), type=\'season\', and a fully-past one'
   assert.match(block, /NOW\(\) - INTERVAL '120 days', NOW\(\) - INTERVAL '90 days'/,
     'the third event is entirely in the past');
   assert.match(block, /Finished Sprint/);
+});
+
+test("the type='season' event has STARTED, so it is the default in a preview", () => {
+  // #999: the leaderboard now opens on the season aggregate
+  // (DEFAULT_PUBLIC_EVENT_SQL step 1), which is guarded on
+  // `starts_at <= NOW()`. This fixture used to start at NOW() + 15 days, so
+  // the guard skipped it and a staging preview kept defaulting to the
+  // regular event — i.e. the new default was unreviewable, and a tester
+  // would have seen no change at all. It now spans the season, like
+  // production's own season event.
+  const start = body.indexOf('INSERT INTO season_events');
+  const block = body.slice(start, body.indexOf('ON CONFLICT (id) DO NOTHING', start));
+  // Slice from the fixture's NAME to the end of that VALUES row (the next
+  // row starts with `($4,`) — the row's own description mentions "type=",
+  // so keying off that would match inside the prose.
+  const seasonRow = block.slice(block.indexOf('Season Standings'), block.indexOf('($4, $3,'));
+  assert.match(seasonRow,
+    /NOW\(\) - INTERVAL '60 days', NOW\(\) \+ INTERVAL '30 days'/,
+    'the season event must already have started for the default rule to pick it');
+  assert.doesNotMatch(block, /NOW\(\) \+ INTERVAL '15 days', NOW\(\) \+ INTERVAL '30 days'/,
+    'the old future-only window must be gone');
+});
+
+test('the season event carries its own leaderboard snapshots', () => {
+  // Without rows on the season event the aggregate is just
+  // EVENT_REGULAR + EVENT_ENDED, whose ordering matches the regular event's
+  // own board — so a tester could not tell the season path from the
+  // per-event path, which is exactly the bug being fixed.
+  const blocks = body.split('INSERT INTO leaderboard_snapshots').slice(1);
+  const seasonBlock = blocks.find((b) => b.includes('$7, $6, 1, 4200'));
+  assert.ok(seasonBlock, 'a snapshot block must target the season event');
+  const rows = seasonBlock.slice(0, seasonBlock.indexOf('ON CONFLICT'));
+
+  // Two snapshot times, so the "latest snapshot per (user, event)" rule the
+  // aggregate depends on (standings.js's DISTINCT ON) is genuinely
+  // exercised on this event — the earlier totals are strictly lower, so a
+  // rule that picked the wrong row would visibly under-count. Both times
+  // reuse the regular block's own interpolated constants.
+  assert.equal((rows.match(/\$\{EARLIER_SNAPSHOT\}/g) || []).length, 6);
+  assert.equal((rows.match(/\$\{LATER_SNAPSHOT\}/g) || []).length, 6);
+
+  // The podium-EXCLUDED fixture user leads on POINTS (4600 -> 5200 season
+  // total) so the "—" rank, the non-podium tag and the home widget's
+  // podium-skip all stay reachable on the DEFAULT board, not just on the
+  // regular event's.
+  assert.match(rows, /\$7, \$1, 1, 4600/,
+    'seasonWide1 (exclude_podium) must top the season board on points');
+  // ...and `mixed`, third on the regular event, tops the season podium — so
+  // "the default board changed" is provable from the preview alone.
+  assert.match(rows, /\$7, \$6, 1, 4200/);
 });
 
 test('4 challenge_kinds', () => {
@@ -195,40 +306,99 @@ test('5 challenge_templates', () => {
   assert.equal(ids.length, 5);
 });
 
-test('10 challenges split across all three season_events', () => {
+test('14 challenges split across four of the five season_events', () => {
   const start = body.indexOf('INSERT INTO challenges');
   const block = body.slice(start, body.indexOf('ON CONFLICT (id) DO NOTHING', start));
-  const ids = block.match(/^\s*\(9005\d\d, \$/gm) || [];
-  assert.equal(ids.length, 10);
-  const regularEventRows = block.match(/\(9005\d\d, \$1,/g) || [];
-  const seasonEventRows = block.match(/\(9005\d\d, \$2,/g) || [];
+  const ids = block.match(/^\s*\(9\d{5}, \$/gm) || [];
+  assert.equal(ids.length, 14);
+  const regularEventRows = block.match(/\(9\d{5}, \$1,/g) || [];
+  const seasonEventRows = block.match(/\(9\d{5}, \$2,/g) || [];
   // The ended event needs its own challenges, or selecting it renders an
   // empty list that reads like the fallback is broken.
-  const endedEventRows = block.match(/\(9005\d\d, \$3,/g) || [];
+  const endedEventRows = block.match(/\(9\d{5}, \$3,/g) || [];
+  const archiveEventRows = block.match(/\(9\d{5}, \$4,/g) || [];
   assert.equal(regularEventRows.length, 5, '5 challenges on the regular event');
   assert.equal(seasonEventRows.length, 3, '3 challenges on the season-type event');
   assert.equal(endedEventRows.length, 2, '2 challenges on the fully-past event');
+  assert.equal(archiveEventRows.length, 4, '4 challenges on the archive-season event');
+
+  // EVENT_EMPTY_ID is deliberately absent: it is the ONLY event with no
+  // challenges, which is the only way the admin challenge list's empty
+  // state can be looked at in a preview. A challenge added to it here
+  // would silently delete that coverage.
+  assert.equal((block.match(/\(9\d{5}, \$5,/g) || []).length, 0,
+    'the unfilled event must stay challenge-free');
 });
 
-test('6 users with emails, one exclude_podium=TRUE, one with a real bcrypt password', () => {
+test('the archive challenges cover disabled and non-contiguous display orders', () => {
+  const start = body.indexOf('INSERT INTO challenges');
+  const block = body.slice(start, body.indexOf('ON CONFLICT (id) DO NOTHING', start));
+  // Every other fixture challenge is enabled, so "Enable" (the control the
+  // list offers on a disabled row) was unreachable in a preview.
+  assert.equal((block.match(/', FALSE, \d+, FALSE/g) || []).length, 1,
+    'exactly one disabled challenge fixture');
+  // Contiguous 1..n orders make a reorder bug invisible — any renumbering
+  // looks right. The archive event's 2/6/11 has gaps for that reason.
+  for (const order of [', 2, TRUE', ', 6, FALSE', ', 11, FALSE']) {
+    assert.ok(block.includes(order), `non-contiguous display order ${order} must be seeded`);
+  }
+});
+
+test('8 users with emails, one exclude_podium=TRUE, one with a real bcrypt password', () => {
   const start = body.indexOf('INSERT INTO users');
   const block = body.slice(start, body.indexOf('ON CONFLICT (id) DO NOTHING', start));
   const usernames = block.match(/staging-demo-topochain-participant-\d/g) || [];
-  assert.equal(new Set(usernames).size, 6, '6 distinct fixture usernames');
+  assert.equal(new Set(usernames).size, 8, '8 distinct fixture usernames');
   const emails = block.match(/staging-demo-topochain-\d@example\.invalid/g) || [];
-  assert.equal(new Set(emails).size, 6, '6 distinct fixture emails');
-  assert.match(block, /TRUE\)/, 'one row sets exclude_podium TRUE');
-  assert.equal((block.match(/, TRUE\)/g) || []).length, 1, 'exactly one exclude_podium=TRUE row');
+  assert.equal(new Set(emails).size, 8, '8 distinct fixture emails');
+  // exclude_podium and accept_logs are adjacent columns, so pin the pair:
+  // exactly one row is podium-excluded, and exactly one has accept_logs
+  // switched off (the column defaults to TRUE, so a screen showing it needs
+  // a FALSE row or the column is the same all the way down).
+  assert.equal((block.match(/', TRUE, TRUE,/g) || []).length, 1,
+    'exactly one exclude_podium = TRUE row');
+  assert.equal((block.match(/', FALSE, FALSE,/g) || []).length, 1,
+    'exactly one accept_logs = FALSE row');
   assert.match(body, /const realHash = await bcrypt\.hash\(/, 'a real bcrypt hash is computed');
   assert.match(block, /\$7,/, 'the bcrypt hash param is used in place of the sentinel password for one user');
+});
+
+test('the block-producer queue has one pending and one released row', () => {
+  // GET /api/v4/admin/bp-queue is literally `users WHERE bp_requested_at IS
+  // NOT NULL`, and its status filter splits on bp_released_at. With no
+  // requesting user the admin screen's queue is empty in every preview and
+  // both the table and its filter read as broken rather than as unused.
+  const start = body.indexOf('INSERT INTO users');
+  const block = body.slice(start, body.indexOf('ON CONFLICT (id) DO NOTHING', start));
+  assert.match(block, /bp_requested_at, bp_released_at/,
+    'the queue columns are set in the users INSERT, not by a later UPDATE');
+  assert.match(block, /NOW\(\) - INTERVAL '12 days', NULL\)/, 'one pending request');
+  assert.match(block, /NOW\(\) - INTERVAL '25 days', NOW\(\) - INTERVAL '20 days'\)/,
+    'one already-released request');
+  assert.equal((block.match(/NULL, NULL\)/g) || []).length, 6,
+    'the other six users are not in the queue');
+});
+
+test('3 waitlist_signups covering pending/unconfirmed/released', () => {
+  const start = body.indexOf('INSERT INTO waitlist_signups');
+  assert.ok(start > 0, 'the admin Waitlist screen reads waitlist_signups, which a staging clone empties');
+  const block = body.slice(start, body.indexOf('ON CONFLICT (id) DO NOTHING', start));
+  const ids = block.match(/^\s*\(9005\d\d, '/gm) || [];
+  assert.equal(ids.length, 3);
+  assert.equal((block.match(/@example\.invalid/g) || []).length, 3,
+    'every fixture address is .invalid — nothing here is ever mailed');
+  // One row per state that renders differently on the screen.
+  assert.match(block, /NULL, NULL, NULL, NULL\)/, 'one unconfirmed, answer-less, pending row');
+  assert.match(block, /NOW\(\) - INTERVAL '20 days', \$1,/, 'one released row linked to a fixture user');
+  assert.equal((block.match(/'::jsonb/g) || []).length, 2, 'two rows carry survey answers');
 });
 
 test('user_enrollments: a mix of season-wide (NULL event) and event-scoped rows, every row carrying the same season_id', () => {
   const start = body.indexOf('INSERT INTO user_enrollments');
   const block = body.slice(start, body.indexOf('ON CONFLICT (id) DO NOTHING', start));
-  const rows = block.match(/\(9005\d\d, [^,]+, \$\d, (\$\d), NOW/g) || [];
-  assert.ok(rows.length >= 6, 'a substantial number of enrollment rows');
-  const seasonIdTokens = new Set(rows.map((r) => r.match(/\$\d, NOW/)[0].split(',')[0].trim()));
+  const rows = block.match(/\(9\d{5}, [^,]+, \$\d+, (\$\d+), NOW/g) || [];
+  assert.ok(rows.length >= 8, 'a substantial number of enrollment rows');
+  const seasonIdTokens = new Set(rows.map((r) => r.match(/\$\d+, NOW/)[0].split(',')[0].trim()));
   assert.equal(seasonIdTokens.size, 1,
     'every enrollment row must reference the SAME season_id placeholder (the scope invariant, enforced by construction)');
   assert.match(block, /\(\d+, NULL, /, 'at least one season-wide (NULL season_event_id) row');
@@ -248,11 +418,25 @@ test('6 onchain_accounts, some assigned/used, some unassigned/unused, with a fak
 test('user_activities span multiple challenges with the challenge_completion replay-guard metadata', () => {
   const start = body.indexOf('INSERT INTO user_activities');
   const block = body.slice(start, body.indexOf('ON CONFLICT (id) DO NOTHING', start));
-  const ids = block.match(/^\s*\(9005\d\d,/gm) || [];
-  assert.equal(ids.length, 8);
+  const ids = block.match(/^\s*\(9\d{5},/gm) || [];
+  assert.equal(ids.length, 12);
   assert.match(block, /'\{"kind": "challenge_completion"\}'::jsonb/);
   const challengeIds = new Set((block.match(/, (900500|900501|900502|900503|900504|900505|900506|900507)\)/g) || []));
   assert.ok(challengeIds.size >= 6, 'activities reference a variety of distinct challenges');
+  // The activities screen filters by event, and until the archive rows
+  // existed every row belonged to the running season — so the filter could
+  // only ever return everything.
+  assert.equal((block.match(/\(9007\d\d, \$[89], \$7,/g) || []).length, 4,
+    '4 activities on the archive event, for the two block-producer-queue users');
+  // NO row may carry a NULL challenge_id. This used to assert exactly one,
+  // to put the activities table's "—" cell (its stand-in for "not tied to a
+  // challenge") on screen — but user_activities.challenge_id is BIGINT NOT
+  // NULL REFERENCES challenges(id), so that row failed the insert on every
+  // boot and, because the seed's try/catch only warns, took the entire
+  // Topochain fixture block down with it. The "—" fallback is unreachable
+  // defensive code in admin-topochain.js, not a state a fixture can reach.
+  assert.equal((block.match(/INTERVAL '\d+ days', NULL\)/g) || []).length, 0,
+    'challenge_id is NOT NULL — a NULL here kills the whole Topochain seed');
 });
 
 // The home-screen Challenges card (#911) can draw four states, and a seed
@@ -345,6 +529,29 @@ test('1 app_version_config per OS (ios, android)', () => {
   assert.match(block, /'android'/);
   const ids = block.match(/^\s*\(9005\d\d,/gm) || [];
   assert.equal(ids.length, 2);
+  assert.match(body, /UPDATE app_version_configs[\s\S]*?SET is_active = FALSE[\s\S]*?WHERE os = 'android'/,
+    'the cloned staging DB always carries one deterministic inactive-rule warning');
+});
+
+test('the Android rule is DEACTIVATED, not merely offered as an inactive insert', () => {
+  // The insert above skips an OS the clone already configured, and
+  // production keeps BOTH ios and android active — so on a prod-cloned
+  // staging DB neither fixture row lands and the admin screen's "No
+  // active version rule for Android" warning cannot render (dapp.json
+  // asserts exactly that text on /#admin/app-version). The
+  // declared state has to be forced, whatever the clone brought.
+  const start = body.indexOf('INSERT INTO app_version_configs');
+  const after = body.slice(start);
+  const upd = after.slice(after.indexOf('UPDATE app_version_configs'));
+  const stmt = upd.slice(0, upd.indexOf('`'));
+  assert.match(stmt, /SET is_active = FALSE/);
+  assert.match(stmt, /WHERE os = 'android'/);
+  // iOS is left exactly as the clone had it — one OS gated, one OS open is
+  // the contrast the warning exists to draw.
+  assert.ok(!/'ios'/.test(stmt), 'the iOS rule must not be touched');
+  const check = DAPP_TESTS.find((t) => t.path === '/#admin/app-version'
+    && /No active version rule/i.test(t.expectText || ''));
+  assert.ok(check, 'the declared check this fixture exists for is still there');
 });
 
 test('1 account_delegation_period', () => {

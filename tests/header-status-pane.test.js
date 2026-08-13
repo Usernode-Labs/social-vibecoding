@@ -1,13 +1,13 @@
-// Header slim-down: the fork label, the platform + app build pills, the
-// kudos badge, the trophy and the admin shield all left the header for
-// the slide-out drawer.
+// Header slim-down: the fork label, the web revision, the kudos
+// badge, the trophy and the admin shield all left the header for the slide-out
+// drawer. #1101 later added the installed mobile-app version directly to it and
+// removed the unrelated per-dApp SHA.
 //
-// The load-bearing property is that the four SLOTS kept their ids while
-// changing parent — five renderers across app.js / app-view.js /
-// kudos.js resolve them with getElementById, and one of them
-// (renderAppVersionPillHTML) is shared with the home-screen cards. A
-// well-meaning rename or a "tidy up the header" edit that re-adds a slot
-// would break the pane silently, so all of it is pinned here.
+// The load-bearing property for the moved slots is that they kept their ids
+// while changing parent — renderers across app.js / app-view.js / kudos.js
+// resolve them with getElementById. A well-meaning rename or a "tidy up the
+// header" edit that re-adds a slot would break the pane silently, so all of it
+// is pinned here.
 //
 // Static-assertion style (cf. tests/theme-mode.test.js): read the
 // shipped source files and assert the wiring is present.
@@ -23,37 +23,54 @@ const root = path.join(__dirname, '..');
 const html = fs.readFileSync(path.join(root, 'public/index.html'), 'utf8');
 const appJs = fs.readFileSync(path.join(root, 'public/js/app.js'), 'utf8');
 const appViewJs = fs.readFileSync(path.join(root, 'public/js/app-view.js'), 'utf8');
-const kudosJs = fs.readFileSync(path.join(root, 'public/js/kudos.js'), 'utf8');
+const kudosJs = fs.readFileSync(path.join(root, 'frontend/src/features/leaderboard/kudos.js'), 'utf8');
 const css = fs.readFileSync(path.join(root, 'public/css/app.css'), 'utf8');
 
 const header = html.slice(0, html.indexOf('</header>'));
-const MOVED_SLOTS = [
+const DRAWER_SLOTS = [
   'platform-version-pill-slot',
-  'app-version-pill-slot',
+  'native-app-version-slot',
   'app-fork-badge-slot',
   'kudos-budget-slot',
 ];
 
 // ─── The slots moved, and kept their ids ─────────────────────────────────
 
-test('each moved slot exists exactly once, inside the drawer status pane', () => {
+// The sidebar reorg (#913) split the old status pane in two: the budget
+// slots (kudos, AI credit) stayed in #drawer-status-pane at the top,
+// while the version pills + fork badge moved to the anchored
+// #drawer-footer at the bottom of the panel. Same load-bearing property
+// as before: every slot keeps its id, exactly once, in its region.
+test('each drawer status slot exists exactly once in its assigned region', () => {
   const paneStart = html.indexOf('id="drawer-status-pane"');
   assert.ok(paneStart > -1, '#drawer-status-pane is missing from the shell');
   // The pane runs until the first drawer navigation row after it.
   const paneEnd = html.indexOf('id="drawer-row-node"');
   assert.ok(paneEnd > paneStart, 'the status pane sits above the Node row');
+  const footerStart = html.indexOf('id="drawer-footer"');
+  assert.ok(footerStart > paneEnd, '#drawer-footer sits below the nav rows');
 
-  for (const id of MOVED_SLOTS) {
+  const PANE_SLOTS = ['kudos-budget-slot'];
+  const FOOTER_SLOTS = [
+    'platform-version-pill-slot', 'native-app-version-slot',
+    'app-fork-badge-slot',
+  ];
+  for (const id of DRAWER_SLOTS) {
     const hits = html.match(new RegExp(`id="${id}"`, 'g')) || [];
     assert.equal(hits.length, 1, `exactly one #${id} in the shell`);
     const at = html.indexOf(`id="${id}"`);
-    assert.ok(at > paneStart && at < paneEnd,
-      `#${id} lives inside #drawer-status-pane`);
+    if (PANE_SLOTS.includes(id)) {
+      assert.ok(at > paneStart && at < paneEnd,
+        `#${id} lives inside #drawer-status-pane`);
+    } else {
+      assert.ok(FOOTER_SLOTS.includes(id), `#${id} is assigned a region`);
+      assert.ok(at > footerStart, `#${id} lives inside #drawer-footer`);
+    }
   }
 });
 
-test('none of the moved slots are left in the header', () => {
-  for (const id of MOVED_SLOTS) {
+test('none of the drawer status slots are duplicated in the header', () => {
+  for (const id of DRAWER_SLOTS) {
     assert.ok(!header.includes(`id="${id}"`), `#${id} has left the header`);
   }
   assert.ok(!header.includes('id="leaderboard-btn"'),
@@ -117,26 +134,33 @@ test('the hamburger carries the amber deploy dot, hidden by default', () => {
 });
 
 test('the deploy dot is derived from the rendered pills, not a duplicate flag', () => {
-  assert.match(appJs, /refreshDeployDot\(\)\s*\{/, 'DrawerStatus.refreshDeployDot is defined');
-  const fn = appJs.slice(appJs.indexOf('    refreshDeployDot() {'));
-  assert.match(fn.slice(0, 600), /#drawer-status-pane \.app-version-pill--deploying/,
+  // #1079 chunk B moved App.DrawerStatus into the React bundle, beside the
+  // drawer markup it drives; app.js keeps a forwarder for its call sites.
+  const headerMenuJs = fs.readFileSync(
+    path.join(root, 'frontend/src/features/header/header-menu-controller.js'), 'utf8');
+  assert.match(headerMenuJs, /refreshDeployDot\(\)\s*\{/, 'DrawerStatus.refreshDeployDot is defined');
+  const fn = headerMenuJs.slice(headerMenuJs.indexOf('  refreshDeployDot() {'));
+  // Post-#913 the version rows live in #drawer-footer and signal a
+  // rolling deploy with .drawer-ver--deploying instead of the pill class.
+  assert.match(fn.slice(0, 600), /#drawer-footer \.drawer-ver--deploying/,
     'reads the deploying state off the rendered pills — the single source of truth');
-  // Every renderer that can paint (or clear) a deploying pill must sync
-  // the dot, or the hamburger keeps signalling a finished deploy.
+  // The platform-revision renderer and the drawer lifecycle both synchronize
+  // the dot. dApp deploy pills live on home cards and are out of scope.
   const calls = (appJs.match(/DrawerStatus\.refreshDeployDot\(\)/g) || []).length
-    + (appViewJs.match(/DrawerStatus\.refreshDeployDot\(\)/g) || []).length;
-  assert.ok(calls >= 4,
-    `refreshDeployDot is called from each pill renderer (found ${calls}, expect >= 4)`);
+    + (headerMenuJs.match(/DrawerStatus\.refreshDeployDot\(\)/g) || []).length;
+  assert.ok(calls >= 2,
+    `refreshDeployDot is called from the revision renderer and lifecycle (found ${calls})`);
 });
 
 // ─── App-scoped row lifecycle ────────────────────────────────────────────
 
-test('the app build + fork rows ship hidden and follow the app lifecycle', () => {
-  const appRow = html.match(/<div id="drawer-row-app-version"[^>]*>/);
+test('the mobile app version and fork rows ship hidden', () => {
+  const nativeRow = html.match(/<div id="drawer-row-native-app-version"[^>]*>/);
   const forkRow = html.match(/<div id="drawer-row-app-fork"[^>]*>/);
-  assert.ok(appRow, '#drawer-row-app-version exists');
+  assert.ok(nativeRow, '#drawer-row-native-app-version exists');
   assert.ok(forkRow, '#drawer-row-app-fork exists');
-  assert.match(appRow[0], /class="hidden /, 'the app build row ships hidden (no app open at boot)');
+  assert.match(nativeRow[0], /class="hidden /,
+    'the mobile app version ships hidden until the native bridge answers');
   assert.match(forkRow[0], /class="hidden /, 'the fork row ships hidden');
 
   // Hidden from every navigate* that leaves an app behind — one call per
@@ -145,15 +169,29 @@ test('the app build + fork rows ship hidden and follow the app lifecycle', () =>
   const shareHides = (appJs.match(/if \(_drs\) _drs\.classList\.add\('hidden'\);/g) || []).length;
   assert.ok(hides > shareHides,
     'setAppOpen(false) runs everywhere the Share row is hidden, plus navigateHome');
-  assert.match(appJs, /DrawerStatus\.setAppOpen\(true\)/, 'and is revealed when an app opens');
+  assert.match(appJs, /DrawerStatus\.setAppOpen\(true\)/,
+    'the app-open lifecycle still drives the header mode switch');
   assert.match(appViewJs, /DrawerStatus\.setAppOpen\(false\)/,
-    'AppView.close() hides it too, so a closed app leaves no stale build line');
+    'AppView.close() clears app-scoped lineage too');
+});
+
+test('version information contains no particular dApp version', () => {
+  assert.doesNotMatch(html, /drawer-row-app-version|app-version-pill-slot|dApp version/);
+  assert.doesNotMatch(appViewJs, /\b(?:refreshVersionPill|applyHeaderDeployProgress)\b/,
+    'opening a dApp no longer fetches or paints its SHA into the drawer');
+  assert.match(html, /Web revision/,
+    'the Git SHA is accurately described as a revision rather than a version');
+  assert.match(html, /Mobile app version/,
+    'the semantic version/build is labelled as the installed mobile app');
 });
 
 test('the fork row visibility is driven by renderForkBadge', () => {
+  // Anchored on the next member, not on `_forkSource`: that field moved into
+  // the fork dialog's island in #1078 chunk I and survives here only in the
+  // comment explaining where it went.
   const fn = appViewJs.slice(
     appViewJs.indexOf('  renderForkBadge() {'),
-    appViewJs.indexOf('  _forkSource:')
+    appViewJs.indexOf('  promptFork(source) {')
   );
   assert.ok(fn.length > 0, 'renderForkBadge located');
   assert.match(fn, /setRow\(false\)/, 'a non-fork hides the row');
@@ -167,8 +205,8 @@ test('status-pane rows are plain divs — the pills carry their own anchors', ()
   // renderPlatformVersionPill's stale state renders a <button
   // onclick="location.reload()">, and the live state an <a>. Nesting
   // those inside a clickable row would be invalid markup.
-  for (const id of ['drawer-row-platform-version', 'drawer-row-app-version',
-    'drawer-row-app-fork', 'drawer-row-kudos',
+  for (const id of ['drawer-row-platform-version',
+    'drawer-row-native-app-version', 'drawer-row-app-fork', 'drawer-row-kudos',
     'drawer-row-ai-budget']) {
     const row = html.match(new RegExp(`<(\\w+) id="${id}"`));
     assert.ok(row, `${id} exists`);
@@ -232,8 +270,6 @@ test('the ≤640px collapse rule no longer hides the drawer slots', () => {
   const block = mq.slice(0, mq.indexOf('\n}\n'));
   assert.ok(!block.includes('#platform-version-pill-slot'),
     'the platform pill renders at every width now — it is in the drawer');
-  assert.ok(!block.includes('#app-version-pill-slot'),
-    'the app pill renders at every width now — it is in the drawer');
   // The home-card class slot still collapses: those pills DO crowd the
   // app name on a narrow card.
   assert.ok(block.includes('.app-version-pill-slot:not(:has(.app-version-pill--deploying))'),
@@ -241,10 +277,12 @@ test('the ≤640px collapse rule no longer hides the drawer slots', () => {
 });
 
 test('the drawer constrains a long pill so it cannot widen the 15rem panel', () => {
-  assert.match(css, /#drawer-status-pane \.app-version-pill \{[^}]*max-width/,
-    'pills in the status pane are width-capped');
-  assert.match(css, /#drawer-status-pane \.app-version-pill-label \{[^}]*text-overflow:\s*ellipsis/,
-    'and their label truncates rather than overflowing');
+  // Post-#913 the version rows are .drawer-ver entries in the footer;
+  // the width constraint moved onto that class (max-width + ellipsis).
+  assert.match(css, /\.drawer-ver \{[^}]*max-width/,
+    'version rows in the drawer footer are width-capped');
+  assert.match(css, /\.drawer-ver \{[^}]*text-overflow:\s*ellipsis/,
+    'and their value truncates rather than overflowing');
 });
 
 // ─── One scroller, with the theme control and status pane inside it ──────

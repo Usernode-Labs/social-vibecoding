@@ -14,7 +14,7 @@ const { proposalHandoffRoutes } = require('./src/routes/proposal-handoff');
 const { voteRoutes } = require('./src/routes/votes');
 const { kudosRoutes } = require('./src/routes/kudos');
 const { publicApiRoutes } = require('./src/routes/public-api');
-const { profileRoutes } = require('./src/routes/profiles');
+const { publicProfileRoutes } = require('./src/routes/profiles');
 const { waitlistConnectRoutes } = require('./src/routes/waitlist-connect');
 const { issueRoutes } = require('./src/routes/issues');
 const { campaignRoutes } = require('./src/routes/campaigns');
@@ -30,17 +30,24 @@ const { appErrorRoutes } = require('./src/routes/app-error');
 const { visualsRoutes } = require('./src/routes/visuals');
 const { appIconRoutes } = require('./src/routes/app-icons');
 const { issueImageRoutes } = require('./src/routes/issue-images');
+const { avatarRoutes } = require('./src/routes/avatars');
+const { profileRoutes } = require('./src/routes/profile');
 const { appFileServeRoutes, appFileShellRoutes } = require('./src/routes/app-files');
 const appStorageRoutes = require('./src/routes/app-storage');
 const anthropicProxyRoutes = require('./src/routes/anthropic-proxy');
+const { credentialRoutes } = require('./src/routes/credentials');
 const appLlmProxyRoutes = require('./src/routes/app-llm-proxy');
 const appPlatformApiRoutes = require('./src/routes/app-platform-api');
 const { llmGrantsRoutes } = require('./src/routes/llm-grants');
 const { userAgentFilesRoutes } = require('./src/routes/user-agent-files');
 const { topicAttributeRoutes } = require('./src/routes/topic-attributes');
 const { boardOrderRoutes } = require('./src/routes/board-order');
+const { reportAiRoutes } = require('./src/routes/report-ai');
+const { reportSnapshotRoutes, reportShareRoutes } = require('./src/routes/report-snapshots');
 const { homePanelRoutes } = require('./src/routes/home-panels');
 const { homeLayoutRoutes } = require('./src/routes/home-layout');
+const { chatDraftsRoutes } = require('./src/routes/chat-drafts');
+const { devFlowRoutes } = require('./src/routes/dev-flow');
 const { pmOrderRoutes } = require('./src/routes/pm-order');
 const { debugRoutes } = require('./src/routes/debug');
 const { galleryRoutes } = require('./src/routes/gallery');
@@ -50,6 +57,15 @@ const {
   cliPreAuthRoutes,
   cliBrowserRoutes,
 } = require('./src/routes/cli-auth');
+// Hosted MCP connector (Claude.ai / ChatGPT). Same three-way split as the
+// CLI surface above: a hard staging/enablement gate, then the public +
+// bearer routes before cookie auth, then the browser-session management
+// routes after it.
+const {
+  mcpConnectGate,
+  mcpPreAuthRoutes,
+  mcpBrowserRoutes,
+} = require('./src/routes/mcp-remote');
 // Topochain v4 (plan Task 3): public/partner/ingest/mobile carry their own
 // auth and mount BEFORE authMiddleware; admin reuses the platform's own
 // admin auth and mounts AFTER it (architecture decision #2 — see the mount
@@ -61,9 +77,13 @@ const { topochainMobileRoutes } = require('./src/routes/topochain/mobile');
 const { topochainAdminRoutes } = require('./src/routes/topochain/admin');
 const github = require('./src/services/github');
 const llm = require('./src/services/llm');
+const llmTelemetry = require('./src/services/llm-telemetry');
 const worker = require('./src/services/worker');
 const activeWorkersSvc = require('./src/services/active-workers');
 const turnWatchdog = require('./src/services/turn-watchdog');
+const recoveryRetry = require('./src/services/recovery-retry');
+const turnLifecycle = require('./src/services/turn-lifecycle');
+const turnEffects = require('./src/services/turn-effects');
 const recoveryPills = require('./src/services/recovery-pills');
 const sessionLifecycle = require('./src/services/session-lifecycle');
 const stagingRecovery = require('./src/services/staging-recovery');
@@ -73,6 +93,7 @@ const stagingReap = require('./src/services/staging-reap');
 // stagingSvc because recoverActiveWorkers() already binds a local `staging`.
 const stagingSvc = require('./src/services/staging');
 const limits = require('./src/services/limits');
+const events = require('./src/services/events');
 const ws = require('./src/services/ws');
 const log = require('./src/services/logger');
 const lifecycle = require('./src/services/lifecycle');
@@ -86,6 +107,7 @@ const { sweepStuckCreatingApps } = require('./src/routes/apps');
 const appAccess = require('./src/services/app-access');
 const platformJwt = require('./src/services/platform-jwt');
 const { getPool } = require('./src/db/pool');
+const { createLeadership, withMigrationLock } = require('./src/services/leadership');
 const { trustedProxyClientIp } = require('./src/services/client-ip');
 const { currentVotePredicateSql } = require('./src/services/pr-vote-revision');
 
@@ -108,6 +130,14 @@ app.use(trustedProxyClientIp({ hostname: config.trustedProxyHost }));
 // session semantics.
 app.use(cliAuthGate(config));
 app.use(cliPreAuthRoutes(config));
+
+// The hosted MCP connector gets the same treatment for the same reason: a
+// staging preview's browser identity comes from an iframe token, so a
+// connector credential must never be mintable or usable there. POST /mcp
+// authenticates with its own OAuth bearer and must never see a cookie, so
+// it mounts here rather than behind authMiddleware.
+app.use(mcpConnectGate(config));
+app.use(mcpPreAuthRoutes(config));
 
 // ── Explorer API passthrough ───────────────────────────────────────────────
 // The mobile app's in-webview "Transaction Log" panel resolves the explorer
@@ -215,6 +245,10 @@ app.use((req, res, next) => {
   // can exceed the 100kb default once JSON-escaped — the route mounts
   // its own 256kb parser (see routes/user-agent-files.js).
   if (req.path === '/api/me/agent-files' && req.method === 'POST') return next();
+  // Locked report snapshots (report-lock-share) carry the full standalone
+  // report HTML, which routinely exceeds 100kb; the route mounts its own
+  // 3mb parser (routes/report-snapshots.js).
+  if (req.method === 'POST' && /^\/api\/apps\/[^/]+\/report-snapshots$/.test(req.path)) return next();
   express.json()(req, res, next);
 });
 app.use(cookieParser());
@@ -270,12 +304,13 @@ app.get('/api/version', (_req, res) => {
     // gates behaviour on it, and USERNODE_ENV is platform-injected (a
     // reserved key), so there's no new declaration to make.
     env: process.env.USERNODE_ENV || null,
-    // SELF-HOSTING.md Phase 2f / Phase 3: the platform's own slug
-    // in the apps table. Clients use this to recognize self-app
-    // surfaces (e.g. the "Platform updating…" banner cross-checks
-    // sessionStorage state against the live self-app slug). Cheap to
-    // include — already available in config; saves the client a second
-    // round-trip for any code path that needs it.
+    // SELF-HOSTING.md Phase 2f: the platform's own slug in the apps
+    // table, so a client can recognize self-app surfaces without
+    // guessing. No client reads it today — the "Platform updating…"
+    // banner that did was removed in #1015 — but it stays as the
+    // documented way to identify the self-app: cheap to include
+    // (already in config) and it saves a second round-trip for any
+    // future code path that needs it.
     selfAppSlug: config.selfAppSlug,
   });
 });
@@ -416,6 +451,17 @@ app.use(appIconRoutes(config));
 // control is the unguessable 32-hex screenshot id.
 app.use(issueImageRoutes(config));
 
+// Profile pictures (#982). Public for the same reason as app-icons: the
+// profile screen and the hamburger drawer load them with plain <img>
+// tags; access control is the unguessable 32-hex avatar id, and the image
+// is published to other users by design.
+app.use(avatarRoutes(config));
+
+// Publicly shared locked report snapshots (report-lock-share). Mounted
+// before authMiddleware like visuals: access control is the unguessable
+// 32-hex share token, and the HTML is served under a sandbox CSP.
+app.use(reportShareRoutes(config));
+
 // App-stored user files (#752). Public for the same reason as app-icons:
 // app pages load them with plain <img> tags from their own subdomains.
 // visibility='public' rows are guarded by the unguessable 32-hex id;
@@ -463,7 +509,13 @@ app.use(topochainMobileRoutes(config));
 app.use(cliApiBearerAuth(config));
 app.use(authMiddleware(config));
 app.use(cliBrowserRoutes(config));
+// Connector consent decision + Settings management (connected chat
+// products, GitHub account link). These need a real platform session, so
+// they mount after authMiddleware — the consent POST must never be
+// satisfiable by a bearer token approving itself.
+app.use(mcpBrowserRoutes(config));
 app.use(authRoutes(config));
+app.use(credentialRoutes(config));
 app.use(appRoutes(config));
 // Shell relay for usernode.uploadFile()/deleteFile()/getStorageUsage()
 // (#752): session-cookie authed, called only by public/js/app-view.js's
@@ -471,14 +523,18 @@ app.use(appRoutes(config));
 app.use(appFileShellRoutes(config));
 app.use(chatRoutes(config));
 app.use(proposalHandoffRoutes(config));
-app.use(sessionRoutes(config));
+app.use(sessionRoutes(config, {
+  scheduleInteractiveRecovery: scheduleInteractiveTurnRecovery,
+}));
 app.use(voteRoutes(config));
 app.use(kudosRoutes(config));
 // Public read-only apps + contributors API. Mounted after authMiddleware
 // like kudosRoutes; reachable anonymously via the `/api/public/` prefix in
 // PUBLIC_PATHS (src/middleware/auth.js).
 app.use(publicApiRoutes(config));
-app.use(profileRoutes(config));
+// Public-profile reads use the anonymous /api/public prefix; owner controls,
+// reports and moderation share this router but remain behind authMiddleware.
+app.use(publicProfileRoutes(config));
 // Waitlist social-connect OAuth round-trip (two-stage waitlist survey).
 // Anonymous via the '/waitlist/connect/' PUBLIC_PATHS prefix.
 app.use(waitlistConnectRoutes(config));
@@ -494,6 +550,8 @@ app.use(llmGrantsRoutes(config));
 app.use(userAgentFilesRoutes(config));
 app.use(topicAttributeRoutes(config));
 app.use(boardOrderRoutes(config));
+app.use(reportAiRoutes(config));
+app.use(reportSnapshotRoutes(config));
 // Home-screen panels (#911): the challenges card's data + its per-user
 // show/hide. Me-scoped reads, so it sits behind authMiddleware like the
 // ordering routes above.
@@ -501,6 +559,19 @@ app.use(homePanelRoutes(config));
 // Free-form home-grid placement: where each app tile and widget sits, per
 // breakpoint. Me-scoped like the panels route above.
 app.use(homeLayoutRoutes(config));
+// Profile customization (#982): the display name / bio / handle write, the
+// avatar upload-delete pair, and the viewer's own completed challenges.
+// Me-scoped, so behind authMiddleware — the avatar READ side is the
+// separate public avatarRoutes mounted above.
+app.use(profileRoutes(config));
+// #940: saved dev-chat drafts, now server-backed so they follow a user
+// across devices. Owner-scoped per session, like the /api/sessions/* family
+// in routes/sessions.js.
+app.use(chatDraftsRoutes(config));
+// #1049: the alternate development flows (Claude Code / Codex web UI) as
+// ordinary browser routes rather than MCP-only tools. App-scoped with the
+// same 'collab' bar as the other dev surfaces, so behind authMiddleware.
+app.use(devFlowRoutes(config));
 app.use(pmOrderRoutes(config));
 app.use(debugRoutes(config));
 app.use(galleryRoutes(config));
@@ -683,9 +754,24 @@ app.get('*', (req, res) => {
   }
 });
 
-async function start() {
-  await migrate(config);
-  await mobilePush.initialize(config);
+// Leadership coordinator for blue-green deploys (assigned in start()).
+// During a rollout both colors serve HTTP, but singleton background work
+// is gated to the leader so it never double-runs. See services/leadership.js.
+let leadership = null;
+
+// Leader-only singleton work. Runs exactly once per cluster — at boot for
+// the leader / the single-instance case (PLATFORM_LEADER_LOCK unset), or at
+// promotion for a follower whose old leader has exited (blue-green handoff).
+// EVERYTHING here either mutates shared cluster state (worker containers,
+// PR/merge rows, staging, Postgres roles, GitHub) or is a singleton
+// poller/sweeper that must never double-run across the two colors. The
+// follower serves HTTP from boot; the couple of leader-scoped capabilities
+// (prod-debug SQL, whose role password lives in the leader's memory) degrade
+// to a clean 503 on the follower for the seconds until promotion.
+async function becomeLeader() {
+  log.info('server', 'Running leader duties (role bootstraps, recovery, sweepers)', {
+    identity: leadership && leadership.identity,
+  });
 
   // Credential rows deliberately outlive their active period for settings
   // and audit correlation, then age out on the documented schedule.
@@ -744,9 +830,6 @@ async function start() {
     });
   });
 
-  await github.init(config);
-  await llm.init(config);
-
   // Any app stuck in 'creating' from a previous process crash gets flipped
   // to 'error' so the creator can retry instead of staring at a spinner.
   await sweepStuckCreatingApps(getPool(config)).catch(() => {});
@@ -787,28 +870,9 @@ async function start() {
     log.warn('server', 'Campaign resume failed', { err: err.message });
   });
 
-  worker.ensureWorkerImage().catch((err) => {
-    log.warn('server', 'Worker image build deferred', { err: err.message });
-  });
-
-  // Module-scoped so cleanup() can close it on SIGTERM (#767) — a
-  // function-local handle left the listener accepting new connections
-  // for the entire drain, then exited from under them.
-  const server = app.listen(config.port, () => {
-    log.info('server', `Listening on :${config.port}`);
-  });
-  httpServer = server;
-  shutdownPool = getPool(config);
-
-  ws.attach(server, config);
+  // The push SENDER claims queued jobs — a singleton. Enqueueing (HTTP
+  // side) works on every color; only the leader drains the queue.
   mobilePush.start();
-  chainPoller.start(config);
-  genesisAccounts.start();
-  nodeStatus.start({ nodeRpcUrl: process.env.NODE_RPC_URL });
-  // Warm the /api/status cache so the first dashboard load doesn't have
-  // to wait 1-2s on `docker stats`. Subsequent loads are served from
-  // cache via stale-while-revalidate (see services/status.js).
-  statusService.start(config);
   // Periodically check imported / bot-owned repos for new commits on
   // `main` we didn't make ourselves and redeploy via the same path
   // that the dev-chat merge flow uses. See main-drift-poller.js.
@@ -834,7 +898,11 @@ async function start() {
   // orphans are a feature, not a bug: workers are intentionally detached
   // from the server lifecycle so `node --watch` restarts don't interrupt
   // in-flight Claude Code sessions.
-  recoverActiveWorkers(config)
+  reconcilePendingTurnCleanup(config)
+    .catch((err) => {
+      log.warn('server', 'Pending turn cleanup reconciliation failed', { err: err.message });
+    })
+    .then(() => recoverActiveWorkers(config))
     .catch((err) => {
       log.warn('server', 'Worker adoption failed', { err: err.message });
     })
@@ -884,6 +952,15 @@ async function start() {
   // period, and hard-purges archived CC volumes once their retention
   // window elapses. Day-scale, so it polls on its own slow interval.
   startStalePrSweeper(config);
+
+  // #907: release local coding-agent leases whose machine stopped
+  // heartbeating, and fail the turn they were holding.
+  startLocalAgentLeaseSweeper(config);
+
+  // #1010: fast, gate-first governance applies (minute-scale). Complements
+  // the hourly sweeper's Pass 0b, which keeps ownership of the close-issue
+  // superseded sweep (its GitHub fetch is too costly to run per minute).
+  startGovernanceApplyTicker(config);
 
   // Reconcile open PR sessions ('promoted'/'merging') against GitHub's
   // actual merge state. Heals sessions that merged on GitHub but whose
@@ -979,6 +1056,62 @@ async function start() {
   // unavailable (services/title-heal.js). Bounded, non-overlapping, no-op
   // while the LLM stays disabled.
   startTitleHealSweeper(config);
+}
+
+async function start() {
+  // Schema migration is serialized across colors with an advisory lock so
+  // two booting platform containers can't run DDL concurrently during a
+  // blue-green rollout. No-op wrapper in single-instance mode. Orthogonal
+  // to the lock_timeout retry INSIDE migrate() (applySchemaWithLockRetry):
+  // this serializes the two colors against each other; that one survives
+  // lock contention with pg_dump'ing staging clones.
+  await withMigrationLock(getPool(config), () => migrate(config));
+  await mobilePush.initialize(config);
+  await github.init(config);
+  // Configure the collection kill switch even on deployments with no
+  // Anthropic client. OpenRouter/local coding runs are initialized by their
+  // own paths and still need the provider-neutral collector.
+  llmTelemetry.init(config);
+  await llm.init(config);
+
+  worker.ensureWorkerImage().catch((err) => {
+    log.warn('server', 'Worker image build deferred', { err: err.message });
+  });
+
+  // ── Per-instance services ────────────────────────────────────────────
+  // Started on EVERY color so a follower can serve traffic the moment the
+  // rollout cuts over to it. These are request-serving / in-memory read
+  // caches — safe (just briefly redundant) to run in both colors during
+  // the rollout overlap.
+  //
+  // Module-scoped so cleanup() can close it on SIGTERM (#767) — a
+  // function-local handle left the listener accepting new connections
+  // for the entire drain, then exited from under them.
+  const server = app.listen(config.port, () => {
+    log.info('server', `Listening on :${config.port}`);
+  });
+  httpServer = server;
+  shutdownPool = getPool(config);
+
+  ws.attach(server, config);
+  chainPoller.start(config);
+  genesisAccounts.start();
+  nodeStatus.start({ nodeRpcUrl: process.env.NODE_RPC_URL });
+  // Warm the /api/status cache so the first dashboard load doesn't have
+  // to wait 1-2s on `docker stats`. Subsequent loads are served from
+  // cache via stale-while-revalidate (see services/status.js).
+  statusService.start(config);
+
+  // ── Leader-only singleton work ───────────────────────────────────────
+  // Elect a single leader across the colors. The leader runs becomeLeader()
+  // immediately; a follower serves HTTP now and runs it later, once the old
+  // leader exits and frees the advisory lock. Single-instance / dev / tests
+  // (PLATFORM_LEADER_LOCK unset) become leader instantly — identical to the
+  // pre-blue-green boot path.
+  leadership = createLeadership({ databaseUrl: config.databaseUrl });
+  leadership.start(becomeLeader).catch((err) => {
+    log.error('server', 'Leadership coordinator failed', { err: err.message });
+  });
 
   return server;
 }
@@ -1475,6 +1608,33 @@ function startTitleHealSweeper(config) {
   setInterval(tick, TITLE_HEAL_SWEEP_MS).unref?.();
 }
 
+// #907: how often expired local-agent leases are swept. A lease is a 120s
+// TTL refreshed by a 30s heartbeat, so a machine that goes to sleep is
+// already ignorable within two minutes on read (every query filters on
+// expires_at). The sweep exists to mark the row released and fail any turn
+// still sitting on it, so the dev chat stops saying "running on your
+// machine" about a laptop in a bag. One minute is well inside that TTL.
+const LOCAL_AGENT_SWEEP_MS = 60 * 1000;
+
+// Release leases whose machine stopped heartbeating. Same guard shape as the
+// sweepers above: never overlap a running pass, swallow every error, unref'd
+// timer so it can't hold the process open during shutdown.
+function startLocalAgentLeaseSweeper(config) {
+  const localAgent = require('./src/services/local-agent');
+  const { getPool } = require('./src/db/pool');
+  let running = false;
+  const tick = () => {
+    if (running) return;
+    running = true;
+    localAgent.sweepExpiredLeases(getPool(config))
+      .catch((err) => {
+        log.warn('server', 'Local-agent lease sweep tick failed', { err: err.message });
+      })
+      .finally(() => { running = false; });
+  };
+  setInterval(tick, LOCAL_AGENT_SWEEP_MS).unref?.();
+}
+
 // Resume post-merge issue-close watches for sessions merged shortly
 // before this process started. See the call site for rationale. The
 // 15-minute window comfortably covers the merge → GHA build → rolling
@@ -1594,6 +1754,7 @@ async function restoreMissingQuickReplies(config) {
   const { rows } = await pool.query(
     `SELECT id, pr_number, spec_md FROM chat_sessions
      WHERE status IN ('active', 'promoted')
+       AND source IS DISTINCT FROM 'imported'
        AND is_headless = FALSE
        AND active_turn IS NULL
        AND last_activity_at > NOW() - make_interval(days => $1::int)
@@ -1729,13 +1890,160 @@ async function recoverActiveWorkers(config) {
 
   for (const orphan of orphans) {
     // Run each adoption in parallel; they're IO-bound and isolated.
-    adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcastGlobal })
+    const deps = { config, pool, staging, ghub, broadcastGlobal };
+    adoptOrphanWorker(orphan, deps)
       .catch((err) => {
+        if (err?.retainActiveTurn && recoveryRetry.shouldRetryRecoveryError(err)) {
+          log.warn('server', 'Orphan adoption paused with durable turn state retained', {
+            name: orphan.name, sessionId: orphan.sessionId, err: err.message,
+          });
+          scheduleRetainedOrphanRecovery(orphan, deps);
+          return;
+        }
         log.warn('server', 'Orphan adoption failed', {
           name: orphan.name, err: err.message,
         });
       });
   }
+}
+
+async function persistedActiveTurnExists(pool, sessionId) {
+  try {
+    const { rows } = await pool.query(
+      'SELECT active_turn FROM chat_sessions WHERE id = $1',
+      [sessionId]
+    );
+    return !!rows[0]?.active_turn;
+  } catch {
+    // An unavailable DB cannot prove the retained state disappeared. Keep
+    // ownership and try again rather than letting the watchdog race us.
+    return null;
+  }
+}
+
+function turnCleanupArgs(activeTurn) {
+  return turnLifecycle.cleanupArgs(activeTurn);
+}
+
+async function reconcilePendingTurnCleanup(config) {
+  const pool = getPool(config);
+  const { rows } = await pool.query(
+    `SELECT id, active_turn
+       FROM chat_sessions
+      WHERE active_turn->>'phase' = $1`,
+    [turnLifecycle.PHASE_CLEANUP_PENDING],
+  );
+  for (const row of rows) {
+    const args = turnCleanupArgs(row.active_turn);
+    const cleared = await worker.finishTurn(row.id, args);
+    if (!cleared) {
+      log.warn('server', 'Pending turn cleanup remains durable for a later sweep', {
+        sessionId: row.id,
+      });
+    }
+  }
+}
+
+function scheduleRetainedOrphanRecovery(orphan, deps) {
+  const sessionId = Number(orphan.sessionId);
+  let releaseReservation = null;
+  return recoveryRetry.scheduleRetainedRecovery({
+    key: `interactive:${sessionId}`,
+    hold: () => {
+      if (!releaseReservation) {
+        releaseReservation = activeWorkersSvc.beginSessionOperation(sessionId);
+      }
+    },
+    release: () => {
+      releaseReservation?.();
+      releaseReservation = null;
+    },
+    // Every retry re-reads the durable phase. The timer is only scheduling;
+    // it never remembers semantic recovery state in a closure.
+    run: async () => {
+      const activeTurn = await turnLifecycle.loadActiveTurn(deps.pool, sessionId);
+      const action = turnLifecycle.recoveryAction(activeTurn);
+      if (action === 'none') return;
+      if (action === 'cleanup') {
+        const args = turnCleanupArgs(activeTurn);
+        recoveryRetry.requireDurableTurnCleanup(
+          await worker.finishTurn(sessionId, args),
+          args,
+        );
+        return;
+      }
+      if (action === 'quarantine') return;
+      await adoptOrphanWorker(orphan, deps);
+    },
+    onError: async (err, { failures }) => {
+      if (!recoveryRetry.shouldRetryRecoveryError(err)) {
+        log.error('server', 'Orphan recovery has invalid durable state; leaving it quarantined', {
+          name: orphan.name, sessionId, err: err.message,
+        });
+        return false;
+      }
+      const retained = err?.retainActiveTurn
+        ? true
+        : await persistedActiveTurnExists(deps.pool, sessionId);
+      if (retained !== false) {
+        log.warn('server', 'Retrying retained orphan recovery', {
+          name: orphan.name, sessionId, failures, err: err.message,
+          activeTurnObservable: retained !== null,
+        });
+        return true;
+      }
+      log.warn('server', 'Retried orphan adoption failed after durable turn cleared', {
+        name: orphan.name, sessionId, err: err.message,
+      });
+      return false;
+    },
+    onComplete: () => log.info('server', 'Retained orphan recovery completed', {
+      name: orphan.name, sessionId,
+    }),
+    onHookError: (err) => log.warn('server', 'Orphan recovery retry hook failed', {
+      name: orphan.name, sessionId, err: err.message,
+    }),
+  });
+}
+
+// Live handlers use the exact orphan-adoption state machine after retaining
+// an active_turn. Supplying it at route construction avoids a circular
+// sessions.js -> server.js import while keeping one semantic recovery path
+// for live failures and process restarts.
+function scheduleInteractiveTurnRecovery(sessionId) {
+  const id = Number(sessionId);
+  if (!Number.isSafeInteger(id) || id <= 0) return false;
+  const key = `interactive:${id}`;
+  const scheduled = scheduleRetainedOrphanRecovery({
+    name: worker.workerContainerName(id),
+    sessionId: id,
+    // Warm workers remain running after their detached turn exits; cleanup
+    // phases bypass this value before adoption is attempted.
+    state: 'running',
+  }, {
+    config,
+    pool: getPool(config),
+    staging: stagingSvc,
+    ghub: github,
+    broadcastGlobal: ws.broadcastGlobal,
+  });
+  // A duplicate request means the retained owner is already scheduled, not
+  // that recovery is absent.
+  return scheduled || recoveryRetry.isScheduled(key);
+}
+
+function recoveredAgentIdentity(session, activeTurn = null) {
+  const backend = activeTurn?.backend || session?.agent_backend || 'claude_code';
+  const isOpenRouter = backend === 'codex_openrouter';
+  return {
+    backend,
+    isOpenRouter,
+    name: isOpenRouter ? 'OpenRouter' : 'Claude Code',
+    metadata: {
+      agentBackend: backend,
+      agentModel: activeTurn?.model || session?.agent_model || null,
+    },
+  };
 }
 
 async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcastGlobal }) {
@@ -1761,8 +2069,29 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
   }
   const session = rows[0];
 
-  if (session.status !== 'active') {
-    // Session archived while we were down — drop the container.
+  const recoveryAction = turnLifecycle.recoveryAction(session.active_turn);
+  if (recoveryAction === 'quarantine') {
+    log.error('server', 'Orphan turn is quarantined; preserving durable state and stopping worker', {
+      sessionId,
+      turnId: turnLifecycle.turnIdentity(session.active_turn),
+      quarantineCode: session.active_turn?.quarantineCode || null,
+    });
+    // destroyWorker removes only the container/registry entry; the session
+    // volume (and therefore the quarantined journal) remains for operators.
+    await worker.destroyWorker(containerName);
+    return;
+  }
+  if (recoveryAction === 'cleanup') {
+    const args = turnCleanupArgs(session.active_turn);
+    recoveryRetry.requireDurableTurnCleanup(
+      await worker.finishTurn(sessionId, args),
+      args,
+    );
+    session.active_turn = null;
+  }
+
+  if (!['active', 'promoted'].includes(session.status)) {
+    // Session became non-runnable while we were down — drop the container.
     await worker.destroyWorker(containerName);
     return;
   }
@@ -1912,7 +2241,43 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
     // GitHub, and resending buys a duplicate run (see
     // buildCodeLandedBreadcrumb). Say what landed and repair the preview.
     const codeLanded = !!goneTail.sha && goneTail.pushOk === true;
-    await worker.clearActiveTurn(sessionId);
+    // Codex owns a durable per-attempt ledger row in addition to active_turn.
+    // Once the latter is cleared there is no remaining pointer from this
+    // recovery path to the running attempt, so terminalize it first. A
+    // transient ledger failure retains the turn for retry; a missing attempt
+    // quarantines it through the same policy used by the stale-turn watchdog.
+    if (goneTurn?.backend === 'codex_openrouter' && goneTurn?.turnUuid) {
+      const agentTurn = require('./src/services/agent-turn');
+      try {
+        await agentTurn.completeCodexAttempt({
+          pool,
+          turnUuid: goneTurn.turnUuid,
+          status: 'failed',
+          errorCode: 'recovery_abandoned',
+          errorDetail: 'Durable turn was abandoned after its worker container disappeared.',
+          telemetryComponent: turnLifecycle.phaseOf(goneTurn) === turnLifecycle.PHASE_DISPATCH_PENDING
+            ? null
+            : goneTurn.telemetryComponent || null,
+        });
+      } catch (ledgerErr) {
+        const disposition = await recoveryRetry.retainOrQuarantineRecoveryError({
+          pool,
+          sessionId,
+          activeTurn: goneTurn,
+          error: ledgerErr,
+        });
+        log.error('server', disposition.action === 'retry'
+          ? 'Gone Codex turn retained because ledger terminalization failed'
+          : 'Gone Codex turn quarantined because its ledger attempt is missing', {
+          sessionId, err: ledgerErr.message,
+        });
+        throw ledgerErr;
+      }
+    }
+    recoveryRetry.requireDurableTurnCleanup(
+      await worker.clearActiveTurn(sessionId, turnCleanupArgs(goneTurn)),
+      turnCleanupArgs(goneTurn),
+    );
     // Terminal marker so the dead turn's progress card doesn't stay
     // frozen on its last in-progress line ("Pushing", "Editing …").
     await appendTerminalProgressLine(pool, sessionId, '[interrupted]');
@@ -1987,11 +2352,15 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
 
   // #896: the same in-flight label a live turn shows. The recovery is
   // plumbing; from the user's side a coding agent is simply running.
-  emit('status', { text: 'Claude Code is running...' });
+  const recoveryAgent = recoveredAgentIdentity(session, session.active_turn);
+  emit('status', {
+    text: `${recoveryAgent.name} is running...`,
+    ...recoveryAgent.metadata,
+  });
 
   const result = await worker.watchWorker(containerName, {
     onProgress: (text) => {
-      emit('cc_progress', { text });
+      emit('cc_progress', { text, ...recoveryAgent.metadata });
       pool.query(
         `UPDATE chat_session_messages
          SET metadata = jsonb_set(
@@ -2009,12 +2378,25 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
     },
   });
 
-  await finalizeRecoveredTurn({
+  const finalized = await finalizeRecoveredTurn({
     config, pool, staging, session, sessionId, result, repoOwner, repoName,
     emit, containerName,
+    activeTurn: session.active_turn || null,
     // Legacy single-shot containers are per-turn; reap when done.
     keepWorker: false,
   });
+  if (recoveryAgent.isOpenRouter && finalized?.summary) {
+    const { runRecoveredWrapUp } = require('./src/routes/sessions');
+    await runRecoveredWrapUp({
+      pool, config, session, sessionId,
+      outcome: result.ahead > 0 && result.sha ? 'code' : 'no_changes',
+      dispatchSummary: finalized.summary,
+      fallbackPillKind: result.ahead > 0 && result.sha ? 'code_done' : 'chat_generic',
+      turnModel: recoveryAgent.metadata.agentModel,
+      turnId: session.active_turn?.turnId || null,
+      emit,
+    });
+  }
 }
 
 // Shared post-turn finalization for both recovery transports (legacy
@@ -2165,8 +2547,20 @@ async function appendTerminalProgressLine(pool, sessionId, line) {
 async function finalizeRecoveredTurn({
   config, pool, staging, session, sessionId, result, repoOwner, repoName,
   emit, containerName, keepWorker, startedAtMs, alreadyDone = null,
+  activeTurn = null,
 }) {
   const done = alreadyDone && typeof alreadyDone === 'object' ? alreadyDone : {};
+  const recoveryAgent = recoveredAgentIdentity(session, activeTurn);
+  const noteMilestone = async (milestone) => {
+    if (!activeTurn) return false;
+    const noted = await worker.noteTailMilestone(
+      sessionId,
+      milestone,
+      turnLifecycle.cleanupArgs(activeTurn),
+    );
+    if (noted) Object.assign(done, milestone);
+    return noted;
+  };
   // #183 belt-and-braces: headless rows must never get the interactive
   // post-turn tail (PR on the auto branch + staging + system message) from
   // any recovery transport — resumeHeadlessRuns owns them. adoptOrphanWorker
@@ -2187,39 +2581,66 @@ async function finalizeRecoveredTurn({
 
   // #896: the live path persists an outcome-aware completion row carrying
   // the agent's own summary (sessions.js runClaudeCodeTool). Recovery
-  // persisted none, so the green "Claude Code finished" card was missing
+  // persisted none, so the coding-agent completion card was missing
   // AND every later Mayor turn was blind to what this turn built
   // (buildMayorMessages folds ccOutput rows into the model's context).
   const persistCompletionRow = async (ccText, ccOutcome) => {
     if (!ccText) return;
+    const directOpenRouterReply = recoveryAgent.isOpenRouter && ccOutcome === 'no_changes';
     // The interrupted tail already wrote this card — a second one would
     // duplicate the agent's summary in the transcript AND double-count it
     // in every later Mayor turn's context (buildMayorMessages folds
     // ccOutput rows in). The summary still goes to the wrap-up below.
     if (done.completionRowPosted) {
       log.info('server', 'Recovered turn: completion card already posted — skipping', { sessionId });
-      summaryParts.unshift(`What the agent did:\n${ccText}`);
+      if (directOpenRouterReply) summaryParts.unshift(ccText);
+      else summaryParts.unshift(`What the agent did:\n${ccText}`);
       return;
     }
     const statusText = ccOutcome === 'success'
-      ? 'Claude Code finished'
+      ? `${recoveryAgent.name} finished`
       : ccOutcome === 'no_changes'
-        ? 'Claude Code made no changes'
-        : 'Claude Code did not complete';
-    await pool.query(
-      `INSERT INTO chat_session_messages (session_id, role, content, metadata)
-       VALUES ($1, 'system', $2, $3)`,
-      [sessionId, statusText, JSON.stringify({
-        ccOutput: ccText, ccOutcome,
-        ...(durationMs != null ? { durationMs } : {}),
-        recovered: true,
-      })]
-    ).catch(() => {});
-    emit('status', {
-      text: statusText, ccOutput: ccText, ccOutcome,
+        ? (recoveryAgent.isOpenRouter
+          ? `${recoveryAgent.name} replied`
+          : `${recoveryAgent.name} made no changes`)
+        : `${recoveryAgent.name} did not complete`;
+    const metadata = {
+      ccOutput: ccText,
+      ccOutcome,
+      ...recoveryAgent.metadata,
       ...(durationMs != null ? { durationMs } : {}),
-    });
-    summaryParts.unshift(`What the agent did:\n${ccText}`);
+      recovered: true,
+    };
+    let emitted = true;
+    if (!directOpenRouterReply) {
+      if (activeTurn?.turnId) {
+        const receipt = await turnEffects.runDbEffect({
+          pool,
+          turnId: activeTurn.turnId,
+          effectKey: 'completion_row',
+          sessionId,
+          run: async (client) => {
+            await client.query(
+              `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+               VALUES ($1, 'system', $2, $3)`,
+              [sessionId, statusText, JSON.stringify(metadata)],
+            );
+            return { persisted: true };
+          },
+        });
+        emitted = receipt.applied;
+      } else {
+        await pool.query(
+          `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+           VALUES ($1, 'system', $2, $3)`,
+          [sessionId, statusText, JSON.stringify(metadata)],
+        );
+      }
+      if (emitted) emit('status', { text: statusText, ...metadata });
+    }
+    await noteMilestone({ completionRowPosted: true });
+    if (directOpenRouterReply) summaryParts.unshift(ccText);
+    else summaryParts.unshift(`What the agent did:\n${ccText}`);
   };
 
   // #127 parity: peel the TESTING block off the agent's summary once, up
@@ -2246,9 +2667,11 @@ async function finalizeRecoveredTurn({
     // emit — and so the wrap-up below has something honest to describe.
     const noChangeOutcome = (result.fatalError || result.ccIsError) ? 'error' : 'no_changes';
     await persistCompletionRow(recoveredCcSummary, noChangeOutcome);
-    summaryParts.push(result.fatalError
-      ? `The coding agent hit an error: ${String(result.fatalError).substring(0, 200)}`
-      : 'The coding agent finished without committing any changes.');
+    if (result.fatalError) {
+      summaryParts.push(`The coding agent hit an error: ${String(result.fatalError).substring(0, 200)}`);
+    } else if (!recoveryAgent.isOpenRouter) {
+      summaryParts.push('The coding agent finished without committing any changes.');
+    }
     if (!keepWorker) await worker.destroyWorker(containerName);
     return { outcome: 'done', summary: summaryParts.join('\n\n') };
   }
@@ -2328,6 +2751,11 @@ async function finalizeRecoveredTurn({
       session.testing_path = recoveredTesting.testingPath;
     }
 
+    // Recovery has no plaintext user key. A completed/pending live receipt
+    // carries its original payer; only a genuinely unclaimed recovery call
+    // uses this platform-billed default.
+    const prMetadataBillingByok = false;
+
     const wasNewPR = !session.pr_number;
     const prMetadata = require('./src/services/pr-metadata');
     const prResult = await prMetadata.applyPrMetadata({
@@ -2337,6 +2765,9 @@ async function finalizeRecoveredTurn({
       username: session.username,
       broadcast: (event, data) => emit(event, data),
       userId: session.user_id,
+      effectTurnId: activeTurn?.turnId || null,
+      effectSessionId: sessionId,
+      effectBillingByok: prMetadataBillingByok,
     });
     // Live-path parity: a freshly opened PR gets its own transcript row,
     // so the recovered turn reads "PR #N created" like any other.
@@ -2345,13 +2776,56 @@ async function finalizeRecoveredTurn({
     // row we were handed may predate that write.
     const prAnnounced = !!done.prNumber || !!done.prOpenedEventRecorded;
     if (prResult && prResult.prNumber && wasNewPR && !prAnnounced) {
-      await pool.query(
-        `INSERT INTO chat_session_messages (session_id, role, content, metadata)
-         VALUES ($1, 'system', $2, $3)`,
-        [sessionId, `PR #${prResult.prNumber} created`,
-          JSON.stringify({ prNumber: prResult.prNumber, recovered: true })]
-      ).catch(() => {});
-      emit('status', { text: `PR #${prResult.prNumber} created` });
+      const prStatus = `PR #${prResult.prNumber} created`;
+      let emitted = true;
+      if (activeTurn?.turnId) {
+        const receipt = await turnEffects.runDbEffect({
+          pool,
+          turnId: activeTurn.turnId,
+          effectKey: 'pr_opened_announcement',
+          sessionId,
+          run: async (client) => {
+            await client.query(
+              `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+               VALUES ($1, 'system', $2, $3)`,
+              [sessionId, prStatus,
+                JSON.stringify({ prNumber: prResult.prNumber, recovered: true })],
+            );
+            await client.query(
+              `INSERT INTO events (user_id, app_id, session_id, event_type, metadata)
+               VALUES ($1, $2, $3, $4, $5::jsonb)`,
+              [
+                session.user_id,
+                session.app_id,
+                sessionId,
+                events.EVENT_TYPES.PR_OPENED,
+                JSON.stringify({ prNumber: prResult.prNumber }),
+              ],
+            );
+            return { prNumber: prResult.prNumber };
+          },
+        });
+        emitted = receipt.applied;
+      } else {
+        await pool.query(
+          `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+           VALUES ($1, 'system', $2, $3)`,
+          [sessionId, prStatus,
+            JSON.stringify({ prNumber: prResult.prNumber, recovered: true })],
+        );
+        await events.record(pool, {
+          type: events.EVENT_TYPES.PR_OPENED,
+          userId: session.user_id,
+          appId: session.app_id,
+          sessionId,
+          metadata: { prNumber: prResult.prNumber },
+        });
+      }
+      if (emitted) emit('status', { text: prStatus });
+      await noteMilestone({
+        prNumber: prResult.prNumber,
+        prOpenedEventRecorded: true,
+      });
       summaryParts.push(`Opened PR #${prResult.prNumber}: ${prResult.prUrl}`);
     } else if (session.pr_number || prResult?.prNumber) {
       summaryParts.push(`Pushed to existing PR #${session.pr_number || prResult.prNumber}.`);
@@ -2366,6 +2840,10 @@ async function finalizeRecoveredTurn({
     // tail already performed is never re-announced.
     if (session.status === 'promoted' && done.votesResetFor !== result.sha) {
       try {
+        // Claim before the destructive delete. If recovery dies after this
+        // point, repeating the reset/announcement would be worse than
+        // leaving the already-reset votes unannounced.
+        await noteMilestone({ votesResetFor: result.sha });
         await require('./src/services/app-admins')
           .refreshExplicitApproval(pool, session, session);
         const { rowCount } = await pool.query(
@@ -2391,6 +2869,118 @@ async function finalizeRecoveredTurn({
     }
 
     const app = { id: session.app_id, slug: session.app_slug, name: session.app_name, repo_url: session.repo_url };
+
+    const stagingFailureSummary = (failure = {}) => (
+      `Staging build failed.\n\nWhat still happened: commit ${result.sha.substring(0, 8)} was pushed to `
+      + `${session.branch_name}${session.pr_number ? ` and PR #${session.pr_number} was created/updated` : ''}. `
+      + `Only the staging preview container is missing — there is no preview URL for this commit.\n\n`
+      + `${failure.fix || 'Retry the preview build when the staging issue is resolved.'}`
+    );
+
+    // The transcript card and its replay checkpoint commit together. The
+    // staging build itself is external and may already have happened, but a
+    // retained tail must never publish its outcome twice on a later wrap-up
+    // retry. A failed outcome is checkpointed too so retrying Mayor/spend
+    // work does not launch another expensive build known to have failed.
+    const publishRecoveredStaging = async ({ outcome, stagingUrl = null, failure = null }) => {
+      const succeeded = outcome === 'success';
+      const content = succeeded ? 'Staging deployed!' : 'Staging build failed';
+      const metadata = succeeded
+        ? {
+            stagingUrl,
+            changesReady: true,
+            prNumber: prResult?.prNumber || session.pr_number || null,
+            prUrl: prResult?.prUrl || session.pr_url || null,
+            recovered: true,
+          }
+        : {
+            error: failure?.errMsg || 'Staging build failed',
+            changesReady: true,
+            stagingFailed: true,
+            stagingErrorName: failure?.errName || 'Error',
+            stagingMissingKeys: failure?.missingKeys || [],
+            prNumber: prResult?.prNumber || session.pr_number || null,
+            prUrl: prResult?.prUrl || session.pr_url || null,
+            recovered: true,
+          };
+      const checkpoint = succeeded
+        ? { stagingPublished: true }
+        : { stagingPublished: true, stagingFailed: failure || { errMsg: metadata.error } };
+      const persist = async (client) => {
+        await client.query(
+          `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+           VALUES ($1, 'system', $2, $3)`,
+          [sessionId, content, JSON.stringify(metadata)],
+        );
+        if (activeTurn) {
+          await turnLifecycle.mergeTailMilestones(client, {
+            sessionId,
+            ...turnLifecycle.cleanupArgs(activeTurn),
+            milestones: checkpoint,
+          });
+        }
+        return { outcome, metadata, failure, checkpoint };
+      };
+
+      let applied = true;
+      let value;
+      if (activeTurn?.turnId) {
+        const receipt = await turnEffects.runDbEffect({
+          pool,
+          turnId: activeTurn.turnId,
+          effectKey: turnEffects.EFFECT_KEYS.RECOVERED_STAGING_PUBLICATION,
+          sessionId,
+          run: persist,
+        });
+        applied = receipt.applied;
+        value = receipt.value || { outcome, metadata, failure, checkpoint };
+      } else {
+        value = await persist(pool);
+      }
+      // A completed receipt is authoritative if two recovery owners reached
+      // this boundary with different observations. Restore the checkpoint
+      // that committed with the card, not the retrying owner's proposal.
+      const settledCheckpoint = value.checkpoint
+        && typeof value.checkpoint === 'object'
+        && !Array.isArray(value.checkpoint)
+        ? value.checkpoint
+        : (value.outcome === 'success'
+            ? { stagingPublished: true }
+            : {
+                stagingPublished: true,
+                stagingFailed: value.failure || { errMsg: value.metadata?.error || 'Staging build failed' },
+              });
+      Object.assign(done, settledCheckpoint);
+
+      if (applied && value.outcome === 'success') {
+        emit('staging_ready', {
+          url: value.metadata.stagingUrl,
+          changesReady: true,
+          testingMd: session.testing_md || null,
+          testingPath: session.testing_path || null,
+        });
+      } else if (applied) {
+        emit('staging_failed', {
+          error: value.metadata.error,
+          errorName: value.metadata.stagingErrorName,
+          missingKeys: value.metadata.stagingMissingKeys,
+          changesReady: true,
+          prNumber: value.metadata.prNumber,
+          prUrl: value.metadata.prUrl,
+        });
+      }
+      return { applied, ...value };
+    };
+
+    if (done.stagingFailed) {
+      log.info('server', 'Recovered turn: staging failure already published — skipping rebuild', {
+        sessionId,
+      });
+      summaryParts.push(stagingFailureSummary(
+        typeof done.stagingFailed === 'object' ? done.stagingFailed : {},
+      ));
+      return { outcome: 'done', summary: summaryParts.join('\n\n') };
+    }
 
     // Did the interrupted tail already build a preview for this commit,
     // and is that container still healthy? Rebuilding one costs minutes
@@ -2419,7 +3009,7 @@ async function finalizeRecoveredTurn({
     // can't satisfy the merge gate while this build runs — or after it
     // fails. The live dev-turn path does this; recovery used to skip it.
     const visuals = require('./src/services/visuals');
-    await visuals.setChecksPending(pool, sessionId, result.sha, 'building')
+    await visuals.setChecksPending(pool, sessionId, result.sha, 'building', 'boot-reconcile')
       .catch((err) => log.warn('server', 'Recovered turn: setChecksPending failed (non-fatal)', {
         sessionId, err: err.message,
       }));
@@ -2432,25 +3022,9 @@ async function finalizeRecoveredTurn({
       log.info('server', 'Recovered turn: reusing healthy staging preview', {
         sessionId, url: reusedStaging,
       });
-      await pool.query(
-        `INSERT INTO chat_session_messages (session_id, role, content, metadata)
-         VALUES ($1, 'system', $2, $3)`,
-        [sessionId, 'Staging deployed!', JSON.stringify({
-          stagingUrl: reusedStaging,
-          changesReady: true,
-          prNumber: prResult?.prNumber || session.pr_number || null,
-          prUrl: prResult?.prUrl || session.pr_url || null,
-          recovered: true,
-        })]
-      ).catch(() => {});
-      emit('staging_ready', {
-        url: reusedStaging,
-        changesReady: true,
-        testingMd: session.testing_md || null,
-        testingPath: session.testing_path || null,
-      });
+      await publishRecoveredStaging({ outcome: 'success', stagingUrl: reusedStaging });
       summaryParts.push(`Staging preview is live: ${reusedStaging}`);
-      visuals.captureForSession(config, session, app, result.sha, null, { send: () => {} })
+      visuals.captureForSession(config, session, app, result.sha, null, { send: () => {}, trigger: 'boot-reconcile' })
         .catch((err) => log.warn('server', 'Recovered turn: reused-preview capture failed (non-fatal)', {
           sessionId, err: err.message,
         }));
@@ -2478,6 +3052,7 @@ async function finalizeRecoveredTurn({
         `UPDATE chat_sessions SET staging_container_id = $1, staging_url = $2 WHERE id = $3`,
         [stagingResult.containerId, stagingResult.stagingUrl, sessionId]
       );
+      await noteMilestone({ stagingUrl: stagingResult.stagingUrl });
 
       // Make the first real request through the edge now that staging_url
       // is persisted and BEFORE staging_ready reveals the preview button,
@@ -2492,27 +3067,9 @@ async function finalizeRecoveredTurn({
         });
       }
 
-      await pool.query(
-        `INSERT INTO chat_session_messages (session_id, role, content, metadata)
-         VALUES ($1, 'system', $2, $3)`,
-        [sessionId, 'Staging deployed!', JSON.stringify({
-          stagingUrl: stagingResult.stagingUrl,
-          // #361 parity: `changesReady` (not the incidental stagingUrl) is
-          // what drives the Changes-ready card, and prNumber/prUrl back its
-          // header + "View on GitHub" after a reload. applyPrMetadata
-          // mutates the session row in place, so prefer its own return.
-          changesReady: true,
-          prNumber: prResult?.prNumber || session.pr_number || null,
-          prUrl: prResult?.prUrl || session.pr_url || null,
-          recovered: true,
-        })]
-      );
-
-      emit('staging_ready', {
-        url: stagingResult.stagingUrl,
-        changesReady: true,
-        testingMd: session.testing_md || null,
-        testingPath: session.testing_path || null,
+      await publishRecoveredStaging({
+        outcome: 'success',
+        stagingUrl: stagingResult.stagingUrl,
       });
       summaryParts.push(`Staging redeployed: ${stagingResult.stagingUrl}`);
       log.info('server', 'Orphan finalized', {
@@ -2521,28 +3078,6 @@ async function finalizeRecoveredTurn({
     } else {
       const { describeStagingFailure } = require('./src/routes/sessions');
       const { fix, missingKeys, errMsg, errName } = describeStagingFailure(stagingErr);
-      await pool.query(
-        `INSERT INTO chat_session_messages (session_id, role, content, metadata)
-         VALUES ($1, 'system', $2, $3)`,
-        [sessionId, 'Staging build failed', JSON.stringify({
-          error: errMsg,
-          changesReady: true,
-          stagingFailed: true,
-          stagingErrorName: errName,
-          stagingMissingKeys: missingKeys,
-          prNumber: prResult?.prNumber || session.pr_number || null,
-          prUrl: prResult?.prUrl || session.pr_url || null,
-          recovered: true,
-        })]
-      ).catch(() => {});
-      emit('staging_failed', {
-        error: errMsg,
-        errorName: errName,
-        missingKeys,
-        changesReady: true,
-        prNumber: session.pr_number || null,
-        prUrl: session.pr_url || null,
-      });
       // #461: record the failure as a terminal 'error' checks verdict
       // instead of leaving the pending state looking "still running".
       await stagingRecovery.recordStagingBootFailure({
@@ -2550,11 +3085,9 @@ async function finalizeRecoveredTurn({
       }).catch((e) => log.warn('server', 'Recovered turn: recordStagingBootFailure failed (non-fatal)', {
         sessionId, err: e.message,
       }));
-      summaryParts.push(
-        `Staging build failed.\n\nWhat still happened: commit ${result.sha.substring(0, 8)} was pushed to `
-        + `${session.branch_name}${session.pr_number ? ` and PR #${session.pr_number} was created/updated` : ''}. `
-        + `Only the staging preview container is missing — there is no preview URL for this commit.\n\n${fix}`
-      );
+      const failure = { fix, missingKeys, errMsg, errName };
+      await publishRecoveredStaging({ outcome: 'failed', failure });
+      summaryParts.push(stagingFailureSummary(failure));
       log.error('server', 'Recovered turn: staging build failed', {
         sessionId, slug: app.slug, errName, err: errMsg, missingKeys,
       });
@@ -2581,6 +3114,26 @@ async function resumeDetachedTurn(args) {
   activeWorkersSvc.activeWorkers.add(sessionId);
   try {
     return await resumeDetachedTurnInner(args);
+  } catch (err) {
+    let retainedTurn;
+    try {
+      retainedTurn = await turnLifecycle.loadActiveTurn(pool, sessionId);
+    } catch (loadErr) {
+      // A DB outage cannot prove that recovery ownership disappeared.
+      // Retry the durable read rather than demoting the original failure to
+      // an ordinary, reapable orphan.
+      loadErr.retainActiveTurn = true;
+      throw loadErr;
+    }
+    if (retainedTurn) {
+      await recoveryRetry.retainOrQuarantineRecoveryError({
+        pool,
+        sessionId,
+        activeTurn: retainedTurn,
+        error: err,
+      });
+    }
+    throw err;
   } finally {
     activeWorkersSvc.activeWorkers.delete(sessionId);
     // Turn completion counts as activity: give the freshly recovered
@@ -2606,7 +3159,9 @@ async function resumeDetachedTurnInner({
   // The milestone map of an interrupted TAIL (empty for a mid-exec
   // recovery). Read once here and threaded into finalizeRecoveredTurn so
   // the tail's non-idempotent steps aren't repeated.
-  const tailDone = (activeTurn && typeof activeTurn.tail === 'object' && activeTurn.tail) || {};
+  let tailDone = (activeTurn && typeof activeTurn.tail === 'object' && activeTurn.tail) || {};
+  let recoveryActiveTurn = activeTurn;
+  const recoveryAgent = recoveredAgentIdentity(session, activeTurn);
   log.info('server', 'Resuming detached turn from journal', {
     sessionId, containerName, mode: activeTurn.mode, journal: activeTurn.journal,
     // 'tail' distinguishes "the agent was done, the platform side wasn't"
@@ -2617,7 +3172,10 @@ async function resumeDetachedTurnInner({
   });
   // #896: the same in-flight label a live turn shows — see the note in
   // adoptOrphanWorker. Emit-only (never persisted), as before.
-  emit('status', { text: 'Claude Code is running...' });
+  emit('status', {
+    text: `${recoveryAgent.name} is running...`,
+    ...recoveryAgent.metadata,
+  });
 
   // The journal replay re-feeds every line from the start of the turn,
   // including ones the previous process already appended to the latest
@@ -2641,25 +3199,65 @@ async function resumeDetachedTurnInner({
     ).catch(() => {});
   };
 
+  const onRecoveredProgress = (text) => {
+    emit('cc_progress', { text, ...recoveryAgent.metadata });
+    progressLines.push(text);
+    if (!flushQueued) {
+      flushQueued = true;
+      setTimeout(flushProgress, 1000);
+    }
+  };
   let result;
   try {
     result = await worker.resumeTurnFromJournal(sessionId, {
       journal: activeTurn.journal,
+      turnId: activeTurn.turnId || null,
+      agentBackend: activeTurn.backend || 'claude_code',
+      telemetryComponent: activeTurn.telemetryComponent
+        || (activeTurn.mode === 'scout' ? 'coding_agent_scout'
+          : activeTurn.mode === 'build' ? 'coding_agent_build' : null),
+      telemetryCorrelationId: activeTurn.telemetryCorrelationId || activeTurn.turnId || null,
+      telemetryAttemptNumber: activeTurn.telemetryAttemptNumber || activeTurn.attemptNumber || 1,
+      requestedModel: activeTurn.model || null,
+      startedAt: activeTurn.startedAt || null,
+      attemptNumber: activeTurn.attemptNumber || 1,
+      billingByok: activeTurn.byok === true,
+      providerWasDispatched: turnLifecycle.phaseOf(activeTurn) !== turnLifecycle.PHASE_DISPATCH_PENDING,
       // #664: seed the per-turn BYOK tally from the persisted record so
       // post-restart switched calls accumulate on top of pre-restart ones.
       byokCentsSoFar: Number(activeTurn.byokCents || 0),
-      onProgress: (text) => {
-        emit('cc_progress', { text });
-        progressLines.push(text);
-        if (!flushQueued) {
-          flushQueued = true;
-          setTimeout(flushProgress, 1000);
-        }
-      },
+      onProgress: onRecoveredProgress,
     });
   } catch (err) {
     log.warn('server', 'Detached-turn resume failed', { sessionId, err: err.message });
-    await worker.clearActiveTurn(sessionId);
+    // Fail the Codex ledger row on a resume failure too (review P1c): the
+    // success path terminalizes, but a thrown resume also must not leave
+    // the row 'running' / the token usable until expiry.
+    if (activeTurn?.backend === 'codex_openrouter' && activeTurn?.turnUuid) {
+      const agentTurn = require('./src/services/agent-turn');
+      try {
+        await agentTurn.completeCodexTurn({
+          pool,
+          turnUuid: activeTurn.turnUuid,
+          status: 'failed',
+          errorCode: agentTurn.classifyErrorCode(err),
+          errorDetail: agentTurn.sanitizeError(err),
+        });
+      } catch (ledgerErr) {
+        const disposition = await recoveryRetry.retainOrQuarantineRecoveryError({
+          pool,
+          sessionId,
+          activeTurn,
+          error: ledgerErr,
+        });
+        log.error('server', disposition.action === 'retry'
+          ? 'Recovered Codex terminalization failed; retaining durable state'
+          : 'Recovered Codex attempt is missing; durable turn quarantined', {
+          sessionId, err: ledgerErr.message,
+        });
+        throw ledgerErr;
+      }
+    }
     // Terminal marker: the card must not stay frozen on the last line
     // the journal managed to deliver before the resume died. When the
     // replay produced no lines at all, append to the persisted row
@@ -2690,34 +3288,95 @@ async function resumeDetachedTurnInner({
       text: recoveryPills.TURN_UNFINISHED_BREADCRUMB,
       quickReplies: failedPills || undefined,
     });
+    // Cleanup is deliberately last: if its durable clear needs a retry, the
+    // retry scheduler can repeat only cleanup without duplicating narration.
+    const cleanupArgs = turnCleanupArgs(activeTurn);
+    recoveryRetry.requireDurableTurnCleanup(
+      await worker.finishTurn(sessionId, cleanupArgs),
+      cleanupArgs,
+    );
     return;
   }
   flushProgress();
 
-  // #174: the journal replay rebuilt the turn's self-reported cost —
-  // without this debit a restart silently drops the CC turn's spend from
-  // both ledger buckets. active_turn rows persisted before the byok flag
-  // shipped fall back to key-on-file (presence of the encrypted key is
-  // enough; no decryption needed). #664: a platform-billed turn that
-  // switched onto the owner's key mid-run settles split across both
-  // buckets (getTurnByokCents covers pre- and post-restart spillover).
-  if (result.costUsd) {
-    let byok = activeTurn.byok;
-    if (byok === undefined || byok === null) {
-      try {
-        const { rows } = await pool.query(
-          'SELECT EXISTS(SELECT 1 FROM users WHERE id = $1 AND anthropic_key_enc IS NOT NULL) AS byok',
-          [session.user_id]
-        );
-        byok = !!rows[0]?.byok;
-      } catch {
-        byok = false;
-      }
-    }
-    await limits.settleTurnSpend(pool, session.user_id, Math.round(result.costUsd * 100), {
-      turnByok: !!byok,
-      byokObservedCents: worker.getTurnByokCents(sessionId),
+  // Mirror execInWorker's finally: the exec is over, hand the durable
+  // record to the tail. A journal that detached MID-EXEC leaves active_turn
+  // in 'executing', and every milestone write below requires 'tail_pending'
+  // (mergeTailMilestones) — without this stamp the tail's first
+  // noteTailMilestone throws invalid_turn_transition, the tail aborts with
+  // the turn retained, and the retained-recovery timer replays the whole
+  // tail every minute forever (session 3180: 13+ identical resume attempts,
+  // each re-running the finalize narration). Only the mid-exec case needs
+  // the stamp — an interrupted TAIL is already 'tail_pending' and re-stamping
+  // would clobber its milestone map with the seed. A failed stamp propagates
+  // to the caller's retain/quarantine triage like any other recovery error.
+  if (turnLifecycle.phaseOf(recoveryActiveTurn) === turnLifecycle.PHASE_EXECUTING) {
+    await worker.markTurnTail(sessionId, {
+      sha: result.sha || null,
+      pushOk: result.pushOk === true,
+    }, turnLifecycle.cleanupArgs(recoveryActiveTurn));
+  }
+
+  // A recovered missing-thread marker still owns its one fresh attempt.
+  // Re-dispatch it before consuming the journal, then make thread + ledger
+  // persistence required. Any failure here deliberately escapes BEFORE the
+  // tail's clearing finally, leaving active_turn and the journal replayable.
+  try {
+    const agentTurn = require('./src/services/agent-turn');
+    const sessionsRoutes = require('./src/routes/sessions');
+    const retried = await sessionsRoutes.resumeRecoveredCodexFreshRetry({
+      pool, config, session, activeTurn, result,
+      onProgress: onRecoveredProgress,
     });
+    if (retried) {
+      result = retried.result;
+      recoveryActiveTurn = retried.activeTurn;
+      tailDone = (recoveryActiveTurn.tail
+        && typeof recoveryActiveTurn.tail === 'object'
+        && recoveryActiveTurn.tail) || {};
+    }
+
+    await agentTurn.persistRecoveredAgentThread({ pool, session, result });
+    await agentTurn.settleRecoveredAgentAttempt({
+      pool,
+      activeTurn: recoveryActiveTurn,
+      result,
+      settleClaude: async () => {
+        if (!result.costUsd) return null;
+        let byok = recoveryActiveTurn.byok;
+        if (byok === undefined || byok === null) {
+          try {
+            const { rows } = await pool.query(
+              'SELECT EXISTS(SELECT 1 FROM users WHERE id = $1 AND anthropic_key_enc IS NOT NULL) AS byok',
+              [session.user_id]
+            );
+            byok = !!rows[0]?.byok;
+          } catch {
+            byok = false;
+          }
+        }
+        const limits = require('./src/services/limits');
+        return limits.settleTurnSpend(pool, session.user_id, Math.round(result.costUsd * 100), {
+          turnByok: !!byok,
+          byokObservedCents: worker.getTurnByokCents(sessionId),
+          turnId: turnLifecycle.turnIdentity(recoveryActiveTurn),
+          sessionId,
+        });
+      },
+    });
+  } catch (err) {
+    const disposition = await recoveryRetry.retainOrQuarantineRecoveryError({
+      pool,
+      sessionId,
+      activeTurn: recoveryActiveTurn,
+      error: err,
+    });
+    log.error('server', disposition.action === 'retry'
+      ? 'Required recovered-turn persistence failed; retaining durable state'
+      : 'Recovered turn has invalid durable state; leaving it quarantined without retry', {
+      sessionId, err: err.message,
+    });
+    throw err;
   }
 
   // Terminal marker for the progress card: pessimistic default so a
@@ -2735,68 +3394,48 @@ async function resumeDetachedTurnInner({
   let wrapUpOutcome = null;
   let wrapUpPillKind = null;
   let wrapUpSummary = null;
+  let durableTailComplete = false;
   try {
-    if (activeTurn.mode === 'scout') {
+    if (recoveryActiveTurn.mode === 'scout') {
       // Scout turns push nothing — their product is the spec text.
       // Persist it the same way runScoutTool does (spec_md + frozen
       // version) so the draft isn't lost with the dead SSE.
       const {
-        stripSpecWrapperFence, snapshotSessionSpec, buildSpecPreview,
+        stripSpecWrapperFence, persistScoutPublication,
       } = require('./src/routes/sessions');
       const ccText = stripSpecWrapperFence((result.lastResultText || '').trim());
       if (ccText) {
         const hadSpec = !!(session.spec_md || '').trim();
-        await pool.query(
-          'UPDATE chat_sessions SET spec_md = $1 WHERE id = $2',
-          [ccText, sessionId]
-        ).catch(() => {});
-        const specVersion = await snapshotSessionSpec(pool, sessionId, ccText);
-        const lineCount = ccText.split('\n').length;
-        // #896: the same wording (and the same specPreview card) a live
-        // scout turn produces — runScoutTool's two status texts.
-        const scoutText = hadSpec
-          ? `Scout revised the spec (now ${lineCount} lines).`
-          : `Scout drafted a ${lineCount}-line spec from the codebase.`;
         // #786: "spec drafted" pills ride the spec row itself rather than
         // the wrap-up — it's the row that describes the state the session
         // actually landed in. They stay as a safety net for the case where
         // the wrap-up below can't run at all.
         const specPills = recoveryPills.buildRecoveryQuickReplies('spec_done');
-        await pool.query(
-          `INSERT INTO chat_session_messages (session_id, role, content, metadata)
-           VALUES ($1, 'system', $2, $3)`,
-          [
-            sessionId,
-            scoutText,
-            JSON.stringify({
-              // specPreview drives the tappable spec card in dev-chat;
-              // without it the row claimed a spec existed but offered no
-              // way to open it.
-              specPreview: buildSpecPreview(ccText),
-              specLines: lineCount,
-              scoutOutput: ccText,
-              specVersion,
-              ...(specPills ? { quickReplies: specPills } : {}),
-              recovered: true,
-            }),
-          ]
-        ).catch(() => {});
-        emit('status', {
-          text: scoutText,
-          specPreview: buildSpecPreview(ccText),
-          specLines: lineCount,
-          scoutOutput: ccText,
-          specVersion,
-          quickReplies: specPills || undefined,
+        const publication = await persistScoutPublication({
+          pool,
+          sessionId,
+          turnId: recoveryActiveTurn.turnId || null,
+          content: ccText,
+          hadSpec,
+          quickReplies: specPills,
+          recovered: true,
         });
-        emit('spec_updated', { length: ccText.length, lines: lineCount, version: specVersion });
+        session.spec_md = ccText;
+        if (publication.applied) {
+          emit('status', { text: publication.scoutText, ...publication.metadata });
+          emit('spec_updated', {
+            length: ccText.length,
+            lines: publication.lineCount,
+            version: publication.specVersion,
+          });
+        }
         wrapUpOutcome = 'spec';
         wrapUpPillKind = 'spec_done';
-        wrapUpSummary = hadSpec
-          ? `The scout revised the session's spec doc (now ${lineCount} lines). `
+        wrapUpSummary = publication.hadSpec
+          ? `The scout revised the session's spec doc (now ${publication.lineCount} lines). `
             + 'The user can review it in the dev-chat spec viewer. When they are ready to ship, '
             + 'they will ask you to dispatch the coding agent.'
-          : `The scout investigated the repo and drafted a ${lineCount}-line markdown spec. `
+          : `The scout investigated the repo and drafted a ${publication.lineCount}-line markdown spec. `
             + "It now lives in the session's spec doc; the user can review it in the dev-chat "
             + 'spec viewer. When they are ready to ship, they will ask you to dispatch the coding agent.';
       } else {
@@ -2830,7 +3469,7 @@ async function resumeDetachedTurnInner({
         ).catch(() => {});
       }
       terminalLine = '[done]';
-    } else if (activeTurn.mode === 'sync') {
+    } else if (recoveryActiveTurn.mode === 'sync') {
       // A sync turn is system work: it posts its own status rows via
       // sync-main's sendStatus and has no Mayor reply on the live path
       // either, so there is nothing to wrap up here. Logged only.
@@ -2842,22 +3481,30 @@ async function resumeDetachedTurnInner({
         emit, containerName,
         // Warm contract: the container outlives the turn.
         keepWorker: true,
-        startedAtMs: activeTurn.startedAt ? Date.parse(activeTurn.startedAt) || null : null,
+        startedAtMs: recoveryActiveTurn.startedAt
+          ? Date.parse(recoveryActiveTurn.startedAt) || null
+          : null,
         alreadyDone: tailDone,
+        activeTurn: recoveryActiveTurn,
       });
       terminalLine = finalizeOutcome === 'push_failed' ? '[push_failed]' : '[done]';
+      const recoveredNoChanges = !(result.ahead > 0 && result.sha);
       wrapUpPillKind = finalizeOutcome === 'push_failed' ? 'push_failed' : 'code_done';
+      if (recoveryAgent.isOpenRouter && finalizeOutcome !== 'push_failed' && recoveredNoChanges) {
+        wrapUpPillKind = 'chat_generic';
+      }
       wrapUpOutcome = finalizeOutcome === 'push_failed'
         ? 'push_failed'
-        : (result.ahead > 0 && result.sha ? 'code' : 'no_changes');
+        : (recoveredNoChanges ? 'no_changes' : 'code');
       wrapUpSummary = summary;
     }
 
     // #896: re-issue the Mayor's phase-2 wrap-up. It used to be skipped
     // outright — the turn ended on a bare recovery breadcrumb and no
     // Mayor reply at all, which is exactly what the issue reported.
-    // runRecoveredWrapUp never throws: a failed model call degrades to a
-    // short static close carrying these pills.
+    // Provider failure degrades to a short static close carrying these pills.
+    // Durable receipt/message/spend failures still throw so this tail remains
+    // owned and is retried from its committed effects.
     // ...unless the interrupted tail already got its wrap-up onto the
     // transcript (a restart in the seconds between the wrap-up persisting
     // and the record being released). Re-issuing it would post a second
@@ -2873,9 +3520,16 @@ async function resumeDetachedTurnInner({
         outcome: wrapUpOutcome,
         dispatchSummary: wrapUpSummary,
         fallbackPillKind: wrapUpPillKind,
-        turnModel: activeTurn.model || null,
+        turnModel: recoveryActiveTurn.model || null,
+        turnId: recoveryActiveTurn.turnId || null,
         emit,
       });
+      await worker.noteTailMilestone(
+        sessionId,
+        { wrapUpPosted: true },
+        turnLifecycle.cleanupArgs(recoveryActiveTurn),
+      );
+      tailDone = { ...tailDone, wrapUpPosted: true };
     }
 
     // #161: the pre-restart SSE is guaranteed dead, so the owner cannot
@@ -2898,6 +3552,7 @@ async function resumeDetachedTurnInner({
         sessionId, err: err.message,
       });
     }
+    durableTailComplete = true;
   } finally {
     // Stamp the terminal marker on the rebuilt log (dedup: journals from
     // new worker images already end with their own [done]/[push_failed])
@@ -2906,7 +3561,18 @@ async function resumeDetachedTurnInner({
       emit('cc_progress', { text: terminalLine });
     }
     flushProgress();
-    await worker.clearActiveTurn(sessionId);
+    if (durableTailComplete) {
+      const cleanupArgs = turnCleanupArgs(recoveryActiveTurn);
+      recoveryRetry.requireDurableTurnCleanup(
+        await worker.finishTurn(sessionId, cleanupArgs),
+        cleanupArgs,
+      );
+    } else {
+      log.warn('server', 'Recovered tail failed; retaining durable turn for replay', {
+        sessionId,
+        turnId: turnLifecycle.turnIdentity(recoveryActiveTurn),
+      });
+    }
   }
 }
 
@@ -3032,15 +3698,32 @@ function startSessionAutoPauseSweeper(config) {
     // in-process window including the post-exec PR/staging tail — the
     // bare isInFlight check used to miss that tail and paused sessions
     // mid-wrap-up (sessions 2391/2386).
+    //
+    // STAGING ONLY: the `staging-fixture/*` sessions are exempt. They are
+    // seeded 'active' by migrate.js because the states they exist to show —
+    // the wrap-up quick-reply pills, the "Propose to group" button on the
+    // changes-ready card, the starter suggestions on an empty session —
+    // render on an ACTIVE session and on nothing else. Their seed comment
+    // stamps `last_activity_at = NOW()` to survive the first sweep, but that
+    // only buys one auto-pause window: five minutes after a deploy every one
+    // of them flips to 'paused' and a dozen dapp.json checks start asserting
+    // against a screen that can no longer paint what they name. Nobody is
+    // holding a worker for them (they were never dispatched), so exempting
+    // them costs no capacity. The predicate is the branch prefix migrate.js
+    // seeds them under, and it is gated on USERNODE_ENV so production's
+    // sweep is byte-for-byte what it was.
+    const exemptFixtures = process.env.USERNODE_ENV === 'staging';
     try {
       const { rows } = await pool.query(
         `SELECT id FROM chat_sessions
          WHERE status = 'active'
            AND active_turn IS NULL
+           AND source IS DISTINCT FROM 'imported'
            AND last_activity_at < NOW() - make_interval(secs => $1::double precision / 1000.0)
+           AND NOT ($2::boolean AND COALESCE(branch_name, '') LIKE 'staging-fixture/%')
          ORDER BY last_activity_at ASC
          LIMIT 50`,
-        [config.sessionAutopauseIdleMs]
+        [config.sessionAutopauseIdleMs, exemptFixtures]
       );
       for (const row of rows) {
         if (activeWorkersSvc.isSessionBusy(row.id)) continue;
@@ -3116,6 +3799,19 @@ function startSessionAutoPauseSweeper(config) {
       const nowMs = Date.now();
       const { broadcastGlobal } = require('./src/services/ws');
       for (const row of rows) {
+        // cleanup_pending means all user-visible/economic work committed and
+        // only the identity-safe clear remains. Complete it silently; never
+        // narrate a false interruption or replay the tail.
+        if (turnLifecycle.recoveryAction(row.active_turn) === 'cleanup') {
+          const args = turnCleanupArgs(row.active_turn);
+          const cleared = await worker.finishTurn(row.id, args);
+          if (!cleared) {
+            log.warn('server', 'Watchdog could not finish pending turn cleanup', {
+              sessionId: row.id,
+            });
+          }
+          continue;
+        }
         const busy = activeWorkersSvc.isSessionBusy(row.id);
         // Cheap pre-filter (no docker probe): fresh or busy rows skip.
         if (turnWatchdog.classifyStaleTurn({
@@ -3146,7 +3842,42 @@ function startSessionAutoPauseSweeper(config) {
             sessionId: row.id, startedAt: row.active_turn?.startedAt || null,
             phase: row.active_turn?.phase || 'exec', codeLanded: reapCodeLanded,
           });
-          await worker.clearActiveTurn(row.id);
+          if (row.active_turn?.backend === 'codex_openrouter'
+              && row.active_turn?.turnUuid) {
+            const agentTurn = require('./src/services/agent-turn');
+            try {
+              await agentTurn.completeCodexAttempt({
+                pool,
+                turnUuid: row.active_turn.turnUuid,
+                status: 'failed',
+                errorCode: 'recovery_abandoned',
+                errorDetail: 'Durable turn was abandoned after its worker became stale.',
+                telemetryComponent: turnLifecycle.phaseOf(row.active_turn) === turnLifecycle.PHASE_DISPATCH_PENDING
+                  ? null
+                  : row.active_turn.telemetryComponent || null,
+              });
+            } catch (ledgerErr) {
+              const disposition = await recoveryRetry.retainOrQuarantineRecoveryError({
+                pool,
+                sessionId: row.id,
+                activeTurn: row.active_turn,
+                error: ledgerErr,
+              });
+              log.error('server', disposition.action === 'retry'
+                ? 'Stale Codex turn retained because ledger terminalization failed'
+                : 'Stale Codex turn quarantined because its ledger attempt is missing', {
+                sessionId: row.id, err: ledgerErr.message,
+              });
+              continue;
+            }
+          }
+          const reaped = await worker.clearActiveTurn(row.id, turnCleanupArgs(row.active_turn));
+          if (!reaped) {
+            log.warn('server', 'Stale turn changed while watchdog was reaping it', {
+              sessionId: row.id,
+            });
+            continue;
+          }
           await appendTerminalProgressLine(pool, row.id, '[interrupted]');
           const msg = reapCodeLanded
             ? recoveryPills.buildCodeLandedBreadcrumb({
@@ -3358,11 +4089,10 @@ function startSessionAutoPauseSweeper(config) {
       log.warn('server', 'Staging app-file sweep failed', { err: err.message });
     }
 
-    // Pass 6: imported-PR head sync (#687, Slice 3). For each OPEN imported
-    // proposal, fetch the PR's current head.sha and no-op on an unchanged
-    // head; on a head change reset the vote tally, post a "please
-    // re-review" note, refresh drift, and re-run checks against the new
-    // head (see services/pr-import-sync.js). Reuses this sweeper's cadence
+    // Pass 6: imported-PR head sync (#687, Slice 3). For each live imported
+    // row, fetch the PR's current head.sha and no-op on an unchanged head;
+    // on a head change refresh its preview/checks (and, once promoted, reset
+    // the vote tally). Reuses this sweeper's cadence
     // + a per-session cooldown (importedHeadSyncAttempts) so the added
     // getPR-per-open-imported-proposal cost stays bounded.
     try {
@@ -3372,7 +4102,7 @@ function startSessionAutoPauseSweeper(config) {
            FROM chat_sessions cs
            JOIN apps a ON cs.app_id = a.id
           WHERE cs.source = 'imported'
-            AND cs.status IN ('promoted', 'merging')
+            AND cs.status IN ('active', 'promoted', 'merging')
             AND cs.pr_number IS NOT NULL
           ORDER BY cs.promoted_at ASC NULLS FIRST
           LIMIT 50`
@@ -3434,6 +4164,94 @@ function startSessionAutoPauseSweeper(config) {
       log.warn('server', 'Orphan staging-DB sweep failed', { err: err.message });
     }
   }, config.sessionSweepIntervalMs).unref();
+}
+
+let governanceApplyTickerHandle = null;
+
+// #1010: FAST governance-apply ticker.
+//
+// A governance proposal (rename / secret_change / close_issue /
+// maintenance_campaign) can become mergeable purely through the passage of
+// time — the threshold is met and the minimum visibility window runs out with
+// no further vote to drive the apply. Before this ticker the ONLY thing that
+// noticed was the hourly stale-PR sweeper's Pass 0b, so a close proposal whose
+// countdown reached zero sat visibly decided-but-open for up to an hour. That
+// is the dead air issue #1010 is about, and it is also what would make the
+// client's derived "Closing issue…" spinner a lie — so the indicator and this
+// ticker ship together.
+//
+// Deliberately narrower than Pass 0b in one way that matters: it is
+// **gate-first for every kind**, including close_issue. Pass 0b dispatches
+// close_issue rows UNCONDITIONALLY because maybeApplyCloseIssueProposal's
+// superseded guard doubles as the catch-all for issues closed by hand on
+// GitHub — and that guard costs a `fetchPublicIssues` per app. Replicating it
+// at 60s cadence would mean a GitHub fetch per app per minute, so the
+// superseded sweep STAYS hourly and this ticker only touches rows whose gate
+// already says "apply me". Cost here is one small query plus a DB-only
+// governedGate per open governance row.
+//
+// Its own interval + own enable knob (GOVERNANCE_APPLY_TICK_MS, 0 disables)
+// so it is not silently switched off along with the stale-PR sweeper, which
+// disables itself entirely when both PR_STALE_NOTIFY_MS and
+// ARCHIVED_RETENTION_MS are zero.
+function startGovernanceApplyTicker(config) {
+  if (governanceApplyTickerHandle) return;
+  const intervalMs = config.governanceApplyTickMs;
+  if (!(intervalMs > 0)) {
+    log.info('server', 'Governance-apply ticker disabled');
+    return;
+  }
+  const pool = getPool(config);
+  const issuesModule = require('./src/routes/issues');
+  const governance = require('./src/services/governance');
+  log.info('server', 'Governance-apply ticker started', { intervalMs });
+  governanceApplyTickerHandle = setInterval(async () => {
+    if (lifecycle.isShuttingDown()) return;
+    try {
+      const { rows } = await pool.query(
+        `SELECT i.*, a.slug AS app_slug, a.repo_url,
+                (SELECT COUNT(*)::int FROM issue_votes WHERE issue_id = i.id AND vote = 'up')   AS up_count,
+                (SELECT COUNT(*)::int FROM issue_votes WHERE issue_id = i.id AND vote = 'down') AS down_count
+           FROM issues i JOIN apps a ON a.id = i.app_id
+          WHERE i.status = 'open' AND i.kind IN ('rename', 'secret_change', 'close_issue', 'maintenance_campaign')
+          LIMIT 100`
+      );
+      for (const issue of rows) {
+        try {
+          // Gate-first for EVERY kind — see the header comment.
+          const gate = await governance.governedGate(pool, issue.app_id, {
+            kind: 'issue', id: issue.id, openedAt: issue.created_at,
+          });
+          if (!gate.mergeable) continue;
+          // The apply helpers re-check the gate and lock the issue row
+          // atomically, so this can never double-apply against a concurrent
+          // vote, the hourly sweep, or another color's ticker.
+          let result;
+          if (issue.kind === 'close_issue') {
+            result = await issuesModule.maybeApplyCloseIssueProposal(pool, issue);
+          } else if (issue.kind === 'rename') {
+            result = await issuesModule.maybeApplyRenameProposal(pool, issue);
+          } else if (issue.kind === 'maintenance_campaign') {
+            result = await issuesModule.maybeApplyMaintenanceCampaignProposal(config, pool, issue);
+          } else {
+            result = await issuesModule.maybeApplySecretChangeProposal(config, pool, issue);
+          }
+          if (result && (result.applied || result.superseded)) {
+            log.info('server', 'Governance proposal applied by ticker', {
+              issueId: issue.id, appId: issue.app_id, kind: issue.kind,
+              applied: !!result.applied, superseded: !!result.superseded,
+            });
+          }
+        } catch (err) {
+          log.warn('server', 'Governance-apply tick failed for row', {
+            issueId: issue.id, kind: issue.kind, err: err.message,
+          });
+        }
+      }
+    } catch (err) {
+      log.warn('server', 'Governance-apply tick failed', { err: err.message });
+    }
+  }, intervalMs).unref();
 }
 
 let stalePrSweeperHandle = null;
@@ -3792,6 +4610,10 @@ async function cleanup() {
     clearInterval(stalePrSweeperHandle);
     stalePrSweeperHandle = null;
   }
+  if (governanceApplyTickerHandle) {
+    clearInterval(governanceApplyTickerHandle);
+    governanceApplyTickerHandle = null;
+  }
 
   const startingCount = getActiveWorkerCount();
   log.info('server', 'Shutdown initiated, draining handlers', {
@@ -3835,6 +4657,16 @@ async function cleanup() {
     } finally {
       if (poolTimer) clearTimeout(poolTimer);
     }
+  }
+
+  // Release the leader advisory lock LAST — only after draining — so the
+  // standby color promotes and runs recovery (incl. orphan worker adoption)
+  // against a quiesced process, not one still finishing a turn. Uses its
+  // own dedicated pg connection, so the pool close above doesn't affect
+  // it. (Process exit would release the session lock anyway; doing it
+  // explicitly just hands off promptly.)
+  if (leadership) {
+    await leadership.stop().catch(() => {});
   }
 
   process.exit(0);

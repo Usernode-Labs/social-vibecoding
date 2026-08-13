@@ -23,7 +23,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const APP_VIEW_SRC = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf8');
-const DEV_CHAT_SRC = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'dev-chat.js'), 'utf8');
+const DEV_CHAT_SRC = fs.readFileSync(path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'dev-chat.js'), 'utf8');
 
 // ── Shared fake element: real Set-backed classList (the docked mode adds
 // a second class to #staging-overlay, so the ensure-staging test's

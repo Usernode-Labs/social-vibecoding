@@ -25,7 +25,7 @@
 #
 # Quick checks before rolling:
 #   grep ^GIT_SHA= /opt/usernode/.env       # current SHA
-#   docker logs usernode --tail 50          # what's broken
+#   docker logs usernode-blue --tail 50     # what's broken (or -green)
 #
 # Caveats:
 #   - Schema migrations are forward-only. If the rolled-back code can't
@@ -54,7 +54,7 @@ Find a known-good SHA at:
 
 Quick checks before rolling:
   grep ^GIT_SHA= /opt/usernode/.env       # current SHA
-  docker logs usernode --tail 50          # what's broken
+  docker logs usernode-blue --tail 50     # what's broken (or -green)
 USAGE
   exit 1
 fi
@@ -108,7 +108,9 @@ rsync -av --delete \
   --exclude=node_modules \
   --exclude=data \
   --exclude=.env \
+  --exclude=.platform-env\* \
   --exclude=runtime \
+  --exclude=caddy/active \
   "$STAGING/" "$DEPLOY_DIR/"
 
 echo "==> Updating GIT_SHA in .env..."
@@ -129,7 +131,55 @@ echo "==> Building and bringing up the harness..."
 cd "$DEPLOY_DIR"
 # Build is required because the platform image bakes in `COPY . .`,
 # so the only way new code gets in is a rebuild.
-docker compose up -d --build
+#
+# Kill-switch semantics, NOT a zero-downtime rollout: the harness is
+# presumed broken, so converge deterministically on ONE platform
+# container. If the rolled-back tree is blue-green (defines
+# usernode-blue), stop everything platform-shaped, point Caddy at blue,
+# and start blue only. If it PREDATES blue-green (single `usernode`
+# service), remove any color containers and `up -d --build` the old way.
+if docker compose config --services 2>/dev/null | grep -qx usernode-blue; then
+  docker compose build usernode-blue
+  docker rm -f usernode >/dev/null 2>&1 || true          # legacy pre-blue-green container
+  docker compose stop -t 10 usernode-green >/dev/null 2>&1 || true
+  # Point the apex + access gate at blue. Written INLINE (not via
+  # scripts/platform-rollout.sh) so the kill-switch cannot be broken by
+  # a bad rollout script in the tree we just rolled back to. Must define
+  # the same two snippets the Caddyfile imports; content mirrors
+  # write_active() in scripts/platform-rollout.sh.
+  mkdir -p caddy/active
+  cat > caddy/active/platform-upstream.caddy <<'ACTIVE'
+# Written by rollback.sh — deterministic post-rollback state: blue live.
+# Rewritten by scripts/platform-rollout.sh on the next normal deploy.
+(platform_upstream) {
+	reverse_proxy usernode-blue:3000 {
+		lb_try_duration 30s
+		lb_try_interval 250ms
+		transport http {
+			dial_timeout 2s
+		}
+	}
+}
+
+(platform_gate) {
+	forward_auth usernode-blue:3000 {
+		uri /__caddy/access
+		lb_try_duration 30s
+		lb_try_interval 250ms
+		transport http {
+			dial_timeout 2s
+		}
+	}
+}
+ACTIVE
+  # Scoped service list: an unscoped `up -d` would start BOTH colors.
+  docker compose up -d usernode-db usernode-node usernode-minio acme-dns caddy
+  docker compose up -d --no-deps --force-recreate usernode-blue
+  docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile || true
+else
+  docker rm -f usernode-blue usernode-green >/dev/null 2>&1 || true
+  docker compose up -d --build
+fi
 
 echo
 echo "==> Rollback complete. Now running on $TARGET_SHA."

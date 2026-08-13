@@ -302,7 +302,16 @@ async function runAppChange({ campaign, app, exemplarSummary, onUsage }) {
   let nudged = false;
 
   for (let iter = 0; iter < MAX_TOOL_ITERATIONS; iter++) {
-    const res = await llm.streamChat({ messages, systemPrompt, tools: CAMPAIGN_TOOLS });
+    const res = await llm.streamChat({
+      messages,
+      systemPrompt,
+      tools: CAMPAIGN_TOOLS,
+      telemetryContext: {
+        appId: app.id,
+        backend: 'helper',
+        component: 'other_helper',
+      },
+    });
     if (onUsage && res.usage) {
       try { onUsage(res.usage, res.servedModel); } catch { /* accounting never fails the run */ }
     }
@@ -466,9 +475,9 @@ function kickChecks(config, pool, session, app) {
   (async () => {
     const visuals = require('./visuals');
     const staging = require('./staging');
-    await visuals.setChecksPending(pool, session.id, null, 'building')
+    await visuals.setChecksPending(pool, session.id, null, 'building', 'fleet-maintenance')
       .catch((err) => log.warn('fleet-maintenance', 'setChecksPending failed (non-fatal)', { sessionId: session.id, err: err.message }));
-    visuals.notifyChecksPending(session.id, null, 'building');
+    visuals.notifyChecksPending(session.id, null, 'building', 'fleet-maintenance');
     let result;
     try {
       result = await staging.buildAndDeployStaging(config, session, app, 'latest');
@@ -484,7 +493,7 @@ function kickChecks(config, pool, session, app) {
       [result.containerId, result.stagingUrl, session.id]
     );
     await staging.verifyStagingEdge(session, result.hostname, result.stagingUrl);
-    visuals.captureForSession(config, session, app, null, result)
+    visuals.captureForSession(config, session, app, null, result, { trigger: 'fleet-maintenance' })
       .catch((err) => log.warn('fleet-maintenance', 'Campaign visuals capture failed', { sessionId: session.id, err: err.message }));
   })().catch((err) => log.warn('fleet-maintenance', 'Campaign staging build failed', { sessionId: session.id, err: err.message }));
 }

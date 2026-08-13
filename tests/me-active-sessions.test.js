@@ -28,6 +28,7 @@ poolMod.getPool = () => ({
 });
 
 const worker = require('../src/services/worker');
+const workerProgress = require('../src/services/worker-progress');
 const { activeWorkers } = require('../src/services/active-workers');
 
 const { sessionRoutes } = require('../src/routes/sessions');
@@ -60,13 +61,16 @@ function sessionRow(overrides = {}) {
     last_activity_at: '2026-06-12T01:00:00Z',
     app_slug: 'demo',
     app_name: 'Demo App',
+    agent_backend: 'claude_code',
+    agent_model: null,
     ...overrides,
   };
 }
 
-async function fetchActiveSessions(server) {
+async function fetchActiveSessions(server, { includeImported = false } = {}) {
   const port = server.address().port;
-  const res = await fetch(`http://127.0.0.1:${port}/api/me/active-sessions`);
+  const suffix = includeImported ? '?include_imported=1' : '';
+  const res = await fetch(`http://127.0.0.1:${port}/api/me/active-sessions${suffix}`);
   return { res, body: await res.json() };
 }
 
@@ -81,17 +85,40 @@ test('query is owner-scoped and excludes archived/headless rows', async () => {
 
     const q = capturedQueries.find((c) => /FROM chat_sessions cs/.test(c.sql));
     assert.ok(q, 'active-sessions query was issued');
-    // Owner scoping: the only filter param is the viewer's own id —
+    // Owner scoping: the first filter param is the viewer's own id —
     // another user's rows can never satisfy the WHERE clause.
     assert.match(q.sql, /cs\.user_id = \$1/);
-    assert.deepStrictEqual(q.params, [VIEWER.id]);
+    assert.deepStrictEqual(q.params, [VIEWER.id, false]);
     // Status filtering: non-archived statuses only, headless excluded.
     assert.match(q.sql, /status IN \('active', 'promoted', 'paused'\)/);
     assert.match(q.sql, /is_headless = FALSE/);
+    assert.match(q.sql, /\$2::boolean OR cs\.source IS DISTINCT FROM 'imported'/,
+      'worker/session consumers exclude imported rows by default');
     assert.match(q.sql, /ORDER BY last_activity_at DESC/);
     // shared_at rides along so the owner's pinned cards can render their
     // "Visible to everyone" / "Make visible" state.
     assert.match(q.sql, /cs\.shared_at/);
+    assert.match(q.sql, /cs\.agent_backend/);
+    assert.match(q.sql, /cs\.agent_model/);
+  } finally {
+    server.close();
+  }
+});
+
+test('the Dev board can opt imported active rows into the owner list', async () => {
+  capturedQueries = [];
+  poolQueryHandler = async () => ({ rows: [sessionRow({
+    id: 44, source: 'imported', imported_pr_author: 'contributor', pr_number: 44,
+  })] });
+  const server = await startServer();
+  try {
+    const { res, body } = await fetchActiveSessions(server, { includeImported: true });
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(body.sessions[0].source, 'imported');
+    const q = capturedQueries.find((c) => /FROM chat_sessions cs/.test(c.sql));
+    assert.deepStrictEqual(q.params, [VIEWER.id, true]);
+    assert.match(q.sql, /cs\.imported_pr_author/);
+    assert.match(q.sql, /cs\.staging_url/);
   } finally {
     server.close();
   }
@@ -102,7 +129,7 @@ test('response shape: row fields pass through, busy false without a warm worker'
   poolQueryHandler = async () => ({
     rows: [
       sessionRow({ id: 11, status: 'active', pr_title: 'Add leaderboard' }),
-      sessionRow({ id: 12, status: 'promoted', app_slug: 'other', app_name: 'Other App' }),
+      sessionRow({ id: 12, status: 'promoted', app_slug: 'other', app_name: 'Other App', agent_backend: 'codex_openrouter', agent_model: 'openai/gpt-5.3-codex' }),
       sessionRow({ id: 13, status: 'paused' }),
     ],
   });
@@ -121,6 +148,8 @@ test('response shape: row fields pass through, busy false without a warm worker'
       assert.strictEqual(s.busy, false);
     }
     assert.strictEqual(body.sessions[0].pr_title, 'Add leaderboard');
+    assert.strictEqual(body.sessions[1].agent_backend, 'codex_openrouter');
+    assert.strictEqual(body.sessions[1].agent_model, 'openai/gpt-5.3-codex');
   } finally {
     worker.isInFlight = realIsInFlight;
     server.close();
@@ -162,6 +191,32 @@ test('busy flag: set via activeWorkers or worker.isInFlight; totals arithmetic c
   } finally {
     worker.isInFlight = realIsInFlight;
     activeWorkers.clear();
+    server.close();
+  }
+});
+
+test('busy runtime identity does not overwrite the session-pinned backend', async () => {
+  capturedQueries = [];
+  poolQueryHandler = async () => ({
+    rows: [sessionRow({
+      id: 31,
+      agent_backend: 'codex_openrouter',
+      agent_model: 'openai/gpt-5.3-codex',
+    })],
+  });
+  workerProgress.set(31, 'Editing locally', {
+    backend: 'claude_code', model: null,
+  });
+  const server = await startServer();
+  try {
+    const { body } = await fetchActiveSessions(server);
+    const session = body.sessions[0];
+    assert.strictEqual(session.agent_backend, 'codex_openrouter', 'next platform turn stays pinned');
+    assert.strictEqual(session.agent_model, 'openai/gpt-5.3-codex');
+    assert.strictEqual(session.agentBackend, 'claude_code', 'busy tooltip names the actual local runtime');
+    assert.strictEqual(session.agentModel, null);
+  } finally {
+    workerProgress.clear(31);
     server.close();
   }
 });
@@ -312,6 +367,8 @@ test('shared-sessions returns linked_issues per row', async () => {
     const q = capturedQueries.find((c) => /shared_at IS NOT NULL/.test(c.sql));
     assert.ok(q, 'shared-sessions query was issued');
     assert.match(q.sql, /cs\.linked_issues/);
+    assert.match(q.sql, /cs\.source/);
+    assert.match(q.sql, /cs\.imported_pr_author/);
   } finally {
     appAccess.getAppForUser = prevGet;
     poolQueryHandler = async () => ({ rows: [] });

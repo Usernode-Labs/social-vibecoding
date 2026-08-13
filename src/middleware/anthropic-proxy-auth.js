@@ -9,12 +9,13 @@ const { clientIp } = require('../services/client-ip');
 //
 // Sibling of internal-auth.js — same token authority (WORKER_JWT_SECRET,
 // verified through platform-jwt with HS256 / issuer / `usernode:worker`
-// audience / `worker:session` purpose all pinned), same private-IP gate —
-// but reads the token from
+// audience / purpose all pinned), same private-IP gate — but reads the token from
 // `x-api-key` instead of `Authorization: Bearer`. The Anthropic SDK and
 // the `claude` CLI authenticate via `x-api-key`, so the worker container
-// puts its WORKER_JWT in `ANTHROPIC_API_KEY` and the SDK forwards it
-// here without us having to fork either client.
+// puts a purpose-bound proxy token in `ANTHROPIC_API_KEY` and the SDK
+// forwards it here without us having to fork either client. The legacy
+// worker:session purpose remains accepted during rolling deploys so a turn
+// dispatched by the previous process is not cut off mid-stream.
 //
 // Two narrow middlewares (this + internal-auth) is intentional — the
 // existing internal endpoints (push, pr) should NOT accidentally accept
@@ -53,18 +54,25 @@ function anthropicProxyAuth(req, res, next) {
     return res.status(500).json({ ok: false, code: 'server_misconfigured' });
   }
 
-  let claims;
-  try {
-    claims = platformJwt.verifyWorkerToken(token);
-  } catch (err) {
-    return res.status(401).json({ ok: false, code: 'bad_token', message: err.message });
+  let claims = null;
+  let lastErr = null;
+  for (const purpose of [platformJwt.PUR_ANTHROPIC_PROXY, platformJwt.PUR_WORKER]) {
+    try {
+      claims = platformJwt.verifyWorkerPurpose(token, purpose);
+      break;
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  if (!claims) {
+    return res.status(401).json({
+      ok: false,
+      code: 'bad_token',
+      message: lastErr?.message || 'unmatched purpose',
+    });
   }
 
-  if (!claims || claims.scope !== platformJwt.PUR_WORKER || typeof claims.session_id === 'undefined') {
-    return res.status(403).json({ ok: false, code: 'bad_scope' });
-  }
-
-  req.workerSession = { sessionId: claims.session_id };
+  req.workerSession = { sessionId: claims.session_id, purpose: claims.pur };
   next();
 }
 

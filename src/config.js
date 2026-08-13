@@ -104,6 +104,28 @@ function isLoopbackOrigin(value) {
   }
 }
 
+// Canonicalize the OpenRouter API base URL (review #2 / plan 4.1). Only an
+// HTTPS origin (no credentials/query/fragment) is valid, with an optional
+// path suffix (trailing slashes stripped). Insecure HTTP is permitted ONLY
+// for loopback hosts when both local-dev conditions are true (USERNODE_LOCAL_DEV
+// set AND OPENROUTER_ALLOW_INSECURE_BASE=true). Remote HTTP is always rejected.
+// Returns null for anything invalid.
+function canonicalOpenRouterApiBase(value, source) {
+  if (typeof value !== 'string' || value.length === 0) return null;
+  let url;
+  try { url = new URL(value); } catch { return null; }
+  if (url.username || url.password || url.search || url.hash) return null;
+  const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
+  const allowLoopbackHttp = !!source
+    && source.isLocalDev
+    && source.allowInsecureBase === 'true';
+  const secure = url.protocol === 'https:';
+  const permittedLocalHttp = allowLoopbackHttp && loopback && url.protocol === 'http:';
+  if (!secure && !permittedLocalHttp) return null;
+  url.pathname = url.pathname.replace(/\/+$/, '');
+  return url.toString().replace(/\/$/, '');
+}
+
 function load() {
   const staging = IS_STAGING();
 
@@ -147,6 +169,19 @@ function load() {
   }
 
   const cliLocalMode = !staging && process.env.USERNODE_LOCAL_DEV === '1';
+
+  // Canonical OpenRouter API base (review #2 / plan 4.2): resolve once here
+  // and FAIL BOOT on an invalid explicit value, so no credential is ever
+  // sent to a non-canonical endpoint. Remote HTTP is rejected even with the
+  // insecure flag; loopback HTTP needs both local-dev conditions.
+  const openrouterApiBase = canonicalOpenRouterApiBase(
+    process.env.OPENROUTER_API_BASE || 'https://openrouter.ai/api/v1',
+    { isLocalDev: cliLocalMode, allowInsecureBase: process.env.OPENROUTER_ALLOW_INSECURE_BASE },
+  );
+  if (!openrouterApiBase) {
+    console.error('[config] OPENROUTER_API_BASE must be an HTTPS URL without credentials, query parameters, or a fragment.');
+    process.exit(1);
+  }
   let cliAuthOrigin = null;
   let cliAuthEnabled = !staging;
   if (cliAuthEnabled && cliLocalMode) {
@@ -196,6 +231,20 @@ function load() {
     iframeJwtPublicKey: (process.env.IFRAME_JWT_PUBLIC_KEY || '').replace(/\\n/g, '\n'),
     workerJwtSecret: process.env.WORKER_JWT_SECRET || '',
     edgeJwtSecret: process.env.EDGE_JWT_SECRET || '',
+    // OpenRouter BYOK + Codex backend. Available alongside Claude by
+    // default; this is an availability/kill switch, never a global provider
+    // choice. Each user explicitly chooses the backend for their session.
+    codexOpenrouterEnabled: String(process.env.CODEX_OPENROUTER_ENABLED || 'true') === 'true',
+    // #717: collection-only emergency switch. Reporting remains readable so
+    // operators can inspect already-recorded aggregates after disabling new
+    // writes. This never changes provider/model/routing behaviour.
+    llmTelemetryEnabled: String(process.env.LLM_TELEMETRY_ENABLED || 'true') === 'true',
+    openrouterBetaUserIds: (process.env.CODEX_OPENROUTER_BETA_USER_IDS || '')
+      .split(',').map((s) => s.trim()).filter(Boolean),
+    openrouterDefaultCodexModel: process.env.OPENROUTER_DEFAULT_CODEX_MODEL || '',
+    openrouterApiBase,
+    openrouterAllowInsecureBase: String(process.env.OPENROUTER_ALLOW_INSECURE_BASE || 'false') === 'true',
+    openrouterOrigin: process.env.OPENROUTER_ORIGIN || 'https://usernode.dev',
     // The former single shared JWT_SECRET is GONE. All four token
     // authorities (app identity RS256, worker, edge grant, edge cookie)
     // read their own key from env via services/platform-jwt.js, and a
@@ -235,7 +284,9 @@ function load() {
     // these bound host resource fan-out. Previously hardcoded literals in
     // src/routes/sessions.js; lifted here so prod can tune them via env
     // without a code deploy. See the scaling notes in README / SPEC.
-    //   - maxGlobalSessions: platform-wide active+promoted session ceiling.
+    //   - maxGlobalSessions: platform-wide active+promoted coding-worker
+    //     ceiling. Externally produced imported PRs own no worker and are
+    //     excluded from it.
     //   - maxUserSessions:   per-user ceiling on 'active'-status sessions
     //     only (#193). Promoted sessions are exempt: they're un-pausable
     //     while their PR is up for a merge vote, so counting them would
@@ -315,6 +366,16 @@ function load() {
     // How often the stale-PR / archived-GC sweeper runs. These actions
     // are day-scale, so it polls infrequently. Default 1h.
     staleSweepIntervalMs: parseInt(process.env.STALE_SWEEP_INTERVAL_MS || String(60 * 60 * 1000), 10),
+    // #1010: how often the FAST governance-apply ticker runs. The hourly
+    // sweeper above also applies window-elapsed governance proposals, but an
+    // hour of dead air after a close proposal's countdown reaches zero is
+    // exactly the "did my vote do anything?" confusion this ticker removes —
+    // and it is what makes the client's derived "Closing issue…" spinner
+    // honest rather than a promise nothing keeps. Deliberately gate-first and
+    // DB-only (no GitHub traffic for rows that aren't ready), and on its own
+    // knob so it can't be silently disabled along with the stale-PR sweeper.
+    // Default 60s; set to 0 to disable (the hourly catch-all still runs).
+    governanceApplyTickMs: parseInt(process.env.GOVERNANCE_APPLY_TICK_MS || String(60 * 1000), 10),
     // Demand-driven global-cap eviction. When a new session is needed but
     // the platform is at maxGlobalSessions, we pause the globally least-
     // recently-active session that has been idle longer than this grace
@@ -353,12 +414,14 @@ function load() {
     platformRepoUrl: (process.env.USERNODE_PLATFORM_REPO || 'https://github.com/Usernode-Labs/social-vibecoding').replace(/\/$/, ''),
     selfAppSlug: SELF_APP_SLUG,
     selfAppDbName: SELF_APP_DB_NAME,
-    // The platform's own container name on the shared docker network.
-    // Child apps run as `usernode-app-<slug>`, but the platform itself is
-    // the compose service `container_name: usernode` (docker-compose.yml)
-    // — the before/after capture pipeline (services/visuals.js) needs this
-    // to shoot a real "before" of the production platform for self-app
-    // sessions. Overridable for forks whose compose names differ.
+    // The platform's own DNS name on the shared docker network. Child
+    // apps run as `usernode-app-<slug>`, but the platform itself runs as
+    // the blue-green pair usernode-blue/-green, BOTH carrying the
+    // `usernode` network alias (docker-compose.yml) — so this default
+    // resolves to whichever color(s) are up. The before/after capture
+    // pipeline (services/visuals.js) needs this to shoot a real "before"
+    // of the production platform for self-app sessions. Overridable for
+    // forks whose compose names differ.
     selfAppContainer: process.env.SELF_APP_CONTAINER || 'usernode',
     // SELF-HOSTING.md Phase 4: in-app vote-to-merge for the self-
     // app. ON by default — all authenticated users can see the self-
@@ -406,19 +469,30 @@ function load() {
     mobilePushEnvironment: process.env.PUSH_ENV || '',
     firebaseProjectId: process.env.FIREBASE_PROJECT_ID || '',
     firebaseServiceAccountJsonB64: process.env.FIREBASE_SERVICE_ACCOUNT_JSON_B64 || '',
-    // Topochain outbound mail. `mailer.js` has always had a transport hook
-    // (`config.topochainMailTransport`) and nothing ever filled it, so BOTH
-    // its callers — the shell's email login codes and the onboarding
-    // waitlist confirmation — generated a message and dropped it while
-    // still reporting success to the user. This wires the one transport
-    // (src/services/topochain/mail-transport.js) behind that same hook.
+    // Platform outbound mail (login codes, waitlist confirmations,
+    // waitlist release notices). src/services/mail/select.js picks the
+    // transport once, here, from platform_env: Gmail API, a generic HTTP
+    // mail API, or the log transport — and ALWAYS the log transport in a
+    // staging preview, which is a clone of production data and must never
+    // mail real people from an unvoted branch.
     //
-    // Null when unconfigured, which preserves mailer.js's existing
-    // "no transport configured" branch (loud error in production, code
-    // printed to the log in dev/staging). OPTIONAL and NOT in REQUIRED,
-    // like the three keys above: unset must not block boot.
-    topochainMailTransport: require('./services/topochain/mail-transport')
-      .create(process.env),
+    // `mailTransport` is null when nothing can send, which is what makes
+    // the mailer's loud "NOT delivered" error fire instead of a boot
+    // failure: every key below is OPTIONAL and NOT in REQUIRED, because a
+    // deploy without mail configured must still come up.
+    ...(() => {
+      const chosen = require('./services/mail/select').chooseTransport(process.env);
+      return {
+        mailTransport: chosen.transport,
+        mailProvider: chosen.provider,
+        mailFrom: chosen.from,
+        mailStagingLogOnly: chosen.stagingLogOnly,
+        mailMaxPerHour: Number(process.env.PLATFORM_MAIL_MAX_PER_HOUR) || 0,
+        // The original hook name. Kept as an alias so any caller (or test)
+        // that still reads `config.topochainMailTransport` keeps working.
+        topochainMailTransport: chosen.transport,
+      };
+    })(),
   };
 
   console.log('[config] Loaded:');
@@ -496,9 +570,9 @@ function load() {
   console.log(`  MOBILE_PUSH=${config.mobilePushEnabled ? 'enabled' : 'disabled'} PUSH_ENV=${config.mobilePushEnvironment || '(not set)'}`);
   console.log(`  FIREBASE_PROJECT_ID=${config.firebaseProjectId || '(not set)'}`);
   console.log(`  FIREBASE_SERVICE_ACCOUNT=${config.firebaseServiceAccountJsonB64 ? '(set)' : '(not set)'}`);
-  console.log(`  TOPOCHAIN_MAIL=${config.topochainMailTransport
-    ? 'configured'
-    : '(not set — OTP login codes and waitlist confirmations are NOT delivered)'}`);
+  console.log(`  PLATFORM_MAIL=${config.mailTransport
+    ? `${config.mailProvider}${config.mailStagingLogOnly ? ' (staging — rendered to the log, never delivered)' : ''} from=${config.mailFrom}`
+    : '(no provider configured — OTP login codes and waitlist confirmations are NOT delivered)'}`);
 
   return config;
 }
@@ -521,5 +595,6 @@ module.exports = {
   load,
   usesMockGithubForImports,
   canonicalCliOrigin,
+  canonicalOpenRouterApiBase,
   isLoopbackOrigin,
 };

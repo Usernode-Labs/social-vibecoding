@@ -1,0 +1,144 @@
+/**
+ * The legacy globals React-owned regions still talk to.
+ *
+ * public/js/** is 50-odd classic scripts that each publish one object on
+ * `window`; a converted region needs the same names, and #1079 chunk B moved
+ * two of those modules INTO this bundle (features/notifications/
+ * notifications.js and features/work-drawer/work-drawer.js) while keeping
+ * their `window.X = X` publication so their remaining legacy callers — app.js,
+ * app-view.js, dev-chat.js, home.js — keep working untouched.
+ *
+ * Declared loosely on purpose: these are untyped JS modules, and pretending
+ * otherwise here would be a type that lies rather than a type that helps. Only
+ * the members React code actually calls are named.
+ */
+
+export {};
+
+declare global {
+  interface Window {
+    /** features/notifications/notifications.js */
+    Notifications?: {
+      init(): void;
+      refresh(): Promise<void>;
+      open: boolean;
+      [key: string]: unknown;
+    };
+    /** features/work-drawer/work-drawer.js */
+    WorkDrawer?: {
+      init(): void;
+      refresh(): Promise<void>;
+      open: boolean;
+      [key: string]: unknown;
+    };
+    /** features/settings/settings.js */
+    Settings?: {
+      init(): void;
+      open(section?: string | null, opts?: unknown): void;
+      [key: string]: unknown;
+    };
+    /** public/js/app.js — the shell's router. */
+    App?: {
+      currentApp?: string | null;
+      [key: string]: unknown;
+    };
+    /** public/js/platform-ui.js — the native-kit adapter. */
+    PlatformUI?: {
+      isTouch(): boolean;
+      pullToRefresh(el: Element, fn: () => Promise<unknown> | void): void;
+      [key: string]: unknown;
+    };
+    /** features/header/node-pill.js */
+    NodePill?: {
+      init(): Promise<void>;
+      [key: string]: unknown;
+    };
+    /** features/header/wallet-sheet.js */
+    WalletSheet?: {
+      init(): void;
+      [key: string]: unknown;
+    };
+    /** features/header/native-app-version.js */
+    NativeAppVersion?: {
+      init(): void;
+      refresh(): Promise<string | null>;
+      [key: string]: unknown;
+    };
+    /**
+     * features/header/header-menu-controller.js — the hamburger drawer's
+     * open/close, and the app-scoped drawer rows' visibility. Both were
+     * App.HeaderMenu / App.DrawerStatus in app.js, which now forwards onto
+     * these so its own call sites (plus app-view.js, native-chrome.js,
+     * node-pill.js, wallet-sheet.js) are untouched.
+     */
+    HeaderMenu?: {
+      init(): void;
+      open(): void;
+      close(): Promise<void> | void;
+      isPresenting(): boolean;
+      consumeNavPending(): boolean;
+      [key: string]: unknown;
+    };
+    /** features/header/header-menu-controller.js */
+    DrawerStatus?: {
+      setAppOpen(open: boolean): void;
+      setForkVisible(visible: boolean): void;
+      refreshDeployDot(): void;
+      [key: string]: unknown;
+    };
+    /**
+     * features/leaderboard/leaderboard.js — the Leaderboard screen's section
+     * state. The island's tab strip reports a click back through
+     * `_setSection`, which is what the strip's own innerHTML'd listener did.
+     */
+    Leaderboard?: {
+      _setSection?(section: string): void;
+      [key: string]: unknown;
+    };
+    /** public/js/app-view.js — the app screen. The dialogs read its appData. */
+    AppView?: {
+      appData?: { slug?: string; name?: string; url?: string; [key: string]: unknown } | null;
+      [key: string]: unknown;
+    };
+    /**
+     * features/dialogs/app-secrets-controller.js — the retired
+     * public/js/app-secrets.js. Still published under this name because five
+     * call sites in app-view.js reach it as `window.Secrets`.
+     */
+    Secrets?: {
+      open(slug: string, opts?: { declare?: boolean }): void;
+      close(): void;
+      [key: string]: unknown;
+    };
+    /**
+     * features/dialogs/screenshot-select.js — the retired
+     * public/js/screenshot-select.js. The feedback dialog gates its attach
+     * button on `isSupported()`, exactly as it did when this was a tag.
+     */
+    ScreenshotSelect?: {
+      isSupported(): boolean;
+      start(opts?: unknown): Promise<{ blob: Blob; contentType: string }>;
+      [key: string]: unknown;
+    };
+    /**
+     * The bridge this bundle publishes for `public/js/**` to call back into.
+     * `dialogs` is #1078 chunk I's addition: one entry per shell dialog,
+     * registered by `useDialog`, so the legacy open/close entry points drive
+     * React state instead of writing `hidden` themselves.
+     */
+    UsernodeReact?: {
+      dialogs?: Record<
+        string,
+        { isOpen(): boolean; open(payload?: unknown): void; close(): void } | undefined
+      >;
+      [key: string]: unknown;
+    };
+    /** The inline head-blocking theme module in src/head.html. */
+    Theme?: {
+      get(): 'light' | 'dark' | 'system';
+      set(mode: string): void;
+      apply(): void;
+      onChange(fn: (mode: string) => void): void;
+    };
+  }
+}

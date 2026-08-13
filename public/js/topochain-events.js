@@ -50,6 +50,28 @@ const TopochainEvents = {
     const renders = (ev) => !requireLeaderboard ||
       ev.display_leaderboard === undefined || ev.display_leaderboard === true;
 
+    const now = Date.now();
+    const hasStarted = (ev) => {
+      const t = Date.parse(ev.starts_at);
+      return Number.isNaN(t) ? true : t <= now;
+    };
+
+    // STEP 1 (issue #999): the season's own `type = 'season'` event, once
+    // it has started. A season's standings are the dataset people mean by
+    // "the leaderboard" — before this step the rule below opened on
+    // whichever sub-event started LAST, which in production was "Season 1
+    // Beta" (started 48h after the "Season 1" season event): a three-week
+    // slice showing four-figure totals where the season shows five.
+    // Individual events stay one click away in the picker.
+    //
+    // Keep in step with DEFAULT_PUBLIC_EVENT_SQL in
+    // src/services/topochain/event-standings.js. The list is starts_at
+    // DESC, so the first match is the most recently started season event —
+    // correct once a Season 2 exists.
+    const season = list.find((ev) =>
+      TopochainEvents.isSeasonAggregate(ev) && hasStarted(ev) && renders(ev));
+    if (season) return season;
+
     // `is_current` is computed server-side on /api/v4/season-events. The
     // /challenges-api/seasons payload carries starts_at/ends_at but no
     // such flag, so derive it — one rule, both entity grains.
@@ -61,11 +83,6 @@ const TopochainEvents = {
     // is the newest. Deliberately skips events that have not STARTED yet:
     // an upcoming event has no standings and no completed challenges, so
     // opening on it shows an empty screen with no explanation.
-    const now = Date.now();
-    const hasStarted = (ev) => {
-      const t = Date.parse(ev.starts_at);
-      return Number.isNaN(t) ? true : t <= now;
-    };
     const past = list.find((ev) => hasStarted(ev) && renders(ev));
     if (past) return past;
 
@@ -74,6 +91,20 @@ const TopochainEvents = {
     // last entry.
     const upcoming = list.filter(renders);
     return upcoming.length ? upcoming[upcoming.length - 1] : null;
+  },
+
+  // True for the season-level wrap-up event whose standings ARE the whole
+  // season's — `season_events.type = 'season'`, which the server resolves
+  // through computeStandings({ seasonId }) rather than through that one
+  // event's stored snapshots (see fetchEventLeaderboardRows).
+  //
+  // A MISSING `type` key is deliberately "not a season event": the
+  // /challenges-api/seasons payload doesn't carry it, and neither does an
+  // older /api/v4/season-events, so this stays additive — a client talking
+  // to a server that predates the field simply gets the old default rule
+  // back instead of a wrong answer.
+  isSeasonAggregate(ev) {
+    return !!ev && ev.type === 'season';
   },
 
   // Running right now. Prefers the server-computed flag when present

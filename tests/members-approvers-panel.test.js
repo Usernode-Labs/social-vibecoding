@@ -31,6 +31,18 @@ const VIEW_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'app-view.js'),
   'utf8'
 );
+// The members dialog's behaviour moved into the island's controller in #1078
+// chunk I (see its header for why it is a controller and not JSX). The sandbox
+// runs it the way init() does in the browser: Object.assign back onto the live
+// window.AppView. Evaluated as an expression, because its file-local
+// `let AppView` would otherwise collide with app-view.js's top-level const in
+// the one lexical scope a vm context shares.
+const MEMBERS_SRC = `(function () {\n${
+  fs.readFileSync(
+    path.join(__dirname, '..', 'frontend', 'src', 'features', 'dialogs', 'members-controller.js'),
+    'utf8',
+  ).replace(/^export \{[^}]*\};$/gm, '').replace(/^export /gm, '')
+}\nreturn { init, MembersDialog };\n})()`;
 const HTML_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'index.html'),
   'utf8'
@@ -195,6 +207,7 @@ function makeHarness({ appData = {} } = {}) {
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
   vm.runInContext(VIEW_SRC, sandbox);
+  vm.runInContext(MEMBERS_SRC, sandbox).init();
 
   const AppView = sandbox.window.AppView;
   AppView.appData = {

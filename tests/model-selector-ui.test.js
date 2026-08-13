@@ -1,4 +1,4 @@
-// UI contract for the #800 model selector in public/js/dev-chat.js.
+// UI contract for the #800 model selector in frontend/src/features/dev-chat/dev-chat.js.
 //
 // Same approach as openSession-streaming-reset.test.js: dev-chat.js is a
 // plain browser script (`const DevChat = {…}`), so we load its source
@@ -29,7 +29,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const SRC = fs.readFileSync(
-  path.join(__dirname, '..', 'public', 'js', 'dev-chat.js'),
+  path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'dev-chat.js'),
   'utf8'
 );
 
@@ -209,6 +209,12 @@ function render(overrides) {
   const h = makeHarness();
   h.DevChat.MODELS = (overrides && overrides.models) || guidanceMap();
   h.DevChat.selectedModel = (overrides && overrides.selected) || 'claude-opus-5';
+  if (overrides && overrides.session) h.DevChat.currentSession = overrides.session;
+  // build-venues.js is outside this focused harness. Mirror its ordinary
+  // in-chat result so provider-specific composer controls are exercised.
+  h.DevChat._currentVenueId = () => h.DevChat._isOpenRouterSession()
+    ? 'usernode-openrouter'
+    : 'usernode-claude';
   h.DevChat.renderChatView();
   return { ...h, html: h.getEl('dc-view').innerHTML };
 }
@@ -247,6 +253,51 @@ test('each option reads "<label> — <what it is for>"', () => {
       `missing option "${expected}"; got: ${html.match(/<option[^>]*>[^<]*<\/option>/g)}`
     );
   }
+});
+
+test('OpenRouter sessions show their pinned model and never show the Claude model picker', () => {
+  const { html } = render({
+    session: {
+      id: 7,
+      branch_name: 'dev/openrouter',
+      session_title: 'OpenRouter change',
+      agent_backend: 'codex_openrouter',
+      agent_model: 'anthropic/claude-sonnet-4.5',
+    },
+  });
+
+  assert.match(html, /OpenRouter model:/);
+  assert.match(html, /id="dc-openrouter-model"/);
+  assert.match(html, /anthropic\/claude-sonnet-4\.5/);
+  assert.match(html, /id="dc-openrouter-model-change"/);
+  assert.match(html, /Change model/);
+  assert.match(html, /All chat and coding in this session use anthropic\/claude-sonnet-4\.5 through OpenRouter and bill your OpenRouter key\./);
+
+  assert.doesNotMatch(html, /Chat model:/);
+  assert.doesNotMatch(html, /id="dc-model-select"/);
+  assert.doesNotMatch(html, /Sonnet 5 — simple, small changes/);
+  assert.doesNotMatch(html, /Opus 5 — general coding work/);
+  assert.doesNotMatch(html, /Fable 5 — design, taste, and difficult coding/);
+});
+
+test('the OpenRouter model button opens the provider-locked catalog', () => {
+  const h = makeHarness();
+  h.DevChat.currentSession = {
+    id: 7,
+    branch_name: 'dev/openrouter',
+    agent_backend: 'codex_openrouter',
+    agent_model: 'deepseek/deepseek-v4-flash',
+  };
+  h.DevChat._currentVenueId = () => 'usernode-openrouter';
+  let calledWith = null;
+  h.DevChat._switchCurrentCodingAgent = (...args) => { calledWith = args; };
+
+  h.DevChat.renderChatView();
+  h.getEl('dc-openrouter-model-change')._fire('click');
+
+  assert.ok(calledWith, 'the Change model button was not wired');
+  assert.equal(calledWith[0], null);
+  assert.equal(calledWith[1].fixedBackend, 'codex_openrouter');
 });
 
 test('no option implies a size ladder between Opus and Fable', () => {
@@ -381,4 +432,127 @@ test('the dev-chat seed map matches src/services/models.js exactly', () => {
       `${id} changeSize.long drifted between models.js and dev-chat.js`
     );
   }
+});
+
+// ── #907: the "Run on" runner controls, in the same composer row ────
+
+test('the composer is byte-identical for a session with no machine attached', () => {
+  const { html, getEl } = render();
+  // The host span ships in the markup so nothing has to be inserted later,
+  // and stays empty — .dc-runner:empty is display:none, so no gap appears.
+  assert.ok(html.includes('id="dc-runner"'), 'the host span is in the composer');
+  const { DevChat } = makeHarness();
+  DevChat._renderRunnerControls();
+  assert.equal(getEl('dc-runner').innerHTML, '');
+  // Nobody who never runs the CLI sees the words.
+  assert.ok(!html.includes('Run on:'));
+  assert.ok(!html.includes('Running on your machine'));
+});
+
+test('an attached machine gets a selector and a live chip', () => {
+  const { DevChat, getEl } = makeHarness();
+  DevChat._applyRunnerState({
+    runner: 'local',
+    localAgent: { leaseId: '7', label: "Evan's laptop", runtime: 'claude-code' },
+  });
+  const html = getEl('dc-runner').innerHTML;
+  assert.match(html, /Run on:/);
+  assert.match(html, /<option value="local" selected>Evan&#39;s laptop|Evan's laptop/);
+  assert.match(html, /<option value="platform">Usernode<\/option>/);
+  assert.match(html, /Running on your machine/);
+  // The chip explains the division of labour, because "running on your
+  // machine" otherwise reads as "Usernode has stopped doing anything".
+  assert.match(html, /Usernode still opens the PR/);
+});
+
+test('a label the user typed on their own machine is escaped, not interpreted', () => {
+  const { DevChat, getEl } = makeHarness();
+  DevChat._applyRunnerState({
+    runner: 'local',
+    localAgent: { leaseId: '7', label: '<img src=x onerror=alert(1)>' },
+  });
+  const html = getEl('dc-runner').innerHTML;
+  assert.ok(!html.includes('<img'), 'the label reached innerHTML unescaped');
+  assert.match(html, /&lt;img/);
+});
+
+test('a machine that has gone leaves a past-tense chip, not a live one', () => {
+  const { DevChat, getEl } = makeHarness();
+  DevChat._applyRunnerState({
+    runner: 'local', runnerLabel: 'laptop', localAgent: { leaseId: '7', label: 'laptop' },
+  });
+  // The lease is gone but chat_sessions still remembers where the last turn
+  // ran, which is what /status sends as runnerLabel.
+  DevChat._applyRunnerState({ runner: 'local', runnerLabel: 'laptop', localAgent: null });
+  const html = getEl('dc-runner').innerHTML;
+  assert.match(html, /dc-runner-chip-past/);
+  assert.match(html, /Last turn: laptop/);
+  // No selector: there is nothing left to select between.
+  assert.ok(!html.includes('dc-runner-select'));
+  assert.match(html, /the next turn runs on Usernode/);
+});
+
+test('choosing Usernode hands the session back and never leaves a half-set select', async () => {
+  const { DevChat, getEl } = makeHarness();
+  const requests = [];
+  let confirmed = true;
+  DevChat._applyRunnerState({ runner: 'local', localAgent: { leaseId: '7', label: 'laptop' } });
+  globalThis.__runnerFetch = null;
+  DevChat._handBackToUsernode = async function patched() {
+    const agent = DevChat._localAgent;
+    if (!agent || agent.demo || !confirmed) return;
+    requests.push(`DELETE /api/me/local-agents/${agent.leaseId}`);
+    DevChat._localAgent = null;
+    DevChat._renderRunnerControls();
+  };
+  const select = getEl('dc-runner-select');
+  const event = { target: { value: 'platform' } };
+  select._fire('change', event);
+  await new Promise((resolve) => setImmediate(resolve));
+  // The select snaps back before the async work: a dropdown left reading
+  // "Usernode" while the lease is still held is a lie about where the next
+  // turn goes.
+  assert.equal(event.target.value, 'local');
+  assert.deepEqual(requests, ['DELETE /api/me/local-agents/7']);
+
+  // Selecting the machine that is already running it is a no-op.
+  requests.length = 0;
+  DevChat._applyRunnerState({ runner: 'local', localAgent: { leaseId: '8', label: 'desktop' } });
+  getEl('dc-runner-select')._fire('change', { target: { value: 'local' } });
+  assert.deepEqual(requests, []);
+});
+
+test('the hand-back is the browser-side escape hatch, and refuses demo rows', () => {
+  const source = fs.readFileSync(
+    path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'dev-chat.js'), 'utf8'
+  );
+  const fn = source.slice(
+    source.indexOf('  async _handBackToUsernode() {'),
+    source.indexOf('  _sanitizeStoredModel() {')
+  );
+  // It must not require the machine to cooperate — the whole point is the
+  // laptop that was closed without detaching.
+  assert.match(fn, /method: 'DELETE'/);
+  assert.match(fn, /res\.status !== 204 && res\.status !== 404/,
+    'an already-gone lease is success, not an error toast');
+  assert.match(fn, /agent\.demo/);
+  assert.match(fn, /confirm\(/, 'detaching is destructive enough to confirm');
+});
+
+test('runner state is per session and never bleeds across a switch', () => {
+  const source = fs.readFileSync(
+    path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'dev-chat.js'), 'utf8'
+  );
+  // openSession clears all three before the /status read re-establishes them.
+  assert.match(
+    source,
+    /DevChat\._runner = null;\n\s+DevChat\._runnerLabel = null;\n\s+DevChat\._localAgent = null;/
+  );
+  const { DevChat, getEl } = makeHarness();
+  DevChat._applyRunnerState({ runner: 'local', localAgent: { leaseId: '7', label: 'laptop' } });
+  DevChat._runner = null;
+  DevChat._runnerLabel = null;
+  DevChat._localAgent = null;
+  DevChat._renderRunnerControls();
+  assert.equal(getEl('dc-runner').innerHTML, '');
 });

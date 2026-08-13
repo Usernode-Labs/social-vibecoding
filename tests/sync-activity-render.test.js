@@ -1,7 +1,7 @@
 // Frontend tests for sync-with-main timeline rendering (issue: make
 // sync emit session-native activity).
 //
-// renderMessages() in public/js/dev-chat.js attaches a "Claude Code
+// renderMessages() in frontend/src/features/dev-chat/dev-chat.js attaches a "Claude Code
 // progress" row to the nearest preceding status line ONLY when that
 // line matches ACTIVE_CC_STATUS_RE — otherwise the progress log renders
 // as an orphan grey box. For a sync turn to read like a normal coding
@@ -20,7 +20,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const SRC = fs.readFileSync(
-  path.join(__dirname, '..', 'public', 'js', 'dev-chat.js'),
+  path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'dev-chat.js'),
   'utf8'
 );
 
@@ -63,6 +63,7 @@ function pairProgressRows(messages) {
 test('ACTIVE_CC_STATUS_RE matches the sync opening status (and keeps build/scout)', () => {
   assert.match('Syncing with main…', ACTIVE_CC_STATUS_RE);
   assert.match('Claude Code is running...', ACTIVE_CC_STATUS_RE);
+  assert.match('Codex is running...', ACTIVE_CC_STATUS_RE);
   assert.match('Scout reading the codebase', ACTIVE_CC_STATUS_RE);
   // The terminal outcome line must NOT be treated as an active CC status,
   // or the progress log would attach to the wrong (later) row.

@@ -57,6 +57,15 @@ test('GET /api/* JSON is network-first-with-cache', () => {
   assert.equal(classify('GET', '/api/version'), 'api');
 });
 
+test('native notification invalidations bypass stale API-cache fallbacks', () => {
+  assert.equal(
+    classify('GET',
+      '/api/notifications?limit=100&native_invalidation=1&native_invalidation_nonce=abc'),
+    'bypass'
+  );
+  assert.equal(classify('GET', '/api/notifications?limit=100'), 'api');
+});
+
 test('shell assets classify as shell', () => {
   assert.equal(classify('GET', '/js/app.js'), 'shell');
   assert.equal(classify('GET', '/css/app.css'), 'shell');
@@ -130,12 +139,27 @@ test('the folded-in admin pages fall back to the cached shell', () => {
 });
 
 test('standalone server pages never fall back to the SPA shell', () => {
-  // /cli/authorize is the last genuine standalone server page: a pre-auth
-  // device-authorisation flow deliberately outside the app shell.
-  assert.deepEqual(NO_FALLBACK_PAGES, ['/cli/authorize']);
+  // The two genuine standalone server pages, both pre-auth consent flows
+  // deliberately outside the app shell with their own stylesheets:
+  //   /cli/authorize     — the CLI / local coding-agent device flow
+  //   /connect/authorize — the hosted MCP connector (Claude.ai, ChatGPT)
+  // Serving either from the cached SPA shell would show a page that looks
+  // signed in but cannot approve anything.
+  assert.deepEqual(NO_FALLBACK_PAGES, ['/cli/authorize', '/connect/authorize']);
   assert.equal(classify('GET', '/cli/authorize', 'text/html', 'navigate'), 'bypass');
+  assert.equal(classify('GET', '/connect/authorize', 'text/html', 'navigate'), 'bypass');
 });
 
 test('unparseable URLs are bypassed', () => {
   assert.equal(classifyRequest('GET', 'not a url', null, 'no-cors', undefined), 'bypass');
+});
+
+test('eviction-immune paths are paths the worker actually caches', () => {
+  // Immunity is meaningless for a bypassed path — the entry would never
+  // exist to be protected. This keeps IMMUNE_API_PATHS and the classifier
+  // from drifting apart (#1021).
+  const { IMMUNE_API_PATHS } = require('../public/sw.js');
+  for (const p of IMMUNE_API_PATHS) {
+    assert.equal(classify('GET', p), 'api', `${p} is immune but never cached`);
+  }
 });

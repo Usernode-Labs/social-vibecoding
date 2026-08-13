@@ -148,7 +148,7 @@ test('estimateRunProgress uses Haiku', () => {
 });
 
 test('dev-chat handles cc_estimate in both event switches', () => {
-  const devChat = read('public/js/dev-chat.js');
+  const devChat = read('frontend/src/features/dev-chat/dev-chat.js');
   const matches = devChat.match(/case 'cc_estimate':/g) || [];
   assert.ok(
     matches.length >= 2,
@@ -202,7 +202,7 @@ test('sessions route persists each estimate and backfills the actual outcome', (
 });
 
 test('dev-chat renders a live count-down for the remaining-time guess (#359)', () => {
-  const devChat = read('public/js/dev-chat.js');
+  const devChat = read('frontend/src/features/dev-chat/dev-chat.js');
   // The numeric guess is now an absolute target end-timestamp the shared 1s
   // ticker counts down from, rendered as a data-countdown-to child span.
   assert.match(devChat, /_countdownTo\s*=\s*DevChat\._countdownTarget/,
@@ -227,7 +227,7 @@ test('dev-chat renders a live count-down for the remaining-time guess (#359)', (
 });
 
 test('dev-chat clears the count-down anchor when a step finishes (#359)', () => {
-  const devChat = read('public/js/dev-chat.js');
+  const devChat = read('frontend/src/features/dev-chat/dev-chat.js');
   const fnStart = devChat.indexOf('_deactivateLastStatus() {');
   assert.ok(fnStart !== -1, '_deactivateLastStatus must exist');
   const fnBody = devChat.slice(fnStart, fnStart + 1400);
@@ -257,7 +257,7 @@ test('cc_estimate SSE payload carries remainingSeconds', () => {
 test('settings modal has the experimental toggle wired to the endpoint', () => {
   const html = read('public/index.html');
   assert.match(html, /id="ai-progress-estimate"/, 'settings modal must have the checkbox');
-  const settings = read('public/js/settings.js');
+  const settings = read('frontend/src/features/settings/settings.js');
   assert.match(settings, /\/api\/me\/ai-progress-estimate/, 'settings.js must POST the toggle');
 });
 
@@ -266,8 +266,10 @@ test('/status response carries the estimate for the polling fallback', () => {
   // Matched key-by-key rather than as one fixed run, so adding a sibling
   // key to the payload (e.g. `stopping`, #889) doesn't fail this — the
   // invariant is that `estimate` ships alongside the polling basics, not
-  // the order they're written in.
-  const payload = sessions.match(/res\.json\(\{\s*\n?\s*busy,[\s\S]{0,200}?\}\);/);
+  // the order they're written in. The window was 200 until #907 added
+  // runner/runnerLabel/localAgent and pushed the object past it; widened
+  // rather than trimmed, since the length was never the point.
+  const payload = sessions.match(/res\.json\(\{\s*\n?\s*busy,[\s\S]{0,400}?\}\);/);
   assert.ok(payload, 'found the /status res.json payload');
   for (const key of ['busy', 'progress', 'phase', 'estimate']) {
     assert.match(payload[0], new RegExp(`\\b${key}\\b`), `/status payload must include ${key}`);
@@ -308,7 +310,7 @@ test('mobile (#286): the 640px block no longer hides .dc-cc-estimate', () => {
 });
 
 test('mobile (#286): dev-chat hydrates _estimate from persisted metadata', () => {
-  const devChat = read('public/js/dev-chat.js');
+  const devChat = read('frontend/src/features/dev-chat/dev-chat.js');
   assert.match(devChat, /m\.metadata\.estimate/,
     'load mapping must read metadata.estimate');
   assert.match(devChat, /m\._estimate\s*=/,
@@ -348,9 +350,15 @@ test('#906: staging seeds estimator-OFF runs at both side-slot states', () => {
     'fixture must be idempotent on its branch names');
   assert.ok(!/estimate:\s*\{/.test(fnBody),
     'the cohort fixture must NOT seed estimate metadata — that is the point');
-  // The two elapsed ages that straddle the ten-minute threshold.
+  // One run with an empty slot, one with the note. The second is 40 rather
+  // than the 12 it used to be because `minutesAgo` is the age AT SEED TIME
+  // and a still-running fixture only ages: runCohortHint reads the live
+  // clock, so a 12-minute row read correctly for the eighteen minutes it
+  // took to cross into the 30-minute bucket and then quietly became a
+  // different screen than the one its dapp.json check names. Seeded inside
+  // the terminal bucket, it stays put for the life of the deployment.
   assert.match(fnBody, /minutesAgo: 5\b/, 'one run must sit below ten minutes');
-  assert.match(fnBody, /minutesAgo: 12\b/, 'one run must sit above ten minutes');
+  assert.match(fnBody, /minutesAgo: 40\b/, 'one run must sit inside the terminal bucket');
   // The dev-chat route embeds the session id, so the ids must be FIXED or the
   // dapp.json tests below would break on every staging rebuild.
   assert.match(fnBody, /id: 900810\b/);
@@ -372,8 +380,8 @@ test('#906: staging seeds estimator-OFF runs at both side-slot states', () => {
   }
   assert.match(
     tests.find((x) => x.path.includes('/sessions/900811')).expectText,
-    /running longer than most/,
-    'the past-ten-minutes route must assert the long-run note is still there'
+    /some runs go 30 min\+/,
+    'the long-run route must assert the cohort note is still there'
   );
 });
 
@@ -522,7 +530,7 @@ test('#323: estimateRunProgress tolerates code fences and smart quotes', () => {
 });
 
 test('#323: _applyEstimate stashes a pending estimate instead of dropping it', () => {
-  const devChat = read('public/js/dev-chat.js');
+  const devChat = read('frontend/src/features/dev-chat/dev-chat.js');
   // No active line yet → stash, don't silently return.
   assert.match(devChat, /_pendingEstimate\s*=\s*\{\s*text:\s*clean/,
     '_applyEstimate must stash the estimate when no active line exists');
@@ -637,7 +645,7 @@ test('#891: the estimator emit and /status carry estimatedAt', () => {
 });
 
 test('#891: _applyEstimate clears instead of swallowing an empty estimate', () => {
-  const devChat = read('public/js/dev-chat.js');
+  const devChat = read('frontend/src/features/dev-chat/dev-chat.js');
   assert.match(devChat, /_clearEstimate\(\)\s*\{/, 'a _clearEstimate helper must exist');
   const fnStart = devChat.indexOf('_applyEstimate(text, remainingSeconds, opts) {');
   assert.ok(fnStart !== -1, '_applyEstimate must take an opts argument');
@@ -656,7 +664,7 @@ test('#891: _applyEstimate clears instead of swallowing an empty estimate', () =
 });
 
 test('#891: the count-down anchors on estimatedAt and ignores re-deliveries', () => {
-  const devChat = read('public/js/dev-chat.js');
+  const devChat = read('frontend/src/features/dev-chat/dev-chat.js');
   // Absolute anchor rather than "now + remaining".
   assert.match(devChat, /_countdownTarget\(remainingSeconds, estimatedAt\)/,
     '_countdownTarget must accept the server timestamp');
@@ -671,7 +679,7 @@ test('#891: the count-down anchors on estimatedAt and ignores re-deliveries', ()
 });
 
 test('#891: the /status poll forwards a null estimate so it can clear', () => {
-  const devChat = read('public/js/dev-chat.js');
+  const devChat = read('frontend/src/features/dev-chat/dev-chat.js');
   assert.match(devChat, /estimate \? estimate\.text : null/,
     'the poll must forward a null estimate rather than skipping it');
   assert.match(devChat, /estimatedAt: estimate \? estimate\.estimatedAt : null/,
@@ -688,7 +696,7 @@ test('#891: the /status poll forwards a null estimate so it can clear', () => {
 });
 
 test('#891: a stale guess cannot survive the turn or reach the next one', () => {
-  const devChat = read('public/js/dev-chat.js');
+  const devChat = read('frontend/src/features/dev-chat/dev-chat.js');
   // _deactivateLastStatus drops the remaining-seconds + the pending stash.
   const deactStart = devChat.indexOf('_deactivateLastStatus() {');
   const deactBody = devChat.slice(deactStart, deactStart + 1800);
@@ -1068,7 +1076,7 @@ test('#892: no overrun flag anywhere in the estimate path', () => {
   for (const rel of [
     'src/services/estimate-guard.js',
     'src/routes/sessions.js',
-    'public/js/dev-chat.js',
+    'frontend/src/features/dev-chat/dev-chat.js',
     'public/js/cc-progress-summary.js',
     'src/services/worker-progress.js',
     'src/services/analytics-demo.js',
@@ -1081,7 +1089,7 @@ test('#892: the countdown copy never says "due now" or "taking longer"', () => {
   // Matched as RENDERED copy (a quoted string), not as prose — the comments
   // describing what was retired legitimately name it.
   const asCopy = (phrase) => new RegExp(`['"\`][^'"\`\\n]*${phrase}[^'"\`\\n]*['"\`]`, 'i');
-  for (const rel of ['public/js/cc-progress-summary.js', 'public/js/dev-chat.js']) {
+  for (const rel of ['public/js/cc-progress-summary.js', 'frontend/src/features/dev-chat/dev-chat.js']) {
     const src = read(rel);
     assert.doesNotMatch(src, asCopy('due now'),
       `${rel} must not render the retired "due now" freeze`);

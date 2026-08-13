@@ -28,6 +28,8 @@ const caddy = require('./caddy');
 const prMetadata = require('./pr-metadata');
 const sessionBus = require('./session-bus');
 const appManifest = require('./app-manifest');
+const checkHistory = require('./check-history');
+const unitSuite = require('./unit-suite');
 const { CAPTURE_MAX_PATHS, normalizeStoredPath, VIEWPORT_MOBILE } = require('./testing-notes');
 const { getPool } = require('../db/pool');
 
@@ -47,7 +49,7 @@ const MOBILE_VIEWPORT = { width: 390, height: 844 };
 // Dedicated capture identity (seeded by src/db/migrate.js). A non-admin
 // service account so the public artifacts (/visuals/:id is unauthenticated;
 // PR bodies embed them on GitHub) never show anyone's personal data or
-// admin-only UI. The capture run is capped at RUN_TIMEOUT_MS (240s); 15
+// admin-only UI. The capture run is capped at RUN_TIMEOUT_MS (600s); 15
 // minutes covers the lazy image build + retry comfortably.
 const CAPTURE_USERNAME = 'usernode-capture';
 // Separate view-only-admin identity (is_admin + admin_readonly; seeded by
@@ -89,8 +91,30 @@ const CONTENT_TYPES = {
 
 // Recording + GIF encoding add real seconds per page on top of load, and
 // the worst-case stdout is six base64 artifacts (2 png + 2 webm + 2 gif).
-const RUN_TIMEOUT_MS = 240 * 1000;
+//
+// Raised 240s → 600s when every declared check started running: the media
+// pass is unchanged, but the suite that follows it now has its own 420s
+// budget, and the container needs room to finish that budget and still emit
+// its sentinel. This is the OUTER bound — the suite stops dispatching at
+// TESTS_DEADLINE_MS long before we get here, so hitting 600s means the
+// container is genuinely wedged, not merely busy.
+const RUN_TIMEOUT_MS = 600 * 1000;
 const RUN_MAX_BUFFER = 128 * 1024 * 1024;
+
+// The capture container drives up to TEST_CONCURRENCY headless pages at
+// once. One Chromium page is ~50-80 MiB of renderer, so eight of them plus
+// the browser process needs materially more than the 1g runOneShot default
+// — an OOM-kill there loses the whole run, sentinel included, and reads to
+// the platform as a crashed container.
+const CAPTURE_MEMORY = process.env.CAPTURE_MEMORY || '4g';
+const CAPTURE_CPUS = process.env.CAPTURE_CPUS || '4';
+
+// Suite bounds handed to the container. Kept here rather than left to the
+// image's own defaults so the platform's timeout arithmetic (below) and the
+// container's agree by construction.
+const TEST_CONCURRENCY = process.env.TEST_CONCURRENCY || '8';
+const TEST_TIMEOUT_MS = process.env.TEST_TIMEOUT_MS || '25000';
+const TESTS_DEADLINE_MS = process.env.TESTS_DEADLINE_MS || '420000';
 
 // Mint a 15-minute capture identity token for a seeded capture identity
 // row, scoped to the app being captured.
@@ -193,11 +217,12 @@ function selfAppHashPath(p) {
   return '/#' + path.slice(1);
 }
 
-// "Before" (production) target container for an app. Child apps run as
-// `usernode-app-<slug>`; the platform itself runs as the compose service
-// named by config.selfAppContainer (default 'usernode'), NOT as
-// `usernode-app-<selfAppSlug>` — which is why self-app sessions used to
-// get no "before" image at all (#195 follow-up).
+// "Before" (production) target hostname for an app. Child apps run as
+// `usernode-app-<slug>`; the platform itself is reached via
+// config.selfAppContainer (default 'usernode' — under blue-green that's
+// the shared network ALIAS both colors carry, not a container name), NOT
+// as `usernode-app-<selfAppSlug>` — which is why self-app sessions used
+// to get no "before" image at all (#195 follow-up).
 function beforeContainerName(config, slug) {
   return slug === config.selfAppSlug
     ? (config.selfAppContainer || 'usernode')
@@ -363,7 +388,12 @@ async function storeConsoleCheck(pool, sessionId, result, expectedCommitSha) {
 //   <base64 JSON { name, path, consoleErrors:[...], failureReason }>
 //   __USERNODE_TEST_END__
 // Parse them into one record per index (latest wins on a dup index).
-const TEST_MAX_RESULTS = 20;
+//
+// Was 20 back when the reader itself kept only 12 declared checks. Now every
+// declared check runs, so the row cap has to reach the declaration ceiling
+// or the card would silently hide the tail it exists to surface. The
+// serialised payload is separately byte-capped in storeChecks.
+const TEST_MAX_RESULTS = appManifest.MAX_DECLARED_TESTS;
 
 function parseTests(stdout) {
   const byIndex = new Map();
@@ -397,33 +427,239 @@ function parseTests(stdout) {
   return Array.from(byIndex.values()).sort((a, b) => a.index - b.index);
 }
 
+// The suite's completion sentinel:
+//   __USERNODE_TESTS_DONE__ ran=<n> expected=<n> deadline=<0|1>
+// Absent when the container died before finishing, or when an OLD capture
+// image (which never emitted it) served the run — both callers below treat
+// `null` as "no claim made" and fall back to counting frames.
+function parseTestsDone(stdout) {
+  const lines = String(stdout || '').split('\n');
+  let found = null;
+  for (const line of lines) {
+    if (!line.startsWith('__USERNODE_TESTS_DONE__ ')) continue;
+    const attrs = {};
+    for (const m of line.matchAll(/(\w+)=(\S+)/g)) attrs[m[1]] = m[2];
+    found = {
+      ran: parseInt(attrs.ran, 10) || 0,
+      expected: parseInt(attrs.expected, 10) || 0,
+      deadline: attrs.deadline === '1',
+    };
+  }
+  return found;
+}
+
+function normalizeConsoleErrors(list) {
+  return (Array.isArray(list) ? list : [])
+    .slice(0, CONSOLE_MAX_ERRORS)
+    .map((e) => ({
+      kind: (e && typeof e.kind === 'string') ? e.kind : 'console',
+      message: String((e && e.message) || '').slice(0, CONSOLE_MAX_MSG_LEN),
+      source: (e && e.source) ? String(e.source).slice(0, CONSOLE_MAX_MSG_LEN) : '',
+    }));
+}
+
 // Classify the parsed test frames into the persisted snapshot:
-//   'passing' — at least one test ran and ALL passed
-//   'failing' — at least one test failed an assertion / had console errors
-//   'error'   — tests were expected but NONE produced a parseable frame
-//               (capture container crashed / staging unreachable) → the
-//               gate blocks fail-closed, the UI shows "couldn't run"
-// `expectedCount` is how many tests the orchestrator dispatched, so a
-// partial run (some frames missing) is treated as 'error' not 'passing'.
-function classifyTests(frames, expectedCount) {
-  const results = (Array.isArray(frames) ? frames : []).slice(0, TEST_MAX_RESULTS).map((f) => ({
-    name: String(f.name || '').slice(0, CONSOLE_MAX_MSG_LEN),
-    path: String(f.path || '').slice(0, CONSOLE_MAX_MSG_LEN),
-    status: f.status === 'pass' ? 'pass' : 'fail',
-    consoleErrors: (Array.isArray(f.consoleErrors) ? f.consoleErrors : [])
-      .slice(0, CONSOLE_MAX_ERRORS)
-      .map((e) => ({
-        kind: (e && typeof e.kind === 'string') ? e.kind : 'console',
-        message: String((e && e.message) || '').slice(0, CONSOLE_MAX_MSG_LEN),
-        source: (e && e.source) ? String(e.source).slice(0, CONSOLE_MAX_MSG_LEN) : '',
-      })),
-    failureReason: String(f.failureReason || '').slice(0, CONSOLE_MAX_MSG_LEN),
-  }));
-  const expected = Number.isInteger(expectedCount) ? expectedCount : results.length;
-  if (!results.length) return { state: 'error', results: [] };
-  if (expected > 0 && results.length < expected) return { state: 'error', results };
-  const anyFail = results.some((r) => r.status !== 'pass');
-  return { state: anyFail ? 'failing' : 'passing', results };
+//   'passing' — every BLOCKING check that ran passed
+//   'failing' — a blocking check failed an assertion / had console errors
+//   'error'   — the run cannot be trusted: no frames at all, or a check
+//               that has earned gating produced no verdict → the gate
+//               blocks fail-closed, the UI shows "couldn't run"
+//
+// Two call shapes:
+//
+//   classifyTests(frames, expectedCount)
+//     Legacy. Every check is blocking and ANY missing frame is an 'error'.
+//     Exactly the pre-#1019 semantics, kept because it is the honest answer
+//     when the caller has no history to consult.
+//
+//   classifyTests(frames, expectedCount, { dispatched, sentinel })
+//     Earned gating. `dispatched` is [{ index, checkKey, name, path,
+//     graduated }] — the suite as sent to the container, in dispatch order.
+//     A check is BLOCKING iff it has been observed passing before
+//     (`graduated`); everything else is ADVISORY: it runs, it shows on the
+//     card, it does not block the merge.
+//
+// Results are matched to declarations BY INDEX, never by position. With a
+// pool the frames arrive out of order, and a missing frame shifts every
+// later row — positional matching would silently attribute check 40's
+// failure to check 39 and, worse, judge it against check 39's graduation.
+//
+// `options.extraRows` are synthesised blocking rows that did not come from
+// the container at all (today: the over-ceiling guard).
+function classifyTests(frames, expectedCount, options) {
+  const opts = options || {};
+  const dispatched = Array.isArray(opts.dispatched) ? opts.dispatched : null;
+  const sentinel = opts.sentinel || null;
+  const extraRows = Array.isArray(opts.extraRows) ? opts.extraRows : [];
+
+  const parsed = (Array.isArray(frames) ? frames : []).slice(0, TEST_MAX_RESULTS);
+
+  // ── Legacy shape ───────────────────────────────────────────────────────
+  // extraRows (the unit-suite row today) still ride along: the synthesized
+  // baseline suite has no graduation history, but the extra rows carry
+  // their own advisory flag and must not vanish just because the app
+  // declares no dapp.json checks. Error verdicts stay decided by the
+  // container's own frames, exactly as before.
+  if (!dispatched) {
+    const results = parsed.map((f) => ({
+      name: String(f.name || '').slice(0, CONSOLE_MAX_MSG_LEN),
+      path: String(f.path || '').slice(0, CONSOLE_MAX_MSG_LEN),
+      status: f.status === 'pass' ? 'pass' : 'fail',
+      consoleErrors: normalizeConsoleErrors(f.consoleErrors),
+      failureReason: String(f.failureReason || '').slice(0, CONSOLE_MAX_MSG_LEN),
+    }));
+    const expected = Number.isInteger(expectedCount) ? expectedCount : results.length;
+    if (!results.length) return { state: 'error', results: extraRows.slice() };
+    if (expected > 0 && results.length < expected) {
+      return { state: 'error', results: results.concat(extraRows) };
+    }
+    const all = results.concat(extraRows);
+    // Legacy container rows carry no advisory flag (always blocking);
+    // extra rows block only when non-advisory — an ungraduated unit-suite
+    // failure shows on the card without closing the gate (#1019 stance).
+    const anyFail = all.some((r) => r.status !== 'pass' && !r.advisory);
+    return { state: anyFail ? 'failing' : 'passing', results: all };
+  }
+
+  // ── Earned-gating shape ────────────────────────────────────────────────
+  const byIndex = new Map();
+  for (const f of parsed) byIndex.set(Number(f.index) || 0, f);
+
+  const rows = [];
+  const missingGraduated = [];
+  const missingAdvisory = [];
+  let blockingFailures = 0;
+  let advisoryFailures = 0;
+  let passed = 0;
+
+  for (const d of dispatched) {
+    const frame = byIndex.get(Number(d.index) || 0);
+    const graduated = !!d.graduated;
+    if (!frame) {
+      (graduated ? missingGraduated : missingAdvisory).push(d);
+      continue;
+    }
+    const pass = frame.status === 'pass';
+    if (pass) passed += 1;
+    else if (graduated) blockingFailures += 1;
+    else advisoryFailures += 1;
+    rows.push({
+      index: Number(d.index) || 0,
+      name: String(frame.name || d.name || '').slice(0, CONSOLE_MAX_MSG_LEN),
+      path: String(frame.path || d.path || '').slice(0, CONSOLE_MAX_MSG_LEN),
+      status: pass ? 'pass' : 'fail',
+      // The card renders advisory rows muted with a chip rather than
+      // rewriting the name, so the check reads identically whichever power
+      // it currently has.
+      advisory: pass ? false : !graduated,
+      consoleErrors: normalizeConsoleErrors(frame.consoleErrors),
+      failureReason: pass ? '' : String(frame.failureReason || '').slice(0, CONSOLE_MAX_MSG_LEN),
+    });
+  }
+
+  // Nothing at all came back: the container crashed, staging never booted,
+  // stdout was lost. Never a verdict.
+  if (!rows.length && dispatched.length) {
+    return {
+      state: 'error', results: extraRows.slice(),
+      blockingCount: 0, advisoryCount: 0, passingCount: 0,
+      ranCount: 0, declaredCount: dispatched.length,
+    };
+  }
+  if (!rows.length && !dispatched.length && !extraRows.length) {
+    return {
+      state: 'error', results: [],
+      blockingCount: 0, advisoryCount: 0, passingCount: 0,
+      ranCount: 0, declaredCount: 0,
+    };
+  }
+
+  // FAIL CLOSED on a graduated check with no verdict. A check that has
+  // earned gating must produce an answer every run — "we ran out of time"
+  // is not a pass, and letting the budget silently drop a guard rail would
+  // make the deadline a merge bypass.
+  if (missingGraduated.length) {
+    const names = missingGraduated.slice(0, 3).map((d) => d.name || `check ${(d.index || 0) + 1}`);
+    const more = missingGraduated.length > 3 ? ` (+${missingGraduated.length - 3} more)` : '';
+    return {
+      state: 'error',
+      results: rows.concat(extraRows),
+      errorDetail: `${missingGraduated.length} merge-blocking check${missingGraduated.length === 1 ? '' : 's'} produced no result: ${names.join(', ')}${more}`,
+      blockingCount: blockingFailures, advisoryCount: advisoryFailures, passingCount: passed,
+      ranCount: rows.length, declaredCount: dispatched.length,
+    };
+  }
+
+  // Advisory checks that never reported collapse into a single honest row
+  // instead of N indistinguishable "no result" lines.
+  if (missingAdvisory.length) {
+    const why = sentinel && sentinel.deadline
+      ? 'did not finish in the run budget'
+      : 'produced no result';
+    rows.push({
+      index: -1,
+      name: `${missingAdvisory.length} check${missingAdvisory.length === 1 ? '' : 's'} ${why}`,
+      path: '',
+      status: 'fail',
+      advisory: true,
+      // This one ROW stands for `count` checks. Without it the card's
+      // summary line counts rows and quietly under-reports the suite —
+      // "239 checks" for a 241-check manifest, which is the same species of
+      // silent undercount #1019 exists to remove.
+      count: missingAdvisory.length,
+      consoleErrors: [],
+      failureReason: 'These checks have never been observed passing, so they do not block the merge.',
+    });
+    advisoryFailures += missingAdvisory.length;
+  }
+
+  const results = rows.concat(extraRows);
+  const blocking = blockingFailures + extraRows.filter((r) => r && r.status !== 'pass' && !r.advisory).length;
+  return {
+    state: blocking > 0 ? 'failing' : 'passing',
+    results,
+    blockingCount: blocking,
+    advisoryCount: advisoryFailures,
+    passingCount: passed,
+    ranCount: rows.length,
+    declaredCount: dispatched.length,
+  };
+}
+
+// A full-ceiling snapshot (400 rows since PR #1125) with console errors
+// attached can get large, and
+// `test_results` rides along in every proposal payload the API serves. Cap
+// the SERIALISED size and shed PASSING rows from the tail first: a passing
+// row carries no diagnostic weight (the summary line already counts them),
+// while every failure — blocking or advisory — is the reason someone opened
+// the card. 256 KB is far above a realistic suite and far below anything
+// that would bloat a proposal response.
+const TEST_RESULTS_MAX_BYTES = 256 * 1024;
+
+function serializeTestResults(results) {
+  const rows = Array.isArray(results) ? results.slice() : [];
+  let json = JSON.stringify(rows);
+  if (Buffer.byteLength(json, 'utf8') <= TEST_RESULTS_MAX_BYTES) return json;
+  let dropped = 0;
+  for (let i = rows.length - 1; i >= 0; i -= 1) {
+    if (Buffer.byteLength(json, 'utf8') <= TEST_RESULTS_MAX_BYTES) break;
+    if (rows[i] && rows[i].status === 'pass') {
+      rows.splice(i, 1);
+      dropped += 1;
+      json = JSON.stringify(rows);
+    }
+  }
+  // Still over after every pass is gone: the failures themselves are the
+  // bulk. Truncate them too rather than write a row nobody can read.
+  while (rows.length && Buffer.byteLength(json, 'utf8') > TEST_RESULTS_MAX_BYTES) {
+    rows.pop();
+    dropped += 1;
+    json = JSON.stringify(rows);
+  }
+  if (dropped) {
+    log.info('visuals', 'Trimmed oversized test_results payload', { dropped, kept: rows.length });
+  }
+  return json;
 }
 
 // Latest-only checks snapshot, tied to the commit it describes (staleness
@@ -455,7 +691,7 @@ async function storeChecks(pool, sessionId, commitSha, result, errorDetail = nul
         WHERE id = $4
           AND status IN ('active', 'paused', 'promoted', 'merging')
           AND checks_commit_sha IS NOT DISTINCT FROM $3::text`,
-      [result.state, JSON.stringify(result.results || []), commitSha || null, sessionId, errorDetail]
+      [result.state, serializeTestResults(result.results), commitSha || null, sessionId, errorDetail]
     );
     return write.rowCount !== 0;
   }
@@ -475,7 +711,7 @@ async function storeChecks(pool, sessionId, commitSha, result, errorDetail = nul
      WHERE id = $4
        AND status IN ('active', 'paused', 'promoted', 'merging')
        AND checks_commit_sha IS NOT DISTINCT FROM $3::text`,
-    [result.state, JSON.stringify(result.results || []), commitSha || null, sessionId]
+    [result.state, serializeTestResults(result.results), commitSha || null, sessionId]
   );
   return write.rowCount !== 0;
 }
@@ -528,7 +764,11 @@ async function storeChecksSkipped(
 // the legacy display. It is deliberately a plain assignment rather than
 // another CASE arm — the phase describes the run happening right now, not
 // the commit, so a backoff retry of the same commit still updates it.
-async function setChecksPending(pool, sessionId, commitSha, phase = null) {
+//
+// `trigger` records WHY the run started (see CHECK_TRIGGERS). Written on
+// every stamp, including as NULL when the caller does not name one, so a
+// label can never outlive the run it described.
+async function setChecksPending(pool, sessionId, commitSha, phase = null, trigger = null) {
   // $2 is spliced into both an assignment to checks_commit_sha (varchar) and
   // IS DISTINCT FROM comparisons (inferred text). Without the explicit ::text
   // casts postgres refuses to prepare the statement — "inconsistent types
@@ -542,6 +782,7 @@ async function setChecksPending(pool, sessionId, commitSha, phase = null) {
     `UPDATE chat_sessions
        SET check_state = 'pending', checks_commit_sha = $2::text, checks_checked_at = NOW(),
            check_phase = $3::text,
+           check_trigger = $4::text,
            check_next_retry_at = NULL,
            consecutive_check_failures = CASE WHEN checks_commit_sha IS DISTINCT FROM $2::text
                                              THEN 0 ELSE consecutive_check_failures END,
@@ -553,7 +794,7 @@ async function setChecksPending(pool, sessionId, commitSha, phase = null) {
                                           THEN NULL ELSE check_error_notified_at END
      WHERE id = $1
        AND status IN ('active', 'paused', 'promoted', 'merging')`,
-    [sessionId, commitSha || null, normalizeCheckPhase(phase)]
+    [sessionId, commitSha || null, normalizeCheckPhase(phase), normalizeCheckTrigger(trigger)]
   );
   return write.rowCount !== 0;
 }
@@ -564,6 +805,29 @@ async function setChecksPending(pool, sessionId, commitSha, phase = null) {
 const CHECK_PHASES = new Set(['building', 'testing']);
 function normalizeCheckPhase(phase) {
   return CHECK_PHASES.has(phase) ? phase : null;
+}
+
+// Why a check run started. The merge-gate trace used to record trigger
+// 'capture' for every single run — the name of the function that opened it,
+// which tells a reader nothing. Production runs 1.81 checks per proposal and
+// 91 of 204 runs are re-runs; "who asked for this one" is the difference
+// between a redundant re-run worth eliminating and a legitimate one.
+//
+// A closed vocabulary, normalised at the boundary: an unrecognised value
+// stores as NULL rather than leaking a caller's private string into the card.
+const CHECK_TRIGGERS = new Set([
+  'proposal-open',     // the proposal's first run
+  'commit-push',       // a new commit landed on the branch
+  'sync-main',         // the branch was refreshed from main
+  'pr-import',         // an imported GitHub PR moved its head
+  'manual-recheck',    // a human pressed "Re-run checks"
+  'promote-kick',      // promotion re-ran checks before merging
+  'boot-reconcile',    // server boot re-drove an interrupted run
+  'stuck-sweep',       // the recovery sweeper re-drove a stalled run
+  'fleet-maintenance', // a fleet-wide rebuild
+]);
+function normalizeCheckTrigger(trigger) {
+  return CHECK_TRIGGERS.has(trigger) ? trigger : null;
 }
 
 // ── Capture-outcome snapshot (screenshot-reliability spec) ──────────────
@@ -637,11 +901,17 @@ function summarizeBootFailure(err) {
 
 // Map the structured test result onto the legacy advisory console snapshot
 // so the dual-written console_* columns stay coherent for one release.
+//
+// Advisory rows are skipped. The console snapshot's whole meaning is "the
+// staging build is clean", and folding in errors from checks that have
+// never been observed passing would report a long-broken tail route as if
+// this proposal had dirtied the build.
 function consoleSnapshotFromTests(result) {
   if (!result || result.state === 'error') return { state: 'unknown', errors: [] };
   const seen = new Set();
   const errors = [];
   for (const r of (result.results || [])) {
+    if (r && r.advisory) continue;
     for (const e of (Array.isArray(r.consoleErrors) ? r.consoleErrors : [])) {
       const message = String((e && e.message) || '').slice(0, CONSOLE_MAX_MSG_LEN);
       if (!message || seen.has(message)) continue;
@@ -932,7 +1202,40 @@ function sessionGitRef(session, commitHash) {
   return (session && session.branch_name) || null;
 }
 
-async function captureForSession(config, session, app, commitHash, stagingResult, { send } = {}) {
+// Is a run for exactly this commit already decided? Reads the row rather than
+// trusting the caller's `session` snapshot, which may have been selected
+// minutes earlier and several runs ago.
+//
+// 'passing' only. A 'failing' row is NOT skipped: the retry machinery, the
+// sweeper and a human pressing Re-run all legitimately re-drive a failure,
+// and a flaky failure that never gets a second chance is a stuck proposal.
+async function checksAlreadyDecided(pool, sessionId, commitHash) {
+  if (!commitHash) return false;
+  try {
+    const { rows } = await pool.query(
+      'SELECT check_state, checks_commit_sha FROM chat_sessions WHERE id = $1', [sessionId]
+    );
+    const row = rows[0];
+    return !!row && row.check_state === 'passing' && row.checks_commit_sha === commitHash;
+  } catch (err) {
+    // Unreadable state means RUN, never skip — a skipped run leaves the gate
+    // reading whatever was there before.
+    log.warn('visuals', 'Redundancy probe failed — running checks anyway', {
+      sessionId, err: err.message,
+    });
+    return false;
+  }
+}
+
+// `trigger` names why this run started (see CHECK_TRIGGERS) and rides into
+// both the merge-debug trace and chat_sessions.check_trigger.
+//
+// `force` runs the suite even when the row already reads 'passing' for this
+// exact commit. The callers that set it are the ones where a fresh verdict is
+// the whole point of the request — a human pressing "Re-run checks", and the
+// promote-time kick that must not merge on a verdict it did not just take.
+async function captureForSession(config, session, app, commitHash, stagingResult, opts = {}) {
+  const { send, trigger = null, force = false } = opts || {};
   const key = captureKey(session.id);
   if (_inFlight.has(key)) {
     // Re-queue instead of dropping: park the NEWER run's arguments (latest
@@ -940,14 +1243,36 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     // `send` is deliberately NOT carried over — by the time the queued run
     // fires, the requesting turn's SSE stream is long closed, so the queued
     // run publishes via the session bus + global WS instead.
-    _queued.set(key, { config, session, app, commitHash, stagingResult });
+    _queued.set(key, { config, session, app, commitHash, stagingResult, trigger, force });
     log.info('visuals', 'Capture already in flight — re-queued for after it finishes', {
-      sessionId: session.id, commitHash: commitHash || null,
+      sessionId: session.id, commitHash: commitHash || null, trigger,
     });
     return;
   }
   _inFlight.add(key);
   const pool = getPool(config);
+
+  // ── Skip a provably redundant run (#1144) ──
+  //
+  // Production runs 1.81 checks runs per proposal — 91 of 204 are re-runs —
+  // and each one is ~106s of a merge gate a human is waiting behind. Several
+  // of those callers fire unconditionally on a path that also runs for
+  // reasons unrelated to the commit (a boot reconcile, the stuck sweeper, a
+  // second staging build of an unchanged head), so they re-tested a commit
+  // whose verdict was already recorded and could not change.
+  //
+  // The bar is deliberately narrow: same session, same commit, already
+  // 'passing'. That combination cannot produce new information — the suite is
+  // run against a build of that exact tree. Anything else runs.
+  if (!force && await checksAlreadyDecided(pool, session.id, commitHash)) {
+    log.info('visuals', 'Checks already passing for this commit — skipping redundant run', {
+      sessionId: session.id, commitHash, trigger,
+    });
+    _inFlight.delete(key);
+    drainQueued(key, session.id, commitHash, null);
+    return;
+  }
+
   // Per-run timing trace (kind='checks'). Nothing recorded how long a checks
   // run took, so diagnosing the slowdown that motivated this meant reading a
   // few hundred lines of container log before they rotated away. This is the
@@ -960,7 +1285,10 @@ async function captureForSession(config, session, app, commitHash, stagingResult
   const mergeDebug = require('./merge-debug');
   const debugRunId = await mergeDebug.startRun(pool, {
     appId: app.id, sessionId: session.id, prNumber: session.pr_number || null,
-    kind: 'checks', trigger: 'capture',
+    // Every run used to record trigger='capture' — the name of this function.
+    // With the real trigger, the same trace query that measures re-run COUNT
+    // can finally attribute it.
+    kind: 'checks', trigger: normalizeCheckTrigger(trigger) || 'capture',
   });
   const traceStep = (phase, message, detail) =>
     mergeDebug.step(pool, debugRunId, { phase, message, detail });
@@ -972,6 +1300,14 @@ async function captureForSession(config, session, app, commitHash, stagingResult
   try {
     const buildTimings = (stagingResult && stagingResult.timings) || null;
     if (buildTimings) {
+      if (buildTimings.sourceFetchMs != null) {
+        // Everything before the image build: the shallow clone of the branch,
+        // its submodules, and the manifest/secrets gating. It was the one leg
+        // of the build half with no phase of its own, so its cost showed up
+        // only as the gap between the run's start and its first step — which
+        // is exactly where an unexplained regression hides.
+        traceStep('source_fetch', 'Branch source fetched', { durationMs: buildTimings.sourceFetchMs });
+      }
       if (buildTimings.imageBuildMs != null) {
         traceStep('image_build', 'Staging image built', { durationMs: buildTimings.imageBuildMs });
       }
@@ -992,12 +1328,12 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     // 'passing' while the fresh build is being tested. Best-effort.
     // Phase 'testing': the staging preview is already up by the time capture
     // starts, so everything from here is the suite running against it.
-    await setChecksPending(pool, session.id, commitHash, 'testing').catch((err) => {
+    await setChecksPending(pool, session.id, commitHash, 'testing', trigger).catch((err) => {
       log.warn('visuals', 'setChecksPending failed (non-fatal)', { sessionId: session.id, err: err.message });
     });
     // #607: flip open clients' badges to "Checks running…" right away —
     // the terminal notifyChecks below can be minutes out.
-    notifyChecksPending(session.id, commitHash, 'testing');
+    notifyChecksPending(session.id, commitHash, 'testing', trigger);
 
     // Heuristic gate. If the compare call fails, default to capturing —
     // staging exists, and a wasted screenshot is cheaper than a missed one.
@@ -1226,7 +1562,8 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     // errors" test per capture path — so every proposal gets at least the
     // #381 coverage. Each test's route is resolved to the same staging
     // origin + token (and self-app hash normalisation) as the after target.
-    const declaredTests = await resolveDeclaredTests(repoOwner, repoName, gitRef);
+    const declared = await resolveDeclaredTests(repoOwner, repoName, gitRef);
+    const declaredTests = declared.tests;
     const tests = (declaredTests.length
       ? declaredTests
       : capturePaths.map((p) => ({ name: `Loads ${p}`, path: p, expectSelector: '', expectText: '', allowConsoleErrors: false }))
@@ -1245,20 +1582,79 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       };
     });
 
+    // Earned gating (#1019). Every declared check runs on every build, but a
+    // check only BLOCKS the merge once this app has been observed passing it
+    // — otherwise switching a long-neglected tail of checks on would block
+    // the next proposal on hundreds of failures it did not cause.
+    //
+    // The SYNTHESIZED baseline suite (no declared tests) is exempt: it keeps
+    // the pre-#1019 all-blocking semantics, because it is one "loads without
+    // console errors" check per capture path and has always gated.
+    let dispatched = null;
+    if (declaredTests.length) {
+      try {
+        // First run for this app pre-graduates the head the merge gate used
+        // to enforce, so turning this on never OPENS a gate that was closed.
+        await checkHistory.bootstrapIfEmpty(pool, app.id, declaredTests);
+        const graduated = await checkHistory.loadGraduated(pool, app.id);
+        dispatched = tests.map((t) => {
+          const key = appManifest.checkKey(t.name, t.path);
+          return {
+            index: t.index, checkKey: key, name: t.name, path: t.path,
+            graduated: graduated.has(key),
+          };
+        });
+      } catch (err) {
+        log.warn('visuals', 'Check-history lookup failed — legacy gating for this run', {
+          sessionId: session.id, err: err.message,
+        });
+        dispatched = null;
+      }
+    }
+
+    // Repo unit suite (aggregate `npm test` check). Launched BEFORE the
+    // capture container and awaited after it, so the suite runs in its own
+    // one-shot container CONCURRENTLY with the browser checks and adds
+    // ~zero wall clock unless it outlasts the whole capture run. The
+    // .catch collapses every failure mode to null (no row) — the checks
+    // run must never die because the unit-suite runner did.
+    const unitSuitePromise = unitSuite.maybeRunUnitSuite({
+      pool, appId: app.id, sessionId: session.id,
+      repoOwner, repoName, ref: gitRef,
+      prNumber: Number(session.pr_number) || null,
+    }).catch((err) => {
+      log.warn('visuals', 'Unit-suite check failed to run (non-fatal)', {
+        sessionId: session.id, err: err.message,
+      });
+      return null;
+    });
+
     log.info('visuals', 'Starting capture', {
       sessionId: session.id, slug: app.slug, before: media && prodRunning,
       paths: capturePaths, pathDefaulted, targets: targets.length,
       authenticated: !!captureToken, selfApp: isSelfApp, deviceScaleFactor, media,
       tests: tests.length, declaredTests: declaredTests.length,
+      blocking: dispatched ? dispatched.filter((d) => d.graduated).length : tests.length,
     });
     let stdout;
     let runPartial = false;
     let runPartialReason = '';
     const captureStartedAt = Date.now();
     try {
+      // #47 payload routing: a Linux exec caps any single argv/env string at
+      // 128KB (MAX_ARG_STRLEN). A manifest-scale suite — this repo's own 232
+      // checks, each carrying a tokenized staging URL — exceeds that as one
+      // `-e TESTS=...` string, and the docker spawn dies with E2BIG before
+      // the container starts (that was every self-app proposal fail-closing
+      // to "Checks couldn't run"). Large suites ride the container's stdin
+      // instead (TESTS='@stdin' marker; docker.runOneShot pipes it); small
+      // ones keep the env var, which older capture images also understand.
+      const testsJson = JSON.stringify(tests);
+      const testsViaStdin = testsJson.length > 90 * 1024;
       let res;
       ({ stdout, ...res } = await docker.runOneShot(`usernode-capture-${session.id}`, {
         image: CAPTURE_IMAGE,
+        stdinPayload: testsViaStdin ? testsJson : null,
         env: {
           // Multi-target protocol (#270). The container loops over these
           // sequentially and tags each shot frame with its index=. The
@@ -1302,9 +1698,20 @@ async function captureForSession(config, session, app, commitHash, stagingResult
           MEDIA: media ? '1' : '0',
           // #47: the proposal's automated test suite (each entry pre-resolved
           // to a staging url + assertions). The container runs these and
-          // emits one __USERNODE_TEST__ frame each.
-          TESTS: JSON.stringify(tests),
+          // emits one __USERNODE_TEST__ frame each. '@stdin' → the real
+          // payload is on stdin (see testsViaStdin above).
+          TESTS: testsViaStdin ? '@stdin' : testsJson,
+          // Pool bounds (#1019). An older capture image ignores all three
+          // and runs the suite sequentially — slower, but correct, so a
+          // rolling deploy degrades rather than breaks.
+          TEST_CONCURRENCY,
+          TEST_TIMEOUT_MS,
+          TESTS_DEADLINE_MS,
         },
+        // Eight concurrent Chromium pages need materially more than the
+        // 1g/1cpu one-shot default.
+        memory: CAPTURE_MEMORY,
+        cpus: CAPTURE_CPUS,
         timeoutMs: RUN_TIMEOUT_MS,
         maxBuffer: RUN_MAX_BUFFER,
         // Improvement 5: the output protocol is a stream of independently
@@ -1348,27 +1755,73 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     // blocks fail-closed, the card shows "couldn't run"), never throws.
     // The advisory console_* columns are dual-written from the same run for
     // one release so a rolling deploy's old readers stay coherent.
-    const checksResult = classifyTests(parseTests(stdout), tests.length);
-    const failingCount = checksResult.results.filter((r) => r.status !== 'pass').length;
+    const extraRows = [];
+    try {
+      const overRow = await overCeilingCheckRow(repoOwner, repoName, declared.ceilingDropped);
+      if (overRow) extraRows.push(overRow);
+    } catch (err) {
+      log.warn('visuals', 'Over-ceiling guard failed (non-fatal)', {
+        sessionId: session.id, err: err.message,
+      });
+    }
+    // The unit-suite container started before the capture run; by now it
+    // has usually been finished for minutes. Its own timeoutMs bounds this
+    // await, and the .catch at launch made rejection impossible.
+    const unitOutcome = await unitSuitePromise;
+    if (unitOutcome) extraRows.push(unitOutcome.row);
+    const checksResult = classifyTests(parseTests(stdout), tests.length, dispatched
+      ? { dispatched, sentinel: parseTestsDone(stdout), extraRows }
+      : { extraRows });
+    const blockingCount = Number.isInteger(checksResult.blockingCount)
+      ? checksResult.blockingCount
+      : checksResult.results.filter((r) => r.status !== 'pass' && !r.advisory).length;
+    const advisoryCount = Number.isInteger(checksResult.advisoryCount) ? checksResult.advisoryCount : 0;
+    const failingCount = blockingCount;
     traceStatus = checksResult.state;
     traceStep('tests', `Suite verdict: ${checksResult.state}`, {
       state: checksResult.state,
       tests: checksResult.results.length,
       failing: failingCount,
+      advisory: advisoryCount || undefined,
       // The suite runs inside the same container invocation as the shots, so
       // this is the whole run's wall clock rather than a tests-only slice.
       durationMs: Date.now() - runStartedAt,
     });
     try {
-      const stored = await storeChecks(pool, session.id, commitHash, checksResult);
+      const stored = await storeChecks(
+        pool, session.id, commitHash, checksResult, checksResult.errorDetail || null
+      );
       if (stored) {
         await storeConsoleCheck(
           pool, session.id, consoleSnapshotFromTests(checksResult), commitHash
         );
+        // History moves only when the snapshot actually landed: a run whose
+        // result was discarded as stale must not graduate anything either.
+        // Rows the container never produced are absent here, so a check that
+        // did not run neither graduates nor records a failure.
+        if (dispatched || unitOutcome) {
+          const historyRows = [];
+          if (dispatched) {
+            const byIndex = new Map(dispatched.map((d) => [d.index, d]));
+            for (const r of checksResult.results) {
+              const d = byIndex.get(r.index);
+              if (!d) continue;
+              historyRows.push({
+                checkKey: d.checkKey, name: d.name, path: d.path, passed: r.status === 'pass',
+              });
+            }
+          }
+          // The unit-suite row graduates through the same history: its
+          // first observed pass flips it from advisory to merge-blocking,
+          // and (recordRun's COALESCE) no later failure demotes it.
+          if (unitOutcome) historyRows.push(unitOutcome.history);
+          await checkHistory.recordRun(pool, app.id, historyRows);
+        }
         log.info('visuals', 'Checks stored', {
           sessionId: session.id, state: checksResult.state,
           tests: checksResult.results.length,
           failing: failingCount,
+          advisory: advisoryCount || undefined,
           durationMs: Date.now() - runStartedAt,
         });
         notifyChecks(session.id, checksResult, commitHash, send);
@@ -1518,49 +1971,117 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       summary: `checks ${traceStatus} in ${Math.round(totalMs / 1000)}s`,
     });
     _inFlight.delete(key);
-    // Improvement 5: drain a re-queued capture (a rebuild that arrived while
-    // this run was shooting). Dispatched detached — awaiting it here would
-    // hold this call open for the queued run's whole duration, and every
-    // caller is fire-and-forget. The recursive call re-enters the _inFlight
-    // guard normally, so a request that lands during the queued run parks
-    // itself in turn (still depth 1 — latest wins).
-    const next = _queued.get(key);
-    if (next) {
-      _queued.delete(key);
-      log.info('visuals', 'Draining re-queued capture', {
-        sessionId: session.id, commitHash: next.commitHash || null,
-      });
-      // Calling the async function directly claims _inFlight synchronously
-      // before its first await. This avoids a one-tick gap where another
-      // surface could observe neither an active nor queued capture.
-      captureForSession(next.config, next.session, next.app, next.commitHash, next.stagingResult)
-        .catch((err) => log.warn('visuals', 'Re-queued capture failed (non-fatal)', {
-          sessionId: session.id, err: err.message,
-        }));
-    }
+    drainQueued(key, session.id, commitHash, traceStatus);
   }
+}
+
+// Improvement 5: drain a re-queued capture (a rebuild that arrived while this
+// run was shooting). Dispatched detached — awaiting it would hold the finished
+// run's call open for the queued run's whole duration, and every caller is
+// fire-and-forget. The recursive call re-enters the _inFlight guard normally,
+// so a request that lands during the queued run parks itself in turn (still
+// depth 1 — latest wins).
+//
+// `justRanSha` / `verdict` are the run that is releasing the slot. A queued
+// run for the SAME commit that has just been given a real verdict is dropped
+// (#1144): the two builds are of one tree, and the parked request exists
+// because the request ARRIVED late, not because anything changed. That is the
+// single most common redundant run in production — a second staging build of
+// an unchanged head landing while the first one's suite is still going.
+// 'error' and 'skipped' are not verdicts in that sense, so they still drain.
+function drainQueued(key, sessionId, justRanSha, verdict) {
+  const next = _queued.get(key);
+  if (!next) return;
+  _queued.delete(key);
+  const decided = verdict === 'passing' || verdict === 'failing';
+  if (!next.force && decided && justRanSha && next.commitHash === justRanSha) {
+    log.info('visuals', 'Dropping re-queued capture — same commit already decided', {
+      sessionId, commitHash: justRanSha, verdict, trigger: next.trigger || null,
+    });
+    return;
+  }
+  log.info('visuals', 'Draining re-queued capture', {
+    sessionId, commitHash: next.commitHash || null, trigger: next.trigger || null,
+  });
+  // Calling the async function directly claims _inFlight synchronously
+  // before its first await. This avoids a one-tick gap where another
+  // surface could observe neither an active nor queued capture.
+  captureForSession(next.config, next.session, next.app, next.commitHash, next.stagingResult,
+    { trigger: next.trigger || null, force: !!next.force })
+    .catch((err) => log.warn('visuals', 'Re-queued capture failed (non-fatal)', {
+      sessionId, err: err.message,
+    }));
 }
 
 // #47: fetch the proposal's declared dapp.json `tests` from GitHub (the
 // staging clone is gone by now) and normalise via the manifest reader.
 // `ref` is anything getFileContent accepts — a branch for native rows, a
 // head SHA for imported (possibly fork-headed) ones, see sessionGitRef.
-// Returns [] when GitHub is disabled, the file is absent, or anything goes
-// wrong — the caller then synthesizes the baseline suite.
+// Returns an empty suite when GitHub is disabled, the file is absent, or
+// anything goes wrong — the caller then synthesizes the baseline suite.
+//
+// The shape is { tests, rawCount, ceilingDropped, ok } rather than a bare
+// array because the over-ceiling guard has to tell "the base branch declares
+// zero checks" apart from "we could not read the base branch". Both give
+// tests.length === 0; only the second must NOT be used as a baseline to
+// accuse a proposal of deleting checks. `ok: false` says so explicitly.
 async function resolveDeclaredTests(repoOwner, repoName, ref) {
-  if (!github.isEnabled() || !repoOwner || !repoName || !ref) return [];
+  const empty = (ok) => ({ tests: [], rawCount: 0, ceilingDropped: 0, ok });
+  if (!github.isEnabled() || !repoOwner || !repoName || !ref) return empty(false);
   try {
     const raw = await github.getFileContent(repoOwner, repoName, appManifest.MANIFEST_FILENAME, ref);
-    if (!raw) return [];
+    // A repo with no dapp.json genuinely declares no checks — that IS a
+    // successful read of an empty suite, not a failure.
+    if (!raw) return empty(true);
     let parsed;
-    try { parsed = JSON.parse(raw); } catch { return []; }
-    return appManifest.readTests(parsed);
+    try { parsed = JSON.parse(raw); } catch { return empty(false); }
+    const meta = appManifest.readTestsWithMeta(parsed);
+    return { tests: meta.tests, rawCount: meta.rawCount, ceilingDropped: meta.ceilingDropped, ok: true };
   } catch (err) {
     log.warn('visuals', 'Declared-test fetch failed — using baseline', {
       repo: `${repoOwner}/${repoName}`, ref, err: err.message,
     });
-    return [];
+    return empty(false);
   }
+}
+
+// The declaration ceiling is a real limit, and silently discarding the
+// checks past it would be the exact failure this whole change exists to
+// end. So when a proposal's manifest declares MORE checks than the reader
+// will accept, the run carries one synthesised BLOCKING row saying so.
+//
+// Two things make it safe to block on:
+//
+//  * It only fires when the reader actually refused entries for CEILING
+//    reasons (`ceilingDropped`), not when it dropped malformed ones. Those
+//    are two different complaints and only one of them is about the limit.
+//  * It only fires when the head is over the ceiling BY MORE than the base
+//    already was. A repo that merged its way over the limit shouldn't block
+//    every subsequent unrelated proposal on a pre-existing condition — only
+//    the proposal that adds to the overflow answers for it. A base we could
+//    not read (`ok: false`) is not evidence of anything, so the guard stays
+//    quiet rather than guessing.
+async function overCeilingCheckRow(repoOwner, repoName, headCeilingDropped) {
+  const over = Number(headCeilingDropped) || 0;
+  if (over <= 0) return null;
+  const base = await resolveDeclaredTests(repoOwner, repoName, 'main');
+  if (!base.ok) {
+    log.warn('visuals', 'Over-ceiling guard skipped — base manifest unreadable', {
+      repo: `${repoOwner}/${repoName}`, over,
+    });
+    return null;
+  }
+  const baseOver = Number(base.ceilingDropped) || 0;
+  if (over <= baseOver) return null;
+  return {
+    index: -2,
+    name: `Manifest declares more than ${appManifest.MAX_DECLARED_TESTS} checks`,
+    path: appManifest.MANIFEST_FILENAME,
+    status: 'fail',
+    advisory: false,
+    consoleErrors: [],
+    failureReason: `${over} declared check${over === 1 ? '' : 's'} past the ${appManifest.MAX_DECLARED_TESTS}-check ceiling were not run (base: ${baseOver}). Remove or consolidate checks so every declared check can run.`,
+  };
 }
 
 // Capture completes after staging_ready fired, so the staging card needs a
@@ -1599,7 +2120,7 @@ function notifyVisualsReady(sessionId, visuals, send) {
 //
 // `phase` rides along so a card that re-renders from the event alone shows
 // the right stage caption without waiting for its next fetch.
-function notifyChecksPending(sessionId, commitSha, phase = null) {
+function notifyChecksPending(sessionId, commitSha, phase = null, trigger = null) {
   try {
     const event = {
       type: 'checks_ready',
@@ -1609,6 +2130,7 @@ function notifyChecksPending(sessionId, commitSha, phase = null) {
       failingCount: 0,
       commitSha: commitSha || null,
       checkPhase: normalizeCheckPhase(phase),
+      checkTrigger: normalizeCheckTrigger(trigger),
     };
     sessionBus.publish(sessionId, event);
     const { broadcastGlobal } = require('./ws');
@@ -1621,11 +2143,23 @@ function notifyChecksPending(sessionId, commitSha, phase = null) {
 // #47: tell open clients the checks landed so the checks badge upgrades in
 // place without a full panel reload. Same emit strategy as
 // notifyVisualsReady — prefer the turn's `send`, else bus + global WS.
+//
+// `failingCount` is the BLOCKING count and nothing else — it drives the
+// "Checks failing · N" badge, and a badge that counts advisory failures
+// would tell a reviewer their merge is blocked when it isn't. Advisory
+// failures ride along separately for surfaces that want to show both.
 function notifyChecks(sessionId, result, commitSha, send) {
+  const blocking = Number.isInteger(result.blockingCount)
+    ? result.blockingCount
+    : (result.results || []).filter((r) => r.status !== 'pass' && !r.advisory).length;
   const data = {
     sessionId,
     checkState: result.state,
-    failingCount: (result.results || []).filter((r) => r.status !== 'pass').length,
+    failingCount: blocking,
+    blockingCount: blocking,
+    advisoryCount: Number.isInteger(result.advisoryCount)
+      ? result.advisoryCount
+      : (result.results || []).filter((r) => r.status !== 'pass' && r.advisory).length,
     commitSha: commitSha || null,
   };
   try {
@@ -1658,11 +2192,17 @@ module.exports = {
   classifyConsole,
   storeConsoleCheck,
   parseTests,
+  parseTestsDone,
   classifyTests,
+  serializeTestResults,
+  overCeilingCheckRow,
   storeChecks,
   storeChecksSkipped,
   setChecksPending,
   notifyChecksPending,
+  checksAlreadyDecided,
+  normalizeCheckTrigger,
+  CHECK_TRIGGERS,
   summarizeBootFailure,
   maybeAutoMergeAfterChecks,
   consoleSnapshotFromTests,
