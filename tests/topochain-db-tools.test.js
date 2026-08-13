@@ -272,6 +272,7 @@ test('db-console-scope: the console table deny list is deliberately EMPTY while 
     'mcp_clients',
     'mcp_auth_audit_events',
     'user_agent_files',
+    'profile_reports',
   ]);
   const OUT_OF_SCHEMA = new Set(['user_ai_credentials']);
   for (const table of DENIED_TABLES) {

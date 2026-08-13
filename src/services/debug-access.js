@@ -62,6 +62,7 @@ const DENIED_TABLES = new Set([
   'cli_access_tokens',   // global CLI bearer hashes and hints
   'cli_auth_audit_events', // security audit trail for CLI credentials
   'cli_auth_rate_limits', // shared security limiter state
+  'profile_reports',      // private abuse reports and reporter identities
   'mcp_clients',              // hosted-connector client registrations
   'mcp_authorization_codes',  // hosted-connector PKCE codes (hashed, short-lived)
   'mcp_tokens',               // hosted-connector bearer hashes and hints
@@ -80,6 +81,7 @@ const DENIED_COLUMNS = {
     'password_reset_token_hash', // email password-reset capability
     'password_reset_expires_at',
     'waitlist_ip',              // topochain (SPEC §6)
+    'profile_disabled_reason',  // private moderator rationale
     'github_oauth_token_enc',   // verified GitHub link: the user's OAuth token
   ],
   apps: [

@@ -42,6 +42,8 @@
 const Profile = {
   _open: false,
   _loading: false,
+  _targetUsername: null,
+  _loadToken: 0,
   // { ranking, breakdown, completed, season } — kept across open/close so
   // re-entering the screen paints instantly, then refreshes.
   _data: null,
@@ -77,15 +79,22 @@ const Profile = {
 
   isOpen() { return Profile._open; },
 
-  async open() {
+  async open(targetUsername = null) {
     Profile._open = true;
+    Profile._targetUsername = targetUsername || null;
+    Profile._data = null;
     Profile._render();
-    await Profile._load();
-    Profile._maybeOpenShot();
+    const token = ++Profile._loadToken;
+    await Profile._load(token);
+    if (Profile._open && token === Profile._loadToken && !Profile._targetUsername) {
+      Profile._maybeOpenShot();
+    }
   },
 
   close() {
     Profile._open = false;
+    Profile._targetUsername = null;
+    Profile._loadToken++;
     Profile._dismissSheet();
   },
 
@@ -111,10 +120,26 @@ const Profile = {
     return body;
   },
 
-  async _load() {
-    if (Profile._loading) return;
+  async _load(token = ++Profile._loadToken) {
     Profile._loading = true;
     try {
+      if (Profile._targetUsername) {
+        const target = Profile._targetUsername;
+        try {
+          const payload = await Profile._fetchJson(
+            `/api/public/profiles/${encodeURIComponent(target)}`
+          );
+          if (token !== Profile._loadToken || target !== Profile._targetUsername) return;
+          Profile._data = { publicProfile: payload.profile };
+        } catch (err) {
+          if (token !== Profile._loadToken || target !== Profile._targetUsername) return;
+          Profile._data = err && err.status === 404
+            ? { publicNotFound: true }
+            : { error: true };
+        }
+        if (Profile._open && token === Profile._loadToken) Profile._render();
+        return;
+      }
       // Cheap pre-check: the SPA boots anonymously now (auth-screens.js),
       // so skip the round-trip entirely when there is no session at all.
       // The 401 branch below still covers a session that expired while
@@ -136,7 +161,7 @@ const Profile = {
       const seasonId = active ? (active.season_id ?? active.id) : null;
       const seasonQS = seasonId != null ? `?season_id=${seasonId}` : '';
 
-      const [ranking, breakdown, completed] = await Promise.all([
+      const [ranking, breakdown, completed, ownerPublicProfile] = await Promise.all([
         Profile._fetchJson(`/challenges-api/me/ranking${seasonQS}`),
         Profile._fetchJson(
           '/challenges-api/me/breakdown?include_activity=1' +
@@ -145,10 +170,19 @@ const Profile = {
         // The viewer's OWN completions. Non-fatal: a failure leaves the
         // rest of the screen intact and the section shows its empty state.
         Profile._fetchJson('/api/me/challenges/completed').catch(() => null),
+        Profile._fetchJson('/api/me/public-profile').catch(() => null),
       ]);
 
-      Profile._data = { season: active, ranking, breakdown, completed };
+      if (token !== Profile._loadToken || Profile._targetUsername) return;
+      Profile._data = {
+        season: active,
+        ranking,
+        breakdown,
+        completed,
+        ownerPublicProfile,
+      };
     } catch (err) {
+      if (token !== Profile._loadToken) return;
       if (err && err.status === 401) {
         // Not signed in (or the session lapsed) — a normal state, not a
         // fault. Replace any stale data so we never show one user's
@@ -159,9 +193,9 @@ const Profile = {
         if (!Profile._data) Profile._data = { error: true };
       }
     } finally {
-      Profile._loading = false;
+      if (token === Profile._loadToken) Profile._loading = false;
     }
-    if (Profile._open) Profile._render();
+    if (Profile._open && token === Profile._loadToken) Profile._render();
   },
 
   // ── rendering ─────────────────────────────────────────────────────────
@@ -212,12 +246,25 @@ const Profile = {
         'Could not load your profile — check your connection and try again.'));
       return;
     }
+    if (d.publicNotFound) {
+      root.appendChild(Profile._el('div',
+        'text-sm text-zinc-400 py-12 text-center',
+        'This profile is unavailable.'));
+      return;
+    }
+    if (d.publicProfile) {
+      Profile._renderPublicProfile(root, d.publicProfile);
+      return;
+    }
     const r = d.ranking || {};
 
     // Identity card (#982) — who this profile belongs to, and the way in
     // to editing it. Sits above the score header so the screen leads with
     // the person rather than the number.
     root.appendChild(Profile._renderIdentityCard());
+    if (d.ownerPublicProfile) {
+      root.appendChild(Profile._renderPublicControls(d.ownerPublicProfile));
+    }
 
     // Rank + points header (native ScoreHeader equivalent).
     const head = Profile._el('div', 'text-center mb-5');
@@ -389,6 +436,234 @@ const Profile = {
     if (chips.childNodes.length) card.appendChild(chips);
 
     return card;
+  },
+
+  // ── opt-in public profile (#582) ────────────────────────────────────
+
+  _publicAvatar(profile, sizeClass = 'w-20 h-20') {
+    const source = String(profile.displayName || profile.username || '?');
+    const match = source.match(/[\p{L}\p{N}]/u);
+    const wrap = Profile._el('div',
+      `${sizeClass} relative rounded-full overflow-hidden bg-violet-100 ` +
+      'dark:bg-violet-950 flex items-center justify-center text-violet-700 ' +
+      'dark:text-violet-300 text-2xl font-bold shrink-0',
+      match ? match[0].toUpperCase() : '?');
+    if (typeof profile.avatarUrl === 'string'
+        && /^\/avatars\/[a-f0-9]{32}$/.test(profile.avatarUrl)) {
+      // Keep the initial behind an absolute image so a failed load can
+      // remove the image and reveal the fallback without shifting layout.
+      const img = Profile._el('img', 'absolute inset-0 w-full h-full object-cover');
+      img.alt = '';
+      img.loading = 'lazy';
+      img.referrerPolicy = 'no-referrer';
+      img.src = profile.avatarUrl;
+      img.addEventListener('error', () => img.remove(), { once: true });
+      wrap.appendChild(img);
+    }
+    return wrap;
+  },
+
+  _renderPublicProfile(root, profile, { allowReport = true } = {}) {
+    const card = Profile._el('article',
+      'rounded-xl border border-zinc-200 dark:border-zinc-800 p-5');
+    card.id = 'public-profile-card';
+    const row = Profile._el('div', 'flex items-start gap-4');
+    row.appendChild(Profile._publicAvatar(profile));
+
+    const copy = Profile._el('div', 'min-w-0 flex-1');
+    copy.appendChild(Profile._el('h2',
+      'text-xl font-bold break-words', profile.displayName || profile.username));
+    copy.appendChild(Profile._el('div',
+      'text-sm text-zinc-500 dark:text-zinc-400 break-all', `@${profile.username}`));
+    if (profile.bio) {
+      copy.appendChild(Profile._el('p',
+        'mt-3 text-sm whitespace-pre-wrap break-words', profile.bio));
+    }
+    row.appendChild(copy);
+    card.appendChild(row);
+    root.appendChild(card);
+
+    if (!allowReport || !window.App?.user
+        || App.user.hasPlatformAccess === false
+        || App.user.username === profile.username) return;
+
+    const details = Profile._el('details', 'mt-4 text-sm');
+    details.id = 'public-profile-report';
+    details.appendChild(Profile._el('summary',
+      'cursor-pointer text-zinc-500 dark:text-zinc-400', 'Report profile'));
+
+    const reasonLabel = Profile._el('label',
+      'block mt-3 text-xs font-medium', 'Reason');
+    const reason = Profile._el('select',
+      'mt-1 w-full rounded-lg border border-zinc-300 dark:border-zinc-700 ' +
+      'bg-transparent p-2 min-h-[44px]');
+    for (const [value, label] of [
+      ['impersonation', 'Impersonation'],
+      ['harassment', 'Harassment'],
+      ['spam', 'Spam'],
+      ['unsafe_avatar', 'Unsafe avatar'],
+      ['other', 'Other'],
+    ]) {
+      const option = Profile._el('option', '', label);
+      option.value = value;
+      reason.appendChild(option);
+    }
+    reasonLabel.appendChild(reason);
+    details.appendChild(reasonLabel);
+
+    const detailLabel = Profile._el('label',
+      'block mt-3 text-xs font-medium', 'Details (optional)');
+    const detail = Profile._el('textarea',
+      'mt-1 w-full rounded-lg border border-zinc-300 dark:border-zinc-700 ' +
+      'bg-transparent p-2');
+    detail.maxLength = 500;
+    detail.rows = 3;
+    detailLabel.appendChild(detail);
+    details.appendChild(detailLabel);
+
+    const status = Profile._el('div', 'mt-2 text-xs text-zinc-500');
+    status.setAttribute('role', 'status');
+    status.setAttribute('aria-live', 'polite');
+    const send = Profile._el('button',
+      'mt-3 px-3 min-h-[44px] rounded-lg border border-zinc-300 ' +
+      'dark:border-zinc-700 font-medium', 'Send report');
+    send.type = 'button';
+    send.addEventListener('click', async () => {
+      send.disabled = true;
+      status.textContent = 'Sending…';
+      try {
+        const res = await fetch(
+          `/api/profiles/${encodeURIComponent(profile.username)}/report`,
+          {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+              reason: reason.value,
+              detail: detail.value || null,
+            }),
+          }
+        );
+        if (!res.ok) throw new Error('request failed');
+        status.textContent = 'Report received.';
+      } catch (_) {
+        status.textContent = 'Could not send the report. Try again.';
+        send.disabled = false;
+      }
+    });
+    details.appendChild(send);
+    details.appendChild(status);
+    root.appendChild(details);
+  },
+
+  _renderPublicControls(state) {
+    const profile = state.profile || {};
+    const section = Profile._el('section',
+      'rounded-xl border border-zinc-200 dark:border-zinc-800 p-4 mb-5');
+    section.id = 'public-profile-controls';
+    section.appendChild(Profile._el('h2', 'font-semibold text-base', 'Public profile'));
+    section.appendChild(Profile._el('p',
+      'text-xs text-zinc-500 dark:text-zinc-400 mt-1',
+      'Private by default. The public page includes only your username, ' +
+      'display name, bio and Usernode-hosted photo—not social links, wallet, ' +
+      'email, roles, memberships or private activity.'));
+
+    const visibility = state.moderationDisabled
+      ? 'Hidden by moderation'
+      : state.published ? 'Published' : 'Private';
+    const visibilityClass = state.moderationDisabled
+      ? 'text-red-600 dark:text-red-400'
+      : state.published
+        ? 'text-emerald-600 dark:text-emerald-400'
+        : 'text-zinc-500 dark:text-zinc-400';
+    section.appendChild(Profile._el('div',
+      `mt-3 text-sm font-medium ${visibilityClass}`, visibility));
+    if (state.moderationDisabled) {
+      section.appendChild(Profile._el('p',
+        'mt-1 text-xs text-red-600 dark:text-red-400',
+        'You can keep editing or unpublish, but the public page remains unavailable.'));
+    }
+
+    const actions = Profile._el('div', 'flex flex-wrap gap-2 mt-3');
+    const publish = Profile._el('button',
+      'px-3 min-h-[44px] rounded-lg bg-violet-600 hover:bg-violet-700 ' +
+      'text-white text-sm font-medium disabled:opacity-60',
+      state.published ? 'Unpublish' : 'Publish profile');
+    publish.type = 'button';
+
+    const preview = Profile._el('button',
+      'px-3 min-h-[44px] rounded-lg border border-zinc-300 dark:border-zinc-700 ' +
+      'text-sm font-medium', 'Preview');
+    preview.type = 'button';
+
+    const open = Profile._el('a',
+      'px-3 min-h-[44px] inline-flex items-center rounded-lg border ' +
+      'border-zinc-300 dark:border-zinc-700 text-sm font-medium',
+      'Open public page');
+    open.href = profile.url || `#profile/${encodeURIComponent(profile.username || '')}`;
+
+    const copy = Profile._el('button',
+      'px-3 min-h-[44px] rounded-lg border border-zinc-300 dark:border-zinc-700 ' +
+      'text-sm font-medium', 'Copy public link');
+    copy.type = 'button';
+
+    const status = Profile._el('div', 'mt-3 text-xs text-zinc-500');
+    status.setAttribute('role', 'status');
+    status.setAttribute('aria-live', 'polite');
+    const previewHost = Profile._el('div', 'hidden mt-4');
+    previewHost.id = 'public-profile-preview';
+
+    publish.addEventListener('click', () => {
+      Profile._setPublished(!state.published, publish, status);
+    });
+    preview.addEventListener('click', () => {
+      const opening = previewHost.classList.contains('hidden');
+      previewHost.textContent = '';
+      if (opening) {
+        Profile._renderPublicProfile(previewHost, profile, { allowReport: false });
+        previewHost.classList.remove('hidden');
+        preview.textContent = 'Hide preview';
+      } else {
+        previewHost.classList.add('hidden');
+        preview.textContent = 'Preview';
+      }
+    });
+    copy.addEventListener('click', async () => {
+      const absolute = new URL(open.getAttribute('href'), location.origin).href;
+      try {
+        await navigator.clipboard.writeText(absolute);
+        status.textContent = 'Public link copied.';
+      } catch (_) {
+        status.textContent = `Copy this link: ${absolute}`;
+      }
+    });
+
+    actions.append(publish, preview, open, copy);
+    section.append(actions, status, previewHost);
+    return section;
+  },
+
+  async _setPublished(published, button, status) {
+    button.disabled = true;
+    status.textContent = published ? 'Publishing…' : 'Unpublishing…';
+    try {
+      const res = await fetch('/api/me/public-profile', {
+        method: 'PATCH',
+        credentials: 'same-origin',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ published }),
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(payload.error || 'Could not update publication.');
+      if (Profile._data) Profile._data.ownerPublicProfile = payload;
+      Profile._render();
+      if (window.PlatformUI) {
+        PlatformUI.toast(published ? 'Public profile published' : 'Public profile unpublished');
+      }
+    } catch (err) {
+      status.textContent = err?.message || 'Could not update publication.';
+      button.disabled = false;
+    }
   },
 
   // ── completed challenges ──────────────────────────────────────────────

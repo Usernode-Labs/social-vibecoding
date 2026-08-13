@@ -1963,41 +1963,52 @@ const App = {
       if (window.AuthScreens) {
         const authRoute = AuthScreens.routeFromHash(hash);
         const authSeg = hash.split('/')[1] || null;
+        const publicProfileRoute = hash.split('/')[0] === 'profile' && !!hash.split('/')[1];
         if (!App.user) {
-          if (authRoute && authRoute !== 'waiting') {
-            AuthScreens.show(authRoute, authSeg);
+          if (publicProfileRoute) {
+            AuthScreens.hideAll();
+          } else {
+            if (authRoute && authRoute !== 'waiting') {
+              AuthScreens.show(authRoute, authSeg);
+              return;
+            }
+            if (!hash || authRoute === 'waiting') {
+              AuthScreens.show('landing');
+              return;
+            }
+            AuthScreens.rememberDeepLink(location.hash);
+            AuthScreens.show('login');
             return;
           }
-          if (!hash || authRoute === 'waiting') {
-            AuthScreens.show('landing');
-            return;
-          }
-          AuthScreens.rememberDeepLink(location.hash);
-          AuthScreens.show('login');
-          return;
         }
-        if (App.user.hasPlatformAccess === false) {
-          if (authRoute === 'landing') {
-            AuthScreens.show('landing');
-            return;
+        if (App.user) {
+          if (App.user.hasPlatformAccess === false) {
+            if (publicProfileRoute) {
+              AuthScreens.hideAll();
+            } else {
+              if (authRoute === 'landing') {
+                AuthScreens.show('landing');
+                return;
+              }
+              // #waitlist stays reachable from the waiting room (a bookmark,
+              // the back button) — the screen shows them the "already on the
+              // list" note instead of the join form, which beats bouncing them.
+              if (authRoute === 'waitlist') {
+                AuthScreens.show('waitlist');
+                return;
+              }
+              // The stage-2 waitlist survey stays reachable from the waiting
+              // room — a gated account is exactly who "Want in sooner?" is
+              // for (the link arrives in the join email).
+              if (authRoute === 'more') {
+                AuthScreens.show('more', authSeg);
+                return;
+              }
+              if (!authRoute && hash) AuthScreens.rememberDeepLink(location.hash);
+              AuthScreens.showWaiting();
+              return;
+            }
           }
-          // #waitlist stays reachable from the waiting room (a bookmark,
-          // the back button) — the screen shows them the "already on the
-          // list" note instead of the join form, which beats bouncing them.
-          if (authRoute === 'waitlist') {
-            AuthScreens.show('waitlist');
-            return;
-          }
-          // The stage-2 waitlist survey stays reachable from the waiting
-          // room — a gated account is exactly who "Want in sooner?" is
-          // for (the link arrives in the join email).
-          if (authRoute === 'more') {
-            AuthScreens.show('more', authSeg);
-            return;
-          }
-          if (!authRoute && hash) AuthScreens.rememberDeepLink(location.hash);
-          AuthScreens.showWaiting();
-          return;
         }
         if (authRoute) {
           AuthScreens.hideAll();
@@ -2093,7 +2104,7 @@ const App = {
       }
       if (parts[0] === 'profile') {
         App.setChromeless(false);
-        App.navigateToProfile();
+        App.navigateToProfile(parts[1] ? decodeURIComponent(parts[1]) : null);
         return;
       }
       if (parts[0] === 'apps') {
@@ -2660,14 +2671,14 @@ const App = {
   // Sibling to navigateToLeaderboard — hides home + app, reveals the
   // dedicated #profile-screen, lets the Profile module render itself
   // into #profile-root.
-  navigateToProfile() {
+  navigateToProfile(username = null) {
     // Already mounted: nothing to swap, just re-render in place. Same
     // reason as navigateToLeaderboard's guard above — popstate AND
     // hashchange both reach restoreFromHash, and a second entry run would
     // apply its mutation before the first run's View Transition captured
     // the outgoing page (#979).
     if (App._inProfile && window.Profile?.isOpen?.()) {
-      if (window.Profile?.open) Profile.open();
+      App._routeMountedProfile(username);
       return;
     }
     const fromIframe = !!(App.currentApp && App.currentTab === 'app');
@@ -2682,10 +2693,19 @@ const App = {
       if (leavingApp) AppView.close();
       App._showOnlyScreen('profile-screen');
       App._enterScreenChrome();
-      App.setHeaderTitle('Profile');
+      App.setHeaderTitle(username ? `@${username}` : 'Profile');
     }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
     App._inProfile = true;
-    if (window.Profile?.open) Profile.open();
+    if (window.Profile?.open) Profile.open(username);
+  },
+
+  // A hash change between the signed-in profile editor and a public
+  // profile is a level change inside the already-visible profile screen,
+  // not a new screen entry. Keep it out of the global transition gate so
+  // drawer navigation still has exactly one transition per screen entry.
+  _routeMountedProfile(username) {
+    App.setHeaderTitle(username ? `@${username}` : 'Profile');
+    if (window.Profile?.open) Profile.open(username);
   },
 
   // State-only (#979) — see _exitLeaderboard.

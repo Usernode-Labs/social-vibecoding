@@ -372,6 +372,24 @@ const waitlistJoinLimiter = makeLimiter({
   message: 'Too many signups from this address — try again in a few minutes.',
 });
 
+// Exact public-profile reads deliberately have no directory/search endpoint;
+// this IP bucket additionally bounds brute-force username enumeration.
+const publicProfileReadLimiter = makeLimiter({
+  windowMs: 60 * 1000,
+  max: 120,
+  name: 'public-profile-read',
+  message: 'Too many profile lookups — slow down for a minute.',
+});
+
+const profileReportLimiter = makeLimiter({
+  windowMs: 60 * 60 * 1000,
+  max: 10,
+  name: 'profile-report',
+  keyByUser: true,
+  skipFailedRequests: true,
+  message: 'Too many profile reports — try again later.',
+});
+
 // Admin "send a test email": 10 / hour / full admin. This is the one
 // route where an authenticated operator can aim platform mail at an
 // address of their choosing, so it gets its own small budget on top of
@@ -417,4 +435,4 @@ const reportSnapshotLimiter = makeLimiter({
   message: 'Please wait a minute before locking or sharing more reports.',
 });
 
-module.exports = { dbExportLimiter, authLimiter, homePanelPrefLimiter, homeLayoutLimiter, draftWriteLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, groupChatWriteLimiter, attributeVoteLimiter, attachmentUploadLimiter, appFileUploadLimiter, feedbackTitleLimiter, boardOrderLimiter, issueScreenshotLimiter, profileWriteLimiter, topochainMobileAuthLimiter, topochainMobilePushRegistrationLimiter, reportAiLimiter, reportSnapshotLimiter, waitlistJoinLimiter, mailTestLimiter };
+module.exports = { dbExportLimiter, authLimiter, homePanelPrefLimiter, homeLayoutLimiter, draftWriteLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, groupChatWriteLimiter, attributeVoteLimiter, attachmentUploadLimiter, appFileUploadLimiter, feedbackTitleLimiter, boardOrderLimiter, issueScreenshotLimiter, profileWriteLimiter, publicProfileReadLimiter, profileReportLimiter, topochainMobileAuthLimiter, topochainMobilePushRegistrationLimiter, reportAiLimiter, reportSnapshotLimiter, waitlistJoinLimiter, mailTestLimiter };

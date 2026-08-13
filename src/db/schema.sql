@@ -4894,6 +4894,39 @@ CREATE TABLE IF NOT EXISTS user_avatars (
   created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Public profiles (#582) extend the existing profile customization storage
+-- above instead of creating a second display-name/bio/avatar record. Platform
+-- username remains the canonical, immutable route key; publishing only makes
+-- the already-user-authored display_name, bio and user_avatars row readable
+-- through the explicit public allowlist in src/routes/profiles.js.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_published BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_disabled_at TIMESTAMPTZ;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_disabled_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_disabled_reason VARCHAR(240);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_updated_at TIMESTAMPTZ;
+
+-- Reports are private moderation material. One open report per reporter and
+-- profile makes retries idempotent while allowing a later report after the
+-- earlier one is resolved or dismissed. Account deletion removes both sides
+-- of the identity edge; resolved_by is audit attribution and may become NULL.
+CREATE TABLE IF NOT EXISTS profile_reports (
+  id               BIGSERIAL PRIMARY KEY,
+  profile_user_id  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  reporter_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  reason           VARCHAR(32) NOT NULL CHECK (reason IN ('impersonation', 'harassment', 'spam', 'unsafe_avatar', 'other')),
+  detail           VARCHAR(500),
+  status           VARCHAR(16) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'resolved', 'dismissed')),
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  resolved_at      TIMESTAMPTZ,
+  resolved_by      INTEGER REFERENCES users(id) ON DELETE SET NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_profile_reports_open_reporter
+  ON profile_reports (profile_user_id, reporter_user_id) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS idx_profile_reports_status_created
+  ON profile_reports (status, created_at DESC, id DESC);
+COMMENT ON TABLE profile_reports IS 'staging:private';
+COMMENT ON COLUMN users.profile_disabled_reason IS 'staging:private';
+
 -- ═══════════════════════════════════════════════════════════════════════
 -- Email-based password reset (magic link from the #login recovery screen).
 -- ═══════════════════════════════════════════════════════════════════════
