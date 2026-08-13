@@ -116,6 +116,8 @@ function makeHarness() {
         return { rows: row ? [{ ...row, app_slug: app.slug }] : [] };
       }
       if (/SELECT COUNT\(\*\) AS cnt FROM chat_sessions/.test(text)) {
+        assert.match(text, /source IS DISTINCT FROM 'imported'/,
+          'the worker cap must exclude externally produced imports');
         return { rows: [{ cnt: '0' }] };
       }
       if (/INSERT INTO chat_sessions/.test(text)) {

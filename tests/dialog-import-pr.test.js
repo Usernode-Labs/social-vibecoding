@@ -156,15 +156,17 @@ test('a dismiss mid-import is refused and a second submit is ignored', () => {
     'no selection submits nothing and says why');
 });
 
-test('only a server-confirmed import navigates, and it goes to the discussion page', () => {
+test('only a server-confirmed import navigates, using the returned lifecycle state', () => {
   const submit = fnBody('submit');
   assert.match(submit, /method: 'POST'/, 'the import is a POST');
   assert.match(submit, /\/pr-import`/, 'to the app’s pr-import endpoint');
   assert.match(submit, /body: JSON\.stringify\(\{ pr \}\)/, 'with just the PR number');
   assert.match(submit, /encodeURIComponent\(slug\)/, 'slug is encoded into the path');
-  // The destination is the proposal's DISCUSSION page, never the dev-chat
-  // session view — an imported PR has no dev session.
-  assert.match(submit, /openTopic[\s\S]{0,200}'proposal',\s*\n?\s*sessionId/, 'routes to the proposal topic');
+  // Browser imports are active and open their public discussion; explicit
+  // automated promote imports retain the proposal-topic fallback.
+  assert.match(submit, /status = data\.status \|\| 'active'/, 'defaults to In progress');
+  assert.match(submit, /status === 'promoted' \? 'proposal' : 'session'/,
+    'routes from the state the server actually created');
   // Navigation is downstream of the ok branch: every failure path returns
   // before `sessionId` is read.
   const okAt = submit.indexOf('sessionId = data.sessionId;');

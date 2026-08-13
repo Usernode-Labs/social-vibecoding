@@ -284,7 +284,9 @@ function load() {
     // these bound host resource fan-out. Previously hardcoded literals in
     // src/routes/sessions.js; lifted here so prod can tune them via env
     // without a code deploy. See the scaling notes in README / SPEC.
-    //   - maxGlobalSessions: platform-wide active+promoted session ceiling.
+    //   - maxGlobalSessions: platform-wide active+promoted coding-worker
+    //     ceiling. Externally produced imported PRs own no worker and are
+    //     excluded from it.
     //   - maxUserSessions:   per-user ceiling on 'active'-status sessions
     //     only (#193). Promoted sessions are exempt: they're un-pausable
     //     while their PR is up for a merge vote, so counting them would

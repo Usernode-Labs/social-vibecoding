@@ -1059,6 +1059,10 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   //   on the ?demo=1 path.
   router.get('/api/me/active-sessions', async (req, res) => {
     try {
+      // Imported PRs have no dev-chat worker. Keep them out of callers that
+      // use this endpoint as a cross-app worker/session list; the Dev board
+      // opts in so it can render the owner's imported In-progress cards.
+      const includeImported = req.query.include_imported === '1';
       // last_activity_at = the newest message in the session's thread,
       // falling back to the session's own creation time. The dev tab's
       // card list sorts session rows by this ("most recent activity"),
@@ -1072,6 +1076,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         `SELECT cs.id, cs.branch_name, cs.pr_number, cs.pr_url, cs.pr_title,
                 cs.session_title, cs.status, cs.linked_issues, cs.shared_at,
                 cs.transcript_shared_at, cs.created_at, cs.source,
+                cs.staging_url, cs.imported_pr_author,
                 cs.agent_backend, cs.agent_model,
                 GREATEST(cs.created_at, COALESCE(m.last_message_at, cs.created_at)) AS last_activity_at,
                 a.slug AS app_slug, a.name AS app_name
@@ -1084,8 +1089,9 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
          ) m ON TRUE
          WHERE cs.user_id = $1 AND cs.status IN ('active', 'promoted', 'paused')
            AND cs.is_headless = FALSE
+           AND ($2::boolean OR cs.source IS DISTINCT FROM 'imported')
          ORDER BY last_activity_at DESC`,
-        [req.user.id]
+        [req.user.id, includeImported]
       );
       const sessions = rows.map((s) => {
         const live = workerProgress.get(s.id);
@@ -1467,7 +1473,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       const { rows } = await pool.query(
         `SELECT cs.id, cs.session_title, cs.pr_title, cs.branch_name, cs.status,
                 cs.staging_url, (cs.pr_number IS NOT NULL) AS can_preview,
-                cs.linked_issues,
+                cs.linked_issues, cs.source, cs.imported_pr_author,
                 (cs.transcript_shared_at IS NOT NULL) AS transcript_shared,
                 (SELECT COUNT(*)::int FROM chat_session_messages m
                   WHERE m.session_id = cs.id) AS message_count,
@@ -1587,7 +1593,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       const caps = effectiveSessionCaps(config, req.user);
       const { rows: countRows } = await pool.query(
         `SELECT COUNT(*) as cnt FROM chat_sessions
-         WHERE user_id = $1 AND status = 'active' AND is_headless = FALSE`,
+         WHERE user_id = $1 AND status = 'active' AND is_headless = FALSE
+           AND source IS DISTINCT FROM 'imported'`,
         [req.user.id]
       );
       if (parseInt(countRows[0].cnt) >= caps.activeSessions) {
@@ -1613,13 +1620,14 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         throw err;
       }
 
-      // The GLOBAL ceiling has no admin tier — it's a host-resource
-      // bound (warm workers + staging containers on one box), not a
-      // per-user policy budget, so full admins queue behind it exactly
-      // like everyone else. Don't "complete the pattern" by exempting
-      // them here.
+      // The GLOBAL ceiling has no admin tier — it's the host's coding-worker
+      // budget, not a policy privilege, so full admins queue behind it like
+      // everyone else. Imported PRs are produced externally and own no
+      // Usernode worker, so they do not spend this budget.
       const { rows: globalRows } = await pool.query(
-        `SELECT COUNT(*) as cnt FROM chat_sessions WHERE status IN ('active', 'promoted')`
+        `SELECT COUNT(*) as cnt FROM chat_sessions
+          WHERE status IN ('active', 'promoted')
+            AND source IS DISTINCT FROM 'imported'`
       );
       if (parseInt(globalRows[0].cnt) >= config.maxGlobalSessions) {
         // At the global cap: try to reclaim a slot from a globally idle
@@ -1782,7 +1790,9 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // /sessions), but they consume a real worker slot, so the global cap
       // still applies.
       const { rows: globalRows } = await pool.query(
-        `SELECT COUNT(*) as cnt FROM chat_sessions WHERE status IN ('active', 'promoted')`
+        `SELECT COUNT(*) as cnt FROM chat_sessions
+          WHERE status IN ('active', 'promoted')
+            AND source IS DISTINCT FROM 'imported'`
       );
       if (parseInt(globalRows[0].cnt) >= config.maxGlobalSessions) {
         const { freed } = await sessionLifecycle.freeGlobalSlot({
@@ -1913,14 +1923,17 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       const caps = effectiveSessionCaps(config, req.user);
       const { rows: countRows } = await pool.query(
         `SELECT COUNT(*) as cnt FROM chat_sessions
-         WHERE user_id = $1 AND status = 'active' AND is_headless = FALSE`,
+         WHERE user_id = $1 AND status = 'active' AND is_headless = FALSE
+           AND source IS DISTINCT FROM 'imported'`,
         [req.user.id]
       );
       if (parseInt(countRows[0].cnt) >= caps.activeSessions) {
         return res.status(429).json({ error: `You already have ${caps.activeSessions} running sessions. Pause or archive one first.` });
       }
       const { rows: globalRows } = await pool.query(
-        `SELECT COUNT(*) as cnt FROM chat_sessions WHERE status IN ('active', 'promoted')`
+        `SELECT COUNT(*) as cnt FROM chat_sessions
+          WHERE status IN ('active', 'promoted')
+            AND source IS DISTINCT FROM 'imported'`
       );
       if (parseInt(globalRows[0].cnt) >= config.maxGlobalSessions) {
         const { freed } = await sessionLifecycle.freeGlobalSlot({
@@ -3035,14 +3048,17 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       const caps = effectiveSessionCaps(config, req.user);
       const { rows: countRows } = await pool.query(
         `SELECT COUNT(*) as cnt FROM chat_sessions
-         WHERE user_id = $1 AND status = 'active' AND is_headless = FALSE`,
+         WHERE user_id = $1 AND status = 'active' AND is_headless = FALSE
+           AND source IS DISTINCT FROM 'imported'`,
         [req.user.id]
       );
       if (parseInt(countRows[0].cnt) >= caps.activeSessions) {
         return res.status(429).json({ error: `You already have ${caps.activeSessions} running sessions. Pause or archive one first.` });
       }
       const { rows: globalRows } = await pool.query(
-        `SELECT COUNT(*) as cnt FROM chat_sessions WHERE status IN ('active', 'promoted')`
+        `SELECT COUNT(*) as cnt FROM chat_sessions
+          WHERE status IN ('active', 'promoted')
+            AND source IS DISTINCT FROM 'imported'`
       );
       if (parseInt(globalRows[0].cnt) >= config.maxGlobalSessions) {
         const { freed } = await sessionLifecycle.freeGlobalSlot({
@@ -3272,7 +3288,9 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       if (!ownRows.length) return res.status(404).json({ error: 'Session not found or not paused' });
 
       const { rows: globalRows } = await pool.query(
-        `SELECT COUNT(*) as cnt FROM chat_sessions WHERE status IN ('active', 'promoted')`
+        `SELECT COUNT(*) as cnt FROM chat_sessions
+          WHERE status IN ('active', 'promoted')
+            AND source IS DISTINCT FROM 'imported'`
       );
       if (parseInt(globalRows[0].cnt) >= config.maxGlobalSessions) {
         // At the global cap: reclaim a slot from a globally idle session
@@ -3296,7 +3314,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       const caps = effectiveSessionCaps(config, req.user);
       const { rows: countRows } = await pool.query(
         `SELECT COUNT(*) as cnt FROM chat_sessions
-         WHERE user_id = $1 AND status = 'active'`,
+         WHERE user_id = $1 AND status = 'active'
+           AND source IS DISTINCT FROM 'imported'`,
         [req.user.id]
       );
       if (parseInt(countRows[0].cnt) >= caps.activeSessions) {
@@ -3309,6 +3328,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         const { rows: lruRows } = await pool.query(
           `SELECT id FROM chat_sessions
            WHERE user_id = $1 AND status = 'active' AND id <> $2
+             AND source IS DISTINCT FROM 'imported'
            ORDER BY last_activity_at ASC`,
           [req.user.id, sessionId]
         );
