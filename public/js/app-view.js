@@ -14789,6 +14789,76 @@ const AppView = {
     }
   },
 
+  // ── User directory relay (#1195) ────────────────────────────────────
+  //
+  // The bridge's usernode.lookupUser()/searchUsers() post a
+  // `__usernode_directory` message to window.parent; the shell performs
+  // the lookup with its own session cookie against
+  // /api/app-directory/users/*. Both iframes are accepted — and the
+  // staging one MATTERS here: staging containers are injected with no
+  // platform token at all, so their server-side code cannot reach
+  // /api/app-platform/users/*, and this relay is the only way handle
+  // lookup is exercisable in a PR preview.
+  //
+  // The relay does NOT gate on AppView.appData?.slug the way the storage
+  // relay above does: these endpoints address the platform's user
+  // directory, not the app's own files, so there is no slug in the URL
+  // and nothing to scope by.
+
+  async handleDirectoryBridgeMessage(e) {
+    const data = e.data;
+    if (!data || !data.id) return;
+    const type = data.__usernode_directory;
+    if (type !== 'lookup' && type !== 'search') return;
+
+    const appIframe = document.getElementById('app-iframe');
+    const stagingIframe = document.getElementById('staging-iframe');
+    const fromApp = appIframe && e.source === appIframe.contentWindow;
+    const fromStaging = stagingIframe && e.source === stagingIframe.contentWindow;
+    if (!fromApp && !fromStaging) return;
+
+    const reply = (value, error) => {
+      try {
+        e.source.postMessage(
+          { __usernode_directory: 'response', id: data.id, value: value ?? null, error: error ?? null },
+          '*'
+        );
+      } catch {}
+    };
+    try { e.source.postMessage({ __usernode_directory: 'ack', id: data.id }, '*'); } catch {}
+
+    try {
+      let url;
+      if (type === 'lookup') {
+        const username = String(data.username || '').trim();
+        if (!username) {
+          reply(null, 'lookupUser expects a username.');
+          return;
+        }
+        url = `/api/app-directory/users/lookup?username=${encodeURIComponent(username)}`;
+      } else {
+        const q = String(data.q || '').trim();
+        if (!q) {
+          reply({ users: [], has_more: false });
+          return;
+        }
+        const params = new URLSearchParams({ q });
+        const limit = parseInt(data.limit, 10);
+        if (Number.isFinite(limit)) params.set('limit', String(limit));
+        url = `/api/app-directory/users/search?${params}`;
+      }
+      const r = await fetch(url, { credentials: 'same-origin' });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        reply(null, j.error || `Directory lookup failed (${r.status}).`);
+        return;
+      }
+      reply(j);
+    } catch {
+      reply(null, 'Network error talking to the platform.');
+    }
+  },
+
   // ── Issue-state snapshots (issue #685) ─────────────────────────────
   //
   // The bridge's usernode.issueState.register() posts an `available`
@@ -14993,6 +15063,8 @@ if (typeof window !== 'undefined') {
     try { AppView.handleIssueStateMessage(e); } catch {}
     // #752: file-storage relay (uploadFile/deleteFile/getStorageUsage).
     try { AppView.handleStorageBridgeMessage(e); } catch {}
+    // #1195: user-directory relay (lookupUser/searchUsers).
+    try { AppView.handleDirectoryBridgeMessage(e); } catch {}
     // #757: usernode.getUserLocale() reads from the app iframe.
     try { AppView.handleLocaleBridgeMessage(e); } catch {}
     // #970: the bridge's startup request for this frame's safe-area insets.

@@ -72,6 +72,7 @@ async function migrate(config) {
   await seedStagingFailedApp(pool, config);
   await seedStagingForkLineage(pool, config);
   await seedStagingMembersPanel(pool);
+  await seedStagingUserDirectory(pool);
   await seedStagingApproverPanel(pool);
   await seedStagingAppAdminsPanel(pool);
   await seedStagingReadonlyDevTab(pool);
@@ -4264,6 +4265,43 @@ async function seedStagingMembersPanel(pool) {
     log.info('db', 'Staging members-panel fixtures seeded');
   } catch (err) {
     log.warn('db', 'Staging members-panel seeding failed', { message: err.message });
+  }
+}
+
+// Fixtures for the user directory (#1195). A fresh staging container's
+// users table holds only the handful of accounts the other seeds create,
+// none of which share a prefix — so a typeahead over it returns one row
+// and demonstrates nothing, and the case-collision branch is unreachable.
+//
+// Two groups, both in the 9000xx range with sentinel passwords that can
+// never log in:
+//   • five 'staging-demo-car*' handles — a common prefix with enough
+//     rows to exercise ordering and, at limit=4, has_more: true.
+//   • 'staging-demo-Nova' / 'staging-demo-nova' — a real case collision.
+//     users.username is UNIQUE but case-SENSITIVE and registration
+//     normalizes nothing, so pairs like this exist in production
+//     (Drea/drea). Looking up 'staging-demo-NOVA' matches neither
+//     exactly and returns the lower id with ambiguous: true.
+// ON CONFLICT DO NOTHING keeps the every-boot re-run idempotent.
+async function seedStagingUserDirectory(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  try {
+    await pool.query(
+      `INSERT INTO users (id, username, password)
+       VALUES
+         (900060, 'staging-demo-carla',    'staging-demo-not-a-login'),
+         (900061, 'staging-demo-carlos',   'staging-demo-not-a-login'),
+         (900062, 'staging-demo-carmen',   'staging-demo-not-a-login'),
+         (900063, 'staging-demo-carter',   'staging-demo-not-a-login'),
+         (900064, 'staging-demo-cargo-bot','staging-demo-not-a-login'),
+         (900065, 'staging-demo-Nova',     'staging-demo-not-a-login'),
+         (900066, 'staging-demo-nova',     'staging-demo-not-a-login')
+       ON CONFLICT DO NOTHING`
+    );
+    log.info('db', 'Staging user-directory fixtures seeded');
+  } catch (err) {
+    log.warn('db', 'Staging user-directory seeding failed', { message: err.message });
   }
 }
 

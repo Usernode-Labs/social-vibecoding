@@ -23,6 +23,7 @@ const { dashboardRoutes } = require('./src/routes/dashboard');
 const { feedbackRoutes } = require('./src/routes/feedback');
 const { notificationsRoutes } = require('./src/routes/notifications');
 const { collaboratorRoutes } = require('./src/routes/collaborators');
+const appDirectoryRoutes = require('./src/routes/app-directory');
 const { approverRoutes } = require('./src/routes/approvers');
 const { statusRoutes } = require('./src/routes/status');
 const { internalRoutes } = require('./src/routes/internal');
@@ -549,6 +550,9 @@ app.use(dashboardRoutes(config));
 app.use(feedbackRoutes(config));
 app.use(notificationsRoutes(config));
 app.use(collaboratorRoutes(config));
+// Session-authenticated user directory for the shell's iframe bridge
+// relay (#1195) — must be AFTER authMiddleware; req.user is required.
+app.use(appDirectoryRoutes(config));
 app.use(approverRoutes(config));
 app.use(llmGrantsRoutes(config));
 app.use(userAgentFilesRoutes(config));

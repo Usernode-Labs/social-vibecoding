@@ -97,7 +97,9 @@ Ordered by how badly an agent working offline gets each one wrong.
    grant. Uploads go through `usernode.uploadFile()` (bridge) or
    `USERNODE_STORAGE_URL` (server); persist the returned URL, never
    image bytes in Postgres. Both are absent in staging — detect and
-   degrade.
+   degrade. Handle checks go through the platform's user directory
+   (`usernode.lookupUser()` / `searchUsers()`, or `/users/lookup` on the
+   platform API) — never a guess from users your app has already seen.
 9. **Install a SIGTERM/SIGINT shutdown handler** that stops accepting
    connections, drains for ~3 seconds, closes the pool and exits. Use
    exec-form `CMD ["node", "server.js"]`.
@@ -1518,6 +1520,94 @@ have your staging/dev fallback serve a small static mock feed — a
 handful of obviously-fake items covering all four statuses, one with
 a near-future `eta` — behind the `FEED_ENABLED === false` branch, so
 the strip is reviewable in previews and testers see the real layout.
+
+## User directory — does this handle exist?
+
+Apps constantly need to answer "is `@someone` a real Usernode user?" —
+an invite field, an @-mention, a hand-off to a teammate. Don't
+approximate a directory from the users your app has happened to see:
+the platform exposes the real one.
+
+Two endpoints, both read-only:
+
+- `GET /users/lookup?username=<handle>` — exact-handle existence check.
+- `GET /users/search?q=<prefix>&limit=<n>` — case-insensitive **prefix**
+  typeahead (`ali` finds `alice`, not `natalie`). `limit` defaults to
+  10, clamps to 1–25.
+
+Both return **only** `{ id, username }` per user. That is the entire
+contract, deliberately: a handle's existence is already public (every
+username is a route key at `/u/<username>`), but nothing else about a
+person is. There is no email, no display name, no avatar, no locale, no
+"which apps are they in" — don't build a feature that needs them from
+here.
+
+### From your server (production)
+
+Same credential and the same absence-detection as the governance feed
+above — `USERNODE_PLATFORM_API_URL` + `USERNODE_LLM_PROXY_TOKEN` —
+**plus** the caller's identity token, because these read platform-wide
+data rather than your own app's row:
+
+```js
+const resp = await fetch(
+  `${process.env.USERNODE_PLATFORM_API_URL}/users/lookup` +
+  `?username=${encodeURIComponent(handle)}`,
+  {
+    headers: {
+      'x-usernode-app-token': process.env.USERNODE_LLM_PROXY_TOKEN,
+      'x-usernode-user-token': userTokenFromThisRequest,
+    },
+  }
+);
+const { found, user, ambiguous } = await resp.json();
+```
+
+Responses:
+
+```json
+{ "found": true,  "user": { "id": 42, "username": "alice" } }
+{ "found": false, "user": null }
+{ "users": [{ "id": 42, "username": "alice" }], "has_more": false }
+```
+
+`user.username` is the **canonical stored casing** — persist that, not
+what the user typed.
+
+`ambiguous: true` appears on a lookup when two accounts differ only by
+case (`Nova` / `nova` — real, and possible because usernames are
+case-sensitively unique) and neither matched your input exactly. You get
+the lower-id one; if it matters who, show both spellings and ask.
+
+Rate limit: 120/min per (app, user), shared across both endpoints —
+plenty for a typeahead. Debounce keystrokes ~200ms and cache a resolved
+handle for the session rather than re-asking. On
+`429 { code: 'rate_limited' }`, back off; don't retry in a loop.
+
+### From your frontend (works in staging too)
+
+The hosted bridge relays both calls through the platform shell using the
+signed-in user's own session, so **no token is involved** — which means
+this path works in **staging previews**, where the server-side route
+above cannot (staging containers get no platform token at all):
+
+```js
+const { found, user } = await usernode.lookupUser('alice');
+const { users, has_more } = await usernode.searchUsers('ali', { limit: 10 });
+```
+
+Both **reject** when the app isn't running inside the platform shell
+(standalone, local dev). That's on purpose — an existence check that
+quietly answered "nobody" would be worse than one that says it couldn't
+ask. Catch it and **degrade open**: accept the handle the user typed and
+carry on. Never block a user's action on a lookup you couldn't perform.
+
+```js
+let known = true; // assume valid unless the platform says otherwise
+try {
+  known = (await usernode.lookupUser(handle)).found;
+} catch { /* no shell — accept it */ }
+```
 
 ## Don't `git push` yourself
 

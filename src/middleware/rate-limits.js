@@ -435,4 +435,18 @@ const reportSnapshotLimiter = makeLimiter({
   message: 'Please wait a minute before locking or sharing more reports.',
 });
 
-module.exports = { dbExportLimiter, authLimiter, homePanelPrefLimiter, homeLayoutLimiter, draftWriteLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, groupChatWriteLimiter, attributeVoteLimiter, attachmentUploadLimiter, appFileUploadLimiter, feedbackTitleLimiter, boardOrderLimiter, issueScreenshotLimiter, profileWriteLimiter, publicProfileReadLimiter, profileReportLimiter, topochainMobileAuthLimiter, topochainMobilePushRegistrationLimiter, reportAiLimiter, reportSnapshotLimiter, waitlistJoinLimiter, mailTestLimiter };
+// App-directory reads relayed through the shell bridge (#1195): 120 /
+// min / user, shared across lookup and search. A typeahead fires per
+// keystroke, so the ceiling is generous; keyed per user (not per IP) so
+// one office NAT can't throttle a building, and matched to the
+// per-(app,user) budget the app-token twin of these endpoints uses in
+// routes/app-platform-api.js.
+const userDirectoryLimiter = makeLimiter({
+  windowMs: 60 * 1000,
+  max: 120,
+  name: 'user-directory',
+  keyByUser: true,
+  message: 'Too many directory lookups — please slow down.',
+});
+
+module.exports = { userDirectoryLimiter, dbExportLimiter, authLimiter, homePanelPrefLimiter, homeLayoutLimiter, draftWriteLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, groupChatWriteLimiter, attributeVoteLimiter, attachmentUploadLimiter, appFileUploadLimiter, feedbackTitleLimiter, boardOrderLimiter, issueScreenshotLimiter, profileWriteLimiter, publicProfileReadLimiter, profileReportLimiter, topochainMobileAuthLimiter, topochainMobilePushRegistrationLimiter, reportAiLimiter, reportSnapshotLimiter, waitlistJoinLimiter, mailTestLimiter };

@@ -5027,6 +5027,137 @@
   })();
   /* __USERNODE_STORAGE_END__ */
 
+  // User directory (#1195) — additive within v1.
+  //
+  // usernode.lookupUser(handle) answers "does this Usernode handle
+  // exist?" and usernode.searchUsers(prefix) drives an invite/@-mention
+  // typeahead over the REAL platform roster — so an app never has to
+  // approximate a directory from the users it happens to have seen.
+  //
+  // Both resolve `{ id, username }` shapes and NOTHING else. Existence of
+  // a handle is already public (every username is a route key at
+  // /u/<username>); no profile data, email, locale or app-membership
+  // signal is reachable through either call.
+  //
+  // Same shell-relay mechanics as file storage above: the iframe posts a
+  // `__usernode_directory` message to window.parent and the platform
+  // shell (public/js/app-view.js) performs the authenticated lookup with
+  // its own session — the bridge never holds a credential. This works in
+  // STAGING as well as production, because the relay is the signed-in
+  // user's browser session rather than the per-app token that staging
+  // containers are never given.
+  //
+  // Both REJECT when there's no platform shell (standalone/dev). That is
+  // deliberate and differs from usernode.getUserLocale, which resolves a
+  // fallback: guessing a default is right for a preference and wrong for
+  // an existence check, where a silent "nobody exists" would read as a
+  // real answer. Feature-detect by calling and handling rejection, then
+  // degrade OPEN — accept the handle the user typed rather than blocking
+  // on an answer the app could not obtain.
+  /* __USERNODE_DIRECTORY_BEGIN__ */
+  (function () {
+    var _DIR_ACK_TIMEOUT_MS = 15000;
+    // A directory read is one indexed query — far shorter than the
+    // upload budget above, so a stalled relay surfaces quickly to a
+    // typeahead instead of hanging it.
+    var _DIR_RESULT_TIMEOUT_MS = 20000;
+    var _DIR_MAX_LIMIT = 25; // mirror of the server clamp
+    var _dirPending = {};
+
+    window.addEventListener("message", function (e) {
+      if (e.source !== window.parent) return;
+      var data = e.data;
+      if (!data || !data.__usernode_directory || !data.id) return;
+      var entry = _dirPending[data.id];
+      if (!entry) return;
+      if (data.__usernode_directory === "ack") {
+        if (entry.ackTimer) { clearTimeout(entry.ackTimer); entry.ackTimer = null; }
+        return;
+      }
+      if (data.__usernode_directory === "response") {
+        delete _dirPending[data.id];
+        if (entry.ackTimer) clearTimeout(entry.ackTimer);
+        if (entry.timer) clearTimeout(entry.timer);
+        if (data.error) entry.reject(new Error(data.error));
+        else entry.resolve(data.value);
+      }
+    });
+
+    function directoryCall(type, payload) {
+      return new Promise(function (resolve, reject) {
+        if (window === window.parent) {
+          reject(new Error(
+            "User directory requires the Usernode platform shell (not available standalone)."
+          ));
+          return;
+        }
+        var id = "directory-" + String(Date.now()) + "-" +
+          Math.random().toString(16).slice(2);
+        var entry = { resolve: resolve, reject: reject, ackTimer: null, timer: null };
+        _dirPending[id] = entry;
+        entry.ackTimer = setTimeout(function () {
+          if (!_dirPending[id]) return;
+          delete _dirPending[id];
+          if (entry.timer) clearTimeout(entry.timer);
+          reject(new Error(
+            "Usernode shell did not respond — not running inside the platform, " +
+            "or the host page predates the user directory."
+          ));
+        }, _DIR_ACK_TIMEOUT_MS);
+        entry.timer = setTimeout(function () {
+          if (!_dirPending[id]) return;
+          delete _dirPending[id];
+          if (entry.ackTimer) clearTimeout(entry.ackTimer);
+          reject(new Error("User directory request timed out."));
+        }, _DIR_RESULT_TIMEOUT_MS);
+        try {
+          var msg = { __usernode_directory: type, id: id };
+          if (payload) {
+            for (var k in payload) {
+              if (Object.prototype.hasOwnProperty.call(payload, k)) msg[k] = payload[k];
+            }
+          }
+          console.log(_BRIDGE_TAG, "directory → parent:", type, "id", id);
+          window.parent.postMessage(msg, "*");
+        } catch (err) {
+          delete _dirPending[id];
+          if (entry.ackTimer) clearTimeout(entry.ackTimer);
+          if (entry.timer) clearTimeout(entry.timer);
+          reject(err);
+        }
+      });
+    }
+
+    // Resolves { found: boolean, user: { id, username } | null } and,
+    // when a case-collided pair matched with no exact-case winner,
+    // ambiguous: true — ask the user which one they meant rather than
+    // silently picking. `user.username` is always the canonical stored
+    // casing, so persist THAT, not what was typed.
+    if (typeof window.usernode.lookupUser !== "function") {
+      window.usernode.lookupUser = function lookupUser(username) {
+        var handle = String(username == null ? "" : username).trim();
+        if (!handle) {
+          return Promise.reject(new Error("lookupUser expects a username."));
+        }
+        return directoryCall("lookup", { username: handle });
+      };
+    }
+    // Resolves { users: [{ id, username }], has_more: boolean }.
+    // Case-insensitive PREFIX match — 'ali' finds 'alice', not 'natalie'.
+    if (typeof window.usernode.searchUsers !== "function") {
+      window.usernode.searchUsers = function searchUsers(prefix, opts) {
+        opts = opts || {};
+        var q = String(prefix == null ? "" : prefix).trim();
+        if (!q) return Promise.resolve({ users: [], has_more: false });
+        var limit = parseInt(opts.limit, 10);
+        if (!isFinite(limit) || limit < 1) limit = 10;
+        if (limit > _DIR_MAX_LIMIT) limit = _DIR_MAX_LIMIT;
+        return directoryCall("search", { q: q, limit: limit });
+      };
+    }
+  })();
+  /* __USERNODE_DIRECTORY_END__ */
+
   // =====================================================================
   //  Public API: user locale (usernode.getUserLocale) — additive within v1
   // =====================================================================
