@@ -76,6 +76,7 @@ async function migrate(config) {
   await seedStagingAppAdminsPanel(pool);
   await seedStagingReadonlyDevTab(pool);
   await seedStagingYourApps(pool, config);
+  await seedStagingBrowseCardBranches(pool, config);
   // Must run AFTER seedStagingYourApps — it features that fixture's apps.
   await seedStagingFeaturedApps(pool);
   await seedStagingAppQuotaUsers(pool);
@@ -4539,6 +4540,145 @@ async function seedStagingYourApps(pool, config) {
     log.info('db', 'Staging your-apps fixtures seeded', { viewers: viewerRows.length });
   } catch (err) {
     log.warn('db', 'Staging your-apps seeding failed', { message: err.message });
+  }
+}
+
+// Fixtures for the two Tier-A surfaces #1120 slice 6 converts: the browse
+// list/detail (features/apps/browse.js + app-card.js) and the notifications
+// drawer's pinned Invites card (features/notifications/notifications.js).
+//
+// Most of what that slice needs is already on this file — seedStaging-
+// Notifications seeds nine kinds plus a pending APPROVER invite,
+// seedStagingYourApps seeds four searchable apps, seedStagingTopochain seeds
+// two seasons with standings and challenges. Two gaps are real, and both are
+// gaps in BRANCH coverage rather than in row count:
+//
+//   1. `AppCard.iconTileFor` picks image > emoji > first-letter, and stamps
+//      the choice on the tile as `data-icon`. Nothing PERSISTED exercises
+//      the image or emoji arm — routes/apps.js's demoIconApps() covers them,
+//      but that is request-time injection behind `?demo=1`, so it never
+//      reaches the browse list a converted component actually renders, and
+//      its rows carry `demo: true` (inert, excluded from the kit drag).
+//      Seeded here: one app per arm, plus a fourth that is `anon_shell =
+//      'gated'` so the requires-login chip has a row of its own.
+//   2. The Invites card renders collaborator and approver invites through
+//      the same component with different verbs. Only the approver arm was
+//      seeded, so half of it has never rendered in a preview.
+//
+// Conventions as elsewhere in this file: fixed ids in an obviously-fake
+// range (9002xx here, clear of the 9000xx/9001xx blocks above), names
+// prefixed 'Staging demo app —', a sentinel non-bcrypt password on the
+// owner so it can never be signed in, ON CONFLICT DO NOTHING throughout,
+// best-effort try/catch so a fixture bug never blocks boot, and a strict
+// no-op outside staging.
+//
+// The `anon_shell_checked_at` on the gated row is stamped a year out for
+// the reason seedStagingLandingDirectory documents: services/shell-probe.js
+// re-probes stale public running apps, and these have no container behind
+// them, so a NOW() stamp would be rewritten to 'unknown' within one sweep.
+async function seedStagingBrowseCardBranches(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  // The same 1×1-ish PNG routes/apps.js serves to the ?demo=1 rows, stored
+  // as a real app_icons blob so /app-icons/:id resolves — the client is
+  // given an icon_url either way, and this makes the persisted path real.
+  const ICON_PNG = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAABwAAAAcCAYAAAByDd+UAAAAg0lEQVR42r3NuRGAMAwEQNdFbXRAIVRHAyQwDmB4/MjS3QUbb5qn7VBKymxddl2YM1l4ZZLwmdHDb0YNSxktrGWUsJXBw14GDS0ZLLRmkHAkC4ejWSj0ZO7Qm7nCSDYcRrOhEJGZQ1RmCpFZN0RnzZCRVUNWVgyZ2S9kZ69Qkd2hKstOLPva44BQr+EAAAAASUVORK5CYII=',
+    'base64'
+  );
+
+  const APPS = [
+    { id: 900201, slug: 'staging-demo-card-image',  name: 'Staging demo app — image icon',
+      iconId: 'stagingdemocardicon01', emoji: null,  anonShell: 'public' },
+    { id: 900202, slug: 'staging-demo-card-emoji',  name: 'Staging demo app — emoji icon',
+      iconId: null, emoji: '🧩', anonShell: 'public' },
+    { id: 900203, slug: 'staging-demo-card-gated',  name: 'Staging demo app — account required',
+      iconId: null, emoji: null,  anonShell: 'gated' },
+    { id: 900204, slug: 'staging-demo-card-letter', name: 'Staging demo app — letter tile',
+      iconId: null, emoji: null,  anonShell: 'public' },
+  ];
+
+  try {
+    const { rows: ownerRows } = await pool.query(
+      'SELECT id FROM users WHERE username = $1', ['staging-demo-user']
+    );
+    const ownerId = ownerRows[0]?.id;
+    if (!ownerId) {
+      log.warn('db', 'Staging browse-card fixtures skipped: staging-demo-user missing');
+      return;
+    }
+
+    for (const app of APPS) {
+      await pool.query(
+        `INSERT INTO apps
+           (id, name, slug, status, view_visibility, created_by,
+            icon_emoji, last_deploy_at, anon_shell, anon_shell_checked_at)
+         VALUES ($1, $2, $3, 'running', 'public', $4, $5,
+                 NOW() - INTERVAL '1 day', $6, NOW() + INTERVAL '1 year')
+         ON CONFLICT (id) DO NOTHING`,
+        [app.id, app.name, app.slug, ownerId, app.emoji, app.anonShell]
+      );
+      // Re-stamp for the same reason the landing fixtures do: ON CONFLICT
+      // skips a row an earlier boot created, and the probe may have
+      // reclassified it since.
+      await pool.query(
+        `UPDATE apps SET anon_shell = $2, anon_shell_checked_at = NOW() + INTERVAL '1 year'
+          WHERE id = $1`,
+        [app.id, app.anonShell]
+      );
+      if (!app.iconId) continue;
+      await pool.query(
+        `INSERT INTO app_icons (id, app_id, content_type, data, sha256)
+         VALUES ($1, $2, 'image/png', $3, $4)
+         ON CONFLICT (id) DO NOTHING`,
+        [app.iconId, app.id, ICON_PNG,
+          crypto.createHash('sha256').update(ICON_PNG).digest('hex')]
+      );
+      await pool.query(
+        'UPDATE apps SET icon_image_id = $2 WHERE id = $1', [app.id, app.iconId]
+      );
+    }
+
+    // The same viewer set seedStagingYourApps grants to: the interactive
+    // admin login plus the two capture identities, so the fixtures are in
+    // the before/after screenshots and in the declared dapp.json checks.
+    const { rows: viewerRows } = await pool.query(
+      'SELECT id FROM users WHERE username = ANY($1::text[])',
+      [[config.adminUsername, 'usernode-capture', 'usernode-capture-admin']]
+    );
+    for (const { id: viewerId } of viewerRows) {
+      for (const app of APPS) {
+        await pool.query(
+          `INSERT INTO app_favorites (app_id, user_id, sort_order)
+           SELECT $1, $2, $3 WHERE EXISTS (SELECT 1 FROM apps WHERE id = $1)
+           ON CONFLICT (app_id, user_id) DO NOTHING`,
+          [app.id, viewerId, 10 + APPS.indexOf(app)]
+        );
+      }
+      // Gap 2: the collaborator arm of the Invites card. Status 'invited'
+      // grants no access — it is exactly the pending row the card offers
+      // Accept / Decline on — and the notification beside it is the badge
+      // bump plus the history entry, matching how seedStagingNotifications
+      // pairs the two for the approver arm.
+      await pool.query(
+        `INSERT INTO app_collaborators (app_id, user_id, status, invited_by)
+         VALUES (900201, $1, 'invited', $2)
+         ON CONFLICT (app_id, user_id) DO NOTHING`,
+        [viewerId, ownerId]
+      );
+      await pool.query(
+        `INSERT INTO notifications
+           (user_id, app_id, source_user_id, kind, created_at)
+         SELECT $1, 900201, $2, 'collab_invite', NOW() - INTERVAL '2 minutes'
+          WHERE NOT EXISTS (
+            SELECT 1 FROM notifications
+             WHERE user_id = $1 AND app_id = 900201 AND kind = 'collab_invite')`,
+        [viewerId, ownerId]
+      );
+    }
+    log.info('db', 'Staging browse-card fixtures seeded', { viewers: viewerRows.length });
+  } catch (err) {
+    log.warn('db', 'Staging browse-card seeding failed', { message: err.message });
   }
 }
 

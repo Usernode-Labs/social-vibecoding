@@ -34,6 +34,7 @@ import { useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { DialogCard, DialogRoot } from '@/components/ui/dialog';
+import { ArrowRightIcon, XIcon } from '@/components/ui/icons';
 import { Input } from '@/components/ui/input';
 
 import { useDialog } from './use-dialog';
@@ -107,9 +108,7 @@ export function ShareDialog() {
           aria-label="Close share"
           onClick={() => dialog.close()}
         >
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-          </svg>
+          <XIcon className="w-5 h-5" />
         </button>
         <h2 className="text-lg font-bold mb-1 text-zinc-900 dark:text-zinc-100">
           Share this app
@@ -140,9 +139,7 @@ export function ShareDialog() {
             className="text-sm text-violet-500 hover:text-violet-400 transition-colors inline-flex items-center gap-1"
           >
             Open in new tab
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M14 5l7 7m0 0l-7 7m7-7H3" />
-            </svg>
+            <ArrowRightIcon className="w-4 h-4" />
           </a>
         </div>
       </DialogCard>

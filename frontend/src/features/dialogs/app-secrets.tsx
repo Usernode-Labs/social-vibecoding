@@ -33,6 +33,7 @@
  */
 
 import { DialogCard, DialogRoot } from '@/components/ui/dialog';
+import { XIcon } from '@/components/ui/icons';
 
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { Secrets, init as initSecrets } from './app-secrets-controller';
@@ -72,9 +73,7 @@ export function AppSecretsDialog() {
           aria-label="Close"
           onClick={() => Secrets.close()}
         >
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-          </svg>
+          <XIcon className="w-5 h-5" />
         </button>
         {/*
             Title + subtitle are set by Secrets.render(): the same modal is

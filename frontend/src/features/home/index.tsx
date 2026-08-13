@@ -58,6 +58,8 @@
 
 import { useRef } from 'react';
 
+import { SearchIcon } from '@/components/ui/icons';
+
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 
 // The three modules that fill this screen, imported in the order their
@@ -96,16 +98,10 @@ export function HomeScreen() {
         */}
         <div className="home-column px-3 pt-3 pb-2">
           <div className="relative max-w-xl">
-            <svg
+            <SearchIcon
               className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-              strokeWidth="2"
               aria-hidden="true"
-            >
-              <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-            </svg>
+            />
             <input
               id="home-search-input"
               type="text"
