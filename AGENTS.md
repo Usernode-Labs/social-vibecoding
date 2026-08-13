@@ -1,6 +1,6 @@
 # Coding-agent project guidance
 
-## `public/index.html` is a GENERATED artifact — edit `frontend/`, then rebuild
+## `public/index.html` is a GENERATED artifact — edit `frontend/`, never commit outputs
 
 - The shell's markup is React now. **Do not edit `public/index.html`** — it is
   built from `frontend/` and any hand edit is overwritten by the next build.
@@ -11,18 +11,21 @@
   - `frontend/src/head.html` — the `<head>`, carried over verbatim.
   - `frontend/@/components/ui/` — shadcn primitives, restyled to the
     platform's existing `zinc`/`violet` palette (`cssVariables: false`).
-- **After editing anything under `frontend/`, run `npm run build:shell` and
-  commit `public/index.html` + `public/shell/assets/shell.js` in the same
-  commit.** `tests/shell-build.test.js` stamps and verifies this and fails
-  with "STALE" otherwise. Run `npm install` inside `frontend/` first if you
-  haven't (it is a separate workspace; the root `npm ci --production` never
-  touches it).
-- When generating CSS locally, **run `build:shell` FIRST, then `build:css`.**
+- **Never add or commit `public/index.html` or
+  `public/shell/assets/shell.js`.** Both are gitignored and rebuilt from the
+  lockfile-pinned frontend sources by every Docker image. For local browser
+  work run `npm run ensure:shell` (or `npm run build:shell` after installing
+  `frontend/`); `npm test`, `npm start`, and `npm run dev` ensure the ignored
+  outputs they need automatically. `tests/shell-build.test.js` pins that
+  lifecycle instead of comparing a committed fixture.
+- `npm run ensure:shell` generates the shell and then its CSS in the required
+  order. If invoking the low-level commands directly, **run `build:shell`
+  FIRST, then `build:css`.**
   `public/index.html` is a Tailwind content source *and* a shell-build output,
   so compiling the stylesheet first scans the previous document. The Docker
-  image build naturally has the same ordering because the committed shell
-  artifact is already present before its CSS builder stage runs. There is no
-  loop — `tailwind.css` is not a shell input.
+  image build enforces the same ordering: its shell builder prerenders the
+  current `index.html`, then the CSS builder scans that generated document.
+  There is no loop — `tailwind.css` is not a shell input.
 - **`Shell.tsx` is now hand-maintained; resolve conflicts in it directly.** The
   one-time generators that derived it from the hand-written document
   (`html-to-jsx.cjs`, `apply-step1-edits.cjs`) and the pre-migration fixture
@@ -150,7 +153,8 @@
   with its own before/after evidence, not a free upgrade.
 - `tests/tailwind-build.test.js` performs a fresh compile into a temporary
   directory, validates representative utilities and palette semantics, and
-  pins the Docker builder/copy contract. It never relies on a source-tree
+  pins the Docker builder/copy contract. Its `public/index.html` input is the
+  ignored output materialized by the test preflight, never a committed
   artifact.
 - The shell loads **no cross-origin assets**. marked, DOMPurify and qrcodejs
   are vendored under `public/vendor/` by `npm run vendor:assets` (provenance

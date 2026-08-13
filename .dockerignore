@@ -2,7 +2,10 @@
 .env.*
 .git
 node_modules
+**/node_modules
+public/index.html
 public/css/tailwind.css
+public/shell/assets/shell.js
 SPEC.md
 TODO
 template/

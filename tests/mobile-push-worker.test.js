@@ -129,6 +129,10 @@ test('pre-send revalidation cancels ineligible recipient and deployment state', 
     [{ registration_user_id: 8 }, 'recipient_mismatch'],
     [{ registration_session_expires_at: new Date(Date.now() - 1000) }, 'session_inactive'],
     [{ permission_status: 'denied' }, 'permission_ineligible'],
+    [{ permission_status: 'not_determined' }, 'permission_ineligible'],
+    [{ registration_id: null }, 'registration_missing'],
+    [{ delivery_installation_id: '223e4567-e89b-12d3-a456-426614174999' }, 'installation_mismatch'],
+    [{ expires_at: new Date(Date.now() - 1000) }, 'expired'],
   ]) {
     const { worker, calls } = harness({ row: delivery(change) });
     await worker.processDelivery(JOB);
@@ -136,6 +140,26 @@ test('pre-send revalidation cancels ineligible recipient and deployment state', 
     assert.equal(calls.finished[0].status, 'cancelled');
     assert.equal(calls.finished[0].code, reason);
   }
+});
+
+test('installation id comparison is case-insensitive, not a cancel', async () => {
+  const { worker, calls } = harness({
+    row: delivery({ delivery_installation_id: '123E4567-E89B-12D3-A456-426614174000' }),
+  });
+  await worker.processDelivery(JOB);
+  assert.equal(calls.sent.length, 1);
+  assert.equal(calls.finished[0].status, 'sent');
+});
+
+test('a hung provider send hits the deadline and retries as provider_timeout', async () => {
+  const { worker, calls } = harness({ send: () => new Promise(() => {}) });
+  await worker.processDelivery(JOB);
+  assert.equal(calls.finished.length, 1);
+  const [finished] = calls.finished;
+  assert.equal(finished.status, 'pending', 'a timeout is retryable, not dead');
+  assert.equal(finished.code, 'provider_timeout');
+  assert.ok(finished.availableAt instanceof Date && finished.availableAt.getTime() > Date.now(),
+    'the retry is deferred by the backoff delay');
 });
 
 test('delivery reload includes the current deployment state and activation timestamps', async () => {
