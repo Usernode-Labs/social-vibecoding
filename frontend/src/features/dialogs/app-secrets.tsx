@@ -32,6 +32,9 @@
  * `DOMContentLoaded` bootstrap.
  */
 
+import { DialogCard, DialogRoot } from '@/components/ui/dialog';
+import { XIcon } from '@/components/ui/icons';
+
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { Secrets, init as initSecrets } from './app-secrets-controller';
 import { useDialog } from './use-dialog';
@@ -57,22 +60,20 @@ export function AppSecretsDialog() {
   }, []);
 
   return (
-    <div
+    <DialogRoot
+      layout="centered"
       id="app-secrets-modal"
       ref={dialog.rootRef}
-      className="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60"
       {...dialog.backdropProps}
     >
-      <div className="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-lg mx-4 shadow-xl relative max-h-[80vh] flex flex-col">
+      <DialogCard size="lg" relative scroll>
         <button
           id="app-secrets-close"
           className="absolute top-4 right-4 text-zinc-400 hover:text-zinc-200 transition-colors"
           aria-label="Close"
           onClick={() => Secrets.close()}
         >
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-          </svg>
+          <XIcon className="w-5 h-5" />
         </button>
         {/*
             Title + subtitle are set by Secrets.render(): the same modal is
@@ -120,7 +121,7 @@ export function AppSecretsDialog() {
           </button>
           .
         </div>
-      </div>
-    </div>
+      </DialogCard>
+    </DialogRoot>
   );
 }

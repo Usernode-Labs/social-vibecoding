@@ -25,6 +25,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { runModules } = require('./helpers/bundle-module');
 
 const read = (f) => fs.readFileSync(path.join(__dirname, '..', 'public', 'js', f), 'utf8');
 const MERGE_STATUS_SRC = read('merge-status.js');
@@ -92,15 +93,24 @@ function makeSandbox() {
 // (#1079: WorkDrawer.renderPendingSection lost its rows exactly this way).
 // Cross-file communication goes through the explicit window.X publications;
 // this harness now holds them to that.
-function loadIsolated(sandbox, src) {
-  vm.runInContext(`(function () {\n${src}\n})();`, sandbox);
+//
+// The sources are ES modules (work-drawer.js imports the kit-surface seam),
+// and `runInContext` compiles a classic script, so each one goes through
+// tests/helpers/bundle-module.js first — its imports become reads of an
+// explicit stub table, and nothing else about the source changes.
+function loadIsolated(sandbox, src, label) {
+  runModules(sandbox, [[label, src]]);
 }
 
 function loadAll() {
   const sandbox = makeSandbox();
-  for (const src of [NOTIFICATIONS_SRC, MERGE_STATUS_SRC, SESSION_STATE_SRC, WORK_DRAWER_SRC]) {
-    loadIsolated(sandbox, src);
-  }
+  const stack = [
+    ['notifications.js', NOTIFICATIONS_SRC],
+    ['merge-status.js', MERGE_STATUS_SRC],
+    ['session-state.js', SESSION_STATE_SRC],
+    ['work-drawer.js', WORK_DRAWER_SRC],
+  ];
+  for (const [label, src] of stack) loadIsolated(sandbox, src, label);
   return sandbox;
 }
 

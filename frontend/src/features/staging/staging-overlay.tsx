@@ -34,6 +34,8 @@
 
 import { useRef, type ReactNode } from 'react';
 
+import { ChevronLeftIcon, TerminalIcon } from '@/components/ui/icons';
+
 import { useClassToggle, useHiddenClass, useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { stagingHandlers, stagingRefs, stagingStore } from './staging-store.js';
 import { useStoreState } from '../../lib/use-store-state';
@@ -92,9 +94,7 @@ export function StagingOverlay(): ReactNode {
           className="text-zinc-400 hover:text-zinc-100 text-sm flex items-center gap-1"
           onClick={() => stagingHandlers.onBack?.()}
         >
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 19l-7-7 7-7" />
-          </svg>
+          <ChevronLeftIcon className="w-4 h-4" />
           Back to session
         </button>
         <span className="flex-1">
@@ -145,13 +145,7 @@ export function StagingOverlay(): ReactNode {
           className="relative text-zinc-400 hover:text-zinc-200"
           aria-label="Open developer console"
         >
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              d="M8 9l3 3-3 3m5 0h3M4 6h16a1 1 0 011 1v10a1 1 0 01-1 1H4a1 1 0 01-1-1V7a1 1 0 011-1z"
-            />
-          </svg>
+          <TerminalIcon className="w-5 h-5" />
           <span
             id="staging-dev-console-badge"
             className="hidden absolute -top-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-red-500 text-white text-[0.65rem] font-bold flex items-center justify-center"

@@ -16,6 +16,23 @@
 export {};
 
 declare global {
+  /** What a kit presentation returns; `el` is the shell it built. */
+  interface KitHandle {
+    el?: HTMLElement | null;
+    dismiss(): void;
+  }
+
+  /**
+   * What every kit presentation takes. `contentEl` is REPARENTED into the
+   * kit's shell — see lib/kit-surface.ts, which is the only thing in this
+   * bundle that should be calling these directly.
+   */
+  interface KitSurfaceOpts {
+    contentEl: HTMLElement;
+    onDismiss?: () => void;
+    [key: string]: unknown;
+  }
+
   interface Window {
     /** features/notifications/notifications.js */
     Notifications?: {
@@ -42,9 +59,26 @@ declare global {
       currentApp?: string | null;
       [key: string]: unknown;
     };
-    /** public/js/platform-ui.js — the native-kit adapter. */
+    /**
+     * public/js/platform-ui.js — the native-kit adapter.
+     *
+     * The three presentation calls are typed because `lib/kit-surface.ts`
+     * dispatches on their names: `ui[kind]` has to be something better than
+     * `unknown` for that lookup to be checkable at all. Each returns null
+     * when the kit declines, which every caller has to handle — that is the
+     * fall-through to the web presentation.
+     *
+     * `hasKit` is optional because the property predates the method: older
+     * builds of the adapter shipped without it, and `kit-surface` feature-
+     * detects rather than assuming. `isTouch` is not, because everything in
+     * this repo has always called it unguarded.
+     */
     PlatformUI?: {
       isTouch(): boolean;
+      hasKit?(): boolean;
+      modal?(opts: KitSurfaceOpts): KitHandle | null;
+      sheet?(opts: KitSurfaceOpts): KitHandle | null;
+      panel?(opts: KitSurfaceOpts & { side?: 'left' | 'right' }): KitHandle | null;
       pullToRefresh(el: Element, fn: () => Promise<unknown> | void): void;
       [key: string]: unknown;
     };

@@ -20,6 +20,14 @@
 // App.HeaderMenu forwarder for its own call sites — that is a forwarder, not
 // the behaviour, so asserting against it would prove nothing.)
 //
+// #1120 slice 3 did the same thing to the ADOPTION half: the adopted class,
+// the restore to <body> and the rollback when the kit refuses were four
+// hand-written copies, and are now one — frontend/src/lib/kit-surface.ts.
+// Every contract below still holds; the ones about the drawer's intent (touch
+// gate, right side, which node is adopted, what its teardown does to
+// HeaderMenu's own state) are read from the open() body, and the ones about
+// the mechanics are read from the shared lift.
+//
 // Run with: node --test tests/header-menu-panel.test.js
 
 const test = require('node:test');
@@ -35,6 +43,8 @@ const headerMenuTsx = fs.readFileSync(
   path.join(root, 'frontend/src/features/header/header-menu.tsx'), 'utf8');
 const appCss = fs.readFileSync(path.join(root, 'public/css/app.css'), 'utf8');
 const platformUiJs = fs.readFileSync(path.join(root, 'public/js/platform-ui.js'), 'utf8');
+const kitSurfaceTs = fs.readFileSync(
+  path.join(root, 'frontend/src/lib/kit-surface.ts'), 'utf8');
 const dapp = JSON.parse(fs.readFileSync(path.join(root, 'dapp.json'), 'utf8'));
 
 // The HeaderMenu.open() body, up to the close() that follows it.
@@ -46,34 +56,49 @@ function openBody() {
 
 test('the touch branch presents a right-side kit panel', () => {
   const body = openBody();
-  assert.match(body, /PlatformUI\.isTouch\(\)/, 'still gated on the touch platform');
-  assert.match(body, /PlatformUI\.panel\(\{/, 'routes through the PlatformUI seam, never window.unNative');
+  assert.match(body, /gate:\s*'touch'/, 'still gated on the touch platform');
+  assert.match(body, /kind:\s*'panel'/, 'a panel, not a sheet');
   assert.match(body, /side:\s*'right'/, 'a drawer that opens from the bottom is the bug being fixed');
   assert.match(body, /contentEl:\s*panel/,
     'the shell panel itself is adopted so its row listeners ride along');
+  // …and the gate and the seam are what the shared lift means by those two.
+  assert.match(kitSurfaceTs, /ui\.isTouch\(\)/, 'the touch gate is still a real isTouch() call');
+  assert.match(kitSurfaceTs, /host\.PlatformUI/,
+    'routes through the PlatformUI seam, never window.unNative');
+  assert.match(kitSurfaceTs, /const presentFn = ui\[options\.kind\]/,
+    "kind: 'panel' has to reach PlatformUI.panel()");
 });
 
 test('the touch branch no longer reaches for the bottom sheet', () => {
   const body = openBody();
   assert.ok(!/PlatformUI\.sheet\(/.test(body),
     'HeaderMenu must not present a bottom sheet any more');
+  assert.ok(!/kind:\s*'sheet'/.test(body),
+    'the sheet kind stamps platform-sheet-adopted, which re-imposes the 70vh cap');
   assert.ok(!/platform-sheet-adopted/.test(body),
     'the sheet adoption class would re-impose the 70vh cap on the drawer');
 });
 
 test('the adopted node is restored on dismissal, and the handle cleared', () => {
   const body = openBody();
-  assert.match(body, /panel\.classList\.add\('platform-panel-adopted'\)/);
-  assert.match(body, /panel\.classList\.remove\('platform-panel-adopted'\)/,
-    'the class must come off or the panel stays flattened for the desktop path');
-  assert.match(body, /document\.body\.appendChild\(panel\)/,
+  assert.match(body, /home:\s*'body'/,
     'the drawer lives in <body> between opens — leaving it detached breaks every later open');
   assert.match(body, /HeaderMenu\._panel = null/,
     'a stale handle would make close() dismiss an already-torn-down panel');
-  // The fallback path: a kit that failed to load returns null, and the
-  // legacy CSS slide-over must not inherit the flattening class.
-  assert.match(body, /if \(kitPanel\)[\s\S]{0,400}?panel\.classList\.remove\('platform-panel-adopted'\)/,
-    'when PlatformUI.panel() returns null the class must be undone before falling through');
+  assert.match(body, /if \(adoption\) \{/,
+    'a kit that failed to load returns null and the legacy slide-over below runs instead');
+  // The three mechanics, in the one place all four surfaces get them from.
+  assert.match(kitSurfaceTs, /flagEl\.classList\.add\(adoptedClass\)/);
+  assert.match(kitSurfaceTs, /flagEl\.classList\.remove\(adoptedClass\)/,
+    'the class must come off or the panel stays flattened for the desktop path');
+  assert.match(kitSurfaceTs, /document\.body\.appendChild\(contentEl\)/,
+    "home: 'body' has to actually re-home the node");
+  // The fallback path: a kit that refuses returns null, and the legacy CSS
+  // slide-over must not inherit the flattening class. This is the copy that
+  // only ONE of the four hand-written versions got right — see the module
+  // header — so it is pinned as its own strand.
+  assert.match(kitSurfaceTs, /if \(!handle\) \{\n\s*undo\(\);\n\s*return null;/,
+    'when the kit declines the adopted class must be undone before the caller falls through');
 });
 
 test('a re-open during the exit spring keeps the drawer in the NEW panel', () => {
@@ -82,8 +107,17 @@ test('a re-open during the exit spring keeps the drawer in the NEW panel', () =>
   // can adopt the drawer into a second kit panel before the first one's
   // onDismiss runs. Without this guard that stale teardown appends the node
   // back to <body> and the freshly-opened panel renders empty.
-  assert.match(body, /HeaderMenu\._panel !== handle\) return/,
+  assert.match(body, /stillOwns: \(\) => !adoption \|\| HeaderMenu\._panel === adoption/,
     'onDismiss must no-op when a newer open already took ownership of the node');
+  // …and the shared lift has to honour that by touching NOTHING when it is
+  // told it no longer owns the node — before the restore, not after.
+  assert.match(kitSurfaceTs, /if \(options\.stillOwns && !options\.stillOwns\(\)\) return;\n\s*undo\(\);/);
+  // The dismiss waiters resolve regardless, or a superseded teardown strands
+  // whoever chained a presentation behind close() until the safety cap.
+  assert.match(body, /onDismissStart: \(\) => \{[\s\S]{0,400}?_resolveDismissWaiters\(\)/);
+  assert.ok(kitSurfaceTs.indexOf('options.onDismissStart?.()')
+    < kitSurfaceTs.indexOf('options.stillOwns()'),
+    'onDismissStart must run BEFORE the ownership guard can bail out');
 });
 
 test('the hamburger reflects its expanded state on the touch path too', () => {
@@ -93,7 +127,7 @@ test('the hamburger reflects its expanded state on the touch path too', () => {
   // drawer was open.
   assert.match(body, /aria-expanded',\s*'true'[\s\S]{0,200}?'Close menu'/,
     'opening must announce the expanded state on the touch path');
-  const dismiss = body.slice(body.indexOf('onDismiss:'), body.indexOf('if (kitPanel)'));
+  const dismiss = body.slice(body.indexOf('onDismiss: () => {'), body.indexOf('if (adoption) {'));
   assert.match(dismiss, /aria-expanded',\s*'false'/,
     'every exit path routes through onDismiss — reset the state there');
   assert.match(dismiss, /'Open menu'/, 'the label must go back too');
@@ -196,14 +230,24 @@ test('.platform-sheet-adopted survives for the surfaces still using it', () => {
   assert.ok(appCss.includes('.platform-sheet-adopted {'),
     'notifications, the work drawer and the dev console still ride bottom sheets');
   // #1079 chunk B moved the dev console into the React bundle; the sheet
-  // idiom came with it (see presentSheetIfTouch in the store).
-  for (const file of ['frontend/src/features/notifications/notifications.js',
-    'frontend/src/features/work-drawer/work-drawer.js',
+  // idiom came with it (see presentSheetIfTouch in the store). #1120 slice 3
+  // then moved the CLASS out of two of these three and into the shared lift,
+  // which spells it `platform-${kind}-adopted` — so the sheet surfaces are
+  // now identified by the kind they ask for, not by the literal.
+  for (const file of ['frontend/src/features/work-drawer/work-drawer.js',
     'frontend/src/features/dev-console/store.ts']) {
     const src = fs.readFileSync(path.join(root, file), 'utf8');
-    assert.match(src, /platform-sheet-adopted/,
+    assert.match(src, /kind: 'sheet'/,
       `${file} is expected to keep the sheet idiom (deferred work, not a leftover)`);
   }
+  assert.match(kitSurfaceTs, /`platform-\$\{options\.kind\}-adopted`/,
+    "and kind: 'sheet' is what still produces the class app.css styles");
+  // notifications.js is the fifth copy of the adoption dance and was NOT part
+  // of slice 3's four — it still writes the class itself, on purpose.
+  const notifications = fs.readFileSync(
+    path.join(root, 'frontend/src/features/notifications/notifications.js'), 'utf8');
+  assert.match(notifications, /platform-sheet-adopted/,
+    'notifications.js is expected to keep the sheet idiom (deferred work, not a leftover)');
 });
 
 test('a dapp check pins the drawer to the panel on a forced-touch route', () => {

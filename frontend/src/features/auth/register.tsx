@@ -15,6 +15,9 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import {
   AUTH_SCREEN_IDS,
@@ -23,6 +26,16 @@ import {
   hiddenLast,
   useAuthScreensPatch,
 } from './shared';
+
+/**
+ * The register form's three fields, spelled as <Input> props: `w-full
+ * rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300
+ * dark:border-zinc-700 px-3 py-2 text-zinc-900 dark:text-zinc-100
+ * placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none
+ * focus:ring-2 focus:ring-violet-500 focus:border-transparent`. #reg-code
+ * appends `font-mono` through className, where its string appends it.
+ */
+const AUTHFIELD = { box: 'auth', hint: 'muted', ring: 'seamless' } as const;
 
 export function RegisterScreen() {
   const rootRef = useRef<HTMLElement>(null);
@@ -127,14 +140,15 @@ export function RegisterScreen() {
               <label htmlFor="reg-code" className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
                 Activation Code
               </label>
-              <input
+              <Input
                 ref={code}
                 id="reg-code"
                 name="code"
                 type="text"
                 required={true}
                 autoComplete="off"
-                className="w-full rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent font-mono"
+                {...AUTHFIELD}
+                className="font-mono"
                 placeholder="enter activation code"
               />
             </div>
@@ -145,14 +159,14 @@ export function RegisterScreen() {
               >
                 Username
               </label>
-              <input
+              <Input
                 ref={username}
                 id="reg-username"
                 name="username"
                 type="text"
                 required={true}
                 autoComplete="username"
-                className="w-full rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+                {...AUTHFIELD}
                 placeholder="choose a username"
               />
             </div>
@@ -163,26 +177,23 @@ export function RegisterScreen() {
               >
                 Password
               </label>
-              <input
+              <Input
                 ref={password}
                 id="reg-password"
                 name="password"
                 type="password"
                 required={true}
                 autoComplete="new-password"
-                className="w-full rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+                {...AUTHFIELD}
                 placeholder="choose a password"
               />
             </div>
             <div id="reg-error" className={hiddenLast(!error, 'text-red-400 text-sm')}>
               {error}
             </div>
-            <button
-              type="submit"
-              className="w-full rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 font-medium transition-colors text-white"
-            >
+            <Button type="submit" layout="full" size="plain" ink="solidLate">
               Register
-            </button>
+            </Button>
           </form>
           <p className="text-center text-sm text-zinc-500 dark:text-zinc-400 mt-6">
             Already have an account?

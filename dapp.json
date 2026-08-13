@@ -2237,6 +2237,24 @@
       "path": "/?demo=1&flow=claude-code#app/usernode-2d5619/dev/sessions/990406",
       "expectSelector": "[data-flow-wizard] [data-flow-step=\"submit\"] .dc-flow-step-title",
       "expectText": "Submit the update"
+    },
+    {
+      "name": "Browse draws the image icon tile for a seeded app (#1120)",
+      "path": "/#apps",
+      "expectSelector": "#browse-list .browse-row .app-icon-tile[data-icon=\"image\"] img",
+      "expectText": "Staging demo app — image icon"
+    },
+    {
+      "name": "Browse draws the emoji icon tile for a seeded app (#1120)",
+      "path": "/#apps",
+      "expectSelector": "#browse-list .browse-row .app-icon-tile[data-icon=\"emoji\"]",
+      "expectText": "Staging demo app — emoji icon"
+    },
+    {
+      "name": "Browse draws the first-letter fallback tile for a seeded app (#1120)",
+      "path": "/#apps",
+      "expectSelector": "#browse-list .browse-row .app-icon-tile[data-icon=\"letter\"]",
+      "expectText": "Staging demo app — letter tile"
     }
   ],
   "governance": {

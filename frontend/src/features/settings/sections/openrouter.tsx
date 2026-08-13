@@ -1,3 +1,4 @@
+import { Button } from '@/components/ui/button';
 import { SectionHeading, StatusLine } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -28,12 +29,12 @@ export function OpenRouterSection() {
       <div id="settings-openrouter-key-info" className="hidden rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-xs mb-2 text-zinc-600 dark:text-zinc-400"></div>
       <div className="flex gap-2">
         <Input id="settings-openrouter-key" type="password" placeholder="sk-or-..." autoComplete="off" spellCheck={false} width="flex" className="font-mono" />
-        <button id="settings-openrouter-save" className="shrink-0 rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors">
+        <Button id="settings-openrouter-save" layout="shrink">
           Test &amp; save
-        </button>
-        <button id="settings-openrouter-remove" className="hidden shrink-0 rounded-lg border border-red-400 dark:border-red-700 px-3 py-2 text-sm font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 transition-colors">
+        </Button>
+        <Button id="settings-openrouter-remove" layout="hiddenShrink" variant="destructive" size="narrow" ink="danger">
           Remove
-        </button>
+        </Button>
       </div>
       <div id="settings-openrouter-models-wrap" className="hidden mt-4">
         <Label className="mb-1" htmlFor="settings-openrouter-model">

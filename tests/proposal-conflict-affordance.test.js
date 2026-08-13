@@ -19,6 +19,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { runModules } = require('./helpers/bundle-module');
 
 const APP_VIEW_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'app-view.js'),
@@ -179,8 +180,15 @@ function makeWorkDrawer() {
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
-  vm.runInContext(`${MERGE_STATUS_SRC}\n${WORK_DRAWER_SRC}\n;globalThis.__WorkDrawer = WorkDrawer;`, sandbox);
-  return sandbox.__WorkDrawer;
+  // work-drawer.js is a bundle module and imports the kit-surface seam, which
+  // a classic-script `runInContext` cannot compile — runModules rewrites the
+  // import into a read of the stub table and leaves the rest of the source
+  // alone. See tests/helpers/bundle-module.js.
+  return runModules(
+    sandbox,
+    [['merge-status.js', MERGE_STATUS_SRC], ['work-drawer.js', WORK_DRAWER_SRC]],
+    { tail: 'return WorkDrawer;' },
+  );
 }
 
 const drawerProposal = (over) => ({

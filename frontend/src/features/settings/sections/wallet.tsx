@@ -1,3 +1,4 @@
+import { Button } from '@/components/ui/button';
 import { SectionHeading, StatusLine } from '@/components/ui/field';
 
 /**
@@ -20,12 +21,9 @@ export function WalletSection() {
         </SectionHeading>
         {/* Unlinked: show link button */}
         <div id="wallet-unlinked" className="hidden">
-          <button
-            id="wallet-link-btn"
-            className="w-full rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors"
-          >
+          <Button id="wallet-link-btn" layout="full">
             Link Usernode Wallet
-          </button>
+          </Button>
         </div>
         {/* Linking: show QR */}
         <div id="wallet-linking" className="hidden text-center">

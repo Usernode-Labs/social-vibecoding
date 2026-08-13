@@ -68,35 +68,31 @@ export function ApiKeySection() {
           className="font-mono"
         />
         {/*
-            THE ONE LIVE shadcn CONVERSION IN STEP 1.
+            Both buttons now route through the primitive.
 
-            <Button>'s default variant + default size emit
-            `rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2
-            text-sm font-medium text-white transition-colors`, so with
-            `shrink-0` passed through className this renders the exact
-            DOM node the hand-written button did — same tag, same id,
-            same class set. settings.js still finds it by
-            getElementById and binds its click.
+            The widened variant table (button.tsx) declares its groups in
+            the order the shell's own strings are written — layout, surface,
+            disabled, box, ink — so `layout="shrink"` emits `shrink-0`
+            AHEAD of the box, exactly where the hand-written string had it.
+            That is what unblocked the rest of these; the note that used to
+            stand here said they would convert "when the primitive's variant
+            table is widened with evidence", and this is that widening.
 
-            Step 2 keeps it exactly as step 1 left it. The remaining
-            buttons on this screen are NOT converted with it: Button's
-            base string leads with `font-medium transition-colors`,
-            which none of the hand-written ones do, so routing them
-            through the primitive would reorder their class attribute
-            — a byte change, on a screen whose whole contract is that
-            the rendered document does not change. They convert when
-            the primitive's variant table is widened with evidence,
-            not as a drive-by here.
+            settings.js still finds both by getElementById and binds their
+            clicks — same tags, same ids, same class strings.
         */}
-        <Button id="settings-save" className="shrink-0">
+        <Button id="settings-save" layout="shrink">
           Save
         </Button>
-        <button
+        <Button
           id="settings-remove"
-          className="hidden shrink-0 rounded-lg border border-red-400 dark:border-red-700 px-3 py-2 text-sm font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 transition-colors"
+          layout="hiddenShrink"
+          variant="destructive"
+          size="narrow"
+          ink="danger"
         >
           Remove
-        </button>
+        </Button>
       </div>
       <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
         Encrypted at rest, verified against Anthropic before saving, never shown in full after save.

@@ -15,6 +15,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { runModules } = require('./helpers/bundle-module');
 
 const read = (f) => fs.readFileSync(path.join(__dirname, '..', 'public', 'js', f), 'utf8');
 const MERGE_STATUS_SRC = read('merge-status.js');
@@ -60,10 +61,17 @@ function makeAppView(opts) {
   return AppView;
 }
 
+// work-drawer.js is a bundle module and imports the kit-surface seam, which a
+// classic-script `runInContext` cannot compile — runModules rewrites the
+// import into a read of the stub table and leaves the rest of the source
+// alone. See tests/helpers/bundle-module.js.
 function makeWorkDrawer(opts) {
   const sandbox = makeSandbox(opts);
-  vm.runInContext(`${MERGE_STATUS_SRC}\n${WORK_DRAWER_SRC}\n;globalThis.__WorkDrawer = WorkDrawer;`, sandbox);
-  return sandbox.__WorkDrawer;
+  return runModules(
+    sandbox,
+    [['merge-status.js', MERGE_STATUS_SRC], ['work-drawer.js', WORK_DRAWER_SRC]],
+    { tail: 'return WorkDrawer;' },
+  );
 }
 
 // ── voteCountPill ────────────────────────────────────────────────────

@@ -27,6 +27,8 @@
 
 import { useCallback, useRef, useState } from 'react';
 
+import { Button } from '@/components/ui/button';
+
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import {
   AUTH_SCREEN_IDS,
@@ -337,14 +339,15 @@ export function WaitlistScreen() {
               className="mt-2 w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
             />
           </div>
-          <button
+          <Button
             type="submit"
             id="waitlist-submit"
             disabled={submitting}
-            className="rounded-lg bg-violet-600 hover:bg-violet-500 disabled:opacity-50 px-5 py-2 text-sm font-medium text-white transition-colors"
+            disabledStyle="dim"
+            size="lg"
           >
             Join the waitlist
-          </button>
+          </Button>
         </form>
         <p id="waitlist-msg" className={msgClass(msg ? msg.tone : null)}>
           {msg ? msg.text : null}
