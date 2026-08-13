@@ -2674,10 +2674,7 @@ const App = {
     // apply its mutation before the first run's View Transition captured
     // the outgoing page (#979).
     if (App._inProfile && window.Profile?.isOpen?.()) {
-      PlatformUI.transition(() => {
-        App.setHeaderTitle(username ? `@${username}` : 'Profile');
-        if (window.Profile?.open) Profile.open(username);
-      }, { type: 'none' });
+      App._routeMountedProfile(username);
       return;
     }
     const fromIframe = !!(App.currentApp && App.currentTab === 'app');
@@ -2695,6 +2692,15 @@ const App = {
       App.setHeaderTitle(username ? `@${username}` : 'Profile');
     }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
     App._inProfile = true;
+    if (window.Profile?.open) Profile.open(username);
+  },
+
+  // A hash change between the signed-in profile editor and a public
+  // profile is a level change inside the already-visible profile screen,
+  // not a new screen entry. Keep it out of the global transition gate so
+  // drawer navigation still has exactly one transition per screen entry.
+  _routeMountedProfile(username) {
+    App.setHeaderTitle(username ? `@${username}` : 'Profile');
     if (window.Profile?.open) Profile.open(username);
   },
 
