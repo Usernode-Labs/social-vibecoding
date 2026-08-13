@@ -100,6 +100,39 @@ const { EXCLUDED_EXPORT_COLUMNS } = require('./db-allowlist');
 // want to hide is not just one column. If it is, add it below instead.
 const DENIED_CONSOLE_TABLES = new Set([]);
 
+// Tables denied wholesale to the automated production-debug role but
+// intentionally readable through the signed-in admin SQL console because
+// they contain no credential value to mask. Keep this policy declaration in
+// the scope module (rather than only in a test) so each new prod-debug table
+// denial has an explicit console-side review decision.
+//
+// Platform Messages belongs here as a domain: its rows are private user data,
+// which is why coding agents cannot query them in production, but none of the
+// tables stores a password, token, encrypted destination, or other reusable
+// credential. This follows the console's existing human-admin policy; it does
+// not widen the separate `usernode_debug_ro` role.
+const FULLY_READABLE_CONSOLE_TABLES = new Set([
+  'mobile_push_deliveries',
+  'mobile_push_deployment_state',
+  'mobile_push_installation_mutations',
+  'cli_auth_audit_events',
+  'cli_auth_rate_limits',
+  'mcp_clients',
+  'mcp_auth_audit_events',
+  'user_agent_files',
+  'profile_reports',
+  'conversations',
+  'conversation_direct_pairs',
+  'conversation_members',
+  'conversation_messages',
+  'conversation_message_reactions',
+  'conversation_message_attachments',
+  'conversation_message_objects',
+  'chat_session_spec_conversation_shares',
+  'user_blocks',
+  'conversation_message_reports',
+]);
+
 // The per-column replacement for the old table-level denials — one entry
 // per formerly-denied `public` table that actually stores a secret, each
 // naming ONLY the columns whose VALUES are credentials. Everything else
@@ -287,6 +320,7 @@ function _resetForTests() {
 
 module.exports = {
   DENIED_CONSOLE_TABLES,
+  FULLY_READABLE_CONSOLE_TABLES,
   DENIED_CONSOLE_COLUMNS,
   CONSOLE_CREDENTIAL_COLUMNS,
   TABLE_INVENTORY_SQL,
