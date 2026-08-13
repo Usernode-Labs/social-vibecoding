@@ -71,6 +71,7 @@ const DDL = `
     source               TEXT,
     imported_pr_head_sha VARCHAR(40),
     imported_pr_author   VARCHAR(255),
+    imported_pr_head_repo TEXT,
     promoted_at          TIMESTAMPTZ,
     shared_at            TIMESTAMPTZ,
     created_at           TIMESTAMPTZ DEFAULT NOW(),
@@ -79,12 +80,14 @@ const DDL = `
     testing_paths        JSONB
   )`;
 
-// The same 12-element parameter shape the handler binds.
+// The same 13-element parameter shape the handler binds ($10 is the head
+// repository #1196 records, which is what decides whether the proposal's head
+// is in the author's fork or in the app's own repository).
 function importParams(status, prNumber) {
   return [
     1, 2, 'pr-import-test-branch', prNumber, 'https://github.com/acme/demo/pull/' + prNumber,
     'PR #' + prNumber, status,
-    'a'.repeat(40), 'external-author',
+    'a'.repeat(40), 'external-author', 'external-author/demo',
     '1. Open the board', '/board?demo=1',
     JSON.stringify([{ path: '/board?demo=1', viewport: 'desktop' }]),
   ];
@@ -135,12 +138,15 @@ test('the pr-import INSERT prepares and writes both status paths on real postgre
       assert.equal(activeRows[0].status, 'active');
 
       const { rows: [active] } = await client.query(
-        'SELECT status, source, shared_at, promoted_at FROM chat_sessions WHERE id = $1',
+        'SELECT status, source, shared_at, promoted_at, imported_pr_head_repo '
+        + 'FROM chat_sessions WHERE id = $1',
         [activeRows[0].id]
       );
       assert.equal(active.source, 'imported');
       assert.ok(active.shared_at, 'an active import joins the shared In-progress board');
       assert.equal(active.promoted_at, null, 'an active import is not up for vote yet');
+      assert.equal(active.imported_pr_head_repo, 'external-author/demo',
+        'the repository the PR head lives in is recorded at import time (#1196)');
 
       // promote: true path: status 'promoted' — the CASE arms flip.
       const { rows: promotedRows } = await client.query(sql, importParams('promoted', 102));

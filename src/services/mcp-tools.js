@@ -197,23 +197,43 @@ function shapeChecks(session) {
 //
 // `branchHomeOf` is imported rather than restated: one function decides this,
 // so the work order, the update path and this description cannot disagree.
+// #1196 is what that rule is for. When the helper was wrong — it read a
+// connector submission's mirrored, bot-owned head as the author's fork — this
+// description and the refusal the agent then hit were both wrong, in
+// lockstep, and fixing the helper fixed both. Nothing about the ownership
+// question is decided in this file.
 function shapeBranch(session) {
-  const { branchHomeOf, authorCanPush } = require('./proposal-update');
+  const { branchHomeOf, authorCanPush, headRepoOwnerOf } = require('./proposal-update');
   const home = branchHomeOf(session);
+  // The caller's own linked GitHub login, carried by the session routes for
+  // imported rows. Absent (an older platform, or an unlinked account) means
+  // `authorCanPush` cannot disprove a fork home and answers as it did before.
+  const canPush = authorCanPush(session, session.viewer_github_login);
+  const headOwner = headRepoOwnerOf(session);
   return {
     home,
-    // The repository the head lives in. For a fork-home proposal Usernode
-    // stores only the tracked SHA, so the fork is named as the author's own.
-    repo: home === 'user_fork' ? 'your fork' : 'the app repository',
+    // The repository the head lives in. A fork home is named as the author's
+    // own only when the fork owner IS the caller — a proposal following
+    // somebody else's fork is not "your fork", and telling an agent it is
+    // sends it pushing somewhere it has no write access to.
+    repo: home !== 'user_fork'
+      ? 'the app repository'
+      : (canPush ? 'your fork' : `${headOwner ? `${headOwner}'s` : 'another user\'s'} fork`),
     name: session.branch_name || null,
-    headSha: (home === 'user_fork'
+    // Imported rows pin their votes and checks to imported_pr_head_sha
+    // whichever repository the head is in; reviewed_head_sha is the native
+    // column. Keyed off the source, not off the home, so a mirrored proposal
+    // does not report a NULL head.
+    headSha: (String(session.source) === 'imported'
       ? session.imported_pr_head_sha
       : (session.reviewed_head_sha || session.imported_pr_head_sha)) || null,
-    // Can a plain `git push` move this proposal? Only for a fork home.
-    youCanPush: authorCanPush(session),
+    // Can a plain `git push` move this proposal? Only when the head is in a
+    // repository the caller's own GitHub account owns — the exact question
+    // services/proposal-update.js asks before it advances anything.
+    youCanPush: canPush,
     // What to do instead when it cannot — named as the exact call, because
     // "submit an update" was the part every agent had to guess.
-    updateWith: authorCanPush(session)
+    updateWith: canPush
       ? 'push to that branch, then call submit_work with proposalId and branch so the votes and checks are reset now rather than on the next sweep'
       : 'push to a branch in your own fork, then call submit_work with proposalId and that branch — Usernode moves the proposal onto it',
   };
@@ -250,8 +270,20 @@ function shapeNextStep(session, checks) {
       + 'second proposal.'
     : 'Checks are failing and they gate merge — this cannot land however the vote goes. Fix the named tests and push '
       + 'to a branch in your OWN fork, then call submit_work with proposalId '
-      + `${session.id} and that branch: this proposal's head is a branch in the app's own repository that only `
-      + 'Usernode can write, so pushing to your fork alone does not move it. Do not open a second proposal.';
+      + `${session.id} and that branch: ${whyYouCannotPush(branch)}. Do not open a second proposal.`;
+}
+
+// Why a plain push does not move this proposal, in one clause, for the two
+// reasons it can be true (#1196). Naming the wrong one is how an agent ends
+// up pushing to a branch that does not exist: the mirrored head reported
+// below is a branch in the APP repository, and its name — `usernode/from-…` —
+// exists nowhere in the agent's fork.
+function whyYouCannotPush(branch) {
+  return branch.home === 'user_fork'
+    ? `this proposal's head is a branch in ${branch.repo}, which your linked GitHub account does not own, so `
+      + 'Usernode will not advance it from your push'
+    : 'this proposal\'s head is a branch in the app\'s own repository that only Usernode can write, so pushing to '
+      + 'your fork alone does not move it';
 }
 
 function shapeProposal(session, origin) {
@@ -710,7 +742,7 @@ function registerTools(server, ctx) {
   // ── get_proposal ─────────────────────────────────────────────────────
   server.registerTool('get_proposal', {
     title: 'Get a proposal',
-    description: "Status of one proposal: its checks verdict — including the NAMES of any failing tests — the staging preview URL, the vote tally and how many votes it still needs to merge. Checks gate merge: a proposal whose checks are failing cannot land however the vote goes, so if you are the agent that wrote the code, fix the named tests and submit the fix as an UPDATE to this same proposal — never as a second one. `branch` says how: `branch.home` is 'user_fork' when the proposal follows a branch in the author's own fork (push to it, then call submit_work with proposalId and branch) or 'app_repo' when its head is a branch only Usernode can write (push to your own fork, then call submit_work with proposalId and that branch — pushing alone moves nothing). `branch.youCanPush` and `nextStep` state the same thing in one line; follow `nextStep`. `captureDefaultedToRoot` true means the submission carried no testing route, so the before/after screenshots the voters see are of the app's home page.",
+    description: "Status of one proposal: its checks verdict — including the NAMES of any failing tests — the staging preview URL, the vote tally and how many votes it still needs to merge. Checks gate merge: a proposal whose checks are failing cannot land however the vote goes, so if you are the agent that wrote the code, fix the named tests and submit the fix as an UPDATE to this same proposal — never as a second one. `branch` says how: `branch.home` is 'user_fork' when the proposal follows a branch in the author's own fork (push to it, then call submit_work with proposalId and branch) or 'app_repo' when its head is a branch only Usernode can write (push to your own fork, then call submit_work with proposalId and that branch — pushing alone moves nothing). `branch.youCanPush` and `nextStep` state the same thing in one line; follow `nextStep`. A proposal you opened with submit_work is usually 'app_repo' even though the work came from your fork — Usernode copies the fork branch into the app repository — so its branch name exists only there, and revising it always goes back through submit_work. `captureDefaultedToRoot` true means the submission carried no testing route, so the before/after screenshots the voters see are of the app's home page.",
     inputSchema: { proposalId: z.number().int().positive().describe('The proposal id returned by list_my_proposals.') },
     outputSchema: {
       proposalId: z.number(),
@@ -757,7 +789,7 @@ function registerTools(server, ctx) {
   // ── list_my_proposals ────────────────────────────────────────────────
   server.registerTool('list_my_proposals', {
     title: 'List your open proposals',
-    description: "List this user's own proposals that are currently open — up for a vote or merging — with their vote tallies and links. `branchHome` and `youCanPush` say how each one is revised: 'user_fork' proposals follow a branch in the user's own fork, and 'app_repo' proposals are advanced by calling submit_work with the proposal id. Call get_proposal for the checks and the exact next step.",
+    description: "List this user's own proposals that are currently open — up for a vote or merging — with their vote tallies and links. `branchHome` and `youCanPush` say how each one is revised: 'user_fork' proposals follow a branch in the user's own fork, and 'app_repo' proposals — which is what a proposal opened through submit_work normally is — are advanced by calling submit_work with the proposal id. Includes proposals imported from a pull request, which is how every connector submission is recorded. Call get_proposal for the checks and the exact next step.",
     inputSchema: {},
     outputSchema: {
       proposals: z.array(z.object({
@@ -778,7 +810,14 @@ function registerTools(server, ctx) {
   }, async () => {
     const guard = scopeGuard(READ_SCOPE);
     if (guard) return guard;
-    const result = await callPlatform(baseUrl, accessToken, 'GET', '/api/me/active-sessions');
+    // `include_imported=1` is not optional here (#1196). That route excludes
+    // `source='imported'` rows by default — it is also the Dev board's
+    // cross-app worker list, and an imported pull request has no worker — but
+    // EVERY proposal this connector opens is such a row: submit_work lands
+    // the work as a pull request and imports it. Without the flag this tool
+    // answered "no open proposals" to the agent that had just opened one, and
+    // the only way back to it was a proposal id nothing had reported.
+    const result = await callPlatform(baseUrl, accessToken, 'GET', '/api/me/active-sessions?include_imported=1');
     if (!result.ok) return platformError(result);
     const sessions = Array.isArray(result.body && result.body.sessions) ? result.body.sessions : [];
     const open = sessions.filter((s) => s.status === 'promoted' || s.status === 'merging');

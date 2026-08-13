@@ -52,27 +52,92 @@ const { PROPOSAL_UPDATE_LOCK } = require('./advisory-locks');
 
 const SHA_RE = /^[0-9a-f]{40}$/i;
 
-// The two homes a proposal's head can live in. Derived, never stored: the
-// source column has always said which, and a second column recording the
-// same thing is a second thing to keep true.
+// The two homes a proposal's head can live in.
 //
-//   'user_fork' — an IMPORTED pull request. Its head is a branch in the
-//                 author's own fork and the platform only tracks it
-//                 (`imported_pr_head_sha`); the author pushes to GitHub and
-//                 the proposal follows.
-//   'app_repo'  — every other source (a platform build, a CLI hand-off, a
-//                 connector submission). The head is `branch_name` inside
-//                 the app's own repository, and ONLY the platform bot can
-//                 write it — which is why this file exists.
-function branchHomeOf(session) {
-  return String(session && session.source) === 'imported' ? 'user_fork' : 'app_repo';
+//   'user_fork' — the head is a branch in the AUTHOR'S OWN fork. The platform
+//                 only tracks it (`imported_pr_head_sha`); the author pushes
+//                 to GitHub and the proposal follows.
+//   'app_repo'  — the head is `branch_name` inside the app's own repository,
+//                 and ONLY the platform bot can write it — which is why this
+//                 file exists.
+//
+// This used to read `source === 'imported' ? 'user_fork' : 'app_repo'`, on the
+// reasoning that the source column had always said which. It does not, and
+// #1196 is what that cost: a connector submission whose cross-fork pull
+// request GitHub refuses falls to the MIRROR rung in
+// services/external-agent-head.js, which copies the agent's verified fork
+// branch into a `usernode/from-…` branch in the APP repository, opens a
+// same-repo pull request from the bot, and imports THAT. The row is
+// `source='imported'` and its head is a branch the author cannot push to.
+// get_proposal told the agent to push to a fork branch that does not exist,
+// and submit_work — reading the same helper — dispatched to `advanceForkHead`,
+// which correctly refused with `not_your_fork`. Both halves of that came from
+// this one function.
+//
+// So the question is answered from WHERE THE HEAD ACTUALLY IS, which is
+// recorded at import time (`imported_pr_head_repo`, added by #1196). Two rows
+// cannot answer from it — one imported before the column existed, and one
+// whose app has lost its repo_url — and those fall back to the branch
+// namespace: `usernode/from-` and `usernode/patch-` are the platform's own
+// prefixes for branches it writes into an app repository
+// (services/external-agent-head.js), deliberately distinct from anything a
+// person names a branch. `dev/` is NOT in that list: it is the native-session
+// prefix, no imported row has it, and users name fork branches `dev/…` all
+// the time.
+const APP_REPO_BRANCH_PREFIXES = ['usernode/from-', 'usernode/patch-'];
+
+function normalizeRepoName(value) {
+  const raw = String(value == null ? '' : value).trim().toLowerCase();
+  if (!raw) return null;
+  const m = /^([a-z0-9._-]+)\/([a-z0-9._-]+?)(?:\.git)?$/.exec(raw);
+  return m ? `${m[1]}/${m[2]}` : null;
 }
 
-// Can the author move this proposal's head with a plain `git push`? True for
-// an imported PR (they own the branch) and false for a bot-owned branch,
-// where the answer is "not directly — submit the fork branch instead".
-function authorCanPush(session) {
-  return branchHomeOf(session) === 'user_fork';
+// 'owner/repo' for an app's GitHub URL, in the same lowercase shape
+// `normalizeRepoName` produces, so the two are comparable with `===`.
+function repoNameFromUrl(url) {
+  const raw = String(url == null ? '' : url).trim();
+  if (!raw) return null;
+  const m = /github\.com[/:]([^/]+)\/([^/#?]+?)(?:\.git)?\/?$/i.exec(raw);
+  return m ? normalizeRepoName(`${m[1]}/${m[2]}`) : null;
+}
+
+function platformOwnedBranch(name) {
+  const branch = String(name == null ? '' : name).trim();
+  return APP_REPO_BRANCH_PREFIXES.some((prefix) => branch.startsWith(prefix));
+}
+
+// The owner half of the head repository, when it is known. This is the value
+// `advanceForkHead` compares against the freshly-read linked login, and it is
+// what makes `authorCanPush` agree with the gate rather than approximate it.
+function headRepoOwnerOf(session) {
+  const repo = normalizeRepoName(session && session.imported_pr_head_repo);
+  return repo ? repo.split('/')[0] : null;
+}
+
+function branchHomeOf(session) {
+  if (String(session && session.source) !== 'imported') return 'app_repo';
+  const headRepo = normalizeRepoName(session.imported_pr_head_repo);
+  const appRepo = repoNameFromUrl(session.repo_url);
+  if (headRepo && appRepo) return headRepo === appRepo ? 'app_repo' : 'user_fork';
+  return platformOwnedBranch(session.branch_name) ? 'app_repo' : 'user_fork';
+}
+
+// Can the author move this proposal's head with a plain `git push`?
+//
+// The honest answer is the one `advanceForkHead` will give when they try, so
+// this asks its question: the head has to be in a repository owned by the
+// GitHub account linked to the caller's profile. `viewerLogin` is that login,
+// freshly read by whoever is reporting; when it or the head owner is unknown
+// there is nothing to disprove and a fork home still answers true — the same
+// answer this returned before #1196, and the refusal still comes from the gate
+// rather than from a guess made here.
+function authorCanPush(session, viewerLogin) {
+  if (branchHomeOf(session) !== 'user_fork') return false;
+  const owner = headRepoOwnerOf(session);
+  const login = String(viewerLogin == null ? '' : viewerLogin).trim();
+  if (!owner || !login) return true;
+  return externalAgentHead.sameLogin(owner, login);
 }
 
 function fail(code, message, extra = {}) {
@@ -385,7 +450,7 @@ function defaultBusyCheck(session) {
 // under a lease.
 async function advanceAppRepoBranch(ctx) {
   const {
-    pool, config, gh, head, votes, githubPublic, session,
+    pool, config, gh, head, votes, prImportSync, githubPublic, session,
     owner, repo, forkOwner, forkRepo, branch, expectedLogin, expectedHeadSha, sessionId,
   } = ctx;
   // The session tails talk to three modules that do real work — a staging
@@ -477,6 +542,44 @@ async function advanceAppRepoBranch(ctx) {
     targetKind: promoted ? 'proposal' : 'session',
     submittedVia: 'update_branch',
   };
+
+  // ── Tail 1a: an IMPORTED proposal on a bot-owned branch (#1196) ─────
+  //
+  // The connector's mirror rung imports a pull request whose head is a branch
+  // in the APP repository, so a revision lands here — but everything an
+  // imported row's votes and checks are pinned to is `imported_pr_head_sha`,
+  // and `reconcileNativeReviewedHead` returns without doing anything for
+  // `source='imported'`. Tail 1 would therefore push the commit and leave the
+  // tally describing code nobody has read until the next sync sweep.
+  //
+  // `syncImportedProposal` is that sweep's own per-proposal step: it re-reads
+  // the pull request, sees the head this push just moved, and runs the
+  // existing imported-head machinery — advance the tracked SHA, clear the
+  // tally, post the re-review note, re-run the SHA-pinned checks. Nothing
+  // about it is reimplemented here. 'unchanged' means GitHub had not caught
+  // up with the push yet, which is honest to report as "not rebuilt": the
+  // sweeper takes it from there.
+  if (String(session.source) === 'imported') {
+    let synced = 'skipped';
+    try {
+      synced = await prImportSync.syncImportedProposal({ config, pool, session });
+    } catch (err) {
+      log.error('proposal-update', 'imported head sync failed after a successful push', {
+        sessionId, err: err.message,
+      });
+    }
+    const applied = synced === 'updated';
+    log.info('proposal-update', 'advanced an imported proposal on its app-repo branch', {
+      sessionId, owner, repo, targetBranch, previousHeadSha: liveHead,
+      headSha: verified.headSha, votesCleared: applied ? votesCleared : 0, synced,
+    });
+    return {
+      ...landed,
+      votesCleared: applied ? votesCleared : 0,
+      checksRerun: applied,
+      previewRebuilding: applied,
+    };
+  }
 
   // ── Tail 2: an ACTIVE session (#1071) ───────────────────────────────
   //
@@ -926,6 +1029,8 @@ function unchanged(session, headSha, via) {
 module.exports = {
   branchHomeOf,
   authorCanPush,
+  headRepoOwnerOf,
+  repoNameFromUrl,
   isContinuableStatus,
   withProposalLock,
   updateProposalFromForkBranch,
