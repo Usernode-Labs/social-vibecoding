@@ -269,6 +269,21 @@ export function LoginScreen() {
       // ↔ signup share the screen element.
       if (openSignup) showOtpView();
       else showLoginBaseView();
+      // Screenshot-state deep link (`?shot=password-recovery#login`): boots
+      // straight into the forgot-password view, pinned to the emailed-link
+      // path so the shot is deterministic regardless of wallet state
+      // (issue #1158). Same idiom as ?shot=waitlist-joined; display-only,
+      // no writes, so it works in every environment.
+      let shot: string | null = null;
+      try {
+        shot = new URLSearchParams(location.search).get('shot');
+      } catch {
+        shot = null;
+      }
+      if (!openSignup && shot === 'password-recovery') {
+        showRecovery();
+        setRecoveryPath('email');
+      }
       // Wallet detection runs once, the first time the screen appears (needs
       // the native bridge; quietly does nothing on desktop web).
       if (!st.walletDetectRan) {
@@ -276,7 +291,7 @@ export function LoginScreen() {
         void walletDetect();
       }
     },
-    [showLoginBaseView, showOtpView, st, walletDetect],
+    [showLoginBaseView, showOtpView, showRecovery, st, walletDetect],
   );
 
   // ── Password login ───────────────────────────────────────────────────
@@ -1087,15 +1102,24 @@ export function LoginScreen() {
                   identifier. _ensureResetUi rewrote this paragraph; the same
                   flag rewrites it here.
               */}
+              {/*
+                  The divider marks the admin route as the separated, final
+                  alternative below the email flow (issue #1158).
+              */}
+              <hr className="border-zinc-200 dark:border-zinc-800" />
               <p className="text-sm text-zinc-500 dark:text-zinc-400">
                 {resetUi ? ADMIN_LEAD_WITH_EMAIL : ADMIN_LEAD_SHIPPED}
               </p>
               <p className="text-sm text-zinc-500 dark:text-zinc-400">
-                Ask a Usernode platform admin to issue you a
+                {/* JSX drops a line-ending space, so the separators before the
+                    inline elements must live inside the string expressions —
+                    without them the text renders as "atemporary" /
+                    "fromSettings" (issue #1158). */}
+                {'Ask a Usernode platform admin to issue you a '}
                 <span className="font-medium text-zinc-700 dark:text-zinc-300">
                   temporary password
                 </span>
-                . Once you're back in, set a password you choose from
+                {". Once you're back in, set a password you choose from "}
                 <a href="#settings/password" className="text-violet-500 hover:text-violet-400 underline">
                   Settings → Change password
                 </a>

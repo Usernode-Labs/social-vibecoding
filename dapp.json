@@ -2048,6 +2048,12 @@
       "expectText": "Signing in needs a connection"
     },
     {
+      "name": "Password recovery separates the admin fallback and spaces its copy correctly (#1158)",
+      "path": "/?shot=password-recovery#login",
+      "expectSelector": "#recovery-view:not(.hidden) #recovery-admin:not(.hidden) hr",
+      "expectText": "issue you a temporary password"
+    },
+    {
       "name": "Back from a dev session is a real link you can open in a new tab (#1036)",
       "path": "/?demo=1#app/usernode-2d5619/dev/sessions/990402",
       "expectSelector": "a#dc-back[href=\"#app/usernode-2d5619/dev\"]"

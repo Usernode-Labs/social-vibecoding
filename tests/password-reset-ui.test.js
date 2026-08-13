@@ -57,6 +57,31 @@ test('the request result copy is anti-enumeration (same message either way)', ()
     'success copy must not confirm the account exists');
 });
 
+test('the admin fallback is separated and its copy is spaced correctly (#1158)', () => {
+  const tsx = read(LOGIN_TSX);
+  // The divider marks the admin route as the final alternative below the
+  // email flow.
+  assert.match(tsx, /id="recovery-admin"[\s\S]{0,1200}?<hr /,
+    'a divider opens the admin fallback block');
+  // JSX drops a line-ending space, so the separators before the inline
+  // elements must live inside string expressions — the shipped copy rendered
+  // "atemporary" / "fromSettings" without them.
+  assert.match(tsx, /\{'Ask a Usernode platform admin to issue you a '\}/,
+    'explicit space before the "temporary password" span');
+  assert.match(tsx, /\{"\. Once you're back in, set a password you choose from "\}/,
+    'explicit space before the Settings → Change password link');
+});
+
+test('the recovery view is URL-reachable for captures (#1158)', () => {
+  // The screenshot-state deep link: login.tsx opens the forgot-password view
+  // on ?shot=password-recovery, and app.js boots the anonymous shell for it
+  // so the capture session cannot strip #login to the home feed.
+  assert.match(read(LOGIN_TSX), /shot === 'password-recovery'/,
+    'login screen handles the shot param');
+  assert.match(read('public/js/app.js'), /shot !== 'password-recovery'/,
+    'the shot boots the anonymous shell like ?shot=anon');
+});
+
 test('the stale "no email on file" claim is rewritten once the email path exists', () => {
   const tsx = read(LOGIN_TSX);
   // The frozen markup's lead still carries the pre-email copy; the screen

@@ -304,7 +304,11 @@ const App = {
     // ordinary boot: this path skips /api/auth/me, so the capture or
     // proposal check's own session can't promote the page into the
     // signed-in shell and stop exercising the guest viewer at all.
-    if (shot !== 'anon' && shot !== 'waitlist-joined' && shot !== 'anon-back') {
+    // `password-recovery` (#1158) opens the login screen's forgot-password
+    // view (login.tsx reads the shot in loginOnShow); it needs the same
+    // anonymous boot so the capture session can't strip #login to the feed.
+    if (shot !== 'anon' && shot !== 'waitlist-joined' && shot !== 'anon-back' &&
+        shot !== 'password-recovery') {
       return false;
     }
     if (shot === 'waitlist-joined' &&
