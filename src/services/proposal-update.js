@@ -255,12 +255,14 @@ async function countVotes(pool, sessionId) {
 //   drive this without a database, a git binary or a GitHub account; the
 //   defaults are the real modules.
 //
-// params: { user, session, branch, forkRepo, expectedHeadSha, origin }
+// params: { user, session, branch, forkRepo, expectedHeadSha, testing, origin }
 //   `session` is the joined chat_sessions row the route loaded and
 //   access-checked. `branch` is the branch in the caller's OWN fork that
 //   carries the new work. `forkRepo` is only its NAME, for an agent that
 //   forked under a name the platform did not predict — the OWNER always
-//   comes from the verified GitHub link.
+//   comes from the verified GitHub link. `testing` is the revision's capture
+//   routes and steps, already validated by services/testing-notes.js's
+//   `parseSubmitted` — see applyTestingMetadata.
 async function updateProposalFromForkBranch(deps, params) {
   const { pool, config } = deps;
   const gh = deps.gh || require('./github');
@@ -358,6 +360,11 @@ async function updateProposalFromForkBranch(deps, params) {
         pool, config, gh, head, votes, prImportSync, githubPublic,
         session, owner, repo, forkOwner: link.login, forkRepo, branch,
         expectedLogin: link.login, expectedHeadSha, sessionId,
+        testing: normalizeTesting(params.testing),
+        // The one module the same-commit resubmit path needs and no other
+        // path does: re-running the checks against corrected capture routes
+        // is the same operation the "Re-run checks" button performs.
+        recovery: deps.recovery,
         // Carried through so the session tails' three real-work modules stay
         // injectable from the caller's deps — sessionParts() below fills in
         // the live modules for every key nobody overrode.
@@ -373,6 +380,183 @@ async function updateProposalFromForkBranch(deps, params) {
       releaseOperation();
     }
   }));
+}
+
+// ── The revision's testing metadata (#1199) ────────────────────────────
+//
+// A revision changes which SCREEN the group should be looking at, so the
+// capture routes travel with it. Until this existed they did not: submit_work
+// accepted `testingPaths`, the update path dropped them on the floor, and
+// chat_sessions.testing_paths kept whatever the FIRST submission said — NULL
+// for a proposal imported without any. The capture then fell back to '/' and
+// set `captureDefaultedToRoot`, so a change to a dialog behind a deep link was
+// voted on from screenshots of the app's home page.
+//
+// Three properties this pair of functions keeps:
+//
+//   1. OMISSION IS NOT ERASURE. An update that says nothing about testing
+//      leaves the stored routes and steps exactly as they are — the common
+//      case is a one-line fix to a failing check, and it must not blank the
+//      routes the first submission got right.
+//   2. THE WRITE HAPPENS BEFORE THE CAPTURE. Every tail below ends in
+//      visuals.captureForSession, which reads `session.testing_paths` off the
+//      IN-MEMORY row it is handed — so the row is mutated here as well as
+//      written, or the run that follows a successful update still shoots the
+//      old routes.
+//   3. IT IS NEVER THE REASON AN UPDATE FAILS. The commit is already on the
+//      branch by the time this runs; a metadata write that throws is logged
+//      and reported as `testingUpdated: false`.
+
+// Re-run the shared validator over whatever the caller handed in. The route
+// has already parsed it, and this is idempotent — but proposal-update.js is
+// also called by the browser twin, and nothing unvalidated may reach a column
+// the capture step later loads into an iframe URL.
+function normalizeTesting(testing) {
+  if (!testing || typeof testing !== 'object') return null;
+  const notes = require('./testing-notes');
+  const parsed = notes.parseSubmitted({
+    testingPaths: Array.isArray(testing.testingPaths) ? testing.testingPaths : undefined,
+    testingSteps: typeof testing.testingSteps === 'string' ? testing.testingSteps : testing.testingMd,
+  });
+  return parsed.provided ? parsed : null;
+}
+
+// The stored list and the submitted one, compared in the normalized
+// { path, viewport } shape so a row written before #768 (plain strings)
+// doesn't read as a change against the same routes resubmitted today.
+function samePaths(stored, next) {
+  const notes = require('./testing-notes');
+  const current = (Array.isArray(stored) ? stored : [])
+    .map((entry) => notes.normalizeStoredPath(entry))
+    .filter(Boolean);
+  if (current.length !== next.length) return false;
+  return current.every((entry, i) => entry.path === next[i].path && entry.viewport === next[i].viewport);
+}
+
+// The submitted routes in the form the caller wrote them, for the response.
+// An agent that reads back exactly what it sent can tell at a glance that the
+// annotation it added survived.
+function displayPaths(paths) {
+  if (!Array.isArray(paths) || !paths.length) return null;
+  const notes = require('./testing-notes');
+  return paths.map((entry) => (entry.viewport === notes.VIEWPORT_MOBILE ? `${entry.path} @mobile` : entry.path));
+}
+
+// Writes only the columns the caller actually supplied, and mutates the
+// in-memory row to match. Returns { changed, pathsChanged, stepsChanged,
+// paths } — `changed` false when nothing was supplied OR when what was
+// supplied is what the row already said, which is what stops a duplicate
+// resubmit from kicking a pointless capture run.
+async function applyTestingMetadata({ pool, session, testing }) {
+  const unchangedResult = (paths) => ({
+    changed: false, pathsChanged: false, stepsChanged: false, paths: paths || null,
+  });
+  if (!testing) return unchangedResult(null);
+
+  const pathsChanged = !!testing.testingPaths && !samePaths(session.testing_paths, testing.testingPaths);
+  const stepsChanged = !!testing.testingMd && String(session.testing_md || '') !== testing.testingMd;
+  if (!pathsChanged && !stepsChanged) return unchangedResult(testing.testingPaths);
+
+  const sets = [];
+  const values = [];
+  if (pathsChanged) {
+    values.push(JSON.stringify(testing.testingPaths));
+    sets.push(`testing_paths = $${values.length}::jsonb`);
+    values.push(testing.testingPath);
+    sets.push(`testing_path = $${values.length}`);
+  }
+  if (stepsChanged) {
+    values.push(testing.testingMd);
+    sets.push(`testing_md = $${values.length}`);
+  }
+  values.push(Number(session.id));
+  try {
+    await pool.query(`UPDATE chat_sessions SET ${sets.join(', ')} WHERE id = $${values.length}`, values);
+  } catch (err) {
+    log.error('proposal-update', 'could not store the revision\'s testing metadata', {
+      sessionId: Number(session.id), err: err.message,
+    });
+    return unchangedResult(testing.testingPaths);
+  }
+
+  // Property 2 above: the tails hand THIS object to captureForSession.
+  if (pathsChanged) {
+    session.testing_paths = testing.testingPaths;
+    session.testing_path = testing.testingPath;
+  }
+  if (stepsChanged) session.testing_md = testing.testingMd;
+
+  log.info('proposal-update', 'stored the revision\'s testing metadata', {
+    sessionId: Number(session.id), pathsChanged, stepsChanged,
+    paths: displayPaths(testing.testingPaths),
+  });
+  return { changed: true, pathsChanged, stepsChanged, paths: testing.testingPaths || null };
+}
+
+// ── A resubmit that moves nothing (#1199) ──────────────────────────────
+//
+// The fork branch is already this proposal's head. That has always been a
+// success rather than an error — an agent that submits twice, or a user who
+// relays "it's pushed" after the agent already did, must not be told their
+// work is missing — but it was also a total no-op, and that made a proposal
+// whose screenshots came out wrong UNFIXABLE: the routes are only read when a
+// capture runs, a capture only runs when the head moves, and the head cannot
+// move for a change that is already correct. The advice left was "push an
+// empty commit", which clears every vote the proposal has collected to correct
+// a screenshot.
+//
+// So a resubmit that carries DIFFERENT testing metadata now stores it and
+// re-runs the checks against it. What it deliberately does not do is touch the
+// votes: not one line of code changed, so the tally is still about the code the
+// group read.
+async function resubmitUnchanged(ctx, headSha, via) {
+  const { pool, config, session, sessionId } = ctx;
+  const base = unchanged(session, headSha, via);
+  const applied = await applyTestingMetadata({ pool, session, testing: ctx.testing });
+  const reported = {
+    ...base,
+    testingUpdated: applied.changed,
+    testingPaths: displayPaths(applied.paths),
+    captureRerun: false,
+  };
+  if (!applied.changed) return reported;
+
+  // A paused session has no container and no preview to shoot against, and
+  // starting a build for one is the thing settlePausedSession exists to avoid.
+  // The metadata is stored; the screenshots follow when it is reopened.
+  if (session.status === 'paused') {
+    log.info('proposal-update', 'stored new testing metadata on a paused session', { sessionId });
+    return { ...reported, resumeRequired: true };
+  }
+
+  // The same operation the "Re-run checks" button performs, under the same
+  // reason→trigger mapping: rebuild the preview if it has died, otherwise
+  // re-run the checks and the capture straight against the live container.
+  // FORCED, because the row may already read passing and a redundant-run skip
+  // is exactly what would leave the old screenshots in place.
+  //
+  // Detached: a dead preview means a full staging rebuild, which takes
+  // minutes, and the caller is an HTTP request that has been told the answer
+  // already. `previewRebuilding` stays false — nothing about the code changed,
+  // so no reviewer is waiting on a new preview of it.
+  const recovery = ctx.recovery || require('./staging-recovery');
+  try {
+    const run = recovery.recheckSessionChecks({ config, pool, session, reason: 'testing-update' });
+    if (run && typeof run.catch === 'function') {
+      run.catch((err) => log.warn('proposal-update', 'testing-metadata recheck failed (non-fatal)', {
+        sessionId, err: err.message,
+      }));
+    }
+  } catch (err) {
+    log.error('proposal-update', 'could not re-run the checks for new testing metadata', {
+      sessionId, err: err.message,
+    });
+    return reported;
+  }
+  log.info('proposal-update', 'same-commit resubmit re-ran the checks against new testing routes', {
+    sessionId, headSha, via, paths: displayPaths(applied.paths),
+  });
+  return { ...reported, captureRerun: true, checksRerun: true };
 }
 
 // ── What a push may land on ────────────────────────────────────────────
@@ -498,7 +682,9 @@ async function advanceAppRepoBranch(ctx) {
   });
   if (!verified.ok) return renameHeadFailure(verified, branch);
 
-  if (verified.headSha === liveHead) return unchanged(session, liveHead, 'update_branch');
+  // Nothing to push — but a resubmit may still be correcting the capture
+  // routes, which is the one thing that used to have no way through (#1199).
+  if (verified.headSha === liveHead) return resubmitUnchanged(ctx, liveHead, 'update_branch');
 
   const ancestry = await checkAncestry({ gh, owner, repo, base: liveHead, head: verified.headSha, branch });
   if (ancestry) return ancestry;
@@ -521,6 +707,10 @@ async function advanceAppRepoBranch(ctx) {
   });
   if (!pushed.ok) return renameHeadFailure(pushed, branch);
 
+  // BEFORE the tails, every one of which ends in a capture that reads the
+  // routes off this session object (#1199).
+  const testingApplied = await applyTestingMetadata({ pool, session, testing: ctx.testing });
+
   // Everything the three tails agree on. They differ only in what they do to
   // the session afterwards and in the three booleans that describe it.
   const landed = {
@@ -541,6 +731,9 @@ async function advanceAppRepoBranch(ctx) {
     // migration for no gain.
     targetKind: promoted ? 'proposal' : 'session',
     submittedVia: 'update_branch',
+    // What the screenshots this revision's capture shoots will be of.
+    testingUpdated: testingApplied.changed,
+    testingPaths: displayPaths(testingApplied.paths),
   };
 
   // ── Tail 1a: an IMPORTED proposal on a bot-owned branch (#1196) ─────
@@ -900,7 +1093,7 @@ async function advanceForkHead(ctx) {
   if (expectedHeadSha && oldHead && expectedHeadSha !== oldHead) {
     return movedError(oldHead);
   }
-  if (oldHead && oldHead === liveHead) return unchanged(session, liveHead, 'update_fork_head');
+  if (oldHead && oldHead === liveHead) return resubmitUnchanged(ctx, liveHead, 'update_fork_head');
 
   if (oldHead) {
     const ancestry = await checkAncestry({ gh, owner, repo, base: oldHead, head: liveHead, branch });
@@ -908,6 +1101,10 @@ async function advanceForkHead(ctx) {
   }
 
   const votesCleared = await countVotes(pool, sessionId);
+
+  // Before applyHeadChange, whose own tail re-runs the SHA-pinned checks off
+  // this session object (#1199).
+  const testingApplied = await applyTestingMetadata({ pool, session, testing: ctx.testing });
 
   // The existing imported-head machinery, unchanged: it advances the tracked
   // SHA, clears the tally, re-classifies dapp.json admins, posts the
@@ -946,6 +1143,8 @@ async function advanceForkHead(ctx) {
     checksRerun: true,
     previewRebuilding: true,
     submittedVia: 'update_fork_head',
+    testingUpdated: testingApplied.changed,
+    testingPaths: displayPaths(testingApplied.paths),
   };
 }
 

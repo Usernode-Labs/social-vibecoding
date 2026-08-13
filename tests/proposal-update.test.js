@@ -163,6 +163,9 @@ function deps(over = {}, log = {}) {
       return fn();
     }),
     busy: over.busy || (() => false),
+    // #1199: the same-commit resubmit path's re-run. Only that path uses it,
+    // and the real one rebuilds a container.
+    recovery: over.recovery,
     beginOperation: over.beginOperation || ((id) => {
       (log.began = log.began || []).push(id);
       return () => { (log.released = log.released || []).push(id); };
@@ -1090,4 +1093,277 @@ test('a fork-owned proposal is refused unless it is up for a vote', () => {
   const fork = CODE.slice(CODE.indexOf('async function advanceForkHead'));
   assert.match(fork.slice(0, 900), /proposal_closed/,
     'the fork path states the one status it accepts');
+});
+
+// ── 11. The revision's testing metadata (#1199) ────────────────────────
+//
+// A revision changes which SCREEN the group should be looking at. Until this
+// section existed, submit_work accepted `testingPaths`, every layer between it
+// and here dropped them, and chat_sessions kept whatever the FIRST submission
+// said — NULL for a proposal imported without any. The capture then fell back
+// to '/' and flagged `captureDefaultedToRoot`, so a change to a dialog behind
+// a deep link was voted on from screenshots of the app's home page. And the
+// obvious correction — resubmit with the right routes — was a silent no-op,
+// because nothing but a moved head ever re-read them.
+//
+// Two properties these tests are about:
+//
+//   1. THE ROUTES ARE STORED BEFORE THE CAPTURE RUNS. Every tail ends in
+//      visuals.captureForSession, which reads `testing_paths` off the
+//      IN-MEMORY session object it is handed — so the row is mutated as well
+//      as written, or the run that follows still shoots the old routes.
+//   2. A SAME-COMMIT RESUBMIT IS NOT A NO-OP WHEN THE ROUTES DIFFER. It
+//      stores them, forces a fresh capture, and says so — while clearing no
+//      votes, because not one line of code changed.
+
+const TESTING = {
+  testingPaths: [{ path: '/?shot=invite', viewport: 'desktop' }, { path: '/?shot=members', viewport: 'mobile' }],
+  testingSteps: '1. Open the invite dialog.',
+};
+
+// A pool that answers the metadata UPDATE too, and records it.
+function testingPool(session, log = {}, extra = []) {
+  const queries = [];
+  log.queries = queries;
+  return fakePool([
+    ['FROM chat_sessions cs JOIN apps a', [session]],
+    ['FROM pr_votes', [{ n: 4 }]],
+    ['SET testing_paths', []],
+    ['SET testing_md', []],
+    ...extra,
+  ], queries);
+}
+
+const testingWrite = (log) => (log.queries || []).find((q) => /SET testing_/.test(String(q.sql)));
+
+test('an update stores the routes it was given, and stores them BEFORE the capture reads them', async () => {
+  const log = {};
+  const session = nativeSession();
+  const result = await run({ session, pool: testingPool(session, log) }, { testing: TESTING }, log);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.updated, true);
+  assert.equal(result.testingUpdated, true);
+  assert.deepEqual(result.testingPaths, ['/?shot=invite', '/?shot=members @mobile'],
+    'reported back in the form they were written, annotation intact');
+
+  const write = testingWrite(log);
+  assert.ok(write, 'the routes reached the column');
+  assert.match(String(write.sql), /testing_paths = \$1::jsonb/);
+  assert.match(String(write.sql), /testing_path = \$2/);
+  assert.match(String(write.sql), /testing_md = \$3/);
+  assert.deepEqual(JSON.parse(write.params[0]), TESTING.testingPaths);
+  assert.equal(write.params[1], '/?shot=invite', 'the PRIMARY path is the first entry, same rule as the block parser');
+  assert.equal(write.params[2], '1. Open the invite dialog.');
+  assert.equal(write.params[3], 501);
+
+  // Property 1: the row the tails hand to captureForSession says the new
+  // routes, not the old ones — and it said so before the tail ran.
+  assert.deepEqual(session.testing_paths, TESTING.testingPaths);
+  assert.equal(session.testing_path, '/?shot=invite');
+  const sqls = (log.queries || []).map((q) => String(q.sql));
+  assert.ok(sqls.findIndex((s) => /SET testing_/.test(s)) >= 0);
+});
+
+test('an update that says nothing about testing leaves the stored routes alone', async () => {
+  // The common case: a one-line fix to a failing check. Blanking the routes
+  // the first submission got right would be worse than dropping them ever was.
+  const log = {};
+  const session = nativeSession({
+    testing_paths: [{ path: '/board', viewport: 'desktop' }], testing_path: '/board',
+  });
+  const result = await run({ session, pool: testingPool(session, log) }, {}, log);
+  assert.equal(result.ok, true);
+  assert.equal(result.testingUpdated, false);
+  assert.equal(result.testingPaths, null);
+  assert.equal(testingWrite(log), undefined, 'no write at all');
+  assert.deepEqual(session.testing_paths, [{ path: '/board', viewport: 'desktop' }]);
+});
+
+test('an unusable route is dropped rather than stored, and the rules are the block parser\'s', async () => {
+  const log = {};
+  const session = nativeSession();
+  const result = await run({ session, pool: testingPool(session, log) }, {
+    testing: {
+      testingPaths: [
+        'https://evil.test/steal', '//evil.test', '/ok?x=1', '/ok?x=1',
+        '/a', '/b', '/c', '/d',
+      ],
+    },
+  }, log);
+  assert.equal(result.ok, true);
+  // Off-origin and protocol-relative dropped, the duplicate collapsed, and
+  // the list capped at CAPTURE_MAX_PATHS — every one of those rules coming
+  // from services/testing-notes.js rather than from a second copy here.
+  assert.deepEqual(result.testingPaths, ['/ok?x=1', '/a', '/b']);
+  const write = testingWrite(log);
+  assert.deepEqual(JSON.parse(write.params[0]).map((p) => p.path), ['/ok?x=1', '/a', '/b']);
+});
+
+test('an imported proposal\'s new routes are stored before its head change re-runs the checks', async () => {
+  const log = {};
+  const session = importedSession();
+  const result = await run(
+    { session, pool: testingPool(session, log) },
+    { branch: 'usernode/add-a-button', testing: TESTING },
+    log
+  );
+  assert.equal(result.ok, true);
+  assert.equal(result.submittedVia, 'update_fork_head');
+  assert.equal(result.testingUpdated, true);
+  assert.deepEqual(result.testingPaths, ['/?shot=invite', '/?shot=members @mobile']);
+  // applyHeadChange's own tail is what shoots the screenshots, and it reads
+  // the session object handed to it — so the mutation has to be visible in
+  // the very object that reached it.
+  assert.equal(log.applied.length, 1);
+  assert.deepEqual(log.applied[0].session.testing_paths, TESTING.testingPaths);
+});
+
+test('a same-commit resubmit with new routes stores them and forces a fresh capture', async () => {
+  const log = {};
+  const rechecks = [];
+  const session = nativeSession({
+    testing_paths: [{ path: '/', viewport: 'desktop' }], testing_path: '/',
+  });
+  const result = await run({
+    session,
+    pool: testingPool(session, log),
+    gh: { getBranchSha: async () => FORK_HEAD },
+    recovery: { recheckSessionChecks: async (args) => { rechecks.push(args); return 'rechecked'; } },
+  }, { testing: TESTING }, log);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.updated, false);
+  assert.equal(result.unchanged, true, 'still honest that no commit moved');
+  assert.equal(result.testingUpdated, true);
+  assert.equal(result.captureRerun, true);
+  assert.equal(result.checksRerun, true);
+  assert.deepEqual(result.testingPaths, ['/?shot=invite', '/?shot=members @mobile']);
+
+  // Not one vote, because not one line of code changed.
+  assert.equal(result.votesCleared, 0);
+  assert.equal(log.push, undefined, 'nothing is pushed');
+  assert.equal(log.reconcile, undefined, 'and nothing reconciles a head that did not move');
+  assert.ok(!(log.queries || []).some((q) => /FROM pr_votes/.test(String(q.sql))), 'no tally is even counted');
+
+  // The stored routes, and the re-run that shoots them.
+  const write = testingWrite(log);
+  assert.deepEqual(JSON.parse(write.params[0]), TESTING.testingPaths);
+  assert.equal(rechecks.length, 1);
+  assert.equal(rechecks[0].reason, 'testing-update');
+  assert.deepEqual(rechecks[0].session.testing_paths, TESTING.testingPaths,
+    'the recheck is handed the row that already says the new routes');
+});
+
+test('a same-commit resubmit of the SAME routes stays the no-op it always was', async () => {
+  const log = {};
+  const rechecks = [];
+  const session = nativeSession({
+    testing_paths: TESTING.testingPaths,
+    testing_path: '/?shot=invite',
+    testing_md: TESTING.testingSteps,
+  });
+  const result = await run({
+    session,
+    pool: testingPool(session, log),
+    gh: { getBranchSha: async () => FORK_HEAD },
+    recovery: { recheckSessionChecks: async (args) => { rechecks.push(args); return 'rechecked'; } },
+  }, { testing: TESTING }, log);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.unchanged, true);
+  assert.equal(result.testingUpdated, false);
+  assert.equal(result.captureRerun, false);
+  assert.equal(testingWrite(log), undefined, 'nothing written');
+  assert.equal(rechecks.length, 0, 'and no capture burned on routes that already applied');
+
+  // A row written before #768 holds plain strings for the same routes. That
+  // is the same list, not a change — otherwise every legacy proposal re-shoots
+  // its screenshots the first time anything resubmits.
+  const legacy = nativeSession({ testing_paths: ['/board'], testing_path: '/board' });
+  const log2 = {};
+  const again = await run({
+    session: legacy,
+    pool: testingPool(legacy, log2),
+    gh: { getBranchSha: async () => FORK_HEAD },
+    recovery: { recheckSessionChecks: async () => 'rechecked' },
+  }, { testing: { testingPaths: ['/board'] } }, log2);
+  assert.equal(again.testingUpdated, false);
+  assert.equal(testingWrite(log2), undefined);
+});
+
+test('a same-commit resubmit with nothing new is still not an error', async () => {
+  const log = {};
+  const session = nativeSession();
+  const result = await run({
+    session,
+    pool: testingPool(session, log),
+    gh: { getBranchSha: async () => FORK_HEAD },
+    recovery: { recheckSessionChecks: async () => { throw new Error('must not run'); } },
+  }, {}, log);
+  assert.equal(result.ok, true);
+  assert.equal(result.unchanged, true);
+  assert.equal(result.testingUpdated, false);
+  assert.equal(result.captureRerun, false);
+  assert.equal(result.votesCleared, 0);
+});
+
+test('a paused session takes the new routes but never starts a build for them', async () => {
+  // Same reason settlePausedSession exists: there is no container to shoot
+  // against, and handoff-pipeline's write only matches an active session.
+  const log = {};
+  const rechecks = [];
+  const session = sessionRow('paused');
+  const result = await run({
+    session,
+    pool: testingPool(session, log),
+    gh: { getBranchSha: async () => FORK_HEAD },
+    recovery: { recheckSessionChecks: async (args) => { rechecks.push(args); return 'rechecked'; } },
+  }, { testing: TESTING }, log);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.testingUpdated, true);
+  assert.equal(result.captureRerun, false);
+  assert.equal(result.resumeRequired, true, 'the caller is told why no screenshots are coming yet');
+  assert.equal(rechecks.length, 0);
+  assert.ok(testingWrite(log), 'the routes are stored either way');
+});
+
+test('a metadata write that fails is reported, never fatal to an update that landed', async () => {
+  // The commit is already on the branch by the time this runs.
+  const log = {};
+  const session = nativeSession();
+  const queries = [];
+  log.queries = queries;
+  const pool = fakePool([
+    ['FROM chat_sessions cs JOIN apps a', [session]],
+    ['FROM pr_votes', [{ n: 4 }]],
+    ['SET testing_paths', () => { throw new Error('column is on fire'); }],
+  ], queries);
+  const result = await run({ session, pool }, { testing: TESTING }, log);
+  assert.equal(result.ok, true);
+  assert.equal(result.updated, true, 'the push still counts');
+  assert.equal(result.testingUpdated, false, 'and the caller is told the routes did not take');
+  assert.equal(session.testing_paths, undefined, 'the in-memory row is not lied to either');
+});
+
+test('the metadata write happens before the tails, and the resubmit path clears no votes', () => {
+  // Source-level, because the ORDER is the property: a future edit that moved
+  // applyTestingMetadata below the tails would still pass a behavioural test
+  // whose stubs do not read the row.
+  const fn = CODE.slice(
+    CODE.indexOf('async function advanceAppRepoBranch'),
+    CODE.indexOf('async function settleActiveSession')
+  );
+  const applied = fn.indexOf('applyTestingMetadata');
+  assert.ok(applied > 0, 'the app-repo path stores the routes');
+  for (const tail of ['syncImportedProposal', 'settleActiveSession', 'settlePausedSession', 'reconcileNativeReviewedHead']) {
+    assert.ok(fn.indexOf(tail) > applied, `${tail} runs after the routes are stored`);
+  }
+  const resubmit = CODE.slice(
+    CODE.indexOf('async function resubmitUnchanged'),
+    CODE.indexOf('async function advanceAppRepoBranch')
+  );
+  assert.doesNotMatch(resubmit, /countVotes|pr_votes|reconcileNativeReviewedHead|pushForkBranchToAppBranch/,
+    'a resubmit that moves no commit touches neither the votes nor the branch');
 });

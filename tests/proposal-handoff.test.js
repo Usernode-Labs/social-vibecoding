@@ -459,6 +459,67 @@ test('handoff validators require a spec-first, bounded, user-visible history con
   } finally { restore(); }
 });
 
+// #1199. The update route is where a revision's capture routes enter the
+// platform. It used to accept three keys and reject anything else, so a
+// connector that sent the routes with the push got a 400 — and the connector,
+// reasonably, stopped sending them. The proposal then kept whichever routes
+// its FIRST submission named.
+test('an update may re-aim the screenshots, and still refuses what it does not know', () => {
+  const { subject, restore } = makeHarness();
+  try {
+    const parsed = subject.parseUpdateFromForkBody({
+      branch: 'dev/fix-invite',
+      expectedHeadSha: HEAD,
+      // The viewport arrives split from the path, exactly as it does on the
+      // import route beside this one: submit_work's own parser is what turns
+      // the agent's "/?shot=invite @mobile" into this pair.
+      testingPaths: [
+        { path: '/?shot=invite', viewport: 'mobile' },
+        { path: '/?shot=members', viewport: 'mobile' },
+      ],
+      testingSteps: '1. Open the invite modal\n2. Type two letters',
+    });
+    assert.equal(parsed.branch, 'dev/fix-invite');
+    // Parsed into the column shape the capture step reads, by the same
+    // validator the import route and the "==== TESTING ====" block use.
+    assert.deepEqual(parsed.testing.testingPaths, [
+      { path: '/?shot=invite', viewport: 'mobile' },
+      { path: '/?shot=members', viewport: 'mobile' },
+    ]);
+    assert.equal(parsed.testing.testingPath, '/?shot=invite');
+    assert.match(parsed.testing.testingMd, /invite modal/);
+    // `provided` is what separates "replace the stored routes" from "leave
+    // them alone" — an update that says nothing about testing must not blank
+    // the routes the proposal already has.
+    assert.equal(parsed.testing.provided, true);
+    const silent = subject.parseUpdateFromForkBody({ branch: 'dev/fix-invite' });
+    assert.equal(silent.testing.provided, false);
+    assert.equal(silent.testing.testingPaths, null);
+
+    // The two new keys are additions to the allow-list, not a hole in it.
+    assert.throws(() => subject.parseUpdateFromForkBody({
+      branch: 'dev/x', testingPath: '/one',
+    }), /unsupported field/, 'a near-miss key is still a caller bug, not a silent drop');
+    // A wrong TYPE is named rather than silently ignored; individual unusable
+    // entries are dropped, the way the block parser drops them.
+    assert.throws(() => subject.parseUpdateFromForkBody({
+      branch: 'dev/x', testingPaths: '/one',
+    }), /testingPaths/);
+    assert.throws(() => subject.parseUpdateFromForkBody({
+      branch: 'dev/x', testingPaths: new Array(51).fill('/a'),
+    }), /at most 50/);
+    assert.doesNotThrow(() => subject.parseUpdateFromForkBody({
+      branch: 'dev/x', testingPaths: [null, 7, 'https://evil.example', '/keep'],
+    }));
+    assert.deepEqual(
+      subject.parseUpdateFromForkBody({
+        branch: 'dev/x', testingPaths: [null, 7, 'https://evil.example', '/keep'],
+      }).testing.testingPaths,
+      [{ path: '/keep', viewport: 'desktop' }]
+    );
+  } finally { restore(); }
+});
+
 test('build adoption is serialized per handoff session', async () => {
   const { subject, restore } = makeHarness();
   try {

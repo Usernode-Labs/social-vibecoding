@@ -193,8 +193,59 @@ function extract(text) {
   };
 }
 
+// Testing metadata that arrived as REQUEST FIELDS rather than inside a
+// "==== TESTING ====" block — `testingPaths` + `testingSteps` on a PR import
+// (routes/votes.js) or on a proposal update (routes/proposal-handoff.js).
+//
+// Every rule is the block parser's, reused rather than restated: what a valid
+// capture route is (validatePath), how many are shot (CAPTURE_MAX_PATHS), how
+// the viewport labels are spelled (normalizeStoredPath), how long the markdown
+// may be (TESTING_MD_MAX), and which entry is the primary path (the first).
+// A second opinion about any of those is how the same routes end up behaving
+// differently depending on whether a build turn or a connector submitted them.
+//
+// Returns the three column values plus `provided` — false when the caller sent
+// nothing usable, which is the browser import button's case and, on an update,
+// the difference between "leave the stored routes alone" and "replace them".
+// An entry that fails validation is DROPPED, exactly as the block parser drops
+// it; a body whose every entry drops reads as "nothing provided".
+function parseSubmitted(body) {
+  const none = { testingMd: null, testingPath: null, testingPaths: null, provided: false };
+  if (!body || typeof body !== 'object') return none;
+
+  const paths = [];
+  const seen = new Set();
+  if (Array.isArray(body.testingPaths)) {
+    for (const entry of body.testingPaths) {
+      const normalized = normalizeStoredPath(entry);
+      if (!normalized) continue;
+      // normalizeStoredPath deliberately does not re-validate (stored rows
+      // were validated at write time); this input never was, so it is.
+      const valid = validatePath(normalized.path);
+      if (!valid) continue;
+      const key = `${normalized.viewport} ${valid}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      if (paths.length < CAPTURE_MAX_PATHS) paths.push({ path: valid, viewport: normalized.viewport });
+    }
+  }
+
+  let md = typeof body.testingSteps === 'string' ? body.testingSteps.trim() : '';
+  if (md.length > TESTING_MD_MAX) md = md.slice(0, TESTING_MD_MAX);
+
+  if (!paths.length && !md) return none;
+  return {
+    testingMd: md || null,
+    // The PRIMARY path, same convention as the block parser: the first entry.
+    testingPath: paths.length ? paths[0].path : null,
+    testingPaths: paths.length ? paths : null,
+    provided: true,
+  };
+}
+
 module.exports = {
   extract,
+  parseSubmitted,
   validatePath,
   normalizeStoredPath,
   TESTING_MD_MAX,

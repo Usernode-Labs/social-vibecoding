@@ -1319,46 +1319,17 @@ function voteMatchesReviewedRevision(expectedHeadSha, revision) {
 // carries nothing, which is the browser import button's case and leaves that
 // path byte-identical to before.
 //
-// Every rule here is BORROWED, not restated: services/testing-notes.js owns
-// what a valid capture route is (validatePath), how many are shot
-// (CAPTURE_MAX_PATHS), how the viewport labels are spelled, and how long the
-// markdown may be (TESTING_MD_MAX). A second opinion about any of those is a
-// bug waiting to happen — the same routes then behave differently depending
-// on whether a build turn or a connector submitted them.
+// Every rule is BORROWED, not restated: services/testing-notes.js's
+// `parseSubmitted` owns what a valid capture route is, how many are shot, how
+// the viewport labels are spelled and how long the markdown may be. It is
+// shared with the UPDATE path (#1199), which is the point — the same routes
+// must not behave differently depending on whether an import or an update
+// submitted them. Only `provided` is dropped here: an import writes all three
+// columns on INSERT either way, so "was anything sent" carries no extra
+// meaning on this path.
 function parseImportTesting(body) {
-  const none = { testingMd: null, testingPath: null, testingPaths: null };
-  if (!body || typeof body !== 'object') return none;
-  const notes = require('../services/testing-notes');
-
-  const paths = [];
-  const seen = new Set();
-  if (Array.isArray(body.testingPaths)) {
-    for (const entry of body.testingPaths) {
-      const normalized = notes.normalizeStoredPath(entry);
-      if (!normalized) continue;
-      // normalizeStoredPath deliberately does not re-validate (stored rows
-      // were validated at write time); this input never was, so it is.
-      const valid = notes.validatePath(normalized.path);
-      if (!valid) continue;
-      const key = `${normalized.viewport} ${valid}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      if (paths.length < notes.CAPTURE_MAX_PATHS) {
-        paths.push({ path: valid, viewport: normalized.viewport });
-      }
-    }
-  }
-
-  let md = typeof body.testingSteps === 'string' ? body.testingSteps.trim() : '';
-  if (md.length > notes.TESTING_MD_MAX) md = md.slice(0, notes.TESTING_MD_MAX);
-
-  if (!paths.length && !md) return none;
-  return {
-    testingMd: md || null,
-    // The PRIMARY path, same convention as the block parser: the first entry.
-    testingPath: paths.length ? paths[0].path : null,
-    testingPaths: paths.length ? paths : null,
-  };
+  const { provided, ...columns } = require('../services/testing-notes').parseSubmitted(body);
+  return columns;
 }
 
 function revisionChangedVoteResponse(res, headSha, message = null) {

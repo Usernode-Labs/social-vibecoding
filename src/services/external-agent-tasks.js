@@ -1910,10 +1910,18 @@ async function submitUpdate(deps, params, proposalId) {
     return fail('invalid_request', 'Pass `slug` (or the taskId from the work order) so Usernode knows which app this proposal is on.');
   }
 
+  // The testing metadata travels WITH the update (#1199). The route stores it
+  // before the tails run their capture, so the screenshots the group votes on
+  // are of the screen this revision changed rather than of whatever the first
+  // submission named — or, when that first submission named nothing, of the
+  // app's home page. Omitted keys leave the stored routes alone.
+  const testing = params.testing || {};
   const updated = await updateProposal(slug, proposalId, {
     branch,
     forkRepo: params.forkRepo ? String(params.forkRepo).trim() : null,
     expectedHeadSha,
+    ...(testing.testingPaths ? { testingPaths: testing.testingPaths } : {}),
+    ...(testing.testingSteps ? { testingSteps: testing.testingSteps } : {}),
   });
   if (!updated || !updated.ok) {
     const body = (updated && updated.body) || {};
@@ -1975,6 +1983,15 @@ async function submitUpdate(deps, params, proposalId) {
     // start a staging build for it — the caller has to be told, or the
     // absence of a rebuilding preview reads as a failure.
     resumeRequired: result.resumeRequired === true,
+    // #1199. What the revision's screenshots will be of, and — on a resubmit
+    // that moved no commit — whether correcting them re-ran the capture. Both
+    // have to be reported: an agent that fixed its capture routes cannot tell
+    // from `unchanged: true` alone whether anything happened.
+    testingUpdated: result.testingUpdated === true,
+    testingPaths: Array.isArray(result.testingPaths) && result.testingPaths.length
+      ? result.testingPaths.map((p) => String(p))
+      : null,
+    captureRerun: result.captureRerun === true,
     // 'proposal' | 'session' | null — what the push actually landed on, as
     // decided under the lock rather than as the work order predicted.
     targetKind: result.targetKind || null,
@@ -1986,16 +2003,18 @@ async function submitUpdate(deps, params, proposalId) {
 // deps: { pool, config, gh, githubLink, limits }
 // params: { user, clientName, clientId, taskId, prNumber, proposalId, slug,
 //           branch, forkRepo, expectedHeadSha, patch, source, agent, title,
-//           body, importProposal, updateProposal }
+//           body, testing, importProposal, updateProposal }
 //
 // `importProposal(slug, prNumber)` is supplied by the caller and performs
 // the loopback POST to /api/apps/:slug/pr-import carrying the caller's own
 // connector token, so the import runs under exactly the authorization the
 // browser would have had. It resolves to { ok, status, body }.
 //
-// `updateProposal(slug, proposalId, { branch, forkRepo, expectedHeadSha })` is
-// the same arrangement for UPDATE mode, against
-// /api/apps/:slug/proposals/:id/update-from-fork.
+// `updateProposal(slug, proposalId, { branch, forkRepo, expectedHeadSha,
+// testingPaths, testingSteps })` is the same arrangement for UPDATE mode,
+// against /api/apps/:slug/proposals/:id/update-from-fork. `params.testing` is
+// the caller's already-shaped testing metadata, in the same
+// { testingPaths, testingSteps } form the import path passes to pr-import.
 //
 // Serialized per task: see withTaskLock above for why one piece of work can
 // now have two callers racing on it.
