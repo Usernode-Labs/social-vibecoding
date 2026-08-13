@@ -1572,6 +1572,12 @@
       "expectSelector": "#settings-footer #settings-logout"
     },
     {
+      "name": "A refused app bridge explains itself instead of just failing (#1162)",
+      "path": "/#settings/usernode?bridgediag=demo",
+      "expectSelector": "#settings-usernode-connection #settings-usernode-connection-retry + #settings-usernode-connection-copy",
+      "expectText": "Force-close the app and reopen it"
+    },
+    {
       "name": "A settings history traversal routes once, so nothing pre-empts the transition snapshot (#1102)",
       "path": "/?shot=settings-back#settings",
       "expectSelector": "#settings-screen:not(.hidden)[data-settings-route=\"skipped\"] #settings-section-content [data-settings-section=\"api-key\"]:not(.hidden)"

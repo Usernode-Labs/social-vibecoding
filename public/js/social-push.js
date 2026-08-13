@@ -481,11 +481,28 @@
   let bridgePageActive = true;
   let bridgeReadyTimer = null;
   let bridgeReadyAttempt = 0;
+  let bridgeReadyGaveUp = false;
+  let bridgeReadyLastError = null;
   const bridgeReadyRetryMs = [100, 500, 2000, 5000, 15000, 30000];
+  // The backoff table is the WHOLE budget, not a floor to clamp to. It used
+  // to clamp the index and retry every 30 s for the life of the document,
+  // so a device whose privileged handshake was refused reissued a call it
+  // could never win, forever, while telling the user nothing. Stop after
+  // the table is spent, remember why, and wait for a real signal — a
+  // pageshow, a native auth-status of "ready", or the user pressing Try
+  // again in Settings → Usernode app — before spending it again.
+  const bridgeReadyMaxAttempts = bridgeReadyRetryMs.length;
+
+  function resetBridgeReadyBackoff() {
+    bridgeReadyAttempt = 0;
+    bridgeReadyGaveUp = false;
+    if (bridgeReadyTimer) clearTimeout(bridgeReadyTimer);
+    bridgeReadyTimer = null;
+  }
 
   function announceBridgeReady() {
     if (!bridgePageActive || bridgeReady || bridgeReadyInFlight ||
-        bridgeReadyTimer || !window.usernode ||
+        bridgeReadyGaveUp || bridgeReadyTimer || !window.usernode ||
         window.usernode.isNative !== true ||
         typeof window.usernode.markPrivilegedBridgeReady !== 'function') {
       return;
@@ -493,6 +510,9 @@
     bridgeReadyInFlight = true;
     window.usernode.markPrivilegedBridgeReady().then((result) => {
       if (!bridgePageActive) return;
+      bridgeReadyLastError = null;
+      bridgeReadyGaveUp = false;
+      bridgeReadyAttempt = 0;
       if (result && result.ready === true) {
         bridgeReady = true;
         return;
@@ -503,9 +523,14 @@
       if (!bridgePageActive) return;
       console.warn('[social-push] native bridge readiness failed:',
         err && err.message ? err.message : err);
-      const delay = bridgeReadyRetryMs[Math.min(
-        bridgeReadyAttempt, bridgeReadyRetryMs.length - 1
-      )];
+      bridgeReadyLastError = (err && err.message) ? String(err.message) : null;
+      if (bridgeReadyAttempt >= bridgeReadyMaxAttempts - 1) {
+        bridgeReadyGaveUp = true;
+        console.warn('[social-push] giving up on native bridge readiness ' +
+          `after ${bridgeReadyMaxAttempts} attempts`);
+        return;
+      }
+      const delay = bridgeReadyRetryMs[bridgeReadyAttempt];
       bridgeReadyAttempt += 1;
       bridgeReadyTimer = setTimeout(() => {
         bridgeReadyTimer = null;
@@ -513,11 +538,31 @@
       }, delay);
     }).finally(() => {
       bridgeReadyInFlight = false;
-      if (bridgePageActive && !bridgeReady && !bridgeReadyTimer) {
+      if (bridgePageActive && !bridgeReady && !bridgeReadyGaveUp &&
+          !bridgeReadyTimer) {
         announceBridgeReady();
       }
     });
   }
+
+  // What the readiness handshake is doing, for the Settings diagnostics
+  // panel. Read-only: { ready, attempts, exhausted, pending, lastError }.
+  SocialPush.readinessState = function readinessState() {
+    return {
+      ready: bridgeReady,
+      attempts: bridgeReadyAttempt,
+      exhausted: bridgeReadyGaveUp,
+      pending: bridgeReadyInFlight || bridgeReadyTimer !== null,
+      lastError: bridgeReadyLastError,
+    };
+  };
+
+  // The user-driven half of the cap above: spend a fresh budget now.
+  SocialPush.retryBridgeReadiness = function retryBridgeReadiness() {
+    resetBridgeReadyBackoff();
+    announceBridgeReady();
+    return SocialPush.readinessState();
+  };
 
   window.addEventListener('pagehide', () => {
     SocialPush._foregroundPageActive = false;
@@ -533,8 +578,7 @@
     // another realm while it was away. Re-announce on pageshow so readiness is
     // rebound even though the per-realm capability itself remains valid.
     bridgeReady = false;
-    if (bridgeReadyTimer) clearTimeout(bridgeReadyTimer);
-    bridgeReadyTimer = null;
+    resetBridgeReadyBackoff();
   });
   window.addEventListener('pageshow', () => {
     SocialPush._foregroundPageActive = true;
@@ -554,7 +598,16 @@
     }
     SocialPush._foregroundRestoreRefreshRequired = false;
     bridgePageActive = true;
+    resetBridgeReadyBackoff();
     SocialPush.retryForegroundInvalidation();
+    announceBridgeReady();
+  });
+  // The app reaching "ready" is the one signal that says the thing we were
+  // failing against now exists, so it re-arms the spent budget too.
+  window.addEventListener('usernode:auth-status', (event) => {
+    if (!event || !event.detail || event.detail.phase !== 'ready') return;
+    if (bridgeReady || !bridgeReadyGaveUp) return;
+    resetBridgeReadyBackoff();
     announceBridgeReady();
   });
   document.addEventListener('DOMContentLoaded', () => {

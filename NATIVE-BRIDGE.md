@@ -33,7 +33,7 @@ feature-detect with `getBridgeInfo`.
   `capabilities` is for — never assume a method exists because this document
   lists it.
 
-Five additive security/session capabilities extend v4 without changing its
+Six additive security/session capabilities extend v4 without changing its
 version:
 
 - `privilegedBridgeCapability`: privileged top-frame methods require a
@@ -48,6 +48,10 @@ version:
   confirmed that no web participant is signed in.
 - `sessionBoundAuthStatus`: auth snapshots include `participantId` and
   identity `epoch`, and node starts can be bound to both values.
+- `privilegedErrorCodes`: every privileged refusal carries a stable
+  machine-readable `code` alongside its human message, so the page never has
+  to pattern-match English. Optional in both directions — see "Privileged
+  refusal codes" below.
 
 One additive **widget** capability extends v4 the same way:
 
@@ -163,6 +167,7 @@ last read succeeded or it was never called.
 | `no-transport` | no channel to the app from this frame at all |
 | `not-native` | called outside the app (or on a build without the method) |
 | `probe-inconclusive` | the privileged handshake could not be negotiated because `getBridgeInfo` itself came back degraded |
+| `privileged-unavailable` | the app refused (or never answered) this realm's privileged handshake, so a privileged method could not be called at all — see "Privileged refusal codes" below |
 | `page-changed` | the originating page entered navigation/BFCache before its native reply arrived |
 
 The record carries a method name plus native's own error string only — the
@@ -171,6 +176,101 @@ message — and each frame keeps its own map, so a frame can only read
 failures of calls it made itself. `NativeChrome.lastReadError(method)`
 forwards to it for SV chrome; SV's Settings screen renders the mapped
 reason instead of a bare "could not load".
+
+Privileged **actions** (setters, `openNativeScreen`, the session methods)
+still reject rather than resolving a fallback — that part is unchanged —
+but they now leave the same record behind, so a refused action is as
+diagnosable as a failed read.
+
+#### Privileged refusal codes
+
+When the app refuses a privileged call, the human message is written for a
+person and may be reworded at any time. Consumers must not pattern-match
+English to decide what happened, so the app may send a stable machine-readable
+code alongside it.
+
+**Transport — a 4th argument to `__usernodeResolve`, additive in both
+directions.** The page already resolves a request with
+`window.__usernodeResolve(id, value, error)` where `error` is a **string**
+that the wrapper turns into `new Error(error)`. A build that has a code
+passes one more argument:
+
+```js
+window.__usernodeResolve(id, null,
+  "Privileged bridge is unavailable for this main frame",
+  { code: "privileged_frame_unauthorized" });
+```
+
+Both halves of this stay compatible on purpose:
+
+- **Old app, new page.** Three arguments arrive, `errorInfo` is `undefined`,
+  and the page behaves byte-for-byte as it does today — no code is invented.
+- **New app, old page.** Older installed wrappers ignore extra arguments.
+- `error` **must stay a string.** Moving the code into that slot would make
+  every installed build render `[object Object]` to the user.
+- A missing, empty, non-string or malformed `code` is ignored, never trusted.
+
+The wrapper puts a valid code on the rejected error as
+`err.usernodeCode`, tags it `err.usernodeKind = "privileged-unavailable"`
+and `err.usernodePrivileged = true`, and classifies it:
+
+| `code` | Classified state | What the user is told |
+|---|---|---|
+| `privileged_frame_unauthorized` | `blocked-frame` | the app is refusing this screen's secure connection |
+| `privileged_unsupported_version` | `unsupported` | this app build predates the connection this screen uses |
+| `privileged_bootstrap_timeout` | `unattached` | the app never answered the connection request |
+
+An **unrecognised** code still classifies (as `blocked-frame`) rather than
+falling through — a code the page has never seen is still positive evidence
+that the app refused deliberately. With **no** code at all, the page falls
+back to matching native's prose, which is why the classification keeps
+working against every build shipped so far.
+
+A build that always sends a code should advertise `privilegedErrorCodes` in
+`capabilities`. Nothing on the SV side depends on that capability or on the
+codes landing at all — this is a paired change owned by the Flutter repo, and
+the consumer half shipped first, degrading to prose matching.
+
+**Codes carry no secrets.** A code is a fixed identifier from the table
+above, never a token, path, account identifier or free-form detail: the page
+renders it and offers it as copyable text.
+
+#### `getBridgeDiagnostics()` → connection snapshot (synchronous)
+
+Everything the current frame knows about its own bridge, copied, with no
+`await`:
+
+```json
+{ "isNative": true, "isTopFrame": true, "inIframe": false,
+  "usesIframeRelay": false, "hasNativeChannel": true,
+  "origin": "https://social.usernode.com",
+  "bridgeVersion": 4, "capabilities": ["..."],
+  "appVersion": "0.4.0", "buildNumber": "1223",
+  "privileged": { "state": "blocked-frame",
+                  "code": "privileged_frame_unauthorized",
+                  "kind": "privileged-unavailable",
+                  "message": "…native's own text…",
+                  "at": 1780000000000, "attempts": 3 },
+  "lastErrors": { "getSettingsState": { "method": "…", "kind": "…",
+                                        "message": "…", "at": 0 } },
+  "collectedAt": 1780000000000 }
+```
+
+`privileged.state` is one of `ready`, `blocked-frame`, `unsupported`,
+`inconclusive`, `unattached`, `unknown`. `bridgeVersion`, `capabilities`,
+`appVersion` and `buildNumber` come from the last **conclusive**
+`getBridgeInfo` — which is unprivileged, and therefore still answers on a
+device whose privileged handshake is refused. That is what makes such a
+device diagnosable at all.
+
+It carries **no capability token** (the token lives in a closure and never
+reaches a message) and no user data, and each frame reads only its own
+records. In a child frame the privileged record is reported as
+`blocked-frame` / `no-transport` regardless of what that frame last tried,
+so an embedded dapp learns nothing about the top frame.
+
+SV renders it as Settings → Usernode app → "Usernode app — connection", with
+**Try again** and **Copy diagnostics**.
 
 #### `getNodeStatus()` → snapshot object
 
@@ -381,6 +481,18 @@ wallet dispatch before `/from-session`, so Android child frames cannot bypass
 the JavaScript wrapper with a raw channel message. A verified current-user
 handoff reopens both gates; failures stay closed. Pre-v4 builds reopen the
 local gate after their older bridge version confirms that no handoff exists.
+
+**Sign-out never depends on the app answering.** `prepareWebLogout()` closes
+every admission gate synchronously and then **resolves a report** —
+`{ nativeTerminal, latch, reason, code }`, where `latch` is `acknowledged`,
+`unsupported`, `unavailable` or `inconclusive` — instead of rejecting. It
+used to reject, which aborted SV's sign-out *before* `POST /api/auth/logout`:
+a device whose privileged handshake was refused kept its web session with no
+way out of the app at all. A refused latch now means SV asks the user and
+then clears the web session anyway, attempts `usernode.logout()` best-effort
+inside a short budget, and says so on the login screen if the app kept its
+own session. The fail-closed wallet gate is unchanged — the fallback loosens
+the exit, never the gate.
 
 #### `beginSessionHandoff()` → `{ blocked: true }`
 

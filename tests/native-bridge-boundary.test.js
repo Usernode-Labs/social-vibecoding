@@ -28,6 +28,9 @@ function loadBridge({
   capabilities = [],
   silentMethods = [],
   errorMethods = {},
+  // Per-method 4th argument for __usernodeResolve — the machine-readable
+  // refusal envelope newer app builds send alongside the English message.
+  errorInfoMethods = {},
   timeoutScale = 1,
   exposeCallNative = false,
   delayedMethods = {},
@@ -120,6 +123,17 @@ function loadBridge({
       nativePosts.push(request);
       if (silentMethods.includes(request.method)) return;
       if (Object.prototype.hasOwnProperty.call(errorMethods, request.method)) {
+        if (Object.prototype.hasOwnProperty.call(
+          errorInfoMethods, request.method
+        )) {
+          sandbox.__usernodeResolve(
+            request.id, null, errorMethods[request.method],
+            errorInfoMethods[request.method]
+          );
+          return;
+        }
+        // Deliberately three arguments: every installed app build calls it
+        // this way and must keep behaving exactly as it does today.
         sandbox.__usernodeResolve(
           request.id, null, errorMethods[request.method]
         );
@@ -768,3 +782,139 @@ test('session handoff gate rejects top-frame and iframe wallet calls', async () 
   );
   assert.equal(childReplies[1].value.error, null);
 });
+
+// ── Refusal codes (bridge contract v4) ──────────────────────────────────
+//
+// Native may now send a 4th argument to __usernodeResolve carrying a
+// machine-readable { code }. The transport has to be additive in BOTH
+// directions: an old app calling it with three arguments must behave
+// byte-for-byte as it does today, and a new app's extra argument must
+// never turn the human message into "[object Object]".
+
+test('a three-argument resolve keeps exactly today’s behaviour', async () => {
+  const loaded = loadBridge({
+    capabilities: ['privilegedBridgeCapability', 'beginSessionHandoff'],
+    errorMethods: { beginSessionHandoff: 'latch is busy' },
+  });
+
+  const err = await loaded.sandbox.usernode.beginSessionHandoff()
+    .then(() => null, (e) => e);
+
+  assert.equal(err.message, 'latch is busy');
+  assert.equal('usernodeCode' in err, false,
+    'no code is invented when native did not send one');
+});
+
+test('a refusal code rides alongside the human message, never replacing it',
+  async () => {
+    const loaded = loadBridge({
+      capabilities: ['privilegedBridgeCapability', 'beginSessionHandoff'],
+      errorMethods: {
+        beginSessionHandoff:
+          'Privileged bridge is unavailable for this main frame',
+      },
+      errorInfoMethods: {
+        beginSessionHandoff: { code: 'privileged_frame_unauthorized' },
+      },
+    });
+
+    const err = await loaded.sandbox.usernode.beginSessionHandoff()
+      .then(() => null, (e) => e);
+
+    assert.equal(err.message,
+      'Privileged bridge is unavailable for this main frame');
+    assert.equal(err.usernodeCode, 'privileged_frame_unauthorized');
+    assert.equal(err.usernodeKind, 'privileged-unavailable');
+    assert.equal(err.usernodePrivileged, true);
+  });
+
+test('a junk or empty errorInfo is ignored rather than trusted', async () => {
+  for (const info of [null, {}, { code: '' }, { code: '  ' }, { code: 7 }, 'x']) {
+    const loaded = loadBridge({
+      capabilities: ['privilegedBridgeCapability', 'beginSessionHandoff'],
+      errorMethods: { beginSessionHandoff: 'nope' },
+      errorInfoMethods: { beginSessionHandoff: info },
+    });
+    const err = await loaded.sandbox.usernode.beginSessionHandoff()
+      .then(() => null, (e) => e);
+    assert.equal(err.message, 'nope');
+    assert.equal(err.usernodeCode, undefined,
+      `errorInfo ${JSON.stringify(info)} must not produce a code`);
+  }
+});
+
+test('each refusal code classifies to its own diagnosable state', async () => {
+  const cases = [
+    ['privileged_frame_unauthorized', 'blocked-frame'],
+    ['privileged_unsupported_version', 'unsupported'],
+    ['privileged_bootstrap_timeout', 'unattached'],
+  ];
+  for (const [code, state] of cases) {
+    const loaded = loadBridge({
+      capabilities: ['privilegedBridgeCapability', 'beginSessionHandoff'],
+      errorMethods: { beginSessionHandoff: 'refused' },
+      errorInfoMethods: { beginSessionHandoff: { code } },
+    });
+    await loaded.sandbox.usernode.beginSessionHandoff().catch(() => {});
+    const diag = loaded.sandbox.usernode.getBridgeDiagnostics();
+    assert.equal(diag.privileged.state, state, `${code} → ${state}`);
+    assert.equal(diag.privileged.code, code);
+  }
+});
+
+test('an unknown code still classifies rather than falling through',
+  async () => {
+    const loaded = loadBridge({
+      capabilities: ['privilegedBridgeCapability', 'beginSessionHandoff'],
+      errorMethods: { beginSessionHandoff: 'refused for reasons' },
+      errorInfoMethods: {
+        beginSessionHandoff: { code: 'privileged_something_new' },
+      },
+    });
+
+    await loaded.sandbox.usernode.beginSessionHandoff().catch(() => {});
+    const diag = loaded.sandbox.usernode.getBridgeDiagnostics();
+    assert.equal(diag.privileged.state, 'blocked-frame');
+    assert.equal(diag.privileged.code, 'privileged_something_new');
+  });
+
+test('with no code at all the English prose still classifies', async () => {
+  const loaded = loadBridge({
+    capabilities: ['privilegedBridgeCapability', 'beginSessionHandoff'],
+    errorMethods: {
+      beginSessionHandoff:
+        'Privileged bridge is unavailable for this main frame',
+    },
+  });
+
+  await loaded.sandbox.usernode.beginSessionHandoff().catch(() => {});
+  const diag = loaded.sandbox.usernode.getBridgeDiagnostics();
+  assert.equal(diag.privileged.state, 'blocked-frame');
+  assert.equal(diag.privileged.code, null);
+});
+
+test('an ordinary method rejection is not mistaken for a refused bridge',
+  async () => {
+    const loaded = loadBridge({
+      capabilities: ['privilegedBridgeCapability', 'beginSessionHandoff'],
+      errorMethods: { beginSessionHandoff: 'the wallet is already unlocked' },
+    });
+
+    const err = await loaded.sandbox.usernode.beginSessionHandoff()
+      .then(() => null, (e) => e);
+    assert.equal(err.usernodePrivileged, undefined);
+
+    const diag = loaded.sandbox.usernode.getBridgeDiagnostics();
+    assert.equal(diag.privileged.state, 'ready',
+      'the handshake itself succeeded; only the method failed');
+  });
+
+test('a build without the privileged bootstrap classifies as unsupported',
+  async () => {
+    const loaded = loadBridge({ capabilities: ['beginSessionHandoff'] });
+
+    await loaded.sandbox.usernode.beginSessionHandoff().catch(() => {});
+    const diag = loaded.sandbox.usernode.getBridgeDiagnostics();
+    assert.equal(diag.privileged.state, 'unsupported');
+    assert.equal(diag.privileged.code, null);
+  });
