@@ -82,6 +82,40 @@ const PLATFORM_BASE_URL = `https://${PLATFORM_DOMAIN}`;
 function getTemplateFiles(appName, slug, dbUrl) {
   return [
     {
+      // Client-side permission rules for the Usernode connector (#1206).
+      //
+      // Read this next to the constraint it exists because of: an MCP
+      // server cannot reduce its own prompting, and must not be able to —
+      // a server that could pre-approve itself would defeat the whole
+      // permission system. So the only place this can live is a file the
+      // USER holds, in the project they work in. Shipping it in the
+      // scaffold is how a correct rule becomes something you already have
+      // rather than something you have to find out about.
+      //
+      // Two things about the content are deliberate:
+      //
+      //  - The server segment is the literal `Usernode`. Claude Code's
+      //    permission syntax accepts tool-name globs only AFTER a
+      //    glob-free `mcp__<server>__` prefix, so this cannot be written
+      //    generically, and against a connector registered under any
+      //    other spelling it matches nothing — silently, with no error.
+      //    The connector must be added as `Usernode` for this to do
+      //    anything, which is why the platform's Settings panel makes
+      //    that name copyable.
+      //
+      //  - The tools that ACT are missing on purpose. `submit_work` puts
+      //    a change to a group vote; `create_request` files under the
+      //    user's name; `prepare_work` and the platform-build tools
+      //    create tasks and spend credits. Those keep prompting, and the
+      //    prompt is worth something again precisely because the ~30
+      //    read-only calls around it stopped.
+      //
+      // Generated from services/mcp-tools.js so the scaffold, the docs
+      // and the connector's own `whoami` cannot drift apart.
+      path: '.claude/settings.json',
+      content: require('./mcp-tools').connectorPermissionSettingsJson(),
+    },
+    {
       path: 'CLAUDE.md',
       content: `# ${appName} — notes for Claude Code
 
@@ -231,9 +265,12 @@ module.exports = {
     },
     {
       path: '.dockerignore',
+      // .claude holds coding-agent settings (the connector's permission
+      // rules) — repo content, but nothing the runtime image needs.
       content: `.env
 .env.*
 .git
+.claude
 node_modules
 `,
     },

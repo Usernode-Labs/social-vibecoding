@@ -75,6 +75,16 @@ const ADDED_IDS = {
   // two is visible; both are flex-1 + min-height:0 children of #app-view's
   // column flex, so the visible one gets the box #app-content used to have.
   'app-frame-host': "React-owned host for the embedded app's #app-iframe, a hidden empty sibling of #app-content (#1085).",
+  // #1206 — the connector's canonical name, and the client-side allow
+  // rules that stop its read-only tools prompting. All five ship empty and
+  // are filled by Settings._renderConnectorSetup() from the API's `setup`
+  // block, so the platform holds exactly one spelling of the server name.
+  'connector-name': 'Copyable canonical connector name, so nobody retypes it wrong (#1206).',
+  'connector-name-copy': 'Copy button for the connector name (#1206).',
+  'connector-perms-json': 'The .claude/settings.json allow rules for the read-only connector tools (#1206).',
+  'connector-perms-copy': 'Copy button for that snippet (#1206).',
+  'connector-perms-reads': 'Names the read-only tools the rules pre-approve (#1206).',
+  'connector-perms-acts': 'Names the acting tools deliberately left prompting (#1206).',
 };
 
 test('the shell still carries every id in the frozen baseline', () => {

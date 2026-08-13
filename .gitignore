@@ -30,3 +30,8 @@ hackathon-data/
 
 # Local Claude Code worktree checkouts (never repo content).
 .claude/worktrees/
+
+# Per-machine permission overrides. .claude/settings.json IS committed —
+# it carries the connector's read-only allow rules (#1206) — but the
+# `.local` sibling is whatever one developer approved on one machine.
+.claude/settings.local.json

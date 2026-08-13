@@ -246,7 +246,10 @@ function mcpPreAuthRoutes(config) {
       authorization_servers: [config.cliAuthOrigin],
       scopes_supported: SUPPORTED_SCOPES,
       bearer_methods_supported: ['header'],
-      resource_name: 'Usernode',
+      // Not a second literal: some clients pre-fill the connector's name
+      // field from this, and a name that disagrees with SERVER_NAME is how
+      // a user ends up with permission rules that match nothing (#1206).
+      resource_name: SERVER_NAME,
       resource_documentation: `${config.cliAuthOrigin}/`,
     });
   };
@@ -731,6 +734,23 @@ function mcpBrowserRoutes(config) {
   });
 
   // ── Settings: connected chat products ────────────────────────────────
+  //
+  // The panel renders the name a user must type at connect time and the
+  // allow rules that stop the read-only tools prompting. Both ride on this
+  // response rather than being typed into the React source, so there is
+  // exactly one spelling of `Usernode` in the product (#1206) — a second
+  // copy in the frontend is precisely how the docs and the rules drift
+  // apart, and the drift is invisible until someone's rules match nothing.
+  const connectorSetup = () => ({
+    serverName: mcpTools.SERVER_NAME,
+    toolPrefix: mcpTools.PERMISSION_RULE_PREFIX,
+    readOnlyTools: mcpTools.READ_ONLY_TOOLS,
+    actingTools: mcpTools.ACTING_TOOLS,
+    settingsPath: '.claude/settings.json',
+    settingsJson: mcpTools.connectorPermissionSettingsJson(),
+    docsPath: '/connector-setup.md',
+  });
+
   router.get('/api/me/connectors', userRate, async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'not_authenticated' });
 
@@ -742,10 +762,13 @@ function mcpBrowserRoutes(config) {
     if (process.env.USERNODE_ENV === 'staging') {
       return res.json(
         req.query.demo === '1'
-          ? { connectors: demoConnectors(), demo: true }
+          ? { connectors: demoConnectors(), demo: true, setup: connectorSetup() }
           // No credential can exist on staging (the surface that mints one
           // is 404 there), so the honest answer without the flag is "none".
-          : { connectors: [] }
+          // `setup` is static platform text, so it renders either way —
+          // the name and the allow rules are exactly what a reviewer of a
+          // staging preview needs to see.
+          : { connectors: [], setup: connectorSetup() }
       );
     }
 
@@ -768,6 +791,7 @@ function mcpBrowserRoutes(config) {
         [req.user.id]
       );
       return res.json({
+        setup: connectorSetup(),
         connectors: rows
           .filter((row) => row.active)
           .map((row) => ({

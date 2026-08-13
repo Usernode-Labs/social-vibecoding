@@ -189,12 +189,16 @@
       const cliMore = document.getElementById('cli-tokens-more');
       if (cliMore) cliMore.addEventListener('click', () => this._loadCliTokens(false));
 
-      // Copy the connector URL — the one thing the user has to carry over
-      // into Claude.ai / ChatGPT by hand.
-      const connectorCopy = document.getElementById('connector-url-copy');
-      if (connectorCopy) {
-        connectorCopy.addEventListener('click', async () => {
-          const field = document.getElementById('connector-url');
+      // Copy the two things the user has to carry over into Claude.ai /
+      // ChatGPT by hand: the connector's NAME and its URL. The name is
+      // copyable rather than merely displayed because retyping it is how
+      // `Uesrnode` happened (#1206) — and a misspelled name still connects
+      // fine, so nothing downstream catches it.
+      const copyFieldOnClick = (buttonId, fieldId) => {
+        const button = document.getElementById(buttonId);
+        if (!button) return;
+        button.addEventListener('click', async () => {
+          const field = document.getElementById(fieldId);
           if (!field) return;
           try {
             await navigator.clipboard.writeText(field.value);
@@ -203,8 +207,27 @@
             // text so the user can copy it themselves.
             field.select();
           }
-          connectorCopy.textContent = 'Copied';
-          setTimeout(() => { connectorCopy.textContent = 'Copy'; }, 1500);
+          button.textContent = 'Copied';
+          setTimeout(() => { button.textContent = 'Copy'; }, 1500);
+        });
+      };
+      copyFieldOnClick('connector-name-copy', 'connector-name');
+      copyFieldOnClick('connector-url-copy', 'connector-url');
+
+      // The allow-rules snippet is a <pre>, not an <input>, so it copies
+      // textContent and has no selection fallback to fall back to.
+      const permsCopy = document.getElementById('connector-perms-copy');
+      if (permsCopy) {
+        permsCopy.addEventListener('click', async () => {
+          const block = document.getElementById('connector-perms-json');
+          if (!block || !block.textContent) return;
+          try {
+            await navigator.clipboard.writeText(`${block.textContent}\n`);
+            permsCopy.textContent = 'Copied';
+          } catch {
+            permsCopy.textContent = 'Select it';
+          }
+          setTimeout(() => { permsCopy.textContent = 'Copy'; }, 1500);
         });
       }
 
@@ -1233,6 +1256,7 @@
         }
         section.classList.remove('hidden');
         this._connectors = data.connectors;
+        this._renderConnectorSetup(data.setup);
         this._renderConnectors();
       } catch (err) {
         if (loadId !== this._connectorLoadId) return;
@@ -1241,6 +1265,35 @@
         status.classList.remove('hidden', 'text-emerald-500');
         status.classList.add('text-red-500');
       }
+    },
+
+    // The connector's canonical name and the client-side allow rules that
+    // stop the read-only tools prompting (#1206). Every value here comes
+    // from the API's `setup` block: the name a permission rule has to
+    // match cannot be wildcarded, so a second spelling typed into this
+    // file would be a rule that silently matches nothing.
+    _renderConnectorSetup(setup) {
+      const nameField = document.getElementById('connector-name');
+      const json = document.getElementById('connector-perms-json');
+      const reads = document.getElementById('connector-perms-reads');
+      const acts = document.getElementById('connector-perms-acts');
+
+      // An older platform build has no `setup` block. Leave the fields
+      // empty rather than inventing a name — a guessed one is exactly the
+      // failure this panel exists to prevent.
+      if (!setup || typeof setup !== 'object') return;
+
+      if (nameField && typeof setup.serverName === 'string') {
+        nameField.value = setup.serverName;
+      }
+      if (json && typeof setup.settingsJson === 'string') {
+        json.textContent = setup.settingsJson.trimEnd();
+      }
+      // A plain readable list, not the fully-qualified rule names — the
+      // rules themselves are right there in the snippet.
+      const names = (arr) => (Array.isArray(arr) ? arr.join(', ') : '');
+      if (reads) reads.textContent = names(setup.readOnlyTools);
+      if (acts) acts.textContent = names(setup.actingTools);
     },
 
     _renderConnectors() {

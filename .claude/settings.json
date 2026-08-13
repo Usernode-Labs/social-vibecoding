@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__Usernode__get_app",
+      "mcp__Usernode__get_platform_build",
+      "mcp__Usernode__get_platform_conventions",
+      "mcp__Usernode__get_proposal",
+      "mcp__Usernode__list_apps",
+      "mcp__Usernode__list_my_proposals",
+      "mcp__Usernode__list_requests",
+      "mcp__Usernode__whoami"
+    ]
+  }
+}

@@ -338,6 +338,28 @@ app.get('/claude.md', (_req, res) => {
   }
 });
 
+// Public connector-setup endpoint (#1206). Same shape and the same reason
+// as /claude.md above: the Settings → Connectors screen links here, and
+// `whoami` returns this URL, so a user being prompted on every read can
+// reach the canonical name and the allow rules without a checkout. Open to
+// anyone — it documents client-side convenience settings and contains no
+// credential or account state.
+app.get('/connector-setup.md', (_req, res) => {
+  const fs = require('fs');
+  const fp = path.join(__dirname, 'CONNECTOR-SETUP.md');
+  try {
+    const body = fs.readFileSync(fp, 'utf-8');
+    const stat = fs.statSync(fp);
+    res.set('Content-Type', 'text/markdown; charset=utf-8');
+    res.set('Last-Modified', stat.mtime.toUTCString());
+    res.set('Cache-Control', 'public, max-age=60');
+    res.send(body);
+  } catch (err) {
+    log.error('connector', 'Failed to serve /connector-setup.md', { err: err.message });
+    res.status(500).type('text/plain').send('connector setup notes unavailable');
+  }
+});
+
 // Public sidecar-status endpoints. All read the cached snapshot maintained
 // by `services/node-status.js` (one poll per process, regardless of how
 // many clients are watching). Mounted before authMiddleware so anonymous

@@ -48,8 +48,37 @@ const IP_RATE_PER_MINUTE = 300;
 // gets its own much tighter per-IP bucket.
 const REGISTER_RATE_PER_MINUTE = 6;
 
-const SERVER_NAME = 'usernode';
+// ── The connector's ONE canonical name ─────────────────────────────────
+//
+// `Usernode`. One spelling, one capitalisation, everywhere the platform
+// says the name out loud: the MCP `serverInfo.name`, the RFC 9728
+// `resource_name`, the Settings → Connectors panel, the consent page, the
+// setup docs, and every `mcp__Usernode__*` permission rule the platform
+// ships.
+//
+// Why this is a constant and not a string typed in six places (#1206): a
+// chat product does NOT take the server's own `serverInfo.name` as the
+// name a permission rule has to match. Claude.ai's "Add custom connector"
+// asks the HUMAN for a name, and whatever they type becomes the server
+// segment of every rule — `mcp__<that string>__whoami`. Claude Code's
+// permission syntax cannot wildcard that segment:
+//
+//   mcp__Usernode__get_*     ✅ names a server the user configured
+//   mcp__*__get_*            ❌ not a thing; there is no fallback
+//
+// So a user who typed `Uesrnode` gets a connector that works perfectly and
+// a shipped allow rule that matches nothing — and it fails SILENTLY: no
+// error, just the same permission prompt on every read-only call, and the
+// reasonable conclusion that our instructions are wrong. The only defence
+// is to put the exact string in front of the user at connect time and to
+// derive every rule we publish from this one constant, so the spelling in
+// the docs can never drift from the spelling in the rules.
+const SERVER_NAME = 'Usernode';
 const SERVER_VERSION = '1.0.0';
+
+// The prefix every permission rule for this connector carries. Derived, so
+// renaming the server rewrites the rules rather than orphaning them.
+const PERMISSION_RULE_PREFIX = `mcp__${SERVER_NAME}__`;
 
 module.exports = {
   READ_SCOPE,
@@ -68,4 +97,5 @@ module.exports = {
   REGISTER_RATE_PER_MINUTE,
   SERVER_NAME,
   SERVER_VERSION,
+  PERMISSION_RULE_PREFIX,
 };

@@ -1462,7 +1462,14 @@ Do this once after the deploy that carries the values. It exercises the
 whole path and each step has a distinguishable failure.
 
 1. **Connect the chat product.** In Claude.ai: Settings → Connectors → Add
-   custom connector, URL `https://<your-domain>/mcp`. The 401 challenge
+   custom connector, name **`Usernode`**, URL `https://<your-domain>/mcp`.
+   The name is the canonical spelling and is worth copying rather than
+   typing: it becomes part of every `permissions.allow` rule written for
+   these tools, and a misspelling leaves those rules matching nothing
+   with no error of any kind — see `CONNECTOR-SETUP.md`, served live at
+   `https://<your-domain>/connector-setup.md`, for the name, the
+   read-only vs acting split and the `.claude/settings.json` snippet.
+   The 401 challenge
    carries `WWW-Authenticate: Bearer resource_metadata=…`, which is what
    starts the OAuth dance. A redirect host outside the allowlist is
    rejected at registration — that is `MCP_CONNECTOR_REDIRECT_HOSTS`
