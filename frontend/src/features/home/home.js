@@ -72,7 +72,7 @@ const Home = {
       // apps, and persist the damaged repair before /api/apps arrived.
       // #app-list is also non-empty for the failure state, so the DOM cannot
       // answer this question either.
-      if (!Home._appsLoaded) return;
+      if (!Home._appsLoaded || !window.HomePanels?.hasLayoutRegistry?.()) return;
       // An active search legitimately has no slots — the section below the
       // grid is that view's host on purpose. Re-rendering would be a no-op
       // at best and would rebuild the results grid for nothing.
@@ -438,7 +438,14 @@ const Home = {
     // deleted, a widget was hidden, a size changed) and is worth persisting
     // so the next load is clean. A repair of a derivation is not — writing it
     // would turn a passive visit into a claim on this width.
-    if (changed && Array.isArray(stored) && stored.length) {
+    // Widget membership is just as load-bearing as app membership. If the
+    // layout wins the network race against /api/home-panels, gridSlotKeys()
+    // is temporarily empty; persisting that partial repair would erase the
+    // viewer's Challenges/Discover/Create cells. Render the transient repair
+    // if needed, but leave server truth and the cached stored layout untouched
+    // until the authoritative widget registry has arrived.
+    const widgetsReady = !!window.HomePanels?.hasLayoutRegistry?.();
+    if (changed && widgetsReady && Array.isArray(stored) && stored.length) {
       Home._layouts[String(cols)] = layout;
       Home._persistLayout(cols, layout);
     }
