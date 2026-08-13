@@ -1823,77 +1823,93 @@
     },
     {
       "name": "Admin App version screen warns when an OS has no active rule",
-      "path": "/#admin/seasons/app-version",
+      "path": "/#admin/app-version",
       "expectText": "No active version rule"
     },
     {
-      "name": "Admin Seasons, Events & Challenges settings reports the outbound-mail state",
-      "path": "/#admin/seasons/settings",
+      "name": "Admin Settings screen reports the outbound-mail state",
+      "path": "/#admin/settings",
       "expectSelector": "#admin-topo-mail-status"
     },
     {
       "name": "Admin Seasons screen lists real seasons from /api/v4/admin/seasons with per-row actions",
-      "path": "/#admin/seasons/seasons",
+      "path": "/#admin/seasons",
       "expectSelector": "[data-season-events]",
       "expectText": "The top tier"
     },
     {
       "name": "Admin Seasons screen surfaces season events that belong to no season",
-      "path": "/#admin/seasons/seasons",
+      "path": "/#admin/seasons",
       "expectSelector": "#admin-topo-sn-unassigned-go",
       "expectText": "Events not assigned to a season"
     },
     {
       "name": "Admin Season events screen can filter by season",
-      "path": "/#admin/seasons/season-events",
+      "path": "/#admin/season-events",
       "expectSelector": "#admin-topo-se-season-filter"
     },
     {
       "name": "Admin Season events deep-links one event's challenges screen",
-      "path": "/#admin/seasons/season-events/900504",
+      "path": "/#admin/season-events/900504",
       "expectSelector": "#admin-topo-se-detail-hero ~ #admin-topo-ch-table",
       "expectText": "Unfilled Sprint"
     },
     {
       "name": "Admin Add-challenge deep link lands on the challenges screen",
-      "path": "/#admin/seasons/season-events/900504/new-challenge/900501",
+      "path": "/#admin/season-events/900504/new-challenge/900501",
       "expectSelector": "#admin-topo-ch-table",
       "expectText": "Unfilled Sprint"
     },
     {
       "name": "Admin API tester offers an endpoint select instead of one placeholder path",
-      "path": "/#admin/seasons/api-tester",
+      "path": "/#admin/api-tester",
       "expectSelector": "select#admin-topo-api-endpoint"
     },
     {
       "name": "Admin API tester select lists the real mounted /api/v4 routes",
-      "path": "/#admin/seasons/api-tester",
+      "path": "/#admin/api-tester",
       "expectSelector": "#admin-topo-api-endpoint optgroup option[value=\"GET /admin/seasons\"]",
       "expectText": "mounted in this build"
     },
     {
       "name": "Admin SQL console lists platform tables, not just the topochain ones",
-      "path": "/#admin/seasons/sql-console",
+      "path": "/#admin/sql-console",
       "expectSelector": "#admin-topo-sql-schema button[data-table]",
       "expectText": "chat_sessions"
     },
     {
       "name": "Admin SQL console schema browser has a filter and a table count for the full schema",
-      "path": "/#admin/seasons/sql-console",
+      "path": "/#admin/sql-console",
       "expectSelector": "#admin-topo-sql-schema-filter",
       "expectText": "Every table in the app database"
     },
     {
       "name": "Admin SQL console reports how many tables the schema browser holds",
-      "path": "/#admin/seasons/sql-console",
+      "path": "/#admin/sql-console",
       "expectSelector": "#admin-topo-sql-schema-count",
       "expectText": "tables"
     },
     {
       "name": "Admin SQL console schema browser lists mobile_push_deliveries (#1130 regression lock)",
-      "path": "/#admin/seasons/sql-console",
+      "path": "/#admin/sql-console",
       "expectSelector": "#admin-topo-sql-schema button[data-table]",
       "expectText": "mobile_push_deliveries"
+    },
+    {
+      "name": "Admin Users section carries the merged programme-users card (#1179)",
+      "path": "/#admin/users",
+      "expectSelector": "#admin-users-programme #admin-topo-u-table",
+      "expectText": "Programme users"
+    },
+    {
+      "name": "Admin Waitlist is a first-class menu section (#1179)",
+      "path": "/#admin/waitlist",
+      "expectSelector": "#admin-topo-content"
+    },
+    {
+      "name": "Legacy #admin/seasons/<screen> addresses still deep-link their promoted section (#1179)",
+      "path": "/#admin/seasons/sql-console",
+      "expectSelector": "#admin-topo-sql-schema-filter"
     },
     {
       "name": "Native kit: pull-to-refresh builds its clipped puck layer (the puck hangs below the header, never over it)",

@@ -1,41 +1,38 @@
-// "Seasons, Events & Challenges" admin console screens (Task 15,
-// migration plan Global Constraint #8: "Admin screens are ONE
-// AdminConsole section that renders its own sub-navigation from
-// public/js/admin-topochain.js").
-// Mounted by AdminConsole._renderSection via SECTION_MODULES (#860;
-// public/js/admin-console.js)
-// into the section's #admin-section-content host, exactly like every other
-// renderXSection — the only difference is this module owns a SECOND hash
-// level of its own (#admin/seasons/<sub>) that AdminConsole never learns
-// the keys of. It reads location.hash directly for the deep-linked sub-key
-// on first render and writes it back itself via replaceState, guarded on
-// '#admin/seasons' — the same pattern features/leaderboard/leaderboard.js
-// uses for its own tab state (_setSub/_syncHash) — so admin-console.js's
-// existing single-level setSection/_writeHash needed no changes at all.
+// The programme admin console screens (Task 15; reorganised by #1179).
+// This module started as ONE AdminConsole section ("Seasons, Events &
+// Challenges") that rendered its own horizontal sub-navigation over
+// eleven screens. #1179 retired that second-level nav: each screen is a
+// FIRST-CLASS AdminConsole section now, listed in the console's own menu
+// under the Programme / People / Platform groups, and every one of them
+// still renders through this module — AdminConsole._renderSection
+// dispatches all ten section keys to it via SECTION_MODULES (#860), and
+// render() reads the active section key back from AdminConsole to pick
+// the screen. One exception: the programme Users screen is not a section
+// of its own — it is merged into the console's existing Users section
+// (admin-console.js renderUsersSection calls renderUsers directly).
 //
-// Season events extends that address with the two screens nested under it:
-// #admin/seasons/season-events/<eventId> is "managing this event's
-// challenges", and .../new-challenge[/<templateId>] is its Add-challenge
-// form, on that template, already filled in. app.js hands this module
-// everything after #admin/<section>, so those segments cost it nothing;
-// _readSeasonEventsDeepLink() parses them and _syncHash() writes them back.
+// Season events still owns tail segments below its section:
+// #admin/season-events/<eventId> is "managing this event's challenges",
+// and .../new-challenge[/<templateId>] is its Add-challenge form, on that
+// template, already filled in. _readSeasonEventsDeepLink() parses them on
+// first render and _syncHash() writes them back via replaceState, the
+// same pattern features/leaderboard/leaderboard.js uses for its own tab
+// state — so admin-console.js's single-level setSection/_writeHash needed
+// no changes.
 //
-// NAMING: the section was called "Topochain" until the rename, and the
-// canonical route is now #admin/seasons/<sub> (the Seasons tab itself is
-// #admin/seasons/seasons). #admin/topochain/<sub> is a PERMANENT alias:
-// _subFromHash() reads either prefix, _syncHash() only ever writes the
-// canonical one, and app.js rewrites the address bar so a bookmark
-// self-heals. The file name, the AdminTopochain global, the
-// `topochain_` settings-key prefix, the /api/v4/admin/* routes and the
-// database tables are all deliberately unchanged — this rename is
-// user-facing copy and routing only.
+// NAMING & LEGACY ADDRESSES: the umbrella section was called "Topochain",
+// then "Seasons, Events & Challenges" at #admin/seasons/<sub>. Both
+// two-level address families (#admin/seasons/<sub> and
+// #admin/topochain/<sub>, tails included) are PERMANENT aliases: app.js
+// promotes the screen segment to the section segment and rewrites the
+// address bar, and this module's _subFromHash()/_syncHash() accept the
+// legacy prefixes on their own too, so a bookmark self-heals either way.
+// The file name, the AdminTopochain global, the `topochain_` settings-key
+// prefix, the /api/v4/admin/* routes and the database tables are all
+// deliberately unchanged — the reorganisations are user-facing copy and
+// routing only.
 //
-// LAYOUT: the eleven subsections are grouped into four labelled clusters
-// (SUB_GROUPS below). At md+ the groups render as a single strip of
-// labelled clusters; below md they become a two-level list — level 1 is
-// the four groups, level 2 is one group's subsections — mirroring
-// admin-console.js's own mobile hierarchy so the two feel like one
-// console. Every screen renders through the shared _list() renderer (a
+// LAYOUT: every screen renders through the shared _list() renderer (a
 // real table at md+, a card stack below) and the shared
 // _skeleton()/_empty()/_error() helpers, so "loading", "nothing here"
 // and "the request failed" never look alike.
@@ -173,41 +170,23 @@ const AdminTopochain = {
   _host: null,
   _sub: null,
 
-  // Built subsections only (see the file-header gap list above for what's
-  // deliberately absent and why).
+  // Built screens only (see the file-header gap list above for what's
+  // deliberately absent and why). Every key here is a first-class
+  // AdminConsole SECTIONS key since #1179 — the two lists must agree
+  // (tests/topochain-admin-screens.test.js checks it), which is why the
+  // programme Users screen is NOT listed: it has no section of its own,
+  // the console's Users section embeds renderUsers directly.
   SUBS: [
     { key: 'seasons', label: 'Seasons' },
     { key: 'season-events', label: 'Season events' },
-    { key: 'users', label: 'Users' },
+    { key: 'challenge-templates', label: 'Challenge templates' },
     { key: 'waitlist', label: 'Waitlist' },
     { key: 'onchain-accounts', label: 'Onchain accounts' },
     { key: 'user-activities', label: 'User activities' },
-    { key: 'challenge-templates', label: 'Challenge templates' },
     { key: 'settings', label: 'Settings' },
     { key: 'app-version', label: 'App version' },
     { key: 'sql-console', label: 'SQL console' },
     { key: 'api-tester', label: 'API tester' },
-  ],
-
-  // The same eleven keys, grouped for navigation. SUBS stays the flat
-  // key -> label source of truth (routing, validation and the sub titles
-  // all read it); SUB_GROUPS only decides ORDER and HEADINGS, so a new
-  // subsection is added in both places and nowhere else. The two lists
-  // are a bijection — tests/topochain-admin-screens.test.js checks that
-  // every SUBS key appears in exactly one group and vice versa, so a key
-  // can never go missing from the nav by being added to only one list.
-  SUB_GROUPS: [
-    // What the programme IS: the season, the events inside it, and the
-    // template library challenges are stamped out of.
-    { key: 'programme', label: 'Programme', subs: ['seasons', 'season-events', 'challenge-templates'] },
-    // Who is in it.
-    { key: 'people', label: 'People', subs: ['users', 'waitlist', 'onchain-accounts'] },
-    // What they did.
-    { key: 'activity', label: 'Activity', subs: ['user-activities'] },
-    // Operator tooling — deliberately last and visually separated: these
-    // are the sharp ones (raw SQL, arbitrary API calls, the settings that
-    // change how the mobile app behaves).
-    { key: 'platform', label: 'Platform', subs: ['settings', 'app-version', 'sql-console', 'api-tester'] },
   ],
 
   // ── Shared helpers ─────────────────────────────────────────────────
@@ -683,25 +662,21 @@ const AdminTopochain = {
     return `<span class="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ${tones[tone] || tones.zinc}">${esc(label)}</span>`;
   },
 
-  // ── Shell / sub-nav ──────────────────────────────────────────────────
+  // ── Shell ─────────────────────────────────────────────────────────────
 
-  // Mobile sub-nav level: 1 = the group list, 2 = one group's
-  // subsections plus the active screen. Only the below-md layout reads
-  // it; the md+ layout always shows every group at once, so this is
-  // pure CSS state rather than a matchMedia listener (same reason
-  // _list() renders both layouts and hides one).
-  _navLevel: 2,
-  _navGroup: null,
-
-  // Entry point, called by AdminConsole._renderSection every time the
-  // top-level "Seasons, Events & Challenges" nav item is (re)selected.
-  // `sub` is read straight from location.hash (not passed down by
-  // admin-console.js — see the file-header comment) so a hand-typed or
-  // deep-linked #admin/seasons/<sub> (or the legacy
-  // #admin/topochain/<sub>) lands on the right tab on first paint.
+  // Entry point, called by AdminConsole._renderSection every time one of
+  // this module's promoted sections is (re)selected (#1179). The active
+  // section key IS the screen key — the console's own menu and routing
+  // already decided what to show — with a legacy-address fallback: a
+  // two-level #admin/seasons/<sub> / #admin/topochain/<sub> hash that
+  // somehow reached this module without app.js's rewrite still lands on
+  // its screen (and self-heals in _syncHash).
   render(host) {
     AdminTopochain._host = host;
-    const sub = AdminTopochain._subFromHash() || AdminTopochain._sub || 'seasons';
+    const section = window.AdminConsole ? AdminConsole._section : null;
+    const sub = AdminTopochain.SUBS.some((s) => s.key === section)
+      ? section
+      : (AdminTopochain._subFromHash() || AdminTopochain._sub || 'seasons');
     // Season events owns two more segments (the event being managed, and
     // its Add-challenge form). They are read BEFORE the first paint so a
     // deep link opens that screen directly instead of the event list.
@@ -718,18 +693,21 @@ const AdminTopochain = {
     AdminTopochain._host = null;
   },
 
-  // Accepts BOTH the canonical prefix and the retired one, so a link
-  // minted before the rename still deep-links its tab. Only
-  // #admin/seasons is ever written back (see _syncHash) — app.js has
+  // Legacy addresses only: the retired two-level prefixes
+  // (#admin/seasons/<sub> and the even older #admin/topochain/<sub>), so
+  // a link minted before #1179 still deep-links its screen. The canonical
+  // single-level address needs no parsing here — the section key names
+  // the screen and render() reads it from AdminConsole. app.js has
   // normally already rewritten the address by the time we get here, but
-  // reading both keeps this module correct on its own.
+  // reading the legacy forms keeps this module correct on its own.
   _subFromHash() {
     const m = /^#admin\/(?:seasons|topochain)\/([^/]+)/.exec(location.hash);
     return m ? decodeURIComponent(m[1]) : null;
   },
 
-  // The Season-events tail: #admin/seasons/season-events/<eventId>
-  // [/new-challenge[/<templateId>]]. Reading it here is what makes the
+  // The Season-events tail: #admin/season-events/<eventId>
+  // [/new-challenge[/<templateId>]] (legacy two-level prefixes accepted
+  // too). Reading it here is what makes the
   // nested screens addressable — before this, "manage this event" and
   // "add a challenge from this template" could only be reached by
   // clicking, so neither could be linked, bookmarked or screenshotted.
@@ -737,7 +715,7 @@ const AdminTopochain = {
   // visit left behind: the address is the source of truth on entry.
   _readSeasonEventsDeepLink(sub) {
     if (sub !== 'season-events') return;
-    const m = /^#admin\/(?:seasons|topochain)\/season-events\/(\d+)(\/new-challenge(?:\/(\d+))?)?/
+    const m = /^#admin\/(?:(?:seasons|topochain)\/)?season-events\/(\d+)(\/new-challenge(?:\/(\d+))?)?/
       .exec(location.hash);
     AdminTopochain._se.detailId = m ? parseInt(m[1], 10) : null;
     AdminTopochain._ch.open = !!(m && m[2]);
@@ -752,52 +730,32 @@ const AdminTopochain = {
     AdminTopochain._ch.templateId = (m && m[3]) || '';
   },
 
-  _groupOf(sub) {
-    return AdminTopochain.SUB_GROUPS.find((g) => g.subs.includes(sub)) || null;
-  },
-
-  _labelOf(sub) {
-    return (AdminTopochain.SUBS.find((s) => s.key === sub) || {}).label || sub;
-  },
-
   setSub(sub) {
     if (!AdminTopochain.SUBS.some((s) => s.key === sub)) sub = 'seasons';
     AdminTopochain._sub = sub;
-    // A deep link lands on its screen, with the mobile back control
-    // pointing at the group that screen belongs to.
-    AdminTopochain._navGroup = (AdminTopochain._groupOf(sub) || {}).key || null;
-    AdminTopochain._navLevel = 2;
     AdminTopochain._syncHash();
     AdminTopochain._renderShell();
   },
 
-  // Mobile only: step back out to the list of groups. Doesn't touch the
-  // hash — the address still names the screen you'd return to, so a
-  // refresh from the group list reopens where you were.
-  _showGroupList() {
-    AdminTopochain._navLevel = 1;
-    AdminTopochain._renderShell();
+  // Cross-screen jump from inside a screen (e.g. a season's "View
+  // events"). Every screen is a first-class console section since #1179,
+  // so the jump goes through AdminConsole.setSection — which repaints the
+  // sidebar's active row and re-enters render() — rather than this
+  // module's own setSub. Module state set before the call (filters, a
+  // cleared detail id) survives it; setSub is the standalone fallback.
+  _gotoSub(sub) {
+    if (window.AdminConsole && AdminConsole.isOpen()) AdminConsole.setSection(sub);
+    else AdminTopochain.setSub(sub);
   },
 
-  _openGroup(key) {
-    const g = AdminTopochain.SUB_GROUPS.find((x) => x.key === key);
-    if (!g) return;
-    AdminTopochain._navGroup = key;
-    AdminTopochain._navLevel = 2;
-    // Drilling into a group selects its first screen unless the current
-    // one already belongs to it (so re-opening the group you're in
-    // doesn't throw away the screen you were reading).
-    if (!g.subs.includes(AdminTopochain._sub)) AdminTopochain.setSub(g.subs[0]);
-    else AdminTopochain._renderShell();
-  },
-
-  // Keep the hash deep-linkable (#admin/seasons/<sub>) without polluting
-  // history — replaceState, and only while actually on this section's
-  // hash (mirrors leaderboard.js's _syncHash). The legacy prefix is
-  // accepted as a starting point and rewritten to the canonical one, so
-  // an old bookmark self-heals even if it somehow bypassed app.js.
+  // Keep the hash deep-linkable (#admin/<screen>) without polluting
+  // history — replaceState, and only while actually on this screen's own
+  // address (mirrors leaderboard.js's _syncHash). The legacy two-level
+  // prefixes (#admin/seasons/<sub>, #admin/topochain/<sub>) are accepted
+  // as a starting point and rewritten to the canonical single-level one,
+  // so an old bookmark self-heals even if it somehow bypassed app.js.
   _syncHash() {
-    let target = `#admin/seasons/${AdminTopochain._sub}`;
+    let target = `#admin/${AdminTopochain._sub}`;
     // Season events' nested screens extend the address rather than
     // hiding behind it (see _readSeasonEventsDeepLink). The template id
     // is part of it because a prefilled form is a STATE — without the
@@ -810,99 +768,23 @@ const AdminTopochain = {
       }
     }
     const h = location.hash;
-    if ((h.startsWith('#admin/seasons') || h.startsWith('#admin/topochain')) && h !== target) {
+    const own = h === `#admin/${AdminTopochain._sub}`
+      || h.startsWith(`#admin/${AdminTopochain._sub}/`)
+      || /^#admin\/(?:seasons|topochain)\//.test(h);
+    if (own && h !== target) {
       history.replaceState(null, '', target);
     }
   },
 
-  // ── Sub-nav markup ─────────────────────────────────────────────────
-
-  // md+: every group at once, as labelled clusters on one strip. Eleven
-  // equal pills in a sideways-scrolling row gave no sense of which
-  // screens belong together; the headings do that work now.
-  _desktopNavHtml() {
-    const esc = AdminTopochain.esc;
-    const active = AdminTopochain._sub;
-    const clusters = AdminTopochain.SUB_GROUPS.map((g) => {
-      const pills = g.subs.map((key) => {
-        const isActive = key === active;
-        const cls = 'admin-topo-tab shrink-0 px-3 py-1.5 text-sm font-medium rounded-lg transition-colors '
-          + (isActive
-            ? 'bg-indigo-600 text-white'
-            : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800');
-        return `<button type="button" data-topo-sub="${esc(key)}"${isActive ? ' aria-current="page"' : ''} class="${cls}">${esc(AdminTopochain._labelOf(key))}</button>`;
-      }).join('');
-      return `<div class="min-w-0">
-        <p class="px-3 pb-1 text-[11px] font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">${esc(g.label)}</p>
-        <div class="flex flex-wrap items-center gap-1">${pills}</div>
-      </div>`;
-    }).join('');
-    return `<nav aria-label="Seasons, events and challenges sections"
-      class="hidden md:flex flex-wrap items-start gap-x-6 gap-y-3 mb-5 pb-4 border-b border-gray-200 dark:border-gray-800">${clusters}</nav>`;
-  },
-
-  // Below md: the same two-level hierarchy the console itself uses —
-  // level 1 is the four groups as full-width drill-in rows, level 2 is
-  // one group's screens with a back control. Same row idiom as
-  // admin-console.js's _mobileMenuHtml so the two navs feel like one.
-  _mobileNavHtml() {
-    const esc = AdminTopochain.esc;
-    const chevron = `<svg class="w-4 h-4 shrink-0 text-gray-400" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M7.21 14.77a.75.75 0 0 1 .02-1.06L11.168 10 7.23 6.29a.75.75 0 1 1 1.04-1.08l4.5 4.25a.75.75 0 0 1 0 1.08l-4.5 4.25a.75.75 0 0 1-1.06-.02Z" clip-rule="evenodd"/></svg>`;
-
-    if (AdminTopochain._navLevel === 1) {
-      const rows = AdminTopochain.SUB_GROUPS.map((g) => `
-        <button type="button" data-topo-group="${esc(g.key)}"
-          class="w-full flex items-center justify-between gap-3 min-h-[44px] px-4 py-2 text-left border-b border-gray-100 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-800/60">
-          <span class="min-w-0">
-            <span class="block text-sm font-medium">${esc(g.label)}</span>
-            <span class="block text-xs text-gray-500 truncate">${esc(g.subs.map((k) => AdminTopochain._labelOf(k)).join(' · '))}</span>
-          </span>
-          ${chevron}
-        </button>`).join('');
-      return `<nav aria-label="Seasons, events and challenges sections"
-        class="md:hidden mb-4 rounded-lg overflow-hidden border border-gray-200 dark:border-gray-800 [&>button:last-child]:border-b-0">${rows}</nav>`;
-    }
-
-    const group = AdminTopochain.SUB_GROUPS.find((g) => g.key === AdminTopochain._navGroup)
-      || AdminTopochain._groupOf(AdminTopochain._sub)
-      || AdminTopochain.SUB_GROUPS[0];
-    const pills = group.subs.map((key) => {
-      const isActive = key === AdminTopochain._sub;
-      const cls = 'admin-topo-tab shrink-0 min-h-[36px] px-3 py-1.5 text-sm font-medium rounded-lg transition-colors '
-        + (isActive
-          ? 'bg-indigo-600 text-white'
-          : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800');
-      return `<button type="button" data-topo-sub="${esc(key)}"${isActive ? ' aria-current="page"' : ''} class="${cls}">${esc(AdminTopochain._labelOf(key))}</button>`;
-    }).join('');
-    return `<nav aria-label="Seasons, events and challenges sections" class="md:hidden mb-4">
-      <button type="button" id="admin-topo-nav-back"
-        class="flex items-center gap-1 min-h-[44px] -ml-1 pr-2 text-sm font-medium text-gray-600 dark:text-gray-300">
-        <svg class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M12.79 5.23a.75.75 0 0 1-.02 1.06L8.832 10l3.938 3.71a.75.75 0 1 1-1.04 1.08l-4.5-4.25a.75.75 0 0 1 0-1.08l4.5-4.25a.75.75 0 0 1 1.06.02Z" clip-rule="evenodd"/></svg>
-        ${esc(group.label)}
-      </button>
-      <div class="flex items-center gap-1 mt-1 -mx-1 px-1 overflow-x-auto">${pills}</div>
-    </nav>`;
-  },
-
+  // The host holds just the screen content since #1179: the horizontal
+  // sub-nav is gone — the console's own menu names every screen — so
+  // there is nothing above the content node. The #admin-topo-content
+  // wrapper survives because every screen renderer and several async
+  // guards look it up by id.
   _renderShell() {
     const host = AdminTopochain._host;
     if (!host) return;
-    // At mobile level 1 the screen itself is out of the way (you're
-    // picking a group), but md+ never has a level 1 — hence the
-    // breakpoint-scoped hide rather than dropping the node.
-    const contentCls = AdminTopochain._navLevel === 1 ? 'hidden md:block' : '';
-    host.innerHTML = `
-      ${AdminTopochain._desktopNavHtml()}
-      ${AdminTopochain._mobileNavHtml()}
-      <div id="admin-topo-content" class="${contentCls}"></div>`;
-    host.querySelectorAll('[data-topo-sub]').forEach((btn) => {
-      btn.addEventListener('click', () => AdminTopochain.setSub(btn.dataset.topoSub));
-    });
-    host.querySelectorAll('[data-topo-group]').forEach((btn) => {
-      btn.addEventListener('click', () => AdminTopochain._openGroup(btn.dataset.topoGroup));
-    });
-    document.getElementById('admin-topo-nav-back')
-      ?.addEventListener('click', AdminTopochain._showGroupList);
+    host.innerHTML = '<div id="admin-topo-content"></div>';
     AdminTopochain._renderSub();
   },
 
@@ -911,7 +793,6 @@ const AdminTopochain = {
     if (!c) return;
     switch (AdminTopochain._sub) {
       case 'season-events': return AdminTopochain.renderSeasonEvents(c);
-      case 'users': return AdminTopochain.renderUsers(c);
       case 'waitlist': return AdminTopochain.renderWaitlist(c);
       case 'onchain-accounts': return AdminTopochain.renderOnchainAccounts(c);
       case 'user-activities': return AdminTopochain.renderUserActivities(c);
@@ -1039,7 +920,7 @@ const AdminTopochain = {
       AdminTopochain._se.seasonFilter = b.dataset.seasonEvents;
       AdminTopochain._se.page = 1;
       AdminTopochain._se.detailId = null;
-      AdminTopochain.setSub('season-events');
+      AdminTopochain._gotoSub('season-events');
     }));
     table.querySelectorAll('[data-edit]').forEach((b) => b.addEventListener('click', () => AdminTopochain._openSeasonForm(parseInt(b.dataset.edit, 10))));
     table.querySelectorAll('[data-delete]').forEach((b) => b.addEventListener('click', () => AdminTopochain._deleteSeason(parseInt(b.dataset.delete, 10))));
@@ -1079,7 +960,7 @@ const AdminTopochain = {
       AdminTopochain._se.seasonFilter = 'none';
       AdminTopochain._se.page = 1;
       AdminTopochain._se.detailId = null;
-      AdminTopochain.setSub('season-events');
+      AdminTopochain._gotoSub('season-events');
     });
   },
 
@@ -1969,12 +1850,17 @@ const AdminTopochain = {
 
   _users: { page: 1, perPage: 50, search: '', items: [], meta: null, editingId: null, deleteConfirm: null },
 
+  // Rendered INSIDE the console's Users section since #1179 (one Users
+  // menu entry, both user surfaces) — admin-console.js's
+  // renderUsersSection hands this a host below the platform-accounts
+  // card and sets _sub = 'users' first, because the loaders below use
+  // _sub as their stale-response guard. Not a SUBS screen of its own.
   renderUsers(host) {
     const canWrite = AdminTopochain.canWrite();
     const esc = AdminTopochain.esc;
     host.innerHTML = `
       ${AdminTopochain._screenHeader({
-    title: 'Users',
+    title: 'Programme users',
     subtitle: 'Everyone enrolled in an event, and their podium and log settings.',
     actions: `<input id="admin-topo-u-search" type="text" placeholder="Search email/telegram/discord/name&hellip;"
             value="${esc(AdminTopochain._users.search)}" aria-label="Search users"

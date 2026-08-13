@@ -20,7 +20,7 @@ import { AdminUI } from './admin-console.js';
 //   3. What has it been doing?                   (activity ledger)
 //
 // The status and activity cards deliberately mirror the ones on
-// Admin → Seasons, Events & Challenges → Settings, down to the copy and
+// Admin → Settings (the programme settings screen), down to the copy and
 // the colours: an
 // operator who learned to read one should not have to learn the other.
 // That card is untouched; this section reads the newer /api/admin/mail/*
