@@ -31,7 +31,12 @@
  * snapshot this store publishes.
  */
 
-import { adoptKitSurface, type KitAdoption } from '../../lib/kit-surface';
+// The extension is load-bearing for invariant 3 above: node resolves relative
+// specifiers by exact filename, so an extensionless import would break the
+// direct require the test does. `allowImportingTsExtensions` in
+// frontend/tsconfig.json is what lets tsc accept it. kit-surface.ts is itself
+// React-free and dependency-free, so the invariant otherwise holds.
+import { adoptKitSurface, type KitAdoption } from '../../lib/kit-surface.ts';
 
 export type DevConsoleLevel = 'error' | 'warn' | 'info' | 'log' | 'debug' | string;
 
