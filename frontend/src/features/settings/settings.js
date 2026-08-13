@@ -2392,7 +2392,7 @@
       // survived and the user had no way out of the app at all. The
       // admission latches are already closed; ask, then sign out of the
       // web session regardless. The app's own session is attempted
-      // best-effort below and named on the login screen if it survives.
+      // best-effort below and named on the landing screen if it survives.
       const degraded = preflight.latch === 'unavailable' ||
         preflight.latch === 'inconclusive';
       if (degraded && !await this._confirmDegradedSignOut(preflight)) {
@@ -2431,14 +2431,18 @@
       }
 
       if (degraded && !await this._bestEffortNativeLogout()) {
-        // The app kept its session. Say so on the login screen rather than
+        // The app kept its session. Say so on the next screen rather than
         // leaving the user to discover it, and point at the fix.
         this._noteIncompleteNativeSignOut();
       }
 
       // Hard navigation on purpose: enterAuthed is one-shot per document
-      // in a regular browser or an old app without hard logout.
-      window.location.href = '/#login';
+      // in a regular browser or an old app without hard logout. `/` boots
+      // the anonymous shell on the landing screen — the public app
+      // directory a guest normally sees — instead of the bare sign-in
+      // form (#1159); the landing header's Sign in CTA keeps re-login one
+      // tap away.
+      window.location.href = '/';
     },
 
     // The user's call, not ours: the web session is going either way, but
@@ -2506,8 +2510,8 @@
       } catch (_) { /* private mode / disabled storage: nothing to note */ }
     },
 
-    // One-shot, on the next document — which is the login screen, since
-    // logout hard-navigates there. Without it the user lands on login with
+    // One-shot, on the next document — which is the landing screen, since
+    // logout hard-navigates to `/`. Without it the user lands there with
     // no idea the app may still hold its own session.
     _showIncompleteNativeSignOutNotice() {
       let flagged = false;
