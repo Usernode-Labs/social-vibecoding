@@ -161,7 +161,24 @@ function Body({ body }: { body: RowView['body'] }): ReactNode {
   );
 }
 
+/**
+ * The meta line: unread dot, optional icon, the per-kind segments, the time.
+ *
+ * Two spacing regimes, both inherited from the string version:
+ *  - `metaFlex` rows are a flex row with `gap-1`, so the gap IS the spacing.
+ *    The string version joined its pieces with a newline; a flex container
+ *    drops whitespace-only text between items, so emitting no separator at all
+ *    renders identically.
+ *  - the mention/reply row is ordinary inline flow and needs real spaces. They
+ *    ride INSIDE the neighbouring string rather than as a separate `{' '}`
+ *    child: a whitespace-only expression between two text runs makes them two
+ *    adjacent children, which cannot survive hydration (React #418) and is
+ *    what tests/shell-build.test.js and the build's own probe both refuse.
+ *    That is safe here because a non-flex row's segments always alternate —
+ *    two text segments never touch.
+ */
 function Meta({ view }: { view: RowView }): ReactNode {
+  const flex = view.metaFlex;
   const nodes: ReactNode[] = [<UnreadDot key="dot" unread={view.unread} />];
   if (view.icon) nodes.push(<span key="icon" aria-hidden="true">{view.icon}</span>);
   view.segments.forEach((s, i) => {
@@ -175,17 +192,17 @@ function Meta({ view }: { view: RowView }): ReactNode {
       nodes.push(
         <span key={`s${i}`} className="font-medium text-zinc-700 dark:text-zinc-300">{s.v}</span>,
       );
-    } else {
+    } else if (flex) {
       nodes.push(<span key={`s${i}`}>{s.v}</span>);
+    } else {
+      // Bare text, exactly as the string version left it on this one row.
+      nodes.push(` ${s.v} `);
     }
   });
-  nodes.push(<span key="time" className="text-zinc-500">{`· ${view.time}`}</span>);
-  // The flex rows space themselves with `gap-1`; the mention/reply row is
-  // ordinary inline flow, where the source newlines used to supply the space.
-  const spaced = view.metaFlex
-    ? nodes
-    : nodes.flatMap((n, i) => (i === 0 ? [n] : [' ', n]));
-  return <div className={metaClass(view)}>{spaced}</div>;
+  nodes.push(
+    <span key="time" className="text-zinc-500">{flex ? `· ${view.time}` : ` · ${view.time}`}</span>,
+  );
+  return <div className={metaClass(view)}>{nodes}</div>;
 }
 
 /**
@@ -329,12 +346,16 @@ function Invite({ view, touch }: { view: InviteView; touch: boolean }): ReactNod
       className="px-3 py-2.5 border-b border-zinc-200 dark:border-zinc-800 bg-violet-500/5 border-l-2 border-l-violet-500"
       data-invite-app={view.appId}
     >
+      {/*
+          The spaces ride inside the neighbouring strings rather than as
+          whitespace-only children — see the note on <Meta> for why.
+      */}
       <div className="text-xs text-zinc-500 dark:text-zinc-400 mb-1.5">
-        <span aria-hidden="true">{view.icon}</span>{' '}
-        <span className="font-medium text-zinc-800 dark:text-zinc-200">{view.who}</span>{' '}
-        {view.verb}{' '}
-        <span className="font-medium text-zinc-700 dark:text-zinc-300">{view.appName}</span>{' '}
-        <span className="text-zinc-500">{`· ${view.time}`}</span>
+        <span aria-hidden="true">{view.icon}</span>
+        <span className="font-medium text-zinc-800 dark:text-zinc-200">{` ${view.who}`}</span>
+        {` ${view.verb} `}
+        <span className="font-medium text-zinc-700 dark:text-zinc-300">{view.appName}</span>
+        <span className="text-zinc-500">{` · ${view.time}`}</span>
       </div>
       <div className="flex gap-2">
         <Button

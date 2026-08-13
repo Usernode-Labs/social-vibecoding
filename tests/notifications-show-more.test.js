@@ -25,6 +25,14 @@ const SRC = fs.readFileSync(
   path.join(__dirname, '..', 'frontend', 'src', 'features', 'notifications', 'notifications.js'),
   'utf8'
 );
+// #1191 slice 6 moved the drawer's markup out of the controller and into this
+// component, so the "what does the list render" assertions read it instead.
+const LIST_SRC = fs.readFileSync(
+  path.join(
+    __dirname, '..', 'frontend', 'src', 'features', 'notifications', 'notifications-list.tsx'
+  ),
+  'utf8'
+);
 const MIGRATE_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'src', 'db', 'migrate.js'),
   'utf8'
@@ -70,10 +78,17 @@ test('no global reveal/scroll handlers remain', () => {
 });
 
 test('_renderList no longer appends a footer to the list markup', () => {
-  const m = SRC.match(/list\.innerHTML\s*=\s*(entries\.join\([^\n;]+);/);
-  assert.ok(m, 'the grouped-entries innerHTML assignment found');
-  assert.match(m[1], /entries\.join\(APP_DIVIDER\)/, 'renders just the grouped entries');
-  assert.doesNotMatch(m[1], /\+/, 'nothing concatenated after the entries (no footer)');
+  // #1191 slice 6: _renderList pushes a descriptor tree instead of an HTML
+  // string, so the "no footer" claim is now two assertions — the controller
+  // publishes exactly the grouped entries, and the component that renders
+  // them puts nothing after the last one.
+  const m = SRC.match(/store\.set\(\{ list: (entries[^,]*),/);
+  assert.ok(m, 'the grouped-entries store push found');
+  assert.equal(m[1], 'entries', 'publishes just the grouped entries');
+  assert.doesNotMatch(LIST_SRC, /loadmore|load more/i, 'no footer control in the renderer');
+  const listBlock = LIST_SRC.match(/id="notifications-list"[\s\S]*?\n {6}<\/div>/);
+  assert.ok(listBlock, 'the #notifications-list container found');
+  assert.match(listBlock[0], /entries\.map\(/, 'renders one child per entry');
 });
 
 // ── the per-group "Show more →" pager still works ───────────────────────
@@ -128,14 +143,15 @@ test('_showMoreGroup does nothing when nothing is loaded and the server is exhau
   assert.deepEqual(calls, [], 'no reveal, no fetch — group fully shown');
 });
 
-test('renderGroup offers a "Show more →" button while the server has more pages', () => {
-  // Source-level assertion: the expanded-group renderer must still emit a
-  // per-group pager (data-group-showmore) in the hasMore branch.
-  const m = SRC.match(/function renderGroup\([\s\S]*?\n\}/);
-  assert.ok(m, 'renderGroup() found');
+test('groupView offers a "Show more →" button while the server has more pages', () => {
+  // Source-level assertion: the expanded-group descriptor must still carry a
+  // per-group pager in the hasMore branch, and the component must render it
+  // with the same data-group-showmore hook the sweep used to bind.
+  const m = SRC.match(/function groupView\([\s\S]*?\n\}/);
+  assert.ok(m, 'groupView() found');
   assert.match(m[0], /else if \(Notifications\.hasMore\)/, 'has a hasMore fallthrough branch');
-  assert.match(m[0], /data-group-showmore/, 'emits the per-group "Show more" control');
   assert.match(m[0], /Show more/, 'labels it "Show more"');
+  assert.match(LIST_SRC, /data-group-showmore=/, 'emits the per-group "Show more" control');
 });
 
 // ── staging seed (unchanged) ────────────────────────────────────────────
