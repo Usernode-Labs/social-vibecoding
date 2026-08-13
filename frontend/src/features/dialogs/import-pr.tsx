@@ -47,6 +47,9 @@
 
 import { useEffect, useRef, useState } from 'react';
 
+import { Button } from '@/components/ui/button';
+import { DialogCard, DialogRoot } from '@/components/ui/dialog';
+
 import { useHiddenClass } from '../../lib/legacy-dom';
 import { useDialog } from './use-dialog';
 
@@ -263,159 +266,157 @@ export function ImportPrDialog() {
   }
 
   return (
-    <div
+    <DialogRoot
       id="import-pr-modal"
       ref={dialog.rootRef}
-      className="hidden fixed inset-0 z-50 overflow-y-auto overscroll-contain bg-black/60"
       {...dialog.backdropProps}
     >
-      <div data-modal-backdrop="" className="flex min-h-full items-center justify-center p-4">
-        <div className="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-md shadow-xl">
-          <h2 className="text-lg font-bold mb-1">
-            Import a pull request
-          </h2>
-          <p className="text-xs text-zinc-500 mb-2">
-            Pick an open pull request to add to In progress. It stays there until you put it up for vote.
-          </p>
-          {/*
-              #866: two expectations worth setting before the import, both of
-              which used to surprise people. (1) The staging preview is built
-              from the PR's head commit and takes a few minutes, so there's no
-              Preview button at first. (2) A pull request can be headed by a
-              fork — rows marked "from a fork" run an outside contributor's
-              code in the preview, so read the diff on GitHub first.
-          */}
-          <p className="text-xs text-zinc-500 mb-4">
-            {"A staging preview is built from the pull request's head commit, so it takes a few minutes to appear — and automated checks stay pending until it does. Rows marked "}
-            <span className="text-amber-600 dark:text-amber-400">
-              from a fork
-            </span>
-            {" are branches in someone else's repository: review the changes on GitHub before importing."}
-          </p>
-          <div
-            id="import-pr-list"
-            className={
-              busy
-                ? 'max-h-80 overflow-y-auto overscroll-contain -mx-1 px-1 space-y-2 pointer-events-none opacity-50'
-                : 'max-h-80 overflow-y-auto overscroll-contain -mx-1 px-1 space-y-2'
-            }
-          >
-            {!dialog.isOpen ? null : list.kind === 'loading' ? (
-              <div className={NOTE_CLASS}>Loading open pull requests…</div>
-            ) : list.kind === 'note' ? (
-              <div className={NOTE_CLASS}>{list.text}</div>
-            ) : list.kind === 'error' ? (
-              <div className={ERROR_CLASS}>{list.text}</div>
-            ) : (
-              list.rows.map((c) => {
-                const num = Number(c.number);
-                return (
-                  <label
-                    key={num}
-                    className="flex items-start gap-3 p-3 rounded-lg border border-zinc-200 dark:border-zinc-700 hover:bg-zinc-50 dark:hover:bg-zinc-800/60 cursor-pointer transition-colors"
-                  >
-                    <input
-                      type="radio"
-                      name="import-pr-choice"
-                      value={num}
-                      className="mt-1 accent-violet-600"
-                      checked={selected === num}
-                      onChange={() => {
-                        setSelected(num);
-                        setError('');
-                      }}
-                    />
-                    <span className="flex-1 min-w-0">
-                      <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">
-                        #{num} · {String(c.title || '')}
-                      </span>
-                      <span className="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
-                        {`${String(c.author || 'unknown')} — `}
-                        <span className="font-mono">
-                          {String(c.headBranch || '')} → {String(c.baseBranch || '')}
-                        </span>
-                      </span>
-                      {/*
-                          #866: fork provenance. A fork-headed PR's branch lives
-                          in someone else's repo — the preview is built from the
-                          PR head ref instead, and the code is an outside
-                          contributor's. Say so on the row so the choice is
-                          informed rather than discovered after importing.
-                      */}
-                      {c.fromFork ? (
-                        <span
-                          className="block text-xs text-amber-600 dark:text-amber-400 mt-0.5"
-                          title="This branch lives in a fork, not in this app's own repository. The preview is built from the pull request's head commit. Review the changes on GitHub before importing."
-                        >
-                          {'from a fork — '}
-                          <span className="font-mono">{String(c.headRepo || 'unknown fork')}</span>
-                        </span>
-                      ) : null}
-                      {c.htmlUrl ? (
-                        <a
-                          href={String(c.htmlUrl)}
-                          target="_blank"
-                          rel="noopener"
-                          className="inline-block text-xs text-violet-500 hover:underline mt-1"
-                          onClick={(event) => event.stopPropagation()}
-                        >
-                          View on GitHub ↗
-                        </a>
-                      ) : null}
+      <DialogCard size="md">
+        <h2 className="text-lg font-bold mb-1">
+          Import a pull request
+        </h2>
+        <p className="text-xs text-zinc-500 mb-2">
+          Pick an open pull request to add to In progress. It stays there until you put it up for vote.
+        </p>
+        {/*
+            #866: two expectations worth setting before the import, both of
+            which used to surprise people. (1) The staging preview is built
+            from the PR's head commit and takes a few minutes, so there's no
+            Preview button at first. (2) A pull request can be headed by a
+            fork — rows marked "from a fork" run an outside contributor's
+            code in the preview, so read the diff on GitHub first.
+        */}
+        <p className="text-xs text-zinc-500 mb-4">
+          {"A staging preview is built from the pull request's head commit, so it takes a few minutes to appear — and automated checks stay pending until it does. Rows marked "}
+          <span className="text-amber-600 dark:text-amber-400">
+            from a fork
+          </span>
+          {" are branches in someone else's repository: review the changes on GitHub before importing."}
+        </p>
+        <div
+          id="import-pr-list"
+          className={
+            busy
+              ? 'max-h-80 overflow-y-auto overscroll-contain -mx-1 px-1 space-y-2 pointer-events-none opacity-50'
+              : 'max-h-80 overflow-y-auto overscroll-contain -mx-1 px-1 space-y-2'
+          }
+        >
+          {!dialog.isOpen ? null : list.kind === 'loading' ? (
+            <div className={NOTE_CLASS}>Loading open pull requests…</div>
+          ) : list.kind === 'note' ? (
+            <div className={NOTE_CLASS}>{list.text}</div>
+          ) : list.kind === 'error' ? (
+            <div className={ERROR_CLASS}>{list.text}</div>
+          ) : (
+            list.rows.map((c) => {
+              const num = Number(c.number);
+              return (
+                <label
+                  key={num}
+                  className="flex items-start gap-3 p-3 rounded-lg border border-zinc-200 dark:border-zinc-700 hover:bg-zinc-50 dark:hover:bg-zinc-800/60 cursor-pointer transition-colors"
+                >
+                  <input
+                    type="radio"
+                    name="import-pr-choice"
+                    value={num}
+                    className="mt-1 accent-violet-600"
+                    checked={selected === num}
+                    onChange={() => {
+                      setSelected(num);
+                      setError('');
+                    }}
+                  />
+                  <span className="flex-1 min-w-0">
+                    <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">
+                      #{num} · {String(c.title || '')}
                     </span>
-                  </label>
-                );
-              })
-            )}
+                    <span className="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
+                      {`${String(c.author || 'unknown')} — `}
+                      <span className="font-mono">
+                        {String(c.headBranch || '')} → {String(c.baseBranch || '')}
+                      </span>
+                    </span>
+                    {/*
+                        #866: fork provenance. A fork-headed PR's branch lives
+                        in someone else's repo — the preview is built from the
+                        PR head ref instead, and the code is an outside
+                        contributor's. Say so on the row so the choice is
+                        informed rather than discovered after importing.
+                    */}
+                    {c.fromFork ? (
+                      <span
+                        className="block text-xs text-amber-600 dark:text-amber-400 mt-0.5"
+                        title="This branch lives in a fork, not in this app's own repository. The preview is built from the pull request's head commit. Review the changes on GitHub before importing."
+                      >
+                        {'from a fork — '}
+                        <span className="font-mono">{String(c.headRepo || 'unknown fork')}</span>
+                      </span>
+                    ) : null}
+                    {c.htmlUrl ? (
+                      <a
+                        href={String(c.htmlUrl)}
+                        target="_blank"
+                        rel="noopener"
+                        className="inline-block text-xs text-violet-500 hover:underline mt-1"
+                        onClick={(event) => event.stopPropagation()}
+                      >
+                        View on GitHub ↗
+                      </a>
+                    ) : null}
+                  </span>
+                </label>
+              );
+            })
+          )}
+        </div>
+        {/*
+            #846: in-flight progress row. The import POST talks to GitHub, so
+            the dialog stays put (list dimmed, buttons disabled) until the
+            server confirms — only then does the user get routed to the new
+            imported item's page. The slow line appears after ~8s so a slow GitHub
+            reads as "still working", not as a hung dialog.
+        */}
+        <div
+          id="import-pr-progress"
+          ref={progressRef}
+          className="hidden mt-3 text-sm text-zinc-500 dark:text-zinc-400"
+        >
+          <div className="flex items-center gap-2">
+            <span className="dc-status-icon dc-status-spinner-arc" aria-hidden="true">
+            </span>
+            <span id="import-pr-progress-text">
+              {progressText}
+            </span>
           </div>
-          {/*
-              #846: in-flight progress row. The import POST talks to GitHub, so
-              the dialog stays put (list dimmed, buttons disabled) until the
-              server confirms — only then does the user get routed to the new
-              imported item's page. The slow line appears after ~8s so a slow GitHub
-              reads as "still working", not as a hung dialog.
-          */}
-          <div
-            id="import-pr-progress"
-            ref={progressRef}
-            className="hidden mt-3 text-sm text-zinc-500 dark:text-zinc-400"
-          >
-            <div className="flex items-center gap-2">
-              <span className="dc-status-icon dc-status-spinner-arc" aria-hidden="true">
-              </span>
-              <span id="import-pr-progress-text">
-                {progressText}
-              </span>
-            </div>
-            <div id="import-pr-progress-slow" ref={slowRef} className="hidden mt-1 text-xs opacity-80">
-              Still working — GitHub is being slow. Don’t close this window.
-            </div>
-          </div>
-          <div id="import-pr-error" ref={errorRef} className="text-red-400 text-sm hidden mt-3">
-            {error}
-          </div>
-          <div className="flex gap-3 mt-5">
-            <button
-              type="button"
-              id="import-pr-cancel"
-              className="flex-1 rounded-lg border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
-              disabled={busy}
-              onClick={() => dialog.close()}
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              id="import-pr-submit"
-              className="flex-1 rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              disabled={busy || selected == null}
-              onClick={submit}
-            >
-              {busy ? 'Importing…' : 'Import'}
-            </button>
+          <div id="import-pr-progress-slow" ref={slowRef} className="hidden mt-1 text-xs opacity-80">
+            Still working — GitHub is being slow. Don’t close this window.
           </div>
         </div>
-      </div>
-    </div>
+        <div id="import-pr-error" ref={errorRef} className="text-red-400 text-sm hidden mt-3">
+          {error}
+        </div>
+        <div className="flex gap-3 mt-5">
+          <button
+            type="button"
+            id="import-pr-cancel"
+            className="flex-1 rounded-lg border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+            disabled={busy}
+            onClick={() => dialog.close()}
+          >
+            Cancel
+          </button>
+          <Button
+            type="button"
+            id="import-pr-submit"
+            layout="flex"
+            className="disabled:opacity-50 disabled:cursor-not-allowed"
+            isDisabled={busy || selected == null}
+            onClick={submit}
+          >
+            {busy ? 'Importing…' : 'Import'}
+          </Button>
+        </div>
+      </DialogCard>
+    </DialogRoot>
   );
 }

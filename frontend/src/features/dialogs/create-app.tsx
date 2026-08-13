@@ -44,6 +44,10 @@
 
 import { useRef, useState, type FormEvent } from 'react';
 
+import { Button } from '@/components/ui/button';
+import { DialogCard, DialogRoot } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+
 import { useClassToggle, useHiddenClass, useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useDialog } from './use-dialog';
 
@@ -235,214 +239,214 @@ export function CreateAppDialog() {
   }
 
   return (
-    <div
+    <DialogRoot
       id="create-modal"
       ref={dialog.rootRef}
-      className="hidden fixed inset-0 z-50 overflow-y-auto overscroll-contain bg-black/60"
       data-mode={mode}
       data-import-state={importState}
       {...dialog.backdropProps}
     >
-      <div data-modal-backdrop="" className="flex min-h-full items-center justify-center p-4">
-        {/*
-            The mode/import-state attributes are mirrored onto this card
-            because the native-kit modal adoption lifts it out of
-            #create-modal while presented — CSS keyed off the root would stop
-            matching (the bug that left the modal stuck in import mode).
-        */}
-        <div
-          id="create-card"
-          className="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-sm shadow-xl"
-          data-mode={mode}
-          data-import-state={importState}
-        >
-          <h2 id="create-title" className="text-lg font-bold mb-4">
-            {mode === 'import' ? 'Import existing app' : 'Create a new app'}
-          </h2>
-          <div className="flex p-1 mb-4 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-sm font-medium">
-            <button
-              type="button"
-              data-mode-pill="new"
-              className="create-mode-pill flex-1 rounded-md px-3 py-1.5 transition-colors"
-              onClick={() => applyMode('new')}
+      {/*
+          The mode/import-state attributes are mirrored onto this card
+          because the native-kit modal adoption lifts it out of
+          #create-modal while presented — CSS keyed off the root would stop
+          matching (the bug that left the modal stuck in import mode).
+      */}
+      <DialogCard
+        size="sm"
+        id="create-card"
+        data-mode={mode}
+        data-import-state={importState}
+      >
+        <h2 id="create-title" className="text-lg font-bold mb-4">
+          {mode === 'import' ? 'Import existing app' : 'Create a new app'}
+        </h2>
+        <div className="flex p-1 mb-4 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-sm font-medium">
+          <button
+            type="button"
+            data-mode-pill="new"
+            className="create-mode-pill flex-1 rounded-md px-3 py-1.5 transition-colors"
+            onClick={() => applyMode('new')}
+          >
+            Create new
+          </button>
+          <button
+            type="button"
+            data-mode-pill="import"
+            className="create-mode-pill flex-1 rounded-md px-3 py-1.5 transition-colors"
+            onClick={() => applyMode('import')}
+          >
+            Import existing
+          </button>
+        </div>
+        <form id="create-form" ref={formRef} className="space-y-4" onSubmit={submit}>
+          {/*
+              Import-only: GitHub repo URL + Check button. The Check
+              button runs the bot-access pre-flight; on success the
+              #app-name field below appears, prefilled with the repo
+              name. CSS hides this whole block in "new" mode.
+          */}
+          <div id="create-import-block" className="create-import-block">
+            <label
+              htmlFor="import-url"
+              className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1"
             >
-              Create new
-            </button>
-            <button
-              type="button"
-              data-mode-pill="import"
-              className="create-mode-pill flex-1 rounded-md px-3 py-1.5 transition-colors"
-              onClick={() => applyMode('import')}
-            >
-              Import existing
-            </button>
-          </div>
-          <form id="create-form" ref={formRef} className="space-y-4" onSubmit={submit}>
-            {/*
-                Import-only: GitHub repo URL + Check button. The Check
-                button runs the bot-access pre-flight; on success the
-                #app-name field below appears, prefilled with the repo
-                name. CSS hides this whole block in "new" mode.
-            */}
-            <div id="create-import-block" className="create-import-block">
-              <label
-                htmlFor="import-url"
-                className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1"
+              GitHub repo URL
+            </label>
+            <div className="flex gap-2">
+              <Input
+                id="import-url"
+                ref={urlRef}
+                name="repoUrl"
+                type="url"
+                autoComplete="off"
+                spellCheck="false"
+                width="flex"
+                box="dialog"
+                hint="muted"
+                ring="seamless"
+                className="font-mono text-sm"
+                placeholder="https://github.com/owner/repo"
+                onInput={() => {
+                  // Any edit invalidates the previous check; the user must
+                  // click again. Without this they could verify repo A, edit
+                  // the URL to point at repo B, then submit — the route's own
+                  // pre-flight catches it, but the UI shouldn't claim
+                  // "verified" for a URL that hasn't been verified.
+                  setImportState('idle');
+                  setStatus(IDLE_STATUS);
+                }}
+              />
+              <Button
+                type="button"
+                id="import-check"
+                disabled="block"
+                className="whitespace-nowrap"
+                isDisabled={importState === 'checking'}
+                onClick={check}
               >
-                GitHub repo URL
+                {importState === 'ok' ? 'Re-check' : 'Check'}
+              </Button>
+            </div>
+            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
+              Invite
+              <code className="font-mono text-xs">
+                usernode-bot
+              </code>
+              as a collaborator with Write access.
+            </p>
+            {/*
+                Inline status row: spinner while checking, green check on
+                ok, red error text on failure. Hidden in idle.
+            */}
+            <div id="import-status" className={statusClass(status)}>
+              {status.spinner ? <span className="import-spinner"></span> : null}
+              {status.text}
+            </div>
+          </div>
+          {/*
+              Name field. Always visible in "new" mode; gated behind a
+              successful access check in "import" mode (CSS hides it
+              until #create-card[data-import-state="ok"]).
+          */}
+          <div id="create-name-block">
+            <label htmlFor="app-name" className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
+              App name
+            </label>
+            <Input
+              id="app-name"
+              ref={nameRef}
+              name="name"
+              type="text"
+              autoComplete="off"
+              box="dialog"
+              hint="muted"
+              ring="seamless"
+              placeholder="my cool app"
+            />
+          </div>
+          {/*
+              Visibility: two segmented controls. Collab=Everyone forces
+              View=Everyone (a publicly-buildable app can't be privately
+              viewed) — applyVisibility enforces it.
+          */}
+          <div id="create-visibility-block" className="space-y-3">
+            <div>
+              <label className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
+                Who can build it
               </label>
-              <div className="flex gap-2">
-                <input
-                  id="import-url"
-                  ref={urlRef}
-                  name="repoUrl"
-                  type="url"
-                  autoComplete="off"
-                  spellCheck="false"
-                  className="flex-1 min-w-0 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent font-mono text-sm"
-                  placeholder="https://github.com/owner/repo"
-                  onInput={() => {
-                    // Any edit invalidates the previous check; the user must
-                    // click again. Without this they could verify repo A, edit
-                    // the URL to point at repo B, then submit — the route's own
-                    // pre-flight catches it, but the UI shouldn't claim
-                    // "verified" for a URL that hasn't been verified.
-                    setImportState('idle');
-                    setStatus(IDLE_STATUS);
-                  }}
-                />
+              <div className="flex p-1 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-sm font-medium">
                 <button
                   type="button"
-                  id="import-check"
-                  className="rounded-lg bg-violet-600 hover:bg-violet-500 disabled:opacity-50 disabled:cursor-not-allowed px-4 py-2 text-sm font-medium text-white transition-colors whitespace-nowrap"
-                  disabled={importState === 'checking'}
-                  onClick={check}
+                  ref={collabPublicRef}
+                  data-collab-vis="public"
+                  className="create-vis-pill flex-1 rounded-md px-3 py-1.5 transition-colors"
+                  onClick={() => applyVisibility('collab', 'public')}
                 >
-                  {importState === 'ok' ? 'Re-check' : 'Check'}
+                  Everyone
+                </button>
+                <button
+                  type="button"
+                  ref={collabPrivateRef}
+                  data-collab-vis="private"
+                  className="create-vis-pill flex-1 rounded-md px-3 py-1.5 transition-colors"
+                  onClick={() => applyVisibility('collab', 'private')}
+                >
+                  Invite-only
                 </button>
               </div>
-              <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
-                Invite
-                <code className="font-mono text-xs">
-                  usernode-bot
-                </code>
-                as a collaborator with Write access.
-              </p>
-              {/*
-                  Inline status row: spinner while checking, green check on
-                  ok, red error text on failure. Hidden in idle.
-              */}
-              <div id="import-status" className={statusClass(status)}>
-                {status.spinner ? <span className="import-spinner"></span> : null}
-                {status.text}
-              </div>
             </div>
-            {/*
-                Name field. Always visible in "new" mode; gated behind a
-                successful access check in "import" mode (CSS hides it
-                until #create-card[data-import-state="ok"]).
-            */}
-            <div id="create-name-block">
-              <label htmlFor="app-name" className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
-                App name
+            <div>
+              <label className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
+                Who can see &amp; use it
               </label>
-              <input
-                id="app-name"
-                ref={nameRef}
-                name="name"
-                type="text"
-                autoComplete="off"
-                className="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
-                placeholder="my cool app"
-              />
-            </div>
-            {/*
-                Visibility: two segmented controls. Collab=Everyone forces
-                View=Everyone (a publicly-buildable app can't be privately
-                viewed) — applyVisibility enforces it.
-            */}
-            <div id="create-visibility-block" className="space-y-3">
-              <div>
-                <label className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
-                  Who can build it
-                </label>
-                <div className="flex p-1 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-sm font-medium">
-                  <button
-                    type="button"
-                    ref={collabPublicRef}
-                    data-collab-vis="public"
-                    className="create-vis-pill flex-1 rounded-md px-3 py-1.5 transition-colors"
-                    onClick={() => applyVisibility('collab', 'public')}
-                  >
-                    Everyone
-                  </button>
-                  <button
-                    type="button"
-                    ref={collabPrivateRef}
-                    data-collab-vis="private"
-                    className="create-vis-pill flex-1 rounded-md px-3 py-1.5 transition-colors"
-                    onClick={() => applyVisibility('collab', 'private')}
-                  >
-                    Invite-only
-                  </button>
-                </div>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
-                  Who can see &amp; use it
-                </label>
-                <div className="flex p-1 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-sm font-medium">
-                  <button
-                    type="button"
-                    ref={viewPublicRef}
-                    data-view-vis="public"
-                    className="create-vis-pill flex-1 rounded-md px-3 py-1.5 transition-colors"
-                    onClick={() => applyVisibility('view', 'public')}
-                  >
-                    Everyone
-                  </button>
-                  <button
-                    type="button"
-                    ref={viewPrivateRef}
-                    data-view-vis="private"
-                    className="create-vis-pill flex-1 rounded-md px-3 py-1.5 transition-colors"
-                    onClick={() => applyVisibility('view', 'private')}
-                  >
-                    Collaborators only
-                  </button>
-                </div>
-                <p
-                  id="create-vis-hint"
-                  ref={hintRef}
-                  className="text-xs text-zinc-500 dark:text-zinc-400 mt-1 hidden"
+              <div className="flex p-1 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-sm font-medium">
+                <button
+                  type="button"
+                  ref={viewPublicRef}
+                  data-view-vis="public"
+                  className="create-vis-pill flex-1 rounded-md px-3 py-1.5 transition-colors"
+                  onClick={() => applyVisibility('view', 'public')}
                 >
-                  Apps everyone can build are always public to view.
-                </p>
+                  Everyone
+                </button>
+                <button
+                  type="button"
+                  ref={viewPrivateRef}
+                  data-view-vis="private"
+                  className="create-vis-pill flex-1 rounded-md px-3 py-1.5 transition-colors"
+                  onClick={() => applyVisibility('view', 'private')}
+                >
+                  Collaborators only
+                </button>
               </div>
-            </div>
-            <div id="create-error" ref={errorRef} className="text-red-400 text-sm hidden">
-              {error}
-            </div>
-            <div className="flex gap-3">
-              <button
-                type="button"
-                id="create-cancel"
-                className="flex-1 rounded-lg border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
-                onClick={() => dialog.close()}
+              <p
+                id="create-vis-hint"
+                ref={hintRef}
+                className="text-xs text-zinc-500 dark:text-zinc-400 mt-1 hidden"
               >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                id="create-submit"
-                className="flex-1 rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors"
-              >
-                {mode === 'import' ? 'Import' : 'Create'}
-              </button>
+                Apps everyone can build are always public to view.
+              </p>
             </div>
-          </form>
-        </div>
-      </div>
-    </div>
+          </div>
+          <div id="create-error" ref={errorRef} className="text-red-400 text-sm hidden">
+            {error}
+          </div>
+          <div className="flex gap-3">
+            <button
+              type="button"
+              id="create-cancel"
+              className="flex-1 rounded-lg border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+              onClick={() => dialog.close()}
+            >
+              Cancel
+            </button>
+            <Button type="submit" id="create-submit" layout="flex">
+              {mode === 'import' ? 'Import' : 'Create'}
+            </Button>
+          </div>
+        </form>
+      </DialogCard>
+    </DialogRoot>
   );
 }

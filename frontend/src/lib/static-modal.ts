@@ -17,12 +17,15 @@
  *
  * ── Why a hook and not a kit-backed <Dialog> primitive ────────────────
  *
- * A `Dialog` primitive would have to render the card through a portal into a
+ * There IS a `Dialog` primitive now — `@/components/ui/dialog` — but it is a
+ * chassis for the backdrop root and the card, not a presentation seam, and
+ * it renders in place. That is the distinction this note is about: a
+ * kit-backed primitive would have to render the card through a portal into a
  * container the kit owns. Two things in this repo rule that out:
  *
  *   1. The prerendered public/index.html must contain each card in its
  *      original place, inside `[data-modal-backdrop]`, with the same ids and
- *      class strings — `tests/baselines/shell-markup.json` and the 315
+ *      class strings — `tests/baselines/shell-markup.json` and the 335
  *      dapp.json selector chains are written against exactly that tree.
  *      `renderToStaticMarkup` does not emit portal content, so a portal-based
  *      primitive would ship an empty backdrop.
@@ -50,23 +53,8 @@
 
 import { useCallback, useEffect, useRef, type RefObject } from 'react';
 
+import { adoptKitSurface, type KitAdoption } from './kit-surface';
 import { useIsomorphicLayoutEffect } from './legacy-dom';
-
-interface KitModalHandle {
-  el?: HTMLElement | null;
-  dismiss(): void;
-}
-
-interface PlatformUILike {
-  hasKit(): boolean;
-  modal(opts: { contentEl: HTMLElement; onDismiss?: () => void }): KitModalHandle | null;
-}
-
-function platformUI(): PlatformUILike | null {
-  const host = window as unknown as { PlatformUI?: PlatformUILike };
-  const ui = host.PlatformUI;
-  return ui && typeof ui.modal === 'function' && typeof ui.hasKit === 'function' ? ui : null;
-}
 
 /**
  * The gesture guard `AppView.revealModal` used to stamp.
@@ -86,65 +74,33 @@ export function isDismissGuarded(root: HTMLElement | null | undefined): boolean 
   return at > 0 && Date.now() - at < MODAL_GESTURE_GUARD_MS;
 }
 
-interface Adoption {
-  handle: KitModalHandle;
-  placeholder: Comment;
-  card: HTMLElement;
-}
-
 /**
  * Present a dialog root's card inside the kit modal shell.
  *
- * Verbatim in behaviour from the retired `adoptStaticModal`: neutralize the
- * card's own chrome (the kit shell already draws surface, radius, shadow and
- * padding — stacking them gave double borders and doubled whitespace),
- * measure its design width first so the shell hugs it instead of defaulting
- * to 480px, and hide the legacy scrim while the kit owns presentation.
+ * The lift itself is `adoptKitSurface` — the same adopt / roll back / restore
+ * the dev console, the hamburger drawer and the work drawer go through. What
+ * is specific to the dialogs, and therefore still here, is which node the kit
+ * takes (the CARD, not the root), where the class goes (the root, which is
+ * what `app.css` keys the legacy scrim off), that the card must return to its
+ * exact position rather than to `<body>`, and that the gate is kit presence
+ * rather than touch.
  */
-function present(root: HTMLElement, onDismiss: () => void): Adoption | null {
-  const ui = platformUI();
-  if (!ui || !ui.hasKit()) return null;
-
+function present(root: HTMLElement, onDismiss: () => void): KitAdoption | null {
   const backdrop = root.querySelector('[data-modal-backdrop]');
   const card = ((backdrop && backdrop.firstElementChild) || root.firstElementChild) as
     | HTMLElement
     | null;
   if (!card) return null;
 
-  let designWidth: string | null = null;
-  try {
-    const mw = getComputedStyle(card).maxWidth;
-    if (mw && mw.endsWith('px')) designWidth = mw;
-  } catch {
-    /* jsdom and very old engines: fall back to the kit default width */
-  }
-
-  card.classList.add('platform-modal-card');
-  const placeholder = document.createComment('platform-modal-home');
-  card.parentNode?.replaceChild(placeholder, card);
-  root.classList.add('platform-modal-adopted');
-
-  const handle = ui.modal({ contentEl: card, onDismiss });
-  if (!handle) {
-    // The kit refused the presentation — put the card back rather than
-    // leaving the dialog invisible behind a `platform-modal-adopted` root.
-    card.classList.remove('platform-modal-card');
-    placeholder.parentNode?.replaceChild(card, placeholder);
-    root.classList.remove('platform-modal-adopted');
-    return null;
-  }
-  if (handle.el && designWidth) {
-    handle.el.style.width = `min(${designWidth}, calc(100vw - 32px))`;
-  }
-  return { handle, placeholder, card };
-}
-
-/** Put the card back where the shell rendered it, undoing `present`. */
-function restore(root: HTMLElement, adoption: Adoption): void {
-  const { placeholder, card } = adoption;
-  card.classList.remove('platform-modal-card');
-  if (placeholder.parentNode) placeholder.parentNode.replaceChild(card, placeholder);
-  root.classList.remove('platform-modal-adopted');
+  return adoptKitSurface({
+    kind: 'modal',
+    contentEl: card,
+    adoptedOn: root,
+    home: 'placeholder',
+    gate: 'kit',
+    hugDesignWidth: true,
+    onDismiss,
+  });
 }
 
 export interface StaticModalOptions {
@@ -190,17 +146,18 @@ export function useStaticModal(
   open: boolean,
   options: StaticModalOptions = {},
 ): void {
-  const adoptionRef = useRef<Adoption | null>(null);
+  const adoptionRef = useRef<KitAdoption | null>(null);
   const opts = useRef(options);
   opts.current = options;
 
   const dismissFromKit = useCallback(() => {
-    const root = rootRef.current;
     const adoption = adoptionRef.current;
     adoptionRef.current = null;
-    if (root && adoption) restore(root, adoption);
+    // `adoptKitSurface` has already restored the DOM by the time it calls us;
+    // this is the idempotent second call that covers the paths that have not.
+    if (adoption) adoption.restore();
     opts.current.onKitDismiss?.();
-  }, [rootRef]);
+  }, []);
 
   useIsomorphicLayoutEffect(() => {
     const root = rootRef.current;
@@ -214,8 +171,8 @@ export function useStaticModal(
       const adoption = adoptionRef.current;
       adoptionRef.current = null;
       if (adoption) {
-        restore(root, adoption);
-        adoption.handle.dismiss();
+        adoption.restore();
+        adoption.dismiss();
       }
       if (!root.classList.contains('hidden')) root.classList.add('hidden');
     }
@@ -239,14 +196,13 @@ export function useStaticModal(
   // shell on screen with a detached card in it.
   useEffect(
     () => () => {
-      const root = rootRef.current;
       const adoption = adoptionRef.current;
       adoptionRef.current = null;
       if (adoption) {
-        if (root) restore(root, adoption);
-        adoption.handle.dismiss();
+        adoption.restore();
+        adoption.dismiss();
       }
     },
-    [rootRef],
+    [],
   );
 }

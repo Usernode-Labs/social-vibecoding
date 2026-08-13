@@ -20,8 +20,8 @@
 //   1. every dialog root is rendered by a component under features/dialogs/;
 //   2. every one of them drives its visibility through `useDialog`, which
 //      means `useStaticModal` owns the `hidden` class and the kit lift;
-//   3. no dialog renders `hidden`, `platform-modal-adopted` or a computed
-//      className on its ROOT — the kit writes to that node;
+//   3. no dialog renders ANY className on its ROOT — the kit writes to that
+//      node, so the class attribute belongs to <DialogRoot> alone;
 //   4. no dialog renders a controlled input, because the prerendered markup
 //      must match the hand-written shell's byte for byte;
 //   5. the seam really is gone from platform-ui.js, and the two modules the
@@ -45,6 +45,7 @@ const PLATFORM_UI = read('public/js/platform-ui.js');
 const SHELL = read('frontend/src/Shell.tsx');
 const INDEX_HTML = read('public/index.html');
 const STATIC_MODAL = read('frontend/src/lib/static-modal.ts');
+const KIT_SURFACE = read('frontend/src/lib/kit-surface.ts');
 const USE_DIALOG = read('frontend/src/features/dialogs/use-dialog.ts');
 
 // The nine roots. This list was read out of platform-ui.js's STATIC_MODAL_IDS
@@ -62,13 +63,19 @@ const componentSrc = new Map(
   componentFiles.map((f) => [f, fs.readFileSync(path.join(DIALOGS, f), 'utf8')]),
 );
 
-/** The opening tag of a component's modal root, as source text. */
+/**
+ * The opening tag of a component's modal root, as source text.
+ *
+ * The root is a <DialogRoot>, not a <div>: the backdrop root, the centring
+ * wrapper that carries `data-modal-backdrop`, and the two class strings the
+ * shell ships for them all live in frontend/@/components/ui/dialog.tsx now.
+ */
 function rootTag(src, id) {
   const at = src.indexOf(`id="${id}"`);
   if (at < 0) return null;
-  const open = src.lastIndexOf('<div', at);
-  const close = src.indexOf('>', src.indexOf('id=', open));
-  return src.slice(open, src.indexOf('>', Math.max(close, at)) + 1);
+  const open = src.lastIndexOf('<DialogRoot', at);
+  if (open < 0) return null;
+  return src.slice(open, src.indexOf('>', at) + 1);
 }
 
 test('every dialog root is rendered by exactly one dialog component', () => {
@@ -98,24 +105,59 @@ test('every dialog drives its visibility through useDialog', () => {
   }
 });
 
-test('no dialog renders the classes the kit writes to its root', () => {
+test('no dialog reaches the class attribute the kit writes to its root', () => {
   // `useStaticModal` mutates `hidden` through classList and the kit adds
   // `platform-modal-adopted`, both on the ROOT. React must therefore render
-  // that node's className exactly once, as a constant — a template literal or
-  // a `hidden` toggled from state would blow the kit's class away on the next
-  // re-render. (Inside the card, className may be computed freely; only the
-  // root is shared with the kit.)
+  // that node's className to the same string on every pass — an unequal
+  // string means React writes the attribute and the kit's class is gone.
+  //
+  // Nine hand-written constants used to carry that. The chassis carries it
+  // now, and DialogRoot has NO className prop at all (see its header), so the
+  // rule is enforced by the type rather than by nine transcriptions of it.
+  // Inside the card className may be computed freely; only the root is shared.
   for (const id of DIALOG_IDS) {
     const [file, src] = [...componentSrc].find(([, s]) => s.includes(`id="${id}"`));
     const tag = rootTag(src, id);
-    assert.ok(tag, `${file}: could not find the opening tag of #${id}`);
-    assert.match(tag, /className="hidden /,
-      `${file}: #${id} must render a constant className starting "hidden " — got ${tag}`);
-    assert.ok(!/className=\{/.test(tag),
-      `${file}: #${id} renders a computed className, but the kit writes platform-modal-adopted to that node`);
+    assert.ok(tag, `${file}: #${id} is not rendered by <DialogRoot> — the chassis owns the root`);
+    assert.ok(!/className/.test(tag),
+      `${file}: #${id} passes className to DialogRoot, but the kit writes platform-modal-adopted to that node: ${tag}`);
     assert.ok(!tag.includes('platform-modal-adopted'),
       `${file}: #${id} renders platform-modal-adopted — that class belongs to the kit at runtime`);
   }
+});
+
+test('the chassis owns the backdrop root, the wrapper and the card', () => {
+  // The point of the chassis: these strings exist once. A dialog that
+  // transcribes one again is a dialog that can drift from the other eight.
+  const DIALOG_UI = read('frontend/@/components/ui/dialog.tsx');
+  assert.match(DIALOG_UI, /cva\('hidden fixed inset-0 z-50'/,
+    'the root base string must lead with `hidden` — the prerendered roots are hidden');
+  assert.match(DIALOG_UI, /data-modal-backdrop=""/,
+    'DialogRoot must render the wrapper useDialog dismisses on');
+
+  for (const [file, src] of componentSrc) {
+    assert.match(src, /from '@\/components\/ui\/dialog'/, `${file} does not import the chassis`);
+    assert.ok(!src.includes('data-modal-backdrop'),
+      `${file} hand-writes the backdrop wrapper — DialogRoot renders it`);
+    assert.ok(!/fixed inset-0 z-50/.test(src),
+      `${file} hand-writes the backdrop root class — DialogRoot owns it`);
+    assert.ok(!/bg-white dark:bg-zinc-900 rounded-xl p-6 w-full/.test(src),
+      `${file} hand-writes the card class — DialogCard owns it`);
+  }
+});
+
+test('the chassis renders in place, never through a portal', () => {
+  // A portal emits nothing during renderToStaticMarkup, so the nine roots
+  // would be absent from the prerendered public/index.html — and the kit
+  // already reparents the card itself. This is why the primitive is
+  // hand-rolled rather than @radix-ui/react-dialog; see its header.
+  const DIALOG_UI = read('frontend/@/components/ui/dialog.tsx');
+  assert.ok(!DIALOG_UI.includes('createPortal'), 'dialog.tsx portals — the roots must prerender in place');
+  assert.ok(!/^import .*@radix-ui/m.test(DIALOG_UI),
+    'dialog.tsx imports Radix; no @radix-ui/* dependency exists (the header explains why)');
+  const pkg = JSON.parse(read('frontend/package.json'));
+  assert.ok(!Object.keys(pkg.dependencies || {}).some((d) => d.startsWith('@radix-ui/')),
+    'a @radix-ui/* dependency appeared — the dialog seam has to be reconciled with it first');
 });
 
 test('no dialog renders a controlled text field', () => {
@@ -146,9 +188,13 @@ test('the adoption seam is inside React, and gone from platform-ui.js', () => {
     'public/js/platform-ui.js still declares STATIC_MODAL_IDS — chunk I retired it');
   // PlatformUI.modal() is the kit entry point the hook calls; it must stay.
   assert.match(PLATFORM_UI, /modal\(opts\)/);
-  // And the hook is what calls it, gated on kit presence — NOT on isTouch(),
-  // which would change desktop presentation for all nine dialogs.
-  assert.match(STATIC_MODAL, /ui\.hasKit\(\)/);
+  // And the hook is what calls it — through the shared lift (#1120 slice 3),
+  // gated on kit presence, NOT on isTouch(), which would change desktop
+  // presentation for all nine dialogs.
+  assert.match(STATIC_MODAL, /adoptKitSurface\(\{/);
+  assert.match(KIT_SURFACE, /ui\.hasKit\(\)/);
+  assert.match(STATIC_MODAL, /gate: 'kit'/,
+    "static-modal.ts must ask for the kit-presence gate, not the drawers' touch gate");
   assert.ok(!/isTouch\(\)\s*[?&]/.test(STATIC_MODAL),
     'static-modal.ts routes on isTouch() — the retired adopter gated on kit presence alone');
   // The ghost-click guard `AppView.revealModal` used to stamp lives here now.

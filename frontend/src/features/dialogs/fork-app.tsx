@@ -25,6 +25,10 @@
 
 import { useRef, useState, type FormEvent } from 'react';
 
+import { Button } from '@/components/ui/button';
+import { DialogCard, DialogRoot } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+
 import { useHiddenClass } from '../../lib/legacy-dom';
 import { useDialog } from './use-dialog';
 
@@ -93,99 +97,98 @@ export function ForkAppDialog() {
   }
 
   return (
-    <div
+    <DialogRoot
       id="fork-modal"
       ref={dialog.rootRef}
-      className="hidden fixed inset-0 z-50 overflow-y-auto overscroll-contain bg-black/60"
       {...dialog.backdropProps}
     >
-      <div data-modal-backdrop="" className="flex min-h-full items-center justify-center p-4">
-        <div className="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-sm shadow-xl">
-          <h2 className="text-lg font-bold mb-1">
-            Fork this app
-          </h2>
-          <p className="text-xs text-zinc-500 mb-4">
-            Forking
-            <span id="fork-source-name" className="font-mono text-zinc-300">
-              {sourceName}
-            </span>
-            stands up your own independent copy — its own repo, database, and web address.
-          </p>
-          <form id="fork-form" className="space-y-4" onSubmit={submit}>
-            <div>
-              <label
-                htmlFor="fork-input"
-                className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1"
-              >
-                Name for your fork
-              </label>
-              <input
-                id="fork-input"
-                ref={inputRef}
-                type="text"
-                required={true}
-                minLength={3}
-                maxLength={64}
-                autoComplete="off"
-                className="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
-                placeholder="My fork"
-              />
-            </div>
-            <div className="text-xs text-zinc-500 dark:text-zinc-400 space-y-1.5 rounded-lg bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700 p-3">
-              <p>
-                <span className="text-emerald-500">
-                  ✅ Carries over:
-                </span>
-                the app's code, its icon, and its current
-                <strong>
-                  public
-                </strong>
-                data (e.g. leaderboards, public posts).
-              </p>
-              <p>
-                <span className="text-violet-400">
-                  🔁 Resets to you:
-                </span>
-                you become the sole owner — collaborators, group chat, issues, proposals and votes all start empty.
-              </p>
-              <p>
-                <span className="text-amber-500">
-                  ❌ Not copied:
-                </span>
-                <strong>
-                  private
-                </strong>
-                secrets (API keys, signing keys) and
-                <strong>
-                  private
-                </strong>
-                data (DMs, per-user rows). You'll be asked to re-enter required secrets before your fork goes live.
-              </p>
-            </div>
-            <div id="fork-error" ref={errorRef} className="text-red-400 text-sm hidden">
-              {error}
-            </div>
-            <div className="flex gap-3">
-              <button
-                type="button"
-                id="fork-cancel"
-                className="flex-1 rounded-lg border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
-                onClick={() => dialog.close()}
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                id="fork-submit"
-                className="flex-1 rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors"
-                disabled={busy}
-              >
-                {busy ? 'Forking…' : 'Fork'}
-              </button>
-            </div>
-          </form>
-        </div>
-      </div>
-    </div>
+      <DialogCard size="sm">
+        <h2 className="text-lg font-bold mb-1">
+          Fork this app
+        </h2>
+        <p className="text-xs text-zinc-500 mb-4">
+          Forking
+          <span id="fork-source-name" className="font-mono text-zinc-300">
+            {sourceName}
+          </span>
+          stands up your own independent copy — its own repo, database, and web address.
+        </p>
+        <form id="fork-form" className="space-y-4" onSubmit={submit}>
+          <div>
+            <label
+              htmlFor="fork-input"
+              className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1"
+            >
+              Name for your fork
+            </label>
+            <Input
+              id="fork-input"
+              ref={inputRef}
+              type="text"
+              required={true}
+              minLength={3}
+              maxLength={64}
+              autoComplete="off"
+              box="dialog"
+              hint="muted"
+              ring="seamless"
+              placeholder="My fork"
+            />
+          </div>
+          <div className="text-xs text-zinc-500 dark:text-zinc-400 space-y-1.5 rounded-lg bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700 p-3">
+            <p>
+              <span className="text-emerald-500">
+                ✅ Carries over:
+              </span>
+              the app's code, its icon, and its current
+              <strong>
+                public
+              </strong>
+              data (e.g. leaderboards, public posts).
+            </p>
+            <p>
+              <span className="text-violet-400">
+                🔁 Resets to you:
+              </span>
+              you become the sole owner — collaborators, group chat, issues, proposals and votes all start empty.
+            </p>
+            <p>
+              <span className="text-amber-500">
+                ❌ Not copied:
+              </span>
+              <strong>
+                private
+              </strong>
+              secrets (API keys, signing keys) and
+              <strong>
+                private
+              </strong>
+              data (DMs, per-user rows). You'll be asked to re-enter required secrets before your fork goes live.
+            </p>
+          </div>
+          <div id="fork-error" ref={errorRef} className="text-red-400 text-sm hidden">
+            {error}
+          </div>
+          <div className="flex gap-3">
+            <button
+              type="button"
+              id="fork-cancel"
+              className="flex-1 rounded-lg border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+              onClick={() => dialog.close()}
+            >
+              Cancel
+            </button>
+            <Button
+              type="submit"
+              id="fork-submit"
+              layout="flex"
+              isDisabled={busy}
+            >
+              {busy ? 'Forking…' : 'Fork'}
+            </Button>
+          </div>
+        </form>
+      </DialogCard>
+    </DialogRoot>
   );
 }

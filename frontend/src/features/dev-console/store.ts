@@ -31,6 +31,8 @@
  * snapshot this store publishes.
  */
 
+import { adoptKitSurface, type KitAdoption } from '../../lib/kit-surface';
+
 export type DevConsoleLevel = 'error' | 'warn' | 'info' | 'log' | 'debug' | string;
 
 export interface DevConsoleEntry {
@@ -42,15 +44,6 @@ export interface DevConsoleEntry {
   line?: number;
   col?: number;
   kind?: string;
-}
-
-interface SheetHandle {
-  dismiss(): void;
-}
-
-interface PlatformUILike {
-  isTouch(): boolean;
-  sheet(opts: { contentEl: HTMLElement; onDismiss?: () => void }): SheetHandle | null;
 }
 
 const MAX_ENTRIES = 500;
@@ -97,7 +90,7 @@ export class DevConsoleStore {
 
   private listeners = new Set<() => void>();
 
-  private sheet: SheetHandle | null = null;
+  private sheet: KitAdoption | null = null;
 
   /** Set by the island so the touch path can present the real element. */
   private panelEl: HTMLElement | null = null;
@@ -361,17 +354,21 @@ export class DevConsoleStore {
    */
   presentSheetIfTouch(): void {
     const panel = this.panelEl;
-    const kit = (globalThis as { PlatformUI?: PlatformUILike }).PlatformUI;
-    if (!panel || !kit || this.sheet || !kit.isTouch()) return;
+    if (!panel || this.sheet) return;
 
+    // Revealed before the adoption, not after: the kit measures the sheet's
+    // height at present time and a `hidden` panel measures zero.
     panel.classList.remove('hidden');
-    panel.classList.add('platform-sheet-adopted');
-    const sheet = kit.sheet({
+    const sheet = adoptKitSurface({
+      kind: 'sheet',
       contentEl: panel,
+      home: 'body',
+      gate: 'touch',
       onDismiss: () => {
-        panel.classList.remove('platform-sheet-adopted');
+        // `adoptKitSurface` has already dropped the adopted class and put the
+        // panel back on <body>; `hidden` is ours, because it is what the
+        // island's own visibility means.
         panel.classList.add('hidden');
-        document.body.appendChild(panel);
         this.sheet = null;
         this.panelOpen = false;
         this._refreshButtonVisibility();
@@ -382,7 +379,9 @@ export class DevConsoleStore {
       this.sheet = sheet;
       return;
     }
-    panel.classList.remove('platform-sheet-adopted');
+    // The kit refused, or this is not a touch platform: back to the panel the
+    // island renders. adoptKitSurface has already undone whatever it did.
+    panel.classList.add('hidden');
   }
 
   /** True while the kit owns the panel — the island leaves `hidden` alone. */

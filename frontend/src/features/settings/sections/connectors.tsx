@@ -1,3 +1,4 @@
+import { Button } from '@/components/ui/button';
 import { SectionHeading, StatusLine } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -40,13 +41,9 @@ export function ConnectorsSection() {
             width="flex"
             mono
           />
-          <button
-            id="connector-url-copy"
-            type="button"
-            className="shrink-0 rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors"
-          >
+          <Button id="connector-url-copy" type="button" layout="shrink">
             Copy
-          </button>
+          </Button>
         </div>
         <p className="text-xs text-zinc-500 dark:text-zinc-500 mb-4 leading-relaxed">
           In Claude.ai: Settings &rarr; Connectors &rarr; Add custom connector. In ChatGPT: Settings &rarr; Connectors. Paste the URL above, then approve the connection in the browser page that opens. You can disconnect here at any time.

@@ -1,3 +1,4 @@
+import { Button } from '@/components/ui/button';
 import { SectionHeading, StatusLine } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 
@@ -40,19 +41,13 @@ export function PasswordSection() {
           />
         </div>
         {/* Default (password) submit */}
-        <button
-          id="cp-save"
-          className="mt-2 w-full rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors"
-        >
+        <Button id="cp-save" layout="stacked">
           Change password
-        </button>
+        </Button>
         {/* Wallet (signature) submit — shown only in wallet mode */}
-        <button
-          id="cp-wallet-save"
-          className="hidden mt-2 w-full rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors"
-        >
+        <Button id="cp-wallet-save" layout="hiddenStacked">
           Sign &amp; change password
-        </button>
+        </Button>
         {/*
             Mode switches. cp-wallet-mode is itself hidden unless the user
             is in the native app with a linked wallet (settings.js).

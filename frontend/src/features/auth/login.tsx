@@ -50,6 +50,9 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import {
   AUTH_SCREEN_IDS,
@@ -77,11 +80,35 @@ type RecoveryPath = 'wallet' | 'email';
 // already covers every one of them.
 const P = 'text-sm text-zinc-500 dark:text-zinc-400';
 const LABEL = 'block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1';
-const INPUT =
-  'w-full rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-zinc-900 dark:text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500';
-const BUTTON =
-  'w-full rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 font-medium transition-colors text-white';
 const QUIET_BUTTON = 'w-full text-sm text-zinc-500 hover:text-zinc-300';
+
+/**
+ * What the retired `BUTTON` class constant is now: the same string, spelled as
+ * <Button> props. `w-full rounded-lg bg-violet-600 hover:bg-violet-500 px-4
+ * py-2 font-medium transition-colors text-white` — note `size="plain"` (these
+ * forms set no text size of their own) and `ink="solidLate"` (the auth screens
+ * write the colour after the transition; see button.tsx's header).
+ *
+ * Spread rather than repeated so the nine call sites stay a single decision,
+ * exactly as the class constant made them.
+ */
+const SOLID = { layout: 'full', size: 'plain', ink: 'solidLate' } as const;
+
+/**
+ * And the retired `INPUT` class constant, likewise: `w-full rounded-lg
+ * bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700
+ * px-3 py-2 text-zinc-900 dark:text-zinc-100 placeholder-zinc-500
+ * focus:outline-none focus:ring-2 focus:ring-violet-500`.
+ */
+const FIELD = { box: 'auth', hint: 'dim' } as const;
+
+/**
+ * The login form's own two fields, which are the auth box again but with the
+ * dialogs' lighter placeholder and the ring that also clears the border. Two
+ * spellings of one field, hand-authored apart; kept apart here for the same
+ * reason input.tsx keeps `default` and `auth` apart.
+ */
+const AUTHFIELD = { box: 'auth', hint: 'muted', ring: 'seamless' } as const;
 const ERROR = 'text-red-400 text-sm';
 const STATUS = 'text-sm text-zinc-400';
 
@@ -751,10 +778,11 @@ export function LoginScreen() {
               {walletError}
             </div>
             <div id="wallet-sign-in" className={hiddenFirst(!walletControls, 'space-y-3')}>
-              <button
+              <Button
                 id="btn-wallet-sign-in"
                 data-offline-disabled=""
-                className="w-full rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 font-medium transition-colors text-white flex items-center justify-center gap-2"
+                {...SOLID}
+                className="flex items-center justify-center gap-2"
                 onClick={onWalletSignIn}
               >
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
@@ -765,7 +793,7 @@ export function LoginScreen() {
                   />
                 </svg>
                 Sign in with Wallet
-              </button>
+              </Button>
             </div>
             <div
               id="wallet-divider"
@@ -791,14 +819,14 @@ export function LoginScreen() {
               >
                 Username or email
               </label>
-              <input
+              <Input
                 ref={username}
                 id="login-username"
                 name="username"
                 type="text"
                 required={true}
                 autoComplete="username"
-                className="w-full rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+                {...AUTHFIELD}
                 placeholder="username or email"
               />
             </div>
@@ -809,27 +837,23 @@ export function LoginScreen() {
               >
                 Password
               </label>
-              <input
+              <Input
                 ref={password}
                 id="login-password"
                 name="password"
                 type="password"
                 required={true}
                 autoComplete="current-password"
-                className="w-full rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+                {...AUTHFIELD}
                 placeholder="password"
               />
             </div>
             <div id="login-error" className={hiddenLast(!loginError, ERROR)}>
               {loginError}
             </div>
-            <button
-              type="submit"
-              data-offline-disabled=""
-              className="w-full rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 font-medium transition-colors text-white"
-            >
+            <Button type="submit" data-offline-disabled="" {...SOLID}>
               Log in
-            </button>
+            </Button>
           </form>
           <p id="forgot-link-wrap" className={hiddenLast(!base, 'text-center text-sm mt-3')}>
             <a
@@ -877,24 +901,24 @@ export function LoginScreen() {
                 <label className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
                   Email
                 </label>
-                <input
+                <Input
                   ref={otpEmailInput}
                   id="otp-email"
                   type="email"
                   autoComplete="email"
-                  className={INPUT}
+                  {...FIELD}
                   placeholder="you@example.com"
                 />
               </div>
-              <button
+              <Button
                 id="btn-otp-request"
                 type="button"
                 data-offline-disabled=""
-                className={BUTTON}
+                {...SOLID}
                 onClick={otpRequestCode}
               >
                 Email me a code
-              </button>
+              </Button>
             </div>
             <div id="otp-step-code" className={hiddenFirst(otpStep !== 'code', 'space-y-3')}>
               <p className="text-sm text-zinc-500 dark:text-zinc-400">
@@ -908,26 +932,27 @@ export function LoginScreen() {
                 <label className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
                   Code
                 </label>
-                <input
+                <Input
                   ref={otpCode}
                   id="otp-code"
                   type="text"
                   inputMode="numeric"
                   autoComplete="one-time-code"
                   maxLength={6}
-                  className={INPUT + ' tracking-widest text-center'}
+                  {...FIELD}
+                  className="tracking-widest text-center"
                   placeholder="123456"
                 />
               </div>
-              <button
+              <Button
                 id="btn-otp-verify"
                 type="button"
                 data-offline-disabled=""
-                className={BUTTON}
+                {...SOLID}
                 onClick={onOtpVerify}
               >
                 Verify code
-              </button>
+              </Button>
               <button
                 id="btn-otp-resend"
                 type="button"
@@ -946,12 +971,12 @@ export function LoginScreen() {
                 <label className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
                   New password
                 </label>
-                <input
+                <Input
                   ref={otpNewPassword}
                   id="otp-new-password"
                   type="password"
                   autoComplete="new-password"
-                  className={INPUT}
+                  {...FIELD}
                   placeholder="at least 8 characters"
                 />
               </div>
@@ -959,24 +984,24 @@ export function LoginScreen() {
                 <label className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
                   Confirm password
                 </label>
-                <input
+                <Input
                   ref={otpConfirmPassword}
                   id="otp-confirm-password"
                   type="password"
                   autoComplete="new-password"
-                  className={INPUT}
+                  {...FIELD}
                   placeholder="re-enter password"
                 />
               </div>
-              <button
+              <Button
                 id="btn-otp-set-password"
                 type="button"
                 data-offline-disabled=""
-                className={BUTTON}
+                {...SOLID}
                 onClick={onOtpSetPassword}
               >
                 Set password &amp; sign in
-              </button>
+              </Button>
             </div>
             <div id="otp-error" className={hiddenLast(!otpError, ERROR)}>
               {otpError}
@@ -1018,12 +1043,12 @@ export function LoginScreen() {
                 <label className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
                   New password
                 </label>
-                <input
+                <Input
                   ref={recoveryNewPassword}
                   id="recovery-new-password"
                   type="password"
                   autoComplete="new-password"
-                  className={INPUT}
+                  {...FIELD}
                   placeholder="at least 8 characters"
                 />
               </div>
@@ -1031,12 +1056,12 @@ export function LoginScreen() {
                 <label className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
                   Confirm new password
                 </label>
-                <input
+                <Input
                   ref={recoveryConfirmPassword}
                   id="recovery-confirm-password"
                   type="password"
                   autoComplete="new-password"
-                  className={INPUT}
+                  {...FIELD}
                   placeholder="re-enter new password"
                 />
               </div>
@@ -1046,9 +1071,9 @@ export function LoginScreen() {
               <div id="recovery-status" className={hiddenLast(!recoveryStatus, STATUS)}>
                 {recoveryStatus}
               </div>
-              <button id="btn-wallet-reset" type="button" className={BUTTON} onClick={onWalletReset}>
+              <Button id="btn-wallet-reset" type="button" {...SOLID} onClick={onWalletReset}>
                 Reset password with your wallet
-              </button>
+              </Button>
             </div>
             {/*
                 The emailed-reset request form. Mounted on the first
@@ -1065,12 +1090,12 @@ export function LoginScreen() {
                 </p>
                 <div>
                   <label className={LABEL} htmlFor="recovery-email-input">Email</label>
-                  <input
+                  <Input
                     ref={recoveryEmailInput}
                     id="recovery-email-input"
                     type="email"
                     autoComplete="email"
-                    className={INPUT}
+                    {...FIELD}
                     placeholder="you@example.com"
                   />
                 </div>
@@ -1080,15 +1105,15 @@ export function LoginScreen() {
                 <div id="recovery-email-status" className={hiddenLast(!emailResetStatus, STATUS)}>
                   {emailResetStatus}
                 </div>
-                <button
+                <Button
                   id="btn-email-reset"
                   type="button"
-                  className={BUTTON}
-                  disabled={busy === 'btn-email-reset'}
+                  {...SOLID}
+                  isDisabled={busy === 'btn-email-reset'}
                   onClick={onEmailReset}
                 >
                   Email me a reset link
-                </button>
+                </Button>
               </div>
             ) : null}
             <div
@@ -1145,23 +1170,23 @@ export function LoginScreen() {
               <h2 className="text-lg font-bold text-center">Choose a new password</h2>
               <div>
                 <label className={LABEL} htmlFor="reset-new-password">New password</label>
-                <input
+                <Input
                   ref={resetNewPassword}
                   id="reset-new-password"
                   type="password"
                   autoComplete="new-password"
-                  className={INPUT}
+                  {...FIELD}
                   placeholder="at least 8 characters"
                 />
               </div>
               <div>
                 <label className={LABEL} htmlFor="reset-confirm-password">Confirm new password</label>
-                <input
+                <Input
                   ref={resetConfirmPassword}
                   id="reset-confirm-password"
                   type="password"
                   autoComplete="new-password"
-                  className={INPUT}
+                  {...FIELD}
                   placeholder="re-enter new password"
                 />
               </div>
@@ -1171,15 +1196,15 @@ export function LoginScreen() {
               <div id="reset-status" className={hiddenLast(!resetStatus, STATUS)}>
                 {resetStatus}
               </div>
-              <button
+              <Button
                 id="btn-reset-confirm"
                 type="button"
-                className={BUTTON}
-                disabled={busy === 'btn-reset-confirm'}
+                {...SOLID}
+                isDisabled={busy === 'btn-reset-confirm'}
                 onClick={onResetConfirm}
               >
                 Set new password
-              </button>
+              </Button>
               <button
                 id="btn-reset-back"
                 type="button"

@@ -43,6 +43,8 @@
 // `busy` flags are seeded into that store so the first paint is right,
 // and a live entry always beats a stale fetch.
 
+import { adoptKitSurface } from '../../lib/kit-surface';
+
 // The four session-related notification kinds that live in the cog
 // drawer instead of the bell. notifications.js exposes the canonical
 // set on window (window.SESSION_NOTIF_KINDS); the literal fallback here
@@ -226,19 +228,25 @@ const WorkDrawer = {
     // Touch platforms: kit bottom sheet (a top-sheet variant was tried
     // and reverted — the bottom sheet felt better). Desktop keeps the
     // anchored dropdown below.
-    if (PlatformUI.isTouch() && !WorkDrawer._sheet) {
+    if (!WorkDrawer._sheet) {
       panel.classList.remove('hidden');
-      panel.classList.add('platform-sheet-adopted');
       // Render BEFORE presenting — the kit sheet measures its height
       // once at present time to seed the slide-up spring (see the
       // matching note in notifications.js show()).
       WorkDrawer._renderList();
-      const sheet = PlatformUI.sheet({
+      // The adopted class, the restore to <body> and the rollback when the
+      // kit refuses are adoptKitSurface's now — see lib/kit-surface.ts's
+      // header. `gate: 'touch'` is the PlatformUI.isTouch() check that used
+      // to wrap this branch; desktop falls through to the anchored dropdown.
+      const sheet = adoptKitSurface({
+        kind: 'sheet',
         contentEl: panel,
+        home: 'body',
+        gate: 'touch',
         onDismiss: () => {
-          panel.classList.remove('platform-sheet-adopted');
+          // `hidden` stays ours: it is what the desktop dropdown means by
+          // closed, and the kit knows nothing about it.
           panel.classList.add('hidden');
-          document.body.appendChild(panel);
           WorkDrawer._sheet = null;
           WorkDrawer.open = false;
         },
@@ -249,7 +257,6 @@ const WorkDrawer = {
         WorkDrawer.refresh();
         return;
       }
-      panel.classList.remove('platform-sheet-adopted');
     }
     panel.classList.remove('hidden');
     WorkDrawer.open = true;
