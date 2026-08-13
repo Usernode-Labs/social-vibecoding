@@ -379,8 +379,21 @@ test('schema, routing and bundled profile UI pin privacy and current-shell integ
   const root = path.join(__dirname, '..');
   const schema = fs.readFileSync(path.join(root, 'src/db/schema.sql'), 'utf8');
   const route = fs.readFileSync(path.join(root, 'src/routes/profiles.js'), 'utf8');
+  // #1191 slice 6 converted #profile-root to React. profile.js kept the
+  // fetches and the writes; the public card's markup moved to
+  // public-profile-card.tsx and the rule that decides who may report moved to
+  // profile-store.js. All three are asserted on below, because the privacy
+  // guarantees this test pins are spread across them now.
   const profile = fs.readFileSync(
     path.join(root, 'frontend/src/features/profile/profile.js'),
+    'utf8'
+  );
+  const profileStore = fs.readFileSync(
+    path.join(root, 'frontend/src/features/profile/profile-store.js'),
+    'utf8'
+  );
+  const publicCard = fs.readFileSync(
+    path.join(root, 'frontend/src/features/profile/public-profile-card.tsx'),
     'utf8'
   );
   const app = fs.readFileSync(path.join(root, 'public/js/app.js'), 'utf8');
@@ -392,11 +405,16 @@ test('schema, routing and bundled profile UI pin privacy and current-shell integ
   assert.doesNotMatch(schema, /ADD COLUMN IF NOT EXISTS profile_(display_name|bio|avatar_url)/);
   assert.match(route, /LEFT JOIN user_avatars/);
   assert.doesNotMatch(route, /profile_(display_name|bio|avatar_url)/);
-  assert.match(profile, /textContent = text/);
-  assert.match(profile, /img\.referrerPolicy = 'no-referrer'/);
-  assert.match(profile, /App\.user\.hasPlatformAccess === false/);
-  assert.match(profile, /absolute inset-0 w-full h-full object-cover/);
+  // A stranger's display name and bio are attacker-controlled, so they have to
+  // reach the page as text. JSX children are text nodes by construction, which
+  // is the React spelling of the old `textContent = text` helper.
+  assert.match(publicCard, /\{profile\.displayName \|\| profile\.username\}/);
+  assert.match(publicCard, /\{profile\.bio\}/);
+  assert.match(publicCard, /referrerPolicy="no-referrer"/);
+  assert.match(profileStore, /viewer\.hasPlatformAccess !== false/);
+  assert.match(publicCard, /absolute inset-0 w-full h-full object-cover/);
   assert.doesNotMatch(profile, /innerHTML\s*=/);
+  assert.doesNotMatch(publicCard, /dangerouslySetInnerHTML/);
   assert.match(app, /publicProfileRoute/);
   assert.match(app, /Profile\.open\(username\)/);
   assert.match(server, /publicProfileRoutes\(config\)/);

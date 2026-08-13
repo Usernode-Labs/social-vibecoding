@@ -93,11 +93,22 @@ const buttonVariants = cva('', {
       stacked: 'mt-2 w-full',
       // #password-set-submit, revealed only for passwordless accounts.
       hiddenStacked: 'hidden mt-2 w-full',
+      // The profile screen writes its padding and its 44px tap target BEFORE
+      // the box rather than after it, so on those two buttons the padding
+      // travels here and the `size` group contributes nothing. #profile-edit-save.
+      tapFull: 'w-full px-4 min-h-[44px]',
+      // The profile's publish/unpublish button, beside a bordered sibling.
+      tap: 'px-3 min-h-[44px]',
     },
     /** Radius + surface. Radius leads the box in every shell button. */
     variant: {
       // The primary action, everywhere.
       default: 'rounded-lg bg-violet-600 hover:bg-violet-500',
+      // The profile screen's spelling of the same box, one step darker on
+      // hover. #profile-edit-save and the publish/unpublish button both write
+      // it; normalising them to `default` would be a visual change, and this
+      // slice's contract is that there are none.
+      tapPrimary: 'rounded-lg bg-violet-600 hover:bg-violet-700',
       // #agent-files-save — the same action inside a `text-xs` inline card,
       // where the smaller radius matches the card.
       compact: 'rounded bg-violet-600 hover:bg-violet-500',
@@ -142,6 +153,10 @@ const buttonVariants = cva('', {
       xl: 'px-6 py-2 text-sm font-medium',
       // Icon buttons carry their own sizing from the surrounding layout.
       icon: '',
+      // The `tap*` layouts above already carry the padding, and the profile
+      // screen writes its text size after the ink rather than before it, so
+      // this group has nothing to add on those two call sites.
+      none: '',
       // Text-only controls add no box of their own.
       inline: 'text-sm',
     },
@@ -149,6 +164,12 @@ const buttonVariants = cva('', {
     ink: {
       none: '',
       solid: 'text-white transition-colors',
+      // #profile-edit-save and the profile's publish/unpublish button, which
+      // fold the text size and weight into this trailing run and carry no
+      // transition. Their `disabled:opacity-60` is written at the very end of
+      // the string, so it rides in through className like the three buttons
+      // named in the header.
+      solidText: 'text-white text-sm font-medium',
       // The auth screens' spelling of the same pair — see the header.
       solidLate: 'transition-colors text-white',
       // #agent-files-cancel.

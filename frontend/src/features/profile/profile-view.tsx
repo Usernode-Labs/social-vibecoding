@@ -15,6 +15,7 @@
 
 import { type ReactNode } from 'react';
 
+import { Button } from '@/components/ui/button';
 import { useStoreState } from '../../lib/use-store-state';
 import {
   buildProfileView,
@@ -136,17 +137,18 @@ function PublicControls({ controls, status, publishing, previewOpen }: {
         </p>
       ) : null}
       <div className="flex flex-wrap gap-2 mt-3">
-        <button
+        <Button
           type="button"
-          className={
-            'px-3 min-h-[44px] rounded-lg bg-violet-600 hover:bg-violet-700 '
-            + 'text-white text-sm font-medium disabled:opacity-60'
-          }
+          layout="tap"
+          variant="tapPrimary"
+          size="none"
+          ink="solidText"
+          className="disabled:opacity-60"
           disabled={publishing}
           onClick={() => { void Profile._setPublished(!controls.published); }}
         >
           {controls.publishLabel}
-        </button>
+        </Button>
         <button
           type="button"
           className={

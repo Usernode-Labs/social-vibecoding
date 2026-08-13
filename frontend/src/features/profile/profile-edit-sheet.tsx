@@ -33,6 +33,7 @@
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 
+import { Button } from '@/components/ui/button';
 import { useClassToggle, useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { adoptKitSurface, type KitAdoption } from '../../lib/kit-surface';
 import { Profile } from './profile.js';
@@ -336,17 +337,18 @@ export function ProfileEditSheet({
         {formError || ''}
       </p>
 
-      <button
+      <Button
         id="profile-edit-save"
-        className={
-          'w-full px-4 min-h-[44px] rounded-lg bg-violet-600 hover:bg-violet-700 '
-          + 'text-white text-sm font-medium disabled:opacity-60'
-        }
+        layout="tapFull"
+        variant="tapPrimary"
+        size="none"
+        ink="solidText"
+        className="disabled:opacity-60"
         disabled={saving}
         onClick={() => { void onSave(); }}
       >
         Save
-      </button>
+      </Button>
       <button
         className="w-full px-4 py-2 mt-2 text-sm text-zinc-500 dark:text-zinc-400"
         onClick={() => Profile._dismissSheet()}
