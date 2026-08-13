@@ -294,6 +294,51 @@ test('merged proposal: Undo, and never twice over a revert', () => {
     .some((l) => /^Undo$/.test(l)));
 });
 
+test('merged proposal: completed-task attributes stay editable for collaborators', () => {
+  const AppView = makeAppView();
+  const populated = AppView._renderMergedCard(PR({
+    status: 'merged', chat_count: 0,
+    priority: { top: 'high', count: 1 },
+    assignee: { top: 'snait', count: 1 },
+    category: { top: 'feature', count: 1 },
+  }), 3);
+
+  for (const field of ['priority', 'assignee', 'category']) {
+    assert.match(populated, new RegExp(`<button[^>]+data-attr-field="${field}"`),
+      `${field} is an interactive chip after merge`);
+  }
+
+  const unset = menuLabels(AppView, AppView._renderMergedCard(
+    PR({ status: 'merged', chat_count: 0 }), 3));
+  assert.ok(unset.includes('Set priority…'));
+  assert.ok(unset.includes('Assign someone…'));
+  assert.ok(unset.includes('Set category…'));
+
+  // The completed task's detail header has no overflow menu, so all three
+  // unset controls remain directly visible there.
+  const detail = AppView._renderProposalCard(
+    PR({ status: 'merged', chat_count: 0 }), { noNav: true });
+  assert.match(detail, /Set priority/);
+  assert.match(detail, /Unassigned/);
+  assert.match(detail, /Set category/);
+  assert.equal((detail.match(/data-attr-chip/g) || []).length, 3);
+});
+
+test('merged proposal: completed-task attributes remain read-only without collaboration access', () => {
+  const AppView = makeAppView({ readOnly: true });
+  const html = AppView._renderMergedCard(PR({
+    status: 'merged', chat_count: 0,
+    priority: { top: 'high', count: 1 },
+    assignee: { top: 'snait', count: 1 },
+    category: { top: 'feature', count: 1 },
+  }), 3);
+
+  assert.doesNotMatch(html, /data-attr-chip/, 'populated chips are non-interactive spans');
+  const labels = menuLabels(AppView, html);
+  assert.ok(!labels.some((label) => /priority|assignee|category/i.test(label)),
+    'no attribute mutation entries leak into the menu');
+});
+
 test('issue: the full demoted set, and Open on GitHub last', () => {
   const AppView = makeAppView();
   const labels = menuLabels(AppView, AppView._renderIssueRow(

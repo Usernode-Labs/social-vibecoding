@@ -7603,7 +7603,7 @@ const AppView = {
     // badge, the checks badge, the console-errors badge, the advisory chip
     // and the explicit-approval chip. Unset metadata chips don't render.
     const badges = AppView._attrChipsHtml('proposal', pr.id, pr, {
-      readonly: isMerged, omitUnset: !noNav, asArray: true,
+      omitUnset: !noNav, asArray: true,
     });
     // The pill LEADS the status band as a flexible bar. The detail head keeps
     // the inline capsule — it already has a wide header, and a bar that wide
@@ -7825,7 +7825,7 @@ const AppView = {
       });
     }
     if (!st.noNav) {
-      items.push(...AppView._attrMenuItems('proposal', pr.id, pr, { readonly: isMerged }));
+      items.push(...AppView._attrMenuItems('proposal', pr.id, pr));
     }
     if (pr.pr_url) {
       items.push({
@@ -9427,7 +9427,7 @@ const AppView = {
   },
 
   // One chip. `summary` is { top, count, myValue } as the feed routes
-  // attach it. Both the interactive <button> and the read-only (merged)
+  // attach it. Both the interactive <button> and the explicitly read-only
   // <span> reuse the SAME geometry class every other chip in the badge row
   // uses (.dev-badge — one height, one padding, one radius), with the
   // utility classes supplying only the tint, so a row of them sits on a
@@ -9484,8 +9484,8 @@ const AppView = {
   },
 
   // All three chips for a card, in the badge row. opts.readonly drops the
-  // dropdown (used on merged/completed proposals, and forced for
-  // read-only viewers — #621).
+  // dropdown when a caller explicitly freezes a surface; read-only viewers
+  // are always forced through the same non-interactive path (#621).
   //
   // opts.omitUnset — skip a chip whose value nobody has set. This is the
   // BOARD default now: rendering "⚑ Set priority", "Set category" and
@@ -9519,7 +9519,8 @@ const AppView = {
   // The ⋯ descriptors that replace the unset attribute chips: the three
   // "set this for the first time" entry points. Each opens the SAME
   // attribute popover the chip would have, anchored to the menu row.
-  // Returns [] for a read-only viewer or a settled/merged card.
+  // Returns [] for a read-only viewer or when a caller explicitly freezes
+  // that surface. Completed proposal tasks intentionally stay editable.
   _attrMenuItems(targetType, targetRef, item, opts) {
     if (AppView.readOnly || (opts && opts.readonly)) return [];
     const it = item || {};
@@ -10733,9 +10734,11 @@ const AppView = {
     const closes = AppView.closesPillHtml(pr);
 
     // The settled pill (denominator is the threshold snapshotted at merge
-    // time) plus the frozen metadata chips that actually carry a value.
+    // time) plus the metadata chips that actually carry a value. Completion
+    // settles the merge vote, not task organization: collaborators may still
+    // correct priority, assignee or category from this card.
     const badges = AppView._attrChipsHtml('proposal', pr.id, pr, {
-      readonly: true, omitUnset: true, asArray: true,
+      omitUnset: true, asArray: true,
     });
     const pill = AppView.statusPillHtml(pr, { majority: maj });
 
