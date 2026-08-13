@@ -184,7 +184,20 @@ test('the header dot is markup, hidden, and toggled from the store', () => {
   assert.match(dot.slice(0, 200), /className="hidden absolute/, 'ships hidden: an island renders empty/hidden markup');
   // The generated document carries it too (build:shell was run).
   assert.match(indexHtml, /id="feedback-queue-dot"/);
-  assert.match(feedbackJs, /const dot = document\.getElementById\('feedback-queue-dot'\);/);
+});
+
+test('the dot travels through the visibility store, not a classList write', () => {
+  // The dot lives inside the React header island. A classList toggle by id
+  // that lands before the header's hydration commit is a mismatch React 19
+  // patches back to the constant className — the dot un-paints and, with
+  // connectivity pinned by ?shot=feedback-queued, nothing ever repaints it.
+  // So the writer publishes and the header subscribes (mount-time apply
+  // covers a publish that happened first). Same seam as the offline banner.
+  assert.match(feedbackJs, /publishVisibility\('feedback-queue-dot', n > 0\)/);
+  assert.doesNotMatch(feedbackJs, /getElementById\('feedback-queue-dot'\)/,
+    'no direct DOM write may sneak back in beside the publish');
+  assert.match(headerTsx, /useVisibilityHiddenClass\(feedbackDotRef, 'feedback-queue-dot', false\)/);
+  assert.match(headerTsx, /ref=\{feedbackDotRef\} id="feedback-queue-dot"/);
 });
 
 test('the queue module loads before app.js and is precached', () => {
