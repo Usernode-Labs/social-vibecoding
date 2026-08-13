@@ -89,7 +89,17 @@ async function resolveApp(pool, token) {
 // to tamper with). Staging containers never hold the token
 // (staging:private column), so unreviewed PR code is rejected here
 // exactly like at the LLM proxy.
-function appPlatformAuth(pool) {
+//
+// `{ requireUser: true }` (issue #1195) additionally demands the caller's
+// iframe identity JWT in x-usernode-user-token and verifies it against
+// the RESOLVED app's audience — the same cross-app-replay closure
+// appLlmAuth performs below, and the same shape appStorageAuth uses:
+// app token + user token, no grant. Endpoints that read platform-wide
+// state rather than the app's own row take this variant, so every read
+// is attributable to a real signed-in user of THIS app and rate-limits
+// can be keyed per (app, user) instead of per app.
+function appPlatformAuth(pool, opts = {}) {
+  const requireUser = !!opts.requireUser;
   return async function appPlatformAuthMiddleware(req, res, next) {
     const ip = clientIp(req);
     if (!isPrivateIp(ip)) {
@@ -100,6 +110,17 @@ function appPlatformAuth(pool) {
     const appToken = req.headers['x-usernode-app-token'];
     if (!appToken || typeof appToken !== 'string' || !/^[0-9a-f]{64}$/.test(appToken)) {
       return res.status(401).json({ ok: false, code: 'missing_app_token' });
+    }
+
+    const userToken = req.headers['x-usernode-user-token'];
+    if (requireUser) {
+      if (!userToken || typeof userToken !== 'string') {
+        return res.status(401).json({ ok: false, code: 'missing_user_token' });
+      }
+      if (!process.env.IFRAME_JWT_PUBLIC_KEY) {
+        log.error('app-platform-auth', 'IFRAME_JWT_PUBLIC_KEY not configured');
+        return res.status(500).json({ ok: false, code: 'server_misconfigured' });
+      }
     }
 
     let app;
@@ -113,7 +134,24 @@ function appPlatformAuth(pool) {
       return res.status(401).json({ ok: false, code: 'bad_app_token' });
     }
 
-    req.appPlatform = { appId: app.id, appSlug: app.slug };
+    let userId = null;
+    if (requireUser) {
+      // Verified against the RESOLVED app's audience — a token minted for
+      // app A carries `usernode:app:<A>` and is rejected when presented
+      // alongside app B's app token.
+      let claims;
+      try {
+        claims = platformJwt.verifyAppIdentityToken(userToken, { appId: app.id });
+      } catch (err) {
+        return res.status(401).json({ ok: false, code: 'bad_user_token', message: err.message });
+      }
+      if (!claims || typeof claims.id !== 'number' || claims.scope) {
+        return res.status(403).json({ ok: false, code: 'bad_user_token' });
+      }
+      userId = claims.id;
+    }
+
+    req.appPlatform = { appId: app.id, appSlug: app.slug, userId };
     next();
   };
 }

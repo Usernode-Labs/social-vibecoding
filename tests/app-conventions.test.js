@@ -91,3 +91,35 @@ test('conventions doc carries the screenshot-state deep-link section (#768)', ()
     'sessions.js TESTING rules must document the @mobile annotation'
   );
 });
+
+test('conventions doc carries the user-directory section (#1195)', () => {
+  const doc = getAppConventions();
+  assert.match(doc, /^## User directory — does this handle exist\?$/m);
+  // Both surfaces: the server-side platform API and the bridge helpers.
+  assert.match(doc, /\/users\/lookup\?username=/);
+  assert.match(doc, /\/users\/search\?q=/);
+  assert.match(doc, /usernode\.lookupUser/);
+  assert.match(doc, /usernode\.searchUsers/);
+  // The field allowlist is the point of the section — apps must not
+  // plan features around data the directory will never return.
+  assert.match(doc, /only\*\* `\{ id, username \}`/);
+  // The staging story: the bridge path works where the token path
+  // cannot, and the degrade rule is fail-OPEN.
+  assert.match(doc, /staging previews/i);
+  assert.match(doc, /degrade open/i);
+  // The case-collision flag apps have to handle.
+  assert.match(doc, /ambiguous.*true/);
+});
+
+test('the offline essentials excerpt points at the user directory (#1195)', () => {
+  const doc = getAppConventions();
+  const begin = doc.indexOf('<!-- work-order:begin -->');
+  const end = doc.indexOf('<!-- work-order:end -->');
+  assert.ok(begin >= 0 && end > begin, 'work-order markers must survive');
+  const excerpt = doc.slice(begin, end);
+  // One clause on rule 8, next to the LLM proxy and file storage — an
+  // agent that never reads the full doc still learns the capability
+  // exists rather than inventing a directory from seen users.
+  assert.match(excerpt, /usernode\.lookupUser\(\)/);
+  assert.match(excerpt, /never a guess from users your app has already seen/);
+});
