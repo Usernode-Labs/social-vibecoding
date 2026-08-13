@@ -4582,6 +4582,12 @@ async function seedStagingBrowseCardBranches(pool, config) {
   // The same 1×1-ish PNG routes/apps.js serves to the ?demo=1 rows, stored
   // as a real app_icons blob so /app-icons/:id resolves — the client is
   // given an icon_url either way, and this makes the persisted path real.
+  //
+  // The id MUST match /^[a-f0-9]{32}$/: src/routes/app-icons.js rejects
+  // anything else with a 404 BEFORE it queries, so a readable id like
+  // 'stagingdemocardicon01' inserts fine, is handed to the client as an
+  // icon_url fine, and then 404s on every screen that renders the app
+  // list — which is a console error on nearly every route.
   const ICON_PNG = Buffer.from(
     'iVBORw0KGgoAAAANSUhEUgAAABwAAAAcCAYAAAByDd+UAAAAg0lEQVR42r3NuRGAMAwEQNdFbXRAIVRHAyQwDmB4/MjS3QUbb5qn7VBKymxddl2YM1l4ZZLwmdHDb0YNSxktrGWUsJXBw14GDS0ZLLRmkHAkC4ejWSj0ZO7Qm7nCSDYcRrOhEJGZQ1RmCpFZN0RnzZCRVUNWVgyZ2S9kZ69Qkd2hKstOLPva44BQr+EAAAAASUVORK5CYII=',
     'base64'
@@ -4589,7 +4595,7 @@ async function seedStagingBrowseCardBranches(pool, config) {
 
   const APPS = [
     { id: 900201, slug: 'staging-demo-card-image',  name: 'Staging demo app — image icon',
-      iconId: 'stagingdemocardicon01', emoji: null,  anonShell: 'public' },
+      iconId: 'facade00facade00facade00facade01', emoji: null,  anonShell: 'public' },
     { id: 900202, slug: 'staging-demo-card-emoji',  name: 'Staging demo app — emoji icon',
       iconId: null, emoji: '🧩', anonShell: 'public' },
     { id: 900203, slug: 'staging-demo-card-gated',  name: 'Staging demo app — account required',
@@ -4627,6 +4633,14 @@ async function seedStagingBrowseCardBranches(pool, config) {
         [app.id, app.anonShell]
       );
       if (!app.iconId) continue;
+      // app_icons.app_id is UNIQUE — one icon per app — so an icon this seed
+      // wrote under a DIFFERENT id on an earlier boot blocks the insert below
+      // and takes the whole seed down with it. Staging's database outlives its
+      // deploys, so that is the ordinary case whenever the id changes, not a
+      // hypothetical.
+      await pool.query(
+        'DELETE FROM app_icons WHERE app_id = $1 AND id <> $2', [app.id, app.iconId]
+      );
       await pool.query(
         `INSERT INTO app_icons (id, app_id, content_type, data, sha256)
          VALUES ($1, $2, 'image/png', $3, $4)

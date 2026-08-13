@@ -161,7 +161,7 @@ export function RenameAppDialog() {
               type="submit"
               id="rename-submit"
               layout="flex"
-              isDisabled={busy}
+              disabled={busy}
             >
               {busy ? 'Opening PR...' : 'Open PR'}
             </Button>

@@ -175,7 +175,7 @@ export function CloseIssueDialog() {
               type="submit"
               id="close-issue-submit"
               layout="flex"
-              isDisabled={busy}
+              disabled={busy}
             >
               Propose close
             </Button>

@@ -610,8 +610,8 @@ export function MoreScreen() {
             <Button
               type="submit"
               id="more-save"
-              isDisabled={saving}
-              disabled="dim"
+              disabled={saving}
+              disabledStyle="dim"
               size="xl"
             >
               Save my answers

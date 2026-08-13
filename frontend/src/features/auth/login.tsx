@@ -1104,7 +1104,7 @@ export function LoginScreen() {
                   id="btn-email-reset"
                   type="button"
                   {...SOLID}
-                  isDisabled={busy === 'btn-email-reset'}
+                  disabled={busy === 'btn-email-reset'}
                   onClick={onEmailReset}
                 >
                   Email me a reset link
@@ -1195,7 +1195,7 @@ export function LoginScreen() {
                 id="btn-reset-confirm"
                 type="button"
                 {...SOLID}
-                isDisabled={busy === 'btn-reset-confirm'}
+                disabled={busy === 'btn-reset-confirm'}
                 onClick={onResetConfirm}
               >
                 Set new password

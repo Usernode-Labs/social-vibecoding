@@ -320,9 +320,9 @@ export function CreateAppDialog() {
               <Button
                 type="button"
                 id="import-check"
-                disabled="block"
+                disabledStyle="block"
                 className="whitespace-nowrap"
-                isDisabled={importState === 'checking'}
+                disabled={importState === 'checking'}
                 onClick={check}
               >
                 {importState === 'ok' ? 'Re-check' : 'Check'}

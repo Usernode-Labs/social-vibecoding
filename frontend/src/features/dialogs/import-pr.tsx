@@ -410,7 +410,7 @@ export function ImportPrDialog() {
             id="import-pr-submit"
             layout="flex"
             className="disabled:opacity-50 disabled:cursor-not-allowed"
-            isDisabled={busy || selected == null}
+            disabled={busy || selected == null}
             onClick={submit}
           >
             {busy ? 'Importing…' : 'Import'}

@@ -109,8 +109,14 @@ const buttonVariants = cva('', {
       // links); they bring their own utilities through className.
       unstyled: '',
     },
-    /** The leading spelling of the disabled treatment. */
-    disabled: {
+    /**
+     * The leading spelling of the disabled treatment. Named `disabledStyle`,
+     * not `disabled`, so the DOM attribute keeps its own name: a button
+     * STYLED for the disabled state and a button that IS disabled are
+     * different things, and the group claiming `disabled` would force every
+     * call site onto a renamed prop for the ordinary one.
+     */
+    disabledStyle: {
       off: '',
       // #waitlist-submit, #more-submit.
       dim: 'disabled:opacity-50',
@@ -156,24 +162,19 @@ const buttonVariants = cva('', {
   defaultVariants: {
     layout: 'none',
     variant: 'default',
-    disabled: 'off',
+    disabledStyle: 'off',
     size: 'default',
     ink: 'solid',
   },
 });
 
+// `disabled` is the plain DOM attribute here, exactly as on a bare <button>.
+// The styling arm is `disabledStyle`, so the two are independent: a call site
+// can take the treatment without the attribute (the state arrives later, from
+// a legacy module), or the attribute without the treatment.
 export interface ButtonProps
-  extends Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, 'disabled'>,
-    VariantProps<typeof buttonVariants> {
-  /**
-   * The real DOM attribute. `disabled` is taken by the variant group above,
-   * so the attribute is spelled out separately rather than shadowed — a
-   * button that is styled for the disabled state and a button that IS
-   * disabled are different things, and several call sites want only the
-   * former (the state arrives later, from a legacy module).
-   */
-  isDisabled?: boolean;
-}
+  extends React.ButtonHTMLAttributes<HTMLButtonElement>,
+    VariantProps<typeof buttonVariants> {}
 
 // `{...props}` is spread BEFORE className, like Input: React serializes
 // attributes in prop order, and the hand-written markup writes `id` and
@@ -185,13 +186,13 @@ export interface ButtonProps
 // call site, which a like-for-like conversion does not do — `type` simply
 // rides along in `props`.
 const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
-  ({ className, layout, variant, disabled, size, ink, isDisabled, ...props }, ref) => (
+  ({ className, layout, variant, disabledStyle, size, ink, disabled, ...props }, ref) => (
     <button
       ref={ref}
       {...props}
-      disabled={isDisabled}
+      disabled={disabled}
       className={cn(
-        buttonVariants({ layout, variant, disabled, size, ink }),
+        buttonVariants({ layout, variant, disabledStyle, size, ink }),
         className,
       )}
     />

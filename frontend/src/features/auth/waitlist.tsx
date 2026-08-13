@@ -342,8 +342,8 @@ export function WaitlistScreen() {
           <Button
             type="submit"
             id="waitlist-submit"
-            isDisabled={submitting}
-            disabled="dim"
+            disabled={submitting}
+            disabledStyle="dim"
             size="lg"
           >
             Join the waitlist

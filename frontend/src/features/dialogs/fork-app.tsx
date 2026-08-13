@@ -182,7 +182,7 @@ export function ForkAppDialog() {
               type="submit"
               id="fork-submit"
               layout="flex"
-              isDisabled={busy}
+              disabled={busy}
             >
               {busy ? 'Forking…' : 'Fork'}
             </Button>

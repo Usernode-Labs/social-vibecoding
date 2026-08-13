@@ -97,6 +97,22 @@ test('the four apps cover the four tile branches, one each', () => {
   // The image arm is only real if /app-icons/:id resolves.
   assert.match(body, /INSERT INTO app_icons/,
     'the image fixture needs an app_icons blob — apps.icon_image_id alone 404s');
+
+  // ...and the blob is only reachable if the id passes the route's guard.
+  // src/routes/app-icons.js 404s on a malformed id BEFORE it queries, so a
+  // readable id inserts, is handed to the client as an icon_url, and then
+  // 404s from the <img> on every screen that lists apps — one console error
+  // on nearly every route. Read the guard from the route so a change there
+  // fails here rather than in a proposal check.
+  const route = fs.readFileSync(path.join(root, 'src/routes/app-icons.js'), 'utf8');
+  const guard = route.match(/if \(!(\/[^/]+\/)\.test\(id\)\) return res\.status\(404\)/);
+  assert.ok(guard, 'the /app-icons/:id id guard moved — re-point this assertion');
+  const idRe = new RegExp(guard[1].slice(1, -1));
+  for (const [, id] of body.matchAll(/iconId: '([^']+)'/g)) {
+    assert.match(id, idRe,
+      `iconId '${id}' does not satisfy the /app-icons/:id guard ${guard[1]} — the route `
+      + 'rejects it with a 404 before it ever reaches the table');
+  }
 });
 
 test('the fixtures are obviously fake and cannot be signed in as', () => {
