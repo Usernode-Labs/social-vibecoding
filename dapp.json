@@ -1634,6 +1634,18 @@
       "expectText": "Force-close the app and reopen it"
     },
     {
+      "name": "The in-app notifications row is itself a control, so tapping it can't do nothing (#1193)",
+      "path": "/#settings/usernode?usernodedemo=ios",
+      "expectSelector": "#settings-usernode-section:not(.hidden) button#settings-notif-row[type=\"button\"] + button",
+      "expectText": "Allow notifications"
+    },
+    {
+      "name": "A determined-denied iOS notification permission still offers the ask (#1193)",
+      "path": "/#settings/usernode?usernodedemo=ios-denied",
+      "expectSelector": "#settings-usernode-section:not(.hidden) button#settings-notif-row",
+      "expectText": "Not granted"
+    },
+    {
       "name": "The Allow notifications sheet survives its own opening tap's ghost click",
       "path": "/?shot=notif-permissions#settings/usernode",
       "expectSelector": ".un-sheet[data-un-ghost-click=\"dispatched\"] .un-sheet-body button",

@@ -459,6 +459,7 @@ recoverable rather than a dead end.
 |---|---|
 | `resetZkChallenge()` | discards in-progress ZK identity registration (confirm web-side first) |
 | `openBatterySettings()` | opens Android battery-optimization settings |
+| `openNotificationSettings()` | opens the OS notification settings page for the app. The only way back from a **determined-denied** iOS notification permission: once the user has answered the OS prompt, `requestPermissions()` resolves immediately and presents no dialog, so a screen offering only "request" is a tap that does nothing forever. Capability-gated, and fails fast (probe timeout, not the 120 s permission timeout) — an *inconclusive* probe still calls through, per issue #978. |
 | `logout()` | performs the bounded hard native logout (node stop/drain plus identity and credential cleanup); clear the web session and cache first, then invoke this as the terminal operation |
 
 ### Platform login + node lifecycle (v4 — thin-shell migration)

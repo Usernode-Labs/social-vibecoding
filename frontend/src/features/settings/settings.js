@@ -3264,6 +3264,23 @@
     // The auth-status re-attempt is once per mount, not a loop.
     _usernodeAuthRetryUsed: false,
 
+    // ── Notification-permission tap state ─────────────────────────────
+    // `{ tone, title, text, settings }` — the visible explanation for a
+    // tap that could not open an OS prompt. A dead end MUST leave one of
+    // these behind; a silent return is the bug this section is fixing.
+    _unNotifNotice: null,
+    // The pre-render iOS push probe runs once per section mount, so the
+    // row decides from the real permission rather than from the
+    // `exactAlarmGranted` proxy — and so re-rendering can never loop.
+    _unPushProbed: false,
+    // Re-entrancy guard: the row and the chip both drive the same ask.
+    _unRequestInFlight: false,
+    // Tri-state, from NativeChrome.supports(): null = the probe could not
+    // say (degraded handshake / no advertised list — issue #978), and an
+    // inconclusive answer must never render a dead "Open notification
+    // settings" button.
+    _unCanOpenNotifSettings: null,
+
     // Plain-language reason per bridge failure `kind` (the record from
     // usernode.getLastNativeReadError). Without this the section could only
     // ever say "something went wrong": the bridge's chrome reads resolve
@@ -3353,18 +3370,60 @@
     },
 
     _bridgeDiagDemo() {
+      return this._demoParam('bridgediag') === 'demo';
+    },
+
+    // Both demo links accept their param in the hash query or the search
+    // string, because a hash route carries its own query
+    // (`/#settings/usernode?usernodedemo=ios`) while a plain capture URL
+    // may put it before the fragment.
+    _demoParam(name) {
       try {
         const hash = String(window.location.hash || '');
         const q = hash.indexOf('?');
-        if (q !== -1 &&
-            new URLSearchParams(hash.slice(q + 1)).get('bridgediag') === 'demo') {
-          return true;
+        if (q !== -1) {
+          const inHash = new URLSearchParams(hash.slice(q + 1)).get(name);
+          if (inHash) return inHash;
         }
-        return new URLSearchParams(window.location.search)
-          .get('bridgediag') === 'demo';
+        return new URLSearchParams(window.location.search).get(name) || null;
       } catch (_) {
-        return false;
+        return null;
       }
+    },
+
+    // ── `?usernodedemo=ios` / `=ios-denied` ───────────────────────────
+    //
+    // Screenshot-state deep link for the device-permissions rows, which
+    // otherwise exist ONLY inside the native app: a browser has no
+    // `usernode.isNative`, so the whole section is hidden and the row
+    // this link exists to pin was unreachable from any URL. Pure UI
+    // state — a fixed snapshot, no bridge call, no writes — so it is
+    // ungated for the same reason as `?shot=menu-nav` in public/js/app.js.
+    //
+    // The snapshot deliberately reports `exactAlarmGranted: true` with an
+    // un-determined push status, because that combination IS the bug: iOS
+    // has no exact alarms, the boolean is a lagging proxy, and a screen
+    // that trusts it renders "Granted" with no control at all — which is
+    // precisely "tapping it does nothing". The row must still offer the
+    // ask. `ios-denied` renders the other dead end (determined-denied,
+    // where iOS presents no prompt however often it is asked).
+    _unDemoMode() {
+      const v = this._demoParam('usernodedemo');
+      return (v === 'ios' || v === 'ios-denied') ? v : null;
+    },
+
+    DEMO_USERNODE_STATE: {
+      buildInfo: { appVersion: '0.0.0-demo', buildNumber: '0' },
+      nodeSleepEnabled: true,
+      debugMode: false,
+      facematchStrict: true,
+      authStatus: 'authenticated',
+      permissions: {
+        platform: 'ios',
+        exactAlarmGranted: true,
+        batteryOptDisabled: null,
+        deviceManufacturer: null,
+      },
     },
 
     _bridgeDiagnostics() {
@@ -3533,7 +3592,8 @@
       // getBridgeInfo is unprivileged, so `isNative` stays readable on a
       // device whose privileged handshake is refused.
       const bridge = window.usernode;
-      const gated = this._bridgeDiagDemo() ||
+      const demo = this._unDemoMode();
+      const gated = this._bridgeDiagDemo() || !!demo ||
         (!!bridge && bridge.isNative === true);
       // The gate resolves asynchronously downstream, so the "Usernode app"
       // menu row is only settled here — re-render the nav either way.
@@ -3545,6 +3605,20 @@
       section.classList.remove('hidden');
       this._renderNavIfOpen();
       const token = ++this._usernodeRenderToken;
+      // A fresh mount re-probes the real notification permission (below)
+      // and drops the previous visit's dead-end notice.
+      this._unPushProbed = false;
+      this._unNotifNotice = null;
+      if (demo) {
+        // Fixed snapshot, no bridge call: this link exists to make the
+        // notification row reachable from a browser.
+        this._usernodeState = this.DEMO_USERNODE_STATE;
+        this._unPushStatus = demo === 'ios-denied' ? 'denied' : 'undetermined';
+        this._unPushProbed = true;
+        this._unCanOpenNotifSettings = true;
+        this._renderUsernodeBody();
+        return;
+      }
       if (!this._usernodeState) {
         section.textContent = '';
         section.appendChild(this._unEl('div',
@@ -3574,6 +3648,48 @@
       }
       this._clearUsernodeAuthStatusRetry();
       this._renderUsernodeBody();
+      this._probeUnNotifPermission(token);
+    },
+
+    // The row's truth, read BEFORE it can mislead.
+    //
+    // `permissions.exactAlarmGranted` is a lagging proxy on iOS — there
+    // are no exact alarms there — and a build that reports it `true`
+    // painted "Notifications — Granted" with no control whatsoever, which
+    // is exactly the reported "nothing happens at all when I tap it".
+    // public/js/native-chrome.js's first-run sheet has always overridden
+    // that boolean with the real push status before deciding; this screen
+    // never did, which is why #1192 (which only settles the status AFTER a
+    // request) did not reach the in-app Settings case.
+    //
+    // Runs once per mount and only re-renders on a real change, so it
+    // cannot loop. Token-guarded like every other write to this section.
+    async _probeUnNotifPermission(token) {
+      if (this._unPushProbed) return;
+      this._unPushProbed = true;
+      const nc = window.NativeChrome;
+      if (!nc) return;
+      let status = this._unPushStatus;
+      let canOpen = this._unCanOpenNotifSettings;
+      try {
+        if (typeof nc.iosPushPermissionStatus === 'function') {
+          status = await nc.iosPushPermissionStatus();
+        }
+        if (typeof nc.supports === 'function') {
+          canOpen = await nc.supports('openNotificationSettings');
+        }
+      } catch (err) {
+        // Never fatal: an unreadable probe leaves the row tappable and the
+        // ask routed through the bridge, which is the safe default.
+        console.warn('[settings] notification permission probe failed:', err);
+        return;
+      }
+      if (token !== this._usernodeRenderToken) return;
+      const changed = status !== this._unPushStatus ||
+        canOpen !== this._unCanOpenNotifSettings;
+      this._unCanOpenNotifSettings = canOpen;
+      if (status != null) this._unPushStatus = status;
+      if (changed) this._renderUsernodeBody();
     },
 
     // Why the snapshot came back empty, straight from the bridge's
@@ -3692,8 +3808,22 @@
       return btn;
     },
 
-    _unStatusRow(parent, label, ok, okText, badText) {
-      const row = this._unEl('div', 'flex items-center gap-2 mt-1 text-sm');
+    // `opts.onActivate` turns the row itself into a real control.
+    //
+    // Without it the row is a plain `div` with no listener, so tapping it
+    // is a no-op BY CONSTRUCTION — and the only control was a small chip
+    // rendered underneath, conditionally. On a phone the row is what a
+    // thumb lands on, so the notifications row now carries the tap and the
+    // chip is a second affordance rather than the only one.
+    _unStatusRow(parent, label, ok, okText, badText, opts = {}) {
+      const interactive = typeof opts.onActivate === 'function';
+      const row = this._unEl(interactive ? 'button' : 'div',
+        'flex items-center gap-2 mt-1 text-sm w-full text-left' +
+        (interactive
+          ? ' rounded-md -mx-1 px-1 py-1 transition-colors ' +
+            'hover:bg-zinc-100 dark:hover:bg-zinc-800'
+          : ''));
+      if (opts.id) row.id = opts.id;
       const dot = this._unEl('span',
         'w-2 h-2 rounded-full shrink-0 ' +
         (ok ? 'bg-emerald-500' : 'bg-amber-500'));
@@ -3705,7 +3835,27 @@
           ? 'text-emerald-600 dark:text-emerald-400'
           : 'text-amber-600 dark:text-amber-400'),
         ok ? okText : badText));
+      if (interactive) {
+        row.type = 'button';
+        if (opts.hint) row.setAttribute('aria-label', `${label} — ${opts.hint}`);
+        row.appendChild(this._unEl('span',
+          'text-xs text-zinc-400 dark:text-zinc-500 shrink-0', '›'));
+        row.addEventListener('click', async () => {
+          row.disabled = true;
+          try {
+            await opts.onActivate();
+          } catch (err) {
+            console.warn('[settings] usernode row action failed:', err);
+            if (window.PlatformUI) {
+              PlatformUI.toast(this._nativeActionMessage(err, 'Action failed'));
+            }
+          } finally {
+            row.disabled = false;
+          }
+        });
+      }
       parent.appendChild(row);
+      return row;
     },
 
     _openNativeScreen(screen, failMsg) {
@@ -3749,17 +3899,253 @@
     // and kicks SocialPush, so this screen and the first-run sheet
     // complete a grant identically.
     async _unRequestPermissions(isAndroid) {
-      const next = await window.usernode.requestPermissions();
-      if (next && typeof next === 'object') this._usernodeState = next;
-      if (!isAndroid) {
-        const nc = window.NativeChrome;
-        if (nc && typeof nc.settleIosPushGrant === 'function') {
-          const settled = await nc.settleIosPushGrant(
-            !!(next && next.granted === true));
-          this._unPushStatus = settled.status || this._unPushStatus;
-        }
-      }
+      if (this._unRequestInFlight) return;
+      this._unRequestInFlight = true;
+      // Visible acknowledgement BEFORE anything can block: whatever the
+      // rest of this does, the tap is never again silent.
+      this._unNotifNotice = {
+        tone: 'info',
+        text: isAndroid
+          ? 'Opening the permission prompt…'
+          : 'Opening the notification prompt…',
+      };
       this._renderUsernodeBody();
+      try {
+        await this._runNotifPermissionTap(isAndroid);
+      } finally {
+        this._unRequestInFlight = false;
+        this._renderUsernodeBody();
+      }
+    },
+
+    // Route the tap through the pure decision functions in
+    // public/js/native-chrome.js, then route the ANSWER through the second
+    // one. Every branch either opens something or leaves a visible notice
+    // plus a console.error — there is no path back out of here that looks
+    // like nothing happened.
+    async _runNotifPermissionTap(isAndroid) {
+      const nc = window.NativeChrome;
+      const bridge = window.usernode;
+      const hasRequest = !!bridge &&
+        typeof bridge.requestPermissions === 'function';
+      if (this._unDemoMode()) {
+        // The browser demo link has no app behind it. Still answers
+        // visibly — but this is a preview, not a dead end, so it does not
+        // log the diagnostic error the real branches do.
+        this._unNotifNotice = {
+          tone: 'info',
+          text: 'This is a preview of the in-app row — the notification ' +
+            'permission itself lives in the Usernode app.',
+        };
+        return;
+      }
+      if (!nc || typeof nc.decideNotificationTap !== 'function') {
+        // Old bundle: fall back to the plain ask rather than refusing.
+        if (!hasRequest) {
+          this._unNotifDeadEnd('no-bridge', {
+            text: 'Notification permission is only available inside the ' +
+              'Usernode app.',
+            settings: false,
+          });
+          return;
+        }
+        await this._applyNotifAnswer(isAndroid,
+          await bridge.requestPermissions());
+        return;
+      }
+      const plan = nc.decideNotificationTap({
+        isNative: !!bridge && bridge.isNative === true,
+        hasRequestMethod: hasRequest,
+        supported: typeof nc.supports === 'function'
+          ? await nc.supports('requestPermissions')
+          : null,
+        isAndroid,
+        pushStatus: this._unPushStatus,
+        canOpenSettings: this._unCanOpenNotifSettings === true,
+      });
+      if (plan.verdict !== 'request') {
+        if (plan.verdict === 'already') {
+          // Not a failure — say so and stop, rather than calling a method
+          // that resolves instantly and shows nothing.
+          this._unNotifNotice = {
+            tone: 'ok',
+            text: 'Notifications are already allowed for Usernode.',
+          };
+          return;
+        }
+        this._unNotifDeadEnd(plan.verdict, {
+          text: this._notifDeadEndText(plan, isAndroid),
+          settings: plan.settings === true,
+          reason: plan.reason,
+        });
+        return;
+      }
+      let next = null;
+      try {
+        next = await this._unRaceNativeAnswer(bridge.requestPermissions());
+      } catch (err) {
+        this._unNotifDeadEnd(err && err.usernodeNoAnswer ? 'no-answer' : 'failed', {
+          text: err && err.usernodeNoAnswer
+            ? 'The Usernode app didn’t respond to the permission request. ' +
+              'Force-close and reopen the app, then try again.'
+            : this._nativeActionMessage(err,
+                'The permission request could not be started.'),
+          settings: this._unCanOpenNotifSettings === true,
+          reason: err && err.message,
+        });
+        return;
+      }
+      await this._applyNotifAnswer(isAndroid, next);
+    },
+
+    // What the tap ended up as, once the app answered. `settleIosPushGrant`
+    // stays the authority on iOS: the native permission caches settle
+    // asynchronously after the OS dialog and some builds resolve
+    // requestPermissions() before the user has even answered, so trusting
+    // that one read repainted the row as "Not granted" moments after a real
+    // grant — and nothing started push registration. It polls for a
+    // determined status and kicks SocialPush, so this screen and the
+    // first-run sheet complete a grant identically.
+    async _applyNotifAnswer(isAndroid, next) {
+      if (next && typeof next === 'object') this._usernodeState = next;
+      const granted = !!(next && next.granted === true);
+      const nc = window.NativeChrome;
+      if (!isAndroid && nc && typeof nc.settleIosPushGrant === 'function') {
+        const settled = await nc.settleIosPushGrant(granted);
+        this._unPushStatus = settled.status || this._unPushStatus;
+      }
+      const outcome = (nc && typeof nc.decideNotificationOutcome === 'function')
+        ? nc.decideNotificationOutcome({
+            isAndroid,
+            granted: granted || this._unPushStatus === 'granted',
+            pushStatus: this._unPushStatus,
+            canOpenSettings: this._unCanOpenNotifSettings === true,
+          })
+        : { verdict: granted ? 'granted' : 'declined', settings: false };
+      if (outcome.verdict === 'granted') {
+        this._unNotifNotice = {
+          tone: 'ok',
+          text: isAndroid
+            ? 'Permission granted.'
+            : 'Notifications are now allowed for Usernode.',
+        };
+        this._renderUsernodeBody();
+        return;
+      }
+      this._unNotifDeadEnd(outcome.verdict, {
+        text: this._notifDeadEndText(outcome, isAndroid),
+        settings: outcome.settings === true,
+        reason: outcome.reason,
+      });
+      this._renderUsernodeBody();
+    },
+
+    // The bridge's own ceiling for requestPermissions is two minutes,
+    // which is the right ceiling for a prompt a user has to read but a
+    // terrible one for a native side that never answers: two minutes of a
+    // disabled control and no explanation reads as a dead tap. Surface the
+    // silence at 20s; a late real answer still applies through the
+    // section's normal re-render.
+    _UN_NATIVE_ANSWER_MS: 20000,
+
+    _unRaceNativeAnswer(promise) {
+      return new Promise((resolve, reject) => {
+        let settled = false;
+        const timer = setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          const err = new Error('the Usernode app did not answer in time');
+          err.usernodeNoAnswer = true;
+          reject(err);
+        }, this._UN_NATIVE_ANSWER_MS);
+        Promise.resolve(promise).then((value) => {
+          clearTimeout(timer);
+          if (settled) {
+            // The app answered after we gave up — honour it anyway.
+            this._applyNotifAnswer(
+              (this._usernodeState && this._usernodeState.permissions &&
+                this._usernodeState.permissions.platform) === 'android',
+              value
+            ).catch(() => {});
+            return;
+          }
+          settled = true;
+          resolve(value);
+        }, (err) => {
+          clearTimeout(timer);
+          if (settled) return;
+          settled = true;
+          reject(err);
+        });
+      });
+    },
+
+    _notifDeadEndText(plan, isAndroid) {
+      switch (plan.verdict) {
+        case 'no-bridge':
+          return 'Notification permission is only available inside the ' +
+            'Usernode app.';
+        case 'unsupported':
+          return 'This version of the Usernode app can’t open the ' +
+            'notification prompt. Update the app from the App Store.';
+        case 'settings':
+          return isAndroid
+            ? 'Permission was denied. Allow notifications in the system ' +
+              'settings for Usernode.'
+            : 'Notifications are turned off for Usernode. iOS only shows ' +
+              'its prompt once, so this has to be changed in Settings › ' +
+              'Notifications › Usernode.';
+        case 'declined':
+          return 'Permission was not granted.';
+        case 'silent':
+          return 'The Usernode app closed without showing the notification ' +
+            'prompt. Reopen the app and try again, or allow notifications ' +
+            'in Settings › Notifications › Usernode.';
+        default:
+          return 'The notification prompt could not be opened.';
+      }
+    },
+
+    // Every dead end lands here: a visible notice AND a console error, so
+    // the next report of a dead tap comes with a line in the dev console
+    // saying which branch swallowed it.
+    _unNotifDeadEnd(kind, opts) {
+      const reason = (opts && opts.reason) || '(no reason recorded)';
+      console.error(
+        `[settings] notification permission dead end (${kind}): ${reason}`
+      );
+      this._unNotifNotice = {
+        tone: 'warn',
+        text: (opts && opts.text) || 'The notification prompt could not be ' +
+          'opened.',
+        settings: !!(opts && opts.settings),
+      };
+    },
+
+    // The notice, plus — only when the app positively advertises the
+    // capability — a way out of a determined-denied permission. A button
+    // that cannot work is worse than no button, so an inconclusive
+    // capability probe (null) renders the manual instructions instead.
+    _renderNotifNotice(parent) {
+      const n = this._unNotifNotice;
+      if (!n) return;
+      const box = this._unEl('div',
+        'mt-2 rounded-md border px-3 py-2 text-xs ' +
+        (n.tone === 'warn'
+          ? 'border-amber-300 dark:border-amber-800 bg-amber-50 ' +
+            'dark:bg-amber-950/40 text-amber-800 dark:text-amber-300'
+          : n.tone === 'ok'
+            ? 'border-emerald-300 dark:border-emerald-800 bg-emerald-50 ' +
+              'dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300'
+            : 'border-zinc-300 dark:border-zinc-700 text-zinc-600 ' +
+              'dark:text-zinc-300'),
+        n.text);
+      box.id = 'settings-notif-notice';
+      parent.appendChild(box);
+      if (n.settings && this._unCanOpenNotifSettings === true) {
+        this._unButton(parent, 'Open notification settings', () =>
+          window.usernode.openNotificationSettings());
+      }
     },
 
     // Awaits a bridge setter and re-renders the section from the refreshed
@@ -3912,6 +4298,11 @@
           isAndroid
             ? 'Block production needs the app to wake your device at exact slot times.'
             : 'Notifications let Usernode alert you about node and account activity.');
+        if (this._unDemoMode()) {
+          permBox.appendChild(this._unEl('p',
+            'text-xs font-medium text-amber-600 dark:text-amber-400 mb-2',
+            'Staging demo — sample data'));
+        }
         // iOS row truth: `exactAlarmGranted` is a lagging proxy for the
         // notification permission (there are no exact alarms on iOS), so
         // once a request has settled through NativeChrome.settleIosPushGrant
@@ -3920,13 +4311,23 @@
         const notifOk = !isAndroid && this._unPushStatus != null
           ? this._unPushStatus === 'granted'
           : !!perms.exactAlarmGranted;
+        // The row IS the control. It used to be an inert div whose only
+        // affordance was the chip below, and that chip only rendered when
+        // the (iOS-meaningless) exactAlarmGranted boolean said "not
+        // granted" — so on a build reporting it `true` there was nothing
+        // to tap at all. The row now always carries the ask.
         this._unStatusRow(permBox, isAndroid ? 'Exact alarms' : 'Notifications',
-          notifOk, 'Granted', 'Not granted');
+          notifOk, 'Granted', 'Not granted', {
+            id: 'settings-notif-row',
+            hint: isAndroid ? 'request permissions' : 'allow notifications',
+            onActivate: () => this._unRequestPermissions(isAndroid),
+          });
         if (!notifOk) {
           this._unButton(permBox,
             isAndroid ? 'Request permissions' : 'Allow notifications',
             () => this._unRequestPermissions(isAndroid));
         }
+        this._renderNotifNotice(permBox);
         if (isAndroid) {
           this._unStatusRow(permBox, 'Battery optimization',
             perms.batteryOptDisabled === true, 'Unrestricted', 'Restricted');
@@ -3941,6 +4342,9 @@
           }
         }
       }
+      // The demo link renders the permissions rows and stops: the sections
+      // below all read the live bridge, which a browser does not have.
+      if (this._unDemoMode()) return;
       this._renderSocialPushSection(section);
       // (The iOS keep-alive toggle is gone — thin-shell migration: block
       // production is disabled on iOS and the keep-alive service was
