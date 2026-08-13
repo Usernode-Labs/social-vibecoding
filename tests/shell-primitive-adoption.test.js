@@ -65,6 +65,18 @@ const FIELD_BOXES = [
 const ALLOWED_BUTTON_FILES = new Set([
   // #dev-plus-btn and the view-toggle segment fill.
   'dev-board/board-frame.tsx',
+  // The Kudos pane's two segmented toggles — the All-time / This week window
+  // pills and the Kudos / Votes history chips — whose ACTIVE state is the
+  // violet fill. Same shape as board-frame's view toggle, and the same
+  // decision: a segment's fill is not a primary button's fill.
+  //
+  // The primitive also cannot spell these. Both strings are written padding
+  // first and box second (`px-3 py-1 text-xs font-medium rounded-full …`),
+  // which is the reverse of the cva group order Button emits, so routing them
+  // through it would mean reordering the groups and moving the rendered class
+  // attribute of every other button in the shell. See the header of
+  // frontend/src/features/leaderboard/kudos-pane.tsx.
+  'leaderboard/kudos-pane.tsx',
 ]);
 
 // Empty, and worth keeping empty: every field box in the tree now comes from

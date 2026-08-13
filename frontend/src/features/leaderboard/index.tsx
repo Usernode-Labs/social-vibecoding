@@ -64,10 +64,12 @@ import {
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { useLeaderboardSection } from './section-store';
 import './kudos.js';
-import './leaderboard.js';
 import './topochain-event-context.js';
-// ./mount imports ./topochain-leaderboard.js and plants its store on it.
+// ./mount imports ./leaderboard.js and ./topochain-leaderboard.js, and plants
+// each one's store on it. Importing either directly here would publish its
+// global without a store and leave that pane permanently blank.
 import './mount';
+import { KudosPane } from './kudos-pane';
 import { TopochainStandingsPane } from './topochain-standings';
 import './topochain-challenges.js';
 
@@ -137,8 +139,16 @@ export function LeaderboardScreen() {
         */}
         <div id="leaderboard-event-bar" className="w-full mb-4">
         </div>
-        {/* The Kudos pane, rendered by ./leaderboard.js. */}
+        {/*
+            The Kudos pane. STATEFUL as of #1191 slice 6 conversion 6:
+            ./kudos-pane.tsx is the only writer below this root now, driven by
+            the descriptors ./leaderboard.js pushes into ./kudos-pane-store.js.
+            The root's own `className` is a CONSTANT for the same reason the
+            standings root's is — `_applySection()` still toggles `hidden` on
+            it, per the note above.
+        */}
         <div id="leaderboard-root" className="hidden max-w-3xl">
+          <KudosPane />
         </div>
         {/*
             The standings pane. STATEFUL as of #1191 slice 6 conversion 5:

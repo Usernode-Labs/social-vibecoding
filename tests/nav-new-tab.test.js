@@ -39,6 +39,7 @@ const devChatJs = read('frontend/src/features/dev-chat/dev-chat.js');
 const chatFrameTsx = read('frontend/src/features/dev-board/chat-frame.tsx');
 const { HOME_SRC: homeJs } = require('./helpers/home-modules');
 const leaderboardJs = read('frontend/src/features/leaderboard/leaderboard.js');
+const kudosPaneTsx = read('frontend/src/features/leaderboard/kudos-pane.tsx');
 const settingsJs = read('frontend/src/features/settings/settings.js');
 const adminConsoleJs = read('frontend/src/features/admin/admin-console.js');
 const dapp = JSON.parse(read('dapp.json'));
@@ -133,7 +134,8 @@ test('no converted control opts into target=_blank', () => {
     'the header control must not carry target — see NavLink\'s header comment');
   for (const [name, src] of [['app-view.js', appViewJs], ['dev-chat.js', devChatJs],
     ['browse.js', browseJs], ['browse-list.tsx', browseListTsx],
-    ['browse-detail.tsx', browseDetailTsx], ['leaderboard.js', leaderboardJs]]) {
+    ['browse-detail.tsx', browseDetailTsx], ['leaderboard.js', leaderboardJs],
+    ['kudos-pane.tsx', kudosPaneTsx]]) {
     for (const id of ['dc-back', 'dev-chat-back', 'dev-topic-back',
       'browse-detail-back', 'data-lb-back']) {
       const at = src.indexOf(`${id}"`) !== -1 ? src.indexOf(`${id}"`) : src.indexOf(id);
@@ -248,14 +250,12 @@ const ANCHORS = [
     href: /href="\$\{AppView\._devPageHref\(\)\}"/,
     handler: "document.getElementById('dev-topic-back').addEventListener",
   },
-  {
-    label: 'back to the top-users leaderboard',
-    src: () => leaderboardJs, file: 'leaderboard.js',
-    markup: /<a data-lb-back href="#leaderboard\/users"/,
-    oldTag: /<button data-lb-back/,
-    href: /data-lb-back href="#leaderboard\/users"/,
-    handler: "root.querySelector('[data-lb-back]').addEventListener",
-  },
+  // 'back to the top-users leaderboard' is NOT in this list either, and for
+  // the same reason as the dev general-chat link above: #1191 slice 6
+  // conversion 6 made the Kudos pane a component, so the anchor is JSX in
+  // frontend/src/features/leaderboard/kudos-pane.tsx and there is no
+  // addEventListener call for `handler` to find. It gets the same three
+  // assertions by hand below.
 ];
 
 for (const a of ANCHORS) {
@@ -313,8 +313,36 @@ test('the dev sub-views resolve their target through one helper', () => {
     'no slug means an EMPTY href, never "#app/undefined/dev"');
 });
 
+// The Kudos pane's profile back link, JSX in kudos-pane.tsx since #1191 slice
+// 6 conversion 6. Same three properties the ANCHORS loop asserts, written out
+// because the control is a component now — plus the margin trap, which is the
+// reason this control was singled out in the first place.
+test('"back to the top-users leaderboard" is a real anchor with a real target', () => {
+  const at = kudosPaneTsx.indexOf('data-lb-back=""');
+  assert.ok(at !== -1, 'kudos-pane.tsx: [data-lb-back] went missing');
+  const tag = kudosPaneTsx.slice(kudosPaneTsx.lastIndexOf('<', at), at + 400);
+  assert.match(tag, /^<a\b/, 'kudos-pane.tsx: the control must be an <a>');
+  assert.match(tag, /href="#leaderboard\/users"/, 'it must carry a resolvable href');
+  assert.ok(!/<button[^>]*data-lb-back/.test(kudosPaneTsx + leaderboardJs),
+    'the old <button> tag is gone from both halves');
+});
+
+test('"back to the top-users leaderboard" leaves a modified click to the browser', () => {
+  const at = kudosPaneTsx.indexOf('data-lb-back=""');
+  const body = kudosPaneTsx.slice(at, at + 900);
+  // Same one-hop-further-in guard as browse-detail.tsx: `e` is React's
+  // SyntheticEvent, so NavLink reads the native event out of it.
+  const guard = body.indexOf('isNativeClick(e.nativeEvent)');
+  const prevent = body.indexOf('e.preventDefault()');
+  assert.ok(guard !== -1, 'kudos-pane.tsx: the modified-click guard went missing');
+  assert.ok(prevent !== -1, 'kudos-pane.tsx: a plain click must still be intercepted');
+  assert.ok(guard < prevent,
+    'kudos-pane.tsx: preventDefault ahead of the guard swallows the new tab');
+});
+
 test('[data-lb-back] keeps its bottom margin as an anchor', () => {
-  const tag = leaderboardJs.match(/<a data-lb-back[^>]*>/)[0];
+  const at = kudosPaneTsx.indexOf('data-lb-back=""');
+  const tag = kudosPaneTsx.slice(kudosPaneTsx.lastIndexOf('<', at), at + 400);
   assert.match(tag, /\bmb-3\b/, 'the spacing the button had');
   assert.match(tag, /\binline-block\b/,
     'an <a> is `inline`, and margin-bottom does nothing on an inline box — '
