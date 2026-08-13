@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "React + shadcn chassis for the platform shell. Builds tracked public/index.html and image-generated public/shell/assets/shell.js.",
+  "description": "React + shadcn chassis for the platform shell. Builds image-generated public/index.html and public/shell/assets/shell.js.",
   "scripts": {
     "build": "node scripts/build-shell.mjs",
     "typecheck": "tsc --noEmit"

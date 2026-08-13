@@ -1,7 +1,6 @@
 # Stage 1 — build the React shell from the exact frontend dependency tree in
-# this commit. public/index.html remains committed as a dependency-light test
-# fixture, but the executable bundle is deliberately not committed: every
-# production deploy, staging preview, local image, and rollback rebuilds it.
+# this commit. Both outputs are deliberately untracked: every production
+# deploy, staging preview, local image, and rollback rebuilds them.
 FROM node:22-alpine AS shell
 WORKDIR /build/frontend
 COPY frontend/package.json frontend/package-lock.json ./
@@ -44,5 +43,11 @@ COPY . .
 COPY --from=shell /build/public/index.html ./public/index.html
 COPY --from=shell /build/public/shell/assets/shell.js ./public/shell/assets/shell.js
 COPY --from=css /build/public/css/tailwind.css ./public/css/tailwind.css
+# docker-compose.dev.yml bind-mounts ./public for live source editing, which
+# hides the three generated files above on a clean checkout. Keep a protected
+# image copy that its startup helper can restore into that mount when missing.
+COPY --from=shell /build/public/index.html /opt/usernode-shell-assets/index.html
+COPY --from=shell /build/public/shell/assets/shell.js /opt/usernode-shell-assets/shell/assets/shell.js
+COPY --from=css /build/public/css/tailwind.css /opt/usernode-shell-assets/css/tailwind.css
 EXPOSE 3000
 CMD ["node", "server.js"]

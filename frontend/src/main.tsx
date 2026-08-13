@@ -1,7 +1,7 @@
 // The React shell's browser entry point.
 //
 // Emitted (unhashed, single chunk) as /shell/assets/shell.js and referenced
-// from the LAST line of <head> in the generated public/index.html.
+// from the LAST line of <head> in the image-generated public/index.html.
 //
 // ── Why the entry is a <head> module, and why hydration is flushSync'd ──
 //
