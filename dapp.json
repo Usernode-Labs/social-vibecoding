@@ -563,7 +563,7 @@
     {
       "name": "Dev board: a finished auto-solve draft says it is ready to review (#1112)",
       "path": "/?demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-body [data-issue-row=\"900005\"] .dev-badge[data-work-state=\"draft_ready\"]",
+      "expectSelector": "#dev-body [data-issue-row=\"900016\"] .dev-badge[data-work-state=\"draft_ready\"]",
       "expectText": "Draft ready to review"
     },
     {

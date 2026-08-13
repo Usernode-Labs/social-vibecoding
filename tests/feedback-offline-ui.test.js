@@ -175,6 +175,14 @@ test('the queued shot seeds the store before it pins connectivity', () => {
     shot.indexOf('seedDisplayOnly?.(') < shot.indexOf('window.Offline?.forceOffline()'),
     'seed first, then pin — otherwise the offline-change read races the seed',
   );
+  assert.ok(
+    shot.indexOf('seedDisplayOnly?.(') < shot.indexOf('setTimeout(() =>'),
+    'the display-only store must be installed before enterAuthed starts the sign-in flush',
+  );
+  assert.ok(
+    shot.indexOf('window.Offline?.forceOffline()') < shot.indexOf('setTimeout(() =>'),
+    'the offline body state is address state, not delayed modal presentation',
+  );
 });
 
 test('the header dot is markup, hidden, and toggled from the store', () => {

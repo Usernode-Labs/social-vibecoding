@@ -185,7 +185,7 @@ function startStagingServer() {
   });
 }
 
-test('staging ?demo=1 attaches synthetic headless to mocks 900003/900005/900015 only', async () => {
+test('staging ?demo=1 attaches synthetic headless to mocks 900003/900005/900015/900016 only', async () => {
   const server = await startStagingServer();
   try {
     const port = server.address().port;
@@ -194,14 +194,15 @@ test('staging ?demo=1 attaches synthetic headless to mocks 900003/900005/900015 
     const body = await res.json();
     const byNumber = new Map(body.issues.map((i) => [i.number, i]));
 
-    // 5 live issues + 15 appended mocks (900008 joined in #556, 900009 in
+    // 5 live issues + 16 appended mocks (900008 joined in #556, 900009 in
     // #617, 900010 in #683, 900011/900012 in #1010 as the targets of the
     // applying / retry-pending mock close proposals, 900013 with the
     // card-as-pointer revision — the deliberately BARE row, which the
     // staging attribute-enrichment block leaves alone so the 'no grey
-    // placeholder chips' rule is reviewable — and 900014/900015 in #1112 to
-    // make the `paused` and `answer_needed` work states reviewable).
-    assert.strictEqual(body.issues.length, 20);
+    // placeholder chips' rule is reviewable — and 900014/900015/900016 in
+    // #1112 to make the paused / answer-needed / draft-ready work states
+    // independently reviewable).
+    assert.strictEqual(body.issues.length, 21);
 
     const generating = byNumber.get(900003).headless;
     assert.ok(generating, '900003 carries synthetic headless state');
@@ -226,6 +227,14 @@ test('staging ?demo=1 attaches synthetic headless to mocks 900003/900005/900015 
     assert.strictEqual(asked.status, 'ready');
     assert.strictEqual(asked.outcome, 'question');
     assert.strictEqual(asked.sessionId, 900015);
+
+    // #1112: the finished draft has a dedicated number that no persisted
+    // staging fixture uses, so its `draft_ready` check cannot be shadowed.
+    const draft = byNumber.get(900016).headless;
+    assert.ok(draft, '900016 carries synthetic headless state');
+    assert.strictEqual(draft.status, 'ready');
+    assert.strictEqual(draft.outcome, 'spec');
+    assert.strictEqual(draft.sessionId, 900016);
 
     // The other mocks — and the live issues — stay plain.
     for (const n of [900001, 900002, 900004, 900006, 900014, 1, 2, 3, 4, 5]) {

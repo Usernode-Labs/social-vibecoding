@@ -243,6 +243,14 @@ function stagingMockIssues(repoUrl) {
       + 'work state: the synthetic headless run below reports the '
       + '`question` outcome, so the card asks for a reply instead of '
       + 'claiming that work is happening right now.', 19),
+    // #1112: keep the finished-draft state on its own row. Reusing 900005
+    // made the check depend on older staging fixtures that already use that
+    // number for the failed-run demo, so the synthetic state could be
+    // shadowed by seed history instead of rendering `draft_ready`.
+    mk(900016, '[Mock] Auto-solve draft ready to review',
+      'Staging-only mock issue for previewing the #1112 "Draft ready to '
+      + 'review" work state. Its synthetic headless run finished with a '
+      + 'draft, and no other staging fixture shares this issue number.', 17),
   ];
 }
 
@@ -1410,6 +1418,10 @@ function issueRoutes(config) {
           // a human answer, which the work-state chip reports as amber
           // "Needs an answer" rather than as work in flight.
           [900015, { status: 'ready', outcome: 'question' }],
+          // #1112: dedicated row for the finished-draft state. Unlike the
+          // older 900005 ranking fixture, this number is not also used by a
+          // persisted staging headless seed.
+          [900016, { status: 'ready', outcome: 'spec' }],
         ]);
         for (const issue of issues) {
           const m = mockHeadless.get(issue.number);
