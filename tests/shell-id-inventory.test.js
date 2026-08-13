@@ -75,6 +75,12 @@ const ADDED_IDS = {
   // two is visible; both are flex-1 + min-height:0 children of #app-view's
   // column flex, so the visible one gets the box #app-content used to have.
   'app-frame-host': "React-owned host for the embedded app's #app-iframe, a hidden empty sibling of #app-content (#1085).",
+  'messages-screen': 'Fully React-owned platform direct/group Messages screen (#488).',
+  'messages-create-dialog': 'React-owned direct/group conversation creation dialog (#488).',
+  'messages-members-dialog': 'React-owned group membership and invitation dialog (#488).',
+  'messages-share-dialog': 'React-owned typed Usernode item chooser for Messages (#488).',
+  'drawer-row-messages': 'Platform Messages destination in the global navigation drawer (#488).',
+  'drawer-messages-badge': 'Aggregate unread conversation count in the global navigation drawer (#488).',
 };
 
 test('the shell still carries every id in the frozen baseline', () => {

@@ -428,13 +428,16 @@ const Notifications = {
     if (!Notifications.items.some(isPriorityNotif)) DevChat.setCompletionTitle(null);
   },
 
-  // Per-group "Mark read": clears every unread notification for one app
-  // in a single round-trip via the /read { app_id } branch.
-  async _markGroupRead(groupKey, appId) {
+  // Per-group "Mark read": app groups and platform-conversation groups use
+  // separate backend scopes so equal integer ids can never clear each other.
+  async _markGroupRead(groupKey, appId, conversationId) {
     const numericAppId = (appId != null && appId !== '') ? Number(appId) : null;
+    const numericConversationId = (conversationId != null && conversationId !== '')
+      ? Number(conversationId) : null;
     // No backend scope for the synthetic "general" (null-app) bucket —
     // fall back to clearing its leaves by id.
-    if (numericAppId == null || Number.isNaN(numericAppId)) {
+    if ((numericAppId == null || Number.isNaN(numericAppId))
+        && (numericConversationId == null || Number.isNaN(numericConversationId))) {
       const ids = Notifications.items
         .filter((n) => groupKeyFor(n) === groupKey && !n.readAt)
         .map((n) => n.id);
@@ -446,7 +449,9 @@ const Notifications = {
       const res = await fetch('/api/notifications/read', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ app_id: numericAppId }),
+        body: JSON.stringify(numericConversationId != null
+          ? { conversation_id: numericConversationId }
+          : { app_id: numericAppId }),
       });
       if (!res.ok) return;
       const data = await res.json();
@@ -500,6 +505,20 @@ const Notifications = {
     // notifications. The drawer only dismisses via outside-click or the
     // explicit close button.
     Notifications._markOneRead(id);
+    // Platform conversations are never routed through an app tab. Prefer the
+    // React bridge because it re-renders even when this is the current hash;
+    // the hash fallback keeps native exact-notification opens functional
+    // during shell startup before the island publishes its controller.
+    if (CONVERSATION_NOTIF_KINDS.has(item.kind)) {
+      const conversationId = Number(item.conversationId);
+      if (Number.isSafeInteger(conversationId) && conversationId > 0
+          && conversationId <= 2147483647) {
+        const messages = window.UsernodeReact?.messages;
+        if (messages?.open) messages.open(conversationId);
+        else window.location.hash = `#messages/${conversationId}`;
+      }
+      return;
+    }
     // #161/#194: completion notifications deep-link to their dev
     // sub-tab. session_done opens the dev session itself;
     // auto_solve_done opens the Issues tab with that issue's accordion
@@ -833,8 +852,11 @@ const Notifications = {
         g = {
           key,
           appId: n.appId != null ? n.appId : null,
-          appName: n.appName || 'General',
+          appName: n.conversationId != null
+            ? (n.conversationTitle || 'Messages')
+            : (n.appName || 'General'),
           appSlug: n.appSlug || null,
+          conversationId: n.conversationId != null ? n.conversationId : null,
           items: [],
           unreadCount: 0,
           hasUnreadPriority: false,
@@ -925,7 +947,8 @@ const Notifications = {
         e.stopPropagation();
         Notifications._markGroupRead(
           el.getAttribute('data-group-markread'),
-          el.getAttribute('data-app-id')
+          el.getAttribute('data-app-id'),
+          el.getAttribute('data-conversation-id')
         );
       });
     });
@@ -981,8 +1004,17 @@ const Notifications = {
 // Stable group key for a notification: the app id when present, else a
 // synthetic 'general' bucket so app-less notifications are never dropped.
 function groupKeyFor(n) {
+  if (n && n.conversationId != null) return `conversation:${n.conversationId}`;
   return n && n.appId != null ? String(n.appId) : 'general';
 }
+
+const CONVERSATION_NOTIF_KINDS = new Set([
+  'conversation_invite',
+  'conversation_message',
+  'conversation_mention',
+  'conversation_reply',
+  'conversation_reaction',
+]);
 
 // #161: completion notifications pin to the top of the drawer while
 // UNREAD — a finished session demands attention; once read it returns
@@ -1039,6 +1071,7 @@ function renderGroup(g, isExpanded) {
 
   const markReadBtn = hasUnread
     ? `<button data-group-markread="${escapeHtml(g.key)}" data-app-id="${g.appId != null ? g.appId : ''}"
+         data-conversation-id="${g.conversationId != null ? g.conversationId : ''}"
          class="shrink-0 text-[0.7rem] text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200 px-1.5 py-1">Mark read</button>`
     : '';
 
@@ -1124,6 +1157,11 @@ function completionAlertInfo(n) {
 function previewText(n) {
   const who = n.sourceUsername ? `@${n.sourceUsername}` : 'someone';
   switch (n.kind) {
+    case 'conversation_invite':   return `✉️ ${who} invited you to a conversation`;
+    case 'conversation_message':  return `💬 ${who} sent a message`;
+    case 'conversation_mention':  return `${who} mentioned you`;
+    case 'conversation_reply':    return `${who} replied to you`;
+    case 'conversation_reaction': return `${n.detail || '❤️'} ${who} reacted to your message`;
     case 'kudos':       return `\u{1F44F} ${who} gave kudos to your PR`;
     case 'reaction':    return `${n.detail || '❤️'} ${who} reacted to your message`;
     case 'stale_pr':    return `⏳ Your PR is going stale`;
@@ -1157,6 +1195,35 @@ function renderRow(n) {
   // Leading unread dot (or an equal-width spacer when read) on the meta
   // line, so unread rows are unmistakable beyond the background accent.
   const dot = unreadDot(!n.readAt);
+
+  if (CONVERSATION_NOTIF_KINDS.has(n.kind)) {
+    const conversation = escapeHtml(n.conversationTitle || 'Messages');
+    const snippet = (n.messageContent || '').slice(0, 140);
+    const labels = {
+      conversation_invite: ['✉️', 'invited you to'],
+      conversation_message: ['💬', 'sent a message in'],
+      conversation_mention: ['@', 'mentioned you in'],
+      conversation_reply: ['↩️', 'replied to you in'],
+      conversation_reaction: [n.detail || '❤️', 'reacted to your message in'],
+    };
+    const [icon, verb] = labels[n.kind];
+    const body = n.kind === 'conversation_invite'
+      ? '<div class="text-sm text-zinc-600 dark:text-zinc-300">Open Messages to accept or decline</div>'
+      : (snippet
+        ? `<div class="text-sm text-zinc-700 dark:text-zinc-300 line-clamp-2">${renderMentionSnippet(snippet)}</div>`
+        : '');
+    return `<button data-notif-id="${n.id}" class="w-full text-left px-3 py-2.5 border-b border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 transition-colors ${unreadCls}">
+      <div class="text-xs text-zinc-500 dark:text-zinc-400 mb-1 flex items-center gap-1 flex-wrap">
+        ${dot}
+        <span aria-hidden="true">${escapeHtml(icon)}</span>
+        <span class="font-medium text-zinc-800 dark:text-zinc-200">@${who}</span>
+        <span>${verb}</span>
+        <span class="font-medium text-zinc-700 dark:text-zinc-300">${conversation}</span>
+        <span class="text-zinc-500">· ${relativeTime(n.createdAt)}</span>
+      </div>
+      ${body}
+    </button>`;
+  }
 
   // Kudos rows have no chat-message body; they show the PR title (or
   // "PR #N" if the PR has no LLM-generated title yet) and a small 👏

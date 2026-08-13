@@ -207,7 +207,7 @@ function withToken(url, token) {
 // the singular 'app' (the app-view route) and must be its own entry: the
 // first path segment is matched exactly, not by prefix.
 const SELF_APP_HASH_ROUTES = new Set([
-  'app', 'apps', 'leaderboard', 'group-chat', 'individual-chat', 'create', 'admin',
+  'app', 'apps', 'leaderboard', 'group-chat', 'individual-chat', 'create', 'admin', 'messages',
 ]);
 function selfAppHashPath(p) {
   const path = typeof p === 'string' ? p : '/';

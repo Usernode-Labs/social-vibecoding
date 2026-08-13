@@ -13404,7 +13404,7 @@ const AppView = {
   // genuinely standalone server pages (/cli/authorize) untouched. 'admin'
   // joined the list in #860, when the seven standalone admin pages became
   // #admin console sections.
-  _SELF_APP_HASH_ROUTES: ['app', 'leaderboard', 'group-chat', 'individual-chat', 'admin'],
+  _SELF_APP_HASH_ROUTES: ['app', 'leaderboard', 'group-chat', 'individual-chat', 'admin', 'messages'],
   _selfAppHashPath(p) {
     const path = typeof p === 'string' ? p : null;
     if (!path || !path.startsWith('/') || path.startsWith('/#')) return path;

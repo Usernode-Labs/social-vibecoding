@@ -37,7 +37,10 @@ interface OpenOptions {
 
 export function FeedbackDialog() {
   const dialog = useDialog<OpenOptions>('feedback', {
-    onOpen: (opts) => Feedback._open(opts || {}),
+    // feedback-controller.js replaces this placeholder during init; its JS
+    // inference sees the pre-init no-op as zero-argument, so keep the cast at
+    // this typed boundary instead of widening the unrelated controller.
+    onOpen: (opts) => (Feedback._open as (options: OpenOptions) => void)(opts || {}),
     onClose: () => Feedback._reset(),
   });
 

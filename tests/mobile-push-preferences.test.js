@@ -16,6 +16,8 @@ const {
 const notifications = require('../src/services/notifications');
 
 const CURRENT_KINDS = [
+  'conversation_invite', 'conversation_message', 'conversation_mention',
+  'conversation_reply', 'conversation_reaction',
   'mention', 'reply', 'reaction', 'kudos', 'stale_pr', 'check_failed',
   'pr_proposed', 'spec_shared', 'collab_invite', 'collab_invite_accepted',
   'approver_invite', 'approver_invite_accepted', 'session_done',
@@ -37,6 +39,7 @@ test('category defaults match the product contract', () => {
       [category.key, category.defaultEnabled]
     ))),
     {
+      messages: true,
       direct_interactions: true,
       invitations: true,
       shared_work: true,
@@ -49,6 +52,10 @@ test('category defaults match the product contract', () => {
   assert.equal(isKindEnabled('reply'), true);
   assert.equal(isKindEnabled('reaction'), false);
   assert.equal(isKindEnabled('kudos'), false);
+  for (const kind of CURRENT_KINDS.filter((value) => value.startsWith('conversation_'))) {
+    assert.equal(isKindEnabled(kind), true, kind);
+    assert.equal(isKindEnabled(kind, { messages: false }), false, kind);
+  }
 });
 
 test('disabling blocks its kinds and re-enabling is prospective policy only', () => {
@@ -124,7 +131,7 @@ test('preferences are account-scoped and never mutate device registrations', asy
     'account updates do not delete, recreate, or update phone registrations');
 
   const defaults = serializePreferences();
-  assert.equal(defaults.length, 6);
+  assert.equal(defaults.length, 7);
   assert.ok(defaults.every((row) => typeof row.enabled === 'boolean'));
 });
 

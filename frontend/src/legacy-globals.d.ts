@@ -40,12 +40,22 @@ declare global {
     /** public/js/app.js — the shell's router. */
     App?: {
       currentApp?: string | null;
+      user?: {
+        id?: number;
+        username?: string;
+        avatarUrl?: string | null;
+        [key: string]: unknown;
+      } | null;
+      eventsWs?: WebSocket | null;
+      setBackIcon?(mode: 'home' | 'arrow', href?: string): void;
+      setHeaderTitle?(title: string): void;
       [key: string]: unknown;
     };
     /** public/js/platform-ui.js — the native-kit adapter. */
     PlatformUI?: {
       isTouch(): boolean;
       pullToRefresh(el: Element, fn: () => Promise<unknown> | void): void;
+      toast?(message: string): void;
       [key: string]: unknown;
     };
     /** features/header/node-pill.js */
@@ -100,6 +110,13 @@ declare global {
       appData?: { slug?: string; name?: string; url?: string; [key: string]: unknown } | null;
       [key: string]: unknown;
     };
+    /** features/home/home.js — refreshed after app creation. */
+    Home?: {
+      load?(): void;
+      [key: string]: unknown;
+    };
+    /** public/js/dev-host.js — maps container-local preview URLs for browsers. */
+    resolveDevHost?: (url: string) => string;
     /**
      * features/dialogs/app-secrets-controller.js — the retired
      * public/js/app-secrets.js. Still published under this name because five
@@ -131,6 +148,22 @@ declare global {
         string,
         { isOpen(): boolean; open(payload?: unknown): void; close(): void } | undefined
       >;
+      messages?: {
+        open(conversationId?: number | null): void;
+        route(conversationId?: number | null): void;
+        close(): void;
+        isOpen(): boolean;
+        handleBack(): boolean;
+        syncChrome(): void;
+        handleEvent(event: Record<string, unknown>): void;
+        share(reference?: unknown): Promise<void> | void;
+        refresh(): Promise<void> | void;
+      };
+      [key: string]: unknown;
+    };
+    /** features/dev-chat/dev-chat.js — sanitized Markdown renderer. */
+    DevChat?: {
+      renderMarkdown(text: string, opts?: { breaks?: boolean; images?: boolean }): string;
       [key: string]: unknown;
     };
     /** The inline head-blocking theme module in src/head.html. */

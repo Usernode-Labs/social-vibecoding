@@ -90,8 +90,8 @@ const DrawerStatus = {
 
 // Slide-out navigation drawer — available at every viewport width
 // (#122). Top to bottom: the kudos/AI-credit status pane, the theme
-// selector directly below it, the native Node/Wallet rows, the four
-// main nav rows (Profile, Leaderboard, Settings, Admin & moderation),
+// selector directly below it, the native Node/Wallet rows, the five
+// main nav rows (Profile, Messages, Leaderboard, Settings, Admin & moderation),
 // and a bottom-anchored footer carrying the web/mobile-app releases plus
 // GitHub + Share. (Members & visibility moved to the Dev "+" menu — #645.)
 const HeaderMenu = {
@@ -368,6 +368,8 @@ const HeaderMenu = {
     // separate Challenges / Topochain-seasons rows that used to sit
     // beside it are gone; they're tabs of this one screen now.
     document.getElementById('drawer-row-leaderboard')
+      ?.addEventListener('click', () => HeaderMenu.close());
+    document.getElementById('drawer-row-messages')
       ?.addEventListener('click', () => HeaderMenu.close());
     // Share — a dialog of its own, so it waits for the drawer to be
     // gone rather than fading in across the drawer's exit (#977).

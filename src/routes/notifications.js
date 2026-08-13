@@ -96,7 +96,7 @@ function notificationsRoutes(config) {
   // Social browser may configure the account, while each phone keeps its
   // independent Activity notifications master switch.
   router.get('/api/me/mobile-push-preferences', async (req, res) => {
-    res.set('Cache-Control', 'no-store');
+    res.set('Cache-Control', 'private, no-store');
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
     try {
       const preferences = await mobilePushPreferences.readPreferences(pool, req.user.id);
@@ -140,6 +140,7 @@ function notificationsRoutes(config) {
   // whole-account aggregate the client already has from the first page).
   router.get('/api/notifications', async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+    res.set('Cache-Control', 'private, no-store');
     try {
       const rawLimit = Number(req.query.limit);
       const limit = Number.isFinite(rawLimit)
@@ -216,7 +217,7 @@ function notificationsRoutes(config) {
   // return the same 404 for an absent row and another user's row.
   router.get('/api/notifications/:id', async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
-    res.set('Cache-Control', 'no-store');
+    res.set('Cache-Control', 'private, no-store');
     const rawId = String(req.params.id || '');
     if (!/^[1-9]\d{0,9}$/.test(rawId)) {
       return res.status(404).json({ error: 'Notification not found' });
@@ -242,8 +243,10 @@ function notificationsRoutes(config) {
 
   router.post('/api/notifications/read', async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+    res.set('Cache-Control', 'private, no-store');
     const {
       id, all, chat_message_id: chatMessageId, app_id: appId,
+      conversation_id: conversationId,
       kinds, exclude_kinds: excludeKinds,
     } = req.body || {};
     // Kind scoping for the split drawers (cog vs bell). Sanitize to
@@ -251,6 +254,33 @@ function notificationsRoutes(config) {
     const kindList = Array.isArray(kinds) ? kinds.filter((k) => typeof k === 'string') : null;
     const excludeList = Array.isArray(excludeKinds) ? excludeKinds.filter((k) => typeof k === 'string') : null;
     try {
+      // Platform conversations are a separate notification domain from app
+      // chats. A dedicated scope prevents equal integer ids from clearing
+      // one another and gives conversation groups one atomic mark-read path.
+      if (conversationId != null) {
+        const rawConversationId = String(conversationId);
+        if (!/^[1-9]\d{0,9}$/.test(rawConversationId)) {
+          return res.status(400).json({ error: 'Invalid conversation id' });
+        }
+        const parsedConversationId = Number(rawConversationId);
+        if (!Number.isSafeInteger(parsedConversationId) || parsedConversationId > 2147483647) {
+          return res.status(400).json({ error: 'Invalid conversation id' });
+        }
+        const cleared = await notifications.markReadForConversation(
+          pool, req.user.id, parsedConversationId
+        );
+        const unread = await notifications.countUnread(pool, req.user.id);
+        if (cleared > 0) {
+          try {
+            const { pushNotificationToUser } = require('../services/ws');
+            pushNotificationToUser(req.user.id, { type: 'notifications_changed' });
+          } catch (err) {
+            log.warn('notifications', 'cross-tab push failed', { message: err.message });
+          }
+        }
+        return res.json({ unread, cleared });
+      }
+
       // `{ app_id }` is the per-group "Mark read" path (#84 grouping):
       // clear every unread notification this user has for one app, in a
       // single round-trip. Mirrors the chat_message_id branch below —

@@ -55,7 +55,7 @@ function legacyHalf({ reactOwned = [], elements = {} } = {}) {
   const win = {};
   const App = {
     SCREEN_IDS: ['app-view', 'home-screen', 'browse-screen', 'leaderboard-screen',
-      'profile-screen', 'admin-screen', 'settings-screen'],
+      'profile-screen', 'admin-screen', 'settings-screen', 'messages-screen'],
     REACT_SCREEN_IDS: reactOwned,
     setBackIcon() {},
     Visibility: {
@@ -177,6 +177,7 @@ test('_showOnlyScreen is unchanged for unconverted screens, keepAlso included', 
     'profile-screen': false,
     'admin-screen': false,
     'settings-screen': false,
+    'messages-screen': false,
   };
   const { App, hidden } = legacyHalf({ elements });
 
@@ -186,7 +187,7 @@ test('_showOnlyScreen is unchanged for unconverted screens, keepAlso included', 
   // going in and must stay that way. The zoom-out close path depends on this.
   assert.equal(hidden('app-view'), true);
   for (const id of ['browse-screen', 'leaderboard-screen', 'profile-screen',
-    'admin-screen', 'settings-screen']) {
+    'admin-screen', 'settings-screen', 'messages-screen']) {
     assert.equal(hidden(id), true, `${id} should have been hidden`);
   }
 });
@@ -241,7 +242,7 @@ test('app.js routes its screen swaps through the seam, not raw classList', () =>
   // for the class directly — it would work perfectly until the day that
   // screen is converted, and then fail in a way that points nowhere near it.
   const SCREEN_IDS = ['app-view', 'home-screen', 'browse-screen', 'leaderboard-screen',
-    'profile-screen', 'admin-screen', 'settings-screen'];
+    'profile-screen', 'admin-screen', 'settings-screen', 'messages-screen'];
   const offenders = [];
   const lines = appJs.split('\n');
   lines.forEach((line, i) => {

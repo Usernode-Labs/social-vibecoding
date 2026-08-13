@@ -51,7 +51,10 @@ function collaboratorRoutes(config) {
   // match, capped at 10. `excludeApp=<slug>` filters out users who
   // already have any row (member or invited) on that app.
   router.get('/api/users/search', async (req, res) => {
-    const q = typeof req.query.q === 'string' ? req.query.q.trim().slice(0, 32) : '';
+    const messageScope = req.query.scope === 'messages';
+    const q = typeof req.query.q === 'string'
+      ? req.query.q.trim().slice(0, messageScope ? 255 : 32)
+      : '';
     if (!q) return res.json({ users: [] });
     try {
       let excludeAppId = null;
@@ -70,9 +73,15 @@ function collaboratorRoutes(config) {
             AND ($2::int IS NULL OR id NOT IN (
               SELECT user_id FROM app_collaborators WHERE app_id = $2
             ))
+            AND (NOT $3::boolean OR id <> $4)
+            AND (NOT $3::boolean OR NOT EXISTS (
+              SELECT 1 FROM user_blocks b
+               WHERE (b.blocker_id = $4 AND b.blocked_user_id = users.id)
+                  OR (b.blocker_id = users.id AND b.blocked_user_id = $4)
+            ))
           ORDER BY LOWER(username)
           LIMIT 10`,
-        [escaped, excludeAppId]
+        [escaped, excludeAppId, messageScope, req.user.id]
       );
       res.json({ users: rows.map((r) => ({ id: r.id, username: r.username })) });
     } catch (err) {

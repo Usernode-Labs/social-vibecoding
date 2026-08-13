@@ -9,6 +9,7 @@ const { authMiddleware } = require('./src/middleware/auth');
 const { authRoutes } = require('./src/routes/auth');
 const { appRoutes } = require('./src/routes/apps');
 const { chatRoutes } = require('./src/routes/chat');
+const { conversationRoutes } = require('./src/routes/conversations');
 const { sessionRoutes } = require('./src/routes/sessions');
 const { proposalHandoffRoutes } = require('./src/routes/proposal-handoff');
 const { voteRoutes } = require('./src/routes/votes');
@@ -239,6 +240,14 @@ app.use((req, res, next) => {
   if (req.method === 'POST'
       && (/^\/api\/apps\/[^/]+\/proposal-handoffs$/.test(req.path)
           || /^\/api\/sessions\/[^/]+\/proposal-handoff\/(?:context|build|commits)$/.test(req.path))) {
+    return next();
+  }
+  // Private conversation uploads carry raw bytes and own a bounded 21 MB
+  // parser in routes/conversations.js. In particular, a .json file may have
+  // application/json content-type; letting this global parser consume it
+  // first would turn valid attachment bytes into an object/empty upload.
+  if (req.method === 'POST'
+      && /^\/api\/conversations\/[^/]+\/attachments$/.test(req.path)) {
     return next();
   }
   // Agent-file uploads (#460) carry up to 48 KB of file content, which
@@ -522,6 +531,7 @@ app.use(appRoutes(config));
 // storage bridge handler on behalf of the app iframe.
 app.use(appFileShellRoutes(config));
 app.use(chatRoutes(config));
+app.use(conversationRoutes(config));
 app.use(proposalHandoffRoutes(config));
 app.use(sessionRoutes(config, {
   scheduleInteractiveRecovery: scheduleInteractiveTurnRecovery,
@@ -945,6 +955,7 @@ async function becomeLeader() {
   // eviction above). Flips long-idle 'active' sessions to 'paused' so
   // they stop counting against the per-user / global session caps. The
   // CC volume + branch + PR are preserved; reopening auto-resumes.
+  startConversationAttachmentSweeper(config);
   startSessionAutoPauseSweeper(config);
 
   // Stale-promoted-PR policy + reversible-archive GC. Warns authors of
@@ -3640,6 +3651,32 @@ function startIdleEvictionSweeper() {
 // should stay live, and pausing+resuming would currently lose the
 // promoted distinction).
 let sessionSweeperHandle = null;
+let conversationAttachmentSweeperHandle = null;
+
+// Messages attachment retention is independent of session auto-pause. In
+// deployments that disable SESSION_AUTOPAUSE_IDLE_MS, abandoned private
+// composer uploads must still be reclaimed. Run once at leader start and on
+// a slow independent cadence; linked rows remain retained with messages.
+function startConversationAttachmentSweeper(config) {
+  if (conversationAttachmentSweeperHandle) return;
+  const pool = getPool(config);
+  const sweep = async () => {
+    if (lifecycle.isShuttingDown()) return;
+    try {
+      const { rowCount } = await pool.query(
+        `DELETE FROM conversation_message_attachments
+          WHERE message_id IS NULL
+            AND created_at < NOW() - INTERVAL '24 hours'`
+      );
+      if (rowCount) log.info('server', 'GC\'d orphaned conversation attachments', { count: rowCount });
+    } catch (err) {
+      log.warn('server', 'Orphaned conversation attachment sweep failed', { err: err.message });
+    }
+  };
+  sweep();
+  conversationAttachmentSweeperHandle = setInterval(sweep, 60 * 60 * 1000);
+  conversationAttachmentSweeperHandle.unref?.();
+}
 
 // Per-session throttle for the sweeper's staging-heal pass (Pass 3). Maps
 // sessionId -> last rebuild-attempt epoch ms so a promoted PR whose build
@@ -4605,6 +4642,10 @@ async function cleanup() {
   if (sessionSweeperHandle) {
     clearInterval(sessionSweeperHandle);
     sessionSweeperHandle = null;
+  }
+  if (conversationAttachmentSweeperHandle) {
+    clearInterval(conversationAttachmentSweeperHandle);
+    conversationAttachmentSweeperHandle = null;
   }
   if (stalePrSweeperHandle) {
     clearInterval(stalePrSweeperHandle);
