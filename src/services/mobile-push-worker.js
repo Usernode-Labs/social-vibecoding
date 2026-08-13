@@ -212,7 +212,7 @@ class MobilePushWorker {
               a.name AS app_name,
               su.username AS source_username,
               cm.content AS message_content,
-              cs.session_title, cs.pr_title, cs.branch_name,
+              cs.session_title, cs.pr_title, cs.branch_name, cs.promoted_at,
               policy.category AS push_category,
               COALESCE(preference.enabled, policy.default_enabled, FALSE) AS push_enabled,
               d.environment AS delivery_environment,
@@ -357,6 +357,7 @@ class MobilePushWorker {
           sessionTitle: row.session_title,
           prTitle: row.pr_title,
           branchName: row.branch_name,
+          promotedAt: row.promoted_at,
           detail: row.detail,
         },
       });
