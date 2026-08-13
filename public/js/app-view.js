@@ -2207,9 +2207,12 @@ const AppView = {
       const ownerName = item.username || (App.user ? App.user.username : '') || 'someone';
       const owner = escapeHtml(ownerName);
       cardHtml = AppView._renderSharedSessionCard({ ...item, username: ownerName }, { noNav: true });
+      const imported = item.source === 'imported';
       bodyHtml = AppView._detailActionsHtml('session', item)
-        + `<div class="text-xs text-zinc-500 dark:text-zinc-400 mt-2 px-1">Live dev session by ${owner} — the discussion below is visible to everyone and carries over if this becomes a proposal.</div>`
-        + AppView._transcriptSectionHtml(item);
+        + (imported
+          ? `<div class="text-xs text-zinc-500 dark:text-zinc-400 mt-2 px-1">Imported pull request — the code stays on GitHub. The discussion below is visible to everyone and carries over when the importer puts it up for vote.</div>`
+          : `<div class="text-xs text-zinc-500 dark:text-zinc-400 mt-2 px-1">Live dev session by ${owner} — the discussion below is visible to everyone and carries over if this becomes a proposal.</div>`)
+        + (imported ? '' : AppView._transcriptSectionHtml(item));
     } else {
       cardHtml = AppView._renderGovCard(item, { noNav: true });
       // Close-issue proposals store the proposer's reason in the payload;
@@ -2366,6 +2369,11 @@ const AppView = {
         rows.push(`<button class="gc-vote-btn" title="Withdraw this proposal (closes the PR, removes it from the vote panel)" onclick="AppView.withdrawProposal(${item.id})">Withdraw</button>`);
       }
       if (window.Kudos) rows.push(Kudos.renderButton(item, { compact: true }));
+    } else if (kind === 'session' && item.source === 'imported') {
+      const mine = item.user_id == null || !!(App.user && item.user_id === App.user.id);
+      if (!AppView.readOnly && mine && item.status === 'active') {
+        rows.push(`<button class="gc-vote-btn" title="Put this imported pull request up for vote" onclick="AppView.promoteImportedSession(${item.id}, this)">Put up for vote</button>`);
+      }
     } else if (kind === 'issue') {
       // The issue card's demoted actions, spelled out where there is room.
       if (!AppView.readOnly) {
@@ -3809,11 +3817,13 @@ const AppView = {
     let archived = [];
     // #1038: stamped BEFORE the requests go out — see SessionState.seed.
     const issuedAt = Date.now();
+    const demoQs = AppView._demoQS();
+    const activeQs = demoQs ? `${demoQs}&include_imported=1` : '?include_imported=1';
     try {
       const [activeRes, sharedRes, allRes] = await Promise.all([
         // ?demo=1 forwarded so the staging mock own-session row (pinned
         // block caption + Make visible button) renders in demo previews.
-        fetch(`/api/me/active-sessions${AppView._demoQS()}`).catch(() => null),
+        fetch(`/api/me/active-sessions${activeQs}`).catch(() => null),
         fetch(`/api/apps/${encodeURIComponent(slug)}/shared-sessions${AppView._demoQS()}`).catch(() => null),
         // ?demo=1 forwarded here too so the staging mock archived row
         // (the "Show archived" toggle demo anchor) renders in previews.
@@ -6728,6 +6738,12 @@ const AppView = {
       : (s.status === 'paused' ? '<span class="dev-badge bg-zinc-500/10 text-zinc-500">paused</span>' : '');
   },
 
+  _importedSessionBadgeHtml(s) {
+    return s && s.source === 'imported'
+      ? '<span class="dev-badge bg-amber-500/10 text-amber-600 dark:text-amber-400">Imported PR</span>'
+      : '';
+  },
+
   // One of the viewer's own session cards. A clickable <div> (not
   // <button>) so the inner Archive / visibility buttons are valid HTML.
   // Two rows: title row (icon + wrapping title + chevron) and an actions
@@ -6737,6 +6753,7 @@ const AppView = {
   // public discussion instead.
   _renderMySessionCard(s) {
     const label = AppView._sessionCardLabel(s);
+    const imported = s.source === 'imported';
     const statusTag = AppView._sessionStatusTagHtml(s);
     const shared = !!s.shared_at;
     const transcriptShared = !!s.transcript_shared_at;
@@ -6749,9 +6766,12 @@ const AppView = {
     // on ensure-staging, which rebuilds the preview if the idle GC
     // reclaimed it.
     const preview = AppView.cardPreviewHtml(s, { kind: 'own-session', sessionId: s.id });
-    const subtitle = shared
-      ? (transcriptShared ? 'Visible to everyone · chat readable' : 'Visible to everyone')
-      : 'Only you can see this';
+    const author = escapeHtml(s.imported_pr_author || 'unknown author');
+    const subtitle = imported
+      ? `Imported pull request by ${author} · not up for vote yet`
+      : (shared
+        ? (transcriptShared ? 'Visible to everyone · chat readable' : 'Visible to everyone')
+        : 'Only you can see this');
 
     // "Open chat" is GONE as a pill. Tapping this card opens the owner's dev
     // chat — its working surface, and its canonical destination; the public
@@ -6762,13 +6782,13 @@ const AppView = {
     // one thing you do to your own session card, the subtitle right above it
     // states the current state, and the card now reserves an action band that
     // otherwise held nothing but the icon Preview.
-    const visibilityBtn = AppView.readOnly ? '' : (shared
+    const visibilityBtn = imported || AppView.readOnly ? '' : (shared
       ? `<button class="gc-vote-btn" title="Make this session private again (removes it from everyone&#39;s In progress area, and stops anyone reading the chat)" onclick="AppView._setSessionShared(${s.id}, false, null)">Hide</button>`
       : `<button class="gc-vote-btn" title="Show this session in everyone&#39;s In progress area — others can comment and open its live preview, but can&#39;t read your chat unless you also share it" onclick="AppView._setSessionShared(${s.id}, true, null)">Make visible</button>`);
     const menu = [];
     // The SECOND opt-in, offered only once the session is visible (there is
     // nowhere for a reader to reach an invisible session's chat from).
-    if (shared) {
+    if (shared && !imported) {
       menu.push(transcriptShared
         ? {
           label: 'Chat shared — stop sharing',
@@ -6790,26 +6810,32 @@ const AppView = {
         act: () => AppView.openTopic('session', s.id),
       });
     }
-    menu.push({
-      label: 'Archive',
-      icon: 'archive',
-      title: 'Archive this session (closes the PR, frees the slot)',
-      danger: true,
-      act: () => {
-        (async () => {
-          const ok = await AppView._archiveSession(s.id, label);
-          if (ok) await AppView._loadDevFeed();
-        })();
-      },
-    });
+    if (!imported) {
+      menu.push({
+        label: 'Archive',
+        icon: 'archive',
+        title: 'Archive this session (closes the PR, frees the slot)',
+        danger: true,
+        act: () => {
+          (async () => {
+            const ok = await AppView._archiveSession(s.id, label);
+            if (ok) await AppView._loadDevFeed();
+          })();
+        },
+      });
+    }
     // `preview` goes to the rail, not in here — see _cardRailHtml below.
-    const actions = AppView._cardActionsHtml({ primary: [visibilityBtn] });
+    const promoteBtn = imported && !AppView.readOnly
+      ? `<button class="gc-vote-btn" title="Put this imported pull request up for vote" onclick="AppView.promoteImportedSession(${s.id}, this)">Put up for vote</button>`
+      : '';
+    const actions = AppView._cardActionsHtml({ primary: [promoteBtn || visibilityBtn] });
 
     // A private session gets the muted/draft shell — that IS the signal
     // nobody else can see it, replacing the caption that used to sit above
     // the group. Single-row shell like every other card on the board.
-    const mutedCls = shared ? '' : ` ${AppView.DEV_CARD_MUTED_CLS}`;
-    return `<div data-session-chip="${s.id}" role="button" tabindex="0"
+    const mutedCls = shared || imported ? '' : ` ${AppView.DEV_CARD_MUTED_CLS}`;
+    const navAttr = imported ? `data-shared-session-row="${s.id}"` : `data-session-chip="${s.id}"`;
+    return `<div ${navAttr} role="button" tabindex="0"
       class="${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}${mutedCls}"
       title="${s.busy ? 'AI is working — ' : ''}${label}">
       ${AppView._cardContentHtml({
@@ -6819,11 +6845,11 @@ const AppView = {
         // element itself carries the full text (`label` is already escaped).
         titleAttrs: ` title="${label}"`,
         metaHtml: subtitle,
-        badges: [statusTag, AppView._sessionVenueChipHtml(s), AppView.issueChipsHtml(s.linked_issues)],
+        badges: [AppView._importedSessionBadgeHtml(s), statusTag, AppView._sessionVenueChipHtml(s), AppView.issueChipsHtml(s.linked_issues)],
         chatCount: null,
         actions,
       })}
-      ${AppView._cardRailHtml(`session:${s.id}`, menu, { preview })}
+      ${AppView._cardRailHtml(`session:${s.id}`, imported ? [] : menu, { preview })}
     </div>`;
   },
 
@@ -6839,6 +6865,8 @@ const AppView = {
     const noNav = !!(opts && opts.noNav);
     const label = AppView._sessionCardLabel(s);
     const owner = escapeHtml(s.username || 'someone');
+    const imported = s.source === 'imported';
+    const author = escapeHtml(s.imported_pr_author || 'unknown author');
     const statusTag = AppView._sessionStatusTagHtml(s);
     const preview = AppView.cardPreviewHtml(s, { kind: 'shared-session', sessionId: s.id });
     const nav = noNav ? '' : ` data-shared-session-row="${s.id}" role="button" tabindex="0"`;
@@ -6853,8 +6881,10 @@ const AppView = {
         icon: AppView._devCardIcon('session'),
         titleHtml: label,
         titleAttrs: ` title="${label}"`,
-        metaHtml: `${owner} is working on this`,
-        badges: [statusTag, AppView.issueChipsHtml(s.linked_issues)],
+        metaHtml: imported
+          ? `Imported pull request by ${author} · imported by ${owner}`
+          : `${owner} is working on this`,
+        badges: [AppView._importedSessionBadgeHtml(s), statusTag, AppView.issueChipsHtml(s.linked_issues)],
         chatCount: s.chat_count,
         // No pills of its own: reading the chat IS the whole-card tap, so the
         // dense band renders reserved-and-empty (see _cardContentHtml).
@@ -9063,6 +9093,41 @@ const AppView = {
     if (!sessionId) return;
     if (typeof App !== 'undefined' && App.switchTab) {
       App.switchTab('dev', sessionId, 'sessions');
+    }
+  },
+
+  // Imported PRs enter the shared In-progress board without a worker or dev
+  // chat. Their owner explicitly crosses the review boundary here; the server
+  // re-reads GitHub's current head before changing the row to `promoted`.
+  async promoteImportedSession(sessionId, btn) {
+    if (!sessionId) return;
+    const oldText = btn ? btn.textContent : '';
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = 'Putting up for vote…';
+    }
+    try {
+      const resp = await fetch(`/api/sessions/${sessionId}/promote`, { method: 'POST' });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        if (window.PlatformUI && PlatformUI.toast) {
+          PlatformUI.toast(data.error || `Could not put this PR up for vote (HTTP ${resp.status}).`);
+        }
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = oldText;
+        }
+        return;
+      }
+      await AppView.openTopic('proposal', sessionId);
+    } catch (err) {
+      if (window.PlatformUI && PlatformUI.toast) {
+        PlatformUI.toast(`Could not put this PR up for vote: ${err.message}`);
+      }
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = oldText;
+      }
     }
   },
 

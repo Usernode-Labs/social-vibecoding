@@ -9,10 +9,10 @@
 //   2. The 429 message must quote the SAME number that was enforced, so a
 //      user is never told "you already have 3" while sitting at 5.
 //
-// Also pinned: the GLOBAL ceiling has NO admin tier. It's a host-resource
-// bound (warm workers + staging containers on one box), so a full admin at
-// the platform cap gets the capacity 429 like everyone else — the per-user
-// tier must not be mistaken for a global exemption.
+// Also pinned: the GLOBAL ceiling has NO admin tier. It's the host's coding-
+// worker budget, so a full admin at the platform cap gets the capacity 429
+// like everyone else. Externally produced imported PRs own no worker and are
+// excluded from that count.
 //
 // Same harness shape as tests/me-active-sessions.test.js: override getPool
 // BEFORE requiring the route module, mount on a real express app, inject
@@ -52,7 +52,11 @@ function occupancy({ own, global: globalCount }) {
   return async (sql) => {
     const s = String(sql);
     if (/status = 'active' AND is_headless = FALSE/.test(s)) return { rows: [{ cnt: String(own) }] };
-    if (/status IN \('active', 'promoted'\)/.test(s)) return { rows: [{ cnt: String(globalCount) }] };
+    if (/status IN \('active', 'promoted'\)/.test(s)) {
+      assert.match(s, /source IS DISTINCT FROM 'imported'/,
+        'the coding-worker cap must exclude externally produced imports');
+      return { rows: [{ cnt: String(globalCount) }] };
+    }
     if (/INSERT INTO chat_sessions/.test(s)) {
       return { rows: [{ id: 99, app_id: APP.id, user_id: 7, status: 'active', branch_name: 'dev/tester-1' }] };
     }

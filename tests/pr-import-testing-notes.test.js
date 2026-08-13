@@ -146,21 +146,31 @@ test('the same validator backs both paths, so both land identically', () => {
   assert.equal(viaImport.testingMd, viaBlock.testingMd);
 });
 
-test('the import writes the parsed notes, and defaults to today’s behaviour', () => {
+test('the import writes parsed notes and defaults browser imports to active', () => {
   const SRC = fs.readFileSync(path.join(__dirname, '../src/routes/votes.js'), 'utf8');
+  const route = SRC.slice(
+    SRC.indexOf("router.post('/api/apps/:slug/pr-import'"),
+    SRC.indexOf('// #687 Slice 6')
+  );
   const insert = SRC.slice(
     SRC.indexOf('const importTesting = parseImportTesting(req.body)'),
-    SRC.indexOf('const importTesting = parseImportTesting(req.body)') + 1400
+    SRC.indexOf('const sessionId = inserted[0].id')
   );
   assert.ok(insert.length > 0, 'the import route parses the body');
   // The three columns the capture step and the "How to test" panel read.
   assert.match(insert, /testing_md, testing_path, testing_paths/);
   // testing_paths is JSONB — the row stores the object form, same as the
   // in-platform path, so nothing downstream needs to know which path wrote it.
-  assert.match(insert, /\$11::jsonb/);
+  assert.match(insert, /\$12::jsonb/);
   assert.match(insert, /importTesting\.testingPaths \? JSON\.stringify\(importTesting\.testingPaths\) : null/);
   // Nulls, not empty strings — an import with no notes is byte-for-byte the
   // row this route wrote before the fields existed.
   assert.match(insert, /importTesting\.testingMd/);
   assert.match(insert, /importTesting\.testingPath\b/);
+  assert.match(insert, /const promote = req\.body\?\.promote === true/);
+  assert.match(insert, /const initialStatus = promote \? 'promoted' : 'active'/);
+  assert.match(insert, /CASE WHEN \$7 = 'active' THEN NOW\(\) END/,
+    'an active import is shared onto the In-progress board');
+  assert.doesNotMatch(route, /maxGlobalSessions|freeGlobalSlot/,
+    'an externally produced PR owns no coding worker and spends no worker-cap slot');
 });

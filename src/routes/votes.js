@@ -899,6 +899,30 @@ async function kickNativeRevisionChecks({ config, pool, session, headSha }) {
   }));
 }
 
+// Imported PRs use their GitHub head as the reviewed revision. Stamp that
+// revision pending before returning control to a promotion/vote request, then
+// let the SHA-pinned preview rebuild continue in the background. The merge
+// gate independently compares the verdict SHA, so even a failed pending write
+// cannot let an older green result authorize this head.
+async function kickImportedRevisionChecks({ config, pool, session, headSha }) {
+  const visuals = require('../services/visuals');
+  await visuals.setChecksPending(pool, session.id, headSha, 'building', 'pr-import')
+    .catch((err) => log.warn('votes', 'Imported revision setChecksPending failed (non-fatal)', {
+      sessionId: session.id, headSha, err: err.message,
+    }));
+  try { visuals.notifyChecksPending(session.id, headSha, 'building', 'pr-import'); } catch (_) {}
+
+  const prImportSync = require('../services/pr-import-sync');
+  prImportSync.rerunChecksForNewHead({
+    config,
+    pool,
+    session,
+    newHead: headSha,
+  }).catch((err) => log.warn('votes', 'Imported revision checks re-run failed', {
+    sessionId: session.id, headSha, err: err.message,
+  }));
+}
+
 // #955: how far back the classifier will follow first parents looking for the
 // reviewed revision. Stacked platform syncs are the reason it is more than one
 // (a drain can resolve, fail to merge, and resolve again before anything
@@ -1526,7 +1550,10 @@ function voteRoutes(config) {
       );
       if (!rows.length) return res.status(404).json({ error: 'Active session not found' });
       const session = rows[0];
-      const previousReviewedHead = session.reviewed_head_sha || null;
+      const imported = session.source === 'imported';
+      const previousReviewedHead = imported
+        ? (session.imported_pr_head_sha || null)
+        : (session.reviewed_head_sha || null);
 
       // Promoted-PR cap: worker-less promoted sessions don't count
       // against the per-user active-session cap (see the create-session
@@ -1663,6 +1690,11 @@ function voteRoutes(config) {
             });
           }
           if (pr && pr.state === 'closed') {
+            if (imported) {
+              return res.status(409).json({
+                error: `PR #${session.pr_number} is closed on GitHub and cannot be put up for vote.`,
+              });
+            }
             try {
               await github.reopenPR(owner, repo, session.pr_number);
               log.info('votes', 'Reopened closed PR at promote time', {
@@ -1704,22 +1736,24 @@ function voteRoutes(config) {
             });
           }
 
-          // Mark PR as ready for review on GitHub. We deliberately DO NOT
-          // touch the title here — previously this overwrote the LLM-
-          // generated title back to "<user>'s changes" every time a PR
-          // was promoted, wiping the more descriptive title.
-          try {
-            // octokit.request rather than .rest.pulls.update —
-            // @octokit/app's installation Octokit is a bare core
-            // instance without the rest-endpoint-methods plugin, so
-            // .rest is undefined.
-            const octokit = await github.getInstallationOctokit(owner);
-            await octokit.request(
-              'PATCH /repos/{owner}/{repo}/pulls/{pull_number}',
-              { owner, repo, pull_number: session.pr_number, draft: false }
-            );
-          } catch (err) {
-            log.warn('votes', 'Failed to update PR on GitHub', { err: err.message });
+          // Native proposals are platform-owned drafts, so crossing the local
+          // review boundary also marks them ready on GitHub. Imported PRs are
+          // externally owned: promotion changes only Usernode's local state
+          // and must not publish an external author's draft.
+          if (!imported) {
+            try {
+              // octokit.request rather than .rest.pulls.update —
+              // @octokit/app's installation Octokit is a bare core
+              // instance without the rest-endpoint-methods plugin, so
+              // .rest is undefined.
+              const octokit = await github.getInstallationOctokit(owner);
+              await octokit.request(
+                'PATCH /repos/{owner}/{repo}/pulls/{pull_number}',
+                { owner, repo, pull_number: session.pr_number, draft: false }
+              );
+            } catch (err) {
+              log.warn('votes', 'Failed to update PR on GitHub', { err: err.message });
+            }
           }
         }
       }
@@ -1731,7 +1765,10 @@ function voteRoutes(config) {
         `UPDATE chat_sessions
             SET status = 'promoted', promoted_at = NOW(),
                 stale_notified_at = NULL,
-                reviewed_head_sha = COALESCE($2, reviewed_head_sha)
+                reviewed_head_sha = CASE WHEN source = 'imported'
+                  THEN reviewed_head_sha ELSE COALESCE($2, reviewed_head_sha) END,
+                imported_pr_head_sha = CASE WHEN source = 'imported'
+                  THEN COALESCE($2, imported_pr_head_sha) ELSE imported_pr_head_sha END
           WHERE id = $1 AND status = 'active'`,
         [session.id, promotedHeadSha]
       );
@@ -1739,7 +1776,8 @@ function voteRoutes(config) {
         return res.status(409).json({ error: 'session_state_changed' });
       }
       if (promotedHeadSha) {
-        session.reviewed_head_sha = promotedHeadSha;
+        if (imported) session.imported_pr_head_sha = promotedHeadSha;
+        else session.reviewed_head_sha = promotedHeadSha;
 
         // A withdrawn proposal may retain votes from its earlier review.
         // Preserve only votes explicitly cast for this exact revision; this
@@ -1767,12 +1805,20 @@ function voteRoutes(config) {
         // still describes the old one, invalidate it immediately and rebuild
         // checks against the captured SHA. A proposal without staging is
         // handled by the ordinary post-response build below.
-        if (previousReviewedHead !== promotedHeadSha
-            && session.staging_url
-            && session.checks_commit_sha !== promotedHeadSha) {
-          await kickNativeRevisionChecks({
-            config, pool, session, headSha: promotedHeadSha,
-          });
+        if (session.checks_commit_sha !== promotedHeadSha) {
+          if (imported) {
+            // Import-time checks may still describe the head captured when
+            // the row entered In progress. Promotion re-read GitHub above;
+            // if that head moved, start a SHA-pinned rebuild even when the
+            // earlier preview has not finished yet.
+            await kickImportedRevisionChecks({
+              config, pool, session, headSha: promotedHeadSha,
+            });
+          } else if (previousReviewedHead !== promotedHeadSha && session.staging_url) {
+            await kickNativeRevisionChecks({
+              config, pool, session, headSha: promotedHeadSha,
+            });
+          }
         }
       }
 
@@ -1833,7 +1879,11 @@ function voteRoutes(config) {
       // the auto session's URL — same content, since the clone branch was
       // forked from it). Build the clone's own staging from its branch head,
       // fire-and-forget; the Pass-3 heal sweeper in server.js is the backstop.
-      if (!session.staging_url) {
+      if (imported) {
+        // Imported rows already start their SHA-pinned preview/check build at
+        // import time. Never fall through to the native branch-name build:
+        // a fork head may not exist in the app repository at all.
+      } else if (!session.staging_url) {
         (async () => {
           // Use the exact revision captured before promotion. The fallback
           // exists only for GitHub-disabled local development.
@@ -1977,7 +2027,8 @@ function voteRoutes(config) {
   // The three endpoints (candidate list, preview, import) let a collaborator pull an
   // externally-authored PR into the vote flow instead of building it in the
   // platform's AI dev-chat. Preview/candidates are read-only; import creates
-  // a `source='imported'` chat_sessions row promoted straight into voting.
+  // a shared `source='imported'` In-progress row. Automated submission paths
+  // may explicitly request the historical straight-to-vote result.
   //
   // Parse owner/repo from an app's repo_url, or null.
   const parseRepo = (url) => {
@@ -2003,7 +2054,7 @@ function voteRoutes(config) {
     const { rows } = await pool.query(
       `SELECT DISTINCT pr_number FROM chat_sessions
         WHERE app_id = $1 AND source = 'imported' AND pr_number IS NOT NULL
-          AND status IN ('promoted', 'merging', 'merged')`,
+          AND status IN ('active', 'promoted', 'merging', 'merged')`,
       [appId]
     );
     return new Set(rows.map((r) => r.pr_number));
@@ -2131,8 +2182,9 @@ function voteRoutes(config) {
     }
   });
 
-  // POST import a PR as a proposal. Collab access. Creates a promoted
-  // `source='imported'` session and kicks its SHA-pinned checks build.
+  // POST import a PR. Collab access. Creates a shared In-progress
+  // `source='imported'` session by default and kicks its SHA-pinned checks
+  // build; trusted automated callers can request `promote: true`.
   router.post('/api/apps/:slug/pr-import', drainGuard, async (req, res) => {
     try {
       const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'collab', '*');
@@ -2181,20 +2233,27 @@ function voteRoutes(config) {
       // Absent (the browser's import button never sends them) leaves all
       // three columns NULL, exactly as before.
       const importTesting = parseImportTesting(req.body);
+      const promote = req.body?.promote === true;
+      const initialStatus = promote ? 'promoted' : 'active';
 
-      // Create the imported proposal row, promoted straight into voting.
+      // Browser imports join the shared In-progress board first. Automated
+      // submission paths may opt into the historical straight-to-vote flow
+      // with `promote: true`.
       const { rows: inserted } = await pool.query(
         `INSERT INTO chat_sessions
            (app_id, user_id, branch_name, pr_number, pr_url, pr_title, status,
-            source, imported_pr_head_sha, imported_pr_author, promoted_at, created_at,
+            source, imported_pr_head_sha, imported_pr_author, promoted_at, shared_at, created_at,
             testing_md, testing_path, testing_paths)
-         VALUES ($1, $2, $3, $4, $5, $6, 'promoted',
-            'imported', $7, $8, NOW(), NOW(),
-            $9, $10, $11::jsonb)
-         RETURNING id`,
+         VALUES ($1, $2, $3, $4, $5, $6, $7,
+            'imported', $8, $9,
+            CASE WHEN $7 = 'promoted' THEN NOW() END,
+            CASE WHEN $7 = 'active' THEN NOW() END,
+            NOW(), $10, $11, $12::jsonb)
+         RETURNING id, status`,
         [
           app.id, req.user.id, headBranch, prNumber, pr.html_url || null,
-          pr.title || `PR #${prNumber}`, headSha, pr.user?.login || null,
+          pr.title || `PR #${prNumber}`, initialStatus,
+          headSha, pr.user?.login || null,
           importTesting.testingMd, importTesting.testingPath,
           importTesting.testingPaths ? JSON.stringify(importTesting.testingPaths) : null,
         ]
@@ -2204,35 +2263,39 @@ function voteRoutes(config) {
         id: sessionId, app_id: app.id, app_slug: app.slug, user_id: req.user.id,
         branch_name: headBranch, pr_number: prNumber, pr_title: pr.title || null,
         repo_url: app.repo_url, staging_url: null, source: 'imported',
+        status: initialStatus, imported_pr_head_sha: headSha,
       };
 
-      // Announce it for voting (group chat + the proposal's own thread),
-      // mirroring the native promote path.
-      const label = pr.title ? `PR #${prNumber} — ${pr.title}` : `PR #${prNumber}`;
-      await sendSystemMessage(pool, app.id,
-        `${req.user.username} imported ${label} for voting`,
-        'vote',
-        { vote: { sessionId, prNumber } }
-      ).catch(() => {});
-      await sendSystemMessage(pool, app.id,
-        `${req.user.username} imported ${label} for voting`,
-        'vote',
-        { vote: { sessionId, prNumber } },
-        { type: 'session', ref: sessionId }
-      ).catch(() => {});
+      if (promote) {
+        // Explicit submissions still announce the vote exactly as before.
+        const label = pr.title ? `PR #${prNumber} — ${pr.title}` : `PR #${prNumber}`;
+        await sendSystemMessage(pool, app.id,
+          `${req.user.username} imported ${label} for voting`,
+          'vote',
+          { vote: { sessionId, prNumber } }
+        ).catch(() => {});
+        await sendSystemMessage(pool, app.id,
+          `${req.user.username} imported ${label} for voting`,
+          'vote',
+          { vote: { sessionId, prNumber } },
+          { type: 'session', ref: sessionId }
+        ).catch(() => {});
+      }
 
       const { pushSessionUpdate } = require('../services/ws');
-      pushSessionUpdate({ action: 'promoted', sessionId, appSlug: app.slug });
-      try {
-        events.record(pool, {
-          type: events.EVENT_TYPES.PR_PROMOTED,
-          userId: req.user.id, appId: app.id, sessionId,
-          metadata: { prNumber, source: 'imported' },
-        });
-      } catch { /* events are best-effort */ }
+      pushSessionUpdate({ action: promote ? 'promoted' : 'imported', sessionId, appSlug: app.slug });
+      if (promote) {
+        try {
+          events.record(pool, {
+            type: events.EVENT_TYPES.PR_PROMOTED,
+            userId: req.user.id, appId: app.id, sessionId,
+            metadata: { prNumber, source: 'imported' },
+          });
+        } catch { /* events are best-effort */ }
+      }
 
-      log.info('votes', 'PR imported as proposal', { sessionId, prNumber, appId: app.id });
-      res.json({ ok: true, sessionId, prNumber });
+      log.info('votes', 'PR imported', { sessionId, prNumber, appId: app.id, status: initialStatus });
+      res.json({ ok: true, sessionId, prNumber, status: initialStatus });
 
       // Kick the SHA-pinned staging build + checks after responding.
       const appForBuild = { id: app.id, slug: app.slug, name: app.name, repo_url: app.repo_url };
@@ -4116,15 +4179,13 @@ async function checkAndMerge(config, pool, session, options = {}) {
          FROM chat_sessions WHERE id = $1`,
       [session.id]
     );
-    const nativeReviewedHead = session.source === 'imported'
-      ? null
-      : (session.reviewed_head_sha || null);
+    const reviewedHead = reviewedHeadForSession(session);
     const returnedChecksSha = checkRows[0]?.checks_commit_sha;
-    const checksRevisionMismatch = !!nativeReviewedHead
+    const checksRevisionMismatch = !!reviewedHead
       // `undefined` exists only in narrow unit-test row adapters that predate
       // the selected column; PostgreSQL returns null for a real unset value.
       && returnedChecksSha !== undefined
-      && returnedChecksSha !== nativeReviewedHead;
+      && !sameSha(returnedChecksSha, reviewedHead);
     // A green verdict for an older commit is not a green verdict for the
     // reviewed code. Treat it as pending and rebuild exactly the pinned SHA.
     const checkState = checksRevisionMismatch
@@ -4145,9 +4206,15 @@ async function checkAndMerge(config, pool, session, options = {}) {
       const stalePending = checkState === null
         || (checkState === 'pending' && (Date.now() - checkedAt) > CHECKS_STALE_MS);
       if (checksRevisionMismatch) {
-        await kickNativeRevisionChecks({
-          config, pool, session, headSha: nativeReviewedHead,
-        });
+        if (session.source === 'imported') {
+          await kickImportedRevisionChecks({
+            config, pool, session, headSha: reviewedHead,
+          });
+        } else {
+          await kickNativeRevisionChecks({
+            config, pool, session, headSha: reviewedHead,
+          });
+        }
       } else if (stalePending) {
         const stagingRecovery = require('../services/staging-recovery');
         stagingRecovery.recheckSessionChecks({

@@ -1750,6 +1750,7 @@ async function restoreMissingQuickReplies(config) {
   const { rows } = await pool.query(
     `SELECT id, pr_number, spec_md FROM chat_sessions
      WHERE status IN ('active', 'promoted')
+       AND source IS DISTINCT FROM 'imported'
        AND is_headless = FALSE
        AND active_turn IS NULL
        AND last_activity_at > NOW() - make_interval(days => $1::int)
@@ -3713,6 +3714,7 @@ function startSessionAutoPauseSweeper(config) {
         `SELECT id FROM chat_sessions
          WHERE status = 'active'
            AND active_turn IS NULL
+           AND source IS DISTINCT FROM 'imported'
            AND last_activity_at < NOW() - make_interval(secs => $1::double precision / 1000.0)
            AND NOT ($2::boolean AND COALESCE(branch_name, '') LIKE 'staging-fixture/%')
          ORDER BY last_activity_at ASC
@@ -4083,11 +4085,10 @@ function startSessionAutoPauseSweeper(config) {
       log.warn('server', 'Staging app-file sweep failed', { err: err.message });
     }
 
-    // Pass 6: imported-PR head sync (#687, Slice 3). For each OPEN imported
-    // proposal, fetch the PR's current head.sha and no-op on an unchanged
-    // head; on a head change reset the vote tally, post a "please
-    // re-review" note, refresh drift, and re-run checks against the new
-    // head (see services/pr-import-sync.js). Reuses this sweeper's cadence
+    // Pass 6: imported-PR head sync (#687, Slice 3). For each live imported
+    // row, fetch the PR's current head.sha and no-op on an unchanged head;
+    // on a head change refresh its preview/checks (and, once promoted, reset
+    // the vote tally). Reuses this sweeper's cadence
     // + a per-session cooldown (importedHeadSyncAttempts) so the added
     // getPR-per-open-imported-proposal cost stays bounded.
     try {
@@ -4097,7 +4098,7 @@ function startSessionAutoPauseSweeper(config) {
            FROM chat_sessions cs
            JOIN apps a ON cs.app_id = a.id
           WHERE cs.source = 'imported'
-            AND cs.status IN ('promoted', 'merging')
+            AND cs.status IN ('active', 'promoted', 'merging')
             AND cs.pr_number IS NOT NULL
           ORDER BY cs.promoted_at ASC NULLS FIRST
           LIMIT 50`

@@ -36,6 +36,9 @@ function loadCoordinator({
   bridgeReadyImpl,
   getInfoImpl,
   refreshImpl,
+  invalidationRefreshVersion = 1,
+  foregroundStorage = new Map(),
+  foregroundStorageImpl,
   includeBridgeReadyMethod = true,
   timeoutScale = 1,
 } = {}) {
@@ -51,6 +54,13 @@ function loadCoordinator({
   const sandbox = {
     console: { warn() {} },
     Promise,
+    localStorage: foregroundStorageImpl || {
+      getItem(key) {
+        return foregroundStorage.has(key) ? foregroundStorage.get(key) : null;
+      },
+      setItem(key, value) { foregroundStorage.set(key, String(value)); },
+      removeItem(key) { foregroundStorage.delete(key); },
+    },
     setTimeout(fn, delay) { return setTimeout(fn, delay * timeoutScale); },
     clearTimeout,
     CustomEvent: class CustomEvent {
@@ -68,6 +78,9 @@ function loadCoordinator({
       },
     },
     Notifications: {
+      ...(invalidationRefreshVersion == null
+        ? {}
+        : { nativeInvalidationRefreshVersion: invalidationRefreshVersion }),
       async openById(id) {
         calls.push(['open', id]);
         return openImpl ? openImpl(id) : openResult;
@@ -476,6 +489,276 @@ test('foreground invalidation does not depend on a native capability probe',
     assert.equal(loaded.sandbox.SocialPush._foregroundInvalidationDirty, false);
   });
 
+test('an older cached Notifications bundle cannot consume an invalidation',
+  async () => {
+    const storage = new Map();
+    const loaded = loadCoordinator({
+      invalidationRefreshVersion: null,
+      foregroundStorage: storage,
+    });
+
+    loaded.fire('usernode:social-push-foreground');
+    await settle();
+
+    assert.equal(
+      loaded.calls.some(([name]) => name === 'refresh'),
+      false,
+      'the previous unconditional-success method must not be called'
+    );
+    assert.equal(loaded.sandbox.SocialPush._foregroundInvalidationDirty, true);
+    const retainedToken = storage.get(
+      'social_push_foreground_invalidation_v1'
+    );
+    assert.ok(retainedToken);
+    assert.equal(
+      loaded.sandbox.SocialPush._foregroundRetryTimer,
+      null,
+      'an already-evaluated old bundle cannot recover through timer polling'
+    );
+    loaded.fire('pagehide');
+
+    const recovered = loadCoordinator({ foregroundStorage: storage });
+    recovered.fireDocument('DOMContentLoaded');
+    await settle();
+
+    assert.equal(
+      recovered.calls.filter(([name]) => name === 'refresh').length,
+      1,
+      'the current bundle must replay the retained invalidation at startup'
+    );
+    assert.equal(recovered.sandbox.SocialPush._foregroundInvalidationDirty, false);
+    assert.equal(storage.has('social_push_foreground_invalidation_v1'), false);
+  });
+
+test('a pagehidden refresh cannot clear replacement-realm recovery',
+  async () => {
+    const storage = new Map();
+    let releaseRefresh;
+    const pendingRefresh = new Promise((resolve) => {
+      releaseRefresh = resolve;
+    });
+    const oldRealm = loadCoordinator({
+      foregroundStorage: storage,
+      refreshImpl: () => pendingRefresh,
+    });
+
+    oldRealm.fire('usernode:social-push-foreground');
+    await settle();
+    oldRealm.fire('pagehide');
+    releaseRefresh(true);
+    await settle();
+
+    assert.equal(oldRealm.sandbox.SocialPush._foregroundInvalidationDirty, true);
+    assert.equal(
+      storage.get('social_push_foreground_invalidation_v1'),
+      oldRealm.sandbox.SocialPush._foregroundInvalidationToken,
+      'an inactive realm must leave recovery ownership for its replacement'
+    );
+
+    const replacement = loadCoordinator({ foregroundStorage: storage });
+    replacement.fireDocument('DOMContentLoaded');
+    await settle();
+
+    assert.equal(
+      replacement.calls.filter(([name]) => name === 'refresh').length,
+      1
+    );
+    assert.equal(storage.has('social_push_foreground_invalidation_v1'), false);
+  });
+
+test('an older restored realm cannot clear a newer realm invalidation',
+  async () => {
+    const storage = new Map();
+    let releaseOldRefresh;
+    const oldRefresh = new Promise((resolve) => {
+      releaseOldRefresh = resolve;
+    });
+    let realmAAttempts = 0;
+    const realmA = loadCoordinator({
+      foregroundStorage: storage,
+      refreshImpl() {
+        realmAAttempts += 1;
+        return realmAAttempts === 1 ? oldRefresh : true;
+      },
+    });
+
+    realmA.fire('usernode:social-push-foreground');
+    await settle();
+    const tokenA = storage.get('social_push_foreground_invalidation_v1');
+    realmA.fire('pagehide');
+
+    const realmB = loadCoordinator({
+      foregroundStorage: storage,
+      invalidationRefreshVersion: null,
+    });
+    realmB.fire('usernode:social-push-foreground');
+    await settle();
+    const tokenB = storage.get('social_push_foreground_invalidation_v1');
+    assert.ok(tokenA);
+    assert.ok(tokenB);
+    assert.notEqual(tokenA, tokenB);
+
+    realmA.fire('pageshow');
+    releaseOldRefresh(true);
+    await settle();
+
+    assert.equal(realmAAttempts, 2,
+      'realm A must refresh in its current lifecycle before consuming token B');
+    assert.equal(
+      storage.has('social_push_foreground_invalidation_v1'),
+      false,
+      'the current-epoch refresh may consume the adopted token'
+    );
+    assert.equal(realmA.sandbox.SocialPush._foregroundInvalidationDirty, false);
+    realmA.fire('pagehide');
+    realmB.fire('pagehide');
+  });
+
+test('a pre-hide refresh cannot settle after another realm consumed its token',
+  async () => {
+    const storage = new Map();
+    let releaseOldRefresh;
+    const oldRefresh = new Promise((resolve) => {
+      releaseOldRefresh = resolve;
+    });
+    let realmAAttempts = 0;
+    const realmA = loadCoordinator({
+      foregroundStorage: storage,
+      refreshImpl() {
+        realmAAttempts += 1;
+        return realmAAttempts === 1 ? oldRefresh : true;
+      },
+    });
+
+    realmA.fire('usernode:social-push-foreground');
+    await settle();
+    realmA.fire('pagehide');
+
+    const realmB = loadCoordinator({ foregroundStorage: storage });
+    realmB.fire('usernode:social-push-foreground');
+    await settle();
+    assert.equal(
+      storage.has('social_push_foreground_invalidation_v1'),
+      false,
+      'realm B consumes its own newer token after a fresh read'
+    );
+
+    realmA.fire('pageshow');
+    const recoveryToken = storage.get(
+      'social_push_foreground_invalidation_v1'
+    );
+    assert.ok(recoveryToken, 'restored realm A reacquires recovery ownership');
+    releaseOldRefresh(true);
+    await settle();
+
+    assert.equal(realmAAttempts, 2,
+      'the pre-hide result must be followed by a current-epoch refresh');
+    assert.equal(realmA.sandbox.SocialPush._foregroundInvalidationDirty, false);
+    assert.equal(storage.has('social_push_foreground_invalidation_v1'), false);
+  });
+
+test('a clean BFCache realm adopts a pending invalidation on restore',
+  async () => {
+    const storage = new Map();
+    const realmA = loadCoordinator({ foregroundStorage: storage });
+    realmA.fire('pagehide');
+
+    const realmB = loadCoordinator({
+      foregroundStorage: storage,
+      invalidationRefreshVersion: null,
+    });
+    realmB.fire('usernode:social-push-foreground');
+    await settle();
+    assert.ok(storage.get('social_push_foreground_invalidation_v1'));
+
+    realmA.fire('pageshow');
+    await settle();
+
+    assert.equal(
+      realmA.calls.filter(([name]) => name === 'refresh').length,
+      1,
+      'restored realm A must reconcile the pending realm B invalidation'
+    );
+    assert.equal(realmA.sandbox.SocialPush._foregroundInvalidationDirty, false);
+    assert.equal(storage.has('social_push_foreground_invalidation_v1'), false);
+    realmA.fire('pagehide');
+    realmB.fire('pagehide');
+  });
+
+test('a clean BFCache realm refreshes after another realm consumed the token',
+  async () => {
+    const storage = new Map();
+    const realmA = loadCoordinator({ foregroundStorage: storage });
+    realmA.fire('pagehide');
+
+    const realmB = loadCoordinator({ foregroundStorage: storage });
+    realmB.fire('usernode:social-push-foreground');
+    await settle();
+    assert.equal(
+      storage.has('social_push_foreground_invalidation_v1'),
+      false,
+      'realm B already consumed the shared invalidation token'
+    );
+
+    realmA.fire('pageshow');
+    await settle();
+
+    assert.equal(
+      realmA.calls.filter(([name]) => name === 'refresh').length,
+      1,
+      'restored realm A still needs its own current-realm network refresh'
+    );
+    assert.equal(realmA.sandbox.SocialPush._foregroundInvalidationDirty, false);
+    assert.equal(storage.has('social_push_foreground_invalidation_v1'), false);
+    realmA.fire('pagehide');
+    realmB.fire('pagehide');
+  });
+
+test('blocked invalidation storage settles through the in-memory path',
+  async () => {
+    const loaded = loadCoordinator({
+      foregroundStorageImpl: {
+        getItem() { throw new Error('storage blocked'); },
+        setItem() { throw new Error('storage blocked'); },
+        removeItem() { throw new Error('storage blocked'); },
+      },
+    });
+
+    loaded.fire('usernode:social-push-foreground');
+    await settle();
+
+    assert.equal(
+      loaded.calls.filter(([name]) => name === 'refresh').length,
+      1,
+      'a successful refresh must not spin when storage throws'
+    );
+    assert.equal(loaded.sandbox.SocialPush._foregroundInvalidationDirty, false);
+    assert.equal(loaded.sandbox.SocialPush._foregroundRefreshPromise, null);
+    assert.equal(loaded.sandbox.SocialPush._foregroundRetryTimer, null);
+  });
+
+test('non-persisting invalidation storage also settles in memory', async () => {
+  const loaded = loadCoordinator({
+    foregroundStorageImpl: {
+      getItem() { return null; },
+      setItem() {},
+      removeItem() {},
+    },
+  });
+
+  loaded.fire('usernode:social-push-foreground');
+  await settle();
+
+  assert.equal(
+    loaded.calls.filter(([name]) => name === 'refresh').length,
+    1,
+    'a no-op storage shim must not trigger immediate trailing fetches'
+  );
+  assert.equal(loaded.sandbox.SocialPush._foregroundInvalidationDirty, false);
+  assert.equal(loaded.sandbox.SocialPush._foregroundRefreshPromise, null);
+  assert.equal(loaded.sandbox.SocialPush._foregroundRetryTimer, null);
+});
+
 test('native state change refreshes delivery status through the admitted bridge', async () => {
   let deliveryActive = true;
   const loaded = loadCoordinator({
@@ -782,10 +1065,22 @@ test('native invalidation refresh bypasses the service-worker API cache',
     vm.createContext(sandbox);
     vm.runInContext(notificationsSource, sandbox);
 
+    assert.equal(sandbox.Notifications.nativeInvalidationRefreshVersion, 1);
     assert.equal(await sandbox.Notifications.refreshAfterInvalidation(), true);
-    assert.equal(
-      requests[0].url,
-      '/api/notifications?limit=100&native_invalidation=1'
+    assert.equal(await sandbox.Notifications.refreshAfterInvalidation(), true);
+    assert.equal(requests.length, 2);
+    const first = new URL(requests[0].url, 'https://social.example');
+    const second = new URL(requests[1].url, 'https://social.example');
+    assert.equal(first.pathname, '/api/notifications');
+    assert.equal(first.searchParams.get('limit'), '100');
+    assert.equal(first.searchParams.get('native_invalidation'), '1');
+    assert.ok(first.searchParams.get('native_invalidation_nonce'));
+    assert.equal(second.searchParams.get('native_invalidation'), '1');
+    assert.ok(second.searchParams.get('native_invalidation_nonce'));
+    assert.notEqual(
+      first.searchParams.get('native_invalidation_nonce'),
+      second.searchParams.get('native_invalidation_nonce'),
+      'an older service worker must not match a previous cached response'
     );
     assert.equal(requests[0].options.cache, 'no-store');
     assert.equal(requests[0].options.credentials, 'same-origin');
@@ -836,6 +1131,117 @@ test('an older ordinary refresh cannot overwrite a newer invalidation result',
     assert.equal(await ordinary, false);
     assert.equal(sandbox.Notifications.items[0].id, 2);
     assert.equal(sandbox.Notifications.unread, 1);
+  });
+
+test('later ordinary refreshes cannot fall below a native freshness floor',
+  async () => {
+    const requests = [];
+    const sandbox = {
+      console: { warn() {} },
+      Date,
+      Promise,
+      URLSearchParams,
+      setTimeout,
+      clearTimeout,
+      location: { search: '', hash: '' },
+      localStorage: { getItem() { return null; }, setItem() {} },
+      document: {
+        title: 'Social',
+        addEventListener() {},
+        getElementById() { return null; },
+      },
+      App: { user: { id: 7 } },
+      async fetch(url, options) {
+        requests.push({ url, options });
+        const id = requests.length + 1;
+        return {
+          ok: true,
+          async json() {
+            return { notifications: [{ id }], unread: 1 };
+          },
+        };
+      },
+    };
+    sandbox.window = sandbox;
+    sandbox.globalThis = sandbox;
+    vm.createContext(sandbox);
+    vm.runInContext(notificationsSource, sandbox);
+
+    assert.equal(await sandbox.Notifications.refreshAfterInvalidation(), true);
+    assert.equal(sandbox.Notifications.items[0].id, 2);
+    assert.equal(await sandbox.Notifications.refresh(), true);
+
+    assert.equal(requests.length, 2);
+    for (const request of requests) {
+      const url = new URL(request.url, 'https://social.example');
+      assert.equal(url.searchParams.get('native_invalidation'), '1');
+      assert.ok(url.searchParams.get('native_invalidation_nonce'));
+      assert.equal(request.options.cache, 'no-store');
+      assert.equal(request.options.credentials, 'same-origin');
+    }
+    assert.notEqual(requests[0].url, requests[1].url,
+      'the later refresh must also bypass an older worker cache entry');
+    assert.equal(sandbox.Notifications.items[0].id, 3);
+  });
+
+test('an overlapping ordinary refresh inherits the native freshness floor',
+  async () => {
+    const requests = [];
+    const responses = [];
+    const sandbox = {
+      console: { warn() {} },
+      Date,
+      Promise,
+      URLSearchParams,
+      setTimeout,
+      clearTimeout,
+      location: { search: '', hash: '' },
+      localStorage: { getItem() { return null; }, setItem() {} },
+      document: {
+        title: 'Social',
+        addEventListener() {},
+        getElementById() { return null; },
+      },
+      App: { user: { id: 7 } },
+      fetch(url, options) {
+        requests.push({ url, options });
+        return new Promise((resolve) => responses.push(resolve));
+      },
+    };
+    sandbox.window = sandbox;
+    sandbox.globalThis = sandbox;
+    vm.createContext(sandbox);
+    vm.runInContext(notificationsSource, sandbox);
+
+    const invalidation = sandbox.Notifications.refreshAfterInvalidation();
+    const ordinary = sandbox.Notifications.refresh();
+    assert.equal(requests.length, 2);
+    for (const request of requests) {
+      const url = new URL(request.url, 'https://social.example');
+      assert.equal(url.searchParams.get('native_invalidation'), '1');
+      assert.ok(url.searchParams.get('native_invalidation_nonce'));
+      assert.equal(request.options.cache, 'no-store');
+      assert.equal(request.options.credentials, 'same-origin');
+    }
+    assert.notEqual(requests[0].url, requests[1].url);
+
+    responses[0]({
+      ok: true,
+      async json() {
+        return { notifications: [{ id: 2 }], unread: 1 };
+      },
+    });
+    assert.equal(await invalidation, false,
+      'the newer overlapping request owns the authoritative generation');
+    responses[1]({
+      ok: true,
+      async json() {
+        return { notifications: [{ id: 3 }], unread: 1 };
+      },
+    });
+    assert.equal(await ordinary, true);
+    assert.equal(sandbox.Notifications.items[0].id, 3);
+    assert.equal(sandbox.Notifications._networkFreshnessFloor, true);
   });
 
 test('a hung native invalidation fetch aborts so a later retry can run',

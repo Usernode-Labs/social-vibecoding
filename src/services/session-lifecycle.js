@@ -71,6 +71,7 @@ async function pauseSession({ pool, sessionId, userId = null, reason = 'manual' 
   const { rows } = await pool.query(
     `UPDATE chat_sessions SET status = 'paused'
      WHERE id = $1${ownerClause} AND status = 'active'
+       AND source IS DISTINCT FROM 'imported'
      RETURNING id`,
     params
   );
@@ -133,6 +134,7 @@ async function freeGlobalSlot({ pool, graceMs, excludeSessionId = null }) {
   const { rows } = await pool.query(
     `SELECT id FROM chat_sessions
      WHERE status = 'active'
+       AND source IS DISTINCT FROM 'imported'
        AND last_activity_at < NOW() - make_interval(secs => $1::double precision / 1000.0)${exclude}
      ORDER BY last_activity_at ASC
      LIMIT 20`,

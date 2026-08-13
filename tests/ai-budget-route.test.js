@@ -127,8 +127,13 @@ test('the payload carries no global spend or global cap', async () => {
   for (const k of Object.keys(r)) {
     assert.ok(!/^global/i.test(k), `unexpected admin-only field ${k}`);
   }
+  // lowBalancePct joined the payload in #593: the client warns at a
+  // threshold, and the threshold is the server's to declare (limits.
+  // LOW_BALANCE_PCT) rather than a number retyped in the browser. It is a
+  // constant, not a fact about this user, so it discloses nothing.
   assert.deepEqual(Object.keys(r).sort(), [
-    'byokCents', 'hasByokKey', 'limitCents', 'remainingCents', 'resetsAt', 'spentCents',
+    'byokCents', 'hasByokKey', 'limitCents', 'lowBalancePct', 'remainingCents',
+    'resetsAt', 'spentCents',
   ]);
 });
 

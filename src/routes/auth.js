@@ -391,6 +391,7 @@ function authRoutes(config) {
         byokCents: 450,
         hasByokKey: true,
         resetsAt: reset.toISOString(),
+        lowBalancePct: 80,
         demo: true,
       });
     }

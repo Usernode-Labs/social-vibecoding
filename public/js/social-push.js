@@ -22,6 +22,70 @@
     'claimPendingSocialNotification',
     'ackPendingSocialNotification',
   ];
+  const NATIVE_INVALIDATION_REFRESH_VERSION = 1;
+  const FOREGROUND_INVALIDATION_STORAGE_KEY =
+    'social_push_foreground_invalidation_v1';
+
+  function readPersistedForegroundInvalidation() {
+    try {
+      const token = window.localStorage.getItem(
+        FOREGROUND_INVALIDATION_STORAGE_KEY
+      );
+      return {
+        available: true,
+        token: typeof token === 'string' && token ? token : null,
+      };
+    } catch {
+      return { available: false, token: null };
+    }
+  }
+
+  function newForegroundInvalidationToken() {
+    if (typeof crypto !== 'undefined' &&
+        typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+    return `${Date.now().toString(36)}-` +
+      `${Math.random().toString(36).slice(2)}-` +
+      Math.random().toString(36).slice(2);
+  }
+
+  function persistForegroundInvalidation(token) {
+    try {
+      window.localStorage.setItem(FOREGROUND_INVALIDATION_STORAGE_KEY, token);
+      const stored = readPersistedForegroundInvalidation();
+      return stored.available && stored.token === token;
+    } catch {
+      // Storage may be unavailable. The in-memory retry path remains active.
+      return false;
+    }
+  }
+
+  function clearOwnedForegroundInvalidation(expectedToken, wasPersisted) {
+    const current = readPersistedForegroundInvalidation();
+    // A blocked or broken storage backend cannot coordinate realms. The
+    // current realm's exact-generation fetch still settles its in-memory
+    // invalidation; BFCache restores independently force another refresh.
+    if (!current.available) {
+      return { cleared: true, currentToken: null };
+    }
+    // A token that never persisted is owned only by this realm. Preserve a
+    // different durable token if another realm managed to publish one.
+    if (!wasPersisted && current.token === null) {
+      return { cleared: true, currentToken: null };
+    }
+    if (current.token !== expectedToken) {
+      return { cleared: false, currentToken: current.token };
+    }
+    try {
+      window.localStorage.removeItem(FOREGROUND_INVALIDATION_STORAGE_KEY);
+      return { cleared: true, currentToken: null };
+    } catch {
+      // The exact token was ours when read. Leaving a redundant durable token
+      // is safer than repeatedly refetching in a tight loop.
+      return { cleared: true, currentToken: null };
+    }
+  }
+  const persistedForegroundState = readPersistedForegroundInvalidation();
+  const persistedForegroundToken = persistedForegroundState.token;
 
   const SocialPush = {
     _supportPromise: null,
@@ -33,12 +97,17 @@
     _admissionGeneration: 0,
     _drainPromise: null,
     _drainRerunRequested: false,
-    _foregroundInvalidationDirty: false,
-    _foregroundInvalidationGeneration: 0,
+    _foregroundInvalidationDirty: persistedForegroundToken !== null,
+    _foregroundInvalidationToken: persistedForegroundToken,
+    _foregroundInvalidationPersisted: persistedForegroundToken !== null,
+    _foregroundInvalidationGeneration:
+      persistedForegroundToken !== null ? 1 : 0,
     _foregroundRefreshPromise: null,
     _foregroundRetryTimer: null,
     _foregroundRetryAttempt: 0,
     _foregroundPageActive: true,
+    _foregroundLifecycleEpoch: 0,
+    _foregroundRestoreRefreshRequired: false,
 
     _sessionAdmitted() {
       return !window.NativeChrome ||
@@ -268,6 +337,10 @@
         return SocialPush._foregroundRefreshPromise;
       }
       const generation = SocialPush._foregroundInvalidationGeneration;
+      const invalidationToken = SocialPush._foregroundInvalidationToken;
+      const invalidationPersisted =
+        SocialPush._foregroundInvalidationPersisted;
+      const lifecycleEpoch = SocialPush._foregroundLifecycleEpoch;
       let attempted = false;
       const refresh = (async () => {
         if (!window.App || !App.user || !window.Notifications ||
@@ -275,8 +348,14 @@
         // The foreground event is itself the content-free invalidation signal.
         // Refreshing the authenticated inbox needs no native push read/action
         // capability, which also keeps mixed cached bridge versions working.
-        attempted = true;
         try {
+          // The React shell bundle is cached independently from this classic
+          // coordinator. Its previous implementation returned true even when
+          // an ordinary cacheable refresh failed. Keep the native invalidation
+          // dirty until a bundle advertising the reliable contract is active.
+          if (Notifications.nativeInvalidationRefreshVersion !==
+              NATIVE_INVALIDATION_REFRESH_VERSION) return false;
+          attempted = true;
           return await Notifications.refreshAfterInvalidation() === true;
         } catch (err) {
           console.warn('[social-push] foreground refresh failed:',
@@ -285,11 +364,33 @@
         }
       })();
       const tracked = refresh.then((refreshed) => {
-        if (refreshed &&
+        if (refreshed && SocialPush._foregroundPageActive &&
+            lifecycleEpoch === SocialPush._foregroundLifecycleEpoch &&
             generation === SocialPush._foregroundInvalidationGeneration) {
-          SocialPush._foregroundInvalidationDirty = false;
-          SocialPush._foregroundRetryAttempt = 0;
-          SocialPush._clearForegroundRetryTimer();
+          const ownership = clearOwnedForegroundInvalidation(
+            invalidationToken,
+            invalidationPersisted
+          );
+          if (ownership.cleared) {
+            SocialPush._foregroundInvalidationDirty = false;
+            SocialPush._foregroundInvalidationToken = null;
+            SocialPush._foregroundInvalidationPersisted = false;
+            SocialPush._foregroundRetryAttempt = 0;
+            SocialPush._clearForegroundRetryTimer();
+          } else {
+            // Another realm either replaced or consumed the captured token.
+            // This realm's rendered inbox is not thereby fresh. Adopt the
+            // newer token, or mint recovery ownership when it was consumed,
+            // and force a trailing network read in this realm.
+            const recoveryToken = ownership.currentToken ||
+              newForegroundInvalidationToken();
+            SocialPush._foregroundInvalidationDirty = true;
+            SocialPush._foregroundInvalidationToken = recoveryToken;
+            SocialPush._foregroundInvalidationGeneration += 1;
+            SocialPush._foregroundInvalidationPersisted =
+              ownership.currentToken !== null ||
+              persistForegroundInvalidation(recoveryToken);
+          }
         }
         return refreshed;
       }).finally(() => {
@@ -297,9 +398,11 @@
         SocialPush._foregroundRefreshPromise = null;
         if (!SocialPush._foregroundInvalidationDirty ||
             !SocialPush._foregroundPageActive) return;
-        if (generation !== SocialPush._foregroundInvalidationGeneration) {
-          // A newer native invalidation arrived after this fetch began. Run a
-          // trailing fetch so the older response cannot consume newer work.
+        if (generation !== SocialPush._foregroundInvalidationGeneration ||
+            lifecycleEpoch !== SocialPush._foregroundLifecycleEpoch) {
+          // A newer native invalidation or a pagehide/pageshow boundary arrived
+          // after this fetch began. Run a current-epoch trailing fetch so the
+          // older response cannot consume newer work.
           Promise.resolve().then(() => SocialPush._runForegroundRefresh());
         } else if (attempted) {
           SocialPush._scheduleForegroundRetry();
@@ -310,7 +413,11 @@
     },
 
     refreshAfterForegroundPush() {
+      const token = newForegroundInvalidationToken();
       SocialPush._foregroundInvalidationDirty = true;
+      SocialPush._foregroundInvalidationToken = token;
+      SocialPush._foregroundInvalidationPersisted =
+        persistForegroundInvalidation(token);
       SocialPush._foregroundInvalidationGeneration += 1;
       SocialPush._clearForegroundRetryTimer();
       return SocialPush._runForegroundRefresh();
@@ -323,6 +430,11 @@
     },
 
     async init() {
+      // A mixed cached shell cannot upgrade its already-evaluated Notifications
+      // object in place. The content-free dirty bit therefore survives the
+      // reload/app restart that obtains the current shell bundle, and is
+      // retried before native capability discovery.
+      await SocialPush.retryForegroundInvalidation();
       if (!await SocialPush.isSupported()) return;
       await SocialPush.getState();
       await SocialPush.drainPending();
@@ -454,6 +566,12 @@
 
   window.addEventListener('pagehide', () => {
     SocialPush._foregroundPageActive = false;
+    SocialPush._foregroundLifecycleEpoch += 1;
+    // If this realm is later restored from BFCache, another realm may have
+    // received and already consumed a shared invalidation while this UI was
+    // frozen. A current-realm network read is the only reliable reconciliation
+    // even when localStorage no longer contains a token.
+    SocialPush._foregroundRestoreRefreshRequired = true;
     SocialPush._clearForegroundRetryTimer();
     bridgePageActive = false;
     // A BFCache restore resumes this same realm, but native may have admitted
@@ -464,6 +582,21 @@
   });
   window.addEventListener('pageshow', () => {
     SocialPush._foregroundPageActive = true;
+    if (SocialPush._foregroundInvalidationDirty ||
+        SocialPush._foregroundRestoreRefreshRequired) {
+      const persisted = readPersistedForegroundInvalidation();
+      const persistedToken = persisted.token;
+      const recoveryToken = persistedToken ||
+        newForegroundInvalidationToken();
+      SocialPush._foregroundInvalidationDirty = true;
+      if (recoveryToken !== SocialPush._foregroundInvalidationToken) {
+        SocialPush._foregroundInvalidationToken = recoveryToken;
+        SocialPush._foregroundInvalidationGeneration += 1;
+      }
+      SocialPush._foregroundInvalidationPersisted = persistedToken !== null ||
+        persistForegroundInvalidation(recoveryToken);
+    }
+    SocialPush._foregroundRestoreRefreshRequired = false;
     bridgePageActive = true;
     resetBridgeReadyBackoff();
     SocialPush.retryForegroundInvalidation();

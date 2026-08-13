@@ -2,8 +2,9 @@
  * Import-a-PR dialog (#import-pr-modal).
  *
  * Lists open PRs on the app's repo that aren't already imported; importing one
- * creates a promoted proposal via POST /api/apps/:slug/pr-import and navigates
- * to it. Only reachable from the "+" menu when `pr_import_enabled` (#687).
+ * creates a shared In-progress item via POST /api/apps/:slug/pr-import and
+ * navigates to it. Only reachable from the "+" menu when
+ * `pr_import_enabled` (#687).
  *
  * Markup extracted verbatim from Shell.tsx by #1078 chunk A; #1078 chunk I
  * moved the behaviour in and made it stateful. The render output is still
@@ -29,9 +30,9 @@
  * ── #846: the import POST is awaited IN PLACE ─────────────────────────
  *
  * Progress row, dimmed list, frozen buttons — and only a server-confirmed
- * import routes the user, to the new proposal's DISCUSSION page
- * (`openTopic('proposal')`), never the dev-chat session view. An imported
- * proposal has no dev session by design (see the sessionBtn / importedNote
+ * import routes the user to its DISCUSSION page (`openTopic('session')`),
+ * never the dev-chat session view. An imported PR has no dev session by
+ * design (see the sessionBtn / importedNote
  * branches in `_renderProposalCard` / `_proposalDetailsHtml`), and that view
  * renders an empty transcript with a live composer until the minutes-long
  * staging build lands. The proposal page is complete on arrival and refreshes
@@ -193,7 +194,7 @@ export function ImportPrDialog() {
     setSlow(false);
     if (!on) return;
     setProgressText(
-      `Importing PR #${prNumber} — checking it on GitHub and creating the proposal…`,
+      `Importing PR #${prNumber} — checking it on GitHub and adding it to In progress…`,
     );
     slowTimer.current = setTimeout(() => {
       if (busyRef.current) setSlow(true);
@@ -212,6 +213,7 @@ export function ImportPrDialog() {
     setImportBusy(true, pr);
 
     let sessionId: string | null = null;
+    let status = 'active';
     try {
       const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/pr-import`, {
         method: 'POST',
@@ -232,28 +234,29 @@ export function ImportPrDialog() {
         return;
       }
       sessionId = data.sessionId;
+      status = data.status || 'active';
     } catch {
       setImportBusy(false);
       setError('Network error — please try again.');
       return;
     }
 
-    // Import confirmed. Land on the proposal's discussion page, THEN close the
+    // Import confirmed. Land on the imported item's discussion page, THEN close the
     // dialog — so it covers the transition instead of flashing the screen the
     // user came from.
     setImportBusy(false);
     try {
       await (appView?.openTopic as ((kind: string, id: string | null) => Promise<void>))(
-        'proposal',
+        status === 'promoted' ? 'proposal' : 'session',
         sessionId,
       );
     } catch {
-      // The proposal exists regardless; say so rather than swallowing it.
+      // The imported item exists regardless; say so rather than swallowing it.
       // #866: set the expectation that the Preview button isn't there yet —
       // the staging build takes minutes, and until it lands the proposal shows
       // "Preview building…" with checks pending.
       window.PlatformUI?.toast?.(
-        `PR #${pr} was imported — its preview is being built now. Find it in the Dev proposals list.`,
+        `PR #${pr} was imported — its preview is being built now. Find it in Dev under In progress.`,
       );
     }
     dialog.close();
@@ -269,10 +272,10 @@ export function ImportPrDialog() {
       <div data-modal-backdrop="" className="flex min-h-full items-center justify-center p-4">
         <div className="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-md shadow-xl">
           <h2 className="text-lg font-bold mb-1">
-            Import a PR as a proposal
+            Import a pull request
           </h2>
           <p className="text-xs text-zinc-500 mb-2">
-            Pick an open pull request to turn into a proposal people can vote on. It goes straight into voting, just like a native proposal.
+            Pick an open pull request to add to In progress. It stays there until you put it up for vote.
           </p>
           {/*
               #866: two expectations worth setting before the import, both of
@@ -369,7 +372,7 @@ export function ImportPrDialog() {
               #846: in-flight progress row. The import POST talks to GitHub, so
               the dialog stays put (list dimmed, buttons disabled) until the
               server confirms — only then does the user get routed to the new
-              proposal's page. The slow line appears after ~8s so a slow GitHub
+              imported item's page. The slow line appears after ~8s so a slow GitHub
               reads as "still working", not as a hung dialog.
           */}
           <div

@@ -17,9 +17,10 @@ const APP_PREFIX = 'usernode-app-';
 const STAGING_PREFIX = 'usernode-staging-';
 
 // Fallbacks only — the live caps come from config (MAX_GLOBAL_SESSIONS /
-// MAX_USER_SESSIONS). Staging is 1:1 with sessions and built per dev turn,
-// so its real ceiling IS the session cap, not a separate number. These
-// constants are kept so the dashboard still renders if config is absent.
+// MAX_USER_SESSIONS). Native coding sessions are 1:1 with workers. Imported
+// PRs are produced externally and are excluded from this worker budget even
+// though Usernode may build them a staging preview. These constants are kept
+// so the dashboard still renders if config is absent.
 const MAX_STAGING_GLOBAL = 25;
 const MAX_STAGING_PER_USER = 3;
 const WORKER_ORPHAN_THRESHOLD_MS = 20 * 60 * 1000;
@@ -130,7 +131,8 @@ async function gatherFull(config) {
     // PRs heading for archive, resumable archives) comes back in one row.
     pool.query(
       `SELECT
-         COUNT(*) FILTER (WHERE status IN ('active','promoted'))                      AS global_used,
+         COUNT(*) FILTER (WHERE status IN ('active','promoted')
+                            AND source IS DISTINCT FROM 'imported')                   AS global_used,
          COUNT(*) FILTER (WHERE status = 'active')                                    AS active,
          COUNT(*) FILTER (WHERE status = 'promoted')                                  AS promoted,
          COUNT(*) FILTER (WHERE status = 'paused')                                    AS paused,
