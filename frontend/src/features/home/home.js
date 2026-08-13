@@ -65,9 +65,14 @@ const Home = {
     // painted without slots. Self-terminating — the slots then exist — and
     // render() defers itself mid-drag like every other path.
     const repaint = () => {
-      // Gated on _apps, not on the DOM: "the grid has painted a payload" is
-      // the condition, and #app-list is non-empty for the failure state too.
-      if (!Home._apps) return;
+      // Gated on the first /api/apps PAYLOAD, not on the array itself or the
+      // DOM. _apps starts as [] so every renderer can read it safely; treating
+      // that truthy empty array as "loaded" let the much smaller home-layout
+      // response win a cold-load race, repair the stored layout against zero
+      // apps, and persist the damaged repair before /api/apps arrived.
+      // #app-list is also non-empty for the failure state, so the DOM cannot
+      // answer this question either.
+      if (!Home._appsLoaded) return;
       // An active search legitimately has no slots — the section below the
       // grid is that view's host on purpose. Re-rendering would be a no-op
       // at best and would rebuild the results grid for nothing.
@@ -90,6 +95,9 @@ const Home = {
       if (!res.ok) throw new Error('Failed to load apps');
       const { apps } = await res.json();
       Home._apps = apps;
+      // Set before render: currentLayout may now safely reconcile the stored
+      // account layout against the complete app catalog.
+      Home._appsLoaded = true;
       Home.render();
       // The #apps browse screen shares this payload and can be the screen
       // actually on top — its cards run the same "…" menu, whose actions
@@ -131,6 +139,10 @@ const Home = {
   // (see index.html) so these wholesale innerHTML re-renders never
   // destroy its focus/caret.
   _apps: [],
+  // False only until this document adopts its first successful /api/apps
+  // payload. Kept separate from _apps because [] is both the safe initial
+  // value and a legitimate loaded result for an account with no apps.
+  _appsLoaded: false,
   _query: '',
 
   // "Your apps" = apps the viewer is a member of (creator or accepted
@@ -784,13 +796,12 @@ const Home = {
   // "Once" means once SUCCESSFULLY: the flag is burned where the menu
   // actually opens, at the bottom of the rAF, and every early return
   // above it leaves the link armed for the next render. That ordering is
-  // the whole fix for #847's flake — Home.load() paints the grid twice,
-  // once from the layout/panels repaint before /api/apps has answered
-  // (empty grid: no "…" trigger, no Home._apps to resolve a slug against,
-  // so openCardMenu bails) and again with the apps. Burning the flag on
-  // that first empty pass meant the real grid's render found the link
-  // already spent and no menu ever opened — which is exactly what a check
-  // sees when the fetch is a few ms slower than the paint.
+  // the whole fix for #847's flake — before the first-app-payload gate above,
+  // Home.load() could paint once from the layout/panels response while
+  // /api/apps was still in flight (empty grid: no "…" trigger and no app to
+  // resolve), then again with the apps. The readiness gate now prevents that
+  // cold-load paint, while this consume-on-success rule remains necessary for
+  // genuinely empty accounts and for the Browse grid racing the Home grid.
   //
   // Called by BOTH launcher grids that carry the menu: home's #app-list
   // and the #apps browse screen's #browse-list. Whichever one is actually
@@ -835,9 +846,9 @@ const Home = {
         }
       }
       if (!slug) return;
-      // The first home paint can legitimately be empty while GET /api/apps
-      // is still in flight. Consume the one-shot only after a real target
-      // exists, so the data-bearing repaint gets another chance.
+      // A genuinely empty Home grid, or a hidden grid that raced Browse, has
+      // no target. Consume the one-shot only after a real one exists, so the
+      // next data-bearing/visible repaint gets another chance.
       Home._shotMenuDone = true;
       Home.openCardMenu(slug, anchor);
       // openCardMenu is a no-op when the app isn't in Home._apps yet or

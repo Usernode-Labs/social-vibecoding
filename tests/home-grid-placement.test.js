@@ -153,10 +153,79 @@ function makeHome({ width = 1280, canCreateApps = true } = {}) {
 
 const flush = () => new Promise((r) => setImmediate(r));
 
+const deferred = () => {
+  let resolve;
+  const promise = new Promise((done) => { resolve = done; });
+  return { promise, resolve };
+};
+
 const app = (slug, over = {}) => ({
   slug, name: slug, status: 'running',
   is_collaborator: true, is_favorited: false, your_apps_hidden: false,
   favorite_order: null, featured: false, ...over,
+});
+
+test('a layout response cannot repair stored positions before apps load', async () => {
+  const { Home, setFetch, fetchCalls } = makeHome();
+  const appsResponse = deferred();
+  const stored = {
+    4: [],
+    5: [
+      { type: 'app', slug: 'a', col: 4, row: 0 },
+      { type: 'widget', key: 'discover', col: 0, row: 1 },
+      { type: 'widget', key: 'challenges', col: 3, row: 1 },
+      { type: 'widget', key: 'create', col: 2, row: 4 },
+    ],
+  };
+  let renders = 0;
+  Home.render = () => { renders += 1; };
+  setFetch(async (url) => {
+    if (url.startsWith('/api/home-layout')) {
+      return { ok: true, json: async () => ({ layouts: stored, widgets: REGISTRY }) };
+    }
+    if (url.startsWith('/api/apps')) return appsResponse.promise;
+    return { ok: true, json: async () => ({}) };
+  });
+
+  const loading = Home.load();
+  await flush();
+  await flush();
+
+  assert.equal(Home._appsLoaded, false);
+  assert.equal(renders, 0, 'the early layout/panel callbacks do not paint an empty catalog');
+  assert.equal(fetchCalls.filter((c) => c.method === 'PUT').length, 0,
+    'stored app cells are not repaired away and written back');
+
+  appsResponse.resolve({ ok: true, json: async () => ({ apps: [app('a')] }) });
+  await loading;
+
+  assert.equal(Home._appsLoaded, true);
+  assert.equal(renders, 1, 'the first app payload owns the first data-bearing paint');
+  const restored = Home.currentLayout(5);
+  const at = (id) => {
+    const item = restored.find((entry) => HomeLayoutIdsOf([entry])[0] === id);
+    return [item.col, item.row];
+  };
+  assert.deepEqual(at('app:a'), [4, 0]);
+  assert.deepEqual(at('widget:discover'), [0, 1]);
+  assert.deepEqual(at('widget:challenges'), [3, 1]);
+  assert.equal(fetchCalls.filter((c) => c.method === 'PUT').length, 0,
+    'an intact stored layout needs no repair write');
+
+  // The readiness gate is first-load-only. Once the catalog exists, the
+  // normal TTL callbacks may repaint from cache while a later apps refresh
+  // is in flight.
+  renders = 0;
+  const laterAppsResponse = deferred();
+  setFetch(async (url) => {
+    if (url.startsWith('/api/apps')) return laterAppsResponse.promise;
+    return { ok: true, json: async () => ({}) };
+  });
+  const reloading = Home.load();
+  await flush();
+  assert.ok(renders > 0, 'later layout/panel callbacks still repaint from a ready catalog');
+  laterAppsResponse.resolve({ ok: true, json: async () => ({ apps: [app('a')] }) });
+  await reloading;
 });
 
 // ── The attach contract ───────────────────────────────────────────────
