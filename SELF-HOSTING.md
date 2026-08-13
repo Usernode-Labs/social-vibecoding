@@ -1350,9 +1350,11 @@ deploy**, not immediately.
   want. Loopback is added automatically in local mode only.
 - `GITHUB_LINK_CLIENT_ID` / `GITHUB_LINK_CLIENT_SECRET` — the GitHub
   OAuth app used for account linking. Both fall back to
-  `WAITLIST_GITHUB_CLIENT_ID` / `_SECRET`, so one OAuth app can serve both
-  flows if its callback list carries this one's URL. Both halves must be
-  set together: an id without a secret counts as unconfigured.
+  `WAITLIST_GITHUB_CLIENT_ID` / `_SECRET` (see
+  [Waitlist social connect](#waitlist-social-connect-github--x) below), so
+  one OAuth app can serve both flows if its callback list carries this
+  one's URL. Both halves must be set together: an id without a secret
+  counts as unconfigured.
 
 **Unset is a supported state, not a broken one.** With no OAuth app:
 `GET /api/me/github/connect` and `/callback` return 404, Settings →
@@ -1500,6 +1502,128 @@ a database incident is expected behaviour, not a stuck cap.
 wording as the promote route. That asymmetry is deliberate: importing used
 to be a one-at-a-time human action, and the browser button's behaviour is
 out of scope here.
+
+## Waitlist social connect (GitHub / X)
+
+The second-stage waitlist form ("Want in sooner?", reached from the
+private link a signer receives) can **verify** a GitHub or an X account
+instead of trusting a handle somebody typed. A verified account renders as
+a green pill and is stored separately from the free-text handles, so
+whoever reads signups can tell a claimed handle from a proven one. The
+round trip lives in `src/routes/waitlist-connect.js` — the classic
+authorize/token shape for GitHub, OAuth 2.0 with mandatory PKCE (S256) and
+an HTTP Basic token exchange for X.
+
+### Configuration
+
+Five settings, all `required: false`, all declared in `dapp.json`'s
+`platform_env` under the **Waitlist** group. None blocks boot or a merge.
+Set them in the platform's **Platform variables** panel (a full admin sets
+directly; anyone else proposes by vote), and note they take effect on the
+platform's **next deploy**, not immediately.
+
+**No pull request can supply these values.** They come out of a developer
+portal that only a human with the owning account can reach, so the
+declaration (this repo) and the value (the panel) land separately and in
+either order. A value pasted before its declaration deploys simply shows
+as an "orphan" row until the deploy catches up.
+
+- `WAITLIST_GITHUB_CLIENT_ID` / `WAITLIST_GITHUB_CLIENT_SECRET` — the
+  GitHub OAuth app that verifies a signer's GitHub account.
+  `GITHUB_LINK_CLIENT_ID` / `_SECRET` fall back to these, so one OAuth app
+  can serve both flows if its callback list carries both URLs.
+- `WAITLIST_X_CLIENT_ID` / `WAITLIST_X_CLIENT_SECRET` — the X app that
+  verifies a signer's X account.
+- `WAITLIST_OAUTH_ORIGIN` — overrides the origin both callback URLs are
+  built from (`connectOrigin()`). Unset it is the production origin in
+  production and `http://localhost:<PORT>` in dev. Change it and you must
+  register the matching callback URL with both providers.
+
+**Each provider is judged on its own, and both halves must be set
+together.** An id without a secret counts as unconfigured, so GitHub can
+be live while X is not.
+
+**Unset is a supported state, not a broken one.** With no credentials for
+a provider, `GET /api/public/waitlist/more/:token` reports that provider
+as unavailable and the form renders **no connect button** for it — the
+free-text handle fields (Farcaster, Discord, Telegram, other) are
+untouched and nothing errors. Somebody who reaches a connect link anyway
+(a stale tab, an old bookmark) is redirected back to the form with
+`?connect=unavailable`, which the form shows as "That sign-in is not
+available yet." `tests/waitlist-connect-config.test.js` pins all of that,
+including the asymmetric GitHub-on / X-off case.
+
+**Staging previews can never exercise the round trip.** `WAITLIST_*` is
+not in `INHERITED_KEYS` (`src/services/staging-env.js`) and
+`platform_env_values` is `staging:private`, so a preview holds no
+credentials by construction — the declarations show up in the panel as
+"not set" and the stage-2 form shows no connect buttons. That is the
+expected preview state; do not seed a fake client id to make a button
+appear, because it would dead-end at the provider.
+
+### Creating the X app
+
+Contributed by **snait** on issue #880, who set up the GitHub side.
+
+1. **Get a developer account.** Go to `developer.x.com` and sign in with
+   the X account that should own the app — that account's project hosts
+   it, and **the app name you pick is what waitlist users see on the
+   consent screen**. The Free tier covers this use case.
+2. **Create a Project, then an App inside it.** X requires apps to live
+   inside a project. Name the project anything (e.g. "Social Vibecoding")
+   and the app something user-visible (e.g. "Social Vibecoding Waitlist").
+   X immediately shows an API Key / API Key Secret / Bearer Token —
+   **ignore all three**; those are the OAuth 1.0a / app-only credentials,
+   not what this flow uses.
+3. **Configure user authentication** (app settings → *User authentication
+   settings* → *Set up*):
+   - **App permissions: Read.** The flow requests
+     `users.read tweet.read`; nothing writes.
+   - **Type of App: "Web App, Automated App or Bot"** — the confidential
+     client. Do **not** pick "Native App / Single page App": that is a
+     public client with no client secret, and the token exchange
+     authenticates with HTTP Basic, so it would fail.
+   - **Callback URI / Redirect URL:**
+     `https://<your-domain>/waitlist/connect/x/callback` — on the
+     canonical deployment,
+     `https://social-vibecoding.usernodelabs.org/waitlist/connect/x/callback`.
+     It must match exactly what `callbackUrl()` builds; X validates it at
+     the authorize redirect, before any platform code runs.
+   - **Website URL:** `https://<your-domain>` — also part of the consent
+     surface the user sees.
+   - Organization / terms / privacy fields are optional; filling them
+     makes the consent screen look more trustworthy.
+   - Save.
+4. **Copy the OAuth 2.0 Client ID and Client Secret** X displays after
+   saving: Client ID → `WAITLIST_X_CLIENT_ID`, Client Secret →
+   `WAITLIST_X_CLIENT_SECRET`. Paste both into the Platform variables
+   panel.
+
+**Brand note.** The app name and Website URL are shown to every person who
+clicks *Connect X*, so the account and name you choose at step 1–2 are a
+public branding decision. Nothing is exposed until the credentials are
+actually set — leaving the pair unset keeps the button hidden and GitHub
+connect working on its own.
+
+### Creating the GitHub OAuth app
+
+A classic **OAuth app** (GitHub → Settings → Developer settings → OAuth
+Apps → New OAuth App), *not* a GitHub App — the repo-hosting integration
+is a separate GitHub App and is unrelated.
+
+- **Authorization callback URL:**
+  `https://<your-domain>/waitlist/connect/github/callback` — on the
+  canonical deployment,
+  `https://social-vibecoding.usernodelabs.org/waitlist/connect/github/callback`.
+- **Scope: none.** The authorize URL omits the parameter, so the token
+  reads public information only; it is used once for `GET /user` to
+  resolve the login and then dropped.
+- Client ID → `WAITLIST_GITHUB_CLIENT_ID`, generated client secret →
+  `WAITLIST_GITHUB_CLIENT_SECRET` (declared `private: true`, so encrypted
+  at rest and never returned by any API).
+- To let the same OAuth app also serve connector account-linking, add
+  `/api/me/github/callback` to its callback list and leave
+  `GITHUB_LINK_CLIENT_ID` / `_SECRET` unset so they fall back to these.
 
 ## Cross-references
 

@@ -369,16 +369,35 @@
     },
     {
       "key": "WAITLIST_GITHUB_CLIENT_ID",
-      "group": "General",
-      "description": "Used in the waitlist process",
-      "required": true
+      "group": "Waitlist",
+      "required": false,
+      "description": "Client ID of the GitHub OAuth app (NOT the GitHub App used for repo hosting) that verifies a waitlist signer's GitHub account on the stage-2 form. Callback URL: https://<your-domain>/waitlist/connect/github/callback. Unset: no Connect GitHub button renders, the free-text handle fields still work, and nothing errors. GITHUB_LINK_CLIENT_ID falls back to this value."
     },
     {
       "key": "WAITLIST_GITHUB_CLIENT_SECRET",
-      "group": "General",
-      "description": "Used in the waitlist process to verify accounts",
-      "required": true,
-      "private": true
+      "group": "Waitlist",
+      "required": false,
+      "private": true,
+      "description": "Client secret paired with WAITLIST_GITHUB_CLIENT_ID. Private: it can complete GitHub authorizations for this deployment, so it is encrypted at rest and never returned by any API. Both halves must be set together — an id without a secret counts as unconfigured and degrades exactly as described on WAITLIST_GITHUB_CLIENT_ID."
+    },
+    {
+      "key": "WAITLIST_X_CLIENT_ID",
+      "group": "Waitlist",
+      "required": false,
+      "description": "OAuth 2.0 client ID of the X app that verifies a waitlist signer's X account. Create it as a Web App (confidential client) with Read permission; the flow requests scopes users.read tweet.read. Callback URL: https://<your-domain>/waitlist/connect/x/callback. Unset: no Connect X button renders and nothing errors — see SELF-HOSTING.md for the portal runbook."
+    },
+    {
+      "key": "WAITLIST_X_CLIENT_SECRET",
+      "group": "Waitlist",
+      "required": false,
+      "private": true,
+      "description": "Client secret paired with WAITLIST_X_CLIENT_ID. The token exchange authenticates with HTTP Basic, so an X app created as \"Native App / Single page App\" (a public client, no secret) can never work here. Private: encrypted at rest and never returned by any API. Both halves must be set together or the Connect X button stays hidden."
+    },
+    {
+      "key": "WAITLIST_OAUTH_ORIGIN",
+      "group": "Waitlist",
+      "required": false,
+      "description": "Overrides the origin the waitlist connect callback URLs are built from. Unset it resolves to this deployment's production origin in production and http://localhost:<PORT> in dev. Changing it means registering the matching callback URL with GitHub and X too — both validate redirect_uri before any platform code runs."
     }
   ],
   "tests": [
@@ -398,6 +417,12 @@
       "name": "Platform variables panel renders on the platform app (#826 folded into app secrets)",
       "path": "/?shot=secrets#app/usernode-2d5619/dev",
       "expectSelector": "#app-secrets-list code"
+    },
+    {
+      "name": "Platform variables panel lists the waitlist OAuth variables (#880)",
+      "path": "/?shot=secrets#app/usernode-2d5619/dev",
+      "expectSelector": "#app-secrets-list code",
+      "expectText": "WAITLIST_X_CLIENT_ID"
     },
     {
       "name": "Profile: an editable identity card above completions that link out (#982)",
