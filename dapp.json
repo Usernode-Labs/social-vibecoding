@@ -341,16 +341,36 @@
     },
     {
       "key": "GITHUB_LINK_CLIENT_ID",
-      "group": "Chat connectors",
+      "group": "Social identity & credits",
       "required": false,
-      "description": "Client ID of the GitHub OAuth app that links a Usernode account to a GitHub one (scope `public_repo`), so the connector can fork an app into the user's own account for their coding agent to push to. Falls back to WAITLIST_GITHUB_CLIENT_ID. Unset: the link routes 404, Settings says so, and prepare_work answers github_link_unavailable and names the platform-build fallback."
+      "description": "Client ID of the dedicated GitHub OAuth app that proves account control for attribution and the $10 social credit tier. Callback: https://<your-domain>/api/me/github/callback. Uses PKCE with no requested scope, reads the immutable account ID and login once, then revokes and discards the token. GitHub allows one callback, so the waitlist app cannot be reused. Unset: GitHub linking is unavailable."
     },
     {
       "key": "GITHUB_LINK_CLIENT_SECRET",
-      "group": "Chat connectors",
+      "group": "Social identity & credits",
       "required": false,
       "private": true,
-      "description": "Client secret paired with GITHUB_LINK_CLIENT_ID. Private: it can mint GitHub authorizations for this deployment, so it is encrypted at rest and never returned by any API. Falls back to WAITLIST_GITHUB_CLIENT_SECRET. Both halves must be set together — an id without a secret counts as unconfigured and degrades exactly as described on GITHUB_LINK_CLIENT_ID."
+      "description": "Client secret paired with GITHUB_LINK_CLIENT_ID. Private: it can complete GitHub authorizations for this deployment, so it is encrypted at rest and never returned by any API. Both halves must be set together; an id without a secret counts as unconfigured."
+    },
+    {
+      "key": "X_LINK_CLIENT_ID",
+      "group": "Social identity & credits",
+      "required": false,
+      "description": "OAuth 2.0 client ID of the X confidential client that proves account control for the $10 social credit tier. Callback: https://<your-domain>/api/me/x/callback. Uses PKCE and the minimum users.read + tweet.read scopes for /2/users/me, reads the immutable ID and username once, then revokes and discards the token. If unset, a complete WAITLIST_X pair is reused when that app has both callbacks."
+    },
+    {
+      "key": "X_LINK_CLIENT_SECRET",
+      "group": "Social identity & credits",
+      "required": false,
+      "private": true,
+      "description": "Client secret paired with X_LINK_CLIENT_ID. Private: encrypted at rest and never returned by any API. Both halves must be set together. When this pair is unset, both WAITLIST_X values must be present for the supported fallback."
+    },
+    {
+      "key": "IDENTITY_CREDIT_POLICY",
+      "group": "Social identity & credits",
+      "required": false,
+      "default": "legacy",
+      "description": "Rollout switch for platform-funded credits. legacy preserves the current default plus per-user admin overrides. tiered gives unverified accounts $0/day and users with verified GitHub OR X $10/day; providers do not stack, and admin overrides still win. BYOK works in both modes. Any other value fails boot instead of silently selecting the wrong allowance."
     },
     {
       "key": "USERNODE_DOMAIN",
@@ -371,7 +391,7 @@
       "key": "WAITLIST_GITHUB_CLIENT_ID",
       "group": "Waitlist",
       "required": false,
-      "description": "Client ID of the GitHub OAuth app (NOT the GitHub App used for repo hosting) that verifies a waitlist signer's GitHub account on the stage-2 form. Callback URL: https://<your-domain>/waitlist/connect/github/callback. Unset: no Connect GitHub button renders, the free-text handle fields still work, and nothing errors. GITHUB_LINK_CLIENT_ID falls back to this value."
+      "description": "Client ID of the GitHub OAuth app (not the repo-hosting GitHub App) that verifies a waitlist signer's account. Callback: https://<your-domain>/waitlist/connect/github/callback. Unset: the Connect GitHub button is hidden and free-text handles still work. It cannot also serve account linking because GitHub OAuth apps allow one callback URL."
     },
     {
       "key": "WAITLIST_GITHUB_CLIENT_SECRET",
@@ -384,7 +404,7 @@
       "key": "WAITLIST_X_CLIENT_ID",
       "group": "Waitlist",
       "required": false,
-      "description": "OAuth 2.0 client ID of the X app that verifies a waitlist signer's X account. Create it as a Web App (confidential client) with Read permission; the flow requests scopes users.read tweet.read. Callback URL: https://<your-domain>/waitlist/connect/x/callback. Unset: no Connect X button renders and nothing errors — see SELF-HOSTING.md for the portal runbook."
+      "description": "OAuth 2.0 client ID of the X confidential Web App that verifies a waitlist signer's account. It needs Read permission and users.read + tweet.read. Callback: https://<your-domain>/waitlist/connect/x/callback. X permits the additional /api/me/x/callback, so this pair may also serve account linking when X_LINK_* is unset. Unset: the waitlist Connect X button is hidden."
     },
     {
       "key": "WAITLIST_X_CLIENT_SECRET",
@@ -637,6 +657,18 @@
       "path": "/?demo=1#settings/connectors",
       "expectSelector": "[data-settings-section=\"connectors\"]:not(.hidden) #github-link-section #github-link-no-token",
       "expectText": "no access to your repositories"
+    },
+    {
+      "name": "Identity credits show the actionable zero-credit state before verification (#538)",
+      "path": "/?demo=identity-unverified#settings/connectors",
+      "expectSelector": "[data-settings-section=\"connectors\"]:not(.hidden) #github-link-body",
+      "expectText": "Layer 1 locked"
+    },
+    {
+      "name": "Legacy GitHub attribution is preserved but asks for one credit-proof reconnect (#538)",
+      "path": "/?demo=identity-legacy#settings/connectors",
+      "expectSelector": "#github-link-body #github-link-no-token",
+      "expectText": "reconnect once"
     },
     {
       "name": "Tapping an app shows its icon and name while it loads, not a blank window (#931)",

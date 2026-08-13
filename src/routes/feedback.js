@@ -176,6 +176,22 @@ function feedbackRoutes(config) {
   const pool = getPool(config);
   const { owner: feedbackOwner, repo: feedbackRepo } = parseGitHubRepo(config.platformRepoUrl);
 
+  // Feedback titles are small calls, but they are still billable. Resolve
+  // the payer before every generation so neither the preview endpoint nor
+  // repeated issue filing becomes a zero-credit platform-spend bypass.
+  // Callers deliberately soft-degrade when this returns an error: feedback
+  // submission itself must never depend on AI availability.
+  const resolveTitleBilling = async (userId) => {
+    if (!userId) return { error: 'credits' };
+    const billing = await limits.resolveBillingPath(
+      pool,
+      config.dataEncryptionKey,
+      userId
+    );
+    if (billing.error) return { error: 'credits' };
+    return billing;
+  };
+
   // #556: live title preview for the feedback modal. The FE debounces
   // calls while the user types the description and fills the editable
   // Title field with the result; whatever ends up in that field is what
@@ -191,18 +207,19 @@ function feedbackRoutes(config) {
     if (description.length > 2000) {
       return res.status(400).json({ error: 'Description too long (max 2000 chars)' });
     }
-    if (!llm.isEnabled()) {
-      return res.json({ title: null, note: 'unavailable' });
-    }
     try {
-      const gen = await llm.generateIssueTitle({ description });
-      // Same ledger posture as the filing path below: record the Haiku
-      // spend against the user's daily ledger, but don't budget-gate —
-      // it's a few dozen tokens, and the per-user limiter plus the FE's
-      // debounce/dirty/cap logic bound repetition.
+      const billing = await resolveTitleBilling(req.user?.id);
+      if (billing.error) return res.json({ title: null, note: billing.error });
+      if (!billing.apiKey && !llm.isEnabled()) {
+        return res.json({ title: null, note: 'unavailable' });
+      }
+      const gen = await llm.generateIssueTitle({
+        description,
+        apiKey: billing.apiKey || undefined,
+      });
       if (gen.usage && req.user?.id) {
         const costCents = llm.estimateCostCents(gen.usage, gen.model);
-        await limits.recordSpend(pool, req.user.id, costCents, { byok: false });
+        await limits.recordSpend(pool, req.user.id, costCents, { byok: billing.byok });
       }
       // Defensive clip to the Title field's maxlength; Haiku's 5-10-word
       // titles never approach it.
@@ -405,17 +422,17 @@ function feedbackRoutes(config) {
         titleFallback = false;
       } else {
         try {
-          const gen = await llm.generateIssueTitle({ description });
+          const billing = await resolveTitleBilling(req.user?.id);
+          if (billing.error) throw new Error(`title billing unavailable: ${billing.error}`);
+          const gen = await llm.generateIssueTitle({
+            description,
+            apiKey: billing.apiKey || undefined,
+          });
           title = gen.title;
           titleFallback = false;
-          // Track this Haiku call against the user's daily ledger even though
-          // we don't budget-gate it (it's a few dozen tokens per feedback).
-          // Without this, the user could spam /api/feedback for a small but
-          // unbounded platform spend off-budget. No-op when usage is missing
-          // or user_id is unset (e.g. anonymous feedback in the future).
           if (gen.usage && req.user?.id) {
             const costCents = llm.estimateCostCents(gen.usage, gen.model);
-            await limits.recordSpend(pool, req.user.id, costCents, { byok: false });
+            await limits.recordSpend(pool, req.user.id, costCents, { byok: billing.byok });
           }
         } catch (err) {
           log.warn('feedback', 'Title generation failed; filing with fallback title', { message: err.message });
@@ -429,10 +446,10 @@ function feedbackRoutes(config) {
         if (!titleFallback) return;
         try {
           await pool.query(
-            `INSERT INTO title_heal_queue (owner, repo, issue_number, description)
-             VALUES ($1, $2, $3, $4)
+            `INSERT INTO title_heal_queue (user_id, owner, repo, issue_number, description)
+             VALUES ($1, $2, $3, $4, $5)
              ON CONFLICT (owner, repo, issue_number) DO NOTHING`,
-            [owner, repo, issueNumber, description.trim()]
+            [req.user?.id || null, owner, repo, issueNumber, description.trim()]
           );
         } catch (err) {
           log.warn('feedback', 'Failed to queue title heal', { repo: `${owner}/${repo}`, issueNumber, message: err.message });

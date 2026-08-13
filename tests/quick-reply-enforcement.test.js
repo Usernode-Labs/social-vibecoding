@@ -27,6 +27,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const llm = require('../src/services/llm.js');
+const limits = require('../src/services/limits.js');
 const { resolveTurnPills, quickReplyMeta } = require('../src/routes/sessions.js');
 const { RECOVERY_PILLS } = require('../src/services/recovery-pills.js');
 
@@ -257,6 +258,28 @@ test('allowGenerate:false stops at the forced rung', async () => {
     assert.equal(out.source, 'static');
     assert.equal(calls.length, 1, 'the forced attempt ran; the backstop did not');
   });
+});
+
+test('a fresh billing refusal skips both paid rungs and uses static pills', async () => {
+  const originalResolve = limits.resolveBillingPath;
+  limits.resolveBillingPath = async () => ({
+    error: 'Connect GitHub or X to unlock platform-funded AI.',
+    reason: 'verification_required',
+  });
+  try {
+    await withStub({
+      forced: new Error('must not be called'),
+      generate: new Error('must not be called'),
+    }, async (calls) => {
+      const out = await ladder({
+        pool: {}, userId: 7, dataKey: Buffer.alloc(32), modelPills: null,
+      });
+      assert.equal(out.source, 'static');
+      assert.equal(calls.length, 0, 'no auxiliary model call runs without a current payer');
+    });
+  } finally {
+    limits.resolveBillingPath = originalResolve;
+  }
 });
 
 test('a forced set that sanitizes to nothing falls through', async () => {

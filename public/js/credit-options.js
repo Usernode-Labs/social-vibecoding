@@ -98,6 +98,12 @@
   // reading it is on UTC and "tomorrow" was the old, wrong shorthand.
   function resetSentence(state, nowMs) {
     var s = state || {};
+    if (s.level === 'locked') {
+      return 'Connect GitHub or X to unlock $10.00/day of Usernode credits.';
+    }
+    if (s.level === 'unavailable') {
+      return 'Credit eligibility is temporarily unavailable.';
+    }
     var parts = 'Free credits reset at midnight UTC';
     var at = s.resetsAt ? new Date(s.resetsAt) : null;
     if (at && Number.isFinite(at.getTime())) {
@@ -123,7 +129,9 @@
   // admin-only, see redact() in services/status.js). Both describe the
   // same allowance, so both collapse to the same four levels:
   //
-  //   unknown   — nothing fetched yet, or a cap of 0: say nothing
+  //   unknown   — nothing fetched yet, or malformed figures: say nothing
+  //   locked    — identity tiers are active and no provider is verified
+  //   unavailable — tier eligibility could not be read (fail closed)
   //   ok        — headroom
   //   low       — at or past lowBalancePct of the cap; warn proactively
   //   exhausted — the personal allowance or the shared one is spent
@@ -136,7 +144,7 @@
     var s = snapshot || null;
     var limitCents = s ? Number(s.limitCents) : NaN;
     var spentCents = s ? Number(s.spentCents) : NaN;
-    if (!s || !Number.isFinite(limitCents) || !Number.isFinite(spentCents) || limitCents <= 0) {
+    if (!s || !Number.isFinite(limitCents) || !Number.isFinite(spentCents) || limitCents < 0) {
       return {
         level: 'unknown', limitCents: 0, spentCents: 0, remainingCents: 0,
         byokCents: 0, pctUsed: 0, hasByokKey: !!(s && s.hasByokKey),
@@ -144,6 +152,8 @@
         lowPct: (s && Number(s.lowBalancePct)) || LOW_PCT,
       };
     }
+    var verificationRequired = !!s.verificationRequired;
+    var entitlementAvailable = s.entitlementAvailable !== false;
     var remainingCents = Number.isFinite(Number(s.remainingCents))
       ? Math.max(0, Number(s.remainingCents))
       : Math.max(0, limitCents - spentCents);
@@ -158,9 +168,13 @@
       && Number.isFinite(globalSpent) && globalSpent >= globalLimit;
     var lowPct = Number(s.lowBalancePct);
     if (!Number.isFinite(lowPct) || lowPct <= 0 || lowPct >= 100) lowPct = LOW_PCT;
-    var pctUsed = Math.min(100, (spentCents / limitCents) * 100);
-    var level = 'ok';
-    if (globalOut || spentCents >= limitCents) level = 'exhausted';
+    var pctUsed = limitCents > 0
+      ? Math.min(100, (spentCents / limitCents) * 100)
+      : 0;
+    var level = limitCents === 0 ? 'exhausted' : 'ok';
+    if (!entitlementAvailable) level = 'unavailable';
+    else if (verificationRequired && limitCents === 0) level = 'locked';
+    else if (globalOut || spentCents >= limitCents) level = 'exhausted';
     else if (pctUsed >= lowPct) level = 'low';
     return {
       level: level,
@@ -173,6 +187,12 @@
       globalOut: globalOut,
       resetsAt: s.resetsAt || null,
       lowPct: lowPct,
+      verificationRequired: verificationRequired,
+      entitlementAvailable: entitlementAvailable,
+      creditPolicy: s.creditPolicy || null,
+      tier: s.tier || null,
+      tierLimitCents: Number.isFinite(Number(s.tierLimitCents))
+        ? Number(s.tierLimitCents) : 1000,
     };
   }
 
@@ -184,6 +204,12 @@
   // wrap them differently.
   function meterParts(state) {
     var s = state || {};
+    if (s.level === 'locked') {
+      return [{ key: 'locked', text: 'verify account · unlock $10/day' }];
+    }
+    if (s.level === 'unavailable') {
+      return [{ key: 'unavailable', text: 'credits temporarily unavailable' }];
+    }
     var spent = money(s.spentCents);
     var limit = money(s.limitCents);
     // `spent`/`limit` come out separately as well as joined: both surfaces
@@ -207,7 +233,7 @@
   function meterTone(state) {
     var level = (state || {}).level;
     if (level === 'exhausted') return 'red';
-    if (level === 'low') return 'amber';
+    if (level === 'low' || level === 'locked' || level === 'unavailable') return 'amber';
     return 'emerald';
   }
 
@@ -310,6 +336,15 @@
         hash: SETTINGS_HASHES.connector,
       });
     }
+    if (s.verificationRequired) {
+      out.unshift({
+        id: 'social-identity',
+        title: 'Unlock $10/day with a social account',
+        blurb: 'Connect GitHub or X to prove control of that account. Either one unlocks the same $10/day tier; they do not stack, and Usernode keeps no provider token.',
+        cta: 'Connect GitHub or X',
+        hash: SETTINGS_HASHES.connector,
+      });
+    }
     return out;
   }
 
@@ -331,6 +366,9 @@
   // it either way, so only the explanation changes.
   function lead(state) {
     var s = state || {};
+    if (s.verificationRequired) {
+      return 'Connect GitHub or X to unlock $10/day of Usernode credits.';
+    }
     return s.globalOut
       ? "The platform's shared daily AI budget is used up."
       : "You're out of today's free AI credits.";

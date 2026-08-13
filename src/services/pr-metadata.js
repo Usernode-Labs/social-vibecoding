@@ -530,6 +530,7 @@ async function applyPrMetadata({
   effectSessionId = null,
   effectBillingByok = !!apiKey,
   metadataMode = null,
+  allowModelGeneration = true,
 }) {
   if (!repoOwner || !repoName) return null;
 
@@ -568,7 +569,7 @@ async function applyPrMetadata({
   let metadataBillingByok = !!effectBillingByok;
   const deterministic = metadataMode === 'deterministic'
     || (metadataMode == null && session?.agent_backend === 'codex_openrouter');
-  if (deterministic) {
+  if (deterministic || (!allowModelGeneration && !effectTurnId)) {
     meta = renderPrMetadataDraft(
       deterministicPrMetadataDraft(generationArgs),
       { username, closingBlock, testingBlock, visualsBlock },
@@ -582,8 +583,10 @@ async function applyPrMetadata({
         sessionId: effectSessionId || session.id,
         intent: { billingByok: metadataBillingByok },
         run: async () => ({
-          draft: await generatePrMetadataDraft(generationArgs),
-          billingByok: metadataBillingByok,
+          draft: allowModelGeneration
+            ? await generatePrMetadataDraft(generationArgs)
+            : deterministicPrMetadataDraft(generationArgs),
+          billingByok: allowModelGeneration && metadataBillingByok,
         }),
         // A pending receipt means an earlier process may already have paid
         // for generation. Fail closed to the deterministic title template;

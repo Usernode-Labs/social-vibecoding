@@ -42,10 +42,18 @@ const budget = (over) => ({
   ...over,
 });
 
-test('creditState collapses either payload shape into the same four levels', () => {
+test('creditState makes zero-credit states explicit instead of unknown or NaN', () => {
   assert.equal(CO.creditState(null).level, 'unknown', 'nothing fetched → say nothing');
-  assert.equal(CO.creditState(budget({ limitCents: 0 })).level, 'unknown',
-    'a zero cap has no story to tell');
+  assert.equal(CO.creditState(budget({ limitCents: 0 })).level, 'exhausted',
+    'an intentional zero admin cap is a real exhausted state');
+  const locked = CO.creditState(budget({
+    limitCents: 0, verificationRequired: true, entitlementAvailable: true,
+  }));
+  assert.equal(locked.level, 'locked');
+  assert.equal(locked.pctUsed, 0, 'zero never divides into NaN');
+  assert.equal(CO.creditState(budget({
+    limitCents: 0, entitlementAvailable: false,
+  })).level, 'unavailable');
   assert.equal(CO.creditState(budget({ spentCents: 100 })).level, 'ok');
   assert.equal(CO.creditState(budget({ spentCents: 2000 })).level, 'low',
     'exactly at the threshold counts as low — 80% of 2500');
@@ -97,6 +105,22 @@ test('the reset sentence names the UTC boundary and translates it', () => {
     'a past boundary drops the clause rather than printing a negative');
   assert.match(CO.resetSentence({}), /reset at midnight UTC\./,
     'no resetsAt → still says when, just not how long');
+  assert.match(CO.resetSentence({ level: 'locked' }), /Connect GitHub or X.*\$10\.00\/day/,
+    'locked credits name the unlock action, not a reset that will not help');
+});
+
+test('locked credits render an unlock meter and lead with the identity action', () => {
+  const state = CO.creditState(budget({
+    limitCents: 0, verificationRequired: true, entitlementAvailable: true,
+  }));
+  assert.deepEqual(CO.meterParts(state), [
+    { key: 'locked', text: 'verify account · unlock $10/day' },
+  ]);
+  assert.equal(CO.meterTone(state), 'amber');
+  assert.match(CO.lead(state), /Connect GitHub or X.*\$10\/day/);
+  const options = CO.options({ verificationRequired: true });
+  assert.equal(options[0].id, 'social-identity');
+  assert.equal(options[0].hash, '#settings/connectors');
 });
 
 test('the meter states what is left, in words a builder can act on', () => {
@@ -135,8 +159,8 @@ test('both budget reads carry the remainder, the reset and the threshold', () =>
   for (const field of ['remainingCents', 'resetsAt', 'lowBalancePct']) {
     assert.match(handler, new RegExp(field), `GET /api/budget sends ${field}`);
   }
-  assert.match(handler, /resetsAt: limits\.dailyResetAt\(\)/,
-    'the real branch uses the one shared boundary helper');
+  assert.match(handler, /getBudgetSnapshot\(pool, req\.user\.id\)/,
+    'the real branch gets reset/remainder/tier fields from the shared snapshot');
   // …and the snapshot the drawer reads gets them from the same helper.
   const snapshot = LIMITS_SRC.slice(
     LIMITS_SRC.indexOf('async function getBudgetSnapshot'),

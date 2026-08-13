@@ -226,9 +226,6 @@ test('the staging gate covers every path the connector owns', () => {
     '/api/connect/authorization',
     '/api/me/connectors',
     '/api/me/connectors/abc',
-    '/api/me/github',
-    '/api/me/github/connect',
-    '/api/me/github/callback',
     '/.well-known/oauth-authorization-server',
     '/.well-known/oauth-protected-resource',
     '/.well-known/oauth-protected-resource/mcp',
@@ -237,17 +234,17 @@ test('the staging gate covers every path the connector owns', () => {
   }
   // …and nothing else. A gate that swallowed unrelated routes would 404
   // the platform on staging.
-  for (const p of ['/', '/api/apps', '/api/me/cli-tokens', '/cli/authorize', '/health']) {
+  for (const p of ['/', '/api/apps', '/api/me/cli-tokens', '/cli/authorize',
+    '/api/me/github', '/api/me/social-identities', '/api/me/x/callback', '/health']) {
     assert.equal(mcpOauth.isConnectorSurfacePath(p), false, `${p} is untouched`);
   }
 });
 
-test('only the two read-only Settings reads survive on staging', () => {
-  // These two exist so the Settings section is reviewable in a staging
-  // preview from its ?demo=1 fixture. They never read real credential
-  // state there (both backing stores are staging:private and empty).
+test('only the read-only connector Settings read survives on staging', () => {
+  // Social identities are a separate account surface with their own
+  // staging fixture; the connector gate owns only this read.
   assert.equal(mcpOauth.isStagingReadableConnectorPath('GET', '/api/me/connectors'), true);
-  assert.equal(mcpOauth.isStagingReadableConnectorPath('GET', '/api/me/github'), true);
+  assert.equal(mcpOauth.isStagingReadableConnectorPath('GET', '/api/me/github'), false);
 
   // Nothing that mints, presents or revokes a credential is exempt.
   for (const [method, p] of [
@@ -258,9 +255,6 @@ test('only the two read-only Settings reads survive on staging', () => {
     ['POST', '/api/connect/oauth/authorize'],
     ['GET', '/api/connect/authorization'],
     ['DELETE', '/api/me/connectors/abc'],
-    ['DELETE', '/api/me/github'],
-    ['GET', '/api/me/github/connect'],
-    ['GET', '/api/me/github/callback'],
     ['GET', '/.well-known/oauth-authorization-server'],
     // Right path, wrong method: a write must not ride the read exemption.
     ['DELETE', '/api/me/connectors'],

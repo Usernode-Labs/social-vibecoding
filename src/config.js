@@ -146,6 +146,17 @@ function load() {
     process.exit(1);
   }
 
+  // Identity-backed credits are an operator-controlled rollout. Keeping
+  // `legacy` as the default makes this migration deploy-safe: schema,
+  // linking and UI can land before anyone loses their existing allowance.
+  // An unknown value is a boot error rather than silently granting credits
+  // under an unintended policy.
+  const identityCreditPolicy = process.env.IDENTITY_CREDIT_POLICY || 'legacy';
+  if (!['legacy', 'tiered'].includes(identityCreditPolicy)) {
+    console.error('[config] IDENTITY_CREDIT_POLICY must be either legacy or tiered');
+    process.exit(1);
+  }
+
   // The platform's own staging clone is injected the production PUBLIC key
   // (so it can verify the parent's token) but no private one — yet it also
   // acts as a parent shell itself: every app view it renders fetches
@@ -270,6 +281,14 @@ function load() {
     waitlistGithubClientSecret: process.env.WAITLIST_GITHUB_CLIENT_SECRET || '',
     waitlistXClientId: process.env.WAITLIST_X_CLIENT_ID || '',
     waitlistXClientSecret: process.env.WAITLIST_X_CLIENT_SECRET || '',
+    // Account-linking OAuth is separate from the waitlist. GitHub requires
+    // a dedicated OAuth app because an OAuth app has one callback URL. X can
+    // reuse the waitlist client when its app has both callbacks registered.
+    githubLinkClientId: process.env.GITHUB_LINK_CLIENT_ID || '',
+    githubLinkClientSecret: process.env.GITHUB_LINK_CLIENT_SECRET || '',
+    xLinkClientId: process.env.X_LINK_CLIENT_ID || '',
+    xLinkClientSecret: process.env.X_LINK_CLIENT_SECRET || '',
+    identityCreditPolicy,
     // Overrides the OAuth redirect_uri origin (staging); defaults to the
     // production origin in production, localhost in dev.
     waitlistOauthOrigin: process.env.WAITLIST_OAUTH_ORIGIN || '',
@@ -530,6 +549,9 @@ function load() {
   console.log(`  GITHUB_APP_ID=${config.githubAppId || '(not set)'}`);
   console.log(`  ANTHROPIC_API_KEY=${mask(config.anthropicApiKey)}`);
   console.log(`  ANTHROPIC_ADMIN_KEY=${mask(config.anthropicAdminKey)}`);
+  console.log(`  IDENTITY_CREDIT_POLICY=${config.identityCreditPolicy}`);
+  console.log(`  GITHUB_LINK=${config.githubLinkClientId && config.githubLinkClientSecret ? '(enabled)' : '(disabled)'}`);
+  console.log(`  X_LINK=${(config.xLinkClientId && config.xLinkClientSecret) || (config.waitlistXClientId && config.waitlistXClientSecret) ? '(enabled)' : '(disabled)'}`);
   console.log(`  LOG_LEVEL=${config.logLevel}`);
   console.log(`  CLI_AUTH=${config.cliAuthEnabled ? config.cliAuthOrigin : '(disabled in staging)'}`);
   console.log(`  MAX_APPS=${config.maxApps}`);

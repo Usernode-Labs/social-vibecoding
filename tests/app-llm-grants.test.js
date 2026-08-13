@@ -16,6 +16,9 @@ const poolMod = require('../src/db/pool');
 
 const state = {
   userLimit: 2500,
+  hasIdentity: false,
+  identityLookupError: false,
+  apiKeyEnc: null,
   grants: new Map(), // `${appId}:${userId}` -> row
   apps: new Map([['demo-app', { id: 11, name: 'Demo App', slug: 'demo-app', manifest_snapshot: null }]]),
   // Today's app_llm_usage row joined by the bootstrap query (issue
@@ -24,6 +27,10 @@ const state = {
 };
 
 function mockQuery(sql, params) {
+  if (/EXISTS \([\s\S]*user_social_identities/.test(sql)) {
+    if (state.identityLookupError) throw new Error('identity store unavailable');
+    return { rows: [{ daily_limit_cents: state.userLimit, has_social_identity: state.hasIdentity }] };
+  }
   if (/SELECT daily_limit_cents FROM users/.test(sql)) {
     return { rows: [{ daily_limit_cents: state.userLimit }] };
   }
@@ -39,7 +46,11 @@ function mockQuery(sql, params) {
     return { rows: app ? [app] : [] };
   }
   if (/SELECT anthropic_key_enc FROM users/.test(sql)) {
-    return { rows: [] };
+    return { rows: state.apiKeyEnc ? [{ anthropic_key_enc: state.apiKeyEnc }] : [] };
+  }
+  if (/SELECT allow_byok FROM app_llm_grants/.test(sql)) {
+    const row = state.grants.get(`${params[0]}:${params[1]}`);
+    return { rows: row ? [{ allow_byok: row.allow_byok }] : [] };
   }
   if (/INSERT INTO app_llm_grants/.test(sql)) {
     const [appId, userId, cap, byok] = params;
@@ -131,8 +142,12 @@ beforeEach(() => {
   limits.invalidate();
   state.grants.clear();
   state.userLimit = 2500;
+  state.hasIdentity = false;
+  state.identityLookupError = false;
+  state.apiKeyEnc = null;
   state.usage = { spent: null, byok: null };
   delete process.env.USERNODE_ENV;
+  delete process.env.IDENTITY_CREDIT_POLICY;
 });
 
 test('POST creates a grant with the default $1.00 cap', async () => {
@@ -291,4 +306,101 @@ test('bootstrap endpoint sanitizes the manifest llm block and clamps the suggest
     assert.equal(body.hasApiKey, false);
   });
   state.apps.set('demo-app', { id: 11, name: 'Demo App', slug: 'demo-app', manifest_snapshot: null });
+});
+
+test('tiered policy refuses an unverified app grant when no payer exists', async () => {
+  process.env.IDENTITY_CREDIT_POLICY = 'tiered';
+  state.userLimit = null;
+  await withServer(async (base) => {
+    const bootstrap = await fetch(`${base}/api/apps/demo-app/llm-grant`);
+    assert.equal(bootstrap.status, 200);
+    const info = await bootstrap.json();
+    assert.equal(info.maxCapCents, 0);
+    assert.equal(info.defaultCapCents, 0);
+    assert.equal(info.entitlement.verificationRequired, true);
+
+    const res = await fetch(`${base}/api/me/llm-grants`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ appSlug: 'demo-app' }),
+    });
+    assert.equal(res.status, 400);
+    const body = await res.json();
+    assert.equal(body.code, 'credit_required');
+    assert.match(body.error, /Connect GitHub or X/);
+  });
+});
+
+test('tiered unverified users can grant BYOK explicitly, but it is never enabled implicitly', async () => {
+  process.env.IDENTITY_CREDIT_POLICY = 'tiered';
+  state.userLimit = null;
+  state.apiKeyEnc = 'present';
+  await withServer(async (base) => {
+    let res = await fetch(`${base}/api/me/llm-grants`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ appSlug: 'demo-app', dailyCapCents: 100 }),
+    });
+    assert.equal(res.status, 400);
+    assert.equal((await res.json()).code, 'byok_required');
+
+    res = await fetch(`${base}/api/me/llm-grants`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        appSlug: 'demo-app', dailyCapCents: 1000, allowByok: true,
+      }),
+    });
+    assert.equal(res.status, 200);
+    assert.equal((await res.json()).grant.allowByok, true);
+
+    // Cap-only edits preserve an existing explicit BYOK consent.
+    res = await fetch(`${base}/api/me/llm-grants/11`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ dailyCapCents: 500 }),
+    });
+    assert.equal(res.status, 200);
+    assert.equal((await res.json()).grant.dailyCapCents, 500);
+
+    // Revoking that consent is refused while it is the only payer.
+    res = await fetch(`${base}/api/me/llm-grants/11`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ allowByok: false }),
+    });
+    assert.equal(res.status, 400);
+    assert.equal((await res.json()).code, 'byok_required');
+  });
+});
+
+test('an entitlement lookup outage still permits an explicitly consented BYOK grant', async () => {
+  process.env.IDENTITY_CREDIT_POLICY = 'tiered';
+  state.identityLookupError = true;
+  state.apiKeyEnc = 'present';
+  await withServer(async (base) => {
+    const bootstrap = await fetch(`${base}/api/apps/demo-app/llm-grant`);
+    assert.equal(bootstrap.status, 200);
+    const info = await bootstrap.json();
+    assert.equal(info.entitlement.entitlementAvailable, false);
+    assert.equal(info.maxCapCents, 1000);
+
+    let res = await fetch(`${base}/api/me/llm-grants`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        appSlug: 'demo-app', dailyCapCents: 500, allowByok: true,
+      }),
+    });
+    assert.equal(res.status, 200);
+    assert.equal((await res.json()).grant.allowByok, true);
+
+    res = await fetch(`${base}/api/me/llm-grants/11`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ dailyCapCents: 250 }),
+    });
+    assert.equal(res.status, 200);
+    assert.equal((await res.json()).grant.dailyCapCents, 250);
+  });
 });

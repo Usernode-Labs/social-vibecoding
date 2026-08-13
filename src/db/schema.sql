@@ -2919,6 +2919,7 @@ ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_title_fallback BOOLEAN NOT
 -- next_attempt_at implements per-row exponential backoff.
 CREATE TABLE IF NOT EXISTS title_heal_queue (
   id              SERIAL PRIMARY KEY,
+  user_id         INTEGER REFERENCES users(id) ON DELETE SET NULL,
   owner           TEXT NOT NULL,
   repo            TEXT NOT NULL,
   issue_number    INTEGER NOT NULL,
@@ -2928,6 +2929,8 @@ CREATE TABLE IF NOT EXISTS title_heal_queue (
   created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE (owner, repo, issue_number)
 );
+ALTER TABLE title_heal_queue
+  ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS idx_title_heal_queue_due ON title_heal_queue(next_attempt_at);
 
 -- #683: drag-selected screenshots attached to filed GitHub issues from
@@ -4531,6 +4534,44 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS github_login             VARCHAR(255)
 ALTER TABLE users ADD COLUMN IF NOT EXISTS github_oauth_token_enc   TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS github_linked_at         TIMESTAMPTZ;
 COMMENT ON COLUMN users.github_oauth_token_enc IS 'staging:private';
+
+-- Generic social-account ownership proofs used by the opt-in identity
+-- credit policy. `provider_subject` is the provider's immutable numeric id;
+-- the handle is presentation/attribution metadata and may change. One
+-- provider account can belong to only one Usernode account, while linking
+-- both providers never stacks the tier. No OAuth access or refresh token is
+-- stored here (or anywhere else after the callback completes).
+CREATE TABLE IF NOT EXISTS user_social_identities (
+  id                  BIGSERIAL PRIMARY KEY,
+  user_id             INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  provider            VARCHAR(16) NOT NULL CHECK (provider IN ('github', 'x')),
+  provider_subject    VARCHAR(40) NOT NULL CHECK (provider_subject ~ '^[1-9][0-9]{0,39}$'),
+  handle              VARCHAR(64) NOT NULL,
+  linked_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_verified_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (user_id, provider),
+  UNIQUE (provider, provider_subject)
+);
+COMMENT ON TABLE user_social_identities IS 'staging:private';
+CREATE INDEX IF NOT EXISTS user_social_identities_user_idx
+  ON user_social_identities (user_id);
+
+-- Single-use OAuth state. The browser receives the random state value while
+-- this table stores only its SHA-256 hash plus the server-side PKCE verifier.
+-- Starting a replacement flow invalidates the previous one for that
+-- user/provider; callbacks atomically DELETE ... RETURNING before exchange.
+CREATE TABLE IF NOT EXISTS social_identity_oauth_states (
+  state_hash       CHAR(64) PRIMARY KEY CHECK (state_hash ~ '^[0-9a-f]{64}$'),
+  user_id          INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  provider         VARCHAR(16) NOT NULL CHECK (provider IN ('github', 'x')),
+  pkce_verifier    VARCHAR(128) NOT NULL,
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at       TIMESTAMPTZ NOT NULL,
+  UNIQUE (user_id, provider)
+);
+COMMENT ON TABLE social_identity_oauth_states IS 'staging:private';
+CREATE INDEX IF NOT EXISTS social_identity_oauth_states_expiry_idx
+  ON social_identity_oauth_states (expires_at);
 
 -- Which external coding agent produced a proposal, for the "built with
 -- Claude Code" / "built with Codex" badge. Deliberately a SEPARATE column

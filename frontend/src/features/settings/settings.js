@@ -113,7 +113,7 @@
       // Own section (not folded into 'cli') so the out-of-credits card can
       // deep-link #settings/connectors as one of its three routes; see
       // public/js/credit-options.js.
-      { key: 'connectors', label: 'Claude & ChatGPT connectors', group: 'AI & agents' },
+      { key: 'connectors', label: 'Social accounts & connectors', group: 'AI & agents' },
       { key: 'openrouter', label: 'OpenRouter', group: 'AI & agents' },
       { key: 'app-ai', label: 'App AI permissions', group: 'AI & agents' },
       { key: 'agent-files', label: 'Agent instructions & skills', group: 'AI & agents' },
@@ -1298,7 +1298,18 @@
       }
     },
 
-    // ── Verified GitHub account link ─────────────────────────────────────
+    // ── Social account ownership proofs + Layer-1 credits ────────────────
+
+    _socialIdentityDemoQuery() {
+      try {
+        const demo = new URLSearchParams(window.location.search).get('demo');
+        if (demo === '1' || demo === 'identity-connected'
+            || demo === 'identity-unverified' || demo === 'identity-legacy') {
+          return `?demo=${encodeURIComponent(demo)}`;
+        }
+      } catch { /* ordinary production read */ }
+      return '';
+    },
 
     async _loadGithubLink() {
       const section = document.getElementById('github-link-section');
@@ -1306,21 +1317,28 @@
       if (!section || !body) return;
       body.textContent = 'Loading…';
       try {
-        const demoQ = this._cliTokensDemo() ? '?demo=1' : '';
-        const response = await fetch(`/api/me/github${demoQ}`, {
+        const response = await fetch(`/api/me/social-identities${this._socialIdentityDemoQuery()}`, {
           credentials: 'same-origin',
           cache: 'no-store',
         });
-        if (response.status === 404 || !response.ok) {
+        if (response.status === 404) {
           section.classList.add('hidden');
           return;
         }
+        if (!response.ok) throw new Error(`Social identity request failed (${response.status})`);
         const data = await response.json();
+        if (!data || !data.providers || !data.entitlement) {
+          throw new Error('Invalid social identity response');
+        }
         section.classList.remove('hidden');
-        this._githubLink = data || { linked: false };
+        // Keep the established property/method names: external-agent code
+        // calls _loadGithubLink after attribution changes. The value is now
+        // the provider-neutral response.
+        this._githubLink = data;
         this._renderGithubLink();
       } catch {
-        section.classList.add('hidden');
+        body.textContent = 'Could not load social accounts. Try again shortly.';
+        section.classList.remove('hidden');
       }
     },
 
@@ -1330,64 +1348,129 @@
       if (!body) return;
       body.textContent = '';
       if (status) status.classList.add('hidden');
-      const link = this._githubLink || { linked: false };
+      const payload = this._githubLink || { providers: {}, entitlement: {} };
+      body.appendChild(this._socialIdentityTierCard(payload.entitlement));
+      ['github', 'x'].forEach((provider) => {
+        body.appendChild(this._socialIdentityProviderRow(
+          provider,
+          payload.providers[provider] || { provider, linked: false, available: false },
+          payload.entitlement,
+          !!payload.demo
+        ));
+      });
+      this._socialIdentityCallbackStatus(status);
+    },
 
-      // No OAuth app configured on this deployment: say so plainly rather
-      // than offering a button that 404s.
-      if (link.available === false) {
-        const note = document.createElement('p');
-        note.className = 'text-xs text-zinc-500 dark:text-zinc-400';
-        note.textContent = 'GitHub linking is not configured on this deployment.';
-        body.appendChild(note);
-        return;
+    _socialIdentityTierCard(entitlement) {
+      const e = entitlement || {};
+      const card = document.createElement('div');
+      card.className = 'rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 px-3 py-2 mb-3';
+      const title = document.createElement('div');
+      title.className = 'text-sm font-semibold text-zinc-800 dark:text-zinc-200';
+      const detail = document.createElement('div');
+      detail.className = 'text-xs text-zinc-500 dark:text-zinc-400 mt-1';
+      const dollars = `$${(Math.max(0, Number(e.limitCents) || 0) / 100).toFixed(2)}/day`;
+      if (e.entitlementAvailable === false) {
+        title.textContent = 'Daily credit tier temporarily unavailable';
+        detail.textContent = 'Usernode could not verify credit eligibility. Platform-funded calls fail closed; your own API key still works.';
+      } else if (e.policy === 'legacy') {
+        title.textContent = `Current daily allowance: ${dollars}`;
+        detail.textContent = 'Social account linking is available, but identity-based credit tiers are not active on this deployment yet.';
+      } else if (e.tier === 'override') {
+        title.textContent = `Administrator-set allowance: ${dollars}`;
+        detail.textContent = 'This account has an explicit administrator override, which takes precedence over identity tiers.';
+      } else if (e.verificationRequired) {
+        title.textContent = 'Layer 1 locked · $0/day';
+        detail.textContent = 'Connect either GitHub or X below to unlock $10.00/day. A second provider does not add another $10.';
+        card.className += ' border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/20';
+      } else {
+        title.textContent = `Layer 1 unlocked · ${dollars}`;
+        detail.textContent = 'At least one social account ownership proof is current. Provider tokens are not stored.';
+        card.className += ' border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/20';
+      }
+      card.append(title, detail);
+      return card;
+    },
+
+    _socialIdentityProviderRow(provider, link, entitlement, demo) {
+      const name = provider === 'github' ? 'GitHub' : 'X';
+      const wrap = document.createElement('div');
+      wrap.className = 'rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2';
+      const row = document.createElement('div');
+      row.className = 'flex items-start justify-between gap-3';
+      const text = document.createElement('div');
+      text.className = 'min-w-0';
+      const heading = document.createElement('div');
+      heading.className = 'text-sm font-semibold text-zinc-800 dark:text-zinc-200';
+      heading.textContent = link.linked && link.handle ? `${name} · @${link.handle}` : name;
+      const state = document.createElement('div');
+      state.className = 'text-xs mt-1';
+      if (link.reconnectRequired) {
+        state.className += ' text-amber-600 dark:text-amber-400';
+        state.textContent = 'Linked for GitHub attribution · reconnect once to make this identity credit-eligible.';
+      } else if (link.linked && entitlement.policy === 'tiered') {
+        state.className += ' text-emerald-600 dark:text-emerald-400';
+        state.textContent = 'Ownership verified · counts toward the single $10/day social tier.';
+      } else if (link.linked) {
+        state.className += ' text-zinc-500 dark:text-zinc-400';
+        state.textContent = 'Ownership verified · identity credit tiers are not active yet.';
+      } else if (link.available === false) {
+        state.className += ' text-zinc-500 dark:text-zinc-400';
+        state.textContent = `${name} linking is not configured on this deployment.`;
+      } else {
+        state.className += ' text-zinc-500 dark:text-zinc-400';
+        state.textContent = entitlement.verificationRequired
+          ? `Not connected · connect ${name} to unlock Layer 1.`
+          : 'Not connected.';
+      }
+      text.append(heading, state);
+      if (link.linkedAt && Number.isFinite(Date.parse(link.linkedAt))) {
+        const when = document.createElement('div');
+        when.className = 'text-xs text-zinc-500 dark:text-zinc-500 mt-1';
+        when.textContent = `linked ${new Date(link.linkedAt).toLocaleString()}`;
+        text.appendChild(when);
+      }
+      if (link.linked && link.access === 'identity') {
+        const noToken = document.createElement('div');
+        if (provider === 'github') noToken.id = 'github-link-no-token';
+        noToken.className = 'text-xs text-zinc-500 dark:text-zinc-400 mt-1';
+        noToken.textContent = provider === 'github'
+          ? 'Usernode holds no GitHub access token for your account.'
+          : 'Usernode stores no X access token for your account.';
+        text.appendChild(noToken);
       }
 
-      if (link.linked) {
-        const row = document.createElement('div');
-        row.className = 'flex items-center justify-between gap-3 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2';
-        const text = document.createElement('div');
-        text.className = 'min-w-0';
-        const login = document.createElement('div');
-        login.className = 'text-sm font-mono text-zinc-800 dark:text-zinc-200';
-        login.textContent = link.login || 'linked';
-        const when = document.createElement('div');
-        when.className = 'text-xs text-zinc-500 dark:text-zinc-400 mt-1';
-        when.textContent = link.linkedAt && Number.isFinite(Date.parse(link.linkedAt))
-          ? `linked ${new Date(link.linkedAt).toLocaleString()}`
-          : 'linked';
-        text.append(login, when);
-        // The whole point of the identity-only link: say plainly that no
-        // credential is held, rather than leaving the user to infer it from
-        // the consent screen they saw once. Driven by the server's `access`
-        // field so a future shape can render differently instead of this
-        // line quietly lying.
-        if (link.access === 'identity') {
-          const noToken = document.createElement('div');
-          noToken.id = 'github-link-no-token';
-          noToken.className = 'text-xs text-zinc-500 dark:text-zinc-400 mt-1';
-          noToken.textContent = 'Usernode holds no GitHub access token for your account.';
-          text.appendChild(noToken);
+      const actions = document.createElement('div');
+      actions.className = 'shrink-0 flex flex-wrap justify-end gap-2';
+      if ((!link.linked || link.reconnectRequired) && link.available !== false) {
+        const label = link.reconnectRequired ? 'Reconnect' : `Connect ${name}`;
+        if (demo) {
+          const disabled = document.createElement('button');
+          disabled.type = 'button';
+          disabled.disabled = true;
+          disabled.className = 'rounded-md bg-violet-600 px-2 py-1 text-xs font-medium text-white opacity-50';
+          disabled.textContent = label;
+          actions.appendChild(disabled);
+        } else {
+          const connect = document.createElement('a');
+          connect.href = `/api/me/social-identities/${provider}/connect`;
+          connect.className = 'rounded-md bg-violet-600 hover:bg-violet-500 px-2 py-1 text-xs font-medium text-white transition-colors';
+          connect.textContent = label;
+          actions.appendChild(connect);
         }
-
+      }
+      if (link.linked) {
         const unlink = document.createElement('button');
         unlink.type = 'button';
-        unlink.className = 'shrink-0 rounded-md border border-red-400 dark:border-red-700 px-2 py-1 text-xs font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 transition-colors';
+        unlink.disabled = demo;
+        unlink.className = 'rounded-md border border-red-400 dark:border-red-700 px-2 py-1 text-xs font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 disabled:opacity-50 transition-colors';
         unlink.textContent = 'Disconnect';
-        unlink.addEventListener('click', () => this._unlinkGithub(unlink));
-        row.append(text, unlink);
-        body.appendChild(row);
-        body.appendChild(this._githubAuditNote());
-        return;
+        if (!demo) unlink.addEventListener('click', () => this._unlinkGithub(unlink, provider));
+        actions.appendChild(unlink);
       }
-
-      // A full-page navigation, not fetch: the GitHub consent screen has to
-      // be shown to the user in a top-level document.
-      const connect = document.createElement('a');
-      connect.href = '/api/me/github/connect';
-      connect.className = 'inline-block rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors';
-      connect.textContent = 'Connect GitHub';
-      body.appendChild(connect);
-      body.appendChild(this._githubAuditNote());
+      row.append(text, actions);
+      wrap.append(row, this._socialIdentityAuditNote(provider));
+      return wrap;
     },
 
     // "Don't take our word for it": GitHub's own page lists what every
@@ -1395,36 +1478,69 @@
     // click. Deliberately a top-level link (target=_blank + noopener) — the
     // shell is framed, and github.com refuses to be framed.
     _githubAuditNote() {
+      return this._socialIdentityAuditNote('github');
+    },
+
+    _socialIdentityAuditNote(provider) {
       const note = document.createElement('p');
-      note.id = 'github-link-audit-note';
+      if (provider === 'github') note.id = 'github-link-audit-note';
       note.className = 'text-xs text-zinc-500 dark:text-zinc-500 mt-2';
-      note.appendChild(document.createTextNode('You can check what Usernode is allowed to do at '));
+      note.appendChild(document.createTextNode('Review or revoke this authorization at '));
       const anchor = document.createElement('a');
-      anchor.href = 'https://github.com/settings/applications';
+      anchor.href = provider === 'github'
+        ? 'https://github.com/settings/applications'
+        : 'https://x.com/settings/connected_apps';
       anchor.target = '_blank';
       anchor.rel = 'noopener noreferrer';
       anchor.className = 'text-violet-600 dark:text-violet-400 hover:underline';
-      anchor.textContent = 'github.com/settings/applications';
+      anchor.textContent = provider === 'github'
+        ? 'github.com/settings/applications'
+        : 'x.com/settings/connected_apps';
       note.appendChild(anchor);
       note.appendChild(document.createTextNode('.'));
       return note;
     },
 
-    async _unlinkGithub(button) {
+    _socialIdentityCallbackStatus(status) {
+      if (!status) return;
+      let result = null;
+      let provider = null;
+      try {
+        const hash = String(window.location.hash || '');
+        const query = hash.includes('?') ? hash.slice(hash.indexOf('?') + 1) : '';
+        const params = new URLSearchParams(query);
+        result = params.get('identity');
+        provider = params.get('provider');
+      } catch { return; }
+      if (!result) return;
+      const name = provider === 'x' ? 'X' : 'GitHub';
+      const messages = {
+        linked: `${name} connected.`,
+        conflict: `That ${name} account is already linked elsewhere, or a different account must be disconnected first.`,
+        denied: `${name} connection was cancelled.`,
+        error: `${name} could not be connected. Try again.`,
+      };
+      status.textContent = messages[result] || '';
+      if (!status.textContent) return;
+      status.classList.remove('hidden', 'text-red-500', 'text-emerald-500');
+      status.classList.add(result === 'linked' ? 'text-emerald-500' : 'text-red-500');
+    },
+
+    async _unlinkGithub(button, provider = 'github') {
       const status = document.getElementById('github-link-status');
       if (button) button.disabled = true;
       try {
-        const response = await fetch('/api/me/github', {
+        const response = await fetch(`/api/me/social-identities/${encodeURIComponent(provider)}`, {
           method: 'DELETE',
           credentials: 'same-origin',
           cache: 'no-store',
         });
-        if (!response.ok) throw new Error('Could not disconnect GitHub.');
+        if (!response.ok) throw new Error(`Could not disconnect ${provider === 'x' ? 'X' : 'GitHub'}.`);
         await this._loadGithubLink();
       } catch (err) {
         if (button) button.disabled = false;
         if (status) {
-          status.textContent = err.message || 'Could not disconnect GitHub.';
+          status.textContent = err.message || 'Could not disconnect this account.';
           status.classList.remove('hidden', 'text-emerald-500');
           status.classList.add('text-red-500');
         }

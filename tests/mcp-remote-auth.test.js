@@ -154,7 +154,6 @@ test('the browser-session routes are CSRF-checked against the configured origin'
   for (const marker of [
     "router.post('/api/connect/oauth/authorize'",
     "router.delete('/api/me/connectors/:id'",
-    "router.delete('/api/me/github'",
   ]) {
     const idx = SRC.indexOf(marker);
     assert.ok(idx > 0, `${marker} exists`);
@@ -170,8 +169,11 @@ test('the service worker hard-bypasses every connector path', () => {
     '/api/connect/oauth/token',
     '/api/me/connectors',
     '/api/me/connectors/abc',
+    '/api/me/social-identities',
+    '/api/me/social-identities/github/connect',
     '/api/me/github',
     '/api/me/github/callback',
+    '/api/me/x/callback',
     '/.well-known/oauth-protected-resource',
     '/.well-known/oauth-authorization-server',
   ]) {

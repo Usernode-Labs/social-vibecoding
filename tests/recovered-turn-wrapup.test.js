@@ -347,6 +347,23 @@ test('a configured-off LLM degrades the same way, without calling out', async ()
   assert.equal(pool.inserts[0].content, '_Done._');
 });
 
+test('a recovered turn with no current payer closes without a provider call', async () => {
+  const { res, pool, chatCalls, spendCalls } = await run({
+    billing: {
+      error: 'Connect GitHub or X to unlock platform-funded AI.',
+      reason: 'verification_required',
+    },
+  });
+
+  assert.equal(res.ok, false);
+  assert.equal(res.reason, 'billing_unavailable');
+  assert.equal(chatCalls.length, 0, 'recovery does not bypass the current credit tier');
+  assert.equal(spendCalls.length, 0);
+  assert.equal(pool.inserts[0].content, '_Done._');
+  assert.deepEqual(pool.inserts[0].metadata.quickReplies,
+    recoveryPills.buildRecoveryQuickReplies('code_done'));
+});
+
 test('the static fallback matches the outcome it is closing', async () => {
   const spec = await run({ chat: new Error('nope') }, { outcome: 'spec', fallbackPillKind: 'spec_done' });
   assert.match(spec.pool.inserts[0].content, /Spec updated/);

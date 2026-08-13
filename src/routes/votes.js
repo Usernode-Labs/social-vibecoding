@@ -15,6 +15,7 @@ const appAccess = require('../services/app-access');
 const appAdmins = require('../services/app-admins');
 const { effectiveSessionCaps } = require('../services/session-caps');
 const topicAttrs = require('../services/topic-attributes');
+const limits = require('../services/limits');
 const { usesMockGithubForImports } = require('../config');
 const { drainGuard } = require('../services/lifecycle');
 const { isCliCredentialManagementSession } = require('../services/cli-api-policy');
@@ -1607,12 +1608,33 @@ function voteRoutes(config) {
         let prResult = null;
         let prError = null;
         try {
+          let metadataApiKey = null;
+          let metadataGenerationAllowed = false;
+          try {
+            const billing = await limits.resolveBillingPath(
+              pool, config.dataEncryptionKey, req.user.id,
+            );
+            if (!billing.error) {
+              metadataApiKey = billing.apiKey;
+              metadataGenerationAllowed = true;
+            } else {
+              log.info('votes', 'Using deterministic PR metadata: no payer available', {
+                sessionId: session.id, reason: billing.reason || null,
+              });
+            }
+          } catch (billingErr) {
+            log.warn('votes', 'PR metadata billing resolve failed; using deterministic draft', {
+              sessionId: session.id, err: billingErr.message,
+            });
+          }
           prResult = await prMetadata.applyPrMetadata({
             pool, session, repoOwner, repoName,
             userMessage: msgRows[0]?.content || '',
             ccSummary: '',
             username: req.user.username,
+            apiKey: metadataApiKey,
             userId: req.user.id,
+            allowModelGeneration: metadataGenerationAllowed,
           });
         } catch (err) {
           prError = err;

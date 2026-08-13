@@ -33,6 +33,8 @@ llm.estimateCostCents = () => 0.05;
 
 const limits = require('../src/services/limits');
 let spendCalls = [];
+let billingImpl = async () => ({ apiKey: null, byok: false });
+limits.resolveBillingPath = (...args) => billingImpl(...args);
 limits.recordSpend = async (pool, userId, costCents, opts) => {
   spendCalls.push({ userId, costCents, opts });
 };
@@ -67,6 +69,7 @@ beforeEach(() => {
   generateCalls = [];
   spendCalls = [];
   llmEnabled = true;
+  billingImpl = async () => ({ apiKey: null, byok: false });
   currentUserId = 7;
   generateImpl = async ({ description }) => {
     generateCalls.push(description);
@@ -116,6 +119,45 @@ test('generation failure → soft null title with note: failed', async () => {
     assert.equal(body.title, null);
     assert.equal(body.note, 'failed');
     assert.equal(spendCalls.length, 0);
+  } finally {
+    server.close();
+  }
+});
+
+test('exhausted platform credits skip title generation without blocking feedback', async () => {
+  billingImpl = async () => ({ error: 'credits exhausted' });
+  const server = await startServer();
+  try {
+    const res = await postTitle(server, { description: 'The form itself must still work' });
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), { title: null, note: 'credits' });
+    assert.equal(generateCalls.length, 0);
+    assert.equal(spendCalls.length, 0);
+  } finally {
+    server.close();
+  }
+});
+
+test('BYOK title generation uses the user key and records only BYOK spend', async () => {
+  billingImpl = async () => ({ apiKey: 'sk-ant-user', byok: true });
+  let receivedKey = null;
+  generateImpl = async ({ description, apiKey }) => {
+    generateCalls.push(description);
+    receivedKey = apiKey;
+    return {
+      title: 'Generated with own key',
+      usage: { input_tokens: 30, output_tokens: 12 },
+      model: 'claude-haiku-4-5',
+    };
+  };
+  const server = await startServer();
+  try {
+    const res = await postTitle(server, { description: 'Use my own key for this title' });
+    assert.equal(res.status, 200);
+    assert.equal((await res.json()).title, 'Generated with own key');
+    assert.equal(receivedKey, 'sk-ant-user');
+    assert.equal(spendCalls.length, 1);
+    assert.deepEqual(spendCalls[0].opts, { byok: true });
   } finally {
     server.close();
   }

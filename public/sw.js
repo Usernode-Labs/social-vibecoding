@@ -229,15 +229,19 @@ function classifyRequest(method, url, acceptHeader, mode, selfOrigin) {
   if (p === '/api/me/cli-tokens' || p.startsWith('/api/me/cli-tokens/')) {
     return 'bypass';
   }
-  // Hosted MCP connector: the endpoint itself, its OAuth surfaces, and the
-  // credential-bearing management reads. Same hard bypass as the CLI's, for
-  // the same reason — none of this may ever be answered from a cache.
+  // Hosted MCP connector and social-account OAuth: endpoints, OAuth
+  // surfaces and identity status. Same hard bypass as the CLI's, for the
+  // same reason — none of this may ever be answered from a cache.
   if (p === '/mcp') return 'bypass';
   if (p.startsWith('/api/connect/')) return 'bypass';
   if (p === '/api/me/connectors' || p.startsWith('/api/me/connectors/')) {
     return 'bypass';
   }
+  if (p === '/api/me/social-identities' || p.startsWith('/api/me/social-identities/')) {
+    return 'bypass';
+  }
   if (p === '/api/me/github' || p.startsWith('/api/me/github/')) return 'bypass';
+  if (p === '/api/me/x' || p.startsWith('/api/me/x/')) return 'bypass';
   if (p.startsWith('/.well-known/oauth-')) return 'bypass';
   // Auth endpoints are online-only — EXCEPT /api/auth/me, which is cached
   // so the SPA's boot check succeeds offline for a logged-in user.

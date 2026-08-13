@@ -250,12 +250,30 @@ async function rebuildSessionStaging({ config, pool, session, reason }) {
       const username = ctxRows[0]?.username || session.username || 'someone';
       const recoveredUserMessage = ctxRows[0]?.last_user_message || '';
       const prMetadata = require('./pr-metadata');
+      const limits = require('./limits');
+      let metadataApiKey = null;
+      let metadataGenerationAllowed = false;
+      try {
+        const billing = await limits.resolveBillingPath(
+          pool, config.dataEncryptionKey, session.user_id,
+        );
+        if (!billing.error) {
+          metadataApiKey = billing.apiKey;
+          metadataGenerationAllowed = true;
+        }
+      } catch (err) {
+        log.warn('staging-recovery', 'PR metadata billing resolve failed; using deterministic draft', {
+          sessionId: session.id, err: err.message,
+        });
+      }
       await prMetadata.applyPrMetadata({
         pool, session, repoOwner: owner, repoName: repo,
         userMessage: recoveredUserMessage,
         ccSummary: '',
         username,
+        apiKey: metadataApiKey,
         userId: session.user_id,
+        allowModelGeneration: metadataGenerationAllowed,
         broadcast: (event, data) =>
           broadcastGlobal({ type: 'session_event', sessionId: session.id, event, ...data }),
       });

@@ -150,6 +150,10 @@ const CONSOLE_CREDENTIAL_COLUMNS = {
   // public half of the exchange and stays readable.
   mcp_authorization_codes: ['code_hash'],
   mcp_tokens: ['token_hash', 'token_hint'],
+  // Social identity is private account metadata. The short-lived OAuth row
+  // additionally contains the callback-state hash and live PKCE verifier.
+  user_social_identities: ['provider_subject', 'handle'],
+  social_identity_oauth_states: ['state_hash', 'pkce_verifier'],
   // Public report share links. `share_token` is the SOLE access control on
   // the unauthenticated /reports/:token route (schema.sql says so outright),
   // so it is a plaintext bearer credential even though the rest of the row
