@@ -108,21 +108,24 @@ test('every path that paints a section records the address it painted', () => {
     '_renderContent marks, so a cold load does not leave the address unrecorded');
 });
 
-test('the #admin/seasons deep links that share one level+section are all declared', () => {
+test('the #admin/season-events deep links that share one level+section are all declared', () => {
   const paths = (manifest.tests || []).map((t) => t.path);
   for (const p of [
-    '/#admin/seasons/seasons',
-    '/#admin/seasons/season-events',
-    '/#admin/seasons/api-tester',
+    '/#admin/season-events',
+    '/#admin/season-events/900504',
+    '/#admin/season-events/900504/new-challenge/900501',
   ]) {
     assert.ok(paths.includes(p), `a check exercises ${p}`);
   }
-  // These three resolve to the SAME level 2 / section 'seasons' target, so
-  // without _reapplySectionHash the second and third render the first's
-  // screen whenever the runner reaches them by hash switch.
-  const tails = paths.filter((p) => p.startsWith('/#admin/seasons/'));
-  assert.ok(tails.length >= 5,
-    `the seasons section is addressed by several tails (${tails.length})`);
+  // Since #1179 the programme screens are sections of their own, so most
+  // hash switches between them change the SECTION and repaint anyway. The
+  // Season-events tails above are the survivors that share one level 2 /
+  // section 'season-events' target — without _reapplySectionHash the
+  // second and third render the first's screen whenever the runner
+  // reaches them by hash switch.
+  const tails = paths.filter((p) => p.startsWith('/#admin/season-events/'));
+  assert.ok(tails.length >= 2,
+    `the season-events section is addressed by several tails (${tails.length})`);
 });
 
 // ─── (c) `?shot=` deep links are a property of the ADDRESS ───────────────

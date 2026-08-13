@@ -538,7 +538,7 @@ test('the Android rule is DEACTIVATED, not merely offered as an inactive insert'
   // production keeps BOTH ios and android active — so on a prod-cloned
   // staging DB neither fixture row lands and the admin screen's "No
   // active version rule for Android" warning cannot render (dapp.json
-  // asserts exactly that text on /#admin/seasons/app-version). The
+  // asserts exactly that text on /#admin/app-version). The
   // declared state has to be forced, whatever the clone brought.
   const start = body.indexOf('INSERT INTO app_version_configs');
   const after = body.slice(start);
@@ -549,7 +549,7 @@ test('the Android rule is DEACTIVATED, not merely offered as an inactive insert'
   // iOS is left exactly as the clone had it — one OS gated, one OS open is
   // the contrast the warning exists to draw.
   assert.ok(!/'ios'/.test(stmt), 'the iOS rule must not be touched');
-  const check = DAPP_TESTS.find((t) => t.path === '/#admin/seasons/app-version'
+  const check = DAPP_TESTS.find((t) => t.path === '/#admin/app-version'
     && /No active version rule/i.test(t.expectText || ''));
   assert.ok(check, 'the declared check this fixture exists for is still there');
 });

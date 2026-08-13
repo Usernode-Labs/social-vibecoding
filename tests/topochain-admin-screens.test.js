@@ -16,13 +16,17 @@ const html = fs.readFileSync(path.join(root, 'public/index.html'), 'utf8');
 const consoleJs = fs.readFileSync(path.join(root, 'frontend/src/features/admin/admin-console.js'), 'utf8');
 const topoJs = fs.readFileSync(path.join(root, 'frontend/src/features/admin/admin-topochain.js'), 'utf8');
 
-// Built subsections only — the four documented gaps (challenge-kinds,
+// Built screens only — the four documented gaps (challenge-kinds,
 // terms-versions, token-allocation, mobile-logs) must NOT appear as a
 // SUBS entry (no API exists for any of them; mobile-logs' one usable
 // capability, accept_logs, is folded into the Users form instead).
+// Since #1179 every SUBS key is also a first-class AdminConsole SECTIONS
+// key; the programme Users screen is the deliberate exception — it has no
+// section of its own, the console's Users section embeds renderUsers.
 const BUILT_SUBS = [
-  'seasons', 'season-events', 'users', 'onchain-accounts', 'user-activities',
-  'challenge-templates', 'settings', 'app-version', 'sql-console', 'api-tester',
+  'seasons', 'season-events', 'challenge-templates', 'waitlist',
+  'onchain-accounts', 'user-activities',
+  'settings', 'app-version', 'sql-console', 'api-tester',
 ];
 const GAP_SUBS = ['challenge-kinds', 'terms-versions', 'token-allocation', 'mobile-logs'];
 
@@ -32,19 +36,52 @@ const GAP_SUBS = ['challenge-kinds', 'terms-versions', 'token-allocation', 'mobi
 // to explain. Same line-comment strip the vocabulary test uses.
 const stripComments = (src) => src.replace(/^\s*\/\/.*$/gm, '');
 
-// ─── admin-console.js: the one SECTIONS entry + delegation ────────────────
+// ─── admin-console.js: the promoted sections + delegation ─────────────────
 
-test("AdminConsole.SECTIONS carries exactly one 'seasons' entry, under its new name", () => {
-  // #860 added a `group` field to every SECTIONS entry (the sidebar
-  // headings); the decision-#8 shape — ONE top-level entry, its own sub-nav
-  // — is unchanged. The KEY moved from 'topochain' to 'seasons' and the
-  // label to the product name users actually recognise.
-  assert.match(consoleJs, /\{ key: 'seasons', label: 'Seasons, Events & Challenges', group: '[^']+' \}/,
-    "SECTIONS has the single renamed entry the plan's decision #8 calls for");
+test('AdminConsole.SECTIONS promotes every programme screen under the #1179 groups', () => {
+  // #1179 retired the single "Seasons, Events & Challenges" entry and its
+  // horizontal sub-nav: each screen is a first-class section in the main
+  // menu now, grouped Programme / People / Platform, and each entry
+  // navigates straight to its screen.
+  assert.doesNotMatch(consoleJs, /label: 'Seasons, Events & Challenges'/,
+    'the umbrella entry is gone from the menu');
+  const EXPECT = {
+    'seasons': ['Seasons', 'Programme'],
+    'season-events': ['Season events', 'Programme'],
+    'challenge-templates': ['Challenge templates', 'Programme'],
+    'waitlist': ['Waitlist', 'People'],
+    'onchain-accounts': ['Onchain accounts', 'People'],
+    'user-activities': ['User activities', 'People'],
+    'settings': ['Settings', 'Platform'],
+    'app-version': ['App version', 'Platform'],
+    'sql-console': ['SQL console', 'Platform'],
+    'api-tester': ['API tester', 'Platform'],
+  };
+  for (const [key, [label, group]] of Object.entries(EXPECT)) {
+    assert.match(consoleJs, new RegExp(`\\{ key: '${key}', label: '${label}', group: '${group}' \\}`),
+      `SECTIONS carries '${key}' as "${label}" under ${group}`);
+  }
+  // The existing platform-accounts Users entry survives the merge — one
+  // Users menu entry, both surfaces (see the renderUsersSection test below).
+  assert.match(consoleJs, /\{ key: 'users', label: 'Users', group: 'People' \}/,
+    'the existing Users entry is kept');
   const matches = consoleJs.match(/key: 'seasons'/g) || [];
-  assert.equal(matches.length, 1, 'seasons appears exactly once in SECTIONS (one section, own sub-nav)');
+  assert.equal(matches.length, 1, "'seasons' appears exactly once in SECTIONS (the Seasons screen itself)");
   assert.doesNotMatch(consoleJs, /key: 'topochain'/,
     'the old key is gone from SECTIONS — it survives only as a legacy alias');
+});
+
+test('the console Users section embeds the programme users screen (merged, #1179)', () => {
+  const fn = consoleJs.slice(consoleJs.indexOf('  renderUsersSection(host) {'),
+    consoleJs.indexOf('  async _bulkQuota() {'));
+  assert.match(fn, /id="admin-users-programme"/,
+    'the section renders a host for the programme users card');
+  assert.match(fn, /window\.AdminTopochain\._sub = 'users'/,
+    "the module's stale-response guard is armed before the render");
+  assert.match(fn, /window\.AdminTopochain\.renderUsers\(/,
+    'and the programme users screen renders into it');
+  // The platform-accounts card is untouched — both surfaces coexist.
+  assert.match(fn, /id="admin-user-list"/, 'the platform accounts list is still there');
 });
 
 test("the retired 'topochain' key still resolves, at ONE choke point", () => {
@@ -64,16 +101,20 @@ test("the retired 'topochain' key still resolves, at ONE choke point", () => {
     'setSection() canonicalises as its first statement');
 });
 
-test('_renderSection dispatches seasons to AdminTopochain via SECTION_MODULES', () => {
+test('_renderSection dispatches every promoted screen to AdminTopochain via SECTION_MODULES', () => {
   // #860 replaced the per-section render*Section methods for delegated
   // sections with the SECTION_MODULES map, so every module-backed section
-  // (this one included) goes through one render/destroy code path. The
+  // goes through one render/destroy code path. The
   // module's own name stays AdminTopochain: renaming the global and its
   // file would churn the service-worker precache list (public/sw.js) for
   // no user-visible gain.
   assert.match(consoleJs, /SECTION_MODULES: \{/, 'the module map exists');
-  assert.match(consoleJs, /seasons: 'AdminTopochain'/,
-    "SECTION_MODULES maps 'seasons' to the AdminTopochain global");
+  const modules = consoleJs.slice(consoleJs.indexOf('SECTION_MODULES: {'),
+    consoleJs.indexOf('_teardownActiveSection() {'));
+  for (const key of BUILT_SUBS) {
+    assert.match(modules, new RegExp(`'?${key}'?: 'AdminTopochain'`),
+      `SECTION_MODULES maps '${key}' to the AdminTopochain global`);
+  }
   const fn = consoleJs.slice(consoleJs.indexOf('  _renderSection() {'));
   assert.match(fn.slice(0, 1200), /mod\.render\(host\)/,
     'the dispatcher calls render(host) on the mapped module');
@@ -128,20 +169,26 @@ test('AdminTopochain defines the core surface the brief calls for', () => {
   }
 });
 
-test('every built subsection key is present in SUBS, and no gap key is', () => {
+test('every built screen key is present in SUBS, no gap key is, and each is a real console section', () => {
   for (const key of BUILT_SUBS) {
-    assert.match(topoJs, new RegExp(`key: '${key}'`), `SUBS carries the built '${key}' subsection`);
+    assert.match(topoJs, new RegExp(`key: '${key}'`), `SUBS carries the built '${key}' screen`);
+    assert.match(consoleJs, new RegExp(`key: '${key}'`),
+      `'${key}' is a first-class AdminConsole SECTIONS key (#1179)`);
   }
   for (const key of GAP_SUBS) {
     assert.ok(!new RegExp(`key: '${key}'`).test(topoJs),
       `'${key}' has no API — must not appear as a SUBS entry (documented gap, not dead UI)`);
   }
+  // The programme Users screen is deliberately NOT a SUBS key: it is
+  // merged into the console's Users section instead (#1179).
+  const subsSrc = topoJs.slice(topoJs.indexOf('  SUBS: ['), topoJs.indexOf('  // ── Shared helpers'));
+  assert.ok(!/key: 'users'/.test(subsSrc), "SUBS carries no 'users' screen — it merged into the console's Users section");
 });
 
-test('every built subsection has a render function reachable from _renderSub', () => {
+test('every built screen has a render function reachable from _renderSub', () => {
   const fn = topoJs.slice(topoJs.indexOf('  _renderSub() {'), topoJs.indexOf('  // ══'.repeat(1), topoJs.indexOf('  _renderSub() {')));
   const renderFns = [
-    'renderSeasonEvents', 'renderUsers', 'renderOnchainAccounts', 'renderUserActivities',
+    'renderSeasonEvents', 'renderWaitlist', 'renderOnchainAccounts', 'renderUserActivities',
     'renderChallengeTemplates', 'renderSettings', 'renderAppVersion', 'renderSqlConsole',
     'renderApiTester', 'renderSeasons',
   ];
@@ -150,6 +197,9 @@ test('every built subsection has a render function reachable from _renderSub', (
     assert.match(topoJs, new RegExp(`\\b${name}\\(host\\) \\{|async ${name}\\(host\\) \\{`),
       `${name}(host) is defined`);
   }
+  // renderUsers is rendered by the console's Users section, not _renderSub.
+  assert.ok(!fn.includes('renderUsers('), '_renderSub no longer dispatches renderUsers');
+  assert.match(topoJs, /\brenderUsers\(host\) \{/, 'renderUsers(host) is still defined for the merged section');
 });
 
 test('the three documented API gaps are explained in the file header, not silently dropped', () => {
@@ -204,49 +254,50 @@ test('the season events screen links to seasons by name and can filter by one', 
     'the event form picks a season from a dropdown instead of asking for a numeric id');
 });
 
-// ─── Sub-nav hash handling ──────────────────────────────────────────────
+// ─── Hash handling: canonical single-level + permanent legacy aliases ─────
 
-test('AdminTopochain owns its own second hash level (#admin/seasons/<sub>)', () => {
-  const subFromHash = topoJs.slice(topoJs.indexOf('  _subFromHash() {'), topoJs.indexOf('  setSub(sub) {'));
-  // Reads BOTH prefixes: a deep link minted before the rename
-  // (#admin/topochain/users) has to keep landing on its sub-tab, not just
-  // on the section's default screen.
+test('AdminTopochain writes the canonical single-level address and heals legacy ones', () => {
+  const subFromHash = topoJs.slice(topoJs.indexOf('  _subFromHash() {'), topoJs.indexOf('  _readSeasonEventsDeepLink(sub) {'));
+  // Reads BOTH retired prefixes: a deep link minted before #1179
+  // (#admin/seasons/sql-console) or before the rename before it
+  // (#admin/topochain/sql-console) has to keep landing on its screen even
+  // when it reaches this module without app.js's rewrite.
   assert.ok(subFromHash.includes('#admin\\/(?:seasons|topochain)\\/([^/]+)'),
-    '_subFromHash parses the sub-key off either the canonical or the legacy prefix');
+    '_subFromHash parses the screen key off either legacy prefix');
 
   const syncHash = topoJs.slice(topoJs.indexOf('  _syncHash() {'), topoJs.indexOf('  _renderShell() {'));
-  assert.match(syncHash, /#admin\/seasons\/\$\{AdminTopochain\._sub\}/,
-    'builds the CANONICAL two-level hash target — the legacy address self-heals on first render');
-  assert.match(syncHash, /startsWith\('#admin\/seasons'\)/,
-    'only writes back while actually on this admin section');
-  assert.match(syncHash, /startsWith\('#admin\/topochain'\)/,
-    '...including when the address is still the legacy one, which is exactly when the rewrite is needed');
-  assert.match(syncHash, /history\.replaceState/, 'replaceState — sub-nav hops never pollute the back stack');
+  assert.match(syncHash, /#admin\/\$\{AdminTopochain\._sub\}/,
+    'builds the CANONICAL single-level hash target (#admin/<screen>) — a legacy address self-heals on first render');
+  assert.ok(syncHash.includes('/^#admin\\/(?:seasons|topochain)\\//'),
+    'the legacy two-level prefixes are recognised as this module\'s own address, which is exactly when the rewrite is needed');
+  assert.match(syncHash, /history\.replaceState/, 'replaceState — address healing never pollutes the back stack');
   assert.ok(!/history\.pushState/.test(topoJs), 'the module never pushes history entries itself');
 });
 
-test('app.js rewrites a legacy #admin/topochain address, sub-tab and all', () => {
+test('app.js promotes a legacy two-level address to its section, tail and all', () => {
   const appJs = fs.readFileSync(path.join(root, 'public/js/app.js'), 'utf8');
   const branch = appJs.slice(appJs.indexOf("parts[0] === 'admin'"),
-    appJs.indexOf("parts[0] === 'admin'") + 1400);
-  assert.match(branch, /_adminSection === 'topochain'/, 'the legacy section key is recognised');
-  assert.match(branch, /_adminSection = 'seasons';/, 'and mapped to the canonical one');
-  // Everything from parts[2] on is owned by AdminTopochain — the sub-tab
-  // AND the Season-events tail under it
-  // (season-events/<eventId>/new-challenge/<templateId>). Keeping only
-  // parts[2] would demote a deep bookmark to the tab's default screen;
-  // dropping it entirely would demote it to the section's.
-  assert.match(branch, /const tail = parts\.slice\(2\)\.join\('\/'\);/,
-    'the whole tail below the section segment is carried over');
-  assert.match(branch, /tail \? `#admin\/seasons\/\$\{tail\}` : `?'?#admin\/seasons/,
-    'and spliced back under the canonical prefix');
+    appJs.indexOf("parts[0] === 'admin'") + 2200);
+  assert.match(branch, /_adminSection === 'topochain' \|\| _adminSection === 'seasons'/,
+    'both legacy section keys are recognised');
+  // Everything below the screen segment is owned by AdminTopochain — the
+  // Season-events tail (season-events/<eventId>/new-challenge/<templateId>).
+  // Dropping it would demote a deep bookmark to the screen's default view.
+  assert.match(branch, /const rest = parts\.slice\(2\);/,
+    'the whole tail below the legacy section segment is read');
+  assert.match(branch, /if \(rest\[0\] === 'seasons'\) rest\.shift\(\);/,
+    "the old sub-nav's own seasons tab collapses onto the Seasons section");
+  assert.match(branch, /`#admin\/\$\{_adminSection\}\/\$\{tail\}`/,
+    'the tail is spliced back under the promoted section segment');
   assert.match(branch, /history\.replaceState/, 'the address bar self-heals rather than keeping a dead path');
 });
 
-test('render() reads the deep-linked sub-key from the hash rather than a passed argument', () => {
-  const fn = topoJs.slice(topoJs.indexOf('  render(host) {'), topoJs.indexOf('  _subFromHash() {'));
+test('render() takes the screen from the active console section, with a legacy-hash fallback', () => {
+  const fn = topoJs.slice(topoJs.indexOf('  render(host) {'), topoJs.indexOf('  destroy() {'));
+  assert.match(fn, /AdminConsole\._section/,
+    'the section key IS the screen key — the console already routed');
   assert.match(fn, /AdminTopochain\._subFromHash\(\) \|\| AdminTopochain\._sub \|\| 'seasons'/,
-    'falls back through the hash, then the last-visited sub, then seasons');
+    'falls back through the legacy hash, then the last-visited screen, then seasons');
 });
 
 // ─── Security: esc()/safeHref() discipline ─────────────────────────────────
@@ -371,7 +422,7 @@ test("no user-facing 'Phase' or 'Participant' label — Event/User/Challenge tem
 
 test('the vocabulary is actually used: Event / User / Challenge template / Kind', () => {
   assert.match(topoJs, /label: 'Season events'/);
-  assert.match(topoJs, /label: 'Users'/);
+  assert.match(topoJs, /title: 'Programme users'/);
   assert.match(topoJs, /label: 'Challenge templates'/);
   assert.match(topoJs, /'Kind'/);
 });
@@ -407,44 +458,30 @@ test('challenges are managed nested under a season-event detail view, not a top-
   }
 });
 
-// ─── Grouped sub-nav: four clusters on desktop, two levels on mobile ──────
+// ─── No second-level nav: the console's own menu names every screen ───────
 
-test('SUB_GROUPS partitions SUBS exactly — every screen in one and only one group', () => {
-  // SUBS stays the key→label source of truth; SUB_GROUPS only says which
-  // cluster a key belongs to. If the two ever drift, a screen either
-  // vanishes from the nav entirely or appears twice, and neither failure
-  // is visible anywhere except by opening the section.
-  const groupsSrc = topoJs.slice(topoJs.indexOf('  SUB_GROUPS: ['), topoJs.indexOf('  SUB_GROUPS: [') + 900);
-  const grouped = [...groupsSrc.matchAll(/subs: \[([^\]]+)\]/g)]
-    .flatMap((m) => [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]));
-  const subsSrc = topoJs.slice(topoJs.indexOf('  SUBS: ['), topoJs.indexOf('  SUB_GROUPS: ['));
-  const subKeys = [...subsSrc.matchAll(/key: '([^']+)'/g)].map((m) => m[1]);
+test('the horizontal sub-nav is gone — the shell hosts only the screen content (#1179)', () => {
+  // The old SUB_GROUPS cluster strip (md+) and two-level mobile list are
+  // retired: the console's main menu carries every screen directly, so a
+  // second navigation layer inside the section would be dead weight.
+  assert.ok(!topoJs.includes('SUB_GROUPS'), 'the SUB_GROUPS cluster definition is gone');
+  assert.ok(!topoJs.includes('_desktopNavHtml'), 'no desktop cluster strip');
+  assert.ok(!topoJs.includes('_mobileNavHtml'), 'no two-level mobile nav');
+  assert.ok(!topoJs.includes('data-topo-sub'), 'no sub-tab buttons rendered at all');
+  assert.ok(!topoJs.includes('admin-topo-nav-back'), 'no nav back control either');
 
-  assert.ok(subKeys.length >= 10, 'SUBS still lists every screen');
-  assert.equal(new Set(grouped).size, grouped.length, 'no key appears in two groups');
-  assert.deepEqual(grouped.slice().sort(), subKeys.slice().sort(),
-    'SUB_GROUPS and SUBS must be a bijection');
+  const shell = topoJs.slice(topoJs.indexOf('  _renderShell() {'), topoJs.indexOf('  _renderSub() {'));
+  assert.match(shell, /admin-topo-content/,
+    'the content host node survives (every screen renderer looks it up by id)');
+  assert.ok(!/matchMedia/.test(stripComments(topoJs)), 'still no breakpoint state to sync');
 
-  const labels = [...groupsSrc.matchAll(/label: '([^']+)'/g)].map((m) => m[1]);
-  assert.deepEqual(labels, ['Programme', 'People', 'Activity', 'Platform'],
-    'the four cluster headings the redesign specifies');
-});
-
-test('the sub-nav renders a desktop cluster strip and a two-level mobile list', () => {
-  const desktop = topoJs.slice(topoJs.indexOf('  _desktopNavHtml() {'), topoJs.indexOf('  _mobileNavHtml() {'));
-  assert.match(desktop, /hidden md:flex/, 'the cluster strip is md+ only');
-  assert.match(desktop, /aria-current="page"/, 'the active screen is announced, not just coloured');
-  assert.match(desktop, /SUB_GROUPS\.map/, 'it renders from the group definition, not a flat list');
-
-  const mobile = topoJs.slice(topoJs.indexOf('  _mobileNavHtml() {'), topoJs.indexOf('  _renderShell() {'));
-  assert.match(mobile, /md:hidden/, 'the two-level list is below-md only');
-  assert.match(mobile, /_navLevel/, 'level 1 (groups) and level 2 (one group\'s screens)');
-  assert.match(mobile, /admin-topo-nav-back/, 'level 2 offers a way back to the group list');
-  assert.match(mobile, /min-h-\[44px\]/, 'drill-in rows meet the touch-target floor');
-  // No matchMedia anywhere: the level only affects the md:hidden block, and
-  // the content host is hidden md:block at level 1, so the desktop layout
-  // is unaffected by mobile nav state and there is no breakpoint to sync.
-  assert.ok(!/matchMedia/.test(stripComments(topoJs)), 'the responsive split is CSS-only');
+  // Cross-screen jumps (a season's "View events") go through the console
+  // so the sidebar's active row follows the navigation.
+  assert.match(topoJs, /_gotoSub\(sub\) \{/, 'the cross-screen jump helper exists');
+  assert.match(topoJs, /AdminConsole\.setSection\(sub\)/,
+    'and it routes through AdminConsole.setSection');
+  assert.ok((topoJs.match(/_gotoSub\('season-events'\)/g) || []).length >= 2,
+    'the seasons screen\'s event links use it');
 });
 
 // ─── No window.prompt(): both flows are inline panels now ─────────────────

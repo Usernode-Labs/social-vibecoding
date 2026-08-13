@@ -2108,23 +2108,34 @@ const App = {
         // App.user.isAdmin lives inside navigateToAdminConsole.
         App.setChromeless(false);
         let _adminSection = parts[1] || null;
-        // Permanent alias for the renamed Topochain section. Everything
-        // after the section segment is owned by AdminTopochain and has to
-        // survive the rewrite VERBATIM — not just the sub-tab, but the
-        // Season-events tail below it
-        // (season-events/<eventId>/new-challenge/<templateId>) — otherwise
-        // a deep bookmark silently lands on the section's default tab or,
-        // worse, on the right tab with the wrong event. Same idiom as the
-        // #topochain branch below: rewrite the address BEFORE navigating so
-        // the module's own _syncHash sees the canonical prefix, and the
-        // bookmark self-heals.
-        if (_adminSection === 'topochain') {
-          _adminSection = 'seasons';
-          const tail = parts.slice(2).join('/');
-          try {
-            history.replaceState(null, '',
-              tail ? `#admin/seasons/${tail}` : '#admin/seasons');
-          } catch (err) { /* non-fatal: navigation below still works */ }
+        // Permanent aliases for the retired "Seasons, Events & Challenges"
+        // umbrella section (#1179): its screens are first-class sections
+        // now, so both legacy two-level address families —
+        // #admin/seasons/<screen> and the even older
+        // #admin/topochain/<screen> — promote the screen segment to the
+        // section segment. Everything BELOW the screen segment is owned by
+        // AdminTopochain and has to survive the rewrite VERBATIM — the
+        // Season-events tail (season-events/<eventId>/new-challenge/
+        // <templateId>) — otherwise a deep bookmark silently lands on the
+        // section's default screen or, worse, on the right screen with the
+        // wrong event. The old sub-nav's own "seasons" tab collapses onto
+        // the Seasons section, and a bare #admin/topochain maps there too.
+        // Same idiom as the #topochain branch below: rewrite the address
+        // BEFORE navigating so the module's own _syncHash sees the
+        // canonical prefix, and the bookmark self-heals.
+        if (_adminSection === 'topochain' || _adminSection === 'seasons') {
+          const rest = parts.slice(2);
+          if (rest[0] === 'seasons') rest.shift();
+          _adminSection = rest.length ? rest[0] : 'seasons';
+          const tail = rest.slice(1).join('/');
+          const target = tail
+            ? `#admin/${_adminSection}/${tail}`
+            : `#admin/${_adminSection}`;
+          if (location.hash !== target) {
+            try {
+              history.replaceState(null, '', target);
+            } catch (err) { /* non-fatal: navigation below still works */ }
+          }
         }
         App.navigateToAdminConsole(_adminSection);
         return;

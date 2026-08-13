@@ -511,7 +511,9 @@ test('the Add-challenge form and its template are an address', async () => {
   const picker = ctx.byId('admin-topo-ch-f-template');
   picker.value = '900501';
   picker.fire('change');
-  assert.equal(ctx.location.hash, '#admin/seasons/season-events/900504/new-challenge/900501',
+  // The write is always the CANONICAL single-level address (#1179) — the
+  // legacy #admin/seasons/... starting hash self-heals on the same write.
+  assert.equal(ctx.location.hash, '#admin/season-events/900504/new-challenge/900501',
     'the picked template is in the hash, so the filled form can be linked and screenshotted');
 });
 
@@ -573,8 +575,10 @@ test('the address, not the last visit, decides which template a deep link fills'
     'reading the address adopts its template, so a stale one cannot be written back');
 
   // The event-detail render syncs the address BEFORE the form exists.
+  // The legacy prefix self-heals to the canonical single-level address
+  // (#1179), but the deep link's segments come through intact.
   ctx.Topo._syncHash();
-  assert.equal(ctx.location.hash, '#admin/seasons/season-events/900504/new-challenge/900501',
+  assert.equal(ctx.location.hash, '#admin/season-events/900504/new-challenge/900501',
     'that early sync leaves the deep link intact');
 
   // Render #2 re-reads it and must reach the same conclusion.
@@ -583,7 +587,7 @@ test('the address, not the last visit, decides which template a deep link fills'
   await ctx.Topo._openChallengeForm(null, { templateId: ctx.Topo._ch.pendingTemplateId });
   assert.equal(fieldVal(ctx, 'goal'), 'Send your first testnet transaction',
     'and the form is filled from the template the address names');
-  assert.equal(ctx.location.hash, '#admin/seasons/season-events/900504/new-challenge/900501');
+  assert.equal(ctx.location.hash, '#admin/season-events/900504/new-challenge/900501');
 });
 
 // Also found in the browser, as a console error (which fails the proposal
@@ -615,6 +619,6 @@ test('a view-only admin cannot open the form, and the segment does not stick', a
   await ctx.Topo._openChallengeForm(null, { templateId: '900501' });
   assert.equal(ctx.byId('admin-topo-ch-f-template'), null, 'nothing is rendered');
   assert.equal(ctx.Topo._ch.open, false, 'and the /new-challenge segment is dropped');
-  assert.equal(ctx.location.hash, '#admin/seasons/season-events/900504',
+  assert.equal(ctx.location.hash, '#admin/season-events/900504',
     'including from the address, which would otherwise promise a form that is not there');
 });

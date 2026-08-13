@@ -48,8 +48,10 @@ test('the hash router handles #admin[/section]', () => {
   assert.match(appJs, /parts\[0\] === 'admin'/,
     'restoreFromHash has an admin branch');
   // The segment goes through `_adminSection` rather than straight into the
-  // call because the branch also rewrites the legacy #admin/topochain
-  // address to #admin/seasons (sub-tab and all) before navigating.
+  // call because the branch also rewrites the legacy two-level
+  // #admin/seasons/<screen> and #admin/topochain/<screen> addresses to the
+  // promoted #admin/<screen> sections (#1179, tails and all) before
+  // navigating.
   assert.match(appJs, /let _adminSection = parts\[1\] \|\| null;/,
     'the optional section segment deep-links a menu section');
   assert.match(appJs, /App\.navigateToAdminConsole\(_adminSection\)/,
@@ -146,9 +148,11 @@ test('the console is not gated on the environment', () => {
 test('the menu carries every section, grouped, with no external tools left', () => {
   const KEYS = [
     'overview', 'status', 'node', 'push', 'merges', 'rollover', 'staging-reap',
-    'users', 'codes', 'limits',
+    'seasons', 'season-events', 'challenge-templates',
+    'users', 'codes', 'limits', 'waitlist', 'onchain-accounts', 'user-activities',
     'analytics', 'estimator', 'gallery', 'features',
-    'campaigns', 'db-export', 'mail', 'seasons',
+    'campaigns', 'db-export', 'mail',
+    'settings', 'app-version', 'sql-console', 'api-tester',
   ];
   for (const key of KEYS) {
     assert.ok(new RegExp(`key: '${key}'`).test(consoleJs), `section '${key}' registered`);

@@ -142,10 +142,16 @@ const producedIds = new Set([
 ]);
 const producedAttrs = new Set([...topo.matchAll(/\b(data-[\w-]+)=/g)].map((m) => m[1]));
 
-test('every id and data-* a declared #admin/seasons check selects on is produced', () => {
-  const declared = (manifest.tests || []).filter((t) => /#admin\/(seasons|topochain)/.test(t.path || ''));
+test('every id and data-* a declared programme-screen check selects on is produced', () => {
+  // The screens are first-class sections since #1179, so the declared
+  // checks address them at #admin/<screen> (legacy #admin/seasons/... and
+  // #admin/topochain/... aliases included).
+  const declared = (manifest.tests || []).filter((t) => new RegExp(
+    '#admin/(seasons|topochain|season-events|challenge-templates|waitlist|'
+    + 'onchain-accounts|user-activities|settings|app-version|sql-console|api-tester)'
+  ).test(t.path || ''));
   assert.ok(declared.length >= 10,
-    `expected the Seasons screens' declared checks to still be there, saw ${declared.length}`);
+    `expected the programme screens' declared checks to still be there, saw ${declared.length}`);
 
   let checked = 0;
   for (const t of declared) {

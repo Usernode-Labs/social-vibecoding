@@ -103,11 +103,12 @@
  * deferred, so retiring admin-console.js alone would have left this file reading
  * a global that no longer existed by the time it ran.
  *
- * Seasons, Events & Challenges is otherwise the easiest section to host: it owns
- * its own SECOND hash level (#admin/seasons/<sub>, plus two more segments under
- * season-events), which it reads from location.hash in render() and writes back
- * with replaceState — AdminConsole._writeHash deliberately leaves an address
- * that deep already alone. It holds no timers at all, so its destroy() only
+ * admin-topochain.js is otherwise easy to host: since #1179 each of its screens
+ * is a first-class console section (Season events still owns tail segments —
+ * #admin/season-events/<eventId>[/new-challenge[/<templateId>]] — which it
+ * reads from location.hash in render() and writes back with replaceState;
+ * AdminConsole._writeHash deliberately leaves an address that deep alone). It
+ * holds no timers at all, so its destroy() only
  * releases the host reference. Its SQL-schema explorer
  * (#admin-topo-sql-schema{,-filter,-count}) fetches the ~90-table schema once
  * and filters it in the browser. See tests/admin-seasons-island.test.js.
