@@ -747,6 +747,7 @@ test('#1130: no credential-SHAPED column name in schema.sql is readable without 
     'mobile_push_deliveries.last_error_code', // an FCM error code string
     'cli_auth_rate_limits.bucket_key',     // a hash of a rate-limit bucket, not a credential
     'cli_auth_rate_limits.tokens',         // leaky-bucket token COUNT
+    'mcp_connector_hints.last_token_id',   // an mcp_tokens.id row id — the setup-hint throttle key, no token material
     'cli_access_tokens.scopes',
     'chat_sessions.handoff_request_fingerprint', // a non-reversible request digest
 

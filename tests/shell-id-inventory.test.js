@@ -75,6 +75,15 @@ const ADDED_IDS = {
   // two is visible; both are flex-1 + min-height:0 children of #app-view's
   // column flex, so the visible one gets the box #app-content used to have.
   'app-frame-host': "React-owned host for the embedded app's #app-iframe, a hidden empty sibling of #app-content (#1085).",
+  // #1218 follow-up — the "Stop the permission prompts" block in
+  // Settings → Connectors. Static markup with a copy button, the same shape
+  // as #connector-url / #connector-url-copy directly above it. It exists
+  // because the scaffolded .claude/settings.json fixes one repo at a time and
+  // the user's personal ~/.claude/settings.json is the only thing that fixes
+  // every repo at once — so the block has to be somewhere they can copy it.
+  'connector-prompt-help': 'Settings → Connectors block explaining how to stop the per-call connector permission prompts (#1218).',
+  'connector-allow-rules': 'The three read-only allow rules, rendered for copying into a personal ~/.claude/settings.json (#1218).',
+  'connector-allow-rules-copy': 'Copy button for that block (#1218).',
 };
 
 test('the shell still carries every id in the frozen baseline', () => {

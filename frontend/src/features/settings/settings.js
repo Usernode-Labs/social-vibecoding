@@ -208,6 +208,27 @@
         });
       }
 
+      // Copy the read-only allow rules for the user's PERSONAL
+      // ~/.claude/settings.json. Same shape as the URL copy above, reading
+      // textContent because the block is a <pre>, not an input — and no
+      // select() fallback for the same reason, so a denied clipboard just
+      // leaves the visible text to be copied by hand.
+      const rulesCopy = document.getElementById('connector-allow-rules-copy');
+      if (rulesCopy) {
+        rulesCopy.addEventListener('click', async () => {
+          const block = document.getElementById('connector-allow-rules');
+          if (!block) return;
+          let ok = true;
+          try {
+            await navigator.clipboard.writeText(block.textContent);
+          } catch {
+            ok = false;
+          }
+          rulesCopy.textContent = ok ? 'Copied' : 'Copy failed';
+          setTimeout(() => { rulesCopy.textContent = 'Copy'; }, 1500);
+        });
+      }
+
       // Change password (issue #282) → POST /api/me/password.
       const cpSave = document.getElementById('cp-save');
       if (cpSave) cpSave.addEventListener('click', () => this.changePassword());

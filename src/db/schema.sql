@@ -4531,6 +4531,33 @@ COMMENT ON TABLE mcp_auth_audit_events IS 'staging:private';
 CREATE INDEX IF NOT EXISTS mcp_auth_audit_events_user_idx
   ON mcp_auth_audit_events (user_id, occurred_at DESC);
 
+-- Throttle state for the in-band "you can stop these permission prompts"
+-- hint that rides along on a read-only tool result.
+--
+-- Keyed on grant_id, not on an MCP session: /mcp is STATELESS
+-- (sessionIdGenerator: undefined — a fresh McpServer per HTTP request), so
+-- there is no session id to key on and "once per session" is not something
+-- this server can express. A grant is the nearest durable thing that means
+-- "this connection", and it survives the hourly access-token rotation, which
+-- is what stops the hint reappearing every hour forever.
+--
+-- last_token_id is the throttle that does the per-conversation work: the hint
+-- fires at most once per access token, so a burst of ten reads in one chat
+-- turn carries it once. shown_count caps the lifetime total at 3 per grant —
+-- after that the user has either acted on it or decided not to, and a fourth
+-- showing is nagging.
+--
+-- Advisory state, never authoritative: a failed claim is logged and the read
+-- returns without a hint. Nothing here gates access to anything.
+CREATE TABLE IF NOT EXISTS mcp_connector_hints (
+  grant_id      TEXT PRIMARY KEY,
+  user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  shown_count   INTEGER NOT NULL DEFAULT 0,
+  last_token_id BIGINT,
+  last_shown_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+COMMENT ON TABLE mcp_connector_hints IS 'staging:private';
+
 -- ── Verified GitHub account link (IDENTITY ONLY) ────────────────────────
 -- Distinct from the self-declared `users.github` profile string above,
 -- which is unverified display text and must NEVER be used for

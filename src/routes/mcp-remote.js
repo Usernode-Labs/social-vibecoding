@@ -572,6 +572,13 @@ function mcpPreAuthRoutes(config) {
         user: auth.user,
         clientName: auth.clientName,
         clientId: auth.clientId,
+        // Both only for the setup-hint throttle in registerTools. This
+        // transport is stateless — sessionIdGenerator is undefined, a fresh
+        // McpServer per request — so there is no session identity to throttle
+        // on; the token (rotates hourly) and the grant (survives it) are the
+        // two durable stand-ins for "this conversation" and "this connection".
+        tokenId: auth.tokenId,
+        grantId: auth.grantId,
         origin: config.cliAuthOrigin,
         baseUrl: platformBaseUrl(config),
         pool,
