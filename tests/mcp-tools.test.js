@@ -722,6 +722,58 @@ test('read-only tools are named get_/list_ (or the one grandfathered whoami)', (
   }
 });
 
+// ── #1219: whoami carries the naming contract's other half ─────────────
+//
+// The in-chat tip reaches a user at most three times a week and only when a
+// read runs. `whoami` is the fallback that needs no throttle at all: the
+// model is the only party that can see BOTH the canonical connector name and
+// the name of the tool it just called, so handing it the canonical spelling
+// and the exact rules lets it notice a mismatch on its own. Deliberately a
+// field on an existing tool rather than a new tool — a new one would widen
+// the surface the allow rules have to keep covering.
+
+test('whoami hands the model the canonical name and the exact shipped rules', () => {
+  const { SERVER_NAME, READ_ONLY_ALLOW_RULES } = require('../src/services/mcp-connect-constants');
+  const idx = SRC.indexOf("server.registerTool('whoami'");
+  const body = SRC.slice(idx, SRC.indexOf('server.registerTool(', idx + 10));
+
+  // Both fields declared AND returned: a schema entry with no value would
+  // fail structured-output validation, and a value with no schema entry
+  // would be dropped before the model ever saw it.
+  assert.match(body, /connectorName: z\.string\(\)/);
+  assert.match(body, /permissionAllowRules: z\.array\(z\.string\(\)\)/);
+  assert.match(body, /connectorName: SERVER_NAME/,
+    'the canonical name comes from the constant, never a re-typed literal');
+  assert.match(body, /permissionAllowRules: \[\.\.\.READ_ONLY_ALLOW_RULES\]/,
+    'the rules come from the constant, and are copied so a caller cannot mutate the frozen array');
+  assert.equal(SERVER_NAME, 'usernode');
+  assert.deepEqual([...READ_ONLY_ALLOW_RULES], [
+    'mcp__usernode__get_*',
+    'mcp__usernode__list_*',
+    'mcp__usernode__whoami',
+  ]);
+
+  // The description has to say what the model should DO with them, or the
+  // fields are two unused strings. It must not widen the rules either.
+  const description = body.slice(body.indexOf('description:'), body.indexOf('inputSchema:'));
+  assert.match(description, /canonical name/);
+  assert.match(description, /the name of the tool you just called/);
+  assert.doesNotMatch(body, /mcp__usernode__\*/,
+    'nothing here suggests the whole-server rule the acting tools are not safe under');
+
+  // Adding fields must not have changed what whoami IS. Still a read, so it
+  // still carries the tip, and still returns nothing credential-shaped.
+  assert.match(body, /annotations: readAnnotations/);
+  assert.match(body, /return readResult\('whoami',/, 'whoami stays hint-eligible');
+  assert.ok(tools.isHintEligibleTool('whoami'));
+  assert.ok(!tools.ACTING_TOOLS.includes('whoami'));
+  // And still returns nothing credential-shaped — checked against the
+  // returned object, which is the thing that reaches the model.
+  const returnedAt = body.indexOf("return readResult('whoami'");
+  const returned = body.slice(returnedAt, body.indexOf('});', returnedAt));
+  assert.doesNotMatch(returned, /token|secret|password/i);
+});
+
 test('every write tool checks its scope before it does anything', () => {
   const writeTools = [
     'create_request', 'prepare_work', 'submit_work',
