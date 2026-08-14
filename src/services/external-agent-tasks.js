@@ -1095,10 +1095,14 @@ function hostedAssetWarning(webPath) {
     'Your container may not be able to reach that host. When it cannot, the app',
     'renders unstyled in a local browser and any native-kit assertion fails. That',
     'is your SANDBOX, not the change — do not "fix" it.',
-    'Vendoring those files into the repository, or swapping in a public CDN, is',
-    'forbidden by the platform and is rejected by two of the app\'s own automated',
-    'checks. The staging preview Usernode builds — not a local screenshot — is the',
-    'authority on how this change looks.',
+    'Vendoring those files into the repository is forbidden: the copy freezes the',
+    'day you make it, and the fleet-wide fixes and rollbacks central hosting buys',
+    'stop reaching this app. No automated check catches that. A cdn.tailwindcss.com',
+    'tag is a different thing — a legacy state many apps are still in, whose checks',
+    'pass: do not add one, do not "fix" one as a drive-by, and when migrating IS the',
+    'task swap it to the Tailwind URL above (including any copy of that hostname in',
+    'the app\'s sw.js precache list). The staging preview Usernode builds — not a',
+    'local screenshot — is the authority on how this change looks.',
   ];
   if (origin) {
     lines.push(

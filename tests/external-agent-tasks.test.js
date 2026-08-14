@@ -2268,7 +2268,12 @@ test('the PLATFORM RULES appendix comes LAST, after everything load-bearing', as
   // And the hosted-asset warning sits immediately above it.
   for (const url of svc.HOSTED_ASSETS) assert.ok(order.includes(url), url);
   assert.match(order, /That\s+is your SANDBOX, not the change/i);
-  assert.match(order, /rejected by two of the app's own automated/);
+  assert.match(order, /Vendoring those files into the repository is forbidden/);
+  // The rule holds by consequence, not by an enforcement claim: nothing the
+  // platform runs inspects an app's source, so the preamble no longer says
+  // two checks reject this (#1215).
+  assert.doesNotMatch(order, /rejected by/i);
+  assert.match(order, /No automated check catches that/);
   assert.match(order, /staging preview Usernode builds/);
   assert.match(order, /https:\/\/usernode\.example\/claude\.md/);
 
