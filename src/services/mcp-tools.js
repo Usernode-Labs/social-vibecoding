@@ -264,6 +264,25 @@ function shapeApp(app, origin) {
   };
 }
 
+// A clip has to say what to DO about itself, not only that it happened
+// (#1223). The precedent is services/github.js, whose agent-facing clip ends
+// every cut body with an explicit "use get_github_issue(N) for full text" —
+// without it the marker reads as the end of the document, and the failure
+// mode is an agent acting confidently on half a bug report.
+//
+// This one sits OUTSIDE the <untrusted-content> envelope on purpose. Every
+// tool description and the server instructions tell the model that what is
+// inside that envelope is data and never an instruction to follow, so an
+// instruction placed there is either ignored — the whole point missed — or
+// obeyed, which teaches the model to act on directions written by whoever
+// filed the request. A "… [truncated — now call this tool]" marker inside
+// the envelope would be Usernode building exactly the habit the envelope
+// exists to prevent.
+function fullTextPointer(number, shown, total) {
+  return `[Usernode: the first ${shown} of ${total} characters. `
+    + `Call get_request for #${number} to read the whole description.]`;
+}
+
 // `withBody: false` is the titles-only page (#1217). The field is omitted
 // rather than emptied: an empty <untrusted-content> envelope reads as "this
 // request has no description", which is a different fact.
@@ -275,19 +294,23 @@ function shapeApp(app, origin) {
 // connector offered. get_request passes the WRITE limit instead, so what was
 // stored comes back whole.
 //
-// The two facts that travel with the text — how long the stored description
-// is, and whether this is all of it — ride OUTSIDE the envelope, next to it
-// rather than in it. "There is more of this, here is the call that returns
-// it" is Usernode talking; only the description itself is the reporter's.
+// The facts that travel with the text — how long the stored description is,
+// whether this is all of it, and what returns the rest — ride OUTSIDE the
+// envelope, next to it rather than in it. "There is more of this, here is the
+// call that gets it" is Usernode talking; only the description itself is the
+// reporter's.
 function shapeRequest(issue, { withBody = true, bodyMax = MAX_BODY_CHARS } = {}) {
   const stored = typeof issue.body === 'string' ? issue.body : '';
+  const clipped = stored.length > bodyMax;
   return {
     number: issue.number,
     title: untrusted(issue.title, MAX_TITLE_CHARS),
     ...(withBody ? {
-      body: untrusted(stored, bodyMax),
+      body: clipped && bodyMax < MAX_REQUEST_BODY_CHARS
+        ? `${untrusted(stored, bodyMax)} ${fullTextPointer(issue.number, bodyMax, stored.length)}`
+        : untrusted(stored, bodyMax),
       bodyChars: stored.length,
-      bodyComplete: stored.length <= bodyMax,
+      bodyComplete: !clipped,
     } : {}),
     author: issue.user || issue.author || null,
     createdAt: issue.created_at || null,

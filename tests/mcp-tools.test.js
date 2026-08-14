@@ -215,8 +215,8 @@ test('a request page carries titles by default, so a whole board fits in one cal
   assert.equal(full.requests.length, 50);
   assert.equal(full.nextOffset, 50, 'and the rest is reachable rather than lost');
   assert.match(full.requests[0].body, /^<untrusted-content>/);
-  assert.match(full.requests[0].body, /\[truncated\]<\/untrusted-content>$/,
-    'a body is still capped for display');
+  assert.match(full.requests[0].body, /\[truncated\]<\/untrusted-content> \[Usernode:/,
+    'a body is still capped for display, and now says what returns the rest (#1223)');
 });
 
 test('paging walks the whole list exactly once', () => {
@@ -408,11 +408,23 @@ test('a clipped body says how much there is, and a full read returns it', () => 
   assert.ok(long.length < tools.MAX_REQUEST_BODY_CHARS);
 
   // The board scan: still clipped — a page of these is what would flood the
-  // model's context — but no longer silently.
+  // model's context — but no longer silently, and no longer without a next
+  // move. A marker that says text was cut and not how to get it reads as the
+  // end of the document.
   const scanned = tools.shapeRequest({ number: 1221, title: 'A long report', body: long });
-  assert.match(scanned.body, /\[truncated\]<\/untrusted-content>$/);
-  assert.equal(scanned.bodyChars, long.length, 'how long the stored one is');
+  assert.match(scanned.body, /\[truncated\]<\/untrusted-content> \[Usernode: /);
+  assert.match(scanned.body, /the first 2000 of \d+ characters/, 'how much of it you got');
+  assert.match(scanned.body, /Call get_request for #1221/, 'and what returns the rest');
+  assert.equal(scanned.bodyChars, long.length, 'the same two numbers, machine-readable');
   assert.equal(scanned.bodyComplete, false, 'and that this is not all of it');
+
+  // The pointer is Usernode's, so it sits OUTSIDE the envelope: everything
+  // inside is declared to the model as data it must never act on, and an
+  // instruction placed there would teach it the opposite habit — on a field
+  // whose contents are written by other users.
+  assert.ok(scanned.body.indexOf('</untrusted-content>') < scanned.body.indexOf('[Usernode:'));
+  assert.equal(scanned.body.slice(scanned.body.indexOf('[Usernode:')).includes('<untrusted-content>'),
+    false, 'and nothing reopens the envelope after it');
 
   // The same request, read whole: the WRITE limit applies, not the display
   // cap, so anything create_request stored can be read back.
@@ -423,8 +435,11 @@ test('a clipped body says how much there is, and a full read returns it', () => 
   assert.equal(read.bodyComplete, true);
   assert.equal(read.bodyChars, long.length);
   assert.ok(!read.body.includes('[truncated]'));
+  assert.ok(!read.body.includes('[Usernode:'),
+    'nothing was cut, so there is nothing to point at');
   assert.ok(read.body.includes('And the fix.'), 'including the part the clip dropped');
   assert.match(read.body, /^<untrusted-content>/, 'read in full is still read as data');
+  assert.match(read.body, /<\/untrusted-content>$/);
 
   // A short body is complete either way, and titles mode carries neither
   // field — there is no body for them to describe.
@@ -448,6 +463,8 @@ test('get_request returns the whole description the board scan cut', async () =>
     })).structuredContent;
     assert.equal(scanned.requests[0].bodyComplete, false);
     assert.equal(scanned.requests[0].bodyChars, body.length);
+    assert.match(scanned.requests[0].body, /Call get_request for #1221/,
+      'the clip names the call that finishes the job');
 
     const full = (await handlers.get('get_request')({
       slug: 'recipe-box', number: 1221,
@@ -511,6 +528,26 @@ test('get_request separates "not on the board" from "could not read the board"',
   } finally {
     unscoped.restore();
   }
+});
+
+test('the truncation marker follows the precedent this codebase already set', () => {
+  // services/github.js clips issue bodies for its own agent surfaces and its
+  // comment is explicit about why the marker names the escape hatch: an
+  // agent has to learn both that it is missing something and what to do. The
+  // connector's clip had no equivalent, which is the half of #1223 that a
+  // new tool alone does not fix — nothing pointed at it.
+  const githubSrc = fs.readFileSync(
+    path.join(__dirname, '../src/services/github.js'), 'utf8'
+  );
+  assert.match(githubSrc, /an EXPLICIT marker naming how to get the full/,
+    'the precedent is still there to follow');
+  assert.match(githubSrc, /\[truncated — use \$\{hint\(issue\.number\)\} for full text\]/);
+
+  // Ours says it outside the envelope, and only when there is something
+  // bigger to point at — get_request already reads at the write limit, so a
+  // clip there would have nowhere to send the caller.
+  assert.match(SRC, /function fullTextPointer\(number, shown, total\)/);
+  assert.match(SRC, /bodyMax < MAX_REQUEST_BODY_CHARS/);
 });
 
 test('get_request reads at the write limit, and says where that limit comes from', () => {
