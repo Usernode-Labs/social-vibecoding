@@ -520,7 +520,7 @@ export function HeaderMenu() {
             */}
             <div id="drawer-row-platform-version" className="drawer-ver-row flex items-center gap-2 px-4">
               <span className="drawer-ver-label">
-                Web revision
+                Platform version
               </span>
               <span
                 id="platform-version-pill-slot"
@@ -532,7 +532,8 @@ export function HeaderMenu() {
                 Installed Flutter app release (#1101) — requested from the
                 native bridge and formatted as version/build (for example
                 0.4.0/1223). It is deliberately independent of the deployed
-                web revision above and never uses the currently-open dApp's
+                platform version (the web build's SHA) above and never uses
+                the currently-open dApp's
                 commit hash. Hidden outside the mobile app.
             */}
             <div id="drawer-row-native-app-version" className="hidden drawer-ver-row flex items-center gap-2 px-4">

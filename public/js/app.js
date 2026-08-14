@@ -856,8 +856,8 @@ const App = {
 
   // Four rendering states, all rendered as .drawer-ver text (see
   // public/css/app.css) with modifier classes for the dev / deploying /
-  // stale variants. This is deliberately labelled as a web revision in the
-  // drawer: a Git SHA is useful deployment identity, but it is not the
+  // stale variants. This is labelled "Platform version" in the drawer
+  // (#1211): it identifies the deployed web build (a Git SHA), not the
   // installed Flutter mobile-app version.
   //
   // The slot moved out of the header (header slim-down) and then out of
@@ -886,7 +886,7 @@ const App = {
       && runningSha !== 'dev';
 
     // The project label ("usernode ·") used to prefix every state here.
-    // It's gone: the row this renders into is LABELLED "Web revision" in the
+    // It's gone: the row this renders into is LABELLED "Platform version" in the
     // drawer footer, so repeating the project name was pure redundancy —
     // and it was what pushed "usernode · 1a2b3c4" past the 15rem panel
     // and into truncation. Bare version only. (`info.name` is still
@@ -894,7 +894,7 @@ const App = {
     if (!runningSha || runningSha === 'dev') {
       // No GIT_SHA. STAGING PREVIEWS OF THE PLATFORM ARE BUILT WITHOUT
       // ONE, so this is the state a PR tester actually sees — and a row
-      // reading "Web revision  dev" told them nothing about which
+      // reading "Platform version  dev" told them nothing about which
       // build they were looking at. Name the environment instead when the
       // server reports one, and keep the literal "dev" for a local run
       // (and for a production build missing its SHA, where printing

@@ -1,6 +1,6 @@
 // Installed Flutter mobile-app version in the hamburger drawer footer (#1101).
 //
-// A Git SHA identifies the deployed web revision, while this value identifies
+// A Git SHA identifies the deployed platform version, while this value identifies
 // the independently released binary hosting the WebView. New app builds put
 // `appVersion` + `buildNumber` on the public getBridgeInfo response, which is
 // readable from staging as well as production. Existing builds fall back to
