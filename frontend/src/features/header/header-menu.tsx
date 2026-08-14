@@ -40,6 +40,7 @@
 import { useCallback, useRef, useState } from 'react';
 
 import {
+  ChatBubbleTailIcon,
   CogIcon,
   GitHubIcon,
   LightBulbIcon,
@@ -382,8 +383,8 @@ export function HeaderMenu() {
                 now (same ids, same lifecycle).
             */}
             {/*
-                MAIN NAV ORDER — Profile, Leaderboard, Settings, Admin &
-                moderation. Personal-first, then shared, then configuration,
+                MAIN NAV ORDER — Profile, Messages, Leaderboard, Settings,
+                Admin & moderation. Personal-first, then shared, then configuration,
                 then the admin surface; the app-scoped and reference rows sit
                 outside this group (status pane above, footer below).
             */}
@@ -420,6 +421,18 @@ export function HeaderMenu() {
               <span className="text-sm font-medium">
                 Profile
               </span>
+            </a>
+            {/* Platform-wide direct and group conversations (#488). A real
+                anchor keeps deep links and modified clicks browser-native;
+                the badge is updated by the React Messages store. */}
+            <a
+              id="drawer-row-messages"
+              href="#messages"
+              className="flex items-center gap-3 px-4 min-h-[44px] border-b border-zinc-100 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800"
+            >
+              <ChatBubbleTailIcon className="w-5 h-5 shrink-0" />
+              <span className="text-sm font-medium">Messages</span>
+              <span id="drawer-messages-badge" className="hidden ml-auto min-w-[18px] h-[18px] px-1 rounded-full bg-violet-600 text-white text-[10px] font-bold leading-[18px] text-center" aria-label="Unread messages"></span>
             </a>
             {/*
                 Leaderboard — the one entry point for shared progress: the

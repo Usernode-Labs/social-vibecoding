@@ -93,6 +93,7 @@ test('selfAppHashPath moves SPA hash routes into the fragment', () => {
   assert.equal(visuals.selfAppHashPath('/group-chat'), '/#group-chat');
   assert.equal(visuals.selfAppHashPath('/individual-chat/9'), '/#individual-chat/9');
   assert.equal(visuals.selfAppHashPath('/create'), '/#create');
+  assert.equal(visuals.selfAppHashPath('/messages/42'), '/#messages/42');
 });
 
 // The browse screen and its per-app detail page. No server page exists at

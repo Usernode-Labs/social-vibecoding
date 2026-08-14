@@ -240,14 +240,15 @@ test("6 season_events: regular (current), type='season', a fully-past one, an ar
   assert.match(block, /Finished Sprint/);
 });
 
-test("the type='season' event has STARTED, so it is the default in a preview", () => {
+test("the type='season' fixture starts with the preview and is refreshed on reboot", async () => {
   // #999: the leaderboard now opens on the season aggregate
   // (DEFAULT_PUBLIC_EVENT_SQL step 1), which is guarded on
   // `starts_at <= NOW()`. This fixture used to start at NOW() + 15 days, so
   // the guard skipped it and a staging preview kept defaulting to the
   // regular event — i.e. the new default was unreviewable, and a tester
-  // would have seen no change at all. It now spans the season, like
-  // production's own season event.
+  // would have seen no change at all. It must also start after any real
+  // season rows inherited from the production clone: a newer, still-empty
+  // season board would otherwise win and leave the fixture table hidden.
   const start = body.indexOf('INSERT INTO season_events');
   const block = body.slice(start, body.indexOf('ON CONFLICT (id) DO NOTHING', start));
   // Slice from the fixture's NAME to the end of that VALUES row (the next
@@ -255,10 +256,20 @@ test("the type='season' event has STARTED, so it is the default in a preview", (
   // so keying off that would match inside the prose.
   const seasonRow = block.slice(block.indexOf('Season Standings'), block.indexOf('($4, $3,'));
   assert.match(seasonRow,
-    /NOW\(\) - INTERVAL '60 days', NOW\(\) \+ INTERVAL '30 days'/,
-    'the season event must already have started for the default rule to pick it');
+    /NOW\(\), NOW\(\) \+ INTERVAL '30 days'/,
+    'the fixture must be the newest already-started season event');
   assert.doesNotMatch(block, /NOW\(\) \+ INTERVAL '15 days', NOW\(\) \+ INTERVAL '30 days'/,
     'the old future-only window must be gone');
+
+  process.env.USERNODE_ENV = 'staging';
+  const pool = mockPool();
+  await seedStagingTopochain(pool, {});
+  const refresh = pool.calls.find((call) => (
+    /UPDATE season_events/.test(call.sql)
+    && /SET starts_at = NOW\(\)/.test(call.sql)
+  ));
+  assert.ok(refresh, 'an existing preview database must refresh the fixture window on reboot');
+  assert.deepEqual(refresh.params, [900501], 'only the fixed staging season event is refreshed');
 });
 
 test('the season event carries its own leaderboard snapshots', () => {

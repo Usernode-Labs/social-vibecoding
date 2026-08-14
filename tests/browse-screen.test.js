@@ -330,7 +330,12 @@ test('browse rows: the layout switch is pure CSS on the container', () => {
     'phone: a hairline between consecutive rows');
   // The md block re-states the sibling selector so the full box wins at
   // equal specificity instead of relying on source order alone.
-  const mdBlock = css.slice(css.indexOf('@media (min-width: 768px)'));
+  const browseStart = css.indexOf('/* ── Browse screen rows / boxes');
+  const browseEnd = css.indexOf('/* ── App-card "…" actions menu', browseStart);
+  assert.ok(browseStart > -1 && browseEnd > browseStart,
+    'the Browse-owned CSS section must remain identifiable');
+  const browseCss = css.slice(browseStart, browseEnd);
+  const mdBlock = browseCss.slice(browseCss.indexOf('@media (min-width: 768px)'));
   const box = mdBlock.slice(0, mdBlock.indexOf('}\n}') + 3);
   assert.match(box, /\.browse-row,\s*\n\s*\.browse-row \+ \.browse-row \{/);
   assert.match(box, /border: 1px solid var\(--browse-border\)/);

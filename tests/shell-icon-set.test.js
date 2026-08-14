@@ -125,6 +125,14 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // #browse-list and #browse-detail are empty by contract, not by accident.
     'M5 13l4 4L19 7',
     'M13 7l5 5m0 0l-5 5m5-5H6',
+    // The thread header and composer render only after a conversation is
+    // selected. The static Messages screen therefore ships only its new-
+    // conversation plus glyph; these five remain behind route state.
+    'M15 18l-6-6 6-6',
+    'M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2M9 11a4 4 0 100-8 4 4 0 000 8zm8-1a3 3 0 010 6m4 5v-2a4 4 0 00-3-3.9',
+    'M21.4 11.6l-8.5 8.5a6 6 0 01-8.5-8.5l9-9a4 4 0 015.7 5.7l-9 9a2 2 0 01-2.8-2.8l8.4-8.4',
+    'M12 3v12m0-12l-4 4m4-4l4 4M5 13v7h14v-7',
+    'M4 4l17 8-17 8 3-8-3-8zm3 8h14',
   ];
   assert.deepEqual(absent.sort(), expected.sort());
 });

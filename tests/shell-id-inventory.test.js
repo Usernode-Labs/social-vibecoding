@@ -101,6 +101,12 @@ const ADDED_IDS = {
   'connector-repo-allow-rules': 'The same three rules, rendered for committing as a repo\'s .claude/settings.json.',
   'connector-repo-allow-rules-copy': 'Copy button for the per-repo block.',
   'connector-hint-status': 'Read-only status of the in-chat setup tip; ships empty and hidden, filled by Settings._renderConnectorHint().',
+  'messages-screen': 'Fully React-owned platform direct/group Messages screen (#488).',
+  'messages-create-dialog': 'React-owned direct/group conversation creation dialog (#488).',
+  'messages-members-dialog': 'React-owned group membership and invitation dialog (#488).',
+  'messages-share-dialog': 'React-owned typed Usernode item chooser for Messages (#488).',
+  'drawer-row-messages': 'Platform Messages destination in the global navigation drawer (#488).',
+  'drawer-messages-badge': 'Aggregate unread conversation count in the global navigation drawer (#488).',
 };
 
 test('the shell still carries every id in the frozen baseline', () => {

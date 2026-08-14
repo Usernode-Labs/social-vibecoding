@@ -5512,6 +5512,31 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
                    WHERE us.session_id = s.session_id
                      AND us.version = s.version
                      AND us.recipient_id = $3
+                ) OR EXISTS (
+                  SELECT 1
+                    FROM chat_session_spec_conversation_shares scs
+                    JOIN conversations shared_conversation
+                      ON shared_conversation.id = scs.conversation_id
+                     AND shared_conversation.status = 'active'
+                    JOIN conversation_members cm
+                      ON cm.conversation_id = scs.conversation_id
+                   WHERE scs.session_id = s.session_id
+                     AND scs.version = s.version
+                     AND cm.user_id = $3
+                     AND cm.status = 'member'
+                     AND NOT EXISTS (
+                       SELECT 1
+                         FROM conversations direct_conversation
+                         JOIN conversation_direct_pairs direct_pair
+                           ON direct_pair.conversation_id = direct_conversation.id
+                         JOIN user_blocks direct_block
+                           ON (direct_block.blocker_id = direct_pair.user_low_id
+                               AND direct_block.blocked_user_id = direct_pair.user_high_id)
+                            OR (direct_block.blocker_id = direct_pair.user_high_id
+                               AND direct_block.blocked_user_id = direct_pair.user_low_id)
+                        WHERE direct_conversation.id = scs.conversation_id
+                          AND direct_conversation.kind = 'direct'
+                     )
                 ))`,
         [sessionId, version, req.user.id]
       );

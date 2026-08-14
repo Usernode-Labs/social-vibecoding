@@ -65,6 +65,7 @@ export type NotificationRowView = {
 type GroupView = {
   key: string;
   appId: number | '';
+  conversationId: number | '';
   expanded: boolean;
   hasUnread: boolean;
   accent: string;
@@ -295,10 +296,11 @@ function Group({ view, touch }: { view: GroupView; touch: boolean }): ReactNode 
           <button
             data-group-markread={view.key}
             data-app-id={view.appId}
+            data-conversation-id={view.conversationId}
             className="shrink-0 text-[0.7rem] text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200 px-1.5 py-1"
             onClick={(e) => {
               e.stopPropagation();
-              controller()?._markGroupRead(view.key, view.appId);
+              controller()?._markGroupRead(view.key, view.appId, view.conversationId);
             }}
           >
             Mark read

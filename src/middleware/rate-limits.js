@@ -171,6 +171,81 @@ const groupChatWriteLimiter = makeLimiter({
   message: 'Too many discussion messages — slow down for a minute.',
 });
 
+// Platform Messages has separate safety buckets from app group chat. Failed
+// consent/membership attempts intentionally count: refunding them would turn
+// these endpoints into an unbounded user/conversation enumeration oracle.
+const conversationMessageLimiter = makeLimiter({
+  windowMs: 60 * 1000,
+  max: 60,
+  name: 'conversation-message',
+  keyByUser: true,
+  message: 'Too many messages — slow down for a minute.',
+});
+
+const conversationActionLimiter = makeLimiter({
+  windowMs: 60 * 60 * 1000,
+  max: 20,
+  name: 'conversation-action',
+  keyByUser: true,
+  message: 'Too many conversation or invitation changes — try again later.',
+});
+
+// Consent exits must never share a bucket with invitation churn: a user who
+// just created or edited many groups must still be able to decline, leave, or
+// block immediately.
+const conversationSafetyLimiter = makeLimiter({
+  windowMs: 60 * 60 * 1000,
+  max: 120,
+  name: 'conversation-safety',
+  keyByUser: true,
+  message: 'Too many consent changes — slow down and try again.',
+});
+
+// express-rate-limit increments once per request. Group APIs batch recipients,
+// so consume one unit per distinct requested recipient (and one for an empty
+// group/direct create) rather than letting a 100-person request cost one.
+const conversationInviteWindows = new Map();
+function conversationInviteLimiter(req, res, next) {
+  const raw = req.body?.kind === 'group' ? req.body?.member_ids : req.body?.user_ids;
+  const cost = Math.max(1, Math.min(101, Array.isArray(raw) ? new Set(raw.map(String)).size : 1));
+  const key = req.user?.id ? `user:${req.user.id}` : `ip:${clientIp(req)}`;
+  const now = Date.now();
+  let window = conversationInviteWindows.get(key);
+  if (!window || window.resetAt <= now) {
+    window = { used: 0, resetAt: now + 60 * 60 * 1000 };
+    conversationInviteWindows.set(key, window);
+  }
+  if (window.used + cost > 100) {
+    const retryAfterSeconds = Math.max(1, Math.ceil((window.resetAt - now) / 1000));
+    log.warn('rate-limit', 'Throttled', {
+      name: 'conversation-invite', ip: clientIp(req), userId: req.user?.id, path: req.path,
+    });
+    res.set('Retry-After', String(retryAfterSeconds));
+    return res.status(429).json({
+      error: 'Too many conversation invitations — try again later.',
+      retryAfterSeconds,
+    });
+  }
+  window.used += cost;
+  return next();
+}
+
+const conversationReactionLimiter = makeLimiter({
+  windowMs: 60 * 1000,
+  max: 120,
+  name: 'conversation-reaction',
+  keyByUser: true,
+  message: 'Too many reactions — slow down for a minute.',
+});
+
+const conversationReportLimiter = makeLimiter({
+  windowMs: 60 * 60 * 1000,
+  max: 10,
+  name: 'conversation-report',
+  keyByUser: true,
+  message: 'Too many reports — try again later.',
+});
+
 // #556: live title previews for the feedback modal (POST /api/feedback/
 // title). Same sizing rationale as chatLimiter — each call is a Haiku
 // spend against the daily LLM budget, so this must not become a faster
@@ -449,4 +524,4 @@ const userDirectoryLimiter = makeLimiter({
   message: 'Too many directory lookups — please slow down.',
 });
 
-module.exports = { userDirectoryLimiter, dbExportLimiter, authLimiter, homePanelPrefLimiter, homeLayoutLimiter, draftWriteLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, groupChatWriteLimiter, attributeVoteLimiter, attachmentUploadLimiter, appFileUploadLimiter, feedbackTitleLimiter, boardOrderLimiter, issueScreenshotLimiter, profileWriteLimiter, publicProfileReadLimiter, profileReportLimiter, topochainMobileAuthLimiter, topochainMobilePushRegistrationLimiter, reportAiLimiter, reportSnapshotLimiter, waitlistJoinLimiter, mailTestLimiter };
+module.exports = { userDirectoryLimiter, dbExportLimiter, authLimiter, homePanelPrefLimiter, homeLayoutLimiter, draftWriteLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, groupChatWriteLimiter, conversationMessageLimiter, conversationActionLimiter, conversationSafetyLimiter, conversationInviteLimiter, conversationReactionLimiter, conversationReportLimiter, attributeVoteLimiter, attachmentUploadLimiter, appFileUploadLimiter, feedbackTitleLimiter, boardOrderLimiter, issueScreenshotLimiter, profileWriteLimiter, publicProfileReadLimiter, profileReportLimiter, topochainMobileAuthLimiter, topochainMobilePushRegistrationLimiter, reportAiLimiter, reportSnapshotLimiter, waitlistJoinLimiter, mailTestLimiter };

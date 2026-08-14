@@ -89,13 +89,13 @@ test('the resolved type is stamped on the screen element', () => {
 
 // ── Every screen entry routes through it ───────────────────────────────
 
-test('all seven screen transitions go through App._entryTransition', () => {
+test('all eight screen transitions go through App._entryTransition', () => {
   const calls = appJs.match(/PlatformUI\.transition\(/g) || [];
-  assert.equal(calls.length, 7,
-    `expected 7 PlatformUI.transition call sites in app.js, found ${calls.length} — `
+  assert.equal(calls.length, 8,
+    `expected 8 PlatformUI.transition call sites in app.js, found ${calls.length} — `
     + 'a new one must route its type through App._entryTransition too');
   const routed = appJs.match(/type: App\._entryTransition\(/g) || [];
-  assert.equal(routed.length, 7,
+  assert.equal(routed.length, 8,
     'every call site must take its type from the gate, or that screen keeps '
     + 'animating over the closing drawer');
 });
@@ -112,7 +112,8 @@ test('no screen entry still hard-codes its transition type', () => {
 
 test('each named screen entry passes its own screen element to the gate', () => {
   for (const nav of ['navigateToLeaderboard', 'navigateToProfile',
-    'navigateToBrowse', 'navigateToAdminConsole', 'navigateToSettings']) {
+    'navigateToBrowse', 'navigateToAdminConsole', 'navigateToSettings',
+    'navigateToMessages']) {
     const at = appJs.indexOf(`  ${nav}(`);
     assert.ok(at !== -1, `${nav} went missing`);
     const body = appJs.slice(at, appJs.indexOf("getElementById('back-btn')", at));

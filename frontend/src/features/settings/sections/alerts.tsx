@@ -13,7 +13,7 @@ import { SwitchRow } from '@/components/ui/switch';
  * order, which the primitive's prop order does not produce. They stay literal
  * — the same call alert.tsx makes for the banner with a display conflict.
  *
- * They are also six WRITTEN-OUT rows rather than a map over a table, which
+ * They are also seven WRITTEN-OUT rows rather than a map over a table, which
  * looks like the obvious deduplication and is not one:
  * tests/settings-mobile-push.test.js reads the label and blurb of every
  * category out of this file's SOURCE, and asserts that no internal
@@ -57,6 +57,13 @@ export function AlertsSection() {
             Choose which Social activity can send a phone notification. Your phone&apos;s Activity notifications switch remains the master control for that device.
           </SectionHeading>
           <div className="space-y-3">
+            <label className="flex items-start justify-between gap-4 cursor-pointer select-none" data-mobile-push-category="messages">
+              <span>
+                <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">Messages</span>
+                <span className="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">Conversation invitations, messages, mentions, replies, and reactions.</span>
+              </span>
+              <input type="checkbox" className="un-switch mt-0.5 shrink-0" disabled />
+            </label>
             <label className="flex items-start justify-between gap-4 cursor-pointer select-none" data-mobile-push-category="direct_interactions">
               <span>
                 <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">Direct interactions</span>

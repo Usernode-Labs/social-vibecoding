@@ -9755,8 +9755,8 @@ async function seedStagingTopochain(pool, config) {
           NOW() - INTERVAL '45 days', NOW() + INTERVAL '15 days', FALSE,
           'staging-demo-chain-1', TRUE, 'regular', NOW(), NOW()),
          ($2, $3, 'Staging Demo Event — Season Standings',
-          'type=''season'' event fixture: its standings are the WHOLE season''s aggregate (computeStandings), not one event''s snapshots. Spans the season like production''s own season event, so it is the DEFAULT the leaderboard opens on — see DEFAULT_PUBLIC_EVENT_SQL step 1.',
-          NOW() - INTERVAL '60 days', NOW() + INTERVAL '30 days', TRUE,
+          'type=''season'' event fixture: its standings are the WHOLE season''s aggregate (computeStandings), not one event''s snapshots. Starts with this preview so cloned season rows cannot outrank it as the DEFAULT leaderboard — see DEFAULT_PUBLIC_EVENT_SQL step 1.',
+          NOW(), NOW() + INTERVAL '30 days', TRUE,
           '{"metrics": [], "offchain_weight": 1}'::jsonb, NULL, NULL, FALSE, TRUE,
           NULL, NULL, FALSE, NULL, FALSE, 'season', NOW(), NOW()),
          ($4, $3, 'Staging Demo Event — Finished Sprint',
@@ -9797,6 +9797,23 @@ async function seedStagingTopochain(pool, config) {
        ON CONFLICT (id) DO NOTHING`,
       [EVENT_REGULAR_ID, EVENT_SEASON_ID, SEASON_ID, EVENT_ENDED_ID,
        EVENT_ARCHIVE_ID, SEASON_CLOSED_ID, EVENT_EMPTY_ID, EVENT_UNASSIGNED_ID]
+    );
+
+    // A staging database is cloned from production before these fixtures are
+    // added. A newly-created real `type = 'season'` row in that clone can
+    // therefore start after this fixed-id fixture was first seeded. The
+    // default-event rule quite correctly chooses that newer row, but if it
+    // has no standings yet the preview's default leaderboard is empty and the
+    // fixture no longer exercises the table it exists to cover. Refresh only
+    // the staging-demo row's window on every boot (the INSERT above remains
+    // idempotent) so it deterministically wins among started season rows.
+    await pool.query(
+      `UPDATE season_events
+          SET starts_at = NOW(),
+              ends_at = NOW() + INTERVAL '30 days',
+              updated_at = NOW()
+        WHERE id = $1`,
+      [EVENT_SEASON_ID]
     );
 
     // ─── Challenge kinds (4) ────────────────────────────────────────────

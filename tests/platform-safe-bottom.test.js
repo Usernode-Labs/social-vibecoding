@@ -156,6 +156,17 @@ test('every top-level screen scroller carries platform-safe-scroll', () => {
   }
 });
 
+test('Messages insets both of its independent scrollers and its composer', () => {
+  const source = read('frontend/src/features/messages/index.tsx');
+  const composer = read('frontend/src/features/messages/composer.tsx');
+  assert.match(source, /className="messages-list-scroll platform-safe-scroll"/,
+    'the conversation list must clear the home indicator');
+  assert.match(source, /className="messages-thread-scroll platform-safe-scroll un-kb-avoid"/,
+    'the message history must clear the home indicator');
+  assert.match(composer, /messages-composer platform-safe-bar/,
+    'the pinned Messages composer must carry the inset itself');
+});
+
 test('#home-screen reads the token instead of a second env() of its own', () => {
   // Home already got this right via .home-body-fill; it just had its own
   // bare env(). One source of truth.

@@ -77,6 +77,7 @@ test('reviewed interaction kinds build and unknown kinds stay closed', () => {
 
 const CONTEXT = {
   appName: 'MyPage',
+  conversationTitle: 'Design crew',
   sourceUsername: 'alice',
   messageContent: 'hey can you look at the header',
   sessionTitle: 'Fix login redirect loop',
@@ -87,6 +88,21 @@ const CONTEXT = {
 
 test('each kind renders its own title and body from send-time context', () => {
   const cases = [
+    ['conversation_invite', CONTEXT,
+      '@alice invited you to a conversation · Design crew',
+      'Open Messages to accept or decline'],
+    ['conversation_message', CONTEXT,
+      '@alice sent you a message · Design crew',
+      'hey can you look at the header'],
+    ['conversation_mention', CONTEXT,
+      '@alice mentioned you · Design crew',
+      'hey can you look at the header'],
+    ['conversation_reply', CONTEXT,
+      '@alice replied to you · Design crew',
+      'hey can you look at the header'],
+    ['conversation_reaction', { ...CONTEXT, detail: '👍' },
+      '@alice reacted 👍 to your message · Design crew',
+      'You said: hey can you look at the header'],
     ['mention', CONTEXT,
       '@alice mentioned you in "Fix login redirect loop" · MyPage',
       'hey can you look at the header'],

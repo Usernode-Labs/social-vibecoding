@@ -63,6 +63,16 @@ const DENIED_TABLES = new Set([
   'cli_auth_audit_events', // security audit trail for CLI credentials
   'cli_auth_rate_limits', // shared security limiter state
   'profile_reports',      // private abuse reports and reporter identities
+  'conversations',        // private platform messaging metadata
+  'conversation_direct_pairs', // private messaging relationships
+  'conversation_members', // private conversation membership/invites/read state
+  'conversation_messages', // private message bodies and reply metadata
+  'conversation_message_reactions', // private social interactions
+  'conversation_message_attachments', // private attachment bytes + metadata
+  'conversation_message_objects', // private shared-object activity
+  'chat_session_spec_conversation_shares', // private spec access grants
+  'user_blocks',          // private user safety relationships
+  'conversation_message_reports', // private abuse evidence and reporter identity
   'mcp_clients',              // hosted-connector client registrations
   'mcp_authorization_codes',  // hosted-connector PKCE codes (hashed, short-lived)
   'mcp_tokens',               // hosted-connector bearer hashes and hints

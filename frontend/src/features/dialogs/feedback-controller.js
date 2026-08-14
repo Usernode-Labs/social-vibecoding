@@ -77,7 +77,9 @@ function resumeDialog() { dialogController()?.resume(); }
 
 // The two halves the island calls back into, populated by `init()`.
 export const Feedback = {
-  _open: () => {},
+  // Match the runtime replacement below so TypeScript's JS inference keeps
+  // the island's legacy `{ fromDev }` payload in the public signature.
+  _open: (_opts = {}) => {},
   _reset: () => {},
 };
 
