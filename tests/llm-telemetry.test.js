@@ -369,6 +369,75 @@ test('Claude coding-agent cost remains known while all token fields remain null'
   });
 });
 
+test('Claude coding-agent records reported run usage, failure reason, and mixed billing', async () => {
+  await withTelemetrySink(async (rows) => {
+    const state = worker.newWatchState();
+    worker.parseLine(JSON.stringify({
+      type: 'result',
+      subtype: 'error_max_turns',
+      is_error: true,
+      total_cost_usd: 3.25,
+      usage: {
+        input_tokens: 120,
+        cache_read_input_tokens: 900,
+        cache_creation_input_tokens: 30,
+        output_tokens: 45,
+        output_tokens_details: { thinking_tokens: 12 },
+      },
+    }), () => {}, state);
+    worker._recordClaudeCodingRunForTests({
+      sessionId: 42,
+      turnId: '44444444-4444-4444-8444-444444444444',
+      result: state,
+      requestedModel: 'claude-opus-5',
+      component: 'coding_agent_build',
+      startedAt: new Date(),
+      durationMs: 50,
+      byokCents: 25,
+    });
+
+    assert.equal(rows.length, 1);
+    assert.equal(state.usageSeen, true);
+    assert.deepEqual({
+      input: rows[0].input_tokens,
+      cacheRead: rows[0].cache_read_input_tokens,
+      cacheWrite: rows[0].cache_write_input_tokens,
+      output: rows[0].output_tokens,
+      reasoning: rows[0].reasoning_output_tokens,
+    }, { input: 120, cacheRead: 900, cacheWrite: 30, output: 45, reasoning: 12 });
+    assert.equal(rows[0].outcome, 'error');
+    assert.equal(rows[0].stop_reason, 'error_max_turns');
+    assert.equal(rows[0].billing_path, 'anthropic_mixed');
+    assert.equal(rows[0].cost_usd, 3.25);
+  });
+});
+
+test('Claude coding-agent billing keeps platform and full BYOK paths distinct', async () => {
+  await withTelemetrySink(async (rows) => {
+    const result = { costUsd: 1, providerCostSeen: true, exitCode: 0 };
+    const base = {
+      sessionId: 42,
+      result,
+      requestedModel: 'claude-opus-5',
+      component: 'coding_agent_scout',
+      startedAt: new Date(),
+      durationMs: 10,
+    };
+    worker._recordClaudeCodingRunForTests({
+      ...base, turnId: '55555555-5555-4555-8555-555555555555',
+    });
+    worker._recordClaudeCodingRunForTests({
+      ...base, turnId: '66666666-6666-4666-8666-666666666666', directByok: true,
+    });
+    worker._recordClaudeCodingRunForTests({
+      ...base, turnId: '77777777-7777-4777-8777-777777777777', byokCents: 100,
+    });
+    assert.deepEqual(rows.map((row) => row.billing_path), [
+      'platform', 'anthropic_byok', 'anthropic_byok',
+    ]);
+  });
+});
+
 test('the aggregate report normalizes OpenRouter per-attempt deltas and preserves unavailable values', async () => {
   let captured;
   const pool = {
@@ -381,8 +450,13 @@ test('the aggregate report normalizes OpenRouter per-attempt deltas and preserve
         input_tokens: null, cache_read_input_tokens: '0', cache_write_input_tokens: null,
         output_tokens: '8', reasoning_output_tokens: null,
         total_known_cost_usd: '0.12000000', unavailable_cost_count: '1', cache_hit_rate: '0',
+        input_tokens_available_count: '0', cache_read_input_tokens_available_count: '2',
+        cache_write_input_tokens_available_count: '0', output_tokens_available_count: '1',
+        reasoning_output_tokens_available_count: '0', known_cost_available_count: '1',
+        duration_available_count: '2', billing_path_attributed_count: '2', cache_read_hit_count: '0',
         median_duration_ms: '100', p95_duration_ms: '190', median_cost_usd: '0.12', p95_cost_usd: '0.12',
         provider_reported_cost_count: '0', platform_estimate_cost_count: '0', catalog_estimate_cost_count: '1',
+        terminal_reason_counts: { end_turn: 1, agent_error: 1 },
       }] };
     },
   };
@@ -393,11 +467,23 @@ test('the aggregate report normalizes OpenRouter per-attempt deltas and preserve
   assert.match(captured.sql, /s\.app_id AS app_id/);
   assert.match(captured.sql, /provider_input_tokens_total IS NULL THEN NULL ELSE a\.input_tokens/);
   assert.match(captured.sql, /a\.metadata \? 'telemetry_component'/);
+  assert.match(captured.sql, /COUNT\(input_tokens\) AS input_tokens_available_count/);
+  assert.match(captured.sql, /jsonb_object_agg\(terminal_reason, reason_count\)/);
+  assert.match(captured.sql, /NULLIF\(a\.error_code, ''\)/);
   assert.doesNotMatch(captured.sql, /prompt|messages|error_detail|user_id/);
   assert.equal(report.groups[0].tokens.input, null);
   assert.equal(report.groups[0].tokens.cacheReadInput, 0);
+  assert.equal(report.groups[0].availabilityCounts.cacheReadInputTokens, 2);
+  assert.equal(report.groups[0].availabilityCounts.inputTokens, 0);
+  assert.deepEqual(report.groups[0].terminalReasonCounts, { end_turn: 1, agent_error: 1 });
   assert.equal(report.groups[0].costSourceCounts.catalogEstimate, 1);
   assert.equal(report.groups[0].costSourceCounts.providerReported, 0);
+  assert.equal(report.summary.invocationCount, 2);
+  assert.equal(report.summary.tokens.input, null);
+  assert.equal(report.summary.tokens.cacheReadInput, 0);
+  assert.equal(report.summary.cacheHitRate, 0);
+  assert.equal(report.summary.billingPathCounts.openrouter_byok, 2);
+  assert.deepEqual(report.summary.terminalReasonCounts, { end_turn: 1, agent_error: 1 });
   assert.equal(Object.hasOwn(report.groups[0], 'appId'), false);
   assert.equal(Object.hasOwn(report.groups[0], 'sessionId'), false);
   await assert.rejects(() => telemetry.aggregateReport(pool, { days: 0 }), /between 1 and 90/);
