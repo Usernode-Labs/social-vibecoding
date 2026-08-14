@@ -35,15 +35,23 @@ truth, so an edit here reaches both the full prompt and the excerpt.
 Ordered by how badly an agent working offline gets each one wrong.
 
 <!-- work-order:begin -->
-1. **Three files are centrally hosted — never vendor them, never swap in
-   a CDN.** Every app loads the bridge, the native UI kit and (on the
-   runtime path) Tailwind from the platform's own origin. If your
-   container cannot reach that host the app renders unstyled and
-   native-kit assertions fail *locally* — that is the sandbox, not your
-   change. Copying those files into the repo or pointing them at
-   `cdn.tailwindcss.com` is forbidden and is rejected by two automated
-   checks. The staging preview the platform builds is the authority on
-   styling.
+1. **Three files are centrally hosted — never vendor them.** Every app
+   loads the bridge, the native UI kit and (on the runtime path) Tailwind
+   from the platform's own origin. If your container cannot reach that
+   host the app renders unstyled and native-kit assertions fail *locally*
+   — that is the sandbox, not your change. Copying any of them into the
+   repo is forbidden: the copy freezes the day you make it, and the
+   fleet-wide fix and one-redeploy rollback central hosting buys stop
+   reaching the app. No automated check catches that, so this rule is the
+   only thing standing between you and a stale fork of platform
+   infrastructure. A `cdn.tailwindcss.com` tag is a different thing — a
+   legacy state many apps are still in, whose checks pass. Don't add one
+   to new code (new apps compile their own stylesheet at build time; the
+   hosted `usernode-tailwind/v1/tailwind.js` is the escape hatch), don't
+   "fix" one as a drive-by, and when migrating IS the task swap it to
+   that URL, including any copy of the CDN hostname in the app's `sw.js`
+   precache list. The staging preview the platform builds is the
+   authority on styling.
 2. **`USERNODE_ENV` is `staging` or `production`.** Gate DATA and
    irreversible outbound side effects on it — `const IS_STAGING =
    process.env.USERNODE_ENV === 'staging'` — never a feature, a screen,
@@ -2236,6 +2244,12 @@ Rules:
   recorded in `public/vendor/README.md`), and the inline `tailwind.config`
   beside the tag keeps working untouched — so the swap is
   behaviour-identical, with no visual difference and no rebuild.
+- **No proposal check rejects a `cdn.tailwindcss.com` tag.** Nothing the
+  platform runs inspects an app's source for one, and apps still on the CDN
+  pass their checks — moving the fleet off it is housekeeping, never a merge
+  gate, and never a drive-by inside an unrelated proposal. (Vendoring the
+  hosted files into a repo is the rule that is real, and it too holds by
+  convention rather than by a check — see the bridge section.)
 - **Why bother:** the CDN is one outside dependency shared by the entire
   fleet. When that host is blocked or down, *every* app it serves loads
   unstyled, not just one. Same reasoning as the bridge.

@@ -5,7 +5,8 @@
 // agent's container BLOCKS that host, so it never reads them — and then
 // reasons its way to the very things the document forbids. The observed run
 // came within one decision of vendoring the three centrally hosted assets
-// into an app repo to "fix" the styling, which two automated checks reject.
+// into an app repo to "fix" the styling — which nothing would have caught,
+// because no check inspects an app's source for a vendored copy (#1215).
 //
 // So the work order carries a compact excerpt with it. These tests pin the
 // two properties that make that safe:
@@ -77,6 +78,30 @@ test('the excerpt covers what an offline agent gets wrong, in priority order', (
   assert.match(essentials, /SIGTERM/);
 });
 
+test('the excerpt states the vendoring rule without claiming a check enforces it', () => {
+  const essentials = prompts.getWorkOrderEssentials();
+
+  // What IS real: vendoring is forbidden, and the cost is the point — a
+  // frozen copy stops receiving the fleet-wide fix and the one-redeploy
+  // rollback that central hosting buys.
+  assert.match(essentials, /never vendor them/i);
+  assert.match(essentials, /fleet-wide fix/i);
+
+  // What is NOT real: any check that inspects an app's source. Nothing in
+  // the platform does, and the excerpt used to claim two did (#1215) — an
+  // agent that checks and finds nothing discounts the other eight rules.
+  assert.doesNotMatch(essentials, /rejected by/i);
+  assert.match(essentials, /No automated check catches that/);
+
+  // And the CDN is described as the legacy state it is, with the one-line
+  // migration target named so a migration turn does not have to guess it.
+  assert.match(essentials, /cdn\.tailwindcss\.com/);
+  assert.match(essentials, /legacy state/i);
+  assert.match(essentials, /usernode-tailwind\/v1\/tailwind\.js/);
+  // Including the reference a one-line-swap framing invites an agent to miss.
+  assert.match(essentials, /sw\.js/);
+});
+
 test('the excerpt does NOT forbid the one thing the agent has to do', () => {
   const essentials = prompts.getWorkOrderEssentials();
 
@@ -143,8 +168,15 @@ test('the work order names all three hosted assets and the full document URL', (
 
   // The diagnosis, so a less careful agent does not "fix" the sandbox.
   assert.match(order, /may not be able to reach that host/);
-  assert.match(order, /rejected by two of the app's own automated/);
+  assert.match(order, /Vendoring those files into the repository is forbidden/);
   assert.match(order, /staging preview Usernode builds/);
+
+  // And it does NOT claim a check enforces any of this. Nothing the platform
+  // runs inspects an app's source for a vendored copy or a CDN tag, so the
+  // count was always wrong; an excerpt caught overstating one rule gets the
+  // other eight discounted with it (#1215).
+  assert.doesNotMatch(order, /rejected by/i);
+  assert.match(order, /No automated check catches that/);
 
   // And a pointer to the always-current full document, derived from the
   // deployment's own origin rather than hardcoded.
