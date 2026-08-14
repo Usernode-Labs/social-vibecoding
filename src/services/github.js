@@ -1643,6 +1643,10 @@ function normalizeIssue(raw) {
     title: raw.title || '',
     body,
     labels,
+    // #1221: both timestamps travel — created and updated are different
+    // facts, and dropping created_at here left every agent surface unable
+    // to say when a request was filed.
+    createdAt: raw.created_at || null,
     updatedAt: raw.updated_at || null,
     htmlUrl: raw.html_url || null,
     // #133: GitHub-side creator login. For platform-filed issues this is

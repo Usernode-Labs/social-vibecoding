@@ -24,6 +24,7 @@ function fakeIssue(number, title, updatedAt) {
     title,
     body: `body of #${number}`,
     labels: [{ name: 'usernode' }],
+    created_at: `2026-06-0${(number % 9) + 1}T00:00:00Z`,
     updated_at: updatedAt,
     html_url: `https://github.com/o/r/issues/${number}`,
     user: { login: `gh-user-${number}` },
@@ -81,6 +82,10 @@ test('seeds a cached repo so the next fetchPublicIssues sees the new issue witho
     // #133: the GitHub-side creator login rides along so the Open Issues
     // panel's creator fallback chain works for seeded issues too.
     assert.strictEqual(after.issues[0].user, 'gh-user-2');
+    // #1221: BOTH timestamps survive normalization — dropping created_at
+    // here is what made every agent surface report createdAt: null.
+    assert.strictEqual(after.issues[0].createdAt, '2026-06-03T00:00:00Z');
+    assert.strictEqual(after.issues[0].updatedAt, '2026-06-10T00:00:00Z');
   } finally {
     global.fetch = origFetch;
   }
