@@ -879,7 +879,7 @@ function registerTools(server, ctx) {
   // throttled precisely because it interrupts.
   server.registerTool('whoami', {
     title: 'Who am I on Usernode',
-    description: 'Identify the Usernode account this connector is acting for, which chat product it is connected from, and whether a GitHub account is linked (needed later to hand work to a coding agent). Also returns the connector\'s canonical name and the read-only permission rules Usernode ships. Those rules cover two spellings of the name, lowercase and capitalised; if the name of the tool you just called uses neither, the user\'s connector is registered under a different spelling, none of the shipped rules match it, and they need the same rules with their own spelling in the server segment. Returns no credential material.',
+    description: 'Identify the Usernode account this connector is acting for, which chat product it is connected from, and whether a GitHub account is linked (needed later to hand work to a coding agent). Also returns the connector\'s canonical name and the read-only permission rules Usernode ships. Those rules cover two spellings of the name, lowercase and capitalised; if the name of the tool you just called uses neither, the user\'s connector is registered under a different spelling, none of the shipped rules match it, and they need the same rules with their own spelling in the server segment. Also reports the platform build that answered this connection\'s handshake, which is the build its cached instructions and tool descriptions came from. Returns no credential material.',
     inputSchema: {},
     outputSchema: {
       username: z.string(),
@@ -890,6 +890,7 @@ function registerTools(server, ctx) {
       settingsUrl: z.string(),
       connectorName: z.string(),
       permissionAllowRules: z.array(z.string()),
+      serverVersion: z.string(),
     },
     annotations: readAnnotations,
   }, async () => {
@@ -904,6 +905,10 @@ function registerTools(server, ctx) {
       settingsUrl: `${origin}/#settings/connectors`,
       connectorName: SERVER_NAME,
       permissionAllowRules: [...READ_ONLY_ALLOW_RULES],
+      // The same string the handshake reported, so a session that suspects
+      // its cached instructions predate the code answering its calls can
+      // compare the two without reading a client debug log.
+      serverVersion: SERVER_VERSION,
     });
   });
 
