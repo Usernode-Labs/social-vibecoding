@@ -40,6 +40,7 @@
 import { useCallback, useRef, useState } from 'react';
 
 import {
+  ChatBubbleTailIcon,
   CogIcon,
   GitHubIcon,
   LightBulbIcon,
@@ -429,9 +430,7 @@ export function HeaderMenu() {
               href="#messages"
               className="flex items-center gap-3 px-4 min-h-[44px] border-b border-zinc-100 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800"
             >
-              <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M8 10h.01M12 10h.01M16 10h.01M21 12a8 8 0 01-8 8H7l-4 2 1.3-4A9 9 0 1121 12z" />
-              </svg>
+              <ChatBubbleTailIcon className="w-5 h-5 shrink-0" />
               <span className="text-sm font-medium">Messages</span>
               <span id="drawer-messages-badge" className="hidden ml-auto min-w-[18px] h-[18px] px-1 rounded-full bg-violet-600 text-white text-[10px] font-bold leading-[18px] text-center" aria-label="Unread messages"></span>
             </a>
