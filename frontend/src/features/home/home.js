@@ -1908,25 +1908,210 @@ const Home = {
   // app open. Present, the payload carries both faces and stops
   // depending on the appearance at all.
   WIDGET_DARK_ICON_CAPABILITY: 'homeScreenShortcutDarkIcon',
-  // null until probed, then true/false. The synchronous payload/marker
-  // builders read this, so both entry points below await the probe
-  // first — a pass that ran with `null` would send a single face and
-  // then immediately re-send it as a pair.
+  // ── Why this is not a plain `NativeChrome.has()` any more ───────────
+  //
+  // It was, and that is what kept the released shell fix invisible. The
+  // capability list arrives from getBridgeInfo, which resolves
+  // `{ version: 0, capabilities: [], degraded: true }` whenever the
+  // handshake times out or the privileged channel is refused —
+  // circumstances that say NOTHING about what the installed app can
+  // store. `has()` collapses that to `false` (it is deliberately binary,
+  // see public/js/native-chrome.js), the old code memoised the answer in
+  // `_darkIconProbe` for the rest of the page load, and every tile went
+  // out as a single face under a `tile:5:<scheme>:…` marker. The next
+  // pass agreed with itself, so the grid never recovered — the exact
+  // latched-negative shape issue #978 forbids.
+  //
+  // So the probe is TRI-STATE now, on three levels:
+  //   1. `NativeChrome.supports()` — true / false / null, where null is
+  //      "could not say" (no bridge, degraded info, empty capability
+  //      list). A null is never memoised: `_darkIconProbe` is dropped so
+  //      the next heal pass asks the shell again.
+  //   2. A behavioural verdict (below), because "does not advertise" and
+  //      "cannot store" are different claims and only the second one
+  //      matters here.
+  //   3. `_widgetDarkIcons` itself stays true / false / null, and the
+  //      synchronous payload + marker builders test it with `=== true`,
+  //      so an unresolved probe behaves exactly like the old
+  //      single-face path rather than emitting a half-built pair.
+  //
+  // Both entry points still await the probe before building a payload or
+  // a marker — a pass that ran on the unresolved value would send a
+  // single face that the next pass immediately re-sends as a pair.
   _widgetDarkIcons: null,
   _darkIconProbe: null,
+  // The raw capability answer, kept apart from the resolution so the
+  // diagnostics row can show what the shell actually said.
+  _darkIconCapability: null,
+  // { appVersion, buildNumber } of the INSTALLED shell, read from the
+  // same getBridgeInfo answer, or null when it could not be read.
+  _darkIconBuild: null,
+  // 'supported' | 'unsupported' | null — the behavioural verdict in
+  // force for this build (see _confirmDarkIconSupport).
+  _widgetDarkVerdict: null,
   _ensureDarkIconCapability() {
     if (Home._darkIconProbe) return Home._darkIconProbe;
+    const probe = Home._probeDarkIconCapability();
+    Home._darkIconProbe = probe;
+    return probe;
+  },
+  async _probeDarkIconCapability() {
     const chrome = window.NativeChrome;
-    const probe = (chrome && typeof chrome.has === 'function')
-      ? Promise.resolve(chrome.has(Home.WIDGET_DARK_ICON_CAPABILITY)).catch(() => false)
-      // No NativeChrome (plain browser, standalone page, tests) means no
-      // native shell at all, so certainly no dual-icon support.
-      : Promise.resolve(false);
-    Home._darkIconProbe = probe.then((has) => {
-      Home._widgetDarkIcons = has === true;
+    let answer = null;
+    if (chrome && typeof chrome.supports === 'function') {
+      try {
+        answer = await chrome.supports(Home.WIDGET_DARK_ICON_CAPABILITY);
+      } catch (_) { answer = null; }
+    }
+    if (answer !== true && answer !== false) answer = null;
+    Home._darkIconCapability = answer;
+    Home._darkIconBuild = await Home._readDarkIconBuild(chrome);
+    // The in-memory fallback matters in private mode, where the verdict
+    // could not be written: without it a confirmed session would fall
+    // back to "unresolved" on the very next pass, and _darkIconConfirmTried
+    // means it can never be re-confirmed either.
+    const stored = Home._storedVerdictForBuild(Home._darkIconBuild)
+      || (Home._darkIconConfirmTried ? Home._widgetDarkVerdict : null);
+    Home._widgetDarkVerdict = stored;
+    // Resolution order: a behavioural verdict recorded against THIS
+    // installed build outranks the capability list (it was obtained by
+    // watching what the shell actually stored); then a conclusive yes;
+    // otherwise the question is still open and _confirmDarkIconSupport
+    // settles it with one silent send.
+    Home._widgetDarkIcons = stored === 'supported' ? true
+      : stored === 'unsupported' ? false
+        : (answer === true ? true : null);
+    // Never latch "could not say".
+    if (Home._widgetDarkIcons === null) Home._darkIconProbe = null;
+    return Home._widgetDarkIcons;
+  },
+  // The version pair the verdict is bound to. Read through getInfo
+  // rather than getSettingsState: getInfo is unprivileged, so it still
+  // answers on a device whose privileged handshake was refused. A
+  // degraded answer carries no version, and an unversioned verdict is
+  // not trusted (see _storedVerdictForBuild).
+  async _readDarkIconBuild(chrome) {
+    if (!chrome || typeof chrome.getInfo !== 'function') return null;
+    let info = null;
+    try { info = await chrome.getInfo(); } catch (_) { return null; }
+    if (!info || info.degraded === true) return null;
+    if (!info.appVersion) return null;
+    return {
+      appVersion: String(info.appVersion),
+      buildNumber: info.buildNumber == null ? null : String(info.buildNumber),
+    };
+  },
+  // ── The behavioural verdict ─────────────────────────────────────────
+  //
+  // NATIVE-BRIDGE.md tells a shell that cannot store a second face not to
+  // advertise the capability, but the converse does not hold: a shell
+  // that CAN store one may still fail to advertise it (the string landed
+  // in a later release than the storage did) or may be unable to answer
+  // at all (degraded getBridgeInfo). The registry read-back is the only
+  // statement of fact available — `has_icon_dark` is written by the same
+  // code path that stores the asset — so when the capability list can't
+  // give a conclusive yes, SV sends one pair and looks.
+  //
+  // The answer is a property of the INSTALLED BUILD, so it is persisted
+  // against `{ appVersion, buildNumber }` and discarded the moment that
+  // pair changes: an app update is precisely when a shell gains (or
+  // loses) the ability, and a verdict that outlived the build it was
+  // measured on would be the same latch in a slower disguise.
+  WIDGET_DARK_VERDICT_KEY: 'sv:widget_dark_icons',
+  _loadDarkIconVerdict() {
+    try {
+      const rec = JSON.parse(localStorage.getItem(Home.WIDGET_DARK_VERDICT_KEY));
+      if (!rec || typeof rec !== 'object') return null;
+      if (rec.verdict !== 'supported' && rec.verdict !== 'unsupported') return null;
+      return rec;
+    } catch (_) { return null; /* private mode / corrupt */ }
+  },
+  _storedVerdictForBuild(build) {
+    const rec = Home._loadDarkIconVerdict();
+    if (!rec) return null;
+    // No readable version means no binding, so the record proves
+    // nothing about the app that is running now — re-confirm instead.
+    if (!build || !build.appVersion) return null;
+    if (rec.appVersion !== build.appVersion) return null;
+    if (String(rec.buildNumber ?? '') !== String(build.buildNumber ?? '')) return null;
+    return rec.verdict;
+  },
+  _recordDarkIconVerdict(verdict) {
+    Home._widgetDarkVerdict = verdict;
+    Home._widgetDarkIcons = verdict === 'supported';
+    const build = Home._darkIconBuild || {};
+    try {
+      localStorage.setItem(Home.WIDGET_DARK_VERDICT_KEY, JSON.stringify({
+        appVersion: build.appVersion ?? null,
+        buildNumber: build.buildNumber ?? null,
+        verdict,
+      }));
+    } catch (_) { /* private mode — re-confirmed next load */ }
+  },
+  // One confirmation per page load, on the first canvas-tile entry in the
+  // registry. Image icons can't answer the question (they are single
+  // artwork by design and never carry a dark face), and a foreign
+  // shortcut isn't ours to touch.
+  _darkIconConfirmTried: false,
+  async _confirmDarkIconSupport(bridge) {
+    if (Home._darkIconConfirmTried) return Home._widgetDarkIcons;
+    if (!bridge || typeof bridge.getHomeScreenShortcuts !== 'function') {
       return Home._widgetDarkIcons;
-    });
-    return Home._darkIconProbe;
+    }
+    let probeItem = null;
+    let probeApp = null;
+    for (const item of Home._widgetItems || []) {
+      const slug = Home._widgetSlugFor(item);
+      const app = slug ? (Home._apps || []).find((a) => a.slug === slug) : null;
+      if (!app || app.icon_url) continue;
+      probeItem = item;
+      probeApp = app;
+      break;
+    }
+    // Nothing to ask with — stay unresolved and try again on the next
+    // pass, once the registry or the apps list has landed.
+    if (!probeApp) return Home._widgetDarkIcons;
+    Home._darkIconConfirmTried = true;
+    try {
+      await bridge.addHomeScreenShortcut({
+        ...Home._shortcutPayloadFor(probeApp, 'dual'),
+        silent: true,
+      });
+    } catch (_) {
+      // Denied or unavailable: the send proved nothing, so no verdict is
+      // recorded and the tile keeps whatever it had.
+      return Home._widgetDarkIcons;
+    }
+    let stored = null;
+    try {
+      const resp = await bridge.getHomeScreenShortcuts();
+      if (resp && Array.isArray(resp.items)) {
+        Home._widgetItems = resp.items;
+        stored = resp.items.find((it) => it.id === probeItem.id) || null;
+      }
+    } catch (_) {
+      return Home._widgetDarkIcons; // couldn't look — no verdict
+    }
+    // Strict === true, mirroring the strict === false the heal pass uses:
+    // a shell that reports neither key has not confirmed anything.
+    if (stored && stored.has_icon_dark === true) {
+      Home._recordDarkIconVerdict('supported');
+      Home._recordIconSrc(probeItem.id, Home._desiredIconSrcFor(probeApp));
+      return true;
+    }
+    Home._recordDarkIconVerdict('unsupported');
+    // The pair's light face is what such a shell kept, which on a dark
+    // homescreen is the bright tile this whole feature exists to stop.
+    // Repaint the probe tile for the CURRENT appearance immediately, so
+    // asking the question never leaves a tile worse than not asking it.
+    try {
+      await bridge.addHomeScreenShortcut({
+        ...Home._shortcutPayloadFor(probeApp),
+        silent: true,
+      });
+      Home._recordIconSrc(probeItem.id, Home._desiredIconSrcFor(probeApp));
+    } catch (_) { /* leave it for the pass below to retry */ }
+    return false;
   },
   _iconSrcKey: 'sv:widget_icon_src',
   _iconHealTried: null,
@@ -2021,13 +2206,38 @@ const Home = {
     if (now - Home._widgetForegroundHealedAt < Home.WIDGET_FOREGROUND_HEAL_MS) return;
     Home._widgetForegroundHealedAt = now;
     Home._iconHealTried = null;
-    Promise.resolve(Home._healWidgetIcons()).catch(() => {});
+    // Re-FETCH the registry, don't just re-heal against the snapshot in
+    // memory. The whole point of a foreground is that the world moved
+    // while SV was suspended: entries were pinned or removed from the
+    // widget, and `has_icon` / `has_icon_dark` were rewritten by whatever
+    // the shell managed to store from the last pass. Healing against the
+    // stale snapshot re-derives the same decisions from the same numbers
+    // and settles on the same wrong answer, which is how a tile that
+    // failed to gain its dark face stayed single-faced across every
+    // reopen. _refreshWidgetItems heals as its last step.
+    Promise.resolve(Home._refreshWidgetItems()).then(() => {
+      // A refresh that couldn't read the registry learned nothing, so it
+      // must not spend the throttle window: disarm it and let the next
+      // foreground try again.
+      if (!Array.isArray(Home._widgetItems)) Home._widgetForegroundHealedAt = 0;
+    }).catch(() => { Home._widgetForegroundHealedAt = 0; });
   },
   _loadIconSrcMap() {
     try {
       const parsed = JSON.parse(localStorage.getItem(Home._iconSrcKey));
       return parsed && typeof parsed === 'object' ? parsed : {};
     } catch (_) { return {}; /* private mode / corrupt */ }
+  },
+  // Read-modify-write of a single record. Used by the capability
+  // confirmation, which sends before the heal pass takes its snapshot —
+  // recording the marker there is what stops the pass re-sending the tile
+  // it just probed with.
+  _recordIconSrc(id, src) {
+    const map = Home._loadIconSrcMap();
+    map[id] = src;
+    try {
+      localStorage.setItem(Home._iconSrcKey, JSON.stringify(map));
+    } catch (_) { /* private mode — the pass re-sends once next load */ }
   },
   // Serialised: a pass reads the recorded-source map, awaits a bridge
   // round trip per stale tile, then writes the map back. Two overlapping
@@ -2045,18 +2255,36 @@ const Home = {
     Home._healInFlight = pass;
     return pass;
   },
+  // Last-pass telemetry, for the Settings → "Widget icons" row. Kept
+  // here rather than derived there: by the time someone opens Settings
+  // the interesting pass has long finished.
+  _lastHealAt: 0,
+  _lastHealOutcome: null,
   async _healWidgetIconsPass() {
-    if (Home._shortcutSupport?.mechanism !== 'widget') return;
+    if (Home._shortcutSupport?.mechanism !== 'widget') {
+      Home._lastHealOutcome = 'skipped — not the widget mechanism';
+      return;
+    }
     const bridge = window.usernode;
-    if (!bridge || typeof bridge.addHomeScreenShortcut !== 'function') return;
+    if (!bridge || typeof bridge.addHomeScreenShortcut !== 'function') {
+      Home._lastHealOutcome = 'skipped — no shortcut bridge';
+      return;
+    }
     // Resolve the dual-icon capability BEFORE building any marker or
     // payload, so the synchronous builders below never see the unprobed
     // null and send a single face that the next pass re-sends as a pair.
     await Home._ensureDarkIconCapability();
+    // Still open after the capability list had its say: settle it by
+    // observation, once. This runs before the snapshot below so its own
+    // send and read-back are already recorded when the loop compares.
+    if (Home._widgetDarkIcons === null) await Home._confirmDarkIconSupport(bridge);
+    Home._lastHealAt = Date.now();
     const tried = (Home._iconHealTried ||= new Set());
     const srcMap = Home._loadIconSrcMap();
     let mapDirty = false;
     let healed = false;
+    let sent = 0;
+    let failed = 0;
     const liveIds = new Set();
     for (const item of Home._widgetItems || []) {
       liveIds.add(item.id);
@@ -2089,9 +2317,12 @@ const Home = {
           silent: true,
         });
         healed = true;
+        sent += 1;
         srcMap[item.id] = desired;
         mapDirty = true;
-      } catch (_) { /* denied / old build — leave the fallback tile */ }
+      } catch (_) {
+        failed += 1; /* denied / old build — leave the fallback tile */
+      }
     }
     // Drop records for shortcuts no longer in the registry so the map
     // can't grow without bound as apps are pinned and unpinned.
@@ -2106,6 +2337,9 @@ const Home = {
         localStorage.setItem(Home._iconSrcKey, JSON.stringify(srcMap));
       } catch (_) { /* private mode — retried next load, sends deduped by `tried` */ }
     }
+    Home._lastHealOutcome = (sent || failed)
+      ? `sent ${sent}${failed ? `, ${failed} refused` : ''}`
+      : 'nothing to send';
     if (healed) {
       try {
         const resp = await bridge.getHomeScreenShortcuts();
@@ -2618,20 +2852,80 @@ const Home = {
   //
   // Callers must have awaited _ensureDarkIconCapability() — see the
   // heal pass and _addShortcutForApp.
-  _shortcutPayloadFor(app) {
+  //
+  // `variant` overrides the resolved capability, and exists for exactly
+  // one caller: _confirmDarkIconSupport, which has to send a pair
+  // PRECISELY when the capability is still unresolved — that send is how
+  // it becomes resolved. Everything else passes nothing and gets the
+  // shape the resolution dictates.
+  _shortcutPayloadFor(app, variant) {
+    const dual = variant ? variant === 'dual' : Home._widgetDarkIcons === true;
     const payload = {
       name: app.name,
       url: `${location.origin}/#app/${encodeURIComponent(app.slug)}`,
       icon_url: app.icon_url
         ? new URL(app.icon_url, location.origin).href
-        : Home._widgetIconDataUrl(app, Home._widgetDarkIcons === true
-          ? 'light'
-          : Home._widgetScheme()),
+        : Home._widgetIconDataUrl(app, dual ? 'light' : Home._widgetScheme()),
     };
-    if (!app.icon_url && Home._widgetDarkIcons === true) {
+    if (!app.icon_url && dual) {
       payload.icon_url_dark = Home._widgetIconDataUrl(app, 'dark');
     }
     return payload;
+  },
+
+  // ── Diagnostics snapshot (Settings → "Widget icons") ────────────────
+  //
+  // Everything the icon path decided, in one plain object: what the
+  // shell said, what SV observed, what each pinned entry actually holds
+  // and whether it matches what SV believes it sent. This screen exists
+  // because every step above is invisible — the failure mode being
+  // diagnosed is "the tile looks wrong", which no log line reports.
+  //
+  // Pure read: no bridge calls, no sends. Settings re-renders it after
+  // asking Home to refresh the registry, so the caller controls I/O.
+  widgetIconDiagnostics() {
+    const srcMap = Home._loadIconSrcMap();
+    const entries = (Home._widgetItems || []).map((item) => {
+      const slug = Home._widgetSlugFor(item);
+      const app = slug ? (Home._apps || []).find((a) => a.slug === slug) : null;
+      const desired = app ? Home._desiredIconSrcFor(app) : null;
+      const recorded = srcMap[item.id] ?? null;
+      return {
+        id: item.id,
+        name: item.name || slug || item.id,
+        // A shortcut pinned by another dapp, or one whose SV app hasn't
+        // loaded — either way this pass can't heal it.
+        foreign: !slug,
+        unknownApp: !!slug && !app,
+        hasIcon: item.has_icon === undefined ? null : item.has_icon === true,
+        hasIconDark: item.has_icon_dark === undefined ? null : item.has_icon_dark === true,
+        recorded,
+        desired,
+        matches: desired != null && recorded === desired,
+      };
+    });
+    let readError = null;
+    const chrome = window.NativeChrome;
+    if (chrome && typeof chrome.lastReadError === 'function') {
+      readError = chrome.lastReadError('getHomeScreenShortcuts')
+        || chrome.lastReadError('addHomeScreenShortcut')
+        || chrome.lastReadError('getBridgeInfo')
+        || null;
+    }
+    return {
+      mechanism: Home._shortcutSupport?.mechanism || null,
+      registryLoaded: Array.isArray(Home._widgetItems),
+      scheme: Home._widgetScheme(),
+      capability: Home._darkIconCapability,
+      verdict: Home._widgetDarkVerdict,
+      resolved: Home._widgetDarkIcons,
+      build: Home._darkIconBuild,
+      confirmTried: Home._darkIconConfirmTried,
+      lastHealAt: Home._lastHealAt || 0,
+      lastHealOutcome: Home._lastHealOutcome,
+      readError,
+      entries,
+    };
   },
 
   // Shared by the hamburger item and the drag-onto-strip drop. On iOS a

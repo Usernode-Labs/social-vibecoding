@@ -104,6 +104,46 @@ second asset). Report `has_icon_dark: true` only once the dark asset is
 actually stored; SV tests it with a strict `=== false`, so a build that
 omits the key entirely is safe.
 
+**`has_icon_dark` is a load-bearing statement of fact, not a hint.** SV
+treats the registry read-back as the authority on what this build can
+store, because the capability list cannot be trusted to be complete: a
+shell may store the dark asset in a release earlier than the one that
+advertises the string, and a degraded `getBridgeInfo` reports no
+capabilities at all while saying nothing about storage. So when the
+capability answer is anything other than a conclusive yes, SV sends **one**
+pair for a single canvas-tile entry, re-reads the registry and believes
+`has_icon_dark`:
+
+- `=== true` → this build stores pairs. SV records the verdict against
+  `{ appVersion, buildNumber }` and sends pairs from then on.
+- anything else → this build does not. SV records that verdict the same
+  way and **immediately re-sends that one tile as a single face for the
+  current appearance**, so the probe never leaves a light tile stranded on
+  a dark homescreen.
+
+Two obligations follow for the shell. A build that stores the asset must
+report `has_icon_dark: true` for it — reporting `false` (or omitting the
+key) after storing a pair tells SV the opposite of the truth and costs
+that build the feature. And a build that accepts `icon_url_dark` while
+discarding it must keep reporting `has_icon_dark: false`, which is what
+lets SV correct the tile in the same pass.
+
+The verdict is **bound to the installed version pair** and discarded as
+soon as it changes: an app update is exactly when a shell gains or loses
+this ability, so a verdict that outlived the build it was measured on
+would be a latched negative in a slower disguise. When `getBridgeInfo`
+cannot supply `appVersion`, no verdict is trusted and SV re-confirms
+(one silent send per page load).
+
+**Appearance selection is a render-time decision.** SV re-fetches the
+registry and re-evaluates every entry when the app returns to the
+foreground, but it cannot repaint while closed. A shell that advertises
+the capability (or reports `has_icon_dark: true`) must therefore select
+between the two stored assets on `colorScheme` **at widget render time**,
+not at store time. Picking a face when the shortcut is added and keeping
+it produces precisely the bug this contract exists to fix, while now
+reporting the flag that makes SV stop compensating for it.
+
 **Why this exists, and why the flag must not be advertised early.** A
 stored PNG cannot restyle itself, and SV cannot repaint one while the app
 is closed — which is exactly when the system flips light/dark (#948).

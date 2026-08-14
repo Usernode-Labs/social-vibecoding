@@ -1027,6 +1027,114 @@ test('the panel has stable ids and both actions', () => {
   }
 });
 
+// ── Settings → "Usernode app — widget icons" ────────────────────────
+//
+// The homescreen widget's icon path is invisible from both ends: the
+// user sees "the tile is the wrong colour", and SV's side of the story
+// (what the capability list said, what the registry reports, what SV
+// last sent per entry) is spread across three pieces of state that no
+// log line reports. This box is that state, in one place.
+test('the widget-icon box reports every step of the icon decision', () => {
+  const widget = settingsJs.slice(
+    settingsJs.indexOf('    _renderWidgetIconsSection(parent) {'),
+    settingsJs.indexOf('    _widgetIconTime(ms) {'),
+  );
+  assert.ok(widget, '_renderWidgetIconsSection exists');
+  assert.match(widget, /'Usernode app — widget icons'/);
+  for (const id of [
+    'settings-widget-mechanism-row',
+    'settings-widget-registry-row',
+    'settings-widget-capability-row',
+    'settings-widget-verdict-row',
+    'settings-widget-sending-row',
+  ]) {
+    assert.match(widget, new RegExp(`id: '${id}'`), `${id} is rendered`);
+    assert.doesNotMatch(html, new RegExp(`id="${id}"`),
+      `#${id} is built by settings.js, never shipped in the markup`);
+  }
+  // The capability row is the one that must not lie by omission: "the
+  // app couldn't say" and "the app said no" are different diagnoses with
+  // different fixes, and collapsing them is the bug being diagnosed.
+  assert.match(widget, /diag\.capability === true/);
+  assert.match(widget, /diag\.capability === false \? 'Not advertised' : 'The app couldn’t say'/);
+  // Same for the behavioural verdict and what SV is actually sending.
+  assert.match(widget, /diag\.verdict === 'supported'/);
+  assert.match(widget, /diag\.verdict === 'unsupported' \? 'Single face only' : 'Not confirmed yet'/);
+  assert.match(widget, /diag\.resolved === true/);
+  assert.match(widget, /Verdict bound to app version/);
+  assert.match(widget, /Last icon check/);
+  // A failed probe explains itself in the same plain language the rest
+  // of this screen uses, rather than leaving a silent "couldn't say".
+  assert.match(widget, /USERNODE_READ_ERROR_REASONS\[diag\.readError\.kind\]/);
+  assert.match(widget, /USERNODE_READ_ERROR_FALLBACK/);
+});
+
+test('the widget-icon box is gated on being in the app, never on a capability', () => {
+  const widget = settingsJs.slice(
+    settingsJs.indexOf('    _renderWidgetIconsSection(parent) {'),
+    settingsJs.indexOf('    _widgetIconTime(ms) {'),
+  );
+  // The ONLY early return is "no snapshot at all" (not in the app, and
+  // not the demo link). Hiding the box when the mechanism or the
+  // capability says no would hide it in exactly the cases it exists for.
+  const returns = widget.match(/^\s+(?:if \(.*\) )?return;/gm) || [];
+  assert.equal(returns.length, 1, 'one early return, and it is the snapshot');
+  assert.match(widget, /if \(!diag\) return;/);
+  assert.doesNotMatch(widget, /diag\.mechanism !== 'widget'\) return/);
+});
+
+test('per-entry rows separate "never sent" from "sent and not kept"', () => {
+  const entries = settingsJs.slice(
+    settingsJs.indexOf('    _renderWidgetIconEntries(box, diag) {'),
+    settingsJs.indexOf('    _bridgeDiagnostics() {'),
+  );
+  assert.ok(entries, '_renderWidgetIconEntries exists');
+  assert.match(entries, /id = 'settings-widget-icon-entries'/);
+  assert.doesNotMatch(html, /id="settings-widget-icon-entries"/);
+  // has_icon / has_icon_dark come from the widget; `matches` is SV's own
+  // record of what it last sent. The pair is what tells a platform bug
+  // apart from a shell bug — they live in different repositories.
+  assert.match(entries, /entry\.hasIcon/);
+  assert.match(entries, /entry\.hasIconDark/);
+  assert.match(entries, /entry\.matches \? 'current' : 'stale'/);
+  // Tri-state all the way down: a shell that reports neither key says
+  // "—", not "no".
+  assert.match(entries, /v === true \? 'yes' : \(v === false \? 'no' : '—'\)/);
+  assert.match(entries, /pinned by another app/,
+    'a foreign shortcut is named as such rather than shown as broken');
+});
+
+// Same reasoning as ?usernodedemo=ios and ?bridgediag=demo: everything
+// this box reports comes from the iOS widget registry, so without a deep
+// link the row cannot be reviewed or screenshotted from a browser.
+test('?widgeticons=demo opens the box on a plain browser', () => {
+  assert.match(settingsJs, /_widgetIconsDemo\(\) \{\n\s+return this\._demoParam\('widgeticons'\) === 'demo';/);
+  const section = settingsJs.slice(
+    settingsJs.indexOf('    async _renderUsernodeSection() {'),
+    settingsJs.indexOf('    // The row’s truth, read BEFORE it can mislead.'),
+  );
+  assert.match(section, /this\._widgetIconsDemo\(\) \|\|/,
+    'the demo link opens the Usernode section it lives in');
+  // A fixed snapshot: no bridge call, no writes — and deliberately the
+  // interesting state rather than the healthy one.
+  const demo = settingsJs.slice(
+    settingsJs.indexOf('    DEMO_WIDGET_ICON_DIAGNOSTICS: {'),
+    settingsJs.indexOf('    _widgetIconDiagnostics() {'),
+  );
+  assert.match(demo, /capability: null/, 'the probe could not say');
+  assert.match(demo, /verdict: 'supported'/, 'but the widget proved it stores pairs');
+  assert.match(demo, /hasIconDark: false/, 'one entry is still missing its dark face');
+  assert.match(demo, /matches: false/, 'and one is stale against what SV sent');
+  // The re-check button performs bridge I/O, so it must not render on a
+  // browser pretending to be a device.
+  const widget = settingsJs.slice(
+    settingsJs.indexOf('    _renderWidgetIconsSection(parent) {'),
+    settingsJs.indexOf('    _widgetIconTime(ms) {'),
+  );
+  assert.match(widget, /if \(!this\._widgetIconsDemo\(\)\) \{\n\s+this\._unButton\(box, 'Re-check icons'/);
+  assert.match(widget, /Staging demo — sample data/);
+});
+
 test('Try again re-probes, re-admits and re-arms readiness in one press', () => {
   const retry = settingsJs.slice(
     settingsJs.indexOf('    async _retryUsernodeConnection() {'),
