@@ -74,7 +74,63 @@ const REGISTER_RATE_PER_MINUTE = 6;
 // user just keeps getting prompted. Hence: recommend the name, and tell
 // people to read it off their own tool list (see MCP-CONNECTOR.md).
 const SERVER_NAME = 'usernode';
-const SERVER_VERSION = '1.0.0';
+
+// ── The build the handshake reports ────────────────────────────────────
+//
+// SERVER_VERSION is `serverInfo.version` in the initialize response — the
+// one field in the handshake whose purpose is to say WHICH server answered.
+// As a frozen literal it said nothing: three handshakes spanning a deploy
+// boundary all reported `1.0.0`, and establishing which build was actually
+// live meant reading a client debug log for the truncated-instructions
+// length and matching it against SERVER_INSTRUCTIONS at two commits — a
+// trick that only worked because that length happened to change between
+// them. A deploy that changes behaviour without changing it leaves no
+// signal at all.
+//
+// It matters because MCP splits what a client learns in two: `instructions`,
+// tool names and tool descriptions are fetched ONCE at initialize and cached
+// for the life of the connection, while tool results are live. A session's
+// cached rules can therefore come from an older build than the code now
+// answering its calls, and this is the only field that can tell them apart.
+// get_connector_guidance sharpens it further — the operating charter a
+// connector agent follows now depends on which build served its handshake.
+//
+// GIT_SHA is the platform's own build stamp, already plumbed through
+// docker-compose.yml and read exactly this way by /api/version,
+// services/status and services/node-status. Reusing it keeps ONE answer to
+// "what is running" instead of minting a second one that can disagree.
+//
+// `serverInfo.version` is free-form in MCP, so the commit rides along as
+// semver build metadata: the string stays parseable, and a build with no
+// deploy behind it still reads honestly instead of claiming to be a release
+// (staging previews of the platform are built without GIT_SHA, and compose
+// defaults it to `dev` — so `1.0.0+dev` says "not a deployed build" where a
+// bare `1.0.0` would have said nothing). whoami returns the same string, so
+// a session can read it without going through a client debug log.
+//
+// TWO THINGS MUST NOT MOVE WITH IT. SERVER_NAME stays fixed, because allow
+// rules match it as a LITERAL (see above) and a per-deploy name would break
+// every rule the platform ships, silently. And the build id stays OUT of
+// SERVER_INSTRUCTIONS, which is budgeted to the byte against a client that
+// truncates it (SERVER_INSTRUCTIONS_MAX_CHARS): serverInfo and a tool result
+// both sit outside that budget, which is precisely why they are the two
+// right places to carry it.
+const SERVER_VERSION_BASE = '1.0.0';
+
+// Semver build metadata is [0-9A-Za-z-], and GIT_SHA arrives from the
+// environment rather than from this repository, so it is narrowed rather
+// than trusted. A value that narrows away to nothing leaves the bare base
+// version instead of a dangling `+`.
+function serverVersionFor(gitSha) {
+  const build = String(gitSha == null ? '' : gitSha)
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, '')
+    .slice(0, 7);
+  return build ? `${SERVER_VERSION_BASE}+${build}` : SERVER_VERSION_BASE;
+}
+
+const SERVER_VERSION = serverVersionFor(process.env.GIT_SHA);
 
 // ── The spellings the shipped rules cover ──────────────────────────────
 //
@@ -176,6 +232,8 @@ module.exports = {
   REGISTER_RATE_PER_MINUTE,
   SERVER_NAME,
   SERVER_VERSION,
+  SERVER_VERSION_BASE,
+  serverVersionFor,
   ALLOW_RULE_SERVER_NAMES,
   READ_ONLY_ALLOW_RULES,
   READ_ONLY_TOOL_PREFIXES,
