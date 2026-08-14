@@ -9030,6 +9030,42 @@ async function seedStagingTopicAttributes(pool, config) {
   const appId = appRows[0]?.id;
   if (!appId) return;
 
+  const { rows: users } = await pool.query(
+    `SELECT id, username FROM users ORDER BY is_admin DESC, id ASC LIMIT 3`
+  );
+  if (!users.length) return;
+  const u0 = users[0];
+  const u1 = users[1] || users[0];
+  const u2 = users[2] || users[0];
+
+  // #1187: the assignee picker is a TOGGLE — clicking your own pick
+  // withdraws it. Make that state URL-reachable for checks/screenshots:
+  // real assignee votes on mock issue 900009 (the card the existing
+  // shot=card-menu&row=assignee deep link opens), cast BY the two capture
+  // identities — proposal checks run as usernode-capture-admin and
+  // screenshots as usernode-capture (services/visuals.js), so keying the
+  // votes to those rows (not "the first admins", which a prod-cloned DB
+  // orders differently) is what guarantees the picker opens with the
+  // VIEWER's own pick checked and re-clickable for both. The value is the
+  // obviously-fake staging-demo-user, matching the synthetic summaries the
+  // demo feed paints. Mock issue numbers are safe targets:
+  // topic_attribute_votes carries no FK to issues.
+  const { rows: capRows } = await pool.query(
+    `SELECT id FROM users
+      WHERE username IN ('usernode-capture', 'usernode-capture-admin')
+      ORDER BY id ASC`
+  );
+  for (let i = 0; i < capRows.length; i++) {
+    await pool.query(
+      `INSERT INTO topic_attribute_votes
+         (app_id, target_type, target_ref, field, value, user_id, created_at)
+       VALUES ($1, 'issue', 900009, 'assignee', 'staging-demo-user', $2,
+               NOW() - ($3 || ' minutes')::interval)
+       ON CONFLICT (app_id, target_type, target_ref, field, user_id) DO NOTHING`,
+      [appId, capRows[i].id, String(26 - i)]
+    );
+  }
+
   const { rows: sessRows } = await pool.query(
     `SELECT id FROM chat_sessions
       WHERE app_id = $1 AND branch_name = $2 LIMIT 1`,
@@ -9040,14 +9076,6 @@ async function seedStagingTopicAttributes(pool, config) {
     return;
   }
   const sessionId = sessRows[0].id;
-
-  const { rows: users } = await pool.query(
-    `SELECT id, username FROM users ORDER BY is_admin DESC, id ASC LIMIT 3`
-  );
-  if (!users.length) return;
-  const u0 = users[0];
-  const u1 = users[1] || users[0];
-  const u2 = users[2] || users[0];
 
   // priority: u0 + u1 → 'high' (clear winner, includes the viewer), u2 → 'low'.
   // assignee: u0 + u1 → @<u1.username> (winner), u2 → @<u0.username>.

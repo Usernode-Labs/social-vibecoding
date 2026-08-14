@@ -620,6 +620,11 @@
       "expectText": "Assigned person"
     },
     {
+      "name": "Assignee picker: the viewer’s own pick renders as a re-clickable toggle — deselect by clicking again (#1187)",
+      "path": "/?demo=1&view=kanban&shot=card-menu&card=issue:900009&row=assignee#app/usernode-2d5619/dev",
+      "expectSelector": "#attr-popover .attr-opt[data-attr-opt-mine=\"1\"][title]"
+    },
+    {
       "name": "Dev board: the same ⋯ row mechanism opens the priority picker in the list view",
       "path": "/?demo=1&shot=card-menu&card=issue:900009&row=priority#app/usernode-2d5619/dev",
       "expectSelector": "#attr-popover .attr-opt[data-attr-opt-value=\"high\"]",
