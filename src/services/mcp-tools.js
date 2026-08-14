@@ -1275,13 +1275,54 @@ function registerTools(server, ctx) {
     return '';
   };
 
+  // The FIRST thing prepare_work's nextStep says when the group is already
+  // voting on this request (#1216).
+  //
+  // It leads because of the order the caller acts in: nextStep is read before
+  // the work order is pasted, and "this may already be built" is only useful
+  // before an hour of an agent's time is spent on it. `reused` was the only
+  // "something already exists" signal this tool had, and it answers a
+  // different question — whether another JOB is open — so a request whose
+  // proposal was finished, checked and waiting on the vote came back looking
+  // exactly like untouched work.
+  //
+  // Deliberately not a refusal, and deliberately not `proposalId`. A second
+  // proposal is legitimate (a rival approach; somebody else's proposal, which
+  // this user cannot touch), and reporting a duplicate as `proposalId` would
+  // make submit_work's UPDATE shape — which advances that proposal onto the
+  // caller's branch and clears its votes — read as the documented next step
+  // for a work order that has nothing to do with it.
+  //
+  // Nothing user-written is interpolated into it. The names and titles behind
+  // these ids are other people's writing on its way into an instruction, and
+  // they ride in `openProposals` under the <untrusted-content> envelope
+  // instead; ids and `mine` carry everything this sentence has to say.
+  const duplicateWarning = (result) => {
+    const open = Array.isArray(result.openProposals) ? result.openProposals : [];
+    if (!open.length) return '';
+    const mine = open.filter((p) => p.mine);
+    const ids = open.map((p) => `${p.proposalId}${p.mine ? ' (the user\'s own)' : ''}`);
+    return `THIS REQUEST IS ALREADY UP FOR A VOTE — proposal${open.length === 1 ? '' : 's'} `
+      + `${ids.join(', ')}. Say so before the user pastes anything, because a second proposal for `
+      + 'work that is already built and waiting on the group is the failure this warning exists to '
+      + 'stop. '
+      + (mine.length
+        ? 'If this change belongs on one of theirs, call prepare_work again with '
+          + `proposalId ${mine[0].proposalId}: that work order starts at the proposal's own commit `
+          + 'and updates it in place. Discard this one — nothing has to be undone, it simply '
+          + 'expires. '
+        : 'Only its author can update it, so the options are commenting on theirs or a deliberate '
+          + 'rival approach — the user\'s call, not yours. ')
+      + 'If they want the second proposal anyway, carry on below. ';
+  };
+
   // ── prepare_work ─────────────────────────────────────────────────────
   //
   // The hand-off. Returns a self-contained work order — no Usernode
   // credential in it, nothing the receiving agent has to look up.
   server.registerTool('prepare_work', {
     title: 'Hand a change to the user’s coding agent',
-    description: "Prepare a change to a Usernode app so the user's own coding agent can build it. Returns `guidance` — the human's next steps, already written for the user: show them in order, as written, instead of your own summary — and `workOrder`, for their coding agent, naming the app's repository, the fork to push to, the branch to create and the exact commit to start from. Reproduce `workOrder` inside a fenced code block character for character, EXACTLY as returned: do not shorten it, re-wrap it, re-indent it, tidy it, strip its <untrusted-content> tags, or retype the branch name or the 40-character commit id, and never append a correction to it — a single wrong character sends the coding agent to a starting point that does not exist. The work order makes the fork and the branch itself, because Usernode asks for NO write access to the user's GitHub account. When the user says the branch is pushed, call submit_work. Pass `proposalId` to REVISE a proposal that is already up for a vote instead of opening a new one — the work order is then based at that proposal's own head and its submission updates it in place. Requires a linked GitHub account (identity only, so work can be attributed to them). This spends the user's own coding-agent subscription, not their Usernode credits.",
+    description: "Prepare a change to a Usernode app so the user's own coding agent can build it. Returns `guidance` — the human's next steps, already written for the user: show them in order, as written, instead of your own summary — and `workOrder`, for their coding agent, naming the app's repository, the fork to push to, the branch to create and the exact commit to start from. Reproduce `workOrder` inside a fenced code block character for character, EXACTLY as returned: do not shorten it, re-wrap it, re-indent it, tidy it, strip its <untrusted-content> tags, or retype the branch name or the 40-character commit id, and never append a correction to it — a single wrong character sends the coding agent to a starting point that does not exist. The work order makes the fork and the branch itself, because Usernode asks for NO write access to the user's GitHub account. When the user says the branch is pushed, call submit_work. Pass `proposalId` to REVISE a proposal that is already up for a vote instead of opening a new one — the work order is then based at that proposal's own head and its submission updates it in place. `openProposals` in the result names any proposals the group is ALREADY voting on for the same request: tell the user before they paste anything, because that work may be built already, and if one of them is theirs, calling prepare_work again with its `proposalId` continues it instead of opening a duplicate. Requires a linked GitHub account (identity only, so work can be attributed to them). This spends the user's own coding-agent subscription, not their Usernode credits.",
     inputSchema: {
       slug: z.string().describe('The app slug, as returned by list_apps.'),
       requestNumber: z.number().int().positive().optional()
@@ -1320,6 +1361,23 @@ function registerTools(server, ctx) {
       // where that proposal's head lives.
       proposalId: z.number().nullable(),
       branchHome: z.enum(['app_repo', 'user_fork']).nullable(),
+      // Proposals the group is ALREADY voting on for this same request
+      // (#1216) — empty when there are none, and never the same thing as
+      // `proposalId` above. A job and a proposal are tracked separately, so
+      // `reused: false` only ever meant "no other JOB is open"; without this,
+      // preparing work for a request that had a finished, live proposal
+      // looked identical to preparing the first work on it.
+      openProposals: z.array(z.object({
+        proposalId: z.number(),
+        title: z.string(),
+        status: z.string(),
+        prNumber: z.number().nullable(),
+        // Only the author can update a proposal — so `mine: false` means the
+        // options are commenting on theirs or a rival approach, not a revision.
+        mine: z.boolean(),
+        author: z.string().nullable(),
+        webPath: z.string().nullable(),
+      })),
       nextStep: z.string(),
     },
     annotations: writeAnnotations,
@@ -1417,7 +1475,17 @@ function registerTools(server, ctx) {
       workOrder: result.workOrder,
       proposalId: result.proposalId || null,
       branchHome: result.branchHome || null,
-      nextStep: (result.proposalId
+      // The title is the proposal's own heading and the author is a username:
+      // both are other Usernode users' writing, so both keep the envelope
+      // every other request- and proposal-shaped string here carries.
+      openProposals: (Array.isArray(result.openProposals) ? result.openProposals : [])
+        .map((p) => ({
+          ...p,
+          title: untrusted(p.title, MAX_TITLE_CHARS),
+          author: p.author ? untrusted(p.author, MAX_TITLE_CHARS) : null,
+        })),
+      nextStep: duplicateWarning(result)
+        + (result.proposalId
         ? `This work order REVISES proposal ${result.proposalId}, and it starts at that proposal's own current `
           + 'commit rather than at the app\'s main branch. Its coding agent submits it with submit_work using '
           + `proposalId ${result.proposalId} and the branch it pushed — not as a new proposal. Tell the user that `

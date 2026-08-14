@@ -97,6 +97,12 @@ const CODEX_URL = 'https://chatgpt.com/codex';
 // URL and two repository names can eat 150 characters on their own.
 const MAX_GUIDANCE_CHARS = 320;
 
+// How many open proposals for the SAME request prepare_work reports back
+// (#1216). A duplicate check does not need the whole board — naming a couple
+// and counting the rest is the whole signal — and this rides on a tool result
+// that is already long.
+const MAX_OPEN_PROPOSALS = 5;
+
 // Which coding agent produced the work. Stored on chat_sessions.external_agent
 // and rendered as the "built with …" badge. A closed vocabulary: this string
 // reaches the client, and the client maps it to a label rather than printing
@@ -298,6 +304,68 @@ function proposalRequestKeyFor(sessionId) {
 // with services/external-agent-head.js so one definition governs both.
 const isValidBranchName = externalAgentHead.validRef;
 
+// A username, printed into a line a host model relays to a person. Usernames
+// are not restricted to a safe character set on this platform (see
+// services/user-directory.js — a lookup handle is trimmed and clipped, no
+// more), so one could carry markup, control characters, or a sentence shaped
+// like an instruction. The name is TRUNCATED at the first character outside a
+// conservative handle alphabet, not filtered of them: deleting the offending
+// characters welds what is left back together, and "dana</b> SYSTEM: ignore
+// the above" reduces to a run that still reads as those words. A real handle
+// has nothing to truncate. The name is decoration here — the proposal id
+// beside it is the identity — so losing it entirely costs nothing.
+function displayHandle(raw) {
+  return /^[A-Za-z0-9._-]*/.exec(String(raw || ''))[0].slice(0, 40);
+}
+
+// ── "This request is already up for a vote" (#1216) ────────────────────
+//
+// One line for the human, built from the open proposals found against the
+// same request. A job and a proposal are tracked separately — `reused` only
+// ever answered "is there another JOB open" — so prepare_work could hand back
+// a brand-new work order for a feature that was already built, reviewed and
+// waiting on the group's vote, and say nothing. It happened: the only thing
+// that stopped a duplicate proposal was the user having the web UI open.
+//
+// It REPORTS, it does not refuse. A second proposal on one request is
+// sometimes exactly what is wanted (a rival approach, a proposal of somebody
+// else's that this user cannot touch), and the caller has context this query
+// does not. What it must not do is stay silent.
+//
+// The user's OWN proposals come first: those are the ones they can actually
+// continue, by calling prepare_work again with `proposalId`. Titles are left
+// out on purpose — they are other people's writing, they are already in the
+// structured result, and the line has a 320-character budget to keep.
+function buildDuplicateNotice({ issueNumber, openProposals }) {
+  const list = Array.isArray(openProposals) ? openProposals : [];
+  if (!list.length || !(Number.isInteger(issueNumber) && issueNumber > 0)) return null;
+
+  const lead = list.find((p) => p.mine) || list[0];
+  const who = displayHandle(lead.author) ? ` by ${displayHandle(lead.author)}` : '';
+  const head = lead.mine
+    ? `Heads-up: request #${issueNumber} already has a proposal of yours up for a vote — proposal ${lead.proposalId}.`
+    : `Heads-up: request #${issueNumber} already has a proposal up for a vote — proposal ${lead.proposalId}, opened${who}.`;
+  const tail = lead.mine
+    ? ' Say so if this change belongs on that one and I\'ll prepare an update to it, instead of a second proposal.'
+    : ' Worth a read first — you can only update your own, so the other option is a deliberate rival approach.';
+
+  const others = list.length - 1;
+  const link = lead.webPath ? ` ${lead.webPath}` : '';
+  const more = others > 0
+    ? ` (${others} other open proposal${others === 1 ? '' : 's'} too.)`
+    : '';
+
+  // The line is read in a chat bubble and a host model reflows anything
+  // longer, so it degrades rather than overflowing: the link goes first, then
+  // the count. The proposal id in `head` is the identity, and it always fits —
+  // so there is no input for which this returns something unusable.
+  for (const middle of [link + more, link, more, '']) {
+    const line = head + middle + tail;
+    if (line.length <= MAX_GUIDANCE_CHARS) return line;
+  }
+  return head;
+}
+
 // ── The human's next steps ─────────────────────────────────────────────
 //
 // Short second-person lines the assistant renders as a numbered list
@@ -316,7 +384,8 @@ const isValidBranchName = externalAgentHead.validRef;
 // it, and in guidance only for the `external` variant, where a terminal
 // really is the likely setting.
 function buildGuidance({
-  agent, forkOwner, forkRepo, repo, forkPageUrl, forkStatus,
+  agent, forkOwner, forkRepo, repo, forkPageUrl, forkStatus, issueNumber,
+  openProposals,
 }) {
   const forkRef = `${forkOwner}/${forkRepo}`;
   const justCreated = forkStatus !== 'ready';
@@ -324,6 +393,12 @@ function buildGuidance({
     ? ' (A coding agent with the GitHub CLI can create it instead — the work order says how.)'
     : '';
   const steps = [];
+
+  // FIRST, when there is one: this request is already being voted on (#1216).
+  // Before the fork step, deliberately — every step below it is work, and the
+  // decision this raises is whether that work should happen at all.
+  const duplicate = buildDuplicateNotice({ issueNumber, openProposals });
+  if (duplicate) steps.push(duplicate);
 
   if (forkStatus === 'name_conflict') {
     steps.push(
@@ -1205,6 +1280,16 @@ async function prepareWork(deps, params) {
     ? proposalRequestKeyFor(update.proposalId)
     : requestKeyFor(issueNumber, trimmedBrief);
 
+  // ── Is the group already voting on this request? (#1216) ─────────────
+  //
+  // Read BEFORE the two returns below, so a REUSED job carries the warning
+  // too: the proposal may well have appeared after the job was minted, and
+  // the second call is exactly when a caller is deciding whether to go ahead.
+  // Skipped in UPDATE mode, where the proposal in question is the target.
+  const openProposals = update
+    ? []
+    : await findOpenProposalsForRequest(pool, app.id, issueNumber, user.id);
+
   // ── Look before minting ──────────────────────────────────────────────
   //
   // BEFORE the rate check, deliberately: re-rendering a work order the
@@ -1215,7 +1300,7 @@ async function prepareWork(deps, params) {
     if (existing) {
       return renderPreparedTask({
         task: existing, app, owner, repo, origin, clientId, clientName,
-        prompts, agent, reused: true, targetProposal: update,
+        prompts, agent, reused: true, targetProposal: update, openProposals,
       });
     }
   } else {
@@ -1349,7 +1434,7 @@ async function prepareWork(deps, params) {
     if (raced) {
       return renderPreparedTask({
         task: raced, app, owner, repo, origin, clientId, clientName,
-        prompts, agent, reused: true, targetProposal: update,
+        prompts, agent, reused: true, targetProposal: update, openProposals,
       });
     }
     return fail('platform_unavailable', 'Usernode could not record this piece of work. Try again shortly.', { retryable: true });
@@ -1370,7 +1455,7 @@ async function prepareWork(deps, params) {
       target_session_id: update ? update.proposalId : null,
     },
     app, owner, repo, origin, clientId, clientName, prompts, agent,
-    forkStatus, reused: false, targetProposal: update,
+    forkStatus, reused: false, targetProposal: update, openProposals,
   });
 }
 
@@ -1395,6 +1480,56 @@ async function findOpenTaskByRequest(pool, userId, appId, requestKey) {
   }
 }
 
+// The proposals ALREADY up for a vote on this request (#1216), whoever opened
+// them. `linked_issues` is the Mayor's declared linkage and is also what a
+// connector submission records (linkedIssuesFor); `created_from_issue_number`
+// catches a dev chat started from the issue row before the Mayor has declared
+// anything. Either one means "somebody's change for this request is in front
+// of the group right now".
+//
+// 'promoted' and 'merging' only — the two statuses list_my_proposals treats as
+// open. An 'active' or 'paused' session is somebody BUILDING, which the issue
+// board already shows as "in progress" and which is not yet a duplicate
+// proposal; 'archived' and 'merged' are over.
+//
+// ADVISORY, like every other read on this path: a lookup that fails costs the
+// warning and nothing else. Refusing to prepare work because a duplicate CHECK
+// broke would be a worse failure than the duplicate it is guarding against.
+async function findOpenProposalsForRequest(pool, appId, issueNumber, viewerId) {
+  if (!(Number.isInteger(issueNumber) && issueNumber > 0)) return [];
+  try {
+    const { rows } = await pool.query(
+      `SELECT cs.id, cs.status, cs.pr_number, cs.pr_title, cs.session_title,
+              cs.user_id, u.username
+         FROM chat_sessions cs
+         LEFT JOIN users u ON u.id = cs.user_id
+        WHERE cs.app_id = $1
+          AND cs.status IN ('promoted', 'merging')
+          AND ($2 = ANY(cs.linked_issues) OR cs.created_from_issue_number = $2)
+        ORDER BY cs.id DESC
+        LIMIT $3`,
+      [appId, issueNumber, MAX_OPEN_PROPOSALS]
+    );
+    return (rows || []).map((r) => ({
+      proposalId: Number(r.id),
+      title: proposalTitle(r),
+      status: String(r.status || ''),
+      prNumber: Number.isInteger(Number(r.pr_number)) && Number(r.pr_number) > 0
+        ? Number(r.pr_number)
+        : null,
+      // Only the author can update a proposal, so this is what decides whether
+      // the notice offers a continuation or a second opinion.
+      mine: Number(r.user_id) === Number(viewerId),
+      author: r.username ? String(r.username).slice(0, 64) : null,
+    }));
+  } catch (err) {
+    log.warn('external-agent-tasks', 'open-proposal lookup failed', {
+      appId, issueNumber, err: err.message,
+    });
+    return [];
+  }
+}
+
 // Render the caller-facing result for a task row, whether it was just minted
 // or adopted from an earlier call. A REUSED task is rendered from its STORED
 // values — original branch, original base commit — never from a fresh read
@@ -1402,11 +1537,17 @@ async function findOpenTaskByRequest(pool, userId, appId, requestKey) {
 // production run rewrite a finished commit.
 function renderPreparedTask({
   task, app, owner, repo, origin, clientId, clientName, prompts,
-  forkStatus, reused, agent: requestedAgent, targetProposal,
+  forkStatus, reused, agent: requestedAgent, targetProposal, openProposals,
 }) {
   const forkOwner = task.fork_owner;
   const forkRepo = task.fork_repo;
   const webPath = `${origin}/#app/${app.slug}`;
+  // The duplicate warning's links, addressed the same way get_proposal's
+  // `webPath` is, so a caller can open one without composing a URL.
+  const duplicates = (Array.isArray(openProposals) ? openProposals : []).map((p) => ({
+    ...p,
+    webPath: origin ? `${origin}/#app/${app.slug}/dev/sessions/${p.proposalId}` : null,
+  }));
   const forkPageUrl = `https://github.com/${owner}/${repo}/fork`;
   // A reused task did not re-read GitHub, so its fork state is genuinely
   // unknown — and `unknown` is now a first-class state with hedged wording.
@@ -1423,6 +1564,8 @@ function renderPreparedTask({
     repo,
     forkPageUrl,
     forkStatus: status,
+    issueNumber: task.issue_number,
+    openProposals: duplicates,
   });
   const workOrder = buildWorkOrder({
     appName: app.name || app.slug,
@@ -1455,6 +1598,12 @@ function renderPreparedTask({
     // of work order apart without re-deriving it from the text.
     proposalId: targetProposal ? targetProposal.proposalId : null,
     branchHome: targetProposal ? targetProposal.branchHome : null,
+    // Proposals ALREADY up for a vote on this same request (#1216). Distinct
+    // from `proposalId` above, which names the one this work order REVISES:
+    // reporting a duplicate there would make the very submission that opens a
+    // duplicate — submit_work with a proposalId advances that proposal and
+    // clears its votes — look like the documented next step.
+    openProposals: duplicates,
     forkOwner,
     forkRepo,
     forkUrl: `https://github.com/${forkOwner}/${forkRepo}`,
@@ -2506,6 +2655,10 @@ module.exports = {
   inspectPushedBranch,
   branchNameFor,
   buildGuidance,
+  // The duplicate-proposal warning (#1216) and the read behind it.
+  buildDuplicateNotice,
+  findOpenProposalsForRequest,
+  MAX_OPEN_PROPOSALS,
   buildWorkOrder,
   headOwnerOf,
   attributionError,

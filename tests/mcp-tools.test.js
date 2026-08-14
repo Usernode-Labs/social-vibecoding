@@ -1309,6 +1309,50 @@ test('prepare_work can be aimed at a proposal, and says which one it produced', 
   assert.match(block, /targetProposal/);
 });
 
+// #1216. `reused` answers "is another JOB open", which is a different
+// question from "has this already been built": a request whose proposal was
+// finished, checked and waiting on the group came back from prepare_work
+// looking exactly like untouched work, and nearly got a second one.
+test('prepare_work reports the proposals already up for a vote on the request', () => {
+  const block = SRC.slice(
+    SRC.indexOf("server.registerTool('prepare_work'"),
+    SRC.indexOf("server.registerTool('submit_work'")
+  );
+  // Declared in the output schema, so a caller can act on it without parsing
+  // prose, and `mine` is there because only an author can update a proposal.
+  assert.match(block, /openProposals: z\.array\(z\.object\(\{/);
+  assert.match(block, /mine: z\.boolean\(\)/);
+  assert.match(block, /openProposals: \(Array\.isArray\(result\.openProposals\)/);
+  // A proposal's heading and its author's username are other users' writing
+  // reaching a model, so they keep the envelope everything else here carries.
+  assert.match(block, /title: untrusted\(p\.title, MAX_TITLE_CHARS\)/);
+  assert.match(block, /author: p\.author \? untrusted\(p\.author, MAX_TITLE_CHARS\) : null/);
+  // It leads nextStep: that string is read BEFORE the work order is pasted,
+  // which is the only point at which an hour of an agent's time can be saved.
+  assert.match(block, /nextStep: duplicateWarning\(result\)/);
+
+  const warning = SRC.slice(
+    SRC.indexOf('const duplicateWarning = (result) =>'),
+    SRC.indexOf("server.registerTool('prepare_work'")
+  );
+  assert.ok(warning.length > 0);
+  assert.match(warning, /THIS REQUEST IS ALREADY UP FOR A VOTE/);
+  // A duplicate of the user's own is continuable — through prepare_work's
+  // proposalId, which rebases the work order onto that proposal's own commit.
+  assert.match(warning, /call prepare_work again with/);
+  assert.match(warning, /proposalId \$\{mine\[0\]\.proposalId\}/);
+  // Somebody else's is not: submit_work would refuse the update, so the
+  // warning must not offer it.
+  assert.match(warning, /Only its author can update it/);
+  // And it reports rather than refuses — a rival approach is legitimate.
+  assert.match(warning, /If they want the second proposal anyway, carry on/);
+
+  // Nothing user-written is interpolated into it. Titles and usernames are
+  // other people's text on its way into an instruction; ids and `mine` say
+  // everything this sentence needs, so they are all it uses.
+  assert.doesNotMatch(warning, /p\.author|p\.title|\.username/);
+});
+
 test('submit_work reaches the update through the platform route, not around it', () => {
   const block = SRC.slice(
     SRC.indexOf("server.registerTool('submit_work'"),
