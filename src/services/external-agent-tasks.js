@@ -1524,6 +1524,33 @@ async function loadAnyTask(pool, userId, taskId) {
   }
 }
 
+// The app a proposal is on. Routing information only: every gate that
+// decides whether an update may happen lives behind the update route, which
+// re-checks the caller against whatever app this resolves to — so reading it
+// here cannot widen anything, and a caller who names somebody else's
+// proposal is refused there exactly as before.
+//
+// #1217: without this, an update had to be told the app as well as the
+// proposal, which submit_work's own shape (4) and get_proposal's `updateWith`
+// both describe as unnecessary. It was a round trip spent learning that a
+// documented recipe was incomplete.
+async function appSlugForProposal(pool, proposalId) {
+  const id = Number(proposalId);
+  if (!Number.isSafeInteger(id) || id <= 0) return null;
+  try {
+    const { rows } = await pool.query(
+      `SELECT a.slug AS app_slug
+         FROM chat_sessions s
+         JOIN apps a ON a.id = s.app_id
+        WHERE s.id = $1`,
+      [id]
+    );
+    return (rows[0] && rows[0].app_slug) || null;
+  } catch {
+    return null;
+  }
+}
+
 // ── Serializing two callers on one task ────────────────────────────────
 //
 // The work order now tells the coding agent to submit for itself, so the
@@ -1905,9 +1932,18 @@ async function submitUpdate(deps, params, proposalId) {
     );
   }
 
-  const slug = task ? task.app_slug : params.slug;
+  // Which app this proposal is on, in order of authority: the task the work
+  // order minted, then whatever the caller passed, then the proposal's own
+  // row (#1217). The task still wins, so a caller cannot redirect a prepared
+  // update at another app by passing a different slug.
+  const slug = (task ? task.app_slug : params.slug)
+    || await appSlugForProposal(pool, proposalId);
   if (!slug) {
-    return fail('invalid_request', 'Pass `slug` (or the taskId from the work order) so Usernode knows which app this proposal is on.');
+    return fail(
+      'invalid_request',
+      `Usernode has no proposal ${proposalId}. Check the id with list_my_proposals — or pass the taskId from the `
+      + 'work order, which names both the proposal and its app.'
+    );
   }
 
   // The testing metadata travels WITH the update (#1199). The route stores it

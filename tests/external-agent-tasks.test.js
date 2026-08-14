@@ -2940,11 +2940,14 @@ const UPDATE_TASK = {
   branch_name: 'usernode/recipe-box-update-512-ab12',
 };
 
-function submitUpdateWork(params, { rows = [UPDATE_TASK], updateProposal } = {}) {
+function submitUpdateWork(params, { rows = [UPDATE_TASK], updateProposal, sessionRows } = {}) {
   const queries = [];
   const calls = [];
   const pool = fakePool([
     ['LEFT JOIN chat_sessions s ON s.id = t.session_id', rows],
+    // The proposal's own app, for an update that carries neither a task nor
+    // a slug (#1217).
+    ['JOIN apps a ON a.id = s.app_id', sessionRows || [{ app_slug: 'recipe-box' }]],
     ['UPDATE external_agent_tasks', []],
   ], queries);
   const call = updateProposal || (async (slug, id, payload) => {
@@ -3138,10 +3141,36 @@ test('an update takes the app slug from the task, so the caller cannot redirect 
   assert.equal(calls[0].slug, 'recipe-box');
 });
 
-test('with no task and no slug there is nothing to update, and it says which to pass', async () => {
-  const { result } = await submitUpdateWork({ taskId: null, slug: null });
+// ── #1217: an update names its app by naming the proposal ──────────────
+//
+// submit_work documents shape (4) as `proposalId` plus `branch`, and
+// get_proposal tells the author of a failing proposal to call exactly that
+// pair — then this refused it for want of a `slug` the proposal already
+// determines. The lookup is routing information only: the update route
+// re-checks the caller against whatever app it resolves to, so a caller who
+// names somebody else's proposal is refused there exactly as before.
+
+test('with no task and no slug, the app is read off the proposal', async () => {
+  const { result, calls, queries } = await submitUpdateWork(
+    { taskId: null, slug: null },
+    { rows: [], sessionRows: [{ app_slug: 'recipe-box' }] }
+  );
+  assert.equal(result.ok, true);
+  assert.equal(calls[0].slug, 'recipe-box', 'resolved, not demanded');
+  const lookup = queries.find((q) => q.sql.includes('JOIN apps a ON a.id = s.app_id'));
+  assert.ok(lookup, 'from the proposal row');
+  assert.deepEqual(lookup.params, [512]);
+});
+
+test('a proposal that does not exist is named as such, not as a missing field', async () => {
+  const { result, calls } = await submitUpdateWork(
+    { taskId: null, slug: null },
+    { rows: [], sessionRows: [] }
+  );
   assert.equal(result.code, 'invalid_request');
-  assert.match(result.message, /Pass `slug`/);
+  assert.match(result.message, /no proposal 512/);
+  assert.match(result.message, /list_my_proposals/, 'and says where to find the right id');
+  assert.deepEqual(calls, [], 'refused before the platform is asked to do anything');
 });
 
 test('an update needs a branch, and a patch or prNumber is the wrong submission', async () => {
