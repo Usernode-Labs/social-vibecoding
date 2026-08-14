@@ -188,6 +188,173 @@ test('the connector doc covers the trust dialog and the version gate', () => {
   assert.match(CONNECTOR_DOC, /anthropic\/requiresUserInteraction/);
 });
 
+// ── 5. Every creation path scaffolds it ────────────────────────────────
+//
+// The scaffold used to ship only from the fresh-create path, which is the one
+// that writes the whole template. Import and fork both make an app repo and
+// neither called it, so neither produced the file — and a user of one of those
+// apps kept getting a prompt per read, forever, with nothing in the product
+// telling them why.
+
+const CREATOR_SRC = read('src/services/app-creator.js');
+const FORKER_SRC = read('src/services/app-forker.js');
+const TEMPLATE_SRC = read('src/services/template.js');
+
+test('the connector scaffold has ONE source, which the full template spreads', () => {
+  // Anti-drift: if getTemplateFiles() carried its own copy, a rule added to
+  // the constant would reach a created app and not an imported one, and the
+  // difference would be invisible until someone compared two repos.
+  const scaffoldFiles = template.getConnectorScaffoldFiles();
+  assert.deepEqual(scaffoldFiles.map((f) => f.path), [
+    '.claude/settings.json',
+    '.claude/README.md',
+  ]);
+
+  const fromTemplate = template.getTemplateFiles('Demo App', 'demo-app', 'postgres://x/y')
+    .filter((f) => f.path.startsWith('.claude/'));
+  assert.deepEqual(fromTemplate, scaffoldFiles,
+    'getTemplateFiles must spread the helper, not repeat it');
+
+  assert.match(TEMPLATE_SRC, /\.\.\.getConnectorScaffoldFiles\(\)/,
+    'the full template spreads the shared helper');
+  assert.equal(
+    (TEMPLATE_SRC.match(/path: '\.claude\/settings\.json'/g) || []).length, 1,
+    "the scaffold's settings.json is written in exactly one place"
+  );
+  assert.equal(
+    (TEMPLATE_SRC.match(/path: '\.claude\/README\.md'/g) || []).length, 1,
+    "the scaffold's README is written in exactly one place"
+  );
+});
+
+test('all three creation paths reach that one helper', () => {
+  // Create goes through getTemplateFiles (which spreads it, asserted above);
+  // import and fork call it directly.
+  assert.match(CREATOR_SRC, /getConnectorScaffoldFiles/,
+    'the import path adds the connector scaffold');
+  assert.match(FORKER_SRC, /getConnectorScaffoldFiles/,
+    'the fork path adds the connector scaffold');
+});
+
+test('adding the scaffold to an imported repo can never fail the import', () => {
+  // A fresh create marks its push failure `repoFailed` and throws, because
+  // there is no app without the push. An import already HAS its repo: the app
+  // is complete and working, just noisier to drive, and a user-owned repo the
+  // platform's GitHub App cannot write to is an ordinary import. Failing the
+  // creation over a settings file would be a regression in what works.
+  const start = CREATOR_SRC.indexOf('} else if (repoUrl) {');
+  assert.ok(start > 0, 'the import branch is still shaped this way');
+  const end = CREATOR_SRC.indexOf('// 3. Clone (or write)', start);
+  const branch = CREATOR_SRC.slice(start, end > 0 ? end : start + 3000);
+
+  assert.match(branch, /getConnectorScaffoldFiles\(\)/);
+  assert.match(branch, /try \{/, 'the whole addition is guarded');
+  assert.match(branch, /log\.warn\(/, 'a failure is logged, not raised');
+
+  // Comments stripped: the branch EXPLAINS why it is not `repoFailed`, and
+  // the prose saying so must not read as the code doing so.
+  const code = branch.split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
+  assert.doesNotMatch(code, /repoFailed/,
+    'an import must not be failed over the connector scaffold');
+  assert.doesNotMatch(code, /throw /,
+    'nothing in the import branch rethrows');
+});
+
+test('an import does not overwrite a .claude/settings.json the repo already has', () => {
+  const start = CREATOR_SRC.indexOf('} else if (repoUrl) {');
+  const end = CREATOR_SRC.indexOf('// 3. Clone (or write)', start);
+  const branch = CREATOR_SRC.slice(start, end);
+  // Read first, push only on a definite absence — getFileContent returns null
+  // for 404 and throws for anything else, so `=== null` is "not there" rather
+  // than "we could not tell".
+  assert.match(branch, /getFileContent\(\s*[\s\S]{0,80}'\.claude\/settings\.json'/);
+  assert.match(branch, /existing === null/);
+});
+
+test('a fork adds the scaffold without clobbering what the source carried', () => {
+  // A fork copies an app; it does not normalise it. Whatever `.claude/` the
+  // source repo has is the app's own.
+  const start = FORKER_SRC.indexOf('function writeConnectorScaffold(');
+  assert.ok(start > 0, 'the fork writes the scaffold through a named helper');
+  const end = FORKER_SRC.indexOf('\n}', start);
+  const fn = FORKER_SRC.slice(start, end);
+  assert.match(fn, /fs\.existsSync\(dest\)\) continue/,
+    'an existing path is skipped, never overwritten');
+  assert.match(fn, /mkdirSync/, '.claude/ is created if the tree has none');
+
+  // Written into the working tree BEFORE the single squashed commit, so it
+  // needs no second push.
+  const writeAt = FORKER_SRC.indexOf('writeConnectorScaffold(tempDir)');
+  const commitAt = FORKER_SRC.indexOf('git init -q -b main');
+  assert.ok(writeAt > 0 && commitAt > writeAt,
+    'the scaffold lands before the commit that captures the tree');
+});
+
+// ── 6. The everywhere-at-once fix, in the product ──────────────────────
+
+test('Settings → Connectors offers the rules for a personal settings file', () => {
+  // The scaffolded file fixes one repo. The user's own settings file is the
+  // only thing that fixes every repo, including ones Usernode never made — so
+  // the block has to be somewhere they can copy it from.
+  assert.match(CONNECTORS_TSX, /Stop the permission prompts/);
+  assert.match(CONNECTORS_TSX, /~\/\.claude\/settings\.json/);
+  assert.match(CONNECTORS_TSX, /id="connector-allow-rules"/);
+  assert.match(CONNECTORS_TSX, /id="connector-allow-rules-copy"/);
+  // And it says what is NOT covered, so nobody reads it as "approve nothing".
+  assert.match(CONNECTORS_TSX, /still asks every time/);
+});
+
+test('the copied block is byte-for-byte the shipped allowlist', () => {
+  // The panel renders a literal rather than importing the server constants
+  // into the browser bundle, so this is what stops the two drifting: add a
+  // rule to READ_ONLY_ALLOW_RULES and this fails until the panel matches.
+  const expected = JSON.stringify(
+    { permissions: { allow: [...constants.READ_ONLY_ALLOW_RULES] } }, null, 2
+  );
+  const match = CONNECTORS_TSX.match(/const PERSONAL_ALLOW_RULES = `([\s\S]*?)`;/);
+  assert.ok(match, 'the panel defines the block as one literal');
+  assert.equal(match[1], expected);
+  // Same content as the scaffolded file, modulo its trailing newline.
+  assert.equal(`${match[1]}\n`, scaffold().get('.claude/settings.json'));
+});
+
+test('the copy button copies that block', () => {
+  const settingsJs = read('frontend/src/features/settings/settings.js');
+  assert.match(settingsJs, /getElementById\('connector-allow-rules-copy'\)/);
+  assert.match(settingsJs, /getElementById\('connector-allow-rules'\)/);
+  assert.match(settingsJs, /clipboard\.writeText\(block\.textContent\)/);
+});
+
+test('the scaffolded README points at the personal settings file too', () => {
+  // Someone who reads the repo file and wants it everywhere should not have
+  // to find the Settings page by accident.
+  const readme = scaffold().get('.claude/README.md');
+  assert.match(readme, /~\/\.claude\/settings\.json/);
+  assert.match(readme, /Settings → Connectors/);
+});
+
+// ── 7. The doc ─────────────────────────────────────────────────────────
+
+test('the doc records which creation paths scaffold the file', () => {
+  assert.match(CONNECTOR_DOC, /getConnectorScaffoldFiles\(\)/);
+  assert.match(CONNECTOR_DOC, /Import an existing repo/);
+  assert.match(CONNECTOR_DOC, /Fork another app/);
+  assert.match(CONNECTOR_DOC, /write-if-absent, and never fatal/i);
+});
+
+test('the doc explains why there is no campaign over existing repos', () => {
+  // The reasoning matters more than the decision: a future reader who only
+  // sees "we did not do it" will propose it again.
+  assert.match(CONNECTOR_DOC, /12 of 35/);
+  assert.match(CONNECTOR_DOC, /everywhere-at-once fix is the user's own settings file/i);
+});
+
+test("the doc states the platform's own build workers are unaffected", () => {
+  // A natural and wrong assumption, worth closing explicitly.
+  assert.match(CONNECTOR_DOC, /--dangerously-skip-permissions/);
+  assert.match(CONNECTOR_DOC, /--strict-mcp-config/);
+});
+
 test('the open question about ephemeral web containers is recorded as open', () => {
   // It cannot be answered from this repository — it needs a fresh Claude
   // Code web session — and it must not be quietly dropped, because the

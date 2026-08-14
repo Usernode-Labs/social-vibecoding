@@ -12,6 +12,7 @@ const appSecrets = require('./app-secrets');
 const { getPool } = require('../db/pool');
 const { pushAppStatusUpdate } = require('./ws');
 const { finalizeDeploy } = require('./app-creator');
+const { getConnectorScaffoldFiles } = require('./template');
 
 // Rewrite (or create) the top-level `name` in the forked working tree's
 // dapp.json to the forker's chosen name. dapp.json's `name` is the
@@ -37,6 +38,27 @@ function rewriteDappName(dir, name) {
   obj.name = name;
   delete obj.admins;
   fs.writeFileSync(p, `${JSON.stringify(obj, null, 2)}\n`);
+}
+
+// Place the `.claude/` connector scaffold in the fork's working tree, so a
+// fork of an app created before #1218 — or of an imported repo that never had
+// one — stops prompting on every read-only connector call too.
+//
+// Write-if-absent, never overwrite: whatever the source repo carries in
+// `.claude/` is the app's own, and a fork copies the app rather than
+// normalising it. A source scaffolded by today's template already has these
+// two files byte-for-byte, so the common case is a no-op.
+//
+// Plain fs on the tree that has just been flattened and not yet committed, so
+// the files land in the single squashed commit below rather than needing a
+// second push.
+function writeConnectorScaffold(dir) {
+  for (const file of getConnectorScaffoldFiles()) {
+    const dest = path.join(dir, file.path);
+    if (fs.existsSync(dest)) continue;
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.writeFileSync(dest, file.content);
+  }
 }
 
 // Copy the SOURCE app's current `main` tree into a brand-new bot-owned
@@ -73,6 +95,7 @@ async function copyRepoTree({ sourceApp, botUsername, forkSlug, forkName, tempDi
     'set -e; find "$DIR" -name .git -prune -exec rm -rf {} + ; rm -f "$DIR/.gitmodules"',
   ], { timeout: 30000, env: { ...process.env, DIR: tempDir } });
   rewriteDappName(tempDir, forkName);
+  writeConnectorScaffold(tempDir);
 
   // Create the fork's repo (bot PAT, public, auto_init) then force-push
   // our single squashed commit over the auto-init commit. The bot PAT is

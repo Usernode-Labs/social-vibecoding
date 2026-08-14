@@ -138,6 +138,11 @@ Project settings load from the repo's `.claude/` directory, so every user of
 every app picks this up with no setup, and a `.claude/README.md` beside it
 carries the reasoning (JSON has no comments).
 
+That file fixes one repo. The same three rules in your **personal**
+`~/.claude/settings.json` fix every repo at once, including repos Usernode
+never scaffolded — see section 4, and Settings → Connectors has the block with
+a copy button.
+
 ### Why not `mcp__usernode__*`
 
 Because the marking in section 2 is version-gated. A whole-server rule would
@@ -191,18 +196,81 @@ consent beats dozens of per-call prompts.
 
 ---
 
-## 4. Existing apps
+## 4. The repos the scaffold does not reach
 
-The scaffold covers **new** app repos. An existing app needs the file added,
-which on this platform means a proposal and a vote per app — unless the platform
-writes it into app repos directly, the way it already manages their branches.
-That rollout is not part of #1218.
+### Every creation path now scaffolds it
 
-Until then, a user can add the same three rules themselves, at any of the levels
-Claude Code reads settings from — the repo's `.claude/settings.json`, their
-personal `~/.claude/settings.json`, or `.claude/settings.local.json` if they do
-not want it committed. Personal settings apply to every repo at once, which is
-often what someone working across several Usernode apps actually wants.
+`.claude/settings.json` used to ship only from the **fresh-create** path, which
+is the one that writes the whole template. Two other paths make an app repo and
+neither called that code, so neither produced the file:
+
+| Path | Before | Now |
+| --- | --- | --- |
+| Create a new app | scaffolded | scaffolded |
+| **Import an existing repo** | nothing | connector scaffold added if absent |
+| **Fork another app** | inherited whatever the source had | connector scaffold added if absent |
+
+All three now read the two `.claude/` entries from one helper,
+`getConnectorScaffoldFiles()` in `src/services/template.js`, so a create, an
+import and a fork cannot end up with three different versions of the file.
+
+Both new paths are **write-if-absent, and never fatal.** An import keeps the
+repo it imported: if `.claude/settings.json` is already there it is left alone,
+and if the push fails — a user-owned repo the platform's GitHub App cannot write
+to is an ordinary import, not an error — the failure is logged and the app is
+created anyway. A fork writes into the flattened working tree before the single
+squashed commit, skipping any path the source already carries, because a fork
+copies an app rather than normalising it.
+
+### Repos that existed before this
+
+There is no campaign to add the file to the ~36 apps that already exist. It
+would mean a proposal and a vote per app, and the last comparable sweep landed
+12 of 35 — leaving a majority of users no better off while looking finished.
+More to the point, a per-repo file is the wrong shape for the problem: it fixes
+one repo at a time, and someone working across several Usernode apps has to
+collect them.
+
+**The everywhere-at-once fix is the user's own settings file.** The same three
+rules under `permissions.allow` in `~/.claude/settings.json` apply to every
+repo, scaffolded or not. Settings → Connectors renders that block with a copy
+button, and `.claude/settings.local.json` is the uncommitted per-repo variant
+for anyone who wants it narrower.
+
+### Usernode's own build workers are not affected either way
+
+Worth stating because it is a natural assumption: none of this changes anything
+for the platform's in-house build agents. They run with
+`--dangerously-skip-permissions`, so they have no permission prompts to
+suppress, and their harness passes `--strict-mcp-config`, so they do not load
+this connector at all. Scaffolding `.claude/` into the repos they work in would
+have been dead weight in every proposal diff.
+
+### How a user finds out any of this exists
+
+A user who never opens Settings → Connectors would otherwise never learn the
+prompts are fixable. The connector therefore says so **in band**, on the
+results of read-only tools:
+
+- The `initialize` instructions tell the model that a second text block
+  beginning `Usernode setup tip` is Usernode talking to the user through it,
+  and is to be relayed once rather than treated as data. Without that, an
+  unexplained block in a tool result is reasonably read as noise and dropped.
+- The hint itself is a second `content` text block on read-only results only —
+  never on a tool that acts, never on an error, and never on `prepare_work`,
+  whose work order the model has been told to reproduce character for
+  character. It carries the three rules, the personal settings path, and an
+  instruction to substitute whatever server segment the model can actually see
+  in the tool name it just called, which is the self-correcting answer to the
+  misspelling problem in section 1.
+- It is **throttled**: at most once per HTTP request, at most once per access
+  token (which rotates roughly hourly, the nearest durable stand-in for "once
+  per conversation" on a stateless transport), and at most three times per
+  grant, ever. State lives in `mcp_connector_hints`, keyed on the grant. A
+  failed claim is logged and the read returns without a hint — a tip never
+  turns a working call into an error.
+- It is suppressed for ChatGPT/Codex clients, which have no Claude Code
+  permission prompts for it to be about.
 
 ---
 
