@@ -2367,7 +2367,14 @@ async function submitWorkLocked(deps, params) {
   }
 
   // ── Hand it to the platform's own import path ────────────────────────
-  const imported = await importProposal(slug, pr.number);
+  //
+  // The request this implements travels WITH the import (#1217), the same
+  // arrangement the testing metadata already uses: the route is what creates
+  // the session row, so anything written afterwards would miss the merge
+  // path and the close watcher that read it. Empty for a submission that
+  // names no request — a plain `slug` + `prNumber` — which stays exactly as
+  // it was.
+  const imported = await importProposal(slug, pr.number, { linkedIssues: linkedIssuesFor(task) });
   if (!imported || !imported.ok) {
     // A head the platform wrote and then could not import is litter on
     // somebody's app repository. Remove it.
@@ -2440,8 +2447,36 @@ function prTitleFor({ title, task, slug }) {
   return raw.split('\n')[0].slice(0, 200).trim() || `Change to ${slug}`;
 }
 
-function prBodyFor({ body }) {
-  return stripEnvelope(body).slice(0, 4000);
+// The request a piece of work implements, as the linked-issue set the rest of
+// the platform speaks in (#1217). prepare_work has recorded it on the task
+// since the beginning — the work order it prints even says "This implements
+// request #N" — but the number stopped there, so a proposal built FROM a
+// request was not linked to it in any way the platform could act on.
+function linkedIssuesFor(task) {
+  const n = task && Number(task.issue_number);
+  return Number.isInteger(n) && n > 0 ? [n] : [];
+}
+
+// Two things close a request when the work lands, and a connector submission
+// carried neither (#1217):
+//
+//   1. the `Closes #N` keyword in the PR body — GitHub is what actually
+//      closes the issue on merge, and the platform's post-merge watcher only
+//      polls for it having happened; and
+//   2. chat_sessions.linked_issues — what the watcher expects to close, what
+//      the merge path suppresses optimistically, and what the Dev board reads
+//      to show a request as being worked on.
+//
+// This is (1). The format is pr-metadata's, imported rather than restated so
+// the two producers of a closing block cannot drift; the require is lazy
+// because that module pulls in the LLM stack and nothing else here needs it.
+// The block goes on AFTER the clip, so a long description can never push the
+// closing line out of the body.
+function prBodyFor({ body, task }) {
+  const { buildClosingBlock } = require('./pr-metadata');
+  const text = stripEnvelope(body).slice(0, 4000);
+  const closing = buildClosingBlock(linkedIssuesFor(task));
+  return closing ? `${text}\n\n${closing}` : text;
 }
 
 module.exports = {
@@ -2459,6 +2494,9 @@ module.exports = {
   normalizeSource,
   agentLabel,
   stripEnvelope,
+  // The request-linking pair (#1217), unit-tested directly.
+  linkedIssuesFor,
+  prBodyFor,
   requestKeyFor,
   proposalRequestKeyFor,
   describeTargetProposal,

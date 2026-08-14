@@ -434,6 +434,19 @@ test('submit_work takes shape (4) exactly as documented: proposalId + branch', a
   }
 });
 
+test('submit_work carries the request its work order named into the import', () => {
+  // #1217. The service decides WHICH request (it holds the task row); this
+  // module only has to put it on the wire under the name the import route
+  // reads, beside the testing metadata that already travels the same way.
+  const block = registration('submit_work');
+  assert.match(block, /const importProposal = \(targetSlug, pr, extra = \{\}\) =>/);
+  assert.match(block, /extra\.linkedIssues && extra\.linkedIssues\.length/);
+  assert.match(block, /\{ linkedIssues: extra\.linkedIssues \}/);
+  // Absent stays absent: a submission that names no request must post the
+  // body this route received before the field existed.
+  assert.match(block, /: \{\}\),\s*\}\s*\);/);
+});
+
 test('list_requests says when the board itself could not be read in full', () => {
   // Distinct from `truncated`, which is only about this page. A degraded
   // fetch means "no duplicate found" is not evidence of anything, and the

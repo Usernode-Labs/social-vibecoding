@@ -77,19 +77,22 @@ const DDL = `
     created_at           TIMESTAMPTZ DEFAULT NOW(),
     testing_md           TEXT,
     testing_path         VARCHAR(512),
-    testing_paths        JSONB
+    testing_paths        JSONB,
+    linked_issues        INTEGER[] NOT NULL DEFAULT '{}'
   )`;
 
-// The same 13-element parameter shape the handler binds ($10 is the head
+// The same 14-element parameter shape the handler binds ($10 is the head
 // repository #1196 records, which is what decides whether the proposal's head
-// is in the author's fork or in the app's own repository).
-function importParams(status, prNumber) {
+// is in the author's fork or in the app's own repository; $14 is the request
+// the work order was prepared from, #1217).
+function importParams(status, prNumber, linkedIssues = [1217]) {
   return [
     1, 2, 'pr-import-test-branch', prNumber, 'https://github.com/acme/demo/pull/' + prNumber,
     'PR #' + prNumber, status,
     'a'.repeat(40), 'external-author', 'external-author/demo',
     '1. Open the board', '/board?demo=1',
     JSON.stringify([{ path: '/board?demo=1', viewport: 'desktop' }]),
+    linkedIssues,
   ];
 }
 
@@ -153,12 +156,24 @@ test('the pr-import INSERT prepares and writes both status paths on real postgre
       assert.equal(promotedRows[0].status, 'promoted');
 
       const { rows: [promoted] } = await client.query(
-        'SELECT status, source, shared_at, promoted_at FROM chat_sessions WHERE id = $1',
+        'SELECT status, source, shared_at, promoted_at, linked_issues FROM chat_sessions WHERE id = $1',
         [promotedRows[0].id]
       );
       assert.equal(promoted.source, 'imported');
       assert.ok(promoted.promoted_at, 'a promoted import lands straight in the vote panel');
       assert.equal(promoted.shared_at, null, 'a promoted import skips the In-progress board');
+      assert.deepEqual(promoted.linked_issues, [1217],
+        'the request the work order was prepared from (#1217)');
+
+      // #1217: the column is INTEGER[] NOT NULL, so the no-request case —
+      // every browser import — has to bind the empty array. Binding null
+      // here would fail the constraint on the statement's commonest use,
+      // and nothing above this line would have noticed.
+      const { rows: bareRows } = await client.query(sql, importParams('active', 103, []));
+      const { rows: [bare] } = await client.query(
+        'SELECT linked_issues FROM chat_sessions WHERE id = $1', [bareRows[0].id]
+      );
+      assert.deepEqual(bare.linked_issues, [], 'an import with no request links none');
     });
   } finally {
     await client.end().catch(() => {});
@@ -167,6 +182,24 @@ test('the pr-import INSERT prepares and writes both status paths on real postgre
 
 // The guard that runs everywhere, including the database-less merge gate:
 // every use of the status parameter must carry an explicit ::text cast.
+// Likewise database-free, and for the same reason: the postgres test above
+// SKIPS wherever no server is reachable, so a column added to the statement
+// without a parameter to bind to it reaches the merge gate green and fails on
+// the first real import ("bind message supplies N parameters, but prepared
+// statement requires N+1"). Counting the placeholders costs nothing and
+// catches it everywhere.
+test('the pr-import INSERT binds exactly as many parameters as the handler supplies', () => {
+  const sql = extractImportInsert();
+  const highest = Math.max(...(sql.match(/\$(\d+)/g) || ['$0']).map((p) => Number(p.slice(1))));
+  assert.equal(highest, importParams('active', 1).length,
+    'every $N in the statement has a value in importParams, and vice versa');
+  // And every position in between is actually used — a gap means a shifted
+  // parameter list, which binds silently and writes the wrong columns.
+  for (let n = 1; n <= highest; n++) {
+    assert.match(sql, new RegExp(`\\$${n}\\b`), `the statement uses $${n}`);
+  }
+});
+
 // One bare use beside a cast one re-creates the "inconsistent types deduced
 // for parameter $7" prepare failure, whichever position the bare one is in.
 test('every use of the status parameter in the pr-import INSERT is cast to ::text', () => {

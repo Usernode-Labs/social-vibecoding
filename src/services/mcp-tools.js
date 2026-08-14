@@ -1540,12 +1540,18 @@ function registerTools(server, ctx) {
     // capture, so anything written after it would land too late to steer the
     // screenshots. One wiring point, and the route re-validates.
     const testing = shapeTestingNotes({ testingPaths, testingSteps, description });
-    const importProposal = (targetSlug, pr) => callPlatform(
+    // `linkedIssues` rides along the same way (#1217): the service knows
+    // which request the task was prepared for, and the import route is the
+    // one write that can record it on the session row.
+    const importProposal = (targetSlug, pr, extra = {}) => callPlatform(
       baseUrl, accessToken, 'POST', `/api/apps/${targetSlug}/pr-import`, {
         pr,
         promote: true,
         ...(testing.testingPaths ? { testingPaths: testing.testingPaths } : {}),
         ...(testing.testingSteps ? { testingSteps: testing.testingSteps } : {}),
+        ...(extra.linkedIssues && extra.linkedIssues.length
+          ? { linkedIssues: extra.linkedIssues }
+          : {}),
       }
     );
 

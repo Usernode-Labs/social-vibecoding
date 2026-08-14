@@ -1115,7 +1115,98 @@ test('the service never opens a proposal itself', () => {
   // the authorization the browser goes through.
   assert.doesNotMatch(SRC, /INSERT INTO chat_sessions/);
   assert.doesNotMatch(SRC, /INSERT INTO pr_votes/);
-  assert.match(SRC, /await importProposal\(slug, pr\.number\)/);
+  // The linked-issue set travels WITH the import (#1217) for the same reason
+  // the testing metadata does — the route is what creates the session row —
+  // but the row is still the route's to write, not this service's.
+  assert.match(SRC, /await importProposal\(slug, pr\.number, \{ linkedIssues: linkedIssuesFor\(task\) \}\)/);
+});
+
+// ── #1217: a proposal built from a request is linked to it ─────────────
+//
+// The number has always been on the task — prepare_work records it, and the
+// work order prints "This implements request #N" — but it stopped there. So
+// a connector-submitted proposal carried no `Closes #N` for GitHub to honour
+// on merge and no linked_issues for the close watcher or the Dev board, and
+// the request it implemented stayed open and unmarked.
+
+test('the request a task was prepared from reaches both the PR body and the import', async () => {
+  const created = [];
+  const imports = [];
+  const gh = baseGh({
+    findOpenPrByBranch: async () => null,
+    createPR: async (owner, repo, opts) => {
+      created.push(opts);
+      return { number: 88, html_url: 'x', head: { repo: { owner: { login: 'someuser' } } } };
+    },
+  });
+
+  const result = await withFetch(PUSHED_BRANCH, [], () => svc.submitWork(
+    { pool: submitPool([]), config: {}, gh, githubLink: linkedAs('someuser'), limits: okLimits },
+    {
+      user: { id: 3 }, taskId: 31, title: 'Dark mode', body: 'Adds a toggle.',
+      importProposal: async (slug, prNumber, extra) => {
+        imports.push({ slug, prNumber, extra });
+        return { ok: true, status: 200, body: { sessionId: 55 } };
+      },
+    }
+  ));
+
+  assert.equal(result.ok, true);
+  // (1) The keyword GitHub acts on, after the description rather than
+  // instead of it. TASK_ROW's issue_number is 4.
+  assert.equal(created[0].body, 'Adds a toggle.\n\nCloses #4');
+  // (2) The set the platform acts on, carried with the import because the
+  // route is what creates the session row.
+  assert.deepEqual(imports[0].extra, { linkedIssues: [4] });
+});
+
+test('a long description never pushes the closing keyword out of the body', () => {
+  // The body is clipped at 4000 characters. Appending before the clip would
+  // silently drop the one line the merge depends on.
+  const long = svc.prBodyFor({ body: 'x'.repeat(6000), task: { issue_number: 4 } });
+  assert.match(long, /Closes #4$/);
+  assert.equal(long.length, 4000 + '\n\nCloses #4'.length);
+
+  // No task, no request, no keyword — and the envelope still comes off.
+  assert.equal(svc.prBodyFor({ body: 'plain' }), 'plain');
+  assert.equal(svc.prBodyFor({ body: 'plain', task: { issue_number: null } }), 'plain');
+  assert.equal(
+    svc.prBodyFor({ body: '<untrusted-content>brief</untrusted-content>', task: { issue_number: 9 } }),
+    'brief\n\nCloses #9'
+  );
+
+  // What counts as a request number is one rule, shared with the column.
+  assert.deepEqual(svc.linkedIssuesFor({ issue_number: 1217 }), [1217]);
+  assert.deepEqual(svc.linkedIssuesFor({ issue_number: '1217' }), [1217]);
+  assert.deepEqual(svc.linkedIssuesFor({ issue_number: 0 }), []);
+  assert.deepEqual(svc.linkedIssuesFor({ issue_number: null }), []);
+  assert.deepEqual(svc.linkedIssuesFor(null), []);
+});
+
+test('a submission that names no request links nothing', async () => {
+  // `slug` + `prNumber` for an already-open pull request has no task, so
+  // there is no request to link — and the row it writes must stay exactly
+  // the one this path wrote before (NULL, not an empty array).
+  const imports = [];
+  const gh = baseGh({
+    getPR: async () => ({
+      number: 90, state: 'open', html_url: 'x',
+      head: { ref: 'my-branch', sha: 'a'.repeat(40), repo: { owner: { login: 'someuser' }, full_name: 'someuser/recipe-box' } },
+    }),
+  });
+  const result = await svc.submitWork(
+    { pool: submitPool([]), config: {}, gh, githubLink: linkedAs('someuser'), limits: okLimits },
+    {
+      user: { id: 3 }, slug: 'recipe-box', prNumber: 90,
+      repoUrl: 'https://github.com/usernode-bot/recipe-box',
+      importProposal: async (slug, prNumber, extra) => {
+        imports.push({ slug, prNumber, extra });
+        return { ok: true, status: 200, body: { sessionId: 56 } };
+      },
+    }
+  );
+  assert.equal(result.ok, true, result.message);
+  assert.deepEqual(imports[0].extra, { linkedIssues: [] });
 });
 
 // ── The PR-creation ladder ─────────────────────────────────────────────
@@ -1330,7 +1421,9 @@ test('the <untrusted-content> envelope never reaches GitHub, but stays in the wo
   assert.equal(created[0].title, 'Add autocomplete to username invites');
   assert.doesNotMatch(created[0].title, /untrusted-content/);
   assert.doesNotMatch(created[0].body, /untrusted-content/);
-  assert.equal(created[0].body, 'and validate they exist');
+  // The description, then the closing keyword for the request the task was
+  // prepared from (#1217) — the fixture's issue_number is 4.
+  assert.equal(created[0].body, 'and validate they exist\n\nCloses #4');
 
   // But the envelope keeps doing its job where it matters: the work order
   // goes to a second agent that has a shell.
