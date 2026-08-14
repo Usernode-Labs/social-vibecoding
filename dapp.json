@@ -1681,6 +1681,18 @@
       "expectText": "Not granted"
     },
     {
+      "name": "Widget icons: the diagnostics box separates \"couldn't say\" from \"no\"",
+      "path": "/#settings/usernode?widgeticons=demo",
+      "expectSelector": "#settings-usernode-section:not(.hidden) #settings-widget-capability-row + #settings-widget-verdict-row",
+      "expectText": "The app couldn’t say"
+    },
+    {
+      "name": "Widget icons: each pinned entry reports what the widget holds and what SV last sent",
+      "path": "/#settings/usernode?widgeticons=demo",
+      "expectSelector": "#settings-widget-icon-entries > div:nth-child(3)",
+      "expectText": "sent stale"
+    },
+    {
       "name": "The Allow notifications sheet survives its own opening tap's ghost click",
       "path": "/?shot=notif-permissions#settings/usernode",
       "expectSelector": ".un-sheet[data-un-ghost-click=\"dispatched\"] .un-sheet-body button",

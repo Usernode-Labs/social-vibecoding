@@ -321,18 +321,91 @@ test('the marker variant is dual when capable, the scheme when not', () => {
   assert.equal(Home._desiredIconSrcFor(image), imageSrc);
 });
 
-// The capability probe answers false wherever there is no native shell
-// to ask, and never throws — _desiredIconSrcFor runs on every heal
-// pass, so a rejection here would break icon healing outright.
-test('the capability probe degrades to false without NativeChrome', async () => {
+// The probe answers "could not say" — NOT false — wherever there is no
+// native shell to ask, and never throws (_desiredIconSrcFor runs on
+// every heal pass, so a rejection here would break icon healing
+// outright).
+//
+// This used to assert `false` for both cases, and that assertion was the
+// bug: a shell whose getBridgeInfo is degraded reports no capabilities,
+// the old `NativeChrome.has()` collapsed that to false, and the answer
+// was memoised for the whole page load — so a build that HAD shipped the
+// dark-icon support never got a pair, and never re-asked. An unresolved
+// probe must therefore stay unresolved and drop its own memo.
+test('the capability probe reports "could not say", and never latches it', async () => {
   const Home = makeHome();
   assert.equal(Home.__sandbox.window.NativeChrome, undefined, 'sandbox has no NativeChrome');
-  assert.equal(await Home._ensureDarkIconCapability(), false);
-  assert.equal(Home._widgetDarkIcons, false);
+  assert.equal(await Home._ensureDarkIconCapability(), null);
+  assert.equal(Home._widgetDarkIcons, null);
+  assert.equal(Home._darkIconProbe, null, 'the inconclusive answer is not memoised');
 
   const rejecting = makeHome();
-  rejecting.__sandbox.NativeChrome = { has: async () => { throw new Error('nope'); } };
-  assert.equal(await rejecting._ensureDarkIconCapability(), false, 'a rejection is not fatal');
+  rejecting.__sandbox.NativeChrome = { supports: async () => { throw new Error('nope'); } };
+  assert.equal(await rejecting._ensureDarkIconCapability(), null, 'a rejection is not fatal');
+  assert.equal(rejecting._darkIconProbe, null, 'and is re-asked next pass');
+
+  // A conclusive answer IS memoised — re-asking on every heal pass would
+  // be pure churn, and only the negative-that-isn't-one is dangerous.
+  const capable = makeHome();
+  let asked = 0;
+  capable.__sandbox.NativeChrome = {
+    supports: async () => { asked += 1; return true; },
+    getInfo: async () => ({ version: 4, capabilities: [], appVersion: '1.4.0', buildNumber: '9' }),
+  };
+  assert.equal(await capable._ensureDarkIconCapability(), true);
+  assert.equal(await capable._ensureDarkIconCapability(), true);
+  assert.equal(asked, 1, 'a conclusive answer is asked for once');
+});
+
+// The variant the payload builder emits is driven by the RESOLVED
+// capability, and an unresolved one behaves exactly like "no" — a
+// half-built pair would be worse than either answer.
+test('an unresolved capability sends the same single face as a "no"', () => {
+  const Home = makeHome();
+  const app = { slug: 'demo', name: 'Demo', icon_emoji: '' };
+  Home._widgetDarkIcons = null;
+  assert.equal('icon_url_dark' in Home._shortcutPayloadFor(app), false);
+  assert.equal(Home._desiredIconSrcFor(app), `tile:${Home.WIDGET_ICON_GEN}:light:`);
+  Home._widgetDarkIcons = false;
+  assert.equal('icon_url_dark' in Home._shortcutPayloadFor(app), false);
+  assert.equal(Home._desiredIconSrcFor(app), `tile:${Home.WIDGET_ICON_GEN}:light:`);
+
+  // …except for the one caller that must force a pair to find out.
+  assert.equal('icon_url_dark' in Home._shortcutPayloadFor(app, 'dual'), true,
+    'the confirmation send carries both faces whatever the state says');
+});
+
+// The verdict is a claim about an installed binary, so it must not
+// survive the binary changing.
+test('a stored verdict is bound to the app version pair', () => {
+  const Home = makeHome();
+  const store = {};
+  Home.__sandbox.localStorage = {
+    getItem: (k) => (k in store ? store[k] : null),
+    setItem: (k, v) => { store[k] = String(v); },
+  };
+  store[Home.WIDGET_DARK_VERDICT_KEY] = JSON.stringify({
+    appVersion: '1.4.0', buildNumber: '1223', verdict: 'supported',
+  });
+  assert.equal(
+    Home._storedVerdictForBuild({ appVersion: '1.4.0', buildNumber: '1223' }),
+    'supported'
+  );
+  assert.equal(
+    Home._storedVerdictForBuild({ appVersion: '1.4.0', buildNumber: '1224' }),
+    null, 'a new build number re-opens the question'
+  );
+  assert.equal(
+    Home._storedVerdictForBuild({ appVersion: '1.5.0', buildNumber: '1223' }),
+    null, 'so does a new app version'
+  );
+  assert.equal(Home._storedVerdictForBuild(null), null,
+    'an unreadable version binds nothing');
+  store[Home.WIDGET_DARK_VERDICT_KEY] = 'not json';
+  assert.equal(
+    Home._storedVerdictForBuild({ appVersion: '1.4.0', buildNumber: '1223' }),
+    null, 'a corrupt record is ignored, not thrown on'
+  );
 });
 
 // The contract spans two repos, so the doc is the only thing keeping
@@ -343,6 +416,35 @@ test('NATIVE-BRIDGE.md documents the dual-icon contract', () => {
   assert.match(doc, /icon_url_dark/, 'the additive payload field');
   assert.match(doc, /has_icon_dark/, 'the registry read-back flag');
   assert.match(doc, /homeScreenShortcutDarkIcon/, 'the capability string');
+  // The behavioural half of the contract. The shell can only hold up its
+  // end of these if they are written down: SV now believes the read-back
+  // over the capability list, binds the answer to the installed version,
+  // and requires the widget to choose its face at RENDER time.
+  assert.match(doc, /appVersion/, 'the verdict is bound to the version pair');
+  assert.match(doc, /render time/i, 'appearance selection is a render-time decision');
+  assert.match(doc, /statement of fact/i, 'has_icon_dark is authoritative, not a hint');
+});
+
+// Source-level twin of tests/native-bridge-boundary.test.js's "a degraded
+// capability probe fails closed and never latches a negative": the same
+// #978 rule, one layer up. NativeChrome.has() is deliberately BINARY — it
+// collapses a degraded probe into `false` — so the icon path must ask
+// through the tri-state supports() and must not memoise the third state.
+// A future edit that "simplifies" this back to has() would restore the
+// exact bug (the dark-icon capability going permanently unseen after one
+// cold-start hiccup) while every behavioural test above still passed,
+// because they stub NativeChrome rather than exercise the real one.
+test('the icon path asks through the tri-state probe, not has()', () => {
+  const capBlock = SRC.slice(
+    SRC.indexOf('_probeDarkIconCapability'),
+    SRC.indexOf('_iconSrcKey')
+  );
+  assert.ok(capBlock.length, 'the capability probe is where it is expected');
+  assert.match(capBlock, /chrome\.supports\(/, 'asks the tri-state probe');
+  assert.equal(/chrome\.has\(/.test(capBlock), false,
+    'never the binary one, which collapses degraded into false');
+  assert.match(capBlock, /_darkIconProbe = null/,
+    'and an unresolved answer is not memoised');
 });
 
 test('image icons fill the tile inside its hairline (w-full/h-full)', () => {

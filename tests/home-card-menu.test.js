@@ -840,6 +840,10 @@ test('shortcut icons: emoji/letter apps get a canvas data URI, image apps a URL'
 
 test('icon heal: has_icon:false entries are silently re-added once', async () => {
   const { Home, sandbox } = makeHomeEnv({ id: ME });
+  // A shell that genuinely cannot hold a pair: conclusive `false` plus
+  // the behavioural verdict on file, so the gen-5 single-face path below
+  // is exercised without the confirmation send.
+  stubCapability(sandbox, false);
   sandbox.document.createElement = () => ({
     getContext: () => fakeCtx(),
     toDataURL: () => 'data:image/png;base64,FAKE',
@@ -882,6 +886,10 @@ test('icon heal: has_icon:false entries are silently re-added once', async () =>
 
 test('icon heal: retries entries skipped while apps were still loading', async () => {
   const { Home, sandbox } = makeHomeEnv({ id: ME });
+  // A shell that genuinely cannot hold a pair: conclusive `false` plus
+  // the behavioural verdict on file, so the gen-5 single-face path below
+  // is exercised without the confirmation send.
+  stubCapability(sandbox, false);
   sandbox.document.createElement = () => ({
     getContext: () => fakeCtx(),
     toDataURL: () => 'data:image/png;base64,FAKE',
@@ -907,6 +915,10 @@ test('icon heal: retries entries skipped while apps were still loading', async (
 
 test('icon heal: unknown last-sent source re-sends once, then settles', async () => {
   const { Home, sandbox } = makeHomeEnv({ id: ME });
+  // A shell that genuinely cannot hold a pair: conclusive `false` plus
+  // the behavioural verdict on file, so the gen-5 single-face path below
+  // is exercised without the confirmation send.
+  stubCapability(sandbox, false);
   sandbox.document.createElement = () => ({
     getContext: () => fakeCtx(),
     toDataURL: () => 'data:image/png;base64,FAKE',
@@ -946,6 +958,10 @@ test('icon heal: unknown last-sent source re-sends once, then settles', async ()
 
 test('icon heal: app gaining an icon after pinning re-sends the new icon', async () => {
   const { Home, sandbox } = makeHomeEnv({ id: ME });
+  // A shell that genuinely cannot hold a pair: conclusive `false` plus
+  // the behavioural verdict on file, so the gen-5 single-face path below
+  // is exercised without the confirmation send.
+  stubCapability(sandbox, false);
   sandbox.document.createElement = () => ({
     getContext: () => fakeCtx(),
     toDataURL: () => 'data:image/png;base64,FAKE',
@@ -1063,6 +1079,10 @@ test('widget tile PNG never recolours an emoji glyph', () => {
 
 test('icon heal: a system light→dark flip re-sends every canvas tile once', async () => {
   const { Home, sandbox } = makeHomeEnv({ id: ME });
+  // A shell that genuinely cannot hold a pair: conclusive `false` plus
+  // the behavioural verdict on file, so the gen-5 single-face path below
+  // is exercised without the confirmation send.
+  stubCapability(sandbox, false);
   const setDark = stubScheme(sandbox, false);
   sandbox.document.createElement = () => ({
     getContext: () => fakeCtx(),
@@ -1124,6 +1144,10 @@ test('icon heal: a system light→dark flip re-sends every canvas tile once', as
 // the re-send would silently never happen.
 test('icon heal: a scheme flip clears the per-load heal-tried set', async () => {
   const { Home, sandbox } = makeHomeEnv({ id: ME });
+  // A shell that genuinely cannot hold a pair: conclusive `false` plus
+  // the behavioural verdict on file, so the gen-5 single-face path below
+  // is exercised without the confirmation send.
+  stubCapability(sandbox, false);
   const setDark = stubScheme(sandbox, false);
   sandbox.document.createElement = () => ({
     getContext: () => fakeCtx(),
@@ -1179,10 +1203,45 @@ test('scheme watching is inert without the widget mechanism', async () => {
 // Installs a NativeChrome answering the capability probe. `capable`
 // false still installs one, so the "shell exists but lacks the flag"
 // case is covered as well as the plain-browser no-NativeChrome case.
-function stubCapability(sandbox, capable) {
+//
+// `supports`, not `has`: the probe is tri-state now, and `null` means
+// "could not say" (see Home._probeDarkIconCapability). Pass `null` for
+// that case explicitly.
+//
+// A conclusive `false` no longer settles the question on its own — SV
+// confirms it behaviourally, because a shell can store the dark asset in
+// a build earlier than the one that advertises it. So `capable === false`
+// also files the matching verdict against this stub's version pair,
+// which is what "this shell genuinely can't" means to the code under
+// test. Tests that want the confirmation itself pass `null` or seed
+// their own verdict.
+const STUB_BUILD = { appVersion: '1.4.0', buildNumber: '1223' };
+
+function stubCapability(sandbox, capable, opts = {}) {
+  const build = opts.build || STUB_BUILD;
   sandbox.NativeChrome = {
-    has: async (cap) => capable === true && cap === 'homeScreenShortcutDarkIcon',
+    supports: async (cap) => (cap === 'homeScreenShortcutDarkIcon'
+      ? (capable === true ? true : (capable === false ? false : null))
+      : null),
+    getInfo: async () => ({
+      version: 4,
+      capabilities: capable === true ? ['homeScreenShortcutDarkIcon'] : [],
+      appVersion: build.appVersion,
+      buildNumber: build.buildNumber,
+    }),
   };
+  if (capable === false && opts.verdict !== false) {
+    stubVerdict(sandbox, 'unsupported', build);
+  }
+}
+
+// Pre-files a behavioural verdict, as a previous page load would have.
+function stubVerdict(sandbox, verdict, build = STUB_BUILD) {
+  sandbox.localStorage.setItem('sv:widget_dark_icons', JSON.stringify({
+    appVersion: build.appVersion,
+    buildNumber: build.buildNumber,
+    verdict,
+  }));
 }
 
 function stubCanvas(sandbox, paints) {
@@ -1434,6 +1493,177 @@ test('icon heal: an absent has_icon_dark key never triggers a send', async () =>
   assert.equal(added.length, 0, 'undefined is not false — no send');
 });
 
+// ── Behavioural confirmation ─────────────────────────────────────────
+//
+// The capability list is not the last word, because it can be silent for
+// reasons that say nothing about storage: a degraded getBridgeInfo
+// reports no capabilities at all, and a shell can ship the storage in a
+// build earlier than the one that advertises the string. Both looked
+// identical to "this build can't", which is how a released shell fix
+// stayed invisible. When the list can't give a conclusive yes, SV sends
+// one pair and reads the registry back.
+
+test('unknown capability: one pair is sent and has_icon_dark settles it', async () => {
+  const { Home, sandbox } = makeHomeEnv({ id: ME });
+  stubCapability(sandbox, null); // degraded probe — "couldn't say"
+  stubScheme(sandbox, false);
+  stubCanvas(sandbox, []);
+  const added = [];
+  let storedDark = false;
+  sandbox.usernode = {
+    isNative: true,
+    addHomeScreenShortcut: async (opts) => {
+      added.push(opts);
+      // A shell that really does hold the second face.
+      storedDark = !!opts.icon_url_dark;
+      return { added: true };
+    },
+    getHomeScreenShortcuts: async () => ({
+      items: [{
+        id: 'w1', name: 'Demo App', url: 'https://sv.test/#app/demo-app',
+        has_icon: true, has_icon_dark: storedDark,
+      }],
+    }),
+  };
+  Home._shortcutSupport = { mechanism: 'widget' };
+  Home._apps = [baseApp()];
+  sandbox.localStorage.setItem('sv:widget_icon_src', JSON.stringify({
+    w1: `tile:${Home.WIDGET_ICON_GEN}:light:`,
+  }));
+  await Home._refreshWidgetItems();
+  assert.equal(added.length, 1, 'exactly one send — the probe itself heals the tile');
+  assert.ok(added[0].icon_url_dark, 'and it carries both faces');
+  assert.equal(Home._widgetDarkIcons, true, 'the read-back overrides the silent list');
+  const rec = JSON.parse(sandbox.localStorage.getItem('sv:widget_dark_icons'));
+  assert.deepEqual(rec, { appVersion: '1.4.0', buildNumber: '1223', verdict: 'supported' });
+  const srcMap = JSON.parse(sandbox.localStorage.getItem('sv:widget_icon_src'));
+  assert.equal(srcMap.w1, `tile:${Home.WIDGET_ICON_GEN}:dual:`,
+    'the probe records its own marker, so the pass does not re-send it');
+});
+
+test('unknown capability: a refused pair is repainted for the current scheme', async () => {
+  const { Home, sandbox } = makeHomeEnv({ id: ME });
+  stubCapability(sandbox, null);
+  stubScheme(sandbox, true); // dark homescreen — the case that looks wrong
+  stubCanvas(sandbox, []);
+  const added = [];
+  sandbox.usernode = {
+    isNative: true,
+    // Accepts the field and throws it away, which is what the flag says.
+    addHomeScreenShortcut: async (opts) => { added.push(opts); return { added: true }; },
+    getHomeScreenShortcuts: async () => ({
+      items: [{
+        id: 'w1', name: 'Demo App', url: 'https://sv.test/#app/demo-app',
+        has_icon: true, has_icon_dark: false,
+      }],
+    }),
+  };
+  Home._shortcutSupport = { mechanism: 'widget' };
+  Home._apps = [baseApp()];
+  await Home._refreshWidgetItems();
+  assert.equal(Home._widgetDarkIcons, false, 'the read-back is believed');
+  assert.equal(
+    JSON.parse(sandbox.localStorage.getItem('sv:widget_dark_icons')).verdict,
+    'unsupported'
+  );
+  // The probe pair's PRIMARY face is the light one, so a shell that keeps
+  // only icon_url has just been handed a white tile for a dark
+  // homescreen. Asking the question must not leave the tile worse than
+  // never asking it.
+  assert.equal(added.length, 2, 'the probe is followed by a corrective send');
+  assert.equal('icon_url_dark' in added[1], false, 'the repaint is a single face');
+  assert.notEqual(added[1].icon_url, added[0].icon_url, 'and it is the dark face');
+  const srcMap = JSON.parse(sandbox.localStorage.getItem('sv:widget_icon_src'));
+  assert.equal(srcMap.w1, `tile:${Home.WIDGET_ICON_GEN}:dark:`);
+});
+
+test('a stored verdict short-circuits the confirmation entirely', async () => {
+  const { Home, sandbox } = makeHomeEnv({ id: ME });
+  stubCapability(sandbox, null, { verdict: false });
+  stubVerdict(sandbox, 'unsupported');
+  stubScheme(sandbox, false);
+  stubCanvas(sandbox, []);
+  const added = [];
+  sandbox.usernode = {
+    isNative: true,
+    addHomeScreenShortcut: async (opts) => { added.push(opts); return { added: true }; },
+    getHomeScreenShortcuts: async () => ({
+      items: [{
+        id: 'w1', name: 'Demo App', url: 'https://sv.test/#app/demo-app',
+        has_icon: true, has_icon_dark: false,
+      }],
+    }),
+  };
+  Home._shortcutSupport = { mechanism: 'widget' };
+  Home._apps = [baseApp()];
+  sandbox.localStorage.setItem('sv:widget_icon_src', JSON.stringify({
+    w1: `tile:${Home.WIDGET_ICON_GEN}:light:`,
+  }));
+  await Home._refreshWidgetItems();
+  assert.equal(added.length, 0, 'a settled question is not re-asked every load');
+  assert.equal(Home._widgetDarkIcons, false);
+});
+
+test('an app update discards the verdict and re-confirms', async () => {
+  const { Home, sandbox } = makeHomeEnv({ id: ME });
+  // Measured on the build BEFORE the one that is running now.
+  stubCapability(sandbox, null, { verdict: false });
+  stubVerdict(sandbox, 'unsupported', { appVersion: '1.3.0', buildNumber: '1100' });
+  stubScheme(sandbox, false);
+  stubCanvas(sandbox, []);
+  const added = [];
+  let storedDark = false;
+  sandbox.usernode = {
+    isNative: true,
+    addHomeScreenShortcut: async (opts) => {
+      added.push(opts);
+      storedDark = !!opts.icon_url_dark;
+      return { added: true };
+    },
+    getHomeScreenShortcuts: async () => ({
+      items: [{
+        id: 'w1', name: 'Demo App', url: 'https://sv.test/#app/demo-app',
+        has_icon: true, has_icon_dark: storedDark,
+      }],
+    }),
+  };
+  Home._shortcutSupport = { mechanism: 'widget' };
+  Home._apps = [baseApp()];
+  await Home._refreshWidgetItems();
+  assert.equal(added.length, 1, 'the new build is asked again');
+  assert.ok(added[0].icon_url_dark);
+  assert.equal(Home._widgetDarkIcons, true, 'and the update is picked up');
+  assert.equal(
+    JSON.parse(sandbox.localStorage.getItem('sv:widget_dark_icons')).appVersion,
+    '1.4.0', 'the verdict is re-bound to the build it was measured on'
+  );
+});
+
+test('a refused confirmation records no verdict at all', async () => {
+  const { Home, sandbox } = makeHomeEnv({ id: ME });
+  stubCapability(sandbox, null);
+  stubScheme(sandbox, false);
+  stubCanvas(sandbox, []);
+  sandbox.usernode = {
+    isNative: true,
+    addHomeScreenShortcut: async () => { throw new Error('denied'); },
+    getHomeScreenShortcuts: async () => ({
+      items: [{
+        id: 'w1', name: 'Demo App', url: 'https://sv.test/#app/demo-app',
+        has_icon: true, has_icon_dark: false,
+      }],
+    }),
+  };
+  Home._shortcutSupport = { mechanism: 'widget' };
+  Home._apps = [baseApp()];
+  await Home._refreshWidgetItems();
+  // A send that never landed proves nothing about what the shell stores;
+  // recording "unsupported" here would be the latched negative again,
+  // just reached by a different route.
+  assert.equal(sandbox.localStorage.getItem('sv:widget_dark_icons'), null);
+  assert.equal(Home._widgetDarkIcons, null, 'the question stays open');
+});
+
 // Image-icon entries are dark-assetless forever by design, so without
 // the !app.icon_url clause they would look stale on every single pass.
 test('icon heal: an image-icon entry with has_icon_dark:false is left alone', async () => {
@@ -1536,6 +1766,78 @@ test('foreground healing is inert without the widget mechanism', async () => {
   assert.equal(added.length, 0, 'no bridge traffic off the widget path');
   assert.equal(Home._widgetForegroundHealedAt, 0, 'the throttle never even armed');
 });
+
+// The foreground handler used to re-run the heal pass against the
+// snapshot already in memory. That is precisely the data that goes stale
+// while SV is suspended: entries are pinned and unpinned from the widget
+// gallery, and has_icon / has_icon_dark are rewritten by whatever the
+// shell managed to store from the last pass. Re-deciding from the old
+// numbers reaches the old conclusion, which is how a tile that failed to
+// gain its dark face stayed wrong across every reopen.
+test('a foreground re-fetches the registry, not just the snapshot', async () => {
+  const { Home, sandbox } = makeHomeEnv({ id: ME });
+  stubCapability(sandbox, false);
+  stubScheme(sandbox, false);
+  stubCanvas(sandbox, []);
+  const foreground = stubForeground(sandbox);
+  const added = [];
+  let items = [
+    { id: 'w1', name: 'Demo App', url: 'https://sv.test/#app/demo-app', has_icon: true },
+  ];
+  sandbox.usernode = {
+    isNative: true,
+    addHomeScreenShortcut: async (opts) => { added.push(opts); return { added: true }; },
+    getHomeScreenShortcuts: async () => ({ items }),
+  };
+  Home._shortcutSupport = { mechanism: 'widget' };
+  Home._apps = [baseApp(), baseApp({ slug: 'second', name: 'Second' })];
+  Home._watchWidgetForeground();
+  sandbox.localStorage.setItem('sv:widget_icon_src', JSON.stringify({
+    w1: `tile:${Home.WIDGET_ICON_GEN}:light:`,
+  }));
+  await Home._refreshWidgetItems();
+  assert.equal(added.length, 0, 'nothing to do on the first pass');
+
+  // Pinned from the widget gallery while SV was suspended: the shell
+  // only reports it on a fresh read.
+  items = items.concat([
+    { id: 'w2', name: 'Second', url: 'https://sv.test/#app/second', has_icon: false },
+  ]);
+  Home._widgetForegroundHealedAt = 0;
+  await foreground('hidden');
+  await foreground('visible');
+  await flushAsync();
+  assert.equal(Home._widgetItems.length, 2, 'the registry was re-read');
+  assert.equal(added.length, 1, 'and the new entry gets its icon');
+  assert.equal(added[0].url, 'https://sv.test/#app/second');
+});
+
+// A foreground whose registry read failed learned nothing, so it must
+// not spend the 30s throttle window on that failure.
+test('a foreground that cannot read the registry does not spend the throttle', async () => {
+  const { Home, sandbox } = makeHomeEnv({ id: ME });
+  stubCapability(sandbox, false);
+  const foreground = stubForeground(sandbox);
+  sandbox.usernode = {
+    isNative: true,
+    addHomeScreenShortcut: async () => ({ added: true }),
+    getHomeScreenShortcuts: async () => { throw new Error('no answer'); },
+  };
+  Home._shortcutSupport = { mechanism: 'widget' };
+  Home._apps = [baseApp()];
+  Home._watchWidgetForeground();
+  await foreground('hidden');
+  await foreground('visible');
+  await flushAsync();
+  assert.equal(Home._widgetItems, null, 'the read failed');
+  assert.equal(Home._widgetForegroundHealedAt, 0, 'so the next foreground retries');
+});
+
+// The refresh chain is several awaits deep (registry read → capability →
+// heal pass → send → write-back), and stubForeground only yields once.
+async function flushAsync() {
+  for (let i = 0; i < 12; i += 1) await new Promise((r) => setTimeout(r, 0));
+}
 
 // Two overlapping passes would each write a srcMap snapshot taken
 // before the other's sends, so the last writer drops the other's
