@@ -79,6 +79,15 @@ const DEV_CONSOLE_FORWARDER = `
 const PLATFORM_DOMAIN = process.env.USERNODE_DOMAIN || 'social-vibecoding.usernodelabs.org';
 const PLATFORM_BASE_URL = `https://${PLATFORM_DOMAIN}`;
 
+// The hosted connector's canonical name and the read-only allow rules built
+// from it, taken from the one place that defines them so a scaffolded repo
+// can never drift from the server that answers those calls. See #1218 and
+// the long note in services/mcp-connect-constants.js.
+const {
+  SERVER_NAME: CONNECTOR_SERVER_NAME,
+  READ_ONLY_ALLOW_RULES: CONNECTOR_ALLOW_RULES,
+} = require('./mcp-connect-constants');
+
 function getTemplateFiles(appName, slug, dbUrl) {
   return [
     {
@@ -102,6 +111,18 @@ When running inside Usernode's dev-chat, those same conventions are
 already injected into your system prompt, so the fetch is a no-op in
 that path — but it's the right reflex when someone runs Claude Code
 against this repo locally or from another harness.
+
+## Connector permission prompts
+
+This repo ships \`.claude/settings.json\`, which allows the **read-only**
+Usernode connector calls (\`mcp__${CONNECTOR_SERVER_NAME}__get_*\`,
+\`…__list_*\`, \`…__whoami\`) so they stop prompting one at a time. Everything
+that acts — filing a request, opening or advancing a proposal — still asks.
+Claude Code applies those rules only after you accept the
+workspace trust dialog, which lists them for review. See \`.claude/README.md\`
+for the whole story, including what to do if you are still being prompted
+(usually: your connector is registered under a different name than the rules
+assume).
 
 If a rule below this line conflicts with the hosted conventions, the
 hosted conventions win. This file is **app-specific** — write down
@@ -234,6 +255,7 @@ module.exports = {
       content: `.env
 .env.*
 .git
+.claude
 node_modules
 `,
     },
@@ -267,6 +289,89 @@ node_modules
       // can't appear in this list.
       path: 'dapp.json',
       content: JSON.stringify({ secrets: [] }, null, 2),
+    },
+    {
+      // Project-level Claude Code settings. #1218: every hosted-connector
+      // call used to raise its own permission prompt, read-only ones
+      // included, and in a Claude Code WEB session the grant does not
+      // survive the container — so the same prompts came back next
+      // session, for every user, and the calls that genuinely deserve a
+      // confirmation drowned in the noise.
+      //
+      // An MCP server cannot reduce its own prompting, and should not be
+      // able to. Prompt reduction is client-side, via `permissions.allow`
+      // rules — so the platform ships them where every user of every app
+      // picks them up with no setup: the repo it scaffolds.
+      //
+      // Three entries, NOT `mcp__${CONNECTOR_SERVER_NAME}__*`. The
+      // `anthropic/requiresUserInteraction` marking that protects
+      // submit_work needs Claude Code >= 2.1.199, and an older client
+      // ignores it — so a whole-server allow would silently auto-approve a
+      // change reaching a group vote. Two globs plus one literal can only
+      // ever match reads, on every version.
+      //
+      // JSON has no comments, so the reasoning lives in .claude/README.md
+      // next to it.
+      path: '.claude/settings.json',
+      content: `${JSON.stringify({ permissions: { allow: CONNECTOR_ALLOW_RULES } }, null, 2)}\n`,
+    },
+    {
+      path: '.claude/README.md',
+      content: `# \`.claude/\` — Claude Code settings for this repo
+
+## Why \`settings.json\` is here
+
+This app is built on **Usernode**, and Usernode has a hosted MCP connector
+that Claude and ChatGPT can talk to. Without an allow rule, Claude Code asks
+permission on **every** connector call — including read-only ones like
+\`whoami\`, \`get_proposal\` and \`list_requests\`. In a Claude Code web session
+that grant does not persist, so the prompts come back next session. The
+calls that genuinely deserve a confirmation — \`submit_work\` puts a change to
+a group vote — end up buried in that noise and approved by reflex.
+
+\`settings.json\` allows the read-only connector calls and **nothing else**:
+
+\`\`\`json
+${JSON.stringify({ permissions: { allow: CONNECTOR_ALLOW_RULES } }, null, 2)}
+\`\`\`
+
+Deliberately not \`mcp__${CONNECTOR_SERVER_NAME}__*\`. Usernode also marks its
+acting tools \`anthropic/requiresUserInteraction\`, which forces a prompt no
+allow rule can skip — but that needs Claude Code 2.1.199 or later, and older
+versions ignore it. A whole-server rule would therefore auto-approve
+\`submit_work\` on an older client. These three entries can only ever match
+reads, on every version.
+
+## You will still see one trust dialog
+
+\`permissions.allow\` rules in a project's \`.claude/settings.json\` grant
+capability, so Claude Code applies them only after you accept the
+**workspace trust dialog** for this workspace. Until then it reads the rules
+but does not apply them. The dialog lists the rules, so you can review these
+three before accepting. One reviewable consent instead of dozens of per-call
+prompts is the whole trade — and a repo silently granting a connector
+permission on your behalf is exactly what that check exists to prevent.
+
+## If you are still being prompted
+
+The server segment of a permission rule is a **literal** — \`mcp__*__get_*\`
+is not a thing — so these rules only match a connector named exactly
+\`${CONNECTOR_SERVER_NAME}\`. Claude.ai's "Add custom connector" dialog takes
+whatever **name you type**, and a rule aimed at a different one fails
+silently: no error, you just keep getting prompted.
+
+**Read the name off your own tool list rather than trusting this file.** The
+tool names you actually see are either \`mcp__<server>__whoami\` or
+\`mcp__claude_ai_<server>__whoami\` — the prefix differs by surface. Copy the
+\`<server>\` segment you see and edit the three rules to match, or reconnect
+the connector naming it \`${CONNECTOR_SERVER_NAME}\` exactly.
+
+## Adding your own rules
+
+This file is yours — add project rules alongside the connector ones. Just
+keep the connector entries narrow: never widen them to a whole-server
+wildcard, for the version reason above.
+`,
     },
     {
       path: 'server.js',

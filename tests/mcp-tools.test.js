@@ -355,6 +355,74 @@ test('the build tools delegate rather than reimplement', () => {
   assert.doesNotMatch(SRC, /api\.github\.com/);
 });
 
+// ── #1218: the acting tools force a human confirmation ─────────────────
+
+test('exactly the five acting tools carry requiresUserInteraction', () => {
+  assert.deepEqual(tools.ACTING_TOOL_META, { 'anthropic/requiresUserInteraction': true });
+  assert.deepEqual([...tools.ACTING_TOOLS].sort(), [
+    'create_request', 'prepare_work', 'start_platform_build',
+    'submit_platform_build', 'submit_work',
+  ]);
+
+  const registered = [...SRC.matchAll(/server\.registerTool\('([a-z_]+)'/g)].map((m) => m[1]);
+  for (const name of registered) {
+    const idx = SRC.indexOf(`server.registerTool('${name}'`);
+    const next = SRC.indexOf('server.registerTool(', idx + 10);
+    const body = SRC.slice(idx, next > 0 ? next : undefined);
+    const marked = /_meta: ACTING_TOOL_META/.test(body);
+    assert.equal(
+      marked, tools.ACTING_TOOLS.includes(name),
+      marked
+        ? `${name} forces a prompt but is not in ACTING_TOOLS`
+        : `${name} is in ACTING_TOOLS but does not carry the marking`
+    );
+  }
+});
+
+test('a tool that forces a prompt is a write, never a read', () => {
+  // The marking and the annotation have to agree: a read that forced a
+  // prompt would be noise, and an unmarked write is the failure #1218 is
+  // about. answer_questions is the deliberate exception — a write that is
+  // NOT marked, because it only feeds a build the user already started.
+  for (const name of tools.ACTING_TOOLS) {
+    const idx = SRC.indexOf(`server.registerTool('${name}'`);
+    const next = SRC.indexOf('server.registerTool(', idx + 10);
+    const body = SRC.slice(idx, next > 0 ? next : undefined);
+    assert.match(body, /annotations: writeAnnotations/, `${name} is a write`);
+  }
+  assert.ok(!tools.ACTING_TOOLS.includes('answer_questions'));
+});
+
+// ── #1218: the naming contract the shipped allow rules rest on ─────────
+//
+// `mcp__usernode__get_*` and `…__list_*` are shipped in every scaffolded
+// app repo. They are only safe while these two rules hold, and a new tool
+// is exactly where they would quietly stop holding — so assert them here
+// rather than trusting review.
+
+test('read-only tools are named get_/list_ (or the one grandfathered whoami)', () => {
+  const {
+    READ_ONLY_TOOL_PREFIXES, READ_ONLY_TOOL_EXCEPTIONS,
+  } = require('../src/services/mcp-connect-constants');
+  assert.deepEqual([...READ_ONLY_TOOL_EXCEPTIONS], ['whoami']);
+
+  const registered = [...SRC.matchAll(/server\.registerTool\('([a-z_]+)'/g)].map((m) => m[1]);
+  for (const name of registered) {
+    const idx = SRC.indexOf(`server.registerTool('${name}'`);
+    const next = SRC.indexOf('server.registerTool(', idx + 10);
+    const body = SRC.slice(idx, next > 0 ? next : undefined);
+    const isRead = /annotations: readAnnotations/.test(body);
+    const matchesReadRule = READ_ONLY_TOOL_PREFIXES.some((p) => name.startsWith(p))
+      || READ_ONLY_TOOL_EXCEPTIONS.includes(name);
+    assert.equal(
+      matchesReadRule, isRead,
+      isRead
+        ? `${name} is read-only but the shipped allow rules would not match it — name it get_*/list_*`
+        : `${name} ACTS but is named like a read — the shipped allow rules would auto-approve it`
+    );
+  }
+});
+
 test('every write tool checks its scope before it does anything', () => {
   const writeTools = [
     'create_request', 'prepare_work', 'submit_work',

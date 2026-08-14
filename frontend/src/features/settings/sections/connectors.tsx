@@ -42,8 +42,22 @@ export function ConnectorsSection() {
             Copy
           </Button>
         </div>
-        <p className="text-xs text-zinc-500 dark:text-zinc-500 mb-4 leading-relaxed">
+        <p className="text-xs text-zinc-500 dark:text-zinc-500 mb-2 leading-relaxed">
           In Claude.ai: Settings &rarr; Connectors &rarr; Add custom connector. In ChatGPT: Settings &rarr; Connectors. Paste the URL above, then approve the connection in the browser page that opens. You can disconnect here at any time.
+        </p>
+        {/*
+            #1218: the Name field in Claude.ai's "Add custom connector" dialog
+            is where the permission-rule server segment comes from — the client
+            builds tool names from what the human types, not from the server's
+            own serverInfo.name. One account typed `Uesrnode`, and because a
+            permission rule's server segment cannot be wildcarded, every rule
+            Usernode ships missed it SILENTLY. So the canonical name is stated
+            here, at the moment the field is filled in, rather than left to
+            chance. `usernode` is exactly what serverInfo.name reports, so a
+            client that derives the name and one where it was typed agree.
+        */}
+        <p className="text-xs text-zinc-500 dark:text-zinc-500 mb-4 leading-relaxed">
+          Name it exactly <code className="font-mono text-zinc-600 dark:text-zinc-400">usernode</code>. Claude Code builds its permission rules from that name &mdash; a different spelling still works, but the read-only allowlist Usernode ships in every app repo will not match it, and you will keep being asked to approve each call.
         </p>
         <h4 className="text-xs font-semibold text-zinc-700 dark:text-zinc-300 mb-2">
           Connected

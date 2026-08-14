@@ -68,6 +68,43 @@ const MAX_ANSWER_CHARS = 8000;          // MAX_CHAT_LEN in services/ws.js.
 
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
 
+// ── Acting tools: force a human confirmation ───────────────────────────
+//
+// #1218. Claude Code reads `anthropic/requiresUserInteraction` off a tool's
+// `_meta` and, when it is true, shows that tool's permission prompt on EVERY
+// call — in `acceptEdits`, `auto` and `bypassPermissions` alike — with no
+// "don't ask again" option, and no allow rule can skip it. On Remote Control
+// and mobile it also withholds one-tap approval, so the confirmation comes
+// from somebody reading the prompt rather than from a tap.
+//
+// It is DEFENCE IN DEPTH, not a control to lean on: it needs Claude Code
+// ≥ 2.1.199 and earlier versions ignore it and apply the standard permission
+// flow. That version gate is exactly why the allow rules Usernode ships
+// (READ_ONLY_ALLOW_RULES) enumerate the reads instead of allowing the whole
+// server — a blanket rule on an older client would auto-approve the tools
+// below.
+const ACTING_TOOL_META = Object.freeze({ 'anthropic/requiresUserInteraction': true });
+
+// The five that get it, and why each one deserves a person:
+//   submit_work            — opens or advances a proposal; starts a group vote
+//   create_request         — files publicly, on the app's board and GitHub
+//   prepare_work           — spends an hourly allowance; mints a task that
+//                            dangles if it is never used
+//   start_platform_build   — spends the user's daily Usernode credits
+//   submit_platform_build  — puts that build to a group vote
+//
+// Everything else keeps normal behaviour. `answer_questions` is deliberately
+// NOT here: it is a write, but it only feeds text to a build the user already
+// started, and marking it would put an unskippable prompt in the middle of a
+// poll loop for no decision the user has not already made.
+const ACTING_TOOLS = Object.freeze([
+  'submit_work',
+  'create_request',
+  'prepare_work',
+  'start_platform_build',
+  'submit_platform_build',
+]);
+
 // One conventions section, at most. The largest current section (the native
 // UI kit) is ~26 KB, so every section fits whole; the cap exists so a future
 // section that does not gets truncated with a flag rather than flooding the
@@ -762,6 +799,7 @@ function registerTools(server, ctx) {
       webPath: z.string(),
     },
     annotations: writeAnnotations,
+    _meta: ACTING_TOOL_META,
   }, async ({ slug, title, description }) => {
     const guard = scopeGuard(WRITE_SCOPE);
     if (guard) return guard;
@@ -1009,6 +1047,7 @@ function registerTools(server, ctx) {
       nextStep: z.string(),
     },
     annotations: writeAnnotations,
+    _meta: ACTING_TOOL_META,
   }, async ({ slug, requestNumber, brief, restart, proposalId }) => {
     const guard = scopeGuard(WRITE_SCOPE);
     if (guard) return guard;
@@ -1184,6 +1223,7 @@ function registerTools(server, ctx) {
       nextStep: z.string(),
     },
     annotations: writeAnnotations,
+    _meta: ACTING_TOOL_META,
   }, async ({
     taskId, slug, prNumber, proposalId, branch, forkRepo, patch, source, title, description, agent,
     testingPaths, testingSteps, expectedHeadSha,
@@ -1391,6 +1431,7 @@ function registerTools(server, ctx) {
       nextStep: z.string(),
     },
     annotations: writeAnnotations,
+    _meta: ACTING_TOOL_META,
   }, async ({ slug, requestNumber }) => {
     const guard = scopeGuard(WRITE_SCOPE);
     if (guard) return guard;
@@ -1552,6 +1593,7 @@ function registerTools(server, ctx) {
       nextStep: z.string(),
     },
     annotations: writeAnnotations,
+    _meta: ACTING_TOOL_META,
   }, async ({ buildId }) => {
     const guard = scopeGuard(WRITE_SCOPE);
     if (guard) return guard;
@@ -1614,6 +1656,8 @@ module.exports = {
   MAX_ANSWER_CHARS,
   MAX_CONVENTIONS_CHARS,
   PLATFORM_INTERNAL_URL,
+  ACTING_TOOL_META,
+  ACTING_TOOLS,
   clip,
   checkWriteLength,
   writeLengthError,
