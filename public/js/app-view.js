@@ -70,6 +70,15 @@ const AppView = {
   // True when paging FAILED and the report fell back to the board's first
   // page, so the document can say it is showing partial history.
   _reportPartial: false,
+  // Report period start (reporting-period): undefined = no explicit choice
+  // yet (resolves to the newest locked snapshot once _reportSnapshots
+  // loads, i.e. "Since last report"), null = "All history", string = ISO
+  // period start. Deliberately NOT cleared by _resetReportCaches — a data
+  // refresh must not discard the user's period choice; reset only on app
+  // switch (open()). _reportPeriodCustom keeps the dropdown on "Specific
+  // date…" while the date input is showing.
+  _reportSince: undefined,
+  _reportPeriodCustom: false,
 
   // #396: per-issue-number cache of the GitHub comment thread fetched
   // lazily when an issue topic opens, so _renderTopicHead's live-refreshes
@@ -442,6 +451,10 @@ const AppView = {
       // one app's completed work into another app's report.
       AppView._resetReportCaches();
       AppView._reportTotal = 0;
+      // The report period is per-app too, and lives OUTSIDE
+      // _resetReportCaches so a data refresh keeps the user's choice.
+      AppView._reportSince = undefined;
+      AppView._reportPeriodCustom = false;
     }
     AppView.appData = appData;
 
@@ -5659,6 +5672,60 @@ const AppView = {
     // Locked snapshots (report-lock-share): undefined = never fetched.
     AppView._reportSnapshots = undefined;
     AppView._reportLocking = false;
+    // Discord copy panel (reporting-period): the composed text is built
+    // from the caches above, so a data refresh invalidates it. Note
+    // _reportSince deliberately survives — see its declaration.
+    AppView._reportDiscordMsg = null;
+    AppView._reportDiscordBusy = false;
+    AppView._reportDiscordFallback = false;
+  },
+
+  // ── Report period (reporting-period) ─────────────────────────────────
+  // The effective period start as an ISO string, or null for "All
+  // history". With no explicit choice, the default is "since the newest
+  // locked snapshot" — which upgrades from "All history" automatically
+  // when _reportSnapshots arrives, because the snapshot fetch already
+  // triggers a repaint.
+  _reportEffectiveSince() {
+    if (AppView._reportSince !== undefined) return AppView._reportSince;
+    const snaps = AppView._reportSnapshots;
+    if (Array.isArray(snaps) && snaps.length && snaps[0].lockedAt) {
+      return snaps[0].lockedAt;
+    }
+    return null;
+  },
+
+  // The same period as _buildReportModel opts: {} or { since: <ms> }.
+  _reportModelOpts() {
+    const iso = AppView._reportEffectiveSince();
+    const t = iso ? Date.parse(iso) : NaN;
+    return Number.isFinite(t) ? { since: t } : {};
+  },
+
+  _onReportPeriodChange(value) {
+    if (value === 'custom') {
+      // Reveal the date input; the effective period only changes once a
+      // date is actually picked.
+      AppView._reportPeriodCustom = true;
+    } else {
+      AppView._reportPeriodCustom = false;
+      AppView._reportSince = (value && value.indexOf('snap:') === 0)
+        ? value.slice(5)
+        : null; // 'all'
+      // Re-check the AI summary's staleness against the new period.
+      AppView._reportAi = undefined;
+    }
+    AppView._repaintReportView();
+  },
+
+  _onReportPeriodDate(value) {
+    // The date input yields 'YYYY-MM-DD'; interpret it at the viewer's
+    // LOCAL midnight (no timezone suffix → local time), then store ISO.
+    const t = Date.parse(value ? `${value}T00:00:00` : '');
+    if (!Number.isFinite(t) || t > Date.now()) return;
+    AppView._reportSince = new Date(t).toISOString();
+    AppView._reportAi = undefined;
+    AppView._repaintReportView();
   },
 
   // Page the full merged history into `_reportMerged` — the one fetch the
@@ -5759,10 +5826,11 @@ const AppView = {
       AppView._ensureReportData();
       return;
     }
-    const model = AppView._buildReportModel(AppView._reportInputs());
+    const model = AppView._buildReportModel(AppView._reportInputs(), AppView._reportModelOpts());
     el.innerHTML = `<style id="dev-report-style">${AppView.REPORT_CSS}</style>`
       + AppView._renderReportToolbar()
       + `<div class="${AppView._reportRootCls()}">`
+      + AppView._renderReportDiscordPanelHtml()
       + AppView._renderReportSnapshotsHtml(
         AppView._reportSnapshots, !!(AppView.appData && AppView.appData.can_manage)
       )
@@ -5777,6 +5845,24 @@ const AppView = {
     if (ab && ab.addEventListener) ab.addEventListener('click', () => AppView.generateReportAi());
     const lk = el.querySelector('#dev-report-lock');
     if (lk && lk.addEventListener) lk.addEventListener('click', () => AppView.lockReport());
+    // Period selector (reporting-period).
+    const per = el.querySelector('#dev-report-period');
+    if (per && per.addEventListener) per.addEventListener('change', () => AppView._onReportPeriodChange(per.value));
+    const pd = el.querySelector('#dev-report-period-date');
+    if (pd && pd.addEventListener) pd.addEventListener('change', () => AppView._onReportPeriodDate(pd.value));
+    // Discord copy panel (reporting-period).
+    const dg = el.querySelector('#dev-report-discord');
+    if (dg && dg.addEventListener) dg.addEventListener('click', () => AppView.generateDiscordMessage());
+    const dc = el.querySelector('#dev-report-discord-copy');
+    if (dc && dc.addEventListener) dc.addEventListener('click', () => AppView.copyDiscordMessage());
+    const dx = el.querySelector('#dev-report-discord-close');
+    if (dx && dx.addEventListener) {
+      dx.addEventListener('click', () => { AppView._reportDiscordMsg = null; AppView._repaintReportView(); });
+    }
+    // Keep the user's in-place edits across WS-driven repaints: the panel
+    // re-renders from _reportDiscordMsg, so write every keystroke back.
+    const dt = el.querySelector('#dev-report-discord-text');
+    if (dt && dt.addEventListener) dt.addEventListener('input', () => { AppView._reportDiscordMsg = dt.value; });
     const wire = (sel, fn) => {
       const nodes = el.querySelectorAll(sel);
       if (nodes && nodes.forEach) {
@@ -5803,6 +5889,63 @@ const AppView = {
     return dark ? 'ur-rpt ur-rpt--dark' : 'ur-rpt';
   },
 
+  // The period dropdown: "Since last report" (the newest locked snapshot)
+  // is the default whenever one exists; every other snapshot gets its own
+  // entry (15 most recent — older start dates stay reachable via
+  // "Specific date…"); "All history" is today's behaviour and the default
+  // with no snapshots.
+  REPORT_PERIOD_MAX_SNAPS: 15,
+
+  _renderReportPeriodHtml() {
+    const snaps = (Array.isArray(AppView._reportSnapshots) ? AppView._reportSnapshots : [])
+      .filter((s) => s && s.lockedAt)
+      .slice(0, AppView.REPORT_PERIOD_MAX_SNAPS);
+    const chosen = AppView._reportSince;
+    let selVal = 'all';
+    if (AppView._reportPeriodCustom) {
+      selVal = 'custom';
+    } else if (chosen === undefined) {
+      selVal = snaps.length ? `snap:${snaps[0].lockedAt}` : 'all';
+    } else if (chosen !== null) {
+      selVal = snaps.some((s) => s.lockedAt === chosen) ? `snap:${chosen}` : 'custom';
+    }
+    // Disambiguate two snapshots locked on the same calendar day with the
+    // time-of-day; a lone snapshot on a day shows the date only.
+    const dayOf = (iso) => {
+      const ms = Date.parse(iso || '');
+      return Number.isFinite(ms) ? new Date(ms).toLocaleDateString() : 'undated';
+    };
+    const dayCounts = {};
+    snaps.forEach((s) => { const d = dayOf(s.lockedAt); dayCounts[d] = (dayCounts[d] || 0) + 1; });
+    const sel = (v) => (selVal === v ? ' selected' : '');
+    let options = '';
+    snaps.forEach((s, i) => {
+      const day = dayOf(s.lockedAt);
+      const ms = Date.parse(s.lockedAt);
+      const label = (dayCounts[day] > 1 && Number.isFinite(ms))
+        ? `${day} ${new Date(ms).toLocaleTimeString()}`
+        : day;
+      const text = i === 0 ? `Since last report — ${label}` : `Since report — ${label}`;
+      options += `<option value="snap:${escapeAttr(s.lockedAt)}"${sel(`snap:${s.lockedAt}`)}>${escapeHtml(text)}</option>`;
+    });
+    options += `<option value="custom"${sel('custom')}>Specific date…</option>`;
+    options += `<option value="all"${sel('all')}>All history</option>`;
+    // The date input pre-fills from a previously chosen custom start.
+    let dateVal = '';
+    if (selVal === 'custom' && typeof chosen === 'string') {
+      const t = Date.parse(chosen);
+      if (Number.isFinite(t)) {
+        const dt = new Date(t);
+        dateVal = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+      }
+    }
+    return `<label class="text-xs opacity-70" for="dev-report-period">Period</label>`
+      + `<select id="dev-report-period" class="gc-vote-btn" title="What counts as completed: everything since this start date">${options}</select>`
+      + (selVal === 'custom'
+        ? `<input type="date" id="dev-report-period-date" class="gc-vote-btn" value="${escapeAttr(dateVal)}" max="${escapeAttr(new Date().toISOString().slice(0, 10))}" title="Report period start date">`
+        : '');
+  },
+
   _renderReportToolbar() {
     const busy = AppView._reportLoading;
     const gen = AppView._reportAiGenerating;
@@ -5811,12 +5954,15 @@ const AppView = {
     const stale = !!(ai && ai.stale && !gen);
     const canManage = !!(AppView.appData && AppView.appData.can_manage);
     const locking = AppView._reportLocking;
+    const discordBusy = AppView._reportDiscordBusy;
     return `
       <div class="flex items-center gap-2 mb-3 flex-wrap">
         <button id="dev-report-download" class="gc-vote-btn" title="Save this report as a self-contained HTML file">Download HTML</button>
         <button id="dev-report-refresh" class="gc-vote-btn"${busy ? ' disabled' : ''} title="Re-pull the data and regenerate the report">${busy ? 'Refreshing…' : 'Refresh'}</button>
         <button id="dev-report-ai" class="gc-vote-btn"${gen ? ' disabled' : ''} title="Ask the AI for a plain-language summary, risks and per-person highlights (uses your budget or API key)">${aiLabel}</button>
+        <button id="dev-report-discord" class="gc-vote-btn"${discordBusy || busy ? ' disabled' : ''} title="Compose a short, friendly progress update ready to paste into Discord">${discordBusy ? 'Generating…' : 'Generate Discord message'}</button>
         ${canManage ? `<button id="dev-report-lock" class="gc-vote-btn"${locking || busy ? ' disabled' : ''} title="Freeze this report as a permanent dated snapshot in Previous reports">${locking ? 'Locking…' : 'Lock report'}</button>` : ''}
+        ${AppView._renderReportPeriodHtml()}
         ${stale ? '<span class="text-xs opacity-60">Data has changed since the AI summary was generated.</span>' : ''}
       </div>`;
   },
@@ -5858,6 +6004,10 @@ const AppView = {
     const d = data || {};
     const o = opts || {};
     const now = Number.isFinite(o.now) ? o.now : Date.now();
+    // Report period start in ms (reporting-period). null = all history.
+    // Only "Done" and the completed counts are period-scoped — Backlog,
+    // Awaiting review and Underway describe the present, not a period.
+    const since = Number.isFinite(o.since) && o.since > 0 ? o.since : null;
     const num = (v) => { const n = parseInt(v, 10); return Number.isFinite(n) ? n : 0; };
     const ts = (v) => { const t = Date.parse(v || ''); return Number.isFinite(t) ? t : 0; };
 
@@ -5875,7 +6025,7 @@ const AppView = {
     // chat_sessions.created_at and exposes no merge timestamp, so grouping
     // by a fabricated merge date would over-claim. Applied close-issue
     // rows do carry payload.appliedAt and use it, labelled "Closed".
-    const doneEntries = buckets.done.map((m) => {
+    const allDoneEntries = buckets.done.map((m) => {
       const closeIssue = (m.row_type || 'pr') === 'close_issue';
       const payload = m.payload || {};
       if (closeIssue) {
@@ -5900,6 +6050,12 @@ const AppView = {
         at: m.created_at, atMs: ts(m.created_at), dateLabel: 'Started',
       };
     });
+    // Period filter: drop entries dated BEFORE the start. Undated entries
+    // (atMs 0 — an unparseable date) are KEPT: dropping them would
+    // silently hide real completed work.
+    const doneEntries = since
+      ? allDoneEntries.filter((e) => !e.atMs || e.atMs >= since)
+      : allDoneEntries;
     // Month buckets over that same field, newest month first.
     const monthOrder = [];
     const monthMap = new Map();
@@ -5917,9 +6073,23 @@ const AppView = {
       monthMap.get(key).entries.push(e);
     }
     const THIRTY_DAYS = 30 * 24 * 60 * 60 * 1000;
-    const completedLast30 = doneEntries
+    const completedLast30 = allDoneEntries
       .filter((e) => e.atMs && (now - e.atMs) <= THIRTY_DAYS).length;
-    const doneTotal = Math.max(num(d.mergedTotal), doneEntries.length);
+    // With a period set, the filtered count IS the total — the server's
+    // mergedTotal describes all history and would contradict the list.
+    const doneTotal = since
+      ? doneEntries.length
+      : Math.max(num(d.mergedTotal), allDoneEntries.length);
+    // The 500-row pager cap can hide part of a period that predates the
+    // oldest paged row — disclose that instead of silently under-counting.
+    let periodIncomplete = false;
+    if (since && d.mergedTruncated) {
+      let oldest = 0;
+      for (const e of allDoneEntries) {
+        if (e.atMs && (!oldest || e.atMs < oldest)) oldest = e.atMs;
+      }
+      if (!oldest || since < oldest) periodIncomplete = true;
+    }
 
     // ── In progress ──────────────────────────────────────────────────
     const review = [];
@@ -6036,6 +6206,10 @@ const AppView = {
       },
       generatedAtMs: now,
       generatedAt: new Date(now).toISOString(),
+      // ms of the period start, or null in All-history mode. The renderer
+      // keys the "Covering …" header line and the completed-in-30-days
+      // suppression off this.
+      periodStartMs: since,
       summary: {
         completed: doneTotal,
         awaitingReview: review.length + gov.length,
@@ -6047,7 +6221,11 @@ const AppView = {
         groups: monthOrder,
         shown: shownDone,
         total: doneTotal,
-        truncated: !!d.mergedTruncated || doneTotal > shownDone,
+        // In period mode the filtered count IS the total, so the "showing
+        // N of M" note never applies; periodIncomplete carries the one
+        // honest caveat instead.
+        truncated: since ? false : (!!d.mergedTruncated || doneTotal > shownDone),
+        periodIncomplete,
         partial: !!d.mergedPartial,
         empty: shownDone === 0,
       },
@@ -6194,7 +6372,11 @@ const AppView = {
 
     const genMs = Date.parse(ai.generatedAt || '');
     const when = Number.isFinite(genMs) ? new Date(genMs).toLocaleDateString() : '';
-    html += `<p class="ur-rpt-ai-note">AI-written summary${ai.model ? ` (${eh(ai.model)})` : ''}${when ? `, generated ${eh(when)}` : ''}. Verify against the lists below.</p>`;
+    // The cache is one shared row per app, so say which period it was
+    // generated for — another member may have selected it.
+    const psMs = Date.parse(ai.periodStart || '');
+    const psLabel = Number.isFinite(psMs) ? new Date(psMs).toLocaleDateString() : '';
+    html += `<p class="ur-rpt-ai-note">AI-written summary${ai.model ? ` (${eh(ai.model)})` : ''}${when ? `, generated ${eh(when)}` : ''}${psLabel ? `, covering since ${eh(psLabel)}` : ''}. Verify against the lists below.</p>`;
     return html;
   },
 
@@ -6286,6 +6468,8 @@ const AppView = {
     '.ur-rpt--dark .ur-rpt-risk-sev--low{color:#bef264;border-color:#365314;}',
     '.ur-rpt-foot{border-top:2px solid var(--rpt-line);margin-top:2rem;padding-top:0.875rem;font-size:0.75rem;color:var(--rpt-faint);}',
     '.ur-rpt-foot p{margin:0.25rem 0;}',
+    '.ur-rpt-discord-text{display:block;width:100%;min-height:11rem;margin-top:0.5rem;font:inherit;font-size:0.8125rem;line-height:1.5;color:var(--rpt-fg);background:var(--rpt-card);border:1px solid var(--rpt-line);border-radius:0.5rem;padding:0.625rem 0.75rem;resize:vertical;}',
+    '.ur-rpt-discord-actions{display:flex;gap:0.5rem;margin-top:0.5rem;}',
   ].join(''),
 
   REPORT_PRINT_CSS: [
@@ -6353,10 +6537,15 @@ const AppView = {
 
     // ── Title block ───────────────────────────────────────────────────
     let html = '';
+    // Period header line (reporting-period): named start → generated date.
+    const periodMs = Number.isFinite(m.periodStartMs) && m.periodStartMs > 0 ? m.periodStartMs : null;
     html += `<header class="ur-rpt-head">`
       + `<p class="ur-rpt-kicker">Progress report</p>`
       + `<h1 class="ur-rpt-app">${eh(app.name)}</h1>`
       + `<p class="ur-rpt-gen">Generated ${eh(genLabel)}</p>`
+      + (periodMs
+        ? `<p class="ur-rpt-gen">Covering ${eh(dateOnly(periodMs))} &rarr; ${eh(gen ? gen.toLocaleDateString() : 'today')}</p>`
+        : '')
       + `<p class="ur-rpt-note">Open issues come from the app&rsquo;s GitHub repository; proposals and dev sessions come from Usernode.</p>`
       + `</header>`;
 
@@ -6368,7 +6557,11 @@ const AppView = {
       + stat(sum.beingWorkedOn || 0, 'Being worked on')
       + stat(sum.backlog || 0, 'Backlog')
       + `</ul>`;
-    html += `<p class="ur-rpt-recent">${eh(sum.completedLast30 || 0)} completed in the last 30 days.</p>`;
+    // With a period active, the Completed tile already answers "how much
+    // since the start date", so the 30-day line is dropped.
+    if (!periodMs) {
+      html += `<p class="ur-rpt-recent">${eh(sum.completedLast30 || 0)} completed in the last 30 days.</p>`;
+    }
 
     // ── AI layer (report-ai): narrative → risks → by-owner ────────────
     // Injected only when the caller passes a summary (or an explicit null
@@ -6408,6 +6601,9 @@ const AppView = {
       const notes = [];
       if (done.truncated && done.total > done.shown) {
         notes.push(`Showing the ${done.shown} most recent of ${done.total} completed items.`);
+      }
+      if (done.periodIncomplete) {
+        notes.push('Only the most recent completed items could be loaded, so this period may be incomplete.');
       }
       if (done.partial) {
         notes.push('The full history could not be loaded, so this section shows only the most recent page.');
@@ -6545,7 +6741,7 @@ const AppView = {
   // already established (frontend/src/features/admin/admin-console.js).
   downloadReport() {
     if (!AppView._reportMerged) { AppView._ensureReportData(); return; }
-    const model = AppView._buildReportModel(AppView._reportInputs());
+    const model = AppView._buildReportModel(AppView._reportInputs(), AppView._reportModelOpts());
     // A summary is embedded when one exists; with none, the export omits
     // the AI layer entirely (no "use the button above" invite in a
     // standalone document).
@@ -6589,7 +6785,11 @@ const AppView = {
     if (!AppView.appData) return;
     AppView._reportAiFetching = true;
     try {
-      const res = await fetch(`/api/apps/${AppView.appData.slug}/report-ai`);
+      // The staleness hash is computed server-side against the same
+      // period the client is looking at.
+      const sinceIso = AppView._reportEffectiveSince();
+      const qs = sinceIso ? `?since=${encodeURIComponent(sinceIso)}` : '';
+      const res = await fetch(`/api/apps/${AppView.appData.slug}/report-ai${qs}`);
       const data = res.ok ? await res.json() : null;
       AppView._reportAi = data && data.summary
         ? { ...data.summary, stale: !!data.stale }
@@ -6609,7 +6809,12 @@ const AppView = {
     AppView._reportAiGenerating = true;
     AppView._repaintReportView();
     try {
-      const res = await fetch(`/api/apps/${AppView.appData.slug}/report-ai/generate`, { method: 'POST' });
+      const sinceIso = AppView._reportEffectiveSince();
+      const res = await fetch(`/api/apps/${AppView.appData.slug}/report-ai/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(sinceIso ? { since: sinceIso } : {}),
+      });
       const data = await res.json().catch(() => ({}));
       if (res.ok && data.summary) {
         AppView._reportAi = { ...data.summary, stale: false };
@@ -6634,6 +6839,14 @@ const AppView = {
       const res = await fetch(`/api/apps/${AppView.appData.slug}/report-snapshots`);
       const data = res.ok ? await res.json() : null;
       AppView._reportSnapshots = data && Array.isArray(data.snapshots) ? data.snapshots : [];
+      // The default period just upgraded from "All history" to "Since
+      // last report" — re-check the AI staleness against it. One-shot:
+      // the guard above stops any refetch loop once _reportSnapshots is
+      // defined.
+      if (AppView._reportSince === undefined && AppView._reportSnapshots.length
+        && AppView._reportAi !== undefined && !AppView._reportAiFetching) {
+        AppView._reportAi = undefined;
+      }
     } catch {
       AppView._reportSnapshots = [];
     } finally {
@@ -6651,7 +6864,7 @@ const AppView = {
     AppView._reportLocking = true;
     AppView._repaintReportView();
     try {
-      const model = AppView._buildReportModel(AppView._reportInputs());
+      const model = AppView._buildReportModel(AppView._reportInputs(), AppView._reportModelOpts());
       const doc = AppView._renderReportHtml(
         model,
         AppView._reportAi
@@ -6728,6 +6941,169 @@ const AppView = {
       if (window.PlatformUI && PlatformUI.toast) PlatformUI.toast(msg || 'Link copied');
     } catch {
       if (window.PlatformUI && PlatformUI.toast) PlatformUI.toast(url);
+    }
+  },
+
+  // ── Discord message (reporting-period): pure, DOM-free ──────────────
+  // model (+ possibly-null AI summary) in → plain string out, written for
+  // a general audience: no PR numbers, no merge windows, no check states.
+  // Uses only **bold**, _italics_ and `- ` bullets — Discord renders all
+  // three natively. Hard-capped at 1,900 characters (Discord's limit is
+  // 2,000), trimming bullets first.
+  _buildDiscordMessage(model, ai) {
+    const m = model || {};
+    const app = m.app || {};
+    const sum = m.summary || {};
+    const dateOnly = (ms) => {
+      try { return new Date(ms).toLocaleDateString(); } catch { return ''; }
+    };
+    const periodMs = Number.isFinite(m.periodStartMs) && m.periodStartMs > 0 ? m.periodStartMs : null;
+    let title = `**${app.name || 'This app'} — progress update**`;
+    if (periodMs) title += ` _(covering since ${dateOnly(periodMs)})_`;
+
+    // Non-technical nouns only — never "PR", "merge", "checks",
+    // "governance".
+    const c = sum.completed || 0;
+    const a = sum.awaitingReview || 0;
+    const w = sum.beingWorkedOn || 0;
+    const b = sum.backlog || 0;
+    const numbersLine = [
+      `${c} improvement${c === 1 ? '' : 's'} finished`,
+      `${a} change${a === 1 ? '' : 's'} waiting for votes`,
+      `${w} in progress`,
+      `${b} idea${b === 1 ? '' : 's'} in the backlog`,
+    ].join(' · ');
+
+    // What's new: the AI summary's plain-language highlights (cap 6), or —
+    // with no summary — up to 5 finished-item titles from the model.
+    const bullets = [];
+    if (ai) {
+      for (const h of (Array.isArray(ai.highlights) ? ai.highlights : [])) {
+        const t = h == null ? '' : String(h).trim();
+        if (t) bullets.push(t);
+        if (bullets.length >= 6) break;
+      }
+    } else {
+      for (const g of ((m.done || {}).groups || [])) {
+        for (const e of (g.entries || [])) {
+          const t = e && e.title ? String(e.title).trim() : '';
+          if (t) bullets.push(t);
+          if (bullets.length >= 5) break;
+        }
+        if (bullets.length >= 5) break;
+      }
+    }
+
+    // Needs attention: up to 3 plainly-worded risk titles (high/medium
+    // only); the section is omitted entirely when nothing qualifies.
+    const risks = ai
+      ? (Array.isArray(ai.risks) ? ai.risks : [])
+        .filter((r) => r && (r.severity === 'high' || r.severity === 'medium'))
+        .map((r) => String((r.title == null ? '' : r.title)).trim())
+        .filter(Boolean)
+        .slice(0, 3)
+      : [];
+
+    const assemble = (bl, rk) => {
+      const parts = [title];
+      if (bl.length) {
+        parts.push('', `**What's new**`);
+        for (const x of bl) parts.push(`- ${x}`);
+      }
+      parts.push('', '**By the numbers**', numbersLine);
+      if (rk.length) {
+        parts.push('', '**Needs attention**');
+        for (const x of rk) parts.push(`- ${x}`);
+      }
+      // The app's public link, and nothing else — never a share link (a
+      // draft report has none, and auto-including one could leak an
+      // unshared snapshot URL).
+      if (app.url) parts.push('', app.url);
+      return parts.join('\n');
+    };
+
+    const bl = bullets.slice();
+    const rk = risks.slice();
+    let msg = assemble(bl, rk);
+    while (msg.length > 1900 && (bl.length || rk.length)) {
+      if (bl.length) bl.pop(); else rk.pop();
+      msg = assemble(bl, rk);
+    }
+    if (msg.length > 1900) msg = msg.slice(0, 1900);
+    return msg;
+  },
+
+  // The editable copy panel, rendered inside the report root when a
+  // message has been composed. Read-only document rules still apply: the
+  // three controls are wired post-paint by _repaintReportView, like the
+  // snapshot buttons.
+  _renderReportDiscordPanelHtml() {
+    if (AppView._reportDiscordMsg == null) return '';
+    const note = AppView._reportDiscordFallback
+      ? 'Numbers-only version — the richer update with highlights needs the AI summary, which could not be generated.'
+      : 'Edit the text freely, then copy and paste it into Discord. Nothing is posted automatically.';
+    return `<section class="ur-rpt-section" data-section="discord">`
+      + `<h2 class="ur-rpt-h2">Discord message</h2>`
+      + `<p class="ur-rpt-sub">${escapeHtml(note)}</p>`
+      + `<textarea id="dev-report-discord-text" class="ur-rpt-discord-text" aria-label="Discord message">${escapeHtml(AppView._reportDiscordMsg)}</textarea>`
+      + `<div class="ur-rpt-discord-actions">`
+      + `<button type="button" id="dev-report-discord-copy" class="gc-vote-btn">Copy message</button>`
+      + `<button type="button" id="dev-report-discord-close" class="gc-vote-btn">Close</button>`
+      + `</div></section>`;
+  },
+
+  // Compose the Discord message: make sure a fresh AI summary exists for
+  // the selected period (the server returns the cache without an LLM call
+  // when the input hash is unchanged, so this never double-bills), fall
+  // back to the numbers-only version when it can't be generated, then
+  // open the panel.
+  async generateDiscordMessage() {
+    if (AppView._reportDiscordBusy || !AppView.appData) return;
+    if (!AppView._reportMerged) { AppView._ensureReportData(); return; }
+    AppView._reportDiscordBusy = true;
+    AppView._repaintReportView();
+    let ai = AppView._reportAi || null;
+    try {
+      if (!ai || ai.stale) {
+        const sinceIso = AppView._reportEffectiveSince();
+        const res = await fetch(`/api/apps/${AppView.appData.slug}/report-ai/generate`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(sinceIso ? { since: sinceIso } : {}),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok && data.summary) {
+          AppView._reportAi = { ...data.summary, stale: false };
+          ai = AppView._reportAi;
+        } else {
+          ai = null;
+          if (window.PlatformUI && PlatformUI.toast) {
+            PlatformUI.toast(data.error || 'Could not generate the AI summary');
+          }
+        }
+      }
+    } catch {
+      ai = null;
+      if (window.PlatformUI && PlatformUI.toast) PlatformUI.toast('Could not generate the AI summary');
+    }
+    const model = AppView._buildReportModel(AppView._reportInputs(), AppView._reportModelOpts());
+    AppView._reportDiscordMsg = AppView._buildDiscordMessage(model, ai);
+    AppView._reportDiscordFallback = !ai;
+    AppView._reportDiscordBusy = false;
+    if (AppView._getViewMode() === 'report') AppView._repaintReportView();
+  },
+
+  // Copy the textarea's CURRENT value — the user may have edited it.
+  // Clipboard failure falls back to toasting the text itself, the same
+  // posture as copyReportShareLink.
+  async copyDiscordMessage() {
+    const ta = document.getElementById('dev-report-discord-text');
+    const text = ta ? ta.value : (AppView._reportDiscordMsg || '');
+    try {
+      await navigator.clipboard.writeText(text);
+      if (window.PlatformUI && PlatformUI.toast) PlatformUI.toast('Message copied');
+    } catch {
+      if (window.PlatformUI && PlatformUI.toast) PlatformUI.toast(text);
     }
   },
 

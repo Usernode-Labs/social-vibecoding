@@ -1296,6 +1296,12 @@
       "expectText": "Progress report"
     },
     {
+      "name": "Reporting toolbar offers the period selector and the Discord button (reporting-period)",
+      "path": "/?demo=1&view=report#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-report select#dev-report-period",
+      "expectText": "Generate Discord message"
+    },
+    {
       "name": "Kanban cards show the assignee initial-avatar",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": ".attr-avatar"

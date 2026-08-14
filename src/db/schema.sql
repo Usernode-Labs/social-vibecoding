@@ -5223,6 +5223,12 @@ CREATE TABLE IF NOT EXISTS app_report_ai (
 -- rows default to an empty list and render without the section.
 ALTER TABLE app_report_ai ADD COLUMN IF NOT EXISTS highlights_json JSONB NOT NULL DEFAULT '[]'::jsonb;
 
+-- Report period start (reporting-period). The start date the cached
+-- summary was generated for — NULL means "all history". The cache is one
+-- shared row per app, so recording the period keeps the summary honest
+-- about what it covers when members select different periods.
+ALTER TABLE app_report_ai ADD COLUMN IF NOT EXISTS period_start TIMESTAMPTZ;
+
 -- Locked report snapshots (report-lock-share). Locking freezes the
 -- client's self-contained standalone report document as an immutable
 -- dated row; the draft cache above keeps being overwritten. html is

@@ -316,3 +316,114 @@ test('GET report-ai serves highlights', async () => {
     assert.deepEqual(body.summary.highlights, ['point one']);
   } finally { server.close(); }
 });
+
+// ── Report period (reporting-period) ─────────────────────────────────
+
+test('buildReportInput with since scopes merged work and the previousReport baseline', async () => {
+  dispatch([[/FROM app_report_snapshots/i, [{
+    ai_json: { narrative: 'the june report', highlights: [], risks: [], owners: [] },
+    locked_at: '2026-06-12T10:00:00Z',
+  }]]]);
+  queries.length = 0;
+  const { input } = await reportAi.buildReportInput(pool, APP, { since: '2026-06-12T10:00:00Z' });
+  const mergedSql = queries.find((q) => /cs\.status = 'merged'/.test(q.sql));
+  assert.ok(mergedSql, 'must query merged sessions');
+  assert.match(mergedSql.sql, /cs\.created_at >= \$2/);
+  assert.deepEqual(Array.from(mergedSql.params), [7, '2026-06-12T10:00:00Z']);
+  // Inclusive baseline: selecting a previous report feeds THAT report.
+  const snapSql = queries.find((q) => /app_report_snapshots/.test(q.sql));
+  assert.match(snapSql.sql, /locked_at <= \$2/);
+  assert.equal(input.previousReport.narrative, 'the june report');
+  // Day-granular, like every other date in the input.
+  assert.equal(input.periodStart, '2026-06-12');
+});
+
+test('buildReportInput without since keeps the unscoped shape (no periodStart key)', async () => {
+  dispatch([]);
+  queries.length = 0;
+  const { input } = await reportAi.buildReportInput(pool, APP);
+  assert.ok(!('periodStart' in input), 'unscoped inputs must hash exactly as before');
+  const mergedSql = queries.find((q) => /cs\.status = 'merged'/.test(q.sql));
+  assert.ok(!/created_at >= \$2/.test(mergedSql.sql));
+  const snapSql = queries.find((q) => /app_report_snapshots/.test(q.sql));
+  assert.ok(!/locked_at <= \$2/.test(snapSql.sql));
+});
+
+test('periodStart changes the fingerprint, but sub-day noise does not', async () => {
+  dispatch([]);
+  const { input: bare } = await reportAi.buildReportInput(pool, APP);
+  const { input: scoped } = await reportAi.buildReportInput(pool, APP, { since: '2026-06-12T00:00:00Z' });
+  const { input: scopedLater } = await reportAi.buildReportInput(pool, APP, { since: '2026-06-12T09:30:00Z' });
+  assert.notEqual(reportAi.fingerprint(bare), reportAi.fingerprint(scoped));
+  assert.equal(reportAi.fingerprint(scoped), reportAi.fingerprint(scopedLater));
+});
+
+test('generateForApp persists period_start and returns it via shapeRow', async () => {
+  const SINCE = '2026-06-12T00:00:00.000Z';
+  dispatch([
+    [/INSERT INTO app_report_ai/i, [{ ...INSERTED_ROW, period_start: SINCE }]],
+    [/FROM app_report_ai/i, []],
+  ]);
+  const prev = llm._setClientForTests({
+    messages: {
+      create: async () => ({
+        content: [{ type: 'text', text: JSON.stringify({ narrative: 'Fresh.', risks: [], owners: [] }) }],
+        usage: { input_tokens: 1, output_tokens: 1 },
+      }),
+    },
+  });
+  try {
+    queries.length = 0;
+    const out = await reportAi.generateForApp({
+      pool, config: { dataEncryptionKey: 'k' }, app: APP, userId: 42, since: SINCE,
+    });
+    assert.equal(out.summary.periodStart, SINCE);
+    const ins = queries.find((q) => /INSERT INTO app_report_ai/i.test(q.sql));
+    assert.match(ins.sql, /period_start/);
+    assert.ok(ins.params.includes(SINCE), 'the period start must be bound into the upsert');
+  } finally { llm._setClientForTests(prev); }
+});
+
+test('GET report-ai serves periodStart and validates ?since', async () => {
+  dispatch([
+    [/FROM apps WHERE slug/i, [appRow]],
+    [/FROM app_report_ai/i, [{
+      input_hash: 'h', narrative: 'n', highlights_json: [], risks_json: [],
+      owners_json: [], model: 'claude-haiku-4-5', generated_by: 1,
+      generated_at: '2026-08-01T00:00:00Z', period_start: '2026-06-12T00:00:00Z',
+    }]],
+  ]);
+  const server = await startServer();
+  try {
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const ok = await fetch(`${base}/api/apps/demo/report-ai?since=2026-06-12T00:00:00Z`);
+    assert.equal(ok.status, 200);
+    const body = await ok.json();
+    assert.equal(body.summary.periodStart, '2026-06-12T00:00:00Z');
+    // Garbage and future dates are rejected, never silently coerced.
+    assert.equal((await fetch(`${base}/api/apps/demo/report-ai?since=not-a-date`)).status, 400);
+    const future = new Date(Date.now() + 7 * 86400000).toISOString();
+    assert.equal((await fetch(`${base}/api/apps/demo/report-ai?since=${encodeURIComponent(future)}`)).status, 400);
+  } finally { server.close(); }
+});
+
+test('POST generate validates body.since', async () => {
+  dispatch([[/FROM apps WHERE slug/i, [appRow]], [/FROM app_report_ai/i, []]]);
+  const server = await startServer();
+  try {
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const bad = await fetch(`${base}/api/apps/demo/report-ai/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ since: 'garbage' }),
+    });
+    assert.equal(bad.status, 400);
+    const future = new Date(Date.now() + 86400000).toISOString();
+    const bad2 = await fetch(`${base}/api/apps/demo/report-ai/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ since: future }),
+    });
+    assert.equal(bad2.status, 400);
+  } finally { server.close(); }
+});

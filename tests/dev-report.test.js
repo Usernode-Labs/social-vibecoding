@@ -798,3 +798,178 @@ test('snapshots list renders nothing when empty', () => {
   assert.equal(AppView._renderReportSnapshotsHtml([], true), '');
   assert.equal(AppView._renderReportSnapshotsHtml(undefined, true), '');
 });
+
+// ── Report period (reporting-period) ─────────────────────────────────
+// _buildReportModel gains opts.since (ms): Done entries dated before the
+// start are dropped, undated ones are kept, and the completed counts
+// follow the filtered list. Backlog / Awaiting review / Underway are
+// untouched — they describe the present, not a period.
+
+const buildSince = (AppView, data, since) => AppView._buildReportModel(
+  { app: { name: 'Acme', slug: 'acme', url: 'https://acme.test', repoUrl: 'https://github.com/acme/app' }, ...data },
+  { now: NOW, since }
+);
+
+test('period filter drops Done entries before the start, keeps the boundary and undated ones', () => {
+  const AppView = makeAppView();
+  const SINCE = Date.parse('2026-08-01T00:00:00Z');
+  const merged = [
+    mergedRow({ id: 300, pr_title: 'After', created_at: daysAgo(2) }),
+    mergedRow({ id: 301, pr_title: 'Boundary', created_at: '2026-08-01T00:00:00Z' }),
+    mergedRow({ id: 302, pr_title: 'Before', created_at: '2026-07-20T10:00:00Z' }),
+    mergedRow({ id: 303, pr_title: 'Undated', created_at: 'not-a-date' }),
+  ];
+  const m = buildSince(AppView, { merged, mergedTotal: 4 }, SINCE);
+  const shown = Array.from(m.done.groups || []).flatMap((g) => titles(g.entries));
+  assert.ok(shown.includes('After'));
+  assert.ok(shown.includes('Boundary'), 'an entry exactly at the start date is kept (inclusive)');
+  assert.ok(!shown.includes('Before'));
+  assert.ok(shown.includes('Undated'), 'undated entries are kept, never silently hidden');
+  // The filtered count IS the total — mergedTotal describes all history.
+  assert.equal(m.summary.completed, 3);
+  assert.equal(m.done.total, 3);
+  assert.equal(m.done.shown, 3);
+  assert.equal(m.periodStartMs, SINCE);
+  // Without a period the model is unchanged.
+  const all = build(AppView, { merged, mergedTotal: 4 });
+  assert.equal(all.periodStartMs, null);
+  assert.equal(all.summary.completed, 4);
+});
+
+test('period leaves Backlog / Awaiting review / Underway alone', () => {
+  const AppView = makeAppView();
+  const SINCE = Date.parse('2026-08-01T00:00:00Z');
+  const m = buildSince(AppView, {
+    issues: [issue({ number: 1, updatedAt: '2026-05-01T00:00:00Z' })],
+    proposals: [prop({ id: 100, created_at: '2026-05-02T00:00:00Z', promoted_at: '2026-05-02T00:00:00Z' })],
+    merged: [mergedRow({ id: 300, created_at: '2026-05-03T00:00:00Z' })],
+    mySessions: [session({ id: 400, created_at: '2026-05-04T00:00:00Z', last_activity_at: '2026-05-04T00:00:00Z' })],
+    mergedTotal: 1,
+  }, SINCE);
+  assert.equal(m.summary.completed, 0);
+  assert.equal(m.summary.awaitingReview, 1);
+  assert.equal(m.summary.beingWorkedOn, 1);
+  assert.equal(m.summary.backlog, 1);
+});
+
+test('periodIncomplete only when the truncated page cannot cover the period', () => {
+  const AppView = makeAppView();
+  const merged = [mergedRow({ id: 300, created_at: daysAgo(5) })];
+  // Start predates the oldest paged row AND the pager hit its cap.
+  const far = buildSince(AppView, { merged, mergedTotal: 900, mergedTruncated: true }, NOW - 400 * 86400000);
+  assert.equal(far.done.periodIncomplete, true);
+  assert.equal(far.done.truncated, false, 'the all-history "showing N of M" note never applies in period mode');
+  const html = AppView._renderReportHtml(far, { standalone: false });
+  assert.match(html, /this period may be incomplete/);
+  // Start inside the paged window: complete even though the page truncated.
+  const near = buildSince(AppView, { merged, mergedTotal: 900, mergedTruncated: true }, NOW - 2 * 86400000);
+  assert.equal(near.done.periodIncomplete, false);
+  // No truncation: never flagged.
+  const ok = buildSince(AppView, { merged, mergedTotal: 1 }, NOW - 400 * 86400000);
+  assert.equal(ok.done.periodIncomplete, false);
+});
+
+test('renderer adds the Covering header line and drops the 30-day line in period mode', () => {
+  const AppView = makeAppView();
+  const merged = [mergedRow({ id: 300, created_at: daysAgo(2) })];
+  const scoped = AppView._renderReportHtml(
+    buildSince(AppView, { merged, mergedTotal: 1 }, Date.parse('2026-08-01T00:00:00Z')),
+    { standalone: false }
+  );
+  assert.match(scoped, /Covering /);
+  assert.ok(!/completed in the last 30 days/.test(scoped));
+  const all = AppView._renderReportHtml(
+    build(AppView, { merged, mergedTotal: 1 }),
+    { standalone: false }
+  );
+  assert.ok(!/Covering /.test(all));
+  assert.match(all, /completed in the last 30 days/);
+});
+
+test('AI note names the period the shared cache was generated for', () => {
+  const AppView = makeAppView();
+  const ai = {
+    narrative: 'n', highlights: [], risks: [], owners: [],
+    model: 'claude-haiku-4-5', generatedAt: '2026-08-10T00:00:00Z',
+    periodStart: '2026-08-01T00:00:00Z',
+  };
+  assert.match(AppView._renderReportAiHtml(ai, []), /covering since /);
+  assert.ok(!/covering since /.test(AppView._renderReportAiHtml({ ...ai, periodStart: null }, [])));
+});
+
+// ── Discord message (reporting-period): pure builder ─────────────────
+
+test('_buildDiscordMessage composes title, highlights, numbers, risks and link', () => {
+  const AppView = makeAppView();
+  const m = buildSince(AppView, {
+    merged: [mergedRow({ id: 300, created_at: daysAgo(2) })],
+    proposals: [prop({ id: 100 }), prop({ id: 101 })],
+    issues: [issue({ number: 1 })],
+    mergedTotal: 1,
+  }, Date.parse('2026-08-01T00:00:00Z'));
+  const msg = AppView._buildDiscordMessage(m, {
+    highlights: ['The board got faster', 'Search now finds drafts'],
+    risks: [
+      { title: 'A change has waited two weeks for votes', severity: 'high' },
+      { title: 'Minor styling drift', severity: 'low' },
+      { title: 'Backlog is growing', severity: 'medium' },
+    ],
+  });
+  assert.match(msg, /^\*\*Acme — progress update\*\* _\(covering since .+\)_/);
+  assert.match(msg, /\*\*What's new\*\*/);
+  assert.match(msg, /- The board got faster/);
+  assert.match(msg, /\*\*By the numbers\*\*/);
+  assert.match(msg, /1 improvement finished · 2 changes waiting for votes · 0 in progress · 1 idea in the backlog/);
+  assert.match(msg, /\*\*Needs attention\*\*/);
+  assert.match(msg, /- A change has waited two weeks for votes/);
+  assert.match(msg, /- Backlog is growing/);
+  assert.ok(!msg.includes('Minor styling drift'), 'low-severity risks are omitted');
+  assert.ok(msg.trimEnd().endsWith('https://acme.test'), 'the app link is the last line');
+});
+
+test('_buildDiscordMessage omits Needs attention when nothing qualifies, caps highlights at 6', () => {
+  const AppView = makeAppView();
+  const m = build(AppView, { merged: [mergedRow({ id: 300 })], mergedTotal: 1 });
+  const msg = AppView._buildDiscordMessage(m, {
+    highlights: Array.from({ length: 8 }, (_, i) => `Highlight ${i + 1}`),
+    risks: [],
+  });
+  assert.ok(!msg.includes('Needs attention'));
+  assert.ok(msg.includes('- Highlight 6'));
+  assert.ok(!msg.includes('- Highlight 7'), 'highlights are capped at 6');
+  assert.ok(!/covering since/.test(msg), 'no period suffix in all-history mode');
+});
+
+test('_buildDiscordMessage fallback (no AI) uses finished-item titles and no technical jargon', () => {
+  const AppView = makeAppView();
+  const m = build(AppView, {
+    merged: Array.from({ length: 7 }, (_, i) => mergedRow({
+      id: 300 + i, pr_title: `Improvement number ${i + 1}`, created_at: daysAgo(i + 1),
+    })),
+    mergedTotal: 7,
+  });
+  const msg = AppView._buildDiscordMessage(m, null);
+  assert.match(msg, /\*\*Acme — progress update\*\*/);
+  assert.match(msg, /- Improvement number 1/);
+  const bulletCount = msg.split('\n').filter((l) => l.startsWith('- ')).length;
+  assert.equal(bulletCount, 5, 'fallback caps at 5 finished-item titles');
+  assert.match(msg, /7 improvements finished/);
+  // The scaffolding vocabulary is general-audience only.
+  assert.ok(!/\bPR\b/.test(msg));
+  assert.ok(!/merge/i.test(msg));
+  assert.ok(!/checks/i.test(msg));
+  assert.ok(!/governance/i.test(msg));
+});
+
+test('_buildDiscordMessage stays under 1,900 characters, trimming bullets first', () => {
+  const AppView = makeAppView();
+  const m = build(AppView, { merged: [mergedRow({ id: 300 })], mergedTotal: 1 });
+  const msg = AppView._buildDiscordMessage(m, {
+    highlights: Array.from({ length: 6 }, (_, i) => `Highlight ${i + 1} ${'x'.repeat(400)}`),
+    risks: [{ title: `Risk ${'y'.repeat(200)}`, severity: 'high' }],
+  });
+  assert.ok(msg.length <= 1900, `message must fit Discord's limit (got ${msg.length})`);
+  // The numbers line and title survive the trim.
+  assert.match(msg, /\*\*By the numbers\*\*/);
+  assert.match(msg, /\*\*Acme — progress update\*\*/);
+});

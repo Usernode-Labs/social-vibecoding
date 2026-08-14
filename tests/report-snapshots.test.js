@@ -269,3 +269,33 @@ test('list/lock 404 on unknown app', async () => {
     assert.equal(res.status, 404);
   } finally { s.close(); }
 });
+
+// ── Report period (reporting-period) ─────────────────────────────────
+
+test('POST lock copies period_start into the frozen ai_json', async () => {
+  currentUser = { id: 1, username: 'creator', isAdmin: false };
+  dispatch([
+    [/FROM apps WHERE slug/i, [appRow]],
+    [/FROM app_report_ai/i, [{
+      input_hash: 'h', narrative: 'n', highlights_json: [], risks_json: [],
+      owners_json: [], model: 'claude-haiku-4-5', generated_by: 1,
+      generated_at: '2026-08-10T00:00:00Z', period_start: '2026-06-12T00:00:00Z',
+    }]],
+    [/INSERT INTO app_report_snapshots/i, [{ id: 10, locked_at: '2026-08-11T12:00:00Z', share_token: null }]],
+  ]);
+  queries.length = 0;
+  const s = await startServer();
+  try {
+    const res = await fetch(`${base(s)}/api/apps/demo/report-snapshots`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ html: DOC }),
+    });
+    assert.equal(res.status, 200);
+    const ins = queries.find((q) => /INSERT INTO app_report_snapshots/i.test(q.sql));
+    assert.ok(ins, 'must insert');
+    // The frozen ai_json says which period it was generated for, so a
+    // locked "since June" report reads as exactly that.
+    assert.match(ins.params[2], /"periodStart":"2026-06-12T00:00:00Z"/);
+  } finally { s.close(); }
+});
