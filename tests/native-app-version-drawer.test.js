@@ -1,5 +1,5 @@
 // #1101: the hamburger footer requests the installed Flutter app's
-// version/build (for example 0.4.0/1223), distinguishes the web revision, and
+// version/build (for example 0.4.0/1223), distinguishes the platform version, and
 // never substitutes the currently-open dApp SHA.
 
 const test = require('node:test');
@@ -105,13 +105,13 @@ test('the drawer island imports and initializes the native version renderer afte
     'layout-effect init prevents a pre-hydration class/text mutation');
 });
 
-test('the footer separates the mobile app version from the web revision', () => {
+test('the footer separates the mobile app version from the platform version', () => {
   const revisionAt = html.indexOf('id="drawer-row-platform-version"');
   const versionAt = html.indexOf('id="drawer-row-native-app-version"');
   const forkAt = html.indexOf('id="drawer-row-app-fork"');
   assert.ok(revisionAt > -1 && versionAt > revisionAt && forkAt > versionAt,
-    'footer order is web revision → mobile app version → optional fork lineage');
-  assert.match(html.slice(revisionAt, versionAt), /Web revision/);
+    'footer order is platform version → mobile app version → optional fork lineage');
+  assert.match(html.slice(revisionAt, versionAt), /Platform version/);
   assert.match(html.slice(versionAt, forkAt), /Mobile app version/);
   assert.doesNotMatch(html, /drawer-row-app-version|app-version-pill-slot|dApp version/,
     'no particular dApp SHA appears in platform information');

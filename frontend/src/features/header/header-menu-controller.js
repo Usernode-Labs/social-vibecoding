@@ -29,7 +29,7 @@
 import { adoptKitSurface } from '../../lib/kit-surface';
 
 // Drawer status/version rows (header slim-down): the kudos + AI-credit meters
-// render into #drawer-status-pane, and the web revision + mobile-app release +
+// render into #drawer-status-pane, and the platform version + mobile-app release +
 // fork lineage label render into #drawer-footer — none of them in the header
 // any more. The dApp SHA does not belong in this platform-information block.
 const DrawerStatus = {
@@ -77,7 +77,7 @@ const DrawerStatus = {
   },
 
   // Mirror "a deploy is in flight" onto the hamburger. Read straight
-  // off the rendered web revision rather than threading state: its markup is
+  // off the rendered platform version row rather than threading state: its markup is
   // already the single source of truth for the platform deploying state.
   // Scoped to #drawer-footer so a deploying dApp pill on a home tile can never
   // light this dot.
