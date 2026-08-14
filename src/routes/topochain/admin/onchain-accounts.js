@@ -21,16 +21,22 @@ const {
 // `secret_key` is a real testnet credential (schema.sql's own comment on
 // `onchain_accounts` calls it out alongside `apps.db_password`) — SPEC
 // 2599 is explicit that "secret_key is never exposed by any endpoint",
-// so it is never in ANY SELECT list in this file, not merely omitted
+// so it is kept out of this shared SELECT list, not merely omitted
 // from the formatted response (a `SELECT *` that later dropped the key
 // in JS would still leak it to a logging/serialization bug downstream).
+// ONE deliberate exception, made at the platform owner's explicit
+// request (#admin/onchain-accounts detail dialog): the show route below
+// appends `oa.secret_key` for FULL admins only (`req.user.canAdminWrite`)
+// and attaches it to the response itself — view-only admins and every
+// other route (index, import, reset) never carry the column, and the
+// staging scrub / prod-debug denial on it are untouched.
 const ACCOUNT_COLUMNS = [
   'oa.id', 'oa.season_event_id', 'oa.season_id', 'oa.amount', 'oa.identity_uid',
   'oa.address', 'oa.public_key', 'oa.tier', 'oa.description', 'oa.registration_code',
   'oa.user_id', 'oa.is_used', 'oa.used_at', 'oa.created_at', 'oa.updated_at',
   'se.id AS event_id', 'se.name AS event_name',
   'u.id AS user_id_full', 'u.username AS user_username', 'u.email AS user_email',
-  'u.display_name AS user_display_name',
+  'u.display_name AS user_display_name', 'u.discord AS user_discord',
 ].join(', ');
 const ACCOUNT_FROM = `
   FROM onchain_accounts oa
@@ -64,6 +70,7 @@ function formatAccount(r) {
       username: r.user_username,
       email: r.user_email,
       display_name: r.user_display_name,
+      discord: r.user_discord != null ? r.user_discord : null,
     } : null,
   };
 }
@@ -114,6 +121,15 @@ function onchainAccountsAdminRoutes(config) {
         if (!seasonEventId) return fail(res, 404, 'Event not found.');
         params.push(seasonEventId);
         where += ` AND oa.season_event_id = $${params.length}`;
+      }
+      // Mirrors the season_event_id filter above exactly (same
+      // present-but-malformed handling): `?season_id=abc` 404s instead of
+      // silently binding NULL and returning zero rows.
+      if (req.query.season_id !== undefined) {
+        const seasonId = toIntId(req.query.season_id);
+        if (!seasonId) return fail(res, 404, 'Season not found.');
+        params.push(seasonId);
+        where += ` AND oa.season_id = $${params.length}`;
       }
       // THE FIX (code-review finding): a PRESENT-but-unparseable `is_used`
       // (e.g. `?is_used=on`) used to make `toBool` return `undefined`,
@@ -306,15 +322,24 @@ function onchainAccountsAdminRoutes(config) {
   });
 
   // ── GET /api/v4/admin/onchain-accounts/:id (SPEC 2601-2603) ──────────
+  //
+  // The one place `secret_key` is served (see the ACCOUNT_COLUMNS comment
+  // above): appended to the SELECT and the response only for full admins.
+  // The decision is made on `canAdminWrite`, never on "was the column in
+  // the row" — a mock or a future `SELECT *` must not widen the audience.
   router.get('/api/v4/admin/onchain-accounts/:id', async (req, res) => {
     try {
       const id = toIntId(req.params.id);
       if (!id) return fail(res, 404, 'Account not found.');
 
-      const { rows } = await pool.query(`SELECT ${ACCOUNT_COLUMNS} ${ACCOUNT_FROM} WHERE oa.id = $1`, [id]);
+      const withSecret = !!(req.user && req.user.canAdminWrite);
+      const columns = withSecret ? `${ACCOUNT_COLUMNS}, oa.secret_key` : ACCOUNT_COLUMNS;
+      const { rows } = await pool.query(`SELECT ${columns} ${ACCOUNT_FROM} WHERE oa.id = $1`, [id]);
       if (!rows.length) return fail(res, 404, 'Account not found.');
 
-      return ok(res, { data: formatAccount(rows[0]) });
+      const account = formatAccount(rows[0]);
+      if (withSecret) account.secret_key = rows[0].secret_key;
+      return ok(res, { data: account });
     } catch (err) {
       log.error('topochain-admin', 'GET /admin/onchain-accounts/:id failed', { message: err.message });
       return fail(res, 500, 'Internal server error.');
