@@ -1524,6 +1524,33 @@ async function loadAnyTask(pool, userId, taskId) {
   }
 }
 
+// The app a proposal is on. Routing information only: every gate that
+// decides whether an update may happen lives behind the update route, which
+// re-checks the caller against whatever app this resolves to — so reading it
+// here cannot widen anything, and a caller who names somebody else's
+// proposal is refused there exactly as before.
+//
+// #1217: without this, an update had to be told the app as well as the
+// proposal, which submit_work's own shape (4) and get_proposal's `updateWith`
+// both describe as unnecessary. It was a round trip spent learning that a
+// documented recipe was incomplete.
+async function appSlugForProposal(pool, proposalId) {
+  const id = Number(proposalId);
+  if (!Number.isSafeInteger(id) || id <= 0) return null;
+  try {
+    const { rows } = await pool.query(
+      `SELECT a.slug AS app_slug
+         FROM chat_sessions s
+         JOIN apps a ON a.id = s.app_id
+        WHERE s.id = $1`,
+      [id]
+    );
+    return (rows[0] && rows[0].app_slug) || null;
+  } catch {
+    return null;
+  }
+}
+
 // ── Serializing two callers on one task ────────────────────────────────
 //
 // The work order now tells the coding agent to submit for itself, so the
@@ -1905,9 +1932,18 @@ async function submitUpdate(deps, params, proposalId) {
     );
   }
 
-  const slug = task ? task.app_slug : params.slug;
+  // Which app this proposal is on, in order of authority: the task the work
+  // order minted, then whatever the caller passed, then the proposal's own
+  // row (#1217). The task still wins, so a caller cannot redirect a prepared
+  // update at another app by passing a different slug.
+  const slug = (task ? task.app_slug : params.slug)
+    || await appSlugForProposal(pool, proposalId);
   if (!slug) {
-    return fail('invalid_request', 'Pass `slug` (or the taskId from the work order) so Usernode knows which app this proposal is on.');
+    return fail(
+      'invalid_request',
+      `Usernode has no proposal ${proposalId}. Check the id with list_my_proposals — or pass the taskId from the `
+      + 'work order, which names both the proposal and its app.'
+    );
   }
 
   // The testing metadata travels WITH the update (#1199). The route stores it
@@ -2331,7 +2367,14 @@ async function submitWorkLocked(deps, params) {
   }
 
   // ── Hand it to the platform's own import path ────────────────────────
-  const imported = await importProposal(slug, pr.number);
+  //
+  // The request this implements travels WITH the import (#1217), the same
+  // arrangement the testing metadata already uses: the route is what creates
+  // the session row, so anything written afterwards would miss the merge
+  // path and the close watcher that read it. Empty for a submission that
+  // names no request — a plain `slug` + `prNumber` — which stays exactly as
+  // it was.
+  const imported = await importProposal(slug, pr.number, { linkedIssues: linkedIssuesFor(task) });
   if (!imported || !imported.ok) {
     // A head the platform wrote and then could not import is litter on
     // somebody's app repository. Remove it.
@@ -2404,8 +2447,36 @@ function prTitleFor({ title, task, slug }) {
   return raw.split('\n')[0].slice(0, 200).trim() || `Change to ${slug}`;
 }
 
-function prBodyFor({ body }) {
-  return stripEnvelope(body).slice(0, 4000);
+// The request a piece of work implements, as the linked-issue set the rest of
+// the platform speaks in (#1217). prepare_work has recorded it on the task
+// since the beginning — the work order it prints even says "This implements
+// request #N" — but the number stopped there, so a proposal built FROM a
+// request was not linked to it in any way the platform could act on.
+function linkedIssuesFor(task) {
+  const n = task && Number(task.issue_number);
+  return Number.isInteger(n) && n > 0 ? [n] : [];
+}
+
+// Two things close a request when the work lands, and a connector submission
+// carried neither (#1217):
+//
+//   1. the `Closes #N` keyword in the PR body — GitHub is what actually
+//      closes the issue on merge, and the platform's post-merge watcher only
+//      polls for it having happened; and
+//   2. chat_sessions.linked_issues — what the watcher expects to close, what
+//      the merge path suppresses optimistically, and what the Dev board reads
+//      to show a request as being worked on.
+//
+// This is (1). The format is pr-metadata's, imported rather than restated so
+// the two producers of a closing block cannot drift; the require is lazy
+// because that module pulls in the LLM stack and nothing else here needs it.
+// The block goes on AFTER the clip, so a long description can never push the
+// closing line out of the body.
+function prBodyFor({ body, task }) {
+  const { buildClosingBlock } = require('./pr-metadata');
+  const text = stripEnvelope(body).slice(0, 4000);
+  const closing = buildClosingBlock(linkedIssuesFor(task));
+  return closing ? `${text}\n\n${closing}` : text;
 }
 
 module.exports = {
@@ -2423,6 +2494,9 @@ module.exports = {
   normalizeSource,
   agentLabel,
   stripEnvelope,
+  // The request-linking pair (#1217), unit-tested directly.
+  linkedIssuesFor,
+  prBodyFor,
   requestKeyFor,
   proposalRequestKeyFor,
   describeTargetProposal,

@@ -26,6 +26,14 @@ const SRC = fs.readFileSync(
 
 const ORIGIN = 'https://social-vibecoding.usernodelabs.org';
 
+// One tool's whole registerTool(...) block, from its name to the next tool's.
+function registration(name) {
+  const idx = SRC.indexOf(`server.registerTool('${name}'`);
+  assert.ok(idx > 0, `${name} is registered`);
+  const next = SRC.indexOf('server.registerTool(', idx + 10);
+  return SRC.slice(idx, next > 0 ? next : undefined);
+}
+
 test('free text is wrapped as untrusted content', () => {
   const wrapped = tools.untrusted('Add dark mode', 500);
   assert.match(wrapped, /^<untrusted-content>/);
@@ -152,7 +160,7 @@ test('list responses are bounded and say when they were cut', () => {
   // The shapers are applied after .slice(0, MAX_LIST_ITEMS) and each list
   // tool reports `truncated` so the model does not present a partial list
   // as complete.
-  const listTools = ['list_apps', 'list_requests', 'list_my_proposals'];
+  const listTools = ['list_apps', 'list_my_proposals'];
   for (const name of listTools) {
     const idx = SRC.indexOf(`server.registerTool('${name}'`);
     assert.ok(idx > 0, `${name} is registered`);
@@ -160,6 +168,297 @@ test('list responses are bounded and say when they were cut', () => {
     assert.match(body, /slice\(0, MAX_LIST_ITEMS\)/, `${name} caps its list`);
     assert.match(body, /truncated:/, `${name} reports truncation`);
   }
+
+  // list_requests is bounded the same way, but it PAGES rather than simply
+  // cutting (#1217): the cap applies per page, a caller's own `limit` is
+  // clamped to it, and `truncated` now has a companion that says how to
+  // reach the rest instead of only that there is more.
+  const requests = registration('list_requests');
+  const oversized = tools.pageRequests(
+    Array.from({ length: 400 }, (_, i) => ({ number: i + 1, title: `R${i + 1}` })),
+    { limit: 5000 }
+  );
+  assert.equal(oversized.requests.length, tools.MAX_REQUEST_PAGE.titles,
+    "a caller's own limit is clamped to the cap for the mode");
+  assert.match(requests, /truncated: page\.nextOffset !== null/, 'and reports truncation');
+  assert.match(requests, /nextCursor: page\.nextOffset === null \? null :/,
+    'with a cursor for the next page when there is one');
+});
+
+// ── #1217: the duplicate check has to be completable ───────────────────
+//
+// The server instructions and create_request both require a duplicate check
+// before filing, and list_requests was the only way to run one — but it
+// returned the first 50 requests WITH their bodies and took nothing but
+// `slug`. On an app with more open requests than that, the required check
+// could not be completed at all: "no duplicate among the ones I was shown"
+// is not "no duplicate". #1209 made it worse by restoring long bodies, so
+// each entry grew and fewer fit.
+
+test('a request page carries titles by default, so a whole board fits in one call', () => {
+  assert.deepEqual(tools.MAX_REQUEST_PAGE, { titles: 200, full: 50 });
+  assert.ok(tools.MAX_REQUEST_PAGE.titles > tools.MAX_LIST_ITEMS,
+    'dropping the bodies is what buys the extra room');
+
+  const issues = Array.from({ length: 120 }, (_, i) => ({
+    number: i + 1, title: `Request ${i + 1}`, body: 'x'.repeat(4000), user: 'someone',
+  }));
+
+  const titles = tools.pageRequests(issues, { detail: 'titles', limit: 200 });
+  assert.equal(titles.requests.length, 120, 'all of them fit');
+  assert.equal(titles.nextOffset, null, 'so there is no second page');
+  assert.ok(!('body' in titles.requests[0]),
+    'the body is omitted, not emptied — an empty envelope reads as "no description"');
+  assert.match(titles.requests[0].title, /^<untrusted-content>/, 'titles stay wrapped');
+
+  const full = tools.pageRequests(issues, { detail: 'full', limit: tools.MAX_LIST_ITEMS });
+  assert.equal(full.requests.length, 50);
+  assert.equal(full.nextOffset, 50, 'and the rest is reachable rather than lost');
+  assert.match(full.requests[0].body, /^<untrusted-content>/);
+  assert.match(full.requests[0].body, /\[truncated\]<\/untrusted-content>$/,
+    'a body is still capped for display');
+});
+
+test('paging walks the whole list exactly once', () => {
+  const issues = Array.from({ length: 25 }, (_, i) => ({ number: i + 1, title: `R${i + 1}` }));
+  const seen = [];
+  let offset = 0;
+  for (let guard = 0; guard < 10; guard++) {
+    const page = tools.pageRequests(issues, { limit: 10, offset });
+    seen.push(...page.requests.map((r) => r.number));
+    if (page.nextOffset === null) break;
+    offset = page.nextOffset;
+  }
+  assert.deepEqual(seen, issues.map((i) => i.number), 'every request, in order, no repeats');
+});
+
+test('the query searches bodies that are never printed', () => {
+  const issues = [
+    { number: 7, title: 'Dark mode', body: 'The board is unreadable at night.' },
+    { number: 8, title: 'Invite flow', body: 'Autocomplete the USERNAME field.' },
+    { number: 9, title: 'Faster boot', body: 'Cold start takes 4s.' },
+  ];
+  // A duplicate is found by what the report SAYS, so the filter reads the
+  // bodies even in titles mode, where they do not come back.
+  const hit = tools.pageRequests(issues, { query: 'username', detail: 'titles' });
+  assert.deepEqual(hit.requests.map((r) => r.number), [8]);
+  assert.ok(!('body' in hit.requests[0]));
+  assert.equal(hit.matched, 1, 'how many matched');
+  assert.equal(hit.totalOpen, 3, 'and how many are open in total');
+
+  // The number is matchable too — "is #8 still open" is the other half of
+  // the same question.
+  assert.deepEqual(
+    tools.pageRequests(issues, { query: '#8' }).requests.map((r) => r.number), [8]
+  );
+  assert.equal(tools.pageRequests(issues, { query: 'nothing here' }).requests.length, 0);
+});
+
+test('a cursor is only valid for the list that issued it', () => {
+  const key = tools.requestPageKey('recipe-box', 'titles', 'dark');
+  const cursor = tools.encodeRequestCursor(200, key);
+  assert.deepEqual(tools.decodeRequestCursor(cursor, key), { offset: 200 });
+
+  // An offset into a DIFFERENT list returns the wrong requests while looking
+  // exactly like the right ones, so it is refused rather than applied.
+  assert.deepEqual(
+    tools.decodeRequestCursor(cursor, tools.requestPageKey('recipe-box', 'titles', 'boot')),
+    { error: 'mismatch' }
+  );
+  assert.deepEqual(
+    tools.decodeRequestCursor(cursor, tools.requestPageKey('other-app', 'titles', 'dark')),
+    { error: 'mismatch' }
+  );
+  assert.deepEqual(tools.decodeRequestCursor('not-a-cursor', key), { error: 'malformed' });
+  assert.deepEqual(tools.decodeRequestCursor('', key), { error: 'malformed' });
+
+  // Refused BEFORE the platform is called: a bad cursor should not cost a
+  // round trip to be told about.
+  const body = registration('list_requests');
+  const decodeIdx = body.indexOf('decodeRequestCursor(cursor');
+  const callIdx = body.indexOf('callPlatform(');
+  assert.ok(decodeIdx > 0 && decodeIdx < callIdx);
+});
+
+// The same thing again, through the registered handler rather than through
+// the source: paging is only fixed if the tool a model actually calls pages.
+const { READ_SCOPE, WRITE_SCOPE } = require('../src/services/mcp-connect-constants');
+
+// registerTools takes an McpServer; a recorder standing in for one is enough
+// to get at the handlers. `platform` answers the loopback calls.
+function connector(platform, { scopes = [READ_SCOPE], pool = null, calls = [] } = {}) {
+  const handlers = new Map();
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    const method = (init && init.method) || 'GET';
+    const pathname = String(url).replace('http://platform.internal', '');
+    calls.push({ method, pathname, body: init && init.body ? JSON.parse(init.body) : null });
+    const answer = platform(method, pathname);
+    return { ok: true, status: 200, text: async () => JSON.stringify(answer) };
+  };
+  tools.registerTools({
+    registerTool(name, _spec, handler) { handlers.set(name, handler); },
+  }, {
+    accessToken: 'svmcp_test',
+    scopes,
+    user: { id: 7, username: 'ada' },
+    clientName: 'Claude', clientId: 'c1',
+    origin: ORIGIN, baseUrl: 'http://platform.internal',
+    pool, config: {}, tokenId: null, grantId: null,
+  });
+  return { handlers, calls, restore: () => { globalThis.fetch = realFetch; } };
+}
+
+test('the registered tool pages a board no single call could return', async () => {
+  const issues = Array.from({ length: 120 }, (_, i) => ({
+    number: i + 1, title: `Request ${i + 1}`, body: 'x'.repeat(3000), user: 'someone',
+  }));
+  const { handlers, restore } = connector(() => ({ issues, truncatedList: false }));
+  try {
+    // Titles: the whole board, one call, no second page. This is the case
+    // that was impossible — 120 open requests, and only the first 50 of them
+    // reachable, with 3 KB of body each.
+    const all = (await handlers.get('list_requests')({ slug: 'recipe-box' })).structuredContent;
+    assert.equal(all.returned, 120);
+    assert.equal(all.totalOpen, 120);
+    assert.equal(all.nextCursor, null);
+    assert.equal(all.truncated, false);
+    assert.equal(all.listComplete, true);
+    assert.ok(!('body' in all.requests[0]));
+
+    // With bodies it pages, and the cursor it hands back reaches the rest.
+    const first = (await handlers.get('list_requests')({ slug: 'recipe-box', detail: 'full' })).structuredContent;
+    assert.equal(first.returned, 50);
+    assert.equal(first.truncated, true);
+    assert.ok(first.nextCursor);
+    assert.match(first.requests[0].body, /^<untrusted-content>/);
+
+    const seen = first.requests.map((r) => r.number);
+    let cursor = first.nextCursor;
+    for (let page = 0; page < 5 && cursor; page++) {
+      const next = (await handlers.get('list_requests')({
+        slug: 'recipe-box', detail: 'full', cursor,
+      })).structuredContent;
+      seen.push(...next.requests.map((r) => r.number));
+      cursor = next.nextCursor;
+    }
+    assert.equal(cursor, null, 'paging terminates');
+    assert.deepEqual(seen, issues.map((i) => i.number), 'and covers every request exactly once');
+
+    // A caller's own limit is clamped to the cap for the mode.
+    const clamped = (await handlers.get('list_requests')({ slug: 'recipe-box', limit: 5000 })).structuredContent;
+    assert.equal(clamped.returned, 120);
+    const small = (await handlers.get('list_requests')({ slug: 'recipe-box', limit: 3 })).structuredContent;
+    assert.equal(small.returned, 3);
+
+    // The query is the duplicate check, and it reads the bodies.
+    const hit = (await handlers.get('list_requests')({ slug: 'recipe-box', query: 'request 42' })).structuredContent;
+    assert.deepEqual(hit.requests.map((r) => r.number), [42]);
+    assert.equal(hit.matched, 1);
+    assert.equal(hit.totalOpen, 120);
+
+    // A cursor from one query is refused against another, rather than
+    // silently returning that offset into a different list.
+    const wrong = await handlers.get('list_requests')({
+      slug: 'recipe-box', query: 'something else', cursor: first.nextCursor,
+    });
+    assert.equal(wrong.isError, true);
+    assert.equal(wrong.structuredContent.code, 'invalid_request');
+    assert.match(wrong.structuredContent.message, /different list/);
+  } finally {
+    restore();
+  }
+});
+
+test('a degraded board is reported as degraded, so no duplicate found proves nothing', async () => {
+  const { handlers, restore } = connector(() => ({ issues: [], note: 'rate limited' }));
+  try {
+    const res = (await handlers.get('list_requests')({ slug: 'recipe-box' })).structuredContent;
+    assert.equal(res.listComplete, false);
+    assert.equal(res.note, 'rate limited');
+  } finally {
+    restore();
+  }
+
+  const partial = connector(() => ({
+    issues: [{ number: 1, title: 'One' }], truncatedList: true,
+  }));
+  try {
+    const res = (await partial.handlers.get('list_requests')({ slug: 'recipe-box' })).structuredContent;
+    assert.equal(res.listComplete, false);
+    assert.match(res.note, /more open requests than the platform fetches/);
+  } finally {
+    partial.restore();
+  }
+});
+
+test('submit_work takes shape (4) exactly as documented: proposalId + branch', async () => {
+  // The refusal this replaces cost a round trip and read as "shape (4) is
+  // wrong" rather than "one field is missing" (#1217).
+  //
+  // taskDeps() reaches for the real github modules, and both refuse before
+  // anything else when the deployment has no GitHub configured — which is
+  // every test run. They are the gate this change does not touch, so they
+  // are stood up rather than worked around.
+  const gh = require('../src/services/github');
+  const githubLink = require('../src/services/github-link');
+  const realGhEnabled = gh.isEnabled;
+  const realLinkEnabled = githubLink.isEnabled;
+  gh.isEnabled = () => true;
+  githubLink.isEnabled = () => true;
+
+  const pool = {
+    async query(sql, params) {
+      assert.match(sql, /JOIN apps a ON a\.id = s\.app_id/);
+      assert.deepEqual(params, [3140]);
+      return { rows: [{ app_slug: 'recipe-box' }] };
+    },
+  };
+  const { handlers, calls, restore } = connector(() => ({
+    updated: true, proposalId: 3140, appSlug: 'recipe-box', prNumber: 52,
+    headSha: 'b1344508506dd8dc4a655f10c96c51389fcc30bb', votesCleared: 2,
+    submittedVia: 'update_branch',
+  }), { scopes: [READ_SCOPE, WRITE_SCOPE], pool });
+  try {
+    const res = await handlers.get('submit_work')({ proposalId: 3140, branch: 'my-fix' });
+    assert.notEqual(res.isError, true, 'no slug, and no refusal');
+    assert.equal(res.structuredContent.proposalId, 3140);
+    assert.equal(res.structuredContent.votesCleared, 2);
+    // Resolved to the app the proposal is on, and pushed through the
+    // platform's own update route.
+    assert.equal(calls.at(-1).pathname, '/api/apps/recipe-box/proposals/3140/update-from-fork');
+  } finally {
+    restore();
+    gh.isEnabled = realGhEnabled;
+    githubLink.isEnabled = realLinkEnabled;
+  }
+});
+
+test('submit_work carries the request its work order named into the import', () => {
+  // #1217. The service decides WHICH request (it holds the task row); this
+  // module only has to put it on the wire under the name the import route
+  // reads, beside the testing metadata that already travels the same way.
+  const block = registration('submit_work');
+  assert.match(block, /const importProposal = \(targetSlug, pr, extra = \{\}\) =>/);
+  assert.match(block, /extra\.linkedIssues && extra\.linkedIssues\.length/);
+  assert.match(block, /\{ linkedIssues: extra\.linkedIssues \}/);
+  // Absent stays absent: a submission that names no request must post the
+  // body this route received before the field existed.
+  assert.match(block, /: \{\}\),\s*\}\s*\);/);
+});
+
+test('list_requests says when the board itself could not be read in full', () => {
+  // Distinct from `truncated`, which is only about this page. A degraded
+  // fetch means "no duplicate found" is not evidence of anything, and the
+  // route already reports both of its degradations — they are passed
+  // through rather than hidden.
+  const body = registration('list_requests');
+  assert.match(body, /listComplete: !note/);
+  assert.match(body, /body\.note/, 'GitHub unreachable or rate-limited');
+  assert.match(body, /body\.truncatedList/, 'or more open requests than the platform fetches');
+  const desc = body.slice(body.indexOf('description:'), body.indexOf('inputSchema:'));
+  assert.match(desc, /listComplete/, 'and the description says what it means');
+  assert.match(desc, /query/, 'and points at the cheapest duplicate check');
 });
 
 test('app and request shaping wraps the user-authored fields', () => {
@@ -1010,6 +1309,38 @@ test('an update carries the testing routes too, and reports what a resubmit did'
   assert.match(block, /re-shot against them/);
   assert.match(block, /no code moved and no votes were affected/);
   assert.match(block, /the testing routes you passed are the ones it already had/);
+});
+
+// ── #1217: shape (4) is complete as written ────────────────────────────
+//
+// The four numbered shapes in submit_work's description read as complete
+// recipes, so an agent follows one exactly. Shape (4) is `proposalId` plus
+// `branch` — and get_proposal's `updateWith` and `nextStep` name that same
+// pair — but the handler refused it with "slug is required when submitting
+// without a taskId". A missing field in a recipe that reads as finished is
+// indistinguishable from the recipe being wrong.
+
+test('an update needs no slug, because naming the proposal names the app', () => {
+  const block = registration('submit_work');
+  // The app is resolved from the proposal instead of demanded from the
+  // caller, and the create path keeps the requirement it actually has.
+  assert.match(block, /if \(updating\) \{/);
+  assert.match(block, /\} else if \(!taskId\) \{[\s\S]*?slug is required when submitting without a taskId/);
+  // A slug that IS passed is still validated — a malformed one should be
+  // named as such, not become a 404 from a loopback URL.
+  assert.match(block, /slug !== undefined && !requireSlug\(slug\)/);
+
+  const desc = block.slice(block.indexOf('description:'), block.indexOf('inputSchema:'));
+  assert.match(desc, /each complete as written/,
+    'the shapes claim to be complete, so they have to be');
+  assert.match(desc, /Shape \(4\) needs no `slug`/);
+  assert.match(block, /NOT needed alongside proposalId/,
+    "and the slug field's own description agrees");
+
+  // What the other two surfaces tell an agent to call, which is what made
+  // the refusal read as a contradiction rather than a missing field.
+  assert.match(SRC, /call submit_work with proposalId and branch/);
+  assert.doesNotMatch(SRC, /submit_work with proposalId, slug and branch/);
 });
 
 test('the server instructions tell the model to update a proposal, not to open a second one', () => {

@@ -1115,7 +1115,98 @@ test('the service never opens a proposal itself', () => {
   // the authorization the browser goes through.
   assert.doesNotMatch(SRC, /INSERT INTO chat_sessions/);
   assert.doesNotMatch(SRC, /INSERT INTO pr_votes/);
-  assert.match(SRC, /await importProposal\(slug, pr\.number\)/);
+  // The linked-issue set travels WITH the import (#1217) for the same reason
+  // the testing metadata does — the route is what creates the session row —
+  // but the row is still the route's to write, not this service's.
+  assert.match(SRC, /await importProposal\(slug, pr\.number, \{ linkedIssues: linkedIssuesFor\(task\) \}\)/);
+});
+
+// ── #1217: a proposal built from a request is linked to it ─────────────
+//
+// The number has always been on the task — prepare_work records it, and the
+// work order prints "This implements request #N" — but it stopped there. So
+// a connector-submitted proposal carried no `Closes #N` for GitHub to honour
+// on merge and no linked_issues for the close watcher or the Dev board, and
+// the request it implemented stayed open and unmarked.
+
+test('the request a task was prepared from reaches both the PR body and the import', async () => {
+  const created = [];
+  const imports = [];
+  const gh = baseGh({
+    findOpenPrByBranch: async () => null,
+    createPR: async (owner, repo, opts) => {
+      created.push(opts);
+      return { number: 88, html_url: 'x', head: { repo: { owner: { login: 'someuser' } } } };
+    },
+  });
+
+  const result = await withFetch(PUSHED_BRANCH, [], () => svc.submitWork(
+    { pool: submitPool([]), config: {}, gh, githubLink: linkedAs('someuser'), limits: okLimits },
+    {
+      user: { id: 3 }, taskId: 31, title: 'Dark mode', body: 'Adds a toggle.',
+      importProposal: async (slug, prNumber, extra) => {
+        imports.push({ slug, prNumber, extra });
+        return { ok: true, status: 200, body: { sessionId: 55 } };
+      },
+    }
+  ));
+
+  assert.equal(result.ok, true);
+  // (1) The keyword GitHub acts on, after the description rather than
+  // instead of it. TASK_ROW's issue_number is 4.
+  assert.equal(created[0].body, 'Adds a toggle.\n\nCloses #4');
+  // (2) The set the platform acts on, carried with the import because the
+  // route is what creates the session row.
+  assert.deepEqual(imports[0].extra, { linkedIssues: [4] });
+});
+
+test('a long description never pushes the closing keyword out of the body', () => {
+  // The body is clipped at 4000 characters. Appending before the clip would
+  // silently drop the one line the merge depends on.
+  const long = svc.prBodyFor({ body: 'x'.repeat(6000), task: { issue_number: 4 } });
+  assert.match(long, /Closes #4$/);
+  assert.equal(long.length, 4000 + '\n\nCloses #4'.length);
+
+  // No task, no request, no keyword — and the envelope still comes off.
+  assert.equal(svc.prBodyFor({ body: 'plain' }), 'plain');
+  assert.equal(svc.prBodyFor({ body: 'plain', task: { issue_number: null } }), 'plain');
+  assert.equal(
+    svc.prBodyFor({ body: '<untrusted-content>brief</untrusted-content>', task: { issue_number: 9 } }),
+    'brief\n\nCloses #9'
+  );
+
+  // What counts as a request number is one rule, shared with the column.
+  assert.deepEqual(svc.linkedIssuesFor({ issue_number: 1217 }), [1217]);
+  assert.deepEqual(svc.linkedIssuesFor({ issue_number: '1217' }), [1217]);
+  assert.deepEqual(svc.linkedIssuesFor({ issue_number: 0 }), []);
+  assert.deepEqual(svc.linkedIssuesFor({ issue_number: null }), []);
+  assert.deepEqual(svc.linkedIssuesFor(null), []);
+});
+
+test('a submission that names no request links nothing', async () => {
+  // `slug` + `prNumber` for an already-open pull request has no task, so
+  // there is no request to link — and the row it writes must stay exactly
+  // the one this path wrote before (NULL, not an empty array).
+  const imports = [];
+  const gh = baseGh({
+    getPR: async () => ({
+      number: 90, state: 'open', html_url: 'x',
+      head: { ref: 'my-branch', sha: 'a'.repeat(40), repo: { owner: { login: 'someuser' }, full_name: 'someuser/recipe-box' } },
+    }),
+  });
+  const result = await svc.submitWork(
+    { pool: submitPool([]), config: {}, gh, githubLink: linkedAs('someuser'), limits: okLimits },
+    {
+      user: { id: 3 }, slug: 'recipe-box', prNumber: 90,
+      repoUrl: 'https://github.com/usernode-bot/recipe-box',
+      importProposal: async (slug, prNumber, extra) => {
+        imports.push({ slug, prNumber, extra });
+        return { ok: true, status: 200, body: { sessionId: 56 } };
+      },
+    }
+  );
+  assert.equal(result.ok, true, result.message);
+  assert.deepEqual(imports[0].extra, { linkedIssues: [] });
 });
 
 // ── The PR-creation ladder ─────────────────────────────────────────────
@@ -1330,7 +1421,9 @@ test('the <untrusted-content> envelope never reaches GitHub, but stays in the wo
   assert.equal(created[0].title, 'Add autocomplete to username invites');
   assert.doesNotMatch(created[0].title, /untrusted-content/);
   assert.doesNotMatch(created[0].body, /untrusted-content/);
-  assert.equal(created[0].body, 'and validate they exist');
+  // The description, then the closing keyword for the request the task was
+  // prepared from (#1217) — the fixture's issue_number is 4.
+  assert.equal(created[0].body, 'and validate they exist\n\nCloses #4');
 
   // But the envelope keeps doing its job where it matters: the work order
   // goes to a second agent that has a shell.
@@ -2940,11 +3033,14 @@ const UPDATE_TASK = {
   branch_name: 'usernode/recipe-box-update-512-ab12',
 };
 
-function submitUpdateWork(params, { rows = [UPDATE_TASK], updateProposal } = {}) {
+function submitUpdateWork(params, { rows = [UPDATE_TASK], updateProposal, sessionRows } = {}) {
   const queries = [];
   const calls = [];
   const pool = fakePool([
     ['LEFT JOIN chat_sessions s ON s.id = t.session_id', rows],
+    // The proposal's own app, for an update that carries neither a task nor
+    // a slug (#1217).
+    ['JOIN apps a ON a.id = s.app_id', sessionRows || [{ app_slug: 'recipe-box' }]],
     ['UPDATE external_agent_tasks', []],
   ], queries);
   const call = updateProposal || (async (slug, id, payload) => {
@@ -3138,10 +3234,36 @@ test('an update takes the app slug from the task, so the caller cannot redirect 
   assert.equal(calls[0].slug, 'recipe-box');
 });
 
-test('with no task and no slug there is nothing to update, and it says which to pass', async () => {
-  const { result } = await submitUpdateWork({ taskId: null, slug: null });
+// ── #1217: an update names its app by naming the proposal ──────────────
+//
+// submit_work documents shape (4) as `proposalId` plus `branch`, and
+// get_proposal tells the author of a failing proposal to call exactly that
+// pair — then this refused it for want of a `slug` the proposal already
+// determines. The lookup is routing information only: the update route
+// re-checks the caller against whatever app it resolves to, so a caller who
+// names somebody else's proposal is refused there exactly as before.
+
+test('with no task and no slug, the app is read off the proposal', async () => {
+  const { result, calls, queries } = await submitUpdateWork(
+    { taskId: null, slug: null },
+    { rows: [], sessionRows: [{ app_slug: 'recipe-box' }] }
+  );
+  assert.equal(result.ok, true);
+  assert.equal(calls[0].slug, 'recipe-box', 'resolved, not demanded');
+  const lookup = queries.find((q) => q.sql.includes('JOIN apps a ON a.id = s.app_id'));
+  assert.ok(lookup, 'from the proposal row');
+  assert.deepEqual(lookup.params, [512]);
+});
+
+test('a proposal that does not exist is named as such, not as a missing field', async () => {
+  const { result, calls } = await submitUpdateWork(
+    { taskId: null, slug: null },
+    { rows: [], sessionRows: [] }
+  );
   assert.equal(result.code, 'invalid_request');
-  assert.match(result.message, /Pass `slug`/);
+  assert.match(result.message, /no proposal 512/);
+  assert.match(result.message, /list_my_proposals/, 'and says where to find the right id');
+  assert.deepEqual(calls, [], 'refused before the platform is asked to do anything');
 });
 
 test('an update needs a branch, and a patch or prNumber is the wrong submission', async () => {
