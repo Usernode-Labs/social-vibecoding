@@ -18,6 +18,31 @@ Use the matching skill whenever its description fits:
 Claude Code and Codex load the full workflow bodies only when a task selects a
 skill.
 
+## Know your base commit before you write code — the checkout will not tell you
+
+- **This checkout can be a fork whose `main` is far behind the platform
+  repository, and nothing in it says so.** A session dispatched onto a
+  ready-made branch inherits whatever commit that branch was cut from. Once
+  that was ~190 merged pull requests behind the commit the request itself
+  described: the files it named had moved, `src/services/mcp-charter.js` did
+  not exist yet, and the drift surfaced only because the request happened to
+  quote a SHA. **Do not assume the branch you were handed is based
+  correctly**, and do not reach for the fork's default branch as the base —
+  that is the thing most likely to be stale.
+- **Establish the base commit before the first edit, then verify it.** It
+  comes from the work order (`prepare_work`), from the guided hand-off's
+  `Base commit:` line, or — with neither to hand — from asking. Then run
+  `git rev-parse HEAD` and compare all forty characters. This is the check
+  step 2 of the `usernode-proposal` skill already makes, hoisted here on
+  purpose: a skill body loads only when a task selects that skill, so a
+  session that arrives on a branch somebody else cut never reads it.
+- **If they disagree, stop and ask — do not merge `upstream/main` yourself.**
+  Which commit a proposal is diffed against decides what the group is voting
+  on, so changing it is not the agent's call. A wrong base IS caught, but only
+  at `submit_work` (`mirrorForkBranch` → `base_mismatch`) — after the change
+  is written, when the remedy has become a rebase across everything that moved
+  underneath it.
+
 ## `public/index.html` is a GENERATED artifact — edit `frontend/`, never commit outputs
 
 - The shell's markup is React now. **Do not edit `public/index.html`** — it is

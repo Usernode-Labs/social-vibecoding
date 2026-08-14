@@ -56,6 +56,38 @@ test('AGENTS keeps always-on rules and routes conditional work to skills', () =>
   assert.doesNotMatch(guidance, /social-vibecoding codex setup/);
 });
 
+// #1246 — the base-commit check has to be ALWAYS-ON, not skill-scoped.
+//
+// The check itself is not new: step 2 of the usernode-proposal skill has
+// always said to verify HEAD against the proposal base. But a skill body
+// loads only when a task selects that skill, and a session dispatched onto a
+// branch somebody else cut never selects it — it just starts editing whatever
+// it was handed. That is how a change got written against a fork's `main`
+// sitting ~190 merged pull requests behind the commit the request described.
+//
+// So this pins the rule in BOTH places. Deleting either one restores the gap:
+// drop it from AGENTS.md and a dispatched session stops being told, drop it
+// from the skill and the local-CLI lifecycle loses the step at the point it
+// actually pins the commit.
+test('the base-commit check is always-on, not only in the proposal skill', () => {
+  const guidance = fs.readFileSync(path.join(root, 'AGENTS.md'), 'utf8');
+  assert.match(guidance, /Know your base commit before you write code/);
+  assert.match(guidance, /git rev-parse HEAD/);
+  // The three clauses that make it actionable rather than a warning: the
+  // fork's default branch is the stale thing, the base has a source, and
+  // reconciling it yourself is not the agent's call.
+  assert.match(guidance, /fork's default branch/);
+  assert.match(guidance, /prepare_work/);
+  assert.match(guidance, /do not merge `upstream\/main` yourself/);
+
+  const proposal = readSkill('usernode-proposal');
+  assert.match(
+    proposal,
+    /Verify `git rev-parse HEAD` equals the proposal base SHA/,
+    'the skill keeps its own check — AGENTS.md hoists it, it does not replace it'
+  );
+});
+
 test('shared Usernode skills retain API safety and scope the hook UI to Codex CLI', () => {
   const api = readSkill('usernode-api');
   assert.match(api, /social-vibecoding codex setup/);
