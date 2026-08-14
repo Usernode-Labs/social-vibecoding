@@ -48,6 +48,105 @@ test('every returned field is capped', () => {
   assert.match(wrapped, /\[truncated\]<\/untrusted-content>$/);
 });
 
+// ── #1209: the display caps above must never touch a write ─────────────
+//
+// create_request ran its `description` through clip(MAX_BODY_CHARS) and
+// answered plain success, so six filed bug reports were stored cut off
+// mid-sentence and the agent that filed them could not tell. The write
+// limits are GitHub's own, and an over-limit write is refused with the
+// numbers rather than trimmed.
+
+test('a long request body survives the write path intact', () => {
+  assert.equal(tools.MAX_REQUEST_BODY_CHARS, 65536, "GitHub's issue-body limit");
+  assert.equal(tools.MAX_REQUEST_TITLE_CHARS, 256, "GitHub's issue-title limit");
+  assert.ok(tools.MAX_REQUEST_BODY_CHARS > tools.MAX_BODY_CHARS,
+    'the write limit is not the display cap');
+
+  // A body far past the old 2 KB cap round-trips byte for byte.
+  const body = `${'Reasoning and evidence. '.repeat(2000)}Suggestions, cheapest first: …`;
+  assert.ok(body.length > 40000 && body.length < tools.MAX_REQUEST_BODY_CHARS);
+  const checked = tools.checkWriteLength(body, {
+    field: 'description', max: tools.MAX_REQUEST_BODY_CHARS, hint: 'Split it.',
+  });
+  assert.equal(checked.ok, true);
+  assert.equal(checked.value, body, 'stored verbatim — not a character dropped');
+  assert.ok(!checked.value.includes('[truncated]'));
+
+  // Exactly at the limit still passes; the check is not off by one.
+  const exact = 'x'.repeat(tools.MAX_REQUEST_BODY_CHARS);
+  assert.equal(
+    tools.checkWriteLength(exact, { field: 'description', max: tools.MAX_REQUEST_BODY_CHARS, hint: '' }).value,
+    exact
+  );
+});
+
+test('an over-limit body is refused with the numbers, never trimmed', () => {
+  const over = 'x'.repeat(tools.MAX_REQUEST_BODY_CHARS + 17);
+  const checked = tools.checkWriteLength(over, {
+    field: 'description',
+    max: tools.MAX_REQUEST_BODY_CHARS,
+    hint: 'Split the report across more than one request.',
+  });
+  assert.equal(checked.ok, false);
+  assert.equal(checked.value, undefined, 'a refusal hands back no shortened value');
+  assert.equal(checked.code, 'description_too_long');
+  assert.equal(checked.limitChars, tools.MAX_REQUEST_BODY_CHARS);
+  assert.equal(checked.actualChars, over.length, 'the caller is told how long it actually was');
+  assert.match(checked.message, /Nothing was written/);
+  assert.match(checked.message, /Split the report/, 'and what to do about it');
+
+  // The tool error carries the same numbers machine-readably, so the model
+  // does not have to parse the sentence to split the report correctly.
+  const err = tools.writeLengthError(checked);
+  assert.equal(err.isError, true);
+  assert.equal(err.structuredContent.code, 'description_too_long');
+  assert.equal(err.structuredContent.field, 'description');
+  assert.equal(err.structuredContent.limitChars, tools.MAX_REQUEST_BODY_CHARS);
+  assert.equal(err.structuredContent.actualChars, over.length);
+});
+
+test('no write path runs user text through the display clip', () => {
+  // The regression itself: `clip(..., MAX_BODY_CHARS)` on anything being
+  // SENT to the platform. Every write body must be a checked value.
+  for (const [, arg] of SRC.matchAll(/(?:description|content|title):\s*(clip\([^)]*\))/g)) {
+    assert.fail(`a write path still shortens its payload: ${arg}`);
+  }
+  const createIdx = SRC.indexOf("server.registerTool('create_request'");
+  const body = SRC.slice(createIdx, SRC.indexOf("server.registerTool('get_proposal'"));
+  assert.match(body, /checkWriteLength\(description == null \? '' : description, \{/);
+  assert.match(body, /max: MAX_REQUEST_BODY_CHARS/);
+  assert.match(body, /description: bodyCheck\.value \|\| null/);
+  // Refuse before the platform is called: a rejected write files nothing.
+  assert.ok(body.indexOf('writeLengthError(bodyCheck)') < body.indexOf('callPlatform('),
+    'the length check happens before the issue is created');
+  // And the result says how much was stored, so the caller can verify.
+  assert.match(body, /descriptionChars: bodyCheck\.value\.length/);
+  assert.match(body, /descriptionChars: z\.number\(\)/);
+
+  // answer_questions posts into the request thread — same rule, and the
+  // limit is the platform's own chat cap rather than an invented one.
+  const answerIdx = SRC.indexOf("server.registerTool('answer_questions'");
+  const answerBody = SRC.slice(answerIdx, SRC.indexOf("server.registerTool('submit_platform_build'"));
+  assert.match(answerBody, /max: MAX_ANSWER_CHARS/);
+  assert.match(answerBody, /content: answerCheck\.value/);
+  const wsSrc = fs.readFileSync(path.join(__dirname, '../src/services/ws.js'), 'utf8');
+  assert.match(wsSrc, new RegExp(`MAX_CHAT_LEN = ${tools.MAX_ANSWER_CHARS}\\b`),
+    'MAX_ANSWER_CHARS tracks the chat cap the platform actually enforces');
+});
+
+test('create_request documents its body limit to the caller', () => {
+  const createIdx = SRC.indexOf("server.registerTool('create_request'");
+  const body = SRC.slice(createIdx, SRC.indexOf("server.registerTool('get_proposal'"));
+  const description = body.slice(body.indexOf('description: `'), body.indexOf('inputSchema'));
+  assert.match(description, /\$\{MAX_REQUEST_BODY_CHARS\}/,
+    'the tool description names the body limit, from the constant');
+  assert.match(description, /\$\{MAX_REQUEST_TITLE_CHARS\}/);
+  assert.match(description, /refused/i, 'and says an over-limit field is refused, not trimmed');
+  // The input field descriptions carry it too — that is what a model reads
+  // when it is deciding how much of the report to write.
+  assert.match(body, /description: z\.string\(\)\.optional\(\)\.describe\(`[^`]*\$\{MAX_REQUEST_BODY_CHARS\} characters/);
+});
+
 test('list responses are bounded and say when they were cut', () => {
   assert.equal(tools.MAX_LIST_ITEMS, 50);
   // The shapers are applied after .slice(0, MAX_LIST_ITEMS) and each list
@@ -184,7 +283,7 @@ test('scope guards refuse before any platform call', () => {
   assert.match(SRC, /const canWrite = scopes\.includes\(WRITE_SCOPE\)/);
   assert.match(SRC, /const canRead = scopes\.includes\(READ_SCOPE\)/);
   const createIdx = SRC.indexOf("server.registerTool('create_request'");
-  const body = SRC.slice(createIdx, createIdx + 2500);
+  const body = SRC.slice(createIdx, SRC.indexOf("server.registerTool('get_proposal'"));
   const guardIdx = body.indexOf('scopeGuard(WRITE_SCOPE)');
   const callIdx = body.indexOf('callPlatform(');
   assert.ok(guardIdx > 0 && guardIdx < callIdx,
