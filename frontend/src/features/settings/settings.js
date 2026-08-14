@@ -1225,7 +1225,7 @@
     // mcp_connector_hints are both staging:private, so a staging clone would
     // render an empty list and a status line with nothing to say).
 
-    // Wider than _cliTokensDemo above, because this panel has five reviewable
+    // Wider than _cliTokensDemo above, because this panel has six reviewable
     // states rather than one: `1` is the everyday mixed state and the
     // `connectors-*` values each pin one of the others. Anything else is not
     // passed on. The server only honours any of it in staging.
