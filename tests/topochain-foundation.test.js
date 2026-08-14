@@ -328,14 +328,14 @@ test('mobileTokenAuth: valid session token -> next(), req.user resolved from the
   });
 });
 
-test('mobileTokenAuth: a lookup failure fails closed as 401, never 500', async () => {
+test('mobileTokenAuth: a lookup failure fails closed as 500, never session invalidation', async () => {
   const pool = makeMobileTokenPool({}, { failLookup: true });
   await withMockPool(pool, async (mod) => {
     const mw = mod.mobileTokenAuth({}, { ability: 'session' });
     const res = fakeRes();
     await runMiddleware(mw, { headers: { authorization: 'Bearer whatever' } }, res);
-    assert.equal(res.statusCode, 401);
-    assert.deepEqual(res.body, { success: false, error: 'Unauthenticated.' });
+    assert.equal(res.statusCode, 500);
+    assert.deepEqual(res.body, { success: false, error: 'Internal server error.' });
   });
 });
 

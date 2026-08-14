@@ -177,11 +177,12 @@ function mobileTokenAuth(config, { ability = 'session', forbiddenMessage } = {})
       );
       row = rows[0];
     } catch (err) {
-      // A lookup failure is not a valid credential either — fail closed
-      // as 401 rather than leaking a 500 (no data endpoint here has a
-      // legitimate reason to work without a resolvable token).
+      // A failed lookup says nothing about whether the presented credential
+      // is valid. Keep the route fail-closed, but report an internal failure
+      // rather than session invalidation: mobile clients treat a 401 as an
+      // authoritative logout signal and clear their local application state.
       log.error('topochain-auth', 'mobileTokenAuth lookup failed', { message: err.message });
-      return fail(res, 401, 'Unauthenticated.');
+      return fail(res, 500, 'Internal server error.');
     }
 
     if (!row || new Date(row.expires_at) < new Date()) {
