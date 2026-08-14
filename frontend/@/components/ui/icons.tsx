@@ -106,6 +106,9 @@ function filled(name: string, d: string) {
 
 export const ChevronLeftIcon = strokedPath('ChevronLeftIcon', 'M15 19l-7-7 7-7');
 
+/** The tighter back chevron used in the mobile Messages thread header. */
+export const ChevronLeftInsetIcon = stroked('ChevronLeftInsetIcon', 'M15 18l-6-6 6-6');
+
 export const ChevronRightIcon = stroked('ChevronRightIcon', 'M9 5l7 7-7 7');
 
 export const ArrowRightIcon = stroked('ArrowRightIcon', 'M14 5l7 7m0 0l-7 7m7-7H3');
@@ -121,6 +124,8 @@ export const ArrowRightShortIcon = stroked('ArrowRightShortIcon', 'M13 7l5 5m0 0
 export const XIcon = stroked('XIcon', 'M6 18L18 6M6 6l12 12');
 
 export const Bars3Icon = stroked('Bars3Icon', 'M4 6h16M4 12h16M4 18h16');
+
+export const PlusIcon = stroked('PlusIcon', 'M12 5v14M5 12h14');
 
 export const HomeIcon = strokedPath(
   'HomeIcon',
@@ -183,6 +188,12 @@ export const ChatIcon = stroked(
   'M8 10h.01M12 10h.01M16 10h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z',
 );
 
+/** The Messages drawer glyph, whose tail sits outside the bubble. */
+export const ChatBubbleTailIcon = stroked(
+  'ChatBubbleTailIcon',
+  'M8 10h.01M12 10h.01M16 10h.01M21 12a8 8 0 01-8 8H7l-4 2 1.3-4A9 9 0 1121 12z',
+);
+
 /** The dev board's discussion glyph — a squared bubble with a tail. */
 export const DiscussionIcon = stroked(
   'DiscussionIcon',
@@ -197,6 +208,26 @@ export const ThumbsUpIcon = stroked(
 export const ShareIcon = stroked(
   'ShareIcon',
   'M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z',
+);
+
+export const PaperClipIcon = stroked(
+  'PaperClipIcon',
+  'M21.4 11.6l-8.5 8.5a6 6 0 01-8.5-8.5l9-9a4 4 0 015.7 5.7l-9 9a2 2 0 01-2.8-2.8l8.4-8.4',
+);
+
+export const ArrowUpTrayIcon = stroked(
+  'ArrowUpTrayIcon',
+  'M12 3v12m0-12l-4 4m4-4l4 4M5 13v7h14v-7',
+);
+
+export const SendIcon = stroked(
+  'SendIcon',
+  'M4 4l17 8-17 8 3-8-3-8zm3 8h14',
+);
+
+export const UserGroupIcon = stroked(
+  'UserGroupIcon',
+  'M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2M9 11a4 4 0 100-8 4 4 0 000 8zm8-1a3 3 0 010 6m4 5v-2a4 4 0 00-3-3.9',
 );
 
 // ── Tooling ──────────────────────────────────────────────────────────────

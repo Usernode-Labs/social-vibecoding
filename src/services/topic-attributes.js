@@ -477,14 +477,18 @@ async function castVote(pool, appId, targetType, ref, field, value, userId, link
 // drag-to-Unassigned gesture in the PM view (and could back an explicit
 // "clear" affordance on the chip). Idempotent: deleting a non-existent vote
 // is a no-op.
-async function clearVote(pool, appId, targetType, ref, field, userId) {
+async function clearVote(pool, appId, targetType, ref, field, userId, linkedIssues) {
   await pool.query(
     `DELETE FROM topic_attribute_votes
       WHERE app_id = $1 AND target_type = $2 AND target_ref = $3
         AND field = $4 AND user_id = $5`,
     [appId, targetType, ref, field, userId]
   );
-  return listOptions(pool, appId, targetType, ref, field, userId);
+  // #1187: the refreshed tally must include a proposal's inherited issue
+  // votes (like GET/POST do) — the popover repaints straight from this
+  // response, so dropping them here would blank inherited options until
+  // the next full load.
+  return listOptions(pool, appId, targetType, ref, field, userId, linkedIssues);
 }
 
 module.exports = {

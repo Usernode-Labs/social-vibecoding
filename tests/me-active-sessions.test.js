@@ -98,6 +98,9 @@ test('query is owner-scoped and excludes archived/headless rows', async () => {
     // shared_at rides along so the owner's pinned cards can render their
     // "Visible to everyone" / "Make visible" state.
     assert.match(q.sql, /cs\.shared_at/);
+    assert.match(q.sql, /cs\.check_state/);
+    assert.match(q.sql, /cs\.check_phase/);
+    assert.match(q.sql, /cs\.check_error_detail/);
     assert.match(q.sql, /cs\.agent_backend/);
     assert.match(q.sql, /cs\.agent_model/);
   } finally {
@@ -369,6 +372,8 @@ test('shared-sessions returns linked_issues per row', async () => {
     assert.match(q.sql, /cs\.linked_issues/);
     assert.match(q.sql, /cs\.source/);
     assert.match(q.sql, /cs\.imported_pr_author/);
+    assert.match(q.sql, /cs\.check_state/);
+    assert.match(q.sql, /cs\.check_phase/);
   } finally {
     appAccess.getAppForUser = prevGet;
     poolQueryHandler = async () => ({ rows: [] });

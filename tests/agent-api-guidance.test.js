@@ -6,21 +6,76 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const root = path.resolve(__dirname, '..');
+const canonicalSkills = path.join(root, '.agents', 'skills');
+const claudeSkills = path.join(root, '.claude', 'skills');
+const skillNames = [
+  'mobile-push-testing',
+  'react-shell-migration',
+  'usernode-api',
+  'usernode-proposal',
+];
 
-test('Claude imports the shared API-agent guidance', () => {
+function readSkill(name) {
+  return fs.readFileSync(path.join(canonicalSkills, name, 'SKILL.md'), 'utf8');
+}
+
+test('Claude and Codex discover one canonical set of shared skills', () => {
   const claude = fs.readFileSync(path.join(root, 'CLAUDE.md'), 'utf8');
   assert.equal(claude, '@AGENTS.md\n');
+  assert.equal(fs.readlinkSync(claudeSkills), '../.agents/skills');
+  assert.equal(fs.realpathSync(claudeSkills), fs.realpathSync(canonicalSkills));
 
+  for (const name of skillNames) {
+    const skill = readSkill(name);
+    const frontmatter = skill.match(/^---\n([\s\S]*?)\n---\n/);
+    assert.ok(frontmatter, `${name} has YAML frontmatter`);
+    const keys = frontmatter[1]
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => line.slice(0, line.indexOf(':')))
+      .sort();
+    assert.deepEqual(keys, ['description', 'name'], `${name} uses portable frontmatter`);
+    assert.match(frontmatter[1], new RegExp(`^name: ${name}$`, 'm'));
+
+    const openai = fs.readFileSync(
+      path.join(canonicalSkills, name, 'agents', 'openai.yaml'),
+      'utf8'
+    );
+    assert.match(openai, new RegExp(`\\$${name}\\b`));
+  }
+});
+
+test('AGENTS keeps always-on rules and routes conditional work to skills', () => {
   const guidance = fs.readFileSync(path.join(root, 'AGENTS.md'), 'utf8');
-  assert.match(guidance, /social-vibecoding codex setup/);
-  assert.match(guidance, /social-vibecoding claude setup/);
-  assert.match(guidance, /`production` unless the user explicitly says/);
-  assert.match(guidance, /Browser approval/);
-  assert.match(guidance, /still-valid legacy credential lacks the API/);
-  assert.match(guidance, /social-vibecoding logout --profile/);
-  assert.match(guidance, /promotion-hook readiness/);
-  assert.match(guidance, /open `\/hooks`/);
-  assert.match(guidance, /Codex-only/);
+  for (const name of skillNames) assert.ok(guidance.includes(`\`${name}\``));
+  assert.match(guidance, /\.agents\/skills/);
+  assert.match(guidance, /\.claude\/skills/);
+  assert.match(guidance, /public\/index\.html.*GENERATED/);
+  assert.match(guidance, /Two design systems, one bundle/);
+  assert.doesNotMatch(guidance, /open `\/hooks`/);
+  assert.doesNotMatch(guidance, /social-vibecoding codex setup/);
+});
+
+test('shared Usernode skills retain API safety and scope the hook UI to Codex CLI', () => {
+  const api = readSkill('usernode-api');
+  assert.match(api, /social-vibecoding codex setup/);
+  assert.match(api, /social-vibecoding claude setup/);
+  assert.match(api, /Use `production` unless the user explicitly requests/);
+  assert.match(api, /browser approval/i);
+  assert.match(api, /still-valid legacy credential lacks the API grant/);
+  assert.match(api, /social-vibecoding logout --profile/);
+  assert.match(api, /host_execution_required/);
+  assert.match(api, /untrusted data/);
+
+  const proposal = readSkill('usernode-proposal');
+  const cli = proposal.indexOf('**Codex CLI only:**');
+  const hookInstruction = proposal.indexOf('open `/hooks`');
+  const desktop = proposal.indexOf('**ChatGPT desktop:**');
+  assert.ok(cli >= 0 && hookInstruction > cli && desktop > hookInstruction);
+  assert.match(proposal, /desktop app has no `\/hooks` command/);
+  assert.match(proposal, /must not trigger a `\/hooks` warning/);
+  assert.match(proposal, /\*\*Claude Code:\*\*/);
+  assert.match(proposal, /proposal_promote/);
 });
 
 test('machine-local agent setup artifacts are ignored', () => {

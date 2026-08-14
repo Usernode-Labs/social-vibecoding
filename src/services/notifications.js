@@ -22,6 +22,58 @@ const { listActiveUserIds } = require('./active-users');
 // trigger mentions) and capture up to 32 chars.
 const MENTION_RE = /(^|[^\w])@([A-Za-z0-9_]{1,32})/g;
 
+// Platform conversations deliberately use their own kinds rather than the
+// app-chat mention/reply/reaction kinds. That keeps routing, access checks,
+// grouping, and mobile-push preferences from inheriting app-centric state.
+const CONVERSATION_NOTIFICATION_KINDS = new Set([
+  'conversation_invite',
+  'conversation_message',
+  'conversation_mention',
+  'conversation_reply',
+  'conversation_reaction',
+]);
+const CONVERSATION_KIND_SQL = [...CONVERSATION_NOTIFICATION_KINDS]
+  .map((kind) => `'${kind}'`).join(', ');
+
+// Conversation notification rows are useful only while their recipient may
+// still open the referenced conversation. Invite history remains visible
+// after acceptance, while an invited user may see only the invite itself.
+// Removed/departed members match no row and therefore lose title/content as
+// well as navigation metadata on list, exact lookup, and live hydration.
+const CONVERSATION_ACCESS_SQL = `(
+  (n.conversation_id IS NULL AND n.kind NOT IN (${CONVERSATION_KIND_SQL}))
+  OR (
+    n.conversation_id IS NOT NULL
+    AND n.kind IN (${CONVERSATION_KIND_SQL})
+    AND EXISTS (
+      SELECT 1
+        FROM conversation_members notification_member
+        JOIN conversations notification_conversation
+          ON notification_conversation.id = notification_member.conversation_id
+         AND notification_conversation.status = 'active'
+       WHERE notification_member.conversation_id = n.conversation_id
+         AND notification_member.user_id = n.user_id
+         AND (
+           notification_member.status = 'member'
+           OR (n.kind = 'conversation_invite' AND notification_member.status = 'invited')
+         )
+         AND NOT EXISTS (
+           SELECT 1
+             FROM conversations direct_conversation
+             JOIN conversation_direct_pairs direct_pair
+               ON direct_pair.conversation_id = direct_conversation.id
+             JOIN user_blocks direct_block
+               ON (direct_block.blocker_id = direct_pair.user_low_id
+                   AND direct_block.blocked_user_id = direct_pair.user_high_id)
+                OR (direct_block.blocker_id = direct_pair.user_high_id
+                   AND direct_block.blocked_user_id = direct_pair.user_low_id)
+            WHERE direct_conversation.id = n.conversation_id
+              AND direct_conversation.kind = 'direct'
+         )
+    )
+  )
+)`;
+
 function parseMentions(text) {
   if (!text || typeof text !== 'string') return [];
   const out = new Set();
@@ -243,26 +295,33 @@ async function hydrateAndPush(pool, row) {
   if (!row || !row.id) return;
   try {
     const { rows } = await pool.query(
-      `SELECT n.id, n.kind, n.read_at, n.created_at,
+      `SELECT n.id, n.kind, n.user_id, n.read_at, n.created_at,
               n.app_id, a.slug AS app_slug, a.name AS app_name,
               n.chat_message_id,
               cm.content AS message_content,
               cm.thread_type, cm.thread_ref,
               n.session_id,
               cs.session_title, cs.pr_title, cs.pr_number, cs.headless_issue_number, cs.branch_name,
+              n.conversation_id, c.kind AS conversation_kind,
+              c.title AS conversation_title,
+              n.conversation_message_id,
+              conversation_message.content AS conversation_message_content,
               su.username AS source_username,
               n.detail
        FROM notifications n
        LEFT JOIN apps a ON a.id = n.app_id
        LEFT JOIN chat_messages cm ON cm.id = n.chat_message_id
        LEFT JOIN chat_sessions cs ON cs.id = n.session_id
+       LEFT JOIN conversations c ON c.id = n.conversation_id
+       LEFT JOIN conversation_messages conversation_message
+         ON conversation_message.id = n.conversation_message_id
        LEFT JOIN users su ON su.id = n.source_user_id
-       WHERE n.id = $1`,
+       WHERE n.id = $1 AND ${CONVERSATION_ACCESS_SQL}`,
       [row.id]
     );
     if (!rows.length) return;
     const { pushNotificationToUser } = require('./ws');
-    pushNotificationToUser(row.user_id, {
+    pushNotificationToUser(rows[0].user_id, {
       type: 'notification_new',
       notification: serialize(rows[0]),
     });
@@ -494,14 +553,21 @@ async function listForUser(pool, userId, { limit = 100, before = null } = {}) {
             cm.thread_type, cm.thread_ref,
             n.session_id,
             cs.session_title, cs.pr_title, cs.pr_number, cs.headless_issue_number, cs.branch_name,
+            n.conversation_id, c.kind AS conversation_kind,
+            c.title AS conversation_title,
+            n.conversation_message_id,
+            conversation_message.content AS conversation_message_content,
             su.username AS source_username,
             n.detail
      FROM notifications n
      LEFT JOIN apps a ON a.id = n.app_id
      LEFT JOIN chat_messages cm ON cm.id = n.chat_message_id
      LEFT JOIN chat_sessions cs ON cs.id = n.session_id
+     LEFT JOIN conversations c ON c.id = n.conversation_id
+     LEFT JOIN conversation_messages conversation_message
+       ON conversation_message.id = n.conversation_message_id
      LEFT JOIN users su ON su.id = n.source_user_id
-     WHERE n.user_id = $1
+     WHERE n.user_id = $1 AND ${CONVERSATION_ACCESS_SQL}
      ${cursorClause}
      ORDER BY n.created_at DESC, n.id DESC
      LIMIT $${limitIdx}`,
@@ -522,14 +588,21 @@ async function getForUser(pool, userId, id) {
             cm.thread_type, cm.thread_ref,
             n.session_id,
             cs.session_title, cs.pr_title, cs.pr_number, cs.headless_issue_number, cs.branch_name,
+            n.conversation_id, c.kind AS conversation_kind,
+            c.title AS conversation_title,
+            n.conversation_message_id,
+            conversation_message.content AS conversation_message_content,
             su.username AS source_username,
             n.detail
        FROM notifications n
        LEFT JOIN apps a ON a.id = n.app_id
        LEFT JOIN chat_messages cm ON cm.id = n.chat_message_id
        LEFT JOIN chat_sessions cs ON cs.id = n.session_id
+       LEFT JOIN conversations c ON c.id = n.conversation_id
+       LEFT JOIN conversation_messages conversation_message
+         ON conversation_message.id = n.conversation_message_id
        LEFT JOIN users su ON su.id = n.source_user_id
-      WHERE n.id = $1 AND n.user_id = $2`,
+      WHERE n.id = $1 AND n.user_id = $2 AND ${CONVERSATION_ACCESS_SQL}`,
     [id, userId]
   );
   return rows[0] || null;
@@ -537,7 +610,9 @@ async function getForUser(pool, userId, id) {
 
 async function countUnread(pool, userId) {
   const { rows } = await pool.query(
-    `SELECT COUNT(*)::int AS c FROM notifications WHERE user_id = $1 AND read_at IS NULL`,
+    `SELECT COUNT(*)::int AS c FROM notifications AS n
+      WHERE n.user_id = $1 AND n.read_at IS NULL
+        AND ${CONVERSATION_ACCESS_SQL}`,
     [userId]
   );
   return rows[0]?.c || 0;
@@ -666,6 +741,21 @@ async function markReadForApp(pool, userId, appId) {
   return rowCount || 0;
 }
 
+// Per-conversation counterpart to markReadForApp. Conversation ids never
+// fall back to app ids: the two notification domains remain disjoint even if
+// their integer primary keys happen to be equal.
+async function markReadForConversation(pool, userId, conversationId) {
+  if (!userId || !conversationId) return 0;
+  const { rowCount } = await pool.query(
+    `UPDATE notifications n
+        SET read_at = NOW()
+      WHERE n.user_id = $1 AND n.conversation_id = $2 AND n.read_at IS NULL
+        AND ${CONVERSATION_ACCESS_SQL}`,
+    [userId, conversationId]
+  );
+  return rowCount || 0;
+}
+
 // Single-id and mark-all clears. Returns rows actually cleared (like the
 // scoped helpers above) so the route can decide whether to fan out a
 // cross-tab `notifications_changed` refresh.
@@ -714,33 +804,43 @@ async function markRead(pool, userId, { id, all = false, kinds = null, excludeKi
 // `kind` to decide which fields to use — kudos rows ignore chatMessageId /
 // messageContent, mention rows ignore sessionId / prTitle.
 function serialize(row) {
+  const isConversation = CONVERSATION_NOTIFICATION_KINDS.has(row.kind);
   return {
     id: row.id,
     kind: row.kind,
     readAt: row.read_at,
     createdAt: row.created_at,
-    appId: row.app_id,
-    appSlug: row.app_slug,
-    appName: row.app_name,
-    chatMessageId: row.chat_message_id,
-    messageContent: row.message_content,
+    // Fail closed if a malformed conversation row also carries legacy app
+    // references: private messaging must never route through or render as an
+    // app chat notification.
+    appId: isConversation ? null : row.app_id,
+    appSlug: isConversation ? null : row.app_slug,
+    appName: isConversation ? null : row.app_name,
+    chatMessageId: isConversation ? null : row.chat_message_id,
+    conversationId: isConversation ? row.conversation_id : null,
+    conversationKind: isConversation ? (row.conversation_kind || null) : null,
+    conversationTitle: isConversation ? (row.conversation_title || null) : null,
+    conversationMessageId: isConversation ? row.conversation_message_id : null,
+    messageContent: isConversation
+      ? (row.conversation_message_content ?? null)
+      : row.message_content,
     // #194 parity: when the referenced chat message lives in a topic
     // thread, these route the click to that topic instead of general chat.
-    threadType: row.thread_type || null,
-    threadRef: row.thread_ref != null ? row.thread_ref : null,
-    sessionId: row.session_id,
+    threadType: isConversation ? null : (row.thread_type || null),
+    threadRef: !isConversation && row.thread_ref != null ? row.thread_ref : null,
+    sessionId: isConversation ? null : row.session_id,
     // #971: the session's display name (schema.sql #249 — set from the first
     // interactive message, refreshed pre-PR, mirrored from pr_title once a PR
     // exists). Session-scoped renderers prefer it so a titled session never
     // shows its machine-generated branch name.
-    sessionTitle: row.session_title,
-    prTitle: row.pr_title,
-    prNumber: row.pr_number,
+    sessionTitle: isConversation ? null : row.session_title,
+    prTitle: isConversation ? null : row.pr_title,
+    prNumber: isConversation ? null : row.pr_number,
     // #161: auto_solve_done rows route back to their issue row. branchName is
     // the last-resort label for session-scoped rows — only reached when the
     // session has neither a session title nor a PR title yet.
-    headlessIssueNumber: row.headless_issue_number,
-    branchName: row.branch_name,
+    headlessIssueNumber: isConversation ? null : row.headless_issue_number,
+    branchName: isConversation ? null : row.branch_name,
     sourceUsername: row.source_username,
     detail: row.detail,
   };
@@ -774,9 +874,11 @@ module.exports = {
   markReadForSession,
   markReadForAction,
   markReadForApp,
+  markReadForConversation,
   markReadForMessage,
   unreadMessageIdsForUser,
   ACTION_COMPLETIONS,
+  CONVERSATION_NOTIFICATION_KINDS,
   serialize,
 };
 

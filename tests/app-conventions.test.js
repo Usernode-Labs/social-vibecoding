@@ -123,3 +123,31 @@ test('the offline essentials excerpt points at the user directory (#1195)', () =
   assert.match(excerpt, /usernode\.lookupUser\(\)/);
   assert.match(excerpt, /never a guess from users your app has already seen/);
 });
+
+test('the excerpt and the full Tailwind section agree about the CDN (#1215)', () => {
+  const doc = getAppConventions();
+  const begin = doc.indexOf('<!-- work-order:begin -->');
+  const end = doc.indexOf('<!-- work-order:end -->');
+  assert.ok(begin >= 0 && end > begin, 'work-order markers must survive');
+  const excerpt = doc.slice(begin, end);
+
+  // The excerpt used to call a `cdn.tailwindcss.com` tag forbidden and
+  // "rejected by two automated checks", while the section below called the
+  // hosted copy a MIGRATION TARGET for apps still on that CDN. An agent
+  // reading only the excerpt could only conclude the app was in violation
+  // or the rules were wrong; both cost more than the sentence saved.
+  const tailwind = doc.slice(
+    doc.indexOf('## Tailwind — precompiled per app, runtime centrally hosted'),
+    doc.indexOf('## Vendored shared files')
+  );
+  assert.ok(tailwind.length > 500, 'the full Tailwind section is still there');
+
+  // Both halves name the same one-line migration target.
+  const TARGET = /usernode-tailwind\/v1\/tailwind\.js/;
+  assert.match(excerpt, TARGET);
+  assert.match(tailwind, TARGET);
+
+  // And neither claims a check rejects the CDN, because none does.
+  assert.doesNotMatch(excerpt, /rejected by/i);
+  assert.match(tailwind, /No proposal check rejects a `cdn\.tailwindcss\.com` tag/);
+});

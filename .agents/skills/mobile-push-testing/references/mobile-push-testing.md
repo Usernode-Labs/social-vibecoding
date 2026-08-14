@@ -2,10 +2,10 @@
 
 End-to-end procedure for verifying that every mobile push notification kind
 reaches a real phone with the right copy. Written after the full 2026-08-13
-verification run (all 14 force-testable kinds delivered and visually
-confirmed on iOS). Intended for humans *and* coding agents: every trigger is
-an exact API call, and the pitfalls that cost time on the first run are
-called out inline.
+verification run of the pre-Messages registry, then extended for platform
+conversations. Intended for humans *and* coding agents: every trigger is an
+exact API call, and the pitfalls that cost time on the first run are called
+out inline.
 
 ## Architecture (what you are testing)
 
@@ -33,8 +33,14 @@ Kind → preference category: `src/services/mobile-push-preferences.js`
 1. **Receiving phone** logged into the mobile app as the *recipient* account,
    notifications permitted. Verify registration exists before anything else
    (see Verification below): `registrations` non-empty, `delivery_eligible: true`.
-2. **All six preference categories enabled** for the recipient
+2. **All seven preference categories enabled** for the recipient
    (`lightweight_activity` — reactions/kudos — is **off by default**).
+   The seventh category, `messages`, is on by default and covers all five
+   `conversation_*` kinds. Confirm it with
+   `GET /api/me/mobile-push-preferences`; if needed, recipient:
+   `PATCH /api/me/mobile-push-preferences`
+   `{"preferences":{"messages":true}}`. Re-enabling is prospective — it does
+   not enqueue pushes for notification rows that already exist.
 3. **Two accounts.** Self-actions are hard no-ops (self-reply, self-reaction,
    self-mention create no notification), and several kinds only fire on the
    *other* member. One account holds the phone ("recipient"); the other acts
@@ -69,6 +75,14 @@ session only.**
 - `registrations` + `preferences` in the same payload cover prerequisites 1–2.
 - Platform-wide state (Firebase project, `send_enabled`, last-24h send/dead
   counts) is under `overview`.
+- Conversation deliveries are re-authorized immediately before send. An
+  invitation permits membership status `invited`; the other four kinds
+  require `member`. A read notification, a removed/left member, an archived
+  conversation, or either user blocking the other in a direct conversation
+  cancels the queued send (look for `notification_read` or
+  `conversation_access_revoked`). Opening an active conversation marks its
+  notifications read, so keep Messages closed until each expected push has
+  reached `sent`.
 
 Server `sent` means "handed to APNs/FCM". Final on-screen rendering can only
 be confirmed by the human holding the phone — always ask.
@@ -96,8 +110,49 @@ foregrounded app may swallow the banner).
 | 12 | `pr_proposed` | Actor promotes a proposal on a shared app (recipient receives as "other member"). Full path: `proposal_start` → local commit → `proposal push` (CLI) → `proposal_submit_build` → poll `GET /api/sessions/:id/proposal-handoff` until `"state":"ready"` → `proposal_promote`. ⚠️ Idle handoff sessions **auto-pause**; `POST /api/sessions/:id/resume` first or promote returns "not ready". |
 | 13 | `check_failed` | ⚠️ Fires **only on staging boot failure** (`src/services/staging-recovery.js`), *not* on failing dapp tests. Recipient-owned proposal whose `server.js` throws at import (`throw new Error(...)` as line 1) → submit build → container crashloops → push in ~4 min. **Archive the session immediately after** (`POST /api/sessions/:id/archive`). One notification per failure streak (`check_error_notified_at`). |
 | 14 | `stale_pr` | **Not force-testable.** Background sweeper, fires after days of a promoted proposal receiving no votes. Copy is pinned by `tests/mobile-push-policy.test.js`. |
+| 15 | `conversation_invite` | Actor creates the disposable group described below: `POST /api/conversations` `{"kind":"group","title":"Mobile push <run>","member_ids":[<recipientId>]}`. Wait for this push before accepting. |
+| 16 | `conversation_message` | After acceptance, actor: `POST /api/conversations/:id/messages` `{"content":"ordinary push test","idempotency_key":"push-message-<run>"}`. Do not include the recipient's handle or `reply_to_id`. |
+| 17 | `conversation_mention` | Actor: `POST /api/conversations/:id/messages` `{"content":"@<recipientUsername> mention push test","idempotency_key":"push-mention-<run>"}`. The handle must be the recipient's exact active-member username. |
+| 18 | `conversation_reply` | Recipient first creates the setup message below; actor replies with `POST /api/conversations/:id/messages` `{"content":"reply push test","reply_to_id":<recipientMessageId>,"idempotency_key":"push-reply-<run>"}`. Conversation replies are REST-capable (unlike legacy app-chat replies). |
+| 19 | `conversation_reaction` | Actor: `POST /api/conversations/:id/messages/:recipientMessageId/reactions` `{"emoji":"👍"}`. This endpoint toggles, so the first call for that actor/message/emoji must add the reaction; a second call removes it and its notification. |
 
-Suggested order: 6 → 1 → 2 → 3 → 4 → 8 → 10 → 11 → 9 → 12 → 5 → 7 → 13.
+### Messages sequence (kinds 15–19)
+
+Use a new group for each run so direct-message consent history and an old
+reaction toggle cannot affect the result. Substitute a short alphanumeric
+timestamp for `<run>`; idempotency keys must be unique, 8–64 characters, and
+contain only letters, digits, `.`, `_`, `:`, or `-`.
+
+1. Actor: `GET /api/users/search?q=<recipientUsername>&scope=messages`; take
+   the `id` from the exact username match as `<recipientId>`. Create the group
+   with trigger 15 and retain `conversation.id` from the response.
+2. Lock the phone and wait for the nested diagnostic row for
+   `conversation_invite` to show delivery `sent`, then confirm the phone says
+   `@actor invited you to a conversation · Mobile push <run>` and
+   `Open Messages to accept or decline`. **Do not accept early:** acceptance
+   marks the invite notification read and can cancel an in-flight delivery.
+3. Recipient (logged-in browser):
+   `POST /api/conversations/:id/respond` `{"action":"accept"}`. Keep the
+   Messages screen closed after this call.
+4. Run triggers 16 and 17 separately, waiting for `sent` and on-device
+   confirmation after each. The body should be the sent content; the title
+   should say the actor sent a message or mentioned the recipient and include
+   the group title.
+5. Recipient (browser): `POST /api/conversations/:id/messages`
+   `{"content":"recipient setup message","idempotency_key":"push-source-<run>"}`;
+   retain the returned `message.id` as `<recipientMessageId>`. This may notify
+   the actor, but it is only setup for the recipient-facing kinds.
+6. Run trigger 18, wait for `sent`, and confirm the reply body is
+   `reply push test`. Then run trigger 19, wait for `sent`, and confirm the
+   title includes `reacted 👍` while the body says
+   `You said: recipient setup message`.
+
+For every step, find the expected kind under diagnostics `notifications`,
+inspect that row's nested `deliveries`, and only then ask the human to confirm
+the banner. A top-level empty `deliveries` array is still not evidence of
+failure. Server `sent` remains provider hand-off, not proof of rendering.
+
+Suggested order: Messages sequence 15–19 → 6 → 1 → 2 → 3 → 4 → 8 → 10 → 11 → 9 → 12 → 5 → 7 → 13.
 Steps 6/8 make the actor a member+approver of the shared app first; 5/7 need
 the actor-owned app; 13 last because it involves the CLI credential swap back
 to the recipient.
@@ -109,14 +164,20 @@ to the recipient.
   and the auto-solve result): vote/merge or withdraw+archive.
 - Close or resolve the test issue.
 - Delete or keep the actor-owned throwaway app.
+- After capturing conversation diagnostics, actor removes the recipient with
+  `DELETE /api/conversations/:id/members/:recipientId`, then actor archives
+  the now-empty group with `POST /api/conversations/:id/leave` `{}`. Removing
+  the recipient deletes their conversation notification evidence, so do this
+  only after all five deliveries and phone banners are recorded.
 - Restore the CLI credential to the normal account (`logout` + device login).
 - Optionally clean test messages from the shared app's group chat.
 
 ## Baseline run (2026-08-13)
 
-All 14 force-testable kinds `sent` within 2–6s of the trigger and rendered
-correctly on iOS (production Firebase project `usernode-7f4a2`). Copy matched
-`buildCopy` for every kind, including app-name suffixes and session-title
-embedding. Re-run this playbook after any change to
+The force-testable pre-Messages kinds `sent` within 2–6s of the trigger and
+rendered correctly on iOS (production Firebase project `usernode-7f4a2`).
+Copy matched `buildCopy`, including app-name suffixes and session-title
+embedding. The five conversation kinds are additional coverage and should be
+recorded as their own run. Re-run this playbook after any change to
 `mobile-push-policy.js` copy (e.g. PR #1175), the preferences registry, the
 enqueue trigger, or the worker/provider layer.

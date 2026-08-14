@@ -5,6 +5,14 @@ const { ALLOWED_KINDS, buildMessage } = require('./mobile-push-policy');
 const { classifyError } = require('./mobile-push-provider');
 const log = require('./logger');
 
+const CONVERSATION_NOTIFICATION_KINDS = new Set([
+  'conversation_invite',
+  'conversation_message',
+  'conversation_mention',
+  'conversation_reply',
+  'conversation_reaction',
+]);
+
 const DEFAULTS = Object.freeze({
   batchSize: 20,
   pollMs: 5000,
@@ -211,10 +219,25 @@ class MobilePushWorker {
       `SELECT d.id, d.attempts, d.expires_at,
               d.created_at AS delivery_created_at,
               n.id AS notification_id, n.user_id AS notification_user_id,
-              n.kind, n.read_at, n.detail,
+              n.kind, n.read_at, n.detail, n.conversation_id,
               a.name AS app_name,
+              c.title AS conversation_title,
+              c.status AS conversation_status,
               su.username AS source_username,
               cm.content AS message_content,
+              conversation_message.content AS conversation_message_content,
+              conversation_member.status AS conversation_member_status,
+              EXISTS (
+                SELECT 1
+                  FROM conversation_direct_pairs direct_pair
+                  JOIN user_blocks direct_block
+                    ON (direct_block.blocker_id = direct_pair.user_low_id
+                        AND direct_block.blocked_user_id = direct_pair.user_high_id)
+                     OR (direct_block.blocker_id = direct_pair.user_high_id
+                        AND direct_block.blocked_user_id = direct_pair.user_low_id)
+                 WHERE direct_pair.conversation_id = n.conversation_id
+                   AND c.kind = 'direct'
+              ) AS conversation_direct_blocked,
               cs.session_title, cs.pr_title, cs.branch_name, cs.promoted_at,
               policy.category AS push_category,
               COALESCE(preference.enabled, policy.default_enabled, FALSE) AS push_enabled,
@@ -233,6 +256,12 @@ class MobilePushWorker {
          LEFT JOIN users su ON su.id = n.source_user_id
          LEFT JOIN chat_messages cm ON cm.id = n.chat_message_id
          LEFT JOIN chat_sessions cs ON cs.id = n.session_id
+         LEFT JOIN conversations c ON c.id = n.conversation_id
+         LEFT JOIN conversation_messages conversation_message
+           ON conversation_message.id = n.conversation_message_id
+         LEFT JOIN conversation_members conversation_member
+           ON conversation_member.conversation_id = n.conversation_id
+          AND conversation_member.user_id = n.user_id
          LEFT JOIN mobile_push_kind_categories policy ON policy.kind = n.kind
          LEFT JOIN mobile_push_preferences preference
            ON preference.user_id = n.user_id
@@ -247,6 +276,22 @@ class MobilePushWorker {
 
   invalidReason(row) {
     if (row.read_at) return 'notification_read';
+    const isConversationKind = CONVERSATION_NOTIFICATION_KINDS.has(row.kind);
+    // Schema references are nullable for legacy kinds, so enforce the domain
+    // pairing at send time: a conversation kind needs a conversation ref and
+    // a legacy kind may not smuggle one into the app-centric push path.
+    if ((row.conversation_id != null) !== isConversationKind) {
+      return 'conversation_access_revoked';
+    }
+    if (isConversationKind) {
+      if (row.conversation_status !== 'active') return 'conversation_access_revoked';
+      if (row.conversation_direct_blocked) return 'conversation_access_revoked';
+      const allowedStatuses = row.kind === 'conversation_invite'
+        ? ['invited', 'member'] : ['member'];
+      if (!allowedStatuses.includes(row.conversation_member_status)) {
+        return 'conversation_access_revoked';
+      }
+    }
     if (!ALLOWED_KINDS.has(row.kind) || !row.push_category) return 'kind_not_allowed';
     if (row.push_enabled !== true) return 'preference_disabled';
     if (!row.registration_id) return 'registration_missing';
@@ -355,8 +400,9 @@ class MobilePushWorker {
         // policy degrades to the generic copy rather than failing a delivery.
         context: {
           appName: row.app_name,
+          conversationTitle: row.conversation_title,
           sourceUsername: row.source_username,
-          messageContent: row.message_content,
+          messageContent: row.conversation_message_content ?? row.message_content,
           sessionTitle: row.session_title,
           prTitle: row.pr_title,
           branchName: row.branch_name,

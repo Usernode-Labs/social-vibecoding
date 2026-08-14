@@ -112,9 +112,9 @@ test('eligibility is DERIVED from the read-only naming contract', () => {
   // Not a hand-kept list: a new get_*/list_* tool carries the hint with no
   // extra edit, and a tool renamed to something that acts stops carrying it
   // in the same edit that renames it.
-  for (const name of ['get_app', 'get_proposal', 'list_apps', 'list_requests',
-                      'get_platform_build', 'get_platform_conventions',
-                      'list_my_proposals', 'whoami']) {
+  for (const name of ['get_app', 'get_proposal', 'get_request', 'list_apps',
+                      'list_requests', 'get_platform_build',
+                      'get_platform_conventions', 'list_my_proposals', 'whoami']) {
     assert.equal(tools.isHintEligibleTool(name), true, `${name} is a read`);
   }
   for (const name of tools.ACTING_TOOLS) {
@@ -127,14 +127,14 @@ test('eligibility is DERIVED from the read-only naming contract', () => {
   assert.equal(tools.isHintEligibleTool(undefined), false);
 });
 
-test('the nine read tools return through readResult and no others do', () => {
+test('every read tool returns through readResult and no others do', () => {
   // The wiring itself, since eligibility is only consulted on the path that
   // asks for it. Everything that acts must still return plain toolResult().
   const hinted = [...TOOLS_SRC.matchAll(/return readResult\('([a-z_]+)'/g)]
     .map((m) => m[1]);
   assert.deepEqual([...new Set(hinted)].sort(), [
     'get_app', 'get_connector_guidance', 'get_platform_build',
-    'get_platform_conventions', 'get_proposal',
+    'get_platform_conventions', 'get_proposal', 'get_request',
     'list_apps', 'list_my_proposals', 'list_requests', 'whoami',
   ]);
   for (const name of hinted) {

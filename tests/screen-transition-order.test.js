@@ -40,7 +40,8 @@ const nativeJs = fs.readFileSync(
 // them. Kept as literals so a new screen that forgets the discipline shows
 // up as a missing entry rather than passing vacuously.
 const SCREEN_ROOTS = ['app-view', 'home-screen', 'browse-screen',
-  'leaderboard-screen', 'profile-screen', 'admin-screen', 'settings-screen'];
+  'leaderboard-screen', 'profile-screen', 'admin-screen', 'settings-screen',
+  'messages-screen'];
 
 const NAVIGATIONS = [
   { fn: 'navigateToLeaderboard', reveal: 'leaderboard-screen' },
@@ -48,10 +49,11 @@ const NAVIGATIONS = [
   { fn: 'navigateToBrowse', reveal: 'browse-screen' },
   { fn: 'navigateToAdminConsole', reveal: 'admin-screen' },
   { fn: 'navigateToSettings', reveal: 'settings-screen' },
+  { fn: 'navigateToMessages', reveal: 'messages-screen' },
 ];
 
 const EXITS = ['_exitLeaderboard', '_exitProfile', '_exitBrowse',
-  '_exitAdminConsole', '_exitSettings'];
+  '_exitAdminConsole', '_exitSettings', '_exitMessages'];
 
 // The body of a top-level App method, from its two-space-indented
 // definition to the closing `},` at the same indent.
@@ -195,6 +197,7 @@ test('every screen entry is guarded against a duplicate dispatch', () => {
     navigateToBrowse: /if \(App\._inBrowse && window\.Browse\?\.isOpen\?\.\(\)\)/,
     navigateToAdminConsole: /if \(App\._inAdmin && window\.AdminConsole\?\.isOpen\?\.\(\)\)/,
     navigateToSettings: /if \(App\._inSettings && window\.Settings\?\.isOpen\?\.\(\)\)/,
+    navigateToMessages: /if \(App\._inMessages && messages\?\.isOpen\?\.\(\)\)/,
   };
   for (const [fn, guard] of Object.entries(guards)) {
     const body = methodBody(fn);

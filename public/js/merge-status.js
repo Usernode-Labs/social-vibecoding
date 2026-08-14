@@ -46,7 +46,7 @@
     return d;
   }
 
-  // Canonical 11-state derivation. Precedence is highest-signal-first: an
+  // Canonical lifecycle derivation. Precedence is highest-signal-first: an
   // active merge/conflict outranks a checks verdict, which outranks the
   // vote/eligibility states. States 8–10 ("Awaiting admin", "Passed —
   // merging shortly", "In vote") need the vote tally; 1–7 + 11 need only the
@@ -222,6 +222,18 @@
           ? 'This changes who can administer the app, so it won’t merge on a timer — it needs real Yes votes to reach the app’s normal threshold.'
           : undefined,
         explicitApproval: !!p.requires_explicit_approval,
+      });
+    }
+    // 10b — an active draft whose pre-promotion checks finished cleanly.
+    // Active sessions used to fall all the way through to the generic
+    // "Draft" state here, hiding the successful checks run that made the
+    // draft ready to propose. The merge-conflict / behind-main states above
+    // retain precedence, and promoted rows already resolved through their
+    // vote state.
+    if (status === 'active' && check === 'passing') {
+      return descriptor('checks_passed', 'Checks passed', 'green', false, {
+        glyph: '✓',
+        title: 'Automated checks passed on the staging build. This draft is ready to propose.',
       });
     }
     // 11 — building; not yet proposed.

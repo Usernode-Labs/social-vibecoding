@@ -43,6 +43,9 @@ async function migrate(config) {
   await seedStagingAdminConsoleData(pool);
   await seedStagingEnvProposal(pool, config);
   await seedStagingMergedPrs(pool, config);
+  // Must run AFTER seedStagingMergedPrs — its snapshot dates are chosen
+  // so the merged fixtures straddle the newest one (reporting-period).
+  await seedStagingReportSnapshots(pool, config);
   await seedStagingMyOpenPr(pool, config);
   await seedStagingImportedPrProposal(pool, config);
   await seedStagingChecksAdvisoryCard(pool, config);
@@ -2238,6 +2241,107 @@ async function seedStagingMergedPrs(pool, config) {
     appId,
     total: fixtures.length,
     inserted,
+  });
+}
+
+// Locked report snapshots for the Reporting tab (reporting-period). The
+// period dropdown's previous-report entries and its "Since last report"
+// default are invisible without rows in app_report_snapshots, so seed
+// two on the self-app: one ~30 days old and one ~3 days old. The merged
+// fixtures above span ~6 days, so the 3-day snapshot visibly splits the
+// Done section when a tester picks "Since last report". The recent row
+// carries ai_json (exercising the previousReport input path) and a share
+// token (keeping the Shared tag reviewable); marker class
+// staging-fixture-report in the html is the idempotence check.
+async function seedStagingReportSnapshots(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: appRows } = await pool.query(
+    'SELECT id FROM apps WHERE slug = $1',
+    [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) {
+    log.warn('db', 'Staging report-snapshot fixtures skipped: self-app row missing', {
+      slug: config.selfAppSlug,
+    });
+    return;
+  }
+
+  const { rows: existing } = await pool.query(
+    `SELECT 1 FROM app_report_snapshots
+      WHERE app_id = $1 AND html LIKE '%staging-fixture-report%'
+      LIMIT 1`,
+    [appId]
+  );
+  if (existing.length) return;
+
+  const { rows: users } = await pool.query(
+    'SELECT id FROM users ORDER BY is_admin DESC, id ASC LIMIT 1'
+  );
+  const lockedBy = users[0]?.id || null;
+
+  const doc = (label) => '<!doctype html>\n'
+    + '<html lang="en"><head><meta charset="utf-8"><title>[staging fixture] '
+    + label
+    + '</title></head><body><div class="staging-fixture-report">'
+    + '<h1>[staging fixture] ' + label + '</h1>'
+    + '<p>A locked staging demo report. Real locked reports carry the full '
+    + 'standalone progress document.</p>'
+    + '</div></body></html>\n';
+
+  const fixtures = [
+    {
+      label: 'Progress report — a month ago',
+      daysAgo: 30,
+      ai: {
+        narrative: 'Staging demo narrative: a month ago the app was mid-build, with the first fixtures landing.',
+        highlights: ['Staging demo highlight: the first fixture rows shipped.'],
+        risks: [],
+        owners: [],
+        model: 'claude-haiku-4-5',
+        generatedAt: null,
+        periodStart: null,
+      },
+      token: null,
+    },
+    {
+      label: 'Progress report — a few days ago',
+      daysAgo: 3,
+      ai: {
+        narrative: 'Staging demo narrative: steady momentum this week — several fixture changes merged and more are queued for review.',
+        highlights: [
+          'Staging demo highlight: several fixture improvements merged.',
+          'Staging demo highlight: review queue stayed short.',
+        ],
+        risks: [],
+        owners: [],
+        model: 'claude-haiku-4-5',
+        generatedAt: null,
+        periodStart: null,
+      },
+      // Fixed 32-hex token: obviously fake, satisfies the /reports/:token
+      // format, and the idempotence check above prevents re-insert races
+      // with the UNIQUE constraint.
+      token: '00abcdef00abcdef00abcdef00abcdef',
+    },
+  ];
+
+  for (const f of fixtures) {
+    await pool.query(
+      `INSERT INTO app_report_snapshots
+         (app_id, html, ai_json, locked_by, locked_at, share_token, shared_at)
+       VALUES
+         ($1, $2, $3::jsonb, $4, NOW() - ($5::int * INTERVAL '1 day'), $6,
+          CASE WHEN $6::varchar IS NULL THEN NULL
+               ELSE NOW() - ($5::int * INTERVAL '1 day') END)`,
+      [appId, doc(f.label), JSON.stringify(f.ai), lockedBy, f.daysAgo, f.token]
+    );
+  }
+
+  log.info('db', 'Staging report-snapshot fixtures seeded', {
+    appId,
+    total: fixtures.length,
   });
 }
 
@@ -9030,6 +9134,42 @@ async function seedStagingTopicAttributes(pool, config) {
   const appId = appRows[0]?.id;
   if (!appId) return;
 
+  const { rows: users } = await pool.query(
+    `SELECT id, username FROM users ORDER BY is_admin DESC, id ASC LIMIT 3`
+  );
+  if (!users.length) return;
+  const u0 = users[0];
+  const u1 = users[1] || users[0];
+  const u2 = users[2] || users[0];
+
+  // #1187: the assignee picker is a TOGGLE — clicking your own pick
+  // withdraws it. Make that state URL-reachable for checks/screenshots:
+  // real assignee votes on mock issue 900009 (the card the existing
+  // shot=card-menu&row=assignee deep link opens), cast BY the two capture
+  // identities — proposal checks run as usernode-capture-admin and
+  // screenshots as usernode-capture (services/visuals.js), so keying the
+  // votes to those rows (not "the first admins", which a prod-cloned DB
+  // orders differently) is what guarantees the picker opens with the
+  // VIEWER's own pick checked and re-clickable for both. The value is the
+  // obviously-fake staging-demo-user, matching the synthetic summaries the
+  // demo feed paints. Mock issue numbers are safe targets:
+  // topic_attribute_votes carries no FK to issues.
+  const { rows: capRows } = await pool.query(
+    `SELECT id FROM users
+      WHERE username IN ('usernode-capture', 'usernode-capture-admin')
+      ORDER BY id ASC`
+  );
+  for (let i = 0; i < capRows.length; i++) {
+    await pool.query(
+      `INSERT INTO topic_attribute_votes
+         (app_id, target_type, target_ref, field, value, user_id, created_at)
+       VALUES ($1, 'issue', 900009, 'assignee', 'staging-demo-user', $2,
+               NOW() - ($3 || ' minutes')::interval)
+       ON CONFLICT (app_id, target_type, target_ref, field, user_id) DO NOTHING`,
+      [appId, capRows[i].id, String(26 - i)]
+    );
+  }
+
   const { rows: sessRows } = await pool.query(
     `SELECT id FROM chat_sessions
       WHERE app_id = $1 AND branch_name = $2 LIMIT 1`,
@@ -9040,14 +9180,6 @@ async function seedStagingTopicAttributes(pool, config) {
     return;
   }
   const sessionId = sessRows[0].id;
-
-  const { rows: users } = await pool.query(
-    `SELECT id, username FROM users ORDER BY is_admin DESC, id ASC LIMIT 3`
-  );
-  if (!users.length) return;
-  const u0 = users[0];
-  const u1 = users[1] || users[0];
-  const u2 = users[2] || users[0];
 
   // priority: u0 + u1 → 'high' (clear winner, includes the viewer), u2 → 'low'.
   // assignee: u0 + u1 → @<u1.username> (winner), u2 → @<u0.username>.
@@ -9623,8 +9755,8 @@ async function seedStagingTopochain(pool, config) {
           NOW() - INTERVAL '45 days', NOW() + INTERVAL '15 days', FALSE,
           'staging-demo-chain-1', TRUE, 'regular', NOW(), NOW()),
          ($2, $3, 'Staging Demo Event — Season Standings',
-          'type=''season'' event fixture: its standings are the WHOLE season''s aggregate (computeStandings), not one event''s snapshots. Spans the season like production''s own season event, so it is the DEFAULT the leaderboard opens on — see DEFAULT_PUBLIC_EVENT_SQL step 1.',
-          NOW() - INTERVAL '60 days', NOW() + INTERVAL '30 days', TRUE,
+          'type=''season'' event fixture: its standings are the WHOLE season''s aggregate (computeStandings), not one event''s snapshots. Starts with this preview so cloned season rows cannot outrank it as the DEFAULT leaderboard — see DEFAULT_PUBLIC_EVENT_SQL step 1.',
+          NOW(), NOW() + INTERVAL '30 days', TRUE,
           '{"metrics": [], "offchain_weight": 1}'::jsonb, NULL, NULL, FALSE, TRUE,
           NULL, NULL, FALSE, NULL, FALSE, 'season', NOW(), NOW()),
          ($4, $3, 'Staging Demo Event — Finished Sprint',
@@ -9665,6 +9797,23 @@ async function seedStagingTopochain(pool, config) {
        ON CONFLICT (id) DO NOTHING`,
       [EVENT_REGULAR_ID, EVENT_SEASON_ID, SEASON_ID, EVENT_ENDED_ID,
        EVENT_ARCHIVE_ID, SEASON_CLOSED_ID, EVENT_EMPTY_ID, EVENT_UNASSIGNED_ID]
+    );
+
+    // A staging database is cloned from production before these fixtures are
+    // added. A newly-created real `type = 'season'` row in that clone can
+    // therefore start after this fixed-id fixture was first seeded. The
+    // default-event rule quite correctly chooses that newer row, but if it
+    // has no standings yet the preview's default leaderboard is empty and the
+    // fixture no longer exercises the table it exists to cover. Refresh only
+    // the staging-demo row's window on every boot (the INSERT above remains
+    // idempotent) so it deterministically wins among started season rows.
+    await pool.query(
+      `UPDATE season_events
+          SET starts_at = NOW(),
+              ends_at = NOW() + INTERVAL '30 days',
+              updated_at = NOW()
+        WHERE id = $1`,
+      [EVENT_SEASON_ID]
     );
 
     // ─── Challenge kinds (4) ────────────────────────────────────────────

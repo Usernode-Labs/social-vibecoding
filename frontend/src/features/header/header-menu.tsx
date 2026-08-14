@@ -40,6 +40,7 @@
 import { useCallback, useRef, useState } from 'react';
 
 import {
+  ChatBubbleTailIcon,
   CogIcon,
   GitHubIcon,
   LightBulbIcon,
@@ -382,8 +383,8 @@ export function HeaderMenu() {
                 now (same ids, same lifecycle).
             */}
             {/*
-                MAIN NAV ORDER — Profile, Leaderboard, Settings, Admin &
-                moderation. Personal-first, then shared, then configuration,
+                MAIN NAV ORDER — Profile, Messages, Leaderboard, Settings,
+                Admin & moderation. Personal-first, then shared, then configuration,
                 then the admin surface; the app-scoped and reference rows sit
                 outside this group (status pane above, footer below).
             */}
@@ -420,6 +421,18 @@ export function HeaderMenu() {
               <span className="text-sm font-medium">
                 Profile
               </span>
+            </a>
+            {/* Platform-wide direct and group conversations (#488). A real
+                anchor keeps deep links and modified clicks browser-native;
+                the badge is updated by the React Messages store. */}
+            <a
+              id="drawer-row-messages"
+              href="#messages"
+              className="flex items-center gap-3 px-4 min-h-[44px] border-b border-zinc-100 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800"
+            >
+              <ChatBubbleTailIcon className="w-5 h-5 shrink-0" />
+              <span className="text-sm font-medium">Messages</span>
+              <span id="drawer-messages-badge" className="hidden ml-auto min-w-[18px] h-[18px] px-1 rounded-full bg-violet-600 text-white text-[10px] font-bold leading-[18px] text-center" aria-label="Unread messages"></span>
             </a>
             {/*
                 Leaderboard — the one entry point for shared progress: the
@@ -520,7 +533,7 @@ export function HeaderMenu() {
             */}
             <div id="drawer-row-platform-version" className="drawer-ver-row flex items-center gap-2 px-4">
               <span className="drawer-ver-label">
-                Web revision
+                Platform version
               </span>
               <span
                 id="platform-version-pill-slot"
@@ -532,7 +545,8 @@ export function HeaderMenu() {
                 Installed Flutter app release (#1101) — requested from the
                 native bridge and formatted as version/build (for example
                 0.4.0/1223). It is deliberately independent of the deployed
-                web revision above and never uses the currently-open dApp's
+                platform version (the web build's SHA) above and never uses
+                the currently-open dApp's
                 commit hash. Hidden outside the mobile app.
             */}
             <div id="drawer-row-native-app-version" className="hidden drawer-ver-row flex items-center gap-2 px-4">

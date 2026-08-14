@@ -51,7 +51,7 @@ function freshDb() {
     challenges: [],
     userActivities: [],
     onchainAccounts: [],
-    users: [{ id: 1, username: 'alice', email: 'alice@example.com', display_name: 'Alice' }],
+    users: [{ id: 1, username: 'alice', email: 'alice@example.com', display_name: 'Alice', discord: 'alice#1234' }],
     appVersionConfigs: [],
     // Task 2's schema.sql seed, verbatim, PLUS one non-topochain platform
     // key (`user_daily_limit_cents`) that must NEVER surface through this
@@ -131,18 +131,21 @@ function accountJoinedRow(a) {
     // test is that formatAccount() never surfaces this, not that the mock hides it.
     event_id: ev ? ev.id : null, event_name: ev ? ev.name : null,
     user_id_full: u ? u.id : null, user_username: u ? u.username : null, user_email: u ? u.email : null,
-    user_display_name: u ? u.display_name : null,
+    user_display_name: u ? u.display_name : null, user_discord: u ? (u.discord ?? null) : null,
   };
 }
 
 // Extracts the optional-filter params off D5's index/count queries. Both
 // queries build their WHERE clause (and therefore their param list) in
-// the SAME order (season_event_id, is_used, search) — this mirrors that
-// order via substring detection rather than re-parsing full SQL.
+// the SAME order (season_event_id, season_id, is_used, search) — this
+// mirrors that order via substring detection rather than re-parsing full
+// SQL. ('oa.season_id = $' cannot false-match 'oa.season_event_id = $':
+// neither string is a substring of the other.)
 function accountFilters(sql) {
   let i = 0;
   const out = {};
   if (sql.includes('oa.season_event_id = $')) out.seasonEventIdIdx = i++;
+  if (sql.includes('oa.season_id = $')) out.seasonIdIdx = i++;
   if (sql.includes('oa.is_used = $')) out.isUsedIdx = i++;
   if (sql.includes('oa.public_key ILIKE $')) out.likeIdx = i++;
   return out;
@@ -232,6 +235,7 @@ function handleQuery(rawSql, params = []) {
     const f = accountFilters(sql);
     const rows = db.onchainAccounts.filter((a) => (
       (f.seasonEventIdIdx === undefined || a.season_event_id === params[f.seasonEventIdIdx])
+      && (f.seasonIdIdx === undefined || a.season_id === params[f.seasonIdIdx])
       && (f.isUsedIdx === undefined || a.is_used === params[f.isUsedIdx])
       && (f.likeIdx === undefined
         || like(a.public_key, params[f.likeIdx]) || like(a.identity_uid, params[f.likeIdx])
@@ -246,6 +250,7 @@ function handleQuery(rawSql, params = []) {
     const rows = db.onchainAccounts
       .filter((a) => (
         (f.seasonEventIdIdx === undefined || a.season_event_id === params[f.seasonEventIdIdx])
+        && (f.seasonIdIdx === undefined || a.season_id === params[f.seasonIdIdx])
         && (f.isUsedIdx === undefined || a.is_used === params[f.isUsedIdx])
         && (f.likeIdx === undefined
           || like(a.public_key, params[f.likeIdx]) || like(a.identity_uid, params[f.likeIdx])
@@ -672,7 +677,9 @@ test('D5: index orders by amount DESC, applies filters, and NEVER exposes secret
     assert.equal(res.status, 200);
     assert.deepEqual(body.data.map((r) => r.id), [401, 400]); // amount DESC
     for (const row of body.data) assert.equal('secret_key' in row, false);
-    assert.deepEqual(body.data[0].user, { id: 1, username: 'alice', email: 'alice@example.com', display_name: 'Alice' });
+    assert.deepEqual(body.data[0].user, {
+      id: 1, username: 'alice', email: 'alice@example.com', display_name: 'Alice', discord: 'alice#1234',
+    });
     assert.equal(body.data[1].user, null);
 
     const usedOnly = await fetch(`${base}/api/v4/admin/onchain-accounts?is_used=true`);
@@ -694,6 +701,64 @@ test('D5: index — a present-but-malformed season_event_id 404s (not a silent e
     const badIsUsed = await fetch(`${base}/api/v4/admin/onchain-accounts?is_used=on`);
     assert.equal(badIsUsed.status, 422);
   } finally { server.close(); }
+});
+
+test('D5: index — season_id filter mirrors season_event_id (filters rows, combines with the event filter, malformed 404s)', async () => {
+  db.seasonEvents.push({ id: 310, season_id: 1, name: 'Event S1' }, { id: 311, season_id: 2, name: 'Event S2' });
+  db.onchainAccounts.push(
+    { id: 410, season_event_id: 310, season_id: 1, amount: 10, identity_uid: 's1', address: 'ut1c', public_key: 'pk-s1',
+      secret_key: 'sk', tier: 't', description: null, registration_code: 'c10', user_id: null,
+      is_used: false, used_at: null, created_at: T(0), updated_at: T(0) },
+    // A season-wide grant (season_event_id NULL) — the season filter must
+    // still find it, which the event filter alone never could.
+    { id: 411, season_event_id: null, season_id: 1, amount: 20, identity_uid: 's1w', address: 'ut1d', public_key: 'pk-s1w',
+      secret_key: 'sk', tier: 't', description: null, registration_code: 'c11', user_id: null,
+      is_used: false, used_at: null, created_at: T(0), updated_at: T(0) },
+    { id: 412, season_event_id: 311, season_id: 2, amount: 30, identity_uid: 's2', address: 'ut1e', public_key: 'pk-s2',
+      secret_key: 'sk', tier: 't', description: null, registration_code: 'c12', user_id: null,
+      is_used: false, used_at: null, created_at: T(0), updated_at: T(0) },
+  );
+  const { server, base } = await listen(buildSubApp(onchainAccountsAdminRoutes));
+  try {
+    const bySeason = await fetch(`${base}/api/v4/admin/onchain-accounts?season_id=1`);
+    assert.equal(bySeason.status, 200);
+    assert.deepEqual((await bySeason.json()).data.map((r) => r.id), [411, 410]); // amount DESC
+
+    const combined = await fetch(`${base}/api/v4/admin/onchain-accounts?season_id=1&season_event_id=310`);
+    assert.deepEqual((await combined.json()).data.map((r) => r.id), [410]);
+
+    const badSeason = await fetch(`${base}/api/v4/admin/onchain-accounts?season_id=not-a-number`);
+    assert.equal(badSeason.status, 404);
+  } finally { server.close(); }
+});
+
+test('D5: show — secret_key is served to a FULL admin only; a view-only admin gets the account without it', async () => {
+  db.seasonEvents.push({ id: 320, season_id: 1, name: 'Event G' });
+  db.onchainAccounts.push({
+    id: 420, season_event_id: 320, season_id: 1, amount: 7, identity_uid: 'u', address: 'ut1f', public_key: 'pk-show',
+    secret_key: 'SHOW-ME-ONLY-TO-FULL-ADMINS', tier: 't', description: null, registration_code: 'c20', user_id: 1,
+    is_used: true, used_at: T(0), created_at: T(0), updated_at: T(0),
+  });
+  const full = await listen(buildSubApp(onchainAccountsAdminRoutes));
+  try {
+    const res = await fetch(`${full.base}/api/v4/admin/onchain-accounts/420`);
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.data.secret_key, 'SHOW-ME-ONLY-TO-FULL-ADMINS');
+    // The show route's user projection carries discord for the dialog.
+    assert.equal(body.data.user.discord, 'alice#1234');
+  } finally { full.server.close(); }
+
+  const ro = await listen(buildSubApp(onchainAccountsAdminRoutes, 'readonly'));
+  try {
+    const res = await fetch(`${ro.base}/api/v4/admin/onchain-accounts/420`);
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    // The decision is made on canAdminWrite, not on row shape — the mock's
+    // raw row DOES carry secret_key, so this proves the route never
+    // forwards it for a view-only admin.
+    assert.equal('secret_key' in body.data, false);
+  } finally { ro.server.close(); }
 });
 
 test('D5: index cap tension — omitted per_page silently uses the SPEC default 200 (over the shared 100 cap); an explicit 200 still 422s', async () => {

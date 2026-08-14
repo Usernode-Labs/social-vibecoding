@@ -620,6 +620,11 @@
       "expectText": "Assigned person"
     },
     {
+      "name": "Assignee picker: the viewer’s own pick renders as a re-clickable toggle — deselect by clicking again (#1187)",
+      "path": "/?demo=1&view=kanban&shot=card-menu&card=issue:900009&row=assignee#app/usernode-2d5619/dev",
+      "expectSelector": "#attr-popover .attr-opt[data-attr-opt-mine=\"1\"][title]"
+    },
+    {
       "name": "Dev board: the same ⋯ row mechanism opens the priority picker in the list view",
       "path": "/?demo=1&shot=card-menu&card=issue:900009&row=priority#app/usernode-2d5619/dev",
       "expectSelector": "#attr-popover .attr-opt[data-attr-opt-value=\"high\"]",
@@ -736,7 +741,7 @@
     {
       "name": "Bare #leaderboard renders all three tabs and opens on the standings (#962)",
       "path": "/#leaderboard",
-      "expectSelector": "#leaderboard-screen:not(.hidden):has(#standings-tabs [data-standings-tab=\"challenges\"]) #topochain-leaderboard-root:not(.hidden) #tc-lb-body table"
+      "expectSelector": "#leaderboard-screen:not(.hidden):has(#standings-tabs [data-standings-tab=\"challenges\"]) #topochain-leaderboard-root:not(.hidden) #tc-lb-body :is(table, [data-tc-lb-empty])"
     },
     {
       "name": "The Create app widget sits in the grid and opens the create flow",
@@ -1291,6 +1296,12 @@
       "expectText": "Progress report"
     },
     {
+      "name": "Reporting toolbar offers the period selector and the Discord button (reporting-period)",
+      "path": "/?demo=1&view=report#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-report select#dev-report-period",
+      "expectText": "Generate Discord message"
+    },
+    {
       "name": "Kanban cards show the assignee initial-avatar",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": ".attr-avatar"
@@ -1537,9 +1548,9 @@
       "expectSelector": "#drawer-main-rows > #drawer-row-theme:first-child + #drawer-status-pane"
     },
     {
-      "name": "Drawer footer distinguishes the mobile app version from the web revision",
+      "name": "Drawer footer distinguishes the mobile app version from the platform version",
       "path": "/?shot=menu",
-      "expectText": "Web revision"
+      "expectText": "Platform version"
     },
     {
       "name": "Drawer footer is bottom-anchored and holds GitHub + Share as its last two items",
@@ -1547,9 +1558,9 @@
       "expectSelector": "#header-menu-rows > #drawer-footer.mt-auto > #drawer-row-share:last-child"
     },
     {
-      "name": "Main nav order is Profile, Leaderboard, Settings, Admin & moderation",
+      "name": "Main nav order is Profile, Messages, Leaderboard, Settings, Admin & moderation",
       "path": "/?shot=menu",
-      "expectSelector": "#drawer-row-profile + #drawer-row-leaderboard + #drawer-row-settings + #drawer-row-admin"
+      "expectSelector": "#drawer-row-profile + #drawer-row-messages + #drawer-row-leaderboard + #drawer-row-settings + #drawer-row-admin"
     },
     {
       "name": "Leaderboard drawer row replaces the header trophy",
@@ -1893,7 +1904,7 @@
     {
       "name": "Topochain leaderboard shows standings, not a red error, between events",
       "path": "/#leaderboard/topochain",
-      "expectSelector": "#leaderboard-screen:not(.hidden) #tc-lb-body table"
+      "expectSelector": "#leaderboard-screen:not(.hidden) #tc-lb-body :is(table, [data-tc-lb-empty])"
     },
     {
       "name": "Admin App version screen warns when an OS has no active rule",

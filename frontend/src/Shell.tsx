@@ -62,6 +62,7 @@ import { LeaderboardScreen } from './features/leaderboard';
 import { HeaderMenu } from './features/header/header-menu';
 import { PlatformHeader } from './features/header/platform-header';
 import { NotificationsPanel } from './features/notifications';
+import { MessagesScreen } from './features/messages';
 import { SettingsScreen } from './features/settings';
 import { WorkDrawerPanel } from './features/work-drawer';
 import { Dialogs } from './features/dialogs';
@@ -111,7 +112,7 @@ export function Shell() {
           (#1008) keep the live color serving until the new one is
           health-gated and cut over, so there is nothing to announce and no
           reason to pause writes. A tab running an older build is caught up
-          by the drawer's "Web revision" row (which turns into a
+          by the drawer's "Platform version" row (which turns into a
           tappable "<sha> · reload") or by pull-to-refresh.
       */}
       {/*
@@ -206,6 +207,14 @@ export function Shell() {
       */}
       <AdminScreen />
       <SettingsScreen />
+      {/*
+          Platform-wide direct and group messaging (#488). This is a fully
+          React-owned sibling screen: unlike app-scoped GroupChat, no legacy
+          module writes inside it. It ships hidden and empty for prerender and
+          hydration parity; the hash router publishes visibility and the
+          feature loads authenticated data only after #messages opens.
+      */}
+      <MessagesScreen />
       {/*
           The Topochain leaderboard used to be its own <main> screen here
           (#topochain-leaderboard-screen, Task 14). The header slim-down

@@ -337,8 +337,8 @@ test('the hash router parses #leaderboard/challenges/<event>/<challenge>', () =>
 test('a non-numeric segment degrades to the plain screen', () => {
   const start = appJs.indexOf('_numericSegment(raw)');
   const body = appJs.slice(start, appJs.indexOf('\n  },', start));
-  assert.match(body, /Number\.isInteger\(n\) && n > 0 \? n : null/,
-    'ids must be positive integers — NaN in a fetch URL is a 404 at best');
+  assert.match(body, /Number\.isSafeInteger\(n\) && n > 0 \? n : null/,
+    'BIGINT-backed event and challenge ids remain valid while unsafe values cannot reach fetch URLs');
 });
 
 test('the target is threaded through both navigateToLeaderboard paths', () => {

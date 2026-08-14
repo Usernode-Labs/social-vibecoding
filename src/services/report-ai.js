@@ -39,8 +39,13 @@ function parseOwnerRepo(repoUrl) {
   return m ? { owner: m[1], repo: m[2] } : null;
 }
 
-async function buildReportInput(pool, app) {
+// opts.since (ISO string or null) scopes the report period: merged work
+// before that date is excluded and the previous-report baseline becomes
+// the newest snapshot at/before it, so "since the June report" feeds the
+// June report itself as the comparison point.
+async function buildReportInput(pool, app, opts) {
   const appId = app.id;
+  const since = (opts && opts.since) || null;
 
   // Open GitHub issues — the same anonymous in-process cache the board's
   // github-issues endpoint reads (services/github.js), so a report
@@ -149,15 +154,16 @@ async function buildReportInput(pool, app) {
     since: day(r.created_at),
   }));
 
-  // Completed work, newest first.
+  // Completed work, newest first — scoped to the period when one is set.
+  const mergedParams = since ? [appId, since] : [appId];
   const { rows: mergedRows } = await pool.query(
     `SELECT cs.pr_number, cs.pr_title, u.username, cs.created_at
        FROM chat_sessions cs
        LEFT JOIN users u ON u.id = cs.user_id
-      WHERE cs.app_id = $1 AND cs.status = 'merged'
+      WHERE cs.app_id = $1 AND cs.status = 'merged'${since ? ' AND cs.created_at >= $2' : ''}
       ORDER BY cs.created_at DESC
       LIMIT ${MAX_MERGED + 1}`,
-    [appId]
+    mergedParams
   );
   const merged = mergedRows.slice(0, MAX_MERGED).map((r) => ({
     pr: r.pr_number,
@@ -171,14 +177,18 @@ async function buildReportInput(pool, app) {
   // makes the fingerprint change the moment a snapshot lands — so a
   // just-locked report immediately makes the draft regenerable. Bounded
   // clips: this is prompt context, not display data.
+  // With a period selected, the baseline is the newest snapshot AT OR
+  // BEFORE the period start (inclusive — selecting a previous report
+  // feeds that exact report), not the newest overall.
   let previousReport = null;
   try {
+    const snapParams = since ? [appId, since] : [appId];
     const { rows: snapRows } = await pool.query(
       `SELECT ai_json, locked_at FROM app_report_snapshots
-        WHERE app_id = $1 AND ai_json IS NOT NULL
+        WHERE app_id = $1 AND ai_json IS NOT NULL${since ? ' AND locked_at <= $2' : ''}
         ORDER BY locked_at DESC, id DESC
         LIMIT 1`,
-      [appId]
+      snapParams
     );
     const snap = snapRows[0];
     if (snap && snap.ai_json) {
@@ -197,6 +207,10 @@ async function buildReportInput(pool, app) {
     appName: clip(app.name || app.slug, 120),
     previousReport,
     issues, review, gov, sessions, merged,
+    // Day-granular like every other date, so the fingerprint changes
+    // with the period but not with sub-day noise. Only present when a
+    // period is set, so unscoped inputs hash exactly as before.
+    ...(since ? { periodStart: day(since) } : {}),
     counts: {
       openIssues: issues.length,
       awaitingReview: review.length + gov.length,
@@ -244,12 +258,13 @@ function shapeRow(r) {
     model: r.model || null,
     generatedBy: r.generated_by != null ? Number(r.generated_by) : null,
     generatedAt: r.generated_at,
+    periodStart: r.period_start || null,
   };
 }
 
 async function getCached(pool, appId) {
   const { rows } = await pool.query(
-    'SELECT input_hash, narrative, highlights_json, risks_json, owners_json, model, generated_by, generated_at FROM app_report_ai WHERE app_id = $1',
+    'SELECT input_hash, narrative, highlights_json, risks_json, owners_json, model, generated_by, generated_at, period_start FROM app_report_ai WHERE app_id = $1',
     [appId]
   );
   return shapeRow(rows[0]);
@@ -259,7 +274,7 @@ async function getCached(pool, appId) {
 // click 409s instead of double-billing.
 const inFlight = new Set();
 
-async function generateForApp({ pool, config, app, userId }) {
+async function generateForApp({ pool, config, app, userId, since }) {
   if (inFlight.has(app.id)) {
     const err = new Error('A report is already being generated for this app');
     err.code = 'generation_in_flight';
@@ -267,7 +282,7 @@ async function generateForApp({ pool, config, app, userId }) {
   }
   inFlight.add(app.id);
   try {
-    const { input, knownUsernames } = await buildReportInput(pool, app);
+    const { input, knownUsernames } = await buildReportInput(pool, app, { since });
     const hash = fingerprint(input);
     const cached = await getCached(pool, app.id);
     if (cached && cached.inputHash === hash) return { summary: cached, cached: true };
@@ -297,16 +312,18 @@ async function generateForApp({ pool, config, app, userId }) {
     }
 
     const { rows } = await pool.query(
-      `INSERT INTO app_report_ai (app_id, input_hash, narrative, highlights_json, risks_json, owners_json, model, generated_by, generated_at)
-       VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6::jsonb, $7, $8, NOW())
+      `INSERT INTO app_report_ai (app_id, input_hash, narrative, highlights_json, risks_json, owners_json, model, generated_by, period_start, generated_at)
+       VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6::jsonb, $7, $8, $9, NOW())
        ON CONFLICT (app_id) DO UPDATE SET
          input_hash = EXCLUDED.input_hash, narrative = EXCLUDED.narrative,
          highlights_json = EXCLUDED.highlights_json,
          risks_json = EXCLUDED.risks_json, owners_json = EXCLUDED.owners_json,
-         model = EXCLUDED.model, generated_by = EXCLUDED.generated_by, generated_at = NOW()
-       RETURNING input_hash, narrative, highlights_json, risks_json, owners_json, model, generated_by, generated_at`,
+         model = EXCLUDED.model, generated_by = EXCLUDED.generated_by,
+         period_start = EXCLUDED.period_start, generated_at = NOW()
+       RETURNING input_hash, narrative, highlights_json, risks_json, owners_json, model, generated_by, generated_at, period_start`,
       [app.id, hash, result.narrative, JSON.stringify(result.highlights || []),
-        JSON.stringify(result.risks), JSON.stringify(result.owners), result.model, userId]
+        JSON.stringify(result.risks), JSON.stringify(result.owners), result.model, userId,
+        since || null]
     );
 
     // Debit the Haiku call to the clicking user — into the BYOK bucket

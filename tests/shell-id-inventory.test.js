@@ -111,6 +111,12 @@ const ADDED_IDS = {
   // BOTH blocks above in place, so the copy buttons already there pick up the
   // corrected rules — hence a field and no button of its own.
   'connector-name-spelling': 'Settings → Connectors input that rewrites both allow-rule blocks for a connector registered under a different server name (#1222 follow-up).',
+  'messages-screen': 'Fully React-owned platform direct/group Messages screen (#488).',
+  'messages-create-dialog': 'React-owned direct/group conversation creation dialog (#488).',
+  'messages-members-dialog': 'React-owned group membership and invitation dialog (#488).',
+  'messages-share-dialog': 'React-owned typed Usernode item chooser for Messages (#488).',
+  'drawer-row-messages': 'Platform Messages destination in the global navigation drawer (#488).',
+  'drawer-messages-badge': 'Aggregate unread conversation count in the global navigation drawer (#488).',
 };
 
 test('the shell still carries every id in the frozen baseline', () => {

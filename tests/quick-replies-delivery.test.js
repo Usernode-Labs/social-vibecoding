@@ -74,6 +74,15 @@ test('WS handler covers suggestions and quick_replies (#437 rule)', () => {
     "handleSessionEvent must handle 'quick_replies' for the same reason");
 });
 
+test('checks_ready refreshes the focused underway session lifecycle', () => {
+  const checksBlock = sliceBetween(
+    handleSessionEventBody, "if (data.event === 'checks_ready') {", '\n    }',
+    'App.handleSessionEvent checks_ready block'
+  );
+  assert.match(checksBlock, /refreshCurrentSessionStatus\(data\.sessionId\)/,
+    'an open session must advance while its background checks run');
+});
+
 test('every WS-broadcast type emitted by send() has a handleSessionEvent case (#437, set-difference)', () => {
   // The interactive turn's send() broadcasts every type NOT in SSE_ONLY;
   // the headless send() broadcasts everything it emits. Any broadcast type

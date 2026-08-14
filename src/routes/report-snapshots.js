@@ -121,6 +121,7 @@ function reportSnapshotRoutes(config) {
           owners: cached.owners,
           model: cached.model,
           generatedAt: cached.generatedAt,
+          periodStart: cached.periodStart,
         } : null;
         const { rows } = await pool.query(
           `INSERT INTO app_report_snapshots (app_id, html, ai_json, locked_by)

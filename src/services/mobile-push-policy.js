@@ -71,6 +71,7 @@ function daysSince(value, now) {
 // missing (e.g. a mention without a sender) — null means the generic copy.
 function buildCopy(kind, context, now) {
   const app = cleanText(context.appName);
+  const conversation = cleanText(context.conversationTitle);
   const actor = cleanText(context.sourceUsername);
   const message = cleanText(context.messageContent);
   const detail = cleanText(context.detail);
@@ -80,9 +81,38 @@ function buildCopy(kind, context, now) {
   const label = cleanText(context.sessionTitle) || cleanText(context.prTitle)
     || (GENERATED_BRANCH_RE.test(branch) ? '' : branch);
   const withApp = (text) => (app ? `${text} · ${app}` : text);
+  const withConversation = (text) => (conversation ? `${text} · ${conversation}` : text);
   const quoted = label ? `"${truncate(label, EMBED_TITLE_MAX)}"` : '';
   const quotedTitle = label ? `"${truncate(label, TITLE_EMBED_MAX)}"` : '';
   switch (kind) {
+    case 'conversation_invite':
+      return {
+        title: withConversation(actor ? `@${actor} invited you to a conversation`
+          : 'You have a conversation invitation'),
+        body: 'Open Messages to accept or decline',
+      };
+    case 'conversation_message':
+      return {
+        title: withConversation(actor ? `@${actor} sent you a message` : 'New message'),
+        body: message,
+      };
+    case 'conversation_mention':
+      return actor && {
+        title: withConversation(`@${actor} mentioned you`),
+        body: message,
+      };
+    case 'conversation_reply':
+      return actor && {
+        title: withConversation(`@${actor} replied to you`),
+        body: message,
+      };
+    case 'conversation_reaction':
+      return actor && {
+        title: withConversation(detail
+          ? `@${actor} reacted ${detail} to your message`
+          : `@${actor} reacted to your message`),
+        body: message && `You said: ${message}`,
+      };
     case 'mention':
       return actor && {
         title: withApp(quotedTitle

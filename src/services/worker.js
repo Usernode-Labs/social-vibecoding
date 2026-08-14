@@ -235,6 +235,38 @@ function summarizeToolResult(block) {
   return trimmed.length > 120 ? `${trimmed.slice(0, 117)}…` : trimmed;
 }
 
+function usageToken(value) {
+  if (value == null) return null;
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? Math.round(number) : null;
+}
+
+function applyClaudeResultUsage(usage, state) {
+  if (!usage || typeof usage !== 'object') return;
+  const values = {
+    inputTokens: usageToken(usage.input_tokens),
+    cachedInputTokens: usageToken(usage.cache_read_input_tokens),
+    cacheWriteInputTokens: usageToken(
+      usage.cache_creation_input_tokens ?? usage.cache_write_input_tokens,
+    ),
+    outputTokens: usageToken(usage.output_tokens),
+    reasoningOutputTokens: usageToken(
+      usage.reasoning_output_tokens ?? usage.output_tokens_details?.thinking_tokens,
+    ),
+  };
+  if (!Object.values(values).some((value) => value != null)) return;
+  state.usageSeen = true;
+  for (const [key, value] of Object.entries(values)) {
+    if (value != null) state[key] = value;
+  }
+}
+
+function safeResultSubtype(value) {
+  if (typeof value !== 'string') return null;
+  const subtype = value.trim();
+  return /^[a-z][a-z0-9_]{0,63}$/.test(subtype) ? subtype : null;
+}
+
 function applyStreamEvent(event, onProgress, state) {
   // Capture the CC session id on the very first event so the caller can
   // persist it even if CC aborts before emitting a `result` event.
@@ -294,6 +326,8 @@ function applyStreamEvent(event, onProgress, state) {
     }
   } else if (event.type === 'result') {
     state.lastResultText = event.result || state.lastResultText;
+    applyClaudeResultUsage(event.usage, state);
+    state.resultSubtype = safeResultSubtype(event.subtype) || state.resultSubtype;
     if (event.cost_usd != null || event.total_cost_usd != null) {
       state.providerCostSeen = true;
     }
@@ -430,7 +464,9 @@ function newWatchState() {
     // ledger intent exists before that boundary, so the aggregate report
     // needs this evidence to exclude a stop/failure during spin-up.
     providerDispatched: false,
-    // Retained Codex usage (review #3) for direct attribution to agent_turns.
+    // Retained terminal-result usage. Codex persists these values to
+    // agent_turns; Claude telemetry records the same nullable fields from its
+    // final result event. Missing provider usage remains null.
     inputTokens: null,
     cachedInputTokens: null,
     outputTokens: null,
@@ -440,6 +476,7 @@ function newWatchState() {
     ccIsError: false,
     agentError: null,
     usageSeen: false,
+    resultSubtype: null,
     // plan.md 5.6: missing usage stays null, never a false zero.
     cacheWriteInputTokens: null,
     ccExit: null,
@@ -497,9 +534,26 @@ function codingRunOutcome(state) {
     || (state.agentExit != null && state.agentExit !== 0)
     || (state.ccExit != null && state.ccExit !== 0)
     || (state.exitCode != null && state.exitCode !== 0));
-  return failed
-    ? { outcome: 'error', stopReason: 'agent_error' }
-    : { outcome: 'success', stopReason: 'end_turn' };
+  if (!failed) return { outcome: 'success', stopReason: 'end_turn' };
+  if (state && state.markerlessCause) {
+    return { outcome: 'error', stopReason: `markerless_${state.markerlessCause}` };
+  }
+  if (state && state.resultSubtype && state.resultSubtype !== 'success') {
+    return { outcome: 'error', stopReason: state.resultSubtype };
+  }
+  if (state && state.agentRetryFresh) {
+    return { outcome: 'error', stopReason: 'resume_thread_missing' };
+  }
+  if (state && state.agentExit != null && state.agentExit !== 0) {
+    return { outcome: 'error', stopReason: 'agent_exit_nonzero' };
+  }
+  if (state && state.ccExit != null && state.ccExit !== 0) {
+    return { outcome: 'error', stopReason: 'claude_exit_nonzero' };
+  }
+  if (state && state.exitCode != null && state.exitCode !== 0) {
+    return { outcome: 'error', stopReason: 'worker_exit_nonzero' };
+  }
+  return { outcome: 'error', stopReason: 'agent_error' };
 }
 
 function claudeBillingPath({ directByok, byokCents, costUsd }) {
@@ -509,9 +563,12 @@ function claudeBillingPath({ directByok, byokCents, costUsd }) {
   const totalCents = Number(costUsd) * 100;
   if (Number.isFinite(totalCents) && totalCents > 0
       && observedByok >= totalCents - 0.5) return 'anthropic_byok';
-  // A proxy-routed run may cross the allowance boundary mid-turn. The
-  // provider reports one total cost, so one event cannot truthfully assign
-  // that mixed total to either payer.
+  if (Number.isFinite(totalCents) && totalCents > 0) {
+    // A proxy-routed run can cross the allowance boundary mid-turn. Keep the
+    // provider-reported total intact while naming the two-payer path instead
+    // of presenting a known mixed run as missing attribution.
+    return 'anthropic_mixed';
+  }
   return 'unknown';
 }
 
@@ -537,13 +594,14 @@ function recordClaudeCodingRun({
     requestedModel,
     servedModel: (result && result.agentModel) || requestedModel || null,
     billingPath: claudeBillingPath({ directByok, byokCents, costUsd }),
-    // Claude Code currently gives this boundary a total cost only. Do not
-    // infer token counts from cost or turn duration.
-    inputTokens: null,
-    cacheReadInputTokens: null,
-    cacheWriteInputTokens: null,
-    outputTokens: null,
-    reasoningOutputTokens: null,
+    // Current Claude result events expose aggregate run usage. Older or
+    // partial result shapes keep these fields null; no values are inferred
+    // from cost or duration.
+    inputTokens: result && result.inputTokens,
+    cacheReadInputTokens: result && result.cachedInputTokens,
+    cacheWriteInputTokens: result && result.cacheWriteInputTokens,
+    outputTokens: result && result.outputTokens,
+    reasoningOutputTokens: result && result.reasoningOutputTokens,
     costUsd,
     costSource: costUsd == null ? 'unavailable' : 'provider_reported',
     durationMs,

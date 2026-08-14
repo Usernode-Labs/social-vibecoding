@@ -29,7 +29,7 @@
 import { adoptKitSurface } from '../../lib/kit-surface';
 
 // Drawer status/version rows (header slim-down): the kudos + AI-credit meters
-// render into #drawer-status-pane, and the web revision + mobile-app release +
+// render into #drawer-status-pane, and the platform version + mobile-app release +
 // fork lineage label render into #drawer-footer — none of them in the header
 // any more. The dApp SHA does not belong in this platform-information block.
 const DrawerStatus = {
@@ -77,7 +77,7 @@ const DrawerStatus = {
   },
 
   // Mirror "a deploy is in flight" onto the hamburger. Read straight
-  // off the rendered web revision rather than threading state: its markup is
+  // off the rendered platform version row rather than threading state: its markup is
   // already the single source of truth for the platform deploying state.
   // Scoped to #drawer-footer so a deploying dApp pill on a home tile can never
   // light this dot.
@@ -92,8 +92,8 @@ const DrawerStatus = {
 
 // Slide-out navigation drawer — available at every viewport width
 // (#122). Top to bottom: the kudos/AI-credit status pane, the theme
-// selector directly below it, the native Node/Wallet rows, the four
-// main nav rows (Profile, Leaderboard, Settings, Admin & moderation),
+// selector directly below it, the native Node/Wallet rows, the five
+// main nav rows (Profile, Messages, Leaderboard, Settings, Admin & moderation),
 // and a bottom-anchored footer carrying the web/mobile-app releases plus
 // GitHub + Share. (Members & visibility moved to the Dev "+" menu — #645.)
 const HeaderMenu = {
@@ -378,6 +378,8 @@ const HeaderMenu = {
     // separate Challenges / Topochain-seasons rows that used to sit
     // beside it are gone; they're tabs of this one screen now.
     document.getElementById('drawer-row-leaderboard')
+      ?.addEventListener('click', () => HeaderMenu.close());
+    document.getElementById('drawer-row-messages')
       ?.addEventListener('click', () => HeaderMenu.close());
     // Share — a dialog of its own, so it waits for the drawer to be
     // gone rather than fading in across the drawer's exit (#977).

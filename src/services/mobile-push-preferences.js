@@ -52,6 +52,19 @@ const CATEGORY_DEFINITIONS = Object.freeze([
     defaultEnabled: false,
     kinds: Object.freeze(['reaction', 'kudos']),
   }),
+  Object.freeze({
+    key: 'messages',
+    label: 'Messages',
+    description: 'Conversation invitations, messages, mentions, replies, and reactions.',
+    defaultEnabled: true,
+    kinds: Object.freeze([
+      'conversation_invite',
+      'conversation_message',
+      'conversation_mention',
+      'conversation_reply',
+      'conversation_reaction',
+    ]),
+  }),
 ]);
 
 const CATEGORY_BY_KEY = new Map(CATEGORY_DEFINITIONS.map((category) => (

@@ -193,8 +193,9 @@ function topicAttributeRoutes(config) {
         return res.status(400).json({ error: 'Invalid field' });
       }
 
+      const linkedIssues = await linkedIssuesFor(pool, app.id, t);
       const data = await attrs.clearVote(
-        pool, app.id, t.targetType, t.targetRef, field, req.user.id
+        pool, app.id, t.targetType, t.targetRef, field, req.user.id, linkedIssues
       );
       res.json(data);
     } catch (err) {

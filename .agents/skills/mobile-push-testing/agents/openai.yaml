@@ -1,0 +1,4 @@
+interface:
+  display_name: "Mobile Push Testing"
+  short_description: "Verify mobile push delivery end to end"
+  default_prompt: "Use $mobile-push-testing to verify mobile push delivery and on-device rendering."
