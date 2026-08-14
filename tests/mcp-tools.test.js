@@ -392,6 +392,146 @@ test('a degraded board is reported as degraded, so no duplicate found proves not
   }
 });
 
+// ── #1223: a request you found has to be readable ──────────────────────
+//
+// The other half of the same cap. list_requests clips every body it prints,
+// and no call read ONE request: `detail: "full"` decides whether bodies come
+// back rather than how much of each, `query` searches the whole body but
+// still returns the clipped one, and there was no per-request read at all.
+// #1209 sharpened it — create_request had just started storing whole reports
+// verbatim, so "look at request #1221" was a thing this connector could not
+// do, on exactly the reports most worth reading.
+
+test('a clipped body says how much there is, and a full read returns it', () => {
+  const long = `${'Evidence, reasoning, and the causal chain. '.repeat(200)}And the fix.`;
+  assert.ok(long.length > tools.MAX_BODY_CHARS);
+  assert.ok(long.length < tools.MAX_REQUEST_BODY_CHARS);
+
+  // The board scan: still clipped — a page of these is what would flood the
+  // model's context — but no longer silently.
+  const scanned = tools.shapeRequest({ number: 1221, title: 'A long report', body: long });
+  assert.match(scanned.body, /\[truncated\]<\/untrusted-content>$/);
+  assert.equal(scanned.bodyChars, long.length, 'how long the stored one is');
+  assert.equal(scanned.bodyComplete, false, 'and that this is not all of it');
+
+  // The same request, read whole: the WRITE limit applies, not the display
+  // cap, so anything create_request stored can be read back.
+  const read = tools.shapeRequest(
+    { number: 1221, title: 'A long report', body: long },
+    { bodyMax: tools.MAX_REQUEST_BODY_CHARS }
+  );
+  assert.equal(read.bodyComplete, true);
+  assert.equal(read.bodyChars, long.length);
+  assert.ok(!read.body.includes('[truncated]'));
+  assert.ok(read.body.includes('And the fix.'), 'including the part the clip dropped');
+  assert.match(read.body, /^<untrusted-content>/, 'read in full is still read as data');
+
+  // A short body is complete either way, and titles mode carries neither
+  // field — there is no body for them to describe.
+  const short = tools.shapeRequest({ number: 7, title: 'Dark mode', body: 'At night.' });
+  assert.equal(short.bodyChars, 9);
+  assert.equal(short.bodyComplete, true);
+  const titlesOnly = tools.shapeRequest({ number: 7, title: 'Dark mode', body: 'At night.' },
+    { withBody: false });
+  assert.ok(!('bodyChars' in titlesOnly) && !('bodyComplete' in titlesOnly));
+});
+
+test('get_request returns the whole description the board scan cut', async () => {
+  const body = `${'Section one, at length. '.repeat(300)}Verification steps, at the end.`;
+  assert.ok(body.length > tools.MAX_BODY_CHARS && body.length < tools.MAX_REQUEST_BODY_CHARS);
+  const issues = [{ number: 1221, title: 'A long report', body, user: 'evan', state: 'open' }];
+  const { handlers, calls, restore } = connector(() => ({ issues, truncatedList: false }));
+  try {
+    // What the scan hands back, and what it now says about what it kept.
+    const scanned = (await handlers.get('list_requests')({
+      slug: 'recipe-box', detail: 'full',
+    })).structuredContent;
+    assert.equal(scanned.requests[0].bodyComplete, false);
+    assert.equal(scanned.requests[0].bodyChars, body.length);
+
+    const full = (await handlers.get('get_request')({
+      slug: 'recipe-box', number: 1221,
+    })).structuredContent;
+    assert.equal(full.number, 1221);
+    assert.equal(full.bodyChars, body.length);
+    assert.equal(full.bodyComplete, true);
+    assert.ok(full.body.includes('Verification steps, at the end.'),
+      'the tail the clip dropped is the whole point');
+    assert.ok(!full.body.includes('[truncated]'));
+    assert.match(full.body, /^<untrusted-content>/);
+    assert.match(full.title, /^<untrusted-content>/);
+    assert.equal(full.state, 'open');
+    assert.equal(full.webPath, `${ORIGIN}/#app/recipe-box/dev/issues/1221`);
+
+    // Same route the scan already uses: no new platform endpoint, and
+    // nothing added to the connector allowlist to read what it could reach.
+    assert.deepEqual([...new Set(calls.map((c) => `${c.method} ${c.pathname}`))],
+      ['GET /api/apps/recipe-box/github-issues']);
+  } finally {
+    restore();
+  }
+});
+
+test('get_request separates "not on the board" from "could not read the board"', async () => {
+  const open = connector(() => ({ issues: [{ number: 4, title: 'Four' }], truncatedList: false }));
+  try {
+    const missing = await open.handlers.get('get_request')({ slug: 'recipe-box', number: 9 });
+    assert.equal(missing.isError, true);
+    assert.equal(missing.structuredContent.code, 'no_access');
+    assert.match(missing.structuredContent.message, /not open on this app/);
+
+    // Bad input is refused here, not sent to the platform as a path segment.
+    const bad = await open.handlers.get('get_request')({ slug: 'Recipe Box', number: 4 });
+    assert.equal(bad.structuredContent.code, 'invalid_request');
+  } finally {
+    open.restore();
+  }
+
+  // A degraded board is the case that matters: "I did not find it" is not
+  // "it is not there", and a caller following a number out of a stale list
+  // has to be able to tell those apart.
+  const degraded = connector(() => ({ issues: [], note: 'rate limited' }));
+  try {
+    const res = await degraded.handlers.get('get_request')({ slug: 'recipe-box', number: 9 });
+    assert.equal(res.isError, true);
+    assert.match(res.structuredContent.message, /rate limited/);
+    assert.match(res.structuredContent.message, /may exist/);
+  } finally {
+    degraded.restore();
+  }
+
+  // And it is a read, so it refuses without the read scope — before any
+  // platform call.
+  const unscoped = connector(() => ({ issues: [] }), { scopes: [] });
+  try {
+    const res = await unscoped.handlers.get('get_request')({ slug: 'recipe-box', number: 4 });
+    assert.equal(res.isError, true);
+    assert.equal(res.structuredContent.code, 'insufficient_scope');
+    assert.equal(unscoped.calls.length, 0);
+  } finally {
+    unscoped.restore();
+  }
+});
+
+test('get_request reads at the write limit, and says where that limit comes from', () => {
+  const block = registration('get_request');
+  assert.match(block, /bodyMax: MAX_REQUEST_BODY_CHARS/,
+    'the full read is capped by what create_request can store, not by the display cap');
+  assert.match(block, /annotations: readAnnotations/);
+  assert.ok(!/_meta: ACTING_TOOL_META/.test(block), 'reading a request acts on nothing');
+  const desc = block.slice(block.indexOf('description:'), block.indexOf('inputSchema:'));
+  assert.match(desc, /\$\{MAX_REQUEST_BODY_CHARS\}/, 'the description names both caps');
+  assert.match(desc, /\$\{MAX_BODY_CHARS\}/);
+  assert.match(desc, /untrusted user content/);
+
+  // The clipped surface points at it, in both places a model might read:
+  // the list tool's own description and the server instructions.
+  const list = registration('list_requests');
+  assert.match(list.slice(list.indexOf('description:'), list.indexOf('inputSchema:')),
+    /get_request/, 'list_requests names the call that returns the rest');
+  assert.match(tools.SERVER_INSTRUCTIONS, /get_request/);
+});
+
 test('submit_work takes shape (4) exactly as documented: proposalId + branch', async () => {
   // The refusal this replaces cost a round trip and read as "shape (4) is
   // wrong" rather than "one field is missing" (#1217).
@@ -547,7 +687,7 @@ test('the registered tool surface is exactly this, and nothing more', () => {
   const registered = [...SRC.matchAll(/server\.registerTool\('([a-z_]+)'/g)].map((m) => m[1]);
   assert.deepEqual(registered.sort(), [
     'answer_questions', 'create_request', 'get_app', 'get_platform_build',
-    'get_platform_conventions', 'get_proposal', 'list_apps',
+    'get_platform_conventions', 'get_proposal', 'get_request', 'list_apps',
     'list_my_proposals', 'list_requests', 'prepare_work',
     'start_platform_build', 'submit_platform_build', 'submit_work', 'whoami',
   ]);
