@@ -3576,6 +3576,24 @@
       return this._demoParam('bridgediag') === 'demo';
     },
 
+    // ── `?widgeticons=demo` ───────────────────────────────────────────
+    //
+    // Screenshot-state deep link for the widget-icon diagnostics box,
+    // same reasoning as `?usernodedemo=ios` above: every value the box
+    // reports comes from the iOS widget registry, so on a browser the
+    // whole thing is empty and the row cannot be reviewed or captured
+    // from any URL. Fixed snapshot — no bridge call, no writes.
+    //
+    // The snapshot is deliberately the interesting state rather than the
+    // healthy one: the capability list "couldn't say" (a degraded
+    // getBridgeInfo, which is the failure that made the released shell
+    // fix invisible), overridden by a behavioural verdict of `supported`
+    // bound to a demo build, with one entry still missing its dark face
+    // and one whose marker doesn't match what SV last recorded.
+    _widgetIconsDemo() {
+      return this._demoParam('widgeticons') === 'demo';
+    },
+
     // Both demo links accept their param in the hash query or the search
     // string, because a hash route carries its own query
     // (`/#settings/usernode?usernodedemo=ios`) while a plain capture URL
@@ -3627,6 +3645,190 @@
         batteryOptDisabled: null,
         deviceManufacturer: null,
       },
+    },
+
+    DEMO_WIDGET_ICON_DIAGNOSTICS: {
+      mechanism: 'widget',
+      registryLoaded: true,
+      scheme: 'dark',
+      capability: null,
+      verdict: 'supported',
+      resolved: true,
+      build: { appVersion: '0.0.0-demo', buildNumber: '0' },
+      confirmTried: true,
+      lastHealAt: 0,
+      lastHealOutcome: 'sent 1',
+      readError: {
+        method: 'getBridgeInfo',
+        kind: 'timeout',
+        message: 'Staging demo — the capability probe did not answer',
+        at: 0,
+      },
+      entries: [
+        {
+          id: 'demo-1', name: 'Weather', foreign: false, unknownApp: false,
+          hasIcon: true, hasIconDark: true,
+          recorded: 'tile:5:dual:🌤', desired: 'tile:5:dual:🌤', matches: true,
+        },
+        {
+          id: 'demo-2', name: 'Ledger', foreign: false, unknownApp: false,
+          hasIcon: true, hasIconDark: false,
+          recorded: 'tile:5:dual:', desired: 'tile:5:dual:', matches: true,
+        },
+        {
+          id: 'demo-3', name: 'Notes', foreign: false, unknownApp: false,
+          hasIcon: true, hasIconDark: null,
+          recorded: 'tile:5:light:📝', desired: 'tile:5:dual:📝', matches: false,
+        },
+      ],
+    },
+
+    // The snapshot Home keeps of the icon path. Read-only and synchronous
+    // — the "Re-check" button below is what performs bridge I/O.
+    //
+    // Reached through `window.Home` rather than an import: home.js and
+    // settings.js are both bundle modules, but Home is the owner of this
+    // state and publishes itself as a global for exactly this kind of
+    // cross-screen read (see the note above its publication).
+    _widgetIconDiagnostics() {
+      // The demo's heal timestamp is stamped at read time, not frozen in
+      // the literal: a fixed `lastHealAt` would print as "never", and a
+      // box that says "never checked" beside "sent 1" reads as a bug in
+      // the box rather than a sample of a healthy pass.
+      if (this._widgetIconsDemo()) {
+        return Object.assign({}, this.DEMO_WIDGET_ICON_DIAGNOSTICS, {
+          lastHealAt: Date.now() - 42000,
+        });
+      }
+      const home = window.Home;
+      if (!home || typeof home.widgetIconDiagnostics !== 'function') return null;
+      try {
+        return home.widgetIconDiagnostics();
+      } catch (err) {
+        console.warn('[settings] widgetIconDiagnostics failed:', err);
+        return null;
+      }
+    },
+
+    // ── Settings → "Usernode app — widget icons" ──────────────────────
+    //
+    // Gated on being in the app (or the demo link), NEVER on the
+    // capability or the mechanism: this box exists to explain why the
+    // widget looks wrong, and every interesting case is one where some
+    // part of that chain answered "no". Hiding it on a "no" would hide it
+    // exactly when it is wanted — the same mistake the connection panel
+    // above was written to undo.
+    _renderWidgetIconsSection(parent) {
+      const diag = this._widgetIconDiagnostics();
+      if (!diag) return;
+      const box = this._unSection(parent, 'Usernode app — widget icons',
+        'What the homescreen widget was told to show, and what it reports back.');
+      if (this._widgetIconsDemo()) {
+        box.appendChild(this._unEl('p',
+          'text-xs font-medium text-amber-600 dark:text-amber-400 mb-2',
+          'Staging demo — sample data'));
+      }
+      const isWidget = diag.mechanism === 'widget';
+      this._unStatusRow(box, 'Widget shortcuts', isWidget, 'Available',
+        diag.mechanism ? `Not this device (${diag.mechanism})` : 'Not available',
+        { id: 'settings-widget-mechanism-row' });
+      this._unStatusRow(box, 'Pinned registry', diag.registryLoaded === true,
+        `Loaded — ${diag.entries.length} pinned`, 'Could not be read',
+        { id: 'settings-widget-registry-row' });
+      // Tri-state, and the third state is the point: `has()` used to
+      // collapse "couldn't say" into "no", which is what latched the
+      // single-face path for a whole page load.
+      this._unStatusRow(box, 'Dark icon capability', diag.capability === true,
+        'Advertised by the app',
+        diag.capability === false ? 'Not advertised' : 'The app couldn’t say',
+        { id: 'settings-widget-capability-row' });
+      this._unStatusRow(box, 'Confirmed by the widget',
+        diag.verdict === 'supported', 'Stores both faces',
+        diag.verdict === 'unsupported' ? 'Single face only' : 'Not confirmed yet',
+        { id: 'settings-widget-verdict-row' });
+      const sending = diag.resolved === true
+        ? 'Light + dark pair'
+        : (diag.resolved === false
+          ? `Single face (${diag.scheme})`
+          : 'Undecided — single face for now');
+      this._unStatusRow(box, 'Sending', diag.resolved === true, sending, sending,
+        { id: 'settings-widget-sending-row' });
+      const build = diag.build
+        ? `${diag.build.appVersion} (${diag.build.buildNumber || '?'})`
+        : 'unknown — the verdict is re-confirmed each time';
+      box.appendChild(this._unEl('p',
+        'text-xs text-zinc-500 dark:text-zinc-500 mt-2',
+        `Verdict bound to app version: ${build}`));
+      const healedAt = diag.lastHealAt
+        ? this._widgetIconTime(diag.lastHealAt)
+        : 'never';
+      box.appendChild(this._unEl('p',
+        'text-xs text-zinc-500 dark:text-zinc-500',
+        `Last icon check: ${healedAt}` +
+        (diag.lastHealOutcome ? ` — ${diag.lastHealOutcome}` : '')));
+      if (diag.readError) {
+        const reason = this.USERNODE_READ_ERROR_REASONS[diag.readError.kind] ||
+          this.USERNODE_READ_ERROR_FALLBACK;
+        box.appendChild(this._unEl('p',
+          'text-xs text-amber-600 dark:text-amber-400 mt-2',
+          `${diag.readError.method}: ${reason}`));
+      }
+      this._renderWidgetIconEntries(box, diag);
+      if (!this._widgetIconsDemo()) {
+        this._unButton(box, 'Re-check icons', async () => {
+          const home = window.Home;
+          if (home && typeof home._refreshWidgetItems === 'function') {
+            // Clears the one-attempt-per-load cap so the pass this
+            // triggers actually re-sends anything it finds wrong.
+            home._iconHealTried = null;
+            await home._refreshWidgetItems();
+          }
+          this._renderUsernodeBody();
+        });
+      }
+    },
+
+    _widgetIconTime(ms) {
+      try { return new Date(ms).toLocaleTimeString(); } catch (_) { return String(ms); }
+    },
+
+    // One line per pinned entry: what the widget says it holds, and
+    // whether that matches what SV believes it last sent. A mismatch here
+    // is the difference between "SV never sent it" and "SV sent it and
+    // the app didn't keep it" — which are different bugs in different
+    // repositories, and were previously indistinguishable from outside.
+    _renderWidgetIconEntries(box, diag) {
+      if (!diag.entries.length) {
+        box.appendChild(this._unEl('p',
+          'text-xs text-zinc-500 dark:text-zinc-500 mt-2',
+          'No shortcuts are pinned to the widget.'));
+        return;
+      }
+      const list = this._unEl('div', 'mt-3 space-y-1');
+      list.id = 'settings-widget-icon-entries';
+      diag.entries.forEach((entry) => {
+        const flag = (v) => (v === true ? 'yes' : (v === false ? 'no' : '—'));
+        const row = this._unEl('div',
+          'flex items-center gap-2 text-xs ' +
+          'text-zinc-600 dark:text-zinc-400');
+        const healthy = entry.foreign
+          ? true
+          : entry.hasIcon !== false && entry.matches;
+        row.appendChild(this._unEl('span',
+          'w-1.5 h-1.5 rounded-full shrink-0 ' +
+          (healthy ? 'bg-emerald-500' : 'bg-amber-500')));
+        row.appendChild(this._unEl('span',
+          'text-zinc-700 dark:text-zinc-300', entry.name));
+        const note = entry.foreign
+          ? 'pinned by another app'
+          : (entry.unknownApp
+            ? 'app not loaded'
+            : `icon ${flag(entry.hasIcon)} · dark ${flag(entry.hasIconDark)} · ` +
+              `sent ${entry.matches ? 'current' : 'stale'}`);
+        row.appendChild(this._unEl('span', 'ml-auto', note));
+        list.appendChild(row);
+      });
+      box.appendChild(list);
     },
 
     _bridgeDiagnostics() {
@@ -3796,7 +3998,7 @@
       // device whose privileged handshake is refused.
       const bridge = window.usernode;
       const demo = this._unDemoMode();
-      const gated = this._bridgeDiagDemo() || !!demo ||
+      const gated = this._bridgeDiagDemo() || this._widgetIconsDemo() || !!demo ||
         (!!bridge && bridge.isNative === true);
       // The gate resolves asynchronously downstream, so the "Usernode app"
       // menu row is only settled here — re-render the nav either way.
@@ -4586,6 +4788,11 @@
           if (window.PlatformUI) PlatformUI.toast('Challenge state reset');
         }, { danger: true });
       }
+
+      // Widget icons. Above the general diagnostics box because it is the
+      // one someone arrives here for: "the widget tile is the wrong
+      // colour" is a user-visible symptom, not a debugging tool.
+      this._renderWidgetIconsSection(section);
 
       // Diagnostics. The two native screens are reachable whether or not
       // the snapshot loaded — they are exactly what someone debugging a

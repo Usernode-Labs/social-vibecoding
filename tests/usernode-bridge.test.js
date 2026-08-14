@@ -86,6 +86,18 @@ test('hosted bridge forwards the paired homescreen-shortcut icons', () => {
   assert.match(call[0], /icon_url_dark: opts\.icon_url_dark \|\| null/,
     'the dark companion asset reaches the native side');
   assert.match(call[0], /silent: opts\.silent === true/);
+  // `|| null` rather than a conditional spread, and that matters more
+  // now than it did: SV decides what the installed build can store by
+  // sending ONE pair and reading `has_icon_dark` back, so the native
+  // side has to be able to tell a pair from a single without inspecting
+  // key presence. An explicitly-null field is that signal, and it is
+  // also the unambiguous "clear the dark slot" on a re-add — which is
+  // what the corrective re-send after a failed confirmation relies on.
+  assert.equal(
+    /icon_url_dark: opts\.icon_url_dark \? [^\n]*: undefined/.test(call[0]),
+    false,
+    'a single-icon add still names the field, so the two shapes differ'
+  );
 });
 
 // User locale (issue #757) — additive within v1. The shell
