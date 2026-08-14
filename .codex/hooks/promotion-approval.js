@@ -11,7 +11,7 @@ const RECEIPT_TTL_MS = 10 * 60 * 1000;
 const PROMOTION_GUARD_ATTESTATION = [
   'Usernode promotion guard health check: PASS.',
   'The trusted project UserPromptSubmit hook executed for this prompt;',
-  'suppress the AGENTS.md warning that asks the user to open /hooks.',
+  'the Codex CLI promotion-readiness check in the usernode-proposal skill is satisfied.',
 ].join(' ');
 const CHECKOUT_ROOT = path.resolve(__dirname, '../..');
 const LAUNCHER = path.join(CHECKOUT_ROOT, 'tools', 'social-vibecoding');
@@ -323,9 +323,9 @@ function processHook(input, { root = receiptRoot() } = {}) {
   const event = input.hook_event_name;
   const toolName = input.tool_name;
 
-  // AGENTS.md is visible even when project hooks are disabled, pending
-  // review, or skipped with an untrusted project config. This prompt-time
-  // attestation is positive proof to Codex that this exact pinned hook ran.
+  // The usernode-proposal skill can load even when project hooks are disabled,
+  // pending review, or skipped with an untrusted project config. This
+  // prompt-time attestation proves to Codex CLI that this exact pinned hook ran.
   if (event === 'UserPromptSubmit') {
     return {
       hookSpecificOutput: {

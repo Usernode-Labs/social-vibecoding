@@ -1,0 +1,4 @@
+interface:
+  display_name: "React Shell Migration"
+  short_description: "Convert legacy shell regions safely"
+  default_prompt: "Use $react-shell-migration to convert a legacy shell region without changing behavior."

@@ -1245,12 +1245,14 @@ changes the hook command definition and triggers Codex's normal hook trust
 review for the new revision.
 
 The same pinned file also runs on `UserPromptSubmit` and adds a short,
-model-visible health attestation. Project guidance expects that separate
-attestation on Codex prompts. If it is absent because hooks are disabled,
-untrusted, pending review, or blocked by policy, Codex asks the user to open
-`/hooks` and does not promote until a later prompt carries the attestation.
-Codex cannot itself operate the `/hooks` trust UI. This is a readiness signal,
-not a replacement for the `PreToolUse` enforcement above.
+model-visible health attestation. The shared proposal skill expects that
+separate attestation only in Codex CLI. If it is absent there because hooks are
+disabled, untrusted, pending review, or blocked by policy, Codex CLI asks the
+user to open `/hooks` and does not promote until a later prompt carries the
+attestation. The check does not apply in ChatGPT desktop, which has no
+`/hooks` command, and must not produce that warning there or in Claude Code.
+This is a readiness signal, not a replacement for the `PreToolUse`
+enforcement above.
 
 For a self-hosted user profile, configuration may use
 `--profile lab`; setup puts only that validated profile name in `args`. The
@@ -1332,11 +1334,14 @@ registration. A bounded ignored lock and atomic durable marker write cover
 each update. Symlinked, malformed, non-generated, or Git-tracked markers are
 refused.
 
-The checked-in root `CLAUDE.md` imports `AGENTS.md`, so Claude Code receives the
-same production/local selection, automatic setup/login, generic API, and
-untrusted-data guidance as Codex. After registration, setup tells the user to
-restart or reload Claude Code's MCP servers and never claims that the current
-process has adopted the new configuration.
+The checked-in root `CLAUDE.md` imports `AGENTS.md` for always-on repository
+rules. Conditional API and proposal procedures live as portable skills in
+`.agents/skills/`, with `.claude/skills/` linking to the same canonical
+directory. Claude Code and Codex therefore receive the same production/local
+selection, automatic setup/login, generic API, and untrusted-data guidance
+without loading the full procedures on unrelated tasks. After registration,
+setup tells the user to restart or reload Claude Code's MCP servers and never
+claims that the current process has adopted the new configuration.
 
 The repository-local launcher and MCP process are inside the credential trust
 boundary: a modified launcher can act with every granted scope. The project
@@ -1582,9 +1587,9 @@ cannot preserve cross-surface continuation.
 
 The API tools use the MCP server's pinned profile when `profile` is omitted.
 They accept only the immutable `production` or `local` names as an explicit
-per-call override. Server instructions and repository `AGENTS.md` require
-production by default and `local` only when the user's prompt explicitly says
-local.
+per-call override. Server instructions and the shared `usernode-api` skill
+require production by default and `local` only when the user's prompt
+explicitly says local.
 
 Before a local API call, MCP checks `http://localhost:3000/health`. If it is
 not ready, it returns `local_setup_required` with `argv: ["make", "up"]` and
@@ -2062,16 +2067,19 @@ This keeps global platform identity separate from child-app identity.
   direct generic-API and literal-shell promotion paths. An approved
   native-store fallback is limited to one exact host tool call, Codex session,
   turn, proposal ID, and a ten-minute window.
-- A prompt-time health attestation lets Codex detect that this hook is active;
-  when the attestation is absent, it asks the user to review `/hooks` and
-  refuses proposal promotion until a later prompt proves the guard is active.
+- A prompt-time health attestation lets Codex CLI detect that this hook is
+  active; when the attestation is absent there, it asks the user to review
+  `/hooks` and refuses proposal promotion until a later prompt proves the
+  guard is active. ChatGPT desktop and Claude Code do not apply this CLI check.
 - `claude setup` registers the same canonical credential-free command through
   `claude mcp` local scope, refuses an unowned same-name collision, repairs a
   missing owned registration, updates moved paths/profile selections with
   rollback, and maintains only an ignored atomic ownership marker in the
   checkout.
-- Root `CLAUDE.md` imports `AGENTS.md`, giving Claude Code the same automatic
-  setup, login, production/local selection, generic API, and retry guidance.
+- Root `CLAUDE.md` imports the always-on `AGENTS.md`; `.claude/skills/`
+  links to the canonical `.agents/skills/`, giving Claude Code and Codex the
+  same on-demand setup, login, production/local selection, generic API, and
+  retry guidance.
 - Setup forwards no environment variables by default; its explicit opt-in
   forwards only the two documented variable names and never persists values.
 - Setup emits the required MCP restart/reload instruction after a material
