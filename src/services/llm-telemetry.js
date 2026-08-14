@@ -33,7 +33,8 @@ const COMPONENTS = new Set([
   'other_helper',
 ]);
 const BILLING_PATHS = new Set([
-  'platform', 'anthropic_byok', 'openrouter_byok', 'local_subscription', 'unknown',
+  'platform', 'anthropic_byok', 'anthropic_mixed', 'openrouter_byok',
+  'local_subscription', 'unknown',
 ]);
 const COST_SOURCES = new Set([
   'provider_reported', 'platform_estimate', 'catalog_estimate', 'unavailable',
@@ -198,6 +199,101 @@ function count(value) {
   return Number(value || 0);
 }
 
+function countMap(value) {
+  let source = value;
+  if (typeof source === 'string') {
+    try { source = JSON.parse(source); } catch { source = null; }
+  }
+  if (!source || typeof source !== 'object' || Array.isArray(source)) return {};
+  const result = {};
+  for (const [key, valueCount] of Object.entries(source)) {
+    const safeKey = safeReason(key);
+    if (safeKey) result[safeKey] = count(valueCount);
+  }
+  return result;
+}
+
+function addCountMap(target, source) {
+  for (const [key, value] of Object.entries(source || {})) {
+    target[key] = count(target[key]) + count(value);
+  }
+}
+
+function summarizeGroups(groups) {
+  const availabilityCounts = {
+    inputTokens: 0,
+    cacheReadInputTokens: 0,
+    cacheWriteInputTokens: 0,
+    outputTokens: 0,
+    reasoningOutputTokens: 0,
+    knownCost: 0,
+    duration: 0,
+    billingPathAttributed: 0,
+  };
+  const tokenTotals = {
+    input: 0,
+    cacheReadInput: 0,
+    cacheWriteInput: 0,
+    output: 0,
+    reasoningOutput: 0,
+  };
+  const summary = {
+    invocationCount: 0,
+    successCount: 0,
+    errorCount: 0,
+    cancelledCount: 0,
+    refusalCount: 0,
+    totalKnownCostUsd: 0,
+    unavailableCostCount: 0,
+    cacheReadHitCount: 0,
+    costSourceCounts: {
+      providerReported: 0,
+      platformEstimate: 0,
+      catalogEstimate: 0,
+      unavailable: 0,
+    },
+    billingPathCounts: {},
+    terminalReasonCounts: {},
+  };
+  const tokenFields = [
+    ['input', 'inputTokens'],
+    ['cacheReadInput', 'cacheReadInputTokens'],
+    ['cacheWriteInput', 'cacheWriteInputTokens'],
+    ['output', 'outputTokens'],
+    ['reasoningOutput', 'reasoningOutputTokens'],
+  ];
+  for (const group of groups) {
+    for (const key of ['invocationCount', 'successCount', 'errorCount', 'cancelledCount', 'refusalCount']) {
+      summary[key] += count(group[key]);
+    }
+    summary.totalKnownCostUsd += Number(group.totalKnownCostUsd || 0);
+    summary.unavailableCostCount += count(group.unavailableCostCount);
+    summary.cacheReadHitCount += count(group.cacheReadHitCount);
+    for (const key of Object.keys(availabilityCounts)) {
+      availabilityCounts[key] += count(group.availabilityCounts[key]);
+    }
+    for (const [tokenKey] of tokenFields) {
+      tokenTotals[tokenKey] += Number(group.tokens[tokenKey] || 0);
+    }
+    addCountMap(summary.costSourceCounts, group.costSourceCounts);
+    summary.billingPathCounts[group.billingPath || 'unknown'] =
+      count(summary.billingPathCounts[group.billingPath || 'unknown']) + group.invocationCount;
+    addCountMap(summary.terminalReasonCounts, group.terminalReasonCounts);
+  }
+  summary.tokens = Object.fromEntries(tokenFields.map(([tokenKey, availabilityKey]) => [
+    tokenKey,
+    availabilityCounts[availabilityKey] > 0 ? tokenTotals[tokenKey] : null,
+  ]));
+  summary.totalKnownCostUsd = availabilityCounts.knownCost > 0
+    ? summary.totalKnownCostUsd
+    : null;
+  summary.cacheHitRate = availabilityCounts.cacheReadInputTokens > 0
+    ? summary.cacheReadHitCount / availabilityCounts.cacheReadInputTokens
+    : null;
+  summary.availabilityCounts = availabilityCounts;
+  return summary;
+}
+
 // Admin-only callers enforce authorization at the route layer. This method
 // returns aggregates only; neither CTE projects user_id nor any content field.
 async function aggregateReport(poolOrConfig, { days = 14 } = {}) {
@@ -238,7 +334,8 @@ async function aggregateReport(poolOrConfig, { days = 14 } = {}) {
               COALESCE(e.metadata->>'cost_source', 'unavailable') AS cost_source,
               CASE WHEN jsonb_typeof(e.metadata->'duration_ms') = 'number'
                    THEN (e.metadata->>'duration_ms')::double precision END AS duration_ms,
-              COALESCE(e.metadata->>'outcome', 'unknown') AS outcome
+              COALESCE(e.metadata->>'outcome', 'unknown') AS outcome,
+              NULLIF(e.metadata->>'stop_reason', '') AS stop_reason
          FROM events e
         WHERE e.event_type = $1
           AND e.created_at >= NOW() - ($2::text || ' days')::interval
@@ -267,7 +364,15 @@ async function aggregateReport(poolOrConfig, { days = 14 } = {}) {
                 WHEN 'failed' THEN 'error'
                 WHEN 'cancelled' THEN 'cancelled'
                 ELSE 'unknown'
-              END AS outcome
+              END AS outcome,
+              COALESCE(
+                NULLIF(a.error_code, ''),
+                CASE a.status
+                  WHEN 'completed' THEN 'end_turn'
+                  WHEN 'cancelled' THEN 'cancelled'
+                  ELSE 'agent_error'
+                END
+              ) AS stop_reason
          FROM agent_turns a
          JOIN chat_sessions s ON s.id = a.session_id
         WHERE a.provider = 'openrouter'
@@ -291,6 +396,15 @@ async function aggregateReport(poolOrConfig, { days = 14 } = {}) {
               CASE WHEN COUNT(reasoning_output_tokens) = 0 THEN NULL ELSE SUM(reasoning_output_tokens) END AS reasoning_output_tokens,
               CASE WHEN COUNT(cost_usd) = 0 THEN NULL ELSE SUM(cost_usd) END AS total_known_cost_usd,
               COUNT(*) FILTER (WHERE cost_usd IS NULL) AS unavailable_cost_count,
+              COUNT(input_tokens) AS input_tokens_available_count,
+              COUNT(cache_read_input_tokens) AS cache_read_input_tokens_available_count,
+              COUNT(cache_write_input_tokens) AS cache_write_input_tokens_available_count,
+              COUNT(output_tokens) AS output_tokens_available_count,
+              COUNT(reasoning_output_tokens) AS reasoning_output_tokens_available_count,
+              COUNT(cost_usd) AS known_cost_available_count,
+              COUNT(duration_ms) AS duration_available_count,
+              COUNT(*) FILTER (WHERE billing_path <> 'unknown') AS billing_path_attributed_count,
+              COUNT(*) FILTER (WHERE cache_read_input_tokens > 0) AS cache_read_hit_count,
               CASE WHEN COUNT(cache_read_input_tokens) = 0 THEN NULL
                    ELSE COUNT(*) FILTER (WHERE cache_read_input_tokens > 0)::double precision
                         / COUNT(cache_read_input_tokens) END AS cache_hit_rate,
@@ -308,12 +422,83 @@ async function aggregateReport(poolOrConfig, { days = 14 } = {}) {
          FROM normalized
         WHERE occurred_at >= NOW() - ($2::text || ' days')::interval
         GROUP BY provider, backend, component, requested_model, served_model, billing_path
+     ), reason_counts AS (
+       SELECT provider, backend, component, requested_model, served_model, billing_path,
+              COALESCE(stop_reason, 'unavailable') AS terminal_reason,
+              COUNT(*) AS reason_count
+         FROM normalized
+        WHERE occurred_at >= NOW() - ($2::text || ' days')::interval
+        GROUP BY provider, backend, component, requested_model, served_model, billing_path,
+                 COALESCE(stop_reason, 'unavailable')
+     ), reason_maps AS (
+       SELECT provider, backend, component, requested_model, served_model, billing_path,
+              jsonb_object_agg(terminal_reason, reason_count) AS terminal_reason_counts
+         FROM reason_counts
+        GROUP BY provider, backend, component, requested_model, served_model, billing_path
      )
-     SELECT * FROM grouped
-      ORDER BY provider, backend, component, requested_model NULLS LAST, served_model NULLS LAST, billing_path`,
+     SELECT g.*, r.terminal_reason_counts
+       FROM grouped g
+       JOIN reason_maps r
+         ON r.provider = g.provider
+        AND r.backend = g.backend
+        AND r.component = g.component
+        AND r.requested_model IS NOT DISTINCT FROM g.requested_model
+        AND r.served_model IS NOT DISTINCT FROM g.served_model
+        AND r.billing_path = g.billing_path
+      ORDER BY g.provider, g.backend, g.component, g.requested_model NULLS LAST,
+               g.served_model NULLS LAST, g.billing_path`,
     [EVENT_TYPE, String(boundedDays)],
   );
 
+  const groups = rows.map((row) => ({
+    provider: row.provider,
+    backend: row.backend,
+    component: row.component,
+    requestedModel: row.requested_model,
+    servedModel: row.served_model,
+    billingPath: row.billing_path,
+    invocationCount: count(row.invocation_count),
+    successCount: count(row.success_count),
+    errorCount: count(row.error_count),
+    cancelledCount: count(row.cancelled_count),
+    refusalCount: count(row.refusal_count),
+    tokens: {
+      input: nullableNumber(row.input_tokens),
+      cacheReadInput: nullableNumber(row.cache_read_input_tokens),
+      cacheWriteInput: nullableNumber(row.cache_write_input_tokens),
+      output: nullableNumber(row.output_tokens),
+      reasoningOutput: nullableNumber(row.reasoning_output_tokens),
+    },
+    totalKnownCostUsd: nullableNumber(row.total_known_cost_usd),
+    unavailableCostCount: count(row.unavailable_cost_count),
+    cacheHitRate: nullableNumber(row.cache_hit_rate),
+    cacheReadHitCount: count(row.cache_read_hit_count),
+    availabilityCounts: {
+      inputTokens: count(row.input_tokens_available_count),
+      cacheReadInputTokens: count(row.cache_read_input_tokens_available_count),
+      cacheWriteInputTokens: count(row.cache_write_input_tokens_available_count),
+      outputTokens: count(row.output_tokens_available_count),
+      reasoningOutputTokens: count(row.reasoning_output_tokens_available_count),
+      knownCost: count(row.known_cost_available_count),
+      duration: count(row.duration_available_count),
+      billingPathAttributed: count(row.billing_path_attributed_count),
+    },
+    durationMs: {
+      median: nullableNumber(row.median_duration_ms),
+      p95: nullableNumber(row.p95_duration_ms),
+    },
+    knownCostUsd: {
+      median: nullableNumber(row.median_cost_usd),
+      p95: nullableNumber(row.p95_cost_usd),
+    },
+    costSourceCounts: {
+      providerReported: count(row.provider_reported_cost_count),
+      platformEstimate: count(row.platform_estimate_cost_count),
+      catalogEstimate: count(row.catalog_estimate_cost_count),
+      unavailable: count(row.unavailable_cost_count),
+    },
+    terminalReasonCounts: countMap(row.terminal_reason_counts),
+  }));
   const generatedAt = new Date();
   return {
     timeframe: {
@@ -325,44 +510,11 @@ async function aggregateReport(poolOrConfig, { days = 14 } = {}) {
       cacheHitRate: 'invocations with cache-read tokens > 0 divided by invocations where cache-read usage is available',
       knownCost: 'provider-reported or explicitly labelled platform/catalog estimate; see costSourceCounts',
       openrouterCost: 'catalog estimate from the pinned model-pricing snapshot; never provider-exact',
+      availabilityCounts: 'invocations where each nullable metric was reported; zero is available and distinct from unavailable',
+      anthropicMixed: 'a Claude coding run that used both platform allowance and Anthropic BYOK after a mid-run payer switch',
     },
-    groups: rows.map((row) => ({
-      provider: row.provider,
-      backend: row.backend,
-      component: row.component,
-      requestedModel: row.requested_model,
-      servedModel: row.served_model,
-      billingPath: row.billing_path,
-      invocationCount: count(row.invocation_count),
-      successCount: count(row.success_count),
-      errorCount: count(row.error_count),
-      cancelledCount: count(row.cancelled_count),
-      refusalCount: count(row.refusal_count),
-      tokens: {
-        input: nullableNumber(row.input_tokens),
-        cacheReadInput: nullableNumber(row.cache_read_input_tokens),
-        cacheWriteInput: nullableNumber(row.cache_write_input_tokens),
-        output: nullableNumber(row.output_tokens),
-        reasoningOutput: nullableNumber(row.reasoning_output_tokens),
-      },
-      totalKnownCostUsd: nullableNumber(row.total_known_cost_usd),
-      unavailableCostCount: count(row.unavailable_cost_count),
-      cacheHitRate: nullableNumber(row.cache_hit_rate),
-      durationMs: {
-        median: nullableNumber(row.median_duration_ms),
-        p95: nullableNumber(row.p95_duration_ms),
-      },
-      knownCostUsd: {
-        median: nullableNumber(row.median_cost_usd),
-        p95: nullableNumber(row.p95_cost_usd),
-      },
-      costSourceCounts: {
-        providerReported: count(row.provider_reported_cost_count),
-        platformEstimate: count(row.platform_estimate_cost_count),
-        catalogEstimate: count(row.catalog_estimate_cost_count),
-        unavailable: count(row.unavailable_cost_count),
-      },
-    })),
+    summary: summarizeGroups(groups),
+    groups,
   };
 }
 
