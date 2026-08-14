@@ -256,7 +256,11 @@ function Body({ view }: { view: BodyView | null }): ReactNode {
       <>
         <ChallengeLine line={view.challengeLine} />
         <Disclaimer text={view.disclaimer} />
-        <p className={HINT}>No leaderboard entries yet.</p>
+        {/* data-tc-lb-empty marks the LEGITIMATE no-scores state for the
+            dapp.json standings checks: a fresh season has an empty
+            leaderboard, and the checks accept "table or this hint" while
+            still rejecting the red error state. */}
+        <p className={HINT} data-tc-lb-empty="">No leaderboard entries yet.</p>
       </>
     );
   }

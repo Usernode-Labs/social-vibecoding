@@ -741,7 +741,7 @@
     {
       "name": "Bare #leaderboard renders all three tabs and opens on the standings (#962)",
       "path": "/#leaderboard",
-      "expectSelector": "#leaderboard-screen:not(.hidden):has(#standings-tabs [data-standings-tab=\"challenges\"]) #topochain-leaderboard-root:not(.hidden) #tc-lb-body table"
+      "expectSelector": "#leaderboard-screen:not(.hidden):has(#standings-tabs [data-standings-tab=\"challenges\"]) #topochain-leaderboard-root:not(.hidden) #tc-lb-body :is(table, [data-tc-lb-empty])"
     },
     {
       "name": "The Create app widget sits in the grid and opens the create flow",
@@ -1904,7 +1904,7 @@
     {
       "name": "Topochain leaderboard shows standings, not a red error, between events",
       "path": "/#leaderboard/topochain",
-      "expectSelector": "#leaderboard-screen:not(.hidden) #tc-lb-body table"
+      "expectSelector": "#leaderboard-screen:not(.hidden) #tc-lb-body :is(table, [data-tc-lb-empty])"
     },
     {
       "name": "Admin App version screen warns when an OS has no active rule",
