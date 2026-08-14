@@ -44,11 +44,21 @@ const MAX_SHOWS_PER_WINDOW = 3;
 const HINT_WINDOW_DAYS = 7;
 const HINT_WINDOW = `${HINT_WINDOW_DAYS} days`;
 
-// Floor between two showings, independent of arming. Some clients send
-// `initialize` more than once for what a human would call one conversation
-// (a reconnect, a resumed session, a second tab), and without this floor each
-// one would spend a slot and the tip would read as a nag.
-const HINT_COOLDOWN_MINUTES = 10;
+// Floor between two showings, ANDed with arming rather than offered as an
+// alternative route to a claim. Some clients send `initialize` more than once
+// for what a human would call one conversation (a reconnect, a resumed
+// session, a second tab), and without this floor each one spends a slot and
+// the tip reads as a nag.
+//
+// It is sixty minutes, not ten, and the change came from the shape of the
+// only production data there is: one grant's whole weekly budget of three was
+// spent inside fourteen minutes, which is one person opening a chat, hitting
+// a snag, and opening another — three showings of the same paragraph in a
+// quarter of an hour, and then silence for the rest of the week. Ten minutes
+// was short enough that "a reconnect" and "a new conversation" were the same
+// thing to the guard. An hour is long enough to separate them and still short
+// enough that tomorrow morning's session gets one.
+const HINT_COOLDOWN_MINUTES = 60;
 const HINT_COOLDOWN = `${HINT_COOLDOWN_MINUTES} minutes`;
 
 // ── Arm ────────────────────────────────────────────────────────────────
@@ -96,22 +106,43 @@ async function armHint(pool, { grantId, userId }) {
 // Claim the right to show the hint on THIS tool result. One atomic
 // statement, so two reads racing on the same grant cannot both win it.
 //
-// Granted when the connection is armed and neither bound is spent:
+// Granted when the connection is armed AND the cooldown has passed AND the
+// weekly budget is not spent. Three conditions, all of which must hold:
 //
 //   * no row yet                    → insert, granted (a client that never
 //                                     sent initialize through this build)
-//   * shown_count = 0               → granted (armed and never shown; see
-//                                     armHint on why the cooldown must not
-//                                     apply to a row it just created)
-//   * armed_at > last_shown_at      → granted (a new session has begun since
-//                                     the last showing)
-//   * last_shown_at older than the
-//     cooldown                      → granted (a long-running session that
-//                                     re-armed nothing still deserves one)
+//   * shown_count = 0               → granted, both bounds skipped (armed and
+//                                     never shown; see armHint on why the
+//                                     cooldown must not apply to a row it
+//                                     just created)
+//   * armed_at > last_shown_at
+//     AND last_shown_at older than
+//     the cooldown                  → granted
 //   * otherwise                     → refused
 //
 // and in every case bounded by MAX_SHOWS_PER_WINDOW within the rolling
 // HINT_WINDOW, whose start is rolled forward inside the same statement.
+//
+// ── The second delivery bug ────────────────────────────────────────────
+//
+// The version before this one wrote those first two conditions as an OR, so
+// arming was a route to a claim that BYPASSED the cooldown entirely — and
+// arming is the one thing a client does freely. Production shows what that
+// cost: a grant's entire weekly budget of three, spent inside fourteen
+// minutes, then nothing for six days.
+//
+// It is the mirror image of the bug in the header. That one made the tip
+// impossible to see twice; this one made it impossible to see slowly. Both
+// came from treating one signal — a token, then an initialize — as if it
+// meant "a new conversation" on its own. It does not, so neither bound is
+// optional now: an arm says a session began, the cooldown says enough time
+// passed to make that plausible, and a claim needs both.
+//
+// The tip's expected landing place has moved too. get_connector_guidance is
+// meant to be the first tool a conversation calls, and it is hint-eligible,
+// so in the ordinary case the tip rides on that first result rather than on
+// whichever read happened to run first — which is another reason a claim can
+// afford to be scarce.
 //
 // Showing CONSUMES the arm (`armed_at = NULL`), so one initialize buys one
 // showing rather than every read in the session.
@@ -140,7 +171,8 @@ async function claimHintShow(pool, { grantId, userId, tokenId }) {
                    armed_at = NULL,
                    last_shown_at = NOW()
              WHERE (mcp_connector_hints.shown_count = 0
-                    OR mcp_connector_hints.armed_at > mcp_connector_hints.last_shown_at
+                    OR mcp_connector_hints.armed_at > mcp_connector_hints.last_shown_at)
+               AND (mcp_connector_hints.shown_count = 0
                     OR mcp_connector_hints.last_shown_at < NOW() - $5::interval)
                AND (mcp_connector_hints.window_started_at < NOW() - $4::interval
                     OR mcp_connector_hints.shown_count < $6)
@@ -186,6 +218,12 @@ async function getHintStatus(pool, { userId }) {
     lastShownAt: null,
     maxPerWindow: MAX_SHOWS_PER_WINDOW,
     windowDays: HINT_WINDOW_DAYS,
+    // So the panel can say "not before <time>" rather than leaving a user who
+    // just saw the tip to guess whether it is coming back. It is a constant,
+    // not per-row state, but it belongs in this response for the same reason
+    // maxPerWindow does: the panel should not carry a second copy of a number
+    // this module owns.
+    cooldownMinutes: HINT_COOLDOWN_MINUTES,
   };
   if (!pool || !userId) return empty;
   try {

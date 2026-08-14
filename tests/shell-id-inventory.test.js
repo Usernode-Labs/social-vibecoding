@@ -101,6 +101,16 @@ const ADDED_IDS = {
   'connector-repo-allow-rules': 'The same three rules, rendered for committing as a repo\'s .claude/settings.json.',
   'connector-repo-allow-rules-copy': 'Copy button for the per-repo block.',
   'connector-hint-status': 'Read-only status of the in-chat setup tip; ships empty and hidden, filled by Settings._renderConnectorHint().',
+  // A permission rule names the MCP server LITERALLY — there is no
+  // `mcp__*__` — so a connector registered under any name but the one the
+  // shipped rules were written for matches none of them, prompts on every
+  // read, and produces no error saying why. Usernode now ships both
+  // spellings it can predict (`usernode` and `Usernode`); this field covers
+  // everything it cannot, because the user is the only party in the exchange
+  // who can see what their tools are actually called. Typing a name rewrites
+  // BOTH blocks above in place, so the copy buttons already there pick up the
+  // corrected rules — hence a field and no button of its own.
+  'connector-name-spelling': 'Settings → Connectors input that rewrites both allow-rule blocks for a connector registered under a different server name (#1222 follow-up).',
   'messages-screen': 'Fully React-owned platform direct/group Messages screen (#488).',
   'messages-create-dialog': 'React-owned direct/group conversation creation dialog (#488).',
   'messages-members-dialog': 'React-owned group membership and invitation dialog (#488).',

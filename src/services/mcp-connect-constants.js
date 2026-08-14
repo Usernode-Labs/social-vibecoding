@@ -76,21 +76,43 @@ const REGISTER_RATE_PER_MINUTE = 6;
 const SERVER_NAME = 'usernode';
 const SERVER_VERSION = '1.0.0';
 
+// ── The spellings the shipped rules cover ──────────────────────────────
+//
+// A permission rule names its server LITERALLY, so a rule is only ever as
+// good as the spelling in it. The canonical name is what this server reports
+// and what Settings → Connectors tells the user to type — but the field it is
+// typed into is a free-text box in someone else's dialog, and the single most
+// likely near-miss is not a typo at all: it is the product name capitalised,
+// which is how a person naturally writes it and what several clients suggest
+// as a default.
+//
+// So the shipped rules cover BOTH spellings rather than only the canonical
+// one. Six rules instead of three, which costs nothing — a rule that matches
+// no tool is inert — and removes the most common silent failure. Anything
+// beyond these two (a real typo, a renamed connector) still needs the user's
+// own spelling, which is what the setup tip, whoami and the Settings panel's
+// rewrite field are all for: this list is the two spellings worth guessing,
+// not an attempt to guess them all.
+const ALLOW_RULE_SERVER_NAMES = Object.freeze([SERVER_NAME, 'Usernode']);
+
 // The read-only allow rules Usernode ships in the app scaffold and
-// documents. Two globs plus one literal, and deliberately NOT the
-// whole-server `mcp__usernode__*`: the `requiresUserInteraction` marking on
-// the acting tools is version-gated (Claude Code ≥ 2.1.199), so a blanket
-// rule would auto-approve `submit_work` on an older client and put a change
-// to a group vote with nobody having confirmed it. These three are safe on
-// every version because they can only ever match reads.
+// documents. Two globs plus one literal per covered spelling, and
+// deliberately NOT the whole-server `mcp__usernode__*`: the
+// `requiresUserInteraction` marking on the acting tools is version-gated
+// (Claude Code ≥ 2.1.199), so a blanket rule would auto-approve `submit_work`
+// on an older client and put a change to a group vote with nobody having
+// confirmed it. These are safe on every version because they can only ever
+// match reads.
 //
 // They stay durable only while the naming contract below holds. Tests
 // enforce it against the registered tool surface.
-const READ_ONLY_ALLOW_RULES = Object.freeze([
-  `mcp__${SERVER_NAME}__get_*`,
-  `mcp__${SERVER_NAME}__list_*`,
-  `mcp__${SERVER_NAME}__whoami`,
-]);
+const READ_ONLY_ALLOW_RULES = Object.freeze(
+  ALLOW_RULE_SERVER_NAMES.flatMap((name) => [
+    `mcp__${name}__get_*`,
+    `mcp__${name}__list_*`,
+    `mcp__${name}__whoami`,
+  ])
+);
 
 // ── The tool-naming contract ───────────────────────────────────────────
 //
@@ -111,6 +133,32 @@ const READ_ONLY_ALLOW_RULES = Object.freeze([
 const READ_ONLY_TOOL_PREFIXES = Object.freeze(['get_', 'list_']);
 const READ_ONLY_TOOL_EXCEPTIONS = Object.freeze(['whoami']);
 
+// ── What the client silently cuts ──────────────────────────────────────
+//
+// Claude Code applies a plain `str.slice(0, 2048)` to two fields it receives
+// from an MCP server: `InitializeResult.instructions` and EVERY tool
+// `description`. The instructions case at least logs ("Server instructions
+// truncated from 5181 to 2048 chars"); the description case logs nothing at
+// all, and `/mcp` renders the full text, so the only way to see it is to
+// count the characters yourself. Upstream: anthropics/claude-code#81268.
+//
+// Neither budget below is the client's 2048. Both leave deliberate headroom,
+// for three reasons: the cap is a client-side constant that has already been
+// renamed once (`WoH` → `D$` in 2.1.220) and could change value as easily;
+// other clients may pick a smaller one; and a field sitting at 99% of the
+// limit fails the moment somebody adds a sentence, which is exactly the
+// silent failure this is here to prevent.
+//
+// Tool RESULTS are not capped by any of this — which is why the full
+// operating charter is delivered as one (services/mcp-charter.js), next to
+// the 32 KB of platform conventions get_platform_conventions already returns.
+//
+// tests/mcp-instruction-budget.test.js enforces both, measuring the RESOLVED
+// descriptions off a registration recorder rather than the source text, so a
+// description assembled from constants is measured as the client sees it.
+const SERVER_INSTRUCTIONS_MAX_CHARS = 1400;
+const TOOL_DESCRIPTION_MAX_CHARS = 1800;
+
 module.exports = {
   READ_SCOPE,
   WRITE_SCOPE,
@@ -128,7 +176,10 @@ module.exports = {
   REGISTER_RATE_PER_MINUTE,
   SERVER_NAME,
   SERVER_VERSION,
+  ALLOW_RULE_SERVER_NAMES,
   READ_ONLY_ALLOW_RULES,
   READ_ONLY_TOOL_PREFIXES,
   READ_ONLY_TOOL_EXCEPTIONS,
+  SERVER_INSTRUCTIONS_MAX_CHARS,
+  TOOL_DESCRIPTION_MAX_CHARS,
 };
