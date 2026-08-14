@@ -630,10 +630,15 @@ function registerTools(server, ctx) {
   //      closure means a request that somehow ran two reads spends one slot.
   //      It is also what keeps initialize and tools/list from burning the
   //      slot: nothing is claimed until a read handler actually returns.
-  //   2. At most once per access token — the ~hourly rotation is the closest
-  //      durable stand-in for "once per conversation" available without a
-  //      session id.
-  //   3. At most three times per grant, ever.
+  //   2. Only when the connection has been ARMED since the tip was last
+  //      shown. routes/mcp-remote.js arms it on `initialize`, so "a new
+  //      conversation" is the protocol saying so rather than this module
+  //      inferring it from a credential — the earlier version keyed on the
+  //      access token, and because one hourly token serves every conversation
+  //      opened in that hour, it fired once per connection and then never
+  //      again. See services/mcp-hint-throttle.js.
+  //   3. Bounded either way: a ten-minute floor between showings, and at most
+  //      three per connection per rolling week.
   //   4. Never to a client with no Claude Code permission prompts to stop.
   //
   // The claim is one atomic statement, so two concurrent reads on the same
@@ -685,9 +690,23 @@ function registerTools(server, ctx) {
   };
 
   // ── whoami ───────────────────────────────────────────────────────────
+  //
+  // connectorName and permissionAllowRules are here because of #1218: a
+  // permission rule names its server LITERALLY (`mcp__usernode__get_*` is
+  // legal, `mcp__*__get_*` is not), and the segment the client builds tool
+  // names from is whatever the human typed into the "Add custom connector"
+  // dialog — a string this server never sees. One account typed `Uesrnode`
+  // and every rule Usernode ships missed it silently.
+  //
+  // The model is the only party in the exchange that can see both halves: the
+  // canonical name below, and the name of the tool it just called. So whoami
+  // hands it the canonical spelling and the exact rules, and asks it to
+  // compare. That is a fact for the model to reason with, not an instruction
+  // to relay — the setup tip is the thing that gets relayed, and it is
+  // throttled precisely because it interrupts.
   server.registerTool('whoami', {
     title: 'Who am I on Usernode',
-    description: 'Identify the Usernode account this connector is acting for, which chat product it is connected from, and whether a GitHub account is linked (needed later to hand work to a coding agent). Returns no credential material.',
+    description: 'Identify the Usernode account this connector is acting for, which chat product it is connected from, and whether a GitHub account is linked (needed later to hand work to a coding agent). Also returns the connector\'s canonical name and the read-only permission rules Usernode ships: if the name of the tool you just called does not use that canonical name, the user\'s connector is registered under a different spelling and those rules will not match it. Returns no credential material.',
     inputSchema: {},
     outputSchema: {
       username: z.string(),
@@ -696,6 +715,8 @@ function registerTools(server, ctx) {
       githubLinked: z.boolean(),
       githubLogin: z.string().nullable(),
       settingsUrl: z.string(),
+      connectorName: z.string(),
+      permissionAllowRules: z.array(z.string()),
     },
     annotations: readAnnotations,
   }, async () => {
@@ -708,6 +729,8 @@ function registerTools(server, ctx) {
       githubLinked: status.linked,
       githubLogin: status.login,
       settingsUrl: `${origin}/#settings/connectors`,
+      connectorName: SERVER_NAME,
+      permissionAllowRules: [...READ_ONLY_ALLOW_RULES],
     });
   });
 

@@ -4541,11 +4541,21 @@ CREATE INDEX IF NOT EXISTS mcp_auth_audit_events_user_idx
 -- "this connection", and it survives the hourly access-token rotation, which
 -- is what stops the hint reappearing every hour forever.
 --
--- last_token_id is the throttle that does the per-conversation work: the hint
--- fires at most once per access token, so a burst of ten reads in one chat
--- turn carries it once. shown_count caps the lifetime total at 3 per grant —
--- after that the user has either acted on it or decided not to, and a fourth
--- showing is nagging.
+-- What decides "a new conversation" is armed_at, NOT the access token.
+-- last_token_id used to be that gate — a claim was refused when the calling
+-- token matched the last one — on the theory that an hourly token is roughly
+-- a conversation. It is not: one token serves every conversation opened in
+-- that hour, so the first eligible read consumed the only slot and every
+-- conversation afterwards got nothing. In production that produced exactly
+-- one row, ever. armed_at is written when the client sends `initialize`,
+-- which is the protocol actually saying a session has started, and a claim is
+-- granted when the row has been armed since it was last shown. The column
+-- stays as a DIAGNOSTIC: written on every showing, read by nothing.
+--
+-- shown_count is a ROLLING budget, not a lifetime cap: at most 3 showings per
+-- window_started_at + 7 days, with the window rolled forward inside the claim
+-- statement. The lifetime cap it replaced had no reset path, so a connection
+-- that spent it went quiet permanently.
 --
 -- Advisory state, never authoritative: a failed claim is logged and the read
 -- returns without a hint. Nothing here gates access to anything.
@@ -4557,6 +4567,22 @@ CREATE TABLE IF NOT EXISTS mcp_connector_hints (
   last_shown_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 COMMENT ON TABLE mcp_connector_hints IS 'staging:private';
+
+-- Added after the table shipped, so they arrive as idempotent ALTERs like
+-- every other post-hoc column in this file.
+--
+-- armed_at is NULLABLE on purpose: NULL means "not armed", and a showing
+-- clears it, so one initialize buys one showing rather than every read in the
+-- session. It has no DEFAULT for the same reason — a row created by the claim
+-- path (a client mid-session when this shipped) must not look armed.
+--
+-- window_started_at is NOT NULL DEFAULT NOW(), which back-fills every existing
+-- row to "the window starts now". That is the deliberate choice: it gives the
+-- one grant that spent its lifetime cap under the old rules a fresh weekly
+-- budget rather than leaving it locked out.
+ALTER TABLE mcp_connector_hints ADD COLUMN IF NOT EXISTS armed_at TIMESTAMPTZ;
+ALTER TABLE mcp_connector_hints
+  ADD COLUMN IF NOT EXISTS window_started_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 
 -- ── Verified GitHub account link (IDENTITY ONLY) ────────────────────────
 -- Distinct from the self-declared `users.github` profile string above,

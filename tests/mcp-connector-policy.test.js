@@ -320,3 +320,67 @@ test('the connector cannot reach GitHub except through the app’s own repo plum
   assert.doesNotMatch(TOOLS_SRC, /github_oauth_token/);
   assert.match(TOOLS_SRC, /require\('\.\/external-agent-tasks'\)/);
 });
+
+// ── #1219 follow-up: the setup hint's own writes and reads ─────────────
+//
+// Arming the in-band setup tip is the first thing on this transport that
+// WRITES a row from the request body rather than from an authenticated
+// identity alone. Two properties keep that safe, and both are positional —
+// they are true because of where the code sits, so a refactor that moves it
+// breaks them without changing a single expression.
+
+test('the hint is armed only after the caller is authenticated and audited', () => {
+  const REMOTE_SRC = fs.readFileSync(
+    path.join(__dirname, '../src/routes/mcp-remote.js'), 'utf8'
+  );
+  const authAt = REMOTE_SRC.indexOf('auth = await authenticateConnector(pool, bearer.token)');
+  const auditAt = REMOTE_SRC.indexOf("eventType: 'token_used'");
+  const armAt = REMOTE_SRC.indexOf('isInitializeRequest(req.body)');
+  const dispatchAt = REMOTE_SRC.indexOf('mcpTools.registerTools(server');
+  assert.ok(authAt > 0 && auditAt > 0 && armAt > 0 && dispatchAt > 0);
+  // An unauthenticated body must never reach a write. `armHint` takes the
+  // grant id and the user id off `auth`, so this is not merely tidy: before
+  // that point there is no grant to key the row on, and an anonymous POST
+  // could otherwise insert one row per made-up value.
+  assert.ok(armAt > authAt, 'the arm is after authentication');
+  // And after the audit insert, so the log records the call in the order it
+  // happened even when the arm is the thing that fails.
+  assert.ok(armAt > auditAt, 'the arm is after the token_used audit row');
+  assert.ok(armAt < dispatchAt, 'the arm precedes tool dispatch, so a read in the same request can claim it');
+  // Fire-and-forget: an advisory tip must not be able to fail a tools/call.
+  const armBlock = REMOTE_SRC.slice(armAt, dispatchAt);
+  assert.match(armBlock, /\.armHint\(/);
+  assert.match(armBlock, /\.catch\(/, 'a rejected arm is swallowed, not surfaced');
+  assert.doesNotMatch(armBlock, /await\s+require\('\.\.\/services\/mcp-hint-throttle'\)/,
+    'the request does not wait on the arm');
+});
+
+test('the tip’s throttle state is readable by the browser, never by the connector', () => {
+  // The status line rides on GET /api/me/connectors, which is cookie-
+  // authenticated. That route is deliberately NOT on the connector
+  // allowlist, so the thing being throttled cannot read — or infer — its own
+  // remaining budget, and a model cannot be talked into checking whether it
+  // has a slot left before deciding what to say.
+  for (const method of ['GET', 'POST', 'DELETE']) {
+    assert.equal(
+      policy.isConnectorApiRequest(method, '/api/me/connectors'), false,
+      `${method} /api/me/connectors is off the connector allowlist`
+    );
+  }
+  assert.equal(policy.isConnectorApiRequest('DELETE', '/api/me/connectors/g_1'), false);
+
+  const REMOTE_SRC = fs.readFileSync(
+    path.join(__dirname, '../src/routes/mcp-remote.js'), 'utf8'
+  );
+  const handler = REMOTE_SRC.slice(
+    REMOTE_SRC.indexOf("router.get('/api/me/connectors'")
+  ).slice(0, 4000);
+  assert.match(handler, /if \(!req\.user\) return res\.status\(401\)/,
+    'the cookie half refuses an unauthenticated caller');
+  assert.match(handler, /getHintStatus\(pool, \{ userId: req\.user\.id \}\)/,
+    'and reads the status for the signed-in user only');
+  // Read-only in both directions: this router exposes no write path for the
+  // throttle. A "show it again" control is a control for making the
+  // connector nag, so there is deliberately none to route to.
+  assert.doesNotMatch(REMOTE_SRC, /resetHint|clearHint|hint\/reset/);
+});

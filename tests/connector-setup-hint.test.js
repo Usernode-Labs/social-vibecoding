@@ -18,9 +18,13 @@
 //      rides as a second content block — which only works if the SDK accepts
 //      an extra block, verified here against a real round trip rather than
 //      assumed.
-//   3. Shown too often. /mcp is stateless, so "once per session" cannot be
-//      expressed; the throttle is per-request, per-token and per-grant, and
-//      an off-by-one there is a connector that nags every single call.
+//   3. Shown too often, or — as shipped — not at all. /mcp is stateless, so
+//      "once per session" cannot be expressed directly. The first version
+//      keyed on the ACCESS TOKEN, which one hour of conversations shares, so
+//      the first eligible read consumed the only slot and the connector went
+//      quiet forever; production held exactly one row. The throttle is now
+//      armed by `initialize` and bounded by a cooldown and a rolling weekly
+//      budget, and section 5 below is about both failure directions.
 //
 // Run with: node --test tests/connector-setup-hint.test.js
 
@@ -250,16 +254,78 @@ function fakePool(responses) {
   };
 }
 
-test('the claim is a single atomic statement against one table', () => {
+const THROTTLE_SRC = read('src/services/mcp-hint-throttle.js');
+
+// The claim statement's WHERE, isolated. Every grant/refuse rule lives in
+// SQL rather than in JS, so this is the thing under test in most of what
+// follows and pulling it out once keeps each assertion about one rule.
+const CLAIM_SQL = THROTTLE_SRC.slice(
+  THROTTLE_SRC.indexOf('async function claimHintShow'),
+  THROTTLE_SRC.indexOf('async function getHintStatus')
+);
+
+test('each exported function is one atomic statement against one table', () => {
   // Two reads racing on the same grant must not both win the slot, which
-  // rules out read-then-write. And this module owns exactly one table.
-  const src = read('src/services/mcp-hint-throttle.js');
-  assert.equal((src.match(/pool\.query\(/g) || []).length, 1);
-  assert.match(src, /ON CONFLICT \(grant_id\) DO UPDATE/);
-  assert.match(src, /RETURNING shown_count/);
-  const tables = [...src.matchAll(/(?:INSERT INTO|UPDATE|FROM)\s+([a-z_]+)/g)]
+  // rules out read-then-write. Three exported functions, three statements —
+  // not "one query in the module", which is what this asserted when claiming
+  // was the only thing the module did.
+  assert.equal((THROTTLE_SRC.match(/pool\.query\(/g) || []).length, 3);
+  for (const fn of ['armHint', 'claimHintShow', 'getHintStatus']) {
+    assert.equal(typeof throttle[fn], 'function', `${fn} is exported`);
+  }
+  assert.match(CLAIM_SQL, /ON CONFLICT \(grant_id\) DO UPDATE/);
+  assert.match(CLAIM_SQL, /RETURNING shown_count/);
+  const tables = [...THROTTLE_SRC.matchAll(/(?:INSERT INTO|UPDATE|FROM)\s+([a-z_]+)/g)]
     .map((m) => m[1]);
   assert.deepEqual([...new Set(tables)], ['mcp_connector_hints']);
+});
+
+test('the claim does NOT key on the access token — that was the bug', () => {
+  // The regression this file exists to prevent from coming back. One hourly
+  // access token serves every conversation opened in that hour, so refusing a
+  // claim when the token matches the last one means the FIRST eligible read
+  // after connecting spends the only slot and every conversation afterwards
+  // gets nothing. In production that produced exactly one row, ever.
+  assert.doesNotMatch(CLAIM_SQL, /last_token_id IS DISTINCT FROM/);
+  // It is still WRITTEN — a diagnostic column — but never read by the guard.
+  const where = CLAIM_SQL.slice(CLAIM_SQL.indexOf('WHERE ('), CLAIM_SQL.indexOf('RETURNING'));
+  assert.match(CLAIM_SQL, /last_token_id = EXCLUDED\.last_token_id/);
+  assert.doesNotMatch(where, /last_token_id/);
+});
+
+test('the three ways a claim is granted are all in the WHERE', () => {
+  const where = CLAIM_SQL.slice(CLAIM_SQL.indexOf('WHERE ('), CLAIM_SQL.indexOf('RETURNING'));
+  // 1. shown_count = 0 — the row armHint just created. Load-bearing because
+  //    last_shown_at is NOT NULL DEFAULT NOW(), so that row looks "just
+  //    shown" and a cooldown check alone would refuse it for ten minutes.
+  assert.match(where, /mcp_connector_hints\.shown_count = 0/);
+  // 2. armed since the last showing — a new session began.
+  assert.match(where, /mcp_connector_hints\.armed_at > mcp_connector_hints\.last_shown_at/);
+  // 3. the cooldown elapsed — a long session that re-armed nothing.
+  assert.match(where, /mcp_connector_hints\.last_shown_at < NOW\(\) - \$5::interval/);
+});
+
+test('showing consumes the arm, so one initialize buys one tip', () => {
+  // Without this, every read in an armed session would claim: armed_at would
+  // stay ahead of last_shown_at until the next initialize.
+  assert.match(CLAIM_SQL, /armed_at = NULL/);
+});
+
+test('the budget is a rolling window, not a lifetime cap', () => {
+  // The lifetime cap had no reset path: a grant that spent three showings
+  // went quiet for the remaining life of a 30-day refresh chain, and there
+  // was nothing in the product to undo it.
+  assert.equal(throttle.MAX_SHOWS_PER_WINDOW, 3);
+  assert.equal(throttle.HINT_WINDOW, '7 days');
+  assert.equal(throttle.HINT_WINDOW_DAYS, 7);
+  assert.equal(throttle.HINT_COOLDOWN, '10 minutes');
+  assert.equal(throttle.MAX_SHOWS_PER_GRANT, undefined, 'the lifetime cap is gone');
+  // The window rolls forward inside the same statement that claims, so no
+  // second write and no scheduled job is needed to refill it.
+  assert.match(CLAIM_SQL, /window_started_at = CASE/);
+  assert.match(CLAIM_SQL, /shown_count = CASE/);
+  const where = CLAIM_SQL.slice(CLAIM_SQL.indexOf('WHERE ('), CLAIM_SQL.indexOf('RETURNING'));
+  assert.match(where, /window_started_at < NOW\(\) - \$4::interval\s*\n?\s*OR mcp_connector_hints\.shown_count < \$6/);
 });
 
 test('a returned row is a granted claim, no row is a refusal', async () => {
@@ -269,14 +335,45 @@ test('a returned row is a granted claim, no row is a refusal', async () => {
   }), true);
   assert.equal(await throttle.claimHintShow(pool, {
     grantId: 'g1', userId: 7, tokenId: 100,
-  }), false, 'the same token does not get a second showing');
+  }), false, 'the statement refused it, so the caller shows nothing');
 
-  // The guards that produce that refusal are in the statement, not in JS.
-  const { text, params } = pool.calls[0];
-  assert.match(text, /last_token_id IS DISTINCT FROM EXCLUDED\.last_token_id/);
-  assert.match(text, /shown_count < \$4/);
-  assert.deepEqual(params, ['g1', 7, 100, throttle.MAX_SHOWS_PER_GRANT]);
-  assert.equal(throttle.MAX_SHOWS_PER_GRANT, 3);
+  const { params } = pool.calls[0];
+  assert.deepEqual(params, [
+    'g1', 7, 100,
+    throttle.HINT_WINDOW, throttle.HINT_COOLDOWN, throttle.MAX_SHOWS_PER_WINDOW,
+  ]);
+});
+
+test('a granted claim is logged at info, not only failures', () => {
+  // The first version logged only failures, so "never granted" and "granted
+  // every time" looked identical in production — which is why the bug above
+  // survived as long as it did. A grant is rare by construction (at most
+  // three per connection per week), so this is not chatty.
+  const granted = CLAIM_SQL.slice(CLAIM_SQL.indexOf('if (!rows.length) return false;'));
+  assert.match(granted, /log\.info\('mcp-hint-throttle'/);
+  assert.match(granted, /shownCount: rows\[0\]\.shown_count/);
+});
+
+// ── 5b. Arming ─────────────────────────────────────────────────────────
+
+test('arming inserts shown_count 0, never 1', async () => {
+  // The subtle one. last_shown_at is NOT NULL DEFAULT NOW(), so a row created
+  // by the arm path looks like it was shown this instant. shown_count = 0 is
+  // what tells the claim guard the difference, and writing 1 here would make
+  // a freshly armed connection wait out the whole cooldown for its first tip.
+  const arm = THROTTLE_SRC.slice(
+    THROTTLE_SRC.indexOf('async function armHint'),
+    THROTTLE_SRC.indexOf('// ── Claim')
+  );
+  assert.match(arm, /VALUES \(\$1, \$2, 0, NOW\(\)\)/);
+  assert.match(arm, /ON CONFLICT \(grant_id\) DO UPDATE\s*\n?\s*SET armed_at = NOW\(\)/);
+  // And nothing else: arming records intent, it does not show anything.
+  assert.doesNotMatch(arm, /shown_count = /);
+  assert.doesNotMatch(arm, /last_shown_at/);
+
+  const pool = fakePool([[{ shown_count: 0 }]]);
+  assert.equal(await throttle.armHint(pool, { grantId: 'g1', userId: 7 }), true);
+  assert.deepEqual(pool.calls[0].params, ['g1', 7]);
 });
 
 test('a missing grant, user or pool refuses without touching the database', async () => {
@@ -284,17 +381,107 @@ test('a missing grant, user or pool refuses without touching the database', asyn
   assert.equal(await throttle.claimHintShow(pool, { grantId: null, userId: 7 }), false);
   assert.equal(await throttle.claimHintShow(pool, { grantId: 'g', userId: null }), false);
   assert.equal(await throttle.claimHintShow(null, { grantId: 'g', userId: 7 }), false);
+  assert.equal(await throttle.armHint(pool, { grantId: null, userId: 7 }), false);
+  assert.equal(await throttle.armHint(pool, { grantId: 'g', userId: null }), false);
+  assert.equal(await throttle.armHint(null, { grantId: 'g', userId: 7 }), false);
   assert.equal(pool.calls.length, 0);
 });
 
-test('a failed claim costs a tip, never the result', async () => {
+test('a failed claim or arm costs a tip, never the result', async () => {
   // The table is advisory. A read that worked must not become an error
   // because a hint could not be booked — the same posture as the
   // fire-and-forget last_used_at update at the /mcp edge.
-  const pool = fakePool([new Error('relation "mcp_connector_hints" does not exist')]);
-  assert.equal(await throttle.claimHintShow(pool, {
+  const boom = () => new Error('relation "mcp_connector_hints" does not exist');
+  assert.equal(await throttle.claimHintShow(fakePool([boom()]), {
     grantId: 'g1', userId: 7, tokenId: 1,
   }), false);
+  assert.equal(await throttle.armHint(fakePool([boom()]), {
+    grantId: 'g1', userId: 7,
+  }), false);
+});
+
+// ── 5c. The status read ────────────────────────────────────────────────
+
+test('the status read is read-only, and reports the budget it is bounded by', async () => {
+  const status = THROTTLE_SRC.slice(THROTTLE_SRC.indexOf('async function getHintStatus'));
+  assert.match(status, /SELECT/);
+  assert.doesNotMatch(status, /INSERT|UPDATE |DELETE/,
+    'nothing the Settings panel calls may write throttle state');
+
+  const pool = fakePool([[{ shown_this_window: 2, last_shown_at: '2026-08-14T04:21:42.000Z' }]]);
+  assert.deepEqual(await throttle.getHintStatus(pool, { userId: 7 }), {
+    shownThisWindow: 2,
+    lastShownAt: '2026-08-14T04:21:42.000Z',
+    maxPerWindow: throttle.MAX_SHOWS_PER_WINDOW,
+    windowDays: throttle.HINT_WINDOW_DAYS,
+  });
+  assert.deepEqual(pool.calls[0].params, [7, throttle.HINT_WINDOW]);
+});
+
+test('an unreadable status does not take the connector list down with it', async () => {
+  // It rides on GET /api/me/connectors, whose point is the list. A status
+  // line that cannot be read is one missing line, not a 503.
+  const empty = {
+    shownThisWindow: 0, lastShownAt: null,
+    maxPerWindow: throttle.MAX_SHOWS_PER_WINDOW, windowDays: throttle.HINT_WINDOW_DAYS,
+  };
+  assert.deepEqual(await throttle.getHintStatus(fakePool([new Error('nope')]), { userId: 7 }), empty);
+  assert.deepEqual(await throttle.getHintStatus(null, { userId: 7 }), empty);
+  assert.deepEqual(await throttle.getHintStatus(fakePool([[]]), { userId: 7 }), empty);
+});
+
+// ── 5d. Arming happens at the /mcp edge, on initialize ─────────────────
+
+test('initialize is detected in the body, batches included', () => {
+  const { isInitializeRequest } = require('../src/routes/mcp-remote');
+  assert.equal(isInitializeRequest({ jsonrpc: '2.0', id: 1, method: 'initialize' }), true);
+  // A JSON-RPC batch arrives as an array; one arm per request either way.
+  assert.equal(isInitializeRequest([
+    { method: 'tools/list' }, { method: 'initialize' },
+  ]), true);
+  for (const body of [
+    { method: 'tools/call', params: { name: 'whoami' } },
+    { method: 'tools/list' },
+    [{ method: 'tools/call' }],
+    [], {}, null, undefined, 'initialize', 42,
+  ]) {
+    assert.equal(isInitializeRequest(body), false,
+      `${JSON.stringify(body)} is not a session opening`);
+  }
+});
+
+test('the arm is placed after authentication and the audit insert', () => {
+  // It writes a row keyed on a grant, so an unauthenticated caller must not be
+  // able to write one — and the audit is the platform's rule that an
+  // authorization it cannot record is one it does not grant.
+  const handler = REMOTE_SRC.slice(
+    REMOTE_SRC.indexOf('router.post(MCP_PATH, jsonBody('),
+    REMOTE_SRC.indexOf('router.all(MCP_PATH,')
+  );
+  const authAt = handler.indexOf('auth = await authenticateConnector');
+  const auditAt = handler.indexOf("eventType: 'token_used'");
+  const armAt = handler.indexOf('.armHint(pool,');
+  const dispatchAt = handler.indexOf('mcpTools.registerTools(server, {');
+  assert.ok(authAt > 0 && auditAt > authAt, 'the audit still follows authentication');
+  assert.ok(armAt > auditAt, 'the arm follows the audit insert');
+  assert.ok(armAt < dispatchAt, 'and precedes the dispatch it is arming for');
+  // Reads the already-parsed body rather than the stream, so it observes the
+  // same object handleRequest is handed a few lines later.
+  assert.match(handler, /isInitializeRequest\(req\.body\)/);
+});
+
+test('a suppressed client is never armed, and a failed arm never fails the request', () => {
+  const handler = REMOTE_SRC.slice(
+    REMOTE_SRC.indexOf('router.post(MCP_PATH, jsonBody('),
+    REMOTE_SRC.indexOf('router.all(MCP_PATH,')
+  );
+  const arm = handler.slice(handler.indexOf('if (isInitializeRequest(req.body)'));
+  assert.match(arm, /!mcpTools\.hintSuppressedForClient\(auth\.clientName\)/,
+    'ChatGPT/Codex connections write no row at all');
+  // Fire-and-forget with the rejection swallowed and logged: an advisory tip
+  // must not delay or fail a working request. No `await` on this call.
+  assert.match(arm.slice(0, arm.indexOf('let transport')), /\.catch\(\(err\) => \{/);
+  assert.doesNotMatch(arm.slice(0, arm.indexOf('let transport')), /await[\s\S]{0,40}armHint/);
 });
 
 test('the per-request memo means one claim however many reads run', () => {

@@ -304,7 +304,31 @@ test('Settings → Connectors offers the rules for a personal settings file', ()
   assert.match(CONNECTORS_TSX, /still asks every time/);
 });
 
-test('the copied block is byte-for-byte the shipped allowlist', () => {
+test('the panel splits into the three surfaces the answer differs between', () => {
+  // One block headed "add this to ~/.claude/settings.json" was wrong for the
+  // surface that needs it most: a Claude Code WEB container is built fresh, so
+  // nothing from the user's machine is in it and only the repo travels. Naming
+  // the wrong file is worse than naming none — the user follows it, is still
+  // prompted, and concludes the feature does not work.
+  for (const id of ['connector-case-cc-local', 'connector-case-cc-web', 'connector-case-chat']) {
+    assert.match(CONNECTORS_TSX, new RegExp(`id="${id}"`), `${id} is one of the three cases`);
+  }
+  // The web case names the per-repo file and says why the personal one is not
+  // in that container.
+  const web = CONNECTORS_TSX.slice(
+    CONNECTORS_TSX.indexOf('id="connector-case-cc-web"'),
+    CONNECTORS_TSX.indexOf('id="connector-case-chat"')
+  );
+  assert.match(web, /fresh container/i);
+  assert.match(web, /\.claude\/settings\.json/);
+  assert.match(web, /id="connector-repo-allow-rules"/);
+  // And the chat case says there is nothing to do, rather than leaving a
+  // Claude.ai user to copy a file format that has no effect there.
+  const chat = CONNECTORS_TSX.slice(CONNECTORS_TSX.indexOf('id="connector-case-chat"'));
+  assert.match(chat, /Nothing to do/i);
+});
+
+test('the copied block is byte-for-byte the shipped allowlist, in BOTH places', () => {
   // The panel renders a literal rather than importing the server constants
   // into the browser bundle, so this is what stops the two drifting: add a
   // rule to READ_ONLY_ALLOW_RULES and this fails until the panel matches.
@@ -316,12 +340,30 @@ test('the copied block is byte-for-byte the shipped allowlist', () => {
   assert.equal(match[1], expected);
   // Same content as the scaffolded file, modulo its trailing newline.
   assert.equal(`${match[1]}\n`, scaffold().get('.claude/settings.json'));
+
+  // The two files take identical content and differ only in reach, so the
+  // second block interpolates the SAME constant. A copy-pasted second literal
+  // would drift from the first the day a rule is added — and would do it
+  // silently, since only one of the two is under the assertion above.
+  assert.equal(
+    (CONNECTORS_TSX.match(/const PERSONAL_ALLOW_RULES = /g) || []).length, 1,
+    'one constant feeds both blocks'
+  );
+  for (const id of ['connector-allow-rules', 'connector-repo-allow-rules']) {
+    const pre = CONNECTORS_TSX.match(new RegExp(`<pre id="${id}"[^>]*>([^<]*)<`));
+    assert.ok(pre, `#${id} is a <pre>`);
+    assert.equal(pre[1].trim(), '{PERSONAL_ALLOW_RULES}', `#${id} renders the shared constant`);
+  }
 });
 
-test('the copy button copies that block', () => {
+test('both copy buttons copy their own block', () => {
+  // Wired as a loop over the two ids rather than two hand-written handlers:
+  // the second block was added later, and a copy button that silently copies
+  // the other block is indistinguishable from one that works.
   const settingsJs = read('frontend/src/features/settings/settings.js');
-  assert.match(settingsJs, /getElementById\('connector-allow-rules-copy'\)/);
-  assert.match(settingsJs, /getElementById\('connector-allow-rules'\)/);
+  assert.match(settingsJs, /\['connector-allow-rules', 'connector-repo-allow-rules'\]/);
+  assert.match(settingsJs, /getElementById\(`\$\{id\}-copy`\)/);
+  assert.match(settingsJs, /getElementById\(id\)/);
   assert.match(settingsJs, /clipboard\.writeText\(block\.textContent\)/);
 });
 

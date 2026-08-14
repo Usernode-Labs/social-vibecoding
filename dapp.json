@@ -671,6 +671,30 @@
       "expectText": "reconnect once"
     },
     {
+      "name": "Claude Code on the web is told to commit the repo file, not edit one on its machine (#1219)",
+      "path": "/?demo=connectors-claude#settings/connectors",
+      "expectSelector": "[data-settings-section=\"connectors\"]:not(.hidden) #connector-case-cc-web:not(.hidden) #connector-repo-allow-rules",
+      "expectText": "fresh container each time"
+    },
+    {
+      "name": "A ChatGPT-only connection hides Claude Code's settings-file advice (#1219)",
+      "path": "/?demo=connectors-chatgpt#settings/connectors",
+      "expectSelector": "#connector-prompt-help #connector-case-cc-local.hidden",
+      "expectText": "Nothing to do"
+    },
+    {
+      "name": "The setup tip's status says when it was last sent in chat (#1219)",
+      "path": "/?demo=connectors-claude-shown#settings/connectors",
+      "expectSelector": "#connector-hint-status:not(.hidden)",
+      "expectText": "sent you this tip in chat once in the last 7 days"
+    },
+    {
+      "name": "A spent weekly tip budget says it comes back, not that it is over (#1219)",
+      "path": "/?demo=connectors-spent#settings/connectors",
+      "expectSelector": "#connector-hint-status:not(.hidden)",
+      "expectText": "it will come back once the window rolls over"
+    },
+    {
       "name": "Tapping an app shows its icon and name while it loads, not a blank window (#931)",
       "path": "/?shot=app-launching",
       "expectSelector": "#app-launch-cover .app-icon-tile",

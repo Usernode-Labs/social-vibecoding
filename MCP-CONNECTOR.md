@@ -19,7 +19,11 @@ lives in [CLI-MCP-AUTH-SPEC.md](CLI-MCP-AUTH-SPEC.md).
 2. New app repos are scaffolded with a `.claude/settings.json` that allows the
    read-only connector calls. Accept the workspace trust dialog once and the
    per-call prompts for reads stop.
-3. The tools that change something still prompt, every time, and Usernode marks
+3. On your own machine, the same three rules in `~/.claude/settings.json` cover
+   every repo at once. On Claude Code **web** they do not — the container is
+   fresh each session — so there it is the repo's committed file that applies.
+   Settings → Connectors has both blocks with a copy button each.
+4. The tools that change something still prompt, every time, and Usernode marks
    them so that stays true even in permissive modes.
 
 ---
@@ -78,6 +82,23 @@ Guidance that names only one form is wrong for the other half of users, so:
 and last `__`, and use that as the server segment of your rules.** If it is not
 `usernode`, either edit the rules or reconnect the connector under the
 canonical name.
+
+### `whoami` hands the model both halves
+
+The server cannot see the name your client built its tool names from. The model
+can — it is looking at the name of the tool it just called. So `whoami` returns
+the other half:
+
+| Field | Value |
+|---|---|
+| `connectorName` | the canonical `usernode`, straight from `SERVER_NAME` |
+| `permissionAllowRules` | the exact three rules Usernode ships, from `READ_ONLY_ALLOW_RULES` |
+
+Comparing the two is a one-step check any client can make: if the tool it just
+called is not named `mcp__<connectorName>__…`, this connection is registered
+under a different spelling and the shipped rules will not match it. These are
+plain output fields, not an instruction to relay — the setup tip is the thing
+that gets relayed, and it is throttled precisely because it interrupts.
 
 ---
 
@@ -142,6 +163,23 @@ That file fixes one repo. The same three rules in your **personal**
 `~/.claude/settings.json` fix every repo at once, including repos Usernode
 never scaffolded — see section 4, and Settings → Connectors has the block with
 a copy button.
+
+### Which file applies where
+
+The two files hold identical content and differ only in reach, and the reach
+that matters depends on the surface you are on. Guidance that names one file is
+wrong for whoever is on the other surface — which is why Settings → Connectors
+now shows three labelled cases rather than one block of prose.
+
+| Where you are | What applies | Why |
+|---|---|---|
+| **Claude Code on your own machine** | `~/.claude/settings.json` | Your home directory persists, so one file covers every repo, including repos Usernode never made. |
+| **Claude Code on the web** | the repo's committed `.claude/settings.json` | The container is built fresh each session, so nothing from your machine is in it. The repo is the only thing that travels — subject to the trust dialog below. |
+| **Claude.ai chat, ChatGPT** | neither | You approve the connector once in that product's own settings; it does not prompt per call. Both files are Claude Code's format and have no effect here. |
+
+The web row is the reason the per-repo copy is offered in the product at all.
+A personal settings file is strictly better where it works, and it does not
+work there.
 
 ### Why not `mcp__usernode__*`
 
@@ -224,12 +262,17 @@ copies an app rather than normalising it.
 
 ### Repos that existed before this
 
-There is no campaign to add the file to the ~36 apps that already exist. It
-would mean a proposal and a vote per app, and the last comparable sweep landed
-12 of 35 — leaving a majority of users no better off while looking finished.
-More to the point, a per-repo file is the wrong shape for the problem: it fixes
-one repo at a time, and someone working across several Usernode apps has to
-collect them.
+The scaffold reaches repos **created, imported or forked after it shipped**
+(commit `feabb34f`) and no others. At that point the platform held **37 apps,
+every one of them created earlier**, so the number of existing app repos
+carrying `.claude/settings.json` because Usernode put it there is zero. Read
+the table above as "from now on", not as a description of the fleet.
+
+There is no campaign to fix that by hand. It would mean a proposal and a vote
+per app, and the last comparable sweep landed 12 of 35 — leaving a majority of
+users no better off while looking finished. More to the point, a per-repo file
+is the wrong shape for the problem: it fixes one repo at a time, and someone
+working across several Usernode apps has to collect them.
 
 **The everywhere-at-once fix is the user's own settings file.** The same three
 rules under `permissions.allow` in `~/.claude/settings.json` apply to every
@@ -263,14 +306,39 @@ results of read-only tools:
   instruction to substitute whatever server segment the model can actually see
   in the tool name it just called, which is the self-correcting answer to the
   misspelling problem in section 1.
-- It is **throttled**: at most once per HTTP request, at most once per access
-  token (which rotates roughly hourly, the nearest durable stand-in for "once
-  per conversation" on a stateless transport), and at most three times per
-  grant, ever. State lives in `mcp_connector_hints`, keyed on the grant. A
-  failed claim is logged and the read returns without a hint — a tip never
-  turns a working call into an error.
+- It is **armed by `initialize`**. That message is the protocol saying a
+  session has started, and it is the only such signal a stateless transport
+  gets, so `POST /mcp` arms the connection's row the moment it sees one (after
+  authentication and the audit insert, never before). A claim is then granted
+  when the connection has been armed since the tip was last shown, and showing
+  it consumes the arm — one session, one tip, however many reads run in it.
+- It is **bounded twice**: a ten-minute floor between showings, so a client
+  that re-initializes for a reconnect or a second tab does not turn the tip
+  into a nag, and at most **three showings per connection per rolling seven
+  days**. The window's start rolls forward inside the same statement that
+  claims, so the budget refills on its own.
+- State lives in `mcp_connector_hints`, keyed on the grant. A failed claim is
+  logged and the read returns without a hint — a tip never turns a working call
+  into an error — and a granted claim is logged at **info**, so "shown too
+  often" and "never shown at all" are distinguishable in production.
 - It is suppressed for ChatGPT/Codex clients, which have no Claude Code
-  permission prompts for it to be about.
+  permission prompts for it to be about. Those clients are not armed either,
+  so a suppressed connection writes no row at all.
+- Settings → Connectors shows the status **read-only**: whether the tip has
+  been sent, when, and how much of this week's budget is left. There is
+  deliberately no reset control. A button that re-arms the tip is a button for
+  making the connector nag, and opening a new conversation already does it.
+
+> **Why this was rewritten.** The first version keyed "already shown?" on the
+> **access token**, refusing a claim when the calling token matched the last
+> one, on the theory that an hourly token is roughly a conversation. It is not:
+> one token serves every conversation opened in that hour, so the first
+> eligible read after connecting consumed the only slot and every conversation
+> afterwards got nothing. With a lifetime cap of three per grant and no reset
+> path, a connection that spent it went quiet permanently. In production the
+> table held exactly one row, written minutes after the feature shipped, and
+> never grew. `last_token_id` survives as a diagnostic column — written on
+> every showing, read by nothing.
 
 ---
 

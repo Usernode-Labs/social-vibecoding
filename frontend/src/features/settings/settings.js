@@ -208,15 +208,19 @@
         });
       }
 
-      // Copy the read-only allow rules for the user's PERSONAL
-      // ~/.claude/settings.json. Same shape as the URL copy above, reading
-      // textContent because the block is a <pre>, not an input — and no
-      // select() fallback for the same reason, so a denied clipboard just
-      // leaves the visible text to be copied by hand.
-      const rulesCopy = document.getElementById('connector-allow-rules-copy');
-      if (rulesCopy) {
+      // Copy the read-only allow rules. Two blocks with identical content and
+      // different destinations: the user's PERSONAL ~/.claude/settings.json,
+      // which covers every repo on their machine, and the per-repo
+      // .claude/settings.json, which is the copy a fresh web container can
+      // actually see. Same shape as the URL copy above, reading textContent
+      // because each block is a <pre>, not an input — and no select()
+      // fallback for the same reason, so a denied clipboard just leaves the
+      // visible text to be copied by hand.
+      for (const id of ['connector-allow-rules', 'connector-repo-allow-rules']) {
+        const rulesCopy = document.getElementById(`${id}-copy`);
+        if (!rulesCopy) continue;
         rulesCopy.addEventListener('click', async () => {
-          const block = document.getElementById('connector-allow-rules');
+          const block = document.getElementById(id);
           if (!block) return;
           let ok = true;
           try {
@@ -1215,8 +1219,21 @@
     //
     // Same shape as the CLI-credentials block below: a load-generation
     // guard so a slow response can't repaint stale credential state over a
-    // fresh one, and the page's ?demo=1 passed through (mcp_tokens is
-    // staging:private, so a staging clone would render an empty panel).
+    // fresh one, and the page's ?demo= flag passed through (mcp_tokens and
+    // mcp_connector_hints are both staging:private, so a staging clone would
+    // render an empty list and a status line with nothing to say).
+
+    // Wider than _cliTokensDemo above, because this panel has five reviewable
+    // states rather than one: `1` is the everyday mixed state and the
+    // `connectors-*` values each pin one of the others. Anything else is not
+    // passed on. The server only honours any of it in staging.
+    _connectorsDemo() {
+      try {
+        const flag = new URLSearchParams(window.location.search).get('demo');
+        if (flag === '1' || (flag && flag.startsWith('connectors-'))) return flag;
+        return null;
+      } catch { return null; }
+    },
 
     async _loadConnectors() {
       const section = document.getElementById('connectors-section');
@@ -1235,7 +1252,8 @@
       status.classList.add('hidden');
 
       try {
-        const demoQ = this._cliTokensDemo() ? '?demo=1' : '';
+        const demoFlag = this._connectorsDemo();
+        const demoQ = demoFlag ? `?demo=${encodeURIComponent(demoFlag)}` : '';
         const response = await fetch(`/api/me/connectors${demoQ}`, {
           credentials: 'same-origin',
           cache: 'no-store',
@@ -1254,6 +1272,7 @@
         }
         section.classList.remove('hidden');
         this._connectors = data.connectors;
+        this._connectorHint = data.hint || null;
         this._renderConnectors();
       } catch (err) {
         if (loadId !== this._connectorLoadId) return;
@@ -1264,11 +1283,86 @@
       }
     },
 
+    // Which of the three "stop the prompts" cases apply to what is actually
+    // connected. Substring matching on the registered client name, which is
+    // attacker-choosable and often just a product name — so this only ever
+    // decides what to SHOW, never what to allow, and anything it cannot place
+    // falls back to showing every case.
+    _connectorFamilies(connectors) {
+      let claude = false;
+      let chatgpt = false;
+      let unknown = false;
+      for (const connector of connectors) {
+        const name = String(connector.client_name || '').toLowerCase();
+        if (/claude|anthropic/.test(name)) claude = true;
+        else if (/chatgpt|openai|codex/.test(name)) chatgpt = true;
+        else unknown = true;
+      }
+      return { claude, chatgpt, unknown };
+    },
+
+    // The Claude Code cases are hidden only when EVERY connection is a
+    // ChatGPT-family one, where they are advice about a file that product
+    // does not read. They stay up for a Claude-family name because that name
+    // does not distinguish claude.ai chat from Claude Code — both arrive as
+    // some spelling of "Claude" — so hiding them there would hide the fix
+    // from the surface that needs it.
+    _renderConnectorCases(connectors) {
+      const { claude, unknown } = this._connectorFamilies(connectors);
+      const claudeCode = !connectors.length || unknown || claude;
+      for (const id of ['connector-case-cc-local', 'connector-case-cc-web']) {
+        const node = document.getElementById(id);
+        if (node) node.classList.toggle('hidden', !claudeCode);
+      }
+    },
+
+    // The read-only tip status. There is no control next to it: arming
+    // happens when a chat client opens a session (services/mcp-hint-throttle.js),
+    // so "open a new chat" is the reset, and a button here would only be a
+    // way to make the connector nag.
+    _renderConnectorHint(connectors) {
+      const line = document.getElementById('connector-hint-status');
+      if (!line) return;
+      const hint = this._connectorHint;
+      const { claude, unknown } = this._connectorFamilies(connectors);
+      // No line at all in two cases: no status to report, and a connection
+      // set that is entirely ChatGPT-family. The tip is suppressed for that
+      // family — there are no per-call prompts there to stop — so "not shown
+      // yet" would read as a promise that one is coming, and a count would
+      // report a budget that will never be spent.
+      if (!hint || (connectors.length && !claude && !unknown)) {
+        line.textContent = '';
+        line.classList.add('hidden');
+        return;
+      }
+      const shown = Number(hint.shownThisWindow) || 0;
+      const cap = Number(hint.maxPerWindow) || 0;
+      const days = Number(hint.windowDays) || 0;
+
+      let text;
+      if (!shown) {
+        text = 'Usernode has not sent you this tip in chat yet. It rides along on the first read it answers in a new conversation.';
+      } else {
+        const when = Number.isFinite(Date.parse(hint.lastShownAt))
+          ? new Date(hint.lastShownAt).toLocaleString()
+          : 'recently';
+        const times = shown === 1 ? 'once' : `${shown} times`;
+        text = `Usernode sent you this tip in chat ${times} in the last ${days} days, most recently ${when}. `
+          + (cap && shown >= cap
+            ? `That is the limit of ${cap} per connection per ${days} days; it will come back once the window rolls over.`
+            : 'Open a new conversation to see it again.');
+      }
+      line.textContent = text;
+      line.classList.remove('hidden');
+    },
+
     _renderConnectors() {
       const list = document.getElementById('connectors-list');
       if (!list) return;
       list.textContent = '';
       const connectors = this._connectors || [];
+      this._renderConnectorCases(connectors);
+      this._renderConnectorHint(connectors);
       if (!connectors.length) {
         const empty = document.createElement('p');
         empty.className = 'text-xs text-zinc-500 dark:text-zinc-400';
