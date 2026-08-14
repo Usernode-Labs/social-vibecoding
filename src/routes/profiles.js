@@ -335,11 +335,11 @@ function publicProfileRoutes(config) {
         const target = rows[0];
         await client.query(
           `UPDATE users
-              SET profile_disabled_at = CASE WHEN $1 THEN NOW() ELSE NULL END,
-                  profile_disabled_by = CASE WHEN $1 THEN $2 ELSE NULL END,
-                  profile_disabled_reason = CASE WHEN $1 THEN $3 ELSE NULL END,
+              SET profile_disabled_at = CASE WHEN $1::boolean THEN NOW() ELSE NULL END,
+                  profile_disabled_by = CASE WHEN $1::boolean THEN $2::integer ELSE NULL END,
+                  profile_disabled_reason = CASE WHEN $1::boolean THEN $3::text ELSE NULL END,
                   profile_updated_at = NOW()
-            WHERE id = $4`,
+            WHERE id = $4::integer`,
           [req.body.disabled, req.user.id, reason.value, target.id]
         );
         if (req.body.disabled) {

@@ -291,6 +291,29 @@ make down         # stop
 
 Then visit `http://localhost:3000`.
 
+### PostgreSQL query validation
+
+`npm run lint:sql` extracts every statically resolvable `.query()` string from
+`server.js` and `src/`, applies `src/db/schema.sql` to a throwaway database,
+and asks PostgreSQL to parse and describe each statement without executing it.
+Point it at the PostgreSQL 17 local development server:
+
+```bash
+SQL_CHECK_CONNECTION_URL=postgres://usernode:localdev@127.0.0.1:5440/usernode \
+  npm run lint:sql
+```
+
+Runtime-built SQL cannot be safely expanded into independent fragments. Its
+fingerprints live in `sql-dynamic-baseline.json`; adding or changing one fails
+the inventory check until the query is reviewed. After review, refresh it with:
+
+```bash
+node scripts/check-sql.js --write-dynamic-baseline
+```
+
+Proposal unit suites run the same gate against the worker image's isolated
+PostgreSQL 17 instance before `npm test`.
+
 ### Codex and Claude Code CLI authentication and MCP
 
 Ask Codex or Claude Code for the platform operation directly, for example:

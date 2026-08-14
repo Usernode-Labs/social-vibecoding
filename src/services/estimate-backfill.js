@@ -70,15 +70,15 @@ async function sweepOnce(pool) {
      SELECT o.pm,
             o.ticks,
             -- The run's total wall clock. A clear active_turn means the
-            -- session finished, so its updated_at is the closest thing to a
-            -- real end stamp; otherwise bound it by the last tick plus one
-            -- 60s estimator cadence.
+            -- session finished, so its last_activity_at is the closest thing
+            -- to a real end stamp; otherwise bound it by the last tick plus
+            -- one 60s estimator cadence.
             GREATEST(
               o.last_elapsed_ms + 60000,
               CASE
-                WHEN cs.active_turn IS NOT TRUE AND cs.updated_at > o.last_tick_at
+                WHEN cs.active_turn IS NULL AND cs.last_activity_at > o.last_tick_at
                   THEN o.last_elapsed_ms
-                       + EXTRACT(EPOCH FROM (cs.updated_at - o.last_tick_at)) * 1000
+                       + EXTRACT(EPOCH FROM (cs.last_activity_at - o.last_tick_at)) * 1000
                 ELSE o.last_elapsed_ms + 60000
               END
             )::bigint AS total_ms

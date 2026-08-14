@@ -2401,7 +2401,7 @@ function voteRoutes(config) {
       // only *do* anything with the vote (chat message, merge check) if
       // it actually changed; see below.
       const { rows: sessionRows } = await pool.query(
-        `SELECT cs.*, a.slug as app_slug, a.id as app_id, a.repo_url,
+      `SELECT cs.*, a.slug as app_slug, a.repo_url,
                 a.self_hosted as app_self_hosted
          FROM chat_sessions cs JOIN apps a ON cs.app_id = a.id
          WHERE cs.id = $1 AND cs.status IN ('promoted', 'merging')`,
@@ -3369,7 +3369,7 @@ function voteRoutes(config) {
   router.post('/api/sessions/:id/undo', async (req, res) => {
     try {
       const { rows: sessionRows } = await pool.query(
-        `SELECT cs.*, a.slug as app_slug, a.id as app_id, a.repo_url
+      `SELECT cs.*, a.slug as app_slug, a.repo_url
          FROM chat_sessions cs JOIN apps a ON cs.app_id = a.id
          WHERE cs.id = $1 AND cs.status = 'merged'`,
         [req.params.id]
@@ -3468,7 +3468,7 @@ function voteRoutes(config) {
       }
 
       const { rows } = await pool.query(
-        `SELECT cs.*, a.slug as app_slug, a.id as app_id, a.repo_url,
+      `SELECT cs.*, a.slug as app_slug, a.repo_url,
                 a.self_hosted as app_self_hosted, a.created_by as app_created_by
          FROM chat_sessions cs JOIN apps a ON cs.app_id = a.id
          WHERE cs.id = $1 AND cs.status = 'promoted'`,

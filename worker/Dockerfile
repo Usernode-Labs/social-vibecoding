@@ -13,13 +13,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git curl wget ca-certificates unzip python3 make g++ \
   && rm -rf /var/lib/apt/lists/*
 
-# ── Local Postgres for the in-loop browser (build turns only, #659) ────
+# ── Local Postgres for in-loop builds and repository SQL checks ────────
 # INLOOP_DATABASE_URL (src/services/in-loop-browser.js) points at
 # postgres://postgres:postgres@127.0.0.1:5432/inloop — a server that must
 # actually exist INSIDE this container, or every backend app crashes with
 # ECONNREFUSED the moment the agent boots it for the in-loop visual
-# check. We install bookworm's postgresql-15 (+contrib, for common app
-# extensions like pgcrypto/uuid-ossp) and pre-initialize a node-owned
+# check. The same server backs repository SQL validation during proposal runs,
+# so it deliberately matches production's PostgreSQL 17 rather than using
+# bookworm's frozen PostgreSQL 15. The PostgreSQL project's apt repository
+# supplies 17 (+contrib, for common app extensions like pgcrypto/uuid-ossp).
+# We pre-initialize a node-owned
 # data dir at image-build time; run-cc.sh starts the server lazily on
 # build turns and recreates the `inloop` database fresh each turn, so
 # scout/sync-only sessions pay zero runtime cost.
@@ -32,14 +35,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN mkdir -p /etc/postgresql-common/createcluster.conf.d \
   && echo 'create_main_cluster = false' \
        > /etc/postgresql-common/createcluster.conf.d/no-main-cluster.conf \
+  && install -d /usr/share/postgresql-common/pgdg \
+  && curl -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+       --fail https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+  && echo 'deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt bookworm-pgdg main' \
+       > /etc/apt/sources.list.d/pgdg.list \
   && apt-get update && apt-get install -y --no-install-recommends \
-    postgresql-15 postgresql-contrib-15 \
+    postgresql-17 postgresql-contrib-17 \
   && rm -rf /var/lib/apt/lists/*
 
 # Debian keeps the server binaries (pg_ctl/initdb/postgres) off PATH —
 # only client tools get pg_wrapper shims. Surface them for run-cc.sh and
 # for the agent itself (`pg_ctl status`, direct `psql`).
-ENV PATH=/usr/lib/postgresql/15/bin:$PATH
+ENV PATH=/usr/lib/postgresql/17/bin:$PATH
 
 # Pre-initialize the throwaway data dir as node (initdb refuses root; the
 # permanent USER node switch only happens further down). Trust auth on
