@@ -9788,8 +9788,11 @@ const AppView = {
     const field = data.field;
     const check = '<svg class="w-3.5 h-3.5 text-violet-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>';
 
+    // #1187: `data-attr-opt-mine` marks the option the viewer already voted
+    // for, so the click handler below can treat a re-click as a deselect
+    // (assignee only — see the wiring). The title spells the affordance out.
     const optRow = (label, value, count, mine) =>
-      `<button type="button" class="attr-opt" data-attr-opt-value="${escapeAttr(value)}">
+      `<button type="button" class="attr-opt" data-attr-opt-value="${escapeAttr(value)}" data-attr-opt-mine="${mine ? '1' : '0'}"${mine && field === 'assignee' ? ' title="Click again to remove your pick"' : ''}>
         <span class="attr-opt-label">${label}</span>
         <span class="attr-opt-right">${count ? `<span class="attr-opt-count">${count}</span>` : ''}${mine ? check : ''}</span>
       </button>`;
@@ -9848,9 +9851,20 @@ const AppView = {
 
     pop.innerHTML = inner;
 
-    // Vote on an existing option.
+    // Vote on an existing option. #1187: the assignee row is a TOGGLE —
+    // clicking the name the viewer already voted for withdraws that vote
+    // (unassign) instead of re-casting it, mirroring the PM view's
+    // drag-to-Unassigned. Priority/category keep the idempotent re-vote:
+    // their checked state doubles as "my current pick" and un-picking them
+    // was never the reported gap.
     pop.querySelectorAll('.attr-opt').forEach((b) => {
-      b.addEventListener('click', () => AppView._castAttrVote(b.dataset.attrOptValue));
+      b.addEventListener('click', () => {
+        if (field === 'assignee' && b.dataset.attrOptMine === '1') {
+          AppView._withdrawAttrVote();
+        } else {
+          AppView._castAttrVote(b.dataset.attrOptValue);
+        }
+      });
     });
 
     if (field === 'category') {
@@ -9951,6 +9965,32 @@ const AppView = {
       }
     } catch (err) {
       PlatformUI.toast(`Could not save your vote: ${err.message}`);
+    }
+  },
+
+  // #1187: DELETE the caller's own vote for the open popover's (target,
+  // field) — the deselect half of the assignee toggle. Same post-processing
+  // as _castAttrVote (the server returns the refreshed tally) so the chips
+  // and the still-open popover repaint in one round-trip, and the card only
+  // reads unassigned once no other votes remain.
+  async _withdrawAttrVote() {
+    const ctx = AppView._attrPopover;
+    if (!ctx) return;
+    const { field, targetType, targetRef, slug } = ctx;
+    try {
+      const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/topics/${targetType}/${targetRef}/attributes?field=${field}`, {
+        method: 'DELETE',
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { PlatformUI.toast(data.error || 'Could not remove your vote.'); return; }
+      AppView._applyAttrSummary(targetType, targetRef, field, data);
+      AppView._refreshAttrCards();
+      if (AppView._attrPopover && AppView._attrPopover.field === field
+          && AppView._attrPopover.targetRef === targetRef) {
+        AppView._renderAttrPopoverBody(data);
+      }
+    } catch (err) {
+      PlatformUI.toast(`Could not remove your vote: ${err.message}`);
     }
   },
 
