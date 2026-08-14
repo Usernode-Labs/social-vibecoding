@@ -1082,6 +1082,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
                 cs.transcript_shared_at, cs.created_at, cs.source,
                 cs.staging_url, cs.imported_pr_author, cs.imported_pr_head_repo,
                 cs.imported_pr_head_sha, cs.reviewed_head_sha, a.repo_url,
+                cs.check_state, cs.check_phase, cs.check_error_detail,
                 cs.agent_backend, cs.agent_model,
                 GREATEST(cs.created_at, COALESCE(m.last_message_at, cs.created_at)) AS last_activity_at,
                 a.slug AS app_slug, a.name AS app_name
@@ -1466,6 +1467,10 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   //   included — issue numbers are group-visible data (the issue list
   //   itself is view-level), and the card renders them as "#N" chips
   //   linking to each issue's in-app discussion.
+  //   check_state / check_phase are the same review-state metadata the
+  //   promoted feed exposes. They let an explicitly shared Underway card
+  //   say that its preview is building, tests are running, or checks have
+  //   finished without exposing the test result payload or error detail.
   //
   //   `transcript_shared` (+ `message_count` for its label) is the ONE
   //   addition that widens what a viewer can reach: it says the owner took
@@ -1486,6 +1491,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         `SELECT cs.id, cs.session_title, cs.pr_title, cs.branch_name, cs.status,
                 cs.staging_url, (cs.pr_number IS NOT NULL) AS can_preview,
                 cs.linked_issues, cs.source, cs.imported_pr_author,
+                cs.check_state, cs.check_phase,
                 (cs.transcript_shared_at IS NOT NULL) AS transcript_shared,
                 (SELECT COUNT(*)::int FROM chat_session_messages m
                   WHERE m.session_id = cs.id) AS message_count,

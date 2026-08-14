@@ -1326,6 +1326,13 @@ const App = {
       if (App.currentTab === 'dev' && App.currentSubTab !== 'sessions') {
         AppView.refreshDevData('session');
       }
+      // The Underway board refresh above is intentionally skipped while the
+      // owner is inside a session. Refresh that focused row directly so its
+      // header advances Draft -> Checks running -> Checks passed/failed
+      // without waiting for a vote/version event or a manual reload.
+      if (typeof DevChat !== 'undefined' && DevChat.refreshCurrentSessionStatus) {
+        DevChat.refreshCurrentSessionStatus(data.sessionId);
+      }
       App.refreshHomeProposals();
     }
     // #439: an on-demand preview rebuild (Preview-click → ensure-staging)

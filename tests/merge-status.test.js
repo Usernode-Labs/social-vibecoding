@@ -1,7 +1,7 @@
 // #405: unit tests for the shared merge-lifecycle helper
 // (public/js/merge-status.js). The helper is the single source of truth for
 // a proposal's canonical merge state across the feed card, the home strip,
-// and the dev session header — so its 11-state derivation precedence and its
+// and the dev session header — so its lifecycle derivation precedence and its
 // missing-vote-data fallback are the contract every surface relies on.
 //
 // merge-status.js is UMD (module.exports under Node), so it's required
@@ -118,6 +118,15 @@ test('state 6b — checks skipped outranks behind_main (precedence)', () => {
     status: 'promoted', check_state: 'skipped', behind_main: 2,
   });
   assert.equal(life.key, 'checks_skipped');
+});
+
+test('state 10b — active draft with green checks says checks passed', () => {
+  const life = MergeStatus.lifecycle({ status: 'active', check_state: 'passing' });
+  assert.equal(life.key, 'checks_passed');
+  assert.equal(life.label, 'Checks passed');
+  assert.equal(life.tone, 'green');
+  assert.equal(life.spinner, false);
+  assert.match(life.title, /ready to propose/);
 });
 
 test('state 7 — behind main, with the commit count in the label', () => {

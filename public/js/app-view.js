@@ -7157,9 +7157,28 @@ const AppView = {
   },
 
   _sessionStatusTagHtml(s) {
-    return AppView._sessionBusy(s)
-      ? '<span class="dev-badge bg-emerald-500/10 text-emerald-500"><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>working…</span>'
-      : (s.status === 'paused' ? '<span class="dev-badge bg-zinc-500/10 text-zinc-500">paused</span>' : '');
+    if (AppView._sessionBusy(s)) {
+      return '<span class="dev-badge bg-emerald-500/10 text-emerald-500"><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>working…</span>';
+    }
+    // A submitted build stays status='active' until the owner puts it up for
+    // a vote, so the generic session state alone cannot distinguish a draft
+    // from a preview/check pipeline in flight. The active-session list now
+    // carries the same two check scalars as the proposal feed. Render that
+    // higher-signal state in the Underway card instead of leaving the row
+    // visually idle while the background pipeline runs.
+    if (s && s.status === 'active' && s.check_state
+        && typeof window !== 'undefined' && window.MergeStatus) {
+      const life = MergeStatus.lifecycle(s);
+      if (life.key === 'checks_running' && s.check_phase) {
+        const phase = AppView._checksPhaseCopy(s.check_phase);
+        return `<span class="ms-badge ms-badge-neutral" title="${escapeAttr(phase.detail)}">`
+          + `<span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>${escapeHtml(phase.title)}</span>`;
+      }
+      return MergeStatus.badgeHtml(life);
+    }
+    return s && s.status === 'paused'
+      ? '<span class="dev-badge bg-zinc-500/10 text-zinc-500">paused</span>'
+      : '';
   },
 
   _importedSessionBadgeHtml(s) {
