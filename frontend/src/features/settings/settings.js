@@ -233,6 +233,8 @@
         });
       }
 
+      this._wireConnectorNameSpelling();
+
       // Change password (issue #282) → POST /api/me/password.
       const cpSave = document.getElementById('cp-save');
       if (cpSave) cpSave.addEventListener('click', () => this.changePassword());
@@ -1235,6 +1237,58 @@
       } catch { return null; }
     },
 
+    // ── Rewriting the allow rules for a different connector name ─────────
+    //
+    // The two blocks ship covering `usernode` and `Usernode`, the two
+    // spellings Usernode can guess. Anything else — a typo like the `Uesrnode`
+    // from #1218, or a name someone simply chose — needs the same rules with
+    // that segment, and asking a user to hand-edit six JSON strings is asking
+    // for a seventh mistake. So the page does the edit.
+    //
+    // The rules are rebuilt from the SHAPE of the rendered block rather than
+    // from a second template kept here: the prerendered default is parsed
+    // once, its tool suffixes are read off it, and a rewrite re-emits those
+    // suffixes under the typed segment. A rule added to READ_ONLY_ALLOW_RULES
+    // reaches this field with no edit in this file.
+    //
+    // textContent throughout, never innerHTML — the value being written comes
+    // from a text input.
+    _wireConnectorNameSpelling() {
+      const field = document.getElementById('connector-name-spelling');
+      if (!field) return;
+      const blocks = ['connector-allow-rules', 'connector-repo-allow-rules']
+        .map((id) => document.getElementById(id))
+        .filter(Boolean);
+      if (!blocks.length) return;
+
+      // Captured before anything is written: this is the canonical answer,
+      // and the fallback for an empty or unusable field.
+      const canonical = blocks[0].textContent;
+      let suffixes = [];
+      try {
+        const allow = JSON.parse(canonical)?.permissions?.allow || [];
+        suffixes = [...new Set(allow.map((rule) => rule.slice(rule.indexOf('__', 5) + 2)))];
+      } catch {
+        suffixes = [];
+      }
+
+      const render = () => {
+        // Only what a permission rule's server segment can hold. `__` is the
+        // separator itself, so a name containing one would silently produce a
+        // rule for a different tool — those characters are dropped, not
+        // escaped, and the result is shown so the user can see what happened.
+        const name = String(field.value || '').trim().replace(/[^A-Za-z0-9.-]/g, '');
+        const custom = name && name.toLowerCase() !== 'usernode' && suffixes.length;
+        const text = custom
+          ? JSON.stringify(
+            { permissions: { allow: suffixes.map((s) => `mcp__${name}__${s}`) } }, null, 2
+          )
+          : canonical;
+        for (const block of blocks) block.textContent = text;
+      };
+      field.addEventListener('input', render);
+    },
+
     async _loadConnectors() {
       const section = document.getElementById('connectors-section');
       const list = document.getElementById('connectors-list');
@@ -1347,10 +1401,26 @@
           ? new Date(hint.lastShownAt).toLocaleString()
           : 'recently';
         const times = shown === 1 ? 'once' : `${shown} times`;
-        text = `Usernode sent you this tip in chat ${times} in the last ${days} days, most recently ${when}. `
-          + (cap && shown >= cap
-            ? `That is the limit of ${cap} per connection per ${days} days; it will come back once the window rolls over.`
-            : 'Open a new conversation to see it again.');
+        text = `Usernode sent you this tip in chat ${times} in the last ${days} days, most recently ${when}. `;
+        // Three different answers to "why am I not seeing it", and they are
+        // not interchangeable: the budget is spent (comes back next week),
+        // the hour since the last one has not passed (comes back shortly), or
+        // neither (open a new conversation). Saying "open a new conversation"
+        // during the quiet hour is advice that does not work, which is worse
+        // than saying nothing.
+        const cooldown = Number(hint.cooldownMinutes) || 0;
+        const shownAt = Date.parse(hint.lastShownAt);
+        const quietUntil = cooldown && Number.isFinite(shownAt)
+          ? shownAt + cooldown * 60 * 1000
+          : 0;
+        if (cap && shown >= cap) {
+          text += `That is the limit of ${cap} per connection per ${days} days; it will come back once the window rolls over.`;
+        } else if (quietUntil > Date.now()) {
+          text += `It stays quiet for ${cooldown} minutes after each one, so a conversation opened before `
+            + `${new Date(quietUntil).toLocaleTimeString()} will not carry it — one opened after that will.`;
+        } else {
+          text += 'Open a new conversation to see it again.';
+        }
       }
       line.textContent = text;
       line.classList.remove('hidden');

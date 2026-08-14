@@ -251,11 +251,14 @@ test('submit_work refuses the same way rather than importing unattributable work
 });
 
 test('the assistant is told the two refusals need different answers', () => {
-  const toolsSrc = fs.readFileSync(path.join(ROOT, 'src/services/mcp-tools.js'), 'utf8');
-  const instructions = toolsSrc.slice(0, toolsSrc.indexOf('function registerTools'));
-  assert.match(instructions, /github_not_linked[\s\S]{0,200}settings/i);
+  // In the operating charter rather than the initialize instructions: the
+  // client cuts that field at 2048 characters, and a two-branch error
+  // contract is exactly the kind of clause that used to fall off the end of
+  // it. The charter is delivered as a tool result, which is not capped.
+  const { CHARTER_FULL } = require('../src/services/mcp-charter');
+  assert.match(CHARTER_FULL, /github_not_linked[\s\S]{0,200}settings/i);
   assert.match(
-    instructions,
+    CHARTER_FULL,
     /github_link_unavailable[\s\S]{0,200}start_platform_build/,
     'the unconfigured case must route to the fallback, not to Settings'
   );

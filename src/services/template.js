@@ -158,8 +158,8 @@ reads, on every version.
 \`permissions.allow\` rules in a project's \`.claude/settings.json\` grant
 capability, so Claude Code applies them only after you accept the
 **workspace trust dialog** for this workspace. Until then it reads the rules
-but does not apply them. The dialog lists the rules, so you can review these
-three before accepting. One reviewable consent instead of dozens of per-call
+but does not apply them. The dialog lists the rules, so you can review them
+before accepting. One reviewable consent instead of dozens of per-call
 prompts is the whole trade — and a repo silently granting a connector
 permission on your behalf is exactly what that check exists to prevent.
 
@@ -167,14 +167,15 @@ permission on your behalf is exactly what that check exists to prevent.
 
 The server segment of a permission rule is a **literal** — \`mcp__*__get_*\`
 is not a thing — so these rules only match a connector named exactly
-\`${CONNECTOR_SERVER_NAME}\`. Claude.ai's "Add custom connector" dialog takes
+\`${CONNECTOR_SERVER_NAME}\` or \`Usernode\` — the two spellings the shipped
+list covers. Claude.ai's "Add custom connector" dialog takes
 whatever **name you type**, and a rule aimed at a different one fails
 silently: no error, you just keep getting prompted.
 
 **Read the name off your own tool list rather than trusting this file.** The
 tool names you actually see are either \`mcp__<server>__whoami\` or
 \`mcp__claude_ai_<server>__whoami\` — the prefix differs by surface. Copy the
-\`<server>\` segment you see and edit the three rules to match, or reconnect
+\`<server>\` segment you see and edit the rules to match, or reconnect
 the connector naming it \`${CONNECTOR_SERVER_NAME}\` exactly.
 
 ## Adding your own rules
@@ -184,9 +185,10 @@ keep the connector entries narrow: never widen them to a whole-server
 wildcard, for the version reason above.
 
 To stop the prompts in **every** repo at once rather than one at a time, put
-the same three rules under \`permissions.allow\` in your personal
+the same rules under \`permissions.allow\` in your personal
 \`~/.claude/settings.json\`. Usernode's Settings → Connectors page has the
-exact block and a copy button.
+exact block, a copy button, and a field that rewrites the rules for a
+connector registered under some other name.
 `,
     },
   ];

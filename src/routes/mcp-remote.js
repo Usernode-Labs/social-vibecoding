@@ -935,6 +935,7 @@ function demoHintStatus({ shownThisWindow = 0, lastShownMinutesAgo = null } = {}
       : new Date(Date.now() - lastShownMinutesAgo * 60 * 1000).toISOString(),
     maxPerWindow: throttle.MAX_SHOWS_PER_WINDOW,
     windowDays: throttle.HINT_WINDOW_DAYS,
+    cooldownMinutes: throttle.HINT_COOLDOWN_MINUTES,
   };
 }
 
@@ -974,6 +975,15 @@ function demoConnectorState(flag) {
     // showing every case rather than guessing.
     case 'connectors-unknown':
       return { connectors: [demoConnector('unknown')], hint: demoHintStatus({}) };
+    // Shown minutes ago, inside the cooldown. The distinct state the panel
+    // has to be able to say something about: budget left, but nothing coming
+    // until the hour is up. Without a fixture the only way to see this line
+    // is to catch a real connection in a sixty-minute window.
+    case 'connectors-cooldown':
+      return {
+        connectors: [demoConnector('claude')],
+        hint: demoHintStatus({ shownThisWindow: 1, lastShownMinutesAgo: 12 }),
+      };
     // This week's budget spent. The panel says so plainly, and says the window
     // rolls over, instead of offering a reset — there is deliberately nothing
     // here that writes throttle state.

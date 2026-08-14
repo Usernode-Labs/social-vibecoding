@@ -53,10 +53,14 @@ test('the initialize instructions set up the relay', () => {
   const instructions = tools.SERVER_INSTRUCTIONS;
   assert.match(instructions, /Usernode setup tip/);
   assert.match(instructions, /relay it once/i);
-  assert.match(instructions, /not data about their apps/);
   // It says the block is NOT untrusted content, because every other line of
   // these instructions says the opposite about everything else returned.
   assert.match(instructions, /never in <untrusted-content> tags/);
+  // The longer form — including what the block is NOT — is in the charter.
+  // The client cuts `instructions` at 2048 chars, so this clause is delivered
+  // twice at two lengths rather than once at the length it would like to be.
+  assert.match(require('../src/services/mcp-charter').CHARTER_FULL,
+    /not data about their apps/);
 });
 
 test('the marker in the instructions is the marker the hint actually uses', () => {
@@ -123,13 +127,14 @@ test('eligibility is DERIVED from the read-only naming contract', () => {
   assert.equal(tools.isHintEligibleTool(undefined), false);
 });
 
-test('the eight read tools return through readResult and no others do', () => {
+test('the nine read tools return through readResult and no others do', () => {
   // The wiring itself, since eligibility is only consulted on the path that
   // asks for it. Everything that acts must still return plain toolResult().
   const hinted = [...TOOLS_SRC.matchAll(/return readResult\('([a-z_]+)'/g)]
     .map((m) => m[1]);
   assert.deepEqual([...new Set(hinted)].sort(), [
-    'get_app', 'get_platform_build', 'get_platform_conventions', 'get_proposal',
+    'get_app', 'get_connector_guidance', 'get_platform_build',
+    'get_platform_conventions', 'get_proposal',
     'list_apps', 'list_my_proposals', 'list_requests', 'whoami',
   ]);
   for (const name of hinted) {
@@ -293,16 +298,49 @@ test('the claim does NOT key on the access token — that was the bug', () => {
   assert.doesNotMatch(where, /last_token_id/);
 });
 
-test('the three ways a claim is granted are all in the WHERE', () => {
+test('the conditions on a claim are ANDed, not offered as alternatives', () => {
   const where = CLAIM_SQL.slice(CLAIM_SQL.indexOf('WHERE ('), CLAIM_SQL.indexOf('RETURNING'));
   // 1. shown_count = 0 — the row armHint just created. Load-bearing because
   //    last_shown_at is NOT NULL DEFAULT NOW(), so that row looks "just
-  //    shown" and a cooldown check alone would refuse it for ten minutes.
-  assert.match(where, /mcp_connector_hints\.shown_count = 0/);
+  //    shown" and a cooldown check alone would refuse its first tip for an
+  //    hour. It is the escape hatch on BOTH bounds, hence twice.
+  assert.equal((where.match(/mcp_connector_hints\.shown_count = 0/g) || []).length, 2);
   // 2. armed since the last showing — a new session began.
   assert.match(where, /mcp_connector_hints\.armed_at > mcp_connector_hints\.last_shown_at/);
-  // 3. the cooldown elapsed — a long session that re-armed nothing.
+  // 3. the cooldown elapsed.
   assert.match(where, /mcp_connector_hints\.last_shown_at < NOW\(\) - \$5::interval/);
+
+  // And the shape, which is the whole fix. The version before this one wrote
+  // arming and the cooldown as an OR, so arming — the one thing a client does
+  // freely, and more than once per human conversation — was a route to a
+  // claim that skipped the cooldown entirely. Production spent a grant's
+  // whole weekly budget of three inside fourteen minutes and then went silent
+  // for six days. An OR here is that bug, so match the AND explicitly.
+  assert.match(
+    where,
+    /armed_at > mcp_connector_hints\.last_shown_at\)\s*\n?\s*AND \(/,
+    'arming and the cooldown are ANDed — an OR lets a re-connect spend a slot'
+  );
+  assert.match(
+    where,
+    /last_shown_at < NOW\(\) - \$5::interval\)\s*\n?\s*AND \(/,
+    'and the weekly budget is ANDed onto both'
+  );
+});
+
+test('a re-arm inside the cooldown is refused by the statement, not by the caller', async () => {
+  // The guard is one atomic statement, so "refused" is the absence of a
+  // returned row — there is no branch in JavaScript to test instead. What
+  // this pins is that the caller reads that absence as a refusal and shows
+  // nothing, which is what a reconnect two minutes into a session produces
+  // now and did not before.
+  const pool = fakePool([[]]);
+  assert.equal(await throttle.claimHintShow(pool, {
+    grantId: 'g1', userId: 7, tokenId: 100,
+  }), false);
+  assert.equal(pool.calls.length, 1, 'and it does not retry around the guard');
+  assert.equal(pool.calls[0].params[4], throttle.HINT_COOLDOWN,
+    'the cooldown the statement was given is the shipped constant');
 });
 
 test('showing consumes the arm, so one initialize buys one tip', () => {
@@ -318,7 +356,8 @@ test('the budget is a rolling window, not a lifetime cap', () => {
   assert.equal(throttle.MAX_SHOWS_PER_WINDOW, 3);
   assert.equal(throttle.HINT_WINDOW, '7 days');
   assert.equal(throttle.HINT_WINDOW_DAYS, 7);
-  assert.equal(throttle.HINT_COOLDOWN, '10 minutes');
+  assert.equal(throttle.HINT_COOLDOWN, '60 minutes');
+  assert.equal(throttle.HINT_COOLDOWN_MINUTES, 60);
   assert.equal(throttle.MAX_SHOWS_PER_GRANT, undefined, 'the lifetime cap is gone');
   // The window rolls forward inside the same statement that claims, so no
   // second write and no scheduled job is needed to refill it.
@@ -414,6 +453,9 @@ test('the status read is read-only, and reports the budget it is bounded by', as
     lastShownAt: '2026-08-14T04:21:42.000Z',
     maxPerWindow: throttle.MAX_SHOWS_PER_WINDOW,
     windowDays: throttle.HINT_WINDOW_DAYS,
+    // Reported so the panel can say "not before <time>" without keeping its
+    // own copy of a number this module owns.
+    cooldownMinutes: throttle.HINT_COOLDOWN_MINUTES,
   });
   assert.deepEqual(pool.calls[0].params, [7, throttle.HINT_WINDOW]);
 });
@@ -424,6 +466,7 @@ test('an unreadable status does not take the connector list down with it', async
   const empty = {
     shownThisWindow: 0, lastShownAt: null,
     maxPerWindow: throttle.MAX_SHOWS_PER_WINDOW, windowDays: throttle.HINT_WINDOW_DAYS,
+    cooldownMinutes: throttle.HINT_COOLDOWN_MINUTES,
   };
   assert.deepEqual(await throttle.getHintStatus(fakePool([new Error('nope')]), { userId: 7 }), empty);
   assert.deepEqual(await throttle.getHintStatus(null, { userId: 7 }), empty);

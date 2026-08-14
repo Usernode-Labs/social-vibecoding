@@ -546,8 +546,8 @@ test('platform failures pass the platform’s own wording through', () => {
 test('the registered tool surface is exactly this, and nothing more', () => {
   const registered = [...SRC.matchAll(/server\.registerTool\('([a-z_]+)'/g)].map((m) => m[1]);
   assert.deepEqual(registered.sort(), [
-    'answer_questions', 'create_request', 'get_app', 'get_platform_build',
-    'get_platform_conventions', 'get_proposal', 'list_apps',
+    'answer_questions', 'create_request', 'get_app', 'get_connector_guidance',
+    'get_platform_build', 'get_platform_conventions', 'get_proposal', 'list_apps',
     'list_my_proposals', 'list_requests', 'prepare_work',
     'start_platform_build', 'submit_platform_build', 'submit_work', 'whoami',
   ]);
@@ -605,11 +605,16 @@ test('the host is told to COPY the work order, not compose it', () => {
   // and split the base commit id with a stray space, then appended a
   // "correction" to a block the user had been told to paste verbatim. The
   // contract is render-guidance-as-a-list, reproduce-the-block-exactly.
-  const instructions = tools.SERVER_INSTRUCTIONS;
-  assert.match(instructions, /EXACTLY as returned/);
-  assert.match(instructions, /do not re-?wrap/i);
-  assert.match(instructions, /never append a correction/i);
-  assert.match(instructions, /numbered list/i, 'and guidance is a list, not prose');
+  // The detail lives in the CHARTER now, not in the initialize instructions:
+  // the client cuts that field at 2048 chars, and a work-order contract this
+  // long is exactly the kind of clause that used to fall off the end. The
+  // instructions keep the one-line version.
+  const charter = require('../src/services/mcp-charter').CHARTER_FULL;
+  assert.match(charter, /EXACTLY as returned/);
+  assert.match(charter, /do not re-?wrap/i);
+  assert.match(charter, /never append a correction/i);
+  assert.match(tools.SERVER_INSTRUCTIONS, /numbered list/i,
+    'and guidance is a list, not prose — that much survives truncation');
 
   // Some hosts surface only the tool description, so it carries it too.
   const idx = SRC.indexOf("server.registerTool('prepare_work'");
@@ -751,6 +756,9 @@ test('whoami hands the model the canonical name and the exact shipped rules', ()
     'mcp__usernode__get_*',
     'mcp__usernode__list_*',
     'mcp__usernode__whoami',
+    'mcp__Usernode__get_*',
+    'mcp__Usernode__list_*',
+    'mcp__Usernode__whoami',
   ]);
 
   // The description has to say what the model should DO with them, or the
@@ -811,8 +819,11 @@ test('a request’s text stays wrapped all the way into the work order', () => {
   // The request must actually be open on this app — a number is not a
   // capability, so it is looked up rather than trusted.
   assert.match(body, /list\.find\(\(i\) => i\.number === issueNumber\)/);
-  // And the server instructions warn the receiving model about exactly this.
-  assert.match(tools.SERVER_INSTRUCTIONS, /WHAT TO BUILD section of a work order/);
+  // And both deliveries of the operating contract warn the receiving model
+  // about exactly this — the truncation-proof brief and the full charter.
+  assert.match(tools.SERVER_INSTRUCTIONS, /WHAT TO BUILD section/);
+  assert.match(require('../src/services/mcp-charter').CHARTER_FULL,
+    /WHAT TO BUILD section of a work order/);
 });
 
 test('prepare_work returns human guidance beside the agent-only work order', () => {
@@ -839,12 +850,16 @@ test('the work order is described as a payload to reproduce, not prose to summar
   assert.match(desc, /commit id/i);
   assert.match(desc, /show them in order|in order, as written/i, 'and guidance is relayed as-is');
 
-  // The same contract in the server instructions, so a model that never
-  // reads a tool description still gets it.
+  // The same contract in the operating charter, so a model that never reads
+  // a tool description still gets it. `character for character` and `in
+  // order, as written` are short enough to survive into the truncated
+  // initialize instructions too; the commit-id clause is charter-only.
   const instructions = tools.SERVER_INSTRUCTIONS;
   assert.match(instructions, /character for character/i);
-  assert.match(instructions, /relay them in order, as written/i);
-  assert.match(instructions, /retype the branch name or the 40-character commit id/i);
+  assert.match(instructions, /in order, as written/i);
+  const charter = require('../src/services/mcp-charter').CHARTER_FULL;
+  assert.match(charter, /relay them in order, as written/i);
+  assert.match(charter, /retype the branch name or the 40-character commit id/i);
 });
 
 test('the platform-build fallback is described as the second choice', () => {
@@ -1395,11 +1410,16 @@ test('an update needs no slug, because naming the proposal names the app', () =>
   assert.doesNotMatch(SRC, /submit_work with proposalId, slug and branch/);
 });
 
-test('the server instructions tell the model to update a proposal, not to open a second one', () => {
-  assert.match(tools.SERVER_INSTRUCTIONS, /update that same proposal instead of opening a second one/);
-  assert.match(tools.SERVER_INSTRUCTIONS, /branch\.youCanPush/);
-  assert.match(tools.SERVER_INSTRUCTIONS, /clears the votes/);
-  assert.match(tools.SERVER_INSTRUCTIONS, /say so before you do it/);
+test('the charter tells the model to update a proposal, not to open a second one', () => {
+  // Charter-only, deliberately: this applies at a moment a conversation
+  // reaches after several other calls, by which time get_connector_guidance
+  // has had every chance to run — and the initialize instructions have 1400
+  // characters to spend, which the safety clauses have first claim on.
+  const charter = require('../src/services/mcp-charter').CHARTER_FULL;
+  assert.match(charter, /update that same proposal instead of opening a second one/);
+  assert.match(charter, /branch\.youCanPush/);
+  assert.match(charter, /clears the votes/);
+  assert.match(charter, /say so before you do it/);
 });
 
 test('an update refusal carries the commit the caller has to act on', () => {

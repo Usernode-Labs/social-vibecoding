@@ -36,6 +36,7 @@ const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 const REMOTE_SRC = read('src/routes/mcp-remote.js');
 const CONNECTORS_TSX = read('frontend/src/features/settings/sections/connectors.tsx');
 const CONNECTOR_DOC = read('MCP-CONNECTOR.md');
+const SETTINGS_JS = read('frontend/src/features/settings/settings.js');
 
 const scaffold = () => {
   const files = template.getTemplateFiles('Demo App', 'demo-app', 'postgres://x/y');
@@ -90,16 +91,36 @@ test('the connect flow recommends the canonical name where it is typed', () => {
 
 // ── 2. The shipped allow rules ─────────────────────────────────────────
 
-test('the read-only allow rules are two globs and one literal, built from the name', () => {
+test('the read-only allow rules are two globs and one literal, per spelling of the name', () => {
+  // Six, not three: the same three rules under each spelling of the server
+  // name Usernode can guess. A permission rule names the server LITERALLY —
+  // there is no `mcp__*__` — so a user whose client registered the connector
+  // as `Usernode` matched none of the three this shipped with, saw a prompt
+  // on every read, and got no error to explain it. Shipping both spellings
+  // costs two lines of JSON and covers the one variation the platform can
+  // predict; anything else is what the Settings field rewrites.
+  assert.deepEqual([...constants.ALLOW_RULE_SERVER_NAMES], ['usernode', 'Usernode']);
   assert.deepEqual([...constants.READ_ONLY_ALLOW_RULES], [
     'mcp__usernode__get_*',
     'mcp__usernode__list_*',
     'mcp__usernode__whoami',
+    'mcp__Usernode__get_*',
+    'mcp__Usernode__list_*',
+    'mcp__Usernode__whoami',
   ]);
+  // Grouped by spelling, not by tool, so the block reads as "these three, and
+  // the same three again" rather than as six unrelated rules.
+  assert.deepEqual(
+    constants.READ_ONLY_ALLOW_RULES.map((r) => r.split('__')[1]),
+    ['usernode', 'usernode', 'usernode', 'Usernode', 'Usernode', 'Usernode']
+  );
+  // And the canonical spelling is the configured one — the second is the
+  // variant, and the order matters because the hint names them in it.
+  assert.equal(constants.ALLOW_RULE_SERVER_NAMES[0], constants.SERVER_NAME);
   for (const rule of constants.READ_ONLY_ALLOW_RULES) {
     assert.ok(
-      rule.startsWith(`mcp__${constants.SERVER_NAME}__`),
-      `${rule} names the configured server literally`
+      constants.ALLOW_RULE_SERVER_NAMES.some((n) => rule.startsWith(`mcp__${n}__`)),
+      `${rule} names one of the shipped server spellings literally`
     );
     // The server segment must be glob-free — a rule with a wildcard there
     // is not a looser rule, it is a rule that matches nothing.
@@ -354,6 +375,46 @@ test('the copied block is byte-for-byte the shipped allowlist, in BOTH places', 
     assert.ok(pre, `#${id} is a <pre>`);
     assert.equal(pre[1].trim(), '{PERSONAL_ALLOW_RULES}', `#${id} renders the shared constant`);
   }
+});
+
+test('the panel says why Usernode cannot just do this for the user', () => {
+  // The #1222 gap: the page explained the fix and offered a copy button, and
+  // said nothing about why a platform that clearly knows the rules does not
+  // apply them. Left unsaid, the copy button reads as busywork the product
+  // could have spared them — and the honest answer is also reassuring, since
+  // "a connector cannot write your permission files" is exactly what stops
+  // the NEXT connector granting itself whatever it likes.
+  assert.match(CONNECTORS_TSX, /Usernode cannot switch this on for you/);
+  assert.match(CONNECTORS_TSX, /a connector has no way to write either/);
+  assert.match(CONNECTORS_TSX, /one-time thing/);
+});
+
+test('a user whose connector has some other name has a field, not a paragraph', () => {
+  // The hint tells the MODEL to substitute the server segment. This is the
+  // same fix for the person reading the page, who has the one piece of
+  // information the platform does not: what their tools are actually called.
+  assert.match(CONNECTORS_TSX, /id="connector-name-spelling"/);
+  assert.match(CONNECTORS_TSX, /Connector registered under a different name\?/);
+  // It tells them where to look, and names both spellings that need no fix.
+  const field = CONNECTORS_TSX.slice(CONNECTORS_TSX.indexOf('connector-name-spelling'));
+  assert.match(field, /mcp__usernode__whoami/);
+  assert.match(field, /both blocks above are rewritten/);
+
+  // And it is wired: the field rewrites the two rendered blocks in place, so
+  // the copy button they already have picks up the corrected rules.
+  assert.match(SETTINGS_JS, /_wireConnectorNameSpelling\(\)/);
+  const handler = SETTINGS_JS.slice(SETTINGS_JS.indexOf('_wireConnectorNameSpelling() {'));
+  assert.match(handler, /connector-allow-rules/);
+  assert.match(handler, /connector-repo-allow-rules/);
+  // Derived from the rendered block rather than from a second copy of the
+  // rule list — the same reason the panel interpolates one constant.
+  assert.match(handler, /JSON\.parse\(canonical\)/);
+  // A server segment is a bare name; anything that could break the JSON or
+  // smuggle a glob into it is dropped rather than rendered.
+  assert.match(handler, /replace\(\/\[\^A-Za-z0-9\.-\]\/g, ''\)/);
+  // And typing the canonical name back puts the shipped block back, rather
+  // than leaving a rewritten copy that happens to say the same thing.
+  assert.match(handler, /toLowerCase\(\) !== 'usernode'/);
 });
 
 test('both copy buttons copy their own block', () => {

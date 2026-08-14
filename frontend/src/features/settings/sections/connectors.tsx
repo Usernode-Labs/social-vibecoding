@@ -15,15 +15,21 @@ import { Label } from '@/components/ui/label';
  * staging fixtures make every credit state reviewable without OAuth).
  */
 /**
- * The three read-only rules, rendered into BOTH copy blocks below: the
- * personal `~/.claude/settings.json` and the per-repo `.claude/settings.json`.
- * One constant, because the two files take identical content and differ only
- * in reach — a repo file covers one repo and travels into a fresh web
- * container; a personal file covers every repo and does not.
+ * The read-only rules, rendered into BOTH copy blocks below: the personal
+ * `~/.claude/settings.json` and the per-repo `.claude/settings.json`. One
+ * constant, because the two files take identical content and differ only in
+ * reach — a repo file covers one repo and travels into a fresh web container;
+ * a personal file covers every repo and does not.
+ *
+ * Six rules, not three: the same three for `usernode` and for `Usernode`. A
+ * permission rule names its server literally, the name is typed by a human
+ * into another product's dialog, and the capitalised spelling is the one
+ * near-miss worth guessing. Any other spelling is what
+ * #connector-name-spelling below rewrites these blocks for.
  *
  * Written out as a literal rather than built from
  * services/mcp-connect-constants.js: that module is CommonJS on the server
- * side of the repo, and pulling it into the browser bundle to render three
+ * side of the repo, and pulling it into the browser bundle to render six
  * short strings would drag the connector's server constants into the shell.
  * tests/connector-permission-rules.test.js asserts this string is exactly
  * `JSON.stringify({ permissions: { allow: READ_ONLY_ALLOW_RULES } }, null, 2)`,
@@ -35,7 +41,10 @@ const PERSONAL_ALLOW_RULES = `{
     "allow": [
       "mcp__usernode__get_*",
       "mcp__usernode__list_*",
-      "mcp__usernode__whoami"
+      "mcp__usernode__whoami",
+      "mcp__Usernode__get_*",
+      "mcp__Usernode__list_*",
+      "mcp__Usernode__whoami"
     ]
   }
 }`;
@@ -83,7 +92,7 @@ export function ConnectorsSection() {
             client that derives the name and one where it was typed agree.
         */}
         <p className="text-xs text-zinc-500 dark:text-zinc-500 mb-4 leading-relaxed">
-          Name it exactly <code className="font-mono text-zinc-600 dark:text-zinc-400">usernode</code>. Claude Code builds its permission rules from that name &mdash; a different spelling still works, but the read-only allowlist Usernode ships in every app repo will not match it, and you will keep being asked to approve each call.
+          Name it exactly <code className="font-mono text-zinc-600 dark:text-zinc-400">usernode</code>. Claude Code builds its permission rules from that name &mdash; a different spelling still works, but the read-only allowlist Usernode ships in every app repo will not match it, and you will keep being asked to approve each call. The allowlist covers <code className="font-mono text-zinc-600 dark:text-zinc-400">Usernode</code> as well, so the capitalised form is safe; anything else needs the rules rewritten, which the field further down does for you.
         </p>
         {/*
             #1218 follow-up: the same three rules land in two different files
@@ -108,6 +117,18 @@ export function ConnectorsSection() {
           </h4>
           <p className="text-xs text-zinc-500 dark:text-zinc-500 mb-3 leading-relaxed">
             Claude Code asks you to approve <em>every</em> connector call by default &mdash; including read-only ones like <code className="font-mono text-zinc-600 dark:text-zinc-400">whoami</code> and <code className="font-mono text-zinc-600 dark:text-zinc-400">get_app</code>. Which fix applies depends on where you run it.
+          </p>
+          {/*
+              #1222 follow-up: the page used to present the blocks below with
+              no statement of whose job it is to apply them, and a reasonable
+              reader concluded Usernode had a switch it was choosing not to
+              offer. It does not — permission rules live in the user's own
+              settings file or their own repo, and nothing this server sends
+              can put them there. Saying so is not an apology; it is what
+              turns "why is this still asking me" into a task with an owner.
+          */}
+          <p className="text-xs text-zinc-500 dark:text-zinc-500 mb-3 leading-relaxed">
+            Usernode cannot switch this on for you. Permission rules live in a file on your machine or in your app&rsquo;s repo, and a connector has no way to write either &mdash; which is also what stops any other connector you add from granting itself permissions. Copying one of the blocks below is the whole fix, and it is a one-time thing.
           </p>
 
           <div id="connector-case-cc-local" className="mb-3">
@@ -153,8 +174,39 @@ export function ConnectorsSection() {
           </div>
 
           <p className="text-xs text-zinc-500 dark:text-zinc-500 leading-relaxed">
-            Reads only. Anything that acts on your behalf &mdash; filing a request, opening or advancing a proposal &mdash; still asks every time, on purpose. If the prompts continue, the connector is registered under a different name: check a tool name in your session and use that spelling in place of <code className="font-mono text-zinc-600 dark:text-zinc-400">usernode</code>.
+            Reads only. Anything that acts on your behalf &mdash; filing a request, opening or advancing a proposal &mdash; still asks every time, on purpose.
           </p>
+          {/*
+              The blocks above cover `usernode` and `Usernode`. Any other
+              spelling — a typo, a name someone chose — needs the same rules
+              with that segment, and telling a user to hand-edit six JSON
+              strings is telling them to make a seventh mistake. So the page
+              does the edit: type what your tools are actually called, and
+              both blocks above are rewritten in place.
+
+              Static markup with a sibling handler, like the copy buttons: the
+              rewrite is Settings._wireConnectorNameSpelling(), which writes
+              textContent (never innerHTML) into the two <pre> elements from a
+              sanitised segment. It ships EMPTY so the prerendered document
+              shows the canonical rules, which is the right answer for almost
+              everyone and the only one that is right before script runs.
+          */}
+          <div className="mt-3">
+            <Label className="mb-1" htmlFor="connector-name-spelling">
+              Connector registered under a different name?
+            </Label>
+            <p className="text-xs text-zinc-500 dark:text-zinc-500 mb-2 leading-relaxed">
+              Check what your tools are called in your session &mdash; the middle part of <code className="font-mono text-zinc-600 dark:text-zinc-400">mcp__usernode__whoami</code>. If it is not <code className="font-mono text-zinc-600 dark:text-zinc-400">usernode</code> or <code className="font-mono text-zinc-600 dark:text-zinc-400">Usernode</code>, type it here and both blocks above are rewritten for it.
+            </p>
+            <Input
+              id="connector-name-spelling"
+              type="text"
+              spellCheck="false"
+              width="flex"
+              mono
+              placeholder="usernode"
+            />
+          </div>
           {/*
               Read-only, and empty until Settings._renderConnectors() fills it:
               rendering it populated would mismatch hydration, and there is
