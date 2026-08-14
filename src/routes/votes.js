@@ -15,6 +15,7 @@ const appAccess = require('../services/app-access');
 const appAdmins = require('../services/app-admins');
 const { effectiveSessionCaps } = require('../services/session-caps');
 const topicAttrs = require('../services/topic-attributes');
+const limits = require('../services/limits');
 const { usesMockGithubForImports } = require('../config');
 const { drainGuard } = require('../services/lifecycle');
 const { isCliCredentialManagementSession } = require('../services/cli-api-policy');
@@ -1318,46 +1319,28 @@ function voteMatchesReviewedRevision(expectedHeadSha, revision) {
 // carries nothing, which is the browser import button's case and leaves that
 // path byte-identical to before.
 //
-// Every rule here is BORROWED, not restated: services/testing-notes.js owns
-// what a valid capture route is (validatePath), how many are shot
-// (CAPTURE_MAX_PATHS), how the viewport labels are spelled, and how long the
-// markdown may be (TESTING_MD_MAX). A second opinion about any of those is a
-// bug waiting to happen — the same routes then behave differently depending
-// on whether a build turn or a connector submitted them.
+// Every rule is BORROWED, not restated: services/testing-notes.js's
+// `parseSubmitted` owns what a valid capture route is, how many are shot, how
+// the viewport labels are spelled and how long the markdown may be. It is
+// shared with the UPDATE path (#1199), which is the point — the same routes
+// must not behave differently depending on whether an import or an update
+// submitted them. Only `provided` is dropped here: an import writes all three
+// columns on INSERT either way, so "was anything sent" carries no extra
+// meaning on this path.
 function parseImportTesting(body) {
-  const none = { testingMd: null, testingPath: null, testingPaths: null };
-  if (!body || typeof body !== 'object') return none;
-  const notes = require('../services/testing-notes');
+  const { provided, ...columns } = require('../services/testing-notes').parseSubmitted(body);
+  return columns;
+}
 
-  const paths = [];
-  const seen = new Set();
-  if (Array.isArray(body.testingPaths)) {
-    for (const entry of body.testingPaths) {
-      const normalized = notes.normalizeStoredPath(entry);
-      if (!normalized) continue;
-      // normalizeStoredPath deliberately does not re-validate (stored rows
-      // were validated at write time); this input never was, so it is.
-      const valid = notes.validatePath(normalized.path);
-      if (!valid) continue;
-      const key = `${normalized.viewport} ${valid}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      if (paths.length < notes.CAPTURE_MAX_PATHS) {
-        paths.push({ path: valid, viewport: normalized.viewport });
-      }
-    }
-  }
+// The linked-issue set an import may carry (#1217). Bounded and sanitized by
+// pr-metadata's own helper — the one that renders `Closes #N` — so the column
+// and the PR body can never disagree about what counts as a linked issue.
+// The cap matches the local-agent handoff route's.
+const MAX_IMPORT_LINKED_ISSUES = 50;
 
-  let md = typeof body.testingSteps === 'string' ? body.testingSteps.trim() : '';
-  if (md.length > notes.TESTING_MD_MAX) md = md.slice(0, notes.TESTING_MD_MAX);
-
-  if (!paths.length && !md) return none;
-  return {
-    testingMd: md || null,
-    // The PRIMARY path, same convention as the block parser: the first entry.
-    testingPath: paths.length ? paths[0].path : null,
-    testingPaths: paths.length ? paths : null,
-  };
+function parseImportLinkedIssues(body) {
+  const { sanitizeIssueNumbers } = require('../services/pr-metadata');
+  return sanitizeIssueNumbers(body && body.linkedIssues).slice(0, MAX_IMPORT_LINKED_ISSUES);
 }
 
 function revisionChangedVoteResponse(res, headSha, message = null) {
@@ -1607,12 +1590,33 @@ function voteRoutes(config) {
         let prResult = null;
         let prError = null;
         try {
+          let metadataApiKey = null;
+          let metadataGenerationAllowed = false;
+          try {
+            const billing = await limits.resolveBillingPath(
+              pool, config.dataEncryptionKey, req.user.id,
+            );
+            if (!billing.error) {
+              metadataApiKey = billing.apiKey;
+              metadataGenerationAllowed = true;
+            } else {
+              log.info('votes', 'Using deterministic PR metadata: no payer available', {
+                sessionId: session.id, reason: billing.reason || null,
+              });
+            }
+          } catch (billingErr) {
+            log.warn('votes', 'PR metadata billing resolve failed; using deterministic draft', {
+              sessionId: session.id, err: billingErr.message,
+            });
+          }
           prResult = await prMetadata.applyPrMetadata({
             pool, session, repoOwner, repoName,
             userMessage: msgRows[0]?.content || '',
             ccSummary: '',
             username: req.user.username,
+            apiKey: metadataApiKey,
             userId: req.user.id,
+            allowModelGeneration: metadataGenerationAllowed,
           });
         } catch (err) {
           prError = err;
@@ -2219,6 +2223,14 @@ function voteRoutes(config) {
       if (!headBranch) {
         return res.status(409).json({ error: 'Could not determine the PR head branch.' });
       }
+      // WHICH REPOSITORY that branch is in (#1196). An imported PR usually
+      // comes from the author's fork, but not always: the connector's mirror
+      // rung copies a verified fork branch into THIS repository and opens a
+      // same-repo pull request, and a proposal whose head only the platform
+      // bot can write has to be reported — and advanced — as such. Recorded
+      // once, here, because it is a fact about the pull request that never
+      // changes while it is open; `branchHomeOf` reads it.
+      const headRepoFullName = pr.head?.repo?.full_name || null;
 
       // Optional testing metadata (#945 follow-up). A connector submission
       // can carry the same two things a build turn's "==== TESTING ===="
@@ -2233,6 +2245,19 @@ function voteRoutes(config) {
       // Absent (the browser's import button never sends them) leaves all
       // three columns NULL, exactly as before.
       const importTesting = parseImportTesting(req.body);
+      // The request this pull request implements (#1217). A submission
+      // prepared from a request knows its number — prepare_work records it,
+      // and the work order prints it — but it stopped at the task, so a
+      // proposal built FROM a request was linked to it nowhere the platform
+      // could act on: no `Closes #N` for GitHub to honour on merge, nothing
+      // for the post-merge close watcher to expect, and no "in progress"
+      // chip on the request it came from.
+      //
+      // Sanitized here rather than trusted, like the testing metadata beside
+      // it: same validator the PR-body producer uses, and the browser's own
+      // import button sends none, which leaves the column at the empty array
+      // it defaulted to before.
+      const importLinkedIssues = parseImportLinkedIssues(req.body);
       const promote = req.body?.promote === true;
       const initialStatus = promote ? 'promoted' : 'active';
 
@@ -2242,20 +2267,26 @@ function voteRoutes(config) {
       const { rows: inserted } = await pool.query(
         `INSERT INTO chat_sessions
            (app_id, user_id, branch_name, pr_number, pr_url, pr_title, status,
-            source, imported_pr_head_sha, imported_pr_author, promoted_at, shared_at, created_at,
-            testing_md, testing_path, testing_paths)
+            source, imported_pr_head_sha, imported_pr_author, imported_pr_head_repo,
+            promoted_at, shared_at, created_at,
+            testing_md, testing_path, testing_paths, linked_issues)
          VALUES ($1, $2, $3, $4, $5, $6, $7::text,
-            'imported', $8, $9,
+            'imported', $8, $9, $10,
             CASE WHEN $7::text = 'promoted' THEN NOW() END,
             CASE WHEN $7::text = 'active' THEN NOW() END,
-            NOW(), $10, $11, $12::jsonb)
+            NOW(), $11, $12, $13::jsonb, $14)
          RETURNING id, status`,
         [
           app.id, req.user.id, headBranch, prNumber, pr.html_url || null,
           pr.title || `PR #${prNumber}`, initialStatus,
-          headSha, pr.user?.login || null,
+          headSha, pr.user?.login || null, headRepoFullName,
           importTesting.testingMd, importTesting.testingPath,
           importTesting.testingPaths ? JSON.stringify(importTesting.testingPaths) : null,
+          // Always an array, never null: the column is INTEGER[] NOT NULL
+          // DEFAULT '{}', so an import with no request writes the empty
+          // array the omitted column used to default to — byte-identical to
+          // the row this route wrote before the field existed.
+          importLinkedIssues,
         ]
       );
       const sessionId = inserted[0].id;
@@ -2264,6 +2295,7 @@ function voteRoutes(config) {
         branch_name: headBranch, pr_number: prNumber, pr_title: pr.title || null,
         repo_url: app.repo_url, staging_url: null, source: 'imported',
         status: initialStatus, imported_pr_head_sha: headSha,
+        imported_pr_head_repo: headRepoFullName,
       };
 
       if (promote) {
@@ -5148,6 +5180,9 @@ module.exports = {
   voteMatchesReviewedRevision,
   // Connector-submitted testing metadata on an import, unit-tested directly.
   parseImportTesting,
+  // The request an imported pull request implements (#1217), likewise.
+  parseImportLinkedIssues,
+  MAX_IMPORT_LINKED_ISSUES,
   recordVote,
   // (#1115) The applied-close demo rows live here because they belong to the
   // Completed stream, but GET /api/apps/:slug/governance/:id in issues.js has

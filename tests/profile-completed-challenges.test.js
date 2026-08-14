@@ -421,9 +421,15 @@ test('the profile screen no longer filters on the organiser flag', () => {
 });
 
 test('completed rows render as real anchors to the challenge', () => {
-  const client = read('frontend/src/features/profile/profile.js');
-  assert.match(client, /#leaderboard\/challenges\//);
-  assert.match(client, /data-completed-challenge/);
-  // Built as an <a>, so middle-click / long-press / back all work.
-  assert.match(client, /Profile\._el\('a',/);
+  // #1191 slice 6 made #profile-root React-owned: the row's href and its
+  // meta line are shaped in profile-store.js (plain JS, so this suite can
+  // still read them) and turned into elements in profile-view.tsx.
+  const shaping = read('frontend/src/features/profile/profile-store.js');
+  const markup = read('frontend/src/features/profile/profile-view.tsx');
+  assert.match(shaping, /#leaderboard\/challenges\//);
+  assert.match(markup, /data-completed-challenge/);
+  // An <a> element, so middle-click / long-press / back all work — not a
+  // click handler on a div.
+  assert.match(markup, /<a\s+key=\{row\.id\}/);
+  assert.match(markup, /href=\{row\.href\}/);
 });

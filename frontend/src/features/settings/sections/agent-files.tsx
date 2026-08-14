@@ -1,3 +1,4 @@
+import { Button } from '@/components/ui/button';
 import { Field, SectionHeading, StatusLine } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 
@@ -98,18 +99,12 @@ export function AgentFilesSection() {
             />
           </Field>
           <div className="flex gap-2">
-            <button
-              id="agent-files-save"
-              className="rounded bg-violet-600 hover:bg-violet-500 px-3 py-1 font-medium text-white transition-colors"
-            >
+            <Button id="agent-files-save" variant="compact" size="xs">
               Save
-            </button>
-            <button
-              id="agent-files-cancel"
-              className="rounded border border-zinc-300 dark:border-zinc-700 px-3 py-1 font-medium text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
-            >
+            </Button>
+            <Button id="agent-files-cancel" variant="outline" size="xs" ink="muted">
               Cancel
-            </button>
+            </Button>
           </div>
         </div>
         <StatusLine id="agent-files-status" />

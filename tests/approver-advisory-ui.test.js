@@ -15,6 +15,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { runModules, workDrawerImports } = require('./helpers/bundle-module');
 
 const read = (f) => fs.readFileSync(path.join(__dirname, '..', 'public', 'js', f), 'utf8');
 const MERGE_STATUS_SRC = read('merge-status.js');
@@ -60,11 +61,27 @@ function makeAppView(opts) {
   return AppView;
 }
 
+// work-drawer.js is a bundle module and imports the kit-surface seam and (since
+// #1191 slice 6 conversion 4) its own store, neither of which a classic-script
+// `runInContext` can compile — runModules rewrites the imports into reads of
+// the stub table and leaves the rest of the source alone. See
+// tests/helpers/bundle-module.js.
 function makeWorkDrawer(opts) {
   const sandbox = makeSandbox(opts);
-  vm.runInContext(`${MERGE_STATUS_SRC}\n${WORK_DRAWER_SRC}\n;globalThis.__WorkDrawer = WorkDrawer;`, sandbox);
-  return sandbox.__WorkDrawer;
+  return runModules(
+    sandbox,
+    [['merge-status.js', MERGE_STATUS_SRC], ['work-drawer.js', WORK_DRAWER_SRC]],
+    { imports: workDrawerImports(), tail: 'return WorkDrawer;' },
+  );
 }
+
+// The pill is a descriptor now, not a fragment of HTML. `{ yes, majority }` is
+// the headline tally and `advisory` the non-approver surplus — the same three
+// numbers the "0 / 1  +2 advisory" strings below used to spell out, which is
+// why the assertions read them directly rather than through a regex.
+const pillsOf = (section) => Array.from(section.rows, (r) => ({
+  yes: r.pill.yes, majority: r.pill.majority, advisory: r.pill.advisory,
+}));
 
 // ── voteCountPill ────────────────────────────────────────────────────
 
@@ -216,14 +233,14 @@ test('cog drawer: pill uses the qualified tally vs votes_required, with the advi
     qualified_yes_count: 0, qualified_no_count: 0,
     approval_policy: 'invited', votes_required: 1, majority: 3,
   }];
-  const html = WorkDrawer.renderProposalsSection();
+  const pills = pillsOf(WorkDrawer.proposalsSection());
   // PR row: 0 (approver yes) / 1 (governed requirement), +2 advisory —
   // NOT the raw-tally "2 / 3" (nor a false-green "2 / 1").
-  assert.match(html, /0 \/ 1/);
-  assert.match(html, /\+2 advisory/);
-  assert.doesNotMatch(html, /2 \/ 3/);
-  // Governance row gets the same treatment (two matches total).
-  assert.equal((html.match(/\+2 advisory/g) || []).length, 2);
+  // Governance row gets the same treatment.
+  assert.deepEqual(pills, [
+    { yes: 0, majority: 1, advisory: 2 },
+    { yes: 0, majority: 1, advisory: 2 },
+  ]);
 });
 
 test('cog drawer: default-policy rows keep the raw tally, no advisory chip', () => {
@@ -234,7 +251,7 @@ test('cog drawer: default-policy rows keep the raw tally, no advisory chip', () 
     check_state: 'passing',
   }];
   WorkDrawer.governance = [];
-  const html = WorkDrawer.renderProposalsSection();
-  assert.match(html, /2 \/ 3/);
-  assert.doesNotMatch(html, /advisory/);
+  // advisory: 0 is what makes the renderer omit the chip entirely.
+  assert.deepEqual(pillsOf(WorkDrawer.proposalsSection()),
+    [{ yes: 2, majority: 3, advisory: 0 }]);
 });

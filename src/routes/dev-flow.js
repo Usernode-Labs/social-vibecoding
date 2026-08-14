@@ -540,7 +540,7 @@ function devFlowRoutes(config) {
       }
 
       const cookie = req.headers.cookie || '';
-      const importProposal = async (targetSlug, prNumber) => {
+      const importProposal = async (targetSlug, prNumber, extra = {}) => {
         try {
           const resp = await fetch(`${loopbackBase(config)}/api/apps/${encodeURIComponent(targetSlug)}/pr-import`, {
             method: 'POST',
@@ -552,7 +552,16 @@ function devFlowRoutes(config) {
               // proposal is attributed to them rather than to the platform.
               cookie,
             },
-            body: JSON.stringify({ pr: prNumber, promote: true }),
+            // `linkedIssues` is the request the task was prepared for
+            // (#1217), forwarded so a browser-relayed submission links it
+            // exactly as the connector's own does.
+            body: JSON.stringify({
+              pr: prNumber,
+              promote: true,
+              ...(extra.linkedIssues && extra.linkedIssues.length
+                ? { linkedIssues: extra.linkedIssues }
+                : {}),
+            }),
           });
           const text = await resp.text();
           let parsed = null;

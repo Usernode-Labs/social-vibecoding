@@ -690,6 +690,10 @@
     // Delay between post-grant permission-status re-reads (the native
     // caches settle asynchronously after the OS dialog).
     _FIRST_RUN_RECHECK_MS: 800,
+    // A dismissal sooner than this, with nothing on the sheet pressed,
+    // cannot be an answer — nobody read it. Same window as the kit's
+    // GHOST_CLICK_MS, because that is what it is defending against.
+    _FIRST_RUN_MIN_SEEN_MS: 450,
 
     _markFirstRunDone() {
       try { localStorage.setItem(NativeChrome._FIRST_RUN_KEY, '1'); } catch (_) {}
@@ -723,6 +727,122 @@
       }
       if (raw === 'denied') return 'denied';
       return null;
+    },
+
+    // Public alias. Settings (frontend/src/features/settings/settings.js)
+    // must read the same truth this file's first-run sheet reads, and it
+    // has no business reaching into an underscore-private.
+    iosPushPermissionStatus() {
+      return NativeChrome._iosPushPermissionStatus();
+    },
+
+    // ── The notification-permission tap ──────────────────────────────
+    //
+    // Pure, so it is unit-testable without a WebView (same discipline as
+    // the kit's decideBackdropDismiss). Given everything knowable BEFORE
+    // the tap, say what the tap must do. The one verdict this must never
+    // return is "call requestPermissions and hope": on iOS that method
+    // resolves immediately and shows NO dialog once the permission is
+    // determined, so a screen that always calls it is a tap that does
+    // nothing at all — for good, however many times it is pressed.
+    //
+    // `verdict` is one of:
+    //   "request"      ask the app to present the OS prompt
+    //   "already"      it is already granted; repaint, don't ask
+    //   "settings"     determined-denied — only the OS settings app can
+    //                  change it now, so send the user there
+    //   "unsupported"  this build does not advertise requestPermissions
+    //   "no-bridge"    there is no app-side channel at all
+    // Every non-"request" verdict carries a `reason` for the log line and
+    // `settings: true` when the OS settings page is the way out.
+    decideNotificationTap(state) {
+      const s = state || {};
+      if (s.isNative !== true || s.hasRequestMethod !== true) {
+        return {
+          verdict: 'no-bridge',
+          settings: false,
+          reason: s.isNative !== true
+            ? 'not running inside the Usernode app'
+            : 'the bridge exposes no requestPermissions()',
+        };
+      }
+      // `supported` is tri-state: false only when the build positively
+      // advertised a capability list without this method. An unknown
+      // (degraded probe, old build with no list) must still try — a
+      // cold-start hiccup must not disable the only control there is.
+      if (s.supported === false) {
+        return {
+          verdict: 'unsupported',
+          settings: s.canOpenSettings === true,
+          reason: 'this app build does not advertise requestPermissions',
+        };
+      }
+      if (s.isAndroid === true) return { verdict: 'request', settings: false };
+      if (s.pushStatus === 'granted') {
+        return {
+          verdict: 'already',
+          settings: false,
+          reason: 'the notification permission is already granted',
+        };
+      }
+      if (s.pushStatus === 'denied') {
+        return {
+          verdict: 'settings',
+          settings: s.canOpenSettings === true,
+          reason: 'the notification permission is denied — iOS shows no ' +
+            'prompt for a determined permission',
+        };
+      }
+      return { verdict: 'request', settings: false };
+    },
+
+    // What the tap ends up as AFTER the app answered. Same purity, same
+    // vocabulary, minus the pre-flight verdicts. "silent" is the one that
+    // matters: the app answered, nothing was granted, and the permission
+    // is STILL un-determined — i.e. the OS prompt was never presented, so
+    // from the user's seat the tap did nothing. That is a defect to
+    // report, not a decline to accept quietly.
+    decideNotificationOutcome(state) {
+      const s = state || {};
+      if (s.isAndroid === true) {
+        return s.granted === true
+          ? { verdict: 'granted', settings: false }
+          : {
+              verdict: 'declined',
+              settings: false,
+              reason: 'the alarm permission was not granted',
+            };
+      }
+      if (s.granted === true) return { verdict: 'granted', settings: false };
+      if (s.pushStatus === 'denied') {
+        return {
+          verdict: 'settings',
+          settings: s.canOpenSettings === true,
+          reason: 'the notification permission was denied',
+        };
+      }
+      return {
+        verdict: 'silent',
+        settings: s.canOpenSettings === true,
+        reason: 'the app answered without granting and the permission is ' +
+          'still un-determined — no OS prompt was presented',
+      };
+    },
+
+    // Whether this build advertises a chrome method. Tri-state on
+    // purpose: `null` means "the probe could not say" (a degraded
+    // getBridgeInfo answers with an empty capability list, which is not
+    // the same as a build that has none — issue #978), and callers must
+    // treat that as "try anyway", never as "unsupported".
+    async supports(method) {
+      const bridge = window.usernode;
+      if (!bridge || typeof bridge.getBridgeInfo !== 'function') return null;
+      let info = null;
+      try { info = await NativeChrome.getInfo(); } catch (_) { return null; }
+      if (!info || info.degraded === true) return null;
+      const caps = info.capabilities;
+      if (!Array.isArray(caps) || caps.length === 0) return null;
+      return caps.indexOf(method) !== -1;
     },
 
     // Triggered from init()'s boot handoff, every `sv:session`, and the
@@ -799,6 +919,50 @@
         return;
       }
 
+      const handle = NativeChrome.presentPermissionsSheet({
+        perms,
+        isAndroid,
+        pushStatus,
+        // A dismissal that arrives before the sheet could physically be
+        // read, from a user who touched nothing on it, is not an answer —
+        // it is the opening gesture's ghost click landing on the backdrop.
+        // The kit guards its own backdrop against exactly that now
+        // (decideBackdropDismiss in public/usernode-native/v1/native.js),
+        // but THIS marker is one-shot and silences the iOS notification
+        // prompt forever, so it does not ride on that guard alone: leave
+        // it unwritten and let a later launch offer the sheet again.
+        onDismiss: (info) => {
+          if (!info.interacted &&
+              info.elapsedMs < NativeChrome._FIRST_RUN_MIN_SEEN_MS) return;
+          NativeChrome._markFirstRunDone();
+        },
+      });
+      // Kit unavailable (degraded shell): present nothing and record
+      // nothing — burning the one-shot marker here silenced the iOS
+      // notification prompt forever. A later healthy launch retries;
+      // the permanent Settings rows remain the in-session fallback.
+      if (handle) NativeChrome._firstRunSheetPresented = true;
+    },
+
+    // The "Set up your device" sheet itself, split out from the trigger
+    // above so it has exactly one definition: the first-run flow presents
+    // it, and so does the `?shot=notif-permissions` screenshot-state link
+    // in public/js/app.js, which means the dapp.json check that asserts
+    // the sheet survives its opening tap is exercising the real sheet
+    // rather than a stand-in.
+    //
+    // opts: { perms, isAndroid, pushStatus, onDismiss }. onDismiss is
+    // called with { interacted, elapsedMs } — `interacted` is true once
+    // the user has pressed anything ON the sheet, which is what lets the
+    // caller tell a real answer from a stray dismissal. Returns the kit's
+    // sheet handle, or null when the UI kit is unavailable.
+    presentPermissionsSheet(options) {
+      const opts = options || {};
+      const perms = opts.perms || {};
+      const isAndroid = !!opts.isAndroid;
+      let pushStatus = opts.pushStatus == null ? null : opts.pushStatus;
+      if (!window.PlatformUI || typeof PlatformUI.sheet !== 'function') return null;
+
       const el = (tag, cls, text) => {
         const n = document.createElement(tag);
         if (cls) n.className = cls;
@@ -835,6 +999,7 @@
       panel.appendChild(body);
 
       let sheet = null;
+      let interacted = false;
       const render = (p) => {
         body.textContent = '';
         // iOS row truth: prefer the push permission status over the
@@ -853,6 +1018,7 @@
             'hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white',
           isAndroid ? 'Grant permissions' : 'Allow notifications');
           b.addEventListener('click', async () => {
+            interacted = true;
             b.disabled = true;
             try {
               const next = await window.usernode.requestPermissions();
@@ -868,23 +1034,9 @@
                 // before the user answers it. Poll briefly for a
                 // determined status instead of trusting one stale read;
                 // a determined answer wins over the grant flag.
-                let status = await NativeChrome._iosPushPermissionStatus();
-                for (let i = 0;
-                  !granted && status === 'undetermined' && i < 4;
-                  i++) {
-                  await new Promise((resolve) => setTimeout(
-                    resolve, NativeChrome._FIRST_RUN_RECHECK_MS));
-                  status = await NativeChrome._iosPushPermissionStatus();
-                }
-                if (status === 'granted') granted = true;
-                else if (status === 'denied') granted = false;
-                pushStatus = granted ? 'granted' : (status || pushStatus);
-                // A fresh grant should start push registration right
-                // away rather than waiting for the next app resume.
-                if (granted && window.SocialPush &&
-                    typeof SocialPush.getState === 'function') {
-                  SocialPush.getState();
-                }
+                const settled = await NativeChrome.settleIosPushGrant(granted);
+                granted = settled.granted;
+                pushStatus = settled.status || pushStatus;
               }
               const batteryOk = !isAndroid ||
                 nextPerms.batteryOptDisabled === true;
@@ -907,6 +1059,7 @@
             'text-zinc-700 dark:text-zinc-200',
           'Open battery settings');
           b.addEventListener('click', () => {
+            interacted = true;
             window.usernode.openBatterySettings().catch(() => {});
           });
           btns.appendChild(b);
@@ -915,6 +1068,7 @@
           'text-zinc-500 dark:text-zinc-400',
         (alarmOk && (!isAndroid || batteryOk)) ? 'Done' : 'Skip for now');
         done.addEventListener('click', () => {
+          interacted = true;
           if (sheet && sheet.dismiss) sheet.dismiss();
         });
         btns.appendChild(done);
@@ -922,15 +1076,50 @@
       };
 
       render(perms);
+      const presentedAt = Date.now();
       sheet = PlatformUI.sheet({
         contentEl: panel,
-        onDismiss: () => NativeChrome._markFirstRunDone(),
+        onDismiss: () => {
+          if (opts.onDismiss) {
+            opts.onDismiss({
+              interacted,
+              elapsedMs: Date.now() - presentedAt,
+            });
+          }
+        },
       });
-      // Kit unavailable (degraded shell): present nothing and record
-      // nothing — burning the one-shot marker here silenced the iOS
-      // notification prompt forever. A later healthy launch retries;
-      // the permanent Settings rows remain the in-session fallback.
-      if (sheet) NativeChrome._firstRunSheetPresented = true;
+      return sheet || null;
+    },
+
+    // Resolve what the iOS notification permission ACTUALLY ended up as
+    // after requestPermissions() resolved. Shared by the sheet above and
+    // Settings → Usernode app (frontend/src/features/settings/settings.js)
+    // so both screens read the grant the same way.
+    //
+    // The native permission caches settle asynchronously after the OS
+    // dialog, and some builds resolve requestPermissions() BEFORE the
+    // user has answered it at all — so a single read reports "not
+    // granted" moments after a real grant. Poll for a determined status;
+    // a determined answer wins over the resolved grant flag. A fresh
+    // grant also kicks push registration rather than waiting for the next
+    // app resume. Resolves { granted, status }.
+    async settleIosPushGrant(grantedFlag) {
+      let granted = grantedFlag === true;
+      let status = await NativeChrome._iosPushPermissionStatus();
+      for (let i = 0; !granted && status === 'undetermined' && i < 4; i++) {
+        await new Promise((resolve) => setTimeout(
+          resolve, NativeChrome._FIRST_RUN_RECHECK_MS));
+        status = await NativeChrome._iosPushPermissionStatus();
+      }
+      if (status === 'granted') granted = true;
+      else if (status === 'denied') granted = false;
+      if (granted) {
+        status = 'granted';
+        if (window.SocialPush && typeof SocialPush.getState === 'function') {
+          SocialPush.getState();
+        }
+      }
+      return { granted, status };
     },
 
     _initAuthStatusEvents() {

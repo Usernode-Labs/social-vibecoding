@@ -9,7 +9,7 @@ const appLlmEnv = require('./app-llm-env');
 const appStorageEnv = require('./app-storage-env');
 const { appIdentityEnv } = require('./app-identity-env');
 const deployFailure = require('./deploy-failure');
-const { getTemplateFiles } = require('./template');
+const { getTemplateFiles, getConnectorScaffoldFiles } = require('./template');
 const { getPool } = require('../db/pool');
 const { pushAppStatusUpdate } = require('./ws');
 
@@ -89,6 +89,37 @@ async function createApp(config, appRow) {
       }
     } else if (repoUrl) {
       log.info('app-creator', 'Importing existing repo (skipping create+push)', { appId, slug, repoUrl });
+
+      // An import skips the template push above, so before #1218's
+      // follow-up an imported app never received `.claude/settings.json`
+      // and its users kept getting a permission prompt on every read-only
+      // connector call, forever. Add just the connector scaffold — an
+      // import must keep the repo it imported, so this is the two
+      // `.claude/` files and nothing else.
+      //
+      // Deliberately NOT fatal, and deliberately NOT `repoFailed`: the
+      // fresh-create branch above fails the whole creation when its push
+      // dies because there is no app without it, whereas here the app is
+      // complete and working, just noisier to drive. A GitHub App with no
+      // write access to a user-owned repo is a normal import, not an
+      // error.
+      try {
+        const parsed = github.parseGithubUrl(repoUrl);
+        if (github.isEnabled() && parsed) {
+          const existing = await github.getFileContent(
+            parsed.owner, parsed.repo, '.claude/settings.json', 'main');
+          if (existing === null) {
+            await github.pushFiles(parsed.owner, parsed.repo, getConnectorScaffoldFiles(), {
+              message: 'Add Usernode connector permissions',
+            });
+            log.info('app-creator', 'Added connector scaffold to imported repo',
+                     { appId, slug, repoUrl });
+          }
+        }
+      } catch (err) {
+        log.warn('app-creator', 'Could not add connector scaffold to imported repo',
+                 { appId, slug, repoUrl, error: err.message });
+      }
     }
 
     // 3. Clone (or write) the working tree that the shared deploy tail

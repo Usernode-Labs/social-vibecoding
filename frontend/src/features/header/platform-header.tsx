@@ -27,6 +27,16 @@
 
 import { useRef } from 'react';
 
+import {
+  Bars3Icon,
+  BellIcon,
+  ChatIcon,
+  ChevronLeftIcon,
+  CogIcon,
+  HomeIcon,
+  TerminalIcon,
+} from '@/components/ui/icons';
+
 import { useHiddenClass } from '../../lib/legacy-dom';
 import { useVisibility, useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { ChromelessPill } from './chromeless-pill';
@@ -127,23 +137,8 @@ export function PlatformHeader() {
               system browser.
           */}
           <a id="back-btn" className="inline-flex items-center text-zinc-400 hover:text-zinc-100 hidden" aria-label="Home">
-            <svg id="back-icon-home" className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth="2"
-                d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-4 0a1 1 0 01-1-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 01-1 1h-2z"
-              />
-            </svg>
-            <svg
-              id="back-icon-arrow"
-              className="w-5 h-5 hidden"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 19l-7-7 7-7" />
-            </svg>
+            <HomeIcon id="back-icon-home" className="w-5 h-5" />
+            <ChevronLeftIcon id="back-icon-arrow" className="w-5 h-5 hidden" />
           </a>
         </div>
         <h1
@@ -234,13 +229,7 @@ export function PlatformHeader() {
             className="hidden relative text-zinc-400 hover:text-zinc-200 mr-2"
             aria-label="Open developer console"
           >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M8 9l3 3-3 3m5 0h3M4 6h16a1 1 0 011 1v10a1 1 0 01-1 1H4a1 1 0 01-1-1V7a1 1 0 011-1z"
-              />
-            </svg>
+            <TerminalIcon className="w-5 h-5" />
             <span
               id="dev-console-badge"
               className="hidden absolute -top-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-red-500 text-white text-[0.65rem] font-bold flex items-center justify-center"
@@ -253,13 +242,7 @@ export function PlatformHeader() {
               The badge it used to show now lives on the in-tab button.
           */}
           <button id="feedback-btn" className="relative text-zinc-400 hover:text-zinc-200 mr-2" aria-label="Send feedback">
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M8 10h.01M12 10h.01M16 10h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
-              />
-            </svg>
+            <ChatIcon className="w-5 h-5" />
             {/*
                 #1054: feedback saved offline and still waiting to send. The
                 only ambient sign that an unsent message exists — app.js
@@ -294,21 +277,7 @@ export function PlatformHeader() {
             aria-label="Your sessions and proposals"
             title="Your sessions and proposals"
           >
-            <svg
-              id="work-drawer-icon"
-              className="w-5 h-5"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-              strokeWidth="2"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
-              />
-              <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-            </svg>
+            <CogIcon id="work-drawer-icon" className="w-5 h-5" />
             <span
               id="notifications-badge-ai"
               className="hidden absolute -top-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-emerald-500 text-white text-[0.65rem] font-bold flex items-center justify-center"
@@ -320,13 +289,7 @@ export function PlatformHeader() {
             className="relative text-zinc-400 hover:text-zinc-200 mr-2"
             aria-label="Notifications"
           >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"
-              />
-            </svg>
+            <BellIcon className="w-5 h-5" />
             <span
               id="notifications-badge"
               className="hidden absolute -top-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-red-500 text-white text-[0.65rem] font-bold flex items-center justify-center"
@@ -349,9 +312,7 @@ export function PlatformHeader() {
             aria-label="Open menu"
             aria-expanded="false"
           >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
-            </svg>
+            <Bars3Icon className="w-5 h-5" />
             <span
               id="header-menu-deploy-dot"
               className="hidden absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-amber-500"

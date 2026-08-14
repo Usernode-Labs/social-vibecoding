@@ -32,6 +32,11 @@
 
 import { useRef, useState } from 'react';
 
+import { Button } from '@/components/ui/button';
+import { DialogCard, DialogRoot } from '@/components/ui/dialog';
+import { ArrowRightIcon, XIcon } from '@/components/ui/icons';
+import { Input } from '@/components/ui/input';
+
 import { useDialog } from './use-dialog';
 
 export function ShareDialog() {
@@ -91,63 +96,53 @@ export function ShareDialog() {
   }
 
   return (
-    <div
+    <DialogRoot
       id="share-modal"
       ref={dialog.rootRef}
-      className="hidden fixed inset-0 z-50 overflow-y-auto overscroll-contain bg-black/60"
       {...dialog.backdropProps}
     >
-      <div data-modal-backdrop="" className="flex min-h-full items-center justify-center p-4">
-        <div className="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-md shadow-xl relative">
-          <button
-            id="share-close"
-            className="absolute top-4 right-4 text-zinc-400 hover:text-zinc-200 transition-colors"
-            aria-label="Close share"
-            onClick={() => dialog.close()}
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-          <h2 className="text-lg font-bold mb-1 text-zinc-900 dark:text-zinc-100">
-            Share this app
-          </h2>
-          <p className="text-xs text-zinc-500 mb-4">
-            Anyone with this link can open the app outside the Usernode platform. Whether they need to log in is up to the app — most public apps work for anonymous viewers.
-          </p>
-          <div className="flex gap-2">
-            <input
-              id="share-url-input"
-              ref={inputRef}
-              type="text"
-              readOnly={true}
-              className="flex-1 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 font-mono focus:outline-none focus:ring-2 focus:ring-violet-500"
-              aria-label="Share URL"
-            />
-            <button
-              id="share-copy-btn"
-              className="rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors whitespace-nowrap"
-              onClick={copy}
-            >
-              {copyLabel}
-            </button>
-          </div>
-          <div className="mt-4 flex justify-end">
-            <a
-              id="share-open-link"
-              href={href || '#'}
-              target="_blank"
-              rel="noopener"
-              className="text-sm text-violet-500 hover:text-violet-400 transition-colors inline-flex items-center gap-1"
-            >
-              Open in new tab
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M14 5l7 7m0 0l-7 7m7-7H3" />
-              </svg>
-            </a>
-          </div>
+      <DialogCard size="md" relative>
+        <button
+          id="share-close"
+          className="absolute top-4 right-4 text-zinc-400 hover:text-zinc-200 transition-colors"
+          aria-label="Close share"
+          onClick={() => dialog.close()}
+        >
+          <XIcon className="w-5 h-5" />
+        </button>
+        <h2 className="text-lg font-bold mb-1 text-zinc-900 dark:text-zinc-100">
+          Share this app
+        </h2>
+        <p className="text-xs text-zinc-500 mb-4">
+          Anyone with this link can open the app outside the Usernode platform. Whether they need to log in is up to the app — most public apps work for anonymous viewers.
+        </p>
+        <div className="flex gap-2">
+          <Input
+            id="share-url-input"
+            ref={inputRef}
+            type="text"
+            readOnly={true}
+            width="flex1"
+            mono
+            aria-label="Share URL"
+          />
+          <Button id="share-copy-btn" className="whitespace-nowrap" onClick={copy}>
+            {copyLabel}
+          </Button>
         </div>
-      </div>
-    </div>
+        <div className="mt-4 flex justify-end">
+          <a
+            id="share-open-link"
+            href={href || '#'}
+            target="_blank"
+            rel="noopener"
+            className="text-sm text-violet-500 hover:text-violet-400 transition-colors inline-flex items-center gap-1"
+          >
+            Open in new tab
+            <ArrowRightIcon className="w-4 h-4" />
+          </a>
+        </div>
+      </DialogCard>
+    </DialogRoot>
   );
 }

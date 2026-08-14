@@ -364,8 +364,6 @@ function isConnectorSurfacePath(pathname) {
     || pathname.startsWith('/api/connect/')
     || pathname === '/api/me/connectors'
     || pathname.startsWith('/api/me/connectors/')
-    || pathname === '/api/me/github'
-    || pathname.startsWith('/api/me/github/')
     || pathname === '/.well-known/oauth-authorization-server'
     || pathname.startsWith('/.well-known/oauth-protected-resource');
 }
@@ -382,7 +380,7 @@ function isConnectorSurfacePath(pathname) {
 // read real credential state.
 function isStagingReadableConnectorPath(method, pathname) {
   if (method !== 'GET') return false;
-  return pathname === '/api/me/connectors' || pathname === '/api/me/github';
+  return pathname === '/api/me/connectors';
 }
 
 // Exactly one syntactically valid Bearer credential. Duplicate headers,

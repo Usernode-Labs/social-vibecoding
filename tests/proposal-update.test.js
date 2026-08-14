@@ -148,6 +148,12 @@ function deps(over = {}, log = {}) {
         (log.applied = log.applied || []).push(args);
         return { ok: true };
       },
+      // The sweep's own per-proposal step, which the app-repo path calls for
+      // an imported row instead of the native reconcile (#1196).
+      syncImportedProposal: async (args) => {
+        (log.synced = log.synced || []).push(args);
+        return 'updated';
+      },
     }, over.prImportSync),
     githubPublic: over.githubPublic || { marker: 'public-reader' },
     // Both of these are real behaviours elsewhere; here they only have to be
@@ -157,6 +163,9 @@ function deps(over = {}, log = {}) {
       return fn();
     }),
     busy: over.busy || (() => false),
+    // #1199: the same-commit resubmit path's re-run. Only that path uses it,
+    // and the real one rebuilds a container.
+    recovery: over.recovery,
     beginOperation: over.beginOperation || ((id) => {
       (log.began = log.began || []).push(id);
       return () => { (log.released = log.released || []).push(id); };
@@ -176,19 +185,84 @@ function run(over = {}, params = {}, log = {}) {
 
 // ── 1. Branch home ─────────────────────────────────────────────────────
 
-test('branch home is derived from source, and only an imported head is the author\'s to push', () => {
+test('branch home is where the head IS, and only a head in the caller\'s own fork is theirs to push', () => {
   assert.equal(svc.branchHomeOf(importedSession()), 'user_fork');
   assert.equal(svc.authorCanPush(importedSession()), true);
-  // Every other source is a branch only the platform bot can write — which is
-  // the whole reason this service exists.
+  // Every non-imported source is a branch only the platform bot can write —
+  // which is the whole reason this service exists.
   for (const source of ['native', 'headless', 'cli', 'platform', null, undefined, '']) {
     const session = nativeSession({ source });
     assert.equal(svc.branchHomeOf(session), 'app_repo', `source ${String(source)}`);
     assert.equal(svc.authorCanPush(session), false, `source ${String(source)}`);
   }
-  // Not stored anywhere: a second column recording the same thing is a second
-  // thing that can be wrong.
+  // The home itself is still never stored — a second column recording it is a
+  // second thing that can be wrong. What IS stored is the fact underneath it:
+  // which repository GitHub said the pull request's head branch was in.
   assert.doesNotMatch(SRC, /branch_home/, 'branch home stays derived, never persisted');
+});
+
+// #1196. A connector submission whose cross-fork pull request GitHub refuses
+// is MIRRORED: the agent's verified fork branch is copied into a
+// `usernode/from-…` branch in the APP repository and a same-repo pull request
+// is opened from the bot, then imported. The row says `source='imported'` and
+// its head is a branch its author cannot push to. Reading the source alone
+// called that a fork, which is what sent get_proposal's advice — and this
+// service's own dispatch — to the wrong path.
+test('an imported head that is really in the app repository is app_repo, not a fork', () => {
+  const mirrored = importedSession({
+    branch_name: 'usernode/from-es92-t3-8510c5ac',
+    imported_pr_head_repo: 'o/r',
+  });
+  assert.equal(svc.branchHomeOf(mirrored), 'app_repo');
+  assert.equal(svc.authorCanPush(mirrored, 'es92'), false, 'not even for the agent whose fork it was copied from');
+
+  // Same repository, written the way GitHub and the app URL each happen to
+  // write it. A case difference is not a different repository.
+  assert.equal(svc.branchHomeOf(importedSession({
+    repo_url: 'https://github.com/O/R.git', imported_pr_head_repo: 'o/r',
+  })), 'app_repo');
+});
+
+test('an imported head in a fork stays user_fork, and answers the gate\'s own question', () => {
+  const fork = importedSession({
+    branch_name: 'add-a-button',
+    imported_pr_head_repo: 'es92/r',
+  });
+  assert.equal(svc.branchHomeOf(fork), 'user_fork');
+  // The exact comparison advanceForkHead makes: the head repository's owner
+  // against the login linked to the account asking.
+  assert.equal(svc.authorCanPush(fork, 'es92'), true);
+  assert.equal(svc.authorCanPush(fork, 'ES92'), true, 'GitHub logins are compared case-insensitively');
+  assert.equal(svc.authorCanPush(fork, 'someone-else'), false,
+    'a proposal following another user\'s fork is not the caller\'s to push');
+  // Nothing to compare against is not evidence of a refusal: an unlinked
+  // caller still gets the answer this returned before the head repo was
+  // recorded, and the gate itself does the refusing.
+  assert.equal(svc.authorCanPush(fork, null), true);
+  assert.equal(svc.headRepoOwnerOf(fork), 'es92');
+  assert.equal(svc.headRepoOwnerOf(importedSession()), null, 'unknown, not guessed');
+});
+
+test('a row imported before the head repo was recorded falls back to the branch namespace', () => {
+  // `usernode/from-` and `usernode/patch-` are the platform's own prefixes for
+  // branches it writes into an app repository, so a legacy row carrying one is
+  // the mirrored case above.
+  for (const branch of ['usernode/from-es92-t3-8510c5ac', 'usernode/patch-t9-1a2b3c4d']) {
+    const legacy = importedSession({ branch_name: branch, imported_pr_head_repo: null });
+    assert.equal(svc.branchHomeOf(legacy), 'app_repo', branch);
+    assert.equal(svc.authorCanPush(legacy, 'es92'), false, branch);
+  }
+  // And everything else is read as the fork it almost always is — including
+  // `dev/…`, which no imported row carries and which people name fork branches
+  // all the time.
+  for (const branch of ['dev/my-fix', 'add-a-button', 'usernode-ideas', '']) {
+    const legacy = importedSession({ branch_name: branch, imported_pr_head_repo: null });
+    assert.equal(svc.branchHomeOf(legacy), 'user_fork', branch);
+  }
+  // An app that has lost its repository URL cannot be compared against either.
+  assert.equal(svc.branchHomeOf(importedSession({
+    repo_url: null, imported_pr_head_repo: 'o/r', branch_name: 'usernode/from-es92-t3-8510c5ac',
+  })), 'app_repo');
 });
 
 // ── 2. Ownership and status ────────────────────────────────────────────
@@ -470,6 +544,72 @@ test('an imported proposal advances the head the platform TRACKS, and pushes not
   assert.equal(log.applied[0].oldHead, NATIVE_HEAD);
 });
 
+// #1196. The proposal the connector's mirror rung opens: imported, but its
+// head is a branch in the app repository. Before this, `branchHomeOf` sent it
+// to the fork path, which read the pull request, saw it came from
+// `usernode-bot` and refused it with `not_your_fork` — so the agent that wrote
+// the code could not fix a failing check on its own proposal at all.
+test('an imported proposal on a bot-owned branch is pushed, then reconciled as an import', async () => {
+  const log = {};
+  const session = importedSession({
+    branch_name: 'usernode/from-es92-t3-8510c5ac',
+    imported_pr_head_repo: 'o/r',
+  });
+  const result = await run(
+    { session, pool: fakePool([
+      ['FROM chat_sessions cs JOIN apps a', [session]],
+      ['FROM pr_votes', [{ n: 3 }]],
+    ]) },
+    {},
+    log
+  );
+  assert.equal(result.ok, true);
+  assert.equal(result.updated, true);
+  assert.equal(result.branchHome, 'app_repo');
+  assert.equal(result.branch, 'usernode/from-es92-t3-8510c5ac');
+  assert.equal(result.submittedVia, 'update_branch');
+
+  // The author's fork branch was copied onto the proposal's own branch, under
+  // the same lease every other app-repo push carries.
+  assert.equal(log.push.length, 1);
+  assert.equal(log.push[0].targetBranch, 'usernode/from-es92-t3-8510c5ac');
+  assert.equal(log.push[0].expectedRemoteSha, NATIVE_HEAD);
+
+  // And it settled through the IMPORT machinery. An imported row's votes and
+  // checks hang off imported_pr_head_sha, and reconcileNativeReviewedHead
+  // returns without doing anything for `source='imported'` — so the native
+  // reconcile would have left the tally describing code nobody has read.
+  assert.equal(log.reconcile, undefined, 'the native reconcile is not the one that can move this row');
+  assert.equal(log.synced.length, 1);
+  assert.equal(log.synced[0].session.id, 601);
+  assert.equal(result.votesCleared, 3);
+  assert.equal(result.checksRerun, true);
+  assert.equal(result.previewRebuilding, true);
+});
+
+test('a mirrored proposal GitHub has not caught up with reports no rebuild, not a failure', async () => {
+  // 'unchanged' means the pull request still reads the old head — GitHub is a
+  // second or two behind the push. The commit landed; the sweeper finishes it.
+  const log = {};
+  const session = importedSession({
+    branch_name: 'usernode/from-es92-t3-8510c5ac',
+    imported_pr_head_repo: 'o/r',
+  });
+  const result = await run({
+    session,
+    pool: fakePool([
+      ['FROM chat_sessions cs JOIN apps a', [session]],
+      ['FROM pr_votes', [{ n: 3 }]],
+    ]),
+    prImportSync: { syncImportedProposal: async () => 'unchanged' },
+  }, {}, log);
+  assert.equal(result.ok, true);
+  assert.equal(result.updated, true, 'the push happened — saying otherwise sends the author to push again');
+  assert.equal(result.votesCleared, 0, 'honest: only reported cleared when the clearing ran');
+  assert.equal(result.checksRerun, false);
+  assert.equal(result.previewRebuilding, false);
+});
+
 test('an imported proposal is only advanced from ITS OWN branch', async () => {
   const session = importedSession();
   const result = await run({ session }, { branch: 'some-other-branch' });
@@ -659,6 +799,7 @@ test('the vote-clearing and check-rerunning machinery is reused, not reimplement
   // of the platform's most consequential rule.
   assert.match(SRC, /votes\.reconcileNativeReviewedHead/);
   assert.match(SRC, /prImportSync\.applyHeadChange/);
+  assert.match(SRC, /prImportSync\.syncImportedProposal/);
   assert.doesNotMatch(SRC, /DELETE\s+FROM\s+pr_votes/i);
   assert.doesNotMatch(SRC, /kickNativeRevisionChecks|rerunChecksForNewHead|startStagingBuild/);
   // pr_votes is read, and only read.
@@ -952,4 +1093,277 @@ test('a fork-owned proposal is refused unless it is up for a vote', () => {
   const fork = CODE.slice(CODE.indexOf('async function advanceForkHead'));
   assert.match(fork.slice(0, 900), /proposal_closed/,
     'the fork path states the one status it accepts');
+});
+
+// ── 11. The revision's testing metadata (#1199) ────────────────────────
+//
+// A revision changes which SCREEN the group should be looking at. Until this
+// section existed, submit_work accepted `testingPaths`, every layer between it
+// and here dropped them, and chat_sessions kept whatever the FIRST submission
+// said — NULL for a proposal imported without any. The capture then fell back
+// to '/' and flagged `captureDefaultedToRoot`, so a change to a dialog behind
+// a deep link was voted on from screenshots of the app's home page. And the
+// obvious correction — resubmit with the right routes — was a silent no-op,
+// because nothing but a moved head ever re-read them.
+//
+// Two properties these tests are about:
+//
+//   1. THE ROUTES ARE STORED BEFORE THE CAPTURE RUNS. Every tail ends in
+//      visuals.captureForSession, which reads `testing_paths` off the
+//      IN-MEMORY session object it is handed — so the row is mutated as well
+//      as written, or the run that follows still shoots the old routes.
+//   2. A SAME-COMMIT RESUBMIT IS NOT A NO-OP WHEN THE ROUTES DIFFER. It
+//      stores them, forces a fresh capture, and says so — while clearing no
+//      votes, because not one line of code changed.
+
+const TESTING = {
+  testingPaths: [{ path: '/?shot=invite', viewport: 'desktop' }, { path: '/?shot=members', viewport: 'mobile' }],
+  testingSteps: '1. Open the invite dialog.',
+};
+
+// A pool that answers the metadata UPDATE too, and records it.
+function testingPool(session, log = {}, extra = []) {
+  const queries = [];
+  log.queries = queries;
+  return fakePool([
+    ['FROM chat_sessions cs JOIN apps a', [session]],
+    ['FROM pr_votes', [{ n: 4 }]],
+    ['SET testing_paths', []],
+    ['SET testing_md', []],
+    ...extra,
+  ], queries);
+}
+
+const testingWrite = (log) => (log.queries || []).find((q) => /SET testing_/.test(String(q.sql)));
+
+test('an update stores the routes it was given, and stores them BEFORE the capture reads them', async () => {
+  const log = {};
+  const session = nativeSession();
+  const result = await run({ session, pool: testingPool(session, log) }, { testing: TESTING }, log);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.updated, true);
+  assert.equal(result.testingUpdated, true);
+  assert.deepEqual(result.testingPaths, ['/?shot=invite', '/?shot=members @mobile'],
+    'reported back in the form they were written, annotation intact');
+
+  const write = testingWrite(log);
+  assert.ok(write, 'the routes reached the column');
+  assert.match(String(write.sql), /testing_paths = \$1::jsonb/);
+  assert.match(String(write.sql), /testing_path = \$2/);
+  assert.match(String(write.sql), /testing_md = \$3/);
+  assert.deepEqual(JSON.parse(write.params[0]), TESTING.testingPaths);
+  assert.equal(write.params[1], '/?shot=invite', 'the PRIMARY path is the first entry, same rule as the block parser');
+  assert.equal(write.params[2], '1. Open the invite dialog.');
+  assert.equal(write.params[3], 501);
+
+  // Property 1: the row the tails hand to captureForSession says the new
+  // routes, not the old ones — and it said so before the tail ran.
+  assert.deepEqual(session.testing_paths, TESTING.testingPaths);
+  assert.equal(session.testing_path, '/?shot=invite');
+  const sqls = (log.queries || []).map((q) => String(q.sql));
+  assert.ok(sqls.findIndex((s) => /SET testing_/.test(s)) >= 0);
+});
+
+test('an update that says nothing about testing leaves the stored routes alone', async () => {
+  // The common case: a one-line fix to a failing check. Blanking the routes
+  // the first submission got right would be worse than dropping them ever was.
+  const log = {};
+  const session = nativeSession({
+    testing_paths: [{ path: '/board', viewport: 'desktop' }], testing_path: '/board',
+  });
+  const result = await run({ session, pool: testingPool(session, log) }, {}, log);
+  assert.equal(result.ok, true);
+  assert.equal(result.testingUpdated, false);
+  assert.equal(result.testingPaths, null);
+  assert.equal(testingWrite(log), undefined, 'no write at all');
+  assert.deepEqual(session.testing_paths, [{ path: '/board', viewport: 'desktop' }]);
+});
+
+test('an unusable route is dropped rather than stored, and the rules are the block parser\'s', async () => {
+  const log = {};
+  const session = nativeSession();
+  const result = await run({ session, pool: testingPool(session, log) }, {
+    testing: {
+      testingPaths: [
+        'https://evil.test/steal', '//evil.test', '/ok?x=1', '/ok?x=1',
+        '/a', '/b', '/c', '/d',
+      ],
+    },
+  }, log);
+  assert.equal(result.ok, true);
+  // Off-origin and protocol-relative dropped, the duplicate collapsed, and
+  // the list capped at CAPTURE_MAX_PATHS — every one of those rules coming
+  // from services/testing-notes.js rather than from a second copy here.
+  assert.deepEqual(result.testingPaths, ['/ok?x=1', '/a', '/b']);
+  const write = testingWrite(log);
+  assert.deepEqual(JSON.parse(write.params[0]).map((p) => p.path), ['/ok?x=1', '/a', '/b']);
+});
+
+test('an imported proposal\'s new routes are stored before its head change re-runs the checks', async () => {
+  const log = {};
+  const session = importedSession();
+  const result = await run(
+    { session, pool: testingPool(session, log) },
+    { branch: 'usernode/add-a-button', testing: TESTING },
+    log
+  );
+  assert.equal(result.ok, true);
+  assert.equal(result.submittedVia, 'update_fork_head');
+  assert.equal(result.testingUpdated, true);
+  assert.deepEqual(result.testingPaths, ['/?shot=invite', '/?shot=members @mobile']);
+  // applyHeadChange's own tail is what shoots the screenshots, and it reads
+  // the session object handed to it — so the mutation has to be visible in
+  // the very object that reached it.
+  assert.equal(log.applied.length, 1);
+  assert.deepEqual(log.applied[0].session.testing_paths, TESTING.testingPaths);
+});
+
+test('a same-commit resubmit with new routes stores them and forces a fresh capture', async () => {
+  const log = {};
+  const rechecks = [];
+  const session = nativeSession({
+    testing_paths: [{ path: '/', viewport: 'desktop' }], testing_path: '/',
+  });
+  const result = await run({
+    session,
+    pool: testingPool(session, log),
+    gh: { getBranchSha: async () => FORK_HEAD },
+    recovery: { recheckSessionChecks: async (args) => { rechecks.push(args); return 'rechecked'; } },
+  }, { testing: TESTING }, log);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.updated, false);
+  assert.equal(result.unchanged, true, 'still honest that no commit moved');
+  assert.equal(result.testingUpdated, true);
+  assert.equal(result.captureRerun, true);
+  assert.equal(result.checksRerun, true);
+  assert.deepEqual(result.testingPaths, ['/?shot=invite', '/?shot=members @mobile']);
+
+  // Not one vote, because not one line of code changed.
+  assert.equal(result.votesCleared, 0);
+  assert.equal(log.push, undefined, 'nothing is pushed');
+  assert.equal(log.reconcile, undefined, 'and nothing reconciles a head that did not move');
+  assert.ok(!(log.queries || []).some((q) => /FROM pr_votes/.test(String(q.sql))), 'no tally is even counted');
+
+  // The stored routes, and the re-run that shoots them.
+  const write = testingWrite(log);
+  assert.deepEqual(JSON.parse(write.params[0]), TESTING.testingPaths);
+  assert.equal(rechecks.length, 1);
+  assert.equal(rechecks[0].reason, 'testing-update');
+  assert.deepEqual(rechecks[0].session.testing_paths, TESTING.testingPaths,
+    'the recheck is handed the row that already says the new routes');
+});
+
+test('a same-commit resubmit of the SAME routes stays the no-op it always was', async () => {
+  const log = {};
+  const rechecks = [];
+  const session = nativeSession({
+    testing_paths: TESTING.testingPaths,
+    testing_path: '/?shot=invite',
+    testing_md: TESTING.testingSteps,
+  });
+  const result = await run({
+    session,
+    pool: testingPool(session, log),
+    gh: { getBranchSha: async () => FORK_HEAD },
+    recovery: { recheckSessionChecks: async (args) => { rechecks.push(args); return 'rechecked'; } },
+  }, { testing: TESTING }, log);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.unchanged, true);
+  assert.equal(result.testingUpdated, false);
+  assert.equal(result.captureRerun, false);
+  assert.equal(testingWrite(log), undefined, 'nothing written');
+  assert.equal(rechecks.length, 0, 'and no capture burned on routes that already applied');
+
+  // A row written before #768 holds plain strings for the same routes. That
+  // is the same list, not a change — otherwise every legacy proposal re-shoots
+  // its screenshots the first time anything resubmits.
+  const legacy = nativeSession({ testing_paths: ['/board'], testing_path: '/board' });
+  const log2 = {};
+  const again = await run({
+    session: legacy,
+    pool: testingPool(legacy, log2),
+    gh: { getBranchSha: async () => FORK_HEAD },
+    recovery: { recheckSessionChecks: async () => 'rechecked' },
+  }, { testing: { testingPaths: ['/board'] } }, log2);
+  assert.equal(again.testingUpdated, false);
+  assert.equal(testingWrite(log2), undefined);
+});
+
+test('a same-commit resubmit with nothing new is still not an error', async () => {
+  const log = {};
+  const session = nativeSession();
+  const result = await run({
+    session,
+    pool: testingPool(session, log),
+    gh: { getBranchSha: async () => FORK_HEAD },
+    recovery: { recheckSessionChecks: async () => { throw new Error('must not run'); } },
+  }, {}, log);
+  assert.equal(result.ok, true);
+  assert.equal(result.unchanged, true);
+  assert.equal(result.testingUpdated, false);
+  assert.equal(result.captureRerun, false);
+  assert.equal(result.votesCleared, 0);
+});
+
+test('a paused session takes the new routes but never starts a build for them', async () => {
+  // Same reason settlePausedSession exists: there is no container to shoot
+  // against, and handoff-pipeline's write only matches an active session.
+  const log = {};
+  const rechecks = [];
+  const session = sessionRow('paused');
+  const result = await run({
+    session,
+    pool: testingPool(session, log),
+    gh: { getBranchSha: async () => FORK_HEAD },
+    recovery: { recheckSessionChecks: async (args) => { rechecks.push(args); return 'rechecked'; } },
+  }, { testing: TESTING }, log);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.testingUpdated, true);
+  assert.equal(result.captureRerun, false);
+  assert.equal(result.resumeRequired, true, 'the caller is told why no screenshots are coming yet');
+  assert.equal(rechecks.length, 0);
+  assert.ok(testingWrite(log), 'the routes are stored either way');
+});
+
+test('a metadata write that fails is reported, never fatal to an update that landed', async () => {
+  // The commit is already on the branch by the time this runs.
+  const log = {};
+  const session = nativeSession();
+  const queries = [];
+  log.queries = queries;
+  const pool = fakePool([
+    ['FROM chat_sessions cs JOIN apps a', [session]],
+    ['FROM pr_votes', [{ n: 4 }]],
+    ['SET testing_paths', () => { throw new Error('column is on fire'); }],
+  ], queries);
+  const result = await run({ session, pool }, { testing: TESTING }, log);
+  assert.equal(result.ok, true);
+  assert.equal(result.updated, true, 'the push still counts');
+  assert.equal(result.testingUpdated, false, 'and the caller is told the routes did not take');
+  assert.equal(session.testing_paths, undefined, 'the in-memory row is not lied to either');
+});
+
+test('the metadata write happens before the tails, and the resubmit path clears no votes', () => {
+  // Source-level, because the ORDER is the property: a future edit that moved
+  // applyTestingMetadata below the tails would still pass a behavioural test
+  // whose stubs do not read the row.
+  const fn = CODE.slice(
+    CODE.indexOf('async function advanceAppRepoBranch'),
+    CODE.indexOf('async function settleActiveSession')
+  );
+  const applied = fn.indexOf('applyTestingMetadata');
+  assert.ok(applied > 0, 'the app-repo path stores the routes');
+  for (const tail of ['syncImportedProposal', 'settleActiveSession', 'settlePausedSession', 'reconcileNativeReviewedHead']) {
+    assert.ok(fn.indexOf(tail) > applied, `${tail} runs after the routes are stored`);
+  }
+  const resubmit = CODE.slice(
+    CODE.indexOf('async function resubmitUnchanged'),
+    CODE.indexOf('async function advanceAppRepoBranch')
+  );
+  assert.doesNotMatch(resubmit, /countVotes|pr_votes|reconcileNativeReviewedHead|pushForkBranchToAppBranch/,
+    'a resubmit that moves no commit touches neither the votes nor the branch');
 });

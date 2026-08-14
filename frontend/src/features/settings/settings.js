@@ -39,6 +39,15 @@
   'use strict';
 
   const Settings = {
+    // Planted by ./mount.ts, never imported: this file is a classic IIFE that
+    // tests/settings-mobile-push.test.js evaluates with vm.runInContext, where
+    // an import statement is a syntax error. `_store` is ./settings-nav-store.js
+    // (the two nav hosts' descriptors) and `_footerHome` is the placeholder
+    // seam #settings-footer leaves behind when _syncFooter moves it. Both stay
+    // null in the vm harnesses and during the SSG prerender pass, and every
+    // use below goes through `?.` for exactly that reason.
+    _store: null,
+    _footerHome: null,
     // `devFlowPreference` is the "remember my option" answer from the
     // dev-chat flow picker (#1049): null = ask every time (the default),
     // otherwise 'platform' | 'claude-code' | 'codex'. `externalFlowsAvailable`
@@ -113,7 +122,7 @@
       // Own section (not folded into 'cli') so the out-of-credits card can
       // deep-link #settings/connectors as one of its three routes; see
       // public/js/credit-options.js.
-      { key: 'connectors', label: 'Claude & ChatGPT connectors', group: 'AI & agents' },
+      { key: 'connectors', label: 'Social accounts & connectors', group: 'AI & agents' },
       { key: 'openrouter', label: 'OpenRouter', group: 'AI & agents' },
       { key: 'app-ai', label: 'App AI permissions', group: 'AI & agents' },
       { key: 'agent-files', label: 'Agent instructions & skills', group: 'AI & agents' },
@@ -196,6 +205,31 @@
           }
           connectorCopy.textContent = 'Copied';
           setTimeout(() => { connectorCopy.textContent = 'Copy'; }, 1500);
+        });
+      }
+
+      // Copy the read-only allow rules. Two blocks with identical content and
+      // different destinations: the user's PERSONAL ~/.claude/settings.json,
+      // which covers every repo on their machine, and the per-repo
+      // .claude/settings.json, which is the copy a fresh web container can
+      // actually see. Same shape as the URL copy above, reading textContent
+      // because each block is a <pre>, not an input — and no select()
+      // fallback for the same reason, so a denied clipboard just leaves the
+      // visible text to be copied by hand.
+      for (const id of ['connector-allow-rules', 'connector-repo-allow-rules']) {
+        const rulesCopy = document.getElementById(`${id}-copy`);
+        if (!rulesCopy) continue;
+        rulesCopy.addEventListener('click', async () => {
+          const block = document.getElementById(id);
+          if (!block) return;
+          let ok = true;
+          try {
+            await navigator.clipboard.writeText(block.textContent);
+          } catch {
+            ok = false;
+          }
+          rulesCopy.textContent = ok ? 'Copied' : 'Copy failed';
+          setTimeout(() => { rulesCopy.textContent = 'Copy'; }, 1500);
         });
       }
 
@@ -621,86 +655,77 @@
       return groups;
     },
 
-    esc(s) {
-      return String(s == null ? '' : s)
-        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    str(s) {
+      return String(s == null ? '' : s);
     },
 
     // Desktop sidebar rows, grouped under headings.
-    _navItemsHtml() {
+    //
+    // A DESCRIPTOR, not HTML, since #1191 slice 6 conversion 8 —
+    // ./settings-nav.tsx is the only writer of #settings-nav-desktop now. The
+    // shape is `[{ name, first, items: [{ key, label, active, className }] }]`.
+    //
+    // `className` is computed HERE rather than in the component on purpose:
+    // it is the one class string on this screen that varies with state, it is
+    // carried over from the retired _navItemsHtml() character for character
+    // (so the rendered attribute cannot drift), and the shaping-stays-in-JS
+    // rule is what keeps this module loadable by the vm harnesses. Tailwind's
+    // extractor scans frontend/** including .js, so both spellings still
+    // compile.
+    _navView() {
       const active = Settings._section;
-      const itemHtml = (s) => {
-        const isActive = s.key === active;
-        const cls = 'settings-nav-item block w-full text-left rounded-lg px-3 py-2 text-sm font-medium transition-colors '
-          + (isActive
+      const item = (s) => ({
+        key: s.key,
+        label: Settings.str(s.label),
+        active: s.key === active,
+        className: 'settings-nav-item block w-full text-left rounded-lg px-3 py-2 text-sm font-medium transition-colors '
+          + (s.key === active
             ? 'bg-violet-600/10 text-violet-600 dark:text-violet-400'
-            : 'text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800');
-        return `<button type="button" role="tab" aria-selected="${isActive ? 'true' : 'false'}"
-          data-settings-nav="${s.key}" class="${cls}">${Settings.esc(s.label)}</button>`;
-      };
-      return Settings._groupedSections().map((g, i) => `
-        <div class="${i === 0 ? '' : 'mt-4 pt-3 border-t border-zinc-200 dark:border-zinc-800'}">
-          <div class="px-3 pb-1 text-[11px] uppercase tracking-wide text-zinc-400 dark:text-zinc-500">${Settings.esc(g.name)}</div>
-          ${g.items.map(itemHtml).join('')}
-        </div>`).join('');
+            : 'text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800'),
+      });
+      return Settings._groupedSections().map((g, i) => ({
+        name: Settings.str(g.name),
+        first: i === 0,
+        items: g.items.map(item),
+      }));
     },
 
     // Mobile level 1: the section menu. A list, not a tab set — so plain
     // buttons in a <nav>, no role="tab"/aria-selected, and the drawer-row
     // idiom from index.html (44px minimum, hairline between rows, chevron
-    // on the right), exactly as the admin console's level-1 menu.
-    _mobileMenuHtml() {
-      const chevron = '<svg class="w-4 h-4 shrink-0 text-zinc-400 dark:text-zinc-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>';
-      const rowHtml = (s) => `
-        <button type="button" data-settings-nav="${s.key}"
-                class="settings-menu-row flex items-center gap-3 w-full text-left min-h-[44px] px-4 py-2
-                       border-b border-zinc-100 dark:border-zinc-800
-                       text-zinc-700 dark:text-zinc-200
-                       hover:bg-zinc-50 dark:hover:bg-zinc-800/60 transition-colors">
-          <span class="flex-1 min-w-0 text-sm font-medium truncate">${Settings.esc(s.label)}</span>
-          ${chevron}
-        </button>`;
-      return Settings._groupedSections().map((g) => `
-        <div class="mb-5">
-          <div class="px-4 pb-1.5 text-[11px] uppercase tracking-wide text-zinc-400 dark:text-zinc-500">${Settings.esc(g.name)}</div>
-          <div class="rounded-lg overflow-hidden border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900
-                      [&>button:last-child]:border-b-0">
-            ${g.items.map(rowHtml).join('')}
-          </div>
-        </div>`).join('');
+    // on the right), exactly as the admin console's level-1 menu. The row
+    // classes and the chevron are the component's now (the chevron is
+    // ChevronRightIcon, same 24x24 path); the grouping is still this
+    // module's, shared with _navView through _groupedSections().
+    _menuView() {
+      return Settings._groupedSections().map((g) => ({
+        name: Settings.str(g.name),
+        items: g.items.map((s) => ({ key: s.key, label: Settings.str(s.label) })),
+      }));
     },
 
-    // Paint BOTH nav hosts. These two elements are the only ones this
-    // module ever innerHTML-writes — the section wrappers are static
-    // markup and are only ever hidden/shown.
+    // Paint BOTH nav hosts. These two elements were the only ones this
+    // module ever innerHTML-wrote — the section wrappers are static markup
+    // and are only ever hidden/shown.
     _renderNav() {
-      const side = document.getElementById('settings-nav-desktop');
-      if (side) {
-        side.innerHTML = Settings._navItemsHtml();
-        Settings._wireNavButtons(side);
-      }
-      const menu = document.getElementById('settings-mobile-menu-host');
-      if (menu) {
-        // Level 2 on a phone must not leave the menu rows above the
-        // section; desktop hides the host through its own md:hidden class.
-        const showMenu = Settings._isMobile() && Settings._level === 1;
-        menu.innerHTML = showMenu ? Settings._mobileMenuHtml() : '';
-        if (showMenu) Settings._wireNavButtons(menu);
-      }
+      // Level 2 on a phone must not leave the menu rows above the section;
+      // desktop hides the host through its own md:hidden class. `null` is
+      // what the empty-string innerHTML write used to mean.
+      const showMenu = Settings._isMobile() && Settings._level === 1;
+      Settings._store?.set({
+        desktop: Settings._navView(),
+        mobile: showMenu ? Settings._menuView() : null,
+      });
     },
 
-    // Every [data-settings-nav] control routes through here. On mobile a
-    // press is a DRILL-IN (a real hash navigation that pushes history); on
-    // desktop it's an in-place sidebar switch.
-    _wireNavButtons(root) {
-      if (!root) return;
-      root.querySelectorAll('[data-settings-nav]').forEach((btn) => {
-        btn.addEventListener('click', () => {
-          const key = btn.dataset.settingsNav;
-          if (Settings._isMobile()) Settings._openSection(key);
-          else Settings.setSection(key);
-        });
-      });
+    // Every [data-settings-nav] control routes through here — the component
+    // calls it from onClick, where _wireNavButtons used to re-bind a listener
+    // per button after every repaint. On mobile a press is a DRILL-IN (a real
+    // hash navigation that pushes history); on desktop it's an in-place
+    // sidebar switch.
+    _navClick(key) {
+      if (Settings._isMobile()) Settings._openSection(key);
+      else Settings.setSection(key);
     },
 
     // Drill-in from a level-1 menu row. A REAL hash navigation so the
@@ -774,10 +799,28 @@
       const footer = document.getElementById('settings-footer');
       if (!footer) return;
       const mobile = Settings._isMobile();
-      const parent = document.getElementById(
-        mobile ? 'settings-content-col' : 'settings-sidebar-col',
-      );
-      if (parent && footer.parentElement !== parent) parent.appendChild(footer);
+      if (mobile) {
+        const parent = document.getElementById('settings-content-col');
+        if (parent && footer.parentElement !== parent) {
+          // Leave a comment in the sidebar column where the footer was, so
+          // React's picture of that column's children still describes the
+          // document while the node is away (#1191 slice 6, conversion 8 —
+          // lib/kit-surface.ts's createPlaceholderHome, the same seam the
+          // dialog cards' lift uses). Planted by ./mount.ts; absent in the
+          // vm harnesses, where the plain appendChild below is the whole
+          // behaviour and always was.
+          Settings._footerHome?.lift();
+          parent.appendChild(footer);
+        }
+      } else if (Settings._footerHome) {
+        // restore() puts it back where the comment SITS — after
+        // #settings-nav-desktop in the sidebar column, i.e. its rendered
+        // position — rather than merely inside the right parent.
+        Settings._footerHome.restore();
+      } else {
+        const parent = document.getElementById('settings-sidebar-col');
+        if (parent && footer.parentElement !== parent) parent.appendChild(footer);
+      }
       // On a phone it belongs to the MENU level only — a drilled-in section
       // shouldn't end with a Log out button.
       footer.classList.toggle('hidden', mobile && Settings._level === 2);
@@ -1176,8 +1219,21 @@
     //
     // Same shape as the CLI-credentials block below: a load-generation
     // guard so a slow response can't repaint stale credential state over a
-    // fresh one, and the page's ?demo=1 passed through (mcp_tokens is
-    // staging:private, so a staging clone would render an empty panel).
+    // fresh one, and the page's ?demo= flag passed through (mcp_tokens and
+    // mcp_connector_hints are both staging:private, so a staging clone would
+    // render an empty list and a status line with nothing to say).
+
+    // Wider than _cliTokensDemo above, because this panel has five reviewable
+    // states rather than one: `1` is the everyday mixed state and the
+    // `connectors-*` values each pin one of the others. Anything else is not
+    // passed on. The server only honours any of it in staging.
+    _connectorsDemo() {
+      try {
+        const flag = new URLSearchParams(window.location.search).get('demo');
+        if (flag === '1' || (flag && flag.startsWith('connectors-'))) return flag;
+        return null;
+      } catch { return null; }
+    },
 
     async _loadConnectors() {
       const section = document.getElementById('connectors-section');
@@ -1196,7 +1252,8 @@
       status.classList.add('hidden');
 
       try {
-        const demoQ = this._cliTokensDemo() ? '?demo=1' : '';
+        const demoFlag = this._connectorsDemo();
+        const demoQ = demoFlag ? `?demo=${encodeURIComponent(demoFlag)}` : '';
         const response = await fetch(`/api/me/connectors${demoQ}`, {
           credentials: 'same-origin',
           cache: 'no-store',
@@ -1215,6 +1272,7 @@
         }
         section.classList.remove('hidden');
         this._connectors = data.connectors;
+        this._connectorHint = data.hint || null;
         this._renderConnectors();
       } catch (err) {
         if (loadId !== this._connectorLoadId) return;
@@ -1225,11 +1283,86 @@
       }
     },
 
+    // Which of the three "stop the prompts" cases apply to what is actually
+    // connected. Substring matching on the registered client name, which is
+    // attacker-choosable and often just a product name — so this only ever
+    // decides what to SHOW, never what to allow, and anything it cannot place
+    // falls back to showing every case.
+    _connectorFamilies(connectors) {
+      let claude = false;
+      let chatgpt = false;
+      let unknown = false;
+      for (const connector of connectors) {
+        const name = String(connector.client_name || '').toLowerCase();
+        if (/claude|anthropic/.test(name)) claude = true;
+        else if (/chatgpt|openai|codex/.test(name)) chatgpt = true;
+        else unknown = true;
+      }
+      return { claude, chatgpt, unknown };
+    },
+
+    // The Claude Code cases are hidden only when EVERY connection is a
+    // ChatGPT-family one, where they are advice about a file that product
+    // does not read. They stay up for a Claude-family name because that name
+    // does not distinguish claude.ai chat from Claude Code — both arrive as
+    // some spelling of "Claude" — so hiding them there would hide the fix
+    // from the surface that needs it.
+    _renderConnectorCases(connectors) {
+      const { claude, unknown } = this._connectorFamilies(connectors);
+      const claudeCode = !connectors.length || unknown || claude;
+      for (const id of ['connector-case-cc-local', 'connector-case-cc-web']) {
+        const node = document.getElementById(id);
+        if (node) node.classList.toggle('hidden', !claudeCode);
+      }
+    },
+
+    // The read-only tip status. There is no control next to it: arming
+    // happens when a chat client opens a session (services/mcp-hint-throttle.js),
+    // so "open a new chat" is the reset, and a button here would only be a
+    // way to make the connector nag.
+    _renderConnectorHint(connectors) {
+      const line = document.getElementById('connector-hint-status');
+      if (!line) return;
+      const hint = this._connectorHint;
+      const { claude, unknown } = this._connectorFamilies(connectors);
+      // No line at all in two cases: no status to report, and a connection
+      // set that is entirely ChatGPT-family. The tip is suppressed for that
+      // family — there are no per-call prompts there to stop — so "not shown
+      // yet" would read as a promise that one is coming, and a count would
+      // report a budget that will never be spent.
+      if (!hint || (connectors.length && !claude && !unknown)) {
+        line.textContent = '';
+        line.classList.add('hidden');
+        return;
+      }
+      const shown = Number(hint.shownThisWindow) || 0;
+      const cap = Number(hint.maxPerWindow) || 0;
+      const days = Number(hint.windowDays) || 0;
+
+      let text;
+      if (!shown) {
+        text = 'Usernode has not sent you this tip in chat yet. It rides along on the first read it answers in a new conversation.';
+      } else {
+        const when = Number.isFinite(Date.parse(hint.lastShownAt))
+          ? new Date(hint.lastShownAt).toLocaleString()
+          : 'recently';
+        const times = shown === 1 ? 'once' : `${shown} times`;
+        text = `Usernode sent you this tip in chat ${times} in the last ${days} days, most recently ${when}. `
+          + (cap && shown >= cap
+            ? `That is the limit of ${cap} per connection per ${days} days; it will come back once the window rolls over.`
+            : 'Open a new conversation to see it again.');
+      }
+      line.textContent = text;
+      line.classList.remove('hidden');
+    },
+
     _renderConnectors() {
       const list = document.getElementById('connectors-list');
       if (!list) return;
       list.textContent = '';
       const connectors = this._connectors || [];
+      this._renderConnectorCases(connectors);
+      this._renderConnectorHint(connectors);
       if (!connectors.length) {
         const empty = document.createElement('p');
         empty.className = 'text-xs text-zinc-500 dark:text-zinc-400';
@@ -1298,7 +1431,18 @@
       }
     },
 
-    // ── Verified GitHub account link ─────────────────────────────────────
+    // ── Social account ownership proofs + Layer-1 credits ────────────────
+
+    _socialIdentityDemoQuery() {
+      try {
+        const demo = new URLSearchParams(window.location.search).get('demo');
+        if (demo === '1' || demo === 'identity-connected'
+            || demo === 'identity-unverified' || demo === 'identity-legacy') {
+          return `?demo=${encodeURIComponent(demo)}`;
+        }
+      } catch { /* ordinary production read */ }
+      return '';
+    },
 
     async _loadGithubLink() {
       const section = document.getElementById('github-link-section');
@@ -1306,21 +1450,28 @@
       if (!section || !body) return;
       body.textContent = 'Loading…';
       try {
-        const demoQ = this._cliTokensDemo() ? '?demo=1' : '';
-        const response = await fetch(`/api/me/github${demoQ}`, {
+        const response = await fetch(`/api/me/social-identities${this._socialIdentityDemoQuery()}`, {
           credentials: 'same-origin',
           cache: 'no-store',
         });
-        if (response.status === 404 || !response.ok) {
+        if (response.status === 404) {
           section.classList.add('hidden');
           return;
         }
+        if (!response.ok) throw new Error(`Social identity request failed (${response.status})`);
         const data = await response.json();
+        if (!data || !data.providers || !data.entitlement) {
+          throw new Error('Invalid social identity response');
+        }
         section.classList.remove('hidden');
-        this._githubLink = data || { linked: false };
+        // Keep the established property/method names: external-agent code
+        // calls _loadGithubLink after attribution changes. The value is now
+        // the provider-neutral response.
+        this._githubLink = data;
         this._renderGithubLink();
       } catch {
-        section.classList.add('hidden');
+        body.textContent = 'Could not load social accounts. Try again shortly.';
+        section.classList.remove('hidden');
       }
     },
 
@@ -1330,64 +1481,129 @@
       if (!body) return;
       body.textContent = '';
       if (status) status.classList.add('hidden');
-      const link = this._githubLink || { linked: false };
+      const payload = this._githubLink || { providers: {}, entitlement: {} };
+      body.appendChild(this._socialIdentityTierCard(payload.entitlement));
+      ['github', 'x'].forEach((provider) => {
+        body.appendChild(this._socialIdentityProviderRow(
+          provider,
+          payload.providers[provider] || { provider, linked: false, available: false },
+          payload.entitlement,
+          !!payload.demo
+        ));
+      });
+      this._socialIdentityCallbackStatus(status);
+    },
 
-      // No OAuth app configured on this deployment: say so plainly rather
-      // than offering a button that 404s.
-      if (link.available === false) {
-        const note = document.createElement('p');
-        note.className = 'text-xs text-zinc-500 dark:text-zinc-400';
-        note.textContent = 'GitHub linking is not configured on this deployment.';
-        body.appendChild(note);
-        return;
+    _socialIdentityTierCard(entitlement) {
+      const e = entitlement || {};
+      const card = document.createElement('div');
+      card.className = 'rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 px-3 py-2 mb-3';
+      const title = document.createElement('div');
+      title.className = 'text-sm font-semibold text-zinc-800 dark:text-zinc-200';
+      const detail = document.createElement('div');
+      detail.className = 'text-xs text-zinc-500 dark:text-zinc-400 mt-1';
+      const dollars = `$${(Math.max(0, Number(e.limitCents) || 0) / 100).toFixed(2)}/day`;
+      if (e.entitlementAvailable === false) {
+        title.textContent = 'Daily credit tier temporarily unavailable';
+        detail.textContent = 'Usernode could not verify credit eligibility. Platform-funded calls fail closed; your own API key still works.';
+      } else if (e.policy === 'legacy') {
+        title.textContent = `Current daily allowance: ${dollars}`;
+        detail.textContent = 'Social account linking is available, but identity-based credit tiers are not active on this deployment yet.';
+      } else if (e.tier === 'override') {
+        title.textContent = `Administrator-set allowance: ${dollars}`;
+        detail.textContent = 'This account has an explicit administrator override, which takes precedence over identity tiers.';
+      } else if (e.verificationRequired) {
+        title.textContent = 'Layer 1 locked · $0/day';
+        detail.textContent = 'Connect either GitHub or X below to unlock $10.00/day. A second provider does not add another $10.';
+        card.className += ' border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/20';
+      } else {
+        title.textContent = `Layer 1 unlocked · ${dollars}`;
+        detail.textContent = 'At least one social account ownership proof is current. Provider tokens are not stored.';
+        card.className += ' border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/20';
+      }
+      card.append(title, detail);
+      return card;
+    },
+
+    _socialIdentityProviderRow(provider, link, entitlement, demo) {
+      const name = provider === 'github' ? 'GitHub' : 'X';
+      const wrap = document.createElement('div');
+      wrap.className = 'rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2';
+      const row = document.createElement('div');
+      row.className = 'flex items-start justify-between gap-3';
+      const text = document.createElement('div');
+      text.className = 'min-w-0';
+      const heading = document.createElement('div');
+      heading.className = 'text-sm font-semibold text-zinc-800 dark:text-zinc-200';
+      heading.textContent = link.linked && link.handle ? `${name} · @${link.handle}` : name;
+      const state = document.createElement('div');
+      state.className = 'text-xs mt-1';
+      if (link.reconnectRequired) {
+        state.className += ' text-amber-600 dark:text-amber-400';
+        state.textContent = 'Linked for GitHub attribution · reconnect once to make this identity credit-eligible.';
+      } else if (link.linked && entitlement.policy === 'tiered') {
+        state.className += ' text-emerald-600 dark:text-emerald-400';
+        state.textContent = 'Ownership verified · counts toward the single $10/day social tier.';
+      } else if (link.linked) {
+        state.className += ' text-zinc-500 dark:text-zinc-400';
+        state.textContent = 'Ownership verified · identity credit tiers are not active yet.';
+      } else if (link.available === false) {
+        state.className += ' text-zinc-500 dark:text-zinc-400';
+        state.textContent = `${name} linking is not configured on this deployment.`;
+      } else {
+        state.className += ' text-zinc-500 dark:text-zinc-400';
+        state.textContent = entitlement.verificationRequired
+          ? `Not connected · connect ${name} to unlock Layer 1.`
+          : 'Not connected.';
+      }
+      text.append(heading, state);
+      if (link.linkedAt && Number.isFinite(Date.parse(link.linkedAt))) {
+        const when = document.createElement('div');
+        when.className = 'text-xs text-zinc-500 dark:text-zinc-500 mt-1';
+        when.textContent = `linked ${new Date(link.linkedAt).toLocaleString()}`;
+        text.appendChild(when);
+      }
+      if (link.linked && link.access === 'identity') {
+        const noToken = document.createElement('div');
+        if (provider === 'github') noToken.id = 'github-link-no-token';
+        noToken.className = 'text-xs text-zinc-500 dark:text-zinc-400 mt-1';
+        noToken.textContent = provider === 'github'
+          ? 'Usernode holds no GitHub access token for your account.'
+          : 'Usernode stores no X access token for your account.';
+        text.appendChild(noToken);
       }
 
-      if (link.linked) {
-        const row = document.createElement('div');
-        row.className = 'flex items-center justify-between gap-3 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2';
-        const text = document.createElement('div');
-        text.className = 'min-w-0';
-        const login = document.createElement('div');
-        login.className = 'text-sm font-mono text-zinc-800 dark:text-zinc-200';
-        login.textContent = link.login || 'linked';
-        const when = document.createElement('div');
-        when.className = 'text-xs text-zinc-500 dark:text-zinc-400 mt-1';
-        when.textContent = link.linkedAt && Number.isFinite(Date.parse(link.linkedAt))
-          ? `linked ${new Date(link.linkedAt).toLocaleString()}`
-          : 'linked';
-        text.append(login, when);
-        // The whole point of the identity-only link: say plainly that no
-        // credential is held, rather than leaving the user to infer it from
-        // the consent screen they saw once. Driven by the server's `access`
-        // field so a future shape can render differently instead of this
-        // line quietly lying.
-        if (link.access === 'identity') {
-          const noToken = document.createElement('div');
-          noToken.id = 'github-link-no-token';
-          noToken.className = 'text-xs text-zinc-500 dark:text-zinc-400 mt-1';
-          noToken.textContent = 'Usernode holds no GitHub access token for your account.';
-          text.appendChild(noToken);
+      const actions = document.createElement('div');
+      actions.className = 'shrink-0 flex flex-wrap justify-end gap-2';
+      if ((!link.linked || link.reconnectRequired) && link.available !== false) {
+        const label = link.reconnectRequired ? 'Reconnect' : `Connect ${name}`;
+        if (demo) {
+          const disabled = document.createElement('button');
+          disabled.type = 'button';
+          disabled.disabled = true;
+          disabled.className = 'rounded-md bg-violet-600 px-2 py-1 text-xs font-medium text-white opacity-50';
+          disabled.textContent = label;
+          actions.appendChild(disabled);
+        } else {
+          const connect = document.createElement('a');
+          connect.href = `/api/me/social-identities/${provider}/connect`;
+          connect.className = 'rounded-md bg-violet-600 hover:bg-violet-500 px-2 py-1 text-xs font-medium text-white transition-colors';
+          connect.textContent = label;
+          actions.appendChild(connect);
         }
-
+      }
+      if (link.linked) {
         const unlink = document.createElement('button');
         unlink.type = 'button';
-        unlink.className = 'shrink-0 rounded-md border border-red-400 dark:border-red-700 px-2 py-1 text-xs font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 transition-colors';
+        unlink.disabled = demo;
+        unlink.className = 'rounded-md border border-red-400 dark:border-red-700 px-2 py-1 text-xs font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 disabled:opacity-50 transition-colors';
         unlink.textContent = 'Disconnect';
-        unlink.addEventListener('click', () => this._unlinkGithub(unlink));
-        row.append(text, unlink);
-        body.appendChild(row);
-        body.appendChild(this._githubAuditNote());
-        return;
+        if (!demo) unlink.addEventListener('click', () => this._unlinkGithub(unlink, provider));
+        actions.appendChild(unlink);
       }
-
-      // A full-page navigation, not fetch: the GitHub consent screen has to
-      // be shown to the user in a top-level document.
-      const connect = document.createElement('a');
-      connect.href = '/api/me/github/connect';
-      connect.className = 'inline-block rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors';
-      connect.textContent = 'Connect GitHub';
-      body.appendChild(connect);
-      body.appendChild(this._githubAuditNote());
+      row.append(text, actions);
+      wrap.append(row, this._socialIdentityAuditNote(provider));
+      return wrap;
     },
 
     // "Don't take our word for it": GitHub's own page lists what every
@@ -1395,36 +1611,69 @@
     // click. Deliberately a top-level link (target=_blank + noopener) — the
     // shell is framed, and github.com refuses to be framed.
     _githubAuditNote() {
+      return this._socialIdentityAuditNote('github');
+    },
+
+    _socialIdentityAuditNote(provider) {
       const note = document.createElement('p');
-      note.id = 'github-link-audit-note';
+      if (provider === 'github') note.id = 'github-link-audit-note';
       note.className = 'text-xs text-zinc-500 dark:text-zinc-500 mt-2';
-      note.appendChild(document.createTextNode('You can check what Usernode is allowed to do at '));
+      note.appendChild(document.createTextNode('Review or revoke this authorization at '));
       const anchor = document.createElement('a');
-      anchor.href = 'https://github.com/settings/applications';
+      anchor.href = provider === 'github'
+        ? 'https://github.com/settings/applications'
+        : 'https://x.com/settings/connected_apps';
       anchor.target = '_blank';
       anchor.rel = 'noopener noreferrer';
       anchor.className = 'text-violet-600 dark:text-violet-400 hover:underline';
-      anchor.textContent = 'github.com/settings/applications';
+      anchor.textContent = provider === 'github'
+        ? 'github.com/settings/applications'
+        : 'x.com/settings/connected_apps';
       note.appendChild(anchor);
       note.appendChild(document.createTextNode('.'));
       return note;
     },
 
-    async _unlinkGithub(button) {
+    _socialIdentityCallbackStatus(status) {
+      if (!status) return;
+      let result = null;
+      let provider = null;
+      try {
+        const hash = String(window.location.hash || '');
+        const query = hash.includes('?') ? hash.slice(hash.indexOf('?') + 1) : '';
+        const params = new URLSearchParams(query);
+        result = params.get('identity');
+        provider = params.get('provider');
+      } catch { return; }
+      if (!result) return;
+      const name = provider === 'x' ? 'X' : 'GitHub';
+      const messages = {
+        linked: `${name} connected.`,
+        conflict: `That ${name} account is already linked elsewhere, or a different account must be disconnected first.`,
+        denied: `${name} connection was cancelled.`,
+        error: `${name} could not be connected. Try again.`,
+      };
+      status.textContent = messages[result] || '';
+      if (!status.textContent) return;
+      status.classList.remove('hidden', 'text-red-500', 'text-emerald-500');
+      status.classList.add(result === 'linked' ? 'text-emerald-500' : 'text-red-500');
+    },
+
+    async _unlinkGithub(button, provider = 'github') {
       const status = document.getElementById('github-link-status');
       if (button) button.disabled = true;
       try {
-        const response = await fetch('/api/me/github', {
+        const response = await fetch(`/api/me/social-identities/${encodeURIComponent(provider)}`, {
           method: 'DELETE',
           credentials: 'same-origin',
           cache: 'no-store',
         });
-        if (!response.ok) throw new Error('Could not disconnect GitHub.');
+        if (!response.ok) throw new Error(`Could not disconnect ${provider === 'x' ? 'X' : 'GitHub'}.`);
         await this._loadGithubLink();
       } catch (err) {
         if (button) button.disabled = false;
         if (status) {
-          status.textContent = err.message || 'Could not disconnect GitHub.';
+          status.textContent = err.message || 'Could not disconnect this account.';
           status.classList.remove('hidden', 'text-emerald-500');
           status.classList.add('text-red-500');
         }
@@ -3148,6 +3397,23 @@
     // The auth-status re-attempt is once per mount, not a loop.
     _usernodeAuthRetryUsed: false,
 
+    // ── Notification-permission tap state ─────────────────────────────
+    // `{ tone, title, text, settings }` — the visible explanation for a
+    // tap that could not open an OS prompt. A dead end MUST leave one of
+    // these behind; a silent return is the bug this section is fixing.
+    _unNotifNotice: null,
+    // The pre-render iOS push probe runs once per section mount, so the
+    // row decides from the real permission rather than from the
+    // `exactAlarmGranted` proxy — and so re-rendering can never loop.
+    _unPushProbed: false,
+    // Re-entrancy guard: the row and the chip both drive the same ask.
+    _unRequestInFlight: false,
+    // Tri-state, from NativeChrome.supports(): null = the probe could not
+    // say (degraded handshake / no advertised list — issue #978), and an
+    // inconclusive answer must never render a dead "Open notification
+    // settings" button.
+    _unCanOpenNotifSettings: null,
+
     // Plain-language reason per bridge failure `kind` (the record from
     // usernode.getLastNativeReadError). Without this the section could only
     // ever say "something went wrong": the bridge's chrome reads resolve
@@ -3237,18 +3503,60 @@
     },
 
     _bridgeDiagDemo() {
+      return this._demoParam('bridgediag') === 'demo';
+    },
+
+    // Both demo links accept their param in the hash query or the search
+    // string, because a hash route carries its own query
+    // (`/#settings/usernode?usernodedemo=ios`) while a plain capture URL
+    // may put it before the fragment.
+    _demoParam(name) {
       try {
         const hash = String(window.location.hash || '');
         const q = hash.indexOf('?');
-        if (q !== -1 &&
-            new URLSearchParams(hash.slice(q + 1)).get('bridgediag') === 'demo') {
-          return true;
+        if (q !== -1) {
+          const inHash = new URLSearchParams(hash.slice(q + 1)).get(name);
+          if (inHash) return inHash;
         }
-        return new URLSearchParams(window.location.search)
-          .get('bridgediag') === 'demo';
+        return new URLSearchParams(window.location.search).get(name) || null;
       } catch (_) {
-        return false;
+        return null;
       }
+    },
+
+    // ── `?usernodedemo=ios` / `=ios-denied` ───────────────────────────
+    //
+    // Screenshot-state deep link for the device-permissions rows, which
+    // otherwise exist ONLY inside the native app: a browser has no
+    // `usernode.isNative`, so the whole section is hidden and the row
+    // this link exists to pin was unreachable from any URL. Pure UI
+    // state — a fixed snapshot, no bridge call, no writes — so it is
+    // ungated for the same reason as `?shot=menu-nav` in public/js/app.js.
+    //
+    // The snapshot deliberately reports `exactAlarmGranted: true` with an
+    // un-determined push status, because that combination IS the bug: iOS
+    // has no exact alarms, the boolean is a lagging proxy, and a screen
+    // that trusts it renders "Granted" with no control at all — which is
+    // precisely "tapping it does nothing". The row must still offer the
+    // ask. `ios-denied` renders the other dead end (determined-denied,
+    // where iOS presents no prompt however often it is asked).
+    _unDemoMode() {
+      const v = this._demoParam('usernodedemo');
+      return (v === 'ios' || v === 'ios-denied') ? v : null;
+    },
+
+    DEMO_USERNODE_STATE: {
+      buildInfo: { appVersion: '0.0.0-demo', buildNumber: '0' },
+      nodeSleepEnabled: true,
+      debugMode: false,
+      facematchStrict: true,
+      authStatus: 'authenticated',
+      permissions: {
+        platform: 'ios',
+        exactAlarmGranted: true,
+        batteryOptDisabled: null,
+        deviceManufacturer: null,
+      },
     },
 
     _bridgeDiagnostics() {
@@ -3417,7 +3725,8 @@
       // getBridgeInfo is unprivileged, so `isNative` stays readable on a
       // device whose privileged handshake is refused.
       const bridge = window.usernode;
-      const gated = this._bridgeDiagDemo() ||
+      const demo = this._unDemoMode();
+      const gated = this._bridgeDiagDemo() || !!demo ||
         (!!bridge && bridge.isNative === true);
       // The gate resolves asynchronously downstream, so the "Usernode app"
       // menu row is only settled here — re-render the nav either way.
@@ -3429,6 +3738,20 @@
       section.classList.remove('hidden');
       this._renderNavIfOpen();
       const token = ++this._usernodeRenderToken;
+      // A fresh mount re-probes the real notification permission (below)
+      // and drops the previous visit's dead-end notice.
+      this._unPushProbed = false;
+      this._unNotifNotice = null;
+      if (demo) {
+        // Fixed snapshot, no bridge call: this link exists to make the
+        // notification row reachable from a browser.
+        this._usernodeState = this.DEMO_USERNODE_STATE;
+        this._unPushStatus = demo === 'ios-denied' ? 'denied' : 'undetermined';
+        this._unPushProbed = true;
+        this._unCanOpenNotifSettings = true;
+        this._renderUsernodeBody();
+        return;
+      }
       if (!this._usernodeState) {
         section.textContent = '';
         section.appendChild(this._unEl('div',
@@ -3458,6 +3781,48 @@
       }
       this._clearUsernodeAuthStatusRetry();
       this._renderUsernodeBody();
+      this._probeUnNotifPermission(token);
+    },
+
+    // The row's truth, read BEFORE it can mislead.
+    //
+    // `permissions.exactAlarmGranted` is a lagging proxy on iOS — there
+    // are no exact alarms there — and a build that reports it `true`
+    // painted "Notifications — Granted" with no control whatsoever, which
+    // is exactly the reported "nothing happens at all when I tap it".
+    // public/js/native-chrome.js's first-run sheet has always overridden
+    // that boolean with the real push status before deciding; this screen
+    // never did, which is why #1192 (which only settles the status AFTER a
+    // request) did not reach the in-app Settings case.
+    //
+    // Runs once per mount and only re-renders on a real change, so it
+    // cannot loop. Token-guarded like every other write to this section.
+    async _probeUnNotifPermission(token) {
+      if (this._unPushProbed) return;
+      this._unPushProbed = true;
+      const nc = window.NativeChrome;
+      if (!nc) return;
+      let status = this._unPushStatus;
+      let canOpen = this._unCanOpenNotifSettings;
+      try {
+        if (typeof nc.iosPushPermissionStatus === 'function') {
+          status = await nc.iosPushPermissionStatus();
+        }
+        if (typeof nc.supports === 'function') {
+          canOpen = await nc.supports('openNotificationSettings');
+        }
+      } catch (err) {
+        // Never fatal: an unreadable probe leaves the row tappable and the
+        // ask routed through the bridge, which is the safe default.
+        console.warn('[settings] notification permission probe failed:', err);
+        return;
+      }
+      if (token !== this._usernodeRenderToken) return;
+      const changed = status !== this._unPushStatus ||
+        canOpen !== this._unCanOpenNotifSettings;
+      this._unCanOpenNotifSettings = canOpen;
+      if (status != null) this._unPushStatus = status;
+      if (changed) this._renderUsernodeBody();
     },
 
     // Why the snapshot came back empty, straight from the bridge's
@@ -3576,8 +3941,22 @@
       return btn;
     },
 
-    _unStatusRow(parent, label, ok, okText, badText) {
-      const row = this._unEl('div', 'flex items-center gap-2 mt-1 text-sm');
+    // `opts.onActivate` turns the row itself into a real control.
+    //
+    // Without it the row is a plain `div` with no listener, so tapping it
+    // is a no-op BY CONSTRUCTION — and the only control was a small chip
+    // rendered underneath, conditionally. On a phone the row is what a
+    // thumb lands on, so the notifications row now carries the tap and the
+    // chip is a second affordance rather than the only one.
+    _unStatusRow(parent, label, ok, okText, badText, opts = {}) {
+      const interactive = typeof opts.onActivate === 'function';
+      const row = this._unEl(interactive ? 'button' : 'div',
+        'flex items-center gap-2 mt-1 text-sm w-full text-left' +
+        (interactive
+          ? ' rounded-md -mx-1 px-1 py-1 transition-colors ' +
+            'hover:bg-zinc-100 dark:hover:bg-zinc-800'
+          : ''));
+      if (opts.id) row.id = opts.id;
       const dot = this._unEl('span',
         'w-2 h-2 rounded-full shrink-0 ' +
         (ok ? 'bg-emerald-500' : 'bg-amber-500'));
@@ -3589,7 +3968,27 @@
           ? 'text-emerald-600 dark:text-emerald-400'
           : 'text-amber-600 dark:text-amber-400'),
         ok ? okText : badText));
+      if (interactive) {
+        row.type = 'button';
+        if (opts.hint) row.setAttribute('aria-label', `${label} — ${opts.hint}`);
+        row.appendChild(this._unEl('span',
+          'text-xs text-zinc-400 dark:text-zinc-500 shrink-0', '›'));
+        row.addEventListener('click', async () => {
+          row.disabled = true;
+          try {
+            await opts.onActivate();
+          } catch (err) {
+            console.warn('[settings] usernode row action failed:', err);
+            if (window.PlatformUI) {
+              PlatformUI.toast(this._nativeActionMessage(err, 'Action failed'));
+            }
+          } finally {
+            row.disabled = false;
+          }
+        });
+      }
       parent.appendChild(row);
+      return row;
     },
 
     _openNativeScreen(screen, failMsg) {
@@ -3614,6 +4013,272 @@
           'screen. Force-close and reopen the app, then try again.';
       }
       return fallback;
+    },
+
+    // iOS only: the settled notification-permission status, once this
+    // screen has asked for it. Null means "no answer of our own yet", and
+    // the row falls back to the snapshot boolean.
+    _unPushStatus: null,
+
+    // "Allow notifications" / "Request permissions".
+    //
+    // Android's returned snapshot IS the answer, so it re-renders straight
+    // from it. iOS's is not: the native permission caches settle
+    // asynchronously after the OS dialog and some builds resolve
+    // requestPermissions() before the user has even answered, so trusting
+    // that one read repainted the row as "Not granted" moments after a
+    // real grant — and nothing started push registration. Defer to
+    // NativeChrome.settleIosPushGrant, which polls for a determined status
+    // and kicks SocialPush, so this screen and the first-run sheet
+    // complete a grant identically.
+    async _unRequestPermissions(isAndroid) {
+      if (this._unRequestInFlight) return;
+      this._unRequestInFlight = true;
+      // Visible acknowledgement BEFORE anything can block: whatever the
+      // rest of this does, the tap is never again silent.
+      this._unNotifNotice = {
+        tone: 'info',
+        text: isAndroid
+          ? 'Opening the permission prompt…'
+          : 'Opening the notification prompt…',
+      };
+      this._renderUsernodeBody();
+      try {
+        await this._runNotifPermissionTap(isAndroid);
+      } finally {
+        this._unRequestInFlight = false;
+        this._renderUsernodeBody();
+      }
+    },
+
+    // Route the tap through the pure decision functions in
+    // public/js/native-chrome.js, then route the ANSWER through the second
+    // one. Every branch either opens something or leaves a visible notice
+    // plus a console.error — there is no path back out of here that looks
+    // like nothing happened.
+    async _runNotifPermissionTap(isAndroid) {
+      const nc = window.NativeChrome;
+      const bridge = window.usernode;
+      const hasRequest = !!bridge &&
+        typeof bridge.requestPermissions === 'function';
+      if (this._unDemoMode()) {
+        // The browser demo link has no app behind it. Still answers
+        // visibly — but this is a preview, not a dead end, so it does not
+        // log the diagnostic error the real branches do.
+        this._unNotifNotice = {
+          tone: 'info',
+          text: 'This is a preview of the in-app row — the notification ' +
+            'permission itself lives in the Usernode app.',
+        };
+        return;
+      }
+      if (!nc || typeof nc.decideNotificationTap !== 'function') {
+        // Old bundle: fall back to the plain ask rather than refusing.
+        if (!hasRequest) {
+          this._unNotifDeadEnd('no-bridge', {
+            text: 'Notification permission is only available inside the ' +
+              'Usernode app.',
+            settings: false,
+          });
+          return;
+        }
+        await this._applyNotifAnswer(isAndroid,
+          await bridge.requestPermissions());
+        return;
+      }
+      const plan = nc.decideNotificationTap({
+        isNative: !!bridge && bridge.isNative === true,
+        hasRequestMethod: hasRequest,
+        supported: typeof nc.supports === 'function'
+          ? await nc.supports('requestPermissions')
+          : null,
+        isAndroid,
+        pushStatus: this._unPushStatus,
+        canOpenSettings: this._unCanOpenNotifSettings === true,
+      });
+      if (plan.verdict !== 'request') {
+        if (plan.verdict === 'already') {
+          // Not a failure — say so and stop, rather than calling a method
+          // that resolves instantly and shows nothing.
+          this._unNotifNotice = {
+            tone: 'ok',
+            text: 'Notifications are already allowed for Usernode.',
+          };
+          return;
+        }
+        this._unNotifDeadEnd(plan.verdict, {
+          text: this._notifDeadEndText(plan, isAndroid),
+          settings: plan.settings === true,
+          reason: plan.reason,
+        });
+        return;
+      }
+      let next = null;
+      try {
+        next = await this._unRaceNativeAnswer(bridge.requestPermissions());
+      } catch (err) {
+        this._unNotifDeadEnd(err && err.usernodeNoAnswer ? 'no-answer' : 'failed', {
+          text: err && err.usernodeNoAnswer
+            ? 'The Usernode app didn’t respond to the permission request. ' +
+              'Force-close and reopen the app, then try again.'
+            : this._nativeActionMessage(err,
+                'The permission request could not be started.'),
+          settings: this._unCanOpenNotifSettings === true,
+          reason: err && err.message,
+        });
+        return;
+      }
+      await this._applyNotifAnswer(isAndroid, next);
+    },
+
+    // What the tap ended up as, once the app answered. `settleIosPushGrant`
+    // stays the authority on iOS: the native permission caches settle
+    // asynchronously after the OS dialog and some builds resolve
+    // requestPermissions() before the user has even answered, so trusting
+    // that one read repainted the row as "Not granted" moments after a real
+    // grant — and nothing started push registration. It polls for a
+    // determined status and kicks SocialPush, so this screen and the
+    // first-run sheet complete a grant identically.
+    async _applyNotifAnswer(isAndroid, next) {
+      if (next && typeof next === 'object') this._usernodeState = next;
+      const granted = !!(next && next.granted === true);
+      const nc = window.NativeChrome;
+      if (!isAndroid && nc && typeof nc.settleIosPushGrant === 'function') {
+        const settled = await nc.settleIosPushGrant(granted);
+        this._unPushStatus = settled.status || this._unPushStatus;
+      }
+      const outcome = (nc && typeof nc.decideNotificationOutcome === 'function')
+        ? nc.decideNotificationOutcome({
+            isAndroid,
+            granted: granted || this._unPushStatus === 'granted',
+            pushStatus: this._unPushStatus,
+            canOpenSettings: this._unCanOpenNotifSettings === true,
+          })
+        : { verdict: granted ? 'granted' : 'declined', settings: false };
+      if (outcome.verdict === 'granted') {
+        this._unNotifNotice = {
+          tone: 'ok',
+          text: isAndroid
+            ? 'Permission granted.'
+            : 'Notifications are now allowed for Usernode.',
+        };
+        this._renderUsernodeBody();
+        return;
+      }
+      this._unNotifDeadEnd(outcome.verdict, {
+        text: this._notifDeadEndText(outcome, isAndroid),
+        settings: outcome.settings === true,
+        reason: outcome.reason,
+      });
+      this._renderUsernodeBody();
+    },
+
+    // The bridge's own ceiling for requestPermissions is two minutes,
+    // which is the right ceiling for a prompt a user has to read but a
+    // terrible one for a native side that never answers: two minutes of a
+    // disabled control and no explanation reads as a dead tap. Surface the
+    // silence at 20s; a late real answer still applies through the
+    // section's normal re-render.
+    _UN_NATIVE_ANSWER_MS: 20000,
+
+    _unRaceNativeAnswer(promise) {
+      return new Promise((resolve, reject) => {
+        let settled = false;
+        const timer = setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          const err = new Error('the Usernode app did not answer in time');
+          err.usernodeNoAnswer = true;
+          reject(err);
+        }, this._UN_NATIVE_ANSWER_MS);
+        Promise.resolve(promise).then((value) => {
+          clearTimeout(timer);
+          if (settled) {
+            // The app answered after we gave up — honour it anyway.
+            this._applyNotifAnswer(
+              (this._usernodeState && this._usernodeState.permissions &&
+                this._usernodeState.permissions.platform) === 'android',
+              value
+            ).catch(() => {});
+            return;
+          }
+          settled = true;
+          resolve(value);
+        }, (err) => {
+          clearTimeout(timer);
+          if (settled) return;
+          settled = true;
+          reject(err);
+        });
+      });
+    },
+
+    _notifDeadEndText(plan, isAndroid) {
+      switch (plan.verdict) {
+        case 'no-bridge':
+          return 'Notification permission is only available inside the ' +
+            'Usernode app.';
+        case 'unsupported':
+          return 'This version of the Usernode app can’t open the ' +
+            'notification prompt. Update the app from the App Store.';
+        case 'settings':
+          return isAndroid
+            ? 'Permission was denied. Allow notifications in the system ' +
+              'settings for Usernode.'
+            : 'Notifications are turned off for Usernode. iOS only shows ' +
+              'its prompt once, so this has to be changed in Settings › ' +
+              'Notifications › Usernode.';
+        case 'declined':
+          return 'Permission was not granted.';
+        case 'silent':
+          return 'The Usernode app closed without showing the notification ' +
+            'prompt. Reopen the app and try again, or allow notifications ' +
+            'in Settings › Notifications › Usernode.';
+        default:
+          return 'The notification prompt could not be opened.';
+      }
+    },
+
+    // Every dead end lands here: a visible notice AND a console error, so
+    // the next report of a dead tap comes with a line in the dev console
+    // saying which branch swallowed it.
+    _unNotifDeadEnd(kind, opts) {
+      const reason = (opts && opts.reason) || '(no reason recorded)';
+      console.error(
+        `[settings] notification permission dead end (${kind}): ${reason}`
+      );
+      this._unNotifNotice = {
+        tone: 'warn',
+        text: (opts && opts.text) || 'The notification prompt could not be ' +
+          'opened.',
+        settings: !!(opts && opts.settings),
+      };
+    },
+
+    // The notice, plus — only when the app positively advertises the
+    // capability — a way out of a determined-denied permission. A button
+    // that cannot work is worse than no button, so an inconclusive
+    // capability probe (null) renders the manual instructions instead.
+    _renderNotifNotice(parent) {
+      const n = this._unNotifNotice;
+      if (!n) return;
+      const box = this._unEl('div',
+        'mt-2 rounded-md border px-3 py-2 text-xs ' +
+        (n.tone === 'warn'
+          ? 'border-amber-300 dark:border-amber-800 bg-amber-50 ' +
+            'dark:bg-amber-950/40 text-amber-800 dark:text-amber-300'
+          : n.tone === 'ok'
+            ? 'border-emerald-300 dark:border-emerald-800 bg-emerald-50 ' +
+              'dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300'
+            : 'border-zinc-300 dark:border-zinc-700 text-zinc-600 ' +
+              'dark:text-zinc-300'),
+        n.text);
+      box.id = 'settings-notif-notice';
+      parent.appendChild(box);
+      if (n.settings && this._unCanOpenNotifSettings === true) {
+        this._unButton(parent, 'Open notification settings', () =>
+          window.usernode.openNotificationSettings());
+      }
     },
 
     // Awaits a bridge setter and re-renders the section from the refreshed
@@ -3766,13 +4431,36 @@
           isAndroid
             ? 'Block production needs the app to wake your device at exact slot times.'
             : 'Notifications let Usernode alert you about node and account activity.');
-        this._unStatusRow(permBox, isAndroid ? 'Exact alarms' : 'Notifications',
-          !!perms.exactAlarmGranted, 'Granted', 'Not granted');
-        if (!perms.exactAlarmGranted) {
-          this._unButton(permBox,
-            isAndroid ? 'Request permissions' : 'Allow notifications', () =>
-              this._unApply(window.usernode.requestPermissions()));
+        if (this._unDemoMode()) {
+          permBox.appendChild(this._unEl('p',
+            'text-xs font-medium text-amber-600 dark:text-amber-400 mb-2',
+            'Staging demo — sample data'));
         }
+        // iOS row truth: `exactAlarmGranted` is a lagging proxy for the
+        // notification permission (there are no exact alarms on iOS), so
+        // once a request has settled through NativeChrome.settleIosPushGrant
+        // that answer is the authority — the same rule the first-run sheet
+        // in public/js/native-chrome.js applies.
+        const notifOk = !isAndroid && this._unPushStatus != null
+          ? this._unPushStatus === 'granted'
+          : !!perms.exactAlarmGranted;
+        // The row IS the control. It used to be an inert div whose only
+        // affordance was the chip below, and that chip only rendered when
+        // the (iOS-meaningless) exactAlarmGranted boolean said "not
+        // granted" — so on a build reporting it `true` there was nothing
+        // to tap at all. The row now always carries the ask.
+        this._unStatusRow(permBox, isAndroid ? 'Exact alarms' : 'Notifications',
+          notifOk, 'Granted', 'Not granted', {
+            id: 'settings-notif-row',
+            hint: isAndroid ? 'request permissions' : 'allow notifications',
+            onActivate: () => this._unRequestPermissions(isAndroid),
+          });
+        if (!notifOk) {
+          this._unButton(permBox,
+            isAndroid ? 'Request permissions' : 'Allow notifications',
+            () => this._unRequestPermissions(isAndroid));
+        }
+        this._renderNotifNotice(permBox);
         if (isAndroid) {
           this._unStatusRow(permBox, 'Battery optimization',
             perms.batteryOptDisabled === true, 'Unrestricted', 'Restricted');
@@ -3787,6 +4475,9 @@
           }
         }
       }
+      // The demo link renders the permissions rows and stops: the sections
+      // below all read the live bridge, which a browser does not have.
+      if (this._unDemoMode()) return;
       this._renderSocialPushSection(section);
       // (The iOS keep-alive toggle is gone — thin-shell migration: block
       // production is disabled on iOS and the keep-alive service was

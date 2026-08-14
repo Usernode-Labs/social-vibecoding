@@ -21,6 +21,12 @@ const KEY_GLOBAL = 'global_daily_limit_cents';
 // is admin-tunable from /admin. Defaults to $25/day (2500 cents).
 const KEY_SYSTEM = 'system_tokens_daily_limit_cents';
 
+const CREDIT_POLICY_LEGACY = 'legacy';
+const CREDIT_POLICY_TIERED = 'tiered';
+// Identity - Layer 1: one verified GitHub OR X account unlocks $10/day.
+// Provider proofs replace one another; they do not stack.
+const TIER_ONE_LIMIT_CENTS = 1000;
+
 const CACHE_TTL_MS = 10_000;
 const cache = new Map();
 
@@ -96,24 +102,115 @@ async function getSystemTokensLimitCents(pool) {
   return readSettingCents(pool, KEY_SYSTEM, 2500);
 }
 
-async function getEffectiveUserLimitCents(pool, userId) {
-  // Per-user override takes precedence over the platform default. NULL
-  // (or row missing) means "use the default", which the COALESCE
-  // implements at the SQL layer so we don't have to do a second round
-  // trip when the user has no override set.
+function identityCreditPolicy() {
+  return process.env.IDENTITY_CREDIT_POLICY === CREDIT_POLICY_TIERED
+    ? CREDIT_POLICY_TIERED
+    : CREDIT_POLICY_LEGACY;
+}
+
+// Resolve the user's allowance and explain where it came from. Explicit
+// admin overrides always win. In legacy mode, a NULL override retains the
+// existing platform default. In tiered mode, either verified provider gets
+// exactly the Layer-1 amount and an unverified account gets zero.
+//
+// Tiered reads fail closed: inability to prove eligibility must never turn
+// into the old default allowance. BYOK remains available through
+// resolveBillingPath(), which resolves it after this platform-funded gate.
+async function getUserCreditEntitlement(pool, userId) {
+  const policy = identityCreditPolicy();
+  if (policy === CREDIT_POLICY_LEGACY) {
+    try {
+      const { rows } = await pool.query(
+        'SELECT daily_limit_cents FROM users WHERE id = $1',
+        [userId]
+      );
+      const override = rows[0]?.daily_limit_cents;
+      if (override != null && Number.isFinite(Number(override)) && Number(override) >= 0) {
+        return {
+          policy,
+          tier: 'override',
+          source: 'admin_override',
+          limitCents: Number(override),
+          verificationRequired: false,
+          entitlementAvailable: true,
+        };
+      }
+    } catch (err) {
+      log.warn('limits', 'user override read failed; using legacy default', {
+        userId, err: err.message,
+      });
+    }
+    return {
+      policy,
+      tier: 'legacy',
+      source: 'default',
+      limitCents: await getDefaultUserLimitCents(pool),
+      verificationRequired: false,
+      entitlementAvailable: true,
+    };
+  }
+
   try {
     const { rows } = await pool.query(
-      'SELECT daily_limit_cents FROM users WHERE id = $1',
+      `SELECT u.daily_limit_cents,
+              EXISTS (
+                SELECT 1
+                  FROM user_social_identities usi
+                 WHERE usi.user_id = u.id
+              ) AS has_social_identity
+         FROM users u
+        WHERE u.id = $1`,
       [userId]
     );
-    const override = rows[0]?.daily_limit_cents;
+    const row = rows[0];
+    if (!row) throw new Error('user not found');
+    const override = row.daily_limit_cents;
     if (override != null && Number.isFinite(Number(override)) && Number(override) >= 0) {
-      return Number(override);
+      return {
+        policy,
+        tier: 'override',
+        source: 'admin_override',
+        limitCents: Number(override),
+        verificationRequired: false,
+        entitlementAvailable: true,
+      };
     }
+    if (row.has_social_identity) {
+      return {
+        policy,
+        tier: 'social',
+        source: 'identity',
+        limitCents: TIER_ONE_LIMIT_CENTS,
+        verificationRequired: false,
+        entitlementAvailable: true,
+      };
+    }
+    return {
+      policy,
+      tier: 'unverified',
+      source: 'identity',
+      limitCents: 0,
+      verificationRequired: true,
+      entitlementAvailable: true,
+    };
   } catch (err) {
-    log.warn('limits', 'user override read failed; using default', { userId, err: err.message });
+    log.warn('limits', 'identity entitlement read failed; refusing platform credits', {
+      userId, err: err.message,
+    });
+    return {
+      policy,
+      tier: 'unavailable',
+      source: 'unavailable',
+      limitCents: 0,
+      verificationRequired: false,
+      entitlementAvailable: false,
+    };
   }
-  return getDefaultUserLimitCents(pool);
+}
+
+async function getEffectiveUserLimitCents(pool, userId) {
+  const entitlement = await getUserCreditEntitlement(pool, userId);
+  return entitlement.limitCents;
 }
 
 // Decision gate for "may this user incur another LLM call right now?".
@@ -122,7 +219,15 @@ async function getEffectiveUserLimitCents(pool, userId) {
 // `{ ok: true, userRemaining, globalRemaining }` or
 // `{ error: '...user-facing message...' }`.
 async function checkBudget(pool, userId) {
-  const userLimit = await getEffectiveUserLimitCents(pool, userId);
+  const entitlement = await getUserCreditEntitlement(pool, userId);
+  const userLimit = entitlement.limitCents;
+  if (!entitlement.entitlementAvailable) {
+    return {
+      error: 'Credit eligibility could not be verified. Try again shortly.',
+      reason: 'entitlement_unavailable',
+      ...entitlement,
+    };
+  }
   const globalLimit = await getGlobalLimitCents(pool);
 
   const { rows: userRows } = await pool.query(
@@ -131,7 +236,18 @@ async function checkBudget(pool, userId) {
   );
   const userSpent = parseFloat(userRows[0]?.total_cost_cents || 0);
   if (userSpent >= userLimit) {
-    return { error: `Daily limit reached ($${(userLimit / 100).toFixed(2)}). Resets at midnight UTC.` };
+    if (entitlement.verificationRequired) {
+      return {
+        error: 'Connect GitHub or X in Settings to unlock $10.00/day of Usernode credits.',
+        reason: 'verification_required',
+        ...entitlement,
+      };
+    }
+    return {
+      error: `Daily limit reached ($${(userLimit / 100).toFixed(2)}). Resets at midnight UTC.`,
+      reason: 'user_limit',
+      ...entitlement,
+    };
   }
 
   const { rows: globalRows } = await pool.query(
@@ -142,11 +258,16 @@ async function checkBudget(pool, userId) {
     // #593: says WHEN, like the per-user message above. "Try again
     // tomorrow" left the reader guessing at the boundary — and guessing
     // wrong, since it is a UTC one and most readers are not on UTC.
-    return { error: 'Global daily limit reached — the platform\'s shared AI budget for today is spent. Resets at midnight UTC.' };
+    return {
+      error: 'Global daily limit reached — the platform\'s shared AI budget for today is spent. Resets at midnight UTC.',
+      reason: 'global_limit',
+      ...entitlement,
+    };
   }
 
   return {
     ok: true,
+    ...entitlement,
     userLimit,
     globalLimit,
     userRemaining: userLimit - userSpent,
@@ -164,7 +285,8 @@ async function checkBudget(pool, userId) {
 // byokCents is reported but is NOT subtracted from the allowance: that
 // spend went to the user's own key and no cap has ever counted it (#119).
 async function getBudgetSnapshot(pool, userId) {
-  const limitCents = await getEffectiveUserLimitCents(pool, userId);
+  const entitlement = await getUserCreditEntitlement(pool, userId);
+  const limitCents = entitlement.limitCents;
   let spentCents = 0;
   let byokCents = 0;
   let hasByokKey = false;
@@ -189,6 +311,12 @@ async function getBudgetSnapshot(pool, userId) {
     log.warn('limits', 'budget snapshot read failed', { userId, err: err.message });
   }
   return {
+    creditPolicy: entitlement.policy,
+    tier: entitlement.tier,
+    limitSource: entitlement.source,
+    verificationRequired: entitlement.verificationRequired,
+    entitlementAvailable: entitlement.entitlementAvailable,
+    tierLimitCents: TIER_ONE_LIMIT_CENTS,
     limitCents,
     spentCents,
     remainingCents: Math.max(0, limitCents - spentCents),
@@ -247,7 +375,11 @@ async function resolveBillingPath(pool, dataKey, userId) {
   // #463: this branch is only reachable with NO usable key on file, so
   // the BYOK hint is always accurate here. checkBudget itself stays
   // hint-free — it also runs on paths where the caller has a key.
-  return { error: `${budget.error} Add your own Anthropic API key in Settings to keep going.` };
+  return {
+    error: `${budget.error} Add your own Anthropic API key in Settings to keep going.`,
+    reason: budget.reason || null,
+    verificationRequired: !!budget.verificationRequired,
+  };
 }
 
 // Daily-ledger upsert shared by every spend site (Mayor turns, Claude
@@ -435,6 +567,8 @@ module.exports = {
   checkSystemBudget,
   recordSystemSpend,
   getEffectiveUserLimitCents,
+  getUserCreditEntitlement,
+  identityCreditPolicy,
   getBudgetSnapshot,
   dailyResetAt,
   LOW_BALANCE_PCT,
@@ -448,4 +582,7 @@ module.exports = {
   KEY_USER,
   KEY_GLOBAL,
   KEY_SYSTEM,
+  CREDIT_POLICY_LEGACY,
+  CREDIT_POLICY_TIERED,
+  TIER_ONE_LIMIT_CENTS,
 };

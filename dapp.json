@@ -341,16 +341,36 @@
     },
     {
       "key": "GITHUB_LINK_CLIENT_ID",
-      "group": "Chat connectors",
+      "group": "Social identity & credits",
       "required": false,
-      "description": "Client ID of the GitHub OAuth app that links a Usernode account to a GitHub one (scope `public_repo`), so the connector can fork an app into the user's own account for their coding agent to push to. Falls back to WAITLIST_GITHUB_CLIENT_ID. Unset: the link routes 404, Settings says so, and prepare_work answers github_link_unavailable and names the platform-build fallback."
+      "description": "Client ID of the dedicated GitHub OAuth app that proves account control for attribution and the $10 social credit tier. Callback: https://<your-domain>/api/me/github/callback. Uses PKCE with no requested scope, reads the immutable account ID and login once, then revokes and discards the token. GitHub allows one callback, so the waitlist app cannot be reused. Unset: GitHub linking is unavailable."
     },
     {
       "key": "GITHUB_LINK_CLIENT_SECRET",
-      "group": "Chat connectors",
+      "group": "Social identity & credits",
       "required": false,
       "private": true,
-      "description": "Client secret paired with GITHUB_LINK_CLIENT_ID. Private: it can mint GitHub authorizations for this deployment, so it is encrypted at rest and never returned by any API. Falls back to WAITLIST_GITHUB_CLIENT_SECRET. Both halves must be set together — an id without a secret counts as unconfigured and degrades exactly as described on GITHUB_LINK_CLIENT_ID."
+      "description": "Client secret paired with GITHUB_LINK_CLIENT_ID. Private: it can complete GitHub authorizations for this deployment, so it is encrypted at rest and never returned by any API. Both halves must be set together; an id without a secret counts as unconfigured."
+    },
+    {
+      "key": "X_LINK_CLIENT_ID",
+      "group": "Social identity & credits",
+      "required": false,
+      "description": "OAuth 2.0 client ID of the X confidential client that proves account control for the $10 social credit tier. Callback: https://<your-domain>/api/me/x/callback. Uses PKCE and the minimum users.read + tweet.read scopes for /2/users/me, reads the immutable ID and username once, then revokes and discards the token. If unset, a complete WAITLIST_X pair is reused when that app has both callbacks."
+    },
+    {
+      "key": "X_LINK_CLIENT_SECRET",
+      "group": "Social identity & credits",
+      "required": false,
+      "private": true,
+      "description": "Client secret paired with X_LINK_CLIENT_ID. Private: encrypted at rest and never returned by any API. Both halves must be set together. When this pair is unset, both WAITLIST_X values must be present for the supported fallback."
+    },
+    {
+      "key": "IDENTITY_CREDIT_POLICY",
+      "group": "Social identity & credits",
+      "required": false,
+      "default": "legacy",
+      "description": "Rollout switch for platform-funded credits. legacy preserves the current default plus per-user admin overrides. tiered gives unverified accounts $0/day and users with verified GitHub OR X $10/day; providers do not stack, and admin overrides still win. BYOK works in both modes. Any other value fails boot instead of silently selecting the wrong allowance."
     },
     {
       "key": "USERNODE_DOMAIN",
@@ -371,7 +391,7 @@
       "key": "WAITLIST_GITHUB_CLIENT_ID",
       "group": "Waitlist",
       "required": false,
-      "description": "Client ID of the GitHub OAuth app (NOT the GitHub App used for repo hosting) that verifies a waitlist signer's GitHub account on the stage-2 form. Callback URL: https://<your-domain>/waitlist/connect/github/callback. Unset: no Connect GitHub button renders, the free-text handle fields still work, and nothing errors. GITHUB_LINK_CLIENT_ID falls back to this value."
+      "description": "Client ID of the GitHub OAuth app (not the repo-hosting GitHub App) that verifies a waitlist signer's account. Callback: https://<your-domain>/waitlist/connect/github/callback. Unset: the Connect GitHub button is hidden and free-text handles still work. It cannot also serve account linking because GitHub OAuth apps allow one callback URL."
     },
     {
       "key": "WAITLIST_GITHUB_CLIENT_SECRET",
@@ -384,7 +404,7 @@
       "key": "WAITLIST_X_CLIENT_ID",
       "group": "Waitlist",
       "required": false,
-      "description": "OAuth 2.0 client ID of the X app that verifies a waitlist signer's X account. Create it as a Web App (confidential client) with Read permission; the flow requests scopes users.read tweet.read. Callback URL: https://<your-domain>/waitlist/connect/x/callback. Unset: no Connect X button renders and nothing errors — see SELF-HOSTING.md for the portal runbook."
+      "description": "OAuth 2.0 client ID of the X confidential Web App that verifies a waitlist signer's account. It needs Read permission and users.read + tweet.read. Callback: https://<your-domain>/waitlist/connect/x/callback. X permits the additional /api/me/x/callback, so this pair may also serve account linking when X_LINK_* is unset. Unset: the waitlist Connect X button is hidden."
     },
     {
       "key": "WAITLIST_X_CLIENT_SECRET",
@@ -600,6 +620,11 @@
       "expectText": "Assigned person"
     },
     {
+      "name": "Assignee picker: the viewer’s own pick renders as a re-clickable toggle — deselect by clicking again (#1187)",
+      "path": "/?demo=1&view=kanban&shot=card-menu&card=issue:900009&row=assignee#app/usernode-2d5619/dev",
+      "expectSelector": "#attr-popover .attr-opt[data-attr-opt-mine=\"1\"][title]"
+    },
+    {
       "name": "Dev board: the same ⋯ row mechanism opens the priority picker in the list view",
       "path": "/?demo=1&shot=card-menu&card=issue:900009&row=priority#app/usernode-2d5619/dev",
       "expectSelector": "#attr-popover .attr-opt[data-attr-opt-value=\"high\"]",
@@ -637,6 +662,42 @@
       "path": "/?demo=1#settings/connectors",
       "expectSelector": "[data-settings-section=\"connectors\"]:not(.hidden) #github-link-section #github-link-no-token",
       "expectText": "no access to your repositories"
+    },
+    {
+      "name": "Identity credits show the actionable zero-credit state before verification (#538)",
+      "path": "/?demo=identity-unverified#settings/connectors",
+      "expectSelector": "[data-settings-section=\"connectors\"]:not(.hidden) #github-link-body",
+      "expectText": "Layer 1 locked"
+    },
+    {
+      "name": "Legacy GitHub attribution is preserved but asks for one credit-proof reconnect (#538)",
+      "path": "/?demo=identity-legacy#settings/connectors",
+      "expectSelector": "#github-link-body #github-link-no-token",
+      "expectText": "reconnect once"
+    },
+    {
+      "name": "Claude Code on the web is told to commit the repo file, not edit one on its machine (#1219)",
+      "path": "/?demo=connectors-claude#settings/connectors",
+      "expectSelector": "[data-settings-section=\"connectors\"]:not(.hidden) #connector-case-cc-web:not(.hidden) #connector-repo-allow-rules",
+      "expectText": "fresh container each time"
+    },
+    {
+      "name": "A ChatGPT-only connection hides Claude Code's settings-file advice (#1219)",
+      "path": "/?demo=connectors-chatgpt#settings/connectors",
+      "expectSelector": "#connector-prompt-help #connector-case-cc-local.hidden",
+      "expectText": "Nothing to do"
+    },
+    {
+      "name": "The setup tip's status says when it was last sent in chat (#1219)",
+      "path": "/?demo=connectors-claude-shown#settings/connectors",
+      "expectSelector": "#connector-hint-status:not(.hidden)",
+      "expectText": "sent you this tip in chat once in the last 7 days"
+    },
+    {
+      "name": "A spent weekly tip budget says it comes back, not that it is over (#1219)",
+      "path": "/?demo=connectors-spent#settings/connectors",
+      "expectSelector": "#connector-hint-status:not(.hidden)",
+      "expectText": "it will come back once the window rolls over"
     },
     {
       "name": "Tapping an app shows its icon and name while it loads, not a blank window (#931)",
@@ -1235,6 +1296,12 @@
       "expectText": "Progress report"
     },
     {
+      "name": "Reporting toolbar offers the period selector and the Discord button (reporting-period)",
+      "path": "/?demo=1&view=report#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-report select#dev-report-period",
+      "expectText": "Generate Discord message"
+    },
+    {
       "name": "Kanban cards show the assignee initial-avatar",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": ".attr-avatar"
@@ -1481,9 +1548,9 @@
       "expectSelector": "#drawer-main-rows > #drawer-row-theme:first-child + #drawer-status-pane"
     },
     {
-      "name": "Drawer footer distinguishes the mobile app version from the web revision",
+      "name": "Drawer footer distinguishes the mobile app version from the platform version",
       "path": "/?shot=menu",
-      "expectText": "Web revision"
+      "expectText": "Platform version"
     },
     {
       "name": "Drawer footer is bottom-anchored and holds GitHub + Share as its last two items",
@@ -1600,6 +1667,24 @@
       "path": "/#settings/usernode?bridgediag=demo",
       "expectSelector": "#settings-usernode-connection #settings-usernode-connection-retry + #settings-usernode-connection-copy",
       "expectText": "Force-close the app and reopen it"
+    },
+    {
+      "name": "The in-app notifications row is itself a control, so tapping it can't do nothing (#1193)",
+      "path": "/#settings/usernode?usernodedemo=ios",
+      "expectSelector": "#settings-usernode-section:not(.hidden) button#settings-notif-row[type=\"button\"] + button",
+      "expectText": "Allow notifications"
+    },
+    {
+      "name": "A determined-denied iOS notification permission still offers the ask (#1193)",
+      "path": "/#settings/usernode?usernodedemo=ios-denied",
+      "expectSelector": "#settings-usernode-section:not(.hidden) button#settings-notif-row",
+      "expectText": "Not granted"
+    },
+    {
+      "name": "The Allow notifications sheet survives its own opening tap's ghost click",
+      "path": "/?shot=notif-permissions#settings/usernode",
+      "expectSelector": ".un-sheet[data-un-ghost-click=\"dispatched\"] .un-sheet-body button",
+      "expectText": "Allow notifications"
     },
     {
       "name": "A settings history traversal routes once, so nothing pre-empts the transition snapshot (#1102)",
@@ -2205,6 +2290,24 @@
       "path": "/?demo=1&flow=claude-code#app/usernode-2d5619/dev/sessions/990406",
       "expectSelector": "[data-flow-wizard] [data-flow-step=\"submit\"] .dc-flow-step-title",
       "expectText": "Submit the update"
+    },
+    {
+      "name": "Browse draws the image icon tile for a seeded app (#1120)",
+      "path": "/#apps",
+      "expectSelector": "#browse-list .browse-row .app-icon-tile[data-icon=\"image\"] img",
+      "expectText": "Staging demo app — image icon"
+    },
+    {
+      "name": "Browse draws the emoji icon tile for a seeded app (#1120)",
+      "path": "/#apps",
+      "expectSelector": "#browse-list .browse-row .app-icon-tile[data-icon=\"emoji\"]",
+      "expectText": "Staging demo app — emoji icon"
+    },
+    {
+      "name": "Browse draws the first-letter fallback tile for a seeded app (#1120)",
+      "path": "/#apps",
+      "expectSelector": "#browse-list .browse-row .app-icon-tile[data-icon=\"letter\"]",
+      "expectText": "Staging demo app — letter tile"
     }
   ],
   "governance": {

@@ -15,6 +15,7 @@ const log = require('../services/logger');
 const appAccess = require('../services/app-access');
 const appAdmins = require('../services/app-admins');
 const notifications = require('../services/notifications');
+const userDirectory = require('../services/user-directory');
 const events = require('../services/events');
 const { drainGuard } = require('../services/lifecycle');
 
@@ -50,8 +51,14 @@ function collaboratorRoutes(config) {
   // Username typeahead for the invite input. Case-insensitive prefix
   // match, capped at 10. `excludeApp=<slug>` filters out users who
   // already have any row (member or invited) on that app.
+  //
+  // The matching, escaping, ordering and { id, username } projection all
+  // live in services/user-directory.js, which the app-facing directory
+  // endpoints (#1195) read too — so a change to how the platform
+  // resolves handles lands on every surface at once. The wire shape here
+  // is unchanged: { users: [...] }, no has_more.
   router.get('/api/users/search', async (req, res) => {
-    const q = typeof req.query.q === 'string' ? req.query.q.trim().slice(0, 32) : '';
+    const q = userDirectory.normalizeQuery(req.query.q);
     if (!q) return res.json({ users: [] });
     try {
       let excludeAppId = null;
@@ -61,20 +68,8 @@ function collaboratorRoutes(config) {
         );
         excludeAppId = rows[0]?.id || null;
       }
-      // Escape LIKE metacharacters so a literal % or _ in the query
-      // can't widen the match.
-      const escaped = q.replace(/([\\%_])/g, '\\$1');
-      const { rows } = await pool.query(
-        `SELECT id, username FROM users
-          WHERE LOWER(username) LIKE LOWER($1) || '%' ESCAPE '\\'
-            AND ($2::int IS NULL OR id NOT IN (
-              SELECT user_id FROM app_collaborators WHERE app_id = $2
-            ))
-          ORDER BY LOWER(username)
-          LIMIT 10`,
-        [escaped, excludeAppId]
-      );
-      res.json({ users: rows.map((r) => ({ id: r.id, username: r.username })) });
+      const { users } = await userDirectory.searchPrefix(pool, q, 10, { excludeAppId });
+      res.json({ users });
     } catch (err) {
       log.error('collab', 'user search failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });

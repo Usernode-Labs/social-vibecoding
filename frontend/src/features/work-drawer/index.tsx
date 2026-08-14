@@ -4,15 +4,23 @@
  * it, so both go through the shared anchored-panel primitive.
  *
  * ./work-drawer.js is the retired public/js/work-drawer.js, moved into this
- * bundle unchanged; it owns everything inside #work-drawer-list and the
- * `hidden` toggling of the root. See ../notifications/index.tsx for the full
- * rationale — this island is its twin.
+ * bundle unchanged by chunk B; #1191 slice 6's fourth conversion turned its one
+ * `innerHTML` site into a store push, so React is now the only writer below
+ * #work-drawer-list — and the empty hint and "Mark all read" moved from
+ * `classList.toggle` calls into the same store. ./work-drawer-list.tsx renders
+ * all three.
+ *
+ * `hidden` on the ROOT is still the controller's (show/hide, and the kit's
+ * sheet adoption on touch), exactly as it is for the bell. React never
+ * re-renders `className` here — see the note in @/components/ui/anchored-panel.
  */
 
 import { AnchoredPanel, AnchoredPanelHeader } from '@/components/ui/anchored-panel';
+import { XIcon } from '@/components/ui/icons';
 
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
-import './work-drawer.js';
+import { WorkDrawerBody, WorkDrawerMarkAll } from './work-drawer-list';
+import './mount';
 
 export function WorkDrawerPanel() {
   // Layout effect for the same reason as the notifications island: it has to
@@ -24,27 +32,16 @@ export function WorkDrawerPanel() {
   return (
     <AnchoredPanel id="work-drawer-panel">
       <AnchoredPanelHeader title="Your work">
-        <button
-          id="work-drawer-mark-all"
-          className="hidden text-xs text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200"
-        >
-          Mark all read
-        </button>
+        <WorkDrawerMarkAll />
         <button
           id="work-drawer-close"
           className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200"
           aria-label="Close"
         >
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-          </svg>
+          <XIcon className="w-4 h-4" />
         </button>
       </AnchoredPanelHeader>
-      <div id="work-drawer-list" className="flex-1 overflow-y-auto">
-      </div>
-      <div id="work-drawer-empty" className="hidden px-4 py-6 text-sm text-zinc-500 text-center">
-        Nothing in flight — start a dev session from any app's Dev tab.
-      </div>
+      <WorkDrawerBody />
     </AnchoredPanel>
   );
 }

@@ -7,6 +7,14 @@
 // shared machinery they all run through (frontend/src/lib/static-modal.ts and
 // features/dialogs/use-dialog.ts).
 //
+// #1120 slice 3 split the lift itself out of static-modal.ts into
+// frontend/src/lib/kit-surface.ts, which the dev console, the hamburger drawer
+// and the work drawer now share. The contracts below did not change; the ones
+// about the MECHANICS of the lift (the adopted class, the placeholder, the
+// rollback) are read from that module, and the ones about what is specific to
+// the dialogs (which node is taken, what gate it runs on, the order the open
+// branch does things in) stay read from static-modal.ts.
+//
 // These are source-level assertions on stable tokens, like every other UI test
 // in this suite: `npm test` runs with no frontend/node_modules — the root
 // install never touches that workspace — so there is no React here to render
@@ -28,11 +36,12 @@ const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
 const dialog = (f) => read(`frontend/src/features/dialogs/${f}`);
 
 const STATIC_MODAL = read('frontend/src/lib/static-modal.ts');
+const KIT_SURFACE = read('frontend/src/lib/kit-surface.ts');
 const USE_DIALOG = dialog('use-dialog.ts');
 const APP = read('public/js/app.js');
 const APP_VIEW = read('public/js/app-view.js');
 
-// ── the seam: frontend/src/lib/static-modal.ts ───────────────────────────
+// ── the seam: static-modal.ts, over the lift in kit-surface.ts ───────────
 
 test('the lift reproduces what adoptStaticModal did, in the same order', () => {
   // Open: stamp the gesture guard, reveal, THEN present. The stamp has to
@@ -50,10 +59,27 @@ test('the lift reproduces what adoptStaticModal did, in the same order', () => {
   assert.ok(stamp >= 0 && reveal >= 0 && lift >= 0, `open branch is missing a step: ${branch}`);
   assert.ok(stamp < reveal, 'the opening gesture is stamped before the reveal — the guard window runs from it');
   assert.ok(reveal < lift, 'the root is revealed before the card is handed to the kit');
-  // The three things the old adopter wrote, all still written.
-  assert.match(STATIC_MODAL, /platform-modal-adopted/);
-  assert.match(STATIC_MODAL, /platform-modal-card/);
-  assert.match(STATIC_MODAL, /maxWidth/, 'the kit shell is still sized from the card’s computed max-width');
+  // What the dialogs ask the shared lift for. `adoptedOn` is the whole reason
+  // the dialogs are the odd one out: the kit takes the CARD, but the class
+  // belongs on the ROOT, which is what app.css keys the legacy scrim off.
+  const call = STATIC_MODAL.slice(
+    STATIC_MODAL.indexOf('adoptKitSurface({'),
+    STATIC_MODAL.indexOf('});', STATIC_MODAL.indexOf('adoptKitSurface({')),
+  );
+  assert.match(call, /kind: 'modal'/);
+  assert.match(call, /contentEl: card/, 'the kit takes the card, not the whole root');
+  assert.match(call, /adoptedOn: root/, 'platform-modal-adopted goes on the root');
+  assert.match(call, /hugDesignWidth: true/,
+    'the kit shell is still sized from the card’s computed max-width');
+  // The three things the old adopter wrote, all still written — by the shared
+  // lift now, which is where the other three surfaces get them from too.
+  assert.match(KIT_SURFACE, /`platform-\$\{options\.kind\}-adopted`/);
+  assert.match(KIT_SURFACE, /classList\.add\('platform-modal-card'\)/);
+  assert.match(KIT_SURFACE, /maxWidth/, 'the kit shell is still sized from the card’s computed max-width');
+  // …and the max-width has to be read BEFORE platform-modal-card lands, since
+  // that class is what strips it.
+  assert.ok(KIT_SURFACE.indexOf('const designWidth') < KIT_SURFACE.indexOf("classList.add('platform-modal-card')"),
+    'the design width must be measured before the card is neutralized');
 });
 
 test('the lift is reversible: the card goes home before the root re-hides', () => {
@@ -61,10 +87,25 @@ test('the lift is reversible: the card goes home before the root re-hides', () =
   // put it back on dismiss. React's reconciler assumes the children it
   // rendered are still where it left them, so a lift that did not restore
   // would break the NEXT render of the dialog, not this one.
-  assert.match(STATIC_MODAL, /createComment\(/, 'a placeholder marks where the card belongs');
-  assert.match(STATIC_MODAL, /function restore/);
-  assert.match(STATIC_MODAL, /replaceChild|insertBefore/, 'restore puts the card back at its original position');
-  assert.match(STATIC_MODAL, /classList\.remove\('platform-modal-adopted'\)/);
+  assert.match(STATIC_MODAL, /home: 'placeholder'/,
+    "the card goes back to its own backdrop, not to <body> like the drawers' panels");
+  // The lift/restore pair itself is createPlaceholderHome since #1191 slice 6
+  // conversion 8, which gave #settings-footer's move the same seam. Same two
+  // operations, one implementation — adoptKitSurface's `home: 'placeholder'`
+  // branch is now a caller of it.
+  assert.match(KIT_SURFACE, /createComment\(label\)/, 'a placeholder marks where the card belongs');
+  assert.match(KIT_SURFACE, /replaceChild\(el, placeholder\)/,
+    'restore puts the card back at its original position');
+  assert.match(KIT_SURFACE, /home = createPlaceholderHome\(contentEl, `platform-\$\{options\.kind\}-home`\)/,
+    'and the dialogs still get theirs from the kind, so the comment names the surface');
+  assert.match(KIT_SURFACE, /flagEl\.classList\.remove\(adoptedClass\)/);
+  // The restore has to be idempotent, because both the close path and the
+  // kit's own onDismiss run it — and it must be reachable without telling the
+  // kit anything, which is what separates it from dismiss().
+  assert.match(KIT_SURFACE, /if \(undone\) return;/);
+  assert.match(KIT_SURFACE, /restore: undo/);
+  assert.match(STATIC_MODAL, /adoption\.restore\(\);\n\s*adoption\.dismiss\(\);/,
+    'the card comes home BEFORE the kit is told, or the exit animation runs over an empty shell');
 });
 
 test('the guard window is the one app-view.js used, and is read by useDialog', () => {
@@ -91,11 +132,21 @@ test('presentation is gated on kit presence, never on isTouch()', () => {
   // The retired adopter ran adoptAll() whenever a kit was present, desktop
   // included. Routing on isTouch() here would silently restyle every dialog on
   // desktop, which "zero visual change" forbids.
-  assert.match(STATIC_MODAL, /hasKit\(\)/);
+  assert.match(STATIC_MODAL, /gate: 'kit'/);
   // The header explains the decision at length, so check the CODE lines only.
   const code = STATIC_MODAL.split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l));
   assert.ok(!code.some((l) => l.includes('isTouch')),
     'static-modal.ts must not branch on isTouch() — see the header');
+  assert.ok(!code.some((l) => l.includes("gate: 'touch'")),
+    "static-modal.ts must not take the drawers' touch gate — see the header");
+  // And that is what `gate: 'kit'` means in the shared lift: kit presence,
+  // desktop included. The touch gate is the OTHER branch.
+  const gate = KIT_SURFACE.slice(
+    KIT_SURFACE.indexOf("if (options.gate === 'kit')"),
+    KIT_SURFACE.indexOf('const presentFn'),
+  );
+  assert.match(gate, /ui\.hasKit\(\)/);
+  assert.match(gate, /ui\.isTouch\(\)/);
 });
 
 // ── the shared lifecycle: use-dialog.ts ──────────────────────────────────

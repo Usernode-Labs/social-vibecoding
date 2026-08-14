@@ -191,15 +191,32 @@ test('the close-completion promise settles on every exit path', () => {
   assert.match(after, /_dismissWaiters\.push\(resolve\)/);
   assert.match(after, /setTimeout\(resolve, HeaderMenu\.DISMISS_SAFETY_MS\)/,
     'a teardown that never fires must not hang the caller forever');
-  // Kit path: resolved in onDismiss BEFORE the newer-open ownership guard,
-  // or a superseded teardown strands the caller until the safety cap.
-  const onDismiss = menu.slice(menu.indexOf('onDismiss: () => {'));
-  const resolveAt = onDismiss.indexOf('_resolveDismissWaiters()');
-  const guardAt = onDismiss.indexOf('HeaderMenu._panel !== handle) return');
-  assert.ok(resolveAt !== -1, 'the kit teardown must resolve the waiters');
+  // Kit path: resolved BEFORE the newer-open ownership guard, or a superseded
+  // teardown strands the caller until the safety cap.
+  //
+  // #1120 slice 3 moved both halves into the shared adoptKitSurface seam, so
+  // the ordering is now a property of two files rather than of one function
+  // body: the controller supplies the resolve as `onDismissStart` and the
+  // guard as `stillOwns`, and lib/kit-surface.ts is what runs them in that
+  // order. Both halves are asserted — either one alone would pass while the
+  // waiters were being stranded.
+  const adoption = menu.slice(menu.indexOf('adoptKitSurface({'));
+  const startAt = adoption.indexOf('onDismissStart:');
+  const guardAt = adoption.indexOf('stillOwns:');
+  assert.ok(startAt !== -1, 'the kit teardown must resolve the waiters');
   assert.ok(guardAt !== -1, 'the newer-open ownership guard went missing');
-  assert.ok(resolveAt < guardAt,
-    'resolve BEFORE the guard — a superseded teardown returns early');
+  assert.match(adoption.slice(startAt, guardAt), /_resolveDismissWaiters\(\)/,
+    'onDismissStart is the hook that runs ahead of the guard — resolving anywhere '
+    + 'else means a superseded teardown returns early with the caller still waiting');
+  assert.match(adoption.slice(guardAt), /HeaderMenu\._panel === adoption/,
+    'stillOwns must compare against the CURRENT adoption, or a deferred teardown '
+    + 'yanks the drawer out of the panel a newer open just adopted it into');
+
+  const kitSurface = read('frontend/src/lib/kit-surface.ts');
+  assert.match(kitSurface,
+    /onDismissStart\?\.\(\);\s*\n\s*if \(options\.stillOwns && !options\.stillOwns\(\)\) return;/,
+    'kit-surface must call onDismissStart before consulting stillOwns — that ordering '
+    + 'is the whole reason the resolve lives in the earlier hook');
   // Legacy path: resolved alongside hiding the overlay.
   const close = headerMenuFn('close() {');
   assert.match(close, /overlay\.classList\.add\('hidden'\);[\s\S]{0,120}?_resolveDismissWaiters\(\)/,

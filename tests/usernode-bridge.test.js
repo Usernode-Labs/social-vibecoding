@@ -116,6 +116,62 @@ test('shell side handles the same locale message family', () => {
   assert.match(shell, /notifyLocaleChanged/);
 });
 
+test('hosted bridge exposes the user-directory API', () => {
+  const bridge = readBridge(versionedBridgePath);
+
+  assert.match(bridge, /window\.usernode\.lookupUser/);
+  assert.match(bridge, /window\.usernode\.searchUsers/);
+  // Message family + the request/ack/response types the shell uses.
+  assert.match(bridge, /__usernode_directory/);
+  assert.match(bridge, /"lookup"/);
+  assert.match(bridge, /"search"/);
+  assert.match(bridge, /_DIR_ACK_TIMEOUT_MS/);
+  assert.match(bridge, /_DIR_RESULT_TIMEOUT_MS/);
+  // Client-side mirror of the server's limit clamp.
+  assert.match(bridge, /_DIR_MAX_LIMIT/);
+  // Only the parent shell may answer a pending directory call.
+  assert.match(bridge, /__USERNODE_DIRECTORY_BEGIN__/);
+  assert.match(bridge, /__USERNODE_DIRECTORY_END__/);
+});
+
+// Unlike getUserLocale, which resolves a token-derived fallback, both
+// directory calls REJECT with no shell: an existence check that quietly
+// answered "nobody" would read as a real answer. Apps degrade open.
+test('directory calls reject rather than fall back when there is no shell', () => {
+  const bridge = readBridge(versionedBridgePath);
+  const block = bridge.slice(
+    bridge.indexOf('__USERNODE_DIRECTORY_BEGIN__'),
+    bridge.indexOf('__USERNODE_DIRECTORY_END__')
+  );
+  assert.ok(block.length > 0);
+  assert.match(block, /if \(window === window\.parent\)/);
+  assert.match(block, /User directory requires the Usernode platform shell/);
+  // The relay is the parent shell only — never a sibling frame.
+  assert.match(block, /if \(e\.source !== window\.parent\) return;/);
+});
+
+test('shell side handles the same directory message family', () => {
+  const shell = fs.readFileSync(path.join(root, 'public', 'js', 'app-view.js'), 'utf8');
+  assert.match(shell, /handleDirectoryBridgeMessage/);
+  assert.match(shell, /__usernode_directory/);
+  assert.match(shell, /\/api\/app-directory\/users\/lookup/);
+  assert.match(shell, /\/api\/app-directory\/users\/search/);
+  // Both iframes are accepted — the staging one is the ONLY way handle
+  // lookup is exercisable in a PR preview (no platform token there).
+  const relay = shell.slice(
+    shell.indexOf('async handleDirectoryBridgeMessage'),
+    shell.indexOf('── Issue-state snapshots')
+  );
+  assert.ok(relay.length > 0);
+  assert.match(relay, /getElementById\('app-iframe'\)/);
+  assert.match(relay, /getElementById\('staging-iframe'\)/);
+  assert.match(relay, /if \(!fromApp && !fromStaging\) return;/);
+  // Session-authenticated, same-origin — the bridge holds no credential.
+  assert.match(relay, /credentials: 'same-origin'/);
+  // Wired into the single top-level message listener.
+  assert.match(shell, /AppView\.handleDirectoryBridgeMessage\(e\)/);
+});
+
 test('shell side handles the same LLM message family', () => {
   const shell = fs.readFileSync(path.join(root, 'public', 'js', 'app-view.js'), 'utf8');
   assert.match(shell, /handleLlmBridgeMessage/);

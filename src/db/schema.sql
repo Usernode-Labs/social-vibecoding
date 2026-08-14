@@ -1024,6 +1024,20 @@ CREATE INDEX IF NOT EXISTS chat_sessions_created_from_issue_idx
 --                          exactly this SHA. NULL for native rows.
 --   imported_pr_author   = display handle of the external PR author, shown
 --                          beside the badge. NULL for native rows.
+--   imported_pr_head_repo= 'owner/repo' of the repository the PR's HEAD
+--                          branch lives in, as GitHub reported it at import
+--                          time (#1196). NOT the same question as `source`:
+--                          the connector's mirror rung copies an agent's
+--                          verified fork branch into the APP repository and
+--                          opens a same-repo pull request, which is then
+--                          imported here — so an 'imported' row's head is
+--                          sometimes a branch only the platform bot can
+--                          write. Recorded because it decides which update
+--                          path a revision takes (services/proposal-update.js
+--                          `branchHomeOf`) and what get_proposal tells an
+--                          agent to push to. NULL for native rows and for
+--                          rows imported before this column existed; that
+--                          fallback is documented at `branchHomeOf`.
 -- NOTE: a partial UNIQUE index on (app_id, pr_number) WHERE source='imported'
 -- is intentionally DEFERRED (see spec Considerations) — Slice 1 relies on
 -- the read-only boot audit in db/migrate.js instead of a hard constraint,
@@ -1031,6 +1045,7 @@ CREATE INDEX IF NOT EXISTS chat_sessions_created_from_issue_idx
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS source               TEXT;
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS imported_pr_head_sha VARCHAR(40);
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS imported_pr_author   VARCHAR(255);
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS imported_pr_head_repo TEXT;
 -- Exact revision approved for a native proposal. Imported proposals keep
 -- imported_pr_head_sha as their existing source of truth; native votes,
 -- checks, and merges are bound to this live GitHub PR head instead.
@@ -2919,6 +2934,7 @@ ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_title_fallback BOOLEAN NOT
 -- next_attempt_at implements per-row exponential backoff.
 CREATE TABLE IF NOT EXISTS title_heal_queue (
   id              SERIAL PRIMARY KEY,
+  user_id         INTEGER REFERENCES users(id) ON DELETE SET NULL,
   owner           TEXT NOT NULL,
   repo            TEXT NOT NULL,
   issue_number    INTEGER NOT NULL,
@@ -2928,6 +2944,8 @@ CREATE TABLE IF NOT EXISTS title_heal_queue (
   created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE (owner, repo, issue_number)
 );
+ALTER TABLE title_heal_queue
+  ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS idx_title_heal_queue_due ON title_heal_queue(next_attempt_at);
 
 -- #683: drag-selected screenshots attached to filed GitHub issues from
@@ -4513,6 +4531,59 @@ COMMENT ON TABLE mcp_auth_audit_events IS 'staging:private';
 CREATE INDEX IF NOT EXISTS mcp_auth_audit_events_user_idx
   ON mcp_auth_audit_events (user_id, occurred_at DESC);
 
+-- Throttle state for the in-band "you can stop these permission prompts"
+-- hint that rides along on a read-only tool result.
+--
+-- Keyed on grant_id, not on an MCP session: /mcp is STATELESS
+-- (sessionIdGenerator: undefined — a fresh McpServer per HTTP request), so
+-- there is no session id to key on and "once per session" is not something
+-- this server can express. A grant is the nearest durable thing that means
+-- "this connection", and it survives the hourly access-token rotation, which
+-- is what stops the hint reappearing every hour forever.
+--
+-- What decides "a new conversation" is armed_at, NOT the access token.
+-- last_token_id used to be that gate — a claim was refused when the calling
+-- token matched the last one — on the theory that an hourly token is roughly
+-- a conversation. It is not: one token serves every conversation opened in
+-- that hour, so the first eligible read consumed the only slot and every
+-- conversation afterwards got nothing. In production that produced exactly
+-- one row, ever. armed_at is written when the client sends `initialize`,
+-- which is the protocol actually saying a session has started, and a claim is
+-- granted when the row has been armed since it was last shown. The column
+-- stays as a DIAGNOSTIC: written on every showing, read by nothing.
+--
+-- shown_count is a ROLLING budget, not a lifetime cap: at most 3 showings per
+-- window_started_at + 7 days, with the window rolled forward inside the claim
+-- statement. The lifetime cap it replaced had no reset path, so a connection
+-- that spent it went quiet permanently.
+--
+-- Advisory state, never authoritative: a failed claim is logged and the read
+-- returns without a hint. Nothing here gates access to anything.
+CREATE TABLE IF NOT EXISTS mcp_connector_hints (
+  grant_id      TEXT PRIMARY KEY,
+  user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  shown_count   INTEGER NOT NULL DEFAULT 0,
+  last_token_id BIGINT,
+  last_shown_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+COMMENT ON TABLE mcp_connector_hints IS 'staging:private';
+
+-- Added after the table shipped, so they arrive as idempotent ALTERs like
+-- every other post-hoc column in this file.
+--
+-- armed_at is NULLABLE on purpose: NULL means "not armed", and a showing
+-- clears it, so one initialize buys one showing rather than every read in the
+-- session. It has no DEFAULT for the same reason — a row created by the claim
+-- path (a client mid-session when this shipped) must not look armed.
+--
+-- window_started_at is NOT NULL DEFAULT NOW(), which back-fills every existing
+-- row to "the window starts now". That is the deliberate choice: it gives the
+-- one grant that spent its lifetime cap under the old rules a fresh weekly
+-- budget rather than leaving it locked out.
+ALTER TABLE mcp_connector_hints ADD COLUMN IF NOT EXISTS armed_at TIMESTAMPTZ;
+ALTER TABLE mcp_connector_hints
+  ADD COLUMN IF NOT EXISTS window_started_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
 -- ── Verified GitHub account link (IDENTITY ONLY) ────────────────────────
 -- Distinct from the self-declared `users.github` profile string above,
 -- which is unverified display text and must NEVER be used for
@@ -4531,6 +4602,44 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS github_login             VARCHAR(255)
 ALTER TABLE users ADD COLUMN IF NOT EXISTS github_oauth_token_enc   TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS github_linked_at         TIMESTAMPTZ;
 COMMENT ON COLUMN users.github_oauth_token_enc IS 'staging:private';
+
+-- Generic social-account ownership proofs used by the opt-in identity
+-- credit policy. `provider_subject` is the provider's immutable numeric id;
+-- the handle is presentation/attribution metadata and may change. One
+-- provider account can belong to only one Usernode account, while linking
+-- both providers never stacks the tier. No OAuth access or refresh token is
+-- stored here (or anywhere else after the callback completes).
+CREATE TABLE IF NOT EXISTS user_social_identities (
+  id                  BIGSERIAL PRIMARY KEY,
+  user_id             INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  provider            VARCHAR(16) NOT NULL CHECK (provider IN ('github', 'x')),
+  provider_subject    VARCHAR(40) NOT NULL CHECK (provider_subject ~ '^[1-9][0-9]{0,39}$'),
+  handle              VARCHAR(64) NOT NULL,
+  linked_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_verified_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (user_id, provider),
+  UNIQUE (provider, provider_subject)
+);
+COMMENT ON TABLE user_social_identities IS 'staging:private';
+CREATE INDEX IF NOT EXISTS user_social_identities_user_idx
+  ON user_social_identities (user_id);
+
+-- Single-use OAuth state. The browser receives the random state value while
+-- this table stores only its SHA-256 hash plus the server-side PKCE verifier.
+-- Starting a replacement flow invalidates the previous one for that
+-- user/provider; callbacks atomically DELETE ... RETURNING before exchange.
+CREATE TABLE IF NOT EXISTS social_identity_oauth_states (
+  state_hash       CHAR(64) PRIMARY KEY CHECK (state_hash ~ '^[0-9a-f]{64}$'),
+  user_id          INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  provider         VARCHAR(16) NOT NULL CHECK (provider IN ('github', 'x')),
+  pkce_verifier    VARCHAR(128) NOT NULL,
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at       TIMESTAMPTZ NOT NULL,
+  UNIQUE (user_id, provider)
+);
+COMMENT ON TABLE social_identity_oauth_states IS 'staging:private';
+CREATE INDEX IF NOT EXISTS social_identity_oauth_states_expiry_idx
+  ON social_identity_oauth_states (expires_at);
 
 -- Which external coding agent produced a proposal, for the "built with
 -- Claude Code" / "built with Codex" badge. Deliberately a SEPARATE column
@@ -5113,6 +5222,12 @@ CREATE TABLE IF NOT EXISTS app_report_ai (
 -- (report-lock-share). Additive to the existing app_report_ai row; old
 -- rows default to an empty list and render without the section.
 ALTER TABLE app_report_ai ADD COLUMN IF NOT EXISTS highlights_json JSONB NOT NULL DEFAULT '[]'::jsonb;
+
+-- Report period start (reporting-period). The start date the cached
+-- summary was generated for — NULL means "all history". The cache is one
+-- shared row per app, so recording the period keeps the summary honest
+-- about what it covers when members select different periods.
+ALTER TABLE app_report_ai ADD COLUMN IF NOT EXISTS period_start TIMESTAMPTZ;
 
 -- Locked report snapshots (report-lock-share). Locking freezes the
 -- client's self-contained standalone report document as an immutable

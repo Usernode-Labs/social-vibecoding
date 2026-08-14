@@ -5,6 +5,14 @@
 // body is unchanged, the panel chassis is now rendered by ./index.tsx, and
 // init() is called from that island instead of on DOMContentLoaded.
 //
+// #1191 slice 6, conversion 4: the one host it still wrote by `innerHTML` —
+// #work-drawer-list — is React's now. The three section builders return
+// DESCRIPTORS instead of HTML strings and push them through
+// ./work-drawer-store.js; ./work-drawer-list.tsx renders them. Everything else
+// here (the fetches, the promoted-duplicate filter, the tally maths, the live
+// SessionState subscription, the kit sheet hand-off, `hidden` on the root) is
+// untouched.
+//
 // The home screen's "Your proposals" / "Your active sessions" strips
 // moved here: a cog button in the header (left of the notifications
 // bell) that spins while the machine is doing something for the viewer
@@ -42,6 +50,9 @@
 // them, and this module subscribes and repaints. The fetched rows' own
 // `busy` flags are seeded into that store so the first paint is right,
 // and a live entry always beats a stale fetch.
+
+import { adoptKitSurface } from '../../lib/kit-surface';
+import { workDrawerStore } from './work-drawer-store.js';
 
 // The four session-related notification kinds that live in the cog
 // drawer instead of the bell. notifications.js exposes the canonical
@@ -226,19 +237,25 @@ const WorkDrawer = {
     // Touch platforms: kit bottom sheet (a top-sheet variant was tried
     // and reverted — the bottom sheet felt better). Desktop keeps the
     // anchored dropdown below.
-    if (PlatformUI.isTouch() && !WorkDrawer._sheet) {
+    if (!WorkDrawer._sheet) {
       panel.classList.remove('hidden');
-      panel.classList.add('platform-sheet-adopted');
       // Render BEFORE presenting — the kit sheet measures its height
       // once at present time to seed the slide-up spring (see the
       // matching note in notifications.js show()).
       WorkDrawer._renderList();
-      const sheet = PlatformUI.sheet({
+      // The adopted class, the restore to <body> and the rollback when the
+      // kit refuses are adoptKitSurface's now — see lib/kit-surface.ts's
+      // header. `gate: 'touch'` is the PlatformUI.isTouch() check that used
+      // to wrap this branch; desktop falls through to the anchored dropdown.
+      const sheet = adoptKitSurface({
+        kind: 'sheet',
         contentEl: panel,
+        home: 'body',
+        gate: 'touch',
         onDismiss: () => {
-          panel.classList.remove('platform-sheet-adopted');
+          // `hidden` stays ours: it is what the desktop dropdown means by
+          // closed, and the kit knows nothing about it.
           panel.classList.add('hidden');
-          document.body.appendChild(panel);
           WorkDrawer._sheet = null;
           WorkDrawer.open = false;
         },
@@ -249,7 +266,6 @@ const WorkDrawer = {
         WorkDrawer.refresh();
         return;
       }
-      panel.classList.remove('platform-sheet-adopted');
     }
     panel.classList.remove('hidden');
     WorkDrawer.open = true;
@@ -315,61 +331,51 @@ const WorkDrawer = {
   },
 
   // ===== Rendering =====
+  //
+  // #1191 slice 6, conversion 4: every method below builds plain DATA.
+  // ./work-drawer-list.tsx is the only writer of the DOM under
+  // #work-drawer-list, so nothing here touches an element — which is also why
+  // the three delegated-click sweeps that used to re-attach handlers after
+  // each `innerHTML` assignment are gone: a React row carries its own.
 
   _renderList() {
-    const list = document.getElementById('work-drawer-list');
-    const empty = document.getElementById('work-drawer-empty');
-    if (!list || !empty) return;
-
-    const pendingHtml = WorkDrawer.renderPendingSection();
-    const sessionsHtml = WorkDrawer.renderSessionsSection();
-    const proposalsHtml = WorkDrawer.renderProposalsSection();
-    const html = pendingHtml + sessionsHtml + proposalsHtml;
-
-    const markAll = document.getElementById('work-drawer-mark-all');
-    if (markAll) markAll.classList.toggle('hidden', !pendingHtml);
-
-    if (!html) {
-      list.innerHTML = '';
-      empty.classList.remove('hidden');
-      return;
-    }
-    empty.classList.add('hidden');
-    list.innerHTML = html;
-
-    // Pinned-notification clicks reuse the bell's mark-read + deep-link
-    // logic wholesale. stopPropagation so the re-render doesn't detach
-    // the row before the document-level outside-click handler sees a
-    // target still inside the panel (same reasoning as the bell).
-    list.querySelectorAll('[data-notif-id]').forEach((el) => {
-      const id = Number(el.getAttribute('data-notif-id'));
-      el.addEventListener('click', (e) => {
-        e.stopPropagation();
-        if (window.Notifications) Notifications._onItemClick(id);
-        WorkDrawer._renderList();
-      });
+    const pending = WorkDrawer.pendingSection();
+    const sections = [
+      pending,
+      WorkDrawer.sessionsSection(),
+      WorkDrawer.proposalsSection(),
+    ].filter(Boolean);
+    workDrawerStore.set({
+      sections,
+      // The empty hint and the header's "Mark all read" were two classList
+      // toggles on nodes this island already owned; they are store fields now
+      // for the same reason the list is — one writer per node.
+      empty: sections.length === 0,
+      markAll: !!pending,
     });
   },
 
-  _sectionHeader(label) {
-    return `<div class="px-3 py-1.5 text-[0.7rem] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400 border-b border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950/40">${label}</div>`;
-  },
-
-  // "Needs attention": unread session-related notifications, rendered
-  // with notifications.js's shared per-kind row builder so copy/markup
-  // match what the bell used to show. Hidden when empty.
+  // "Needs attention": unread session-related notifications, rendered with
+  // notifications.js's shared per-kind row DESCRIPTOR so copy and markup match
+  // the bell exactly — conversion 4 retired the second, HTML-string renderer,
+  // and both drawers now paint these rows with the same React component.
+  // Absent when empty.
   //
   // The builder is reached through window.Notifications (the same seam as
   // .items and ._onItemClick below), not as a bare identifier: since #1079
   // chunk B both files live in the bundle, where each module has its own
-  // scope and a bare `renderRow` would resolve to nothing.
-  renderPendingSection() {
+  // scope and a bare `rowView` would resolve to nothing.
+  pendingSection() {
     const pending = WorkDrawer._pendingNotifs();
-    if (!pending.length) return '';
-    const rowFn = (typeof window !== 'undefined' && window.Notifications
-      && typeof Notifications._renderRow === 'function') ? Notifications._renderRow : null;
-    if (!rowFn) return '';
-    return WorkDrawer._sectionHeader('Needs attention') + pending.map(rowFn).join('');
+    if (!pending.length) return null;
+    const viewFn = (typeof window !== 'undefined' && window.Notifications
+      && typeof Notifications._rowView === 'function') ? Notifications._rowView : null;
+    if (!viewFn) return null;
+    return {
+      key: 'pending',
+      label: 'Needs attention',
+      rows: pending.map((n) => viewFn(n)),
+    };
   },
 
   // "Your sessions" — one compact row per non-archived dev session the
@@ -387,14 +393,13 @@ const WorkDrawer = {
   // issues table and could collide with session ids. Display-only:
   // WorkDrawer.sessions stays unfiltered so isWorking() still sees
   // busy promoted sessions.
-  renderSessionsSection() {
-    const esc = wdEscapeHtml;
+  sessionsSection() {
     const proposalIds = new Set(
       (Array.isArray(WorkDrawer.proposals) ? WorkDrawer.proposals : []).map((p) => p.id)
     );
     const all = (Array.isArray(WorkDrawer.sessions) ? WorkDrawer.sessions : [])
       .filter((s) => !proposalIds.has(s.id));
-    if (!all.length) return '';
+    if (!all.length) return null;
 
     // Busy-first on top of the server's last_activity_at DESC order
     // (stable sort preserves activity order within each bucket). Cap at
@@ -406,34 +411,32 @@ const WorkDrawer = {
       .sort((a, b) => (WorkDrawer._busy(b) ? 1 : 0) - (WorkDrawer._busy(a) ? 1 : 0))
       .slice(0, 10);
 
-    let rows = '';
-    for (const s of shown) {
-      const title = s.session_title || s.pr_title || s.branch_name || `Session #${s.id}`;
-      const rel = wdRelativeTime(s.last_activity_at || s.created_at);
+    const rows = shown.map((s) => {
       const busy = WorkDrawer._busy(s);
-      const busyTag = busy
-        ? '<span class="inline-flex items-center gap-1 text-xs text-emerald-500 shrink-0"><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>working…</span>'
-        : '';
-      const statusTag = !busy && s.status === 'paused'
-        ? '<span class="text-[0.65rem] font-medium text-zinc-400 dark:text-zinc-500 uppercase shrink-0">paused</span>'
-        : (!busy && s.status === 'promoted'
-          ? '<span class="text-[0.65rem] font-medium text-violet-400 uppercase shrink-0">in vote</span>'
-          : '');
-      const timeTag = rel
-        ? `<span class="text-[0.7rem] text-zinc-400 dark:text-zinc-500 shrink-0">${esc(rel)}</span>`
-        : '';
-      rows += `
-        <a href="#app/${esc(s.app_slug)}/dev/sessions/${s.id}"
-           class="flex items-center gap-2 px-3 py-2.5 border-b border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 transition-colors">
-          <span class="text-xs font-medium text-zinc-500 dark:text-zinc-400 shrink-0 max-w-[30%] truncate">${esc(s.app_name)}</span>
-          <span class="text-sm text-zinc-800 dark:text-zinc-200 flex-1 min-w-0 truncate">${esc(title)}</span>
-          ${timeTag}
-          ${statusTag}
-          ${busyTag}
-        </a>`;
-    }
+      // The two tags are mutually exclusive with "working…", exactly as the
+      // three-way conditional they replace was. Each carries its own class
+      // string because paused is muted zinc and in-vote is violet.
+      const status = busy ? null
+        : (s.status === 'paused'
+          ? { label: 'paused', cls: 'text-zinc-400 dark:text-zinc-500' }
+          : (s.status === 'promoted'
+            ? { label: 'in vote', cls: 'text-violet-400' }
+            : null));
+      return {
+        id: s.id,
+        // Raw, not encoded: React escapes the attribute on write, and
+        // URI-encoding it here would change the value the string version
+        // produced for every slug that needed escaping at all.
+        href: `#app/${s.app_slug}/dev/sessions/${s.id}`,
+        appName: s.app_name,
+        title: s.session_title || s.pr_title || s.branch_name || `Session #${s.id}`,
+        time: wdRelativeTime(s.last_activity_at || s.created_at),
+        status,
+        busy,
+      };
+    });
 
-    return WorkDrawer._sectionHeader('Your sessions') + rows;
+    return { key: 'sessions', label: 'Your sessions', rows };
   },
 
   // "Your proposals" — the viewer's PR proposals currently open for
@@ -441,23 +444,22 @@ const WorkDrawer = {
   // proposals, ported from the home screen's "Your proposals" strip:
   // same qualified-tally pill (#695), auto-title chip, and canonical
   // MergeStatus lifecycle chip (#405).
-  renderProposalsSection() {
-    const esc = wdEscapeHtml;
+  proposalsSection() {
     const prs = Array.isArray(WorkDrawer.proposals) ? WorkDrawer.proposals : [];
     const govs = Array.isArray(WorkDrawer.governance) ? WorkDrawer.governance : [];
-    if (!prs.length && !govs.length) return '';
+    if (!prs.length && !govs.length) return null;
 
-    const pill = (yes, majority, state, advisory) => {
-      const cls = state === 'merging'
+    // #695: `advisory` (the non-approver surplus on invited-approver apps)
+    // rides along as a count; the renderer draws the muted chip beside the
+    // pill, never inside the headline tally.
+    const pill = (yes, majority, state, advisory) => ({
+      yes,
+      majority,
+      advisory,
+      cls: state === 'merging'
         ? 'bg-amber-500/10 text-amber-500'
-        : (yes >= majority ? 'bg-emerald-500/10 text-emerald-500' : 'bg-violet-500/10 text-violet-400');
-      // #695: advisory (non-approver) surplus on invited-approver apps —
-      // a muted chip beside the pill, never inside the headline tally.
-      const adv = advisory > 0
-        ? ` <span class="inline-flex items-center text-[0.65rem] font-medium px-1 py-0.5 rounded bg-zinc-500/10 text-zinc-500 shrink-0" title="${advisory} advisory Yes vote${advisory === 1 ? '' : 's'} from non-approvers — they don't count toward merging">+${advisory} advisory</span>`
-        : '';
-      return `<span class="inline-flex items-center text-[0.7rem] font-mono font-medium px-1.5 py-0.5 rounded ${cls}">${yes} / ${majority}</span>${adv}`;
-    };
+        : (yes >= majority ? 'bg-emerald-500/10 text-emerald-500' : 'bg-violet-500/10 text-violet-400'),
+    });
 
     // #695: headline tally = the QUALIFYING (approver-only) count when the
     // row carries one, against the per-row governed requirement
@@ -477,11 +479,17 @@ const WorkDrawer = {
     // lifecycle helper so this drawer surfaces the SAME canonical states
     // as the proposal feed card and the dev session header. The vote pill
     // carries the tally, so in-vote/draft states render no extra chip.
-    const lifeChip = (p) => {
-      if (!(typeof window !== 'undefined' && window.MergeStatus && MergeStatus.lifecycle)) return '';
+    //
+    // The chip stays an HTML STRING across the seam, on the same grounds as
+    // the browse detail's version pill: MergeStatus.badgeHtml is a pure string
+    // builder in a still-legacy classic script that reads no DOM and escapes
+    // its own input, and re-deriving it here would put a second implementation
+    // of the badge one lifecycle change away from drifting.
+    const lifeChipHtml = (p) => {
+      if (!(typeof window !== 'undefined' && window.MergeStatus && MergeStatus.lifecycle)) return null;
       const life = MergeStatus.lifecycle(p);
-      if (!life || ['in_vote', 'draft', 'none'].indexOf(life.key) !== -1) return '';
-      return `<span class="shrink-0">${MergeStatus.badgeHtml(life)}</span>`;
+      if (!life || ['in_vote', 'draft', 'none'].indexOf(life.key) !== -1) return null;
+      return MergeStatus.badgeHtml(life);
     };
 
     // #747: promoted sessions no longer render in "Your sessions", so a
@@ -493,54 +501,44 @@ const WorkDrawer = {
       (Array.isArray(WorkDrawer.sessions) ? WorkDrawer.sessions : [])
         .filter(WorkDrawer._busy).map((s) => s.id)
     );
-    const busyTag = '<span class="inline-flex items-center gap-1 text-xs text-emerald-500 shrink-0"><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>working…</span>';
 
-    let rows = '';
+    const rows = [];
     for (const p of prs) {
       const t = tally(p, p.yes_count);
-      const title = p.pr_title || `PR #${p.pr_number || p.id}`;
-      // Placeholder-title marker: AI naming was down when this PR was
-      // titled; the title-heal sweeper regenerates it automatically.
-      const fallbackChip = p.pr_title_fallback
-        ? '<span class="inline-flex items-center text-[0.65rem] font-medium px-1.5 py-0.5 rounded bg-sky-500/10 text-sky-500 shrink-0" title="AI naming was unavailable when this proposal was created, so it shows a placeholder title. A descriptive title will be generated automatically.">Auto-title pending</span>'
-        : '';
-      rows += `
-        <a href="#app/${esc(p.app_slug)}/dev/proposals/${p.id}"
-           class="flex items-center gap-2 px-3 py-2.5 border-b border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 transition-colors">
-          <span class="text-xs font-medium text-zinc-500 dark:text-zinc-400 shrink-0 max-w-[30%] truncate">${esc(p.app_name)}</span>
-          <span class="text-sm text-zinc-800 dark:text-zinc-200 flex-1 min-w-0 truncate">${esc(title)}</span>
-          ${fallbackChip}
-          ${lifeChip(p)}
-          ${pill(t.yes, t.target, p.status, t.advisory)}
-          ${busyIds.has(p.id) ? busyTag : ''}
-        </a>`;
+      rows.push({
+        kind: 'pr',
+        id: p.id,
+        href: `#app/${p.app_slug}/dev/proposals/${p.id}`,
+        appName: p.app_name,
+        title: p.pr_title || `PR #${p.pr_number || p.id}`,
+        // Placeholder-title marker: AI naming was down when this PR was
+        // titled; the title-heal sweeper regenerates it automatically.
+        fallback: !!p.pr_title_fallback,
+        lifeChipHtml: lifeChipHtml(p),
+        pill: pill(t.yes, t.target, p.status, t.advisory),
+        busy: busyIds.has(p.id),
+      });
     }
     for (const g of govs) {
       const gt = tally(g, g.up_count);
-      rows += `
-        <a href="#app/${esc(g.app_slug)}/dev/proposals"
-           class="flex items-center gap-2 px-3 py-2.5 border-b border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 transition-colors">
-          <span class="text-xs font-medium text-zinc-500 dark:text-zinc-400 shrink-0 max-w-[30%] truncate">${esc(g.app_name)}</span>
-          <span class="text-sm text-zinc-800 dark:text-zinc-200 flex-1 min-w-0 truncate">${esc(g.title)}</span>
-          ${pill(gt.yes, gt.target, 'open', gt.advisory)}
-          <span class="text-[0.65rem] font-medium text-violet-400 uppercase shrink-0">In vote</span>
-        </a>`;
+      rows.push({
+        kind: 'gov',
+        id: g.id,
+        href: `#app/${g.app_slug}/dev/proposals`,
+        appName: g.app_name,
+        title: g.title,
+        pill: pill(gt.yes, gt.target, 'open', gt.advisory),
+      });
     }
 
-    return WorkDrawer._sectionHeader('Your proposals') + rows;
+    return { key: 'proposals', label: 'Your proposals', rows };
   },
 };
 
-// Local helpers with drawer-unique names — home.js and notifications.js
-// each declare their own global escapeHtml/relative-time helpers, and a
-// same-named declaration here would silently shadow theirs (classic
-// scripts share one global scope).
-function wdEscapeHtml(s) {
-  return String(s ?? '').replace(/[&<>"']/g, (c) => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
-  }[c]));
-}
-
+// The drawer's own escapeHtml went with the innerHTML it existed for: every
+// value this module produces is now a descriptor field React places as a text
+// node or an attribute, and React escapes both by construction.
+//
 // Compact "Nx ago" formatter (same buckets as home.js's card meta line).
 // Returns null for unparseable input so callers can drop the segment.
 function wdRelativeTime(input) {

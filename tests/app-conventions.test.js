@@ -91,3 +91,63 @@ test('conventions doc carries the screenshot-state deep-link section (#768)', ()
     'sessions.js TESTING rules must document the @mobile annotation'
   );
 });
+
+test('conventions doc carries the user-directory section (#1195)', () => {
+  const doc = getAppConventions();
+  assert.match(doc, /^## User directory — does this handle exist\?$/m);
+  // Both surfaces: the server-side platform API and the bridge helpers.
+  assert.match(doc, /\/users\/lookup\?username=/);
+  assert.match(doc, /\/users\/search\?q=/);
+  assert.match(doc, /usernode\.lookupUser/);
+  assert.match(doc, /usernode\.searchUsers/);
+  // The field allowlist is the point of the section — apps must not
+  // plan features around data the directory will never return.
+  assert.match(doc, /only\*\* `\{ id, username \}`/);
+  // The staging story: the bridge path works where the token path
+  // cannot, and the degrade rule is fail-OPEN.
+  assert.match(doc, /staging previews/i);
+  assert.match(doc, /degrade open/i);
+  // The case-collision flag apps have to handle.
+  assert.match(doc, /ambiguous.*true/);
+});
+
+test('the offline essentials excerpt points at the user directory (#1195)', () => {
+  const doc = getAppConventions();
+  const begin = doc.indexOf('<!-- work-order:begin -->');
+  const end = doc.indexOf('<!-- work-order:end -->');
+  assert.ok(begin >= 0 && end > begin, 'work-order markers must survive');
+  const excerpt = doc.slice(begin, end);
+  // One clause on rule 8, next to the LLM proxy and file storage — an
+  // agent that never reads the full doc still learns the capability
+  // exists rather than inventing a directory from seen users.
+  assert.match(excerpt, /usernode\.lookupUser\(\)/);
+  assert.match(excerpt, /never a guess from users your app has already seen/);
+});
+
+test('the excerpt and the full Tailwind section agree about the CDN (#1215)', () => {
+  const doc = getAppConventions();
+  const begin = doc.indexOf('<!-- work-order:begin -->');
+  const end = doc.indexOf('<!-- work-order:end -->');
+  assert.ok(begin >= 0 && end > begin, 'work-order markers must survive');
+  const excerpt = doc.slice(begin, end);
+
+  // The excerpt used to call a `cdn.tailwindcss.com` tag forbidden and
+  // "rejected by two automated checks", while the section below called the
+  // hosted copy a MIGRATION TARGET for apps still on that CDN. An agent
+  // reading only the excerpt could only conclude the app was in violation
+  // or the rules were wrong; both cost more than the sentence saved.
+  const tailwind = doc.slice(
+    doc.indexOf('## Tailwind — precompiled per app, runtime centrally hosted'),
+    doc.indexOf('## Vendored shared files')
+  );
+  assert.ok(tailwind.length > 500, 'the full Tailwind section is still there');
+
+  // Both halves name the same one-line migration target.
+  const TARGET = /usernode-tailwind\/v1\/tailwind\.js/;
+  assert.match(excerpt, TARGET);
+  assert.match(tailwind, TARGET);
+
+  // And neither claims a check rejects the CDN, because none does.
+  assert.doesNotMatch(excerpt, /rejected by/i);
+  assert.match(tailwind, /No proposal check rejects a `cdn\.tailwindcss\.com` tag/);
+});

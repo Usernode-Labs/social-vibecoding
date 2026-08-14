@@ -75,6 +75,32 @@ const ADDED_IDS = {
   // two is visible; both are flex-1 + min-height:0 children of #app-view's
   // column flex, so the visible one gets the box #app-content used to have.
   'app-frame-host': "React-owned host for the embedded app's #app-iframe, a hidden empty sibling of #app-content (#1085).",
+  // #1218 follow-up — the "Stop the permission prompts" block in
+  // Settings → Connectors. Static markup with a copy button, the same shape
+  // as #connector-url / #connector-url-copy directly above it. It exists
+  // because the scaffolded .claude/settings.json fixes one repo at a time and
+  // the user's personal ~/.claude/settings.json is the only thing that fixes
+  // every repo at once — so the block has to be somewhere they can copy it.
+  'connector-prompt-help': 'Settings → Connectors block explaining how to stop the per-call connector permission prompts (#1218).',
+  'connector-allow-rules': 'The three read-only allow rules, rendered for copying into a personal ~/.claude/settings.json (#1218).',
+  'connector-allow-rules-copy': 'Copy button for that block (#1218).',
+  // The in-chat setup tip fired once in production and locked itself out, and
+  // the panel it points at had one flaw of its own: a single block headed "add
+  // this to ~/.claude/settings.json", which is the wrong file for Claude Code
+  // on the WEB — that container is built fresh, so nothing from the user's
+  // machine is in it and only the repo's committed copy travels. So the block
+  // became three labelled cases with a second copy block for the per-repo
+  // file, plus a read-only line reporting the tip's own throttle state.
+  //
+  // The three case ids are toggled by Settings._renderConnectorCases() and
+  // render VISIBLE, so a client name it cannot classify — or a page whose
+  // script has not run — shows every case rather than none.
+  'connector-case-cc-local': 'Settings → Connectors case for Claude Code on the user\'s own machine (personal settings file).',
+  'connector-case-cc-web': 'Settings → Connectors case for Claude Code on the web, where only the repo\'s committed file travels.',
+  'connector-case-chat': 'Settings → Connectors case for Claude.ai chat and ChatGPT, which have no per-call prompts to stop.',
+  'connector-repo-allow-rules': 'The same three rules, rendered for committing as a repo\'s .claude/settings.json.',
+  'connector-repo-allow-rules-copy': 'Copy button for the per-repo block.',
+  'connector-hint-status': 'Read-only status of the in-chat setup tip; ships empty and hidden, filled by Settings._renderConnectorHint().',
 };
 
 test('the shell still carries every id in the frozen baseline', () => {

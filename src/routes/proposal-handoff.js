@@ -286,14 +286,23 @@ function requireCliMiddleware(req, res, next) {
   if (requireCli(req, res)) next();
 }
 
-// The update route's body: the fork branch that carries the new work, and two
-// optional refinements. Same `exactKeys` discipline as every other body in
-// this file — an unrecognised field is a 400 rather than a silently ignored
-// intention. The VALUES are validated by services/proposal-update.js against
-// the same git-ref and repository-name predicates the submit path uses; this
-// only bounds their size so nothing enormous reaches them.
+// The update route's body: the fork branch that carries the new work, two
+// optional refinements, and the revision's testing metadata. Same `exactKeys`
+// discipline as every other body in this file — an unrecognised field is a 400
+// rather than a silently ignored intention. The VALUES are validated by
+// services/proposal-update.js against the same git-ref and repository-name
+// predicates the submit path uses; this only bounds their size so nothing
+// enormous reaches them.
+//
+// `testingPaths` / `testingSteps` are the same two fields the pr-import route
+// takes, parsed by the same shared function (#1199). An update that carries
+// them REPLACES the proposal's stored capture routes before the checks re-run,
+// so the screenshots the group votes on show the screen this revision changed;
+// an update that omits them leaves the stored routes alone. Before this, they
+// were accepted by submit_work, dropped here, and every revised proposal
+// silently fell back to home-page screenshots.
 function parseUpdateFromForkBody(body) {
-  exactKeys(body, ['branch', 'forkRepo', 'expectedHeadSha'], 'body');
+  exactKeys(body, ['branch', 'forkRepo', 'expectedHeadSha', 'testingPaths', 'testingSteps'], 'body');
   const branch = boundedText(body.branch, { label: 'branch', min: 1, max: 255, trim: true });
   const forkRepo = body.forkRepo == null
     ? null
@@ -301,7 +310,20 @@ function parseUpdateFromForkBody(body) {
   const expectedHeadSha = body.expectedHeadSha == null
     ? null
     : parseSha(body.expectedHeadSha, 'expectedHeadSha');
-  return { branch, forkRepo, expectedHeadSha };
+  // Shape only — an outright wrong TYPE is a caller bug worth naming, while an
+  // individual unusable entry is dropped by the shared parser exactly as the
+  // "==== TESTING ====" block parser drops it.
+  if (body.testingPaths != null && !Array.isArray(body.testingPaths)) {
+    throw new ValidationError('testingPaths must be an array of in-app paths');
+  }
+  if (body.testingPaths != null && body.testingPaths.length > 50) {
+    throw new ValidationError('testingPaths must contain at most 50 entries');
+  }
+  if (body.testingSteps != null) {
+    boundedText(body.testingSteps, { label: 'testingSteps', max: 16 * 1024 });
+  }
+  const testing = require('../services/testing-notes').parseSubmitted(body);
+  return { branch, forkRepo, expectedHeadSha, testing };
 }
 
 function repoCoordinates(app) {
@@ -537,7 +559,7 @@ function proposalHandoffRoutes(config) {
   // connector token reaches this path and nothing else it was not granted.
   //
   // The route's whole job is authorization and shape: `collab` access to the
-  // app, the proposal belonging to this app, and a body of at most three
+  // app, the proposal belonging to this app, and a body of at most five
   // fields. Every decision about whose fork it is, whether the work sits on
   // the proposal's head and what a moved branch means lives in
   // services/proposal-update.js, which the browser twin and the connector
@@ -574,6 +596,7 @@ function proposalHandoffRoutes(config) {
           branch: input.branch,
           forkRepo: input.forkRepo,
           expectedHeadSha: input.expectedHeadSha,
+          testing: input.testing,
           origin: config.cliAuthOrigin || null,
         }
       );
@@ -1196,6 +1219,7 @@ module.exports = {
   parseContextBody,
   parseBuildBody,
   parseCommitUploadBody,
+  parseUpdateFromForkBody,
   parseSessionId,
   startRequestFingerprint,
   publicSessionStatus,

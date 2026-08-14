@@ -120,19 +120,36 @@ test('steps are clipped to what the column holds', () => {
   assert.equal(parsed.testingPaths, null);
 });
 
-test('the same validator backs both paths, so both land identically', () => {
+test('the same validator backs every path, so they all land identically', () => {
   // If this route grew its own path rules, a connector proposal and an
   // in-platform one would capture differently from the same route string.
+  // #1199 moved the rules themselves into services/testing-notes.js so the
+  // UPDATE route could share them too — so what is pinned here is the
+  // DELEGATION, and that the route kept no rules of its own.
   const SRC = fs.readFileSync(path.join(__dirname, '../src/routes/votes.js'), 'utf8');
   const fn = SRC.slice(
     SRC.indexOf('function parseImportTesting'),
     SRC.indexOf('function revisionChangedVoteResponse')
   );
   assert.match(fn, /require\('\.\.\/services\/testing-notes'\)/);
-  assert.match(fn, /notes\.validatePath\(/, 'the shared validator, not a local regex');
-  assert.match(fn, /notes\.normalizeStoredPath\(/);
-  assert.match(fn, /notes\.CAPTURE_MAX_PATHS/);
-  assert.match(fn, /notes\.TESTING_MD_MAX/);
+  assert.match(fn, /\.parseSubmitted\(/, 'the shared validator, not a local regex');
+  assert.doesNotMatch(fn, /startsWith\('\/'\)|\.test\(/, 'no path rules of its own');
+
+  // …and the shared validator is itself built out of the block parser's
+  // rules rather than a second copy of them.
+  const NOTES_SRC = fs.readFileSync(path.join(__dirname, '../src/services/testing-notes.js'), 'utf8');
+  const shared = NOTES_SRC.slice(
+    NOTES_SRC.indexOf('function parseSubmitted'),
+    NOTES_SRC.indexOf('module.exports')
+  );
+  assert.match(shared, /validatePath\(/, 'the shared validator, not a local regex');
+  assert.match(shared, /normalizeStoredPath\(/);
+  assert.match(shared, /CAPTURE_MAX_PATHS/);
+  assert.match(shared, /TESTING_MD_MAX/);
+
+  // The update route reaches the same function rather than its own copy.
+  const HANDOFF_SRC = fs.readFileSync(path.join(__dirname, '../src/routes/proposal-handoff.js'), 'utf8');
+  assert.match(HANDOFF_SRC, /testing-notes'\)\.parseSubmitted\(body\)/);
 
   // And the same string produces the same result through the block parser.
   const viaBlock = notes.extract(
@@ -161,7 +178,7 @@ test('the import writes parsed notes and defaults browser imports to active', ()
   assert.match(insert, /testing_md, testing_path, testing_paths/);
   // testing_paths is JSONB — the row stores the object form, same as the
   // in-platform path, so nothing downstream needs to know which path wrote it.
-  assert.match(insert, /\$12::jsonb/);
+  assert.match(insert, /\$13::jsonb/);
   assert.match(insert, /importTesting\.testingPaths \? JSON\.stringify\(importTesting\.testingPaths\) : null/);
   // Nulls, not empty strings — an import with no notes is byte-for-byte the
   // row this route wrote before the fields existed.

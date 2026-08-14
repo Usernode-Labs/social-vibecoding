@@ -1435,3 +1435,97 @@ test('every helper native.js calls is declared in it (no stale renames)', () => 
       + 'that belongs in this test\'s GLOBALS list):\n  ' + unknown.join('\n  ')
   );
 });
+
+// ── Backdrop dismissal vs. the opening gesture's ghost click ───────────
+// A tap that presents an overlay leaves a synthesized `click` behind
+// ~300ms later, hit-tested against whatever is under the finger by then —
+// the full-screen backdrop the present() just appended. Every backdrop
+// dismissed on the first click it saw, so one tap opened AND closed the
+// surface: the "Allow notifications" sheet rose from the bottom for a
+// fraction of a second with nothing left to tap. The decision is a pure
+// function so it can be pinned here; the wiring is pinned below it.
+
+test('backdrop dismiss: the opening gesture\'s ghost click does not dismiss', () => {
+  // No press of its own, inside the window: the ghost, and only the ghost.
+  assert.equal(physics.decideBackdropDismiss({ pressed: false, elapsedMs: 0 }), false);
+  assert.equal(physics.decideBackdropDismiss({ pressed: false, elapsedMs: 300 }), false);
+  assert.equal(
+    physics.decideBackdropDismiss({
+      pressed: false,
+      elapsedMs: physics.GHOST_CLICK_MS - 1,
+    }),
+    false,
+    'the window is closed at its own boundary, not before it'
+  );
+});
+
+test('backdrop dismiss: a deliberate backdrop tap dismisses immediately', () => {
+  // A press ON the backdrop cannot be the press that opened the surface,
+  // so it dismisses however early it arrives — no 450ms of dead overlay.
+  assert.equal(physics.decideBackdropDismiss({ pressed: true, elapsedMs: 0 }), true);
+  assert.equal(physics.decideBackdropDismiss({ pressed: true, elapsedMs: 10 }), true);
+});
+
+test('backdrop dismiss: an un-pressed click past the window still dismisses', () => {
+  // Keeps a programmatic backdrop.click() (and any click the platform
+  // synthesizes for assistive tech) working once the ghost cannot be one.
+  assert.equal(
+    physics.decideBackdropDismiss({ pressed: false, elapsedMs: physics.GHOST_CLICK_MS }),
+    true
+  );
+  assert.equal(physics.decideBackdropDismiss({ pressed: false, elapsedMs: 5000 }), true);
+});
+
+test('backdrop dismiss: the kit\'s window matches the React dialog layer\'s', () => {
+  // frontend/src/lib/static-modal.ts guards the same failure for the nine
+  // static dialogs with MODAL_GESTURE_GUARD_MS. Two different numbers
+  // would mean a ghost that is late enough to close a kit sheet but not a
+  // React dialog (or the reverse) — keep them in step.
+  const staticModal = fs.readFileSync(
+    path.join(__dirname, '..', 'frontend', 'src', 'lib', 'static-modal.ts'), 'utf8');
+  const react = Number(/MODAL_GESTURE_GUARD_MS\s*=\s*(\d+)/.exec(staticModal)[1]);
+  assert.equal(physics.GHOST_CLICK_MS, react,
+    `kit guard ${physics.GHOST_CLICK_MS}ms vs React guard ${react}ms`);
+});
+
+test('native.js: every dismissible backdrop goes through the guard', () => {
+  // The bug was one raw listener per presenter. Binding 'click' straight
+  // onto a backdrop is the shape that reintroduces it, so allow it in
+  // exactly one place: inside onBackdropDismiss itself.
+  const raw = [];
+  NATIVE_JS.split('\n').forEach((line, i) => {
+    if (/backdrop\.addEventListener\(\s*'click'/.test(line)) raw.push(i + 1);
+  });
+  const helperAt = NATIVE_JS.slice(0, NATIVE_JS.indexOf('function onBackdropDismiss('))
+    .split('\n').length;
+  const helperEnd = helperAt + 40;
+  const strays = raw.filter((n) => n < helperAt || n > helperEnd);
+  assert.deepEqual(strays, [],
+    'a backdrop binds click directly instead of via onBackdropDismiss — '
+      + `native.js:${strays.join(', ')}`);
+
+  // And each presenter that HAS a dismissible backdrop is wired.
+  const wired = (NATIVE_JS.match(/[^\w]onBackdropDismiss\(backdrop, function/g) || []).length;
+  assert.equal(wired, 4,
+    'the bottom sheet, modal, side panel and action sheet all dismiss on '
+      + 'their backdrop and all four must be guarded');
+});
+
+test('native.js: only pointerdown/touchstart count as a real backdrop press', () => {
+  // The ghost is a compatibility MOUSE sequence (mousedown → mouseup →
+  // click) synthesized from a touch that landed on the opener. Treating
+  // its mousedown as a press would hand the guard straight back the
+  // answer it exists to reject — so mousedown is only a press signal on a
+  // browser with neither pointer events nor touch, where it cannot be one.
+  const at = NATIVE_JS.indexOf('function onBackdropDismiss(');
+  const fn = NATIVE_JS.slice(at, NATIVE_JS.indexOf('\n  // presentSheet(', at));
+  assert.match(fn, /addEventListener\('pointerdown', press\)/);
+  assert.match(fn, /addEventListener\('touchstart', press/);
+  const mouse = fn.indexOf("addEventListener('mousedown', press)");
+  assert.ok(mouse > 0, 'the no-pointer-no-touch fallback still exists');
+  assert.match(fn.slice(0, mouse), /PointerEvent === 'undefined'[\s\S]*ontouchstart/,
+    'the mousedown press signal must stay behind the no-pointer/no-touch guard');
+  // A swallowed ghost must not bubble on to re-fire whatever opened us.
+  assert.match(fn, /stopPropagation\(\)/);
+  assert.match(fn, /preventDefault\(\)/);
+});

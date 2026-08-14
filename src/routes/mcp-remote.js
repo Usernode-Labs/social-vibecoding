@@ -15,8 +15,8 @@
 //                                 Mounts BEFORE the cookie middleware.
 //   mcpBrowserRoutes(config)    — the parts that need a platform session:
 //                                 the consent decision, the connected-apps
-//                                 list, disconnect, and the GitHub link
-//                                 round-trip. Mounts AFTER authMiddleware.
+//                                 list and disconnect. Mounts AFTER
+//                                 authMiddleware.
 //
 // The split matters: /mcp must never fall back to an ambient cookie (that
 // would let a logged-in browser tab drive the connector), and the consent
@@ -43,7 +43,6 @@ const {
 } = require('../services/mcp-connect-constants');
 const mcpOauth = require('../services/mcp-oauth');
 const mcpTools = require('../services/mcp-tools');
-const githubLink = require('../services/github-link');
 const { consumeSharedTokenBucket } = require('../services/cli-auth');
 
 const CONSENT_CSP = [
@@ -74,8 +73,8 @@ function mcpConnectGate(config) {
   return (req, res, next) => {
     if (!isConnectorSurface(req)) return next();
     const staging = process.env.USERNODE_ENV === 'staging';
-    // The two read-only Settings status reads survive on staging so the
-    // section is reviewable there from its ?demo=1 fixture; they never
+    // The read-only Settings connector status survives on staging so the
+    // section is reviewable there from its ?demo=1 fixture; it never
     // touch real credential state (see the staging branches in their
     // handlers). Everything else — minting, presenting, revoking — is
     // dead. `!cliAuthEnabled` still 404s the whole surface.
@@ -220,6 +219,19 @@ async function authenticateConnector(pool, token) {
   };
 }
 
+// Is this POST body the client opening a session?
+//
+// Deliberately shallow: it looks at the parsed body's `method`, and at each
+// element's if the body is a JSON-RPC batch. It does NOT validate the
+// envelope — the SDK does that a few lines later and is the only thing
+// entitled to reject a message. All this decides is whether an advisory row
+// gets armed, so a false negative costs a tip and a false positive costs a
+// row that was going to be written on the next real initialize anyway.
+function isInitializeRequest(body) {
+  if (Array.isArray(body)) return body.some((entry) => isInitializeRequest(entry));
+  return !!body && typeof body === 'object' && body.method === 'initialize';
+}
+
 // ── Router 1: gate + public/bearer surfaces ────────────────────────────
 
 function mcpPreAuthRoutes(config) {
@@ -233,8 +245,6 @@ function mcpPreAuthRoutes(config) {
     '/api/connect/*',
     '/api/me/connectors',
     '/api/me/connectors/*',
-    '/api/me/github',
-    '/api/me/github/*',
     '/.well-known/oauth-authorization-server',
     '/.well-known/oauth-protected-resource',
     '/.well-known/oauth-protected-resource/*',
@@ -558,6 +568,31 @@ function mcpPreAuthRoutes(config) {
       log.warn('mcp-remote', 'last_used_at update failed', { message: err.message });
     });
 
+    // ── Arm the setup hint ───────────────────────────────────────────────
+    //
+    // `initialize` is the one message in this protocol that means "a session
+    // is starting" — everything else the transport carries happens inside one
+    // that already began. This endpoint is stateless, so that message is the
+    // only signal available for "a new conversation", and services/
+    // mcp-hint-throttle.js keys the whole throttle on it.
+    //
+    // Read off `req.body` because jsonBody() has already parsed it and
+    // handleRequest() takes it as a parameter below — so this observes the
+    // same object the SDK is about to dispatch, without consuming the stream.
+    // A JSON-RPC batch arrives as an array; one arm per request either way.
+    //
+    // Placed AFTER authentication and the audit insert, and never before: it
+    // writes a row keyed on a grant, and an unauthenticated caller must not be
+    // able to write one. Fire-and-forget for the same reason as last_used_at
+    // above — an advisory tip must not delay or fail a working request.
+    if (isInitializeRequest(req.body) && !mcpTools.hintSuppressedForClient(auth.clientName)) {
+      require('../services/mcp-hint-throttle')
+        .armHint(pool, { grantId: auth.grantId, userId: auth.user.id })
+        .catch((err) => {
+          log.warn('mcp-remote', 'hint arm failed', { message: err.message });
+        });
+    }
+
     let transport;
     try {
       const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js');
@@ -575,6 +610,14 @@ function mcpPreAuthRoutes(config) {
         user: auth.user,
         clientName: auth.clientName,
         clientId: auth.clientId,
+        // Both only for the setup-hint throttle in registerTools. The grant
+        // is the durable stand-in for "this connection" — this transport is
+        // stateless (sessionIdGenerator is undefined, a fresh McpServer per
+        // request), so there is no session identity to key on. The token is
+        // recorded as a diagnostic and nothing more: keying the throttle on
+        // it is the bug the arm-on-initialize above replaced.
+        tokenId: auth.tokenId,
+        grantId: auth.grantId,
         origin: config.cliAuthOrigin,
         baseUrl: platformBaseUrl(config),
         pool,
@@ -624,8 +667,6 @@ function mcpBrowserRoutes(config) {
     '/api/connect/oauth/authorize',
     '/api/me/connectors',
     '/api/me/connectors/*',
-    '/api/me/github',
-    '/api/me/github/*',
   ], noStore);
 
   const userRate = async (req, res, next) => {
@@ -745,12 +786,13 @@ function mcpBrowserRoutes(config) {
     // the DB — same pattern as GET /api/me/cli-tokens, and a strict no-op
     // in production.
     if (process.env.USERNODE_ENV === 'staging') {
+      const fixture = demoConnectorState(req.query.demo);
       return res.json(
-        req.query.demo === '1'
-          ? { connectors: demoConnectors(), demo: true }
+        fixture
+          ? { ...fixture, demo: true }
           // No credential can exist on staging (the surface that mints one
           // is 404 there), so the honest answer without the flag is "none".
-          : { connectors: [] }
+          : { connectors: [], hint: demoHintStatus({}) }
       );
     }
 
@@ -772,6 +814,21 @@ function mcpBrowserRoutes(config) {
           LIMIT 50`,
         [req.user.id]
       );
+      // The setup-tip status, read-only. It rides on this response rather than
+      // on an endpoint of its own because it is one line of the same panel and
+      // is worthless without the list next to it. READ-ONLY is the load-bearing
+      // word: there is deliberately no control here that writes throttle state,
+      // because a "show it again" button is a button for making the connector
+      // nag. Opening a new chat arms it — see services/mcp-hint-throttle.js.
+      //
+      // Cookie-authenticated only, like everything else in this router: a
+      // connector bearer token cannot reach /api/me/connectors at all (the
+      // connector allowlist in services/cli-api-policy.js does not carry it),
+      // so the tip's own throttle state is not readable by the thing being
+      // throttled.
+      const hint = await require('../services/mcp-hint-throttle')
+        .getHintStatus(pool, { userId: req.user.id });
+
       return res.json({
         connectors: rows
           .filter((row) => row.active)
@@ -782,6 +839,7 @@ function mcpBrowserRoutes(config) {
             last_used_at: row.last_used_at ? new Date(row.last_used_at).toISOString() : null,
             status: 'connected',
           })),
+        hint,
       });
     } catch (err) {
       log.error('mcp-remote', 'connector list failed', { message: err.message });
@@ -825,105 +883,108 @@ function mcpBrowserRoutes(config) {
     }
   });
 
-  // ── GitHub account link ──────────────────────────────────────────────
-
-  function githubRedirectUri() {
-    return `${config.cliAuthOrigin}/api/me/github/callback`;
-  }
-
-  router.get('/api/me/github', userRate, async (req, res) => {
-    if (!req.user) return res.status(401).json({ error: 'not_authenticated' });
-    // Same staging fixture reasoning as the connector list: the token
-    // column is staging:private, so the connected layout would never be
-    // reviewable there. Never reads the real column on staging.
-    if (process.env.USERNODE_ENV === 'staging') {
-      return res.json(
-        req.query.demo === '1'
-          ? { ...githubLink.demoLinkStatus(), available: true }
-          : { linked: false, login: null, linkedAt: null, available: true }
-      );
-    }
-    const status = await githubLink.linkStatus(pool, req.user.id);
-    return res.json({ ...status, available: githubLink.isEnabled(config) });
-  });
-
-  router.get('/api/me/github/connect', userRate, (req, res) => {
-    if (!req.user) return res.status(401).json({ error: 'not_authenticated' });
-    if (!githubLink.isEnabled(config)) return res.status(404).json({ error: 'not_found' });
-    const url = githubLink.authorizeUrl(config, {
-      userId: req.user.id,
-      redirectUri: githubRedirectUri(),
-    });
-    if (!url) return res.status(404).json({ error: 'not_found' });
-    res.setHeader('Referrer-Policy', 'no-referrer');
-    return res.redirect(302, url);
-  });
-
-  router.get('/api/me/github/callback', userRate, async (req, res) => {
-    if (!req.user) return res.status(401).json({ error: 'not_authenticated' });
-    if (!githubLink.isEnabled(config)) return res.status(404).json({ error: 'not_found' });
-    const backTo = `${config.cliAuthOrigin}/#settings/connectors`;
-    // The state binds this callback to the session that STARTED the flow;
-    // failure lands back in Settings with a flag rather than reflecting
-    // GitHub's error text into the page.
-    const state = githubLink.verifyState(config, req.query.state, req.user.id);
-    if (!state || typeof req.query.code !== 'string') {
-      return res.redirect(302, `${backTo}?github=error`);
-    }
-    try {
-      const linked = await githubLink.exchangeCode(config, {
-        code: req.query.code,
-        redirectUri: githubRedirectUri(),
-      });
-      if (!linked) return res.redirect(302, `${backTo}?github=error`);
-      await githubLink.saveLink(pool, config, req.user.id, linked);
-      log.info('mcp-remote', 'GitHub account linked', { userId: req.user.id });
-      return res.redirect(302, `${backTo}?github=linked`);
-    } catch (err) {
-      log.error('mcp-remote', 'GitHub link failed', { message: err.message });
-      return res.redirect(302, `${backTo}?github=error`);
-    }
-  });
-
-  router.delete('/api/me/github', userRate, async (req, res) => {
-    if (!req.user) return res.status(401).json({ error: 'not_authenticated' });
-    if (!browserCsrf(config, req, res)) return undefined;
-    try {
-      await githubLink.clearLink(pool, req.user.id);
-      return res.status(204).end();
-    } catch (err) {
-      log.error('mcp-remote', 'GitHub unlink failed', { message: err.message });
-      return res.status(503).json({ error: 'temporarily_unavailable' });
-    }
-  });
-
   return router;
 }
 
 // Staging mock data for the Settings → connectors list. Obviously fake,
-// written nowhere, and only ever returned in staging with ?demo=1.
-function demoConnectors() {
+// written nowhere, and only ever returned in staging with a ?demo= flag.
+//
+// mcp_tokens AND mcp_connector_hints are both staging:private, so without
+// these a staging clone renders an empty list and a status line with nothing
+// to say — which is exactly the part of the panel a reviewer needs to see.
+function demoConnector(kind, overrides = {}) {
   const day = 24 * 60 * 60 * 1000;
   const now = Date.now();
   const iso = (ms) => new Date(ms).toISOString();
-  return [
-    {
+  const base = {
+    claude: {
       id: 'staging-demo-connector-1',
       client_name: 'Claude — claude.ai',
       connected_at: iso(now - 6 * day),
       last_used_at: iso(now - 20 * 60 * 1000),
-      status: 'connected',
-      demo: true,
     },
-    {
+    chatgpt: {
       id: 'staging-demo-connector-2',
       client_name: 'ChatGPT — chatgpt.com',
       connected_at: iso(now - 2 * day),
       last_used_at: null,
-      status: 'connected',
-      demo: true,
     },
-  ];
+    // A client whose name matches neither family. The panel must fall back to
+    // showing every case rather than guessing — this is the fixture that makes
+    // that fallback reviewable.
+    unknown: {
+      id: 'staging-demo-connector-3',
+      client_name: 'Some other MCP client',
+      connected_at: iso(now - 9 * day),
+      last_used_at: iso(now - 3 * day),
+    },
+  }[kind];
+  return { ...base, status: 'connected', demo: true, ...overrides };
+}
+
+function demoConnectors() {
+  return [demoConnector('claude'), demoConnector('chatgpt')];
+}
+
+function demoHintStatus({ shownThisWindow = 0, lastShownMinutesAgo = null } = {}) {
+  const throttle = require('../services/mcp-hint-throttle');
+  return {
+    shownThisWindow,
+    lastShownAt: lastShownMinutesAgo == null
+      ? null
+      : new Date(Date.now() - lastShownMinutesAgo * 60 * 1000).toISOString(),
+    maxPerWindow: throttle.MAX_SHOWS_PER_WINDOW,
+    windowDays: throttle.HINT_WINDOW_DAYS,
+  };
+}
+
+// Every reviewable state of the panel, one ?demo= value each. `1` stays the
+// everyday mixed one so the existing declared tests keep pointing at it.
+//
+// The panel now says different things depending on WHICH families are
+// connected and where the tip's weekly budget stands, and none of that is
+// reachable from a staging clone: mcp_tokens and mcp_connector_hints are both
+// staging:private, so the real tables are empty there. A state with no fixture
+// is a state no reviewer can look at.
+function demoConnectorState(flag) {
+  switch (flag) {
+    case '1':
+      return {
+        connectors: demoConnectors(),
+        hint: demoHintStatus({ shownThisWindow: 1, lastShownMinutesAgo: 95 }),
+      };
+    // Claude only, tip never shown: the state a fresh connection is in, and
+    // the one where the Claude Code cases are the only ones that apply.
+    case 'connectors-claude':
+      return { connectors: [demoConnector('claude')], hint: demoHintStatus({}) };
+    // Claude only, shown recently — the "why haven't I seen anything" question
+    // answered with a date instead of a guess.
+    case 'connectors-claude-shown':
+      return {
+        connectors: [demoConnector('claude')],
+        hint: demoHintStatus({ shownThisWindow: 1, lastShownMinutesAgo: 95 }),
+      };
+    // ChatGPT only. The tip is SUPPRESSED for this family — there are no
+    // per-call permission prompts there to stop — so the status is absent
+    // rather than zeroed: a "not shown yet" line would read as a promise that
+    // one is coming. The panel must render no line at all here.
+    case 'connectors-chatgpt':
+      return { connectors: [demoConnector('chatgpt')] };
+    // A client name that matches neither family. The panel falls back to
+    // showing every case rather than guessing.
+    case 'connectors-unknown':
+      return { connectors: [demoConnector('unknown')], hint: demoHintStatus({}) };
+    // This week's budget spent. The panel says so plainly, and says the window
+    // rolls over, instead of offering a reset — there is deliberately nothing
+    // here that writes throttle state.
+    case 'connectors-spent':
+      return {
+        connectors: demoConnectors(),
+        hint: demoHintStatus({ shownThisWindow: 3, lastShownMinutesAgo: 40 }),
+      };
+    default:
+      return null;
+  }
 }
 
 module.exports = {
@@ -934,4 +995,6 @@ module.exports = {
   readConnectorBearer,
   authenticateConnector,
   demoConnectors,
+  demoConnectorState,
+  isInitializeRequest,
 };

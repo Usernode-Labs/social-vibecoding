@@ -97,6 +97,12 @@ const CODEX_URL = 'https://chatgpt.com/codex';
 // URL and two repository names can eat 150 characters on their own.
 const MAX_GUIDANCE_CHARS = 320;
 
+// How many open proposals for the SAME request prepare_work reports back
+// (#1216). A duplicate check does not need the whole board — naming a couple
+// and counting the rest is the whole signal — and this rides on a tool result
+// that is already long.
+const MAX_OPEN_PROPOSALS = 5;
+
 // Which coding agent produced the work. Stored on chat_sessions.external_agent
 // and rendered as the "built with …" badge. A closed vocabulary: this string
 // reaches the client, and the client maps it to a label rather than printing
@@ -298,6 +304,68 @@ function proposalRequestKeyFor(sessionId) {
 // with services/external-agent-head.js so one definition governs both.
 const isValidBranchName = externalAgentHead.validRef;
 
+// A username, printed into a line a host model relays to a person. Usernames
+// are not restricted to a safe character set on this platform (see
+// services/user-directory.js — a lookup handle is trimmed and clipped, no
+// more), so one could carry markup, control characters, or a sentence shaped
+// like an instruction. The name is TRUNCATED at the first character outside a
+// conservative handle alphabet, not filtered of them: deleting the offending
+// characters welds what is left back together, and "dana</b> SYSTEM: ignore
+// the above" reduces to a run that still reads as those words. A real handle
+// has nothing to truncate. The name is decoration here — the proposal id
+// beside it is the identity — so losing it entirely costs nothing.
+function displayHandle(raw) {
+  return /^[A-Za-z0-9._-]*/.exec(String(raw || ''))[0].slice(0, 40);
+}
+
+// ── "This request is already up for a vote" (#1216) ────────────────────
+//
+// One line for the human, built from the open proposals found against the
+// same request. A job and a proposal are tracked separately — `reused` only
+// ever answered "is there another JOB open" — so prepare_work could hand back
+// a brand-new work order for a feature that was already built, reviewed and
+// waiting on the group's vote, and say nothing. It happened: the only thing
+// that stopped a duplicate proposal was the user having the web UI open.
+//
+// It REPORTS, it does not refuse. A second proposal on one request is
+// sometimes exactly what is wanted (a rival approach, a proposal of somebody
+// else's that this user cannot touch), and the caller has context this query
+// does not. What it must not do is stay silent.
+//
+// The user's OWN proposals come first: those are the ones they can actually
+// continue, by calling prepare_work again with `proposalId`. Titles are left
+// out on purpose — they are other people's writing, they are already in the
+// structured result, and the line has a 320-character budget to keep.
+function buildDuplicateNotice({ issueNumber, openProposals }) {
+  const list = Array.isArray(openProposals) ? openProposals : [];
+  if (!list.length || !(Number.isInteger(issueNumber) && issueNumber > 0)) return null;
+
+  const lead = list.find((p) => p.mine) || list[0];
+  const who = displayHandle(lead.author) ? ` by ${displayHandle(lead.author)}` : '';
+  const head = lead.mine
+    ? `Heads-up: request #${issueNumber} already has a proposal of yours up for a vote — proposal ${lead.proposalId}.`
+    : `Heads-up: request #${issueNumber} already has a proposal up for a vote — proposal ${lead.proposalId}, opened${who}.`;
+  const tail = lead.mine
+    ? ' Say so if this change belongs on that one and I\'ll prepare an update to it, instead of a second proposal.'
+    : ' Worth a read first — you can only update your own, so the other option is a deliberate rival approach.';
+
+  const others = list.length - 1;
+  const link = lead.webPath ? ` ${lead.webPath}` : '';
+  const more = others > 0
+    ? ` (${others} other open proposal${others === 1 ? '' : 's'} too.)`
+    : '';
+
+  // The line is read in a chat bubble and a host model reflows anything
+  // longer, so it degrades rather than overflowing: the link goes first, then
+  // the count. The proposal id in `head` is the identity, and it always fits —
+  // so there is no input for which this returns something unusable.
+  for (const middle of [link + more, link, more, '']) {
+    const line = head + middle + tail;
+    if (line.length <= MAX_GUIDANCE_CHARS) return line;
+  }
+  return head;
+}
+
 // ── The human's next steps ─────────────────────────────────────────────
 //
 // Short second-person lines the assistant renders as a numbered list
@@ -316,7 +384,8 @@ const isValidBranchName = externalAgentHead.validRef;
 // it, and in guidance only for the `external` variant, where a terminal
 // really is the likely setting.
 function buildGuidance({
-  agent, forkOwner, forkRepo, repo, forkPageUrl, forkStatus,
+  agent, forkOwner, forkRepo, repo, forkPageUrl, forkStatus, issueNumber,
+  openProposals,
 }) {
   const forkRef = `${forkOwner}/${forkRepo}`;
   const justCreated = forkStatus !== 'ready';
@@ -324,6 +393,12 @@ function buildGuidance({
     ? ' (A coding agent with the GitHub CLI can create it instead — the work order says how.)'
     : '';
   const steps = [];
+
+  // FIRST, when there is one: this request is already being voted on (#1216).
+  // Before the fork step, deliberately — every step below it is work, and the
+  // decision this raises is whether that work should happen at all.
+  const duplicate = buildDuplicateNotice({ issueNumber, openProposals });
+  if (duplicate) steps.push(duplicate);
 
   if (forkStatus === 'name_conflict') {
     steps.push(
@@ -1020,10 +1095,14 @@ function hostedAssetWarning(webPath) {
     'Your container may not be able to reach that host. When it cannot, the app',
     'renders unstyled in a local browser and any native-kit assertion fails. That',
     'is your SANDBOX, not the change — do not "fix" it.',
-    'Vendoring those files into the repository, or swapping in a public CDN, is',
-    'forbidden by the platform and is rejected by two of the app\'s own automated',
-    'checks. The staging preview Usernode builds — not a local screenshot — is the',
-    'authority on how this change looks.',
+    'Vendoring those files into the repository is forbidden: the copy freezes the',
+    'day you make it, and the fleet-wide fixes and rollbacks central hosting buys',
+    'stop reaching this app. No automated check catches that. A cdn.tailwindcss.com',
+    'tag is a different thing — a legacy state many apps are still in, whose checks',
+    'pass: do not add one, do not "fix" one as a drive-by, and when migrating IS the',
+    'task swap it to the Tailwind URL above (including any copy of that hostname in',
+    'the app\'s sw.js precache list). The staging preview Usernode builds — not a',
+    'local screenshot — is the authority on how this change looks.',
   ];
   if (origin) {
     lines.push(
@@ -1205,6 +1284,16 @@ async function prepareWork(deps, params) {
     ? proposalRequestKeyFor(update.proposalId)
     : requestKeyFor(issueNumber, trimmedBrief);
 
+  // ── Is the group already voting on this request? (#1216) ─────────────
+  //
+  // Read BEFORE the two returns below, so a REUSED job carries the warning
+  // too: the proposal may well have appeared after the job was minted, and
+  // the second call is exactly when a caller is deciding whether to go ahead.
+  // Skipped in UPDATE mode, where the proposal in question is the target.
+  const openProposals = update
+    ? []
+    : await findOpenProposalsForRequest(pool, app.id, issueNumber, user.id);
+
   // ── Look before minting ──────────────────────────────────────────────
   //
   // BEFORE the rate check, deliberately: re-rendering a work order the
@@ -1215,7 +1304,7 @@ async function prepareWork(deps, params) {
     if (existing) {
       return renderPreparedTask({
         task: existing, app, owner, repo, origin, clientId, clientName,
-        prompts, agent, reused: true, targetProposal: update,
+        prompts, agent, reused: true, targetProposal: update, openProposals,
       });
     }
   } else {
@@ -1349,7 +1438,7 @@ async function prepareWork(deps, params) {
     if (raced) {
       return renderPreparedTask({
         task: raced, app, owner, repo, origin, clientId, clientName,
-        prompts, agent, reused: true, targetProposal: update,
+        prompts, agent, reused: true, targetProposal: update, openProposals,
       });
     }
     return fail('platform_unavailable', 'Usernode could not record this piece of work. Try again shortly.', { retryable: true });
@@ -1370,7 +1459,7 @@ async function prepareWork(deps, params) {
       target_session_id: update ? update.proposalId : null,
     },
     app, owner, repo, origin, clientId, clientName, prompts, agent,
-    forkStatus, reused: false, targetProposal: update,
+    forkStatus, reused: false, targetProposal: update, openProposals,
   });
 }
 
@@ -1395,6 +1484,56 @@ async function findOpenTaskByRequest(pool, userId, appId, requestKey) {
   }
 }
 
+// The proposals ALREADY up for a vote on this request (#1216), whoever opened
+// them. `linked_issues` is the Mayor's declared linkage and is also what a
+// connector submission records (linkedIssuesFor); `created_from_issue_number`
+// catches a dev chat started from the issue row before the Mayor has declared
+// anything. Either one means "somebody's change for this request is in front
+// of the group right now".
+//
+// 'promoted' and 'merging' only — the two statuses list_my_proposals treats as
+// open. An 'active' or 'paused' session is somebody BUILDING, which the issue
+// board already shows as "in progress" and which is not yet a duplicate
+// proposal; 'archived' and 'merged' are over.
+//
+// ADVISORY, like every other read on this path: a lookup that fails costs the
+// warning and nothing else. Refusing to prepare work because a duplicate CHECK
+// broke would be a worse failure than the duplicate it is guarding against.
+async function findOpenProposalsForRequest(pool, appId, issueNumber, viewerId) {
+  if (!(Number.isInteger(issueNumber) && issueNumber > 0)) return [];
+  try {
+    const { rows } = await pool.query(
+      `SELECT cs.id, cs.status, cs.pr_number, cs.pr_title, cs.session_title,
+              cs.user_id, u.username
+         FROM chat_sessions cs
+         LEFT JOIN users u ON u.id = cs.user_id
+        WHERE cs.app_id = $1
+          AND cs.status IN ('promoted', 'merging')
+          AND ($2 = ANY(cs.linked_issues) OR cs.created_from_issue_number = $2)
+        ORDER BY cs.id DESC
+        LIMIT $3`,
+      [appId, issueNumber, MAX_OPEN_PROPOSALS]
+    );
+    return (rows || []).map((r) => ({
+      proposalId: Number(r.id),
+      title: proposalTitle(r),
+      status: String(r.status || ''),
+      prNumber: Number.isInteger(Number(r.pr_number)) && Number(r.pr_number) > 0
+        ? Number(r.pr_number)
+        : null,
+      // Only the author can update a proposal, so this is what decides whether
+      // the notice offers a continuation or a second opinion.
+      mine: Number(r.user_id) === Number(viewerId),
+      author: r.username ? String(r.username).slice(0, 64) : null,
+    }));
+  } catch (err) {
+    log.warn('external-agent-tasks', 'open-proposal lookup failed', {
+      appId, issueNumber, err: err.message,
+    });
+    return [];
+  }
+}
+
 // Render the caller-facing result for a task row, whether it was just minted
 // or adopted from an earlier call. A REUSED task is rendered from its STORED
 // values — original branch, original base commit — never from a fresh read
@@ -1402,11 +1541,17 @@ async function findOpenTaskByRequest(pool, userId, appId, requestKey) {
 // production run rewrite a finished commit.
 function renderPreparedTask({
   task, app, owner, repo, origin, clientId, clientName, prompts,
-  forkStatus, reused, agent: requestedAgent, targetProposal,
+  forkStatus, reused, agent: requestedAgent, targetProposal, openProposals,
 }) {
   const forkOwner = task.fork_owner;
   const forkRepo = task.fork_repo;
   const webPath = `${origin}/#app/${app.slug}`;
+  // The duplicate warning's links, addressed the same way get_proposal's
+  // `webPath` is, so a caller can open one without composing a URL.
+  const duplicates = (Array.isArray(openProposals) ? openProposals : []).map((p) => ({
+    ...p,
+    webPath: origin ? `${origin}/#app/${app.slug}/dev/sessions/${p.proposalId}` : null,
+  }));
   const forkPageUrl = `https://github.com/${owner}/${repo}/fork`;
   // A reused task did not re-read GitHub, so its fork state is genuinely
   // unknown — and `unknown` is now a first-class state with hedged wording.
@@ -1423,6 +1568,8 @@ function renderPreparedTask({
     repo,
     forkPageUrl,
     forkStatus: status,
+    issueNumber: task.issue_number,
+    openProposals: duplicates,
   });
   const workOrder = buildWorkOrder({
     appName: app.name || app.slug,
@@ -1455,6 +1602,12 @@ function renderPreparedTask({
     // of work order apart without re-deriving it from the text.
     proposalId: targetProposal ? targetProposal.proposalId : null,
     branchHome: targetProposal ? targetProposal.branchHome : null,
+    // Proposals ALREADY up for a vote on this same request (#1216). Distinct
+    // from `proposalId` above, which names the one this work order REVISES:
+    // reporting a duplicate there would make the very submission that opens a
+    // duplicate — submit_work with a proposalId advances that proposal and
+    // clears its votes — look like the documented next step.
+    openProposals: duplicates,
     forkOwner,
     forkRepo,
     forkUrl: `https://github.com/${forkOwner}/${forkRepo}`,
@@ -1519,6 +1672,33 @@ async function loadAnyTask(pool, userId, taskId) {
       [id, userId]
     );
     return rows[0] || null;
+  } catch {
+    return null;
+  }
+}
+
+// The app a proposal is on. Routing information only: every gate that
+// decides whether an update may happen lives behind the update route, which
+// re-checks the caller against whatever app this resolves to — so reading it
+// here cannot widen anything, and a caller who names somebody else's
+// proposal is refused there exactly as before.
+//
+// #1217: without this, an update had to be told the app as well as the
+// proposal, which submit_work's own shape (4) and get_proposal's `updateWith`
+// both describe as unnecessary. It was a round trip spent learning that a
+// documented recipe was incomplete.
+async function appSlugForProposal(pool, proposalId) {
+  const id = Number(proposalId);
+  if (!Number.isSafeInteger(id) || id <= 0) return null;
+  try {
+    const { rows } = await pool.query(
+      `SELECT a.slug AS app_slug
+         FROM chat_sessions s
+         JOIN apps a ON a.id = s.app_id
+        WHERE s.id = $1`,
+      [id]
+    );
+    return (rows[0] && rows[0].app_slug) || null;
   } catch {
     return null;
   }
@@ -1905,15 +2085,32 @@ async function submitUpdate(deps, params, proposalId) {
     );
   }
 
-  const slug = task ? task.app_slug : params.slug;
+  // Which app this proposal is on, in order of authority: the task the work
+  // order minted, then whatever the caller passed, then the proposal's own
+  // row (#1217). The task still wins, so a caller cannot redirect a prepared
+  // update at another app by passing a different slug.
+  const slug = (task ? task.app_slug : params.slug)
+    || await appSlugForProposal(pool, proposalId);
   if (!slug) {
-    return fail('invalid_request', 'Pass `slug` (or the taskId from the work order) so Usernode knows which app this proposal is on.');
+    return fail(
+      'invalid_request',
+      `Usernode has no proposal ${proposalId}. Check the id with list_my_proposals — or pass the taskId from the `
+      + 'work order, which names both the proposal and its app.'
+    );
   }
 
+  // The testing metadata travels WITH the update (#1199). The route stores it
+  // before the tails run their capture, so the screenshots the group votes on
+  // are of the screen this revision changed rather than of whatever the first
+  // submission named — or, when that first submission named nothing, of the
+  // app's home page. Omitted keys leave the stored routes alone.
+  const testing = params.testing || {};
   const updated = await updateProposal(slug, proposalId, {
     branch,
     forkRepo: params.forkRepo ? String(params.forkRepo).trim() : null,
     expectedHeadSha,
+    ...(testing.testingPaths ? { testingPaths: testing.testingPaths } : {}),
+    ...(testing.testingSteps ? { testingSteps: testing.testingSteps } : {}),
   });
   if (!updated || !updated.ok) {
     const body = (updated && updated.body) || {};
@@ -1975,6 +2172,15 @@ async function submitUpdate(deps, params, proposalId) {
     // start a staging build for it — the caller has to be told, or the
     // absence of a rebuilding preview reads as a failure.
     resumeRequired: result.resumeRequired === true,
+    // #1199. What the revision's screenshots will be of, and — on a resubmit
+    // that moved no commit — whether correcting them re-ran the capture. Both
+    // have to be reported: an agent that fixed its capture routes cannot tell
+    // from `unchanged: true` alone whether anything happened.
+    testingUpdated: result.testingUpdated === true,
+    testingPaths: Array.isArray(result.testingPaths) && result.testingPaths.length
+      ? result.testingPaths.map((p) => String(p))
+      : null,
+    captureRerun: result.captureRerun === true,
     // 'proposal' | 'session' | null — what the push actually landed on, as
     // decided under the lock rather than as the work order predicted.
     targetKind: result.targetKind || null,
@@ -1986,16 +2192,18 @@ async function submitUpdate(deps, params, proposalId) {
 // deps: { pool, config, gh, githubLink, limits }
 // params: { user, clientName, clientId, taskId, prNumber, proposalId, slug,
 //           branch, forkRepo, expectedHeadSha, patch, source, agent, title,
-//           body, importProposal, updateProposal }
+//           body, testing, importProposal, updateProposal }
 //
 // `importProposal(slug, prNumber)` is supplied by the caller and performs
 // the loopback POST to /api/apps/:slug/pr-import carrying the caller's own
 // connector token, so the import runs under exactly the authorization the
 // browser would have had. It resolves to { ok, status, body }.
 //
-// `updateProposal(slug, proposalId, { branch, forkRepo, expectedHeadSha })` is
-// the same arrangement for UPDATE mode, against
-// /api/apps/:slug/proposals/:id/update-from-fork.
+// `updateProposal(slug, proposalId, { branch, forkRepo, expectedHeadSha,
+// testingPaths, testingSteps })` is the same arrangement for UPDATE mode,
+// against /api/apps/:slug/proposals/:id/update-from-fork. `params.testing` is
+// the caller's already-shaped testing metadata, in the same
+// { testingPaths, testingSteps } form the import path passes to pr-import.
 //
 // Serialized per task: see withTaskLock above for why one piece of work can
 // now have two callers racing on it.
@@ -2312,7 +2520,14 @@ async function submitWorkLocked(deps, params) {
   }
 
   // ── Hand it to the platform's own import path ────────────────────────
-  const imported = await importProposal(slug, pr.number);
+  //
+  // The request this implements travels WITH the import (#1217), the same
+  // arrangement the testing metadata already uses: the route is what creates
+  // the session row, so anything written afterwards would miss the merge
+  // path and the close watcher that read it. Empty for a submission that
+  // names no request — a plain `slug` + `prNumber` — which stays exactly as
+  // it was.
+  const imported = await importProposal(slug, pr.number, { linkedIssues: linkedIssuesFor(task) });
   if (!imported || !imported.ok) {
     // A head the platform wrote and then could not import is litter on
     // somebody's app repository. Remove it.
@@ -2385,8 +2600,36 @@ function prTitleFor({ title, task, slug }) {
   return raw.split('\n')[0].slice(0, 200).trim() || `Change to ${slug}`;
 }
 
-function prBodyFor({ body }) {
-  return stripEnvelope(body).slice(0, 4000);
+// The request a piece of work implements, as the linked-issue set the rest of
+// the platform speaks in (#1217). prepare_work has recorded it on the task
+// since the beginning — the work order it prints even says "This implements
+// request #N" — but the number stopped there, so a proposal built FROM a
+// request was not linked to it in any way the platform could act on.
+function linkedIssuesFor(task) {
+  const n = task && Number(task.issue_number);
+  return Number.isInteger(n) && n > 0 ? [n] : [];
+}
+
+// Two things close a request when the work lands, and a connector submission
+// carried neither (#1217):
+//
+//   1. the `Closes #N` keyword in the PR body — GitHub is what actually
+//      closes the issue on merge, and the platform's post-merge watcher only
+//      polls for it having happened; and
+//   2. chat_sessions.linked_issues — what the watcher expects to close, what
+//      the merge path suppresses optimistically, and what the Dev board reads
+//      to show a request as being worked on.
+//
+// This is (1). The format is pr-metadata's, imported rather than restated so
+// the two producers of a closing block cannot drift; the require is lazy
+// because that module pulls in the LLM stack and nothing else here needs it.
+// The block goes on AFTER the clip, so a long description can never push the
+// closing line out of the body.
+function prBodyFor({ body, task }) {
+  const { buildClosingBlock } = require('./pr-metadata');
+  const text = stripEnvelope(body).slice(0, 4000);
+  const closing = buildClosingBlock(linkedIssuesFor(task));
+  return closing ? `${text}\n\n${closing}` : text;
 }
 
 module.exports = {
@@ -2404,6 +2647,9 @@ module.exports = {
   normalizeSource,
   agentLabel,
   stripEnvelope,
+  // The request-linking pair (#1217), unit-tested directly.
+  linkedIssuesFor,
+  prBodyFor,
   requestKeyFor,
   proposalRequestKeyFor,
   describeTargetProposal,
@@ -2413,6 +2659,10 @@ module.exports = {
   inspectPushedBranch,
   branchNameFor,
   buildGuidance,
+  // The duplicate-proposal warning (#1216) and the read behind it.
+  buildDuplicateNotice,
+  findOpenProposalsForRequest,
+  MAX_OPEN_PROPOSALS,
   buildWorkOrder,
   headOwnerOf,
   attributionError,

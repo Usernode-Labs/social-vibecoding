@@ -678,12 +678,16 @@ function authRoutes(config) {
   const CHALLENGE_TTL_MS = 2 * 60 * 1000;
   const walletChallenges = new Map();
 
-  setInterval(() => {
+  const walletChallengeSweep = setInterval(() => {
     const now = Date.now();
     for (const [key, entry] of walletChallenges) {
       if (now > entry.expiresAt) walletChallenges.delete(key);
     }
   }, 30_000);
+  // Route construction happens in focused tests and development utilities
+  // as well as the long-lived server. The cleanup timer must not keep a
+  // process alive after its HTTP server has closed.
+  if (typeof walletChallengeSweep.unref === 'function') walletChallengeSweep.unref();
 
   function httpJson(method, urlStr, body) {
     return new Promise((resolve, reject) => {

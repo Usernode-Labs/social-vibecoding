@@ -26,8 +26,10 @@
 // The publication is guarded on `window` because the SSG prerender pass
 // evaluates this module's whole graph in Node.
 
+import { adoptKitSurface } from '../../lib/kit-surface';
+
 // Drawer status/version rows (header slim-down): the kudos + AI-credit meters
-// render into #drawer-status-pane, and the web revision + mobile-app release +
+// render into #drawer-status-pane, and the platform version + mobile-app release +
 // fork lineage label render into #drawer-footer — none of them in the header
 // any more. The dApp SHA does not belong in this platform-information block.
 const DrawerStatus = {
@@ -75,7 +77,7 @@ const DrawerStatus = {
   },
 
   // Mirror "a deploy is in flight" onto the hamburger. Read straight
-  // off the rendered web revision rather than threading state: its markup is
+  // off the rendered platform version row rather than threading state: its markup is
   // already the single source of truth for the platform deploying state.
   // Scoped to #drawer-footer so a deploying dApp pill on a home tile can never
   // light this dot.
@@ -193,49 +195,57 @@ const HeaderMenu = {
     // via contentEl — its row listeners ride along — and is restored to
     // <body> (off-screen, as usual) when the panel dismisses. Desktop
     // keeps the right-side slide-over below.
-    if (PlatformUI.isTouch()) {
+    // Assigned right below; captured here so onDismiss can tell its own
+    // teardown apart from a newer one's (see stillOwns).
+    let adoption = null;
+    // The adopted class, the restore to <body> and the rollback when the kit
+    // refuses are adoptKitSurface's now — see lib/kit-surface.ts's header for
+    // the three other copies this used to be one of. `gate: 'touch'` is the
+    // `PlatformUI.isTouch()` check that used to wrap this whole branch, so a
+    // desktop browser falls straight through to the slide-over below.
+    adoption = adoptKitSurface({
+      kind: 'panel',
+      contentEl: panel,
+      home: 'body',
+      gate: 'touch',
+      present: { side: 'right' },
+      onDismissStart: () => {
+        // The drawer this handle owned has left the screen, so anyone
+        // who chained a presentation behind close() may go — resolved
+        // BEFORE the ownership guard below, or a superseded teardown
+        // would strand them until the safety cap (#977).
+        HeaderMenu._resolveDismissWaiters();
+      },
+      // Teardown is deferred behind the exit spring, so a tap on the
+      // hamburger during that window can re-adopt the drawer into a
+      // NEW kit panel before this fires. Restoring it to <body> then
+      // would yank the node straight back out of the panel the user
+      // just opened, leaving an empty drawer. Only the CURRENT
+      // handle's teardown owns the node.
+      stillOwns: () => !adoption || HeaderMenu._panel === adoption,
+      onDismiss: () => {
+        HeaderMenu._panel = null;
+        // The hamburger's state is not the kit's business, so it is
+        // reset here on EVERY exit path (backdrop, Escape, ✕, row
+        // navigation) — they all route through the kit dismiss.
+        btn.setAttribute('aria-expanded', 'false');
+        btn.setAttribute('aria-label', 'Open menu');
+      },
+    });
+    if (adoption) {
+      HeaderMenu._panel = adoption;
+      // Announced on the touch path only, exactly as before — the desktop
+      // slide-over below does its own. It moved after the presentation
+      // because the touch gate lives inside adoptKitSurface now; the one
+      // listener (ThemeControl) just re-reads Theme.get(), so it does not
+      // care which side of the present it fires on.
       HeaderMenu._announceOpen();
-      panel.classList.add('platform-panel-adopted');
-      // Assigned right below; captured here so onDismiss can tell its own
-      // teardown apart from a newer one's (see the guard).
-      let handle = null;
-      const kitPanel = PlatformUI.panel({
-        contentEl: panel,
-        side: 'right',
-        onDismiss: () => {
-          // The drawer this handle owned has left the screen, so anyone
-          // who chained a presentation behind close() may go — resolved
-          // BEFORE the ownership guard below, or a superseded teardown
-          // would strand them until the safety cap (#977).
-          HeaderMenu._resolveDismissWaiters();
-          // Teardown is deferred behind the exit spring, so a tap on the
-          // hamburger during that window can re-adopt the drawer into a
-          // NEW kit panel before this fires. Restoring it to <body> then
-          // would yank the node straight back out of the panel the user
-          // just opened, leaving an empty drawer. Only the CURRENT
-          // handle's teardown owns the node.
-          if (handle && HeaderMenu._panel !== handle) return;
-          panel.classList.remove('platform-panel-adopted');
-          document.body.appendChild(panel);
-          HeaderMenu._panel = null;
-          // The hamburger's state is not the kit's business, so it is
-          // reset here on EVERY exit path (backdrop, Escape, ✕, row
-          // navigation) — they all route through the kit dismiss.
-          btn.setAttribute('aria-expanded', 'false');
-          btn.setAttribute('aria-label', 'Open menu');
-        },
-      });
-      handle = kitPanel;
-      if (kitPanel) {
-        HeaderMenu._panel = kitPanel;
-        // The touch path used to return before the aria writes below,
-        // leaving the button reading "Open menu" / collapsed while the
-        // drawer was open.
-        btn.setAttribute('aria-expanded', 'true');
-        btn.setAttribute('aria-label', 'Close menu');
-        return;
-      }
-      panel.classList.remove('platform-panel-adopted');
+      // The touch path used to return before the aria writes below,
+      // leaving the button reading "Open menu" / collapsed while the
+      // drawer was open.
+      btn.setAttribute('aria-expanded', 'true');
+      btn.setAttribute('aria-label', 'Close menu');
+      return;
     }
     overlay.classList.remove('hidden');
     // Force a reflow so the transition fires (element was display:none).

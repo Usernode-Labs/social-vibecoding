@@ -11,6 +11,12 @@
     // would obscure that.
     "allowJs": true,
     "checkJs": false,
+    // features/dev-console/store.ts is loaded two ways: by Vite, and DIRECTLY
+    // by tests/dev-console-invariant.test.js through node's type-stripping
+    // require. Node resolves relative specifiers by exact filename, so its one
+    // import (../../lib/kit-surface.ts) has to carry the extension. Legal here
+    // because noEmit is on — nothing rewrites the specifier on the way out.
+    "allowImportingTsExtensions": true,
     "strict": true,
     "noEmit": true,
     "skipLibCheck": true,

@@ -1,4 +1,4 @@
-// Header slim-down: the fork label, the web revision, the kudos
+// Header slim-down: the fork label, the platform version, the kudos
 // badge, the trophy and the admin shield all left the header for the slide-out
 // drawer. #1101 later added the installed mobile-app version directly to it and
 // removed the unrelated per-dApp SHA.
@@ -179,8 +179,8 @@ test('version information contains no particular dApp version', () => {
   assert.doesNotMatch(html, /drawer-row-app-version|app-version-pill-slot|dApp version/);
   assert.doesNotMatch(appViewJs, /\b(?:refreshVersionPill|applyHeaderDeployProgress)\b/,
     'opening a dApp no longer fetches or paints its SHA into the drawer');
-  assert.match(html, /Web revision/,
-    'the Git SHA is accurately described as a revision rather than a version');
+  assert.match(html, /Platform version/,
+    'the platform build row carries the #1211 "Platform version" label');
   assert.match(html, /Mobile app version/,
     'the semantic version/build is labelled as the installed mobile app');
 });

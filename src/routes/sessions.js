@@ -1069,14 +1069,19 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // not by creation order.
       //
       // `source` is carried so a caller can tell where a proposal's head lives
-      // (#1054) — an imported pull request follows a branch in its author's own
-      // fork, everything else a branch only the platform can write — without a
-      // second read per row.
+      // (#1054) — an imported pull request usually follows a branch in its
+      // author's own fork, everything else a branch only the platform can
+      // write — without a second read per row. `imported_pr_head_repo` and
+      // `a.repo_url` are carried with it because "usually" is not good enough
+      // (#1196): the connector's mirror rung imports a pull request whose head
+      // is a branch in the APP repository, and only comparing the two repos
+      // separates that from a genuine fork.
       const { rows } = await pool.query(
         `SELECT cs.id, cs.branch_name, cs.pr_number, cs.pr_url, cs.pr_title,
                 cs.session_title, cs.status, cs.linked_issues, cs.shared_at,
                 cs.transcript_shared_at, cs.created_at, cs.source,
-                cs.staging_url, cs.imported_pr_author,
+                cs.staging_url, cs.imported_pr_author, cs.imported_pr_head_repo,
+                cs.imported_pr_head_sha, cs.reviewed_head_sha, a.repo_url,
                 cs.check_state, cs.check_phase, cs.check_error_detail,
                 cs.agent_backend, cs.agent_model,
                 GREATEST(cs.created_at, COALESCE(m.last_message_at, cs.created_at)) AS last_activity_at,
@@ -1094,10 +1099,17 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
          ORDER BY last_activity_at DESC`,
         [req.user.id, includeImported]
       );
+      // #1196: the same login /api/sessions/:id carries, read once for the
+      // whole list rather than per row. It is what makes "can you push this
+      // proposal's head" the answer the update path will actually give.
+      const viewerLogin = rows.some((s) => s.source === 'imported')
+        ? (await require('../services/github-link').linkStatus(pool, req.user.id)).login || null
+        : null;
       const sessions = rows.map((s) => {
         const live = workerProgress.get(s.id);
         return {
           ...s,
+          ...(s.source === 'imported' ? { viewer_github_login: viewerLogin } : {}),
           busy: isSessionBusy(s.id),
           // Keep the pinned snake_case fields untouched. Camel-case fields
           // describe the runtime actually producing progress right now, so a
@@ -1787,7 +1799,12 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       let billing = { apiKey: null };
       if (!isOpenRouterSession) {
         billing = await limits.resolveBillingPath(pool, config.dataEncryptionKey, req.user.id);
-        if (billing.error) return res.status(429).json({ error: billing.error, code: 'budget_exceeded' });
+        if (billing.error) return res.status(429).json({
+          error: billing.error,
+          code: 'budget_exceeded',
+          reason: billing.reason || null,
+          verificationRequired: !!billing.verificationRequired,
+        });
       }
       const userApiKey = billing.apiKey;
 
@@ -2081,6 +2098,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         ).catch(() => ({ rows: [] }));
         followUpPills = await resolveTurnPills({
           pool,
+          dataKey: config.dataEncryptionKey,
           // `src` (not the fresh row) because it carries app_name from its
           // JOIN — the new session row has only its own columns.
           session: { id: session.id, app_name: src.app_name },
@@ -2163,7 +2181,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   router.get('/api/sessions/:id', async (req, res) => {
     try {
       const { rows } = await pool.query(
-        `SELECT cs.*, a.slug as app_slug, a.name as app_name,
+        `SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url,
                 (SELECT COUNT(*)::int FROM pr_votes pv
                   WHERE pv.session_id = cs.id AND pv.vote = 'yes'
                     AND ${currentVotePredicateSql('pv', 'cs')}) AS yes_count,
@@ -2176,6 +2194,20 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         [req.params.id, req.user.id, !!req.user?.isAdmin]
       );
       if (!rows.length) return res.status(404).json({ error: 'Session not found' });
+
+      // #1196: whether this caller can push the proposal's head is not a
+      // property of the row on its own. For a head that lives in somebody's
+      // fork it is the comparison services/proposal-update.js's
+      // `advanceForkHead` makes when a revision arrives — that fork's owner
+      // against the GitHub account linked to the CALLER's profile — so the
+      // login is carried here and readers report what submit_work will
+      // actually do instead of approximating it. Imported rows only: a native
+      // proposal's head is a branch in the app repository by definition, and
+      // nobody can push that.
+      if (rows[0].source === 'imported') {
+        const link = await require('../services/github-link').linkStatus(pool, req.user.id);
+        rows[0].viewer_github_login = link && link.linked ? link.login : null;
+      }
 
       // #405: the session view's merge-lifecycle pill needs the vote tally to
       // resolve the In-vote / "Passed — merging shortly" states exactly as
@@ -3154,6 +3186,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         .map((r) => ({ role: r.role, content: r.content }));
       const forkPills = await resolveTurnPills({
         pool,
+        dataKey: config.dataEncryptionKey,
         // `src` carries app_name from its JOIN; the fresh row does not.
         session: { id: session.id, app_name: src.app_name },
         userId: req.user.id,
@@ -3619,7 +3652,12 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       let billing = { apiKey: null };
       if (!isOpenRouterSession) {
         billing = await limits.resolveBillingPath(pool, config.dataEncryptionKey, req.user.id);
-        if (billing.error) return res.status(429).json({ error: billing.error, code: 'budget_exceeded' });
+        if (billing.error) return res.status(429).json({
+          error: billing.error,
+          code: 'budget_exceeded',
+          reason: billing.reason || null,
+          verificationRequired: !!billing.verificationRequired,
+        });
       }
       // Mutable since #664: an expensive CC phase can exhaust the
       // allowance mid-turn, so billing is re-resolved after the tool
@@ -3855,6 +3893,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       ].join('; ');
       const resolvePills = (outcome, opts = {}) => resolveTurnPills({
         pool,
+        dataKey: config.dataEncryptionKey,
         session,
         userId: req.user.id,
         apiKey: userApiKey,
@@ -3866,32 +3905,38 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         ...opts,
       });
 
-      // #249: first-message naming — a brand-new session (no title yet,
-      // no PR) gets a readable display name from its opening ask, long
-      // before any code lands. Fire-and-forget: the turn never waits on
-      // it, and any failure just keeps the branch-name fallback. The
-      // billing path resolved above means the Haiku call is debited to
-      // the requesting user (BYOK-aware), like every other turn cost.
-      // OpenRouter sessions deliberately make no Anthropic side calls, so
-      // their eventual deterministic PR title owns the session name.
+      // #249: a brand-new session gets a readable display name from its
+      // opening ask. The call is scheduled at turn end (below), after the
+      // main turn has settled, so its fresh billing check sees the real
+      // remaining allowance instead of racing the main model call.
+      // OpenRouter sessions deliberately make no Anthropic side calls.
       const titledThisTurn = !isOpenRouterSession && !session.session_title && !session.pr_number;
-      if (titledThisTurn) {
-        sessionTitles.maybeTitleFirstMessage({
-          pool, session, message: messageText,
-          userId: req.user.id, apiKey: userApiKey, send,
-        });
-      }
-      // #249: pre-PR turn-end refresh — re-title from the full request
-      // history + latest spec draft so a vague opening ask sharpens once
-      // the direction is clear. Once a PR exists applyPrMetadata owns
-      // the name (it mirrors pr_title into session_title), so this
-      // never fires again; and the first-message hook already covers
-      // the turn it ran on. Fire-and-forget like the hook above.
+      // Pre-PR turn-end refresh re-titles from the full request history +
+      // latest spec draft. Once a PR exists applyPrMetadata owns the name.
+      // Both title modes are fire-and-forget, but only after a fresh payer
+      // decision made after the main turn's spend has been recorded.
       const refreshTitleAtTurnEnd = () => {
-        if (isOpenRouterSession || titledThisTurn || session.pr_number) return;
-        sessionTitles.refreshFromHistory({
-          pool, session, userId: req.user.id, apiKey: userApiKey, send,
-        });
+        if (isOpenRouterSession || session.pr_number) return;
+        limits.resolveBillingPath(pool, config.dataEncryptionKey, req.user.id)
+          .then((billing) => {
+            if (billing.error) {
+              log.info('sessions', 'Turn-end title refresh skipped: no payer available', {
+                sessionId: session.id, reason: billing.reason || null,
+              });
+              return null;
+            }
+            return titledThisTurn
+              ? sessionTitles.maybeTitleFirstMessage({
+                pool, session, message: messageText,
+                userId: req.user.id, apiKey: billing.apiKey, send,
+              })
+              : sessionTitles.refreshFromHistory({
+                pool, session, userId: req.user.id, apiKey: billing.apiKey, send,
+              });
+          })
+          .catch((err) => log.warn('sessions', 'Turn-end title billing resolve failed', {
+            sessionId: session.id, err: err.message,
+          }));
       };
 
       try {
@@ -4405,6 +4450,40 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
                 })),
               },
             ];
+
+            // The next loop iteration is a separate paid model call. The
+            // data lookup above may follow a call that consumed the final
+            // platform-funded credit, so never reuse the turn-start payer.
+            let continuationBilling = null;
+            try {
+              continuationBilling = await limits.resolveBillingPath(
+                pool, config.dataEncryptionKey, req.user.id,
+              );
+            } catch (err) {
+              log.warn('sessions', 'Data-tool continuation billing resolve failed', {
+                sessionId: session.id, err: err.message,
+              });
+            }
+            if (!continuationBilling || continuationBilling.error) {
+              await sendStatus(
+                continuationBilling?.error
+                  || 'Could not verify credit eligibility for another AI call.',
+                { turnError: true },
+              );
+              // This response was already persisted and debited as the
+              // intermediate call. Close on the normal no-dispatch path
+              // without double-counting it or retaining a dangling tool.
+              mayor1 = {
+                ...mayor1,
+                text: '',
+                toolUses: [],
+                rawContent: [],
+                usage: { input_tokens: 0, output_tokens: 0 },
+                stopReason: 'billing_unavailable',
+              };
+              break;
+            }
+            userApiKey = continuationBilling.apiKey;
           }
         } catch (err) {
           if (stopHandle.stopped) {
@@ -4521,12 +4600,33 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
             const baseCost = llm.estimateCostCents(mayor1.usage, servedModelBase);
             await limits.recordSpend(pool, req.user.id, baseCost, { byok: !!userApiKey });
             send('usage', { costCents: baseCost, model: servedModelBase, byok: !!userApiKey });
+            // The ordinary phase-1 settlement below must only see the
+            // retry's usage. If the retry is skipped or fails, the base
+            // call has already been fully settled here.
+            mayor1.usage = { input_tokens: 0, output_tokens: 0 };
           }
-          // Seal the (empty) bubble so the retry's tokens land in a fresh
-          // one below the status line, mirroring the data-loop flow.
-          send('assistant_message_end', {});
-          await sendStatus('Writing up what the data showed...');
+          let summaryBilling = null;
           try {
+            summaryBilling = await limits.resolveBillingPath(
+              pool, config.dataEncryptionKey, req.user.id,
+            );
+          } catch (err) {
+            log.warn('sessions', 'Data-summary billing resolve failed', {
+              sessionId: session.id, err: err.message,
+            });
+          }
+          if (!summaryBilling || summaryBilling.error) {
+            await sendStatus(
+              summaryBilling?.error
+                || 'Could not verify credit eligibility for the data summary.',
+              { turnError: true },
+            );
+          } else try {
+            userApiKey = summaryBilling.apiKey;
+            // Seal the (empty) bubble so the retry's tokens land in a fresh
+            // one below the status line, mirroring the data-loop flow.
+            send('assistant_message_end', {});
+            await sendStatus('Writing up what the data showed...');
             const retry = await llm.streamChat({
               messages: [...mayorConvo, ...buildDataSummaryReprompt(mayor1.rawContent, mayor1.toolUses)],
               systemPrompt: mayorPrompt,
@@ -4640,6 +4740,14 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         const willDispatch = mayor1.toolUses.some((t) =>
           t && (t.name === 'dispatch_claude_code' || t.name === 'dispatch_scout'));
 
+        // Settle the response before any post-hoc pill/title model call.
+        // Those helpers independently re-check billing and must see the
+        // main call's real spend, not the pre-call balance.
+        if (mayor1.usage) {
+          await limits.recordSpend(pool, req.user.id, costCents1, { byok: !!userApiKey });
+          send('usage', { costCents: costCents1, model: servedModel1, byok: !!userApiKey });
+        }
+
         if (mayorText1.trim()) {
           // Stream/reconcile the reply bubble FIRST. #1001's enforcement can
           // add ~1s before the pill row lands, and this ordering is what
@@ -4687,14 +4795,6 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           if (suggestions) send('suggestions', { suggestions });
           if (pills1 && pills1.replies) send('quick_replies', { replies: pills1.replies });
         }
-        // BYOK users pay Anthropic directly, so their spend lands in
-        // the display-only byok_cost_cents bucket (#119) — only
-        // platform-key spend counts against the daily caps.
-        if (mayor1.usage) {
-          await limits.recordSpend(pool, req.user.id, costCents1, { byok: !!userApiKey });
-          send('usage', { costCents: costCents1, model: servedModel1, byok: !!userApiKey });
-        }
-
         // Pick which tool the Mayor invoked, with server-side priority
         // enforcement: dispatch_scout > dispatch_claude_code. If the
         // Mayor (mis)used both in one turn, we honor the planning tool
@@ -4944,21 +5044,26 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           stagingUrl = toolResult.stagingUrl;
         }
 
-        // #664: the dispatched phase may have drained the daily allowance.
-        // Re-resolve the payer so the wrap-up Mayor call (and its debit)
-        // bills the user's own key instead of silently overshooting the
-        // exhausted platform budget. Only relevant when the turn started
-        // platform-billed; an { error } (no headroom, no key) keeps the
-        // platform path — the wrap-up is cheap and ends the turn anyway.
-        if (!userApiKey) {
-          try {
-            const rebill = await limits.resolveBillingPath(pool, config.dataEncryptionKey, req.user.id);
-            if (!rebill.error && rebill.apiKey) userApiKey = rebill.apiKey;
-          } catch (err) {
-            log.warn('sessions', 'Post-dispatch billing re-resolve failed (continuing platform-billed)', {
-              sessionId: session.id, err: err.message,
+        // The dispatch may have consumed the final platform-funded cent (or
+        // the user may have removed their key while it ran). Resolve a fresh
+        // payer for the separate wrap-up call. When none is available, the
+        // completed work is preserved and closed with deterministic text;
+        // no post-dispatch model request is allowed to bypass the tier.
+        let wrapUpBillingAvailable = false;
+        try {
+          const rebill = await limits.resolveBillingPath(pool, config.dataEncryptionKey, req.user.id);
+          if (!rebill.error) {
+            userApiKey = rebill.apiKey;
+            wrapUpBillingAvailable = true;
+          } else {
+            log.info('sessions', 'Interactive wrap-up using deterministic fallback: no payer available', {
+              sessionId: session.id, reason: rebill.reason || null,
             });
           }
+        } catch (err) {
+          log.warn('sessions', 'Post-dispatch billing re-resolve failed; using deterministic wrap-up', {
+            sessionId: session.id, err: err.message,
+          });
         }
 
         // --- Phase 2: Mayor wrap-up turn ---
@@ -5056,7 +5161,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           }),
           recoveryFallback: true,
         };
-        const invokeMayor2 = async () => snapshotMayorResponse(await llm.streamChat({
+        const invokeMayor2 = async () => wrapUpBillingAvailable
+          ? snapshotMayorResponse(await llm.streamChat({
             messages: followUpMessages,
             systemPrompt: mayorPrompt,
             model: selectedModel,
@@ -5069,7 +5175,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
             onToken: (text) => send('token', { text }),
             apiKey: userApiKey,
             telemetryContext: invocationTelemetry(pool, session, 'mayor_phase_2'),
-          }));
+          }))
+          : fallbackMayor2;
         let mayor2;
         let mayor2Disposition = 'executed';
         if (toolResult.turnId) {
@@ -5153,6 +5260,22 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         const tokenCount2 = mayor2.usage
           ? (mayor2.usage.input_tokens || 0) + (mayor2.usage.output_tokens || 0)
           : null;
+        // Record the wrap-up call before asking for separate quick-reply
+        // generation. The pill ladder's fresh preflight must include this
+        // call in the remaining-credit calculation.
+        if (costCents2) {
+          if (toolResult.turnId) {
+            await limits.settleTurnSpend(pool, req.user.id, costCents2, {
+              turnByok: !!userApiKey,
+              turnId: toolResult.turnId,
+              sessionId: session.id,
+              effectKey: TURN_WRAPUP_EFFECT_KEYS.spend,
+            });
+          } else {
+            await limits.recordSpend(pool, req.user.id, costCents2, { byok: !!userApiKey });
+          }
+          send('usage', { costCents: costCents2, model: servedModel2, byok: !!userApiKey });
+        }
         // #1001: the wrap-up is the row the user is left looking at after a
         // build or a spec, so this is where a generic pill set hurt most —
         // and where the tool was skipped most (a plain `end_turn`). Ask the
@@ -5227,20 +5350,6 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         if (messageApplied) {
           send('mayor_reasoning', { text: mayorText2 });
           if (wrapUpPills) send('quick_replies', { replies: wrapUpPills });
-        }
-
-        if (costCents2) {
-          if (toolResult.turnId) {
-            await limits.settleTurnSpend(pool, req.user.id, costCents2, {
-              turnByok: !!userApiKey,
-              turnId: toolResult.turnId,
-              sessionId: session.id,
-              effectKey: TURN_WRAPUP_EFFECT_KEYS.spend,
-            });
-          } else {
-            await limits.recordSpend(pool, req.user.id, costCents2, { byok: !!userApiKey });
-          }
-          send('usage', { costCents: costCents2, model: servedModel2, byok: !!userApiKey });
         }
 
         if (toolResult.turnId) {
@@ -6059,6 +6168,12 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         spentCents: 2000,
         limitCents: 2000,
         remainingCents: 0,
+        creditPolicy: 'legacy',
+        tier: 'legacy',
+        limitSource: 'default',
+        verificationRequired: false,
+        entitlementAvailable: true,
+        tierLimitCents: 1000,
         globalSpentCents: 4000,
         globalLimitCents: 100000,
         byokSpentCents: 0,
@@ -6069,37 +6184,32 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       });
     }
     try {
-      const userLimit = await limits.getEffectiveUserLimitCents(pool, req.user.id);
+      const snapshot = await limits.getBudgetSnapshot(pool, req.user.id);
       const globalLimit = await limits.getGlobalLimitCents(pool);
-      const budget = await checkBudget(pool, req.user.id);
-      const userSpent = budget.error ? userLimit : userLimit - (budget.userRemaining || 0);
-      const globalSpent = budget.error ? globalLimit : globalLimit - (budget.globalRemaining || 0);
-      // #119: spend billed to the user's own Anthropic key today —
-      // informational only, never part of the cap math above.
-      const { rows: byokRows } = await pool.query(
-        'SELECT byok_cost_cents FROM llm_usage WHERE user_id = $1 AND date = CURRENT_DATE',
-        [req.user.id]
+      const { rows: globalRows } = await pool.query(
+        'SELECT COALESCE(SUM(total_cost_cents), 0) AS total FROM llm_usage WHERE date = CURRENT_DATE'
       );
-      const byokSpentCents = parseFloat(byokRows[0]?.byok_cost_cents || 0);
+      const globalSpent = parseFloat(globalRows[0]?.total || 0);
       // #297: surface AI availability so client chrome (the proposal
       // "Explore in dev chat" pill) can disable itself with a tooltip when there's
       // no usable LLM path — the platform key is unset AND the user has
       // no BYOK key on file. Same degradation posture the dev chat takes.
       const userApiKey = await limits.loadUserApiKey(pool, req.user.id, config.dataEncryptionKey);
       res.json({
-        spentCents: userSpent,
-        limitCents: userLimit,
+        ...snapshot,
         // #593: the two figures the composer's meter has to state out loud
         // — what is left, and when it comes back. Both were derivable from
         // the pair above plus a hardcoded "midnight UTC" on the client,
         // which is how the reset boundary ended up living in three places.
-        remainingCents: Math.max(0, userLimit - userSpent),
         globalSpentCents: globalSpent,
         globalLimitCents: globalLimit,
-        byokSpentCents,
+        // Keep the route's established spelling while the shared snapshot
+        // uses `byokCents` internally.
+        byokSpentCents: snapshot.byokCents,
+        // Availability means a provider exists, not that this request has
+        // allowance headroom. Keep the Explore/dev-chat entry points open so
+        // their locked-tier UI can explain how to connect an identity.
         aiEnabled: llm.isEnabled() || !!userApiKey,
-        resetsAt: limits.dailyResetAt(),
-        lowBalancePct: limits.LOW_BALANCE_PCT,
       });
     } catch (err) {
       log.error('sessions', 'Budget check failed', { message: err.message });
@@ -6746,7 +6856,7 @@ function headlessWrapUpMeta(outcome, { suggestions = null } = {}) {
 }
 
 async function runHeadlessMayorEffect({
-  pool, sessionId, headlessTurnId, invoke, fallbackText,
+  pool, sessionId, headlessTurnId, invoke, fallbackText, allowInvoke = true,
 }) {
   const fallback = {
     ...snapshotMayorResponse({ text: fallbackText }),
@@ -6754,8 +6864,8 @@ async function runHeadlessMayorEffect({
   };
   if (!headlessTurnId) {
     return {
-      response: snapshotMayorResponse(await invoke()),
-      disposition: 'legacy',
+      response: allowInvoke ? snapshotMayorResponse(await invoke()) : fallback,
+      disposition: allowInvoke ? 'legacy' : 'skipped',
     };
   }
   const effect = await turnEffects.runExternalEffectFailClosed({
@@ -6763,7 +6873,10 @@ async function runHeadlessMayorEffect({
     turnId: headlessTurnId,
     effectKey: HEADLESS_WRAPUP_EFFECT_KEYS.llm,
     sessionId,
-    run: async () => snapshotMayorResponse(await invoke()),
+    // Recording the deterministic fallback as the completed effect keeps
+    // restart recovery idempotent without issuing a provider request when
+    // the current billing decision has no payer.
+    run: async () => (allowInvoke ? snapshotMayorResponse(await invoke()) : fallback),
     fallback,
   });
   return {
@@ -6870,6 +6983,26 @@ async function runHeadlessSession({
     await limits.recordSpend(pool, user.id, cost, { byok: !!userApiKey });
     send('usage', { costCents: cost, model: billModel, byok: !!userApiKey });
     return cost;
+  };
+
+  const resolveHeadlessPayer = async (phase) => {
+    try {
+      const billing = await limits.resolveBillingPath(
+        pool, config.dataEncryptionKey, user.id,
+      );
+      if (!billing.error) {
+        userApiKey = billing.apiKey;
+        return true;
+      }
+      log.info('sessions', 'Headless model phase skipped: no payer available', {
+        sessionId: session.id, phase, reason: billing.reason || null,
+      });
+    } catch (err) {
+      log.warn('sessions', 'Headless billing re-resolve failed', {
+        sessionId: session.id, phase, err: err.message,
+      });
+    }
+    return false;
   };
 
   // Fable 5 classifier fallback: same once-per-run notice + per-call
@@ -7058,6 +7191,22 @@ async function runHeadlessSession({
           })),
         },
       ];
+      if (!await resolveHeadlessPayer('data-tool-continuation')) {
+        await sendStatus('Auto session paused before another AI call because no current payer is available.');
+        // The just-finished provider call was already persisted/debited as
+        // an intermediate turn above. Replace it with a zero-usage terminal
+        // response so the ordinary no-dispatch path can close the run
+        // without double-counting it or acting on dangling tool calls.
+        mayor1 = {
+          ...mayor1,
+          text: '',
+          toolUses: [],
+          rawContent: [],
+          usage: { input_tokens: 0, output_tokens: 0 },
+          stopReason: 'billing_unavailable',
+        };
+        break;
+      }
     }
 
     // Whole-chain refusal (mirrors the interactive handler): record it,
@@ -7165,20 +7314,11 @@ async function runHeadlessSession({
         ? await runScoutTool({ ...toolArgs, headless: true })
         : await runClaudeCodeTool({ ...toolArgs, headless: true });
 
-      // #664: the dispatched phase may have drained the allowance — the
-      // later Mayor phases (decision turn, wrap-ups) bill the re-resolved
-      // payer. Mirrors the interactive chat handler; an { error } keeps
-      // the platform path (the wrap-up is cheap and ends the run).
-      if (!userApiKey) {
-        try {
-          const rebill = await limits.resolveBillingPath(pool, config.dataEncryptionKey, user.id);
-          if (!rebill.error && rebill.apiKey) userApiKey = rebill.apiKey;
-        } catch (err) {
-          log.warn('sessions', 'Headless post-dispatch billing re-resolve failed (continuing platform-billed)', {
-            sessionId: session.id, err: err.message,
-          });
-        }
-      }
+      // The coding phase can consume the last available platform credit.
+      // Later Mayor calls are optional presentation work: resolve again and
+      // use deterministic wrap-ups if neither platform credit nor BYOK is
+      // currently available.
+      let postDispatchBillingAvailable = await resolveHeadlessPayer('post-dispatch');
 
       if (toolResult.isError) {
         outcome = 'question';
@@ -7251,6 +7391,7 @@ async function runHeadlessSession({
           sessionId: session.id,
           headlessTurnId: decisionTurnId,
           fallbackText: decisionFallback,
+          allowInvoke: postDispatchBillingAvailable,
           invoke: () => llm.streamChat({
             messages: phase2Messages,
             systemPrompt: wrapPrompt + buildHeadlessDecisionAddendum(issueNumber),
@@ -7390,18 +7531,6 @@ async function runHeadlessSession({
                   );
                 },
               });
-              // #664: the build itself may have exhausted the allowance —
-              // re-resolve so the phase-3 wrap-up bills the fresh payer.
-              if (!userApiKey) {
-                try {
-                  const rebill = await limits.resolveBillingPath(pool, config.dataEncryptionKey, user.id);
-                  if (!rebill.error && rebill.apiKey) userApiKey = rebill.apiKey;
-                } catch (err) {
-                  log.warn('sessions', 'Headless post-build billing re-resolve failed (continuing platform-billed)', {
-                    sessionId: session.id, err: err.message,
-                  });
-                }
-              }
             }
             // Build error degrades to 'spec' (NOT 'question' like the
             // phase-1 build path): the spec is the durable artifact and a
@@ -7437,11 +7566,13 @@ async function runHeadlessSession({
             : outcome === 'question'
               ? '_The spec has open questions — review the Questions section in the spec viewer after starting a session from this auto session._'
               : '_Spec drafted — the implementation attempt did not complete; review the spec in the spec viewer after starting a session from this auto session._';
+          postDispatchBillingAvailable = await resolveHeadlessPayer('phase-3-wrapup');
           const phase3Effect = await runHeadlessMayorEffect({
             pool,
             sessionId: session.id,
             headlessTurnId,
             fallbackText: phase3Fallback,
+            allowInvoke: postDispatchBillingAvailable,
             invoke: () => llm.streamChat({
               messages: [
                 ...phase2Messages,
@@ -7517,6 +7648,7 @@ async function runHeadlessSession({
           sessionId: session.id,
           headlessTurnId,
           fallbackText: directFallback,
+          allowInvoke: postDispatchBillingAvailable,
           invoke: () => llm.streamChat({
             messages: phase2Messages,
             systemPrompt: wrapPrompt,
@@ -7785,16 +7917,24 @@ async function runRecoveredWrapUp({
   }
 
   try {
-    // Limit-first billing, same posture as the headless resume: spend the
-    // daily allowance while it lasts, then the owner's own key. An
-    // { error } (no headroom, no key) proceeds platform-billed — the
-    // proxy enforces the cap per call.
+    // Limit-first billing, same posture as a live wrap-up: spend the daily
+    // allowance while it lasts, then the owner's own key. Recovery already
+    // has the coding result, so a missing payer degrades to deterministic
+    // text instead of issuing a new platform-funded call.
     let userApiKey = null;
+    let wrapUpBillingAvailable = false;
     try {
       const billing = await limits.resolveBillingPath(pool, config.dataEncryptionKey, session.user_id);
-      if (!billing.error) userApiKey = billing.apiKey;
+      if (!billing.error) {
+        userApiKey = billing.apiKey;
+        wrapUpBillingAvailable = true;
+      } else {
+        log.info('sessions', 'Recovered wrap-up using deterministic fallback: no payer available', {
+          sessionId, reason: billing.reason || null,
+        });
+      }
     } catch (err) {
-      log.warn('sessions', 'Recovered wrap-up billing resolve failed (continuing platform-billed)', {
+      log.warn('sessions', 'Recovered wrap-up billing resolve failed; using deterministic fallback', {
         sessionId, err: err.message,
       });
     }
@@ -7860,7 +8000,8 @@ async function runRecoveredWrapUp({
       ...snapshotMayorResponse({ text: fallbackText }),
       recoveryFallback: true,
     };
-    const invokeMayor = async () => snapshotMayorResponse(await llm.streamChat({
+    const invokeMayor = async () => wrapUpBillingAvailable
+      ? snapshotMayorResponse(await llm.streamChat({
       messages,
       systemPrompt,
       model: selectedModel,
@@ -7870,7 +8011,8 @@ async function runRecoveredWrapUp({
       toolChoice: { type: 'auto' },
       apiKey: userApiKey,
       telemetryContext: invocationTelemetry(pool, session, 'mayor_phase_2'),
-    }));
+    }))
+      : fallbackMayor;
 
     let mayor;
     if (turnId) {
@@ -7897,6 +8039,21 @@ async function runRecoveredWrapUp({
     const servedModel = mayor.servedModel || selectedModel;
     const costCents = mayor.usage ? llm.estimateCostCents(mayor.usage, servedModel) : 0;
 
+    // Settle the recovered wrap-up before any separate pill-generation
+    // request so that request's fresh billing check includes this spend.
+    if (costCents) {
+      if (turnId) {
+        await limits.settleTurnSpend(pool, session.user_id, costCents, {
+          turnByok: !!userApiKey,
+          turnId,
+          sessionId,
+          effectKey: TURN_WRAPUP_EFFECT_KEYS.spend,
+        });
+      } else {
+        await limits.recordSpend(pool, session.user_id, costCents, { byok: !!userApiKey });
+      }
+    }
+
     // #1001: a recovered wrap-up gets the same ladder as a live one. It
     // qualifies for the forced continuation because it has already resolved
     // a user id and an API key here — the constraint that keeps the BOOT
@@ -7908,6 +8065,7 @@ async function runRecoveredWrapUp({
     };
     const resolveRecoveredPills = () => resolveTurnPills({
         pool,
+        dataKey: config.dataEncryptionKey,
         session,
         userId: session.user_id,
         apiKey: userApiKey,
@@ -7947,24 +8105,14 @@ async function runRecoveredWrapUp({
       source: resolved.replies ? resolved.source : 'static',
       kind: resolved.kind,
     });
-    if (costCents) {
-      if (turnId) {
-        await limits.settleTurnSpend(pool, session.user_id, costCents, {
-          turnByok: !!userApiKey,
-          turnId,
-          sessionId,
-          effectKey: TURN_WRAPUP_EFFECT_KEYS.spend,
-        });
-      } else {
-        await limits.recordSpend(pool, session.user_id, costCents, { byok: !!userApiKey });
-      }
-    }
     log.info('sessions', 'Recovered turn wrap-up posted', {
       sessionId, outcome, model: servedModel, textLen: text.length,
     });
     return {
       ok: !mayor.recoveryFallback,
-      ...(mayor.recoveryFallback ? { reason: 'llm_failed' } : {}),
+      ...(mayor.recoveryFallback
+        ? { reason: wrapUpBillingAvailable ? 'llm_failed' : 'billing_unavailable' }
+        : {}),
       text,
       quickReplies,
     };
@@ -8280,17 +8428,15 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
     return failHeadlessRun(pool, session, 'Auto session failed: no GitHub repo configured.');
   }
 
-  // Limit-first (#212): the resumed run's NEW calls (re-driven phases,
-  // wrap-up Mayor turn) bill the allowance while it has headroom, then
-  // the owner's BYOK key. On { error } (allowance gone, no key) resume
-  // proceeds platform-billed like it always has — the Anthropic proxy
-  // enforces the cap per-call, so the run fails with the same message
-  // it would have shown live rather than dying silently here.
+  // Limit-first (#212): every newly issued recovery call must have a
+  // current payer. Durable coding output can still be finalized without
+  // one, but a planning step has no completed work to recover and must be
+  // retried after credits or BYOK become available.
   const isOpenRouterSession = registry.resolveBackend(session.agent_backend) === 'codex_openrouter';
   const resumeBilling = isOpenRouterSession
     ? { apiKey: null }
     : await limits.resolveBillingPath(pool, config.dataEncryptionKey, session.user_id);
-  const userApiKey = resumeBilling.error ? null : resumeBilling.apiKey;
+  let userApiKey = resumeBilling.error ? null : resumeBilling.apiKey;
   // The model picked at start isn't a session column, but every persisted
   // assistant turn carries it — reuse the latest, else the default.
   const { rows: modelRows } = await pool.query(
@@ -8305,6 +8451,13 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
   log.info('sessions', 'Resuming headless run', { sessionId: session.id, issueNumber, step });
 
   if (step === 'planning') {
+    if (!isOpenRouterSession && resumeBilling.error) {
+      return failHeadlessRun(
+        pool,
+        session,
+        `Auto session could not resume its planning call: ${resumeBilling.error}`,
+      );
+    }
     // Nothing was dispatched yet — re-issue the whole Mayor turn. The
     // seed user message already exists (resume: true skips re-inserting);
     // re-fetch the issue (+ its comments, #150) for the in-memory seed
@@ -8625,6 +8778,24 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
     mayorText2 = String(dispatchSummary || '').trim() || fallbackMayorText;
     servedModelR = session.agent_model ? `openrouter/${session.agent_model}` : null;
   } else {
+    let recoveredWrapUpBillingAvailable = false;
+    try {
+      const billing = await limits.resolveBillingPath(
+        pool, config.dataEncryptionKey, session.user_id,
+      );
+      if (!billing.error) {
+        userApiKey = billing.apiKey;
+        recoveredWrapUpBillingAvailable = true;
+      } else {
+        log.info('sessions', 'Resumed headless wrap-up using deterministic fallback', {
+          sessionId: session.id, reason: billing.reason || null,
+        });
+      }
+    } catch (err) {
+      log.warn('sessions', 'Resumed headless wrap-up billing resolve failed', {
+        sessionId: session.id, err: err.message,
+      });
+    }
     const { rows: msgRows } = await pool.query(
       `SELECT role, content FROM chat_session_messages
        WHERE session_id = $1 AND role IN ('user', 'assistant')
@@ -8646,6 +8817,7 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
       sessionId: session.id,
       headlessTurnId,
       fallbackText: fallbackMayorText,
+      allowInvoke: recoveredWrapUpBillingAvailable,
       invoke: () => llm.streamChat({
         messages: convo,
         systemPrompt: wrapPrompt,
@@ -9308,7 +9480,7 @@ function qrWithTimeout(makeCall, ms) {
 //                     degrades to the wording those paths already shipped
 //                     rather than a state-derived approximation of it.
 async function resolveTurnPills({
-  pool, session, userId, apiKey, model, modelPills, outcome,
+  pool, dataKey, session, userId, apiKey, model, modelPills, outcome,
   hasPr, hasSpec, replyText, transcriptTail, state, staticFallback = null,
   allowModelCalls = true, allowGenerate = true,
 }) {
@@ -9349,26 +9521,45 @@ async function resolveTurnPills({
     ? { replies: modelPills, source: 'model' }
     : staticRung();
 
-  const debit = async (usage, servedModel) => {
+  // Every extra model rung is a new paid call. Re-resolve immediately before
+  // each one instead of inheriting the parent turn's payer decision: a build
+  // or wrap-up may have consumed the last platform-funded cent meanwhile.
+  // Test-only/no-database callers retain their supplied key.
+  const resolvePayer = async (rung) => {
+    if (!pool || !userId) return { apiKey };
+    try {
+      const billing = await limits.resolveBillingPath(pool, dataKey, userId);
+      if (!billing.error) return { apiKey: billing.apiKey };
+      log.info('sessions', 'Quick-reply model rung skipped: no payer available', {
+        sessionId: session && session.id, rung, reason: billing.reason || null,
+      });
+    } catch (err) {
+      log.warn('sessions', 'Quick-reply billing resolve failed', {
+        sessionId: session && session.id, rung, err: err.message,
+      });
+    }
+    return null;
+  };
+
+  const debit = async (usage, servedModel, payerApiKey) => {
     if (!usage || !pool || !userId) return;
     const costCents = llm.estimateCostCents(usage, servedModel);
     if (!costCents) return;
-    // Deliberately NOT re-checking limits.checkBudget here: phase 2 already
-    // records spend without re-checking, and a one-cent overshoot at the
-    // cap is a better outcome than a pill-less turn.
-    await limits.recordSpend(pool, userId, costCents, { byok: !!apiKey })
+    await limits.recordSpend(pool, userId, costCents, { byok: !!payerApiKey })
       .catch((err) => log.warn('sessions', 'Quick-reply spend record failed', { err: err.message }));
   };
 
   // Rung 2 — the forced pills-only continuation on the turn's own model.
   if (QR_ENFORCE && allowModelCalls && llm.isEnabled()) {
     try {
+      const payer = await resolvePayer('enforced');
+      if (!payer) throw new Error('no payer available');
       const forced = await qrWithTimeout((signal) => llm.requireQuickReplies({
         rules: QUICK_REPLY_RULES_TEXT,
         context,
         model,
         tool: SUGGEST_REPLIES_TOOL,
-        apiKey,
+        apiKey: payer.apiKey,
         signal,
         telemetryContext: {
           pool,
@@ -9376,9 +9567,9 @@ async function resolveTurnPills({
           sessionId: session && session.id,
         },
       }), QR_ENFORCE_TIMEOUT_MS);
+      await debit(forced.usage, forced.model, payer.apiKey);
       const replies = sanitizeQuickReplies(forced.replies);
       if (replies) {
-        await debit(forced.usage, forced.model);
         // An enforced set that is STILL all boilerplate is kept anyway —
         // it was at least freshly authored for this turn — and recorded
         // under its own source so the telemetry shows the prompt needs
@@ -9402,19 +9593,21 @@ async function resolveTurnPills({
   // Rung 3 — the cheap contextual backstop, on a different model.
   if (allowGenerate && llm.isEnabled()) {
     try {
+      const payer = await resolvePayer('generated');
+      if (!payer) throw new Error('no payer available');
       const gen = await qrWithTimeout(() => llm.generateQuickReplies({
         rules: QUICK_REPLY_RULES_TEXT,
         context,
-        apiKey,
+        apiKey: payer.apiKey,
         telemetryContext: {
           pool,
           appId: session && session.app_id,
           sessionId: session && session.id,
         },
       }), QR_GENERATE_TIMEOUT_MS);
+      await debit(gen.usage, gen.model, payer.apiKey);
       const replies = sanitizeQuickReplies(gen.replies);
       if (replies) {
-        await debit(gen.usage, gen.model);
         return { replies, source: 'generated' };
       }
     } catch (err) {
@@ -11674,7 +11867,7 @@ path: /another/changed/view
       const WIDE_SPACING_MS = 150_000;   // ~2.5 min minimum spacing late in a run
       const IDLE_REFRESH_MS = 180_000;   // re-ask even with no new lines so ~X left moves
       const CC_ACTION_RE = /^(Reading |Writing |Editing |\$ |Using )/;
-      estimator = setInterval(() => {
+      estimator = setInterval(async () => {
         // Torn down (terminal marker / turn end / stop) — never tick again.
         if (estimatorDone) return;
         // One call in flight at a time.
@@ -11728,6 +11921,34 @@ path: /another/changed/view
         if (!shouldRun) return;
 
         estimateInFlight = true;
+        // A long coding run can cross the user's or platform's allowance
+        // between progress ticks. Re-resolve the payer for every estimate
+        // so this auxiliary Haiku call cannot continue spending platform
+        // credits after the main run has switched to BYOK (or stopped).
+        let estimateBilling;
+        try {
+          estimateBilling = await limits.resolveBillingPath(
+            pool,
+            config.dataEncryptionKey,
+            req.user.id
+          );
+        } catch (err) {
+          estimateInFlight = false;
+          log.warn('chat', 'AI progress estimator budget check failed', {
+            sessionId: session.id, err: err.message,
+          });
+          stopEstimator('budget_check_failed');
+          return;
+        }
+        if (estimateBilling.error) {
+          estimateInFlight = false;
+          stopEstimator('budget_exhausted');
+          return;
+        }
+        if (estimatorDone || (stopHandle && stopHandle.stopped)) {
+          estimateInFlight = false;
+          return;
+        }
         const linesAtStart = liveProgressLines.length;
         const phaseAtStart = lastPhase;
         // Distinct files the run has touched so far — one of the two new
@@ -11743,7 +11964,7 @@ path: /another/changed/view
           progressTail: liveProgressLines,
           elapsedMs,
           steps: liveProgressLines.filter((l) => CC_ACTION_RE.test(l)).length,
-          apiKey: userApiKey || undefined,
+          apiKey: estimateBilling.apiKey || undefined,
           lastPhase: phaseAtStart,
           distinctFiles,
           previousGuess: previousRemainingSeconds == null ? null : {
@@ -11847,7 +12068,9 @@ path: /another/changed/view
           }
           if (usage) {
             const cents = llm.estimateCostCents(usage, estModel);
-            await limits.recordSpend(pool, req.user.id, cents, { byok: !!userApiKey });
+            await limits.recordSpend(pool, req.user.id, cents, {
+              byok: estimateBilling.byok,
+            });
           }
         }).catch((err) => {
           // Self-healing backoff: skip up to 5 ticks (~5 min) after repeated
@@ -12457,10 +12680,33 @@ path: /another/changed/view
         session.testing_paths = testing.testingPaths || [];
       }
 
+      // PR prose generation is another paid model call after the coding
+      // agent has settled. Resolve its payer independently; when no payer is
+      // current, applyPrMetadata still creates/updates the PR using its
+      // deterministic draft. Durable receipts preserve a previously
+      // completed generation on replay.
+      let prMetadataApiKey = null;
+      let prMetadataGenerationAllowed = false;
+      try {
+        const billing = await limits.resolveBillingPath(
+          pool, config.dataEncryptionKey, req.user.id,
+        );
+        if (!billing.error) {
+          prMetadataApiKey = billing.apiKey;
+          prMetadataGenerationAllowed = true;
+        } else {
+          log.info('sessions', 'Using deterministic PR metadata: no payer available', {
+            sessionId: session.id, reason: billing.reason || null,
+          });
+        }
+      } catch (err) {
+        log.warn('sessions', 'PR metadata billing resolve failed; using deterministic draft', {
+          sessionId: session.id, err: err.message,
+        });
+      }
       // The external-effect receipt stores this payer as its pending intent,
-      // so recovery can settle an ambiguous call without guessing from its
-      // own keyless boot context.
-      const prMetadataBillingByok = !!userApiKey;
+      // so recovery can settle an ambiguous call without guessing.
+      const prMetadataBillingByok = prMetadataGenerationAllowed && !!prMetadataApiKey;
 
       const wasNewPR = !session.pr_number;
       let prResult = null;
@@ -12469,11 +12715,12 @@ path: /another/changed/view
           pool, session, repoOwner, repoName,
           userMessage, ccSummary: ccText, username: req.user.username,
           broadcast: (event, data) => send(event, data),
-          apiKey: userApiKey,
+          apiKey: prMetadataApiKey,
           userId: req.user.id,
           effectTurnId: durableTurnId,
           effectSessionId: session.id,
           effectBillingByok: prMetadataBillingByok,
+          allowModelGeneration: prMetadataGenerationAllowed,
         });
       } catch (prErr) {
         if (prErr?.retainActiveTurn) throw prErr;

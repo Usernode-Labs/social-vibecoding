@@ -43,6 +43,9 @@ async function migrate(config) {
   await seedStagingAdminConsoleData(pool);
   await seedStagingEnvProposal(pool, config);
   await seedStagingMergedPrs(pool, config);
+  // Must run AFTER seedStagingMergedPrs — its snapshot dates are chosen
+  // so the merged fixtures straddle the newest one (reporting-period).
+  await seedStagingReportSnapshots(pool, config);
   await seedStagingMyOpenPr(pool, config);
   await seedStagingImportedPrProposal(pool, config);
   await seedStagingChecksAdvisoryCard(pool, config);
@@ -72,10 +75,12 @@ async function migrate(config) {
   await seedStagingFailedApp(pool, config);
   await seedStagingForkLineage(pool, config);
   await seedStagingMembersPanel(pool);
+  await seedStagingUserDirectory(pool);
   await seedStagingApproverPanel(pool);
   await seedStagingAppAdminsPanel(pool);
   await seedStagingReadonlyDevTab(pool);
   await seedStagingYourApps(pool, config);
+  await seedStagingBrowseCardBranches(pool, config);
   // Must run AFTER seedStagingYourApps — it features that fixture's apps.
   await seedStagingFeaturedApps(pool);
   await seedStagingAppQuotaUsers(pool);
@@ -2239,6 +2244,107 @@ async function seedStagingMergedPrs(pool, config) {
   });
 }
 
+// Locked report snapshots for the Reporting tab (reporting-period). The
+// period dropdown's previous-report entries and its "Since last report"
+// default are invisible without rows in app_report_snapshots, so seed
+// two on the self-app: one ~30 days old and one ~3 days old. The merged
+// fixtures above span ~6 days, so the 3-day snapshot visibly splits the
+// Done section when a tester picks "Since last report". The recent row
+// carries ai_json (exercising the previousReport input path) and a share
+// token (keeping the Shared tag reviewable); marker class
+// staging-fixture-report in the html is the idempotence check.
+async function seedStagingReportSnapshots(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: appRows } = await pool.query(
+    'SELECT id FROM apps WHERE slug = $1',
+    [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) {
+    log.warn('db', 'Staging report-snapshot fixtures skipped: self-app row missing', {
+      slug: config.selfAppSlug,
+    });
+    return;
+  }
+
+  const { rows: existing } = await pool.query(
+    `SELECT 1 FROM app_report_snapshots
+      WHERE app_id = $1 AND html LIKE '%staging-fixture-report%'
+      LIMIT 1`,
+    [appId]
+  );
+  if (existing.length) return;
+
+  const { rows: users } = await pool.query(
+    'SELECT id FROM users ORDER BY is_admin DESC, id ASC LIMIT 1'
+  );
+  const lockedBy = users[0]?.id || null;
+
+  const doc = (label) => '<!doctype html>\n'
+    + '<html lang="en"><head><meta charset="utf-8"><title>[staging fixture] '
+    + label
+    + '</title></head><body><div class="staging-fixture-report">'
+    + '<h1>[staging fixture] ' + label + '</h1>'
+    + '<p>A locked staging demo report. Real locked reports carry the full '
+    + 'standalone progress document.</p>'
+    + '</div></body></html>\n';
+
+  const fixtures = [
+    {
+      label: 'Progress report — a month ago',
+      daysAgo: 30,
+      ai: {
+        narrative: 'Staging demo narrative: a month ago the app was mid-build, with the first fixtures landing.',
+        highlights: ['Staging demo highlight: the first fixture rows shipped.'],
+        risks: [],
+        owners: [],
+        model: 'claude-haiku-4-5',
+        generatedAt: null,
+        periodStart: null,
+      },
+      token: null,
+    },
+    {
+      label: 'Progress report — a few days ago',
+      daysAgo: 3,
+      ai: {
+        narrative: 'Staging demo narrative: steady momentum this week — several fixture changes merged and more are queued for review.',
+        highlights: [
+          'Staging demo highlight: several fixture improvements merged.',
+          'Staging demo highlight: review queue stayed short.',
+        ],
+        risks: [],
+        owners: [],
+        model: 'claude-haiku-4-5',
+        generatedAt: null,
+        periodStart: null,
+      },
+      // Fixed 32-hex token: obviously fake, satisfies the /reports/:token
+      // format, and the idempotence check above prevents re-insert races
+      // with the UNIQUE constraint.
+      token: '00abcdef00abcdef00abcdef00abcdef',
+    },
+  ];
+
+  for (const f of fixtures) {
+    await pool.query(
+      `INSERT INTO app_report_snapshots
+         (app_id, html, ai_json, locked_by, locked_at, share_token, shared_at)
+       VALUES
+         ($1, $2, $3::jsonb, $4, NOW() - ($5::int * INTERVAL '1 day'), $6,
+          CASE WHEN $6::varchar IS NULL THEN NULL
+               ELSE NOW() - ($5::int * INTERVAL '1 day') END)`,
+      [appId, doc(f.label), JSON.stringify(f.ai), lockedBy, f.daysAgo, f.token]
+    );
+  }
+
+  log.info('db', 'Staging report-snapshot fixtures seeded', {
+    appId,
+    total: fixtures.length,
+  });
+}
+
 // Fixtures for the home screen's "Your active sessions" section.
 // chat_sessions is staging:private (schema-only in staging), so without
 // these the section would be invisible to testers. The section is
@@ -4266,6 +4372,43 @@ async function seedStagingMembersPanel(pool) {
   }
 }
 
+// Fixtures for the user directory (#1195). A fresh staging container's
+// users table holds only the handful of accounts the other seeds create,
+// none of which share a prefix — so a typeahead over it returns one row
+// and demonstrates nothing, and the case-collision branch is unreachable.
+//
+// Two groups, both in the 9000xx range with sentinel passwords that can
+// never log in:
+//   • five 'staging-demo-car*' handles — a common prefix with enough
+//     rows to exercise ordering and, at limit=4, has_more: true.
+//   • 'staging-demo-Nova' / 'staging-demo-nova' — a real case collision.
+//     users.username is UNIQUE but case-SENSITIVE and registration
+//     normalizes nothing, so pairs like this exist in production
+//     (Drea/drea). Looking up 'staging-demo-NOVA' matches neither
+//     exactly and returns the lower id with ambiguous: true.
+// ON CONFLICT DO NOTHING keeps the every-boot re-run idempotent.
+async function seedStagingUserDirectory(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  try {
+    await pool.query(
+      `INSERT INTO users (id, username, password)
+       VALUES
+         (900060, 'staging-demo-carla',    'staging-demo-not-a-login'),
+         (900061, 'staging-demo-carlos',   'staging-demo-not-a-login'),
+         (900062, 'staging-demo-carmen',   'staging-demo-not-a-login'),
+         (900063, 'staging-demo-carter',   'staging-demo-not-a-login'),
+         (900064, 'staging-demo-cargo-bot','staging-demo-not-a-login'),
+         (900065, 'staging-demo-Nova',     'staging-demo-not-a-login'),
+         (900066, 'staging-demo-nova',     'staging-demo-not-a-login')
+       ON CONFLICT DO NOTHING`
+    );
+    log.info('db', 'Staging user-directory fixtures seeded');
+  } catch (err) {
+    log.warn('db', 'Staging user-directory seeding failed', { message: err.message });
+  }
+}
+
 // Fixtures for the reworked Approvers section in the Members &
 // visibility panel: under the default 'anyone' policy the section is
 // hidden while the roster is empty (any ordinary prod-cloned app demos
@@ -4539,6 +4682,159 @@ async function seedStagingYourApps(pool, config) {
     log.info('db', 'Staging your-apps fixtures seeded', { viewers: viewerRows.length });
   } catch (err) {
     log.warn('db', 'Staging your-apps seeding failed', { message: err.message });
+  }
+}
+
+// Fixtures for the two Tier-A surfaces #1120 slice 6 converts: the browse
+// list/detail (features/apps/browse.js + app-card.js) and the notifications
+// drawer's pinned Invites card (features/notifications/notifications.js).
+//
+// Most of what that slice needs is already on this file — seedStaging-
+// Notifications seeds nine kinds plus a pending APPROVER invite,
+// seedStagingYourApps seeds four searchable apps, seedStagingTopochain seeds
+// two seasons with standings and challenges. Two gaps are real, and both are
+// gaps in BRANCH coverage rather than in row count:
+//
+//   1. `AppCard.iconTileFor` picks image > emoji > first-letter, and stamps
+//      the choice on the tile as `data-icon`. Nothing PERSISTED exercises
+//      the image or emoji arm — routes/apps.js's demoIconApps() covers them,
+//      but that is request-time injection behind `?demo=1`, so it never
+//      reaches the browse list a converted component actually renders, and
+//      its rows carry `demo: true` (inert, excluded from the kit drag).
+//      Seeded here: one app per arm, plus a fourth that is `anon_shell =
+//      'gated'` so the requires-login chip has a row of its own.
+//   2. The Invites card renders collaborator and approver invites through
+//      the same component with different verbs. Only the approver arm was
+//      seeded, so half of it has never rendered in a preview.
+//
+// Conventions as elsewhere in this file: fixed ids in an obviously-fake
+// range (9002xx here, clear of the 9000xx/9001xx blocks above), names
+// prefixed 'Staging demo app —', a sentinel non-bcrypt password on the
+// owner so it can never be signed in, ON CONFLICT DO NOTHING throughout,
+// best-effort try/catch so a fixture bug never blocks boot, and a strict
+// no-op outside staging.
+//
+// The `anon_shell_checked_at` on the gated row is stamped a year out for
+// the reason seedStagingLandingDirectory documents: services/shell-probe.js
+// re-probes stale public running apps, and these have no container behind
+// them, so a NOW() stamp would be rewritten to 'unknown' within one sweep.
+async function seedStagingBrowseCardBranches(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  // The same 1×1-ish PNG routes/apps.js serves to the ?demo=1 rows, stored
+  // as a real app_icons blob so /app-icons/:id resolves — the client is
+  // given an icon_url either way, and this makes the persisted path real.
+  //
+  // The id MUST match /^[a-f0-9]{32}$/: src/routes/app-icons.js rejects
+  // anything else with a 404 BEFORE it queries, so a readable id like
+  // 'stagingdemocardicon01' inserts fine, is handed to the client as an
+  // icon_url fine, and then 404s on every screen that renders the app
+  // list — which is a console error on nearly every route.
+  const ICON_PNG = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAABwAAAAcCAYAAAByDd+UAAAAg0lEQVR42r3NuRGAMAwEQNdFbXRAIVRHAyQwDmB4/MjS3QUbb5qn7VBKymxddl2YM1l4ZZLwmdHDb0YNSxktrGWUsJXBw14GDS0ZLLRmkHAkC4ejWSj0ZO7Qm7nCSDYcRrOhEJGZQ1RmCpFZN0RnzZCRVUNWVgyZ2S9kZ69Qkd2hKstOLPva44BQr+EAAAAASUVORK5CYII=',
+    'base64'
+  );
+
+  const APPS = [
+    { id: 900201, slug: 'staging-demo-card-image',  name: 'Staging demo app — image icon',
+      iconId: 'facade00facade00facade00facade01', emoji: null,  anonShell: 'public' },
+    { id: 900202, slug: 'staging-demo-card-emoji',  name: 'Staging demo app — emoji icon',
+      iconId: null, emoji: '🧩', anonShell: 'public' },
+    { id: 900203, slug: 'staging-demo-card-gated',  name: 'Staging demo app — account required',
+      iconId: null, emoji: null,  anonShell: 'gated' },
+    { id: 900204, slug: 'staging-demo-card-letter', name: 'Staging demo app — letter tile',
+      iconId: null, emoji: null,  anonShell: 'public' },
+  ];
+
+  try {
+    const { rows: ownerRows } = await pool.query(
+      'SELECT id FROM users WHERE username = $1', ['staging-demo-user']
+    );
+    const ownerId = ownerRows[0]?.id;
+    if (!ownerId) {
+      log.warn('db', 'Staging browse-card fixtures skipped: staging-demo-user missing');
+      return;
+    }
+
+    for (const app of APPS) {
+      await pool.query(
+        `INSERT INTO apps
+           (id, name, slug, status, view_visibility, created_by,
+            icon_emoji, last_deploy_at, anon_shell, anon_shell_checked_at)
+         VALUES ($1, $2, $3, 'running', 'public', $4, $5,
+                 NOW() - INTERVAL '1 day', $6, NOW() + INTERVAL '1 year')
+         ON CONFLICT (id) DO NOTHING`,
+        [app.id, app.name, app.slug, ownerId, app.emoji, app.anonShell]
+      );
+      // Re-stamp for the same reason the landing fixtures do: ON CONFLICT
+      // skips a row an earlier boot created, and the probe may have
+      // reclassified it since.
+      await pool.query(
+        `UPDATE apps SET anon_shell = $2, anon_shell_checked_at = NOW() + INTERVAL '1 year'
+          WHERE id = $1`,
+        [app.id, app.anonShell]
+      );
+      if (!app.iconId) continue;
+      // app_icons.app_id is UNIQUE — one icon per app — so an icon this seed
+      // wrote under a DIFFERENT id on an earlier boot blocks the insert below
+      // and takes the whole seed down with it. Staging's database outlives its
+      // deploys, so that is the ordinary case whenever the id changes, not a
+      // hypothetical.
+      await pool.query(
+        'DELETE FROM app_icons WHERE app_id = $1 AND id <> $2', [app.id, app.iconId]
+      );
+      await pool.query(
+        `INSERT INTO app_icons (id, app_id, content_type, data, sha256)
+         VALUES ($1, $2, 'image/png', $3, $4)
+         ON CONFLICT (id) DO NOTHING`,
+        [app.iconId, app.id, ICON_PNG,
+          crypto.createHash('sha256').update(ICON_PNG).digest('hex')]
+      );
+      await pool.query(
+        'UPDATE apps SET icon_image_id = $2 WHERE id = $1', [app.id, app.iconId]
+      );
+    }
+
+    // The same viewer set seedStagingYourApps grants to: the interactive
+    // admin login plus the two capture identities, so the fixtures are in
+    // the before/after screenshots and in the declared dapp.json checks.
+    const { rows: viewerRows } = await pool.query(
+      'SELECT id FROM users WHERE username = ANY($1::text[])',
+      [[config.adminUsername, 'usernode-capture', 'usernode-capture-admin']]
+    );
+    for (const { id: viewerId } of viewerRows) {
+      for (const app of APPS) {
+        await pool.query(
+          `INSERT INTO app_favorites (app_id, user_id, sort_order)
+           SELECT $1, $2, $3 WHERE EXISTS (SELECT 1 FROM apps WHERE id = $1)
+           ON CONFLICT (app_id, user_id) DO NOTHING`,
+          [app.id, viewerId, 10 + APPS.indexOf(app)]
+        );
+      }
+      // Gap 2: the collaborator arm of the Invites card. Status 'invited'
+      // grants no access — it is exactly the pending row the card offers
+      // Accept / Decline on — and the notification beside it is the badge
+      // bump plus the history entry, matching how seedStagingNotifications
+      // pairs the two for the approver arm.
+      await pool.query(
+        `INSERT INTO app_collaborators (app_id, user_id, status, invited_by)
+         VALUES (900201, $1, 'invited', $2)
+         ON CONFLICT (app_id, user_id) DO NOTHING`,
+        [viewerId, ownerId]
+      );
+      await pool.query(
+        `INSERT INTO notifications
+           (user_id, app_id, source_user_id, kind, created_at)
+         SELECT $1, 900201, $2, 'collab_invite', NOW() - INTERVAL '2 minutes'
+          WHERE NOT EXISTS (
+            SELECT 1 FROM notifications
+             WHERE user_id = $1 AND app_id = 900201 AND kind = 'collab_invite')`,
+        [viewerId, ownerId]
+      );
+    }
+    log.info('db', 'Staging browse-card fixtures seeded', { viewers: viewerRows.length });
+  } catch (err) {
+    log.warn('db', 'Staging browse-card seeding failed', { message: err.message });
   }
 }
 
@@ -8838,6 +9134,42 @@ async function seedStagingTopicAttributes(pool, config) {
   const appId = appRows[0]?.id;
   if (!appId) return;
 
+  const { rows: users } = await pool.query(
+    `SELECT id, username FROM users ORDER BY is_admin DESC, id ASC LIMIT 3`
+  );
+  if (!users.length) return;
+  const u0 = users[0];
+  const u1 = users[1] || users[0];
+  const u2 = users[2] || users[0];
+
+  // #1187: the assignee picker is a TOGGLE — clicking your own pick
+  // withdraws it. Make that state URL-reachable for checks/screenshots:
+  // real assignee votes on mock issue 900009 (the card the existing
+  // shot=card-menu&row=assignee deep link opens), cast BY the two capture
+  // identities — proposal checks run as usernode-capture-admin and
+  // screenshots as usernode-capture (services/visuals.js), so keying the
+  // votes to those rows (not "the first admins", which a prod-cloned DB
+  // orders differently) is what guarantees the picker opens with the
+  // VIEWER's own pick checked and re-clickable for both. The value is the
+  // obviously-fake staging-demo-user, matching the synthetic summaries the
+  // demo feed paints. Mock issue numbers are safe targets:
+  // topic_attribute_votes carries no FK to issues.
+  const { rows: capRows } = await pool.query(
+    `SELECT id FROM users
+      WHERE username IN ('usernode-capture', 'usernode-capture-admin')
+      ORDER BY id ASC`
+  );
+  for (let i = 0; i < capRows.length; i++) {
+    await pool.query(
+      `INSERT INTO topic_attribute_votes
+         (app_id, target_type, target_ref, field, value, user_id, created_at)
+       VALUES ($1, 'issue', 900009, 'assignee', 'staging-demo-user', $2,
+               NOW() - ($3 || ' minutes')::interval)
+       ON CONFLICT (app_id, target_type, target_ref, field, user_id) DO NOTHING`,
+      [appId, capRows[i].id, String(26 - i)]
+    );
+  }
+
   const { rows: sessRows } = await pool.query(
     `SELECT id FROM chat_sessions
       WHERE app_id = $1 AND branch_name = $2 LIMIT 1`,
@@ -8848,14 +9180,6 @@ async function seedStagingTopicAttributes(pool, config) {
     return;
   }
   const sessionId = sessRows[0].id;
-
-  const { rows: users } = await pool.query(
-    `SELECT id, username FROM users ORDER BY is_admin DESC, id ASC LIMIT 3`
-  );
-  if (!users.length) return;
-  const u0 = users[0];
-  const u1 = users[1] || users[0];
-  const u2 = users[2] || users[0];
 
   // priority: u0 + u1 → 'high' (clear winner, includes the viewer), u2 → 'low'.
   // assignee: u0 + u1 → @<u1.username> (winner), u2 → @<u0.username>.

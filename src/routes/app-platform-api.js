@@ -5,6 +5,7 @@ const { rateLimit } = require('express-rate-limit');
 const { appPlatformAuth } = require('../middleware/app-llm-auth');
 const { getPool } = require('../db/pool');
 const governance = require('../services/governance');
+const userDirectory = require('../services/user-directory');
 const log = require('../services/logger');
 const { currentVotePredicateSql } = require('../services/pr-vote-revision');
 
@@ -87,6 +88,85 @@ function appPlatformApiRoutes(config) {
   });
 
   const auth = appPlatformAuth(pool);
+
+  // ── User directory (issue #1195) ──────────────────────────────────
+  //
+  //   GET /api/app-platform/users/lookup?username=<handle>
+  //   GET /api/app-platform/users/search?q=<prefix>[&limit=]
+  //
+  // "Does this Usernode handle exist?", so an app can validate an invite
+  // or @-mention against the real platform roster instead of guessing
+  // from the users it has already seen.
+  //
+  // Unlike the governance feed these read PLATFORM-WIDE state rather than
+  // the calling app's own row, so they take the user-token variant of the
+  // auth middleware: every lookup is attributable to a signed-in user of
+  // this app, and the limiter keys on (app, user) so one app's chatty
+  // user can't exhaust the budget for the rest.
+  //
+  // The reply is `{ id, username }` and nothing else — see the projection
+  // note in services/user-directory.js. Existence of a handle is already
+  // public (every username is a route key at /u/<username>); no profile
+  // data, no email, no app-membership signal is inferable from either
+  // endpoint.
+  const directoryAuth = appPlatformAuth(pool, { requireUser: true });
+
+  const directoryLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 120,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    // Per (app, user): a typeahead fires per keystroke, and one app's
+    // heavy user must not rate-limit that app's other users.
+    keyGenerator: (req) => `app:${req.appPlatform?.appId || 'anon'}` +
+      `:user:${req.appPlatform?.userId || 'anon'}`,
+    handler: (req, res) => {
+      log.warn('app-platform-api', 'Directory rate-limited', {
+        appId: req.appPlatform?.appId, userId: req.appPlatform?.userId,
+      });
+      res.status(429).json({ ok: false, code: 'rate_limited' });
+    },
+  });
+
+  router.get('/api/app-platform/users/lookup', directoryAuth, directoryLimiter,
+    async (req, res) => {
+      const { appId } = req.appPlatform;
+      const username = userDirectory.normalizeUsername(req.query.username);
+      if (username === null) {
+        // Distinct from a miss: a miss is a 200 with found:false, so an
+        // app can tell "no such handle" from "you sent nonsense".
+        return res.status(400).json({
+          ok: false,
+          code: 'bad_request',
+          message: 'username is required (1-255 characters).',
+        });
+      }
+      try {
+        const result = await userDirectory.lookupExact(pool, username);
+        const body = { found: result.found, user: result.user };
+        // Only present when it's true — a case-collided pair matched and
+        // the caller should ask which one they meant.
+        if (result.ambiguous) body.ambiguous = true;
+        res.json(body);
+      } catch (err) {
+        log.error('app-platform-api', 'User lookup failed', { appId, message: err.message });
+        res.status(500).json({ ok: false, error: 'Internal server error' });
+      }
+    });
+
+  router.get('/api/app-platform/users/search', directoryAuth, directoryLimiter,
+    async (req, res) => {
+      const { appId } = req.appPlatform;
+      try {
+        const { users, hasMore } = await userDirectory.searchPrefix(
+          pool, req.query.q, req.query.limit
+        );
+        res.json({ users, has_more: hasMore });
+      } catch (err) {
+        log.error('app-platform-api', 'User search failed', { appId, message: err.message });
+        res.status(500).json({ ok: false, error: 'Internal server error' });
+      }
+    });
 
   router.get('/api/app-platform/governance/feed', auth, feedLimiter, async (req, res) => {
     const { appId } = req.appPlatform;
