@@ -156,6 +156,21 @@ test('platformStagingEnv: carries the identity trio + PORT + USERNODE_ENV', () =
   assert.equal(env.USERNODE_ENV, 'staging');
 });
 
+// #1213: previews get the app-platform API's BASE URL so their server can
+// reach the user-directory endpoints with the caller's forwarded iframe
+// token — but never any credential. This is the assertion that keeps a
+// future edit from leaking a token into unreviewed PR containers.
+test('platformStagingEnv: carries USERNODE_PLATFORM_API_URL and NO platform credential', () => {
+  const env = platformStagingEnv({ id: 7 }, { iframeJwtPublicKey: PEM_A });
+  assert.match(env.USERNODE_PLATFORM_API_URL, /\/api\/app-platform$/);
+  for (const key of [
+    'USERNODE_LLM_PROXY_TOKEN', 'USERNODE_LLM_PROXY_URL',
+    'USERNODE_STORAGE_TOKEN', 'USERNODE_STORAGE_URL',
+  ]) {
+    assert.equal(key in env, false, `${key} must never reach a preview`);
+  }
+});
+
 test('platformStagingEnv: never carries DATABASE_URL or app-declared secrets', () => {
   const env = platformStagingEnv({ id: 7 }, { iframeJwtPublicKey: PEM_A });
   // DATABASE_URL holds a per-clone random password — including it would make

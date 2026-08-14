@@ -109,7 +109,19 @@ function appPlatformApiRoutes(config) {
   // public (every username is a route key at /u/<username>); no profile
   // data, no email, no app-membership signal is inferable from either
   // endpoint.
-  const directoryAuth = appPlatformAuth(pool, { requireUser: true });
+  //
+  // allowUserTokenOnly (#1213): staging previews hold the API's base URL
+  // but no app token, so these two routes — and ONLY these — also accept
+  // the caller's forwarded iframe token on its own. The token's audience
+  // names the app it was minted for and the signature is verified against
+  // that audience, so a preview gains exactly what its reviewer's browser
+  // already has through the shell relay (/api/app-directory/users/*): a
+  // per-user, ~1h, app-pinned read. The governance feed keeps the plain
+  // app-token auth below.
+  const directoryAuth = appPlatformAuth(pool, {
+    requireUser: true,
+    allowUserTokenOnly: true,
+  });
 
   const directoryLimiter = rateLimit({
     windowMs: 60 * 1000,

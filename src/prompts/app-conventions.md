@@ -1542,26 +1542,42 @@ person is. There is no email, no display name, no avatar, no locale, no
 "which apps are they in" — don't build a feature that needs them from
 here.
 
-### From your server (production)
+### From your server (production AND staging previews)
 
-Same credential and the same absence-detection as the governance feed
-above — `USERNODE_PLATFORM_API_URL` + `USERNODE_LLM_PROXY_TOKEN` —
-**plus** the caller's identity token, because these read platform-wide
-data rather than your own app's row:
+`USERNODE_PLATFORM_API_URL` is injected into **both** production and
+staging containers (unlike every other platform credential pair), so
+one server-side code path covers both environments. The header rule:
+
+- **Production** — send `x-usernode-app-token`
+  (`USERNODE_LLM_PROXY_TOKEN`) **and** `x-usernode-user-token` (the
+  caller's forwarded iframe token), because these read platform-wide
+  data rather than your own app's row.
+- **Staging previews** — the app token env var is absent (unreviewed PR
+  code never holds a credential); send **only**
+  `x-usernode-user-token`. The platform authenticates the lookup from
+  the token itself — it was minted for this exact app and this exact
+  signed-in reviewer.
+
+One code path, one conditional header:
 
 ```js
+const headers = { 'x-usernode-user-token': userTokenFromThisRequest };
+if (process.env.USERNODE_LLM_PROXY_TOKEN) {
+  headers['x-usernode-app-token'] = process.env.USERNODE_LLM_PROXY_TOKEN;
+}
 const resp = await fetch(
   `${process.env.USERNODE_PLATFORM_API_URL}/users/lookup` +
   `?username=${encodeURIComponent(handle)}`,
-  {
-    headers: {
-      'x-usernode-app-token': process.env.USERNODE_LLM_PROXY_TOKEN,
-      'x-usernode-user-token': userTokenFromThisRequest,
-    },
-  }
+  { headers }
 );
 const { found, user, ambiguous } = await resp.json();
 ```
+
+This user-token-only fallback exists **only** on the two `/users/*`
+endpoints. The governance feed still requires the app token, so its
+`FEED_ENABLED` check above (which ANDs `USERNODE_PLATFORM_API_URL`
+**and** `USERNODE_LLM_PROXY_TOKEN`) remains correct and required — a
+URL-only check would try the feed in previews and get a 401.
 
 Responses:
 
@@ -1587,9 +1603,9 @@ handle for the session rather than re-asking. On
 ### From your frontend (works in staging too)
 
 The hosted bridge relays both calls through the platform shell using the
-signed-in user's own session, so **no token is involved** — which means
-this path works in **staging previews**, where the server-side route
-above cannot (staging containers get no platform token at all):
+signed-in user's own session, so **no token is involved**. It works in
+**staging previews** too, and stays the right default for a typeahead —
+no server hop per keystroke:
 
 ```js
 const { found, user } = await usernode.lookupUser('alice');

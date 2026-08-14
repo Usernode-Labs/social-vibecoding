@@ -105,9 +105,12 @@ async function lookupExact(pool, username) {
   };
 }
 
-// Case-insensitive PREFIX search. Prefix-only on purpose: LIKE 'q%' uses
-// the index and matches what the platform's own typeahead has always
-// done, while LIKE '%q%' turns every keystroke into a table scan.
+// Case-insensitive PREFIX search. Prefix-only on purpose: LIKE 'q%' is
+// servable by an index — idx_users_username_lower_pattern on
+// LOWER(username) in schema.sql (#1213); text_pattern_ops because a
+// non-C collation's default opclass cannot turn a LIKE prefix into an
+// index range — and matches what the platform's own typeahead has
+// always done, while LIKE '%q%' turns every keystroke into a table scan.
 //
 // `excludeAppId` filters out users who already hold any app_collaborators
 // row (member or invited) on that app — used only by the platform's own
