@@ -2232,9 +2232,15 @@ const App = {
       }
       if (parts[0] === 'messages') {
         // Platform-wide conversations. A malformed/oversized id degrades to
-        // the list without ever reaching a fetch URL.
+        // the list without ever reaching a fetch URL. Conversations use
+        // SERIAL ids, so keep their signed-int32 bound local to this route;
+        // _numericSegment also serves BIGSERIAL-backed Topochain routes.
         App.setChromeless(false);
-        App.navigateToMessages(App._numericSegment(parts[1]));
+        const conversationId = App._numericSegment(parts[1]);
+        App.navigateToMessages(
+          conversationId != null && conversationId <= 2147483647
+            ? conversationId : null
+        );
         return;
       }
       if (parts[0] === 'topochain') {
@@ -2640,7 +2646,7 @@ const App = {
   _numericSegment(raw) {
     if (!raw) return null;
     const n = Number(raw);
-    return Number.isInteger(n) && n > 0 && n <= 2147483647 ? n : null;
+    return Number.isSafeInteger(n) && n > 0 ? n : null;
   },
 
   navigateToLeaderboard(sub, profileUser, challengeTarget) {

@@ -31,11 +31,16 @@ test('Messages is a hidden React-owned top-level screen with global navigation',
     === '#drawer-row-profile + #drawer-row-messages + #drawer-row-leaderboard + #drawer-row-settings + #drawer-row-admin'));
   assert.match(screen, /useVisibilityHiddenClass\(screenRef, 'messages-screen', false\)/);
   assert.match(app, /REACT_SCREEN_IDS:[\s\S]*?'messages-screen'/);
-  assert.match(app, /parts\[0\] === 'messages'[\s\S]{0,300}navigateToMessages/);
+  assert.match(app, /parts\[0\] === 'messages'[\s\S]{0,600}navigateToMessages/);
 });
 
 test('deep links validate ids and route list/thread without a client events socket send', () => {
-  assert.match(app, /navigateToMessages\(App\._numericSegment\(parts\[1\]\)\)/);
+  const routeStart = app.indexOf("if (parts[0] === 'messages')");
+  const messagesRoute = app.slice(routeStart, app.indexOf("if (parts[0] === 'topochain')", routeStart));
+  assert.match(messagesRoute, /const conversationId = App\._numericSegment\(parts\[1\]\)/);
+  assert.match(messagesRoute, /conversationId != null && conversationId <= 2147483647/,
+    'SERIAL conversation ids retain their signed-int32 bound without constraining other hash routes');
+  assert.match(messagesRoute, /App\.navigateToMessages\(/);
   assert.match(api, /id <= MAX_ID/);
   assert.match(store, /const target = validId\(conversationId\) \? `#messages\/\$\{conversationId\}` : '#messages'/);
   assert.match(store, /api\.setTyping\(conversationId, typing\)/,
