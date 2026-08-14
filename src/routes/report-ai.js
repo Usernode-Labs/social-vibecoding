@@ -22,7 +22,18 @@ function publicShape(summary) {
     owners: summary.owners,
     model: summary.model,
     generatedAt: summary.generatedAt,
+    periodStart: summary.periodStart || null,
   };
+}
+
+// The report period start (reporting-period). Absent/empty means "all
+// history"; anything else must parse to a real, non-future date. Returns
+// { since } (ISO or null) or { error } for a 400.
+function parseSince(raw) {
+  if (raw == null || raw === '') return { since: null };
+  const t = Date.parse(String(raw));
+  if (!Number.isFinite(t) || t > Date.now()) return { error: 'Invalid report period start date' };
+  return { since: new Date(t).toISOString() };
 }
 
 function reportAiRoutes(config) {
@@ -34,11 +45,16 @@ function reportAiRoutes(config) {
     try {
       const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'view', APP_COLS);
       if (!app) return res.status(404).json({ error: 'App not found' });
+      const parsed = parseSince(req.query.since);
+      if (parsed.error) return res.status(400).json({ error: parsed.error });
       const cached = await reportAi.getCached(pool, app.id);
       if (!cached) return res.json({ summary: null, stale: false });
       let stale = false;
       try {
-        const { input } = await reportAi.buildReportInput(pool, app);
+        // The staleness hash is computed against the same period the
+        // client is looking at, so a cache generated for another period
+        // reads as stale rather than silently current.
+        const { input } = await reportAi.buildReportInput(pool, app, { since: parsed.since });
         stale = reportAi.fingerprint(input) !== cached.inputHash;
       } catch (err) {
         // Staleness is a hint; a fetch hiccup must not hide the summary.
@@ -55,8 +71,10 @@ function reportAiRoutes(config) {
     try {
       const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'view', APP_COLS);
       if (!app) return res.status(404).json({ error: 'App not found' });
+      const parsed = parseSince(req.body && req.body.since);
+      if (parsed.error) return res.status(400).json({ error: parsed.error });
       const { summary, cached } = await reportAi.generateForApp({
-        pool, config, app, userId: req.user.id,
+        pool, config, app, userId: req.user.id, since: parsed.since,
       });
       res.json({ summary: publicShape(summary), cached });
     } catch (err) {

@@ -43,6 +43,9 @@ async function migrate(config) {
   await seedStagingAdminConsoleData(pool);
   await seedStagingEnvProposal(pool, config);
   await seedStagingMergedPrs(pool, config);
+  // Must run AFTER seedStagingMergedPrs — its snapshot dates are chosen
+  // so the merged fixtures straddle the newest one (reporting-period).
+  await seedStagingReportSnapshots(pool, config);
   await seedStagingMyOpenPr(pool, config);
   await seedStagingImportedPrProposal(pool, config);
   await seedStagingChecksAdvisoryCard(pool, config);
@@ -2238,6 +2241,107 @@ async function seedStagingMergedPrs(pool, config) {
     appId,
     total: fixtures.length,
     inserted,
+  });
+}
+
+// Locked report snapshots for the Reporting tab (reporting-period). The
+// period dropdown's previous-report entries and its "Since last report"
+// default are invisible without rows in app_report_snapshots, so seed
+// two on the self-app: one ~30 days old and one ~3 days old. The merged
+// fixtures above span ~6 days, so the 3-day snapshot visibly splits the
+// Done section when a tester picks "Since last report". The recent row
+// carries ai_json (exercising the previousReport input path) and a share
+// token (keeping the Shared tag reviewable); marker class
+// staging-fixture-report in the html is the idempotence check.
+async function seedStagingReportSnapshots(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: appRows } = await pool.query(
+    'SELECT id FROM apps WHERE slug = $1',
+    [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) {
+    log.warn('db', 'Staging report-snapshot fixtures skipped: self-app row missing', {
+      slug: config.selfAppSlug,
+    });
+    return;
+  }
+
+  const { rows: existing } = await pool.query(
+    `SELECT 1 FROM app_report_snapshots
+      WHERE app_id = $1 AND html LIKE '%staging-fixture-report%'
+      LIMIT 1`,
+    [appId]
+  );
+  if (existing.length) return;
+
+  const { rows: users } = await pool.query(
+    'SELECT id FROM users ORDER BY is_admin DESC, id ASC LIMIT 1'
+  );
+  const lockedBy = users[0]?.id || null;
+
+  const doc = (label) => '<!doctype html>\n'
+    + '<html lang="en"><head><meta charset="utf-8"><title>[staging fixture] '
+    + label
+    + '</title></head><body><div class="staging-fixture-report">'
+    + '<h1>[staging fixture] ' + label + '</h1>'
+    + '<p>A locked staging demo report. Real locked reports carry the full '
+    + 'standalone progress document.</p>'
+    + '</div></body></html>\n';
+
+  const fixtures = [
+    {
+      label: 'Progress report — a month ago',
+      daysAgo: 30,
+      ai: {
+        narrative: 'Staging demo narrative: a month ago the app was mid-build, with the first fixtures landing.',
+        highlights: ['Staging demo highlight: the first fixture rows shipped.'],
+        risks: [],
+        owners: [],
+        model: 'claude-haiku-4-5',
+        generatedAt: null,
+        periodStart: null,
+      },
+      token: null,
+    },
+    {
+      label: 'Progress report — a few days ago',
+      daysAgo: 3,
+      ai: {
+        narrative: 'Staging demo narrative: steady momentum this week — several fixture changes merged and more are queued for review.',
+        highlights: [
+          'Staging demo highlight: several fixture improvements merged.',
+          'Staging demo highlight: review queue stayed short.',
+        ],
+        risks: [],
+        owners: [],
+        model: 'claude-haiku-4-5',
+        generatedAt: null,
+        periodStart: null,
+      },
+      // Fixed 32-hex token: obviously fake, satisfies the /reports/:token
+      // format, and the idempotence check above prevents re-insert races
+      // with the UNIQUE constraint.
+      token: '00abcdef00abcdef00abcdef00abcdef',
+    },
+  ];
+
+  for (const f of fixtures) {
+    await pool.query(
+      `INSERT INTO app_report_snapshots
+         (app_id, html, ai_json, locked_by, locked_at, share_token, shared_at)
+       VALUES
+         ($1, $2, $3::jsonb, $4, NOW() - ($5::int * INTERVAL '1 day'), $6,
+          CASE WHEN $6::varchar IS NULL THEN NULL
+               ELSE NOW() - ($5::int * INTERVAL '1 day') END)`,
+      [appId, doc(f.label), JSON.stringify(f.ai), lockedBy, f.daysAgo, f.token]
+    );
+  }
+
+  log.info('db', 'Staging report-snapshot fixtures seeded', {
+    appId,
+    total: fixtures.length,
   });
 }
 
