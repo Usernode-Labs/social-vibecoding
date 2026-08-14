@@ -39,7 +39,10 @@ test('every protected MCP API checks local readiness before credential lookup', 
 
 test('proposal guidance requires a shallow checkout pinned to the exact base SHA', () => {
   const root = path.resolve(__dirname, '..');
-  const guidance = require('node:fs').readFileSync(path.join(root, 'AGENTS.md'), 'utf8');
+  const guidance = require('node:fs').readFileSync(
+    path.join(root, '.agents', 'skills', 'usernode-proposal', 'SKILL.md'),
+    'utf8'
+  );
   const spec = require('node:fs').readFileSync(
     path.join(root, 'CLI-MCP-AUTH-SPEC.md'),
     'utf8'
@@ -47,7 +50,7 @@ test('proposal guidance requires a shallow checkout pinned to the exact base SHA
   const cli = require('node:fs').readFileSync(path.join(root, 'src/cli/main.js'), 'utf8');
 
   for (const [label, source] of [
-    ['agent guidance', guidance],
+    ['proposal skill', guidance],
     ['auth spec', spec],
     ['MCP initialization instructions', cli],
   ]) {
