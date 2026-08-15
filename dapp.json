@@ -575,6 +575,11 @@
       "expectText": "Paused"
     },
     {
+      "name": "Dev board: an issue whose proposal is up for a vote is still ON the board (#1251)",
+      "path": "/?demo=1&view=kanban&col=inprogress#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-kanban-col-inprogress [data-issue-row=\"900017\"]"
+    },
+    {
       "name": "Dev board: an auto-solve run that asked a question says so (#1112)",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#dev-body [data-issue-row=\"900015\"] .dev-badge[data-work-state=\"answer_needed\"]",
