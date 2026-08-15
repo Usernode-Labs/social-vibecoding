@@ -201,8 +201,11 @@ test('staging ?demo=1 attaches synthetic headless to mocks 900003/900005/900015/
     // staging attribute-enrichment block leaves alone so the 'no grey
     // placeholder chips' rule is reviewable — and 900014/900015/900016 in
     // #1112 to make the paused / answer-needed / draft-ready work states
-    // independently reviewable).
-    assert.strictEqual(body.issues.length, 21);
+    // independently reviewable, and 900017 in #1251 — the untouched row
+    // mock proposal 9000013 links to, so "an issue with an open proposal
+    // is still on the board" is reviewable without any other work state
+    // muddying it).
+    assert.strictEqual(body.issues.length, 22);
 
     const generating = byNumber.get(900003).headless;
     assert.ok(generating, '900003 carries synthetic headless state');

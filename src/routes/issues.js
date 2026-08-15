@@ -251,6 +251,18 @@ function stagingMockIssues(repoUrl) {
       'Staging-only mock issue for previewing the #1112 "Draft ready to '
       + 'review" work state. Its synthetic headless run finished with a '
       + 'draft, and no other staging fixture shares this issue number.', 17),
+    // #1251: the row that makes the fix reviewable. Mock proposal 9000013
+    // declares this number in linked_issues and NOTHING else touches it —
+    // no session, no claim, no synthetic headless state — so before the fix
+    // it appeared in the list feed and in no kanban column at all, and
+    // after it sits in In progress alongside its proposal in In review.
+    // Every other mock issue is already in-progress for some other reason,
+    // which is why this needs a number of its own.
+    mk(900017, '[Mock] Issue with an open proposal against it',
+      'Staging-only mock issue for previewing #1251: an issue whose work '
+      + 'is already up for a vote. It must appear on the kanban board (In '
+      + 'progress) as well as in the list view — the proposal card in In '
+      + 'review is not the only place it exists.', 8),
   ];
 }
 

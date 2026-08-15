@@ -4362,13 +4362,13 @@ const AppView = {
   //     sharedSessions — OTHER users' shared (shared_at-set) sessions
   //
   // Returns { issues, inProgress, inReview, done }:
-  //   issues     — open issues with no proposal yet (headless none/failed/
-  //                absent) AND not linked to any open promoted proposal
+  //   issues     — open issues with no work under way on them (headless
+  //                none/failed/absent, no claim, no live linked session)
   //   inProgress — TYPED entries {kind:'my-session'|'issue'|'shared-session',
   //                item}: the viewer's sessions pinned first (most recent
-  //                activity first), then issues whose headless proposal is
-  //                generating/ready (same dedup as before), then other
-  //                users' shared sessions (oldest-shared first)
+  //                activity first), then issues with work under way —
+  //                including issues an open promoted proposal addresses —
+  //                then other users' shared sessions (oldest-shared first)
   //   inReview   — [{kind:'proposal'|'gov', item}] sorted by pin-rank then
   //                recency, exactly as the list feed's proposal group
   //   done       — merged proposals, most-recent-activity first
@@ -4399,8 +4399,16 @@ const AppView = {
       return 3;
     };
 
-    // Issue numbers already represented by an open promoted proposal card
-    // (Column 3) — kept out of the issue columns so they don't double up.
+    // Issue numbers an open promoted proposal card (Column 3) addresses.
+    // #1251: these used to be dropped from BOTH issue columns so they
+    // wouldn't "double up" with the proposal card — but the board is the
+    // only view that did that. The list feed renders the issue card AND
+    // the proposal card (_feedItems has no such dedup), and so does the PM
+    // view, so an issue with an open proposal was visible in the list and
+    // findable nowhere on the board — it survived only as a "Closes #N"
+    // chip on the proposal card. It now stays on the board, in the In
+    // progress column: an open proposal IS work under way, and the two
+    // cards never share a column, so nothing doubles up within one.
     const linked = new Set();
     for (const p of proposals) {
       const arr = Array.isArray(p.linked_issues) ? p.linked_issues : [];
@@ -4413,11 +4421,16 @@ const AppView = {
     const col1 = [];
     const col2 = [];
     for (const i of issues) {
-      if (linked.has(i.number)) continue;
       // Any live work routes the issue to the In-progress column: a
       // headless run (the historical rule), a live linked dev session,
-      // or a manual claim — the shared _issueInProgress predicate.
-      if (AppView._issueInProgress(i)) col2.push(i);
+      // or a manual claim — the shared _issueInProgress predicate — plus
+      // an open promoted proposal against it (#1251). The proposal case is
+      // named explicitly rather than left to _issueInProgress: the server
+      // sets `in_progress` from the same promoted session in the ordinary
+      // case, but a headless-authored proposal isn't in that query, and an
+      // issue with a live proposal must never sit in "Issues" inviting
+      // someone to start the work over.
+      if (linked.has(i.number) || AppView._issueInProgress(i)) col2.push(i);
       else col1.push(i);
     }
     col1.sort((a, b) => issueT(b) - issueT(a));
@@ -5122,11 +5135,10 @@ const AppView = {
     buckets.inReview = AppView._applyManualOrder(
       buckets.inReview, order.review, (c) => AppView._cardOrderKey('review', c));
 
-    // #482: apply the filter bar AFTER bucketing, per column. Filtering
-    // the inputs instead would resurrect issues whose open proposal was
-    // filtered out (the bucketer dedups linked_issues out of the issue
-    // columns), so post-bucket filtering keeps every card's lifecycle
-    // placement identical to the unfiltered board.
+    // #482: apply the filter bar AFTER bucketing, per column, so every
+    // card's lifecycle placement stays identical to the unfiltered board —
+    // filtering the inputs instead would let a hidden proposal change
+    // which column its issue lands in.
     const f = AppView._kanbanFilters || {};
     const filtering = AppView._kanbanFiltersActive();
     const kIssues = filtering
@@ -6094,8 +6106,23 @@ const AppView = {
     // ── In progress ──────────────────────────────────────────────────
     const review = [];
     const gov = [];
+    // #1251: issue numbers the Awaiting-review section already accounts for,
+    // via the proposal that closes them. The BOARD deliberately shows such
+    // an issue in its In progress column — a column is a place you go
+    // looking for your issue, and dropping it there left it findable
+    // nowhere. A report is a document you read top to bottom, where the
+    // same work under two headings reads as two pieces of work and inflates
+    // the counts, so the report keeps the one-entity-one-section rule and
+    // filters them out below.
+    const reviewedIssues = new Set();
     for (const entry of buckets.inReview) {
       const it = entry.item || {};
+      if (entry.kind === 'proposal' && Array.isArray(it.linked_issues)) {
+        for (const n of it.linked_issues) {
+          const parsed = parseInt(n, 10);
+          if (Number.isFinite(parsed)) reviewedIssues.add(parsed);
+        }
+      }
       if (entry.kind === 'gov') {
         gov.push({
           kind: 'gov',
@@ -6133,6 +6160,8 @@ const AppView = {
     for (const entry of buckets.inProgress) {
       const it = entry.item || {};
       if (entry.kind === 'issue') {
+        // Counted under Awaiting review already — see reviewedIssues above.
+        if (it.number != null && reviewedIssues.has(it.number)) continue;
         const ip = it.in_progress || null;
         const people = [];
         const push = (u) => { if (u && !people.includes(u)) people.push(u); };

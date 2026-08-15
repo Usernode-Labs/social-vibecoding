@@ -13,9 +13,12 @@
 // The three properties worth locking in beyond the mapping itself:
 //
 //   * The three sections are MUTUALLY EXCLUSIVE. The model delegates
-//     classification to _bucketDevItems, which already drops issues linked
-//     to an open proposal and routes in-progress issues away from the plain
-//     issue column — so no entity can appear twice.
+//     classification to _bucketDevItems, which routes in-progress issues
+//     away from the plain issue column. Issues an open proposal closes are
+//     the one case the model handles ITSELF (#1251): the board shows such
+//     an issue in its In progress column, because a column is somewhere you
+//     go looking for your issue, but a report read top to bottom would
+//     print the same work twice and inflate its counts.
 //   * The report markup carries NONE of the delegated-click hooks
 //     (data-issue-row / data-proposal-row / data-gov-row /
 //     data-session-chip). #dev-body's delegated handler fires card actions
@@ -235,6 +238,29 @@ test('no entity appears in two sections', () => {
   assert.deepEqual(backlogNums, [9]);
   // No number is in both lists.
   assert.equal(backlogNums.filter((n) => workNums.includes(n)).length, 0);
+});
+
+// #1251: the exclusion above is the REPORT's own, not something the
+// bucketer does for it. The board deliberately keeps #7 on screen, so a
+// future "simplify" that deletes the report's filter would silently start
+// printing it under two headings — this pins both halves at once.
+test('an issue its proposal closes is on the board but not twice in the report', () => {
+  const AppView = makeAppView();
+  const issues = [issue({ number: 7 })];
+  const proposals = [prop({ id: 100, linked_issues: [7] })];
+
+  const buckets = AppView._bucketDevItems({
+    issues, proposals, gov: [], merged: [], mySessions: [], sharedSessions: [],
+  });
+  const boardIssues = Array.from(buckets.inProgress)
+    .filter((e) => e.kind === 'issue')
+    .map((e) => e.item.number);
+  assert.deepEqual(boardIssues, [7], 'the board keeps it in In progress');
+
+  const m = build(AppView, { issues, proposals, merged: [], mergedTotal: 0 });
+  assert.deepEqual(numbers(m.inProgress.issues), [], 'the report does not repeat it');
+  assert.equal(m.summary.awaitingReview, 1);
+  assert.equal(m.summary.beingWorkedOn, 0, 'and does not double-count it');
 });
 
 test('backlog groups by voted priority: high, medium, low, then unset', () => {

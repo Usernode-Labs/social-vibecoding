@@ -1,9 +1,10 @@
 // Kanban view-mode: AppView._bucketDevItems() sorts the cached dev data
 // into the four lifecycle columns shown on the board:
 //
-//   issues     — open GitHub issues with NO proposal yet (headless none/
-//                failed/absent) and not linked to an open promoted proposal
-//   inProgress — open issues whose headless proposal is generating/ready
+//   issues     — open GitHub issues with no work under way (headless none/
+//                failed/absent, no claim, no live session, no proposal)
+//   inProgress — open issues with work under way: a generating/ready
+//                headless run, a claim/live session, or an open proposal
 //   inReview   — promoted PR proposals + governance proposals
 //   done       — merged proposals
 //
@@ -117,23 +118,54 @@ test('headless none/failed/absent → Issues; generating/ready → In progress',
   assert.deepEqual(inProgOf(b.inProgress).sort(), ['issue:3', 'issue:4']);
 });
 
-test('issues linked to an open promoted proposal are excluded from both issue columns', () => {
+// #1251: an issue an open promoted proposal addresses stays ON the board,
+// in the In progress column. It used to be dropped from both issue columns
+// — which made it visible in the list feed (which never deduped) and
+// findable nowhere on the board.
+test('issues linked to an open promoted proposal go to In progress, not off the board', () => {
   const AppView = makeAppView();
   const b = AppView._bucketDevItems({
     issues: [
+      // 10 carries no in-progress signal of its own — only the proposal.
       issue({ number: 10, headless: null }),
       issue({ number: 11, headless: { status: 'ready' } }),
       issue({ number: 12, headless: null }),
     ],
-    // Proposal addresses issues 10 (plain) and 11 (ready) — both must drop
-    // out of the issue columns since they render as the proposal card.
     proposals: [prop({ id: 100, linked_issues: [10, 11] })],
     gov: [],
     merged: [],
   });
-  assert.deepEqual(numbersOf(b.issues), [12], 'only the unlinked plain issue remains');
-  assert.deepEqual(inProgOf(b.inProgress), [], 'linked ready issue is removed');
+  assert.deepEqual(numbersOf(b.issues), [12], 'only the untouched issue sits in Issues');
+  assert.deepEqual(inProgOf(b.inProgress).sort(), ['issue:10', 'issue:11'],
+    'both linked issues are in the In progress column');
   assert.deepEqual(reviewOf(b.inReview), ['proposal:100']);
+  // The proposal card is in a DIFFERENT column, so nothing doubles up.
+  assert.equal(
+    numbersOf(b.issues).concat(inProgOf(b.inProgress)).length, 3,
+    'every input issue appears exactly once across the two issue columns'
+  );
+});
+
+// The regression the fix is really about: whatever the bucketing, every
+// visible issue must land in SOME column — the list feed shows them all.
+test('no visible issue is dropped from the board', () => {
+  const AppView = makeAppView();
+  const issues = [
+    issue({ number: 20, headless: null }),
+    issue({ number: 21, headless: { status: 'generating' } }),
+    issue({ number: 22, in_progress: { count: 1, users: ['them'], claims: [] } }),
+    issue({ number: 23, headless: null }),
+  ];
+  const b = AppView._bucketDevItems({
+    issues,
+    proposals: [prop({ id: 200, linked_issues: [23] })],
+    gov: [],
+    merged: [],
+  });
+  const onBoard = numbersOf(b.issues)
+    .concat(b.inProgress.filter((e) => e.kind === 'issue').map((e) => e.item.number))
+    .sort((a, c) => a - c);
+  assert.deepEqual(onBoard, [20, 21, 22, 23]);
 });
 
 test('In progress: own sessions pinned first, issues middle, shared sessions last', () => {
