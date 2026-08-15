@@ -81,9 +81,8 @@ function fakePool(handlers, queries) {
 }
 
 const okLimits = {
-  checkPrepareRate: async () => null,
+  checkOpenWorkOrders: async () => null,
   checkPromotedCap: async () => null,
-  checkOpenProposals: async () => null,
 };
 
 const APP = {
@@ -817,7 +816,13 @@ test('prepare_work is bounded before it records anything', async () => {
       {
         pool: fakePool([], queries), config: {}, gh: baseGh(),
         githubLink: linkedAs('someuser'),
-        limits: { ...okLimits, checkPrepareRate: async () => ({ code: 'at_capacity', message: 'Slow down.' }) },
+        limits: {
+          ...okLimits,
+          checkOpenWorkOrders: async () => ({
+            code: 'at_capacity',
+            message: 'You have 10 pieces of work started and not yet submitted, which is the limit.',
+          }),
+        },
       },
       { user: { id: 3 }, app: APP, brief: 'x', origin: 'https://usernode.example' }
     );
@@ -1666,7 +1671,14 @@ test('the caps run BEFORE a patch is applied, so a refusal leaves no branch', as
   const patchIndex = SRC.indexOf('externalAgentPatch.applyPatch');
   assert.ok(capIndex > 0 && patchIndex > 0);
   assert.ok(capIndex < patchIndex, 'the promoted-session cap is checked first');
-  assert.ok(SRC.indexOf('checkOpenProposals') < patchIndex, 'and so is the proposal rate');
+  // And it is the ONLY cap here: the connector-only proposal cap that used to
+  // sit beside it counted a strict subset of the same queue, and held full
+  // admins below the ceiling the browser gives them.
+  assert.doesNotMatch(SRC, /checkOpenProposals/);
+  assert.equal(
+    (SRC.match(/limits\.check[A-Za-z]+\(/g) || []).length, 2,
+    'one cap on starting work, one on submitting it'
+  );
 });
 
 // ── Two callers, one task ──────────────────────────────────────────────
@@ -1867,14 +1879,14 @@ function prepareTwice(params, { pool, limits }) {
   ));
 }
 
-test('asking twice for the same request returns the SAME job, and spends no allowance', async () => {
+test('asking twice for the same request returns the SAME job, and spends no slot', async () => {
   // Three OPEN rows for one request is what production actually recorded —
-  // each with a different branch, each burning a slot, and the agent then
+  // each with a different branch, each holding a slot, and the agent then
   // rewrote its finished commit to match the newest name.
   const queries = [];
   const pool = idempotentPool(queries);
   let prepareChecks = 0;
-  const limits = { ...okLimits, checkPrepareRate: async () => { prepareChecks += 1; return null; } };
+  const limits = { ...okLimits, checkOpenWorkOrders: async () => { prepareChecks += 1; return null; } };
 
   const first = await prepareTwice({ issueNumber: 4, brief: 'x' }, { pool, limits });
   const second = await prepareTwice({ issueNumber: 4, brief: 'x' }, { pool, limits });
@@ -3063,7 +3075,7 @@ test('an update job is keyed on the proposal, so asking twice reuses it', async 
   const queries = [];
   const pool = idempotentPool(queries);
   let prepareChecks = 0;
-  const limits = { ...okLimits, checkPrepareRate: async () => { prepareChecks += 1; return null; } };
+  const limits = { ...okLimits, checkOpenWorkOrders: async () => { prepareChecks += 1; return null; } };
 
   const first = await prepareUpdate(BOT_PROPOSAL, { pool, limits });
   const second = await prepareUpdate(BOT_PROPOSAL, { pool, limits });
@@ -3081,12 +3093,12 @@ test('a refusal about the proposal is made BEFORE a slot is spent or a row is wr
   const queries = [];
   const pool = fakePool([['INSERT INTO external_agent_tasks', [{ id: 44 }]]], queries);
   let prepareChecks = 0;
-  const limits = { ...okLimits, checkPrepareRate: async () => { prepareChecks += 1; return null; } };
+  const limits = { ...okLimits, checkOpenWorkOrders: async () => { prepareChecks += 1; return null; } };
   const { result } = await prepareUpdate(
     { ...BOT_PROPOSAL, status: 'merged' }, { pool, limits }
   );
   assert.equal(result.code, 'proposal_closed');
-  assert.equal(prepareChecks, 0, 'an hour of wasted work is the thing being prevented — so is a burned slot');
+  assert.equal(prepareChecks, 0, 'wasted work is the thing being prevented — so is a spent slot');
   assert.equal(queries.length, 0);
 });
 

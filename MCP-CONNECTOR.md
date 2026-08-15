@@ -130,7 +130,7 @@ Five tools carry it:
 |---|---|
 | `submit_work` | Opens or advances a proposal — starts a group vote |
 | `create_request` | Files publicly, on the app's board and as a GitHub issue |
-| `prepare_work` | Spends an hourly allowance; mints a task that dangles if unused |
+| `prepare_work` | Claims the request on the app's board; mints a work order that dangles if unused |
 | `start_platform_build` | Spends the user's daily Usernode credits |
 | `submit_platform_build` | Puts that build to a group vote |
 

@@ -107,8 +107,8 @@ const ACTING_TOOL_META = Object.freeze({ 'anthropic/requiresUserInteraction': tr
 // The five that get it, and why each one deserves a person:
 //   submit_work            — opens or advances a proposal; starts a group vote
 //   create_request         — files publicly, on the app's board and GitHub
-//   prepare_work           — spends an hourly allowance; mints a task that
-//                            dangles if it is never used
+//   prepare_work           — claims the request on the app's board; mints a
+//                            work order that dangles if it is never used
 //   start_platform_build   — spends the user's daily Usernode credits
 //   submit_platform_build  — puts that build to a group vote
 //
@@ -1760,7 +1760,7 @@ function registerTools(server, ctx) {
       proposalId: z.number().int().positive().optional()
         .describe("The id of one of the user's own proposals that is already up for a vote, to REVISE it rather than open a new one — for fixing a failing check or acting on review comments. The work order starts at that proposal's current commit and its submission updates the same proposal, which clears the votes it has collected. Only the proposal's author can do this."),
       restart: z.boolean().optional()
-        .describe('Only when the user explicitly wants to start this request over from the app\'s current code. Closes the job already open for it and mints a fresh one, spending a slot of their hourly allowance. Omit it: calling prepare_work twice for the same request already returns the existing job, which is almost always what is wanted.'),
+        .describe('Only when the user explicitly wants to start this request over from the app\'s current code. Closes the job already open for it and mints a fresh one, which frees the old work-order slot and takes a new one. Omit it: calling prepare_work twice for the same request already returns the existing job, which is almost always what is wanted.'),
     },
     outputSchema: {
       taskId: z.number(),
@@ -1916,7 +1916,8 @@ function registerTools(server, ctx) {
     // all live in `guidance` now, built by the service — nextStep is only
     // the rendering contract plus what to call next. Re-rendering is free:
     // a bad paste is fixed from this same result, never by calling
-    // prepare_work again (that spends the hourly cap and opens a new task).
+    // prepare_work again (that holds another work-order slot and opens a
+    // new task).
     return toolResult({
       taskId: result.taskId,
       appSlug: app.slug,
@@ -2234,9 +2235,10 @@ function registerTools(server, ctx) {
   // ── The platform-build fallback ──────────────────────────────────────
   //
   // For a user with no coding agent of their own. This is the ONLY path
-  // that spends the platform's credits, so it is bounded harder (see
-  // services/connector-limits.js) and it is described honestly to the model
-  // as the second choice.
+  // that spends the platform's credits, so it carries the user's daily
+  // credit budget plus the same per-user cap on builds running at once that
+  // the browser applies to a dev session (see services/connector-limits.js),
+  // and it is described honestly to the model as the second choice.
 
   server.registerTool('start_platform_build', {
     title: 'Have Usernode build it',
@@ -2260,7 +2262,7 @@ function registerTools(server, ctx) {
     if (!Number.isInteger(requestNumber) || requestNumber <= 0) {
       return toolError('invalid_request', 'requestNumber must be an open request number.');
     }
-    const capped = await connectorLimits.checkFallbackStart(pool, user.id);
+    const capped = await connectorLimits.checkFallbackStart(pool, config, user);
     if (capped) return toolError(capped.code, capped.message, { retryable: true });
 
     const result = await callPlatform(
@@ -2385,7 +2387,7 @@ function registerTools(server, ctx) {
     });
     if (!posted.ok) return platformError(posted);
 
-    const capped = await connectorLimits.checkFallbackStart(pool, user.id);
+    const capped = await connectorLimits.checkFallbackStart(pool, config, user);
     if (capped) return toolError(capped.code, capped.message, { retryable: true });
 
     const rerun = await callPlatform(

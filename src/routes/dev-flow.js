@@ -430,7 +430,7 @@ function devFlowRoutes(config) {
   //
   // Idempotent per (user, app, request) exactly as the connector's
   // prepare_work is — asking twice returns the task that already exists,
-  // and only genuinely new work spends an hourly slot.
+  // and only genuinely new work counts against the open-work-order cap.
   router.post('/api/apps/:slug/external-tasks', async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
     if (!sameOrigin(config, req, res)) return undefined;

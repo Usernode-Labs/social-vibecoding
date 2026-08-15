@@ -1,15 +1,17 @@
 // The connector's own caps — specifically, what they MEASURE.
 //
-// #1248 follow-up. The connector-authored proposal cap used to count
-// proposals created in the last 24 hours. That measured a flow, when the thing
-// being protected is a stock: the vote queue is harmed by how many proposals
-// sit in it unreviewed, not by how many were opened yesterday. The window was
-// wrong in both directions — it refused a submission on a day whose earlier
-// proposals had all merged (queue empty, work reviewed, still locked out for
-// hours), and it permitted five simultaneous unreviewed proposals.
+// #1248 → #1250 → here. The policy this module now keeps is: NO CLOCKS,
+// ONLY CONCURRENCY. Nothing in it counts how many things a user started in
+// the last hour or the last day; every bound asks how much they are doing
+// right now, and each one is either the platform's own per-user cap or
+// looser than it.
 //
-// So the cap counts OPEN proposals, and a slot comes back the moment one
-// merges or closes. These tests pin the semantics rather than the number.
+// The reason is that a window measures the wrong thing in both directions —
+// it refuses work on a day whose earlier work has all merged, and it permits
+// a pile of simultaneous unreviewed work — and, worse here, it has no
+// counterpart in normal in-platform building, so it makes the connector
+// strictly MORE limited than the same person clicking the same button in the
+// browser. These tests pin those semantics rather than the numbers.
 //
 // Run with: node --test tests/connector-limits.test.js
 
@@ -21,6 +23,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const limits = require('../src/services/connector-limits');
+const { effectiveSessionCaps } = require('../src/services/session-caps');
 
 const SRC = fs.readFileSync(
   path.join(__dirname, '..', 'src/services/connector-limits.js'), 'utf8'
@@ -39,66 +42,137 @@ function poolCounting(n) {
   };
 }
 
-test('the cap counts proposals that are open, not proposals that are recent', async () => {
-  const pool = poolCounting(0);
-  await limits.checkOpenProposals(pool, 7);
-  const { sql, params } = pool.asked[0];
-  assert.deepEqual(params, [7], 'scoped to the one user');
-  assert.match(sql, /status IN \('promoted', 'merging'\)/, 'counts what is up for a vote');
-  assert.match(sql, /external_agent IS NOT NULL/, 'and only connector-authored rows');
+const admin = { id: 7, canAdminWrite: true };
+const ordinary = { id: 7, canAdminWrite: false };
+
+test('the connector keeps no clocks', () => {
+  // The single strongest guard in this file. A rate window anywhere in this
+  // module is a limit normal platform building does not have, so the whole
+  // category is banned rather than any particular one of them.
   assert.doesNotMatch(
-    sql, /INTERVAL/,
-    'a time window is what this cap stopped using — a merged proposal must free its slot at once'
+    SRC, /INTERVAL/,
+    'no rolling window may return to this module — bound what is open, never what was started'
   );
+  assert.doesNotMatch(SRC, /forksPerHour|fallbackPerDay|proposalsPerDay/);
 });
 
-test('a full queue is refused, and the refusal says how a slot comes back', async () => {
-  const result = await limits.checkOpenProposals(poolCounting(limits.LIMITS.openProposals), 7);
+test('one literal survives, and it is a concurrency bound', () => {
+  assert.deepEqual(Object.keys(limits.LIMITS), ['openTasks']);
+  assert.ok(limits.LIMITS.openTasks > 0);
+});
+
+// ── Work orders held open at once ──────────────────────────────────────
+
+test('starting work counts what is open, not what was recently started', async () => {
+  const pool = poolCounting(0);
+  await limits.checkOpenWorkOrders(pool, 7);
+  const { sql, params } = pool.asked[0];
+  assert.deepEqual(params, [7], 'scoped to the one user');
+  assert.match(sql, /status = 'open'/, 'counts reservations still held');
+  assert.match(
+    sql, /expires_at > NOW\(\)/,
+    'a work order somebody walked away from stops counting on its own'
+  );
+  assert.equal(pool.asked.length, 1, 'and that is the only bound on starting work');
+});
+
+test('a full set of work orders is refused, and the refusal is actionable', async () => {
+  const result = await limits.checkOpenWorkOrders(poolCounting(limits.LIMITS.openTasks), 7);
   assert.equal(result.code, 'at_capacity');
-  assert.match(result.message, /up for a vote/);
-  assert.match(result.message, /merge or close/, 'names the event that frees a slot');
+  assert.match(result.message, /not yet submitted/);
+  assert.match(result.message, /Submit one/, 'names something the user can do right now');
   // The old wording sent an agent away for a fixed period with nothing to do.
-  assert.doesNotMatch(result.message, /24 hours|daily limit/);
-  // A finished branch must not be rebuilt while its author waits.
-  assert.match(result.message, /task stays open/);
+  assert.doesNotMatch(result.message, /in the last hour|24 hours|daily limit/);
 });
 
 test('one slot short of the cap still goes through', async () => {
-  const result = await limits.checkOpenProposals(
-    poolCounting(limits.LIMITS.openProposals - 1), 7
+  const result = await limits.checkOpenWorkOrders(
+    poolCounting(limits.LIMITS.openTasks - 1), 7
   );
   assert.equal(result, null);
 });
 
-test('a cap that cannot be measured refuses rather than waves through', async () => {
-  // Same posture as the rest of this module: these bound writes to the vote
-  // queue, so an unavailable database is a reason to stop.
-  const pool = { query: async () => { throw new Error('db down'); } };
-  const result = await limits.checkOpenProposals(pool, 7);
-  assert.equal(result.code, 'platform_unavailable');
+// ── The vote queue ─────────────────────────────────────────────────────
+
+test('submitting is bounded by the platform proposal cap and nothing else', async () => {
+  // The connector-only proposal cap counted a strict subset of this same
+  // queue against a hard 5: it could never fire first for an ordinary user,
+  // and it cut a full admin off below the browser's own ceiling.
+  assert.equal(limits.checkOpenProposals, undefined, 'the second, connector-only cap is gone');
+
+  const pool = poolCounting(0);
+  await limits.checkPromotedCap(pool, {}, ordinary);
+  assert.equal(pool.asked.length, 1, 'one query, one bound');
+  assert.match(pool.asked[0].sql, /status IN \('promoted', 'merging'\)/);
+  assert.doesNotMatch(
+    pool.asked[0].sql, /external_agent/,
+    'connector proposals are ordinary proposals and share the ordinary queue'
+  );
 });
 
-test('the open-proposal cap and the promoted-session cap agree on what open means', () => {
-  // They bound the same queue from two directions, so a proposal counted by
-  // one and not the other would make the pair incoherent.
-  const promoted = SRC.slice(
-    SRC.indexOf('async function checkPromotedCap'),
-    SRC.indexOf('async function checkOpenProposals')
+test('a full admin gets the raised proposal ceiling through the connector too', async () => {
+  const caps = effectiveSessionCaps({}, admin);
+  assert.ok(caps.promotedSessions > effectiveSessionCaps({}, ordinary).promotedSessions);
+
+  const atOrdinaryCap = poolCounting(effectiveSessionCaps({}, ordinary).promotedSessions);
+  assert.equal(
+    await limits.checkPromotedCap(atOrdinaryCap, {}, admin), null,
+    'the browser would allow this, so the connector must too'
   );
-  const open = SRC.slice(
-    SRC.indexOf('async function checkOpenProposals'),
-    SRC.indexOf('async function checkPrepareRate')
+
+  const full = await limits.checkPromotedCap(poolCounting(caps.promotedSessions), {}, admin);
+  assert.equal(full.code, 'at_capacity');
+  assert.match(full.message, new RegExp(`${caps.promotedSessions} PRs up for vote`));
+});
+
+// ── The platform-build fallback ────────────────────────────────────────
+
+test('the fallback counts builds running, against the platform session cap', async () => {
+  const pool = poolCounting(0);
+  await limits.checkFallbackStart(pool, {}, ordinary);
+  assert.equal(pool.asked.length, 1, 'the per-day quota is gone; only in-flight is counted');
+  assert.match(pool.asked[0].sql, /headless_status = 'generating'/);
+
+  const caps = effectiveSessionCaps({}, ordinary);
+  const refused = await limits.checkFallbackStart(poolCounting(caps.activeSessions), {}, ordinary);
+  assert.equal(refused.code, 'at_capacity');
+  assert.match(refused.message, new RegExp(`${caps.activeSessions} Usernode builds running`));
+  assert.doesNotMatch(refused.message, /24 hours|daily limit/);
+
+  // Same tiering as a dev session in the browser.
+  assert.equal(
+    await limits.checkFallbackStart(poolCounting(caps.activeSessions), {}, admin), null
   );
-  for (const block of [promoted, open]) {
-    assert.match(block, /status IN \('promoted', 'merging'\)/);
+});
+
+test('the fallback ceiling comes from session-caps, not a literal', () => {
+  const block = SRC.slice(SRC.indexOf('async function checkFallbackStart'));
+  assert.match(block, /effectiveSessionCaps\(config, user\)/);
+  assert.match(block, /caps\.activeSessions/);
+});
+
+// ── Posture ────────────────────────────────────────────────────────────
+
+test('the browser walkthrough and the connector share ONE limiter', () => {
+  // "Prepare a work order for Claude Code" in the dev chat runs through the
+  // same prepareWork as the connector's prepare_work, and both inject THIS
+  // module as `limits`. That shared seam is what makes "the connector is
+  // never more limited than the browser" checkable rather than aspirational,
+  // so a cap can never be reintroduced on one surface alone.
+  const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
+  for (const rel of ['src/routes/dev-flow.js', 'src/services/mcp-tools.js']) {
+    const src = read(rel);
+    assert.match(src, /require\('\.[./]*(?:\.\.\/)?services\/connector-limits'\)|require\('\.\/connector-limits'\)/,
+      `${rel} resolves the caps from the shared module`);
+    assert.match(src, /limits: connectorLimits/, `${rel} injects it rather than its own numbers`);
   }
 });
 
-test('the remaining daily quota is the one that spends platform credits', () => {
-  // fallbackPerDay stays a per-day cap on purpose: it meters the platform's
-  // OWN credits, where the thing being conserved really is a flow. Only the
-  // vote-queue cap changed.
-  assert.ok(limits.LIMITS.fallbackPerDay > 0);
-  assert.match(SRC, /fallbackPerDay[\s\S]*?INTERVAL '24 hours'/);
-  assert.equal(limits.LIMITS.proposalsPerDay, undefined, 'the daily proposal quota is gone');
+test('a cap that cannot be measured refuses rather than waves through', async () => {
+  // Same posture across the whole module: these bound writes to GitHub and
+  // to the vote queue, so an unavailable database is a reason to stop.
+  const down = { query: async () => { throw new Error('db down'); } };
+  assert.equal((await limits.checkOpenWorkOrders(down, 7)).code, 'platform_unavailable');
+  assert.equal((await limits.checkPromotedCap(down, {}, ordinary)).code, 'platform_unavailable');
+  assert.equal((await limits.checkFallbackStart(down, {}, ordinary)).code, 'platform_unavailable');
 });

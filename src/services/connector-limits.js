@@ -5,7 +5,21 @@
 // The connector deliberately does its work through the platform's own
 // routes, so every cap those routes already enforce (daily credit budget,
 // active-session cap, the global worker cap) applies to it for free. This
-// module holds the ones that do NOT come for free:
+// module holds the ones that do NOT come for free.
+//
+// THE RULE THIS MODULE KEEPS: no clocks, only concurrency. Nothing here
+// counts how many things you started in the last hour or the last day.
+// Every bound below asks "how much is this user doing RIGHT NOW", and each
+// one is either the platform's own cap resolved per requester, or looser
+// than it. A connector caller must never be MORE limited than the same
+// person clicking the same button in the browser — a rate window is the
+// most reliable way to break that, because normal building has no
+// equivalent anywhere, and because waiting out an hour is not something
+// the user can act on. (#1250 made this argument for the vote queue; the
+// hourly prepare_work bound and the fallback's daily quota were the rest
+// of it.)
+//
+// What is left, and why it isn't free from the routes underneath:
 //
 //   1. The promoted-session cap. POST /api/sessions/:id/promote enforces it;
 //      POST /api/apps/:slug/pr-import does not, because an import was
@@ -13,33 +27,33 @@
 //      picker. submit_work reaches pr-import from a loop that a model can
 //      run, so it has to apply the same bound the browser's promote path
 //      applies — otherwise the connector becomes the way around it.
-//   2. Rate bounds on prepare_work itself. It no longer writes anything to
-//      GitHub — the user's own coding agent makes the fork and the branch —
-//      but a confused model retrying it still mints task rows, each of which
-//      is a work order somebody may act on, so a loop must not turn into an
-//      unbounded pile of dead reservations (or of forks, one step
-//      downstream). The key keeps its old name to avoid churn.
-//   3. Bounds on the platform-build fallback, which spends the platform's
-//      own credits (the primary path spends the user's coding-agent
-//      subscription instead).
+//   2. Work orders held open at once. prepare_work writes nothing to GitHub
+//      — the user's own coding agent makes the fork and the branch — but a
+//      confused model retrying it still mints task rows, each of which is a
+//      work order somebody may act on, so a loop must not turn into an
+//      unbounded pile of dead reservations. Deliberately looser than the
+//      platform's own active-session cap: a work order is a piece of paper,
+//      not a running machine, and it holds no worker while it sits.
+//   3. The platform-build fallback, which spends the platform's own credits
+//      (the primary path spends the user's coding-agent subscription
+//      instead). Bounded by the SAME per-user session cap the browser
+//      applies to a dev session, resolved through session-caps.
 //
 // Every check returns null when the request may proceed, or a plain
 // { code, message } that the caller turns into a tool error. The wording is
 // user-facing: it is read aloud by an assistant to somebody who cannot see
-// the platform UI, so it says what to do next.
+// the platform UI, so it says what to do next — and, because every bound
+// here is a concurrency bound, "what to do next" is always something the
+// user can do immediately rather than a period to wait out.
 
 const log = require('./logger');
 const { effectiveSessionCaps } = require('./session-caps');
 
-// Deliberately small. These are not throughput knobs — they are the point
-// at which "the model is looping" becomes more likely than "the user is
-// working".
+// The one literal left in this module. Not a throughput knob — it is the
+// point at which "the model is looping" becomes more likely than "the user
+// is working". Everything else resolves from the platform's own caps.
 const LIMITS = Object.freeze({
-  openProposals: 5,        // connector-authored proposals up for a vote at once
-  forksPerHour: 3,         // prepare_work work orders per user per hour
   openTasks: 10,           // un-submitted work orders held at once
-  fallbackInFlight: 2,     // platform builds running at once
-  fallbackPerDay: 10,      // platform builds started per user per 24h
 });
 
 function limitError(code, message) {
@@ -69,6 +83,14 @@ const UNAVAILABLE = limitError(
 // Mirrors routes/votes.js's promote handler exactly, including the wording,
 // so a user hits one bound with one explanation regardless of which surface
 // they came in through. Headless rows are excluded there and here.
+//
+// This is the ONLY bound on submit_work. There used to be a second,
+// connector-only proposal cap beside it, counting the same queue with
+// `external_agent IS NOT NULL` against a hard 5. It could never fire first
+// for an ordinary user (same number, strict subset) and it cut a full admin
+// off at 5 where the browser allows 8 — a connector-only penalty for doing
+// exactly what the browser permits, which is the thing this module is not
+// allowed to do.
 async function checkPromotedCap(pool, config, user) {
   const caps = effectiveSessionCaps(config, user);
   const count = await countOr(
@@ -89,64 +111,19 @@ async function checkPromotedCap(pool, config, user) {
   return null;
 }
 
-// ── 2. Connector-authored proposals open at once ───────────────────────
+// ── 2. prepare_work reservations ───────────────────────────────────────
 //
-// A CONCURRENCY bound, not a daily quota. What this cap is for is stopping a
-// looping model from filling the vote queue — and the queue is a stock, not a
-// flow: what harms it is how many proposals sit in it at once, which is also
-// what a human reviewer actually feels. A 24-hour window measured the wrong
-// thing in both directions. It punished a productive day whose proposals had
-// already merged — the queue empty, the work reviewed and voted in, and the
-// next submission still refused for hours — while leaving five simultaneous
-// unreviewed proposals perfectly within the rules.
+// How many work orders are held open at once — a stock, and the only bound
+// on starting work. `expires_at` is the one time term left in this module,
+// and it is a row lifetime rather than a rate window: a work order somebody
+// genuinely walked away from stops counting after fourteen days without the
+// user having to do anything.
 //
-// "Open" is the same set the promoted-session cap above counts, and the same
-// one pr-import-sync calls up-for-a-vote: a proposal stops occupying the queue
-// once it merges or is closed, and the slot returns immediately rather than at
-// the end of a rolling window.
-async function checkOpenProposals(pool, userId) {
-  const count = await countOr(
-    pool,
-    `SELECT COUNT(*) AS cnt FROM chat_sessions
-      WHERE user_id = $1 AND external_agent IS NOT NULL
-        AND status IN ('promoted', 'merging')`,
-    [userId],
-    'open-proposals'
-  );
-  if (count === null) return UNAVAILABLE;
-  if (count >= LIMITS.openProposals) {
-    return limitError(
-      'at_capacity',
-      `You already have ${LIMITS.openProposals} proposals from a connected coding agent up for a vote. `
-      + 'Wait for one to merge or close, or archive one, then submit again — the branch you pushed '
-      + 'keeps, and its task stays open.'
-    );
-  }
-  return null;
-}
-
-// ── 2b. prepare_work reservations ──────────────────────────────────────
-//
-// Two separate bounds because they fail for different reasons and deserve
-// different advice: too many too fast (slow down) versus too many at once
-// (finish or drop some).
-async function checkPrepareRate(pool, userId) {
-  const recent = await countOr(
-    pool,
-    `SELECT COUNT(*) AS cnt FROM external_agent_tasks
-      WHERE user_id = $1 AND created_at > NOW() - INTERVAL '1 hour'`,
-    [userId],
-    'prepare-rate'
-  );
-  if (recent === null) return UNAVAILABLE;
-  if (recent >= LIMITS.forksPerHour) {
-    return limitError(
-      'at_capacity',
-      `You have started ${LIMITS.forksPerHour} pieces of work in the last hour, which is the limit. `
-      + 'Finish or submit one before starting another.'
-    );
-  }
-
+// Called AFTER prepareWork's idempotent reuse lookup, so re-rendering a work
+// order the caller already holds is free even at the cap, and after the
+// `restart` branch, so starting one over frees its own slot before the
+// count is taken.
+async function checkOpenWorkOrders(pool, userId) {
   const open = await countOr(
     pool,
     `SELECT COUNT(*) AS cnt FROM external_agent_tasks
@@ -159,7 +136,8 @@ async function checkPrepareRate(pool, userId) {
     return limitError(
       'at_capacity',
       `You have ${LIMITS.openTasks} pieces of work started and not yet submitted, which is the limit. `
-      + 'Submit one, or abandon one, before starting another.'
+      + 'Submit one, or start one of them over, before starting another — a slot comes back as soon '
+      + 'as one is submitted.'
     );
   }
   return null;
@@ -168,40 +146,29 @@ async function checkPrepareRate(pool, userId) {
 // ── 3. The platform-build fallback ─────────────────────────────────────
 //
 // This path spends the platform's credits rather than the user's own
-// coding-agent subscription, so it is bounded more tightly than the primary
-// path. The daily credit budget still applies underneath (the platform
-// route consults limits.resolveBillingPath itself); these two bounds stop a
-// model from queueing builds faster than a human would ever read them.
-async function checkFallbackStart(pool, userId) {
+// coding-agent subscription. The daily credit budget still applies
+// underneath (the platform route consults limits.resolveBillingPath
+// itself) — that is the spend meter, and it is the one the browser's own
+// auto-build route relies on too, so nothing here needs to count a day's
+// worth of builds.
+//
+// What is left is how many builds are RUNNING, bounded by the same per-user
+// session cap the browser applies to a dev session, admin tier included.
+async function checkFallbackStart(pool, config, user) {
+  const caps = effectiveSessionCaps(config, user);
   const inFlight = await countOr(
     pool,
     `SELECT COUNT(*) AS cnt FROM chat_sessions
       WHERE user_id = $1 AND is_headless = TRUE AND headless_status = 'generating'`,
-    [userId],
+    [user.id],
     'fallback-in-flight'
   );
   if (inFlight === null) return UNAVAILABLE;
-  if (inFlight >= LIMITS.fallbackInFlight) {
+  if (inFlight >= caps.activeSessions) {
     return limitError(
       'at_capacity',
-      `You already have ${LIMITS.fallbackInFlight} Usernode builds running. `
+      `You already have ${caps.activeSessions} Usernode builds running. `
       + 'Wait for one to finish before starting another.'
-    );
-  }
-
-  const today = await countOr(
-    pool,
-    `SELECT COUNT(*) AS cnt FROM chat_sessions
-      WHERE user_id = $1 AND is_headless = TRUE
-        AND created_at > NOW() - INTERVAL '24 hours'`,
-    [userId],
-    'fallback-daily'
-  );
-  if (today === null) return UNAVAILABLE;
-  if (today >= LIMITS.fallbackPerDay) {
-    return limitError(
-      'at_capacity',
-      `You have started ${LIMITS.fallbackPerDay} Usernode builds in the last 24 hours, which is the daily limit.`
     );
   }
   return null;
@@ -210,7 +177,6 @@ async function checkFallbackStart(pool, userId) {
 module.exports = {
   LIMITS,
   checkPromotedCap,
-  checkOpenProposals,
-  checkPrepareRate,
+  checkOpenWorkOrders,
   checkFallbackStart,
 };

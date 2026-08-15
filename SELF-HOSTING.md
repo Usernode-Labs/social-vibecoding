@@ -1520,10 +1520,28 @@ whole path and each step has a distinguishable failure.
 
 ### Caps worth knowing before you debug one
 
-Per user: 5 connector-opened proposals per rolling 24h, 3 `prepare_work`
-work orders per hour, 10 open work orders at once, and the fallback runs
-are capped at 2 in flight / 10 per day (`src/services/connector-limits.js`).
-Rate limits at the `/mcp` edge are 60/min per token and 300/min per IP.
+The connector keeps **no clocks** — nothing counts how many things a user
+started in the last hour or day. Every cap in
+`src/services/connector-limits.js` is a concurrency bound, and each is
+either the platform's own per-user cap or looser than it, so a connector
+caller is never more limited than the same person clicking the same button
+in the browser:
+
+- **10 open work orders at once** — the only bound on `prepare_work`, and
+  the module's only hard-coded number. Deliberately looser than the
+  platform's 3-active-sessions cap: a work order holds no worker.
+  Re-asking for one you already hold is free, and a genuinely abandoned
+  reservation stops counting when it expires after 14 days.
+- **`submit_work` is bounded by the platform's promoted-session cap** —
+  same query and same wording as the browser's promote route, admin tier
+  included (5 base / 8 for full admins, via `services/session-caps.js`).
+- **The platform-build fallback is bounded by the platform's active-session
+  cap** (3 base / 5 for full admins) on builds running at once. Spend is
+  metered by the user's daily credit budget, exactly as it is for the
+  browser's own auto-build.
+
+Rate limits at the `/mcp` edge are 60/min per token and 300/min per IP —
+transport abuse protection, not work capacity, and untouched by the above.
 Every limiter **fails closed** — if it cannot read its own state it
 refuses rather than waving the write through, so a limiter refusal during
 a database incident is expected behaviour, not a stuck cap.
