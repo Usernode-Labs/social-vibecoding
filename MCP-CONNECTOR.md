@@ -137,7 +137,11 @@ Five tools carry it:
 Everything else keeps normal behaviour. `answer_questions` is a write but is
 deliberately unmarked: it only feeds text to a build the user already started,
 and an unskippable prompt inside a poll loop buys no decision they have not
-already made.
+already made. `claim_request` and `release_request` are unmarked for the same
+kind of reason: a claim says "somebody is working on this" on the app's board,
+it is platform-local, it names only the caller, it expires by itself and one
+call clears it. Charging a click for announcing work is how the announcement
+stops being made.
 
 **This is defence in depth, not a control to lean on.** It requires Claude Code
 **2.1.199 or later**; earlier versions ignore the metadata and apply the

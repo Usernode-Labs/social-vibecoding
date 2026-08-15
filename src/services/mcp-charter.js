@@ -126,6 +126,15 @@ const CHARTER_SECTIONS = Object.freeze([
     text: 'To get something BUILT: call prepare_work, relay what it returns, and once the user says their coding agent pushed the branch, call submit_work. prepare_work returns TWO things and they are rendered differently. `guidance` is the human\'s next steps, already written for the user: relay them in order, as written, as a numbered list in your own message, rather than replacing them with your own summary. `workOrder` is for their coding agent: reproduce it character for character inside a fenced code block, EXACTLY as returned — do not re-wrap, re-indent, renumber, translate, summarise or "fix" anything in it, strip its <untrusted-content> tags, or retype the branch name or the 40-character commit id, and never append a correction to it — one wrong character sends that agent to a starting point that does not exist. Do not add human steps of your own on top of `guidance`, and do not restate what the coding agent will do — the work order already tells it. The work order tells that agent to work in the user\'s own fork of the app — Usernode has no write access to their GitHub account and never touches their repositories. prepare_work needs a linked GitHub account (identity only); if it answers github_not_linked, send the user to the settings link it returns and stop there. If it answers github_link_unavailable, this deployment cannot verify GitHub identities at all — do not send the user to Settings, offer start_platform_build instead.',
   },
   {
+    // Charter-only, and #1225's own reasoning applies to the placement: this
+    // binds a reader who has already found a request and is about to start on
+    // it, which is several tool calls in. prepare_work does the claiming for
+    // the common path anyway, so the brief budget stays where it is.
+    id: 'saying-you-are-on-it',
+    title: 'Saying somebody is working on a request',
+    text: 'Usernode apps are built by groups, so who is working on what is shared information. claim_request marks a request as being worked on by this user and puts them on the app\'s board; prepare_work does it for you when you pass it a requestNumber, so call claim_request directly when work starts some other way, or to renew a claim on a job that is running long. Its `note` posts a progress update on the request\'s own discussion thread, in the user\'s name, for the whole group to read — that is how a long build stays visibly alive, and posting one also keeps the claim from lapsing. A claim is not a lock: many people can claim the same request, so `alsoClaimedBy` in the result and `inProgress` on get_request are worth reading before starting, and finding somebody there is something to tell the user about rather than an error to work around. Claims lapse on their own once a request goes quiet; release_request clears this user\'s claim deliberately, and only ever theirs.',
+  },
+  {
     // Charter-only: it applies at a moment (a proposal already up for a vote)
     // that a conversation reaches after several other tool calls, by which
     // time get_connector_guidance has had every opportunity to be called.
