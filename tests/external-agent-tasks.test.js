@@ -2417,10 +2417,15 @@ test('a submission with no identifier at all still gets the full surface', async
 // saw. Pin the shared claims rather than the wording, so either copy can be
 // rephrased but neither can quietly lose a clause the other makes.
 test('both copies of the refusal make the same load-bearing claims', () => {
-  const connector = fs.readFileSync(
+  // These messages are assembled from concatenated literals, so a claim can
+  // sit either side of a line break and exist only once the string is built.
+  // Join the pieces before looking — searching the raw source for a phrase
+  // that spans a `'\n  + '` seam finds nothing and reads as a missing clause.
+  const flatten = (src) => src.replace(/'\s*\+\s*'/g, '');
+  const connector = flatten(fs.readFileSync(
     path.join(__dirname, '../src/services/mcp-tools.js'), 'utf8'
-  );
-  const service = SRC;
+  ));
+  const service = flatten(SRC);
   for (const claim of [
     'no GitHub write access',
     'you can submit it yourself',
