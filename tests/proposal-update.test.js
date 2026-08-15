@@ -1198,6 +1198,77 @@ test('an unusable route is dropped rather than stored, and the rules are the blo
   assert.deepEqual(result.testingPaths, ['/ok?x=1', '/a', '/b']);
   const write = testingWrite(log);
   assert.deepEqual(JSON.parse(write.params[0]).map((p) => p.path), ['/ok?x=1', '/a', '/b']);
+
+  // …and every one of those drops is NAMED (#1214). Dropping is right —
+  // one bad route must not cost an update that already landed on GitHub —
+  // but doing it silently left the author with no signal at all until
+  // `captureDefaultedToRoot` came back minutes later on another endpoint.
+  assert.deepEqual(result.testingPathsRejected, [
+    'https://evil.test/steal (not a usable in-app path — it must start with a single "/")',
+    '//evil.test (not a usable in-app path — it must start with a single "/")',
+    '/ok?x=1 (already listed)',
+    '/c (over the 3-route cap)',
+    '/d (over the 3-route cap)',
+  ]);
+});
+
+test('a route the caller already had rejected is still reported back (#1214)', async () => {
+  // The route parses the RAW body and hands this service its shaped output, so
+  // a second parse here sees nothing to reject. The list has to travel.
+  const log = {};
+  const session = nativeSession();
+  const result = await run({ session, pool: testingPool(session, log) }, {
+    testing: {
+      testingPaths: [{ path: '/kept', viewport: 'desktop' }],
+      dropped: [{ index: 0, entry: 'nope', reason: 'invalid_path' }],
+    },
+  }, log);
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.testingPaths, ['/kept']);
+  assert.deepEqual(result.testingPathsRejected, [
+    'nope (not a usable in-app path — it must start with a single "/")',
+  ]);
+});
+
+test('nothing rejected reports null, not an empty list', async () => {
+  const log = {};
+  const session = nativeSession();
+  const result = await run({ session, pool: testingPool(session, log) }, { testing: TESTING }, log);
+  assert.equal(result.testingPathsRejected, null);
+});
+
+test('a submission whose every route is rejected changes nothing but says why', async () => {
+  // Nothing is stored, so the capture keeps whatever the proposal already had
+  // — which is exactly why the caller has to be told, rather than reading
+  // `testingUpdated: false` as "the routes I sent were already the ones set".
+  const log = {};
+  const session = nativeSession();
+  const result = await run({ session, pool: testingPool(session, log) }, {
+    testing: { testingPaths: ['nope', '//evil.test'] },
+  }, log);
+  assert.equal(result.ok, true);
+  assert.equal(result.updated, true, 'the commit still landed');
+  assert.equal(result.testingUpdated, false);
+  assert.equal(result.testingPaths, null);
+  assert.equal(result.testingPathsRejected.length, 2);
+  assert.equal(testingWrite(log), undefined, 'and nothing was written');
+});
+
+test('the @mobile annotation survives an update written as a plain string (#1214)', async () => {
+  // The spelling every agent-facing description teaches. It used to be read as
+  // part of the path, fail the no-whitespace rule, and take the route with it.
+  const log = {};
+  const session = nativeSession();
+  const result = await run({ session, pool: testingPool(session, log) }, {
+    testing: { testingPaths: ['/?shot=invite @mobile', '/?shot=members @mobile'] },
+  }, log);
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.testingPaths, ['/?shot=invite @mobile', '/?shot=members @mobile']);
+  assert.equal(result.testingPathsRejected, null);
+  assert.deepEqual(JSON.parse(testingWrite(log).params[0]), [
+    { path: '/?shot=invite', viewport: 'mobile' },
+    { path: '/?shot=members', viewport: 'mobile' },
+  ]);
 });
 
 test('an imported proposal\'s new routes are stored before its head change re-runs the checks', async () => {

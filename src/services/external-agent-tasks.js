@@ -1007,6 +1007,14 @@ function buildWorkOrder({
       '   CHANGED, not the home page; if that screen is only reachable by',
       '   interacting, add a deep link (a query param handled at boot) in this',
       '   same change so a URL can reach it.',
+      // #1214: the answer now says which routes it took and which it could
+      // not use, so a malformed route is caught while the agent is still
+      // holding the branch rather than from a boolean minutes later.
+      '   READ THE ANSWER: `testingPaths` is what the screenshots will actually',
+      '   be shot on and `testingPathsRejected` names anything Usernode could not',
+      '   use. If a route you meant was rejected, submit once more with the',
+      '   proposal id and corrected routes — on the SAME commit that is not a',
+      '   second proposal, it only re-shoots the screenshots and clears no votes.',
       '   Your sandbox cannot reach the Usernode website, and it does not need to:',
       '   connector traffic goes out through Claude\'s own infrastructure, not',
       '   through your container.',
@@ -1054,6 +1062,8 @@ function buildWorkOrder({
       '   already exists, and a second submission would duplicate it. If',
       '   `get_proposal` reports `captureDefaultedToRoot`, your `testingPaths` did',
       '   not arrive: the voters are looking at screenshots of the home page.',
+      '   `capturePaths` names what it did shoot, which is how you tell that apart',
+      '   from a change whose own first route is "/".',
       '',
       'Do not open the pull request yourself in the normal path: Usernode opens it,',
       'and the change becomes a proposal with a staging preview, automated checks',
@@ -2193,6 +2203,12 @@ async function submitUpdate(deps, params, proposalId) {
     testingUpdated: result.testingUpdated === true,
     testingPaths: Array.isArray(result.testingPaths) && result.testingPaths.length
       ? result.testingPaths.map((p) => String(p))
+      : null,
+    // #1214. And what the route would NOT shoot: a route it could not use is
+    // reported here rather than only as a boolean on a different endpoint,
+    // minutes later, once the group is already voting on the wrong screen.
+    testingPathsRejected: Array.isArray(result.testingPathsRejected) && result.testingPathsRejected.length
+      ? result.testingPathsRejected.map((p) => String(p))
       : null,
     captureRerun: result.captureRerun === true,
     // 'proposal' | 'session' | null — what the push actually landed on, as

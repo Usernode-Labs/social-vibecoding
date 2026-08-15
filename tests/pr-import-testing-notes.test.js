@@ -136,16 +136,24 @@ test('the same validator backs every path, so they all land identically', () => 
   assert.doesNotMatch(fn, /startsWith\('\/'\)|\.test\(/, 'no path rules of its own');
 
   // …and the shared validator is itself built out of the block parser's
-  // rules rather than a second copy of them.
+  // rules rather than a second copy of them. #1214 moved the last of those
+  // rules — the `@mobile` annotation grammar — into readAnnotatedPath, which
+  // BOTH parsers now call, so what is pinned here is that parseSubmitted reads
+  // an entry through the shared reader rather than picking the string apart.
   const NOTES_SRC = fs.readFileSync(path.join(__dirname, '../src/services/testing-notes.js'), 'utf8');
-  const shared = NOTES_SRC.slice(
-    NOTES_SRC.indexOf('function parseSubmitted'),
-    NOTES_SRC.indexOf('module.exports')
-  );
-  assert.match(shared, /validatePath\(/, 'the shared validator, not a local regex');
-  assert.match(shared, /normalizeStoredPath\(/);
+  const sliceOf = (start, end) => NOTES_SRC.slice(NOTES_SRC.indexOf(start), NOTES_SRC.indexOf(end));
+  const shared = sliceOf('function parseSubmitted', 'function explainDrop');
+  assert.match(shared, /readSubmittedPath\(/, 'the shared reader, not a local regex');
   assert.match(shared, /CAPTURE_MAX_PATHS/);
   assert.match(shared, /TESTING_MD_MAX/);
+  assert.doesNotMatch(shared, /split\(|startsWith\(/, 'no path rules of its own');
+
+  // The one reader both the block parser and the submitted-field parser use.
+  const reader = sliceOf('function readSubmittedPath', 'function describeEntry');
+  assert.match(reader, /validatePath\(/);
+  assert.match(reader, /readAnnotatedPath\(/, 'a string entry is read by the block grammar');
+  const blockLoop = sliceOf('const blockLines = text.slice', 'let testingMd');
+  assert.match(blockLoop, /readAnnotatedPath\(/, 'the block parser reads it the same way');
 
   // The update route reaches the same function rather than its own copy.
   const HANDOFF_SRC = fs.readFileSync(path.join(__dirname, '../src/routes/proposal-handoff.js'), 'utf8');

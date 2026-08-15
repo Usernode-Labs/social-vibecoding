@@ -1506,6 +1506,42 @@ test('a proposal reports its checks and whether its capture route was lost', () 
   );
 });
 
+test('a proposal names the routes its screenshots were actually shot on (#1214)', () => {
+  // The boolean alone cannot be read when the change's own first route IS '/':
+  // "defaulted to the home page" and "shot exactly what you asked for" look
+  // identical, and an agent checking its own work has no way to tell which
+  // happened. The list it shot settles it.
+  const honoured = tools.shapeProposal({
+    id: 7, app_slug: 'recipe-box',
+    capture_detail: { pathDefaulted: false, paths: ['/', '/landing.html'] },
+  }, ORIGIN);
+  assert.equal(honoured.captureDefaultedToRoot, false);
+  assert.deepEqual(honoured.capturePaths, ['/', '/landing.html']);
+
+  const defaulted = tools.shapeProposal({
+    id: 8, app_slug: 'recipe-box', capture_detail: { pathDefaulted: true, paths: ['/'] },
+  }, ORIGIN);
+  assert.equal(defaulted.captureDefaultedToRoot, true);
+  assert.deepEqual(defaulted.capturePaths, ['/']);
+
+  // Null until a capture has run — an empty list would read as "shot nothing".
+  assert.equal(tools.shapeProposal({ id: 9 }, ORIGIN).capturePaths, null);
+  assert.equal(tools.shapeProposal({ id: 10, capture_detail: { paths: [] } }, ORIGIN).capturePaths, null);
+  // A row from any era, and a bounded answer whatever it holds.
+  assert.equal(
+    tools.shapeProposal({ id: 11, capture_detail: { paths: 'not-a-list' } }, ORIGIN).capturePaths,
+    null
+  );
+  const many = tools.shapeProposal({
+    id: 12, capture_detail: { paths: Array.from({ length: 40 }, (_, i) => `/p${i}`) },
+  }, ORIGIN);
+  assert.equal(many.capturePaths.length, 10);
+  assert.deepEqual(
+    tools.shapeProposal({ id: 13, capture_detail: { paths: ['/ok', 42, null] } }, ORIGIN).capturePaths,
+    ['/ok']
+  );
+});
+
 // ── Testing notes arriving over the connector ─────────────────────────────
 //
 // The in-platform path gets these from a `==== TESTING ====` block in the
@@ -1595,6 +1631,75 @@ test('explicit arguments win over a block in the description', () => {
   assert.equal(shaped.testingSteps, 'Click the thing');
   // The block is still stripped, because it must not reach the voters.
   assert.equal(shaped.description, 'Body.');
+});
+
+// ── #1214: a dropped route is reported, not swallowed ────────────────────
+
+test('every route the connector could not use is named back to the caller', () => {
+  const shaped = tools.shapeTestingNotes({
+    testingPaths: ['https://evil.example/x', '/ok', '/ok', '/a', '/b', '/c'],
+  });
+  assert.deepEqual(shaped.testingPaths.map((p) => p.path), ['/ok', '/a', '/b']);
+  assert.deepEqual(shaped.rejectedPaths, [
+    'https://evil.example/x (not a usable in-app path — it must start with a single "/")',
+    '/ok (already listed)',
+    '/c (over the 3-route cap)',
+  ]);
+});
+
+test('a submission whose every route is rejected is told so in its own answer', () => {
+  // This is the case that used to be invisible: nothing is sent to the import,
+  // the capture falls back to '/', and the only signal was
+  // `captureDefaultedToRoot` on a different endpoint minutes later.
+  const shaped = tools.shapeTestingNotes({ testingPaths: ['nope', '//evil.example'] });
+  assert.equal('testingPaths' in shaped, false, 'nothing usable is sent on');
+  assert.equal(shaped.rejectedPaths.length, 2);
+  const note = tools.testingRouteNote(shaped, false);
+  assert.match(note, /could not use any of the testingPaths/);
+  assert.match(note, /fall back to the app's home page/);
+  assert.match(note, /clears no votes/, 'and the cheap repair is named');
+});
+
+test('a partly usable list says what will actually be shot', () => {
+  const shaped = tools.shapeTestingNotes({ testingPaths: ['/board @mobile', 'nope'] });
+  const note = tools.testingRouteNote(shaped, false);
+  assert.match(note, /could not use 1 of the testingPaths/);
+  assert.match(note, /shot on \/board @mobile only/, 'in the spelling the caller used');
+});
+
+test('a first submission with no routes at all is warned, an update is not', () => {
+  // Omitting them on an UPDATE deliberately keeps the routes the proposal
+  // already has, so there is nothing to warn about there.
+  const none = tools.shapeTestingNotes({ description: 'Backend only.' });
+  assert.match(tools.testingRouteNote(none, false), /No testingPaths were supplied/);
+  assert.equal(tools.testingRouteNote(none, true), '');
+  // And a submission that named good routes is not lectured either way.
+  const good = tools.shapeTestingNotes({ testingPaths: ['/board'] });
+  assert.equal(tools.testingRouteNote(good, false), '');
+  assert.equal(tools.testingRouteNote(good, true), '');
+});
+
+test('the connector reads a route exactly as the routes underneath it do', () => {
+  // It used to keep its own copy of the grammar. The copies disagreed: this
+  // module understood "/board @mobile" and services/testing-notes.js, which is
+  // what the pr-import and update routes call, did not — so the annotated form
+  // survived the connector and was dropped one layer down (#1214).
+  const notes = require('../src/services/testing-notes');
+  const viaConnector = tools.shapeTestingNotes({ testingPaths: ['/board @mobile', 'nope'] });
+  const viaRoute = notes.parseSubmitted({ testingPaths: ['/board @mobile', 'nope'] });
+  assert.deepEqual(viaConnector.testingPaths, viaRoute.testingPaths);
+  assert.deepEqual(viaConnector.rejectedPaths, notes.explainDrops(viaRoute.dropped));
+  // Asserted at the source too: a future edit that reintroduced a local
+  // reader would still pass the behavioural check above on the day it landed.
+  const fn = SRC.slice(
+    SRC.indexOf('function shapeTestingNotes'),
+    SRC.indexOf('function testingRouteNote')
+  // Comments stripped: this one NAMES the grammar in order to say it is not
+  // restated here, and asserting against the prose would fail on the very
+  // comment that documents the rule.
+  ).replace(/^\s*\/\/.*$/gm, '');
+  assert.match(fn, /notes\.parseSubmitted\(/, 'the shared parser, not a local copy');
+  assert.doesNotMatch(fn, /VIEWPORT_MOBILE|@mobile/, 'no second opinion about the grammar');
 });
 
 test('absent testing notes stay absent, so nothing overwrites a default', () => {
