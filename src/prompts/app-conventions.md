@@ -64,6 +64,11 @@ Ordered by how badly an agent working offline gets each one wrong.
    step needs in the same commit, in a boot-time block gated on
    `IS_STAGING`: idempotent (`ON CONFLICT DO NOTHING`), obviously fake
    ("Staging demo …"), a handful of rows, never cloned from real users.
+   Seed FAKE identities only — never rows owned by whoever opened the
+   preview, and never a signal your own logic reads ("has this user
+   done X?"). Every check runs against staging, so seeding that
+   fabricates the answer makes that code path untestable by the gate
+   and different for real users.
 4. **Tables are public by default; mark the sensitive ones private.**
    `COMMENT ON TABLE foo IS 'staging:private'` copies the schema to
    staging without the rows. Use it for auth material, direct messages,
@@ -446,6 +451,53 @@ Tie-in with testing instructions: the testing steps you emit must
 reference the seeded entities by name ("Open the thread 'Staging demo
 thread' and …"), so a tester knows exactly what they should be seeing.
 
+### Seeded data must not fabricate a signal your logic reads
+
+Seeding decides what a preview *looks* like. It can also decide what
+your code *concludes*, and that is where it stops being cosmetic. The
+merge gate only ever runs against staging (see "Proposal tests" below),
+so a code path that reads data seeding manufactured is a path no check
+can observe: it goes green, and it answers differently for real users.
+
+The shape of it, from a real case. An app added "you may only invite a
+handle this app has seen", where *seen* meant list owners, list members
+and item authors. The same app seeded a demo list **owned by whoever
+opened the preview**. So in staging every visitor was already an owner,
+therefore already seen, and inviting anyone worked. In production
+nothing is seeded, a user who had opened the app but not yet created
+anything was in none of those tables, and inviting them failed — a
+regression, shipped past 24 green checks including the change's own new
+test.
+
+Neither half was a rule violation. Gating seed data on `IS_STAGING` is
+the rule, and seeding a preview so it isn't blank is also the rule.
+Together they made seeded rows indistinguishable from real ones to the
+app's own logic. Three habits keep them apart:
+
+- **Never seed the visitor.** Seeded rows belong to fake identities
+  (`staging-demo-user`), never to `req.user`. This is the "never
+  reference real users" seed rule above, and it is the one that bites
+  hardest — the visitor is the account every code path checks against,
+  so attributing seeded rows to them is handing the preview a
+  credential production won't have.
+- **Request-time seeding only behind `?demo=1`.** Never seed from a
+  route the app serves normally. A `GET /api/lists` that writes demo
+  rows as a side effect leaves no way to ask the app what production
+  looks like; keep it behind `IS_STAGING && req.query.demo === '1'` and
+  the plain route stays honest.
+- **Ask what the empty database answers.** Before shipping logic of the
+  form "has this user done X / does this user appear in Y", check
+  whether staging seeding is what put them there. If it is, the gate
+  cannot test the check you just wrote — and flipping `USERNODE_ENV` to
+  `production` against a real database is the comparison that shows it.
+
+When a change does read a signal like that, **declare a test on the
+unseeded route** as well: the same path *without* `?demo=1`, asserting
+the production-shaped answer — the empty state, the refusal, the
+fallback copy. Because the two sanctioned mechanisms are boot-time
+seeding of fake identities and `?demo=1` injection, that plain route is
+the closest thing to production the gate can reach.
+
 ### Make the changed screen URL-reachable — screenshot-state deep links
 
 The before/after screenshots and the "Test this change" button can only
@@ -589,6 +641,16 @@ data" above (a blank page usually means missing seed data, not a bug). A
 test that depends on missing seed data will fail and block your merge.
 Because checks gate merge, verify your declared tests pass (use the in-loop
 browser on a build turn) before you commit.
+
+**What the checks cannot see.** Every check runs against the staging
+preview, with your `IS_STAGING` seeding already applied. Nothing on the
+platform ever exercises the production shape, so a passing gate is
+evidence the change works *in staging* — not evidence that it works.
+That gap only bites when app logic reads data staging seeding produced,
+and "Seeded data must not fabricate a signal your logic reads" above is
+how to stay out of it: seed fake identities, keep request-time seeding
+behind `?demo=1`, and declare a test on the unseeded route whenever new
+logic asks whether a user or a row already exists.
 
 ## Repo test suites on build turns — run them efficiently
 

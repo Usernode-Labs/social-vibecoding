@@ -418,7 +418,16 @@ function normalizeTesting(testing) {
     testingPaths: Array.isArray(testing.testingPaths) ? testing.testingPaths : undefined,
     testingSteps: typeof testing.testingSteps === 'string' ? testing.testingSteps : testing.testingMd,
   });
-  return parsed.provided ? parsed : null;
+  // The caller parsed the RAW body and this re-parse sees its already-shaped
+  // output, so anything the caller rejected is invisible here — carry its list
+  // rather than recomputing an empty one (#1214). An entry this second pass
+  // drops is added to it; in practice there is none, which is the point.
+  const dropped = [
+    ...(Array.isArray(testing.dropped) ? testing.dropped : []),
+    ...parsed.dropped,
+  ];
+  if (!parsed.provided) return dropped.length ? { ...parsed, dropped } : null;
+  return { ...parsed, dropped };
 }
 
 // The stored list and the submitted one, compared in the normalized
@@ -435,11 +444,17 @@ function samePaths(stored, next) {
 
 // The submitted routes in the form the caller wrote them, for the response.
 // An agent that reads back exactly what it sent can tell at a glance that the
-// annotation it added survived.
+// annotation it added survived. One spelling of that, in testing-notes.js,
+// shared with the connector's own response (#1214).
 function displayPaths(paths) {
-  if (!Array.isArray(paths) || !paths.length) return null;
-  const notes = require('./testing-notes');
-  return paths.map((entry) => (entry.viewport === notes.VIEWPORT_MOBILE ? `${entry.path} @mobile` : entry.path));
+  return require('./testing-notes').displayPaths(paths);
+}
+
+// The routes that did NOT become capture routes, each with its reason, for the
+// same response (#1214). Null when nothing was rejected, so a caller that
+// branches on it never has to distinguish an empty list from "all fine".
+function rejectedPaths(testing) {
+  return require('./testing-notes').explainDrops(testing && testing.dropped);
 }
 
 // Writes only the columns the caller actually supplied, and mutates the
@@ -517,6 +532,7 @@ async function resubmitUnchanged(ctx, headSha, via) {
     ...base,
     testingUpdated: applied.changed,
     testingPaths: displayPaths(applied.paths),
+    testingPathsRejected: rejectedPaths(ctx.testing),
     captureRerun: false,
   };
   if (!applied.changed) return reported;
@@ -731,9 +747,11 @@ async function advanceAppRepoBranch(ctx) {
     // migration for no gain.
     targetKind: promoted ? 'proposal' : 'session',
     submittedVia: 'update_branch',
-    // What the screenshots this revision's capture shoots will be of.
+    // What the screenshots this revision's capture shoots will be of — and
+    // what it will NOT be of, because a route the caller sent was unusable.
     testingUpdated: testingApplied.changed,
     testingPaths: displayPaths(testingApplied.paths),
+    testingPathsRejected: rejectedPaths(ctx.testing),
   };
 
   // ── Tail 1a: an IMPORTED proposal on a bot-owned branch (#1196) ─────
@@ -1145,6 +1163,7 @@ async function advanceForkHead(ctx) {
     submittedVia: 'update_fork_head',
     testingUpdated: testingApplied.changed,
     testingPaths: displayPaths(testingApplied.paths),
+    testingPathsRejected: rejectedPaths(ctx.testing),
   };
 }
 

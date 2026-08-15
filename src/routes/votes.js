@@ -132,9 +132,15 @@ function stagingMockProposals(viewer) {
       3, 2, 0, 4, { required: 2, windowEndsAt: hoursAhead(46) }),
     // Near-majority, no opposition: window almost elapsed → short
     // "Merging in Xh" countdown.
-    mk(9000013, 900113,
+    // #1251: the only mock proposal that declares a linked issue. 900017 is
+    // a mock issue nothing else touches, so this pair is what makes the
+    // board's "an issue with an open proposal is still on the board"
+    // behaviour visible in a ?demo=1 preview — the issue renders in In
+    // progress, this card in In review, and the report prints it once.
+    { ...mk(9000013, 900113,
       '[Mock] Near-majority test: tighten the proposal card spacing on tablet widths',
       20, 5, 0, 3, { required: 3, windowEndsAt: hoursAhead(5) }),
+    linked_issues: [900017] },
     // Majority reached: no window, would merge immediately in prod.
     // my_vote is set on this one mock (#482) so the kanban "Needs my vote"
     // filter visibly removes a card in the ?demo=1 preview instead of
@@ -1324,12 +1330,15 @@ function voteMatchesReviewedRevision(expectedHeadSha, revision) {
 // the viewport labels are spelled and how long the markdown may be. It is
 // shared with the UPDATE path (#1199), which is the point — the same routes
 // must not behave differently depending on whether an import or an update
-// submitted them. Only `provided` is dropped here: an import writes all three
-// columns on INSERT either way, so "was anything sent" carries no extra
-// meaning on this path.
+// submitted them. Only the three COLUMNS are kept: an import writes all three
+// on INSERT either way, so `provided` carries no extra meaning on this path,
+// and the rejected-entry list (#1214) is reported to the submitter by the
+// connector that shaped the routes rather than written to a column here.
 function parseImportTesting(body) {
-  const { provided, ...columns } = require('../services/testing-notes').parseSubmitted(body);
-  return columns;
+  const {
+    testingMd, testingPath, testingPaths,
+  } = require('../services/testing-notes').parseSubmitted(body);
+  return { testingMd, testingPath, testingPaths };
 }
 
 // The linked-issue set an import may carry (#1217). Bounded and sanitized by

@@ -107,8 +107,8 @@ const ACTING_TOOL_META = Object.freeze({ 'anthropic/requiresUserInteraction': tr
 // The five that get it, and why each one deserves a person:
 //   submit_work            — opens or advances a proposal; starts a group vote
 //   create_request         — files publicly, on the app's board and GitHub
-//   prepare_work           — spends an hourly allowance; mints a task that
-//                            dangles if it is never used
+//   prepare_work           — claims the request on the app's board; mints a
+//                            work order that dangles if it is never used
 //   start_platform_build   — spends the user's daily Usernode credits
 //   submit_platform_build  — puts that build to a group vote
 //
@@ -321,6 +321,35 @@ function shapeRequest(issue, { withBody = true, bodyMax = MAX_BODY_CHARS } = {})
   };
 }
 
+// ── Who is already on it (#1225) ───────────────────────────────────────
+//
+// The board route enriches every request with `in_progress`, composed from
+// two independent things: live in-platform build sessions that declared the
+// request, and manual claims. A connector never saw either, so an agent could
+// pick up a request three other people were already building and only find
+// out when its proposal met theirs.
+//
+// Shaped down to what a caller can act on, and no further. `claimedBy` is
+// what claim_request writes and release_request clears; `sessions` is a COUNT
+// because those are in-platform builds a connector cannot join, join, or
+// affect — naming them would invite a message to somebody it cannot reach.
+// Usernames are other users' chosen strings, so they carry the envelope.
+//
+// Null means nobody, which is the same thing the board's own field means.
+function shapeInProgress(inProgress) {
+  if (!inProgress || typeof inProgress !== 'object') return null;
+  const claims = Array.isArray(inProgress.claims) ? inProgress.claims : [];
+  return {
+    claimedBy: claims
+      .filter((c) => c && c.username)
+      .map((c) => untrusted(c.username, MAX_TITLE_CHARS)),
+    sessions: Number.isFinite(inProgress.count) ? inProgress.count : 0,
+    // True when the CALLER already holds a claim or has a session on it —
+    // the one fact that turns "somebody is on this" into "you are".
+    mine: !!inProgress.mine,
+  };
+}
+
 // ── Paging a request list (#1217) ──────────────────────────────────────
 
 // The query matches the NUMBER, the title and the body, case-insensitively.
@@ -502,6 +531,11 @@ function whyYouCannotPush(branch) {
       + 'your fork alone does not move it';
 }
 
+// Capture routes reported back on a proposal. The capture step caps its own
+// list at CAPTURE_MAX_PATHS; this bounds what a stored row from any era can
+// put in a tool response.
+const MAX_CAPTURE_PATHS_REPORTED = 10;
+
 function shapeProposal(session, origin) {
   const detail = (session.capture_detail && typeof session.capture_detail === 'object')
     ? session.capture_detail : {};
@@ -525,6 +559,14 @@ function shapeProposal(session, origin) {
     // at screenshots of a screen this change never touched. Worth saying out
     // loud: it is fixable by resubmitting the routes, and invisible otherwise.
     captureDefaultedToRoot: detail.pathDefaulted === true,
+    // And the routes it DID shoot (#1214). The boolean alone cannot be read
+    // when the change's own first route is '/': "defaulted to the home page"
+    // and "shot exactly what you asked for" look identical, and an agent
+    // checking its work has no way to tell which happened. Null until the
+    // first capture has run.
+    capturePaths: Array.isArray(detail.paths) && detail.paths.length
+      ? detail.paths.filter((p) => typeof p === 'string').slice(0, MAX_CAPTURE_PATHS_REPORTED)
+      : null,
     yesVotes: typeof session.yes_count === 'number' ? session.yes_count : null,
     noVotes: typeof session.no_count === 'number' ? session.no_count : null,
     votesRequired: typeof session.votes_required === 'number' ? session.votes_required : null,
@@ -590,40 +632,24 @@ async function buildRequestDiscussion({ pool, baseUrl, accessToken, appId, slug,
 //
 // Both are optional and absent means exactly what it meant before: no testing
 // metadata, capture defaults to the root.
+//
+// What it will NOT do is drop a route without saying so (#1214). `parseSubmitted`
+// reports every entry it could not use, and `rejectedPaths` carries that list up
+// into submit_work's own answer — the caller learns it sent an unusable route
+// while it is still holding the branch, rather than from a boolean on a
+// different endpoint after the group has started voting.
 function shapeTestingNotes({ testingPaths, testingSteps, description } = {}) {
   const notes = require('./testing-notes');
-  let steps = typeof testingSteps === 'string' ? testingSteps.trim() : '';
-  let paths = [];
   let body = typeof description === 'string' ? description : '';
 
-  // One entry may be a plain path, a path with the same `@mobile` annotation
-  // the block grammar accepts, or a { path, viewport } object.
-  const readEntry = (entry) => {
-    if (entry && typeof entry === 'object') {
-      const valid = notes.validatePath(entry.path);
-      if (!valid) return null;
-      const mobile = /^mobile$/i.test(String(entry.viewport || ''));
-      return { path: valid, viewport: mobile ? notes.VIEWPORT_MOBILE : notes.VIEWPORT_DESKTOP };
-    }
-    if (typeof entry !== 'string') return null;
-    const tokens = entry.trim().split(/\s+/);
-    const valid = notes.validatePath(tokens[0]);
-    if (!valid) return null;
-    const mobile = tokens.slice(1).some((t) => /^@mobile$/i.test(t));
-    return { path: valid, viewport: mobile ? notes.VIEWPORT_MOBILE : notes.VIEWPORT_DESKTOP };
-  };
-
-  if (Array.isArray(testingPaths)) {
-    const seen = new Set();
-    for (const entry of testingPaths) {
-      const shaped = readEntry(entry);
-      if (!shaped) continue;
-      const key = `${shaped.viewport} ${shaped.path}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      if (paths.length < notes.CAPTURE_MAX_PATHS) paths.push(shaped);
-    }
-  }
+  // The whole grammar — the `@mobile` annotation, the { path, viewport } object
+  // form, the validator, the cap, the dedupe — belongs to testing-notes.js and
+  // is not restated here. This module used to keep its own copy of it, and the
+  // copies disagreed: a "/board @mobile" string was understood by the connector
+  // and rejected by the routes underneath it.
+  const submitted = notes.parseSubmitted({ testingPaths, testingSteps });
+  let paths = submitted.testingPaths || [];
+  let steps = submitted.testingMd || '';
 
   // A coding agent already trained on the in-platform contract may simply
   // paste its whole final message as `description`, markers and all. Parse it
@@ -646,7 +672,36 @@ function shapeTestingNotes({ testingPaths, testingSteps, description } = {}) {
   const shaped = { description: body || null };
   if (paths.length) shaped.testingPaths = paths;
   if (steps) shaped.testingSteps = steps.slice(0, notes.TESTING_MD_MAX);
+  // Absent when nothing was rejected, like every other field here: a caller
+  // that branches on it never has to tell an empty list from "all fine".
+  const rejected = notes.explainDrops(submitted.dropped);
+  if (rejected) shaped.rejectedPaths = rejected;
   return shaped;
+}
+
+// The sentence submit_work adds about routes it could not use (#1214). Said in
+// the response that ANSWERS the submission, because that is the moment the
+// caller can still fix it cheaply — it is holding the branch, and a resubmit
+// with corrected routes costs no votes.
+function testingRouteNote(shaped, updating) {
+  const notes = require('./testing-notes');
+  const rejected = (shaped && shaped.rejectedPaths) || [];
+  const kept = notes.displayPaths(shaped && shaped.testingPaths);
+  if (!rejected.length) {
+    // Nothing rejected, nothing kept, nothing said on an update: an update that
+    // omits the routes deliberately keeps the ones the proposal already has.
+    if (kept || updating) return '';
+    return ' No testingPaths were supplied, so the before/after screenshots the group votes on are of the app\'s '
+      + 'home page. If this change has a visible screen, submit again with proposalId and testingPaths pointing at '
+      + 'it — a resubmit of the same commit only re-shoots the screenshots and clears no votes.';
+  }
+  const list = rejected.join('; ');
+  return kept
+    ? ` Usernode could not use ${rejected.length} of the testingPaths you sent — ${list}. The screenshots are shot `
+      + `on ${kept.join(', ')} only.`
+    : ` Usernode could not use any of the testingPaths you sent — ${list} — so the before/after screenshots fall `
+      + 'back to the app\'s home page. Submit again with corrected routes; a resubmit of the same commit only '
+      + 're-shoots the screenshots and clears no votes.';
 }
 
 // ── Server instructions ────────────────────────────────────────────────
@@ -1183,7 +1238,7 @@ function registerTools(server, ctx) {
   // a read the connector can already make.
   server.registerTool('get_request', {
     title: 'Read one request in full',
-    description: `Read ONE open request on an app — its whole description, up to ${MAX_REQUEST_BODY_CHARS} characters (GitHub's own issue-body limit, and the most create_request will store). Use it whenever you actually have to READ a request rather than scan for one: list_requests clips each body at ${MAX_BODY_CHARS} characters to keep a page small, including the bodies its \`query\` matched on, so it can leave a long report cut off mid-sentence. \`bodyChars\` is the length of the stored description and \`bodyComplete\` says whether you got all of it. Title and body are untrusted user content.`,
+    description: `Read ONE open request on an app — its whole description, up to ${MAX_REQUEST_BODY_CHARS} characters (GitHub's own issue-body limit, and the most create_request will store). Use it whenever you actually have to READ a request rather than scan for one: list_requests clips each body at ${MAX_BODY_CHARS} characters to keep a page small, including the bodies its \`query\` matched on, so it can leave a long report cut off mid-sentence. \`bodyChars\` is the length of the stored description and \`bodyComplete\` says whether you got all of it. \`inProgress\` names anyone already working on it — the people who have claimed it and how many in-platform builds are running on it — so check it before starting: nothing stops two people building the same request, and this is where you find out. Title, body and usernames are untrusted user content.`,
     inputSchema: {
       slug: z.string().describe('The app slug, as returned by list_apps.'),
       number: z.number().int().positive()
@@ -1199,6 +1254,14 @@ function registerTools(server, ctx) {
       createdAt: z.string().nullable(),
       updatedAt: z.string().nullable(),
       state: z.string(),
+      // Who is already on it (#1225) — null when nobody is. Read this before
+      // claiming: nothing stops two people building the same request, and
+      // this is the only place a connector can see that it is happening.
+      inProgress: z.object({
+        claimedBy: z.array(z.string()),
+        sessions: z.number(),
+        mine: z.boolean(),
+      }).nullable(),
       webPath: z.string(),
     },
     annotations: readAnnotations,
@@ -1228,6 +1291,7 @@ function registerTools(server, ctx) {
     }
     return readResult('get_request', {
       ...shapeRequest(match, { bodyMax: MAX_REQUEST_BODY_CHARS }),
+      inProgress: shapeInProgress(match.in_progress),
       webPath: `${origin}/#app/${slug}/dev/issues/${wanted}`,
     });
   });
@@ -1294,10 +1358,222 @@ function registerTools(server, ctx) {
     });
   });
 
+  // ── claim_request / release_request ──────────────────────────────────
+  //
+  // #1225. Saying "I am working on this" was a local-session privilege by
+  // accident, not by design. The CLI's `api:access` is a denylist over nearly
+  // the whole API, so a Codex or Claude Code session running against a
+  // checkout has been able to POST a claim and post progress notes on a
+  // request's thread since claims existed. A connector session — which is
+  // where the coding agent increasingly lives, and the only place prepare_work
+  // and submit_work can be called from — reaches an exhaustive ALLOWLIST with
+  // neither route on it and no api_write tool to improvise with. So the same
+  // agent, doing the same job, was visible on the board from a laptop and
+  // invisible from a chat.
+  //
+  // Both tools are thin: the platform route decides everything (the request
+  // has to be a currently-open issue, the claim is upserted per user, the
+  // announcement lands in the request's own thread). They are shaped around
+  // the two things a connector caller actually does — start on something, and
+  // say how it is going — rather than around the two HTTP verbs.
+  //
+  // Neither carries ACTING_TOOL_META. The five tools that do either spend an
+  // allowance, file publicly on GitHub, or start a group vote; a claim is
+  // platform-local, names only the caller, expires by itself and is cleared by
+  // one call. Putting an unskippable prompt on it would mean an agent that
+  // announces its work costs the user a click every time, which is how a
+  // coordination signal stops being sent.
+  //
+  // `note` is the "note progress" half, and it is a normal chat message on the
+  // request's thread — the same channel answer_questions posts to and the same
+  // one the next build reads. It is optional on both: a bare claim already
+  // announces itself, and a note without new work is how a long job stays
+  // visibly alive (thread activity is what keeps a claim from expiring).
+  const CLAIM_NOTE_HINT = 'Shorten the note and call again — nothing about the claim changed.';
+
+  // Post a progress note on a request's discussion thread, after the claim
+  // itself has already succeeded. Failure is REPORTED, never thrown: the claim
+  // is the thing the caller asked for and it has already landed, so a chat
+  // hiccup must not come back as "claiming failed" and send them round again.
+  const postRequestNote = async (slug, number, text) => {
+    if (!text) return { attempted: false, posted: false, error: null };
+    const posted = await callPlatform(baseUrl, accessToken, 'POST', `/api/apps/${slug}/messages`, {
+      content: text,
+      thread_type: 'issue',
+      thread_ref: number,
+    });
+    if (posted.ok) return { attempted: true, posted: true, error: null };
+    const failure = platformError(posted).structuredContent;
+    return { attempted: true, posted: false, error: failure.message || 'The note could not be posted.' };
+  };
+
+  // The board read both tools share. It answers two questions in one call —
+  // does this request exist and who else is on it — and it is the same route
+  // get_request reads, so no allowlist entry is added for it.
+  const readRequestState = async (slug, number) => {
+    const result = await callPlatform(baseUrl, accessToken, 'GET', `/api/apps/${slug}/github-issues`);
+    if (!result.ok) return { error: platformError(result) };
+    const issues = Array.isArray(result.body && result.body.issues) ? result.body.issues : [];
+    const match = issues.find((i) => i && i.number === number);
+    if (!match) {
+      // A degraded board cannot prove absence — the same distinction
+      // get_request draws, for the same reason.
+      const note = result.body?.note
+        || (result.body?.truncatedList ? 'this app has more open requests than the platform fetches' : null);
+      return {
+        error: toolError('no_access', note
+          ? `Request #${number} was not among this app's open requests, but the board could not be read in full (${note}) — it may exist.`
+          : `Request #${number} is not open on this app. Check list_requests.`),
+      };
+    }
+    const claims = Array.isArray(match.in_progress?.claims) ? match.in_progress.claims : [];
+    return {
+      issue: match,
+      // Everyone EXCEPT the caller. "You already claimed this" is reported as
+      // `created: false`; this list is the people a caller might want to talk
+      // to before duplicating their work.
+      others: claims
+        .filter((c) => c && c.username && !c.mine)
+        .map((c) => untrusted(c.username, MAX_TITLE_CHARS)),
+      mine: claims.some((c) => c && c.mine),
+    };
+  };
+
+  server.registerTool('claim_request', {
+    title: 'Say you are working on a request',
+    description: `Mark a request as being worked on by this user, so the app's board shows it and the group can see who is on what. Call it when you START on a request — before writing code, and before prepare_work if you are about to call that — not when you finish. Calling it again renews the claim silently, which is how a long job stays marked live; only the first call announces itself on the request. \`note\` posts a progress update on the request's own discussion thread, in the user's name, visible to everyone: use it to say what you are doing or how far you have got. A request can hold MANY claims at once and claiming one grants no exclusivity — \`alsoClaimedBy\` names anyone else already on it, and finding somebody there is a reason to check with the user before duplicating their work, not an error. Claims lapse on their own once a request goes quiet, so nothing is left stuck; release_request hands one back deliberately. Notes are posted verbatim, up to ${MAX_ANSWER_CHARS} characters; a longer one is refused with your actual length rather than shortened.`,
+    inputSchema: {
+      slug: z.string().describe('The app slug, as returned by list_apps.'),
+      number: z.number().int().positive()
+        .describe('The request number, as returned by list_requests.'),
+      note: z.string().optional()
+        .describe(`Optional progress update, posted on the request's discussion thread in the user's name for the whole group to read. At most ${MAX_ANSWER_CHARS} characters.`),
+    },
+    outputSchema: {
+      number: z.number(),
+      // False only when the caller already held this claim — the call still
+      // succeeded and the clock still restarted.
+      created: z.boolean(),
+      claimedAt: z.string().nullable(),
+      alsoClaimedBy: z.array(z.string()),
+      // Whether a `note` was posted. Null when none was passed; false with
+      // `noteError` set when one was passed and did not land.
+      notePosted: z.boolean().nullable(),
+      noteError: z.string().nullable(),
+      webPath: z.string(),
+      nextStep: z.string(),
+    },
+    annotations: writeAnnotations,
+  }, async ({ slug, number, note }) => {
+    const guard = scopeGuard(WRITE_SCOPE);
+    if (guard) return guard;
+    if (!requireSlug(slug)) return toolError('invalid_request', 'slug must be a valid app slug.');
+    const wanted = Number(number);
+    if (!Number.isInteger(wanted) || wanted <= 0) {
+      return toolError('invalid_request', 'number must be a request number, as returned by list_requests.');
+    }
+    // Checked before anything is written, so a refused note leaves no claim
+    // half-made behind it — the same rule create_request follows.
+    const noteCheck = checkWriteLength(note == null ? '' : String(note).trim(), {
+      field: 'note', max: MAX_ANSWER_CHARS, hint: CLAIM_NOTE_HINT,
+    });
+    if (!noteCheck.ok) return writeLengthError(noteCheck);
+
+    const state = await readRequestState(slug, wanted);
+    if (state.error) return state.error;
+
+    const claimed = await callPlatform(
+      baseUrl, accessToken, 'POST', `/api/apps/${slug}/github-issues/${wanted}/claim`
+    );
+    if (!claimed.ok) return platformError(claimed);
+    const created = !!(claimed.body && claimed.body.created);
+
+    const noteResult = await postRequestNote(slug, wanted, noteCheck.value);
+
+    return toolResult({
+      number: wanted,
+      created,
+      claimedAt: (claimed.body && claimed.body.claimedAt) || null,
+      alsoClaimedBy: state.others,
+      notePosted: noteResult.attempted ? noteResult.posted : null,
+      noteError: noteResult.error,
+      webPath: `${origin}/#app/${slug}/dev/issues/${wanted}`,
+      nextStep: (state.others.length
+        ? `${state.others.length} other ${state.others.length === 1 ? 'person has' : 'people have'} claimed this request too — `
+          + 'tell the user who, because the work may already be under way. '
+        : '')
+        + (noteResult.attempted && !noteResult.posted
+          ? 'The claim is recorded but the note did not post; call again with the note to retry it. '
+          : '')
+        + 'The claim is visible on the app\'s board and it is not exclusive. Renew it by calling '
+        + 'claim_request again, or post a `note` as the work moves; call release_request if the user '
+        + 'stops working on this.',
+    });
+  });
+
+  server.registerTool('release_request', {
+    title: 'Hand a request back',
+    description: 'Clear this user\'s claim on a request, so the board stops showing them as working on it. Use it when the user stops, drops or finishes work that will not become a proposal — a claim also lapses by itself once the request goes quiet, so this is for saying so deliberately rather than for tidying up. It clears only THIS user\'s claim and never anybody else\'s, and it is a soft success when there was no claim to clear (`cleared: false`). `note` posts a parting message on the request\'s discussion thread — worth writing when somebody else may pick the work up, because what you learned is otherwise lost with the claim.',
+    inputSchema: {
+      slug: z.string().describe('The app slug, as returned by list_apps.'),
+      number: z.number().int().positive()
+        .describe('The request number, as returned by list_requests.'),
+      note: z.string().optional()
+        .describe(`Optional parting note, posted on the request's discussion thread in the user's name — what was tried, what is left. At most ${MAX_ANSWER_CHARS} characters.`),
+    },
+    outputSchema: {
+      number: z.number(),
+      cleared: z.boolean(),
+      notePosted: z.boolean().nullable(),
+      noteError: z.string().nullable(),
+      webPath: z.string(),
+      nextStep: z.string(),
+    },
+    annotations: writeAnnotations,
+  }, async ({ slug, number, note }) => {
+    const guard = scopeGuard(WRITE_SCOPE);
+    if (guard) return guard;
+    if (!requireSlug(slug)) return toolError('invalid_request', 'slug must be a valid app slug.');
+    const wanted = Number(number);
+    if (!Number.isInteger(wanted) || wanted <= 0) {
+      return toolError('invalid_request', 'number must be a request number, as returned by list_requests.');
+    }
+    const noteCheck = checkWriteLength(note == null ? '' : String(note).trim(), {
+      field: 'note', max: MAX_ANSWER_CHARS, hint: CLAIM_NOTE_HINT,
+    });
+    if (!noteCheck.ok) return writeLengthError(noteCheck);
+
+    // No `userId` in the body, ever. The route accepts one from a write-admin
+    // to clear somebody else's stuck claim; a connector is not the place to
+    // reach over another person's coordination state, and leaving the field
+    // off is what makes that true rather than a comment saying it is.
+    const cleared = await callPlatform(
+      baseUrl, accessToken, 'DELETE', `/api/apps/${slug}/github-issues/${wanted}/claim`
+    );
+    if (!cleared.ok) return platformError(cleared);
+    const wasCleared = !!(cleared.body && cleared.body.cleared);
+
+    // Posted whether or not there was a claim to clear: a note about work
+    // somebody is stopping is worth the same either way.
+    const noteResult = await postRequestNote(slug, wanted, noteCheck.value);
+
+    return toolResult({
+      number: wanted,
+      cleared: wasCleared,
+      notePosted: noteResult.attempted ? noteResult.posted : null,
+      noteError: noteResult.error,
+      webPath: `${origin}/#app/${slug}/dev/issues/${wanted}`,
+      nextStep: wasCleared
+        ? 'The claim is cleared and the board no longer shows this user on this request.'
+        : 'There was no live claim of this user\'s to clear, so nothing changed — the board already '
+          + 'did not show them on this request.',
+    });
+  });
+
   // ── get_proposal ─────────────────────────────────────────────────────
   server.registerTool('get_proposal', {
     title: 'Get a proposal',
-    description: "Status of one proposal: its checks verdict — including the NAMES of any failing tests — the staging preview URL, the vote tally and how many votes it still needs to merge. Checks gate merge: a proposal whose checks are failing cannot land however the vote goes, so if you are the agent that wrote the code, fix the named tests and submit the fix as an UPDATE to this same proposal — never as a second one. `branch` says how: `branch.home` is 'user_fork' when the proposal follows a branch in the author's own fork (push to it, then call submit_work with proposalId and branch) or 'app_repo' when its head is a branch only Usernode can write (push to your own fork, then call submit_work with proposalId and that branch — pushing alone moves nothing). `branch.youCanPush` and `nextStep` state the same thing in one line; follow `nextStep`. A proposal you opened with submit_work is usually 'app_repo' even though the work came from your fork — Usernode copies the fork branch into the app repository — so its branch name exists only there, and revising it always goes back through submit_work. `captureDefaultedToRoot` true means the submission carried no testing route, so the before/after screenshots the voters see are of the app's home page.",
+    description: "Status of one proposal: its checks verdict — including the NAMES of any failing tests — the staging preview URL, the vote tally and how many votes it still needs to merge. Checks gate merge: a proposal whose checks are failing cannot land however the vote goes, so if you are the agent that wrote the code, fix the named tests and submit the fix as an UPDATE to this same proposal — never as a second one. `branch` says how: `branch.home` is 'user_fork' when the proposal follows a branch in the author's own fork (push to it, then call submit_work with proposalId and branch) or 'app_repo' when its head is a branch only Usernode can write (push to your own fork, then call submit_work with proposalId and that branch — pushing alone moves nothing). `branch.youCanPush` and `nextStep` state the same thing in one line; follow `nextStep`. A proposal you opened with submit_work is usually 'app_repo' even though the work came from your fork — Usernode copies the fork branch into the app repository — so its branch name exists only there, and revising it always goes back through submit_work. `captureDefaultedToRoot` true means the submission carried no testing route AT ALL, so the before/after screenshots the voters see are of the app's home page; `capturePaths` names the routes the last capture actually shot, which is how you tell that apart from a change whose own first route is '/'. Fix either by calling submit_work with this proposalId and corrected testingPaths — resubmitting the same commit only re-shoots the screenshots and clears no votes.",
     inputSchema: { proposalId: z.number().int().positive().describe('The proposal id returned by list_my_proposals.') },
     outputSchema: {
       proposalId: z.number(),
@@ -1324,6 +1600,7 @@ function registerTools(server, ctx) {
       }),
       nextStep: z.string(),
       captureDefaultedToRoot: z.boolean(),
+      capturePaths: z.array(z.string()).nullable(),
       yesVotes: z.number().nullable(),
       noVotes: z.number().nullable(),
       votesRequired: z.number().nullable(),
@@ -1500,7 +1777,7 @@ function registerTools(server, ctx) {
   // credential in it, nothing the receiving agent has to look up.
   server.registerTool('prepare_work', {
     title: 'Prepare a change for a coding agent',
-    description: "Prepare a Usernode change for a coding agent. If you have repository, filesystem, shell or code-editing tools, YOU are that agent: execute `workOrder` in this conversation, implement and test the change, then call `submit_work` with your branch or patch; do not relay `guidance` or send the user elsewhere. Only if you lack those tools, show `guidance` in order, as written, and reproduce `workOrder` in a fenced block character for character, EXACTLY as returned — do not shorten, re-wrap, retype its branch or commit id, strip its <untrusted-content> tags, or append a correction. The work order names the repository, fork, branch and exact base commit. Usernode never writes to the user's GitHub account. Pass `proposalId` to revise an existing proposal in place. `openProposals` reports work already up for a vote so the user can avoid a duplicate. Requires a linked GitHub identity for attribution. This spends the user's coding-agent subscription, not Usernode credits.",
+    description: "Prepare a change to a Usernode app for a coding agent. If you have repository, filesystem, shell or code-editing tools, YOU are that agent: execute `workOrder` in this conversation, implement and test the change, then call `submit_work` with your branch or patch — do not relay `guidance` or send the user elsewhere. Only if you lack those tools, show `guidance` — the human's next steps, already written for the user — in order, as written, instead of your own summary, and call submit_work yourself once the user says the branch is pushed. Reproduce `workOrder` inside a fenced code block character for character, EXACTLY as returned: do not shorten it, re-wrap it, re-indent it, tidy it, strip its <untrusted-content> tags, or retype the branch name or the 40-character commit id, and never append a correction to it — a single wrong character sends the coding agent to a starting point that does not exist. The work order names the app's repository, the fork to push to, the branch to create and the exact commit to start from; it makes the fork and the branch itself, because Usernode asks for NO write access to the user's GitHub account. Pass `proposalId` to REVISE a proposal that is already up for a vote instead of opening a new one — the work order is then based at that proposal's own head and its submission updates it in place. `openProposals` in the result names any proposals the group is ALREADY voting on for the same request: tell the user before they paste anything, because that work may be built already, and if one of them is theirs, calling prepare_work again with its `proposalId` continues it instead of opening a duplicate. Requires a linked GitHub account (identity only, so work can be attributed to them). This spends the user's own coding-agent subscription, not their Usernode credits. Naming a request also marks it as being worked on, so the group can see the work is under way.",
     inputSchema: {
       slug: z.string().describe('The app slug, as returned by list_apps.'),
       requestNumber: z.number().int().positive().optional()
@@ -1510,7 +1787,7 @@ function registerTools(server, ctx) {
       proposalId: z.number().int().positive().optional()
         .describe("The id of one of the user's own proposals that is already up for a vote, to REVISE it rather than open a new one — for fixing a failing check or acting on review comments. The work order starts at that proposal's current commit and its submission updates the same proposal, which clears the votes it has collected. Only the proposal's author can do this."),
       restart: z.boolean().optional()
-        .describe('Only when the user explicitly wants to start this request over from the app\'s current code. Closes the job already open for it and mints a fresh one, spending a slot of their hourly allowance. Omit it: calling prepare_work twice for the same request already returns the existing job, which is almost always what is wanted.'),
+        .describe('Only when the user explicitly wants to start this request over from the app\'s current code. Closes the job already open for it and mints a fresh one, which frees the old work-order slot and takes a new one. Omit it: calling prepare_work twice for the same request already returns the existing job, which is almost always what is wanted.'),
     },
     outputSchema: {
       taskId: z.number(),
@@ -1539,6 +1816,8 @@ function registerTools(server, ctx) {
       // where that proposal's head lives.
       proposalId: z.number().nullable(),
       branchHome: z.enum(['app_repo', 'user_fork']).nullable(),
+      claimedRequest: z.boolean()
+        .describe('Whether the request was marked as being worked on. False when this work order names no request, or when the claim did not land — the work order itself is unaffected either way, and claim_request retries it.'),
       // Proposals the group is ALREADY voting on for this same request
       // (#1216) — empty when there are none, and never the same thing as
       // `proposalId` above. A job and a proposal are tracked separately, so
@@ -1635,11 +1914,37 @@ function registerTools(server, ctx) {
     });
     if (!result.ok) return serviceError(result);
 
+    // Mark the request as being worked on (#1225). An in-platform session
+    // marks its issues in progress at dispatch, from the linked_issues the
+    // Mayor declared; a connector work order created the same commitment and
+    // showed the group nothing, so a request handed to somebody's coding agent
+    // looked exactly as free as one nobody had touched.
+    //
+    // Advisory, and it must stay that way: the work order is the thing the
+    // caller asked for and it has already been minted, so a failed claim is
+    // reported as `claimedRequest: false` rather than losing it. Only when the
+    // work order names a request — a `brief`-only one has no board row to
+    // mark. Renewals are silent platform-side, so calling prepare_work twice
+    // does not announce twice.
+    let claimedRequest = false;
+    if (issueNumber) {
+      const claimed = await callPlatform(
+        baseUrl, accessToken, 'POST', `/api/apps/${slug}/github-issues/${issueNumber}/claim`
+      );
+      claimedRequest = !!claimed.ok;
+      if (!claimed.ok) {
+        log.warn('mcp-tools', 'prepare_work claim failed (continuing)', {
+          slug, issueNumber, status: claimed.status,
+        });
+      }
+    }
+
     // The fork wording, the one-click link and the "do not open a PR" note
     // all live in `guidance` now, built by the service — nextStep is only
     // the rendering contract plus what to call next. Re-rendering is free:
     // a bad paste is fixed from this same result, never by calling
-    // prepare_work again (that spends the hourly cap and opens a new task).
+    // prepare_work again (that holds another work-order slot and opens a
+    // new task).
     return toolResult({
       taskId: result.taskId,
       appSlug: app.slug,
@@ -1653,6 +1958,7 @@ function registerTools(server, ctx) {
       workOrder: result.workOrder,
       proposalId: result.proposalId || null,
       branchHome: result.branchHome || null,
+      claimedRequest,
       // The title is the proposal's own heading and the author is a username:
       // both are other Usernode users' writing, so both keep the envelope
       // every other request- and proposal-shaped string here carries.
@@ -1714,7 +2020,7 @@ function registerTools(server, ctx) {
       title: z.string().optional().describe('A short title for the proposal. Defaults to the task description.'),
       description: z.string().optional().describe('What changed and why, for the people voting on it.'),
       testingPaths: z.array(z.string()).optional()
-        .describe('The in-app routes this change is visible on, most important first — e.g. ["/board?demo=1", "/settings"]. Usernode shoots a before/after screenshot pair of each one for the people voting. Point them at the SCREEN YOU CHANGED, never the home page; a route may carry " @mobile" to be shot in a phone-sized viewport. Up to 3 are used. Omit only if the change has no visible screen — otherwise the voters see screenshots of the app\'s home page, which show nothing of your change. On an UPDATE these replace the proposal\'s stored routes and the screenshots are re-shot on them; omit them there to keep the ones it already has.'),
+        .describe('The in-app routes this change is visible on, most important first — e.g. ["/board?demo=1", "/settings"]. Usernode shoots a before/after screenshot pair of each one for the people voting. Point them at the SCREEN YOU CHANGED, never the home page; a route may carry " @mobile" to be shot in a phone-sized viewport. Up to 3 are used. Omit only if the change has no visible screen — otherwise the voters see screenshots of the app\'s home page, which show nothing of your change. On an UPDATE these replace the proposal\'s stored routes and the screenshots are re-shot on them; omit them there to keep the ones it already has. The answer reports back `testingPaths` — what will actually be shot — and `testingPathsRejected` for anything it could not use, so check them rather than waiting for get_proposal\'s `captureDefaultedToRoot`.'),
       testingSteps: z.string().optional()
         .describe('A few short numbered lines telling a person what to click to see the change, shown beside the staging preview. Markdown.'),
       expectedHeadSha: z.string().optional()
@@ -1736,12 +2042,20 @@ function registerTools(server, ctx) {
       headSha: z.string().nullable(),
       votesCleared: z.number().nullable(),
       submittedVia: z.string().nullable(),
-      // Set only by an UPDATE (#1199): the capture routes this revision's
-      // screenshots are shot against, whether this call changed them, and —
-      // for a resubmit that moved no commit — whether that re-ran the
-      // capture. Without these, a correction is indistinguishable from a
-      // no-op in the answer the agent reads.
+      // The capture routes this submission's screenshots are shot against, in
+      // the spelling they were sent in — on a FIRST submission as well as on an
+      // update (#1214), because "which screen will the group actually see" is
+      // the same question either way.
       testingPaths: z.array(z.string()).nullable(),
+      // Every route that did NOT become one, with the reason (#1214). A route
+      // is still dropped rather than failing the submission — one malformed
+      // path must not cost an agent its whole push — but it is no longer
+      // dropped in silence.
+      testingPathsRejected: z.array(z.string()).nullable(),
+      // Set only by an UPDATE (#1199): whether this call changed the stored
+      // routes and — for a resubmit that moved no commit — whether that re-ran
+      // the capture. Without these, a correction is indistinguishable from a
+      // no-op in the answer the agent reads.
       testingUpdated: z.boolean().nullable(),
       captureRerun: z.boolean().nullable(),
       nextStep: z.string(),
@@ -1875,6 +2189,9 @@ function registerTools(server, ctx) {
       const shotOn = result.testingPaths && result.testingPaths.length
         ? ` The screenshots the group votes on are shot on ${result.testingPaths.join(', ')}.`
         : '';
+      // Rejections are named from what THIS call was given, not from what the
+      // proposal ended up with: the routes the route refused never reach it.
+      const rejectedNote = testingRouteNote(testing, true);
       // A resubmit that moved no commit is reported by what it DID, not by
       // what it did not (#1199) — three outcomes, and the agent acts on a
       // different one in each.
@@ -1897,18 +2214,19 @@ function registerTools(server, ctx) {
         votesCleared: cleared,
         submittedVia: result.submittedVia || null,
         testingPaths: result.testingPaths || null,
+        testingPathsRejected: testing.rejectedPaths || result.testingPathsRejected || null,
         testingUpdated: result.testingUpdated === true,
         captureRerun: result.captureRerun === true,
         webPath: result.proposalId
           ? `${origin}/#app/${result.appSlug}/dev/sessions/${result.proposalId}`
           : `${origin}/#app/${result.appSlug}`,
-        nextStep: result.unchanged
+        nextStep: (result.unchanged
           ? resubmitStep
           : `The proposal now points at your new commit.${cleared > 0
             ? ` The ${cleared} vote${cleared === 1 ? '' : 's'} it had collected were cleared, because they were cast on the old code`
             : ' Any votes it had collected were cleared, because they were cast on the old code'}`
             + ' — reviewers have been asked to look again. Checks and the staging preview rebuild automatically; '
-            + `use get_proposal to follow them.${shotOn}`,
+            + `use get_proposal to follow them.${shotOn}`) + rejectedNote,
       });
     }
 
@@ -1925,7 +2243,11 @@ function registerTools(server, ctx) {
         headSha: null,
         votesCleared: null,
         submittedVia: null,
+        // Nothing was written by THIS call, so there is nothing to report about
+        // what will be shot — but a route this call could not read is still
+        // worth naming, because it is what the caller would resubmit with.
         testingPaths: null,
+        testingPathsRejected: testing.rejectedPaths || null,
         testingUpdated: null,
         captureRerun: null,
         webPath: result.proposalId
@@ -1945,22 +2267,29 @@ function registerTools(server, ctx) {
       headSha: null,
       votesCleared: null,
       submittedVia: null,
-      testingPaths: null,
+      // A FIRST submission reports its capture routes too (#1214). It used to
+      // report null here whatever it was given, so the only way to learn that a
+      // route had been lost was get_proposal's `captureDefaultedToRoot`, minutes
+      // later, once the group was already looking at the wrong screenshots.
+      testingPaths: require('./testing-notes').displayPaths(testing.testingPaths),
+      testingPathsRejected: testing.rejectedPaths || null,
       testingUpdated: null,
       captureRerun: null,
       webPath: result.proposalId
         ? `${origin}/#app/${result.appSlug}/dev/sessions/${result.proposalId}`
         : `${origin}/#app/${result.appSlug}`,
-      nextStep: 'It is now up for a vote. Checks and the staging preview build automatically — use get_proposal to follow it. It merges when the group approves it.',
+      nextStep: 'It is now up for a vote. Checks and the staging preview build automatically — use get_proposal to follow it. It merges when the group approves it.'
+        + testingRouteNote(testing, false),
     });
   });
 
   // ── The platform-build fallback ──────────────────────────────────────
   //
   // For a user with no coding agent of their own. This is the ONLY path
-  // that spends the platform's credits, so it is bounded harder (see
-  // services/connector-limits.js) and it is described honestly to the model
-  // as the second choice.
+  // that spends the platform's credits, so it carries the user's daily
+  // credit budget plus the same per-user cap on builds running at once that
+  // the browser applies to a dev session (see services/connector-limits.js),
+  // and it is described honestly to the model as the second choice.
 
   server.registerTool('start_platform_build', {
     title: 'Have Usernode build it',
@@ -1984,7 +2313,7 @@ function registerTools(server, ctx) {
     if (!Number.isInteger(requestNumber) || requestNumber <= 0) {
       return toolError('invalid_request', 'requestNumber must be an open request number.');
     }
-    const capped = await connectorLimits.checkFallbackStart(pool, user.id);
+    const capped = await connectorLimits.checkFallbackStart(pool, config, user);
     if (capped) return toolError(capped.code, capped.message, { retryable: true });
 
     const result = await callPlatform(
@@ -2109,7 +2438,7 @@ function registerTools(server, ctx) {
     });
     if (!posted.ok) return platformError(posted);
 
-    const capped = await connectorLimits.checkFallbackStart(pool, user.id);
+    const capped = await connectorLimits.checkFallbackStart(pool, config, user);
     if (capped) return toolError(capped.code, capped.message, { retryable: true });
 
     const rerun = await callPlatform(
@@ -2217,6 +2546,7 @@ module.exports = {
   platformError,
   shapeApp,
   shapeRequest,
+  shapeInProgress,
   matchesRequestQuery,
   requestPageKey,
   encodeRequestCursor,
@@ -2225,5 +2555,6 @@ module.exports = {
   shapeProposal,
   shapeChecks,
   shapeTestingNotes,
+  testingRouteNote,
   registerTools,
 };

@@ -529,8 +529,8 @@ test('_bucketDevItems routes in-progress issues (sessions, claims, headless) to 
     .filter((x) => x.kind === 'issue')
     .map((x) => x.item.number)
     .sort((a, b) => a - b);
-  assert.deepEqual(inProgressNums, [2, 3, 4]);
-  // The issue represented by a promoted proposal card stays hidden from
-  // both issue columns (it lives in In review as the proposal).
-  assert.ok(!buckets.inProgress.some((x) => x.kind === 'issue' && x.item.number === 5));
+  // #1251: the issue an open promoted proposal addresses is In progress
+  // too — it used to be dropped from both issue columns, which left it
+  // visible in the list feed but findable nowhere on the board.
+  assert.deepEqual(inProgressNums, [2, 3, 4, 5]);
 });
