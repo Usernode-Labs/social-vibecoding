@@ -124,6 +124,51 @@ test('the offline essentials excerpt points at the user directory (#1195)', () =
   assert.match(excerpt, /never a guess from users your app has already seen/);
 });
 
+test('conventions doc warns that seeding must not fabricate a signal (#1212)', () => {
+  const doc = getAppConventions();
+  assert.match(
+    doc, /^### Seeded data must not fabricate a signal your logic reads$/m,
+    'the seeding/logic-interaction subsection is missing or renamed'
+  );
+  const section = doc.slice(
+    doc.indexOf('### Seeded data must not fabricate a signal your logic reads'),
+    doc.indexOf('### Make the changed screen URL-reachable')
+  );
+  // The three habits are the load-bearing part: each one is what the real
+  // case (Todo List invite validation, #1212) actually needed.
+  assert.match(section, /\*\*Never seed the visitor\.\*\*/);
+  assert.match(section, /\*\*Request-time seeding only behind `\?demo=1`\.\*\*/);
+  assert.match(section, /\*\*Ask what the empty database answers\.\*\*/);
+  // And the remedy an author can act on: assert the production shape on
+  // the route that carries no seeding.
+  assert.match(section, /declare a test on the\nunseeded route/);
+});
+
+test('the Proposal tests section names the gate\'s staging-only blind spot (#1212)', () => {
+  const doc = getAppConventions();
+  const checks = doc.slice(
+    doc.indexOf('## Proposal tests — "CI for proposals"'),
+    doc.indexOf('## Repo test suites on build turns')
+  );
+  assert.ok(checks.length > 500, 'the Proposal tests section is still there');
+  assert.match(checks, /What the checks cannot see/);
+  // The cross-reference has to keep matching the subsection's heading, or
+  // the pointer dangles the way #218's did.
+  assert.match(checks, /Seeded data must not fabricate a signal your logic reads/);
+});
+
+test('the offline essentials excerpt carries the fake-identity seed rule (#1212)', () => {
+  const doc = getAppConventions();
+  const begin = doc.indexOf('<!-- work-order:begin -->');
+  const end = doc.indexOf('<!-- work-order:end -->');
+  assert.ok(begin >= 0 && end > begin, 'work-order markers must survive');
+  const excerpt = doc.slice(begin, end);
+  // Rule 3 is the seeding rule, and an agent that only ever reads the
+  // excerpt has to learn that seeding can become an INPUT to its own logic.
+  assert.match(excerpt, /Seed FAKE identities only/);
+  assert.match(excerpt, /never a signal your own logic reads/);
+});
+
 test('the excerpt and the full Tailwind section agree about the CDN (#1215)', () => {
   const doc = getAppConventions();
   const begin = doc.indexOf('<!-- work-order:begin -->');
