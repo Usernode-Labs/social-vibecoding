@@ -75,6 +75,26 @@ const CHARTER_SECTIONS = Object.freeze([
     text: 'You do NOT write code through this connector. Usernode supplies the task and the repository plumbing; the code is written by the user\'s own coding agent (Claude Code on the web, or Codex) on their own subscription, and Usernode turns the resulting branch into a proposal with a staging preview, automated checks and a vote.',
   },
   {
+    // The section above is about this CONNECTOR, and an agent that is itself
+    // the user's coding agent reads it as being about ITSELF: "you do not
+    // write code here" lands as "prepare_work is somebody else's step". One
+    // such session went looking for its base commit by other means instead of
+    // asking for the work order that carries it, and reported the tool it
+    // needed as a hand-off it had no business making.
+    //
+    // The work order already says the right thing — "submitting it yourself is
+    // the expected path, not an overreach" — but that text only reaches an
+    // agent that already has a work order, which is exactly what this reader
+    // does not yet have.
+    //
+    // No `brief`: the instruction budget is for clauses a model that reads
+    // NOTHING else would get wrong, and this one only binds a reader already
+    // deep enough in the flow to be holding a checkout.
+    id: 'you-may-be-both',
+    title: 'When you are the coding agent as well',
+    text: 'The section above is about this connector, not about you. If you are yourself the user\'s coding agent — a Claude Code or Codex session that also holds this connector — then you are both parties to the hand-off, and the steps written as "give this to the user\'s coding agent" are yours to carry out rather than to relay. Call prepare_work for the request you are building and read the work order it returns: it names the repository, the fork, the branch and the exact base commit your branch has to start from, and that base commit is not discoverable from inside a checkout — the branch you were handed may have been cut from something far older. Then push and call submit_work yourself with that task id. That is the expected path, not an overreach: the task belongs to the Usernode account this connector is signed in as, not to the chat that created it. Do not relay a work order to the user as though somebody else were going to build it.',
+  },
+  {
     id: 'where-to-start',
     title: 'Where to start, and the duplicate check',
     brief: 'Start from list_apps, and list_requests before filing anything — page `nextCursor` until it is null, or the duplicate check is not done.',

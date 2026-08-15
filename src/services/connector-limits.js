@@ -35,7 +35,7 @@ const { effectiveSessionCaps } = require('./session-caps');
 // at which "the model is looping" becomes more likely than "the user is
 // working".
 const LIMITS = Object.freeze({
-  proposalsPerDay: 5,      // connector-authored proposals per user per 24h
+  openProposals: 5,        // connector-authored proposals up for a vote at once
   forksPerHour: 3,         // prepare_work work orders per user per hour
   openTasks: 10,           // un-submitted work orders held at once
   fallbackInFlight: 2,     // platform builds running at once
@@ -89,22 +89,37 @@ async function checkPromotedCap(pool, config, user) {
   return null;
 }
 
-// ── 2. Connector-authored proposals per day ────────────────────────────
-async function checkProposalRate(pool, userId) {
+// ── 2. Connector-authored proposals open at once ───────────────────────
+//
+// A CONCURRENCY bound, not a daily quota. What this cap is for is stopping a
+// looping model from filling the vote queue — and the queue is a stock, not a
+// flow: what harms it is how many proposals sit in it at once, which is also
+// what a human reviewer actually feels. A 24-hour window measured the wrong
+// thing in both directions. It punished a productive day whose proposals had
+// already merged — the queue empty, the work reviewed and voted in, and the
+// next submission still refused for hours — while leaving five simultaneous
+// unreviewed proposals perfectly within the rules.
+//
+// "Open" is the same set the promoted-session cap above counts, and the same
+// one pr-import-sync calls up-for-a-vote: a proposal stops occupying the queue
+// once it merges or is closed, and the slot returns immediately rather than at
+// the end of a rolling window.
+async function checkOpenProposals(pool, userId) {
   const count = await countOr(
     pool,
     `SELECT COUNT(*) AS cnt FROM chat_sessions
       WHERE user_id = $1 AND external_agent IS NOT NULL
-        AND created_at > NOW() - INTERVAL '24 hours'`,
+        AND status IN ('promoted', 'merging')`,
     [userId],
-    'proposal-rate'
+    'open-proposals'
   );
   if (count === null) return UNAVAILABLE;
-  if (count >= LIMITS.proposalsPerDay) {
+  if (count >= LIMITS.openProposals) {
     return limitError(
       'at_capacity',
-      `You have opened ${LIMITS.proposalsPerDay} proposals from a connected coding agent in the last 24 hours, `
-      + 'which is the daily limit. The proposals already up for a vote are unaffected.'
+      `You already have ${LIMITS.openProposals} proposals from a connected coding agent up for a vote. `
+      + 'Wait for one to merge or close, or archive one, then submit again — the branch you pushed '
+      + 'keeps, and its task stays open.'
     );
   }
   return null;
@@ -195,7 +210,7 @@ async function checkFallbackStart(pool, userId) {
 module.exports = {
   LIMITS,
   checkPromotedCap,
-  checkProposalRate,
+  checkOpenProposals,
   checkPrepareRate,
   checkFallbackStart,
 };

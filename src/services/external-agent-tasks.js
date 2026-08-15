@@ -561,6 +561,20 @@ function buildWorkOrder({
     setup.push('', 'Your fork already exists — start at the clone.');
   }
 
+  // Dependencies are not a detail the agent can be left to infer. A checkout
+  // handed to a dispatched session can arrive with an empty node_modules, and
+  // the first thing a careful agent does is run the suite — which then fails
+  // with module-not-found errors on every file that imports a dependency.
+  // That reads as "my change broke the tests", not as "nothing is installed",
+  // and the wrong reading costs a debugging pass before the first real edit.
+  setup.push(
+    '',
+    'Install dependencies before you run anything. A fresh checkout has none,',
+    'and a test run without them fails with module-not-found errors that look',
+    'like a broken change rather than a missing install:',
+    `${CMD}npm ci`
+  );
+
   // The base commit is the single most-mangled part of this text: it reaches
   // the coding agent through an assistant that likes to paraphrase. Say what
   // failure looks like and how to recover, so a bad transcription corrects
@@ -2293,19 +2307,38 @@ async function submitWorkLocked(deps, params) {
   }
 
   // `slug` + `branch` with no taskId: resolve the caller's most recent open
-  // task for that app. An agent that lost its task id is not stuck, and if
-  // there genuinely is no task the submission proceeds task-less with the
-  // attribution gate fully applied.
+  // task for that app. An agent that lost its task id is not stuck — but this
+  // RECOVERS a task, it does not stand in for one. With no open task on the
+  // account for that app there is nothing to resolve, and the guard below
+  // refuses. That refusal is deliberate: a submission with no task has no
+  // recorded base commit, and mirrorForkBranch runs its ancestry check only
+  // `if (baseSha)` — so a task-less path would quietly drop the very
+  // base_mismatch protection that catches a branch cut from the wrong commit.
   if (!task && !prNumber && params.slug && (callerBranch || patch)) {
     task = await loadLatestOpenTaskForSlug(pool, user.id, params.slug);
   }
 
   if (!task && !prNumber) {
+    // Two different callers land here and they need different sentences.
+    // One passed slug + branch and simply has no open task: listing
+    // "or slug + branch" back to them names the exact call they just made as
+    // the remedy for itself, which reads as a platform bug and sends them
+    // hunting for one instead of calling prepare_work. The other identified
+    // nothing at all, and needs the menu.
+    const recoveryAttempt = !!(params.slug && (callerBranch || patch));
     return fail(
       'invalid_request',
-      'Nothing to submit. Any of these works: taskId + the branch you pushed; taskId + patch (if GitHub refused '
-      + 'the push — Usernode applies it and opens the pull request itself); slug + prNumber for a pull request '
-      + 'that is already open; or slug + branch. The taskId is printed in the work order you were given.'
+      recoveryAttempt
+        ? `No open task for ${params.slug}, so there is nothing to attach that branch to. `
+          + 'slug + branch recovers a task you already have and lost the id of; it does not create one. '
+          + 'Call prepare_work first — it returns the taskId AND the base commit your branch has to start '
+          + 'from — then submit with taskId + the branch you pushed. The branch you already pushed is fine '
+          + 'as it is; nothing needs rebuilding.'
+        : 'Nothing to submit. Any of these works: taskId + the branch you pushed; taskId + patch (if GitHub '
+          + 'refused the push — Usernode applies it and opens the pull request itself, no GitHub write access '
+          + 'needed); slug + prNumber for a pull request that is already open; or slug + branch, which '
+          + 'recovers an open task whose id you lost. The taskId is printed in the work order you were given, '
+          + 'and it belongs to the user\'s Usernode account — you can submit it yourself.'
     );
   }
   if (patch && !task) {
@@ -2336,7 +2369,7 @@ async function submitWorkLocked(deps, params) {
   // so an over-cap submit does not leave a stray pull request or branch.
   const capError = await limits.checkPromotedCap(pool, config, user);
   if (capError) return fail(capError.code, capError.message, { retryable: true });
-  const rateError = await limits.checkProposalRate(pool, user.id);
+  const rateError = await limits.checkOpenProposals(pool, user.id);
   if (rateError) return fail(rateError.code, rateError.message, { retryable: true });
 
   // ── Resolve the pull request ─────────────────────────────────────────

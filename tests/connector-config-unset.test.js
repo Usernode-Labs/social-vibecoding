@@ -175,7 +175,7 @@ test('no connector module reads an undeclared new variable', () => {
 const APP = { id: 7, slug: 'recipe-box', repo_url: 'https://github.com/usernode-bot/recipe-box' };
 const okLimits = {
   checkPrepareRate: async () => null,
-  checkProposalRate: async () => null,
+  checkOpenProposals: async () => null,
   checkPromotedCap: async () => null,
 };
 const baseGh = () => ({

@@ -83,7 +83,7 @@ function fakePool(handlers, queries) {
 const okLimits = {
   checkPrepareRate: async () => null,
   checkPromotedCap: async () => null,
-  checkProposalRate: async () => null,
+  checkOpenProposals: async () => null,
 };
 
 const APP = {
@@ -1666,7 +1666,7 @@ test('the caps run BEFORE a patch is applied, so a refusal leaves no branch', as
   const patchIndex = SRC.indexOf('externalAgentPatch.applyPatch');
   assert.ok(capIndex > 0 && patchIndex > 0);
   assert.ok(capIndex < patchIndex, 'the promoted-session cap is checked first');
-  assert.ok(SRC.indexOf('checkProposalRate') < patchIndex, 'and so is the proposal rate');
+  assert.ok(SRC.indexOf('checkOpenProposals') < patchIndex, 'and so is the proposal rate');
 });
 
 // ── Two callers, one task ──────────────────────────────────────────────
@@ -2357,6 +2357,92 @@ test('the no-identifier refusal from the service enumerates the surface too', as
     assert.match(result.message, new RegExp(shape.replace(/\+/g, '\\+')));
   }
   assert.doesNotMatch(SRC, /'Pass the taskId returned by prepare_work\.'/);
+});
+
+// #1248 — the refusal must not name the caller's own call as the remedy.
+//
+// slug + branch RECOVERS an open task whose id the agent lost; it does not
+// stand in for one. A session that never took a work order has no task, so it
+// lands on this refusal — and the old text answered "or slug + branch", which
+// is exactly what it had just sent. Twice. The agent reasonably concluded the
+// validator was broken and reported a platform bug instead of calling
+// prepare_work, which is the one thing that would have unblocked it.
+test('a slug + branch submission with no open task is told to call prepare_work', async () => {
+  const result = await svc.submitWork(
+    { pool: fakePool([], []), config: {}, gh: baseGh(), githubLink: linkedAs('someuser'), limits: okLimits },
+    {
+      user: { id: 3 },
+      slug: 'recipe-box',
+      branch: 'claude/issue-1244-7c5t1j',
+      importProposal: async () => ({ ok: true, body: {} }),
+    }
+  );
+  assert.equal(result.code, 'invalid_request');
+  assert.match(result.message, /No open task for recipe-box/);
+  assert.match(result.message, /prepare_work/);
+  // The precondition, stated rather than implied.
+  assert.match(result.message, /does not create one/);
+  // And the reassurance that stops a finished branch being rebuilt.
+  assert.match(result.message, /nothing needs rebuilding/i);
+  // The trap itself: never hand this caller back the shape it just used.
+  assert.doesNotMatch(
+    result.message,
+    /or slug \+ branch/,
+    'naming the failed call as its own remedy is what sent a session hunting for a platform bug'
+  );
+});
+
+// The other caller who reaches the same guard — one that identified nothing
+// at all — still needs the menu, slug + branch included.
+test('a submission with no identifier at all still gets the full surface', async () => {
+  const result = await svc.submitWork(
+    { pool: fakePool([], []), config: {}, gh: baseGh(), githubLink: linkedAs('someuser'), limits: okLimits },
+    { user: { id: 3 }, importProposal: async () => ({ ok: true, body: {} }) }
+  );
+  assert.equal(result.code, 'invalid_request');
+  assert.match(result.message, /Nothing to submit\. Any of these works/);
+  assert.match(result.message, /slug \+ branch, which recovers an open task/);
+});
+
+// #1248 — the refusal is written twice, and the copies had already drifted.
+//
+// The connector guard (services/mcp-tools.js) and the service guard (this
+// file) both refuse a submission that identifies nothing, and each carries its
+// own copy of the text. The connector's copy had gained two clauses the
+// service's never did: that the patch path needs no GitHub write access, and
+// that the task belongs to the user's account so the agent may submit its own
+// work. Both are load-bearing, and the drift ran the wrong way — the service
+// copy is what a real caller hits, because the connector lets slug + branch
+// through to be resolved here. So the better-written text was the one nobody
+// saw. Pin the shared claims rather than the wording, so either copy can be
+// rephrased but neither can quietly lose a clause the other makes.
+test('both copies of the refusal make the same load-bearing claims', () => {
+  // These messages are assembled from concatenated literals, so a claim can
+  // sit either side of a line break and exist only once the string is built.
+  // Join the pieces before looking — searching the raw source for a phrase
+  // that spans a `'\n  + '` seam finds nothing and reads as a missing clause.
+  const flatten = (src) => src.replace(/'\s*\+\s*'/g, '');
+  const connector = flatten(fs.readFileSync(
+    path.join(__dirname, '../src/services/mcp-tools.js'), 'utf8'
+  ));
+  const service = flatten(SRC);
+  for (const claim of [
+    'no GitHub write access',
+    'you can submit it yourself',
+    'recovers an open task',
+  ]) {
+    assert.ok(connector.includes(claim), `the connector refusal states: ${claim}`);
+    assert.ok(service.includes(claim), `the service refusal states: ${claim}`);
+  }
+});
+
+// #1248 — a dispatched session can arrive with an empty node_modules, run the
+// suite first, and read module-not-found failures as its own breakage.
+test('the work order says to install dependencies before running anything', () => {
+  const block = orderFor('ready');
+  assert.match(block, /npm ci/);
+  assert.match(block, /Install dependencies before you run anything/);
+  assert.match(block, /module-not-found/);
 });
 
 // ── Caller-supplied branch and fork name ───────────────────────────────
