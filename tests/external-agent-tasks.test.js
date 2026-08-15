@@ -2404,6 +2404,33 @@ test('a submission with no identifier at all still gets the full surface', async
   assert.match(result.message, /slug \+ branch, which recovers an open task/);
 });
 
+// #1248 — the refusal is written twice, and the copies had already drifted.
+//
+// The connector guard (services/mcp-tools.js) and the service guard (this
+// file) both refuse a submission that identifies nothing, and each carries its
+// own copy of the text. The connector's copy had gained two clauses the
+// service's never did: that the patch path needs no GitHub write access, and
+// that the task belongs to the user's account so the agent may submit its own
+// work. Both are load-bearing, and the drift ran the wrong way — the service
+// copy is what a real caller hits, because the connector lets slug + branch
+// through to be resolved here. So the better-written text was the one nobody
+// saw. Pin the shared claims rather than the wording, so either copy can be
+// rephrased but neither can quietly lose a clause the other makes.
+test('both copies of the refusal make the same load-bearing claims', () => {
+  const connector = fs.readFileSync(
+    path.join(__dirname, '../src/services/mcp-tools.js'), 'utf8'
+  );
+  const service = SRC;
+  for (const claim of [
+    'no GitHub write access',
+    'you can submit it yourself',
+    'recovers an open task',
+  ]) {
+    assert.ok(connector.includes(claim), `the connector refusal states: ${claim}`);
+    assert.ok(service.includes(claim), `the service refusal states: ${claim}`);
+  }
+});
+
 // #1248 — a dispatched session can arrive with an empty node_modules, run the
 // suite first, and read module-not-found failures as its own breakage.
 test('the work order says to install dependencies before running anything', () => {

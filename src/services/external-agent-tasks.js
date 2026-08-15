@@ -2335,9 +2335,10 @@ async function submitWorkLocked(deps, params) {
           + 'from — then submit with taskId + the branch you pushed. The branch you already pushed is fine '
           + 'as it is; nothing needs rebuilding.'
         : 'Nothing to submit. Any of these works: taskId + the branch you pushed; taskId + patch (if GitHub '
-          + 'refused the push — Usernode applies it and opens the pull request itself); slug + prNumber for a '
-          + 'pull request that is already open; or slug + branch, which recovers an open task whose id you '
-          + 'lost. The taskId is printed in the work order you were given.'
+          + 'refused the push — Usernode applies it and opens the pull request itself, no GitHub write access '
+          + 'needed); slug + prNumber for a pull request that is already open; or slug + branch, which '
+          + 'recovers an open task whose id you lost. The taskId is printed in the work order you were given, '
+          + 'and it belongs to the user\'s Usernode account — you can submit it yourself.'
     );
   }
   if (patch && !task) {
