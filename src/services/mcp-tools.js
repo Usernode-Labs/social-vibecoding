@@ -1698,7 +1698,7 @@ function registerTools(server, ctx) {
         .describe('The task id from prepare_work — or printed in the work order text you were handed, which is the usual source when you are the coding agent. It belongs to the user’s Usernode account, not to the chat that gave it to you, so you can submit it yourself.'),
       proposalId: z.number().int().positive().optional()
         .describe('The id of one of the user’s own proposals that is already up for a vote, to UPDATE it with the branch you pushed rather than open a new proposal. Usernode checks the branch is in their own fork and builds on the proposal’s current commit, then moves the proposal onto it — get_proposal reports where a proposal’s head lives and whether you can push to it directly. Every update clears the proposal’s votes and re-runs its checks, so submit a finished change rather than each attempt. The one exception is resubmitting the SAME commit with corrected testingPaths: no code moves, no votes are cleared, and the screenshots are simply re-shot on the routes you name. Cannot be combined with prNumber or patch.'),
-      slug: z.string().optional().describe('The app slug. Needed when submitting an already-open pull request by number, or a branch without a taskId. NOT needed alongside proposalId — Usernode reads the app off the proposal.'),
+      slug: z.string().optional().describe('The app slug. Needed when submitting an already-open pull request by number, or a branch when you have an open task for the app and lost its id — slug + branch RECOVERS that task, it does not stand in for one, so with no open task call prepare_work first and submit with its taskId. NOT needed alongside proposalId — Usernode reads the app off the proposal.'),
       prNumber: z.number().int().positive().optional()
         .describe('An already-open pull request to submit instead. It must come from the user’s own fork. This is also the recovery when submitting a branch returns pr_open_failed: open the pull request from the compareUrl that error returns, then call again with slug + prNumber.'),
       branch: z.string().optional()
@@ -1769,9 +1769,10 @@ function registerTools(server, ctx) {
         'invalid_request',
         'Nothing to submit. Any of these works: taskId + the branch you pushed; taskId + patch (if GitHub '
         + 'refused the push — Usernode applies it and opens the pull request itself, no GitHub write access '
-        + 'needed); slug + prNumber for a pull request that is already open; or slug + branch. The taskId is '
-        + 'printed in the work order you were given, and it belongs to the user\'s Usernode account — you can '
-        + 'submit it yourself.'
+        + 'needed); slug + prNumber for a pull request that is already open; or slug + branch, which recovers '
+        + 'an open task whose id you lost rather than standing in for one — with no open task for the app, '
+        + 'call prepare_work first. The taskId is printed in the work order you were given, and it belongs to '
+        + 'the user\'s Usernode account — you can submit it yourself.'
       );
     }
     if (patch && !taskId) {

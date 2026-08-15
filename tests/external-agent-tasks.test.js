@@ -2359,6 +2359,60 @@ test('the no-identifier refusal from the service enumerates the surface too', as
   assert.doesNotMatch(SRC, /'Pass the taskId returned by prepare_work\.'/);
 });
 
+// #1248 — the refusal must not name the caller's own call as the remedy.
+//
+// slug + branch RECOVERS an open task whose id the agent lost; it does not
+// stand in for one. A session that never took a work order has no task, so it
+// lands on this refusal — and the old text answered "or slug + branch", which
+// is exactly what it had just sent. Twice. The agent reasonably concluded the
+// validator was broken and reported a platform bug instead of calling
+// prepare_work, which is the one thing that would have unblocked it.
+test('a slug + branch submission with no open task is told to call prepare_work', async () => {
+  const result = await svc.submitWork(
+    { pool: fakePool([], []), config: {}, gh: baseGh(), githubLink: linkedAs('someuser'), limits: okLimits },
+    {
+      user: { id: 3 },
+      slug: 'recipe-box',
+      branch: 'claude/issue-1244-7c5t1j',
+      importProposal: async () => ({ ok: true, body: {} }),
+    }
+  );
+  assert.equal(result.code, 'invalid_request');
+  assert.match(result.message, /No open task for recipe-box/);
+  assert.match(result.message, /prepare_work/);
+  // The precondition, stated rather than implied.
+  assert.match(result.message, /does not create one/);
+  // And the reassurance that stops a finished branch being rebuilt.
+  assert.match(result.message, /nothing needs rebuilding/i);
+  // The trap itself: never hand this caller back the shape it just used.
+  assert.doesNotMatch(
+    result.message,
+    /or slug \+ branch/,
+    'naming the failed call as its own remedy is what sent a session hunting for a platform bug'
+  );
+});
+
+// The other caller who reaches the same guard — one that identified nothing
+// at all — still needs the menu, slug + branch included.
+test('a submission with no identifier at all still gets the full surface', async () => {
+  const result = await svc.submitWork(
+    { pool: fakePool([], []), config: {}, gh: baseGh(), githubLink: linkedAs('someuser'), limits: okLimits },
+    { user: { id: 3 }, importProposal: async () => ({ ok: true, body: {} }) }
+  );
+  assert.equal(result.code, 'invalid_request');
+  assert.match(result.message, /Nothing to submit\. Any of these works/);
+  assert.match(result.message, /slug \+ branch, which recovers an open task/);
+});
+
+// #1248 — a dispatched session can arrive with an empty node_modules, run the
+// suite first, and read module-not-found failures as its own breakage.
+test('the work order says to install dependencies before running anything', () => {
+  const block = orderFor('ready');
+  assert.match(block, /npm ci/);
+  assert.match(block, /Install dependencies before you run anything/);
+  assert.match(block, /module-not-found/);
+});
+
 // ── Caller-supplied branch and fork name ───────────────────────────────
 
 test('a caller-supplied branch is validated, then used in place of the suggestion', async () => {

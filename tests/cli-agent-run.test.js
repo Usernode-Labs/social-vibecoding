@@ -507,3 +507,48 @@ test('the agent commands are documented in the CLI usage text', () => {
     assert.ok(mainSource.includes(line), `usage must mention \`${line}\``);
   }
 });
+
+// #1248 — every commit this path made read "Changes via Usernode".
+//
+// The server-side sibling (routes/sessions.js) derives a subject from the
+// user's own message; this file hardwired DEFAULT_COMMIT_MESSAGE into the turn
+// context, so the constant was the answer rather than the fallback. These
+// commits are not scratch — they become the proposal the app's group reads,
+// and a history of identical subjects tells a voter nothing about which change
+// is which.
+test('a turn commit is named after the turn, not after the constant', () => {
+  assert.equal(
+    agent.turnCommitMessage({ prompt: 'Add dark mode to the settings screen' }),
+    'Changes: Add dark mode to the settings screen'
+  );
+  // Long prompts are cut to the same 50 characters the server-side path uses.
+  const long = agent.turnCommitMessage({ prompt: 'x'.repeat(200) });
+  assert.equal(long, `Changes: ${'x'.repeat(50)}`);
+  // A multi-line prompt is summarised by its first non-empty line, not by a
+  // commit subject with a newline in it.
+  assert.equal(
+    agent.turnCommitMessage({ prompt: '\n\n  Fix the export button\n\nmore detail here' }),
+    'Changes: Fix the export button'
+  );
+});
+
+test('a turn commit message cannot ping anybody on GitHub', () => {
+  // Same neutralisation as services/github.js safeMention, reproduced rather
+  // than imported so the CLI does not pull the GitHub stack onto its require
+  // path. If that helper changes, this is the copy that has to change with it.
+  const msg = agent.turnCommitMessage({ prompt: 'ping @someuser about the API' });
+  assert.match(msg, /@​someuser/);
+  assert.doesNotMatch(msg, /@someuser/);
+  // A bare @ with nothing mention-shaped after it is left alone.
+  assert.equal(agent.turnCommitMessage({ prompt: 'rates @ 5% now' }), 'Changes: rates @ 5% now');
+});
+
+test('a turn with nothing to summarise falls back to the constant', () => {
+  for (const turn of [{}, { prompt: '' }, { prompt: '   \n  ' }, null]) {
+    assert.equal(agent.turnCommitMessage(turn), null, 'null lets the caller fall back');
+  }
+  // And the call site is what applies that fallback, so the constant survives.
+  const source = fs.readFileSync(path.join(root, 'src/cli/agent-command.js'), 'utf8');
+  assert.match(source, /commitMessage: turnCommitMessage\(turn\) \|\| commitMessage/);
+  assert.equal(agent.DEFAULT_COMMIT_MESSAGE, 'Changes via Usernode');
+});

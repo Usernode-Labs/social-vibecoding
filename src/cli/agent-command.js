@@ -214,6 +214,27 @@ function progressReporter(api, { turnId, leaseId }) {
 // turn produced, oldest first. Oldest-first matters: the platform reconstructs
 // each commit on top of the previous one it built, so an out-of-order upload
 // is rejected rather than silently reordered.
+// The message THIS turn's commit carries.
+//
+// routes/sessions.js derives one from the user's own message for the
+// server-side path (`Changes: ${userMessage.substring(0, 50)}`); the CLI path
+// hardwired DEFAULT_COMMIT_MESSAGE into its context instead, so every commit
+// it made read "Changes via Usernode". These commits are not scratch: they
+// become the proposal the app's group reads, and a history of identical
+// subject lines tells a voter nothing about which change is which.
+//
+// `@` is neutralised the way services/github.js's safeMention does it, with
+// the same zero-width space. Reproduced rather than imported because that
+// module pulls the whole GitHub stack onto a CLI require path that does not
+// otherwise need it — tests/cli-agent-run.test.js pins the two in step.
+function turnCommitMessage(turn) {
+  const prompt = String((turn && turn.prompt) || '');
+  const firstLine = prompt.split('\n').map((l) => l.trim()).find(Boolean) || '';
+  const summary = firstLine.slice(0, 50).trim();
+  if (!summary) return null;
+  return `Changes: ${summary}`.replace(/@(?=[A-Za-z0-9_-])/g, '@\u200B');
+}
+
 async function uploadTurnCommits(api, { repo, turnId, leaseId, startSha, commitMessage }, io) {
   if (git(repo, ['status', '--porcelain']).trim()) {
     git(repo, ['add', '-A']);
@@ -385,7 +406,14 @@ async function runOneTurn(api, turn, context, io) {
   let uploadError = null;
   try {
     uploaded = await uploadTurnCommits(api, {
-      repo, turnId: turn.turnId, leaseId: context.leaseId, startSha, commitMessage,
+      repo,
+      turnId: turn.turnId,
+      leaseId: context.leaseId,
+      startSha,
+      // Per-turn first, context second: the context value is the constant
+      // fallback, not the answer. A turn with no prompt to summarise still
+      // gets DEFAULT_COMMIT_MESSAGE.
+      commitMessage: turnCommitMessage(turn) || commitMessage,
     }, io);
   } catch (err) {
     uploadError = err.message;
@@ -604,6 +632,7 @@ module.exports = {
   PROGRESS_FLUSH_LINES,
   CONFIRM_PREVIEW_CHARS,
   DEFAULT_COMMIT_MESSAGE,
+  turnCommitMessage,
   RUNTIMES,
   MODES,
   defaultLabel,

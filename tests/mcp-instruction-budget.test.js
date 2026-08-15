@@ -124,6 +124,37 @@ test('every brief is delivered, and every delivered brief exists', () => {
   assert.equal(new Set(ids).size, ids.length, 'section ids are unique');
 });
 
+// #1248 — the charter is written for a connector agent handing work to a
+// separate coding agent, and `no-code-here` says exactly that. An agent that
+// is BOTH reads it as "prepare_work is somebody else's step" and goes looking
+// for its base commit another way. This section is the one that tells it
+// otherwise, and it must stay charter-only: the instruction budget belongs to
+// clauses a model reading nothing else would get wrong, and this one only
+// binds a reader already holding a checkout.
+test('the charter tells an agent that is also the coding agent to act', () => {
+  const section = charter.CHARTER_SECTIONS.find((s) => s.id === 'you-may-be-both');
+  assert.ok(section, 'the charter carries a section for the both-parties case');
+  assert.match(section.text, /prepare_work/);
+  assert.match(section.text, /submit_work/);
+  assert.match(section.text, /not an overreach/);
+  // The reason it matters more than etiquette: the base commit is in the work
+  // order and nowhere in the checkout.
+  assert.match(section.text, /base commit/);
+  assert.ok(!section.brief, 'charter-only — a brief would spend budget the safety clauses compete for');
+  assert.ok(
+    !charter.BRIEF_ORDER.includes('you-may-be-both'),
+    'a section with no brief must not be listed for delivery'
+  );
+
+  // It qualifies no-code-here, so it has to come after it for a reader going
+  // top to bottom.
+  const ids = charter.CHARTER_SECTIONS.map((s) => s.id);
+  assert.ok(
+    ids.indexOf('you-may-be-both') > ids.indexOf('no-code-here'),
+    'the qualification reads after the rule it qualifies'
+  );
+});
+
 test('the safety clauses survive the cut, and the pointer is fourth', () => {
   // The whole point of the reorder. These three positions are the file's
   // reason for existing: ordering by workflow put the safety clauses where
