@@ -83,6 +83,12 @@ function normalizeStoredPath(entry) {
   return null;
 }
 
+// How many characters of a rejected entry are echoed back to whoever sent it
+// (#1214). Long enough to recognise the route, short enough that a caller
+// cannot use the rejection list to bounce a wall of text back through a tool
+// response.
+const REJECTED_ENTRY_CHARS = 120;
+
 // Validate a deep-link path emitted by the agent. The path is later joined
 // onto the staging origin and loaded in the preview iframe, so anything
 // that could steer the iframe off that origin is rejected outright:
@@ -102,6 +108,88 @@ function validatePath(p) {
   // eslint-disable-next-line no-control-regex
   if (/[\x00-\x1f\x7f]/.test(path)) return null;
   return path;
+}
+
+// ONE capture route, written the way a person writes it: the path, then any
+// whitespace-separated annotations. `@mobile` asks for the phone-sized frame;
+// anything else is logged and IGNORED, so a typo'd annotation degrades to a
+// desktop shot rather than losing the route (a route the capture cannot find
+// is a screenshot of the wrong screen; a route it never receives is a
+// screenshot of the home page, which is worse).
+//
+// This is the grammar of a `path:` line's value inside a "==== TESTING ===="
+// block AND of a `testingPaths` string on a submission (#1214). It used to be
+// the first only: parseSubmitted read a whole string as the path, so
+// "/board @mobile" — the spelling every agent-facing description teaches —
+// failed the no-whitespace rule and the route was dropped on the floor.
+// Returns { path, viewport } or null when the path itself is unusable.
+function readAnnotatedPath(value) {
+  const tokens = String(value == null ? '' : value).trim().split(/\s+/);
+  const valid = validatePath(tokens[0]);
+  if (!valid) return null;
+  let viewport = VIEWPORT_DESKTOP;
+  for (const annotation of tokens.slice(1)) {
+    if (/^@mobile$/i.test(annotation)) {
+      viewport = VIEWPORT_MOBILE;
+    } else {
+      log.warn('testing-notes', 'Unknown path annotation ignored', {
+        annotation: annotation.slice(0, 32), path: valid,
+      });
+    }
+  }
+  return { path: valid, viewport };
+}
+
+// One SUBMITTED capture route, in any of the three shapes a caller writes it:
+//
+//   '/board?demo=1'                                — a plain path
+//   '/board?demo=1 @mobile'                        — with the block grammar's
+//                                                    annotation
+//   { path: '/board?demo=1', viewport: 'mobile' }  — the stored object form
+//
+// The connector shapes strings into objects before they reach a route, and the
+// browser and the CLI post them as the caller typed them — so both forms
+// arrive here, and both have to mean the same thing.
+function readSubmittedPath(entry) {
+  if (entry && typeof entry === 'object' && !Array.isArray(entry)) {
+    const valid = validatePath(entry.path);
+    if (!valid) return null;
+    return {
+      path: valid,
+      viewport: /^@?mobile$/i.test(String(entry.viewport || '')) ? VIEWPORT_MOBILE : VIEWPORT_DESKTOP,
+    };
+  }
+  if (typeof entry !== 'string') return null;
+  return readAnnotatedPath(entry);
+}
+
+// A rejected entry, in the caller's own words, for the response that tells
+// them it was rejected (#1214). Clipped, control characters stripped: it is
+// echoed back through a tool result, and the whole point is that the caller
+// recognises the line they sent.
+function describeEntry(entry) {
+  const raw = (entry && typeof entry === 'object' && !Array.isArray(entry))
+    ? String(entry.path == null ? `(object with no path: ${Object.keys(entry).join(', ') || 'no fields'})` : entry.path)
+    : (typeof entry === 'string' ? entry : `(${entry === null ? 'null' : typeof entry})`);
+  // eslint-disable-next-line no-control-regex
+  const clean = raw.replace(/[\x00-\x1f\x7f]/g, ' ').trim();
+  return clean.length > REJECTED_ENTRY_CHARS ? `${clean.slice(0, REJECTED_ENTRY_CHARS)}…` : clean;
+}
+
+// The stored { path, viewport } form written back the way a caller writes it,
+// so an agent reading a response can compare it against what it sent without
+// translating. One spelling of the annotation, here, rather than one per
+// caller.
+function displayPath(entry) {
+  const normalized = normalizeStoredPath(entry);
+  if (!normalized) return null;
+  return normalized.viewport === VIEWPORT_MOBILE ? `${normalized.path} @mobile` : normalized.path;
+}
+
+function displayPaths(paths) {
+  if (!Array.isArray(paths) || !paths.length) return null;
+  const out = paths.map((entry) => displayPath(entry)).filter(Boolean);
+  return out.length ? out : null;
 }
 
 // Find the LAST "==== TESTING ====" block in `text`, remove it, and parse
@@ -137,12 +225,9 @@ function extract(text) {
   const blockLines = text.slice(blockStart, blockEnd).split('\n');
 
   // Optional `path:` lines — the consecutive leading lines of the block
-  // (blank lines tolerated between them). Each line's value splits on
-  // whitespace: the first token is the path (validated independently;
-  // invalid ones are dropped), the rest are annotations — `@mobile` sets
-  // the entry's viewport, anything unrecognized is logged and ignored so
-  // a typo'd annotation degrades to a desktop shot rather than losing the
-  // route. Duplicates collapse by path+viewport preserving first-seen
+  // (blank lines tolerated between them). Each line's value is read by
+  // readAnnotatedPath above: path first, annotations after, invalid paths
+  // dropped. Duplicates collapse by path+viewport preserving first-seen
   // order (the same path may legitimately appear once per viewport), and
   // the list is capped at CAPTURE_MAX_PATHS (extras logged, not silently
   // truncated). The first non-blank line that isn't a `path:` line begins
@@ -157,23 +242,12 @@ function extract(text) {
     const pm = line.match(/^path:\s*(.+)$/i);
     if (!pm) { mdStart = i; break; }
     mdStart = i + 1;
-    const tokens = pm[1].trim().split(/\s+/);
-    const valid = validatePath(tokens[0]);
-    if (!valid) continue;
-    let viewport = VIEWPORT_DESKTOP;
-    for (const annotation of tokens.slice(1)) {
-      if (/^@mobile$/i.test(annotation)) {
-        viewport = VIEWPORT_MOBILE;
-      } else {
-        log.warn('testing-notes', 'Unknown path annotation ignored', {
-          annotation: annotation.slice(0, 32), path: valid,
-        });
-      }
-    }
-    const key = `${viewport} ${valid}`;
+    const shaped = readAnnotatedPath(pm[1]);
+    if (!shaped) continue;
+    const key = `${shaped.viewport} ${shaped.path}`;
     if (seenKeys.has(key)) continue;
     seenKeys.add(key);
-    if (testingPaths.length < CAPTURE_MAX_PATHS) testingPaths.push({ path: valid, viewport });
+    if (testingPaths.length < CAPTURE_MAX_PATHS) testingPaths.push(shaped);
     else droppedForCap++;
   }
   if (droppedForCap > 0) {
@@ -197,9 +271,9 @@ function extract(text) {
 // "==== TESTING ====" block — `testingPaths` + `testingSteps` on a PR import
 // (routes/votes.js) or on a proposal update (routes/proposal-handoff.js).
 //
-// Every rule is the block parser's, reused rather than restated: what a valid
-// capture route is (validatePath), how many are shot (CAPTURE_MAX_PATHS), how
-// the viewport labels are spelled (normalizeStoredPath), how long the markdown
+// Every rule is the block parser's, reused rather than restated: how one route
+// is read (readSubmittedPath, and through it validatePath and the `@mobile`
+// annotation), how many are shot (CAPTURE_MAX_PATHS), how long the markdown
 // may be (TESTING_MD_MAX), and which entry is the primary path (the first).
 // A second opinion about any of those is how the same routes end up behaving
 // differently depending on whether a build turn or a connector submitted them.
@@ -209,48 +283,88 @@ function extract(text) {
 // the difference between "leave the stored routes alone" and "replace them".
 // An entry that fails validation is DROPPED, exactly as the block parser drops
 // it; a body whose every entry drops reads as "nothing provided".
+//
+// And `dropped` — every entry that did NOT become a capture route, with the
+// caller's own text and the reason (#1214). Dropping is still the right
+// behaviour (one bad route must not fail a whole submission), but doing it
+// SILENTLY was not: the only signal a route had been lost was a boolean read
+// back from a different endpoint minutes later, by which time the group was
+// already voting on screenshots of the app's home page. Nothing here refuses
+// anything on account of `dropped`; it exists so the caller can be told.
 function parseSubmitted(body) {
-  const none = { testingMd: null, testingPath: null, testingPaths: null, provided: false };
+  const none = {
+    testingMd: null, testingPath: null, testingPaths: null, provided: false, dropped: [],
+  };
   if (!body || typeof body !== 'object') return none;
 
   const paths = [];
+  const dropped = [];
   const seen = new Set();
   if (Array.isArray(body.testingPaths)) {
-    for (const entry of body.testingPaths) {
-      const normalized = normalizeStoredPath(entry);
-      if (!normalized) continue;
-      // normalizeStoredPath deliberately does not re-validate (stored rows
-      // were validated at write time); this input never was, so it is.
-      const valid = validatePath(normalized.path);
-      if (!valid) continue;
-      const key = `${normalized.viewport} ${valid}`;
-      if (seen.has(key)) continue;
+    body.testingPaths.forEach((entry, index) => {
+      const shaped = readSubmittedPath(entry);
+      if (!shaped) {
+        dropped.push({ index, entry: describeEntry(entry), reason: 'invalid_path' });
+        return;
+      }
+      const key = `${shaped.viewport} ${shaped.path}`;
+      if (seen.has(key)) {
+        dropped.push({ index, entry: displayPath(shaped), reason: 'duplicate' });
+        return;
+      }
       seen.add(key);
-      if (paths.length < CAPTURE_MAX_PATHS) paths.push({ path: valid, viewport: normalized.viewport });
-    }
+      if (paths.length < CAPTURE_MAX_PATHS) paths.push(shaped);
+      else dropped.push({ index, entry: displayPath(shaped), reason: 'over_cap' });
+    });
   }
 
   let md = typeof body.testingSteps === 'string' ? body.testingSteps.trim() : '';
   if (md.length > TESTING_MD_MAX) md = md.slice(0, TESTING_MD_MAX);
 
-  if (!paths.length && !md) return none;
+  // Reported even here: a body whose every route was rejected is exactly the
+  // case where the caller most needs to hear about it, and it is the case
+  // that reads as "nothing provided" to everyone downstream.
+  if (!paths.length && !md) return { ...none, dropped };
   return {
     testingMd: md || null,
     // The PRIMARY path, same convention as the block parser: the first entry.
     testingPath: paths.length ? paths[0].path : null,
     testingPaths: paths.length ? paths : null,
     provided: true,
+    dropped,
   };
+}
+
+// Why an entry was dropped, in a clause that can be read straight out of a
+// tool response. One wording, so the connector and the routes cannot describe
+// the same rejection differently.
+function explainDrop(entry) {
+  const label = entry && entry.entry ? entry.entry : '(empty)';
+  if (entry && entry.reason === 'duplicate') return `${label} (already listed)`;
+  if (entry && entry.reason === 'over_cap') return `${label} (over the ${CAPTURE_MAX_PATHS}-route cap)`;
+  return `${label} (not a usable in-app path — it must start with a single "/")`;
+}
+
+function explainDrops(droppedEntries) {
+  if (!Array.isArray(droppedEntries) || !droppedEntries.length) return null;
+  return droppedEntries.map((entry) => explainDrop(entry));
 }
 
 module.exports = {
   extract,
   parseSubmitted,
+  readAnnotatedPath,
+  readSubmittedPath,
+  displayPath,
+  displayPaths,
+  explainDrop,
+  explainDrops,
   validatePath,
   normalizeStoredPath,
   TESTING_MD_MAX,
   TESTING_PATH_MAX,
   CAPTURE_MAX_PATHS,
+  REJECTED_ENTRY_CHARS,
   VIEWPORT_DESKTOP,
   VIEWPORT_MOBILE,
 };

@@ -531,6 +531,11 @@ function whyYouCannotPush(branch) {
       + 'your fork alone does not move it';
 }
 
+// Capture routes reported back on a proposal. The capture step caps its own
+// list at CAPTURE_MAX_PATHS; this bounds what a stored row from any era can
+// put in a tool response.
+const MAX_CAPTURE_PATHS_REPORTED = 10;
+
 function shapeProposal(session, origin) {
   const detail = (session.capture_detail && typeof session.capture_detail === 'object')
     ? session.capture_detail : {};
@@ -554,6 +559,14 @@ function shapeProposal(session, origin) {
     // at screenshots of a screen this change never touched. Worth saying out
     // loud: it is fixable by resubmitting the routes, and invisible otherwise.
     captureDefaultedToRoot: detail.pathDefaulted === true,
+    // And the routes it DID shoot (#1214). The boolean alone cannot be read
+    // when the change's own first route is '/': "defaulted to the home page"
+    // and "shot exactly what you asked for" look identical, and an agent
+    // checking its work has no way to tell which happened. Null until the
+    // first capture has run.
+    capturePaths: Array.isArray(detail.paths) && detail.paths.length
+      ? detail.paths.filter((p) => typeof p === 'string').slice(0, MAX_CAPTURE_PATHS_REPORTED)
+      : null,
     yesVotes: typeof session.yes_count === 'number' ? session.yes_count : null,
     noVotes: typeof session.no_count === 'number' ? session.no_count : null,
     votesRequired: typeof session.votes_required === 'number' ? session.votes_required : null,
@@ -619,40 +632,24 @@ async function buildRequestDiscussion({ pool, baseUrl, accessToken, appId, slug,
 //
 // Both are optional and absent means exactly what it meant before: no testing
 // metadata, capture defaults to the root.
+//
+// What it will NOT do is drop a route without saying so (#1214). `parseSubmitted`
+// reports every entry it could not use, and `rejectedPaths` carries that list up
+// into submit_work's own answer — the caller learns it sent an unusable route
+// while it is still holding the branch, rather than from a boolean on a
+// different endpoint after the group has started voting.
 function shapeTestingNotes({ testingPaths, testingSteps, description } = {}) {
   const notes = require('./testing-notes');
-  let steps = typeof testingSteps === 'string' ? testingSteps.trim() : '';
-  let paths = [];
   let body = typeof description === 'string' ? description : '';
 
-  // One entry may be a plain path, a path with the same `@mobile` annotation
-  // the block grammar accepts, or a { path, viewport } object.
-  const readEntry = (entry) => {
-    if (entry && typeof entry === 'object') {
-      const valid = notes.validatePath(entry.path);
-      if (!valid) return null;
-      const mobile = /^mobile$/i.test(String(entry.viewport || ''));
-      return { path: valid, viewport: mobile ? notes.VIEWPORT_MOBILE : notes.VIEWPORT_DESKTOP };
-    }
-    if (typeof entry !== 'string') return null;
-    const tokens = entry.trim().split(/\s+/);
-    const valid = notes.validatePath(tokens[0]);
-    if (!valid) return null;
-    const mobile = tokens.slice(1).some((t) => /^@mobile$/i.test(t));
-    return { path: valid, viewport: mobile ? notes.VIEWPORT_MOBILE : notes.VIEWPORT_DESKTOP };
-  };
-
-  if (Array.isArray(testingPaths)) {
-    const seen = new Set();
-    for (const entry of testingPaths) {
-      const shaped = readEntry(entry);
-      if (!shaped) continue;
-      const key = `${shaped.viewport} ${shaped.path}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      if (paths.length < notes.CAPTURE_MAX_PATHS) paths.push(shaped);
-    }
-  }
+  // The whole grammar — the `@mobile` annotation, the { path, viewport } object
+  // form, the validator, the cap, the dedupe — belongs to testing-notes.js and
+  // is not restated here. This module used to keep its own copy of it, and the
+  // copies disagreed: a "/board @mobile" string was understood by the connector
+  // and rejected by the routes underneath it.
+  const submitted = notes.parseSubmitted({ testingPaths, testingSteps });
+  let paths = submitted.testingPaths || [];
+  let steps = submitted.testingMd || '';
 
   // A coding agent already trained on the in-platform contract may simply
   // paste its whole final message as `description`, markers and all. Parse it
@@ -675,7 +672,36 @@ function shapeTestingNotes({ testingPaths, testingSteps, description } = {}) {
   const shaped = { description: body || null };
   if (paths.length) shaped.testingPaths = paths;
   if (steps) shaped.testingSteps = steps.slice(0, notes.TESTING_MD_MAX);
+  // Absent when nothing was rejected, like every other field here: a caller
+  // that branches on it never has to tell an empty list from "all fine".
+  const rejected = notes.explainDrops(submitted.dropped);
+  if (rejected) shaped.rejectedPaths = rejected;
   return shaped;
+}
+
+// The sentence submit_work adds about routes it could not use (#1214). Said in
+// the response that ANSWERS the submission, because that is the moment the
+// caller can still fix it cheaply — it is holding the branch, and a resubmit
+// with corrected routes costs no votes.
+function testingRouteNote(shaped, updating) {
+  const notes = require('./testing-notes');
+  const rejected = (shaped && shaped.rejectedPaths) || [];
+  const kept = notes.displayPaths(shaped && shaped.testingPaths);
+  if (!rejected.length) {
+    // Nothing rejected, nothing kept, nothing said on an update: an update that
+    // omits the routes deliberately keeps the ones the proposal already has.
+    if (kept || updating) return '';
+    return ' No testingPaths were supplied, so the before/after screenshots the group votes on are of the app\'s '
+      + 'home page. If this change has a visible screen, submit again with proposalId and testingPaths pointing at '
+      + 'it — a resubmit of the same commit only re-shoots the screenshots and clears no votes.';
+  }
+  const list = rejected.join('; ');
+  return kept
+    ? ` Usernode could not use ${rejected.length} of the testingPaths you sent — ${list}. The screenshots are shot `
+      + `on ${kept.join(', ')} only.`
+    : ` Usernode could not use any of the testingPaths you sent — ${list} — so the before/after screenshots fall `
+      + 'back to the app\'s home page. Submit again with corrected routes; a resubmit of the same commit only '
+      + 're-shoots the screenshots and clears no votes.';
 }
 
 // ── Server instructions ────────────────────────────────────────────────
@@ -1547,7 +1573,7 @@ function registerTools(server, ctx) {
   // ── get_proposal ─────────────────────────────────────────────────────
   server.registerTool('get_proposal', {
     title: 'Get a proposal',
-    description: "Status of one proposal: its checks verdict — including the NAMES of any failing tests — the staging preview URL, the vote tally and how many votes it still needs to merge. Checks gate merge: a proposal whose checks are failing cannot land however the vote goes, so if you are the agent that wrote the code, fix the named tests and submit the fix as an UPDATE to this same proposal — never as a second one. `branch` says how: `branch.home` is 'user_fork' when the proposal follows a branch in the author's own fork (push to it, then call submit_work with proposalId and branch) or 'app_repo' when its head is a branch only Usernode can write (push to your own fork, then call submit_work with proposalId and that branch — pushing alone moves nothing). `branch.youCanPush` and `nextStep` state the same thing in one line; follow `nextStep`. A proposal you opened with submit_work is usually 'app_repo' even though the work came from your fork — Usernode copies the fork branch into the app repository — so its branch name exists only there, and revising it always goes back through submit_work. `captureDefaultedToRoot` true means the submission carried no testing route, so the before/after screenshots the voters see are of the app's home page.",
+    description: "Status of one proposal: its checks verdict — including the NAMES of any failing tests — the staging preview URL, the vote tally and how many votes it still needs to merge. Checks gate merge: a proposal whose checks are failing cannot land however the vote goes, so if you are the agent that wrote the code, fix the named tests and submit the fix as an UPDATE to this same proposal — never as a second one. `branch` says how: `branch.home` is 'user_fork' when the proposal follows a branch in the author's own fork (push to it, then call submit_work with proposalId and branch) or 'app_repo' when its head is a branch only Usernode can write (push to your own fork, then call submit_work with proposalId and that branch — pushing alone moves nothing). `branch.youCanPush` and `nextStep` state the same thing in one line; follow `nextStep`. A proposal you opened with submit_work is usually 'app_repo' even though the work came from your fork — Usernode copies the fork branch into the app repository — so its branch name exists only there, and revising it always goes back through submit_work. `captureDefaultedToRoot` true means the submission carried no testing route AT ALL, so the before/after screenshots the voters see are of the app's home page; `capturePaths` names the routes the last capture actually shot, which is how you tell that apart from a change whose own first route is '/'. Fix either by calling submit_work with this proposalId and corrected testingPaths — resubmitting the same commit only re-shoots the screenshots and clears no votes.",
     inputSchema: { proposalId: z.number().int().positive().describe('The proposal id returned by list_my_proposals.') },
     outputSchema: {
       proposalId: z.number(),
@@ -1574,6 +1600,7 @@ function registerTools(server, ctx) {
       }),
       nextStep: z.string(),
       captureDefaultedToRoot: z.boolean(),
+      capturePaths: z.array(z.string()).nullable(),
       yesVotes: z.number().nullable(),
       noVotes: z.number().nullable(),
       votesRequired: z.number().nullable(),
@@ -1991,7 +2018,7 @@ function registerTools(server, ctx) {
       title: z.string().optional().describe('A short title for the proposal. Defaults to the task description.'),
       description: z.string().optional().describe('What changed and why, for the people voting on it.'),
       testingPaths: z.array(z.string()).optional()
-        .describe('The in-app routes this change is visible on, most important first — e.g. ["/board?demo=1", "/settings"]. Usernode shoots a before/after screenshot pair of each one for the people voting. Point them at the SCREEN YOU CHANGED, never the home page; a route may carry " @mobile" to be shot in a phone-sized viewport. Up to 3 are used. Omit only if the change has no visible screen — otherwise the voters see screenshots of the app\'s home page, which show nothing of your change. On an UPDATE these replace the proposal\'s stored routes and the screenshots are re-shot on them; omit them there to keep the ones it already has.'),
+        .describe('The in-app routes this change is visible on, most important first — e.g. ["/board?demo=1", "/settings"]. Usernode shoots a before/after screenshot pair of each one for the people voting. Point them at the SCREEN YOU CHANGED, never the home page; a route may carry " @mobile" to be shot in a phone-sized viewport. Up to 3 are used. Omit only if the change has no visible screen — otherwise the voters see screenshots of the app\'s home page, which show nothing of your change. On an UPDATE these replace the proposal\'s stored routes and the screenshots are re-shot on them; omit them there to keep the ones it already has. The answer reports back `testingPaths` — what will actually be shot — and `testingPathsRejected` for anything it could not use, so check them rather than waiting for get_proposal\'s `captureDefaultedToRoot`.'),
       testingSteps: z.string().optional()
         .describe('A few short numbered lines telling a person what to click to see the change, shown beside the staging preview. Markdown.'),
       expectedHeadSha: z.string().optional()
@@ -2013,12 +2040,20 @@ function registerTools(server, ctx) {
       headSha: z.string().nullable(),
       votesCleared: z.number().nullable(),
       submittedVia: z.string().nullable(),
-      // Set only by an UPDATE (#1199): the capture routes this revision's
-      // screenshots are shot against, whether this call changed them, and —
-      // for a resubmit that moved no commit — whether that re-ran the
-      // capture. Without these, a correction is indistinguishable from a
-      // no-op in the answer the agent reads.
+      // The capture routes this submission's screenshots are shot against, in
+      // the spelling they were sent in — on a FIRST submission as well as on an
+      // update (#1214), because "which screen will the group actually see" is
+      // the same question either way.
       testingPaths: z.array(z.string()).nullable(),
+      // Every route that did NOT become one, with the reason (#1214). A route
+      // is still dropped rather than failing the submission — one malformed
+      // path must not cost an agent its whole push — but it is no longer
+      // dropped in silence.
+      testingPathsRejected: z.array(z.string()).nullable(),
+      // Set only by an UPDATE (#1199): whether this call changed the stored
+      // routes and — for a resubmit that moved no commit — whether that re-ran
+      // the capture. Without these, a correction is indistinguishable from a
+      // no-op in the answer the agent reads.
       testingUpdated: z.boolean().nullable(),
       captureRerun: z.boolean().nullable(),
       nextStep: z.string(),
@@ -2152,6 +2187,9 @@ function registerTools(server, ctx) {
       const shotOn = result.testingPaths && result.testingPaths.length
         ? ` The screenshots the group votes on are shot on ${result.testingPaths.join(', ')}.`
         : '';
+      // Rejections are named from what THIS call was given, not from what the
+      // proposal ended up with: the routes the route refused never reach it.
+      const rejectedNote = testingRouteNote(testing, true);
       // A resubmit that moved no commit is reported by what it DID, not by
       // what it did not (#1199) — three outcomes, and the agent acts on a
       // different one in each.
@@ -2174,18 +2212,19 @@ function registerTools(server, ctx) {
         votesCleared: cleared,
         submittedVia: result.submittedVia || null,
         testingPaths: result.testingPaths || null,
+        testingPathsRejected: testing.rejectedPaths || result.testingPathsRejected || null,
         testingUpdated: result.testingUpdated === true,
         captureRerun: result.captureRerun === true,
         webPath: result.proposalId
           ? `${origin}/#app/${result.appSlug}/dev/sessions/${result.proposalId}`
           : `${origin}/#app/${result.appSlug}`,
-        nextStep: result.unchanged
+        nextStep: (result.unchanged
           ? resubmitStep
           : `The proposal now points at your new commit.${cleared > 0
             ? ` The ${cleared} vote${cleared === 1 ? '' : 's'} it had collected were cleared, because they were cast on the old code`
             : ' Any votes it had collected were cleared, because they were cast on the old code'}`
             + ' — reviewers have been asked to look again. Checks and the staging preview rebuild automatically; '
-            + `use get_proposal to follow them.${shotOn}`,
+            + `use get_proposal to follow them.${shotOn}`) + rejectedNote,
       });
     }
 
@@ -2202,7 +2241,11 @@ function registerTools(server, ctx) {
         headSha: null,
         votesCleared: null,
         submittedVia: null,
+        // Nothing was written by THIS call, so there is nothing to report about
+        // what will be shot — but a route this call could not read is still
+        // worth naming, because it is what the caller would resubmit with.
         testingPaths: null,
+        testingPathsRejected: testing.rejectedPaths || null,
         testingUpdated: null,
         captureRerun: null,
         webPath: result.proposalId
@@ -2222,13 +2265,19 @@ function registerTools(server, ctx) {
       headSha: null,
       votesCleared: null,
       submittedVia: null,
-      testingPaths: null,
+      // A FIRST submission reports its capture routes too (#1214). It used to
+      // report null here whatever it was given, so the only way to learn that a
+      // route had been lost was get_proposal's `captureDefaultedToRoot`, minutes
+      // later, once the group was already looking at the wrong screenshots.
+      testingPaths: require('./testing-notes').displayPaths(testing.testingPaths),
+      testingPathsRejected: testing.rejectedPaths || null,
       testingUpdated: null,
       captureRerun: null,
       webPath: result.proposalId
         ? `${origin}/#app/${result.appSlug}/dev/sessions/${result.proposalId}`
         : `${origin}/#app/${result.appSlug}`,
-      nextStep: 'It is now up for a vote. Checks and the staging preview build automatically — use get_proposal to follow it. It merges when the group approves it.',
+      nextStep: 'It is now up for a vote. Checks and the staging preview build automatically — use get_proposal to follow it. It merges when the group approves it.'
+        + testingRouteNote(testing, false),
     });
   });
 
@@ -2504,5 +2553,6 @@ module.exports = {
   shapeProposal,
   shapeChecks,
   shapeTestingNotes,
+  testingRouteNote,
   registerTools,
 };

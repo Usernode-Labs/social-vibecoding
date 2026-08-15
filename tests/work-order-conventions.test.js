@@ -267,6 +267,11 @@ test('the work order asks for the testing routes, pointed at the changed screen'
   // route" never becomes a reason to omit them.
   assert.match(order, /deep link/i);
   assert.match(order, /query param handled at boot/);
+  // #1214: a route the platform could not use is named in submit_work's own
+  // answer, so the agent checks it while it is still holding the branch
+  // instead of learning it from a boolean minutes later.
+  assert.match(order, /testingPathsRejected/);
+  assert.match(order, /re-shoots the screenshots and clears no votes/);
 });
 
 test('the work order says the checks gate merge and how to clear them', () => {

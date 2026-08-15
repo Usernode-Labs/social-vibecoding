@@ -260,3 +260,106 @@ test('validatePath rejects unsafe or non-relative values', () => {
   assert.equal(validatePath(null), null);
   assert.equal(validatePath('/' + 'a'.repeat(600)), null);
 });
+
+// ── #1214: one grammar for a submitted route, and no silent drops ─────────
+//
+// `parseSubmitted` is what a PR import and a proposal update read their
+// capture routes with. It used to read a whole string as the path, so the
+// annotated form every agent-facing description teaches — "/board @mobile" —
+// failed the no-whitespace rule and the route vanished. Nothing said so: the
+// only signal was `captureDefaultedToRoot` on a different endpoint, minutes
+// later, by which time the group was voting on home-page screenshots.
+
+const {
+  parseSubmitted, readSubmittedPath, displayPaths, explainDrops,
+} = require('../src/services/testing-notes');
+
+test('a submitted route may carry the same @mobile annotation the block does', () => {
+  const parsed = parseSubmitted({ testingPaths: ['/board?shot=invite @mobile', '/settings'] });
+  assert.deepEqual(parsed.testingPaths, [mob('/board?shot=invite'), desk('/settings')]);
+  // The primary path is the path alone — the annotation is not part of it.
+  assert.equal(parsed.testingPath, '/board?shot=invite');
+  assert.deepEqual(parsed.dropped, []);
+
+  // The same route, written all three ways, means the same thing.
+  const viaObject = parseSubmitted({ testingPaths: [{ path: '/board', viewport: 'mobile' }] });
+  const viaString = parseSubmitted({ testingPaths: ['/board @mobile'] });
+  const viaBlock = extract('==== TESTING ====\npath: /board @mobile\n==== END TESTING ====');
+  assert.deepEqual(viaString.testingPaths, viaObject.testingPaths);
+  assert.deepEqual(viaString.testingPaths, viaBlock.testingPaths);
+});
+
+test('an unknown annotation loses the annotation, never the route', () => {
+  // A typo'd annotation degrades to a desktop shot. Losing the route would
+  // fall the capture back to the home page, which is strictly worse.
+  const parsed = parseSubmitted({ testingPaths: ['/board @tablet', '/inbox @MOBILE'] });
+  assert.deepEqual(parsed.testingPaths, [desk('/board'), mob('/inbox')]);
+  assert.deepEqual(parsed.dropped, []);
+});
+
+test('every dropped entry is reported, with the caller\'s own text', () => {
+  const parsed = parseSubmitted({
+    testingPaths: ['https://evil.example/x', '/ok', '/ok', 42],
+  });
+  assert.deepEqual(parsed.testingPaths, [desk('/ok')]);
+  assert.deepEqual(parsed.dropped, [
+    { index: 0, entry: 'https://evil.example/x', reason: 'invalid_path' },
+    { index: 2, entry: '/ok', reason: 'duplicate' },
+    { index: 3, entry: '(number)', reason: 'invalid_path' },
+  ]);
+  // Dropping is still the behaviour — one bad route must not cost a whole
+  // submission — so the usable route is kept and `provided` stays true.
+  assert.equal(parsed.provided, true);
+});
+
+test('entries over the capture cap are reported rather than vanishing', () => {
+  const many = ['/a', '/b', '/c', '/d', '/e'];
+  const parsed = parseSubmitted({ testingPaths: many });
+  assert.equal(parsed.testingPaths.length, CAPTURE_MAX_PATHS);
+  assert.deepEqual(parsed.dropped.map((d) => d.entry), ['/d', '/e']);
+  assert.ok(parsed.dropped.every((d) => d.reason === 'over_cap'));
+  assert.match(explainDrops(parsed.dropped)[0], /over the 3-route cap/);
+});
+
+test('a body whose every route is rejected still reports why', () => {
+  // This is the case that most needs saying out loud: nothing is stored, the
+  // capture falls back to '/', and to every consumer downstream it is
+  // indistinguishable from a submission that named no route at all.
+  const parsed = parseSubmitted({ testingPaths: ['nope', '//evil.example'] });
+  assert.equal(parsed.provided, false);
+  assert.equal(parsed.testingPaths, null);
+  assert.equal(parsed.dropped.length, 2);
+  assert.match(explainDrops(parsed.dropped)[0], /must start with a single "\/"/);
+  // And a caller that sent nothing at all hears nothing at all.
+  assert.deepEqual(parseSubmitted({}).dropped, []);
+  assert.deepEqual(parseSubmitted(null).dropped, []);
+  assert.equal(explainDrops([]), null);
+  assert.equal(explainDrops(undefined), null);
+});
+
+test('a rejected entry is clipped and stripped before it is echoed back', () => {
+  // It goes into a tool response. It is the caller's own text, but it is not
+  // a licence to bounce a wall of it back through the connector.
+  const long = `/${'x'.repeat(600)}`; // over TESTING_PATH_MAX, so it is rejected
+  const [dropped] = parseSubmitted({ testingPaths: [`${long} @mobile`] }).dropped;
+  assert.ok(dropped.entry.length < 130, 'clipped');
+  assert.match(dropped.entry, /…$/);
+  const [controls] = parseSubmitted({ testingPaths: ['/ba\u0001d path'] }).dropped;
+  assert.equal(controls.entry, '/ba d path');
+  const [noPath] = parseSubmitted({ testingPaths: [{ viewport: 'mobile' }] }).dropped;
+  assert.match(noPath.entry, /object with no path/);
+});
+
+test('readSubmittedPath and displayPaths round-trip a route', () => {
+  // An agent reading a response compares it against what it sent, so the
+  // annotation has to be spelled back the way it was written.
+  assert.deepEqual(readSubmittedPath('/board @mobile'), mob('/board'));
+  assert.deepEqual(readSubmittedPath({ path: '/board', viewport: 'mobile' }), mob('/board'));
+  assert.equal(readSubmittedPath('nope'), null);
+  assert.equal(readSubmittedPath(null), null);
+  assert.deepEqual(displayPaths([mob('/board'), desk('/settings')]), ['/board @mobile', '/settings']);
+  // Pre-#768 rows hold plain strings, and they display as themselves.
+  assert.deepEqual(displayPaths(['/legacy']), ['/legacy']);
+  assert.equal(displayPaths([]), null);
+  assert.equal(displayPaths(null), null);
+});
