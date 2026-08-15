@@ -815,7 +815,7 @@ test('prepare_work marks the request it names, and survives a claim that fails',
 
     // Advisory, and it has to stay that way: the work order is what the
     // caller asked for and it has already been minted. Losing it because a
-    // coordination signal failed would cost an hourly allowance slot.
+    // coordination signal failed would cost the caller a work-order slot.
     const failed = await runPrepare({ __http: { ok: false, status: 503, body: {} } });
     assert.equal(failed.out.claimedRequest, false);
     assert.equal(failed.out.taskId, 88);

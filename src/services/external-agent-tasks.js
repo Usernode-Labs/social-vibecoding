@@ -829,7 +829,7 @@ function buildWorkOrder({
       'DO NOT CALL prepare_work',
       'You already have the task id, the branch and the base commit — everything a',
       'new one would give you. Calling it again mints a SECOND job for the same',
-      'request, spends part of the user\'s hourly allowance, and leaves the first',
+      'request, holds another of the user\'s work-order slots, and leaves the first',
       'one dangling. It does not obtain push access and it does not fix anything.'
     );
     if (update) {
@@ -1310,9 +1310,10 @@ async function prepareWork(deps, params) {
 
   // ── Look before minting ──────────────────────────────────────────────
   //
-  // BEFORE the rate check, deliberately: re-rendering a work order the
-  // caller already has must not spend an hourly slot. Only genuinely NEW
-  // work is bounded.
+  // BEFORE the open-work-order check, deliberately: re-rendering a work
+  // order the caller already has must not consume a slot. Only genuinely
+  // NEW work is bounded — so a caller sitting at the cap can still get back
+  // a work order they already hold.
   if (!restart) {
     const existing = await findOpenTaskByRequest(pool, user.id, app.id, requestKey);
     if (existing) {
@@ -1340,8 +1341,8 @@ async function prepareWork(deps, params) {
     }
   }
 
-  const rateError = await limits.checkPrepareRate(pool, user.id);
-  if (rateError) return fail(rateError.code, rateError.message, { retryable: true });
+  const capError = await limits.checkOpenWorkOrders(pool, user.id);
+  if (capError) return fail(capError.code, capError.message, { retryable: true });
 
   // The base commit comes from upstream, read with the platform's own
   // credentials — never from the fork, which may be stale or edited.
@@ -2367,10 +2368,11 @@ async function submitWorkLocked(deps, params) {
   // with the same bound and the same wording the browser's promote path
   // uses. Checked BEFORE the PR is opened — and before a patch is applied —
   // so an over-cap submit does not leave a stray pull request or branch.
+  //
+  // It is the ONLY cap on this path, deliberately: a connector submission is
+  // an ordinary proposal and gets the ordinary ceiling, admin tier included.
   const capError = await limits.checkPromotedCap(pool, config, user);
   if (capError) return fail(capError.code, capError.message, { retryable: true });
-  const rateError = await limits.checkOpenProposals(pool, user.id);
-  if (rateError) return fail(rateError.code, rateError.message, { retryable: true });
 
   // ── Resolve the pull request ─────────────────────────────────────────
   let pr = null;

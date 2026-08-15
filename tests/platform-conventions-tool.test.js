@@ -241,7 +241,7 @@ test('the lookup is unmetered, so asking twice is free', () => {
   // builds). A read that an agent is being told to call mid-build must not
   // burn one of those, or the guidance becomes a trap.
   const limits = require('../src/services/connector-limits');
-  assert.ok(limits.LIMITS.openProposals > 0, 'writes are metered');
+  assert.ok(limits.LIMITS.openTasks > 0, 'writes are metered');
   const LIMITS_SRC = fs.readFileSync(
     path.join(__dirname, '../src/services/connector-limits.js'), 'utf8'
   );

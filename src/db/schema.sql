@@ -4748,8 +4748,8 @@ CREATE INDEX IF NOT EXISTS external_agent_tasks_user_idx
 -- has never once delivered it: prepare_work invents a fresh random nonce for
 -- every branch name, so the index can only ever catch a nonce collision.
 -- Production proved it — three OPEN rows for one request (#50 on app 156),
--- minted 15:29 / 16:02 / 17:35 UTC on 2026-08-07, each burning a slot of the
--- caller's hourly bound and each with a different branch the agent then felt
+-- minted 15:29 / 16:02 / 17:35 UTC on 2026-08-07, each holding a slot of the
+-- caller's open-work-order bound and each with a different branch the agent felt
 -- obliged to rewrite its finished commit to match.
 --
 -- request_key is the key the behaviour actually needs: `issue:<n>` when the
