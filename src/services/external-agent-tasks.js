@@ -2369,7 +2369,7 @@ async function submitWorkLocked(deps, params) {
   // so an over-cap submit does not leave a stray pull request or branch.
   const capError = await limits.checkPromotedCap(pool, config, user);
   if (capError) return fail(capError.code, capError.message, { retryable: true });
-  const rateError = await limits.checkProposalRate(pool, user.id);
+  const rateError = await limits.checkOpenProposals(pool, user.id);
   if (rateError) return fail(rateError.code, rateError.message, { retryable: true });
 
   // ── Resolve the pull request ─────────────────────────────────────────

@@ -83,7 +83,7 @@ function fakePool(handlers, queries) {
 const okLimits = {
   checkPrepareRate: async () => null,
   checkPromotedCap: async () => null,
-  checkProposalRate: async () => null,
+  checkOpenProposals: async () => null,
 };
 
 const APP = {
@@ -1666,7 +1666,7 @@ test('the caps run BEFORE a patch is applied, so a refusal leaves no branch', as
   const patchIndex = SRC.indexOf('externalAgentPatch.applyPatch');
   assert.ok(capIndex > 0 && patchIndex > 0);
   assert.ok(capIndex < patchIndex, 'the promoted-session cap is checked first');
-  assert.ok(SRC.indexOf('checkProposalRate') < patchIndex, 'and so is the proposal rate');
+  assert.ok(SRC.indexOf('checkOpenProposals') < patchIndex, 'and so is the proposal rate');
 });
 
 // ── Two callers, one task ──────────────────────────────────────────────
