@@ -41,6 +41,12 @@ test('the allowlist permits exactly the routes the tools need', () => {
     // live in the platform's own thread. prepare_work reads it so the work
     // order carries the requirements raised in the replies.
     ['GET', '/api/apps/recipe-box/github-issues/12/comments'],
+    // #1225 — saying somebody is working on a request, and handing it back.
+    // A local CLI session has reached both through the denylist since claims
+    // existed; a connector session could not, so the same agent was visible
+    // on the board from a checkout and invisible from a chat.
+    ['POST', '/api/apps/recipe-box/github-issues/12/claim'],
+    ['DELETE', '/api/apps/recipe-box/github-issues/12/claim'],
     ['GET', '/api/apps/recipe-box/promoted'],
     ['GET', '/api/apps/recipe-box/messages'],
     ['POST', '/api/apps/recipe-box/messages'],
@@ -111,6 +117,12 @@ test('fail-closed: anything not listed is refused', () => {
     ['POST', '/api/apps/recipe-box/github-issues/12/comments'],
     ['GET', '/api/apps/recipe-box/github-issues/12/comments/3'],
     ['GET', '/api/apps/recipe-box/github-issues//comments'],
+    // A claim is one exact shape too. Reading the board is a different
+    // route, and nothing else under an issue becomes reachable with it.
+    ['GET', '/api/apps/recipe-box/github-issues/12/claim'],
+    ['POST', '/api/apps/recipe-box/github-issues//claim'],
+    ['POST', '/api/apps/recipe-box/github-issues/12/claim/extra'],
+    ['POST', '/api/apps/recipe-box/github-issues/12/bounty'],
     // Path-shape games.
     ['GET', '/api/apps/recipe-box/github-issues/12'],
     ['GET', '/api/apps'.concat('/')],

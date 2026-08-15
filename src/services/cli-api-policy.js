@@ -101,6 +101,22 @@ const CONNECTOR_ALLOWED_ROUTES = Object.freeze([
   // replies rather than only the opening line. Read-only, and the route
   // itself is already clipped and access-checked.
   { method: 'GET', pattern: '/api/apps/:slug/github-issues/:number/comments' },
+  // Marking a request as being worked on, and handing it back (#1225). A
+  // local coding agent has reached these two through the CLI's denylist
+  // `api:access` since claims existed; a connector session — which is where
+  // the agent that actually builds the thing increasingly lives — could not,
+  // so its work was invisible on the board and two people could start the
+  // same request without either seeing the other.
+  //
+  // On the list because a claim decides nothing: it is platform-local (no
+  // GitHub write), it names only the CALLER (the route refuses a foreign
+  // userId unless the caller is a write-admin), it expires on its own, and
+  // clearing it is one call away. It is coordination data, not authority —
+  // an issue holds many concurrent claims and holding one grants nothing.
+  // release_request never sends the `userId` body the DELETE route accepts
+  // from a write-admin, so a connector only ever clears its own claim.
+  { method: 'POST', pattern: '/api/apps/:slug/github-issues/:number/claim' },
+  { method: 'DELETE', pattern: '/api/apps/:slug/github-issues/:number/claim' },
   { method: 'GET', pattern: '/api/apps/:slug/promoted' },
   { method: 'GET', pattern: '/api/apps/:slug/messages' },
   { method: 'POST', pattern: '/api/apps/:slug/messages' },

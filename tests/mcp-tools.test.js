@@ -294,7 +294,15 @@ function connector(platform, { scopes = [READ_SCOPE], pool = null, calls = [] } 
     const pathname = String(url).replace('http://platform.internal', '');
     calls.push({ method, pathname, body: init && init.body ? JSON.parse(init.body) : null });
     const answer = platform(method, pathname);
-    return { ok: true, status: 200, text: async () => JSON.stringify(answer) };
+    // Every loopback call succeeds unless the platform stub says otherwise:
+    // returning `{ __http: { ok, status, body } }` is how a test makes ONE
+    // route fail while the rest of the conversation keeps working.
+    const http = answer && answer.__http ? answer.__http : null;
+    return {
+      ok: http ? !!http.ok : true,
+      status: http ? http.status : 200,
+      text: async () => JSON.stringify(http ? http.body : answer),
+    };
   };
   tools.registerTools({
     registerTool(name, _spec, handler) { handlers.set(name, handler); },
@@ -530,6 +538,303 @@ test('get_request separates "not on the board" from "could not read the board"',
   }
 });
 
+// ── #1225: a connector session can say it is working on something ──────
+//
+// Claiming a request and posting progress on it were a LOCAL-session
+// privilege by accident: the CLI's `api:access` is a denylist, so an agent
+// with a checkout has always reached both routes, while a connector session
+// reaches an exhaustive allowlist that carried neither. Same agent, same job,
+// visible from a laptop and invisible from a chat.
+//
+// The tools are thin on purpose — the platform route decides everything — so
+// what these tests hold is the wiring and the failure behaviour around it.
+
+// One open request, with whatever `in_progress` the board would have
+// attached to it. `null` is the common case: nobody is on it.
+const boardWith = (inProgress) => () => ({
+  issues: [{
+    number: 12, title: 'Dark mode', body: 'At night.', user: 'maya', state: 'open',
+    ...(inProgress ? { in_progress: inProgress } : {}),
+  }],
+  truncatedList: false,
+});
+
+const claimScopes = { scopes: [READ_SCOPE, WRITE_SCOPE] };
+
+test('claiming a request marks it and posts the progress note on its thread', async () => {
+  const { handlers, calls, restore } = connector((method, pathname) => {
+    if (pathname.endsWith('/claim')) return { ok: true, created: true, claimedAt: '2026-08-15T09:00:00Z' };
+    if (pathname.endsWith('/messages')) return { message: { id: 4 } };
+    return boardWith(null)();
+  }, claimScopes);
+  try {
+    const res = await handlers.get('claim_request')({
+      slug: 'recipe-box', number: 12, note: 'Starting on this now.',
+    });
+    assert.notEqual(res.isError, true);
+    const out = res.structuredContent;
+    assert.equal(out.number, 12);
+    assert.equal(out.created, true);
+    assert.equal(out.claimedAt, '2026-08-15T09:00:00Z');
+    assert.deepEqual(out.alsoClaimedBy, []);
+    assert.equal(out.notePosted, true);
+    assert.equal(out.noteError, null);
+    assert.equal(out.webPath, `${ORIGIN}/#app/recipe-box/dev/issues/12`);
+
+    // The claim goes through the platform's own route, and the note through
+    // the same chat route answer_questions uses — no new endpoint for either.
+    assert.deepEqual(calls.map((c) => `${c.method} ${c.pathname}`), [
+      'GET /api/apps/recipe-box/github-issues',
+      'POST /api/apps/recipe-box/github-issues/12/claim',
+      'POST /api/apps/recipe-box/messages',
+    ]);
+    assert.deepEqual(calls.at(-1).body, {
+      content: 'Starting on this now.', thread_type: 'issue', thread_ref: 12,
+    });
+  } finally {
+    restore();
+  }
+});
+
+test('a claim is not a lock, so it names whoever else is already on it', async () => {
+  // Many concurrent claims are the platform's own model — the route never
+  // 409s. The caller has to be TOLD, or "claimed" reads as "reserved".
+  const { handlers, restore } = connector((method, pathname) => {
+    if (pathname.endsWith('/claim')) return { ok: true, created: true, claimedAt: null };
+    return boardWith({
+      count: 1, mine: false,
+      claims: [
+        { username: 'maya', mine: false },
+        { username: 'ada', mine: true },
+        { username: 'sam', mine: false },
+      ],
+    })();
+  }, claimScopes);
+  try {
+    const res = await handlers.get('claim_request')({ slug: 'recipe-box', number: 12 });
+    const out = res.structuredContent;
+    // The caller's own claim is not "somebody else", and the names are other
+    // users' strings, so they arrive as data.
+    assert.deepEqual(out.alsoClaimedBy, [
+      '<untrusted-content>maya</untrusted-content>',
+      '<untrusted-content>sam</untrusted-content>',
+    ]);
+    assert.match(out.nextStep, /2 other people have claimed this request/);
+    assert.match(out.nextStep, /not exclusive/);
+    // No note passed means none attempted — distinct from one that failed.
+    assert.equal(out.notePosted, null);
+  } finally {
+    restore();
+  }
+});
+
+test('get_request says who is already working on a request', async () => {
+  const { handlers, restore } = connector(boardWith({
+    count: 2, mine: true, claims: [{ username: 'maya', mine: false }],
+  }), claimScopes);
+  try {
+    const out = (await handlers.get('get_request')({
+      slug: 'recipe-box', number: 12,
+    })).structuredContent;
+    assert.deepEqual(out.inProgress, {
+      claimedBy: ['<untrusted-content>maya</untrusted-content>'],
+      sessions: 2,
+      mine: true,
+    });
+  } finally {
+    restore();
+  }
+
+  // Nobody on it is null, not an empty shape — the same fact the board's own
+  // field states, and the difference a caller acts on.
+  const quiet = connector(boardWith(null), claimScopes);
+  try {
+    const out = (await quiet.handlers.get('get_request')({
+      slug: 'recipe-box', number: 12,
+    })).structuredContent;
+    assert.equal(out.inProgress, null);
+  } finally {
+    quiet.restore();
+  }
+});
+
+test('an over-long note is refused before anything is claimed', async () => {
+  const { handlers, calls, restore } = connector(boardWith(null), claimScopes);
+  try {
+    const res = await handlers.get('claim_request')({
+      slug: 'recipe-box', number: 12, note: 'x'.repeat(tools.MAX_ANSWER_CHARS + 1),
+    });
+    assert.equal(res.isError, true);
+    assert.equal(res.structuredContent.code, 'note_too_long');
+    assert.equal(res.structuredContent.actualChars, tools.MAX_ANSWER_CHARS + 1);
+    assert.equal(calls.length, 0, 'nothing was written, so nothing needs undoing');
+  } finally {
+    restore();
+  }
+});
+
+test('a note that fails to post does not lose the claim that already landed', async () => {
+  // The claim is the thing the caller asked for and it has already happened.
+  // Reporting the whole call as a failure would send them round again and
+  // re-announce work that is already marked.
+  const { handlers, restore } = connector((method, pathname) => {
+    if (pathname.endsWith('/claim')) return { ok: true, created: true, claimedAt: null };
+    if (pathname.endsWith('/messages')) {
+      return { __http: { ok: false, status: 503, body: { error: 'temporarily_unavailable' } } };
+    }
+    return boardWith(null)();
+  }, claimScopes);
+  try {
+    const res = await handlers.get('claim_request')({
+      slug: 'recipe-box', number: 12, note: 'Half way.',
+    });
+    assert.notEqual(res.isError, true, 'the claim landed, so this is not an error');
+    assert.equal(res.structuredContent.created, true);
+    assert.equal(res.structuredContent.notePosted, false);
+    assert.match(res.structuredContent.noteError, /temporarily_unavailable/);
+    assert.match(res.structuredContent.nextStep, /note did not post/);
+  } finally {
+    restore();
+  }
+});
+
+test('releasing clears only the caller’s own claim, and never anybody else’s', async () => {
+  const { handlers, calls, restore } = connector((method, pathname) => {
+    if (pathname.endsWith('/claim')) return { ok: true, cleared: true };
+    return { message: { id: 9 } };
+  }, claimScopes);
+  try {
+    const out = (await handlers.get('release_request')({
+      slug: 'recipe-box', number: 12, note: 'Stopping here — the API needs a migration first.',
+    })).structuredContent;
+    assert.equal(out.cleared, true);
+    assert.equal(out.notePosted, true);
+
+    const del = calls.find((c) => c.method === 'DELETE');
+    assert.equal(del.pathname, '/api/apps/recipe-box/github-issues/12/claim');
+    // The route accepts a userId from a write-admin to clear somebody else's
+    // stuck claim. The connector must never send one, and the absence of the
+    // body is what makes that true.
+    assert.equal(del.body, null);
+  } finally {
+    restore();
+  }
+
+  // No claim to clear is a soft success: the board already did not show them.
+  const none = connector(() => ({ ok: true, cleared: false }), claimScopes);
+  try {
+    const out = (await none.handlers.get('release_request')({
+      slug: 'recipe-box', number: 12,
+    })).structuredContent;
+    assert.equal(out.cleared, false);
+    assert.notEqual(out.nextStep, undefined);
+    assert.match(out.nextStep, /nothing changed/);
+  } finally {
+    none.restore();
+  }
+});
+
+test('claiming needs the write scope, and refuses before any platform call', async () => {
+  for (const tool of ['claim_request', 'release_request']) {
+    const { handlers, calls, restore } = connector(boardWith(null), { scopes: [READ_SCOPE] });
+    try {
+      const res = await handlers.get(tool)({ slug: 'recipe-box', number: 12 });
+      assert.equal(res.isError, true, `${tool} refuses a read-only grant`);
+      assert.equal(res.structuredContent.code, 'insufficient_scope');
+      assert.equal(calls.length, 0);
+    } finally {
+      restore();
+    }
+  }
+});
+
+test('a claim on a request that is not open is refused, and says which it is', async () => {
+  const open = connector(boardWith(null), claimScopes);
+  try {
+    const res = await open.handlers.get('claim_request')({ slug: 'recipe-box', number: 99 });
+    assert.equal(res.isError, true);
+    assert.match(res.structuredContent.message, /not open on this app/);
+    assert.equal(open.calls.length, 1, 'the board read, and nothing written');
+  } finally {
+    open.restore();
+  }
+
+  // A board that could not be read cannot prove absence — the same
+  // distinction get_request draws, because a caller acts on it the same way.
+  const degraded = connector(() => ({ issues: [], note: 'rate limited' }), claimScopes);
+  try {
+    const res = await degraded.handlers.get('claim_request')({ slug: 'recipe-box', number: 12 });
+    assert.equal(res.isError, true);
+    assert.match(res.structuredContent.message, /rate limited/);
+    assert.match(res.structuredContent.message, /may exist/);
+  } finally {
+    degraded.restore();
+  }
+});
+
+test('prepare_work marks the request it names, and survives a claim that fails', async () => {
+  const gh = require('../src/services/github');
+  const githubLink = require('../src/services/github-link');
+  const svc = require('../src/services/external-agent-tasks');
+  const saved = {
+    gh: gh.isEnabled, link: githubLink.isEnabled, prepare: svc.prepareWork,
+  };
+  gh.isEnabled = () => true;
+  githubLink.isEnabled = () => true;
+  svc.prepareWork = async () => ({
+    ok: true, taskId: 88, forkUrl: 'https://github.com/ada/recipe-box',
+    forkPageUrl: 'https://github.com/ada/recipe-box', forkStatus: 'ready',
+    branch: 'usernode/12', baseSha: 'a'.repeat(40), guidance: ['step one'],
+    workOrder: 'WORK ORDER', openProposals: [],
+  });
+
+  const runPrepare = async (claimAnswer, args = { requestNumber: 12 }) => {
+    const c = connector((method, pathname) => {
+      if (pathname === '/api/apps/recipe-box') {
+        return { app: { id: 3, slug: 'recipe-box', name: 'Recipe Box' } };
+      }
+      if (pathname.endsWith('/claim')) return claimAnswer;
+      return boardWith(null)();
+    }, claimScopes);
+    try {
+      const res = await c.handlers.get('prepare_work')({ slug: 'recipe-box', ...args });
+      return { out: res.structuredContent, calls: c.calls };
+    } finally {
+      c.restore();
+    }
+  };
+
+  try {
+    // An in-platform session marks its issues in progress at dispatch. A work
+    // order creates the same commitment, so it says so on the same board.
+    const ok = await runPrepare({ ok: true, created: true, claimedAt: null });
+    assert.equal(ok.out.claimedRequest, true);
+    assert.ok(ok.calls.some((c) => c.pathname === '/api/apps/recipe-box/github-issues/12/claim'
+      && c.method === 'POST'));
+    assert.equal(ok.out.workOrder, 'WORK ORDER', 'and the work order is untouched');
+
+    // Advisory, and it has to stay that way: the work order is what the
+    // caller asked for and it has already been minted. Losing it because a
+    // coordination signal failed would cost an hourly allowance slot.
+    const failed = await runPrepare({ __http: { ok: false, status: 503, body: {} } });
+    assert.equal(failed.out.claimedRequest, false);
+    assert.equal(failed.out.taskId, 88);
+    assert.equal(failed.out.workOrder, 'WORK ORDER');
+
+    // A brief-only work order names no request, so there is no board row to
+    // mark and no claim is attempted.
+    const briefOnly = await runPrepare(
+      { ok: true, created: true }, { brief: 'Add dark mode' }
+    );
+    assert.equal(briefOnly.out.claimedRequest, false);
+    assert.equal(briefOnly.calls.filter((c) => c.pathname.endsWith('/claim')).length, 0);
+  } finally {
+    gh.isEnabled = saved.gh;
+    githubLink.isEnabled = saved.link;
+    svc.prepareWork = saved.prepare;
+  }
+});
+
 test('the truncation marker follows the precedent this codebase already set', () => {
   // services/github.js clips issue bodies for its own agent surfaces and its
   // comment is explicit about why the marker names the escape hatch: an
@@ -748,10 +1053,11 @@ test('platform failures pass the platform’s own wording through', () => {
 test('the registered tool surface is exactly this, and nothing more', () => {
   const registered = [...SRC.matchAll(/server\.registerTool\('([a-z_]+)'/g)].map((m) => m[1]);
   assert.deepEqual(registered.sort(), [
-    'answer_questions', 'create_request', 'get_app', 'get_connector_guidance',
+    'answer_questions', 'claim_request', 'create_request', 'get_app',
+    'get_connector_guidance',
     'get_platform_build', 'get_platform_conventions', 'get_proposal',
     'get_request', 'list_apps',
-    'list_my_proposals', 'list_requests', 'prepare_work',
+    'list_my_proposals', 'list_requests', 'prepare_work', 'release_request',
     'start_platform_build', 'submit_platform_build', 'submit_work', 'whoami',
   ]);
   // Nothing that decides an app's future. The connector hands work to the

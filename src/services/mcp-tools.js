@@ -321,6 +321,35 @@ function shapeRequest(issue, { withBody = true, bodyMax = MAX_BODY_CHARS } = {})
   };
 }
 
+// ── Who is already on it (#1225) ───────────────────────────────────────
+//
+// The board route enriches every request with `in_progress`, composed from
+// two independent things: live in-platform build sessions that declared the
+// request, and manual claims. A connector never saw either, so an agent could
+// pick up a request three other people were already building and only find
+// out when its proposal met theirs.
+//
+// Shaped down to what a caller can act on, and no further. `claimedBy` is
+// what claim_request writes and release_request clears; `sessions` is a COUNT
+// because those are in-platform builds a connector cannot join, join, or
+// affect — naming them would invite a message to somebody it cannot reach.
+// Usernames are other users' chosen strings, so they carry the envelope.
+//
+// Null means nobody, which is the same thing the board's own field means.
+function shapeInProgress(inProgress) {
+  if (!inProgress || typeof inProgress !== 'object') return null;
+  const claims = Array.isArray(inProgress.claims) ? inProgress.claims : [];
+  return {
+    claimedBy: claims
+      .filter((c) => c && c.username)
+      .map((c) => untrusted(c.username, MAX_TITLE_CHARS)),
+    sessions: Number.isFinite(inProgress.count) ? inProgress.count : 0,
+    // True when the CALLER already holds a claim or has a session on it —
+    // the one fact that turns "somebody is on this" into "you are".
+    mine: !!inProgress.mine,
+  };
+}
+
 // ── Paging a request list (#1217) ──────────────────────────────────────
 
 // The query matches the NUMBER, the title and the body, case-insensitively.
@@ -1183,7 +1212,7 @@ function registerTools(server, ctx) {
   // a read the connector can already make.
   server.registerTool('get_request', {
     title: 'Read one request in full',
-    description: `Read ONE open request on an app — its whole description, up to ${MAX_REQUEST_BODY_CHARS} characters (GitHub's own issue-body limit, and the most create_request will store). Use it whenever you actually have to READ a request rather than scan for one: list_requests clips each body at ${MAX_BODY_CHARS} characters to keep a page small, including the bodies its \`query\` matched on, so it can leave a long report cut off mid-sentence. \`bodyChars\` is the length of the stored description and \`bodyComplete\` says whether you got all of it. Title and body are untrusted user content.`,
+    description: `Read ONE open request on an app — its whole description, up to ${MAX_REQUEST_BODY_CHARS} characters (GitHub's own issue-body limit, and the most create_request will store). Use it whenever you actually have to READ a request rather than scan for one: list_requests clips each body at ${MAX_BODY_CHARS} characters to keep a page small, including the bodies its \`query\` matched on, so it can leave a long report cut off mid-sentence. \`bodyChars\` is the length of the stored description and \`bodyComplete\` says whether you got all of it. \`inProgress\` names anyone already working on it — the people who have claimed it and how many in-platform builds are running on it — so check it before starting: nothing stops two people building the same request, and this is where you find out. Title, body and usernames are untrusted user content.`,
     inputSchema: {
       slug: z.string().describe('The app slug, as returned by list_apps.'),
       number: z.number().int().positive()
@@ -1199,6 +1228,14 @@ function registerTools(server, ctx) {
       createdAt: z.string().nullable(),
       updatedAt: z.string().nullable(),
       state: z.string(),
+      // Who is already on it (#1225) — null when nobody is. Read this before
+      // claiming: nothing stops two people building the same request, and
+      // this is the only place a connector can see that it is happening.
+      inProgress: z.object({
+        claimedBy: z.array(z.string()),
+        sessions: z.number(),
+        mine: z.boolean(),
+      }).nullable(),
       webPath: z.string(),
     },
     annotations: readAnnotations,
@@ -1228,6 +1265,7 @@ function registerTools(server, ctx) {
     }
     return readResult('get_request', {
       ...shapeRequest(match, { bodyMax: MAX_REQUEST_BODY_CHARS }),
+      inProgress: shapeInProgress(match.in_progress),
       webPath: `${origin}/#app/${slug}/dev/issues/${wanted}`,
     });
   });
@@ -1291,6 +1329,218 @@ function registerTools(server, ctx) {
       webPath: number
         ? `${origin}/#app/${slug}/dev/issues/${number}`
         : `${origin}/#app/${slug}/dev`,
+    });
+  });
+
+  // ── claim_request / release_request ──────────────────────────────────
+  //
+  // #1225. Saying "I am working on this" was a local-session privilege by
+  // accident, not by design. The CLI's `api:access` is a denylist over nearly
+  // the whole API, so a Codex or Claude Code session running against a
+  // checkout has been able to POST a claim and post progress notes on a
+  // request's thread since claims existed. A connector session — which is
+  // where the coding agent increasingly lives, and the only place prepare_work
+  // and submit_work can be called from — reaches an exhaustive ALLOWLIST with
+  // neither route on it and no api_write tool to improvise with. So the same
+  // agent, doing the same job, was visible on the board from a laptop and
+  // invisible from a chat.
+  //
+  // Both tools are thin: the platform route decides everything (the request
+  // has to be a currently-open issue, the claim is upserted per user, the
+  // announcement lands in the request's own thread). They are shaped around
+  // the two things a connector caller actually does — start on something, and
+  // say how it is going — rather than around the two HTTP verbs.
+  //
+  // Neither carries ACTING_TOOL_META. The five tools that do either spend an
+  // allowance, file publicly on GitHub, or start a group vote; a claim is
+  // platform-local, names only the caller, expires by itself and is cleared by
+  // one call. Putting an unskippable prompt on it would mean an agent that
+  // announces its work costs the user a click every time, which is how a
+  // coordination signal stops being sent.
+  //
+  // `note` is the "note progress" half, and it is a normal chat message on the
+  // request's thread — the same channel answer_questions posts to and the same
+  // one the next build reads. It is optional on both: a bare claim already
+  // announces itself, and a note without new work is how a long job stays
+  // visibly alive (thread activity is what keeps a claim from expiring).
+  const CLAIM_NOTE_HINT = 'Shorten the note and call again — nothing about the claim changed.';
+
+  // Post a progress note on a request's discussion thread, after the claim
+  // itself has already succeeded. Failure is REPORTED, never thrown: the claim
+  // is the thing the caller asked for and it has already landed, so a chat
+  // hiccup must not come back as "claiming failed" and send them round again.
+  const postRequestNote = async (slug, number, text) => {
+    if (!text) return { attempted: false, posted: false, error: null };
+    const posted = await callPlatform(baseUrl, accessToken, 'POST', `/api/apps/${slug}/messages`, {
+      content: text,
+      thread_type: 'issue',
+      thread_ref: number,
+    });
+    if (posted.ok) return { attempted: true, posted: true, error: null };
+    const failure = platformError(posted).structuredContent;
+    return { attempted: true, posted: false, error: failure.message || 'The note could not be posted.' };
+  };
+
+  // The board read both tools share. It answers two questions in one call —
+  // does this request exist and who else is on it — and it is the same route
+  // get_request reads, so no allowlist entry is added for it.
+  const readRequestState = async (slug, number) => {
+    const result = await callPlatform(baseUrl, accessToken, 'GET', `/api/apps/${slug}/github-issues`);
+    if (!result.ok) return { error: platformError(result) };
+    const issues = Array.isArray(result.body && result.body.issues) ? result.body.issues : [];
+    const match = issues.find((i) => i && i.number === number);
+    if (!match) {
+      // A degraded board cannot prove absence — the same distinction
+      // get_request draws, for the same reason.
+      const note = result.body?.note
+        || (result.body?.truncatedList ? 'this app has more open requests than the platform fetches' : null);
+      return {
+        error: toolError('no_access', note
+          ? `Request #${number} was not among this app's open requests, but the board could not be read in full (${note}) — it may exist.`
+          : `Request #${number} is not open on this app. Check list_requests.`),
+      };
+    }
+    const claims = Array.isArray(match.in_progress?.claims) ? match.in_progress.claims : [];
+    return {
+      issue: match,
+      // Everyone EXCEPT the caller. "You already claimed this" is reported as
+      // `created: false`; this list is the people a caller might want to talk
+      // to before duplicating their work.
+      others: claims
+        .filter((c) => c && c.username && !c.mine)
+        .map((c) => untrusted(c.username, MAX_TITLE_CHARS)),
+      mine: claims.some((c) => c && c.mine),
+    };
+  };
+
+  server.registerTool('claim_request', {
+    title: 'Say you are working on a request',
+    description: `Mark a request as being worked on by this user, so the app's board shows it and the group can see who is on what. Call it when you START on a request — before writing code, and before prepare_work if you are about to call that — not when you finish. Calling it again renews the claim silently, which is how a long job stays marked live; only the first call announces itself on the request. \`note\` posts a progress update on the request's own discussion thread, in the user's name, visible to everyone: use it to say what you are doing or how far you have got. A request can hold MANY claims at once and claiming one grants no exclusivity — \`alsoClaimedBy\` names anyone else already on it, and finding somebody there is a reason to check with the user before duplicating their work, not an error. Claims lapse on their own once a request goes quiet, so nothing is left stuck; release_request hands one back deliberately. Notes are posted verbatim, up to ${MAX_ANSWER_CHARS} characters; a longer one is refused with your actual length rather than shortened.`,
+    inputSchema: {
+      slug: z.string().describe('The app slug, as returned by list_apps.'),
+      number: z.number().int().positive()
+        .describe('The request number, as returned by list_requests.'),
+      note: z.string().optional()
+        .describe(`Optional progress update, posted on the request's discussion thread in the user's name for the whole group to read. At most ${MAX_ANSWER_CHARS} characters.`),
+    },
+    outputSchema: {
+      number: z.number(),
+      // False only when the caller already held this claim — the call still
+      // succeeded and the clock still restarted.
+      created: z.boolean(),
+      claimedAt: z.string().nullable(),
+      alsoClaimedBy: z.array(z.string()),
+      // Whether a `note` was posted. Null when none was passed; false with
+      // `noteError` set when one was passed and did not land.
+      notePosted: z.boolean().nullable(),
+      noteError: z.string().nullable(),
+      webPath: z.string(),
+      nextStep: z.string(),
+    },
+    annotations: writeAnnotations,
+  }, async ({ slug, number, note }) => {
+    const guard = scopeGuard(WRITE_SCOPE);
+    if (guard) return guard;
+    if (!requireSlug(slug)) return toolError('invalid_request', 'slug must be a valid app slug.');
+    const wanted = Number(number);
+    if (!Number.isInteger(wanted) || wanted <= 0) {
+      return toolError('invalid_request', 'number must be a request number, as returned by list_requests.');
+    }
+    // Checked before anything is written, so a refused note leaves no claim
+    // half-made behind it — the same rule create_request follows.
+    const noteCheck = checkWriteLength(note == null ? '' : String(note).trim(), {
+      field: 'note', max: MAX_ANSWER_CHARS, hint: CLAIM_NOTE_HINT,
+    });
+    if (!noteCheck.ok) return writeLengthError(noteCheck);
+
+    const state = await readRequestState(slug, wanted);
+    if (state.error) return state.error;
+
+    const claimed = await callPlatform(
+      baseUrl, accessToken, 'POST', `/api/apps/${slug}/github-issues/${wanted}/claim`
+    );
+    if (!claimed.ok) return platformError(claimed);
+    const created = !!(claimed.body && claimed.body.created);
+
+    const noteResult = await postRequestNote(slug, wanted, noteCheck.value);
+
+    return toolResult({
+      number: wanted,
+      created,
+      claimedAt: (claimed.body && claimed.body.claimedAt) || null,
+      alsoClaimedBy: state.others,
+      notePosted: noteResult.attempted ? noteResult.posted : null,
+      noteError: noteResult.error,
+      webPath: `${origin}/#app/${slug}/dev/issues/${wanted}`,
+      nextStep: (state.others.length
+        ? `${state.others.length} other ${state.others.length === 1 ? 'person has' : 'people have'} claimed this request too — `
+          + 'tell the user who, because the work may already be under way. '
+        : '')
+        + (noteResult.attempted && !noteResult.posted
+          ? 'The claim is recorded but the note did not post; call again with the note to retry it. '
+          : '')
+        + 'The claim is visible on the app\'s board and it is not exclusive. Renew it by calling '
+        + 'claim_request again, or post a `note` as the work moves; call release_request if the user '
+        + 'stops working on this.',
+    });
+  });
+
+  server.registerTool('release_request', {
+    title: 'Hand a request back',
+    description: 'Clear this user\'s claim on a request, so the board stops showing them as working on it. Use it when the user stops, drops or finishes work that will not become a proposal — a claim also lapses by itself once the request goes quiet, so this is for saying so deliberately rather than for tidying up. It clears only THIS user\'s claim and never anybody else\'s, and it is a soft success when there was no claim to clear (`cleared: false`). `note` posts a parting message on the request\'s discussion thread — worth writing when somebody else may pick the work up, because what you learned is otherwise lost with the claim.',
+    inputSchema: {
+      slug: z.string().describe('The app slug, as returned by list_apps.'),
+      number: z.number().int().positive()
+        .describe('The request number, as returned by list_requests.'),
+      note: z.string().optional()
+        .describe(`Optional parting note, posted on the request's discussion thread in the user's name — what was tried, what is left. At most ${MAX_ANSWER_CHARS} characters.`),
+    },
+    outputSchema: {
+      number: z.number(),
+      cleared: z.boolean(),
+      notePosted: z.boolean().nullable(),
+      noteError: z.string().nullable(),
+      webPath: z.string(),
+      nextStep: z.string(),
+    },
+    annotations: writeAnnotations,
+  }, async ({ slug, number, note }) => {
+    const guard = scopeGuard(WRITE_SCOPE);
+    if (guard) return guard;
+    if (!requireSlug(slug)) return toolError('invalid_request', 'slug must be a valid app slug.');
+    const wanted = Number(number);
+    if (!Number.isInteger(wanted) || wanted <= 0) {
+      return toolError('invalid_request', 'number must be a request number, as returned by list_requests.');
+    }
+    const noteCheck = checkWriteLength(note == null ? '' : String(note).trim(), {
+      field: 'note', max: MAX_ANSWER_CHARS, hint: CLAIM_NOTE_HINT,
+    });
+    if (!noteCheck.ok) return writeLengthError(noteCheck);
+
+    // No `userId` in the body, ever. The route accepts one from a write-admin
+    // to clear somebody else's stuck claim; a connector is not the place to
+    // reach over another person's coordination state, and leaving the field
+    // off is what makes that true rather than a comment saying it is.
+    const cleared = await callPlatform(
+      baseUrl, accessToken, 'DELETE', `/api/apps/${slug}/github-issues/${wanted}/claim`
+    );
+    if (!cleared.ok) return platformError(cleared);
+    const wasCleared = !!(cleared.body && cleared.body.cleared);
+
+    // Posted whether or not there was a claim to clear: a note about work
+    // somebody is stopping is worth the same either way.
+    const noteResult = await postRequestNote(slug, wanted, noteCheck.value);
+
+    return toolResult({
+      number: wanted,
+      cleared: wasCleared,
+      notePosted: noteResult.attempted ? noteResult.posted : null,
+      noteError: noteResult.error,
+      webPath: `${origin}/#app/${slug}/dev/issues/${wanted}`,
+      nextStep: wasCleared
+        ? 'The claim is cleared and the board no longer shows this user on this request.'
+        : 'There was no live claim of this user\'s to clear, so nothing changed — the board already '
+          + 'did not show them on this request.',
     });
   });
 
@@ -1500,7 +1750,7 @@ function registerTools(server, ctx) {
   // credential in it, nothing the receiving agent has to look up.
   server.registerTool('prepare_work', {
     title: 'Hand a change to the user’s coding agent',
-    description: "Prepare a change to a Usernode app so the user's own coding agent can build it. Returns `guidance` — the human's next steps, already written for the user: show them in order, as written, instead of your own summary — and `workOrder`, for their coding agent, naming the app's repository, the fork to push to, the branch to create and the exact commit to start from. Reproduce `workOrder` inside a fenced code block character for character, EXACTLY as returned: do not shorten it, re-wrap it, re-indent it, tidy it, strip its <untrusted-content> tags, or retype the branch name or the 40-character commit id, and never append a correction to it — a single wrong character sends the coding agent to a starting point that does not exist. The work order makes the fork and the branch itself, because Usernode asks for NO write access to the user's GitHub account. When the user says the branch is pushed, call submit_work. Pass `proposalId` to REVISE a proposal that is already up for a vote instead of opening a new one — the work order is then based at that proposal's own head and its submission updates it in place. `openProposals` in the result names any proposals the group is ALREADY voting on for the same request: tell the user before they paste anything, because that work may be built already, and if one of them is theirs, calling prepare_work again with its `proposalId` continues it instead of opening a duplicate. Requires a linked GitHub account (identity only, so work can be attributed to them). This spends the user's own coding-agent subscription, not their Usernode credits.",
+    description: "Prepare a change to a Usernode app so the user's own coding agent can build it. Returns `guidance` — the human's next steps, already written for the user: show them in order, as written, instead of your own summary — and `workOrder`, for their coding agent, naming the app's repository, the fork to push to, the branch to create and the exact commit to start from. Reproduce `workOrder` inside a fenced code block character for character, EXACTLY as returned: do not shorten it, re-wrap it, re-indent it, tidy it, strip its <untrusted-content> tags, or retype the branch name or the 40-character commit id, and never append a correction to it — a single wrong character sends the coding agent to a starting point that does not exist. The work order makes the fork and the branch itself, because Usernode asks for NO write access to the user's GitHub account. When the user says the branch is pushed, call submit_work. Pass `proposalId` to REVISE a proposal that is already up for a vote instead of opening a new one — the work order is then based at that proposal's own head and its submission updates it in place. `openProposals` in the result names any proposals the group is ALREADY voting on for the same request: tell the user before they paste anything, because that work may be built already, and if one of them is theirs, calling prepare_work again with its `proposalId` continues it instead of opening a duplicate. Requires a linked GitHub account (identity only, so work can be attributed to them). This spends the user's own coding-agent subscription, not their Usernode credits. Naming a request also marks it as being worked on, so the group can see the work is under way.",
     inputSchema: {
       slug: z.string().describe('The app slug, as returned by list_apps.'),
       requestNumber: z.number().int().positive().optional()
@@ -1539,6 +1789,8 @@ function registerTools(server, ctx) {
       // where that proposal's head lives.
       proposalId: z.number().nullable(),
       branchHome: z.enum(['app_repo', 'user_fork']).nullable(),
+      claimedRequest: z.boolean()
+        .describe('Whether the request was marked as being worked on. False when this work order names no request, or when the claim did not land — the work order itself is unaffected either way, and claim_request retries it.'),
       // Proposals the group is ALREADY voting on for this same request
       // (#1216) — empty when there are none, and never the same thing as
       // `proposalId` above. A job and a proposal are tracked separately, so
@@ -1635,6 +1887,31 @@ function registerTools(server, ctx) {
     });
     if (!result.ok) return serviceError(result);
 
+    // Mark the request as being worked on (#1225). An in-platform session
+    // marks its issues in progress at dispatch, from the linked_issues the
+    // Mayor declared; a connector work order created the same commitment and
+    // showed the group nothing, so a request handed to somebody's coding agent
+    // looked exactly as free as one nobody had touched.
+    //
+    // Advisory, and it must stay that way: the work order is the thing the
+    // caller asked for and it has already been minted, so a failed claim is
+    // reported as `claimedRequest: false` rather than losing it. Only when the
+    // work order names a request — a `brief`-only one has no board row to
+    // mark. Renewals are silent platform-side, so calling prepare_work twice
+    // does not announce twice.
+    let claimedRequest = false;
+    if (issueNumber) {
+      const claimed = await callPlatform(
+        baseUrl, accessToken, 'POST', `/api/apps/${slug}/github-issues/${issueNumber}/claim`
+      );
+      claimedRequest = !!claimed.ok;
+      if (!claimed.ok) {
+        log.warn('mcp-tools', 'prepare_work claim failed (continuing)', {
+          slug, issueNumber, status: claimed.status,
+        });
+      }
+    }
+
     // The fork wording, the one-click link and the "do not open a PR" note
     // all live in `guidance` now, built by the service — nextStep is only
     // the rendering contract plus what to call next. Re-rendering is free:
@@ -1653,6 +1930,7 @@ function registerTools(server, ctx) {
       workOrder: result.workOrder,
       proposalId: result.proposalId || null,
       branchHome: result.branchHome || null,
+      claimedRequest,
       // The title is the proposal's own heading and the author is a username:
       // both are other Usernode users' writing, so both keep the envelope
       // every other request- and proposal-shaped string here carries.
@@ -2215,6 +2493,7 @@ module.exports = {
   platformError,
   shapeApp,
   shapeRequest,
+  shapeInProgress,
   matchesRequestQuery,
   requestPageKey,
   encodeRequestCursor,
