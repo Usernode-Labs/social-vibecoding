@@ -1482,6 +1482,159 @@ test('checks degrade to a knowable nothing rather than a guess', () => {
   assert.equal(capped.total, 50, 'but the total still tells the truth');
 });
 
+// ── A run in flight is not a verdict (#1258) ──────────────────────────────
+//
+// `{state: 'pending', failing: [], total: 0}` used to be the connector's
+// answer to four different situations — the run has not started, the preview
+// is building, the tests are running, and the build died before registering a
+// single check. An agent cannot choose between "wait", "re-push" and "say
+// something is wrong" from that, so it waits, and a wedged proposal reads as a
+// healthy one for as long as it is willing to poll. Everything below was
+// already on the row and was being dropped.
+
+test('a pending checks run says which half of it is in flight', () => {
+  const building = tools.shapeChecks({
+    check_state: 'pending',
+    check_phase: 'building',
+    check_trigger: 'commit-push',
+    checks_checked_at: '2026-08-16T10:00:00.000Z',
+    test_results: [],
+  });
+  assert.equal(building.state, 'pending');
+  assert.equal(building.phase, 'building');
+  assert.equal(building.trigger, 'commit-push');
+  assert.equal(building.checkedAt, '2026-08-16T10:00:00.000Z');
+  assert.equal(building.total, 0, 'nothing has reported yet — which is the point');
+
+  const testing = tools.shapeChecks({ check_state: 'pending', check_phase: 'testing' });
+  assert.equal(testing.phase, 'testing');
+
+  // A legacy row that predates the column, and a Date rather than a string:
+  // both are normal, and neither may throw or invent a phase.
+  const legacy = tools.shapeChecks({ check_state: 'pending' });
+  assert.equal(legacy.phase, null);
+  assert.equal(legacy.trigger, null);
+  assert.equal(legacy.checkedAt, null);
+  assert.equal(
+    tools.shapeChecks({ checks_checked_at: new Date('2026-08-16T10:00:00.000Z') }).checkedAt,
+    '2026-08-16T10:00:00.000Z'
+  );
+  assert.equal(tools.shapeChecks({ checks_checked_at: 'not a date' }).checkedAt, null);
+});
+
+test('a verdict for a superseded commit is reported as stale, not as current', () => {
+  const head = 'a'.repeat(40);
+  const older = 'b'.repeat(40);
+  // Passing — but for code that is no longer this proposal's head. Previously
+  // indistinguishable from a pass on the current commit.
+  const stale = tools.shapeChecks({
+    check_state: 'passing', reviewed_head_sha: head, checks_commit_sha: older,
+  });
+  assert.equal(stale.stale, true);
+  assert.equal(stale.ranOnCommit, older);
+
+  const current = tools.shapeChecks({
+    check_state: 'passing', reviewed_head_sha: head, checks_commit_sha: head.toUpperCase(),
+  });
+  assert.equal(current.stale, false, 'the same commit in a different case is the same commit');
+
+  // Unprovable must never read as proven: either side missing answers false.
+  assert.equal(tools.shapeChecks({ reviewed_head_sha: head }).stale, false);
+  assert.equal(tools.shapeChecks({ checks_commit_sha: older }).stale, false);
+  assert.equal(tools.shapeChecks({}).stale, false);
+});
+
+test('what broke is reported when a run errors before any test reports', () => {
+  const shaped = tools.shapeChecks({
+    check_state: 'error',
+    check_error_detail: 'Container build failed: npm ci exited 1',
+    test_results: [],
+  });
+  assert.equal(shaped.state, 'error');
+  assert.equal(shaped.total, 0);
+  // Build output is not the platform's own prose — it carries whatever the
+  // app printed, so it wears the same envelope as every other borrowed string.
+  assert.ok(shaped.error.startsWith('<untrusted-content>'));
+  assert.ok(shaped.error.includes('npm ci exited 1'));
+  assert.equal(tools.shapeChecks({ check_state: 'passing' }).error, null);
+});
+
+test('nextStep tells a pending proposal to wait, not that nothing is wrong', () => {
+  const step = tools.shapeProposal({
+    id: 11, app_slug: 'recipe-box', status: 'promoted',
+    check_state: 'pending', check_phase: 'building', check_trigger: 'commit-push',
+    checks_checked_at: '2026-08-16T10:00:00.000Z',
+    test_results: [],
+  }, ORIGIN).nextStep;
+  // The exact sentence that made a wedged run look healthy.
+  assert.ok(
+    !step.includes('Checks are not reporting a failure'),
+    'a run still in flight is not a clean verdict'
+  );
+  assert.ok(step.includes('building'), 'it names the stage being waited on');
+  assert.ok(step.includes('2026-08-16T10:00:00.000Z'), 'and when that stage started');
+  assert.ok(step.includes('commit-push'), 'and what started it');
+  assert.ok(/poll get_proposal/i.test(step), 'the correct action is to wait, not to push');
+
+  // A pending run does not clear the previous verdict's results, so a stale
+  // failing list must be labelled rather than presented as this commit's.
+  const lingering = tools.shapeProposal({
+    id: 12, app_slug: 'recipe-box', status: 'promoted',
+    check_state: 'pending', check_phase: 'testing',
+    test_results: [{ name: 'Board loads', status: 'fail' }],
+  }, ORIGIN).nextStep;
+  assert.ok(/PREVIOUS run/.test(lingering));
+});
+
+test('an errored build is not reported as "no failure" (#1258)', () => {
+  // The regression this replaces: the state test read `=== 'fail'`, but the
+  // stored verdict is 'failing', so the state half never once matched. A run
+  // that errored carried no test results either, so it took the clean-verdict
+  // branch — and checks GATE MERGE, which makes that the most expensive wrong
+  // answer in the file.
+  const errored = tools.shapeProposal({
+    id: 13, app_slug: 'recipe-box', status: 'promoted',
+    check_state: 'error', check_error_detail: 'Container build failed',
+    test_results: [],
+  }, ORIGIN).nextStep;
+  assert.ok(!errored.includes('Checks are not reporting a failure'));
+  assert.ok(/ERRORED/.test(errored), 'it says the run broke rather than passed');
+  assert.ok(errored.includes('Container build failed'), 'and quotes what broke');
+  assert.ok(/cannot merge/i.test(errored), 'and that this gates the merge');
+
+  // The same for a 'failing' verdict whose results array is empty or lost.
+  const failingNoResults = tools.shapeProposal({
+    id: 14, app_slug: 'recipe-box', status: 'promoted',
+    check_state: 'failing', test_results: [],
+  }, ORIGIN).nextStep;
+  assert.ok(!failingNoResults.includes('Checks are not reporting a failure'));
+  assert.ok(/gate merge/i.test(failingNoResults));
+});
+
+test('nextStep flags a passing verdict that describes superseded code', () => {
+  const step = tools.shapeProposal({
+    id: 15, app_slug: 'recipe-box', status: 'promoted',
+    check_state: 'passing',
+    reviewed_head_sha: 'a'.repeat(40), checks_commit_sha: 'b'.repeat(40),
+    test_results: [{ name: 'Home loads', status: 'pass' }],
+  }, ORIGIN).nextStep;
+  assert.ok(/superseded/.test(step), 'a pass on an old commit is not a pass on this one');
+});
+
+test('a proposal reports the base commit its branch started from (#1258)', () => {
+  // `behindMain` is a count: it says a base drifted, never what the base IS,
+  // and a count cannot be checked against a checkout. A wrong base is
+  // otherwise caught at submit_work, after the change is written.
+  const base = 'c'.repeat(40);
+  const shaped = tools.shapeProposal({
+    id: 16, app_slug: 'recipe-box', status: 'promoted', base_sha: base,
+  }, ORIGIN);
+  assert.equal(shaped.baseSha, base);
+  // Unknown stays null — an imported pull request, a pre-job row, or a
+  // staging clone (the job table is staging:private). Never a guess at main.
+  assert.equal(tools.shapeProposal({ id: 17 }, ORIGIN).baseSha, null);
+});
+
 test('a proposal reports its checks and whether its capture route was lost', () => {
   const shaped = tools.shapeProposal({
     id: 7, app_slug: 'recipe-box', check_state: 'failing',
