@@ -2187,7 +2187,30 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
                     AND ${currentVotePredicateSql('pv', 'cs')}) AS yes_count,
                 (SELECT COUNT(*)::int FROM pr_votes pv
                   WHERE pv.session_id = cs.id AND pv.vote = 'no'
-                    AND ${currentVotePredicateSql('pv', 'cs')}) AS no_count
+                    AND ${currentVotePredicateSql('pv', 'cs')}) AS no_count,
+                -- #1258: the upstream commit this proposal's branch started
+                -- from. It is not a column on the session — it lives on the
+                -- job that produced the branch — and a coding agent that
+                -- arrives on a branch somebody else cut has no other way to
+                -- learn it. Without it, a wrong base is caught at submit_work
+                -- as base_mismatch, after the change is written.
+                --
+                -- Two producers, in preference order: the connector's
+                -- external_agent_tasks row, then the guided hand-off's own
+                -- column. Earliest task wins — a proposal revised through a
+                -- second task is still diffed against the base its branch was
+                -- originally cut from, which is the number the group votes on.
+                --
+                -- external_agent_tasks is staging:private, so this reads NULL
+                -- on a staging clone. That is the honest answer there, and the
+                -- connector reports it as null rather than guessing.
+                COALESCE(
+                  (SELECT t.base_sha FROM external_agent_tasks t
+                    WHERE t.session_id = cs.id
+                    ORDER BY t.created_at, t.id
+                    LIMIT 1),
+                  cs.handoff_base_sha
+                ) AS base_sha
          FROM chat_sessions cs
          JOIN apps a ON cs.app_id = a.id
          WHERE cs.id = $1 AND (cs.user_id = $2 OR $3::boolean)`,

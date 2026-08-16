@@ -411,22 +411,89 @@ function pageRequests(issues, { query = '', detail = 'titles', offset = 0, limit
   };
 }
 
+// The commit a proposal's votes and checks are pinned to. Imported rows pin
+// to imported_pr_head_sha whichever repository the head is in; reviewed_head_sha
+// is the native column. Keyed off the source, not off the branch home, so a
+// mirrored proposal does not report a NULL head.
+//
+// Extracted (#1258) because two readers need it and they must not drift: the
+// branch block reports it, and the checks block compares it against the commit
+// the checks actually ran on to decide whether that snapshot is still current.
+function headShaOf(session) {
+  return (String(session.source) === 'imported'
+    ? session.imported_pr_head_sha
+    : (session.reviewed_head_sha || session.imported_pr_head_sha)) || null;
+}
+
+// A stored timestamp as an ISO string, or null. Postgres hands back a Date;
+// a JSON round trip hands back a string; a legacy row hands back nothing.
+function isoOrNull(value) {
+  if (!value) return null;
+  const d = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
+}
+
+// How much of a build failure to quote. The summarizer upstream
+// (services/deploy-failure.js) already produces a short string; this only
+// bounds a pathological one.
+const MAX_CHECK_ERROR_CHARS = 1000;
+
 // The checks snapshot, in the shape the agent that wrote the code can act on.
 // `checkState` alone said something was wrong without saying WHAT — and checks
 // GATE MERGE, so the gap between "failing" and "which test failed" is the gap
 // between one more commit and a proposal that quietly cannot land.
 //
-// Test names come from the app's own dapp.json, which other people edit, so
-// they keep the same envelope as every other field here.
+// #1258 is the other half of the same problem, at the other end of the run.
+// `{state: 'pending', failing: [], total: 0}` was every one of these at once:
+// the run has not started, the preview is building, the tests are running, or
+// the build died before it registered a single check. An agent cannot choose
+// between "wait", "re-push" and "say something is wrong" from that, so it
+// waits — and a wedged proposal is indistinguishable from a healthy one for as
+// long as it is willing to poll. Everything needed to tell them apart was
+// already on the row and thrown away here:
+//
+//   phase     — which half of the run is in flight ('building' | 'testing').
+//               The web card has worded these two since #1144; the connector
+//               was the only surface that could not tell them apart.
+//   trigger   — why this run started. A re-run the platform drove for itself
+//               (a boot reconcile, a stuck sweep) reads very differently from
+//               one the author's own push caused.
+//   checkedAt — when the snapshot was taken, so elapsed time is derivable.
+//               "pending for 40 seconds" and "pending for an hour" are not the
+//               same situation and used to render identically.
+//   stale     — the checks ran on a commit that is no longer the head. A
+//               distinct failure mode from `pending`, and previously invisible:
+//               a passing verdict for superseded code looks exactly like a
+//               passing verdict for the current one.
+//   error     — what broke, when the run errored rather than failed a test.
+//
+// `phase` and `trigger` are closed vocabularies normalised at the write
+// boundary (services/visuals.js), so they pass through as-is: an unrecognised
+// value was already stored as NULL and never reaches here. Test names and the
+// error detail are not — they come from the app's own dapp.json and its build
+// output — so they keep the same envelope as every other free text here.
 function shapeChecks(session) {
   const results = Array.isArray(session.test_results) ? session.test_results : [];
+  const ranOn = session.checks_commit_sha || null;
+  const head = headShaOf(session);
   return {
     state: session.check_state || null,
+    phase: session.check_phase || null,
+    trigger: session.check_trigger || null,
+    checkedAt: isoOrNull(session.checks_checked_at),
+    // The commit this verdict describes, and whether that is still the head.
+    // `stale` answers false when either side is unknown: an unprovable
+    // mismatch must not read as a proven one.
+    ranOnCommit: ranOn,
+    stale: !!(ranOn && head && ranOn.toLowerCase() !== head.toLowerCase()),
     failing: results
       .filter((t) => t && t.status && t.status !== 'pass')
       .slice(0, MAX_LIST_ITEMS)
       .map((t) => untrusted(t.name || t.path || 'unnamed test', MAX_TITLE_CHARS)),
     total: results.length,
+    error: session.check_error_detail
+      ? untrusted(session.check_error_detail, MAX_CHECK_ERROR_CHARS)
+      : null,
   };
 }
 
@@ -465,13 +532,10 @@ function shapeBranch(session) {
       ? 'the app repository'
       : (canPush ? 'your fork' : `${headOwner ? `${headOwner}'s` : 'another user\'s'} fork`),
     name: session.branch_name || null,
-    // Imported rows pin their votes and checks to imported_pr_head_sha
-    // whichever repository the head is in; reviewed_head_sha is the native
-    // column. Keyed off the source, not off the home, so a mirrored proposal
-    // does not report a NULL head.
-    headSha: (String(session.source) === 'imported'
-      ? session.imported_pr_head_sha
-      : (session.reviewed_head_sha || session.imported_pr_head_sha)) || null,
+    // Which commit this is, decided by `headShaOf` — the same function the
+    // checks block compares against, so "the head" cannot mean two things in
+    // one response.
+    headSha: headShaOf(session),
     // Can a plain `git push` move this proposal? Only when the head is in a
     // repository the caller's own GitHub account owns — the exact question
     // services/proposal-update.js asks before it advances anything.
@@ -484,6 +548,40 @@ function shapeBranch(session) {
   };
 }
 
+// The two stages a 'pending' run can be in, in the words the web card has
+// used since #1144. They have very different expected durations, which is the
+// entire reason an agent wants to know which one it is waiting on.
+const PHASE_CAPTION = {
+  building: 'the staging preview is still building (container build + database clone), so no test has run yet',
+  testing: 'the automated tests are running against the preview',
+};
+
+// A run in flight. Neither verdict applies: there is nothing to fix yet and
+// nothing to trust yet, and the only correct action is to wait.
+//
+// This case did not exist before #1258 — 'pending' fell through to the
+// no-failure branch and was told "Checks are not reporting a failure", which
+// is true, useless, and reads as permission to stop watching. It is also what
+// made `total: 0` unreadable: an agent could not tell "no test has reported
+// yet" from "this proposal has no checks", so it could not tell a wedged run
+// from a healthy one.
+function pendingNextStep(checks) {
+  const caption = PHASE_CAPTION[checks.phase]
+    || 'a checks run is in flight, at a stage this proposal did not record';
+  const started = checks.checkedAt ? ` This run started at ${checks.checkedAt}.` : '';
+  const why = checks.trigger ? ` It was started by: ${checks.trigger}.` : '';
+  // A pending run does not clear the previous verdict's results, so a lingering
+  // failing list belongs to the commit before this one. Saying so stops an
+  // agent fixing tests that may already be fixed.
+  const previous = (checks.failing && checks.failing.length)
+    ? ' The failing tests listed here are from the PREVIOUS run and may not reflect this commit.'
+    : '';
+  return `Checks have not reported a verdict yet — ${caption}.${started}${why}${previous} `
+    + 'Poll get_proposal rather than pushing again: a new commit restarts the run from the beginning, and if you '
+    + 'submit_work it also clears the votes collected so far. A `total` of 0 here means no test has reported yet, '
+    + 'not that this proposal has no checks.';
+}
+
 // What the agent that wrote this code should do about it right now. Branches
 // on the BRANCH HOME, because the same failing check has two different fixes
 // and the platform is the only party that knows which (#1054): a fork-home
@@ -491,20 +589,50 @@ function shapeBranch(session) {
 // submit_work is called with its id.
 function shapeNextStep(session, checks) {
   const branch = shapeBranch(session);
-  const failing = checks.state === 'fail' || (checks.failing && checks.failing.length > 0);
+  // #1258: the stored verdict is 'failing', never 'fail', so the state half of
+  // this test had never once matched — the failing path was reached only via
+  // the results array. A run that ERRORED (the build broke, no test ever ran)
+  // therefore carried an empty array and reported "not reporting a failure",
+  // which is the most consequential wrong answer in this file: checks gate
+  // merge, so that proposal cannot land however the vote goes. 'fail' stays in
+  // the test alongside the real value: it costs one comparison, and a stored
+  // row from some earlier writer carrying it would otherwise read as clean.
+  const errored = checks.state === 'error';
+  const failing = errored
+    || checks.state === 'failing' || checks.state === 'fail'
+    || (checks.failing && checks.failing.length > 0);
   const isOpen = session.status === 'promoted';
   if (!isOpen) {
     return `This proposal is ${session.status || 'no longer open'}, so its code is frozen — anything further is a new `
       + 'change through prepare_work.';
   }
+  // Before either verdict: a run still in flight is not a verdict at all.
+  if (checks.state === 'pending') return pendingNextStep(checks);
   if (!failing) {
+    // A verdict for a commit that is no longer the head is not a verdict for
+    // this proposal's code. Previously indistinguishable from a current pass.
+    const stale = checks.stale
+      ? 'These checks last ran on a commit that is no longer this proposal\'s head, so the verdict describes '
+        + 'superseded code — a fresh run should follow on its own; poll get_proposal. '
+      : '';
     return branch.youCanPush
-      ? 'Checks are not reporting a failure. If you revise this proposal anyway, push to '
+      ? `${stale}Checks are not reporting a failure. If you revise this proposal anyway, push to `
         + `${branch.name || 'its branch'} in your fork and call submit_work with proposalId and that branch — every `
         + 'submission clears the votes it has collected, so only do it for a change worth re-reviewing.'
-      : 'Checks are not reporting a failure. If you revise this proposal anyway, push to a branch in your own fork '
-        + 'and call submit_work with proposalId and that branch — every submission clears the votes it has '
+      : `${stale}Checks are not reporting a failure. If you revise this proposal anyway, push to a branch in your `
+        + 'own fork and call submit_work with proposalId and that branch — every submission clears the votes it has '
         + 'collected, so only do it for a change worth re-reviewing.';
+  }
+  // An errored run is a failure with no test to point at: the build or the
+  // preview broke before the suite could report. Naming that is the difference
+  // between fixing a test and fixing a Dockerfile.
+  if (errored && !(checks.failing && checks.failing.length)) {
+    const detail = checks.error ? ` What broke: ${checks.error}` : '';
+    return 'The checks run ERRORED before any test reported — the staging build or the preview itself failed, so '
+      + 'there is no failing test to fix and this cannot merge however the vote goes.'
+      + `${detail} Fix the build, then push a new commit to `
+      + `${branch.youCanPush ? (branch.name || 'this proposal\'s branch') + ' in your own fork' : 'a branch in your OWN fork'}`
+      + ` and call submit_work with proposalId ${session.id} and that branch. Do not open a second proposal.`;
   }
   // The failing-checks path. Checks GATE MERGE, so this is the one answer the
   // agent most needs to be exactly right.
@@ -571,6 +699,18 @@ function shapeProposal(session, origin) {
     noVotes: typeof session.no_count === 'number' ? session.no_count : null,
     votesRequired: typeof session.votes_required === 'number' ? session.votes_required : null,
     behindMain: typeof session.behind_main === 'number' ? session.behind_main : null,
+    // The upstream commit this proposal's branch started from (#1258).
+    // `behindMain` is a COUNT — it says a base drifted but not what the base
+    // is, and a count cannot be checked against a checkout. This can:
+    // `git rev-parse HEAD` and compare all forty characters before writing a
+    // line of code. prepare_work has always returned it for a job it minted;
+    // a session that arrives on a branch somebody else cut never sees a work
+    // order, and this is the only place it can learn the number.
+    //
+    // Null when the platform cannot prove it: an imported pull request, a row
+    // that predates the job table, or a staging clone (the job table is
+    // staging:private). Null means unknown — never "use main".
+    baseSha: session.base_sha || null,
     externalAgent: session.external_agent || null,
     webPath: session.app_slug
       ? `${origin}/#app/${session.app_slug}/dev/sessions/${session.id}`
@@ -1573,7 +1713,7 @@ function registerTools(server, ctx) {
   // ── get_proposal ─────────────────────────────────────────────────────
   server.registerTool('get_proposal', {
     title: 'Get a proposal',
-    description: "Status of one proposal: its checks verdict — including the NAMES of any failing tests — the staging preview URL, the vote tally and how many votes it still needs to merge. Checks gate merge: a proposal whose checks are failing cannot land however the vote goes, so if you are the agent that wrote the code, fix the named tests and submit the fix as an UPDATE to this same proposal — never as a second one. `branch` says how: `branch.home` is 'user_fork' when the proposal follows a branch in the author's own fork (push to it, then call submit_work with proposalId and branch) or 'app_repo' when its head is a branch only Usernode can write (push to your own fork, then call submit_work with proposalId and that branch — pushing alone moves nothing). `branch.youCanPush` and `nextStep` state the same thing in one line; follow `nextStep`. A proposal you opened with submit_work is usually 'app_repo' even though the work came from your fork — Usernode copies the fork branch into the app repository — so its branch name exists only there, and revising it always goes back through submit_work. `captureDefaultedToRoot` true means the submission carried no testing route AT ALL, so the before/after screenshots the voters see are of the app's home page; `capturePaths` names the routes the last capture actually shot, which is how you tell that apart from a change whose own first route is '/'. Fix either by calling submit_work with this proposalId and corrected testingPaths — resubmitting the same commit only re-shoots the screenshots and clears no votes.",
+    description: "Status of one proposal: its checks verdict — including the NAMES of any failing tests — the staging preview URL, the vote tally and how many votes it still needs to merge. Checks gate merge: a proposal whose checks are failing cannot land however the vote goes, so if you are the agent that wrote the code, fix the named tests and submit the fix as an UPDATE to this same proposal — never as a second one. `branch` says how: `branch.home` is 'user_fork' when the proposal follows a branch in the author's own fork (push to it, then call submit_work with proposalId and branch) or 'app_repo' when its head is a branch only Usernode can write (push to your own fork, then call submit_work with proposalId and that branch — pushing alone moves nothing). `branch.youCanPush` and `nextStep` state the same thing in one line; follow `nextStep`. A proposal you opened with submit_work is usually 'app_repo' even though the work came from your fork — Usernode copies the fork branch into the app repository — so its branch name exists only there, and revising it always goes back through submit_work. `captureDefaultedToRoot` true means the submission carried no testing route AT ALL, so the before/after screenshots the voters see are of the app's home page; `capturePaths` names the routes the last capture actually shot, which is how you tell that apart from a change whose own first route is '/'. Fix either by calling submit_work with this proposalId and corrected testingPaths — resubmitting the same commit only re-shoots the screenshots and clears no votes. A `checks.state` of 'pending' is NOT a verdict and not a reason to push again — read `checks.phase`, `checks.checkedAt` and `checks.stale`, and `baseSha` before writing any code; each output field describes itself.",
     inputSchema: { proposalId: z.number().int().positive().describe('The proposal id returned by list_my_proposals.') },
     outputSchema: {
       proposalId: z.number(),
@@ -1584,10 +1724,40 @@ function registerTools(server, ctx) {
       prUrl: z.string().nullable(),
       stagingUrl: z.string().nullable(),
       checkState: z.string().nullable(),
+      // The per-field prose lives here rather than in the tool description on
+      // purpose: the description is capped at 1800 chars by
+      // tests/mcp-instruction-budget.test.js — because Claude Code silently
+      // cuts every description at 2048 — and an outputSchema is not.
       checks: z.object({
-        state: z.string().nullable(),
-        failing: z.array(z.string()),
-        total: z.number(),
+        state: z.string().nullable()
+          .describe("'pending' (a run is in flight), 'passing', 'failing', 'error' (the build or preview broke "
+            + "before any test reported), or 'skipped'. Only 'passing' and 'skipped' mean this proposal can merge."),
+        // Closed vocabularies, normalised at the write boundary, so an
+        // unrecognised value arrives as null rather than as itself.
+        phase: z.enum(['building', 'testing']).nullable()
+          .describe("Which half of a pending run is in flight. 'building' means the staging preview is still being "
+            + "built, so no test has run yet and a `total` of 0 is expected; 'testing' means the suite is running "
+            + 'against the preview. Null on a row that predates the column. Neither is a reason to push again.'),
+        trigger: z.string().nullable()
+          .describe('What started this run — e.g. commit-push, proposal-open, manual-recheck, boot-reconcile, '
+            + 'stuck-sweep. A run the platform drove for itself reads differently from one your own push caused.'),
+        checkedAt: z.string().nullable()
+          .describe('ISO timestamp of this snapshot; for a pending run, when that run started. Pending for 40 '
+            + 'seconds and pending for an hour are not the same situation.'),
+        ranOnCommit: z.string().nullable()
+          .describe('The commit this verdict describes.'),
+        stale: z.boolean()
+          .describe('True when ranOnCommit is no longer the head, so even a passing verdict describes superseded '
+            + 'code. False when either side is unknown — an unprovable mismatch is not a proven one.'),
+        failing: z.array(z.string())
+          .describe('Names of the tests that are not passing. While state is pending these are left over from the '
+            + 'PREVIOUS run and may already be fixed.'),
+        total: z.number()
+          .describe('How many tests reported. While pending, 0 means none has reported yet — never that this '
+            + 'proposal has no checks.'),
+        error: z.string().nullable()
+          .describe('What broke when a run errored before any test could report — a build or preview failure, not '
+            + 'a test failure, so there is no test to fix.'),
       }),
       // Where this proposal's head lives, and how its author advances it.
       branch: z.object({
@@ -1605,6 +1775,11 @@ function registerTools(server, ctx) {
       noVotes: z.number().nullable(),
       votesRequired: z.number().nullable(),
       behindMain: z.number().nullable(),
+      baseSha: z.string().nullable()
+        .describe('The upstream commit this proposal\'s branch started from. Compare all forty characters against '
+          + 'your checkout\'s HEAD before writing code: a wrong base is otherwise caught only at submit_work, after '
+          + 'the change is written, when the remedy has become a rebase. Null when the platform cannot prove it '
+          + '(an imported pull request, a pre-job row, a staging clone) — which never means "use main".'),
       externalAgent: z.string().nullable(),
       webPath: z.string().nullable(),
     },
