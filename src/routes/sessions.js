@@ -713,6 +713,13 @@ async function buildSessionDiscussionBlock(pool, session) {
 // tests can keep requiring it from this module.
 const { stripSpecWrapperFence } = require('../services/spec-format');
 
+// #1204: spot an agent run that died on the wire and reported it as its
+// FINAL message ("API Error: Connection lost mid-response…") instead of in
+// its exit code. A scout's final message IS the spec, so without this the
+// notice is what gets stored as the session's spec doc. See
+// src/services/agent-result-text.js.
+const { agentApiFailure, describeAgentApiFailure } = require('../services/agent-result-text');
+
 // #27: freeze the current spec content as a new immutable version in
 // chat_session_specs and return its version number. Every spec mutation
 // (scout) calls this and tags its inline spec
@@ -8681,7 +8688,13 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
     // staging (the headless contract).
     if (recoveryActiveTurn.mode === 'scout') {
       const ccText = stripSpecWrapperFence((result.lastResultText || '').trim());
-      if (ccText && !result.fatalError) {
+      // #1204: the replayed journal can end on a transport-failure notice
+      // just like a live turn does. There is no re-dispatch on this path
+      // (the run is being finalized after a platform restart, not driven),
+      // so the only correct move is to refuse the "spec" and finalize as a
+      // question for a human to pick up.
+      const apiFailure = agentApiFailure(ccText);
+      if (ccText && !result.fatalError && !apiFailure) {
         const publication = await persistScoutPublication({
           pool,
           sessionId: session.id,
@@ -8701,7 +8714,9 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
           : `The scout investigated the repo and drafted a ${publication.lineCount}-line markdown spec. It now lives in the session's spec doc.`;
       } else {
         outcome = 'question';
-        dispatchSummary = 'The scout did not complete successfully — no spec was produced.';
+        dispatchSummary = apiFailure
+          ? `${describeAgentApiFailure(apiFailure)}. No spec was produced.`
+          : 'The scout did not complete successfully — no spec was produced.';
       }
     } else {
       const testing = testingNotes.extract(result.lastResultText || '');
@@ -10641,12 +10656,32 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
           onProgress: onScoutProgress,
         });
       };
+      // #1204: a dropped API stream ends the run "successfully" — exit 0,
+      // __USERNODE_RESULT__ written — with the failure notice as the agent's
+      // FINAL message, which for a scout IS the spec. It is retried like a
+      // markerless death, but deliberately NOT only when headless: the
+      // reported symptom is an interactive one, a scout is read-only so
+      // re-running it changes nothing, and the alternative is the user
+      // retyping the same request. Returns the status line to show, or null
+      // for "do not retry", so all three dispatch paths below — local, the
+      // Codex attempt ledger, and the legacy Claude one — share one rule and
+      // each still names the reason it is retrying.
+      const scoutRetryStatus = (r) => {
+        if (headless && shouldRetryHeadlessTurn(r, stopHandle, !!(r?.lastResultText || '').trim())) {
+          return 'The coding step failed unexpectedly — retrying once…';
+        }
+        if (shouldRetryApiErrorTurn(r, stopHandle)) {
+          return 'The coding agent lost its connection to the API — retrying once…';
+        }
+        return null;
+      };
       if (runLocally) {
         // Local turns do not enter the platform's Codex attempt ledger and a
         // retry must stay on the same attached machine.
         result = await dispatchLocalScout();
-        if (headless && shouldRetryHeadlessTurn(result, stopHandle, !!(result.lastResultText || '').trim())) {
-          await sendStatus('The coding step failed unexpectedly — retrying once…', executionAgentMeta);
+        const localRetryStatus = scoutRetryStatus(result);
+        if (localRetryStatus) {
+          await sendStatus(localRetryStatus, executionAgentMeta);
           await waitForTurnStopped(session.id, containerName);
           result = await dispatchLocalScout();
         }
@@ -10666,7 +10701,9 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
           resumeThreadId, config,
         }),
         dispatchOnce: (ctx) => doScout(ctx),
-        retryPredicate: (r) => headless && shouldRetryHeadlessTurn(r, stopHandle, !!(r.lastResultText || '').trim()),
+        // Returns the status line rather than a bare boolean, so the loop
+        // says which failure it is retrying (#1204).
+        retryPredicate: (r) => scoutRetryStatus(r),
         sendStatus: async (msg) => { await sendStatus(msg, executionAgentMeta); },
         waitForStopped: waitForTurnStopped,
         prepareRetry: async (retry) => {
@@ -10732,8 +10769,9 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
         // but keep the headless auto-retry that the Codex loop provides
         // for its own attempts (one extra dispatch, never more).
         result = await doScout({});
-        if (headless && shouldRetryHeadlessTurn(result, stopHandle, !!(result.lastResultText || '').trim())) {
-          await sendStatus('The coding step failed unexpectedly — retrying once…', executionAgentMeta);
+        const claudeRetryStatus = scoutRetryStatus(result);
+        if (claudeRetryStatus) {
+          await sendStatus(claudeRetryStatus, executionAgentMeta);
           await waitForTurnStopped(session.id, containerName);
           if (!result.turnId || !await worker.finishTurn(session.id, { turnId: result.turnId })) {
             throw new Error('Could not durably finish the first scout attempt before retry');
@@ -10790,13 +10828,33 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
     }
 
     const ccText = stripSpecWrapperFence((result.lastResultText || '').trim());
+    // #1204: after the retry above, is the final message STILL a transport
+    // failure notice rather than a spec?
+    const apiFailure = agentApiFailure(ccText);
 
     if (result.fatalError) {
       isError = true;
       const msg = `Scout error: ${result.fatalError.substring(0, 200)}`;
       await sendStatus(msg, executionAgentMeta);
       summaryParts.push(msg);
-    } else if (result.ccIsError && !ccText) {
+    } else if (apiFailure) {
+      // #1204: the run "succeeded" — exit 0, result line written — but the
+      // agent's last words are the failure, so there is no spec here. Leave
+      // spec_md alone: a reviewed draft from an earlier turn must survive a
+      // dropped connection, and freezing this as a spec version would put a
+      // one-line error notice in the viewer's version history forever.
+      isError = true;
+      const msg = `${describeAgentApiFailure(apiFailure)}. The spec doc was not updated — send your request again to retry.`;
+      await sendStatus(msg);
+      summaryParts.push(msg);
+    } else if (result.ccIsError) {
+      // The runtime flagged the run as errored. A scout's final message IS
+      // the product (the prompt says so verbatim), so text produced by an
+      // errored run is the runtime's own explanation, not a spec — surface
+      // it instead of storing it. Previously this branch also required an
+      // EMPTY ccText, which both stored error text as specs and made the
+      // `ccText || 'unknown'` below dead: it could only ever print
+      // "unknown".
       isError = true;
       const msg = `Scout error: ${(ccText || 'unknown').substring(0, 200)}`;
       await sendStatus(msg, executionAgentMeta);
@@ -11110,6 +11168,19 @@ function shouldRetryHeadlessTurn(result, stopHandle, producedOutput) {
   if (!result || producedOutput) return false;
   if (stopHandle && stopHandle.stopped) return false;
   return result.exitCode === -1 && !result.resultSeen;
+}
+
+// #1204: one automatic re-dispatch for a scout turn whose final message is
+// a transport-failure notice instead of a spec. Unlike the markerless
+// retry above this is NOT headless-only: the reported symptom ("often
+// getting spec result of 'API Error: Connection lost mid-response'") is an
+// interactive one, a scout is read-only so re-running it changes nothing,
+// and the human's only alternative is to retype the same request. A
+// user-stopped turn is still a deliberate end, not a failure to retry.
+function shouldRetryApiErrorTurn(result, stopHandle) {
+  if (!result) return false;
+  if (stopHandle && stopHandle.stopped) return false;
+  return !!agentApiFailure(result.lastResultText);
 }
 
 const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -13519,4 +13590,4 @@ CMD ["node", "server.js"]
   return { containerId, stagingUrl, hostname };
 }
 
-module.exports = { runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, advanceSharedReviewAfterSync, advanceReviewAfterPlatformSync, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, stripFakeCompletionMarker, buildMayorMessages, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError };
+module.exports = { runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, advanceSharedReviewAfterSync, advanceReviewAfterPlatformSync, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, stripFakeCompletionMarker, buildMayorMessages, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError };
