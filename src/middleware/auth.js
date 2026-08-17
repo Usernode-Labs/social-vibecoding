@@ -85,6 +85,14 @@ const PUBLIC_PATHS = [
   '/sw.js',
   '/manifest.webmanifest',
   '/icons/',
+  // Public report share links (routes/report-snapshots.js). The route is
+  // mounted BEFORE this middleware in server.js, so requests normally
+  // never get here — this entry is belt-and-braces so the public contract
+  // (the unguessable 32-hex token is the only access control) survives a
+  // mount reorder instead of silently becoming a redirect-to-login. An
+  // unmatched /reports/ path just falls through to static handling and
+  // 404s; no data is reachable without a valid token.
+  '/reports/',
 ];
 
 // ── Platform-access gate (onboarding flow alignment) ─────────────────────

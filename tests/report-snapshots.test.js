@@ -299,3 +299,31 @@ test('POST lock copies period_start into the frozen ai_json', async () => {
     assert.match(ins.params[2], /"periodStart":"2026-06-12T00:00:00Z"/);
   } finally { s.close(); }
 });
+
+// The share route is only public because of WHERE it mounts: server.js
+// wires reportShareRoutes before authMiddleware (the visuals.js pattern),
+// and src/middleware/auth.js lists /reports/ in PUBLIC_PATHS as
+// belt-and-braces should that order ever change. Neither guarantee is
+// visible from this file's stub harness, so pin both in source — a
+// reorder that put the share link behind auth would otherwise ship
+// silently and turn every circulated report link into a login redirect.
+test('share links stay public: pre-auth mount order and PUBLIC_PATHS entry', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+
+  const serverSrc = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+  const shareMount = serverSrc.indexOf('app.use(reportShareRoutes(');
+  const authMount = serverSrc.indexOf('app.use(authMiddleware(');
+  assert.ok(shareMount !== -1, 'server.js mounts reportShareRoutes');
+  assert.ok(authMount !== -1, 'server.js mounts authMiddleware');
+  assert.ok(shareMount < authMount,
+    'reportShareRoutes must mount BEFORE authMiddleware — /reports/:token is a public share link');
+
+  const authSrc = fs.readFileSync(
+    path.join(__dirname, '..', 'src', 'middleware', 'auth.js'), 'utf8');
+  const m = authSrc.match(/const PUBLIC_PATHS = \[([\s\S]*?)\];/);
+  assert.ok(m, 'PUBLIC_PATHS array found');
+  const entries = [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]);
+  assert.ok(entries.includes('/reports/'),
+    '/reports/ must stay in PUBLIC_PATHS (belt-and-braces for the share link)');
+});
