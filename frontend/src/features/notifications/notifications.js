@@ -63,6 +63,16 @@ const Notifications = {
   // /api/notifications payload). Rendered as a pinned section above the
   // grouped list with Accept / Decline actions.
   invites: [],
+  // #1280: messages this user saved with the bookmark button in group
+  // chat, newest save first (also from the first-page payload). Rendered
+  // as the TOP pinned section — above the invites and the grouped list —
+  // and they stay there until unsaved, from the message or from here.
+  //
+  // Deliberately NOT folded into `items`: a save is not a notification. It
+  // has no unread state, so it must not touch the badge, the mark-all
+  // path, the grouping transform or the pagination cursor — all of which
+  // operate on `items` alone.
+  saved: [],
   unread: 0,
   open: false,
   // Pagination cursor for the per-group "Show more →" pager.
@@ -208,15 +218,21 @@ const Notifications = {
       if (generation !== Notifications._refreshGeneration) return false;
       Notifications.items = Array.isArray(data.notifications) ? data.notifications : [];
       Notifications.invites = Array.isArray(data.pendingInvites) ? data.pendingInvites : [];
+      Notifications.saved = Array.isArray(data.savedMessages) ? data.savedMessages : [];
       Notifications.unread = data.unread || 0;
       Notifications.hasMore = !!data.hasMore;
       Notifications.nextBefore = data.nextBefore || null;
       Notifications._reconcileCompletionTitle();
       Notifications._renderBadge();
       if (Notifications.open) {
+        Notifications._renderSaved();
         Notifications._renderInvites();
         Notifications._renderList();
       }
+      // After the first populated refresh, so a deep-linked drawer opens
+      // onto real rows rather than an empty-state flash — same ordering
+      // WorkDrawer._maybeShotOpen() uses.
+      Notifications._maybeShotOpen();
       return true;
     } catch (err) {
       console.warn('[notifications] refresh failed', err);
@@ -362,6 +378,7 @@ const Notifications = {
       // open "pop" (a grabber-height slide, then the content snapped
       // in); later opens still held the previous render, so only the
       // first one looked broken.
+      Notifications._renderSaved();
       Notifications._renderInvites();
       Notifications._renderList();
       const sheet = PlatformUI.sheet({
@@ -383,8 +400,26 @@ const Notifications = {
     }
     panel.classList.remove('hidden');
     Notifications.open = true;
+    Notifications._renderSaved();
     Notifications._renderInvites();
     Notifications._renderList();
+  },
+
+  // Screenshot-state deep link (`?shot=notifications`): the drawer only
+  // exists behind a click on the header bell, so the capture pipeline and
+  // any dapp.json test would otherwise never see it — and #1280's saved
+  // section lives nowhere else. Same idiom as WorkDrawer._maybeShotOpen();
+  // pair it with ?demo=1 in staging so the pinned sections have mock rows
+  // to render. Once per page load — reopening after a manual dismiss would
+  // fight the user, and refresh() runs again on live events.
+  _shotOpened: false,
+  _maybeShotOpen() {
+    if (Notifications._shotOpened || Notifications.open) return;
+    let shot = null;
+    try { shot = new URLSearchParams(location.search).get('shot'); } catch { /* ignore */ }
+    if (shot !== 'notifications') return;
+    Notifications._shotOpened = true;
+    Notifications.show();
   },
 
   hide() {
@@ -711,6 +746,85 @@ const Notifications = {
     else document.title = base;
   },
 
+  // --- pinned saved-messages section (#1280) ----------------------------
+
+  // Same contract as _renderInvites below: compute descriptors, push them
+  // into the store, let ./notifications-list.tsx render them. Empty stays
+  // empty — nothing saved renders no "Saved" header at all.
+  _renderSaved() {
+    const store = Notifications._store;
+    if (!store) return;
+    store.set({
+      saved: Notifications.saved.map(savedView),
+      touch: isTouchNow(),
+    });
+  },
+
+  // Clicking a saved row opens the message where it actually lives: the
+  // topic discussion when it was posted in one (#194 parity with the
+  // mention/reply rows), otherwise the app's Dev → Chat. Deliberately does
+  // NOT unsave — a save is not a to-do item, and a row that vanished the
+  // moment you looked at it would make the section unusable.
+  _onSavedClick(messageId) {
+    const saved = Notifications.saved.find((s) => s.messageId === messageId);
+    if (!saved || !saved.appSlug) return;
+    const kindMap = { issue: 'issue', session: 'proposal', governance: 'gov' };
+    const topicKind = kindMap[saved.threadType];
+    const topicId = parseInt(saved.threadRef, 10);
+    if (topicKind && Number.isInteger(topicId) && topicId > 0) {
+      if (typeof App !== 'undefined' && App.openAppTab) {
+        App.openAppTab(saved.appSlug, 'dev', {
+          subTab: 'topic',
+          ref: { kind: topicKind, id: topicId },
+        });
+      } else {
+        const seg = topicKind === 'issue' ? 'issues'
+          : topicKind === 'proposal' ? 'proposals' : 'governance';
+        window.location.hash = `#app/${saved.appSlug}/dev/${seg}/${topicId}`;
+      }
+      return;
+    }
+    if (typeof App !== 'undefined' && App.openAppTab) {
+      App.openAppTab(saved.appSlug, 'dev', { subTab: 'chat' });
+    } else {
+      window.location.hash = `#app/${saved.appSlug}/dev/chat`;
+    }
+  },
+
+  // Unsave from the drawer — the "or there" half of "until unsaved in the
+  // message / there". Optimistic like the message-side toggle, and it
+  // repaints the message's own button when that chat happens to be on
+  // screen (GroupChat is a classic-script global lexical binding, so it is
+  // reachable by a bare reference behind a typeof guard, not on window).
+  async _unsave(messageId) {
+    const saved = Notifications.saved.find((s) => s.messageId === messageId);
+    if (!saved || !saved.appSlug) return;
+    const previous = Notifications.saved;
+    Notifications.saved = Notifications.saved.filter((s) => s.messageId !== messageId);
+    Notifications._renderSaved();
+    if (typeof GroupChat !== 'undefined' && GroupChat._paintBookmark) {
+      GroupChat._paintBookmark(messageId, false);
+      const msg = GroupChat._findMessage && GroupChat._findMessage(messageId);
+      if (msg) msg.bookmarked = false;
+    }
+    try {
+      const res = await fetch(
+        `/api/apps/${saved.appSlug}/messages/${messageId}/bookmark`,
+        { method: 'DELETE' }
+      );
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    } catch (err) {
+      // Put it back rather than leaving the drawer disagreeing with the
+      // server about what is saved.
+      Notifications.saved = previous;
+      Notifications._renderSaved();
+      if (typeof GroupChat !== 'undefined' && GroupChat._paintBookmark) {
+        GroupChat._paintBookmark(messageId, true);
+      }
+      console.warn('[notifications] unsave failed', err);
+    }
+  },
+
   // --- pinned invites section -------------------------------------------
 
   // The pinned section is a descriptor list now; ./notifications-list.tsx
@@ -845,9 +959,16 @@ const Notifications = {
     const touch = isTouchNow();
 
     if (Notifications._bellItems().length === 0) {
-      // The pinned invites section may still have content — only show
-      // the empty hint when there's truly nothing in the drawer.
-      store.set({ list: [], empty: Notifications.invites.length === 0, touch });
+      // The pinned sections may still have content — only show the empty
+      // hint when there's truly nothing in the drawer. #1280 added the
+      // saved section to that "truly nothing" test: a drawer showing your
+      // saved messages while telling you nothing has arrived yet reads as
+      // a bug.
+      store.set({
+        list: [],
+        empty: Notifications.invites.length === 0 && Notifications.saved.length === 0,
+        touch,
+      });
       return;
     }
 
@@ -935,6 +1056,26 @@ if (typeof window !== 'undefined') window.SESSION_NOTIF_KINDS = SESSION_NOTIF_KI
 // file don't define it, and neither does the SSG prerender pass.
 function isTouchNow() {
   return typeof PlatformUI !== 'undefined' && !!PlatformUI.isTouch && PlatformUI.isTouch();
+}
+
+// #1280: one saved message, as data. The row reads "@author in AppName ·
+// 2h ago" over a two-line snippet of the message, which is the same shape
+// the mention/reply rows use — a saved message and a message you were
+// mentioned in are the same object, and looking different for no reason
+// would just make the drawer harder to read.
+//
+// `time` is the age of the SAVE, not of the message: the section is
+// ordered by when you saved things, so a timestamp measuring anything else
+// would contradict the order the rows are in.
+function savedView(s) {
+  return {
+    messageId: s.messageId,
+    slug: s.appSlug || '',
+    who: s.author ? `@${s.author}` : 'System',
+    appName: s.appName || s.appSlug || 'an app',
+    time: relativeTime(s.savedAt),
+    text: (s.content || '').slice(0, 140),
+  };
 }
 
 // #646: approver invites share the pinned section, with distinct copy and

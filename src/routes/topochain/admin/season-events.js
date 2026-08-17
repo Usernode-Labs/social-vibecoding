@@ -235,13 +235,20 @@ function seasonEventsAdminRoutes(config) {
       );
       const total = countRows[0].c;
 
-      // users_count/onchain_accounts_count are scoped to THIS event only
-      // (season_event_id = se.id) — the direct analog of the source's
-      // phase-scoped pivot counts, not a season-wide fallback.
+      // users_count/onchain_accounts_count use the standard scope idiom
+      // (this event OR season-wide within its season): accounts are
+      // season-scoped from Pre Season 2 onward and wallet/provision
+      // enrolls season-wide, so an event-only count would read 0 for
+      // every new-model season. Legacy events keep their old numbers —
+      // their rows match the first arm.
       const { rows } = await pool.query(
         `SELECT se.*, s.name AS season_name,
-                (SELECT COUNT(*) FROM user_enrollments ue WHERE ue.season_event_id = se.id)::int AS users_count,
-                (SELECT COUNT(*) FROM onchain_accounts oa WHERE oa.season_event_id = se.id)::int AS onchain_accounts_count
+                (SELECT COUNT(*) FROM user_enrollments ue
+                  WHERE ue.season_event_id = se.id
+                     OR (ue.season_event_id IS NULL AND ue.season_id = se.season_id))::int AS users_count,
+                (SELECT COUNT(*) FROM onchain_accounts oa
+                  WHERE oa.season_event_id = se.id
+                     OR (oa.season_event_id IS NULL AND oa.season_id = se.season_id))::int AS onchain_accounts_count
            FROM season_events se
            LEFT JOIN seasons s ON s.id = se.season_id
           WHERE ($1::text IS NULL OR se.name ILIKE $1) AND ${seasonWhere}
@@ -381,10 +388,16 @@ function seasonEventsAdminRoutes(config) {
       const id = toIntId(req.params.id);
       if (!id) return fail(res, 404, 'Event not found.');
 
+      // Same scope idiom as the index route above; user_activities stays
+      // event-scoped (activities are recorded against a concrete event).
       const { rows } = await pool.query(
         `SELECT se.*, s.name AS season_name,
-                (SELECT COUNT(*) FROM user_enrollments ue WHERE ue.season_event_id = se.id)::int AS users_count,
-                (SELECT COUNT(*) FROM onchain_accounts oa WHERE oa.season_event_id = se.id)::int AS onchain_accounts_count,
+                (SELECT COUNT(*) FROM user_enrollments ue
+                  WHERE ue.season_event_id = se.id
+                     OR (ue.season_event_id IS NULL AND ue.season_id = se.season_id))::int AS users_count,
+                (SELECT COUNT(*) FROM onchain_accounts oa
+                  WHERE oa.season_event_id = se.id
+                     OR (oa.season_event_id IS NULL AND oa.season_id = se.season_id))::int AS onchain_accounts_count,
                 (SELECT COUNT(*) FROM user_activities ua WHERE ua.season_event_id = se.id)::int AS user_activities_count
            FROM season_events se
            LEFT JOIN seasons s ON s.id = se.season_id

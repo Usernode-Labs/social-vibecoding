@@ -174,8 +174,12 @@ function handleQuery(rawSql, params = []) {
       .map((e) => ({
         ...e,
         season_name: (db.seasons.find((s) => s.id === e.season_id) || {}).name ?? null,
-        users_count: db.userEnrollments.filter((u) => u.season_event_id === e.id).length,
-        onchain_accounts_count: db.onchainAccounts.filter((a) => a.season_event_id === e.id).length,
+        // Mirrors the route's scope idiom: this event OR season-wide rows
+        // of the event's season (accounts are season-scoped now).
+        users_count: db.userEnrollments.filter((u) => u.season_event_id === e.id
+          || (u.season_event_id == null && e.season_id != null && u.season_id === e.season_id)).length,
+        onchain_accounts_count: db.onchainAccounts.filter((a) => a.season_event_id === e.id
+          || (a.season_event_id == null && e.season_id != null && a.season_id === e.season_id)).length,
       }));
     return { rows };
   }
@@ -186,8 +190,10 @@ function handleQuery(rawSql, params = []) {
       rows: [{
         ...row,
         season_name: (db.seasons.find((s) => s.id === row.season_id) || {}).name ?? null,
-        users_count: db.userEnrollments.filter((u) => u.season_event_id === row.id).length,
-        onchain_accounts_count: db.onchainAccounts.filter((a) => a.season_event_id === row.id).length,
+        users_count: db.userEnrollments.filter((u) => u.season_event_id === row.id
+          || (u.season_event_id == null && row.season_id != null && u.season_id === row.season_id)).length,
+        onchain_accounts_count: db.onchainAccounts.filter((a) => a.season_event_id === row.id
+          || (a.season_event_id == null && row.season_id != null && a.season_id === row.season_id)).length,
         user_activities_count: db.userActivities.filter((a) => a.season_event_id === row.id).length,
       }],
     };
@@ -358,14 +364,19 @@ function handleQuery(rawSql, params = []) {
     const [removed] = db.users.splice(idx, 1);
     return { rows: [{ id: removed.id }] };
   }
-  if (sql.startsWith('SELECT id, amount FROM onchain_accounts WHERE season_event_id = $1 AND is_used = FALSE')) {
-    const seasonEventId = params[0];
-    let rows = db.onchainAccounts.filter((a) => a.season_event_id === seasonEventId && !a.is_used);
+  if (sql.startsWith('SELECT id, amount FROM onchain_accounts WHERE season_id = $1 AND season_event_id IS NULL')) {
+    const seasonId = params[0];
+    let rows = db.onchainAccounts.filter((a) => a.season_id === seasonId && a.season_event_id == null
+      && a.user_id == null && !a.is_used);
     let pi = 1;
     if (sql.includes('amount >=')) { rows = rows.filter((a) => a.amount >= params[pi]); pi += 1; }
     if (sql.includes('amount <=')) { rows = rows.filter((a) => a.amount <= params[pi]); pi += 1; }
     rows = rows.slice().sort((a, b) => b.amount - a.amount || a.id - b.id);
     return { rows: rows.map((a) => ({ id: a.id, amount: a.amount })) };
+  }
+  if (sql === 'SELECT 1 FROM onchain_accounts WHERE user_id = $1 AND season_id = $2 LIMIT 1') {
+    const owned = db.onchainAccounts.some((a) => a.user_id === params[0] && a.season_id === params[1]);
+    return { rows: owned ? [{ '?column?': 1 }] : [] };
   }
   if (sql.startsWith('UPDATE onchain_accounts SET user_id = $1, is_used = TRUE')) {
     const [userId, accountId] = params;
@@ -1249,9 +1260,11 @@ test('users: import-csv runs in a transaction (BEGIN/COMMIT observed) with count
   db.seasonEvents.push({ id: 9, name: 'Import Event', season_id: 5, starts_at: T(0), ends_at: T(10) });
   db.users.push({ id: 1, email: 'existing@example.com', discord: 'existing#0001' });
   db.userEnrollments.push({ id: 1, user_id: 1, season_event_id: 9, season_id: 5, registered_at: T(-1) });
+  // The linkable pool is the SEASON pool (season-scoped rows), mirroring
+  // wallet/provision — event-scoped rows are legacy and never linked here.
   db.onchainAccounts.push(
-    { id: 1, user_id: null, season_event_id: 9, amount: 100, is_used: false },
-    { id: 2, user_id: null, season_event_id: 9, amount: 50, is_used: false }
+    { id: 1, user_id: null, season_event_id: null, season_id: 5, amount: 100, is_used: false },
+    { id: 2, user_id: null, season_event_id: null, season_id: 5, amount: 50, is_used: false }
   );
 
   const { server, base } = await listen(buildSubApp(usersAdminRoutes));
@@ -1293,6 +1306,47 @@ test('users: import-csv runs in a transaction (BEGIN/COMMIT observed) with count
 
     assert.ok(queryLog.includes('BEGIN'), 'import must run inside a transaction');
     assert.ok(queryLog.includes('COMMIT'), 'a fully successful import must commit');
+  } finally { server.close(); }
+});
+
+test('users: import-csv never double-links — a user already holding ANY account in the season (even a legacy event-scoped one) is counted, not linked', async () => {
+  db.seasonEvents.push({ id: 9, name: 'Import Event', season_id: 5, starts_at: T(0), ends_at: T(10) });
+  db.users.push(
+    { id: 1, email: 'haswallet@example.com', discord: 'haswallet#0001' },
+    { id: 2, email: 'legacy@example.com', discord: 'legacy#0002' }
+  );
+  db.onchainAccounts.push(
+    // User 1 already owns the season-scoped account for season 5.
+    { id: 1, user_id: 1, season_event_id: null, season_id: 5, amount: 100, is_used: true },
+    // User 2 owns only a LEGACY event-scoped row in the same season — the
+    // guard must catch this too (the DB unique can't, different scope).
+    { id: 2, user_id: 2, season_event_id: 9, season_id: 5, amount: 80, is_used: true },
+    // One free pool row that must stay unclaimed by either of them.
+    { id: 3, user_id: null, season_event_id: null, season_id: 5, amount: 50, is_used: false }
+  );
+
+  const { server, base } = await listen(buildSubApp(usersAdminRoutes));
+  try {
+    const res = await fetch(`${base}/api/v4/admin/users/import-csv`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        season_event_id: 9,
+        link_accounts: true,
+        participants: [
+          { email: 'haswallet@example.com', username: 'haswallet#0001' },
+          { email: 'legacy@example.com', username: 'legacy#0002' },
+        ],
+      }),
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.data.already_linked_count, 2);
+    assert.equal(body.data.linked_count, 0);
+    assert.equal(body.data.unassigned_count, 0);
+    // Both users were still enrolled — the guard only skips the LINK.
+    assert.equal(body.data.added_to_phase_count, 2);
+    // The pool row is untouched.
+    assert.equal(db.onchainAccounts.find((a) => a.id === 3).user_id, null);
   } finally { server.close(); }
 });
 

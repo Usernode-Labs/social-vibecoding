@@ -117,6 +117,7 @@ const ADDED_IDS = {
   'messages-share-dialog': 'React-owned typed Usernode item chooser for Messages (#488).',
   'drawer-row-messages': 'Platform Messages destination in the global navigation drawer (#488).',
   'drawer-messages-badge': 'Aggregate unread conversation count in the global navigation drawer (#488).',
+  'notifications-saved': 'Pinned "Saved" section at the top of the bell drawer, holding the messages this user bookmarked (#1280).',
 };
 
 test('the shell still carries every id in the frozen baseline', () => {

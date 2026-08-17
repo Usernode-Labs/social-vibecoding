@@ -1568,6 +1568,31 @@ CREATE TABLE IF NOT EXISTS message_reactions (
 );
 CREATE INDEX IF NOT EXISTS message_reactions_message_idx ON message_reactions(message_id);
 
+-- #1280: personal bookmarks on group-chat messages. A user saves any
+-- message they can read (the bookmark button in the message header,
+-- public/js/group-chat.js); saved messages render in a pinned "Saved"
+-- section at the TOP of the notifications drawer until unsaved — from
+-- the message itself, or from that section. Toggled over REST
+-- (src/routes/chat.js), not the chat WebSocket: a bookmark is private to
+-- one user, so there is nothing to broadcast to the app's other viewers.
+--
+-- One row per (user, message); the UNIQUE constraint is what makes the
+-- save path an idempotent upsert. Tagged `staging:private` below for the
+-- same reason `notifications` is — it is one person's private feed, and
+-- a staging clone must not carry it. The staging preview is fed by the
+-- request-time `?demo=1` mock in src/routes/notifications.js instead.
+CREATE TABLE IF NOT EXISTS message_bookmarks (
+  id         SERIAL PRIMARY KEY,
+  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  message_id INTEGER NOT NULL REFERENCES chat_messages(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(user_id, message_id)
+);
+-- The drawer's section reads "this user's saves, newest first", which is
+-- exactly this index; the message-side lookup rides the UNIQUE index.
+CREATE INDEX IF NOT EXISTS message_bookmarks_user_idx
+  ON message_bookmarks (user_id, created_at DESC);
+
 -- Issues (mirrored to GitHub Issues). `kind` discriminates general issues from
 -- structured proposals like 'rename' (see src/routes/issues.js). `payload`
 -- carries the proposal-specific data (e.g. { newName }).
@@ -2020,6 +2045,7 @@ COMMENT ON TABLE chat_session_specs     IS 'staging:private';
 COMMENT ON TABLE chat_session_spec_user_shares IS 'staging:private';
 COMMENT ON TABLE llm_usage              IS 'staging:private';
 COMMENT ON TABLE notifications          IS 'staging:private';
+COMMENT ON TABLE message_bookmarks      IS 'staging:private';
 COMMENT ON TABLE app_secrets            IS 'staging:private';
 -- `mail_deliveries` is tagged too, but its COMMENT lives beside its
 -- CREATE TABLE further down this file — the table doesn't exist yet at
@@ -3510,7 +3536,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS user_activities_nullifier_unique
 -- whole season. Invariant (app/ETL-enforced): when season_event_id is
 -- set, season_id must equal that event's season_id. Two partial
 -- uniques keep season-scoped and event-scoped accounts from colliding
--- on the same public key. `secret_key` is a real testnet credential —
+-- on the same public key. Event-scoped rows are legacy history (Season
+-- 1 recycled keys between users mid-season, so they cannot satisfy any
+-- per-user uniqueness); from Pre Season 2 onward accounts are created
+-- season-scoped only, and the third partial unique below enforces the
+-- model's core rule: a user holds at most ONE season-scoped account
+-- per season. `secret_key` is a real testnet credential —
 -- handled like `apps.db_password` elsewhere in this schema: scrubbed
 -- in staging and denied from prod-debug access (wired in Task 2).
 -- `address` (ut1…) is the participant-facing account; `public_key`
@@ -3537,6 +3568,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS onchain_accounts_season_event_public_key_uniqu
   ON onchain_accounts (season_event_id, public_key) WHERE season_event_id IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS onchain_accounts_season_public_key_unique
   ON onchain_accounts (season_id, public_key) WHERE season_event_id IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS onchain_accounts_user_season_unique
+  ON onchain_accounts (user_id, season_id)
+  WHERE user_id IS NOT NULL AND season_event_id IS NULL;
 CREATE INDEX IF NOT EXISTS idx_onchain_accounts_user ON onchain_accounts (user_id);
 CREATE INDEX IF NOT EXISTS idx_onchain_accounts_season ON onchain_accounts (season_id);
 CREATE INDEX IF NOT EXISTS idx_onchain_accounts_season_event_address ON onchain_accounts (season_event_id, address);

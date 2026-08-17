@@ -209,9 +209,9 @@ function onchainAccountsAdminRoutes(config) {
   // THE FIX (SPEC 2632's ⚠ "row-level errors are caught inside the
   // transaction, so partial imports commit" note, §4.8 item 7): made
   // genuinely atomic by validating EVERY row (types, lengths, and
-  // (season_event_id, public_key) duplicate detection — both against
-  // already-stored accounts and against earlier rows in this SAME
-  // payload) BEFORE issuing a single INSERT. If any row fails, nothing
+  // (season_id, public_key) duplicate detection — both against
+  // already-stored season-scoped accounts and against earlier rows in
+  // this SAME payload) BEFORE issuing a single INSERT. If any row fails, nothing
   // is written at all: the response still reports the row errors (same
   // 201 envelope shape as the source, so existing callers don't need a
   // new error-handling branch), but `imported_count` is 0 and every
@@ -224,32 +224,37 @@ function onchainAccountsAdminRoutes(config) {
       const body = req.body || {};
       const details = {};
 
-      const seasonEventId = toIntId(body.season_event_id);
-      if (!seasonEventId) details.season_event_id = ['The selected season_event_id is invalid.'];
+      // Accounts are season-scoped from Pre Season 2 onward (0..1 per user
+      // per season, `onchain_accounts_user_season_unique`). A caller still
+      // sending the retired event scope fails loudly rather than silently
+      // importing rows the season pool (wallet/provision, CSV linking)
+      // would never see.
+      if (body.season_event_id !== undefined) {
+        details.season_event_id = ['Accounts are imported per season now; send season_id instead of season_event_id.'];
+      }
+
+      const seasonId = toIntId(body.season_id);
+      if (!seasonId) details.season_id = ['The selected season_id is invalid.'];
 
       const accounts = Array.isArray(body.accounts) ? body.accounts : null;
       if (!accounts || accounts.length < 1) details.accounts = ['The accounts field is required and must have at least 1 item.'];
 
       if (Object.keys(details).length) return fail(res, 422, 'The given data was invalid.', { details });
 
-      const { rows: eventRows } = await client.query('SELECT id, season_id FROM season_events WHERE id = $1', [seasonEventId]);
-      const event = eventRows[0];
-      if (!event) {
+      const { rows: seasonRows } = await client.query('SELECT id FROM seasons WHERE id = $1', [seasonId]);
+      if (!seasonRows.length) {
         return fail(res, 422, 'The given data was invalid.', {
-          details: { season_event_id: ['The selected season_event_id is invalid.'] },
-        });
-      }
-      if (event.season_id == null) {
-        return fail(res, 422, 'The given data was invalid.', {
-          details: { season_event_id: ['The selected season_event_id belongs to no season and cannot be imported into.'] },
+          details: { season_id: ['The selected season_id is invalid.'] },
         });
       }
 
-      // Existing (season_event_id, public_key) pairs, fetched once (not
-      // per row — the source's N+1 shape task 11 already flagged
-      // elsewhere is avoided here too).
+      // Existing (season_id, public_key) pairs among season-scoped rows,
+      // fetched once (not per row — the source's N+1 shape task 11 already
+      // flagged elsewhere is avoided here too). Event-scoped legacy rows
+      // are deliberately NOT consulted: carry-over re-imports the same keys
+      // season over season, and the DB's partial uniques agree.
       const { rows: existingRows } = await client.query(
-        'SELECT public_key FROM onchain_accounts WHERE season_event_id = $1', [seasonEventId]
+        'SELECT public_key FROM onchain_accounts WHERE season_id = $1 AND season_event_id IS NULL', [seasonId]
       );
       const existingKeys = new Set(existingRows.map((r) => r.public_key));
       const seenInBatch = new Set();
@@ -289,7 +294,7 @@ function onchainAccountsAdminRoutes(config) {
 
         if (!rowErrors.length && publicKey) {
           if (existingKeys.has(publicKey) || seenInBatch.has(publicKey)) {
-            rowErrors.push(`an account with public_key "${publicKey}" already exists for this event`);
+            rowErrors.push(`an account with public_key "${publicKey}" already exists for this season`);
           } else {
             seenInBatch.add(publicKey);
           }
@@ -326,9 +331,9 @@ function onchainAccountsAdminRoutes(config) {
             `INSERT INTO onchain_accounts
                (amount, identity_uid, address, public_key, secret_key, tier, description,
                 registration_code, season_event_id, season_id, user_id, is_used, created_at, updated_at)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NULL,FALSE,NOW(),NOW())`,
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NULL,$9,NULL,FALSE,NOW(),NOW())`,
             [acc.amount, acc.identityUid, acc.address, acc.publicKey, acc.secretKey, acc.tier, acc.description,
-              code, seasonEventId, event.season_id]
+              code, seasonId]
           );
         }
         await client.query('COMMIT');

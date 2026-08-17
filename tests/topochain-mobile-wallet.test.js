@@ -75,6 +75,7 @@ function resetState() {
   enrollments = initialEnrollments();
   nextEnrollmentId = 10;
   global.__noCurrentSeason = false;
+  global.__raceWinnerAccountId = null;
 }
 
 // ─── Mock pool ──────────────────────────────────────────────────────────
@@ -122,6 +123,19 @@ function handleQuery(rawSql, params = []) {
     return { rows };
   }
   if (sql.startsWith('UPDATE onchain_accounts SET user_id = $1, is_used = TRUE, used_at = NOW()')) {
+    // Race simulation: a concurrent provision "wins" by committing a claim
+    // on a DIFFERENT pool row for the same user, so this claim trips
+    // onchain_accounts_user_season_unique exactly once.
+    if (global.__raceWinnerAccountId != null) {
+      const winner = accounts.find((a) => a.id === global.__raceWinnerAccountId);
+      global.__raceWinnerAccountId = null;
+      winner.user_id = params[0];
+      winner.is_used = true;
+      winner.used_at = new Date();
+      const err = new Error('duplicate key value violates unique constraint "onchain_accounts_user_season_unique"');
+      err.code = '23505';
+      throw err;
+    }
     const row = accounts.find((a) => a.id === params[1]);
     row.user_id = params[0];
     row.is_used = true;
@@ -312,4 +326,24 @@ test('422 when no active public season exists', async () => {
     assert.equal(resp.status, 422);
   });
   global.__noCurrentSeason = false;
+});
+
+test('losing the per-(user, season) unique race returns the winner\'s account idempotently, not a 500', async () => {
+  resetState();
+  // The concurrent "winner" commits pool row 101 for user 1 the instant
+  // this request tries to claim row 100 — the claim UPDATE raises 23505.
+  global.__raceWinnerAccountId = 101;
+  await withServer(async (base) => {
+    const resp = await provision(base, FRESH);
+    assert.equal(resp.status, 200);
+    const body = await resp.json();
+    assert.equal(body.data.address, 'ut1pool1');
+    assert.equal(body.data.newly_allocated, false);
+
+    // Exactly one account ended up on the user (the winner's), the loser's
+    // target row went back to the pool, and enrollment still happened.
+    assert.equal(accounts.filter((a) => a.user_id === 1).length, 1);
+    assert.equal(accounts.find((a) => a.id === 100).user_id, null);
+    assert.equal(enrollments.filter((e) => e.user_id === 1).length, 1);
+  });
 });

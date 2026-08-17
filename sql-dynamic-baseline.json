@@ -418,16 +418,16 @@
     {
       "source": "src/routes/sessions.js",
       "kind": "structural-template",
-      "fingerprint": "e16f1722cca1c2b80269",
+      "fingerprint": "6b4074fc68779b52c528",
       "count": 1,
-      "preview": "`UPDATE chat_sessions SET last_activity_at = NOW()${userOpened ? ', notify_on_done = FALSE' : ''} WHERE id = $1`"
+      "preview": "`SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, (SELECT COUNT(*)::int FROM pr_votes pv WHERE pv.session_id = cs.id AND pv.vote = 'yes' AND ${c"
     },
     {
       "source": "src/routes/sessions.js",
       "kind": "structural-template",
-      "fingerprint": "e9a799501130941fe5ef",
+      "fingerprint": "e16f1722cca1c2b80269",
       "count": 1,
-      "preview": "`SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, (SELECT COUNT(*)::int FROM pr_votes pv WHERE pv.session_id = cs.id AND pv.vote = 'yes' AND ${c"
+      "preview": "`UPDATE chat_sessions SET last_activity_at = NOW()${userOpened ? ', notify_on_done = FALSE' : ''} WHERE id = $1`"
     },
     {
       "source": "src/routes/topochain/admin/app-version-configs.js",
@@ -463,6 +463,13 @@
       "fingerprint": "f7be2e119ab72967c38e",
       "count": 1,
       "preview": "`UPDATE challenges SET ${setClauses.join(', ')}, updated_at = NOW() WHERE id = $1`"
+    },
+    {
+      "source": "src/routes/topochain/admin/delegations.js",
+      "kind": "structural-template",
+      "fingerprint": "43117193f4ad98d36e6c",
+      "count": 1,
+      "preview": "`SELECT ${DELEGATION_COLUMNS} ${DELEGATION_FROM} ${where} ORDER BY adp.started_at DESC, adp.id ASC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`"
     },
     {
       "source": "src/routes/topochain/admin/onchain-accounts.js",

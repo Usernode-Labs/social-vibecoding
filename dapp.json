@@ -1520,6 +1520,18 @@
       "expectSelector": "#notifications-mark-all"
     },
     {
+      "name": "Saved messages pin to the top of the notifications drawer (#1280)",
+      "path": "/?shot=notifications&demo=1",
+      "expectSelector": "#notifications-panel:not(.hidden) #notifications-saved [data-saved-message]",
+      "expectText": "The deploy runbook lives in docs/deploy.md"
+    },
+    {
+      "name": "A saved message can be unsaved from the drawer (#1280)",
+      "path": "/?shot=notifications&demo=1",
+      "expectSelector": "#notifications-saved [data-saved-unsave]",
+      "expectText": "Unsave"
+    },
+    {
       "name": "Header cog (your-work drawer) button renders with its icon",
       "path": "/",
       "expectSelector": "#work-drawer-btn #work-drawer-icon"
