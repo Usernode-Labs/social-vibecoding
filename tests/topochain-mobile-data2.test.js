@@ -125,6 +125,15 @@ const ONCHAIN_ACCOUNTS = [
   { user_id: 6, address: 'wallet_frank', season_event_id: null, season_id: 10 },
   { user_id: 7, address: 'wallet_grace', season_event_id: null, season_id: 10 },
   { user_id: null, address: 'wallet_orphan', season_event_id: null, season_id: 10 },
+  // The same ut1… address exists once PER SEASON EVENT in production (up
+  // to 9 rows for one address), with different claimants across events.
+  // Foreign/unclaimed rows are listed FIRST on purpose: an ownership
+  // check that resolves "the" row for an address (unordered LIMIT 1)
+  // instead of asking whether ANY row belongs to the caller picks one of
+  // these and wrongly 409s the real owner (carol, user 3).
+  { user_id: null, address: 'wallet_shared', season_event_id: 90, season_id: 9 },
+  { user_id: 4, address: 'wallet_shared', season_event_id: 95, season_id: 9 },
+  { user_id: 3, address: 'wallet_shared', season_event_id: 100, season_id: 10 },
 ];
 
 const TERMS_VERSIONS = [
@@ -426,6 +435,14 @@ function handleQuery(rawSql, params = []) {
   if (sql.startsWith('SELECT address, user_id FROM onchain_accounts WHERE address = $1')) {
     const row = ONCHAIN_ACCOUNTS.find((a) => a.address === params[0]);
     return { rows: row ? [{ address: row.address, user_id: row.user_id }] : [] };
+  }
+  // POST /delegation ownership: known = the address exists in ANY row,
+  // owned = at least one of its rows belongs to the caller.
+  if (sql.startsWith('SELECT EXISTS(SELECT 1 FROM onchain_accounts WHERE address = $1) AS known')) {
+    return { rows: [{
+      known: ONCHAIN_ACCOUNTS.some((a) => a.address === params[0]),
+      owned: ONCHAIN_ACCOUNTS.some((a) => a.address === params[0] && a.user_id === params[1]),
+    }] };
   }
   if (sql.startsWith('SELECT started_at FROM account_delegation_periods WHERE account = $1 AND ended_at IS NULL')) {
     const row = delegationRows.find((d) => d.account === params[0] && d.ended_at == null);
@@ -1110,6 +1127,21 @@ test('POST /delegation: owner toggles on, then off — idempotent re-assert repo
     assert.equal(offBody.data.delegated, false);
     assert.equal(offBody.data.changed, true);
     assert.equal(offBody.data.delegated_since, null);
+  });
+});
+
+test('POST /delegation: an address duplicated across events delegates for its CURRENT owner, 409s everyone else', async () => {
+  await withServer({}, async (base) => {
+    // carol owns wallet_shared via its season-10 row; the address also
+    // has an unclaimed row and another user's row listed before hers.
+    const on = await postJson(base, '/api/v4/mobile/delegation', { wallet_address: 'wallet_shared', delegated: true }, CAROL);
+    assert.equal(on.status, 200, 'the real owner must not lose the row-resolution coin flip');
+    assert.equal((await on.json()).data.delegated, true);
+
+    // A user with no claim on ANY row of the address still 409s.
+    const foreign = await postJson(base, '/api/v4/mobile/delegation', { wallet_address: 'wallet_shared', delegated: false }, GRACE);
+    assert.equal(foreign.status, 409);
+    assert.equal((await foreign.json()).code, 'user_wallet_mismatch');
   });
 });
 
