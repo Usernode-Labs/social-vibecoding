@@ -183,6 +183,7 @@ const AdminTopochain = {
     { key: 'waitlist', label: 'Waitlist' },
     { key: 'onchain-accounts', label: 'Onchain accounts' },
     { key: 'user-activities', label: 'User activities' },
+    { key: 'delegations', label: 'Delegations' },
     { key: 'settings', label: 'Settings' },
     { key: 'app-version', label: 'App version' },
     { key: 'sql-console', label: 'SQL console' },
@@ -796,6 +797,7 @@ const AdminTopochain = {
       case 'waitlist': return AdminTopochain.renderWaitlist(c);
       case 'onchain-accounts': return AdminTopochain.renderOnchainAccounts(c);
       case 'user-activities': return AdminTopochain.renderUserActivities(c);
+      case 'delegations': return AdminTopochain.renderDelegations(c);
       case 'challenge-templates': return AdminTopochain.renderChallengeTemplates(c);
       case 'settings': return AdminTopochain.renderSettings(c);
       case 'app-version': return AdminTopochain.renderAppVersion(c);
@@ -3095,6 +3097,112 @@ const AdminTopochain = {
       else AdminTopochain._alert((data && data.error) || 'Refresh failed.');
     });
     loadTotals();
+  },
+
+  // ══════════════════════════════════════════════════════════════════
+  // Delegations — read-only list over GET /api/v4/admin/delegations.
+  // The mobile app is the delegation actor (it reconciles its local
+  // state against the backend flag), so this screen deliberately has no
+  // mutation controls: an admin write here would desync phones. The
+  // backing table keeps ONE row per account — the current or last
+  // period; re-delegation overwrites the previous timestamps — which is
+  // why the subtitle says so instead of pretending this is a history.
+  // ══════════════════════════════════════════════════════════════════
+
+  _dlg: { page: 1, perPage: 50, status: '', search: '', items: [], meta: null, error: null },
+
+  renderDelegations(host) {
+    const esc = AdminTopochain.esc;
+    host.innerHTML = `
+      ${AdminTopochain._screenHeader({
+    title: 'Delegations',
+    subtitle: 'Staking delegation per testnet account — the current or last period only; re-delegating overwrites the previous one.',
+    actions: `<label class="sr-only" for="admin-topo-dlg-status">Filter by delegation status</label>
+          ${AdminTopochain._selectHtml('admin-topo-dlg-status', [
+    { value: 'delegated', label: 'Delegated' },
+    { value: 'ended', label: 'Ended' },
+  ], AdminTopochain._dlg.status, { blank: 'All statuses' })}
+          <input id="admin-topo-dlg-search" type="text" placeholder="Search account address&hellip;"
+            value="${esc(AdminTopochain._dlg.search)}" aria-label="Search delegations by account address"
+            class="${FIELD_CLS} sm:w-64">`,
+  })}
+      <div id="admin-topo-dlg-table">${AdminTopochain._skeleton(4)}</div>`;
+    document.getElementById('admin-topo-dlg-status').addEventListener('change', (e) => {
+      AdminTopochain._dlg.status = e.target.value;
+      AdminTopochain._dlg.page = 1;
+      AdminTopochain._loadDelegations();
+    });
+    document.getElementById('admin-topo-dlg-search').addEventListener('change', (e) => {
+      AdminTopochain._dlg.search = e.target.value.trim();
+      AdminTopochain._dlg.page = 1;
+      AdminTopochain._loadDelegations();
+    });
+    AdminTopochain._loadDelegations();
+  },
+
+  async _loadDelegations() {
+    const s = AdminTopochain._dlg;
+    const params = new URLSearchParams({ page: String(s.page), per_page: String(s.perPage) });
+    if (s.status) params.set('status', s.status);
+    if (s.search) params.set('search', s.search);
+    const { ok, data, status } = await AdminTopochain.fetchJson(`/api/v4/admin/delegations?${params}`);
+    if (AdminTopochain._sub !== 'delegations') return;
+    if (ok && data?.success) { s.items = data.data; s.meta = data.meta; s.error = null; }
+    else { s.items = []; s.meta = null; s.error = { status, message: (data && data.error) || null }; }
+    AdminTopochain._renderDelegationsTable();
+  },
+
+  _renderDelegationsTable() {
+    const table = document.getElementById('admin-topo-dlg-table');
+    if (!table) return;
+    const esc = AdminTopochain.esc;
+    const s = AdminTopochain._dlg;
+    if (s.error) {
+      table.innerHTML = AdminTopochain._error({
+        title: "Couldn't load delegations", status: s.error.status,
+        message: s.error.message, retryId: 'admin-topo-dlg-retry',
+      });
+      AdminTopochain._wireRetry('admin-topo-dlg-retry', () => AdminTopochain._loadDelegations());
+      return;
+    }
+    if (!s.items.length) {
+      const filtered = !!(s.status || s.search);
+      table.innerHTML = AdminTopochain._empty({
+        title: filtered ? 'No delegations match these filters' : 'No delegation periods yet',
+        body: filtered ? 'Clear the search box and the status filter to see every period.'
+          : 'A row appears the first time a phone delegates its stake to the server.',
+      });
+      return;
+    }
+    table.innerHTML = AdminTopochain._list({
+      items: s.items,
+      columns: [
+        { label: 'Account', primary: true, cell: (d) => esc(d.account), tdClass: 'text-xs font-mono break-all' },
+        {
+          label: 'Status',
+          cell: (d) => (d.delegated
+            ? AdminTopochain._badgeHtml('Delegated', 'green')
+            : AdminTopochain._badgeHtml('Ended', 'zinc')),
+        },
+        { label: 'Since', cell: (d) => esc(AdminTopochain._fmt(d.started_at)), tdClass: 'text-xs text-gray-500' },
+        { label: 'Ended', cell: (d) => esc(AdminTopochain._fmt(d.ended_at)), tdClass: 'text-xs text-gray-500' },
+      ],
+      // The join is LEFT (no FK ties a period to onchain_accounts), so
+      // only rows whose account still exists get a way into the account
+      // detail dialog.
+      actions: (d) => (d.onchain_account_id != null
+        ? `<button data-dlg-acct="${d.onchain_account_id}" type="button" class="${BTN.row}">View account</button>` : ''),
+    }) + AdminTopochain._pagerHtml(s.meta, 'admin-topo-dlg-pg');
+    // Jumps to the Onchain accounts screen (same setSection pattern as
+    // _syncHash's legacy-address fallback) and opens the dialog there —
+    // that screen owns the #admin-topo-oa-detail host, and rendering a
+    // second copy of it here would duplicate a static id.
+    table.querySelectorAll('[data-dlg-acct]').forEach((b) => b.addEventListener('click', () => {
+      const id = parseInt(b.dataset.dlgAcct, 10);
+      if (window.AdminConsole && AdminConsole.isOpen()) AdminConsole.setSection('onchain-accounts');
+      AdminTopochain._openAccountDetail(id);
+    }));
+    if (s.meta) AdminTopochain._wirePager(s.meta, 'admin-topo-dlg-pg', (page) => { s.page = page; AdminTopochain._loadDelegations(); });
   },
 
   // ══════════════════════════════════════════════════════════════════
