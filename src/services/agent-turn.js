@@ -327,7 +327,7 @@ async function startCodexAttempt({
 // the row in any state, or null only when the identity is genuinely missing.
 async function lockAttempt(client, turnUuid) {
   const { rows } = await client.query(
-    `SELECT id, session_id, user_id, backend, requested_model,
+    `SELECT id, session_id, user_id, backend, requested_model, reasoning_effort,
             agent_thread_id, status, metadata, logical_turn_id, attempt_number,
             input_tokens, cached_input_tokens, cache_write_input_tokens,
             output_tokens, reasoning_output_tokens,
@@ -356,6 +356,7 @@ async function lockAttempt(client, turnUuid) {
 async function completeCodexAttempt({
   pool, turnUuid, status = 'completed', threadId = null, usageTotal = null,
   errorCode = null, errorDetail = null, telemetryComponent = null,
+  telemetryMetrics = null,
 }) {
   if (!turnUuid) return { updated: false, alreadyTerminal: true };
   const client = await pool.connect();
@@ -407,7 +408,32 @@ async function completeCodexAttempt({
       ? estimateRequestedModelCost(delta, row.metadata?.pricing)
       : { costSource: 'unavailable', estimatedCostUsd: null };
     const metadata = row.metadata || {};
-    if (measuredComponent) metadata.telemetry_component = measuredComponent;
+    if (measuredComponent) {
+      metadata.telemetry_component = measuredComponent;
+      const errorClassByCode = {
+        user_cancelled: 'cancelled',
+        rate_limited: 'rate_limited',
+        timeout: 'timeout',
+        credential_failure: 'authentication',
+        insufficient_credits: 'billing',
+        dispatch_failed: 'worker',
+        agent_context_changed: 'worker',
+        recovery_abandoned: 'worker',
+      };
+      const normalizedMetrics = llmTelemetry.normalizeDiagnostics({
+        ...(telemetryMetrics || {}),
+        requestMode: telemetryMetrics?.requestMode
+          || (row.agent_thread_id ? 'agent_resume' : 'agent_new'),
+        reasoningEffort: row.reasoning_effort || null,
+        usageResetDetected: resetDetected,
+        errorClass: errorClassByCode[errorCode]
+          || (status === 'cancelled' ? 'cancelled'
+            : status === 'failed' ? 'provider' : null),
+      });
+      if (Object.keys(normalizedMetrics).length) {
+        metadata.telemetry_metrics = normalizedMetrics;
+      }
+    }
     if (previous && resetDetected) {
       metadata.usageReset = {
         previous: previous,
@@ -709,6 +735,7 @@ async function settleRecoveredAgentAttempt({
       telemetryComponent: result?.providerDispatched === true
         ? activeTurn.telemetryComponent || null
         : null,
+      telemetryMetrics: result || null,
       errorCode: result?.agentRetryFresh === true ? 'resume_thread_missing' : null,
     });
   }

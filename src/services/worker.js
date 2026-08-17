@@ -253,12 +253,24 @@ function applyClaudeResultUsage(usage, state) {
     reasoningOutputTokens: usageToken(
       usage.reasoning_output_tokens ?? usage.output_tokens_details?.thinking_tokens,
     ),
+    cacheWrite5mInputTokens: usageToken(
+      usage.cache_creation?.ephemeral_5m_input_tokens,
+    ),
+    cacheWrite1hInputTokens: usageToken(
+      usage.cache_creation?.ephemeral_1h_input_tokens,
+    ),
+    serverWebSearchCount: usageToken(usage.server_tool_use?.web_search_requests),
+    serverWebFetchCount: usageToken(usage.server_tool_use?.web_fetch_requests),
   };
-  if (!Object.values(values).some((value) => value != null)) return;
+  const hasUsageMetadata = typeof usage.service_tier === 'string'
+    || typeof usage.inference_geo === 'string';
+  if (!Object.values(values).some((value) => value != null) && !hasUsageMetadata) return;
   state.usageSeen = true;
   for (const [key, value] of Object.entries(values)) {
     if (value != null) state[key] = value;
   }
+  if (typeof usage.service_tier === 'string') state.serviceTier = usage.service_tier;
+  if (typeof usage.inference_geo === 'string') state.inferenceRegion = usage.inference_geo;
 }
 
 function safeResultSubtype(value) {
@@ -267,7 +279,138 @@ function safeResultSubtype(value) {
   return /^[a-z][a-z0-9_]{0,63}$/.test(subtype) ? subtype : null;
 }
 
+function noteFirstAgentOutput(state) {
+  if (!state || state.timeToFirstOutputMs != null) return;
+  if (Number.isFinite(state.providerStartedMs)) {
+    state.timeToFirstOutputMs = Math.max(0, Date.now() - state.providerStartedMs);
+  }
+}
+
+function resultMetric(value) {
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? number : null;
+}
+
+function collectionCount(value) {
+  if (Array.isArray(value)) return value.length;
+  if (value && typeof value === 'object') return Object.keys(value).length;
+  return null;
+}
+
+function addObservedValue(set, value) {
+  if (!(set instanceof Set) || typeof value !== 'string' || !value) return;
+  set.add(value);
+}
+
+function noteToolName(state, name) {
+  addObservedValue(state.telemetryToolNames, name);
+}
+
+function noteFileRead(state, path) {
+  state.fileReadCount += 1;
+  addObservedValue(state.telemetryFileReads, path);
+}
+
+function noteFileChange(state, path) {
+  state.fileChangeCount += 1;
+  addObservedValue(state.telemetryFileChanges, path);
+}
+
+function noteClaudeToolCall(state, block) {
+  const itemKey = block && block.id ? `claude:${block.id}` : null;
+  if (itemKey && state.telemetryStartedItemIds.has(itemKey)) return false;
+  if (itemKey) state.telemetryStartedItemIds.add(itemKey);
+  const name = typeof block?.name === 'string' ? block.name : String(block?.type || 'tool');
+  const input = block && block.input && typeof block.input === 'object' ? block.input : {};
+  state.toolCallCount += 1;
+  noteToolName(state, name);
+  if (block?.type === 'server_tool_use' || block?.type === 'mcp_tool_use') {
+    state.responseServerToolCallCount += 1;
+  } else {
+    state.responseToolCallCount += 1;
+  }
+  if (block?.type === 'mcp_tool_use' || /^mcp(?:__|$)/i.test(name)) state.mcpCallCount += 1;
+  if (name === 'Read') noteFileRead(state, input.file_path);
+  else if (['Write', 'Edit', 'MultiEdit', 'NotebookEdit'].includes(name)) {
+    noteFileChange(state, input.file_path || input.notebook_path);
+  } else if (name === 'Bash') state.commandCount += 1;
+  else if (['Glob', 'Grep'].includes(name)) state.fileSearchCount += 1;
+  else if (['Task', 'Agent'].includes(name)) state.subagentCallCount += 1;
+  else if (['WebSearch', 'WebFetch'].includes(name)) state.webToolCallCount += 1;
+  else if (name === 'ToolSearch') state.toolSearchCount += 1;
+  return true;
+}
+
+function codexItemKey(event) {
+  return event && event.itemId ? `codex:${event.itemId}` : null;
+}
+
+function noteCodexToolStart(state, event) {
+  const key = codexItemKey(event);
+  if (key && state.telemetryStartedItemIds.has(key)) return false;
+  if (key) state.telemetryStartedItemIds.add(key);
+  noteFirstAgentOutput(state);
+  state.toolCallCount += 1;
+  state.responseToolCallCount += 1;
+  noteToolName(state, event.toolName || event.kind);
+  if (event.kind === 'command_started' || event.kind === 'command_completed') {
+    state.commandCount += 1;
+  } else if (event.kind === 'file_read' || event.kind === 'file_read_completed') {
+    noteFileRead(state, event.resourcePath);
+  } else if (event.kind === 'mcp_started' || event.kind === 'mcp_completed') {
+    state.mcpCallCount += 1;
+  }
+  return true;
+}
+
+function noteCodexToolCompletion(state, event) {
+  if (event.countCompletion === false) return false;
+  const key = codexItemKey(event);
+  if (key && state.telemetryCompletedItemIds.has(key)) return false;
+  if (key) state.telemetryCompletedItemIds.add(key);
+  state.toolResultCount += 1;
+  if ((event.exitCode != null && Number(event.exitCode) !== 0)
+      || (typeof event.status === 'string'
+          && ['failed', 'error', 'cancelled'].includes(event.status.toLowerCase()))) {
+    state.toolErrorCount += 1;
+  }
+  return true;
+}
+
 function applyStreamEvent(event, onProgress, state) {
+  const observeDiagnostics = state.telemetryDiagnosticsEnabled === true;
+  // Claude's init event is the only content-free source for the configured
+  // tool/MCP/skill/agent surface. Some wrappers put the CLI event under
+  // `data`; accept both shapes without retaining any names.
+  const systemEvent = event && event.data?.type === 'system' ? event.data : event;
+  if (observeDiagnostics && systemEvent?.type === 'system' && systemEvent.subtype === 'init') {
+    const toolCount = collectionCount(systemEvent.tools);
+    const mcpCount = collectionCount(systemEvent.mcp_servers ?? systemEvent.mcpServers);
+    const agentCount = collectionCount(systemEvent.agents);
+    const skillCount = collectionCount(systemEvent.skills);
+    const pluginCount = collectionCount(systemEvent.plugins);
+    if (toolCount != null) state.requestToolDefinitionCount = toolCount;
+    if (mcpCount != null) state.requestMcpServerCount = mcpCount;
+    if (agentCount != null) state.requestAgentDefinitionCount = agentCount;
+    if (skillCount != null) state.requestSkillCount = skillCount;
+    if (pluginCount != null) state.requestPluginCount = pluginCount;
+  }
+  if (observeDiagnostics && systemEvent?.type === 'system'
+      && systemEvent.subtype === 'compact_boundary') {
+    state.contextCompactionCount = (state.contextCompactionCount || 0) + 1;
+    const metadata = systemEvent.compact_metadata || systemEvent.compactMetadata || {};
+    const preTokens = usageToken(metadata.pre_tokens ?? metadata.preTokens);
+    if (preTokens != null) {
+      state.contextCompactionPreTokensMax = Math.max(
+        state.contextCompactionPreTokensMax || 0,
+        preTokens,
+      );
+    }
+  }
+  if (observeDiagnostics && event?.type === 'rate_limit_event') {
+    state.providerRateLimitEventCount = (state.providerRateLimitEventCount || 0) + 1;
+  }
+
   // Capture the CC session id on the very first event so the caller can
   // persist it even if CC aborts before emitting a `result` event.
   if (event.type === 'system' && event.subtype === 'init' && event.session_id) {
@@ -275,19 +418,41 @@ function applyStreamEvent(event, onProgress, state) {
     state.sessionId = state.sessionId || event.session_id;
   }
   if (event.type === 'assistant' && event.message?.content) {
+    if (observeDiagnostics) {
+      noteFirstAgentOutput(state);
+      state.providerTurnCount = (state.providerTurnCount || 0) + 1;
+    }
     for (const block of event.message.content) {
-      if (block.type === 'text' && block.text) {
-        state.lastResultText = block.text;
-        onProgress(block.text.substring(0, 300));
-      } else if (block.type === 'thinking' && block.thinking) {
+      if (observeDiagnostics) state.responseContentBlockCount += 1;
+      if (block.type === 'text') {
+        if (observeDiagnostics) {
+          state.responseTextBlockCount += 1;
+          state.responseTextCharacters += typeof block.text === 'string' ? block.text.length : 0;
+        }
+        if (block.text) {
+          state.lastResultText = block.text;
+          onProgress(block.text.substring(0, 300));
+        }
+      } else if (block.type === 'thinking') {
+        if (observeDiagnostics) {
+          state.responseThinkingBlockCount += 1;
+          state.responseThinkingCharacters += typeof block.thinking === 'string'
+            ? block.thinking.length
+            : 0;
+        }
         // Extended thinking blocks. Without surfacing these the UI can
         // sit on "Reading foo.html" for 30+ seconds while the model
         // thinks about what to do next — misleading. Prefix with `…`
         // so it's visually distinct from tool / text lines.
-        const firstLine = block.thinking.split('\n').find((l) => l.trim()) || '';
+        const firstLine = String(block.thinking || '').split('\n').find((l) => l.trim()) || '';
         const clipped = firstLine.trim().slice(0, 200);
         if (clipped) onProgress(`… ${clipped}`);
+      } else if (block.type === 'redacted_thinking') {
+        if (observeDiagnostics) state.responseRedactedThinkingBlockCount += 1;
+      } else if (block.type === 'server_tool_use' || block.type === 'mcp_tool_use') {
+        if (observeDiagnostics) noteClaudeToolCall(state, block);
       } else if (block.type === 'tool_use') {
+        if (observeDiagnostics) noteClaudeToolCall(state, block);
         const input = block.input || {};
         // Track id → label mapping so the matching tool_result can
         // display "⎿ <label>: <summary>" instead of just "⎿ done".
@@ -315,6 +480,15 @@ function applyStreamEvent(event, onProgress, state) {
     // the user see CC is progressing through its plan.
     for (const block of event.message.content) {
       if (block.type !== 'tool_result') continue;
+      if (observeDiagnostics) {
+        const resultKey = block.tool_use_id ? `claude:${block.tool_use_id}` : null;
+        const firstResult = !resultKey || !state.telemetryCompletedItemIds.has(resultKey);
+        if (resultKey) state.telemetryCompletedItemIds.add(resultKey);
+        if (firstResult) {
+          state.toolResultCount += 1;
+          if (block.is_error) state.toolErrorCount += 1;
+        }
+      }
       const summary = summarizeToolResult(block);
       const prior = block.tool_use_id ? state.toolUses.get(block.tool_use_id) : null;
       if (prior) {
@@ -328,6 +502,36 @@ function applyStreamEvent(event, onProgress, state) {
     state.lastResultText = event.result || state.lastResultText;
     applyClaudeResultUsage(event.usage, state);
     state.resultSubtype = safeResultSubtype(event.subtype) || state.resultSubtype;
+    state.providerStopReason = safeResultSubtype(event.stop_reason) || state.providerStopReason;
+    const reportedDuration = observeDiagnostics ? resultMetric(event.duration_ms) : null;
+    const providerDuration = observeDiagnostics ? resultMetric(event.duration_api_ms) : null;
+    const turns = observeDiagnostics ? usageToken(event.num_turns) : null;
+    if (reportedDuration != null) state.agentReportedDurationMs = reportedDuration;
+    if (providerDuration != null) state.providerDurationMs = providerDuration;
+    if (turns != null) state.providerTurnCount = turns;
+    const modelUsage = event.modelUsage && typeof event.modelUsage === 'object'
+      && !Array.isArray(event.modelUsage)
+      ? event.modelUsage
+      : (event.model_usage && typeof event.model_usage === 'object'
+        && !Array.isArray(event.model_usage) ? event.model_usage : null);
+    if (observeDiagnostics && modelUsage) {
+      state.providerModelCount = Object.keys(modelUsage).length;
+      for (const modelMetrics of Object.values(modelUsage)) {
+        if (!modelMetrics || typeof modelMetrics !== 'object') continue;
+        const contextWindow = usageToken(
+          modelMetrics.contextWindow ?? modelMetrics.context_window,
+        );
+        if (contextWindow != null) {
+          state.modelContextWindowTokens = Math.max(
+            state.modelContextWindowTokens || 0,
+            contextWindow,
+          );
+        }
+      }
+    }
+    if (observeDiagnostics && Array.isArray(event.permission_denials)) {
+      state.permissionDenialCount = event.permission_denials.length;
+    }
     if (event.cost_usd != null || event.total_cost_usd != null) {
       state.providerCostSeen = true;
     }
@@ -364,7 +568,10 @@ function parseLine(line, onProgress, state) {
       // cc_exit alias still honored during the migration window.
       else if (k === 'agent_backend') state.agentBackend = v || null;
       else if (k === 'agent_provider') state.agentProvider = v || null;
-      else if (k === 'agent_model') state.agentModel = v || null;
+      else if (k === 'agent_model') {
+        state.agentModel = v || null;
+        if (v) state.providerModelCount = Math.max(1, state.providerModelCount || 0);
+      }
       else if (k === 'agent_thread_id') state.agentThreadId = v || null;
       else if (k === 'agent_exit') state.agentExit = parseInt(v, 10);
       else if (k === 'agent_retry_fresh') state.agentRetryFresh = v === '1';
@@ -414,12 +621,36 @@ function parseLine(line, onProgress, state) {
       // mutation are kept separate so each normalization branch is
       // independently testable.
       const events = codex.normalizeCodexLine(line, state);
+      const observeDiagnostics = state.telemetryDiagnosticsEnabled === true;
       for (const ev of events) {
         if (ev.threadId) state.agentThreadId = ev.threadId;
+        const isToolStart = ['command_started', 'file_read', 'mcp_started'].includes(ev.kind)
+          || (ev.kind === 'file_changed' && ev.lifecycle === 'started');
+        const isToolCompletion = ['command_completed', 'file_read_completed', 'mcp_completed'].includes(ev.kind)
+          || (ev.kind === 'file_changed' && ev.lifecycle === 'completed');
+        if (observeDiagnostics && isToolStart) noteCodexToolStart(state, ev);
+        if (observeDiagnostics && isToolCompletion) {
+          // A future CLI may omit item.started for a completed item. Infer the
+          // missing call once from its id so the workload count remains whole.
+          if (ev.countCompletion !== false) noteCodexToolStart(state, ev);
+          noteCodexToolCompletion(state, ev);
+        }
+        if (observeDiagnostics && ev.kind === 'file_changed' && ev.lifecycle === 'completed') {
+          noteFileChange(state, ev.resourcePath);
+        }
+        if (observeDiagnostics && ev.diagnostic === 'provider_retry') {
+          state.providerRetryCount = (state.providerRetryCount || 0) + 1;
+        }
         // Store the final agent message as the turn result (review P4):
         // scout persists this as the spec, and `[done]` (turn.completed)
         // must never overwrite it.
         if (ev.kind === 'agent_message' && ev.fullText != null) {
+          if (observeDiagnostics) {
+            noteFirstAgentOutput(state);
+            state.responseContentBlockCount += 1;
+            state.responseTextBlockCount += 1;
+            state.responseTextCharacters += String(ev.fullText).length;
+          }
           state.lastResultText = ev.fullText;
         } else if (ev.kind === 'usage') {
           // Retain token counts so the Codex turn can be attributed directly
@@ -477,6 +708,67 @@ function newWatchState() {
     agentError: null,
     usageSeen: false,
     resultSubtype: null,
+    providerStopReason: null,
+    telemetryDiagnosticsEnabled: false,
+    // Content-free workload and latency diagnostics. Counters start at zero
+    // because the JSONL parser sees the complete run; provider-reported
+    // values override them when the terminal result has a more authoritative
+    // aggregate (for example Claude's num_turns).
+    providerStartedMs: null,
+    providerDurationMs: null,
+    agentReportedDurationMs: null,
+    queueDurationMs: null,
+    dispatchSetupDurationMs: null,
+    timeToFirstOutputMs: null,
+    modelContextWindowTokens: null,
+    modelMaxOutputTokens: null,
+    cacheWrite5mInputTokens: null,
+    cacheWrite1hInputTokens: null,
+    serverWebSearchCount: null,
+    serverWebFetchCount: null,
+    serviceTier: null,
+    inferenceRegion: null,
+    providerTurnCount: null,
+    providerModelCount: null,
+    providerRetryCount: null,
+    providerRateLimitEventCount: null,
+    contextCompactionCount: null,
+    contextCompactionPreTokensMax: null,
+    responseContentBlockCount: 0,
+    responseTextBlockCount: 0,
+    responseTextCharacters: 0,
+    responseToolCallCount: 0,
+    responseServerToolCallCount: 0,
+    responseThinkingBlockCount: 0,
+    responseThinkingCharacters: 0,
+    responseRedactedThinkingBlockCount: 0,
+    toolCallCount: 0,
+    toolResultCount: 0,
+    toolErrorCount: 0,
+    permissionDenialCount: 0,
+    commandCount: 0,
+    fileReadCount: 0,
+    fileSearchCount: 0,
+    fileChangeCount: 0,
+    mcpCallCount: 0,
+    subagentCallCount: 0,
+    webToolCallCount: 0,
+    toolSearchCount: 0,
+    requestMode: null,
+    requestMessageCount: null,
+    requestUserMessageCount: null,
+    requestContentBlockCount: null,
+    requestTextCharacters: null,
+    requestUserTextCharacters: null,
+    requestAssistantTextCharacters: null,
+    requestToolResultTextCharacters: null,
+    requestThinkingCharacters: null,
+    requestPayloadCharacters: null,
+    requestToolDefinitionCount: null,
+    requestMcpServerCount: null,
+    requestAgentDefinitionCount: null,
+    requestSkillCount: null,
+    requestPluginCount: null,
     // plan.md 5.6: missing usage stays null, never a false zero.
     cacheWriteInputTokens: null,
     ccExit: null,
@@ -523,6 +815,13 @@ function newWatchState() {
     // id → { name, label } for pending tool_use calls, so the matching
     // tool_result can be annotated with the same label.
     toolUses: new Map(),
+    // Runtime-only sets provide deduplication and distinct counts. Their raw
+    // names/paths never cross the telemetry allowlist or enter its ledger.
+    telemetryStartedItemIds: new Set(),
+    telemetryCompletedItemIds: new Set(),
+    telemetryToolNames: new Set(),
+    telemetryFileReads: new Set(),
+    telemetryFileChanges: new Set(),
   };
 }
 
@@ -534,12 +833,18 @@ function codingRunOutcome(state) {
     || (state.agentExit != null && state.agentExit !== 0)
     || (state.ccExit != null && state.ccExit !== 0)
     || (state.exitCode != null && state.exitCode !== 0));
-  if (!failed) return { outcome: 'success', stopReason: 'end_turn' };
+  if (!failed) return {
+    outcome: 'success',
+    stopReason: (state && state.providerStopReason) || 'end_turn',
+  };
   if (state && state.markerlessCause) {
     return { outcome: 'error', stopReason: `markerless_${state.markerlessCause}` };
   }
   if (state && state.resultSubtype && state.resultSubtype !== 'success') {
-    return { outcome: 'error', stopReason: state.resultSubtype };
+    return {
+      outcome: 'error',
+      stopReason: state.providerStopReason || state.resultSubtype,
+    };
   }
   if (state && state.agentRetryFresh) {
     return { outcome: 'error', stopReason: 'resume_thread_missing' };
@@ -554,6 +859,27 @@ function codingRunOutcome(state) {
     return { outcome: 'error', stopReason: 'worker_exit_nonzero' };
   }
   return { outcome: 'error', stopReason: 'agent_error' };
+}
+
+function codingErrorClass(state, outcome) {
+  if (outcome === 'cancelled') return 'cancelled';
+  if (outcome !== 'error') return null;
+  if (state && state.markerlessCause) return 'worker';
+  const text = String([
+    state && state.resultSubtype,
+    state && state.agentError,
+    state && state.fatalError,
+  ].filter(Boolean).join(' ')).toLowerCase();
+  if (/429|rate.?limit/.test(text)) return 'rate_limited';
+  if (/timeout|timed.?out|etimedout/.test(text)) return 'timeout';
+  if (/401|unauthori[sz]ed|authentication|api.?key/.test(text)) return 'authentication';
+  if (/402|credit|payment|billing/.test(text)) return 'billing';
+  if (/403|permission|denied/.test(text)) return 'permission';
+  if (/overload|529/.test(text)) return 'overloaded';
+  if (/network|connection|econn|socket/.test(text)) return 'network';
+  if (state && (state.fatalError
+      || (state.exitCode != null && Number(state.exitCode) !== 0))) return 'worker';
+  return 'provider';
 }
 
 function claudeBillingPath({ directByok, byokCents, costUsd }) {
@@ -602,11 +928,75 @@ function recordClaudeCodingRun({
     cacheWriteInputTokens: result && result.cacheWriteInputTokens,
     outputTokens: result && result.outputTokens,
     reasoningOutputTokens: result && result.reasoningOutputTokens,
+    cacheWrite5mInputTokens: result && result.cacheWrite5mInputTokens,
+    cacheWrite1hInputTokens: result && result.cacheWrite1hInputTokens,
+    serverWebSearchCount: result && result.serverWebSearchCount,
+    serverWebFetchCount: result && result.serverWebFetchCount,
+    serviceTier: result && result.serviceTier,
+    inferenceRegion: result && result.inferenceRegion,
+    requestMode: result && result.requestMode,
+    requestMessageCount: result && result.requestMessageCount,
+    requestUserMessageCount: result && result.requestUserMessageCount,
+    requestContentBlockCount: result && result.requestContentBlockCount,
+    requestTextCharacters: result && result.requestTextCharacters,
+    requestUserTextCharacters: result && result.requestUserTextCharacters,
+    requestAssistantTextCharacters: result && result.requestAssistantTextCharacters,
+    requestToolResultTextCharacters: result && result.requestToolResultTextCharacters,
+    requestThinkingCharacters: result && result.requestThinkingCharacters,
+    requestPayloadCharacters: result && result.requestPayloadCharacters,
+    requestToolDefinitionCount: result && result.requestToolDefinitionCount,
+    requestMcpServerCount: result && result.requestMcpServerCount,
+    requestAgentDefinitionCount: result && result.requestAgentDefinitionCount,
+    requestSkillCount: result && result.requestSkillCount,
+    requestPluginCount: result && result.requestPluginCount,
+    providerDurationMs: result && result.providerDurationMs,
+    agentReportedDurationMs: result && result.agentReportedDurationMs,
+    queueDurationMs: result && result.queueDurationMs,
+    dispatchSetupDurationMs: result && result.dispatchSetupDurationMs,
+    timeToFirstOutputMs: result && result.timeToFirstOutputMs,
+    modelContextWindowTokens: result && result.modelContextWindowTokens,
+    modelMaxOutputTokens: result && result.modelMaxOutputTokens,
+    providerTurnCount: result && result.providerTurnCount,
+    providerModelCount: result && result.providerModelCount,
+    providerRetryCount: result && result.providerRetryCount,
+    providerRateLimitEventCount: result && result.providerRateLimitEventCount,
+    contextCompactionCount: result && result.contextCompactionCount,
+    contextCompactionPreTokensMax: result && result.contextCompactionPreTokensMax,
+    responseContentBlockCount: result && result.responseContentBlockCount,
+    responseTextBlockCount: result && result.responseTextBlockCount,
+    responseTextCharacters: result && result.responseTextCharacters,
+    responseToolCallCount: result && result.responseToolCallCount,
+    responseServerToolCallCount: result && result.responseServerToolCallCount,
+    responseThinkingBlockCount: result && result.responseThinkingBlockCount,
+    responseThinkingCharacters: result && result.responseThinkingCharacters,
+    responseRedactedThinkingBlockCount: result && result.responseRedactedThinkingBlockCount,
+    toolCallCount: result && result.toolCallCount,
+    toolResultCount: result && result.toolResultCount,
+    toolErrorCount: result && result.toolErrorCount,
+    distinctToolCount: result && result.telemetryToolNames instanceof Set
+      ? result.telemetryToolNames.size
+      : null,
+    permissionDenialCount: result && result.permissionDenialCount,
+    commandCount: result && result.commandCount,
+    fileReadCount: result && result.fileReadCount,
+    distinctFileReadCount: result && result.telemetryFileReads instanceof Set
+      ? result.telemetryFileReads.size
+      : null,
+    fileSearchCount: result && result.fileSearchCount,
+    fileChangeCount: result && result.fileChangeCount,
+    distinctFileChangeCount: result && result.telemetryFileChanges instanceof Set
+      ? result.telemetryFileChanges.size
+      : null,
+    mcpCallCount: result && result.mcpCallCount,
+    subagentCallCount: result && result.subagentCallCount,
+    webToolCallCount: result && result.webToolCallCount,
+    toolSearchCount: result && result.toolSearchCount,
     costUsd,
     costSource: costUsd == null ? 'unavailable' : 'provider_reported',
     durationMs,
     outcome,
     stopReason,
+    errorClass: codingErrorClass(result, outcome),
     attemptNumber,
     correlationId: correlationId || String(turnId),
   });
@@ -1404,6 +1794,7 @@ async function execInWorker(sessionId, {
   }
   const containerName = meta.containerName;
   const durableTurnId = logicalTurnId || turnUuid || turnLifecycle.newTurnId();
+  const dispatchSetupStartedMs = Date.now();
   // Only caller-supplied identities can already own a durable row at this
   // point. A legacy Claude dispatch gets its active_turn below, after the
   // stop gate, so its freshly generated fallback id must not be returned as
@@ -1626,6 +2017,10 @@ async function execInWorker(sessionId, {
     telemetryComponent: measuredTelemetryComponent || undefined,
     telemetryCorrelationId: measuredTelemetryCorrelationId || undefined,
     telemetryAttemptNumber: measuredTelemetryAttemptNumber || undefined,
+    telemetryRequestMode: resumeSessionId ? 'agent_resume' : 'agent_new',
+    telemetryRequestTextCharacters: typeof prompt === 'string' ? prompt.length : undefined,
+    telemetryModelContextWindowTokens: agentModelMetadata?.contextWindow ?? undefined,
+    telemetryModelMaxOutputTokens: agentModelMetadata?.maxOutputTokens ?? undefined,
     model: persistedModel,
     startedAt: new Date().toISOString(),
     // #174: billing context for restart-resume — the resume paths debit
@@ -1703,6 +2098,26 @@ async function execInWorker(sessionId, {
     // agent_backend in __USERNODE_RESULT__ (too late for the events), so
     // we seed it from the dispatch param up front.
     state.agentBackend = agentBackend;
+    state.telemetryDiagnosticsEnabled = !!measuredTelemetryComponent;
+    if (isClaude) {
+      state.providerRateLimitEventCount = 0;
+      state.contextCompactionCount = 0;
+    }
+    if (isCodex) state.providerRetryCount = 0;
+    state.providerStartedMs = providerStartedMs;
+    state.dispatchSetupDurationMs = providerStartedMs == null
+      ? null
+      : Math.max(0, providerStartedMs - dispatchSetupStartedMs);
+    state.requestMode = resumeSessionId ? 'agent_resume' : 'agent_new';
+    state.requestMessageCount = typeof prompt === 'string' ? 1 : null;
+    state.requestUserMessageCount = typeof prompt === 'string' ? 1 : null;
+    state.requestContentBlockCount = typeof prompt === 'string' ? 1 : null;
+    state.requestTextCharacters = typeof prompt === 'string' ? prompt.length : null;
+    state.requestUserTextCharacters = typeof prompt === 'string' ? prompt.length : null;
+    state.requestPayloadCharacters = typeof prompt === 'string' ? prompt.length : null;
+    if (persistedModel) state.providerModelCount = 1;
+    state.modelContextWindowTokens = agentModelMetadata?.contextWindow ?? null;
+    state.modelMaxOutputTokens = agentModelMetadata?.maxOutputTokens ?? null;
     execState = state;
     const progress = typeof onProgress === 'function' ? onProgress : () => {};
     await _consumeJournal(containerName, journal, progress, state, { sessionId });
@@ -2183,6 +2598,10 @@ async function resumeTurnFromJournal(sessionId, {
   telemetryComponent = null,
   telemetryCorrelationId = null,
   telemetryAttemptNumber = null,
+  telemetryRequestMode = null,
+  telemetryRequestTextCharacters = null,
+  telemetryModelContextWindowTokens = null,
+  telemetryModelMaxOutputTokens = null,
   requestedModel = null,
   startedAt = null,
   attemptNumber = 1,
@@ -2215,10 +2634,31 @@ async function resumeTurnFromJournal(sessionId, {
   // recovery too (review P4). The caller passes the persisted
   // session.agent_backend.
   state.agentBackend = agentBackend;
+  state.telemetryDiagnosticsEnabled = !!llmTelemetry.collectionComponent(telemetryComponent);
+  const recoveredBackend = resolveTurnBackend(agentBackend);
+  if (recoveredBackend.isClaude) {
+    state.providerRateLimitEventCount = 0;
+    state.contextCompactionCount = 0;
+  }
+  if (recoveredBackend.isCodex) state.providerRetryCount = 0;
   const physicalStartedAt = new Date(startedAt || Date.now());
   const safeStartedAt = Number.isFinite(physicalStartedAt.getTime())
     ? physicalStartedAt
     : new Date();
+  // Journal replay has no trustworthy timestamp per JSONL event. Leaving the
+  // first-output clock unavailable is more honest than measuring from the
+  // original start to the instant a restarted host replays old output.
+  state.providerStartedMs = null;
+  state.requestMode = telemetryRequestMode;
+  state.requestMessageCount = telemetryRequestTextCharacters == null ? null : 1;
+  state.requestUserMessageCount = telemetryRequestTextCharacters == null ? null : 1;
+  state.requestContentBlockCount = telemetryRequestTextCharacters == null ? null : 1;
+  state.requestTextCharacters = telemetryRequestTextCharacters;
+  state.requestUserTextCharacters = telemetryRequestTextCharacters;
+  state.requestPayloadCharacters = telemetryRequestTextCharacters;
+  state.modelContextWindowTokens = telemetryModelContextWindowTokens;
+  state.modelMaxOutputTokens = telemetryModelMaxOutputTokens;
+  if (requestedModel) state.providerModelCount = 1;
   let providerTerminalObserved = false;
   try {
     const progress = typeof onProgress === 'function' ? onProgress : () => {};

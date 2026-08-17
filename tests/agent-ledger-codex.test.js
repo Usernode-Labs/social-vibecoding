@@ -9,6 +9,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const recoveryRetry = require('../src/services/recovery-retry');
+const llmTelemetry = require('../src/services/llm-telemetry');
 
 const {
   computeProviderUsageDelta,
@@ -237,7 +238,8 @@ function makeTransactionPool() {
     if (/INSERT INTO agent_turns/.test(sql)) {
       const r = {
         id: params[0], session_id: params[1], user_id: params[2],
-        requested_model: params[3], status: 'running', metadata: JSON.parse(params[11] || '{}'),
+        requested_model: params[3], reasoning_effort: params[4],
+        status: 'running', metadata: JSON.parse(params[11] || '{}'),
       };
       rowsById.set(params[0], r);
       return { rows: [r] };
@@ -263,6 +265,7 @@ function makeTransactionPool() {
         r.provider_cache_write_input_tokens_total = params[12];
         r.provider_output_tokens_total = params[13];
         r.provider_reasoning_output_tokens_total = params[14];
+        r.metadata = JSON.parse(params[19] || '{}');
         r.updated = true;
       }
       return { rows: r && r.status ? [{ id: params[0] }] : [] };
@@ -309,6 +312,52 @@ test('completeCodexAttempt completes once and is idempotent on repeat', async ()
   });
   assert.equal(second.updated, false, 'repeat completion does not double-add');
   assert.equal(second.alreadyTerminal, true);
+});
+
+test('OpenRouter completion persists only allowlisted run diagnostics on its authoritative attempt', async () => {
+  const previousEnabled = llmTelemetry._setEnabledForTests(true);
+  try {
+    const { pool, rowsById } = makeTransactionPool();
+    const started = await startCodexAttempt({
+      pool, session: { id: 111, agent_config_version: 1 }, userId: 1,
+      logicalTurnId: 'lt-telemetry', attemptNumber: 1, model: 'openai/gpt-5.3-codex',
+      reasoningEffort: 'high', resumeThreadId: 'thread-prior',
+      telemetryComponent: 'coding_agent_build',
+      runtimeContext: {
+        agentConfigVersion: 1,
+        pricingSnapshot: { available: true, inputPricePerMillion: 1, outputPricePerMillion: 2 },
+      },
+    });
+    await completeCodexAttempt({
+      pool, turnUuid: started.turnUuid, status: 'completed', threadId: 'thread-prior',
+      usageTotal: { inputTokens: 100, outputTokens: 20 },
+      telemetryComponent: 'coding_agent_build',
+      telemetryMetrics: {
+        requestMode: 'agent_resume', requestTextCharacters: 1234,
+        toolCallCount: 4, providerRetryCount: 1,
+        telemetryToolNames: new Set(['command', 'file_read']),
+        prompt: 'private prompt', rawError: 'private error',
+        toolInput: { secret: true }, filename: '/private/path',
+      },
+    });
+    const metadata = rowsById.get(started.turnUuid).metadata;
+    assert.equal(metadata.telemetry_component, 'coding_agent_build');
+    assert.deepEqual(metadata.telemetry_metrics, {
+      request_mode: 'agent_resume',
+      reasoning_effort: 'high',
+      request_text_characters: 1234,
+      provider_retry_count: 1,
+      tool_call_count: 4,
+      distinct_tool_count: 2,
+      usage_reset_detected: false,
+    });
+    const serialized = JSON.stringify(metadata);
+    for (const secret of ['private prompt', 'private error', 'secret', '/private/path']) {
+      assert.equal(serialized.includes(secret), false);
+    }
+  } finally {
+    llmTelemetry._setEnabledForTests(previousEnabled);
+  }
 });
 
 test('completeCodexAttempt records unavailable cost when usage was not observed', async () => {
