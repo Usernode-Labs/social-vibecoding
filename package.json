@@ -18,13 +18,16 @@
     "build:css": "node scripts/build-tailwind.js",
     "watch:css": "node scripts/build-tailwind.js --watch",
     "vendor:assets": "node scripts/vendor-assets.js",
-    "build:shell": "node frontend/scripts/build-shell.mjs"
+    "build:shell": "node frontend/scripts/build-shell.mjs",
+    "lint:sql": "node scripts/check-sql.js"
   },
   "devDependencies": {
     "dompurify": "3.4.4",
     "marked": "15.0.12",
+    "postgres": "3.4.9",
     "qrcodejs": "1.0.0",
-    "tailwindcss": "3.4.17"
+    "tailwindcss": "3.4.17",
+    "typescript": "6.0.3"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.89.0",
