@@ -96,9 +96,17 @@ test('dropped source columns are NOT carried over', () => {
   assert.ok(!/remember_token/.test(block));
 });
 
-test('users.email gets a PARTIAL unique index (existing platform users have none)', () => {
+test('users.email gets a PARTIAL case-insensitive unique index (existing platform users have none)', () => {
+  // #1269: uniqueness moved to lower(email) so email matching can be
+  // case-insensitive everywhere. The index is created inside a guarded DO
+  // block (legacy mixed-case duplicates must warn, not crash boot), so the
+  // assertion targets the CREATE line within it, and the old raw-column
+  // index must only ever be dropped, never re-created.
   assert.match(block,
-    /CREATE UNIQUE INDEX IF NOT EXISTS users_email_unique ON users\(email\) WHERE email IS NOT NULL;/);
+    /CREATE UNIQUE INDEX users_email_lower_unique ON users\(lower\(email\)\) WHERE email IS NOT NULL;/);
+  assert.match(block, /DROP INDEX IF EXISTS users_email_unique;/);
+  assert.ok(!/CREATE UNIQUE INDEX IF NOT EXISTS users_email_unique/.test(block),
+    'the raw-column users_email_unique index must not be re-created');
 });
 
 test('the six plain users indexes from SPEC §8.5 exist', () => {

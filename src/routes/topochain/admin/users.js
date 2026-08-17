@@ -43,17 +43,22 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 // amount of wall-clock time on a large batch (code-review finding).
 const UNUSABLE_PASSWORD_BCRYPT_COST = 4;
 
-// The pre-INSERT/pre-UPDATE `SELECT id FROM users WHERE email = $1` check
-// (both create and update) is a plain read, not a lock — a genuinely
-// concurrent request for the SAME email can still slip past it and hit
-// `users_email_unique` (schema.sql) at write time (code-review finding).
-// Rather than SELECT ... FOR UPDATE-ing an unrelated caller's row (a
-// worse trade-off than the rare race itself), the write's own unique-
-// violation is caught and mapped to the same 422 the pre-check produces —
-// defense in depth, not a replacement for the pre-check (which still
-// gives the common case a clean 422 without ever reaching the DB write).
+// The pre-INSERT/pre-UPDATE `SELECT id FROM users WHERE lower(email) =
+// lower($1)` check (both create and update) is a plain read, not a lock —
+// a genuinely concurrent request for the SAME email can still slip past
+// it and hit `users_email_lower_unique` (schema.sql) at write time
+// (code-review finding). Rather than SELECT ... FOR UPDATE-ing an
+// unrelated caller's row (a worse trade-off than the rare race itself),
+// the write's own unique-violation is caught and mapped to the same 422
+// the pre-check produces — defense in depth, not a replacement for the
+// pre-check (which still gives the common case a clean 422 without ever
+// reaching the DB write). Matches BOTH constraint names: a database that
+// hasn't rebooted onto the lower(email) index yet (or where a legacy
+// case-variant duplicate blocked its creation) still raises on the old
+// raw-column `users_email_unique`.
 function isEmailUniqueViolation(err) {
-  return err && err.code === '23505' && typeof err.constraint === 'string' && err.constraint.includes('users_email_unique');
+  return err && err.code === '23505' && typeof err.constraint === 'string'
+    && (err.constraint.includes('users_email_lower_unique') || err.constraint.includes('users_email_unique'));
 }
 
 // ─── Row shaping ────────────────────────────────────────────────────────
@@ -193,11 +198,15 @@ function parseUserFields(body, details) {
       details[key] = [`The ${key} field must be a string of at most 255 characters.`];
       continue;
     }
-    if (key === 'email' && !EMAIL_RE.test(body[key])) {
+    if (key === 'email' && !EMAIL_RE.test(body[key].trim())) {
       details.email = ['The email field must be a valid email address.'];
       continue;
     }
-    fields[key] = body[key];
+    // Emails are stored in normalized lower-case form everywhere (the
+    // mobile OTP flow already does this — mobile-auth.js's
+    // validateEmailField), so login and the uniqueness checks can match
+    // case-insensitively (issue #1269).
+    fields[key] = key === 'email' ? body[key].trim().toLowerCase() : body[key];
   }
 
   if (body.accept_logs !== undefined) {
@@ -321,7 +330,7 @@ function usersAdminRoutes(config) {
       // v4 addition (§8.3): unique email, post-dedupe — the source has no
       // uniqueness check at all here (SPEC 2317's note).
       if (email) {
-        const { rows } = await client.query('SELECT id FROM users WHERE email = $1', [email]);
+        const { rows } = await client.query('SELECT id FROM users WHERE lower(email) = lower($1)', [email]);
         if (rows.length) {
           return fail(res, 422, 'The email has already been taken.', {
             details: { email: ['The email has already been taken.'] },
@@ -488,7 +497,8 @@ function usersAdminRoutes(config) {
         for (let i = 0; i < participants.length; i++) {
           const row = participants[i] || {};
           const rowNum = i + 1;
-          const email = typeof row.email === 'string' ? row.email.trim() : '';
+          // Lower-cased like every other email write path (issue #1269).
+          const email = typeof row.email === 'string' ? row.email.trim().toLowerCase() : '';
           const username = typeof row.username === 'string' ? row.username.trim() : '';
 
           if (!email || !EMAIL_RE.test(email)) {
@@ -506,7 +516,7 @@ function usersAdminRoutes(config) {
           // 2361's column mapping) — an existing user is enrolled, never
           // duplicated (SPEC 2390's note).
           const { rows: userRows } = await client.query(
-            'SELECT id FROM users WHERE email = $1 OR discord = $2 LIMIT 1',
+            'SELECT id FROM users WHERE lower(email) = lower($1) OR discord = $2 LIMIT 1',
             [email, username]
           );
           let userId;
@@ -712,7 +722,7 @@ function usersAdminRoutes(config) {
       }
 
       if ('email' in fields && fields.email && fields.email !== existing.email) {
-        const { rows } = await client.query('SELECT id FROM users WHERE email = $1 AND id != $2', [fields.email, id]);
+        const { rows } = await client.query('SELECT id FROM users WHERE lower(email) = lower($1) AND id != $2', [fields.email, id]);
         if (rows.length) {
           return fail(res, 422, 'The email has already been taken.', {
             details: { email: ['The email has already been taken.'] },
