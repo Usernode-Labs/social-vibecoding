@@ -3536,7 +3536,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS user_activities_nullifier_unique
 -- whole season. Invariant (app/ETL-enforced): when season_event_id is
 -- set, season_id must equal that event's season_id. Two partial
 -- uniques keep season-scoped and event-scoped accounts from colliding
--- on the same public key. `secret_key` is a real testnet credential —
+-- on the same public key. Event-scoped rows are legacy history (Season
+-- 1 recycled keys between users mid-season, so they cannot satisfy any
+-- per-user uniqueness); from Pre Season 2 onward accounts are created
+-- season-scoped only, and the third partial unique below enforces the
+-- model's core rule: a user holds at most ONE season-scoped account
+-- per season. `secret_key` is a real testnet credential —
 -- handled like `apps.db_password` elsewhere in this schema: scrubbed
 -- in staging and denied from prod-debug access (wired in Task 2).
 -- `address` (ut1…) is the participant-facing account; `public_key`
@@ -3563,6 +3568,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS onchain_accounts_season_event_public_key_uniqu
   ON onchain_accounts (season_event_id, public_key) WHERE season_event_id IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS onchain_accounts_season_public_key_unique
   ON onchain_accounts (season_id, public_key) WHERE season_event_id IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS onchain_accounts_user_season_unique
+  ON onchain_accounts (user_id, season_id)
+  WHERE user_id IS NOT NULL AND season_event_id IS NULL;
 CREATE INDEX IF NOT EXISTS idx_onchain_accounts_user ON onchain_accounts (user_id);
 CREATE INDEX IF NOT EXISTS idx_onchain_accounts_season ON onchain_accounts (season_id);
 CREATE INDEX IF NOT EXISTS idx_onchain_accounts_season_event_address ON onchain_accounts (season_event_id, address);
