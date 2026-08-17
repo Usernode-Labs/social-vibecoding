@@ -313,6 +313,14 @@
         'you would earn by producing blocks directly from your phone.';
       card.appendChild(disclosure);
 
+      const selfHosted = document.createElement('div');
+      selfHosted.className = 'mb-3 rounded-lg bg-sky-500/10 px-3 py-2 ' +
+        'text-sm font-medium text-sky-800 dark:text-sky-300';
+      selfHosted.textContent = 'Want to run a node on your own laptop or ' +
+        'server and monitor it from your phone? Start the node there using ' +
+        'the same account you use on this phone.';
+      card.appendChild(selfHosted);
+
       if (staking === null || staking === undefined) {
         const progress = document.createElement('div');
         progress.className = 'text-sm font-semibold';
@@ -337,34 +345,46 @@
       }
 
       const delegated = WalletSheet._isDelegated(staking);
+      // The delegated state gets its own tinted container so a delegated
+      // wallet stands out from the rest of the card at a glance.
+      const state = document.createElement('div');
+      state.className = delegated
+        ? 'rounded-lg bg-violet-500/10 px-3 py-2' : '';
+      card.appendChild(state);
+
       const status = document.createElement('div');
-      status.className = 'text-base font-semibold';
+      status.className = delegated
+        ? 'text-base font-semibold text-violet-800 dark:text-violet-300'
+        : 'text-base font-semibold';
       status.textContent = delegated
         ? 'Delegated' : 'Producing blocks on this phone';
-      card.appendChild(status);
+      state.appendChild(status);
 
       const detail = document.createElement('div');
-      detail.className = 'mt-1 text-sm text-zinc-500 dark:text-zinc-400';
+      detail.className = delegated
+        ? 'mt-1 text-sm text-violet-700 dark:text-violet-300/80'
+        : 'mt-1 text-sm text-zinc-500 dark:text-zinc-400';
       detail.textContent = delegated
         ? 'Block production on this phone is disabled.'
         : 'Producing blocks directly on this phone earns full points.';
-      card.appendChild(detail);
+      state.appendChild(detail);
 
       if (delegated) {
         const delegate = document.createElement('div');
-        delegate.className = 'mt-2 font-mono text-xs text-zinc-600 ' +
-          'dark:text-zinc-300';
+        delegate.className = 'mt-2 font-mono text-xs text-violet-700 ' +
+          'dark:text-violet-300';
         delegate.textContent = WalletSheet._shortAddr(staking.delegate);
-        card.appendChild(delegate);
+        state.appendChild(delegate);
 
         const since = WalletSheet._formatDelegatedSince(
           staking.delegated_since
         );
         if (since) {
           const sinceEl = document.createElement('div');
-          sinceEl.className = 'mt-1 text-xs text-zinc-500 dark:text-zinc-400';
+          sinceEl.className = 'mt-1 text-xs text-violet-700 ' +
+            'dark:text-violet-300/80';
           sinceEl.textContent = 'Delegated since ' + since;
-          card.appendChild(sinceEl);
+          state.appendChild(sinceEl);
         }
       }
 
