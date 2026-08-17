@@ -47,6 +47,7 @@ function freshDb() {
       { id: 'SEND_TX_CHALLENGE', name: 'Send a transaction' },
     ],
     challengeTemplates: [],
+    seasons: [],
     seasonEvents: [],
     challenges: [],
     userActivities: [],
@@ -184,6 +185,10 @@ function handleQuery(rawSql, params = []) {
     const row = db.seasonEvents.find((e) => e.id === params[0]);
     return { rows: row ? [{ id: row.id, season_id: row.season_id }] : [] };
   }
+  if (sql === 'SELECT id FROM seasons WHERE id = $1') {
+    const row = db.seasons.find((s) => s.id === params[0]);
+    return { rows: row ? [{ id: row.id }] : [] };
+  }
   if (sql === 'SELECT id FROM challenge_templates WHERE id = $1') {
     const row = db.challengeTemplates.find((t) => t.id === params[0]);
     return { rows: row ? [{ id: row.id }] : [] };
@@ -279,8 +284,8 @@ function handleQuery(rawSql, params = []) {
       .slice(offset, offset + perPage);
     return { rows: rows.map(accountJoinedRow) };
   }
-  if (sql === 'SELECT public_key FROM onchain_accounts WHERE season_event_id = $1') {
-    const rows = db.onchainAccounts.filter((a) => a.season_event_id === params[0]);
+  if (sql === 'SELECT public_key FROM onchain_accounts WHERE season_id = $1 AND season_event_id IS NULL') {
+    const rows = db.onchainAccounts.filter((a) => a.season_id === params[0] && a.season_event_id == null);
     return { rows: rows.map((a) => ({ public_key: a.public_key })) };
   }
   if (sql === 'SELECT 1 FROM onchain_accounts WHERE registration_code = $1') {
@@ -288,12 +293,14 @@ function handleQuery(rawSql, params = []) {
     return { rows: clash ? [{ '?column?': 1 }] : [] };
   }
   if (sql.startsWith('INSERT INTO onchain_accounts')) {
+    // Season-scoped insert: season_event_id is a literal NULL in the SQL,
+    // so the params carry only the 8 row values plus season_id as $9.
     const [amount, identityUid, address, publicKey, secretKey, tier, description, registrationCode,
-      seasonEventId, seasonId] = params;
+      seasonId] = params;
     db.onchainAccounts.push({
       id: db.nextId.onchainAccounts++, amount, identity_uid: identityUid, address, public_key: publicKey,
       secret_key: secretKey, tier, description, registration_code: registrationCode,
-      season_event_id: seasonEventId, season_id: seasonId, user_id: null, is_used: false,
+      season_event_id: null, season_id: seasonId, user_id: null, is_used: false,
       used_at: null, created_at: new Date(), updated_at: new Date(),
     });
     return { rows: [] };
@@ -837,10 +844,10 @@ test('D5: index cap tension — omitted per_page silently uses the SPEC default 
   } finally { server.close(); }
 });
 
-test('D5: import — atomic (any row error rolls back ALL rows, none committed), dupes detected on (event, public_key)', async () => {
-  db.seasonEvents.push({ id: 500, season_id: 9, name: 'Event C' });
+test('D5: import — atomic (any row error rolls back ALL rows, none committed), dupes detected on (season_id, public_key)', async () => {
+  db.seasons.push({ id: 9, name: 'Season Nine' });
   db.onchainAccounts.push({
-    id: 600, season_event_id: 500, season_id: 9, amount: 10, identity_uid: 'existing', address: 'ut1x',
+    id: 600, season_event_id: null, season_id: 9, amount: 10, identity_uid: 'existing', address: 'ut1x',
     public_key: 'DUPLICATE-KEY', secret_key: 's', tier: 'bronze', description: null, registration_code: 'ex-code',
     user_id: null, is_used: false, used_at: null, created_at: T(0), updated_at: T(0),
   });
@@ -849,7 +856,7 @@ test('D5: import — atomic (any row error rolls back ALL rows, none committed),
     const res = await fetch(`${base}/api/v4/admin/onchain-accounts/import`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        season_event_id: 500,
+        season_id: 9,
         accounts: [
           { amount: 100, identity_uid: 'new1', address: 'ut1y', public_key: 'FRESH-KEY', secret_key: 's2', tier: 'gold' },
           { amount: 200, identity_uid: 'new2', address: 'ut1z', public_key: 'DUPLICATE-KEY', secret_key: 's3', tier: 'gold' },
@@ -869,14 +876,14 @@ test('D5: import — atomic (any row error rolls back ALL rows, none committed),
   } finally { server.close(); }
 });
 
-test('D5: import — happy path generates a server-side registration_code per row and derives season_id from the event', async () => {
-  db.seasonEvents.push({ id: 501, season_id: 42, name: 'Event D' });
+test('D5: import — happy path creates SEASON-scoped rows (season_event_id NULL) with a server-side registration_code per row', async () => {
+  db.seasons.push({ id: 42, name: 'Season Forty-Two' });
   const { server, base } = await listen(buildSubApp(onchainAccountsAdminRoutes));
   try {
     const res = await fetch(`${base}/api/v4/admin/onchain-accounts/import`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        season_event_id: 501,
+        season_id: 42,
         accounts: [{ amount: 1, identity_uid: 'i', address: 'a', public_key: 'PK-1', secret_key: 'sk', tier: 't' }],
       }),
     });
@@ -886,18 +893,74 @@ test('D5: import — happy path generates a server-side registration_code per ro
     assert.equal(db.onchainAccounts.length, 1);
     const created = db.onchainAccounts[0];
     assert.equal(created.season_id, 42);
+    assert.equal(created.season_event_id, null);
     assert.ok(created.registration_code && created.registration_code.length > 0);
   } finally { server.close(); }
 });
 
-test('D5: import — a blank-string amount is a row error, not a silently-coerced 0 (code-review finding: bare Number() coercion)', async () => {
-  db.seasonEvents.push({ id: 502, season_id: 1, name: 'Event F' });
+test('D5: import — a legacy event-scoped row with the same key does NOT block a season import (carry-over re-imports keys), a season-scoped one does', async () => {
+  db.seasons.push({ id: 7, name: 'Season Seven' });
+  db.seasonEvents.push({ id: 510, season_id: 7, name: 'Legacy event' });
+  // Legacy event-scoped row in the SAME season holding the key being imported.
+  db.onchainAccounts.push({
+    id: 610, season_event_id: 510, season_id: 7, amount: 10, identity_uid: 'legacy', address: 'ut1l',
+    public_key: 'CARRIED-KEY', secret_key: 's', tier: 'bronze', description: null, registration_code: 'legacy-code',
+    user_id: 1, is_used: true, used_at: T(0), created_at: T(0), updated_at: T(0),
+  });
+  const { server, base } = await listen(buildSubApp(onchainAccountsAdminRoutes));
+  try {
+    const first = await fetch(`${base}/api/v4/admin/onchain-accounts/import`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        season_id: 7,
+        accounts: [{ amount: 5, identity_uid: 'i', address: 'ut1l', public_key: 'CARRIED-KEY', secret_key: 'sk', tier: 't' }],
+      }),
+    });
+    assert.equal(first.status, 201);
+    assert.equal((await first.json()).data.imported_count, 1);
+
+    // Re-importing the same key now collides with the season-scoped row.
+    const second = await fetch(`${base}/api/v4/admin/onchain-accounts/import`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        season_id: 7,
+        accounts: [{ amount: 5, identity_uid: 'i2', address: 'ut1l', public_key: 'CARRIED-KEY', secret_key: 'sk', tier: 't' }],
+      }),
+    });
+    assert.equal(second.status, 201);
+    const body = await second.json();
+    assert.equal(body.data.imported_count, 0);
+    assert.match(body.data.errors[0], /already exists for this season/);
+  } finally { server.close(); }
+});
+
+test('D5: import — a stale caller still sending season_event_id gets a 422 naming the new field, never a silent event-scoped import', async () => {
+  db.seasons.push({ id: 7, name: 'Season Seven' });
+  db.seasonEvents.push({ id: 511, season_id: 7, name: 'Some event' });
   const { server, base } = await listen(buildSubApp(onchainAccountsAdminRoutes));
   try {
     const res = await fetch(`${base}/api/v4/admin/onchain-accounts/import`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        season_event_id: 502,
+        season_event_id: 511,
+        accounts: [{ amount: 1, identity_uid: 'i', address: 'a', public_key: 'PK-9', secret_key: 'sk', tier: 't' }],
+      }),
+    });
+    assert.equal(res.status, 422);
+    const body = await res.json();
+    assert.match(body.details.season_event_id[0], /season_id/);
+    assert.equal(db.onchainAccounts.length, 0);
+  } finally { server.close(); }
+});
+
+test('D5: import — a blank-string amount is a row error, not a silently-coerced 0 (code-review finding: bare Number() coercion)', async () => {
+  db.seasons.push({ id: 1, name: 'Season One' });
+  const { server, base } = await listen(buildSubApp(onchainAccountsAdminRoutes));
+  try {
+    const res = await fetch(`${base}/api/v4/admin/onchain-accounts/import`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        season_id: 1,
         accounts: [{ amount: '', identity_uid: 'i', address: 'a', public_key: 'PK-2', secret_key: 'sk', tier: 't' }],
       }),
     });

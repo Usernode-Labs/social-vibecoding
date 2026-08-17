@@ -275,6 +275,11 @@ test('onchain_accounts has both partial uniques (season-wide vs per-event public
     /CREATE UNIQUE INDEX IF NOT EXISTS onchain_accounts_season_public_key_unique\s+ON onchain_accounts \(season_id, public_key\) WHERE season_event_id IS NULL;/);
 });
 
+test('onchain_accounts enforces 0..1 season-scoped account per (user, season); legacy event-scoped rows are exempt', () => {
+  assert.match(block,
+    /CREATE UNIQUE INDEX IF NOT EXISTS onchain_accounts_user_season_unique\s+ON onchain_accounts \(user_id, season_id\)\s+WHERE user_id IS NOT NULL AND season_event_id IS NULL;/);
+});
+
 // ─── Replay-protection indexes (SPEC §4.10, restoring dropped completion tables) ──
 
 test('the two user_activities anti-replay partial unique indexes exist verbatim', () => {

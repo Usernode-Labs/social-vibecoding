@@ -460,19 +460,25 @@ function usersAdminRoutes(config) {
         });
       }
 
-      // Unused accounts for the event, highest-balance-first (SPEC 2390's
-      // "link_accounts assigns unused accounts highest-balance-first").
+      // Unused accounts, highest-balance-first (SPEC 2390's "link_accounts
+      // assigns unused accounts highest-balance-first"). The queue is the
+      // SEASON pool (season-scoped rows, `season_event_id IS NULL`) — the
+      // same pool wallet/provision claims from — not the event's legacy
+      // rows: accounts are 0..1 per (user, season) now
+      // (`onchain_accounts_user_season_unique`), while enrollment below
+      // stays event-scoped as the participation record.
       // Fetched once, consumed in order as rows are processed below —
       // NOT re-queried per row (that would be the source's N+1 shape).
       let accountQueue = [];
       if (linkAccounts) {
-        const boundParams = [seasonEventId];
+        const boundParams = [event.season_id];
         let boundClause = '';
         if (minBalance != null) { boundParams.push(minBalance); boundClause += ` AND amount >= $${boundParams.length}`; }
         if (maxBalance != null) { boundParams.push(maxBalance); boundClause += ` AND amount <= $${boundParams.length}`; }
         const { rows } = await client.query(
           `SELECT id, amount FROM onchain_accounts
-            WHERE season_event_id = $1 AND is_used = FALSE ${boundClause}
+            WHERE season_id = $1 AND season_event_id IS NULL
+              AND user_id IS NULL AND is_used = FALSE ${boundClause}
             ORDER BY amount DESC, id ASC`,
           boundParams
         );
@@ -482,6 +488,7 @@ function usersAdminRoutes(config) {
       const counters = {
         created_count: 0, linked_count: 0, unassigned_count: 0,
         skipped_count: 0, added_to_phase_count: 0, already_in_phase_count: 0,
+        already_linked_count: 0,
       };
       const errors = [];
 
@@ -551,6 +558,19 @@ function usersAdminRoutes(config) {
           }
 
           if (linkAccounts) {
+            // GUARD: a user who already holds ANY account in this season —
+            // season-scoped or a legacy event-scoped row — is never linked
+            // a second one. Double-linking is exactly what produced the
+            // historical multi-account users the per-season unique now
+            // forbids, and for legacy rows the DB index can't backstop us.
+            const { rows: ownedRows } = await client.query(
+              'SELECT 1 FROM onchain_accounts WHERE user_id = $1 AND season_id = $2 LIMIT 1',
+              [userId, event.season_id]
+            );
+            if (ownedRows.length) {
+              counters.already_linked_count += 1;
+              continue;
+            }
             const account = accountQueue[queueIndex];
             if (account) {
               queueIndex += 1;

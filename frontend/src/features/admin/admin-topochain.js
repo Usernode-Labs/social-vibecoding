@@ -2769,17 +2769,17 @@ const AdminTopochain = {
 
   async _openAccountImportForm() {
     if (!AdminTopochain.canWrite()) return;
-    const events = await AdminTopochain._fetchAllEvents();
+    const seasons = await AdminTopochain._fetchAllSeasons();
     const sel = AdminTopochain._selectHtml, field = AdminTopochain._field;
     const host = document.getElementById('admin-topo-oa-form');
     host.innerHTML = AdminTopochain._panel({
       title: 'Import onchain accounts',
-      subtitle: 'One account per line, for a single event.',
+      subtitle: 'One account per line, into a season’s pool (accounts are per-season; each user can hold one).',
       closeId: 'admin-topo-oa-imp-close',
       closeLabel: 'Close the import panel',
       body: `
         <div class="grid grid-cols-1 gap-4">
-          ${field('Event *', sel('admin-topo-oa-imp-event', AdminTopochain._eventOptions(events), '', { blank: 'Choose an event…' }))}
+          ${field('Season *', sel('admin-topo-oa-imp-season', AdminTopochain._seasonOptions(seasons), '', { blank: 'Choose a season…' }))}
           ${field('Accounts — one "amount,identity_uid,address,public_key,secret_key,tier,description" per line *',
     AdminTopochain._textareaHtml('admin-topo-oa-imp-rows', '', 8),
     'registration_code is generated server-side; do not include it.')}
@@ -2799,8 +2799,8 @@ const AdminTopochain = {
     if (!AdminTopochain.canWrite()) return;
     const errEl = document.getElementById('admin-topo-oa-imp-err');
     errEl.classList.add('hidden');
-    const eventId = document.getElementById('admin-topo-oa-imp-event').value;
-    if (!eventId) { errEl.textContent = 'Choose an event.'; errEl.classList.remove('hidden'); return; }
+    const seasonId = document.getElementById('admin-topo-oa-imp-season').value;
+    if (!seasonId) { errEl.textContent = 'Choose a season.'; errEl.classList.remove('hidden'); return; }
     const lines = document.getElementById('admin-topo-oa-imp-rows').value.split('\n').map((l) => l.trim()).filter(Boolean);
     const accounts = lines.map((line) => {
       const [amount, identity_uid, address, public_key, secret_key, tier, description] = line.split(',').map((s) => (s || '').trim());
@@ -2808,7 +2808,7 @@ const AdminTopochain = {
     });
     if (!accounts.length) { errEl.textContent = 'Add at least one account row.'; errEl.classList.remove('hidden'); return; }
     const { ok, data } = await AdminTopochain.send('POST', '/api/v4/admin/onchain-accounts/import',
-      { season_event_id: parseInt(eventId, 10), accounts });
+      { season_id: parseInt(seasonId, 10), accounts });
     if (!ok || !data?.success) {
       errEl.textContent = (data && data.error) || 'Import failed.';
       errEl.classList.remove('hidden');
