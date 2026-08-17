@@ -699,6 +699,10 @@ function stagingMockMerged() {
     linked_issues: null,
     username: 'staging-tester',
     created_at: daysAgo(days),
+    // #1264: mocks merge the moment they were created — good enough for
+    // reviewing the report's "Merged <date>" label and monthly strip.
+    merged_at: daysAgo(days),
+    promoted_at: daysAgo(days),
     revert_of_session_id: null,
     votes_required: 2,
     active_users_at_merge: 3,
@@ -798,6 +802,27 @@ function stagingMockMerged() {
     revert_pr_url: null,
     revert_status: 'merged',
   };
+  // #1264: older completed rows (~35–150 days) so the report's
+  // "Completed by month" strip shows several distinct months in a ?demo=1
+  // preview instead of one bar. A little kudos variety rides along so the
+  // report's new "N kudos" meta is reviewable too.
+  const older = [
+    [9100030, 910130, '[Mock] Completed: rework the onboarding checklist', 35, 2],
+    [9100031, 910131, '[Mock] Completed: ship the notification digest', 70, 0],
+    [9100032, 910132, '[Mock] Completed: split settings into sections', 110, 3],
+    [9100033, 910133, '[Mock] Completed: first pass at the activity feed', 150, 0],
+  ].map(([id, pr, title, days, kudos]) => ({
+    ...mk(id, pr, title, days, 0),
+    kudos_count: kudos,
+  }));
+  // #1264: a LEGACY completed row — merged before merged_at existed, so it
+  // carries no merge time. Keeps the report's "Started <date>" fallback and
+  // its conditional disclaimer reviewable in a preview.
+  const legacy = {
+    ...mk(9100034, 910134,
+      '[Mock] Completed: legacy change with no recorded merge time', 95, 0),
+    merged_at: null,
+  };
   return [autoMerged, inheritedAttrs, undone].concat(titles.map((t, i) => mk(
     9100001 + i,
     910101 + i,
@@ -805,7 +830,7 @@ function stagingMockMerged() {
     i + 1,
     // Sprinkle a few discussion counts so the 💬 badge is visible.
     i % 3 === 0 ? 5 : 0
-  )));
+  ))).concat(older, [legacy]);
 }
 
 // Staging demo rows for APPLIED close-issue proposals in the Completed
@@ -849,11 +874,12 @@ function stagingMockCompletedCloseIssues() {
     mk(9100061, 'admin:staging-admin', 4, 5, 0),
     // (#1115) A DELIBERATELY OLD applied close proposal. The mocks are only
     // injected on the demo stream's FIRST page and the merged mocks span
-    // 1–26 days, so a 32-day-old row can never appear in any /merged page —
-    // making it reachable ONLY through GET /api/apps/:slug/governance/:id.
+    // up to ~150 days (#1264 extended them for the report's monthly strip),
+    // so a 400-day-old row can never appear in any /merged page — making it
+    // reachable ONLY through GET /api/apps/:slug/governance/:id.
     // That is exactly the regression this mock exists to test: before the
     // by-id recovery path, deep-linking it bounced back to the board.
-    mk(9100062, 'group-vote', 30, 32, 4),
+    mk(9100062, 'group-vote', 400, 402, 4),
   ];
 }
 
@@ -1430,6 +1456,12 @@ async function reconcilePromotedSweepHead({ config, pool, session }) {
 // append their own WHERE / ORDER / LIMIT.
 function mergedRowSelect() {
   return `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_summary_md, cs.user_id, cs.status, cs.linked_issues, u.username, cs.created_at,
+           -- #1264: the exact merge time (and the promotion time beside it)
+           -- so the progress report can date completed work by when it
+           -- actually landed instead of when it was started. NULL on rows
+           -- merged before the column existed — consumers must keep the
+           -- created_at fallback forever.
+           cs.merged_at, cs.promoted_at,
            cs.revert_of_session_id,
            -- Transcript sharing: true when this proposal's owner published
            -- the dev chat that produced it, so the proposal page can offer

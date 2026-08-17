@@ -6033,10 +6033,12 @@ const AppView = {
     });
 
     // ── Done ─────────────────────────────────────────────────────────
-    // Dated by `created_at` and LABELLED "Started": GET /merged orders by
-    // chat_sessions.created_at and exposes no merge timestamp, so grouping
-    // by a fabricated merge date would over-claim. Applied close-issue
-    // rows do carry payload.appliedAt and use it, labelled "Closed".
+    // #1264: proposal rows are dated by `merged_at` — the exact merge
+    // time checkAndMerge() records — and labelled "Merged". Rows merged
+    // before that column existed carry no merge time and keep the old
+    // `created_at` date, labelled "Started", forever (the history cannot
+    // be backfilled; see schema.sql). Applied close-issue rows carry
+    // payload.appliedAt and use it, labelled "Closed".
     const allDoneEntries = buckets.done.map((m) => {
       const closeIssue = (m.row_type || 'pr') === 'close_issue';
       const payload = m.payload || {};
@@ -6050,8 +6052,17 @@ const AppView = {
           yes: num(m.yes_count), no: num(m.no_count),
           votesRequired: num(m.votes_required),
           at, atMs: ts(at), dateLabel: 'Closed',
+          hasMergeDate: true,
+          kudos: 0,
+          chatCount: num(m.chat_count),
+          linkedIssues: [],
+          imported: false, importedAuthor: '', externalAgent: '',
         };
       }
+      const mergedMs = ts(m.merged_at);
+      const linked = Array.isArray(m.linked_issues)
+        ? m.linked_issues.map((n) => parseInt(n, 10)).filter((n) => Number.isFinite(n))
+        : [];
       return {
         kind: 'proposal',
         title: m.pr_title || `Change by ${m.username || 'someone'}`,
@@ -6059,7 +6070,16 @@ const AppView = {
         author: m.username || '',
         yes: num(m.yes_count), no: num(m.no_count),
         votesRequired: num(m.votes_required),
-        at: m.created_at, atMs: ts(m.created_at), dateLabel: 'Started',
+        at: mergedMs ? m.merged_at : m.created_at,
+        atMs: mergedMs || ts(m.created_at),
+        dateLabel: mergedMs ? 'Merged' : 'Started',
+        hasMergeDate: !!mergedMs,
+        kudos: num(m.kudos_count),
+        chatCount: num(m.chat_count),
+        linkedIssues: linked,
+        imported: m.source === 'imported',
+        importedAuthor: m.imported_pr_author || '',
+        externalAgent: m.external_agent || '',
       };
     });
     // Period filter: drop entries dated BEFORE the start. Undated entries
@@ -6084,9 +6104,58 @@ const AppView = {
       }
       monthMap.get(key).entries.push(e);
     }
+    // #1264: entries are dated by merge time now, so the server's
+    // created_at arrival order no longer implies month order — sort
+    // groups newest month first (Undated last) and each group's entries
+    // by their effective date, newest first.
+    monthOrder.sort((a, b) => {
+      if (a.key === b.key) return 0;
+      if (a.key === 'unknown') return 1;
+      if (b.key === 'unknown') return -1;
+      return a.key < b.key ? 1 : -1;
+    });
+    for (const g of monthOrder) {
+      g.entries.sort((a, b) => (b.atMs || 0) - (a.atMs || 0));
+    }
     const THIRTY_DAYS = 30 * 24 * 60 * 60 * 1000;
     const completedLast30 = allDoneEntries
       .filter((e) => e.atMs && (now - e.atMs) <= THIRTY_DAYS).length;
+    // #1264: the 30 days BEFORE those, so the momentum line can say
+    // whether the pace is rising or falling instead of one bare number.
+    const completedPrev30 = allDoneEntries
+      .filter((e) => e.atMs
+        && (now - e.atMs) > THIRTY_DAYS
+        && (now - e.atMs) <= 2 * THIRTY_DAYS).length;
+    // #1264: the last six calendar months of completed work, zero-filled
+    // and oldest-first, for the "Completed by month" strip. Counted over
+    // ALL paged history rather than the period filter — the strip is a
+    // trend, and a period-scoped trend of one bar says nothing.
+    const monthly = [];
+    {
+      const ref = new Date(now);
+      const counts = new Map();
+      for (const e of allDoneEntries) {
+        if (!e.atMs) continue;
+        const dt = new Date(e.atMs);
+        const k = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}`;
+        counts.set(k, (counts.get(k) || 0) + 1);
+      }
+      for (let i = 5; i >= 0; i--) {
+        const dt = new Date(ref.getFullYear(), ref.getMonth() - i, 1);
+        const k = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}`;
+        monthly.push({
+          key: k,
+          label: `${AppView.REPORT_MONTHS[dt.getMonth()]} ${dt.getFullYear()}`,
+          shortLabel: AppView.REPORT_MONTHS[dt.getMonth()].slice(0, 3),
+          count: counts.get(k) || 0,
+        });
+      }
+    }
+    // #1264: true when any SHOWN proposal entry has no recorded merge
+    // time — the renderer keys the started-date disclaimer off this, so
+    // apps whose whole history has real merge dates never see it.
+    const anyUndatedMerge = doneEntries
+      .some((e) => e.kind === 'proposal' && !e.hasMergeDate);
     // With a period set, the filtered count IS the total — the server's
     // mergedTotal describes all history and would contradict the list.
     const doneTotal = since
@@ -6137,6 +6206,8 @@ const AppView = {
           votesRequired: num(it.votes_required),
           mergeWindowEndsAt: it.merge_window_ends_at || null,
           chatCount: num(it.chat_count),
+          // #1264: how long this has sat waiting on people.
+          waitingSinceMs: ts(it.created_at),
         });
         continue;
       }
@@ -6152,6 +6223,9 @@ const AppView = {
         checkLabel: AppView._reportCheckLabel(it.check_state),
         mergeWindowEndsAt: it.merge_window_ends_at || null,
         chatCount: num(it.chat_count),
+        // #1264: promotion is when the proposal entered review; rows
+        // promoted before that column existed fall back to created_at.
+        waitingSinceMs: ts(it.promoted_at || it.created_at),
       });
     }
 
@@ -6221,12 +6295,55 @@ const AppView = {
         category: (i.category && i.category.top) || null,
         at: i.updatedAt || null, atMs: ts(i.updatedAt),
         chatCount: num(i.chatCount),
+        // #1264: provenance — when the issue was filed, by whom, and
+        // whether anyone has put a bounty on it.
+        createdAtMs: ts(i.createdAt),
+        reporter: i.created_by_username || '',
+        bountyCount: num(i.bounty_count),
       });
     }
     const backlogTotal = backlogGroups.reduce((n, g) => n + g.issues.length, 0);
 
+    // ── Needs attention (#1264) ──────────────────────────────────────
+    // A deterministic cross-reference layer, NOT a fifth bucket — every
+    // entry here also appears in its own section below. Three rules only:
+    // failing/errored checks, a merge window that closed without a merge,
+    // and an auto-solve run waiting on a human answer.
+    const attention = [];
+    const windowClosed = (e) => {
+      const ends = e.mergeWindowEndsAt ? Date.parse(e.mergeWindowEndsAt) : NaN;
+      return Number.isFinite(ends) && ends <= now;
+    };
+    for (const e of review) {
+      const reasons = [];
+      if (e.checkState === 'failing') reasons.push('checks failing');
+      if (e.checkState === 'error') reasons.push('checks could not run');
+      if (e.status !== 'merging' && windowClosed(e)) {
+        reasons.push('merge window closed without a merge');
+      }
+      if (reasons.length) {
+        attention.push({ kind: 'proposal', title: e.title, prNumber: e.prNumber, reasons });
+      }
+    }
+    for (const e of gov) {
+      if (windowClosed(e)) {
+        attention.push({
+          kind: 'gov', title: e.title, issueNumber: e.issueNumber,
+          reasons: ['merge window closed without a merge'],
+        });
+      }
+    }
+    for (const e of workIssues) {
+      if (e.state === 'answer_needed') {
+        attention.push({
+          kind: 'issue', title: e.title, number: e.number, htmlUrl: e.htmlUrl,
+          reasons: ['an auto-solve run is waiting on an answer'],
+        });
+      }
+    }
+
     const shownDone = doneEntries.length;
-    return {
+    const model = {
       app: {
         name: (d.app && d.app.name) || 'This app',
         slug: (d.app && d.app.slug) || '',
@@ -6244,8 +6361,21 @@ const AppView = {
         awaitingReview: review.length + gov.length,
         beingWorkedOn: sessions.length + workIssues.length,
         backlog: backlogTotal,
+        // #1264: two more tiles — high-priority backlog straight off the
+        // priority groups; contributors is filled in below from `owners`
+        // so the tile and the Work-by-owner rows can never disagree.
+        backlogHighPriority:
+          (backlogGroups.find((g) => g.key === 'high') || { issues: [] }).issues.length,
+        contributors: 0,
         completedLast30,
+        completedPrev30,
       },
+      // #1264: six zero-filled months, oldest first, for the trend strip;
+      // `monthlyIncomplete` discloses when the 500-row pager (or its
+      // one-page fallback) may have under-counted the oldest months.
+      monthly,
+      monthlyIncomplete: !!d.mergedTruncated || !!d.mergedPartial,
+      attention,
       done: {
         groups: monthOrder,
         shown: shownDone,
@@ -6256,6 +6386,7 @@ const AppView = {
         truncated: since ? false : (!!d.mergedTruncated || doneTotal > shownDone),
         periodIncomplete,
         partial: !!d.mergedPartial,
+        anyUndatedMerge,
         empty: shownDone === 0,
       },
       // #1112: one model group still, but the renderer prints it as TWO
@@ -6276,6 +6407,12 @@ const AppView = {
         empty: backlogTotal === 0,
       },
     };
+    // #1264: owner stats are part of the model now — the "Work by owner"
+    // section renders with or without an AI summary — and the
+    // Contributors tile is their count, computed from the same object.
+    model.owners = AppView._buildOwnerStats(model);
+    model.summary.contributors = model.owners.length;
+    return model;
   },
 
   _reportGovKindLabel(kind) {
@@ -6325,11 +6462,14 @@ const AppView = {
   },
 
   // ── AI layer renderer: pure, DOM-free ───────────────────────────────
-  // ai (server report-ai summary or null) + ownerStats in → HTML out.
+  // ai (server report-ai summary or null) in → HTML out: highlights,
+  // narrative, risks and the provenance note. The per-owner section moved
+  // into the deterministic document (#1264, _renderReportOwnersHtml) —
+  // the AI's only contribution there is the optional blurb per owner.
   // Every LLM-authored string passes through escapeHtml and renders as
   // plain text — no markdown, no links, no attributes. Same hard rule as
   // the rest of the report: no live-card data-* hooks.
-  _renderReportAiHtml(ai, ownerStats) {
+  _renderReportAiHtml(ai) {
     const eh = (s) => escapeHtml(s == null ? '' : String(s));
     if (!ai) {
       return `<p class="ur-rpt-empty">No AI summary yet &mdash; use &ldquo;Generate AI summary&rdquo; above to add a plain-language overview, risks and per-person highlights.</p>`;
@@ -6372,17 +6512,33 @@ const AppView = {
     html += `<section class="ur-rpt-section" data-section="ai-risks">`
       + `<h2 class="ur-rpt-h2">Critical risks</h2>${riskBody}</section>`;
 
-    // Work by owner: deterministic counts + LLM blurb (only for owners
-    // the stats know; a blurb for anyone else was already dropped
-    // server-side by sanitizeReportSummary's known-usernames guard).
-    const blurbs = new Map((Array.isArray(ai.owners) ? ai.owners : [])
-      .map((o) => [o && o.username, o && o.blurb]));
+    const genMs = Date.parse(ai.generatedAt || '');
+    const when = Number.isFinite(genMs) ? new Date(genMs).toLocaleDateString() : '';
+    // The cache is one shared row per app, so say which period it was
+    // generated for — another member may have selected it.
+    const psMs = Date.parse(ai.periodStart || '');
+    const psLabel = Number.isFinite(psMs) ? new Date(psMs).toLocaleDateString() : '';
+    html += `<p class="ur-rpt-ai-note">AI-written summary${ai.model ? ` (${eh(ai.model)})` : ''}${when ? `, generated ${eh(when)}` : ''}${psLabel ? `, covering since ${eh(psLabel)}` : ''}. Verify against the lists below.</p>`;
+    return html;
+  },
+
+  // ── Work by owner: pure, DOM-free (#1264) ───────────────────────────
+  // A deterministic section of the report proper — the counts come from
+  // _buildOwnerStats (model.owners), so it renders with or without an AI
+  // summary. When a summary exists, its per-owner blurb (already filtered
+  // server-side to known usernames by sanitizeReportSummary) rides along
+  // as prose under the counts. Same hard markup rules as the rest of the
+  // report: escaped text, no live-card data-* hooks.
+  _renderReportOwnersHtml(ownerStats, ai) {
+    const eh = (s) => escapeHtml(s == null ? '' : String(s));
     const stats = Array.isArray(ownerStats) ? ownerStats : [];
-    let ownerBody = '';
+    const blurbs = new Map((ai && Array.isArray(ai.owners) ? ai.owners : [])
+      .map((o) => [o && o.username, o && o.blurb]));
+    let body = '';
     if (!stats.length) {
-      ownerBody = `<p class="ur-rpt-empty">No attributable work yet.</p>`;
+      body = `<p class="ur-rpt-empty">No attributable work yet.</p>`;
     } else {
-      ownerBody = `<ul class="ur-rpt-list">${stats.map((s) => {
+      body = `<ul class="ur-rpt-list">${stats.map((s) => {
         const parts = [];
         if (s.completed) parts.push(`${s.completed} completed`);
         if (s.inReview) parts.push(`${s.inReview} awaiting review`);
@@ -6396,17 +6552,8 @@ const AppView = {
           + `</li>`;
       }).join('')}</ul>`;
     }
-    html += `<section class="ur-rpt-section" data-section="ai-owners">`
-      + `<h2 class="ur-rpt-h2">Work by owner</h2>${ownerBody}</section>`;
-
-    const genMs = Date.parse(ai.generatedAt || '');
-    const when = Number.isFinite(genMs) ? new Date(genMs).toLocaleDateString() : '';
-    // The cache is one shared row per app, so say which period it was
-    // generated for — another member may have selected it.
-    const psMs = Date.parse(ai.periodStart || '');
-    const psLabel = Number.isFinite(psMs) ? new Date(psMs).toLocaleDateString() : '';
-    html += `<p class="ur-rpt-ai-note">AI-written summary${ai.model ? ` (${eh(ai.model)})` : ''}${when ? `, generated ${eh(when)}` : ''}${psLabel ? `, covering since ${eh(psLabel)}` : ''}. Verify against the lists below.</p>`;
-    return html;
+    return `<section class="ur-rpt-section" data-section="owners">`
+      + `<h2 class="ur-rpt-h2">Work by owner (${eh(stats.length)})</h2>${body}</section>`;
   },
 
   // ── Previous reports (locked snapshots): pure, DOM-free ─────────────
@@ -6482,6 +6629,14 @@ const AppView = {
     '.ur-rpt-num{font-variant-numeric:tabular-nums;color:var(--rpt-muted);font-weight:400;}',
     '.ur-rpt-tag{display:inline-block;font-size:0.6875rem;font-weight:600;border:1px solid var(--rpt-line);border-radius:0.25rem;padding:0 0.3125rem;margin-left:0.25rem;color:var(--rpt-muted);}',
     '.ur-rpt-empty{font-size:0.8125rem;color:var(--rpt-faint);font-style:italic;margin:0.5rem 0;}',
+    // #1264: the "Completed by month" trend strip — label, proportional
+    // bar (inline width %), count. Plain scoped CSS like everything else.
+    '.ur-rpt-trend-list{list-style:none;margin:0.5rem 0 0;padding:0;}',
+    '.ur-rpt-trend-row{display:flex;align-items:center;gap:0.5rem;padding:0.125rem 0;}',
+    '.ur-rpt-trend-label{flex:0 0 2.5rem;font-size:0.75rem;color:var(--rpt-muted);}',
+    '.ur-rpt-trend-bar{flex:1 1 auto;height:0.5rem;border-radius:0.25rem;background:var(--rpt-card);border:1px solid var(--rpt-line);overflow:hidden;display:block;}',
+    '.ur-rpt-trend-fill{display:block;height:100%;background:var(--rpt-accent);border-radius:0.25rem;}',
+    '.ur-rpt-trend-n{flex:0 0 2rem;text-align:right;font-size:0.75rem;font-variant-numeric:tabular-nums;color:var(--rpt-muted);}',
     '.ur-rpt-ai-p{margin:0.75rem 0 0;max-width:44rem;}',
     '.ur-rpt-ai-note{font-size:0.75rem;color:var(--rpt-faint);font-style:italic;margin:-0.75rem 0 1.75rem;}',
     '.ur-rpt-bullets{list-style:disc;margin:0.75rem 0 0;padding-left:1.25rem;}',
@@ -6506,6 +6661,7 @@ const AppView = {
     'body{background:#fff;}',
     '.ur-rpt{max-width:none;padding:0;font-size:11pt;}',
     '.ur-rpt-section{break-inside:auto;}',
+    '.ur-rpt-trend{break-inside:avoid;}',
     '.ur-rpt-row{break-inside:avoid;}',
     '.ur-rpt-h2,.ur-rpt-h3{break-after:avoid;}',
     '.ur-rpt a{color:inherit;text-decoration:none;}',
@@ -6585,21 +6741,84 @@ const AppView = {
       + stat(sum.awaitingReview || 0, 'Awaiting review')
       + stat(sum.beingWorkedOn || 0, 'Being worked on')
       + stat(sum.backlog || 0, 'Backlog')
+      + stat(sum.contributors || 0, 'Contributors')
+      + stat(sum.backlogHighPriority || 0, 'High priority backlog')
       + `</ul>`;
     // With a period active, the Completed tile already answers "how much
-    // since the start date", so the 30-day line is dropped.
+    // since the start date", so the momentum line is dropped. #1264: the
+    // bare 30-day count became a comparison against the 30 days before.
     if (!periodMs) {
-      html += `<p class="ur-rpt-recent">${eh(sum.completedLast30 || 0)} completed in the last 30 days.</p>`;
+      const last30 = sum.completedLast30 || 0;
+      const prev30 = sum.completedPrev30 || 0;
+      const pace = last30 > prev30 ? 'up' : (last30 < prev30 ? 'down' : 'steady');
+      html += `<p class="ur-rpt-recent">${eh(last30)} completed in the last 30 days vs ${eh(prev30)} in the 30 days before that &mdash; pace is ${pace}.</p>`;
     }
 
-    // ── AI layer (report-ai): narrative → risks → by-owner ────────────
+    // ── Completed by month (#1264) ────────────────────────────────────
+    // Six zero-filled months as label + proportional bar + count. Plain
+    // spans with an inline width — no script, no external asset — so the
+    // strip survives the standalone export and the sandboxed snapshot CSP.
+    // Skipped entirely when all six months are zero: an all-empty chart
+    // says less than no chart.
+    const monthly = Array.isArray(m.monthly) ? m.monthly : [];
+    const monthlyMax = monthly.reduce((x, mo) => Math.max(x, (mo && mo.count) || 0), 0);
+    if (monthlyMax > 0) {
+      const bars = monthly.map((mo) => {
+        const count = (mo && mo.count) || 0;
+        const pct = Math.round((count / monthlyMax) * 100);
+        return `<li class="ur-rpt-trend-row">`
+          + `<span class="ur-rpt-trend-label">${eh(mo.shortLabel || mo.label)}</span>`
+          + `<span class="ur-rpt-trend-bar"><span class="ur-rpt-trend-fill" style="width:${pct}%"></span></span>`
+          + `<span class="ur-rpt-trend-n">${eh(count)}</span>`
+          + `</li>`;
+      }).join('');
+      html += `<section class="ur-rpt-section ur-rpt-trend" data-section="monthly">`
+        + `<h2 class="ur-rpt-h2">Completed by month</h2>`
+        + `<ul class="ur-rpt-trend-list">${bars}</ul>`
+        + (m.monthlyIncomplete
+          ? `<p class="ur-rpt-sub">Not all history could be loaded, so the oldest months may be incomplete.</p>`
+          : '')
+        + `</section>`;
+    }
+
+    // ── Needs attention (#1264) ───────────────────────────────────────
+    // Deterministic cross-references into the sections below. The empty
+    // state is explicit so a reader knows the absence is deliberate.
+    const attn = Array.isArray(m.attention) ? m.attention : [];
+    let attnBody = '';
+    if (!attn.length) {
+      attnBody = `<p class="ur-rpt-empty">Nothing needs attention right now.</p>`;
+    } else {
+      attnBody = rows(attn.map((e) => `<li class="ur-rpt-row">`
+        + `<div class="ur-rpt-title">${eh(e.title)}</div>`
+        + metaLine([
+          e.prNumber != null
+            ? `<span class="ur-rpt-num">${link(app.repoUrl ? `${app.repoUrl}/pull/${e.prNumber}` : '', `PR #${e.prNumber}`)}</span>`
+            : '',
+          e.number != null
+            ? `<span class="ur-rpt-num">${link(e.htmlUrl, `#${e.number}`)}</span>`
+            : '',
+          e.issueNumber != null
+            ? `<span class="ur-rpt-num">${link(app.repoUrl ? `${app.repoUrl}/issues/${e.issueNumber}` : '', `#${e.issueNumber}`)}</span>`
+            : '',
+          eh((e.reasons || []).join(', ')),
+        ])
+        + `</li>`));
+    }
+    html += `<section class="ur-rpt-section" data-section="attention">`
+      + `<h2 class="ur-rpt-h2">Needs attention</h2>${attnBody}</section>`;
+
+    // ── AI layer (report-ai): highlights → narrative → risks ──────────
     // Injected only when the caller passes a summary (or an explicit null
     // for the invite line); legacy callers that omit `ai` entirely get
     // the deterministic document unchanged, which is also what the
     // standalone export does when no summary exists yet.
     if (o.ai !== undefined) {
-      html += AppView._renderReportAiHtml(o.ai, AppView._buildOwnerStats(m));
+      html += AppView._renderReportAiHtml(o.ai);
     }
+
+    // ── Work by owner (#1264: deterministic, AI blurbs optional) ──────
+    html += AppView._renderReportOwnersHtml(m.owners, o.ai || null);
 
     // ── Done ──────────────────────────────────────────────────────────
     const done = m.done || {};
@@ -6608,7 +6827,7 @@ const AppView = {
       doneBody = `<p class="ur-rpt-empty">Nothing has been completed yet.</p>`;
     } else {
       for (const g of (done.groups || [])) {
-        doneBody += `<h3 class="ur-rpt-h3">${eh(g.label)}</h3>`;
+        doneBody += `<h3 class="ur-rpt-h3">${eh(g.label)} (${eh((g.entries || []).length)})</h3>`;
         doneBody += rows((g.entries || []).map((e) => {
           const head = e.kind === 'close-issue'
             ? `Issue ${link(app.repoUrl && e.issueNumber ? `${app.repoUrl}/issues/${e.issueNumber}` : '', `#${e.issueNumber}`)} closed by vote`
@@ -6616,12 +6835,25 @@ const AppView = {
           const pr = (e.kind !== 'close-issue' && e.prNumber != null)
             ? `<span class="ur-rpt-num">${link(app.repoUrl ? `${app.repoUrl}/pull/${e.prNumber}` : '', `PR #${e.prNumber}`)}</span>`
             : '';
+          // #1264: provenance tags ride on the title, like the board's
+          // own chips — an imported PR and/or the external agent used.
+          const tags = (e.imported
+            ? `<span class="ur-rpt-tag">Imported PR${e.importedAuthor ? ` by ${eh(e.importedAuthor)}` : ''}</span>`
+            : '')
+            + (e.externalAgent ? `<span class="ur-rpt-tag">built with ${eh(e.externalAgent)}</span>` : '');
+          // #1264: which issue(s) this change closed.
+          const closes = (e.linkedIssues && e.linkedIssues.length)
+            ? `closes ${e.linkedIssues.map((n) => link(app.repoUrl ? `${app.repoUrl}/issues/${n}` : '', `#${n}`)).join(', ')}`
+            : '';
           return `<li class="ur-rpt-row">`
-            + `<div class="ur-rpt-title">${e.kind === 'close-issue' ? head : eh(e.title)}</div>`
+            + `<div class="ur-rpt-title">${e.kind === 'close-issue' ? head : eh(e.title)}${tags}</div>`
             + metaLine([
               pr,
               e.author ? eh(e.author) : '',
               voteText(e),
+              closes,
+              e.kudos ? `${eh(e.kudos)} kudos` : '',
+              e.chatCount ? `${eh(e.chatCount)} in discussion` : '',
               `${eh(e.dateLabel)} ${eh(dateOnly(e.atMs))}`,
             ])
             + `</li>`;
@@ -6637,11 +6869,16 @@ const AppView = {
       if (done.partial) {
         notes.push('The full history could not be loaded, so this section shows only the most recent page.');
       }
-      notes.push('Completed items are dated by when the work was started — the platform does not record a merge time.');
-      doneBody += `<p class="ur-rpt-sub">${notes.map(eh).join(' ')}</p>`;
+      // #1264: the platform records merge times now — only rows merged
+      // before that existed still fall back to their start date, so the
+      // disclaimer renders only when such a row is actually on screen.
+      if (done.anyUndatedMerge) {
+        notes.push('Items without a recorded merge time are dated by when the work was started.');
+      }
+      if (notes.length) doneBody += `<p class="ur-rpt-sub">${notes.map(eh).join(' ')}</p>`;
     }
     html += `<section class="ur-rpt-section" data-section="done">`
-      + `<h2 class="ur-rpt-h2">Done &mdash; completed work</h2>${doneBody}</section>`;
+      + `<h2 class="ur-rpt-h2">Done &mdash; completed work (${eh(done.total || 0)})</h2>${doneBody}</section>`;
 
     // ── Awaiting review ───────────────────────────────────────────────
     // #1112: split out of the old single "In progress" H2. These two lists
@@ -6649,12 +6886,13 @@ const AppView = {
     // work still happening. Printing both under one heading is what made a
     // reader unable to tell whether anything needed them.
     const ip = m.inProgress || {};
+    const arCount = (ip.review || []).length + (ip.gov || []).length;
     let arBody = '';
     if (ip.emptyAwaiting) {
       arBody = `<p class="ur-rpt-empty">Nothing is waiting for review or a vote.</p>`;
     } else {
       if ((ip.review || []).length) {
-        arBody += `<h3 class="ur-rpt-h3">Awaiting review or vote</h3>`;
+        arBody += `<h3 class="ur-rpt-h3">Awaiting review or vote (${eh(ip.review.length)})</h3>`;
         arBody += rows(ip.review.map((e) => `<li class="ur-rpt-row">`
           + `<div class="ur-rpt-title">${eh(e.title)}</div>`
           + metaLine([
@@ -6663,13 +6901,15 @@ const AppView = {
               : '',
             e.author ? eh(e.author) : '',
             voteText(e),
+            e.waitingSinceMs ? `waiting since ${eh(dateOnly(e.waitingSinceMs))}` : '',
             e.checkLabel ? eh(e.checkLabel) : '',
+            e.chatCount ? `${eh(e.chatCount)} in discussion` : '',
             e.status === 'merging' ? 'merging' : countdown(e.mergeWindowEndsAt),
           ])
           + `</li>`));
       }
       if ((ip.gov || []).length) {
-        arBody += `<h3 class="ur-rpt-h3">Governance proposals</h3>`;
+        arBody += `<h3 class="ur-rpt-h3">Governance proposals (${eh(ip.gov.length)})</h3>`;
         arBody += rows(ip.gov.map((e) => `<li class="ur-rpt-row">`
           + `<div class="ur-rpt-title">${eh(e.title)}<span class="ur-rpt-tag">${eh(e.govKindLabel)}</span></div>`
           + metaLine([
@@ -6678,47 +6918,52 @@ const AppView = {
               : '',
             e.author ? eh(e.author) : '',
             voteText(e),
+            e.waitingSinceMs ? `waiting since ${eh(dateOnly(e.waitingSinceMs))}` : '',
+            e.chatCount ? `${eh(e.chatCount)} in discussion` : '',
             countdown(e.mergeWindowEndsAt),
           ])
           + `</li>`));
       }
     }
     html += `<section class="ur-rpt-section" data-section="awaiting-review">`
-      + `<h2 class="ur-rpt-h2">Awaiting review</h2>${arBody}</section>`;
+      + `<h2 class="ur-rpt-h2">Awaiting review (${eh(arCount)})</h2>${arBody}</section>`;
 
     // ── Underway ──────────────────────────────────────────────────────
     // Work still happening: live sessions plus the issues somebody or
     // something is on. Each issue row names its exact state rather than the
     // old catch-all "in progress" note.
+    const uwCount = (ip.sessions || []).length + (ip.issues || []).length;
     let ipBody = '';
     if (ip.emptyWork) {
       ipBody = `<p class="ur-rpt-empty">Nothing is underway.</p>`;
     } else {
       if ((ip.sessions || []).length) {
-        ipBody += `<h3 class="ur-rpt-h3">Being worked on right now</h3>`;
+        ipBody += `<h3 class="ur-rpt-h3">Being worked on right now (${eh(ip.sessions.length)})</h3>`;
         ipBody += rows(ip.sessions.map((e) => `<li class="ur-rpt-row">`
           + `<div class="ur-rpt-title">${eh(e.title)}${e.busy ? `<span class="ur-rpt-tag">agent running</span>` : ''}</div>`
           + metaLine([
             e.owner ? eh(e.owner) : '',
             e.mine ? 'your session' : 'shared session',
             e.atMs ? `last active ${eh(dateOnly(e.atMs))}` : '',
+            e.chatCount ? `${eh(e.chatCount)} in discussion` : '',
           ])
           + `</li>`));
       }
       if ((ip.issues || []).length) {
-        ipBody += `<h3 class="ur-rpt-h3">Issues with work underway</h3>`;
+        ipBody += `<h3 class="ur-rpt-h3">Issues with work underway (${eh(ip.issues.length)})</h3>`;
         ipBody += rows(ip.issues.map((e) => `<li class="ur-rpt-row" data-work-state="${ea(e.state || '')}">`
           + `<div class="ur-rpt-title">${eh(e.title)}</div>`
           + metaLine([
             e.number != null ? `<span class="ur-rpt-num">${link(e.htmlUrl, `#${e.number}`)}</span>` : '',
             e.people && e.people.length ? eh(e.people.join(', ')) : '',
             e.stateLabel ? eh(e.stateLabel) : '',
+            e.chatCount ? `${eh(e.chatCount)} in discussion` : '',
           ])
           + `</li>`));
       }
     }
     html += `<section class="ur-rpt-section" data-section="inprogress">`
-      + `<h2 class="ur-rpt-h2">Underway</h2>${ipBody}</section>`;
+      + `<h2 class="ur-rpt-h2">Underway (${eh(uwCount)})</h2>${ipBody}</section>`;
 
     // ── Backlog ───────────────────────────────────────────────────────
     const bl = m.backlog || {};
@@ -6727,11 +6972,16 @@ const AppView = {
       blBody = `<p class="ur-rpt-empty">The backlog is empty.</p>`;
     } else {
       for (const g of (bl.groups || [])) {
-        blBody += `<h3 class="ur-rpt-h3">${eh(g.label)}</h3>`;
+        blBody += `<h3 class="ur-rpt-h3">${eh(g.label)} (${eh(g.issues.length)})</h3>`;
         blBody += rows(g.issues.map((e) => `<li class="ur-rpt-row">`
-          + `<div class="ur-rpt-title">${eh(e.title)}</div>`
+          + `<div class="ur-rpt-title">${eh(e.title)}${e.bountyCount
+            ? `<span class="ur-rpt-tag">${eh(e.bountyCount)} ${e.bountyCount === 1 ? 'bounty' : 'bounties'}</span>`
+            : ''}</div>`
           + metaLine([
             e.number != null ? `<span class="ur-rpt-num">${link(e.htmlUrl, `#${e.number}`)}</span>` : '',
+            e.createdAtMs
+              ? `filed ${eh(dateOnly(e.createdAtMs))}${e.reporter ? ` by ${eh(e.reporter)}` : ''}`
+              : (e.reporter ? `filed by ${eh(e.reporter)}` : ''),
             e.assignee ? eh(e.assignee) : '',
             e.category ? eh(e.category) : '',
             e.atMs ? `active ${eh(dateOnly(e.atMs))}` : '',
@@ -6746,7 +6996,7 @@ const AppView = {
       }
     }
     html += `<section class="ur-rpt-section" data-section="backlog">`
-      + `<h2 class="ur-rpt-h2">Backlog</h2>${blBody}</section>`;
+      + `<h2 class="ur-rpt-h2">Backlog (${eh(bl.total || 0)})</h2>${blBody}</section>`;
 
     // ── Footer ────────────────────────────────────────────────────────
     html += `<footer class="ur-rpt-foot">`

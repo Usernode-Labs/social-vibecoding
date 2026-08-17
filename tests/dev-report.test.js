@@ -306,7 +306,9 @@ test('Done groups into months, newest month first, dated by created_at', () => {
     ['August 2026', 'July 2026', 'June 2026']);
   // Within a month, newest first (_bucketDevItems' own sort).
   assert.deepEqual(titles(m.done.groups[0].entries), ['Merged 302', 'Merged 300']);
-  // Every proposal entry is labelled "Started" — there is no merge timestamp.
+  // These fixtures carry no merged_at (legacy rows), so the entries keep
+  // the created_at date labelled "Started" — see the #1264 tests below
+  // for the merged_at-preferred path.
   assert.equal(m.done.groups[0].entries[0].dateLabel, 'Started');
 });
 
@@ -508,8 +510,9 @@ test('the report splits Awaiting review from Underway, in that order', () => {
   assert.ok(at('done') < at('awaiting-review'), 'Done first');
   assert.ok(at('awaiting-review') < at('inprogress'), 'Awaiting review before Underway');
   assert.ok(at('inprogress') < at('backlog'), 'Backlog last');
-  assert.match(html, /data-section="awaiting-review"><h2 class="ur-rpt-h2">Awaiting review<\/h2>/);
-  assert.match(html, /data-section="inprogress"><h2 class="ur-rpt-h2">Underway<\/h2>/);
+  // #1264: the H2s carry item counts now.
+  assert.match(html, /data-section="awaiting-review"><h2 class="ur-rpt-h2">Awaiting review \(2\)<\/h2>/);
+  assert.match(html, /data-section="inprogress"><h2 class="ur-rpt-h2">Underway \(2\)<\/h2>/);
   assert.ok(!/<h2 class="ur-rpt-h2">In progress<\/h2>/.test(html), 'the old H2 is gone');
 
   // The proposal and the governance row are in the FIRST section; the session
@@ -693,19 +696,18 @@ test('_renderReportAiHtml escapes LLM text and orders sections', () => {
     risks: [{ title: 'Risk <b>one</b>', detail: 'Bad & scary', severity: 'high' }],
     owners: [{ username: 'alice', blurb: 'Did <i>things</i>' }],
     model: 'claude-haiku-4-5', generatedAt: '2026-08-10T00:00:00Z', stale: false,
-  }, [{ username: 'alice', completed: 2, inReview: 1, inProgress: 0, backlog: 0 }]);
+  });
   assert.ok(!html.includes('<script>'));
   assert.ok(html.includes('&lt;script&gt;'));
   assert.ok(html.includes('Bad &amp; scary'));
   assert.ok(html.includes('ur-rpt-risk-sev--high'));
-  // narrative before risks before owners
+  // narrative before risks; the owners section moved into the
+  // deterministic document (#1264) and no longer renders here.
   const iN = html.indexOf('data-section="ai-summary"');
   const iR = html.indexOf('data-section="ai-risks"');
-  const iO = html.indexOf('data-section="ai-owners"');
-  assert.ok(iN > -1 && iR > iN && iO > iR, 'sections must appear in order');
-  // deterministic counts rendered alongside the blurb
-  assert.ok(html.includes('2 completed'));
-  assert.ok(html.includes('Did &lt;i&gt;things&lt;/i&gt;'));
+  assert.ok(iN > -1 && iR > iN, 'sections must appear in order');
+  assert.ok(!html.includes('data-section="ai-owners"'),
+    'owners render in the deterministic document, not the AI layer (#1264)');
   // no live-card hooks
   for (const attr of ['data-issue-row', 'data-proposal-row', 'data-gov-row', 'data-session-chip']) {
     assert.ok(!html.includes(attr), `report AI markup must not carry ${attr}`);
@@ -998,4 +1000,293 @@ test('_buildDiscordMessage stays under 1,900 characters, trimming bullets first'
   // The numbers line and title survive the trim.
   assert.match(msg, /\*\*By the numbers\*\*/);
   assert.match(msg, /\*\*Acme — progress update\*\*/);
+});
+
+// ── #1264: the more descriptive report ──────────────────────────────────
+// Six summary tiles, the momentum comparison, the zero-filled monthly
+// strip, the deterministic Needs-attention layer, always-on Work by
+// owner, merged_at-preferred dating, per-line detail and heading counts.
+
+test('summary strip renders six tiles including Contributors and High priority backlog (#1264)', () => {
+  const AppView = makeAppView();
+  const m = build(AppView, {
+    issues: [issue({ number: 1, pri: 'high' }), issue({ number: 2, pri: 'high' }), issue({ number: 3 })],
+    proposals: [prop({ id: 100, username: 'alice' })],
+    merged: [mergedRow({ id: 300, username: 'carol' })],
+    mergedTotal: 1,
+  });
+  assert.equal(m.summary.backlogHighPriority, 2);
+  assert.equal(m.summary.contributors, m.owners.length);
+  assert.equal(m.summary.contributors, 2, 'alice (in review) + carol (completed)');
+  const html = AppView._renderReportHtml(m, { standalone: false });
+  assert.ok(html.includes('Contributors'));
+  assert.ok(html.includes('High priority backlog'));
+  assert.equal((html.match(/ur-rpt-stat-l/g) || []).length, 6, 'exactly six tiles');
+});
+
+test('momentum line compares the last 30 days against the 30 before (#1264)', () => {
+  const AppView = makeAppView();
+  const mUp = build(AppView, {
+    merged: [
+      mergedRow({ id: 300, created_at: daysAgo(5) }),
+      mergedRow({ id: 301, created_at: daysAgo(10) }),
+      mergedRow({ id: 302, created_at: daysAgo(45) }),
+    ],
+    mergedTotal: 3,
+  });
+  assert.equal(mUp.summary.completedLast30, 2);
+  assert.equal(mUp.summary.completedPrev30, 1);
+  const up = AppView._renderReportHtml(mUp, { standalone: false });
+  assert.match(up, /2 completed in the last 30 days vs 1 in the 30 days before that/);
+  assert.match(up, /pace is up/);
+
+  const mDown = build(AppView, {
+    merged: [mergedRow({ id: 300, created_at: daysAgo(45) })],
+    mergedTotal: 1,
+  });
+  const down = AppView._renderReportHtml(mDown, { standalone: false });
+  assert.match(down, /pace is down/);
+
+  const mSteady = build(AppView, {
+    merged: [
+      mergedRow({ id: 300, created_at: daysAgo(5) }),
+      mergedRow({ id: 301, created_at: daysAgo(45) }),
+    ],
+    mergedTotal: 2,
+  });
+  const steady = AppView._renderReportHtml(mSteady, { standalone: false });
+  assert.match(steady, /pace is steady/);
+
+  // Period mode drops the line exactly like the old 30-day count did.
+  const scoped = AppView._renderReportHtml(
+    buildSince(AppView, { merged: [mergedRow({ id: 300, created_at: daysAgo(2) })], mergedTotal: 1 },
+      Date.parse('2026-08-01T00:00:00Z')),
+    { standalone: false }
+  );
+  assert.ok(!/completed in the last 30 days/.test(scoped));
+});
+
+test('monthly buckets: six zero-filled months, oldest first, rendered as bars (#1264)', () => {
+  const AppView = makeAppView();
+  const m = build(AppView, {
+    merged: [
+      mergedRow({ id: 300, created_at: '2026-07-01T00:00:00Z', merged_at: '2026-08-02T10:00:00Z' }),
+      mergedRow({ id: 301, created_at: '2026-07-01T00:00:00Z', merged_at: '2026-08-05T10:00:00Z' }),
+      mergedRow({ id: 302, created_at: '2026-04-01T00:00:00Z', merged_at: '2026-05-05T10:00:00Z' }),
+    ],
+    mergedTotal: 3,
+  });
+  assert.equal(m.monthly.length, 6);
+  assert.deepEqual(Array.from(m.monthly, (x) => x.key),
+    ['2026-03', '2026-04', '2026-05', '2026-06', '2026-07', '2026-08']);
+  assert.deepEqual(Array.from(m.monthly, (x) => x.count), [0, 0, 1, 0, 0, 2],
+    'counts follow the MERGE month, zero-filled');
+  assert.equal(m.monthly[5].label, 'August 2026');
+  assert.equal(m.monthly[5].shortLabel, 'Aug');
+  const html = AppView._renderReportHtml(m, { standalone: false });
+  assert.match(html, /data-section="monthly"/);
+  assert.match(html, /Completed by month/);
+  assert.match(html, /style="width:100%"/);
+  assert.match(html, /style="width:50%"/);
+  assert.ok(!/oldest months may be incomplete/.test(html));
+
+  // All-zero six months → the strip is omitted entirely.
+  const empty = AppView._renderReportHtml(build(AppView, { merged: [], mergedTotal: 0 }), { standalone: false });
+  assert.ok(!empty.includes('data-section="monthly"'));
+
+  // Truncated history discloses that the oldest months may under-count.
+  const trunc = AppView._renderReportHtml(build(AppView, {
+    merged: [mergedRow({ id: 300, merged_at: daysAgo(2) })], mergedTotal: 900, mergedTruncated: true,
+  }), { standalone: false });
+  assert.equal(build(AppView, {
+    merged: [mergedRow({ id: 300, merged_at: daysAgo(2) })], mergedTotal: 900, mergedTruncated: true,
+  }).monthlyIncomplete, true);
+  assert.match(trunc, /oldest months may be incomplete/);
+});
+
+test('Done entries prefer merged_at ("Merged"), fall back to created_at ("Started") (#1264)', () => {
+  const AppView = makeAppView();
+  const m = build(AppView, {
+    merged: [
+      mergedRow({ id: 300, pr_title: 'Dated one', created_at: '2026-07-01T10:00:00Z', merged_at: '2026-08-03T10:00:00Z' }),
+      mergedRow({ id: 301, pr_title: 'Legacy one', created_at: '2026-07-02T10:00:00Z' }),
+    ],
+    mergedTotal: 2,
+  });
+  const entries = Array.from(m.done.groups || []).flatMap((g) => Array.from(g.entries));
+  const dated = entries.find((e) => e.title === 'Dated one');
+  const legacy = entries.find((e) => e.title === 'Legacy one');
+  assert.equal(dated.dateLabel, 'Merged');
+  assert.equal(dated.atMs, Date.parse('2026-08-03T10:00:00Z'));
+  assert.equal(dated.hasMergeDate, true);
+  assert.equal(legacy.dateLabel, 'Started');
+  assert.equal(legacy.atMs, Date.parse('2026-07-02T10:00:00Z'));
+  assert.equal(legacy.hasMergeDate, false);
+  // Month grouping follows the effective date: merged row in August,
+  // legacy row under its July start.
+  assert.deepEqual(Array.from(m.done.groups, (g) => g.key), ['2026-08', '2026-07']);
+  // The disclaimer renders only because a shown row lacks a merge time.
+  assert.equal(m.done.anyUndatedMerge, true);
+  const html = AppView._renderReportHtml(m, { standalone: false });
+  assert.match(html, /Items without a recorded merge time are dated by when the work was started\./);
+
+  const allDated = build(AppView, {
+    merged: [mergedRow({ id: 300, merged_at: daysAgo(1) })], mergedTotal: 1,
+  });
+  assert.equal(allDated.done.anyUndatedMerge, false);
+  const html2 = AppView._renderReportHtml(allDated, { standalone: false });
+  assert.ok(!html2.includes('dated by when the work was started'));
+
+  // The period filter follows the merge date too: created before the
+  // start but merged after it is INSIDE the period.
+  const scoped = buildSince(AppView, {
+    merged: [mergedRow({ id: 300, created_at: '2026-07-01T00:00:00Z', merged_at: '2026-08-03T00:00:00Z' })],
+    mergedTotal: 1,
+  }, Date.parse('2026-08-01T00:00:00Z'));
+  assert.equal(scoped.summary.completed, 1);
+});
+
+test('Needs attention flags failing checks, closed windows and answer-needed issues (#1264)', () => {
+  const AppView = makeAppView();
+  const m = build(AppView, {
+    proposals: [
+      prop({ id: 100, pr_title: 'Failing one', check_state: 'failing' }),
+      prop({ id: 101, pr_title: 'Errored one', check_state: 'error' }),
+      prop({ id: 102, pr_title: 'Window closed one', merge_window_ends_at: daysAgo(1) }),
+      prop({ id: 103, pr_title: 'Healthy one', check_state: 'passing', merge_window_ends_at: daysAgo(-1) }),
+      prop({ id: 104, pr_title: 'Merging one', status: 'merging', merge_window_ends_at: daysAgo(1) }),
+    ],
+    gov: [govRow({ id: 200, kind: 'rename', payload: { newName: 'Acme Two' }, merge_window_ends_at: daysAgo(2) })],
+    issues: [issue({ number: 5, title: 'Question issue', headless: { status: 'ready', outcome: 'question' } })],
+    merged: [], mergedTotal: 0,
+  });
+  const names = Array.from(m.attention, (e) => e.title);
+  assert.ok(names.includes('Failing one'));
+  assert.ok(names.includes('Errored one'));
+  assert.ok(names.includes('Window closed one'));
+  assert.ok(names.includes('Acme Two'), 'a governance row with a closed window qualifies');
+  assert.ok(names.includes('Question issue'));
+  assert.ok(!names.includes('Healthy one'));
+  assert.ok(!names.includes('Merging one'), 'a merging proposal is not stuck');
+  const reasons = Object.fromEntries(Array.from(m.attention, (e) => [e.title, Array.from(e.reasons).join(', ')]));
+  assert.match(reasons['Failing one'], /checks failing/);
+  assert.match(reasons['Errored one'], /checks could not run/);
+  assert.match(reasons['Window closed one'], /merge window closed without a merge/);
+  assert.match(reasons['Question issue'], /waiting on an answer/);
+  const html = AppView._renderReportHtml(m, { standalone: false });
+  assert.match(html, /data-section="attention"><h2 class="ur-rpt-h2">Needs attention<\/h2>/);
+  assert.ok(html.includes('checks failing'));
+});
+
+test('Needs attention renders its explicit empty state between summary and the AI layer (#1264)', () => {
+  const AppView = makeAppView();
+  const m = build(AppView, { merged: [mergedRow({ id: 300 })], mergedTotal: 1 });
+  assert.deepEqual(Array.from(m.attention), []);
+  const html = AppView._renderReportHtml(m, {
+    standalone: false,
+    ai: { narrative: 'N.', risks: [], owners: [], model: 'm', generatedAt: '2026-08-10T00:00:00Z', stale: false },
+  });
+  assert.match(html, /Nothing needs attention right now\./);
+  const idx = (s) => html.indexOf(s);
+  assert.ok(idx('ur-rpt-summary') < idx('data-section="attention"'), 'summary before attention');
+  assert.ok(idx('data-section="attention"') < idx('data-section="ai-summary"'), 'attention before the AI layer');
+  assert.ok(idx('data-section="ai-summary"') < idx('data-section="owners"'), 'AI layer before owners');
+  assert.ok(idx('data-section="owners"') < idx('data-section="done"'), 'owners directly before Done');
+});
+
+test('Work by owner renders without an AI summary and folds blurbs in when present (#1264)', () => {
+  const AppView = makeAppView();
+  const m = build(AppView, {
+    proposals: [prop({ id: 100, username: 'alice' })],
+    merged: [mergedRow({ id: 300, username: 'carol' })],
+    mergedTotal: 1,
+  });
+  const plain = AppView._renderReportHtml(m, { standalone: false });
+  assert.match(plain, /data-section="owners"/);
+  assert.match(plain, /Work by owner \(2\)/);
+  assert.match(plain, /1 completed/);
+  assert.ok(!plain.includes('data-section="ai-owners"'));
+  const withAi = AppView._renderReportHtml(m, {
+    standalone: false,
+    ai: { narrative: 'n', risks: [], owners: [{ username: 'carol', blurb: 'Did <i>things</i>' }] },
+  });
+  assert.ok(withAi.includes('Did &lt;i&gt;things&lt;/i&gt;'));
+  assert.ok(!withAi.includes('<i>things</i>'));
+  // The empty state still reads deliberately.
+  const none = AppView._renderReportHtml(build(AppView, {}), { standalone: false });
+  assert.match(none, /No attributable work yet\./);
+});
+
+test('Done rows carry kudos, discussion, closes-links and provenance tags (#1264)', () => {
+  const AppView = makeAppView();
+  const m = build(AppView, {
+    merged: [mergedRow({
+      id: 300, pr_title: 'Rich change', kudos_count: 3, chat_count: 5,
+      linked_issues: [12, 13], source: 'imported', imported_pr_author: 'octo<cat>',
+      external_agent: 'codex', merged_at: daysAgo(1),
+    })],
+    mergedTotal: 1,
+  });
+  const e = m.done.groups[0].entries[0];
+  assert.equal(e.kudos, 3);
+  assert.equal(e.chatCount, 5);
+  assert.deepEqual(Array.from(e.linkedIssues), [12, 13]);
+  assert.equal(e.imported, true);
+  assert.equal(e.externalAgent, 'codex');
+  const html = AppView._renderReportHtml(m, { standalone: false });
+  assert.match(html, /3 kudos/);
+  assert.match(html, /5 in discussion/);
+  assert.match(html, /closes /);
+  assert.match(html, /href="https:\/\/github\.com\/acme\/app\/issues\/12"/);
+  assert.match(html, /Imported PR by octo&lt;cat&gt;/);
+  assert.ok(!html.includes('octo<cat>'));
+  assert.match(html, /built with codex/);
+});
+
+test('review, session and backlog rows print the new provenance details (#1264)', () => {
+  const AppView = makeAppView();
+  const m = build(AppView, {
+    proposals: [prop({ id: 100, promoted_at: '2026-08-05T00:00:00Z', chat_count: 4 })],
+    issues: [issue({
+      number: 1, title: 'Backlog issue', createdAt: '2026-07-01T00:00:00Z',
+      created_by_username: 'gina', bounty_count: 2, chatCount: 0,
+    })],
+    mySessions: [session({ id: 400, username: 'me', chat_count: 7 })],
+    merged: [], mergedTotal: 0,
+  });
+  assert.equal(m.inProgress.review[0].waitingSinceMs, Date.parse('2026-08-05T00:00:00Z'));
+  const bl = m.backlog.groups[0].issues[0];
+  assert.equal(bl.reporter, 'gina');
+  assert.equal(bl.bountyCount, 2);
+  assert.equal(bl.createdAtMs, Date.parse('2026-07-01T00:00:00Z'));
+  const html = AppView._renderReportHtml(m, { standalone: false });
+  assert.match(html, /waiting since /);
+  assert.match(html, /4 in discussion/);
+  assert.match(html, /filed .+ by gina/);
+  assert.match(html, /2 bounties/);
+  assert.match(html, /7 in discussion/);
+  // Singular bounty copy.
+  const one = AppView._renderReportHtml(build(AppView, {
+    issues: [issue({ number: 2, bounty_count: 1 })], merged: [], mergedTotal: 0,
+  }), { standalone: false });
+  assert.match(one, /1 bounty</);
+});
+
+test('section and group headings carry item counts (#1264)', () => {
+  const AppView = makeAppView();
+  const m = build(AppView, {
+    issues: [issue({ number: 1, pri: 'high' }), issue({ number: 2 })],
+    proposals: [prop({ id: 100 })],
+    merged: [mergedRow({ id: 300, merged_at: '2026-08-02T10:00:00Z' })],
+    mySessions: [session({ id: 400 })],
+    mergedTotal: 1,
+  });
+  const html = AppView._renderReportHtml(m, { standalone: false });
+  assert.match(html, /Done &mdash; completed work \(1\)/);
+  assert.match(html, /August 2026 \(1\)/);
+  assert.match(html, /Awaiting review \(1\)/);
+  assert.match(html, /Underway \(1\)/);
+  assert.match(html, /Backlog \(2\)/);
+  assert.match(html, /High \(1\)/);
+  assert.match(html, /Work by owner \(\d+\)/);
 });
