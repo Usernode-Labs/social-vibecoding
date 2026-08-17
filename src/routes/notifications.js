@@ -1,6 +1,7 @@
 const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const notifications = require('../services/notifications');
+const messageBookmarks = require('../services/message-bookmarks');
 const mobilePushPreferences = require('../services/mobile-push-preferences');
 const log = require('../services/logger');
 
@@ -81,6 +82,47 @@ function stagingMockNotifications() {
       sessionTitle: null, prTitle: null,
       branchName: 'dev/mockuser-1700000000001',
       prNumber: null, headlessIssueNumber: null,
+    },
+  ];
+}
+
+// #1280: staging demo rows for the drawer's pinned "Saved" section.
+// `message_bookmarks` is `staging:private` (it is one person's private
+// feed), so a staging clone has the table and none of the rows and the
+// section would render empty in every preview — the same problem
+// stagingMockNotifications above solves for the session kinds, solved the
+// same way: request-time (?demo=1) injection, never persisted, a strict
+// no-op outside staging. Unsaving one of these hits a message id that
+// matches no row and no-ops harmlessly, exactly like a mark-read on a mock
+// notification.
+function stagingMockSavedMessages() {
+  const now = Date.now();
+  return [
+    {
+      messageId: 990301,
+      appId: 0,
+      appSlug: 'staging-demo',
+      appName: 'Staging demo app',
+      author: 'staging-demo-user',
+      content: '[Mock] The deploy runbook lives in docs/deploy.md — '
+        + 'saving this so I can find it again on Friday.',
+      threadType: null,
+      threadRef: null,
+      savedAt: new Date(now - 8 * 60 * 1000).toISOString(),
+      messageCreatedAt: new Date(now - 3 * 60 * 60 * 1000).toISOString(),
+    },
+    {
+      messageId: 990302,
+      appId: 0,
+      appSlug: 'staging-demo',
+      appName: 'Staging demo app',
+      author: 'staging-demo-reviewer',
+      content: '[Mock] Decision from the thread: we ship the smaller '
+        + 'version first and revisit the picker next week.',
+      threadType: 'issue',
+      threadRef: 990001,
+      savedAt: new Date(now - 26 * 60 * 60 * 1000).toISOString(),
+      messageCreatedAt: new Date(now - 27 * 60 * 60 * 1000).toISOString(),
     },
   ];
 }
@@ -180,6 +222,15 @@ function notificationsRoutes(config) {
         // rows. First page only — like `unread`, it's an account-wide
         // aggregate the client already has on cursor follow-ups.
         payload.pendingInvites = await notifications.listPendingInvites(pool, req.user.id);
+        // #1280: this user's saved messages, for the drawer's pinned
+        // "Saved" section. First page only for the same reason as the two
+        // aggregates above — the section is pinned, not paginated, so a
+        // cursor follow-up would only re-send what the client already has.
+        // Best-effort: a failure here renders an empty section rather than
+        // 500ing the whole dropdown.
+        payload.savedMessages = await messageBookmarks.listForUserSafe(
+          pool, req.user.id, { isAdmin: !!req.user.isAdmin }
+        );
         // Staging-only demo rows (?demo=1) — see stagingMockNotifications.
         // First page only (they'd duplicate on cursor follow-ups), unread
         // count bumped to match so the client's red-badge subtraction
@@ -202,6 +253,13 @@ function notificationsRoutes(config) {
               createdAt: new Date(Date.now() - 2 * 60 * 1000).toISOString(),
             },
             ...(payload.pendingInvites || []),
+          ];
+          // Pinned saved-message demo rows (#1280) — see
+          // stagingMockSavedMessages. Prepended, so a staging clone that
+          // somehow does carry real saves still shows them below.
+          payload.savedMessages = [
+            ...stagingMockSavedMessages(),
+            ...(payload.savedMessages || []),
           ];
         }
       }
@@ -352,4 +410,6 @@ function notificationsRoutes(config) {
   return router;
 }
 
-module.exports = { notificationsRoutes, stagingMockNotifications };
+module.exports = {
+  notificationsRoutes, stagingMockNotifications, stagingMockSavedMessages,
+};

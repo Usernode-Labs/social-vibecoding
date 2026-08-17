@@ -38,6 +38,8 @@ import { createStore } from '../../lib/plain-store.js';
  * been fetched yet", which renders exactly that.
  */
 export const notificationsStore = createStore({
+  /** #1280: null until the first _renderSaved; else saved-message descriptors. */
+  saved: null,
   /** null until the first _renderInvites; else an array of invite descriptors. */
   invites: null,
   /** null until the first _renderList; else an array of entry descriptors. */

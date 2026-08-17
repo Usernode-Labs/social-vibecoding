@@ -238,6 +238,19 @@ const conversationReactionLimiter = makeLimiter({
   message: 'Too many reactions — slow down for a minute.',
 });
 
+// #1280: saving/unsaving a group-chat message. Sized like the reaction
+// limiter above — the honest gesture is one tap, but a user skimming a
+// backlog may save a dozen in a few seconds, and toggling one message off
+// and on again must not feel rate-limited. Per-user keyed for shared-NAT
+// fairness.
+const messageBookmarkLimiter = makeLimiter({
+  windowMs: 60 * 1000,
+  max: 120,
+  name: 'message-bookmark',
+  keyByUser: true,
+  message: 'Too many saves — slow down for a minute.',
+});
+
 const conversationReportLimiter = makeLimiter({
   windowMs: 60 * 60 * 1000,
   max: 10,
@@ -524,4 +537,4 @@ const userDirectoryLimiter = makeLimiter({
   message: 'Too many directory lookups — please slow down.',
 });
 
-module.exports = { userDirectoryLimiter, dbExportLimiter, authLimiter, homePanelPrefLimiter, homeLayoutLimiter, draftWriteLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, groupChatWriteLimiter, conversationMessageLimiter, conversationActionLimiter, conversationSafetyLimiter, conversationInviteLimiter, conversationReactionLimiter, conversationReportLimiter, attributeVoteLimiter, attachmentUploadLimiter, appFileUploadLimiter, feedbackTitleLimiter, boardOrderLimiter, issueScreenshotLimiter, profileWriteLimiter, publicProfileReadLimiter, profileReportLimiter, topochainMobileAuthLimiter, topochainMobilePushRegistrationLimiter, reportAiLimiter, reportSnapshotLimiter, waitlistJoinLimiter, mailTestLimiter };
+module.exports = { userDirectoryLimiter, dbExportLimiter, authLimiter, homePanelPrefLimiter, homeLayoutLimiter, draftWriteLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, groupChatWriteLimiter, conversationMessageLimiter, conversationActionLimiter, conversationSafetyLimiter, conversationInviteLimiter, conversationReactionLimiter, conversationReportLimiter, messageBookmarkLimiter, attributeVoteLimiter, attachmentUploadLimiter, appFileUploadLimiter, feedbackTitleLimiter, boardOrderLimiter, issueScreenshotLimiter, profileWriteLimiter, publicProfileReadLimiter, profileReportLimiter, topochainMobileAuthLimiter, topochainMobilePushRegistrationLimiter, reportAiLimiter, reportSnapshotLimiter, waitlistJoinLimiter, mailTestLimiter };

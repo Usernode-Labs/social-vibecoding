@@ -133,6 +133,16 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     'M21.4 11.6l-8.5 8.5a6 6 0 01-8.5-8.5l9-9a4 4 0 015.7 5.7l-9 9a2 2 0 01-2.8-2.8l8.4-8.4',
     'M12 3v12m0-12l-4 4m4-4l4 4M5 13v7h14v-7',
     'M4 4l17 8-17 8 3-8-3-8zm3 8h14',
+    // BookmarkIcon — the outline half of the save toggle (#1280). It has no
+    // React call site at all: the button it draws belongs to the message,
+    // which public/js/group-chat.js renders as an HTML string, so this
+    // export exists to BE the source of truth for that duplicate (see the
+    // note beside it in icons.tsx) rather than to be rendered here.
+    'M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0 1 11.186 0Z',
+    // BookmarkSolidIcon — the drawer's saved rows, which are empty until the
+    // first /api/notifications payload lands, so the pinned section is
+    // prerendered as nothing by contract (see notifications-store.js).
+    'M6.32 2.577a49.255 49.255 0 0 1 11.36 0c1.497.174 2.57 1.46 2.57 2.93V21a.75.75 0 0 1-1.085.67L12 18.089l-7.165 3.583A.75.75 0 0 1 3.75 21V5.507c0-1.47 1.073-2.756 2.57-2.93Z',
   ];
   assert.deepEqual(absent.sort(), expected.sort());
 });
