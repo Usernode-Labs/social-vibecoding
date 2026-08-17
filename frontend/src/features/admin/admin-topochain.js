@@ -3671,14 +3671,12 @@ const AdminTopochain = {
           ${canWrite ? `<button id="admin-topo-set-reset" type="button" class="${BTN.warnSm}">Reset to defaults&hellip;</button>` : ''}`,
   })}
       <div id="admin-topo-mail-status" class="mb-4"></div>
-      <div id="admin-topo-mail-activity" class="mb-4"></div>
       <div id="admin-topo-set-form"></div>
       <div id="admin-topo-set-table">${AdminTopochain._skeleton(4)}</div>`;
     document.getElementById('admin-topo-set-new')?.addEventListener('click', () => AdminTopochain._openSettingForm(null));
     document.getElementById('admin-topo-set-reset')?.addEventListener('click', () => AdminTopochain._resetSettings());
     AdminTopochain._loadSettings();
     AdminTopochain._loadMailStatus();
-    AdminTopochain._loadMailActivity();
   },
 
   // Outbound-mail readiness. Read-only and deliberately value-free: the
@@ -3761,71 +3759,6 @@ const AdminTopochain = {
           behind those credentials must also be authorised to send as
           <code class="font-mono text-xs">${esc(m.from || '')}</code>.
         </p>
-      </div>`;
-  },
-
-  // Colour per delivery status. `sent` is the only unambiguously good
-  // outcome; `suppressed_rate_limit` is the throttle working, not a fault,
-  // so it reads as informational rather than red.
-  _mailStatusClass(status) {
-    if (status === 'sent') return 'text-emerald-700 dark:text-emerald-400';
-    if (status === 'failed') return 'text-rose-700 dark:text-rose-400';
-    if (status === 'suppressed_rate_limit') return 'text-amber-700 dark:text-amber-400';
-    if (status === 'no_transport') return 'text-amber-700 dark:text-amber-400';
-    return 'text-gray-500';
-  },
-
-  // Recent email activity. The ONLY place a delivery failure is visible:
-  // every endpoint that triggers mail is always-200 by contract, so it
-  // cannot tell the waiting user their code never went out.
-  async _loadMailActivity() {
-    const { ok, data } = await AdminTopochain.fetchJson('/api/v4/admin/settings/mail-activity');
-    if (AdminTopochain._sub !== 'settings') return;
-    const host = document.getElementById('admin-topo-mail-activity');
-    if (!host) return;
-    const esc = AdminTopochain.esc;
-    if (!ok || !data?.success) { host.innerHTML = ''; return; }
-
-    const recent = (data.data && data.data.recent) || [];
-    const last24h = (data.data && data.data.last24h) || {};
-    const totals = Object.keys(last24h).sort()
-      .map((k) => `${esc(k)} ${last24h[k]}`).join(' · ');
-
-    const rows = recent.map((r) => `
-      <tr class="border-t border-gray-100 dark:border-gray-800">
-        <td class="py-1.5 pr-3 whitespace-nowrap text-gray-500">${esc(
-    r.created_at ? String(r.created_at).replace('T', ' ').slice(0, 19) : '')}</td>
-        <td class="py-1.5 pr-3 whitespace-nowrap">${esc(r.kind || '')}</td>
-        <td class="py-1.5 pr-3">${esc(r.recipient || '')}</td>
-        <td class="py-1.5 pr-3 whitespace-nowrap text-gray-500">${esc(r.provider || '—')}</td>
-        <td class="py-1.5 pr-3 whitespace-nowrap font-medium ${
-  AdminTopochain._mailStatusClass(r.status)}">${esc(r.status || '')}</td>
-        <td class="py-1.5 text-gray-500">${esc(r.error || '')}</td>
-      </tr>`).join('');
-
-    host.innerHTML = `
-      <div class="${PANEL_CLS} px-4 py-3 sm:px-5">
-        <div class="flex flex-col gap-1 sm:flex-row sm:flex-wrap sm:items-baseline sm:justify-between sm:gap-2">
-          <h3 class="text-sm font-semibold">Recent email activity</h3>
-          <span class="text-xs text-gray-500">${totals ? `last 24h: ${totals}` : 'nothing in the last 24h'}</span>
-        </div>
-        ${recent.length ? `
-        <div class="overflow-x-auto mt-3 -mx-4 px-4 sm:mx-0 sm:px-0">
-          <table class="w-full text-xs">
-            <thead class="text-gray-500">
-              <tr>
-                <th class="text-left font-medium pb-1 pr-3">When</th>
-                <th class="text-left font-medium pb-1 pr-3">Kind</th>
-                <th class="text-left font-medium pb-1 pr-3">Recipient</th>
-                <th class="text-left font-medium pb-1 pr-3">Provider</th>
-                <th class="text-left font-medium pb-1 pr-3">Status</th>
-                <th class="text-left font-medium pb-1">Detail</th>
-              </tr>
-            </thead>
-            <tbody>${rows}</tbody>
-          </table>
-        </div>`
-    : '<p class="text-sm text-gray-500 mt-2">No mail has been attempted yet.</p>'}
       </div>`;
   },
 
