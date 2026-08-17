@@ -34,8 +34,18 @@ const T = (offsetDays) => new Date(NOW + offsetDays * DAY);
 // closed on an unassigned account, and one open on an account that no
 // longer exists in onchain_accounts (deliberately representable — the
 // table has no FK on `account`).
+//
+// The open account's address exists THREE times in onchain_accounts (the
+// per-season-event duplication production exhibits — one address, many
+// rows, different claimants): the endpoint's lateral must resolve it to
+// the claimed row with the most recent used_at (id 400 / user 7), never
+// fan the one period out into three list rows.
 let delegationRows;
 let onchainAccounts;
+let userRows;
+let avatarRows;
+
+const AVATAR_ID = 'a1b2c3d4e5f60718293a4b5c6d7e8f90';
 
 function resetFixtures() {
   delegationRows = [
@@ -44,8 +54,17 @@ function resetFixtures() {
     { id: 3, account: 'ut1orphan00000000000000000000000000000000', started_at: T(-2), ended_at: null, created_at: T(-2), updated_at: T(-2) },
   ];
   onchainAccounts = [
-    { id: 400, address: 'ut1open0000000000000000000000000000000000', user_id: 7 },
-    { id: 401, address: 'ut1closed00000000000000000000000000000000', user_id: null },
+    { id: 350, address: 'ut1open0000000000000000000000000000000000', user_id: 5, is_used: true, used_at: T(-40) },
+    { id: 400, address: 'ut1open0000000000000000000000000000000000', user_id: 7, is_used: true, used_at: T(-6) },
+    { id: 410, address: 'ut1open0000000000000000000000000000000000', user_id: null, is_used: false, used_at: null },
+    { id: 401, address: 'ut1closed00000000000000000000000000000000', user_id: null, is_used: false, used_at: null },
+  ];
+  userRows = [
+    { id: 5, username: 'past-claimant', display_name: null },
+    { id: 7, username: 'current-claimant', display_name: 'Current Claimant' },
+  ];
+  avatarRows = [
+    { id: AVATAR_ID, user_id: 7 },
   ];
 }
 
@@ -81,11 +100,22 @@ function handleQuery(rawSql, params = []) {
       .sort((a, b) => (b.started_at - a.started_at) || (a.id - b.id))
       .slice(offset, offset + limit)
       .map((r) => {
-        const oa = onchainAccounts.find((a) => a.address === r.account) || null;
+        // The route's LATERAL: one account row per period, claimed rows
+        // first, most recent claim first, newest id as the tie-break.
+        const oa = onchainAccounts
+          .filter((a) => a.address === r.account)
+          .sort((a, b) => (Number(b.is_used) - Number(a.is_used))
+            || ((b.used_at ? b.used_at.getTime() : -Infinity) - (a.used_at ? a.used_at.getTime() : -Infinity))
+            || (b.id - a.id))[0] || null;
+        const u = (oa && oa.user_id != null && userRows.find((x) => x.id === oa.user_id)) || null;
+        const av = (u && avatarRows.find((x) => x.user_id === u.id)) || null;
         return {
           ...r,
           onchain_account_id: oa ? oa.id : null,
           user_id: oa ? oa.user_id : null,
+          username: u ? u.username : null,
+          display_name: u ? u.display_name : null,
+          avatar_id: av ? av.id : null,
         };
       });
     return { rows };
@@ -178,19 +208,48 @@ test('index returns every period (open AND closed) ordered started_at DESC, with
   } finally { server.close(); }
 });
 
-test('index joins onchain_accounts: rows carry onchain_account_id/user_id, null for a vanished account', async () => {
+test('index resolves ONE current claimant per period: no fan-out over duplicate addresses, delegator carries the user identity', async () => {
+  const { server, base } = await listen(buildApp('admin'));
+  try {
+    const body = await (await fetch(`${base}/api/v4/admin/delegations`)).json();
+
+    // Three onchain_accounts rows share the open address; the period must
+    // still appear exactly once, resolved to the claimed row with the most
+    // recent used_at — not the older claim (id 350) or the unclaimed
+    // duplicate (id 410), and total stays in step with the visible rows.
+    assert.deepEqual(body.data.map((r) => r.id), [3, 1, 2]);
+    assert.equal(body.meta.total, 3);
+
+    const owned = body.data.find((r) => r.id === 1);
+    assert.equal(owned.onchain_account_id, 400);
+    assert.equal(owned.user_id, 7);
+    assert.deepEqual(owned.delegator, {
+      user_id: 7,
+      username: 'current-claimant',
+      display_name: 'Current Claimant',
+      avatar_url: `/avatars/${AVATAR_ID}`,
+    });
+
+    const unassigned = body.data.find((r) => r.id === 2);
+    assert.equal(unassigned.onchain_account_id, 401);
+    assert.equal(unassigned.user_id, null);
+    assert.equal(unassigned.delegator, null);
+
+    const orphan = body.data.find((r) => r.id === 3);
+    assert.equal(orphan.onchain_account_id, null);
+    assert.equal(orphan.user_id, null);
+    assert.equal(orphan.delegator, null);
+  } finally { server.close(); }
+});
+
+test('a delegator without an avatar row gets avatar_url null, not a broken path', async () => {
+  avatarRows = [];
   const { server, base } = await listen(buildApp('admin'));
   try {
     const body = await (await fetch(`${base}/api/v4/admin/delegations`)).json();
     const owned = body.data.find((r) => r.id === 1);
-    assert.equal(owned.onchain_account_id, 400);
-    assert.equal(owned.user_id, 7);
-    const unassigned = body.data.find((r) => r.id === 2);
-    assert.equal(unassigned.onchain_account_id, 401);
-    assert.equal(unassigned.user_id, null);
-    const orphan = body.data.find((r) => r.id === 3);
-    assert.equal(orphan.onchain_account_id, null);
-    assert.equal(orphan.user_id, null);
+    assert.equal(owned.delegator.username, 'current-claimant');
+    assert.equal(owned.delegator.avatar_url, null);
   } finally { server.close(); }
 });
 

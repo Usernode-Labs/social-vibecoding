@@ -3116,7 +3116,7 @@ const AdminTopochain = {
     host.innerHTML = `
       ${AdminTopochain._screenHeader({
     title: 'Delegations',
-    subtitle: 'Staking delegation per testnet account — the current or last period only; re-delegating overwrites the previous one.',
+    subtitle: 'Who delegated stake to the platform node, one row per testnet account — the current or last period only; re-delegating overwrites the previous one.',
     actions: `<label class="sr-only" for="admin-topo-dlg-status">Filter by delegation status</label>
           ${AdminTopochain._selectHtml('admin-topo-dlg-status', [
     { value: 'delegated', label: 'Delegated' },
@@ -3177,7 +3177,14 @@ const AdminTopochain = {
     table.innerHTML = AdminTopochain._list({
       items: s.items,
       columns: [
-        { label: 'Account', primary: true, cell: (d) => esc(d.account), tdClass: 'text-xs font-mono break-all' },
+        { label: 'Delegator', primary: true, cell: (d) => AdminTopochain._dlgDelegatorHtml(d) },
+        // Structurally constant BY THE MODEL, not decoration: every
+        // period in this table is the account's stake handed to the
+        // platform's own block-production node (there is no per-row
+        // delegate target in the data), and naming the receiving party
+        // in the row is what lets an admin read "who delegated to whom"
+        // without knowing that convention.
+        { label: 'Delegatee', cell: () => AdminTopochain._dlgDelegateeHtml() },
         {
           label: 'Status',
           cell: (d) => (d.delegated
@@ -3203,6 +3210,71 @@ const AdminTopochain = {
       AdminTopochain._openAccountDetail(id);
     }));
     if (s.meta) AdminTopochain._wirePager(s.meta, 'admin-topo-dlg-pg', (page) => { s.page = page; AdminTopochain._loadDelegations(); });
+  },
+
+  // ── Delegation row parties ─────────────────────────────────────────
+  // A delegation always has two parties — the account owner handing
+  // their stake over, and the platform's block-production node
+  // receiving it — and each row names both so "who delegated to whom"
+  // is one glance, not a click into the account detail. Built from
+  // INLINE elements only (span/img, never div/p): _list()'s card
+  // variant renders the primary cell inside a <p>, and a block element
+  // there would make the parser close the paragraph mid-chip.
+  _dlgPartyChip({ party, avatar, titleHtml, subHtml }) {
+    return `<span class="inline-flex items-start gap-2 text-left" data-dlg-party="${party}">
+      ${avatar}
+      <span class="inline-flex min-w-0 flex-col">
+        <span class="text-sm font-medium leading-5">${titleHtml}</span>
+        ${subHtml ? `<span class="text-[11px] leading-4 text-gray-500">${subHtml}</span>` : ''}
+      </span>
+    </span>`;
+  },
+
+  _dlgAvatarHtml(u) {
+    const esc = AdminTopochain.esc;
+    if (u && u.avatar_url) {
+      return `<img src="${esc(u.avatar_url)}" alt="" class="mt-0.5 h-6 w-6 shrink-0 rounded-full bg-gray-100 object-cover dark:bg-gray-800">`;
+    }
+    // Initial-letter fallback (the platform's avatar idiom): indigo for
+    // a resolved user, gray for the two no-claimant states.
+    const name = u ? (u.display_name || u.username || '') : '';
+    const tone = u
+      ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300'
+      : 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400';
+    return `<span class="mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold ${tone}">${esc((name[0] || '?').toUpperCase())}</span>`;
+  },
+
+  _dlgDelegatorHtml(d) {
+    const esc = AdminTopochain.esc;
+    const u = d.delegator;
+    const address = `<span class="font-mono break-all">${esc(d.account)}</span>`;
+    if (u) {
+      const name = u.display_name || u.username || `user #${u.user_id}`;
+      return AdminTopochain._dlgPartyChip({
+        party: 'delegator',
+        avatar: AdminTopochain._dlgAvatarHtml(u),
+        titleHtml: `${esc(name)} <span class="text-xs font-normal text-gray-500">user #${esc(u.user_id)}</span>`,
+        subHtml: address,
+      });
+    }
+    // No current claimant: the account row exists but nobody claimed it,
+    // or the account vanished from onchain_accounts entirely (no FK ties
+    // a period to it — the API's own header note).
+    return AdminTopochain._dlgPartyChip({
+      party: 'delegator',
+      avatar: AdminTopochain._dlgAvatarHtml(null),
+      titleHtml: `<span class="font-normal text-gray-500">${d.onchain_account_id != null ? 'Unclaimed account' : 'Account not on file'}</span>`,
+      subHtml: address,
+    });
+  },
+
+  _dlgDelegateeHtml() {
+    return AdminTopochain._dlgPartyChip({
+      party: 'delegatee',
+      avatar: `<span class="mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-indigo-600 text-[11px] font-semibold text-white">P</span>`,
+      titleHtml: 'Platform node',
+      subHtml: 'Block-production server',
+    });
   },
 
   // ══════════════════════════════════════════════════════════════════
