@@ -1951,8 +1951,8 @@ function registerTools(server, ctx) {
   // The hand-off. Returns a self-contained work order — no Usernode
   // credential in it, nothing the receiving agent has to look up.
   server.registerTool('prepare_work', {
-    title: 'Hand a change to the user’s coding agent',
-    description: "Prepare a change to a Usernode app so the user's own coding agent can build it. Returns `guidance` — the human's next steps, already written for the user: show them in order, as written, instead of your own summary — and `workOrder`, for their coding agent, naming the app's repository, the fork to push to, the branch to create and the exact commit to start from. Reproduce `workOrder` inside a fenced code block character for character, EXACTLY as returned: do not shorten it, re-wrap it, re-indent it, tidy it, strip its <untrusted-content> tags, or retype the branch name or the 40-character commit id, and never append a correction to it — a single wrong character sends the coding agent to a starting point that does not exist. The work order makes the fork and the branch itself, because Usernode asks for NO write access to the user's GitHub account. When the user says the branch is pushed, call submit_work. Pass `proposalId` to REVISE a proposal that is already up for a vote instead of opening a new one — the work order is then based at that proposal's own head and its submission updates it in place. `openProposals` in the result names any proposals the group is ALREADY voting on for the same request: tell the user before they paste anything, because that work may be built already, and if one of them is theirs, calling prepare_work again with its `proposalId` continues it instead of opening a duplicate. Requires a linked GitHub account (identity only, so work can be attributed to them). This spends the user's own coding-agent subscription, not their Usernode credits. Naming a request also marks it as being worked on, so the group can see the work is under way.",
+    title: 'Prepare a change for a coding agent',
+    description: "Prepare a change to a Usernode app for a coding agent. If you have repository, filesystem, shell or code-editing tools, YOU are that agent: execute `workOrder` in this conversation, implement and test the change, then call `submit_work` with your branch or patch — do not relay `guidance` or send the user elsewhere. Only if you lack those tools, show `guidance` — the human's next steps, already written for the user — in order, as written, instead of your own summary, and call submit_work yourself once the user says the branch is pushed. Reproduce `workOrder` inside a fenced code block character for character, EXACTLY as returned: do not shorten it, re-wrap it, re-indent it, tidy it, strip its <untrusted-content> tags, or retype the branch name or the 40-character commit id, and never append a correction to it — a single wrong character sends the coding agent to a starting point that does not exist. The work order names the app's repository, the fork to push to, the branch to create and the exact commit to start from; it makes the fork and the branch itself, because Usernode asks for NO write access to the user's GitHub account. Pass `proposalId` to REVISE a proposal that is already up for a vote instead of opening a new one — the work order is then based at that proposal's own head and its submission updates it in place. `openProposals` in the result names any proposals the group is ALREADY voting on for the same request: tell the user before they paste anything, because that work may be built already, and if one of them is theirs, calling prepare_work again with its `proposalId` continues it instead of opening a duplicate. Requires a linked GitHub account (identity only, so work can be attributed to them). This spends the user's own coding-agent subscription, not their Usernode credits. Naming a request also marks it as being worked on, so the group can see the work is under way.",
     inputSchema: {
       slug: z.string().describe('The app slug, as returned by list_apps.'),
       requestNumber: z.number().int().positive().optional()
@@ -1981,10 +1981,10 @@ function registerTools(server, ctx) {
       // True when this returned a job that was ALREADY open for this
       // request rather than minting a new one.
       reused: z.boolean(),
-      // The human's steps, already ordered and already client-specific.
-      // Render as a numbered list; do not merge them into prose. The work
-      // order beside them is for their coding agent and is reproduced
-      // verbatim; splitting the two is what keeps the payload intact.
+      // Handoff steps for a conversation that lacks repository/code tools.
+      // A capable coding host ignores these and executes workOrder itself.
+      // Otherwise render them as a numbered list without merging into prose;
+      // the work order beside them is reproduced verbatim.
       guidance: z.array(z.string()),
       workOrder: z.string(),
       // Set only when this work order REVISES a proposal (#1054): its id, and
@@ -2157,16 +2157,18 @@ function registerTools(server, ctx) {
           + 'the work order once, their coding agent may be working on it right now; say so rather than '
           + 'sending them round again. '
         : '')
-        + 'Render every string in guidance as a numbered list, in order, then the workOrder '
-        + 'below it in a fenced code block reproduced exactly as returned — no re-wrapping, no '
-        + 'tidying, no summarising, no retyping the commit id, no correction appended. Add no steps '
-        + 'of your own and do not describe what their coding agent will do; the work order tells it. '
-        + 'If a paste needs redoing, re-render from this result rather than calling prepare_work '
-        + 'again. The coding agent submits the work itself through its own Usernode connector, so the '
-        + 'user may hear nothing further from you — if they ask, or if it reports that it could not '
+        + 'FIRST inspect the tools available in THIS conversation. If you have repository, filesystem, '
+        + 'shell or code-editing tools, YOU are the coding agent: do not render guidance and do not send '
+        + 'the user elsewhere. Execute workOrder yourself, implement and test the change here, then call '
         + (result.proposalId
-          ? `submit, call submit_work with proposalId ${result.proposalId} and the branch they name.`
-          : `submit, call submit_work with taskId ${result.taskId} and the branch they name.`),
+          ? `submit_work with proposalId ${result.proposalId} and the branch you pushed. `
+          : `submit_work with taskId ${result.taskId} and the branch or patch you produced. `)
+        + 'Only if this conversation lacks code-editing tools, render every string in guidance as a '
+        + 'numbered list, in order, then reproduce workOrder below it in a fenced code block exactly as '
+        + 'returned — no re-wrapping, tidying, summarising, retyping the commit id or appended correction. '
+        + 'Add no steps of your own. If a paste needs redoing, re-render this result rather than calling '
+        + 'prepare_work again. The receiving coding agent submits through its own Usernode connector; if '
+        + 'the user later says it could not submit, call submit_work with the id above and its branch.',
     });
   });
 
@@ -2466,7 +2468,7 @@ function registerTools(server, ctx) {
 
   server.registerTool('start_platform_build', {
     title: 'Have Usernode build it',
-    description: "Ask Usernode to build a request itself, using the user's daily Usernode credits, when they have no coding agent of their own. Prefer prepare_work when they do. Returns a build id to poll with get_platform_build. Nothing is proposed or voted on until submit_platform_build is called.",
+    description: "Ask Usernode to build a request using the user's daily Usernode credits. Call this only after explaining the credit spend and the user explicitly chooses the platform build; never infer consent because the current chat lacks repository tools or GitHub access. Prefer prepare_work when this conversation or the user has a coding agent. Returns a build id to poll with get_platform_build. Nothing is proposed or voted on until submit_platform_build is called.",
     inputSchema: {
       slug: z.string().describe('The app slug, as returned by list_apps.'),
       requestNumber: z.number().int().positive().describe('The request to build, from list_requests.'),

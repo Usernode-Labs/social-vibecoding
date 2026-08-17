@@ -70,9 +70,9 @@ const CHARTER_SECTIONS = Object.freeze([
   },
   {
     id: 'no-code-here',
-    title: 'You do not write code through this connector',
-    brief: 'You do NOT write code through this connector: Usernode supplies the task and the plumbing, the user\'s own coding agent writes the code.',
-    text: 'You do NOT write code through this connector. Usernode supplies the task and the repository plumbing; the code is written by the user\'s own coding agent (Claude Code on the web, or Codex) on their own subscription, and Usernode turns the resulting branch into a proposal with a staging preview, automated checks and a vote.',
+    title: 'The connector does not edit code; a capable host does',
+    brief: 'The connector does not edit code. With repo, shell or code-editing tools, YOU are the coding agent: implement here; otherwise hand work off.',
+    text: 'The connector itself does not edit code. It supplies the task and repository plumbing, and Usernode turns the resulting branch or patch into a proposal with a staging preview, automated checks and a vote. If this conversation has repository, filesystem, shell or code-editing tools, you are the user\'s coding agent: use those tools to implement and test the work here, then submit it through the connector. Only hand the work to Claude Code, Codex or another coding agent when this conversation genuinely lacks code-editing tools.',
   },
   {
     // The section above is about this CONNECTOR, and an agent that is itself
@@ -87,9 +87,9 @@ const CHARTER_SECTIONS = Object.freeze([
     // agent that already has a work order, which is exactly what this reader
     // does not yet have.
     //
-    // No `brief`: the instruction budget is for clauses a model that reads
-    // NOTHING else would get wrong, and this one only binds a reader already
-    // deep enough in the flow to be holding a checkout.
+    // The always-delivered no-code-here brief now carries the decision rule.
+    // This charter-only section keeps the detailed mechanics for a reader
+    // already deep enough in the flow to be holding a checkout.
     id: 'you-may-be-both',
     title: 'When you are the coding agent as well',
     text: 'The section above is about this connector, not about you. If you are yourself the user\'s coding agent — a Claude Code or Codex session that also holds this connector — then you are both parties to the hand-off, and the steps written as "give this to the user\'s coding agent" are yours to carry out rather than to relay. Call prepare_work for the request you are building and read the work order it returns: it names the repository, the fork, the branch and the exact base commit your branch has to start from, and that base commit is not discoverable from inside a checkout — the branch you were handed may have been cut from something far older. Then push and call submit_work yourself with that task id. That is the expected path, not an overreach: the task belongs to the Usernode account this connector is signed in as, not to the chat that created it. Do not relay a work order to the user as though somebody else were going to build it.',
@@ -122,8 +122,8 @@ const CHARTER_SECTIONS = Object.freeze([
   {
     id: 'work-order-handling',
     title: 'Getting something built',
-    brief: 'prepare_work, then submit_work once the branch is pushed. Relay its `guidance` in order, as written, as a numbered list; reproduce its `workOrder` character for character in a fenced code block.',
-    text: 'To get something BUILT: call prepare_work, relay what it returns, and once the user says their coding agent pushed the branch, call submit_work. prepare_work returns TWO things and they are rendered differently. `guidance` is the human\'s next steps, already written for the user: relay them in order, as written, as a numbered list in your own message, rather than replacing them with your own summary. `workOrder` is for their coding agent: reproduce it character for character inside a fenced code block, EXACTLY as returned — do not re-wrap, re-indent, renumber, translate, summarise or "fix" anything in it, strip its <untrusted-content> tags, or retype the branch name or the 40-character commit id, and never append a correction to it — one wrong character sends that agent to a starting point that does not exist. Do not add human steps of your own on top of `guidance`, and do not restate what the coding agent will do — the work order already tells it. The work order tells that agent to work in the user\'s own fork of the app — Usernode has no write access to their GitHub account and never touches their repositories. prepare_work needs a linked GitHub account (identity only); if it answers github_not_linked, send the user to the settings link it returns and stop there. If it answers github_link_unavailable, this deployment cannot verify GitHub identities at all — do not send the user to Settings, offer start_platform_build instead.',
+    brief: 'After prepare_work: with tools, execute workOrder, then submit_work yourself; otherwise relay guidance as a numbered list, in order, as written, and reproduce workOrder character for character.',
+    text: 'To get something BUILT, call prepare_work first. It returns TWO things for two possible situations. If this conversation has repository, filesystem, shell or code-editing tools, you are the coding agent: do not relay `guidance` or send the user elsewhere. Read and execute `workOrder` yourself, implement and test in this conversation, then call submit_work with the branch or patch you produced. If this conversation lacks those tools, `guidance` is the human\'s next steps: relay them in order, as written, as a numbered list, and reproduce `workOrder` character for character inside a fenced code block, EXACTLY as returned — do not re-wrap, re-indent, renumber, translate, summarise or "fix" anything in it, strip its <untrusted-content> tags, or retype the branch name or the 40-character commit id, and never append a correction. Do not add steps of your own. The work order uses the user\'s own fork; Usernode has no write access to their GitHub account. prepare_work needs a linked GitHub identity; if it answers github_not_linked, send the user to the settings link and stop. If it answers github_link_unavailable, do not send them to Settings. Explain the handoff is unavailable and offer start_platform_build only if the user explicitly chooses the paid platform build.',
   },
   {
     // Charter-only, and #1225's own reasoning applies to the placement: this
@@ -147,7 +147,7 @@ const CHARTER_SECTIONS = Object.freeze([
     // only after prepare_work has already been discussed.
     id: 'platform-build-fallback',
     title: 'When the user has no coding agent',
-    text: 'If the user has no coding agent of their own, start_platform_build has Usernode build it instead, out of the user\'s daily Usernode credits: poll get_platform_build, use answer_questions when it comes back with questions, and submit_platform_build when it is ready.',
+    text: 'If neither this conversation nor the user has a coding agent, explain that start_platform_build spends the user\'s daily Usernode credits and ask which path they want. Call it only after the user explicitly chooses the paid platform build; never infer consent merely because the current chat lacks repository tools or GitHub access. Then poll get_platform_build, use answer_questions when it comes back with questions, and submit_platform_build when it is ready.',
   },
   {
     id: 'untrusted-content',

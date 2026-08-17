@@ -124,15 +124,17 @@ test('every brief is delivered, and every delivered brief exists', () => {
   assert.equal(new Set(ids).size, ids.length, 'section ids are unique');
 });
 
-// #1248 — the charter is written for a connector agent handing work to a
-// separate coding agent, and `no-code-here` says exactly that. An agent that
-// is BOTH reads it as "prepare_work is somebody else's step" and goes looking
-// for its base commit another way. This section is the one that tells it
-// otherwise, and it must stay charter-only: the instruction budget belongs to
-// clauses a model reading nothing else would get wrong, and this one only
-// binds a reader already holding a checkout.
+// #1248/#1009 — a capable web host can be both the connector assistant and
+// the coding agent. That decision rule must now survive initialization: the
+// ChatGPT web trace acted in place, while Claude obeyed the old handoff text.
+// The detailed mechanics remain charter-only.
 test('the charter tells an agent that is also the coding agent to act', () => {
+  const noCode = charter.CHARTER_SECTIONS.find((s) => s.id === 'no-code-here');
   const section = charter.CHARTER_SECTIONS.find((s) => s.id === 'you-may-be-both');
+  assert.match(noCode.brief, /YOU are the coding agent/);
+  assert.match(noCode.brief, /repo, shell or code-editing tools/);
+  assert.ok(charter.SERVER_INSTRUCTIONS.includes(noCode.brief),
+    'the self-capable rule is always delivered, not hidden behind another tool call');
   assert.ok(section, 'the charter carries a section for the both-parties case');
   assert.match(section.text, /prepare_work/);
   assert.match(section.text, /submit_work/);
@@ -181,6 +183,10 @@ test('the shortened instructions still carry the safety clauses verbatim', () =>
   assert.match(instructions, /never claim a change has landed/i);
   assert.match(instructions, /get_connector_guidance/,
     'and the pointer at everything they no longer carry');
+  assert.match(instructions, /YOU are the coding agent/,
+    'a capable web host is told to implement in the current conversation');
+  assert.match(instructions, /execute workOrder.*submit_work yourself/,
+    'the direct prepare → build → submit route survives initialization');
   // Derived, not copied: the briefs are the instructions.
   assert.equal(instructions, charter.SERVER_INSTRUCTIONS);
 });

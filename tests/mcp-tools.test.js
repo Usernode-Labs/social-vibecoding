@@ -1100,8 +1100,10 @@ test('scope guards refuse before any platform call', () => {
 
 test('the server instructions tell the model what it is and is not', () => {
   const instructions = tools.SERVER_INSTRUCTIONS;
-  assert.match(instructions, /do NOT write code/i,
-    'the model is told the coding happens elsewhere, on the user’s own plan');
+  assert.match(instructions, /connector does not edit code/i,
+    'the connector boundary is stated without forbidding a capable host from coding');
+  assert.match(instructions, /YOU are the coding agent/,
+    'a host with code tools is told to act in the current conversation');
   assert.match(instructions, /untrusted/i,
     'and that returned content is data, not instructions');
   assert.match(instructions, /never ask the user to run shell commands/i);
@@ -1130,6 +1132,20 @@ test('the host is told to COPY the work order, not compose it', () => {
   const desc = SRC.slice(idx, SRC.indexOf('inputSchema:', idx));
   assert.match(desc, /EXACTLY as returned/);
   assert.match(desc, /guidance/);
+  assert.match(desc, /YOU are that agent/,
+    'and a capable host executes the payload instead of copying it to somebody else');
+});
+
+test('prepare_work chooses self-execution before handoff', () => {
+  const idx = SRC.indexOf("server.registerTool('prepare_work'");
+  const desc = SRC.slice(idx, SRC.indexOf('inputSchema:', idx));
+  const body = SRC.slice(idx, SRC.indexOf("server.registerTool('submit_work'"));
+  assert.match(desc, /repository, filesystem, shell or code-editing tools/);
+  assert.match(desc, /do not relay `guidance` or send the user elsewhere/);
+  assert.match(body, /FIRST inspect the tools available in THIS conversation/);
+  assert.match(body, /do not render guidance and do not send/);
+  assert.match(body, /branch or patch you produced/);
+  assert.match(body, /Only if this conversation lacks code-editing tools/);
 });
 
 test('prepare_work returns the human steps separately from the work order', () => {
@@ -1377,6 +1393,9 @@ test('the platform-build fallback is described as the second choice', () => {
   // Honest about whose money it spends, and about the better path.
   assert.match(desc, /daily Usernode credits/);
   assert.match(desc, /Prefer prepare_work/);
+  assert.match(desc, /user explicitly chooses the platform build/,
+    'missing tools never silently opt the user into platform credit spend');
+  assert.match(desc, /never infer consent/);
   // Bounded before the platform is asked to start anything.
   const body = SRC.slice(idx, SRC.indexOf("server.registerTool('get_platform_build'"));
   const capIdx = body.indexOf('connectorLimits.checkFallbackStart');
