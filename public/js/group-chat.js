@@ -1160,20 +1160,47 @@ const GroupChat = {
   _renderBookmarkBtn(msg) {
     if (!(window.App && App.user)) return '';
     const on = !!(msg && msg.bookmarked);
-    // 📌 rather than a bookmark or a star: what this does is pin the
-    // message to the top of your notifications, and the pushpin is the
-    // only one of the three that says so. The drawer's saved rows use the
-    // same glyph (see notifications-list.tsx) so the two ends of the
-    // gesture look like one feature.
-    //
-    // One glyph, two states: `gc-msg-saved` is what makes it read as ON
-    // (full-strength and always visible), and its absence leaves it faded
-    // like the react button's hover affordance. The accessible name and
-    // aria-pressed carry the same state for anyone not looking at it.
+    // The state lives in the SHAPE — hollow when it isn't saved, solid when
+    // it is — which is legible at 12px, in a screenshot, and to anyone who
+    // cannot tell 30% opacity from 100%. The faded/full-strength weighting
+    // stays as a second signal; the accessible name and aria-pressed carry
+    // the same state for anyone not looking at it.
     return `<button class="gc-msg-save${on ? ' gc-msg-saved' : ''}"`
       + ` title="${on ? 'Saved — click to unsave' : 'Save to your notifications'}"`
       + ` aria-label="${on ? 'Unsave message' : 'Save message'}"`
-      + ` aria-pressed="${on ? 'true' : 'false'}">\u{1F4CC}</button>`;
+      + ` aria-pressed="${on ? 'true' : 'false'}">${GroupChat._bookmarkSvg(on)}</button>`;
+  },
+
+  // The bookmark mark itself: a rectangle with a notch cut out of its
+  // bottom edge, the "save for later" shape every product uses. Drawn
+  // rather than typed because NO character draws it — U+1F516 is the
+  // ribbon-and-tag bookmark, which turns to mud at this size — and the
+  // outline/solid pair is the whole reason this button doesn't have to
+  // signal its state through opacity alone.
+  //
+  // These are the shell's own glyphs: Heroicons v2, the set
+  // frontend/@/components/ui/icons.tsx exports as BookmarkIcon and
+  // BookmarkSolidIcon (drawn for stroke-width 1.5, hence the value below).
+  // This file is a classic script and cannot import that module, so the two
+  // paths are duplicated here on purpose — the ONLY duplication in the set,
+  // and tests/notifications-saved-section.test.js reads them out of the
+  // module and asserts these still match, so redrawing one end fails rather
+  // than quietly shipping two different bookmarks.
+  _BOOKMARK_PATH: 'M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0 1 11.186 0Z',
+  _BOOKMARK_SOLID_PATH: 'M6.32 2.577a49.255 49.255 0 0 1 11.36 0c1.497.174 2.57 1.46 2.57 2.93V21a.75.75 0 0 1-1.085.67L12 18.089l-7.165 3.583A.75.75 0 0 1 3.75 21V5.507c0-1.47 1.073-2.756 2.57-2.93Z',
+
+  _bookmarkSvg(on) {
+    // Solid is a FILL with no stroke and outline is the reverse, exactly as
+    // the module's two factories render them — the pair is not one path with
+    // its fill flipped.
+    return '<svg viewBox="0 0 24 24" aria-hidden="true"'
+      + (on
+        ? ' fill="currentColor">'
+          + `<path d="${GroupChat._BOOKMARK_SOLID_PATH}"></path>`
+        : ' fill="none" stroke="currentColor" stroke-width="1.5">'
+          + '<path stroke-linecap="round" stroke-linejoin="round"'
+          + ` d="${GroupChat._BOOKMARK_PATH}"></path>`)
+      + '</svg>';
   },
 
   // Toggle the save state of one message. Optimistic: the button flips
@@ -1218,6 +1245,9 @@ const GroupChat = {
       btn.setAttribute('aria-pressed', on ? 'true' : 'false');
       btn.setAttribute('aria-label', on ? 'Unsave message' : 'Save message');
       btn.setAttribute('title', on ? 'Saved — click to unsave' : 'Save to your notifications');
+      // The mark is hollow or solid, so a class toggle alone would leave
+      // the icon showing the state it had before the click.
+      btn.innerHTML = GroupChat._bookmarkSvg(!!on);
     });
   },
 

@@ -262,6 +262,32 @@ export const PhotoIcon = stroked(
   'M3 16.5l5.25-5.25a2.25 2.25 0 013.182 0L15 14.818m-1.5-1.5 1.068-1.068a2.25 2.25 0 013.182 0L21 15.5m-18 3.75h18A2.25 2.25 0 0023.25 17V6.75A2.25 2.25 0 0021 4.5H3A2.25 2.25 0 00.75 6.75V17A2.25 2.25 0 003 19.25z',
 );
 
+/**
+ * #1280: saving a message. The outline/solid PAIR is the point — this is the
+ * only glyph in the set that has to render two states, and hollow-versus-
+ * filled says which one at 12px, where an opacity difference does not.
+ *
+ * Heroicons v2 (24 outline / 24 solid) like the rest of the file, drawn for
+ * `strokeWidth="1.5"` — both call sites pass it, rather than the default '2'
+ * this file's older v1 glyphs want.
+ *
+ * These two paths are ALSO inlined in public/js/group-chat.js, and that is
+ * deliberate: the message's own save button is rendered by a classic script
+ * that cannot import this module. It is the one duplication in the set, so
+ * tests/notifications-saved-section.test.js reads the strings out of here and
+ * asserts the script still carries them — redrawing the glyph in one place
+ * fails rather than quietly shipping two bookmarks.
+ */
+export const BookmarkIcon = stroked(
+  'BookmarkIcon',
+  'M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0 1 11.186 0Z',
+);
+
+export const BookmarkSolidIcon = filled(
+  'BookmarkSolidIcon',
+  'M6.32 2.577a49.255 49.255 0 0 1 11.36 0c1.497.174 2.57 1.46 2.57 2.93V21a.75.75 0 0 1-1.085.67L12 18.089l-7.165 3.583A.75.75 0 0 1 3.75 21V5.507c0-1.47 1.073-2.756 2.57-2.93Z',
+);
+
 export const GitHubIcon = filled(
   'GitHubIcon',
   'M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z',

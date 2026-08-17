@@ -35,6 +35,9 @@ const STORE_SRC = fs.readFileSync(
   'utf8'
 );
 const CHAT_SRC = fs.readFileSync(path.join(ROOT, 'public', 'js', 'group-chat.js'), 'utf8');
+const ICONS_SRC = fs.readFileSync(
+  path.join(ROOT, 'frontend', '@', 'components', 'ui', 'icons.tsx'), 'utf8'
+);
 const SCHEMA = fs.readFileSync(path.join(ROOT, 'src', 'db', 'schema.sql'), 'utf8');
 
 // ── the payload ─────────────────────────────────────────────────────────
@@ -248,16 +251,35 @@ test('every message kind carries the save button', () => {
     'ordinary messages, system/vote rows and spec-share cards all get one');
 });
 
-test('both ends of the gesture use the same pushpin', () => {
-  // 📌 = U+1F4CC. The message's button emits it escaped (the file is ASCII
-  // around it); the drawer row carries it literally in JSX. If one is ever
-  // changed without the other, saving and its saved row stop looking like
-  // one feature — which is the whole reason this is asserted rather than
-  // left to whoever edits next.
-  assert.match(CHAT_SRC, /aria-pressed="\$\{on \? 'true' : 'false'\}">\\u\{1F4CC\}<\/button>/,
-    'the message button is the pushpin');
-  assert.ok(LIST_SRC.includes('<span aria-hidden="true">\u{1F4CC}</span>'),
-    "the drawer row's meta icon is the same pushpin");
+test('the message button draws the shell’s own bookmark, not a second one', () => {
+  // frontend/@/components/ui/icons.tsx is the shell's icon set and
+  // tests/shell-icon-set.test.js forbids an inline <svg> anywhere under
+  // frontend/src — but public/js/** is a classic script that cannot import
+  // the module, so this one glyph exists in two places. That is only safe
+  // while the path data is identical, which is what this asserts: the
+  // strings are read OUT of the module, so redrawing the glyph there
+  // without updating the script fails here.
+  const outline = ICONS_SRC.match(/BookmarkIcon',\s*\n\s*'([^']+)'/);
+  const solid = ICONS_SRC.match(/BookmarkSolidIcon',\s*\n\s*'([^']+)'/);
+  assert.ok(outline && solid, 'the module exports the outline/solid bookmark pair');
+  assert.ok(CHAT_SRC.includes(outline[1]), 'the unsaved button draws the module’s outline');
+  assert.ok(CHAT_SRC.includes(solid[1]), 'the saved button draws the module’s solid');
+  assert.match(LIST_SRC, /BookmarkSolidIcon/,
+    'the drawer row imports the glyph rather than inlining one');
+});
+
+test('the mark is hollow when unsaved and solid when saved', () => {
+  const svg = CHAT_SRC.match(/_bookmarkSvg\(on\) \{([\s\S]*?)\n  \},/);
+  assert.ok(svg, '_bookmarkSvg() found');
+  assert.match(svg[1], /on\s*\?\s*\n?\s*' fill="currentColor">'/,
+    'the saved mark is a fill');
+  assert.match(svg[1], /fill="none" stroke="currentColor"/,
+    'and the unsaved one is an outline — the state is the shape, not the opacity');
+  // A class toggle alone would leave the previous state's mark on screen.
+  const paint = CHAT_SRC.match(/_paintBookmark\(messageId, on\) \{([\s\S]*?)\n  \},/);
+  assert.ok(paint, '_paintBookmark() found');
+  assert.match(paint[1], /innerHTML = GroupChat\._bookmarkSvg\(!!on\)/,
+    'an optimistic toggle redraws the mark, not just the classes');
 });
 
 test('the save button is available where react and edit are not', () => {

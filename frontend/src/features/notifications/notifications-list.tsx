@@ -43,6 +43,7 @@
 import { useEffect, useRef, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
+import { BookmarkSolidIcon } from '@/components/ui/icons';
 
 import { useStoreState } from '../../lib/use-store-state';
 import { notificationsStore } from './notifications-store.js';
@@ -379,9 +380,11 @@ function Saved({ view, touch }: { view: SavedView; touch: boolean }): ReactNode 
             whitespace-only children — see the note on <Meta> for why.
         */}
         <div className="text-xs text-zinc-500 dark:text-zinc-400 mb-1">
-          {/* The same 📌 the message's own save button carries, so the two
-              ends of the gesture read as one feature. */}
-          <span aria-hidden="true">📌</span>
+          {/* The same mark the message's own save button carries — solid
+              here, because everything in this section is saved by
+              definition — so the two ends of the gesture read as one
+              feature. */}
+          <BookmarkSolidIcon aria-hidden="true" className="inline-block w-3 h-3 align-middle text-violet-500" />
           <span className="font-medium text-zinc-800 dark:text-zinc-200">{` ${view.who}`}</span>
           {' in '}
           <span className="font-medium text-zinc-700 dark:text-zinc-300">{view.appName}</span>
