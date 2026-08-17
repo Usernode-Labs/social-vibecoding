@@ -83,36 +83,60 @@ function authRoutes(config) {
     try {
       // The identifier can be a username OR an email (thin-shell
       // migration: mobile-created accounts are email-keyed, and platform
-      // login is now the only sign-in surface for the app). Email lookup
-      // uses the normalized lower-case form the mobile OTP flow stores
-      // (src/routes/topochain/mobile-auth.js). Email is tried first for
-      // @-shaped identifiers, falling back to an exact username match so
-      // legacy accounts whose username merely looks like an email keep
-      // working.
+      // login is now the only sign-in surface for the app). An @-shaped
+      // identifier can name TWO different accounts at once: the account
+      // whose email it is, and an account whose username merely looks
+      // like an email (the mobile OTP flow uses the email as the
+      // username, so one person routinely owns both — issue #1269).
+      // First-match-wins lookup let the email row shadow the username
+      // row and the wrong account's password got checked, so both
+      // matches are collected as CANDIDATES and the password decides:
+      // the first candidate it verifies against wins. Two accounts can
+      // never share an email (users_email_lower_unique), so the only
+      // ambiguity is email-of-A vs username-of-B; on the improbable
+      // both-verify tie the email owner wins (listed first). Email
+      // matching is case-insensitive on both sides — every write path
+      // stores the lower-cased form, and lower(email) also reaches any
+      // legacy mixed-case row. Usernames stay exact-match.
       const identifier = String(username).trim();
-      let rows;
+      const candidates = [];
       if (identifier.includes('@')) {
-        ({ rows } = await pool.query(
-          'SELECT id, username, password, is_admin, admin_readonly FROM users WHERE email = $1',
-          [identifier.toLowerCase()]
-        ));
+        const { rows } = await pool.query(
+          'SELECT id, username, password, is_admin, admin_readonly FROM users WHERE lower(email) = lower($1)',
+          [identifier]
+        );
+        for (const row of rows) candidates.push({ row, matchedBy: 'email' });
       }
-      if (!rows || rows.length === 0) {
-        ({ rows } = await pool.query(
+      {
+        const { rows } = await pool.query(
           'SELECT id, username, password, is_admin, admin_readonly FROM users WHERE username = $1',
           [identifier]
-        ));
+        );
+        for (const row of rows) {
+          if (!candidates.some((c) => c.row.id === row.id)) {
+            candidates.push({ row, matchedBy: 'username' });
+          }
+        }
       }
 
-      if (rows.length === 0) {
+      if (candidates.length === 0) {
         log.warn('auth', 'Login failed - unknown user', { username });
         return res.status(401).json({ error: 'Invalid credentials' });
       }
 
-      const user = rows[0];
-      const valid = await bcrypt.compare(password, user.password);
+      let user = null;
+      let matchedBy = null;
+      for (const candidate of candidates) {
+        // At most 2 compares (one email match + one username match), so
+        // the cost posture behind authLimiter is unchanged.
+        if (await bcrypt.compare(password, candidate.row.password)) {
+          user = candidate.row;
+          matchedBy = candidate.matchedBy;
+          break;
+        }
+      }
 
-      if (!valid) {
+      if (!user) {
         log.warn('auth', 'Login failed - bad password', { username });
         return res.status(401).json({ error: 'Invalid credentials' });
       }
@@ -134,7 +158,7 @@ function authRoutes(config) {
         expires: expiresAt,
       });
 
-      log.info('auth', 'Login successful', { userId: user.id, username: user.username });
+      log.info('auth', 'Login successful', { userId: user.id, username: user.username, matchedBy });
 
       res.json({
         // Echo the account's real username, not the raw identifier — the
@@ -936,7 +960,7 @@ function authRoutes(config) {
     try {
       const { rows } = await pool.query(
         `SELECT id, email FROM users
-          WHERE email = $1 AND email_confirmed = TRUE AND is_admin = FALSE`,
+          WHERE lower(email) = lower($1) AND email_confirmed = TRUE AND is_admin = FALSE`,
         [email]
       );
       if (rows.length > 0) {

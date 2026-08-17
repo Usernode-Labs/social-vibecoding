@@ -4248,7 +4248,47 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS exclude_podium             BOOLEAN NO
 ALTER TABLE users ADD COLUMN IF NOT EXISTS accept_logs                BOOLEAN NOT NULL DEFAULT TRUE;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at                 TIMESTAMPTZ;
 
-CREATE UNIQUE INDEX IF NOT EXISTS users_email_unique ON users(email) WHERE email IS NOT NULL;
+-- Email uniqueness is case-insensitive (issue #1269): login, the admin
+-- editor and the password-reset request all match on lower(email), so
+-- uniqueness must hold on lower(email) too or two case-variants of one
+-- address would each satisfy a raw-column index while colliding at
+-- lookup time. The DO block (1) lower-cases any legacy mixed-case rows,
+-- skipping — with a warning, never a boot failure — any row whose
+-- lowered form already exists on another row (production has zero
+-- mixed-case emails, but a self-hosted instance must not crash-loop over
+-- one); (2) creates users_email_lower_unique, downgrading a residual
+-- case-variant collision to a warning; (3) drops the old raw-column
+-- users_email_unique only once the functional index exists, so email
+-- uniqueness is never left unenforced. Every write path stores emails
+-- lower-cased, so the skip branches are legacy-data-only.
+DO $$
+BEGIN
+  UPDATE users u SET email = lower(u.email)
+   WHERE u.email IS NOT NULL AND u.email <> lower(u.email)
+     AND NOT EXISTS (
+       SELECT 1 FROM users o
+        WHERE o.id <> u.id AND lower(o.email) = lower(u.email)
+     );
+  IF EXISTS (
+    SELECT 1 FROM users u WHERE u.email IS NOT NULL AND u.email <> lower(u.email)
+  ) THEN
+    RAISE WARNING 'users: case-variant duplicate emails left unnormalized; resolve them manually so users_email_lower_unique can be created';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_indexes WHERE schemaname = current_schema() AND indexname = 'users_email_lower_unique'
+  ) THEN
+    BEGIN
+      CREATE UNIQUE INDEX users_email_lower_unique ON users(lower(email)) WHERE email IS NOT NULL;
+    EXCEPTION WHEN unique_violation THEN
+      RAISE WARNING 'users_email_lower_unique not created: case-variant duplicate emails exist; the raw-column users_email_unique index is kept';
+    END;
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM pg_indexes WHERE schemaname = current_schema() AND indexname = 'users_email_lower_unique'
+  ) THEN
+    DROP INDEX IF EXISTS users_email_unique;
+  END IF;
+END $$;
 CREATE INDEX IF NOT EXISTS idx_users_is_in_waitlist ON users(is_in_waitlist);
 CREATE INDEX IF NOT EXISTS idx_users_exclude_podium ON users(exclude_podium);
 CREATE INDEX IF NOT EXISTS idx_users_email_confirmation_token ON users(email_confirmation_token);

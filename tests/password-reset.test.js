@@ -25,7 +25,7 @@ let capturedQueries = [];
 let userByPubkey = null;   // row returned for SELECT ... WHERE usernode_pubkey = $1
 let userPasswordRow = null; // row returned for SELECT password ... WHERE id
 let userLinkedPubkeyRow = null; // row for SELECT usernode_pubkey FROM users WHERE id
-let userByEmail = null;     // row for SELECT ... WHERE email = $1 (reset request)
+let userByEmail = null;     // row for SELECT ... WHERE lower(email) = lower($1) (reset request)
 let userByResetHash = null; // row for SELECT ... WHERE password_reset_token_hash = $1
 let updateReturns = [];     // rows returned for UPDATE ... RETURNING
 
@@ -44,7 +44,7 @@ poolMod.getPool = () => ({
     if (/SELECT .*password_reset_token_hash = \$1/s.test(sql)) {
       return { rows: userByResetHash ? [userByResetHash] : [] };
     }
-    if (/SELECT .*WHERE email = \$1/s.test(sql)) {
+    if (/SELECT .*WHERE lower\(email\) = lower\(\$1\)/s.test(sql)) {
       return { rows: userByEmail ? [userByEmail] : [] };
     }
     if (/UPDATE users SET password/.test(sql)) {
@@ -469,8 +469,8 @@ test('email-reset request: eligibility filter excludes admins and unconfirmed em
   try {
     const r = await post(server, '/api/auth/password-reset/request', { email: 'Dave@Example.com' });
     assert.strictEqual(r.res.status, 200);
-    const sel = capturedQueries.find((q) => /SELECT .*WHERE email = \$1/s.test(q.sql));
-    assert.ok(sel, 'looked the account up by email');
+    const sel = capturedQueries.find((q) => /SELECT .*WHERE lower\(email\) = lower\(\$1\)/s.test(q.sql));
+    assert.ok(sel, 'looked the account up by email (case-insensitively — #1269)');
     assert.match(sel.sql, /email_confirmed = TRUE/, 'only confirmed emails are eligible');
     assert.match(sel.sql, /is_admin = FALSE/, 'admin accounts are excluded from email reset');
     assert.strictEqual(sel.params[0], 'dave@example.com', 'email is normalized to lower case');

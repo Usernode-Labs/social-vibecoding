@@ -246,16 +246,19 @@ function handleQuery(rawSql, params = []) {
     const n = db.users.filter((u) => u.is_admin && !u.admin_readonly).length;
     return { rows: [{ n }] };
   }
-  if (sql === 'SELECT id FROM users WHERE email = $1') {
-    const row = db.users.find((u) => u.email === params[0]);
+  // #1269: the route's uniqueness pre-checks match lower(email) so a
+  // legacy mixed-case stored row still collides with a lower-cased write.
+  const lowerEmail = (e) => (typeof e === 'string' ? e.toLowerCase() : e);
+  if (sql === 'SELECT id FROM users WHERE lower(email) = lower($1)') {
+    const row = db.users.find((u) => lowerEmail(u.email) === lowerEmail(params[0]) && u.email != null);
     return { rows: row ? [{ id: row.id }] : [] };
   }
-  if (sql === 'SELECT id FROM users WHERE email = $1 AND id != $2') {
-    const row = db.users.find((u) => u.email === params[0] && u.id !== params[1]);
+  if (sql === 'SELECT id FROM users WHERE lower(email) = lower($1) AND id != $2') {
+    const row = db.users.find((u) => lowerEmail(u.email) === lowerEmail(params[0]) && u.email != null && u.id !== params[1]);
     return { rows: row ? [{ id: row.id }] : [] };
   }
-  if (sql === 'SELECT id FROM users WHERE email = $1 OR discord = $2 LIMIT 1') {
-    const row = db.users.find((u) => u.email === params[0] || u.discord === params[1]);
+  if (sql === 'SELECT id FROM users WHERE lower(email) = lower($1) OR discord = $2 LIMIT 1') {
+    const row = db.users.find((u) => (u.email != null && lowerEmail(u.email) === lowerEmail(params[0])) || u.discord === params[1]);
     return { rows: row ? [{ id: row.id }] : [] };
   }
   if (sql === 'SELECT id FROM users WHERE id = $1') {
@@ -993,6 +996,61 @@ test('users: create enforces at-least-one-identifier and unique email; update ca
     });
     assert.equal(overClearRes.status, 422);
     assert.equal((await overClearRes.json()).error, 'At least one identifier (email, telegram, or discord) is required.');
+  } finally { server.close(); }
+});
+
+test('users: emails are stored lower-cased and the duplicate check is case-insensitive (#1269)', async () => {
+  // A legacy row stored before writes were normalized — mixed case on disk.
+  db.users.push({ id: 60, username: 'legacy-user', email: 'Legacy@Example.com', is_admin: false, admin_readonly: false });
+
+  const { server, base } = await listen(buildSubApp(usersAdminRoutes));
+  try {
+    // Mixed-case input on create is normalized before it is stored.
+    const createRes = await fetch(`${base}/api/v4/admin/users`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'Mixed.Case@Example.COM', telegram: 'tg-mixed' }),
+    });
+    assert.equal(createRes.status, 201);
+    const user = (await createRes.json()).data;
+    assert.equal(user.email, 'mixed.case@example.com');
+
+    // A case-variant of an existing (already-lowercase) email is a dup.
+    const dupRes = await fetch(`${base}/api/v4/admin/users`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'MIXED.case@example.com' }),
+    });
+    assert.equal(dupRes.status, 422);
+    assert.equal((await dupRes.json()).error, 'The email has already been taken.');
+
+    // A legacy mixed-case STORED row still blocks a lower-cased write —
+    // the pre-check lowers the column side too, not just the input.
+    const legacyDup = await fetch(`${base}/api/v4/admin/users`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'legacy@example.com' }),
+    });
+    assert.equal(legacyDup.status, 422);
+    assert.equal((await legacyDup.json()).error, 'The email has already been taken.');
+
+    // Update: mixed-case input is normalized, and a case-variant of
+    // another user's email is refused.
+    const other = (await (await fetch(`${base}/api/v4/admin/users`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ telegram: 'tg-other' }),
+    })).json()).data;
+
+    const updDup = await fetch(`${base}/api/v4/admin/users/${other.id}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'Mixed.Case@example.com' }),
+    });
+    assert.equal(updDup.status, 422);
+    assert.equal((await updDup.json()).error, 'The email has already been taken.');
+
+    const upd = await fetch(`${base}/api/v4/admin/users/${other.id}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'Another.One@Example.com' }),
+    });
+    assert.equal(upd.status, 200);
+    assert.equal((await upd.json()).data.email, 'another.one@example.com');
   } finally { server.close(); }
 });
 
