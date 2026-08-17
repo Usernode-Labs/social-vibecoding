@@ -2025,13 +2025,22 @@ function topochainMobileRoutes(config) {
       // Validation runs BEFORE the account lookup (same ordering as
       // partner.js's PUT /delegations/:account) — a bad body on an
       // unknown account still 422s, not 404s.
-      const { rows: acctRows } = await client.query(
-        'SELECT address, user_id FROM onchain_accounts WHERE address = $1 LIMIT 1',
-        [walletAddress]
+      //
+      // THE FIX (found live on production): the same ut1… address exists
+      // once PER SEASON EVENT in onchain_accounts (up to 9 rows for one
+      // address, claimed by different parties across events), so the old
+      // unordered `LIMIT 1` lookup resolved "the" row nondeterministically
+      // — whichever row the planner returned decided whether the real
+      // owner got a 409 `user_wallet_mismatch`. Ownership is a property
+      // of the ADDRESS, not of one grant row: the caller owns the wallet
+      // when ANY of its rows carries their user_id.
+      const { rows: ownRows } = await client.query(
+        `SELECT EXISTS(SELECT 1 FROM onchain_accounts WHERE address = $1) AS known,
+                EXISTS(SELECT 1 FROM onchain_accounts WHERE address = $1 AND user_id = $2) AS owned`,
+        [walletAddress, req.user.id]
       );
-      const account = acctRows[0];
-      if (!account) return fail(res, 404, 'Unknown account address.');
-      if (account.user_id == null || Number(account.user_id) !== Number(req.user.id)) {
+      if (!ownRows[0].known) return fail(res, 404, 'Unknown account address.');
+      if (!ownRows[0].owned) {
         return fail(res, 409, 'Wallet does not belong to your account.', { code: 'user_wallet_mismatch' });
       }
 
