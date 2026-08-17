@@ -90,6 +90,18 @@ function findText(node, text) {
   return null;
 }
 
+function findClass(node, className) {
+  if (typeof node.className === 'string' &&
+      node.className.split(/\s+/).includes(className)) {
+    return node;
+  }
+  for (const child of node.children) {
+    const match = findClass(child, className);
+    if (match) return match;
+  }
+  return null;
+}
+
 test('delegate alone determines active delegation', () => {
   const { wallet } = loadWallet();
 
@@ -107,6 +119,9 @@ test('delegation card renders off, active and setup states with disclosure', () 
   const { wallet } = loadWallet();
   const disclosure = 'When delegated, you receive half the points you would ' +
     'earn by producing blocks directly from your phone.';
+  const selfHosted = 'Want to run a node on your own laptop or server and ' +
+    'monitor it from your phone? Start the node there using the same ' +
+    'account you use on this phone.';
 
   const off = textTree(wallet._renderStakingCard({
     delegate: null,
@@ -115,14 +130,21 @@ test('delegation card renders off, active and setup states with disclosure', () 
   assert.match(off, /Producing blocks on this phone/);
   assert.match(off, /earns full points/);
   assert.ok(off.includes(disclosure));
+  assert.ok(off.includes(selfHosted));
   assert.doesNotMatch(off, /Delegated since/,
     'delegated_since is not active-state evidence');
+  assert.equal(findClass(wallet._renderStakingCard({
+    delegate: null,
+    delegated_since: null,
+  }), 'bg-violet-500/10'), null,
+  'the delegated highlight only appears while delegated');
 
   const activeValue = '2026-08-11T10:30:00Z';
-  const active = textTree(wallet._renderStakingCard({
+  const activeCard = wallet._renderStakingCard({
     delegate: 'B62qiTKpEPjGTSHZrtM8uXiKgn8So916pLmNJKDhKeyBQL9TDb3nvBG',
     delegated_since: activeValue,
-  }));
+  });
+  const active = textTree(activeCard);
   assert.match(active, /Delegated/);
   assert.match(active, /B62qiTKp…b3nvBG/);
   assert.match(active, /Block production on this phone is disabled/);
@@ -130,6 +152,13 @@ test('delegation card renders off, active and setup states with disclosure', () 
     new Date(activeValue).toLocaleString()),
   'the timestamp follows the runtime user locale');
   assert.ok(active.includes(disclosure));
+  assert.ok(active.includes(selfHosted));
+  const highlight = findClass(activeCard, 'bg-violet-500/10');
+  assert.ok(highlight, 'the delegated state sits in a tinted container');
+  assert.ok(findText(highlight, 'Delegated'),
+    'the status line lives inside the highlighted container');
+  assert.ok(findText(highlight, 'B62qiTKp…b3nvBG'),
+    'the delegate address lives inside the highlighted container');
 
   const setup = textTree(wallet._renderStakingCard(null));
   assert.match(setup, /Wallet setup is still in progress/);
