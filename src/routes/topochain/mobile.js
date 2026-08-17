@@ -1908,13 +1908,37 @@ function topochainMobileRoutes(config) {
             return fail(res, 409, 'No on-chain accounts are available for the current season.');
           }
           account = poolRows[0];
-          await client.query(
-            `UPDATE onchain_accounts
-                SET user_id = $1, is_used = TRUE, used_at = NOW(), updated_at = NOW()
-              WHERE id = $2`,
-            [req.user.id, account.id]
-          );
-          newlyAllocated = true;
+          try {
+            await client.query(
+              `UPDATE onchain_accounts
+                  SET user_id = $1, is_used = TRUE, used_at = NOW(), updated_at = NOW()
+                WHERE id = $2`,
+              [req.user.id, account.id]
+            );
+            newlyAllocated = true;
+          } catch (err) {
+            // Two concurrent first-provisions can each pass the existing-
+            // allocation check and claim DIFFERENT pool rows (SKIP LOCKED
+            // only stops them racing onto the SAME row); the loser then
+            // trips `onchain_accounts_user_season_unique` here once the
+            // winner commits. That is the guard working — restart the
+            // transaction, adopt the winner's now-visible row, and fall
+            // through to the shared enrollment logic below, keeping the
+            // endpoint idempotent instead of 500ing.
+            if (err.code !== '23505') throw err;
+            await client.query('ROLLBACK');
+            await client.query('BEGIN');
+            const { rows: retryRows } = await client.query(
+              `SELECT id, address, public_key, secret_key, season_event_id
+                 FROM onchain_accounts
+                WHERE user_id = $1 AND season_id = $2
+                ORDER BY (season_event_id IS NULL) DESC, id ASC
+                LIMIT 1`,
+              [req.user.id, seasonId]
+            );
+            if (!retryRows.length) throw err;
+            account = retryRows[0];
+          }
         }
 
         // Any enrollment for the season (event-scoped or season-wide)
