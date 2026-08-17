@@ -12,7 +12,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { classifyRequest, NO_FALLBACK_PAGES } = require('../public/sw.js');
+const { classifyRequest, NO_FALLBACK_PAGES, NO_FALLBACK_PREFIXES } = require('../public/sw.js');
 
 const ORIGIN = 'https://social-vibecoding.example';
 const classify = (method, path, accept = null, mode = 'no-cors') =>
@@ -148,6 +148,22 @@ test('standalone server pages never fall back to the SPA shell', () => {
   assert.deepEqual(NO_FALLBACK_PAGES, ['/cli/authorize', '/connect/authorize']);
   assert.equal(classify('GET', '/cli/authorize', 'text/html', 'navigate'), 'bypass');
   assert.equal(classify('GET', '/connect/authorize', 'text/html', 'navigate'), 'bypass');
+});
+
+// Public report share links (/reports/<token>) are standalone sandboxed
+// server documents pasted to people WITHOUT a platform session. Falling
+// back to the cached SPA shell — offline, or when the network misses the
+// navigate deadline — would replace the report with the login screen for
+// a logged-out recipient, turning a deliberately unauthenticated link
+// into an auth wall. They must bypass the worker entirely.
+test('report share links never fall back to the SPA shell', () => {
+  assert.deepEqual(NO_FALLBACK_PREFIXES, ['/reports/']);
+  assert.equal(
+    classify('GET', `/reports/${'a'.repeat(32)}`, 'text/html', 'navigate'),
+    'bypass'
+  );
+  // Malformed tokens 404 server-side; the worker still stays out of the way.
+  assert.equal(classify('GET', '/reports/not-a-token', 'text/html', 'navigate'), 'bypass');
 });
 
 test('unparseable URLs are bypassed', () => {

@@ -2325,6 +2325,12 @@
       "path": "/#apps",
       "expectSelector": "#browse-list .browse-row .app-icon-tile[data-icon=\"letter\"]",
       "expectText": "Staging demo app — letter tile"
+    },
+    {
+      "name": "Shared report link serves the report document without a session",
+      "path": "/reports/00abcdef00abcdef00abcdef00abcdef",
+      "expectSelector": ".staging-fixture-report",
+      "expectText": "staging fixture"
     }
   ],
   "governance": {

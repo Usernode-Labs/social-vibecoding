@@ -191,6 +191,24 @@ const NO_FALLBACK_PAGES = [
   '/connect/authorize',
 ];
 
+// Prefix-matched counterpart of NO_FALLBACK_PAGES, for standalone pages
+// whose path carries a variable segment.
+//
+// /reports/<token> is a PUBLIC report share link (routes/
+// report-snapshots.js, mounted before authMiddleware): a sandboxed,
+// self-contained server document meant to be pasted to people with no
+// platform session. The recipient most likely to hit this worker is a
+// platform user who is logged out on that device — and serving them the
+// cached SPA shell (offline, or on the 3s navigate deadline of a slow
+// connection) replaces the report with the LOGIN SCREEN, turning a
+// deliberately unauthenticated link into an auth wall. The report is
+// no-store by design (unshare must bite immediately), so there is no
+// cached copy to fall back to either way: bypass, and let it load or
+// fail like any plain document.
+const NO_FALLBACK_PREFIXES = [
+  '/reports/',
+];
+
 // Pure request classifier — the single source of truth for what the fetch
 // handler does with a request. Returns one of:
 //   'bypass'   — don't touch it; the browser talks to the network directly.
@@ -219,7 +237,9 @@ function classifyRequest(method, url, acceptHeader, mode, selfOrigin) {
   if (/^\/api\/sessions\/[^/]+\/events$/.test(p)) return 'bypass';
 
   if (mode === 'navigate') {
-    return NO_FALLBACK_PAGES.includes(p) ? 'bypass' : 'navigate';
+    if (NO_FALLBACK_PAGES.includes(p)) return 'bypass';
+    if (NO_FALLBACK_PREFIXES.some((pre) => p.startsWith(pre))) return 'bypass';
+    return 'navigate';
   }
 
   // Local-dev mock namespace and short-lived credentials.
@@ -352,6 +372,7 @@ if (typeof module !== 'undefined' && module.exports) {
     raceNetworkAndCache,
     SHELL_ASSETS,
     NO_FALLBACK_PAGES,
+    NO_FALLBACK_PREFIXES,
     SW_VERSION,
     API_CACHE,
     ALL_CACHES,
