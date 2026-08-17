@@ -5,7 +5,9 @@
 // matcher in src/services/user-directory.js.
 //
 // Covers: the auth matrix (private-IP gate, missing/malformed/unknown
-// app token, missing/forged/cross-app user token), the FIELD ALLOWLIST
+// app token, missing/forged/cross-app user token, and the #1213
+// user-token-only path staging previews use — including that the feed's
+// plain appPlatformAuth config still rejects it), the FIELD ALLOWLIST
 // (only id + username ever reach the wire, even when the row carries
 // email/password/is_admin), exact lookup including the case-collision
 // rule, prefix search with limit clamping and has_more, LIKE-metacharacter
@@ -94,6 +96,12 @@ const pool = {
       const app = state.apps.find((a) => a.llm_proxy_token === params[0]);
       return { rows: app ? [app] : [] };
     }
+    // The user-token-only path (#1213): the middleware loads the app row
+    // by the id the verified token's audience names.
+    if (/FROM apps WHERE id = \$1/.test(s)) {
+      const app = state.apps.find((a) => a.id === params[0]);
+      return { rows: app ? [{ id: app.id, slug: app.slug }] : [] };
+    }
     // lookupExact: case-insensitive equality, exact-case first, then id.
     if (/WHERE LOWER\(username\) = LOWER/.test(s)) {
       const name = params[0];
@@ -180,10 +188,14 @@ test('non-private source IP is rejected', async () => {
   assert.equal(body.code, 'forbidden_ip');
 });
 
-test('missing app token (the staging-container shape) is rejected', async () => {
-  const { status, body } = await lookup({ token: null, qs: '?username=alice' });
-  assert.equal(status, 401);
-  assert.equal(body.code, 'missing_app_token');
+test('neither credential is still missing_app_token — the pre-#1213 contract', async () => {
+  for (const path of ['lookup', 'search']) {
+    const { status, body } = await call(path, {
+      token: null, userToken: null, qs: '?username=alice&q=a',
+    });
+    assert.equal(status, 401);
+    assert.equal(body.code, 'missing_app_token');
+  }
 });
 
 test('malformed app token is rejected without a lookup', async () => {
@@ -244,6 +256,88 @@ test('a scoped infrastructure token is rejected even when otherwise valid', asyn
   const { status, body } = await lookup({ userToken: forged, qs: '?username=alice' });
   assert.equal(status, 403);
   assert.equal(body.code, 'bad_user_token');
+});
+
+// ── User-token-only (staging previews, #1213) ────────────────────────
+//
+// Preview containers get USERNODE_PLATFORM_API_URL but no app token, so
+// the two directory routes — and only these — also accept the caller's
+// forwarded iframe token on its own. The token's audience picks which
+// app id the verifier pins; the SIGNATURE is what authenticates it.
+
+// Rebuild a signed token with a swapped audience, keeping the original
+// signature — the forgery the unverified-aud read must not fall for.
+function tamperAudience(token, aud) {
+  const [h, p, sig] = token.split('.');
+  const payload = JSON.parse(Buffer.from(p, 'base64url').toString('utf8'));
+  payload.aud = aud;
+  const p2 = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
+  return `${h}.${p2}.${sig}`;
+}
+
+test('no app token + a valid user token succeeds, same body, no leak', async () => {
+  state.users = [user(42, 'alice')];
+  const viaAppToken = await lookup({ qs: '?username=alice' });
+  const viaUserToken = await lookup({ token: null, qs: '?username=alice' });
+  assert.equal(viaUserToken.status, 200);
+  // Byte-identical answer on both auth paths.
+  assert.deepEqual(viaUserToken.body, viaAppToken.body);
+  assert.deepEqual(viaUserToken.body.user, { id: 42, username: 'alice' });
+  assertNoLeak(viaUserToken.body, [viaUserToken.body.user]);
+
+  state.users = [user(1, 'alice'), user(2, 'alina')];
+  const s = await search({ token: null, qs: '?q=ali' });
+  assert.equal(s.status, 200);
+  assert.equal(s.body.users.length, 2);
+  for (const u of s.body.users) {
+    assert.deepEqual(Object.keys(u).sort(), ['id', 'username']);
+  }
+  assertNoLeak(s.body, s.body.users);
+});
+
+test('a tampered audience cannot redirect the app identity', async () => {
+  state.users = [user(42, 'alice')];
+  // Minted for app A, aud swapped to app B without re-signing: the aud
+  // read picks app B, so verification pins app B's audience and the
+  // signature no longer verifies.
+  const forged = tamperAudience(userJwt({ appId: APP_A_ID }), `usernode:app:${APP_B_ID}`);
+  const { status, body } = await lookup({ token: null, userToken: forged, qs: '?username=alice' });
+  assert.equal(status, 401);
+  assert.equal(body.code, 'bad_user_token');
+});
+
+test('an audience naming an unknown app is rejected', async () => {
+  const { status, body } = await lookup({
+    token: null, userToken: userJwt({ appId: 999 }), qs: '?username=alice',
+  });
+  assert.equal(status, 401);
+  assert.equal(body.code, 'bad_app_token');
+});
+
+test('garbage / non-app-audience / expired tokens fail alone too', async () => {
+  for (const bad of [
+    'not.a.jwt',
+    // Signed, but the audience is not usernode:app:<id> — nothing to pin.
+    jwt.sign({ id: 7, username: 'tester', pur: 'iframe' }, keys.IFRAME_JWT_PRIVATE_KEY, {
+      algorithm: 'RS256', issuer: 'usernode', audience: 'usernode:infra', expiresIn: '1h',
+    }),
+    userJwt({ ttl: -60 }),
+  ]) {
+    const { status, body } = await lookup({ token: null, userToken: bad, qs: '?username=alice' });
+    assert.equal(status, 401);
+    assert.equal(body.code, 'bad_user_token');
+  }
+});
+
+test('the governance feed does NOT accept a user token alone', async () => {
+  // The feed keeps plain appPlatformAuth (allowUserTokenOnly unset) —
+  // app-scoped data that unreviewed preview code has no business reading.
+  const res = await fetch(
+    `http://127.0.0.1:${server.address().port}/api/app-platform/governance/feed`,
+    { headers: { 'x-usernode-user-token': userJwt() } }
+  );
+  assert.equal(res.status, 401);
+  assert.equal((await res.json()).code, 'missing_app_token');
 });
 
 // ── Field allowlist ──────────────────────────────────────────────────

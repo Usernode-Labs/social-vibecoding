@@ -4377,15 +4377,23 @@ async function seedStagingMembersPanel(pool) {
 // none of which share a prefix — so a typeahead over it returns one row
 // and demonstrates nothing, and the case-collision branch is unreachable.
 //
-// Two groups, both in the 9000xx range with sentinel passwords that can
+// Three groups, all in the 9000xx range with sentinel passwords that can
 // never log in:
-//   • five 'staging-demo-car*' handles — a common prefix with enough
-//     rows to exercise ordering and, at limit=4, has_more: true.
+//   • twelve 'staging-demo-car*' handles — a common prefix with enough
+//     rows that BOTH clamp points are demonstrable: limit=4 shows
+//     has_more with room to spare, and the DEFAULT limit of 10 also
+//     truncates (12 > 10), so the untouched-limit typeahead path shows
+//     has_more: true too (#1213).
 //   • 'staging-demo-Nova' / 'staging-demo-nova' — a real case collision.
 //     users.username is UNIQUE but case-SENSITIVE and registration
 //     normalizes nothing, so pairs like this exist in production
 //     (Drea/drea). Looking up 'staging-demo-NOVA' matches neither
 //     exactly and returns the lower id with ambiguous: true.
+//   • 'staging-demo-a_b_test' — a handle containing a LIKE
+//     metacharacter, so the escapeLike path is visible from a preview:
+//     searching 'staging-demo-a_b' must return exactly this row, not
+//     every 'staging-demo-a?b…' shape an unescaped underscore would
+//     match.
 // ON CONFLICT DO NOTHING keeps the every-boot re-run idempotent.
 async function seedStagingUserDirectory(pool) {
   if (process.env.USERNODE_ENV !== 'staging') return;
@@ -4400,7 +4408,15 @@ async function seedStagingUserDirectory(pool) {
          (900063, 'staging-demo-carter',   'staging-demo-not-a-login'),
          (900064, 'staging-demo-cargo-bot','staging-demo-not-a-login'),
          (900065, 'staging-demo-Nova',     'staging-demo-not-a-login'),
-         (900066, 'staging-demo-nova',     'staging-demo-not-a-login')
+         (900066, 'staging-demo-nova',     'staging-demo-not-a-login'),
+         (900067, 'staging-demo-caramel',  'staging-demo-not-a-login'),
+         (900068, 'staging-demo-carbon',   'staging-demo-not-a-login'),
+         (900069, 'staging-demo-cardio',   'staging-demo-not-a-login'),
+         (900073, 'staging-demo-carina',   'staging-demo-not-a-login'),
+         (900074, 'staging-demo-carnival', 'staging-demo-not-a-login'),
+         (900075, 'staging-demo-carol',    'staging-demo-not-a-login'),
+         (900076, 'staging-demo-carwash',  'staging-demo-not-a-login'),
+         (900077, 'staging-demo-a_b_test', 'staging-demo-not-a-login')
        ON CONFLICT DO NOTHING`
     );
     log.info('db', 'Staging user-directory fixtures seeded');

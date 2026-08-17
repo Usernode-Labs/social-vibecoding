@@ -98,8 +98,43 @@ async function resolveApp(pool, token) {
 // state rather than the app's own row take this variant, so every read
 // is attributable to a real signed-in user of THIS app and rate-limits
 // can be keyed per (app, user) instead of per app.
+//
+// `{ allowUserTokenOnly: true }` (issue #1213, requires requireUser) lets
+// a caller with NO app token authenticate with the user token alone —
+// the staging-preview path for the user-directory endpoints: preview
+// containers hold USERNODE_PLATFORM_API_URL but deliberately no app
+// token, and the person reviewing a proposal already has an iframe
+// token minted for that exact app. The app identity comes from the
+// token's own `aud` claim (`usernode:app:<id>`), which is only TRUSTED
+// after the signature verifies against that same audience — the
+// unverified read merely picks which audience to pin, so a forged aud
+// fails verification and a real token can only ever name the app it
+// was minted for. When the app token IS present, the path is
+// byte-identical to `{ requireUser: true }` alone. Used ONLY by the
+// directory routes: the governance feed stays app-token-gated, because
+// unreviewed preview code has no business reading it.
+
+// The candidate app id in a token's audience claim, read WITHOUT
+// verifying the signature. Never trust the result on its own — pass it
+// to verifyAppIdentityToken, which re-pins the audience.
+function unverifiedAudienceAppId(token) {
+  try {
+    const payload = JSON.parse(
+      Buffer.from(String(token).split('.')[1], 'base64url').toString('utf8')
+    );
+    const aud = Array.isArray(payload.aud) ? payload.aud[0] : payload.aud;
+    const m = /^usernode:app:(\d+)$/.exec(String(aud || ''));
+    if (!m) return null;
+    const id = parseInt(m[1], 10);
+    return Number.isInteger(id) && id > 0 ? id : null;
+  } catch {
+    return null;
+  }
+}
+
 function appPlatformAuth(pool, opts = {}) {
   const requireUser = !!opts.requireUser;
+  const allowUserTokenOnly = !!opts.allowUserTokenOnly && requireUser;
   return async function appPlatformAuthMiddleware(req, res, next) {
     const ip = clientIp(req);
     if (!isPrivateIp(ip)) {
@@ -108,11 +143,17 @@ function appPlatformAuth(pool, opts = {}) {
     }
 
     const appToken = req.headers['x-usernode-app-token'];
-    if (!appToken || typeof appToken !== 'string' || !/^[0-9a-f]{64}$/.test(appToken)) {
+    const userToken = req.headers['x-usernode-user-token'];
+    const userTokenOnly = allowUserTokenOnly && !appToken
+      && !!userToken && typeof userToken === 'string';
+
+    if (!userTokenOnly
+      && (!appToken || typeof appToken !== 'string' || !/^[0-9a-f]{64}$/.test(appToken))) {
+      // Covers "neither credential" too — the error contract for a caller
+      // that presents nothing is unchanged from before #1213.
       return res.status(401).json({ ok: false, code: 'missing_app_token' });
     }
 
-    const userToken = req.headers['x-usernode-user-token'];
     if (requireUser) {
       if (!userToken || typeof userToken !== 'string') {
         return res.status(401).json({ ok: false, code: 'missing_user_token' });
@@ -124,21 +165,44 @@ function appPlatformAuth(pool, opts = {}) {
     }
 
     let app;
-    try {
-      app = await resolveApp(pool, appToken);
-    } catch (err) {
-      log.error('app-platform-auth', 'App token lookup failed', { err: err.message });
-      return res.status(500).json({ ok: false, code: 'lookup_failed' });
-    }
-    if (!app) {
-      return res.status(401).json({ ok: false, code: 'bad_app_token' });
+    if (userTokenOnly) {
+      // The signature is what authenticates the app identity; the
+      // unverified aud only selects which audience the verifier pins.
+      const candidateAppId = unverifiedAudienceAppId(userToken);
+      if (!candidateAppId) {
+        return res.status(401).json({ ok: false, code: 'bad_user_token' });
+      }
+      try {
+        const { rows } = await pool.query(
+          'SELECT id, slug FROM apps WHERE id = $1', [candidateAppId]
+        );
+        app = rows[0] ? { id: rows[0].id, slug: rows[0].slug } : null;
+      } catch (err) {
+        log.error('app-platform-auth', 'App row lookup failed', { err: err.message });
+        return res.status(500).json({ ok: false, code: 'lookup_failed' });
+      }
+      if (!app) {
+        return res.status(401).json({ ok: false, code: 'bad_app_token' });
+      }
+    } else {
+      try {
+        app = await resolveApp(pool, appToken);
+      } catch (err) {
+        log.error('app-platform-auth', 'App token lookup failed', { err: err.message });
+        return res.status(500).json({ ok: false, code: 'lookup_failed' });
+      }
+      if (!app) {
+        return res.status(401).json({ ok: false, code: 'bad_app_token' });
+      }
     }
 
     let userId = null;
     if (requireUser) {
       // Verified against the RESOLVED app's audience — a token minted for
       // app A carries `usernode:app:<A>` and is rejected when presented
-      // alongside app B's app token.
+      // alongside app B's app token. On the user-token-only path the
+      // "resolved" app came from the token's own aud, and this same
+      // verification is what makes that identity authentic.
       let claims;
       try {
         claims = platformJwt.verifyAppIdentityToken(userToken, { appId: app.id });
@@ -152,6 +216,7 @@ function appPlatformAuth(pool, opts = {}) {
     }
 
     req.appPlatform = { appId: app.id, appSlug: app.slug, userId };
+    if (userTokenOnly) req.appPlatform.viaUserToken = true;
     next();
   };
 }

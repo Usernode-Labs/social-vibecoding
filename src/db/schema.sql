@@ -4246,6 +4246,19 @@ CREATE INDEX IF NOT EXISTS idx_users_telegram ON users(telegram);
 CREATE INDEX IF NOT EXISTS idx_users_discord ON users(discord);
 CREATE INDEX IF NOT EXISTS idx_users_country ON users(country);
 
+-- The user directory's handle match (services/user-directory.js, #1213).
+-- Every lookup runs `LOWER(username) = LOWER($1)` and every typeahead
+-- keystroke runs `LOWER(username) LIKE '<prefix>%' ... ORDER BY
+-- LOWER(username)`, across three surfaces (app-platform API, the shell's
+-- bridge relay, the collaborator-invite typeahead) — without these both
+-- were sequential scans. Two indexes because they serve different
+-- operators: the default (btree/collation) opclass answers the equality
+-- and the ORDER BY, but under a non-C collation it cannot serve LIKE
+-- prefix ranges — that needs text_pattern_ops, which in turn cannot serve
+-- the collation-ordered ORDER BY.
+CREATE INDEX IF NOT EXISTS idx_users_username_lower ON users (LOWER(username));
+CREATE INDEX IF NOT EXISTS idx_users_username_lower_pattern ON users (LOWER(username) text_pattern_ops);
+
 -- `platform_settings` gains a `description` column (SPEC §3.5) and the
 -- topochain point-values as `topochain_`-prefixed keys, so the prefix can
 -- never collide with a platform key. Seeded with ON CONFLICT (key) DO

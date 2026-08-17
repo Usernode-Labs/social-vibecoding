@@ -57,6 +57,7 @@
 
 const crypto = require('crypto');
 const { appIdentityEnv } = require('./app-identity-env');
+const { platformApiBaseUrl } = require('./app-llm-env');
 
 // Bump to force every preview to be treated as stale on the next sweep —
 // the deliberate "rebuild the fleet" lever for a change that the injected
@@ -92,6 +93,15 @@ function platformStagingEnv(app, config = null) {
     ...appIdentityEnv(app, config),
     PORT: '3000',
     USERNODE_ENV: 'staging',
+    // #1213: the app-facing platform API's base URL — the URL ONLY, never
+    // a token. A preview's server can reach the user-directory endpoints
+    // with just the caller's forwarded iframe token (the middleware's
+    // allowUserTokenOnly path); everything token-gated (governance feed,
+    // LLM proxy, storage) stays production-only because the credential
+    // env vars are still absent here. Adding this key moves the env
+    // fingerprint below, so pre-existing previews are swept as stale and
+    // rebuilt with it — no FINGERPRINT_VERSION bump needed.
+    USERNODE_PLATFORM_API_URL: platformApiBaseUrl(),
   };
   for (const key of INHERITED_KEYS) {
     if (process.env[key]) env[key] = process.env[key];

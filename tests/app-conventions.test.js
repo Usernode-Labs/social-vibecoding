@@ -103,12 +103,28 @@ test('conventions doc carries the user-directory section (#1195)', () => {
   // The field allowlist is the point of the section — apps must not
   // plan features around data the directory will never return.
   assert.match(doc, /only\*\* `\{ id, username \}`/);
-  // The staging story: the bridge path works where the token path
-  // cannot, and the degrade rule is fail-OPEN.
+  // The staging story: BOTH paths now work in previews (#1213), and the
+  // frontend degrade rule is still fail-OPEN.
   assert.match(doc, /staging previews/i);
   assert.match(doc, /degrade open/i);
   // The case-collision flag apps have to handle.
   assert.match(doc, /ambiguous.*true/);
+});
+
+test('the server-side directory section covers staging previews (#1213)', () => {
+  const doc = getAppConventions();
+  // Retitled from "(production)" — previews can reach the directory now.
+  assert.match(doc, /^### From your server \(production AND staging previews\)$/m);
+  // One code path, one conditional header: the app token is sent only
+  // when its env var exists (production); previews send the user token
+  // alone.
+  assert.match(doc, /if \(process\.env\.USERNODE_LLM_PROXY_TOKEN\) \{/);
+  assert.match(doc, /send \*\*only\*\*\n\s*`x-usernode-user-token`/);
+  // The URL is now injected into both environments…
+  assert.match(doc, /`USERNODE_PLATFORM_API_URL` is injected into \*\*both\*\* production and\nstaging containers/);
+  // …but the governance feed stays token-gated, so the FEED_ENABLED
+  // check that ANDs both env vars must still be documented as required.
+  assert.match(doc, /`FEED_ENABLED` check above \(which ANDs `USERNODE_PLATFORM_API_URL`\n\*\*and\*\* `USERNODE_LLM_PROXY_TOKEN`\) remains correct and required/);
 });
 
 test('the offline essentials excerpt points at the user directory (#1195)', () => {

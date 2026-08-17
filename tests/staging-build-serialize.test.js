@@ -63,7 +63,11 @@ function loadStaging({ cloneDelayMs = 20, buildImageImpl = null } = {}) {
     platformDefaultsFromEnv: () => ({}),
     mergeForDeploy: () => ({ missingRequired: [], missingPrivateStagingDefault: [], env: {} }),
   });
-  stub(ids.appLlmEnv, {});
+  stub(ids.appLlmEnv, {
+    // #1213: platformStagingEnv() injects the app-platform API base URL
+    // into previews (URL only, no token), so the staging path calls this.
+    platformApiBaseUrl: () => 'http://usernode:3000/api/app-platform',
+  });
   stub(ids.pool, { getPool: () => ({ query: async () => ({ rows: [] }) }) });
   stub(ids.caddy, {
     stagingHostname: (slug, u) => `${slug}--${u}.example.test`,
