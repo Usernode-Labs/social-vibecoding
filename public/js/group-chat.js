@@ -1160,14 +1160,20 @@ const GroupChat = {
   _renderBookmarkBtn(msg) {
     if (!(window.App && App.user)) return '';
     const on = !!(msg && msg.bookmarked);
+    // 📌 rather than a bookmark or a star: what this does is pin the
+    // message to the top of your notifications, and the pushpin is the
+    // only one of the three that says so. The drawer's saved rows use the
+    // same glyph (see notifications-list.tsx) so the two ends of the
+    // gesture look like one feature.
+    //
     // One glyph, two states: `gc-msg-saved` is what makes it read as ON
-    // (full-strength and always visible), and its absence leaves a faded
-    // hover affordance like the react button's. The accessible name and
+    // (full-strength and always visible), and its absence leaves it faded
+    // like the react button's hover affordance. The accessible name and
     // aria-pressed carry the same state for anyone not looking at it.
     return `<button class="gc-msg-save${on ? ' gc-msg-saved' : ''}"`
       + ` title="${on ? 'Saved — click to unsave' : 'Save to your notifications'}"`
       + ` aria-label="${on ? 'Unsave message' : 'Save message'}"`
-      + ` aria-pressed="${on ? 'true' : 'false'}">\u{1F516}</button>`;
+      + ` aria-pressed="${on ? 'true' : 'false'}">\u{1F4CC}</button>`;
   },
 
   // Toggle the save state of one message. Optimistic: the button flips

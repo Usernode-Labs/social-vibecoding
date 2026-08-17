@@ -248,6 +248,18 @@ test('every message kind carries the save button', () => {
     'ordinary messages, system/vote rows and spec-share cards all get one');
 });
 
+test('both ends of the gesture use the same pushpin', () => {
+  // 📌 = U+1F4CC. The message's button emits it escaped (the file is ASCII
+  // around it); the drawer row carries it literally in JSX. If one is ever
+  // changed without the other, saving and its saved row stop looking like
+  // one feature — which is the whole reason this is asserted rather than
+  // left to whoever edits next.
+  assert.match(CHAT_SRC, /aria-pressed="\$\{on \? 'true' : 'false'\}">\\u\{1F4CC\}<\/button>/,
+    'the message button is the pushpin');
+  assert.ok(LIST_SRC.includes('<span aria-hidden="true">\u{1F4CC}</span>'),
+    "the drawer row's meta icon is the same pushpin");
+});
+
 test('the save button is available where react and edit are not', () => {
   const render = CHAT_SRC.match(/_renderBookmarkBtn\(msg\) \{([\s\S]*?)\n  \},/);
   assert.ok(render, '_renderBookmarkBtn() found');
