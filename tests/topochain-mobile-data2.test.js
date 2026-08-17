@@ -427,18 +427,13 @@ function handleQuery(rawSql, params = []) {
     const row = ONCHAIN_ACCOUNTS.find((a) => a.address === params[0]);
     return { rows: row ? [{ address: row.address, user_id: row.user_id }] : [] };
   }
-  if (sql.startsWith('SELECT started_at, ended_at FROM account_delegation_periods WHERE account = $1')) {
-    const row = delegationRows.find((d) => d.account === params[0]);
-    return { rows: row ? [{ started_at: row.started_at, ended_at: row.ended_at }] : [] };
+  if (sql.startsWith('SELECT started_at FROM account_delegation_periods WHERE account = $1 AND ended_at IS NULL')) {
+    const row = delegationRows.find((d) => d.account === params[0] && d.ended_at == null);
+    return { rows: row ? [{ started_at: row.started_at }] : [] };
   }
-  if (sql.startsWith('SELECT id, started_at, ended_at FROM account_delegation_periods WHERE account = $1 FOR UPDATE')) {
-    const row = delegationRows.find((d) => d.account === params[0]);
-    return { rows: row ? [{ id: row.id, started_at: row.started_at, ended_at: row.ended_at }] : [] };
-  }
-  if (sql.startsWith('UPDATE account_delegation_periods SET started_at = NOW(), ended_at = NULL')) {
-    const row = delegationRows.find((d) => d.id === params[0]);
-    row.started_at = new Date(); row.ended_at = null;
-    return { rows: [{ started_at: row.started_at }] };
+  if (sql.startsWith('SELECT id, started_at FROM account_delegation_periods WHERE account = $1 AND ended_at IS NULL FOR UPDATE')) {
+    const row = delegationRows.find((d) => d.account === params[0] && d.ended_at == null);
+    return { rows: row ? [{ id: row.id, started_at: row.started_at }] : [] };
   }
   if (sql.startsWith('INSERT INTO account_delegation_periods')) {
     const startedAt = new Date();

@@ -524,11 +524,15 @@ for (const [label, value] of [
   });
 }
 
-test('templates: all seven pass validateStatement (the exact execute-endpoint gate) and reference only in-scope tables', () => {
-  // Seven since #1130 added the push-delivery template, whose whole point
-  // is that this assertion is a permanent regression lock on
-  // mobile_push_deliveries + mobile_push_registrations staying queryable.
-  assert.equal(TEMPLATES.length, 7);
+test('templates: all eight pass validateStatement (the exact execute-endpoint gate) and reference only in-scope tables', () => {
+  // Seven since #1130 added the push-delivery template (a permanent
+  // regression lock on mobile_push_deliveries + mobile_push_registrations
+  // staying queryable); eight with the delegation-history template, which
+  // pins account_delegation_periods + its onchain_accounts/users joins
+  // the same way.
+  assert.equal(TEMPLATES.length, 8);
+  assert.ok(TEMPLATES.some((t) => t.name === 'Delegation periods with current claimant'),
+    'the delegation-history template exists');
   for (const t of TEMPLATES) {
     assert.equal(typeof t.name, 'string');
     assert.equal(typeof t.description, 'string');
@@ -1197,14 +1201,14 @@ test('schema: shape per SPEC, real row estimate (not a lifetime counter), every 
 
 // ── GET /sql-query/templates ─────────────────────────────────────────────
 
-test('templates: HTTP endpoint returns the seven static templates', async () => {
+test('templates: HTTP endpoint returns the eight static templates', async () => {
   const { server, base } = await listen(buildApp('readonly'));
   try {
     const res = await fetch(`${base}/api/v4/admin/sql-query/templates`);
     assert.equal(res.status, 200);
     const body = await res.json();
     assert.equal(body.success, true);
-    assert.equal(body.data.length, 7);
+    assert.equal(body.data.length, 8);
     for (const t of body.data) {
       assert.equal(typeof t.name, 'string');
       assert.equal(typeof t.description, 'string');

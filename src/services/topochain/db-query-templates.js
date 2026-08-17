@@ -96,6 +96,23 @@ SELECT ls.season_event_id, ls.user_id, ls.rank, ls.total_points, ls.snapshot_at
  GROUP BY d.environment, r.platform, r.permission_status, d.status
  ORDER BY d.environment, deliveries DESC`,
   },
+  {
+    // Delegation is keyed on the ut1… ADDRESS, which exists once per
+    // season event in onchain_accounts — DISTINCT ON (adp.id) with the
+    // is_used/used_at ordering picks each period's current claimant
+    // instead of fanning one period out into N rows (the same resolution
+    // the admin Delegations screen's LATERAL performs).
+    name: 'Delegation periods with current claimant',
+    description: 'Every account_delegation_periods row (open and closed), each resolved to the claiming user where one exists — the raw history behind the admin Delegations screen.',
+    query: `SELECT DISTINCT ON (adp.id)
+       adp.account, adp.started_at, adp.ended_at,
+       (adp.ended_at IS NULL) AS delegated,
+       u.id AS user_id, u.username
+  FROM account_delegation_periods adp
+  LEFT JOIN onchain_accounts oa ON oa.address = adp.account
+  LEFT JOIN users u ON u.id = oa.user_id
+ ORDER BY adp.id, oa.is_used DESC NULLS LAST, oa.used_at DESC NULLS LAST`,
+  },
 ];
 
 for (const t of TEMPLATES) {

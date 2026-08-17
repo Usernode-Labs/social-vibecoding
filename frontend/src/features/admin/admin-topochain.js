@@ -2452,7 +2452,7 @@ const AdminTopochain = {
   // ══════════════════════════════════════════════════════════════════
 
   _accts: {
-    page: 1, perPage: 50, search: '', seasonFilter: '', eventFilter: '',
+    page: 1, perPage: 50, search: '', seasonFilter: '', eventFilter: '', delegatedFilter: '',
     seasons: [], events: [], items: [], meta: null,
   },
 
@@ -2497,7 +2497,12 @@ const AdminTopochain = {
     return `<label class="sr-only" for="admin-topo-oa-season-filter">Filter by season</label>
       ${AdminTopochain._selectHtml('admin-topo-oa-season-filter', AdminTopochain._seasonOptions(s.seasons), s.seasonFilter, { blank: 'All seasons' })}
       <label class="sr-only" for="admin-topo-oa-event-filter">Filter by event</label>
-      ${AdminTopochain._selectHtml('admin-topo-oa-event-filter', AdminTopochain._eventOptions(events), s.eventFilter, { blank: 'All events' })}`;
+      ${AdminTopochain._selectHtml('admin-topo-oa-event-filter', AdminTopochain._eventOptions(events), s.eventFilter, { blank: 'All events' })}
+      <label class="sr-only" for="admin-topo-oa-delegated-filter">Filter by delegation</label>
+      ${AdminTopochain._selectHtml('admin-topo-oa-delegated-filter', [
+    { value: 'true', label: 'Delegated' },
+    { value: 'false', label: 'Not delegated' },
+  ], s.delegatedFilter, { blank: 'Delegation: any' })}`;
   },
 
   _wireAcctFilters() {
@@ -2520,6 +2525,11 @@ const AdminTopochain = {
       AdminTopochain._accts.page = 1;
       AdminTopochain._loadAccounts();
     });
+    document.getElementById('admin-topo-oa-delegated-filter')?.addEventListener('change', (e) => {
+      AdminTopochain._accts.delegatedFilter = e.target.value;
+      AdminTopochain._accts.page = 1;
+      AdminTopochain._loadAccounts();
+    });
   },
 
   // Rebuilds both filter <select>s' options from current state, keeping
@@ -2529,12 +2539,13 @@ const AdminTopochain = {
     const s = AdminTopochain._accts;
     const wrap = document.createElement('div');
     wrap.innerHTML = AdminTopochain._acctFiltersHtml();
-    for (const id of ['admin-topo-oa-season-filter', 'admin-topo-oa-event-filter']) {
+    for (const id of ['admin-topo-oa-season-filter', 'admin-topo-oa-event-filter', 'admin-topo-oa-delegated-filter']) {
       const sel = document.getElementById(id);
       const fresh = wrap.querySelector(`#${id}`);
       if (!sel || !fresh) continue;
       sel.innerHTML = fresh.innerHTML;
-      sel.value = id === 'admin-topo-oa-season-filter' ? s.seasonFilter : s.eventFilter;
+      sel.value = id === 'admin-topo-oa-season-filter' ? s.seasonFilter
+        : id === 'admin-topo-oa-event-filter' ? s.eventFilter : s.delegatedFilter;
     }
   },
 
@@ -2555,6 +2566,7 @@ const AdminTopochain = {
     if (s.search) params.set('search', s.search);
     if (s.seasonFilter) params.set('season_id', s.seasonFilter);
     if (s.eventFilter) params.set('season_event_id', s.eventFilter);
+    if (s.delegatedFilter) params.set('delegated', s.delegatedFilter);
     const { ok, data, status } = await AdminTopochain.fetchJson(`/api/v4/admin/onchain-accounts?${params}`);
     if (AdminTopochain._sub !== 'onchain-accounts') return;
     if (ok && data?.success) { s.items = data.data; s.meta = data.meta; s.error = null; }
@@ -2577,10 +2589,10 @@ const AdminTopochain = {
       return;
     }
     if (!s.items.length) {
-      const filtered = !!(s.search || s.seasonFilter || s.eventFilter);
+      const filtered = !!(s.search || s.seasonFilter || s.eventFilter || s.delegatedFilter);
       table.innerHTML = AdminTopochain._empty({
         title: filtered ? 'No accounts match these filters' : 'No onchain accounts yet',
-        body: filtered ? 'Clear the search box and the season/event filters to see every account.'
+        body: filtered ? 'Clear the search box and the season/event/delegation filters to see every account.'
           : 'Import a batch of accounts to hand out registration codes for an event.',
         actionId: filtered ? null : 'admin-topo-oa-empty-import',
         actionLabel: 'Import accounts',
@@ -2607,6 +2619,10 @@ const AdminTopochain = {
         { label: 'Amount', cell: (a) => esc(a.amount), tdClass: 'font-mono text-right', thClass: 'text-right' },
         { label: 'Event', cell: (a) => (a.event ? esc(a.event.name) : '—'), tdClass: 'text-xs text-gray-500' },
         { label: 'Status', cell: (a) => (a.is_used ? '<span class="text-amber-600 dark:text-amber-400">used</span>' : '<span class="text-green-600 dark:text-green-400">free</span>') },
+        {
+          label: 'Delegation',
+          cell: (a) => (a.delegated ? AdminTopochain._badgeHtml('Delegated', 'green') : '<span class="text-gray-400">—</span>'),
+        },
         { label: 'User', cell: (a) => (a.user ? esc(a.user.username) : '—'), tdClass: 'text-xs text-gray-500' },
       ],
       actions: (a) => (canWrite && a.is_used
@@ -2732,6 +2748,9 @@ const AdminTopochain = {
         ${row('Status', a.is_used
     ? `<span class="text-amber-600 dark:text-amber-400">used</span> · ${esc(AdminTopochain._fmt(a.used_at))}`
     : '<span class="text-green-600 dark:text-green-400">free</span>')}
+        ${row('Delegation', a.delegated
+    ? `${AdminTopochain._badgeHtml('Delegated', 'green')} <span class="text-xs text-gray-500">since ${esc(AdminTopochain._fmt(a.delegated_since))}</span>`
+    : '<span class="text-gray-500">Not delegated</span>')}
         ${row('Created', esc(AdminTopochain._fmt(a.created_at)))}
         ${row('Updated', esc(AdminTopochain._fmt(a.updated_at)))}
       </dl>
@@ -3100,24 +3119,29 @@ const AdminTopochain = {
   },
 
   // ══════════════════════════════════════════════════════════════════
-  // Delegations — read-only list over GET /api/v4/admin/delegations.
-  // The mobile app is the delegation actor (it reconciles its local
-  // state against the backend flag), so this screen deliberately has no
-  // mutation controls: an admin write here would desync phones. The
-  // backing table keeps ONE row per account — the current or last
-  // period; re-delegation overwrites the previous timestamps — which is
-  // why the subtitle says so instead of pretending this is a history.
+  // Delegations — read-only surface over GET /api/v4/admin/delegations
+  // (+ /stats and /:account/history). The mobile app is the delegation
+  // actor (it reconciles its local state against the backend flag), so
+  // this screen deliberately has no mutation controls: an admin write
+  // here would desync phones. The backing table is a HISTORY now: one
+  // list row per account (its latest period, with a period count), and
+  // each row expands into that account's full period timeline.
   // ══════════════════════════════════════════════════════════════════
 
-  _dlg: { page: 1, perPage: 50, status: '', search: '', items: [], meta: null, error: null },
+  _dlg: {
+    page: 1, perPage: 50, status: '', search: '', seasonFilter: '', eventFilter: '',
+    seasons: [], events: [], items: [], meta: null, error: null, stats: null,
+    expanded: null, history: null, historyError: null,
+  },
 
   renderDelegations(host) {
     const esc = AdminTopochain.esc;
     host.innerHTML = `
       ${AdminTopochain._screenHeader({
     title: 'Delegations',
-    subtitle: 'Who delegated stake to the platform node, one row per testnet account — the current or last period only; re-delegating overwrites the previous one.',
-    actions: `<label class="sr-only" for="admin-topo-dlg-status">Filter by delegation status</label>
+    subtitle: 'Who delegated stake to the platform node, one row per testnet account. Every period is kept — expand a row for that account’s history.',
+    actions: `${AdminTopochain._dlgFiltersHtml()}
+          <label class="sr-only" for="admin-topo-dlg-status">Filter by delegation status</label>
           ${AdminTopochain._selectHtml('admin-topo-dlg-status', [
     { value: 'delegated', label: 'Delegated' },
     { value: 'ended', label: 'Ended' },
@@ -3126,6 +3150,7 @@ const AdminTopochain = {
             value="${esc(AdminTopochain._dlg.search)}" aria-label="Search delegations by account address"
             class="${FIELD_CLS} sm:w-64">`,
   })}
+      <div id="admin-topo-dlg-stats" class="mb-4"></div>
       <div id="admin-topo-dlg-table">${AdminTopochain._skeleton(4)}</div>`;
     document.getElementById('admin-topo-dlg-status').addEventListener('change', (e) => {
       AdminTopochain._dlg.status = e.target.value;
@@ -3137,7 +3162,69 @@ const AdminTopochain = {
       AdminTopochain._dlg.page = 1;
       AdminTopochain._loadDelegations();
     });
+    AdminTopochain._wireDlgFilters();
     AdminTopochain._loadDelegations();
+    AdminTopochain._loadDelegationStats();
+    AdminTopochain._refreshDlgPickers();
+  },
+
+  // Season/event scoping, same picker idiom as the Onchain accounts
+  // screen: rendered from whatever is already cached so first paint
+  // isn't blocked, refreshed in place once the pickers load.
+  _dlgFiltersHtml() {
+    const s = AdminTopochain._dlg;
+    const events = s.seasonFilter
+      ? s.events.filter((ev) => String(ev.season_id) === String(s.seasonFilter))
+      : s.events;
+    return `<label class="sr-only" for="admin-topo-dlg-season-filter">Filter by season</label>
+      ${AdminTopochain._selectHtml('admin-topo-dlg-season-filter', AdminTopochain._seasonOptions(s.seasons), s.seasonFilter, { blank: 'All seasons' })}
+      <label class="sr-only" for="admin-topo-dlg-event-filter">Filter by event</label>
+      ${AdminTopochain._selectHtml('admin-topo-dlg-event-filter', AdminTopochain._eventOptions(events), s.eventFilter, { blank: 'All events' })}`;
+  },
+
+  _wireDlgFilters() {
+    document.getElementById('admin-topo-dlg-season-filter')?.addEventListener('change', (e) => {
+      const s = AdminTopochain._dlg;
+      s.seasonFilter = e.target.value;
+      // An event choice from another season no longer makes sense — drop
+      // it rather than sending a contradictory filter pair.
+      if (s.eventFilter) {
+        const ev = s.events.find((x) => String(x.id) === String(s.eventFilter));
+        if (s.seasonFilter && (!ev || String(ev.season_id) !== String(s.seasonFilter))) s.eventFilter = '';
+      }
+      AdminTopochain._syncDlgFilterOptions();
+      s.page = 1;
+      AdminTopochain._loadDelegations();
+    });
+    document.getElementById('admin-topo-dlg-event-filter')?.addEventListener('change', (e) => {
+      AdminTopochain._dlg.eventFilter = e.target.value;
+      AdminTopochain._dlg.page = 1;
+      AdminTopochain._loadDelegations();
+    });
+  },
+
+  _syncDlgFilterOptions() {
+    const s = AdminTopochain._dlg;
+    const wrap = document.createElement('div');
+    wrap.innerHTML = AdminTopochain._dlgFiltersHtml();
+    for (const id of ['admin-topo-dlg-season-filter', 'admin-topo-dlg-event-filter']) {
+      const sel = document.getElementById(id);
+      const fresh = wrap.querySelector(`#${id}`);
+      if (!sel || !fresh) continue;
+      sel.innerHTML = fresh.innerHTML;
+      sel.value = id === 'admin-topo-dlg-season-filter' ? s.seasonFilter : s.eventFilter;
+    }
+  },
+
+  async _refreshDlgPickers() {
+    const [seasons, events] = await Promise.all([
+      AdminTopochain._fetchAllSeasons(),
+      AdminTopochain._fetchAllEvents(),
+    ]);
+    if (AdminTopochain._sub !== 'delegations') return;
+    AdminTopochain._dlg.seasons = seasons;
+    AdminTopochain._dlg.events = events;
+    AdminTopochain._syncDlgFilterOptions();
   },
 
   async _loadDelegations() {
@@ -3145,11 +3232,44 @@ const AdminTopochain = {
     const params = new URLSearchParams({ page: String(s.page), per_page: String(s.perPage) });
     if (s.status) params.set('status', s.status);
     if (s.search) params.set('search', s.search);
+    if (s.seasonFilter) params.set('season_id', s.seasonFilter);
+    if (s.eventFilter) params.set('season_event_id', s.eventFilter);
     const { ok, data, status } = await AdminTopochain.fetchJson(`/api/v4/admin/delegations?${params}`);
     if (AdminTopochain._sub !== 'delegations') return;
     if (ok && data?.success) { s.items = data.data; s.meta = data.meta; s.error = null; }
     else { s.items = []; s.meta = null; s.error = { status, message: (data && data.error) || null }; }
+    // A fresh page invalidates whichever timeline was open.
+    s.expanded = null; s.history = null; s.historyError = null;
     AdminTopochain._renderDelegationsTable();
+  },
+
+  // The account-level summary strip. Unaffected by the list filters on
+  // purpose — it answers "how is delegation doing overall" while the
+  // list answers "show me these accounts"; a failed load leaves the
+  // strip empty rather than blocking the table beneath it.
+  async _loadDelegationStats() {
+    const { ok, data } = await AdminTopochain.fetchJson('/api/v4/admin/delegations/stats');
+    if (AdminTopochain._sub !== 'delegations') return;
+    AdminTopochain._dlg.stats = (ok && data?.success) ? data.data : null;
+    AdminTopochain._renderDelegationStats();
+  },
+
+  _renderDelegationStats() {
+    const host = document.getElementById('admin-topo-dlg-stats');
+    if (!host) return;
+    const esc = AdminTopochain.esc;
+    const stats = AdminTopochain._dlg.stats;
+    if (!stats) { host.innerHTML = ''; return; }
+    const tile = (label, value, valueCls) => `<div class="${PANEL_CLS} px-4 py-3">
+      <p class="text-xs uppercase tracking-wide text-gray-500">${esc(label)}</p>
+      <p class="mt-1 text-2xl font-semibold tabular-nums ${valueCls || ''}">${esc(value)}</p>
+    </div>`;
+    host.innerHTML = `<div class="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      ${tile('Delegated now', stats.delegated_accounts, 'text-green-600 dark:text-green-400')}
+      ${tile('Ended', stats.ended_accounts)}
+      ${tile('Account not on file', stats.orphaned_accounts, stats.orphaned_accounts ? 'text-amber-600 dark:text-amber-400' : '')}
+      ${tile('Periods recorded', stats.total_periods)}
+    </div>`;
   },
 
   _renderDelegationsTable() {
@@ -3166,10 +3286,10 @@ const AdminTopochain = {
       return;
     }
     if (!s.items.length) {
-      const filtered = !!(s.status || s.search);
+      const filtered = !!(s.status || s.search || s.seasonFilter || s.eventFilter);
       table.innerHTML = AdminTopochain._empty({
         title: filtered ? 'No delegations match these filters' : 'No delegation periods yet',
-        body: filtered ? 'Clear the search box and the status filter to see every period.'
+        body: filtered ? 'Clear the search box and the status/season/event filters to see every account.'
           : 'A row appears the first time a phone delegates its stake to the server.',
       });
       return;
@@ -3193,13 +3313,20 @@ const AdminTopochain = {
         },
         { label: 'Since', cell: (d) => esc(AdminTopochain._fmt(d.started_at)), tdClass: 'text-xs text-gray-500' },
         { label: 'Ended', cell: (d) => esc(AdminTopochain._fmt(d.ended_at)), tdClass: 'text-xs text-gray-500' },
+        { label: 'Periods', cell: (d) => esc(d.period_count), tdClass: 'tabular-nums text-right text-xs text-gray-500', thClass: 'text-right' },
       ],
       // The join is LEFT (no FK ties a period to onchain_accounts), so
       // only rows whose account still exists get a way into the account
-      // detail dialog.
-      actions: (d) => (d.onchain_account_id != null
-        ? `<button data-dlg-acct="${d.onchain_account_id}" type="button" class="${BTN.row}">View account</button>` : ''),
+      // detail dialog. History is always offered — one period is still a
+      // history, and the timeline names the states in full.
+      actions: (d) => `${d.onchain_account_id != null
+        ? `<button data-dlg-acct="${d.onchain_account_id}" type="button" class="${BTN.row}">View account</button>` : ''}
+        <button data-dlg-history="${esc(d.account)}" type="button" class="${BTN.row}"
+          aria-expanded="${s.expanded === d.account ? 'true' : 'false'}">${s.expanded === d.account ? 'Hide history' : 'History'}</button>`,
+      extra: (d) => (s.expanded === d.account ? AdminTopochain._dlgHistoryHtml() : ''),
     }) + AdminTopochain._pagerHtml(s.meta, 'admin-topo-dlg-pg');
+    table.querySelectorAll('[data-dlg-history]').forEach((b) => b.addEventListener('click', () =>
+      AdminTopochain._toggleDlgHistory(b.dataset.dlgHistory)));
     // Jumps to the Onchain accounts screen (same setSection pattern as
     // _syncHash's legacy-address fallback) and opens the dialog there —
     // that screen owns the #admin-topo-oa-detail host, and rendering a
@@ -3210,6 +3337,52 @@ const AdminTopochain = {
       AdminTopochain._openAccountDetail(id);
     }));
     if (s.meta) AdminTopochain._wirePager(s.meta, 'admin-topo-dlg-pg', (page) => { s.page = page; AdminTopochain._loadDelegations(); });
+  },
+
+  // ── Per-account history timeline ───────────────────────────────────
+  // One expanded account at a time: the toggle re-renders the whole list
+  // (the extra() block is computed at render time), so opening a second
+  // account's history closes the first — the table stays scannable.
+  async _toggleDlgHistory(account) {
+    const s = AdminTopochain._dlg;
+    if (s.expanded === account) {
+      s.expanded = null; s.history = null; s.historyError = null;
+      AdminTopochain._renderDelegationsTable();
+      return;
+    }
+    s.expanded = account; s.history = null; s.historyError = null;
+    AdminTopochain._renderDelegationsTable(); // skeleton in the extra block
+    const { ok, data, status } = await AdminTopochain.fetchJson(
+      `/api/v4/admin/delegations/${encodeURIComponent(account)}/history`);
+    if (AdminTopochain._sub !== 'delegations' || AdminTopochain._dlg.expanded !== account) return;
+    if (ok && data?.success) s.history = data.data;
+    else s.historyError = { status, message: (data && data.error) || null };
+    AdminTopochain._renderDelegationsTable();
+  },
+
+  _dlgHistoryHtml() {
+    const esc = AdminTopochain.esc;
+    const s = AdminTopochain._dlg;
+    if (s.historyError) {
+      return AdminTopochain._error({
+        title: "Couldn't load this account's history",
+        status: s.historyError.status, message: s.historyError.message,
+      });
+    }
+    if (!s.history) return AdminTopochain._skeleton(2);
+    if (!s.history.length) {
+      return '<p class="text-xs text-gray-500">No periods recorded for this account.</p>';
+    }
+    const rows = s.history.map((p) => `<li class="flex flex-wrap items-center gap-2 py-1.5">
+      ${p.delegated ? AdminTopochain._badgeHtml('Delegated', 'green') : AdminTopochain._badgeHtml('Ended', 'zinc')}
+      <span class="text-xs text-gray-600 dark:text-gray-300">${esc(AdminTopochain._fmt(p.started_at))}</span>
+      <span class="text-xs text-gray-400">&rarr;</span>
+      <span class="text-xs text-gray-600 dark:text-gray-300">${p.ended_at ? esc(AdminTopochain._fmt(p.ended_at)) : 'now'}</span>
+    </li>`).join('');
+    return `<div>
+      <p class="text-xs font-medium uppercase tracking-wide text-gray-500">Delegation history, newest first</p>
+      <ul class="mt-1 divide-y divide-gray-100 dark:divide-gray-800">${rows}</ul>
+    </div>`;
   },
 
   // ── Delegation row parties ─────────────────────────────────────────

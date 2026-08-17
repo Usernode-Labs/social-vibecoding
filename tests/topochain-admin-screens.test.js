@@ -421,6 +421,33 @@ test("no user-facing 'Phase' or 'Participant' label — Event/User/Challenge tem
   assert.match(code, /const participants = /, 'the import payload still builds its `participants` field');
 });
 
+test('Delegations screen: stat strip, season/event scoping, and a per-account history timeline', () => {
+  // The summary strip renders account-level tallies from /delegations/stats
+  // into its own host, above the table.
+  assert.match(topoJs, /id="admin-topo-dlg-stats"/, 'the stat-strip host exists');
+  assert.match(topoJs, /_loadDelegationStats\(\)/, 'and is loaded separately from the list');
+  assert.match(topoJs, /\/api\/v4\/admin\/delegations\/stats/, 'from the stats endpoint');
+
+  // Season/event filters, same picker idiom as the accounts screen.
+  assert.match(topoJs, /admin-topo-dlg-season-filter/, 'season filter select');
+  assert.match(topoJs, /admin-topo-dlg-event-filter/, 'event filter select');
+
+  // History: a Periods column plus an expandable per-account timeline
+  // fetched from /:account/history — the schema keeps every period now.
+  assert.match(topoJs, /label: 'Periods'/, 'the period-count column');
+  assert.match(topoJs, /data-dlg-history=/, 'the history toggle action');
+  assert.match(topoJs, /\/history`/, 'fetching the account history endpoint');
+  assert.ok(!topoJs.includes('re-delegating overwrites the previous one'),
+    'the old single-row caveat is gone from the copy — it is no longer true');
+});
+
+test('Onchain accounts: delegation is visible and filterable, list and detail', () => {
+  assert.match(topoJs, /admin-topo-oa-delegated-filter/, 'the delegated filter select');
+  assert.match(topoJs, /params\.set\('delegated'/, 'wired into the index query');
+  assert.match(topoJs, /label: 'Delegation'/, 'the list column');
+  assert.match(topoJs, /row\('Delegation'/, 'and the detail dialog row');
+});
+
 test('the vocabulary is actually used: Event / User / Challenge template / Kind', () => {
   assert.match(topoJs, /label: 'Season events'/);
   assert.match(topoJs, /title: 'Programme users'/);
