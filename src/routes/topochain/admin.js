@@ -33,6 +33,7 @@ const { challengesAdminRoutes } = require('./admin/challenges');
 const { appVersionConfigsAdminRoutes } = require('./admin/app-version-configs');
 const { settingsAdminRoutes } = require('./admin/settings');
 const { dbToolsAdminRoutes } = require('./admin/db-tools');
+const { delegationsAdminRoutes } = require('./admin/delegations');
 const { waitlistAdminRoutes } = require('./admin/waitlist');
 const { apiCatalogAdminRoutes } = require('./admin/api-catalog');
 
@@ -123,6 +124,12 @@ function topochainAdminRoutes(config) {
   router.use(challengesAdminRoutes(config));
   router.use(appVersionConfigsAdminRoutes(config));
   router.use(settingsAdminRoutes(config));
+
+  // Read-only delegations list (#admin/delegations). Its `/delegations`
+  // path is unused by every other admin group (the similarly named
+  // partner routes live at the unprefixed `/api/v4/delegations`, a
+  // different literal path behind a different auth stack).
+  router.use(delegationsAdminRoutes(config));
 
   // Task 13: D10 admin DB tooling (export, sql-query execute/schema/
   // templates) — no path collision with anything above (its own

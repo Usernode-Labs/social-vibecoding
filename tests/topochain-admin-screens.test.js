@@ -25,7 +25,7 @@ const topoJs = fs.readFileSync(path.join(root, 'frontend/src/features/admin/admi
 // section of its own, the console's Users section embeds renderUsers.
 const BUILT_SUBS = [
   'seasons', 'season-events', 'challenge-templates', 'waitlist',
-  'onchain-accounts', 'user-activities',
+  'onchain-accounts', 'user-activities', 'delegations',
   'settings', 'app-version', 'sql-console', 'api-tester',
 ];
 const GAP_SUBS = ['challenge-kinds', 'terms-versions', 'token-allocation', 'mobile-logs'];
@@ -52,6 +52,7 @@ test('AdminConsole.SECTIONS promotes every programme screen under the #1179 grou
     'waitlist': ['Waitlist', 'People'],
     'onchain-accounts': ['Onchain accounts', 'People'],
     'user-activities': ['User activities', 'People'],
+    'delegations': ['Delegations', 'People'],
     'settings': ['Settings', 'Platform'],
     'app-version': ['App version', 'Platform'],
     'sql-console': ['SQL console', 'Platform'],
@@ -190,7 +191,7 @@ test('every built screen has a render function reachable from _renderSub', () =>
   const renderFns = [
     'renderSeasonEvents', 'renderWaitlist', 'renderOnchainAccounts', 'renderUserActivities',
     'renderChallengeTemplates', 'renderSettings', 'renderAppVersion', 'renderSqlConsole',
-    'renderApiTester', 'renderSeasons',
+    'renderApiTester', 'renderSeasons', 'renderDelegations',
   ];
   for (const name of renderFns) {
     assert.ok(fn.includes(name), `_renderSub dispatches to ${name}`);
