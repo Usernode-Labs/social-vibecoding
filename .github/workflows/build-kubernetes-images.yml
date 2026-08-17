@@ -33,6 +33,14 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Normalize GHCR owner
+        id: registry
+        shell: bash
+        run: |
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          test -n "$owner"
+          echo "owner=$owner" >> "$GITHUB_OUTPUT"
+
       - uses: docker/login-action@v4
         with:
           registry: ghcr.io
@@ -49,7 +57,7 @@ jobs:
           file: ${{ matrix.dockerfile }}
           platforms: linux/amd64
           push: true
-          tags: ghcr.io/${{ github.repository_owner }}/social-vibecoding-${{ matrix.component }}:sha-${{ github.sha }}
+          tags: ghcr.io/${{ steps.registry.outputs.owner }}/social-vibecoding-${{ matrix.component }}:sha-${{ github.sha }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
@@ -72,7 +80,7 @@ jobs:
           printf '%s\n' "$IMAGE_DIGEST" > "$RUNNER_TEMP/image-digest/$COMPONENT.txt"
           echo '### ${{ matrix.component }}' >> "$GITHUB_STEP_SUMMARY"
           echo '```text' >> "$GITHUB_STEP_SUMMARY"
-          echo 'ghcr.io/${{ github.repository_owner }}/social-vibecoding-${{ matrix.component }}@${{ steps.build.outputs.digest }}' >> "$GITHUB_STEP_SUMMARY"
+          echo 'ghcr.io/${{ steps.registry.outputs.owner }}/social-vibecoding-${{ matrix.component }}@${{ steps.build.outputs.digest }}' >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload ${{ matrix.component }} digest

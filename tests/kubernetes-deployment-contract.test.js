@@ -34,6 +34,9 @@ test('Kubernetes workflow publishes all three SHA-addressable images', () => {
     assert.match(workflow, new RegExp(`component: ${component}`));
   }
   assert.match(workflow, /packages: write/);
+  assert.match(workflow, /owner="\$\{GITHUB_REPOSITORY_OWNER,,\}"/);
+  assert.match(workflow, /ghcr\.io\/\$\{\{ steps\.registry\.outputs\.owner \}\}\/social-vibecoding-\$\{\{ matrix\.component \}\}/);
+  assert.doesNotMatch(workflow, /ghcr\.io\/\$\{\{ github\.repository_owner \}\}/);
   assert.match(workflow, /sha-\$\{\{ github\.sha \}\}/);
   assert.match(workflow, /steps\.build\.outputs\.digest/);
 });
