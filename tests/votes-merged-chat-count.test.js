@@ -127,6 +127,22 @@ test('/merged SELECT asks for a session-scoped chat_count', () => {
   });
 });
 
+test('/merged SELECT exposes merged_at and promoted_at (#1264)', () => {
+  const { routes, captured } = loadVotes({ mergedRows: [] });
+  const route = findRoute(routes, 'get', '/api/apps/:slug/merged');
+  assert.ok(route, 'merged route registered');
+  return route.handler(
+    { params: { slug: 'demo' }, user: { id: 1 }, query: {} },
+    { json() {}, status() { return { json() {} }; } }
+  ).then(() => {
+    const sql = captured.sql.join('\n');
+    // The progress report dates completed work by the real merge time,
+    // with promoted_at alongside for future "waiting since" reads.
+    assert.match(sql, /cs\.merged_at/, 'merged_at column selected');
+    assert.match(sql, /cs\.promoted_at/, 'promoted_at column selected');
+  });
+});
+
 test('/merged response forwards chat_count on each row', async () => {
   const rows = [
     { id: 55, pr_number: 700, chat_count: 4, status: 'merged' },

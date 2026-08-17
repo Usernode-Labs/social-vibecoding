@@ -1307,6 +1307,18 @@
       "expectText": "Generate Discord message"
     },
     {
+      "name": "Progress report renders the six-tile summary and Needs attention (#1264)",
+      "path": "/?demo=1&view=report#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-report .ur-rpt-section[data-section=\"attention\"]",
+      "expectText": "High priority backlog"
+    },
+    {
+      "name": "Progress report renders the monthly strip and Work by owner (#1264)",
+      "path": "/?demo=1&view=report#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-report .ur-rpt-section[data-section=\"monthly\"] .ur-rpt-trend-fill",
+      "expectText": "Work by owner"
+    },
+    {
       "name": "Kanban cards show the assignee initial-avatar",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": ".attr-avatar"
