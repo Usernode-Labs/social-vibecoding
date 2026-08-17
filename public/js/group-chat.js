@@ -1010,6 +1010,16 @@ const GroupChat = {
         if (id) GroupChat.sendReact(id, pill.dataset.emoji);
         return;
       }
+      // #1280: save/unsave button → toggle this message in the viewer's
+      // own saved list. Handled before tap-to-quote (like Edit below) so
+      // the click doesn't also stage a reply.
+      const saveBtn = e.target.closest('.gc-msg-save');
+      if (saveBtn) {
+        const row = saveBtn.closest('[data-msg-id]');
+        const id = row && parseInt(row.dataset.msgId || '', 10);
+        if (id) GroupChat.toggleBookmark(id);
+        return;
+      }
       // Edit button (own ordinary messages) → swap the row into an inline
       // editor. Handled before tap-to-quote so the click doesn't also stage
       // a reply.
@@ -1130,6 +1140,79 @@ const GroupChat = {
   _renderReactAddBtn(_msg) {
     if (GroupChat._readOnly()) return ''; // #621: no reactions read-only
     return `<button class="gc-react-add" title="React" aria-label="Add reaction" tabindex="-1">\u{1F642}</button>`;
+  },
+
+  // ── #1280: save (bookmark) a message ────────────────────────────────
+
+  // The save toggle that sits beside the react button in a message's
+  // header. A saved message pins to the "Saved" section at the top of the
+  // notifications drawer until it is unsaved — from here, or from there.
+  //
+  // NOT gated on _readOnly(), unlike the react and edit affordances beside
+  // it: a save writes nothing to the app, only to the viewer's own private
+  // list, so a #621 read-only viewer may save what they can read (which is
+  // exactly what the route's 'view' gate allows). It IS gated on being
+  // signed in — there is no personal list to save into otherwise.
+  //
+  // Unlike the react button this stays in the tab order and is visible
+  // whenever it is ON: a saved message has to look saved without hovering
+  // it, or the only way to find out what you saved is to open the drawer.
+  _renderBookmarkBtn(msg) {
+    if (!(window.App && App.user)) return '';
+    const on = !!(msg && msg.bookmarked);
+    // One glyph, two states: `gc-msg-saved` is what makes it read as ON
+    // (full-strength and always visible), and its absence leaves a faded
+    // hover affordance like the react button's. The accessible name and
+    // aria-pressed carry the same state for anyone not looking at it.
+    return `<button class="gc-msg-save${on ? ' gc-msg-saved' : ''}"`
+      + ` title="${on ? 'Saved — click to unsave' : 'Save to your notifications'}"`
+      + ` aria-label="${on ? 'Unsave message' : 'Save message'}"`
+      + ` aria-pressed="${on ? 'true' : 'false'}">\u{1F516}</button>`;
+  },
+
+  // Toggle the save state of one message. Optimistic: the button flips
+  // immediately (a save is a personal, instantly-reversible act, and a
+  // spinner on a bookmark reads as breakage), and reverts if the server
+  // refuses. The authoritative flag comes back with the next history load.
+  async toggleBookmark(messageId) {
+    if (!messageId || !GroupChat.appSlug) return;
+    const msg = GroupChat._findMessage(messageId);
+    const next = !(msg && msg.bookmarked);
+    if (msg) msg.bookmarked = next;
+    GroupChat._paintBookmark(messageId, next);
+    try {
+      const res = await fetch(
+        `/api/apps/${GroupChat.appSlug}/messages/${messageId}/bookmark`,
+        { method: next ? 'PUT' : 'DELETE' }
+      );
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      // The drawer's pinned section is fed by the notifications payload,
+      // so it only learns about this through a refresh. Notifications is a
+      // window global published by the React bundle; guard for the app
+      // frame and the vm harnesses, where it is absent.
+      if (window.Notifications && Notifications.refresh) Notifications.refresh();
+    } catch (err) {
+      if (msg) msg.bookmarked = !next;
+      GroupChat._paintBookmark(messageId, !next);
+      if (typeof PlatformUI !== 'undefined' && PlatformUI.toast) {
+        PlatformUI.toast(next ? "Couldn't save that message" : "Couldn't unsave that message");
+      }
+      console.warn('[group-chat] bookmark toggle failed', err);
+    }
+  },
+
+  // Patch just the button(s) for one message — the row may be rendered
+  // twice (general stream and a mounted thread), so every match is painted.
+  _paintBookmark(messageId, on) {
+    document.querySelectorAll(
+      `#gc-messages [data-msg-id="${messageId}"] .gc-msg-save,`
+      + ` #gc-thread-messages [data-msg-id="${messageId}"] .gc-msg-save`
+    ).forEach((btn) => {
+      btn.classList.toggle('gc-msg-saved', !!on);
+      btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+      btn.setAttribute('aria-label', on ? 'Unsave message' : 'Save message');
+      btn.setAttribute('title', on ? 'Saved — click to unsave' : 'Save to your notifications');
+    });
   },
 
   // Apply a fresh reaction aggregate (from the WS 'reaction' broadcast or
@@ -1934,6 +2017,7 @@ const GroupChat = {
       return `<div class="gc-msg-system ${isVote ? 'gc-msg-vote' : ''}${voteRowClass ? ' ' + voteRowClass : ''}" data-msg-id="${msg.id || ''}">` +
         `<span class="gc-msg-system-text">${escapeHtml(msg.content)}</span>` +
         inlineControls +
+        GroupChat._renderBookmarkBtn(msg) +
         GroupChat._renderReactAddBtn(msg) +
         GroupChat._renderReactionsHtml(msg) +
         `</div>`;
@@ -1959,6 +2043,7 @@ const GroupChat = {
           <span class="gc-msg-time">${time}</span>
           ${editedMarker}
           ${editBtn}
+          ${GroupChat._renderBookmarkBtn(msg)}
           ${GroupChat._renderReactAddBtn(msg)}
         </div>
         ${quotedHtml}
@@ -2122,6 +2207,7 @@ const GroupChat = {
           <button class="gc-spec-card-view" data-session-id="${meta.sessionId}" data-version="${meta.version}">View full spec</button>
         </div>
         ${GroupChat._renderReactionsHtml(msg)}
+        ${GroupChat._renderBookmarkBtn(msg)}
         ${GroupChat._renderReactAddBtn(msg)}
       </div>`;
   },

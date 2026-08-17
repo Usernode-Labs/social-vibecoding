@@ -4567,6 +4567,52 @@ span.gc-vote-btn-icon { cursor: default; }
 }
 @media (hover: none) { .gc-msg-edit { display: none; } }
 
+/* #1280: save (bookmark) a message. Sits beside the react/edit buttons and
+   borrows their shape, with two deliberate differences:
+
+   1. It has a RESTING state. The react and edit buttons are invisible until
+      hover because they are pure affordances — nothing about the message
+      changes when you're not using them. A save is state: a saved message
+      has to look saved without being hovered, so `.gc-msg-saved` is fully
+      opaque at all times and the unsaved button keeps a faint resting
+      opacity so it can be found at all.
+   2. It is NOT hidden on touch. The two buttons above hand their action to
+      the long-press reaction bar there; this one has no such fallback, and
+      hiding it would leave phones with no way to save anything. */
+.gc-msg-save {
+  align-self: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.3;
+  transition: opacity 120ms;
+}
+.gc-msg-save.gc-msg-saved { opacity: 1; background: var(--accent-light); }
+@media (hover: hover) {
+  .gc-msg:hover .gc-msg-save,
+  .gc-msg-system:hover .gc-msg-save,
+  .gc-spec-card:hover .gc-msg-save { opacity: 0.85; }
+  .gc-msg-save:hover,
+  .gc-msg-save.gc-msg-saved { opacity: 1; }
+}
+
+/* System / vote lines have no header row, so the button flows inline after
+   the text — same treatment the react button gets there. */
+.gc-msg-system > .gc-msg-save,
+.gc-spec-card > .gc-msg-save {
+  vertical-align: middle;
+  width: 18px;
+  height: 18px;
+  margin-left: 4px;
+}
+
 /* Edit button inside the long-press reaction bar (touch). */
 .gc-react-bar-edit {
   font-size: 18px;

@@ -1568,6 +1568,31 @@ CREATE TABLE IF NOT EXISTS message_reactions (
 );
 CREATE INDEX IF NOT EXISTS message_reactions_message_idx ON message_reactions(message_id);
 
+-- #1280: personal bookmarks on group-chat messages. A user saves any
+-- message they can read (the bookmark button in the message header,
+-- public/js/group-chat.js); saved messages render in a pinned "Saved"
+-- section at the TOP of the notifications drawer until unsaved — from
+-- the message itself, or from that section. Toggled over REST
+-- (src/routes/chat.js), not the chat WebSocket: a bookmark is private to
+-- one user, so there is nothing to broadcast to the app's other viewers.
+--
+-- One row per (user, message); the UNIQUE constraint is what makes the
+-- save path an idempotent upsert. Tagged `staging:private` below for the
+-- same reason `notifications` is — it is one person's private feed, and
+-- a staging clone must not carry it. The staging preview is fed by the
+-- request-time `?demo=1` mock in src/routes/notifications.js instead.
+CREATE TABLE IF NOT EXISTS message_bookmarks (
+  id         SERIAL PRIMARY KEY,
+  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  message_id INTEGER NOT NULL REFERENCES chat_messages(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(user_id, message_id)
+);
+-- The drawer's section reads "this user's saves, newest first", which is
+-- exactly this index; the message-side lookup rides the UNIQUE index.
+CREATE INDEX IF NOT EXISTS message_bookmarks_user_idx
+  ON message_bookmarks (user_id, created_at DESC);
+
 -- Issues (mirrored to GitHub Issues). `kind` discriminates general issues from
 -- structured proposals like 'rename' (see src/routes/issues.js). `payload`
 -- carries the proposal-specific data (e.g. { newName }).
@@ -2020,6 +2045,7 @@ COMMENT ON TABLE chat_session_specs     IS 'staging:private';
 COMMENT ON TABLE chat_session_spec_user_shares IS 'staging:private';
 COMMENT ON TABLE llm_usage              IS 'staging:private';
 COMMENT ON TABLE notifications          IS 'staging:private';
+COMMENT ON TABLE message_bookmarks      IS 'staging:private';
 COMMENT ON TABLE app_secrets            IS 'staging:private';
 -- `mail_deliveries` is tagged too, but its COMMENT lives beside its
 -- CREATE TABLE further down this file — the table doesn't exist yet at

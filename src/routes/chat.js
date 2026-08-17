@@ -7,9 +7,11 @@ const models = require('../services/models');
 const { listActiveUserIds } = require('../services/active-users');
 const appAccess = require('../services/app-access');
 const attachmentsSvc = require('../services/attachments');
+const messageBookmarks = require('../services/message-bookmarks');
 const {
   attachmentUploadLimiter,
   groupChatWriteLimiter,
+  messageBookmarkLimiter,
 } = require('../middleware/rate-limits');
 
 const THREAD_TYPES = new Set(['issue', 'session', 'governance']);
@@ -113,6 +115,21 @@ function chatRoutes(config) {
         log.warn('chat', 'reaction hydrate failed', { message: err.message });
       }
 
+      // #1280: per-message saved flag, so a loaded page renders its
+      // bookmark buttons already filled in. Same non-fatal contract as the
+      // reaction and unread-dot hydrates around it — a failure here must
+      // never break loading the chat, it just renders every button empty.
+      if (req.user) {
+        try {
+          const savedIds = await messageBookmarks.savedMessageIdsFor(
+            pool, req.user.id, messages.map((m) => m.id)
+          );
+          for (const m of messages) m.bookmarked = savedIds.has(m.id);
+        } catch (err) {
+          log.warn('chat', 'bookmark hydrate failed', { message: err.message });
+        }
+      }
+
       // Per-message unread dot: flag any message this user has an unread
       // mention/reply/reaction notification for, so the chat renders a dot
       // next to it. Live messages (over the WS) can't yet carry this flag,
@@ -212,6 +229,77 @@ function chatRoutes(config) {
       });
     } catch (err) {
       log.error('chat', 'Failed to post message', {
+        slug: req.params.slug, message: err.message,
+      });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ── #1280: saving (bookmarking) a group-chat message ─────────────
+  //
+  // PUT saves, DELETE unsaves, and both are idempotent — the button is a
+  // toggle and two tabs (or a double-tap) must not be able to disagree
+  // about the result. The saved list is read back through the
+  // notifications payload (`savedMessages`), which is what renders the
+  // drawer's pinned "Saved" section.
+  //
+  // Gated on 'view', not 'collab' (#621): a read-only viewer may save what
+  // they can read. The message must belong to the named app, so the slug's
+  // access check is the real gate rather than decoration — otherwise any
+  // public app's slug would unlock every message id on the platform.
+  async function resolveBookmarkTarget(req, res) {
+    // parseThreadRef is named for its first caller, but what it enforces is
+    // "a positive PostgreSQL INTEGER" — the same bound a message id has, so
+    // reusing it keeps one definition of that rule rather than two.
+    const messageId = parseThreadRef(req.params.id);
+    if (messageId == null) {
+      res.status(404).json({ error: 'Message not found' });
+      return null;
+    }
+    const app = await appAccess.getAppForUser(
+      pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS
+    );
+    if (!app) {
+      res.status(404).json({ error: 'App not found' });
+      return null;
+    }
+    const { rows } = await pool.query(
+      `SELECT id FROM chat_messages WHERE id = $1 AND app_id = $2`,
+      [messageId, app.id]
+    );
+    if (!rows.length) {
+      res.status(404).json({ error: 'Message not found' });
+      return null;
+    }
+    return messageId;
+  }
+
+  router.put('/api/apps/:slug/messages/:id/bookmark', messageBookmarkLimiter, async (req, res) => {
+    res.set('Cache-Control', 'private, no-store');
+    if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+    try {
+      const messageId = await resolveBookmarkTarget(req, res);
+      if (messageId == null) return undefined;
+      await messageBookmarks.save(pool, req.user.id, messageId);
+      return res.json({ bookmarked: true });
+    } catch (err) {
+      log.error('chat', 'Failed to save message', {
+        slug: req.params.slug, message: err.message,
+      });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.delete('/api/apps/:slug/messages/:id/bookmark', messageBookmarkLimiter, async (req, res) => {
+    res.set('Cache-Control', 'private, no-store');
+    if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+    try {
+      const messageId = await resolveBookmarkTarget(req, res);
+      if (messageId == null) return undefined;
+      const removed = await messageBookmarks.remove(pool, req.user.id, messageId);
+      return res.json({ bookmarked: false, removed });
+    } catch (err) {
+      log.error('chat', 'Failed to unsave message', {
         slug: req.params.slug, message: err.message,
       });
       return res.status(500).json({ error: 'Internal server error' });
