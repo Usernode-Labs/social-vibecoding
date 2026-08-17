@@ -81,8 +81,10 @@ test('#892: the sweep is bounded per pass and ordered oldest-first', () => {
 });
 
 test('#892: the run end is derived from the session, with a bounded fallback', () => {
-  assert.match(SRC, /cs\.active_turn IS NOT TRUE/,
+  assert.match(SRC, /cs\.active_turn IS NULL/,
     'a finished session\'s own stamp is the best available end time');
+  assert.match(SRC, /cs\.last_activity_at - o\.last_tick_at/,
+    'the end stamp must use chat_sessions.last_activity_at (there is no updated_at column)');
   assert.match(SRC, /o\.last_elapsed_ms \+ 60000/,
     'the fallback bounds the run at the last tick plus one estimator cadence');
   assert.match(SRC, /GREATEST\(/,

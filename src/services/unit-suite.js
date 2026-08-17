@@ -47,9 +47,10 @@ const UNIT_CHECK_PATH = 'package.json';
 // over-ceiling guard (visuals.js). This row is -3.
 const UNIT_CHECK_INDEX = -3;
 
-// The worker image ships node 22 + git (+ a local postgres it won't use
-// here) and is rebuilt daily, so reusing it means no new image to build or
-// deploy. Override for self-hosters whose worker image is named differently.
+// The worker image ships node 22 + git + a local PostgreSQL 17 and is rebuilt
+// daily, so reusing it means no separate CI image to build or deploy. Repos
+// that declare the direct SQL checker use that server before their tests run.
+// Override for self-hosters whose worker image is named differently.
 const UNIT_SUITE_IMAGE = process.env.UNIT_SUITE_IMAGE || 'usernode-worker:latest';
 const UNIT_SUITE_TIMEOUT_MS = parseInt(process.env.UNIT_SUITE_TIMEOUT_MS, 10) || 600 * 1000;
 const UNIT_SUITE_CPUS = process.env.UNIT_SUITE_CPUS || '4';
@@ -140,6 +141,19 @@ else
   npm install --no-audit --no-fund --loglevel=error
 fi
 echo "${SETUP_DONE_SENTINEL}"
+# The SQL checker needs a real catalog and permission to create its throwaway
+# shadow database. Its script path is the explicit opt-in; ordinary app suites
+# remain byte-for-byte unchanged.
+if node -e "const p=require('./package.json');process.exit(p.scripts?.['lint:sql']?.includes('scripts/check-sql.js')?0:1)"; then
+  if ! command -v pg_ctl >/dev/null 2>&1 || [ ! -d /home/node/pgdata ]; then
+    echo "unit-suite: SQL validation is configured but PostgreSQL 17 is unavailable" >&2
+    exit 91
+  fi
+  pg_ctl -D /home/node/pgdata -w -l /tmp/unit-suite-postgres.log start >/dev/null
+  trap 'pg_ctl -D /home/node/pgdata -m fast stop >/dev/null 2>&1 || true' EXIT
+  export SQL_CHECK_CONNECTION_URL=postgres://postgres:postgres@127.0.0.1:5432/postgres
+  npm run lint:sql
+fi
 npm test
 `;
 
