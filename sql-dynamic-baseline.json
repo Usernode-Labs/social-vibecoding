@@ -864,6 +864,20 @@
       "preview": "`INSERT INTO llm_usage (user_id, date, ${column}) VALUES ($1, CURRENT_DATE, $2) ON CONFLICT (user_id, date) DO UPDATE SET ${column} = llm_usage.${column} + EXCL"
     },
     {
+      "source": "src/services/llm-telemetry.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "a4952cce9e8871368ba2",
+      "count": 1,
+      "preview": "groupSql"
+    },
+    {
+      "source": "src/services/llm-telemetry.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "d84356900ebc93c01a1a",
+      "count": 1,
+      "preview": "dailySql"
+    },
+    {
       "source": "src/services/notifications.js",
       "kind": "structural-template",
       "fingerprint": "072b7bda222bacb9f37e",
