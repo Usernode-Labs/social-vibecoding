@@ -19,14 +19,31 @@ const {
 // the accounts table across seasons — schema.sql's own comment), so the
 // join is LEFT and `onchain_account_id`/`user_id` are null for a
 // vanished account rather than the row being hidden.
+//
+// LATERAL, not a plain LEFT JOIN: the same address exists once PER
+// SEASON EVENT in `onchain_accounts` (prod holds up to 9 rows for one
+// address, claimed by different users across events), so a plain join
+// fans one delegation period out into N list rows while COUNT(*) — which
+// only scans adp — still says 1. The lateral picks the account's CURRENT
+// claim: a claimed (is_used) row over an unclaimed one, the most recent
+// claim first, newest account row as the final tie-break.
 const DELEGATION_COLUMNS = [
   'adp.id', 'adp.account', 'adp.started_at', 'adp.ended_at',
   'adp.created_at', 'adp.updated_at',
   'oa.id AS onchain_account_id', 'oa.user_id',
+  'u.username', 'u.display_name', 'av.id AS avatar_id',
 ].join(', ');
 const DELEGATION_FROM = `
   FROM account_delegation_periods adp
-  LEFT JOIN onchain_accounts oa ON oa.address = adp.account
+  LEFT JOIN LATERAL (
+    SELECT o.id, o.user_id
+      FROM onchain_accounts o
+     WHERE o.address = adp.account
+     ORDER BY o.is_used DESC, o.used_at DESC NULLS LAST, o.id DESC
+     LIMIT 1
+  ) oa ON TRUE
+  LEFT JOIN users u ON u.id = oa.user_id
+  LEFT JOIN user_avatars av ON av.user_id = oa.user_id
 `;
 
 function formatDelegation(r) {
@@ -40,6 +57,17 @@ function formatDelegation(r) {
     updated_at: iso(r.updated_at),
     onchain_account_id: r.onchain_account_id != null ? Number(r.onchain_account_id) : null,
     user_id: r.user_id != null ? Number(r.user_id) : null,
+    // The delegating party, resolved to a person where the account has a
+    // current claimant: the same identity fields the console's Users and
+    // account-detail surfaces show (username, display name, id) plus the
+    // platform avatar. Null when the account is unclaimed or vanished —
+    // the UI names those states rather than hiding the row.
+    delegator: r.user_id != null ? {
+      user_id: Number(r.user_id),
+      username: r.username ?? null,
+      display_name: r.display_name ?? null,
+      avatar_url: r.avatar_id ? `/avatars/${r.avatar_id}` : null,
+    } : null,
   };
 }
 
