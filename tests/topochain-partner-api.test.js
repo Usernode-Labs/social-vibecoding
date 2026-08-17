@@ -154,27 +154,21 @@ function handleQuery(rawSql, params = []) {
     return { rows: acct ? [{ address: acct.address }] : [] };
   }
 
-  // GET /delegations/:account: current period row (any state).
-  if (sql.startsWith('SELECT started_at, ended_at FROM account_delegation_periods WHERE account = $1')) {
-    const row = delegationRows.find((d) => d.account === params[0]);
-    return { rows: row ? [{ started_at: row.started_at, ended_at: row.ended_at }] : [] };
+  // GET /delegations/:account: the OPEN period, if any (history model —
+  // closed periods are kept but never speak for current state).
+  if (sql.startsWith('SELECT started_at FROM account_delegation_periods WHERE account = $1 AND ended_at IS NULL')) {
+    const row = delegationRows.find((d) => d.account === params[0] && d.ended_at == null);
+    return { rows: row ? [{ started_at: row.started_at }] : [] };
   }
 
-  // PUT /delegations/:account: row lock.
-  if (sql.startsWith('SELECT id, started_at, ended_at FROM account_delegation_periods WHERE account = $1 FOR UPDATE')) {
-    const row = delegationRows.find((d) => d.account === params[0]);
-    return { rows: row ? [{ id: row.id, started_at: row.started_at, ended_at: row.ended_at }] : [] };
+  // PUT /delegations/:account: lock the open period.
+  if (sql.startsWith('SELECT id, started_at FROM account_delegation_periods WHERE account = $1 AND ended_at IS NULL FOR UPDATE')) {
+    const row = delegationRows.find((d) => d.account === params[0] && d.ended_at == null);
+    return { rows: row ? [{ id: row.id, started_at: row.started_at }] : [] };
   }
 
-  // PUT /delegations/:account: reopen an existing row.
-  if (sql.startsWith('UPDATE account_delegation_periods SET started_at = NOW(), ended_at = NULL')) {
-    const row = delegationRows.find((d) => d.id === params[0]);
-    row.started_at = new Date();
-    row.ended_at = null;
-    return { rows: [{ started_at: row.started_at }] };
-  }
-
-  // PUT /delegations/:account: insert a brand-new row (first-ever delegation).
+  // PUT /delegations/:account: open a NEW period (always an insert — the
+  // partial unique index allows one open row per account, any number closed).
   if (sql.startsWith('INSERT INTO account_delegation_periods')) {
     const startedAt = new Date();
     delegationRows.push({ id: nextDelegationId++, account: params[0], started_at: startedAt, ended_at: null });
@@ -571,8 +565,12 @@ test('PUT /delegations/:account: accepts "1"/"0" string booleans (Laravel boolea
   assert.equal(body.data.delegated, true);
 });
 
-test('PUT /delegations/:account: re-delegating after a close opens a fresh period on the same row', async () => {
-  // ut1closed is currently ended — turn it back on, then verify GET reflects it.
+test('PUT /delegations/:account: re-delegating after a close INSERTS a new period and keeps the closed one (history)', async () => {
+  const closed = delegationRows.find((d) => d.account === 'ut1closed00000000000000000000000000000000');
+  const closedStartedAt = closed.started_at;
+  const closedEndedAt = closed.ended_at;
+  const rowsBefore = delegationRows.length;
+
   const res = await putJson('/api/v4/delegations/ut1closed00000000000000000000000000000000', { delegated: true });
   assert.equal(res.status, 200);
   const body = await res.json();
@@ -582,4 +580,11 @@ test('PUT /delegations/:account: re-delegating after a close opens a fresh perio
   const get2 = await get('/api/v4/delegations/ut1closed00000000000000000000000000000000');
   const getBody = await get2.json();
   assert.equal(getBody.data.delegated, true);
+
+  // The point of the schema change: re-delegation appends, never rewrites.
+  assert.equal(delegationRows.length, rowsBefore + 1, 'a fresh period row was inserted');
+  assert.equal(closed.started_at, closedStartedAt, "the closed period's start survives");
+  assert.equal(closed.ended_at, closedEndedAt, "the closed period's end survives");
+  const open = delegationRows.filter((d) => d.account === 'ut1closed00000000000000000000000000000000' && d.ended_at == null);
+  assert.equal(open.length, 1, 'exactly one open period per account (partial unique)');
 });

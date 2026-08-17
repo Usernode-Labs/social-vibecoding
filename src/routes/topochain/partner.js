@@ -40,24 +40,18 @@
 //      SPEC 1330-1453 doesn't re-litigate this nuance for this endpoint;
 //      it's the natural generalization of the enrollment model used
 //      everywhere else in this migration.
-//   4. `account_delegation_periods` carries a FULL unique constraint on
-//      `account` (SPEC's own table spec, line ~455: "UNIQUE INDEX
-//      (account)" — matching schema.sql, Task 1), not the partial
-//      "one open period" unique the endpoint notes at SPEC 1451 describe
-//      for the source. Per the prime directive ("where a rule and a table
-//      specification disagree, the specification wins" — and here the
-//      table spec IS the specification), PUT /delegations/:account
-//      upserts the SAME row per account rather than inserting a new
-//      historical row every time delegation is re-asserted: turning
-//      delegation on sets `started_at = NOW(), ended_at = NULL` on that
-//      row (inserting it if it doesn't exist yet); turning it off sets
-//      `ended_at = NOW()`. This still satisfies "at most one open period
-//      per account" (trivially — there is at most one row per account,
-//      full stop) and "history is never deleted" in the sense that
-//      survives here: the row is never DELETEd, only ever mutated;
-//      SPEC 1451's stronger claim (a full audit trail of every past
-//      period) isn't representable under the table's own normative index,
-//      and prod only ever held 1 row for this table anyway.
+//   4. `account_delegation_periods` is a HISTORY table: the partial
+//      unique index `uq_account_delegation_periods_open` enforces SPEC
+//      1451's real invariant — at most one OPEN period per account, any
+//      number of closed ones. (Judgment call #4 originally shipped the
+//      table spec's FULL unique on `account`, which forced PUT
+//      /delegations/:account to overwrite the one row and made SPEC
+//      1451's "full audit trail" unrepresentable; that constraint was
+//      dropped when the admin console grew a per-account timeline.)
+//      Turning delegation on INSERTS a fresh period; turning it off sets
+//      `ended_at = NOW()` on the open one; closed rows are immutable.
+//      Note history only accumulates from the schema change forward —
+//      periods overwritten before it are gone.
 'use strict';
 
 const { Router } = require('express');

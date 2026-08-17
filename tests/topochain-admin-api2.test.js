@@ -51,6 +51,7 @@ function freshDb() {
     challenges: [],
     userActivities: [],
     onchainAccounts: [],
+    accountDelegationPeriods: [],
     users: [{ id: 1, username: 'alice', email: 'alice@example.com', display_name: 'Alice', discord: 'alice#1234' }],
     appVersionConfigs: [],
     // Task 2's schema.sql seed, verbatim, PLUS one non-topochain platform
@@ -132,7 +133,23 @@ function accountJoinedRow(a) {
     event_id: ev ? ev.id : null, event_name: ev ? ev.name : null,
     user_id_full: u ? u.id : null, user_username: u ? u.username : null, user_email: u ? u.email : null,
     user_display_name: u ? u.display_name : null, user_discord: u ? (u.discord ?? null) : null,
+    // The route's delegation subqueries: an OPEN period on this address.
+    delegated: openDelegation(a.address) != null,
+    delegated_since: openDelegation(a.address)?.started_at ?? null,
   };
+}
+
+function openDelegation(address) {
+  return db.accountDelegationPeriods.find((p) => p.account === address && p.ended_at == null) || null;
+}
+
+// Param-less delegated filter off D5's index/count queries: EXISTS /
+// NOT EXISTS over open periods. ('AND NOT EXISTS' is checked first —
+// 'AND EXISTS' is a substring of neither.)
+function delegatedFilterMatch(sql, a) {
+  if (sql.includes('AND NOT EXISTS (SELECT 1 FROM account_delegation_periods')) return openDelegation(a.address) == null;
+  if (sql.includes('AND EXISTS (SELECT 1 FROM account_delegation_periods')) return openDelegation(a.address) != null;
+  return true;
 }
 
 // Extracts the optional-filter params off D5's index/count queries. Both
@@ -240,6 +257,7 @@ function handleQuery(rawSql, params = []) {
       && (f.likeIdx === undefined
         || like(a.public_key, params[f.likeIdx]) || like(a.identity_uid, params[f.likeIdx])
         || like(a.registration_code, params[f.likeIdx]) || like(a.tier, params[f.likeIdx]))
+      && delegatedFilterMatch(sql, a)
     ));
     return { rows: [{ c: rows.length }] };
   }
@@ -255,6 +273,7 @@ function handleQuery(rawSql, params = []) {
         && (f.likeIdx === undefined
           || like(a.public_key, params[f.likeIdx]) || like(a.identity_uid, params[f.likeIdx])
           || like(a.registration_code, params[f.likeIdx]) || like(a.tier, params[f.likeIdx]))
+        && delegatedFilterMatch(sql, a)
       ))
       .sort((a, b) => b.amount - a.amount || a.id - b.id)
       .slice(offset, offset + perPage);
@@ -689,6 +708,51 @@ test('D5: index orders by amount DESC, applies filters, and NEVER exposes secret
     const searchRes = await fetch(`${base}/api/v4/admin/onchain-accounts?search=gold`);
     const searchBody = await searchRes.json();
     assert.deepEqual(searchBody.data.map((r) => r.id), [400]);
+  } finally { server.close(); }
+});
+
+test('D5: rows carry the live delegation flag, ?delegated filters on it, and an unparseable value 422s', async () => {
+  db.seasonEvents.push({ id: 300, season_id: 1, name: 'Event B' });
+  db.onchainAccounts.push(
+    { id: 400, season_event_id: 300, season_id: 1, amount: 50, identity_uid: 'u1', address: 'ut1delegated', public_key: 'pk1',
+      secret_key: 's1', tier: 'gold', description: null, registration_code: 'code1', user_id: null,
+      is_used: false, used_at: null, created_at: T(0), updated_at: T(0) },
+    { id: 401, season_event_id: 300, season_id: 1, amount: 20, identity_uid: 'u2', address: 'ut1plain', public_key: 'pk2',
+      secret_key: 's2', tier: 'silver', description: null, registration_code: 'code2', user_id: null,
+      is_used: false, used_at: null, created_at: T(0), updated_at: T(0) },
+  );
+  db.accountDelegationPeriods.push(
+    // A closed period must NOT count as delegated — only an open one does.
+    { id: 1, account: 'ut1plain', started_at: T(-30), ended_at: T(-20) },
+    { id: 2, account: 'ut1delegated', started_at: T(-5), ended_at: null },
+  );
+  const { server, base } = await listen(buildSubApp(onchainAccountsAdminRoutes));
+  try {
+    const body = await (await fetch(`${base}/api/v4/admin/onchain-accounts`)).json();
+    const delegated = body.data.find((a) => a.id === 400);
+    assert.equal(delegated.delegated, true);
+    assert.match(delegated.delegated_since, /\+00:00$/);
+    const plain = body.data.find((a) => a.id === 401);
+    assert.equal(plain.delegated, false);
+    assert.equal(plain.delegated_since, null);
+
+    const onlyDelegated = await (await fetch(`${base}/api/v4/admin/onchain-accounts?delegated=true`)).json();
+    assert.deepEqual(onlyDelegated.data.map((a) => a.id), [400]);
+    assert.equal(onlyDelegated.meta.total, 1);
+    const notDelegated = await (await fetch(`${base}/api/v4/admin/onchain-accounts?delegated=false`)).json();
+    assert.deepEqual(notDelegated.data.map((a) => a.id), [401]);
+
+    // Same discipline as is_used: present-but-unparseable rejects, never
+    // silently ignores the filter.
+    const bad = await fetch(`${base}/api/v4/admin/onchain-accounts?delegated=on`);
+    assert.equal(bad.status, 422);
+    assert.ok((await bad.json()).details.delegated);
+
+    // The show route carries the same two fields (the detail dialog's
+    // Delegation row reads them).
+    const show = await (await fetch(`${base}/api/v4/admin/onchain-accounts/400`)).json();
+    assert.equal(show.data.delegated, true);
+    assert.match(show.data.delegated_since, /\+00:00$/);
   } finally { server.close(); }
 });
 

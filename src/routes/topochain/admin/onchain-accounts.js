@@ -37,6 +37,16 @@ const ACCOUNT_COLUMNS = [
   'se.id AS event_id', 'se.name AS event_name',
   'u.id AS user_id_full', 'u.username AS user_username', 'u.email AS user_email',
   'u.display_name AS user_display_name', 'u.discord AS user_discord',
+  // Live delegation state, by address (the delegations table is keyed on
+  // the ut1… address, not this row's id — duplicates of the address
+  // across season events all report the same state, which is correct:
+  // delegation is a property of the on-chain account, not of one grant
+  // row). The partial unique index guarantees at most one open period,
+  // so the scalar subquery needs no LIMIT semantics beyond itself.
+  `EXISTS (SELECT 1 FROM account_delegation_periods adp
+            WHERE adp.account = oa.address AND adp.ended_at IS NULL) AS delegated`,
+  `(SELECT adp.started_at FROM account_delegation_periods adp
+     WHERE adp.account = oa.address AND adp.ended_at IS NULL LIMIT 1) AS delegated_since`,
 ].join(', ');
 const ACCOUNT_FROM = `
   FROM onchain_accounts oa
@@ -64,6 +74,8 @@ function formatAccount(r) {
     used_at: iso(r.used_at),
     created_at: iso(r.created_at),
     updated_at: iso(r.updated_at),
+    delegated: !!r.delegated,
+    delegated_since: iso(r.delegated_since),
     event: r.event_id != null ? { id: Number(r.event_id), name: r.event_name } : null,
     user: r.user_id_full != null ? {
       id: Number(r.user_id_full),
@@ -145,6 +157,22 @@ function onchainAccountsAdminRoutes(config) {
         }
         params.push(isUsed);
         where += ` AND oa.is_used = $${params.length}`;
+      }
+      // Param-less on purpose (EXISTS over open periods) so the shared
+      // filter-param ordering the count/list queries rely on is
+      // untouched. Same present-but-unparseable discipline as is_used.
+      if (req.query.delegated !== undefined) {
+        const delegated = toBool(req.query.delegated);
+        if (delegated === undefined) {
+          return fail(res, 422, 'The given data was invalid.', {
+            details: { delegated: ['The delegated field must be a boolean.'] },
+          });
+        }
+        where += delegated
+          ? ` AND EXISTS (SELECT 1 FROM account_delegation_periods adp
+                WHERE adp.account = oa.address AND adp.ended_at IS NULL)`
+          : ` AND NOT EXISTS (SELECT 1 FROM account_delegation_periods adp
+                WHERE adp.account = oa.address AND adp.ended_at IS NULL)`;
       }
       if (like) {
         params.push(like);

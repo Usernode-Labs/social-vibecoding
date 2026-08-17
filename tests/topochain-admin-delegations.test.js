@@ -52,12 +52,16 @@ function resetFixtures() {
     { id: 1, account: 'ut1open0000000000000000000000000000000000', started_at: T(-5), ended_at: null, created_at: T(-5), updated_at: T(-5) },
     { id: 2, account: 'ut1closed00000000000000000000000000000000', started_at: T(-20), ended_at: T(-10), created_at: T(-20), updated_at: T(-10) },
     { id: 3, account: 'ut1orphan00000000000000000000000000000000', started_at: T(-2), ended_at: null, created_at: T(-2), updated_at: T(-2) },
+    // History model: an OLDER, CLOSED period on the open account. The
+    // index must collapse it into that account's one row (period_count
+    // 2, state from the latest period); the history endpoint lists both.
+    { id: 4, account: 'ut1open0000000000000000000000000000000000', started_at: T(-30), ended_at: T(-25), created_at: T(-30), updated_at: T(-25) },
   ];
   onchainAccounts = [
-    { id: 350, address: 'ut1open0000000000000000000000000000000000', user_id: 5, is_used: true, used_at: T(-40) },
-    { id: 400, address: 'ut1open0000000000000000000000000000000000', user_id: 7, is_used: true, used_at: T(-6) },
-    { id: 410, address: 'ut1open0000000000000000000000000000000000', user_id: null, is_used: false, used_at: null },
-    { id: 401, address: 'ut1closed00000000000000000000000000000000', user_id: null, is_used: false, used_at: null },
+    { id: 350, address: 'ut1open0000000000000000000000000000000000', user_id: 5, is_used: true, used_at: T(-40), season_id: 1, season_event_id: 300 },
+    { id: 400, address: 'ut1open0000000000000000000000000000000000', user_id: 7, is_used: true, used_at: T(-6), season_id: 1, season_event_id: 310 },
+    { id: 410, address: 'ut1open0000000000000000000000000000000000', user_id: null, is_used: false, used_at: null, season_id: 2, season_event_id: 320 },
+    { id: 401, address: 'ut1closed00000000000000000000000000000000', user_id: null, is_used: false, used_at: null, season_id: 1, season_event_id: 300 },
   ];
   userRows = [
     { id: 5, username: 'past-claimant', display_name: null },
@@ -74,8 +78,24 @@ function collapse(sql) {
   return sql.replace(/\s+/g, ' ').trim();
 }
 
+// The route's latest-periods subquery: one row per account (its most
+// recent period by started_at DESC, id DESC) carrying period_count.
+function latestPeriods() {
+  const byAccount = new Map();
+  for (const r of delegationRows) {
+    if (!byAccount.has(r.account)) byAccount.set(r.account, []);
+    byAccount.get(r.account).push(r);
+  }
+  const out = [];
+  for (const list of byAccount.values()) {
+    list.sort((a, b) => (b.started_at - a.started_at) || (b.id - a.id));
+    out.push({ ...list[0], period_count: list.length });
+  }
+  return out;
+}
+
 function filterRows(sql, params) {
-  let rows = delegationRows.slice();
+  let rows = latestPeriods();
   if (sql.includes('adp.ended_at IS NULL')) rows = rows.filter((r) => r.ended_at == null);
   if (sql.includes('adp.ended_at IS NOT NULL')) rows = rows.filter((r) => r.ended_at != null);
   const ilike = /adp\.account ILIKE \$(\d+)/.exec(sql);
@@ -83,17 +103,49 @@ function filterRows(sql, params) {
     const needle = String(params[Number(ilike[1]) - 1]).replace(/%/g, '').toLowerCase();
     rows = rows.filter((r) => r.account.toLowerCase().includes(needle));
   }
+  // EXISTS-based season/event scoping: an address belongs to a season or
+  // event when ANY of its onchain_accounts duplicates does.
+  const season = /f\.season_id = \$(\d+)/.exec(sql);
+  if (season) {
+    const id = params[Number(season[1]) - 1];
+    rows = rows.filter((r) => onchainAccounts.some((a) => a.address === r.account && a.season_id === id));
+  }
+  const event = /f\.season_event_id = \$(\d+)/.exec(sql);
+  if (event) {
+    const id = params[Number(event[1]) - 1];
+    rows = rows.filter((r) => onchainAccounts.some((a) => a.address === r.account && a.season_event_id === id));
+  }
   return rows;
 }
 
 function handleQuery(rawSql, params = []) {
   const sql = collapse(rawSql);
 
-  if (sql.startsWith('SELECT COUNT(*)::int AS c FROM account_delegation_periods adp')) {
+  // Stats first — its SQL contains the generic filter phrases inside
+  // FILTER clauses, so it must not fall through to the list handlers.
+  if (sql.includes('AS delegated_accounts')) {
+    const latest = latestPeriods();
+    return { rows: [{
+      delegated_accounts: latest.filter((r) => r.ended_at == null).length,
+      ended_accounts: latest.filter((r) => r.ended_at != null).length,
+      orphaned_accounts: latest.filter((r) => !onchainAccounts.some((a) => a.address === r.account)).length,
+      total_periods: delegationRows.length,
+    }] };
+  }
+
+  if (sql.startsWith('SELECT id, account, started_at, ended_at, created_at, updated_at FROM account_delegation_periods WHERE account = $1')) {
+    const rows = delegationRows
+      .filter((d) => d.account === params[0])
+      .sort((a, b) => (b.started_at - a.started_at) || (b.id - a.id))
+      .map((r) => ({ ...r }));
+    return { rows };
+  }
+
+  if (sql.startsWith('SELECT COUNT(*)::int AS c FROM (')) {
     return { rows: [{ c: filterRows(sql, params).length }] };
   }
 
-  if (sql.startsWith('SELECT') && sql.includes('FROM account_delegation_periods adp')) {
+  if (sql.startsWith('SELECT') && sql.includes('FROM account_delegation_periods p')) {
     const limit = params[params.length - 2];
     const offset = params[params.length - 1];
     const rows = filterRows(sql, params)
@@ -185,13 +237,15 @@ test('non-admin gets the SPEC 403 body; a view-only admin can read (no write gat
 
 // ─── Index ──────────────────────────────────────────────────────────────
 
-test('index returns every period (open AND closed) ordered started_at DESC, with the admin data+meta envelope', async () => {
+test('index returns ONE row per account — its latest period, with period_count — ordered started_at DESC', async () => {
   const { server, base } = await listen(buildApp('admin'));
   try {
     const res = await fetch(`${base}/api/v4/admin/delegations`);
     assert.equal(res.status, 200);
     const body = await res.json();
     assert.equal(body.success, true);
+    // Four periods, three accounts: the open account's older closed
+    // period (id 4) collapses into its latest row.
     assert.deepEqual(body.data.map((r) => r.id), [3, 1, 2]); // started_at DESC
     assert.deepEqual(body.meta, { page: 1, per_page: 25, total: 3, total_pages: 1 });
 
@@ -199,12 +253,71 @@ test('index returns every period (open AND closed) ordered started_at DESC, with
     assert.equal(open.account, 'ut1open0000000000000000000000000000000000');
     assert.equal(open.delegated, true);
     assert.equal(open.ended_at, null);
+    assert.equal(open.period_count, 2);
     assert.match(open.started_at, /\+00:00$/); // iso() rendering
     assert.match(open.updated_at, /\+00:00$/);
 
     const closed = body.data.find((r) => r.id === 2);
     assert.equal(closed.delegated, false);
+    assert.equal(closed.period_count, 1);
     assert.match(closed.ended_at, /\+00:00$/);
+  } finally { server.close(); }
+});
+
+test('season/event filters scope by EXISTS across every duplicate of the address; malformed values 404', async () => {
+  const { server, base } = await listen(buildApp('admin'));
+  try {
+    // The open address has a duplicate row in season 2 (the unclaimed
+    // one) — EXISTS semantics must still surface the account.
+    const s2 = await (await fetch(`${base}/api/v4/admin/delegations?season_id=2`)).json();
+    assert.deepEqual(s2.data.map((r) => r.id), [1]);
+    assert.equal(s2.meta.total, 1);
+
+    const ev = await (await fetch(`${base}/api/v4/admin/delegations?season_event_id=300`)).json();
+    assert.deepEqual(ev.data.map((r) => r.id), [1, 2]);
+
+    // The orphan account exists in no season — a season filter excludes it.
+    const s1 = await (await fetch(`${base}/api/v4/admin/delegations?season_id=1`)).json();
+    assert.ok(!s1.data.some((r) => r.id === 3));
+
+    const badSeason = await fetch(`${base}/api/v4/admin/delegations?season_id=not-a-number`);
+    assert.equal(badSeason.status, 404);
+    assert.equal((await badSeason.json()).error, 'Season not found.');
+    const badEvent = await fetch(`${base}/api/v4/admin/delegations?season_event_id=not-a-number`);
+    assert.equal(badEvent.status, 404);
+    assert.equal((await badEvent.json()).error, 'Event not found.');
+  } finally { server.close(); }
+});
+
+test('stats: account-level tallies (delegated / ended / not-on-file) plus the total period count', async () => {
+  const { server, base } = await listen(buildApp('admin'));
+  try {
+    const res = await fetch(`${base}/api/v4/admin/delegations/stats`);
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.success, true);
+    assert.deepEqual(body.data, {
+      delegated_accounts: 2,
+      ended_accounts: 1,
+      orphaned_accounts: 1,
+      total_periods: 4,
+    });
+  } finally { server.close(); }
+});
+
+test('history: every period for an account, newest first, each with its own delegated flag; unknown account -> empty list', async () => {
+  const { server, base } = await listen(buildApp('admin'));
+  try {
+    const res = await fetch(`${base}/api/v4/admin/delegations/ut1open0000000000000000000000000000000000/history`);
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.deepEqual(body.data.map((r) => r.id), [1, 4]);
+    assert.deepEqual(body.data.map((r) => r.delegated), [true, false]);
+    assert.match(body.data[1].ended_at, /\+00:00$/);
+
+    const none = await fetch(`${base}/api/v4/admin/delegations/ut1never000000000000000000000000000000000/history`);
+    assert.equal(none.status, 200);
+    assert.deepEqual((await none.json()).data, []);
   } finally { server.close(); }
 });
 

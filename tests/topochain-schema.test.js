@@ -184,11 +184,17 @@ test('onchain_accounts: registration_code unique, secret_key present, user_id SE
     'nullable user_id preserves the row (SET NULL, not CASCADE)');
 });
 
-test('account_delegation_periods.account carries no FK', () => {
+test('account_delegation_periods: history model — no FK, no full unique, one OPEN period per account', () => {
   const t = tableText('account_delegation_periods');
-  assert.match(t, /account\s+VARCHAR\(255\) NOT NULL UNIQUE/);
-  assert.ok(!/account\s+VARCHAR\(255\) NOT NULL UNIQUE REFERENCES/.test(t));
+  assert.match(t, /account\s+VARCHAR\(255\) NOT NULL/);
+  assert.ok(!/account\s+VARCHAR\(255\) NOT NULL UNIQUE/.test(t),
+    'the full unique is gone — re-delegation appends a period instead of overwriting');
   assert.ok(!t.includes('REFERENCES'), 'no FK columns at all in this table');
+  // The real invariant, as a partial unique index: at most one open
+  // period per account, any number of closed historical ones.
+  assert.match(schema, /CREATE UNIQUE INDEX IF NOT EXISTS uq_account_delegation_periods_open\s+ON account_delegation_periods \(account\) WHERE ended_at IS NULL/);
+  // Existing databases converge by dropping the old column constraint.
+  assert.match(schema, /ALTER TABLE account_delegation_periods DROP CONSTRAINT IF EXISTS account_delegation_periods_account_key/);
 });
 
 test('leaderboard_snapshots: extra_points and the plain unique', () => {

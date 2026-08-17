@@ -3550,14 +3550,24 @@ CREATE INDEX IF NOT EXISTS idx_onchain_accounts_season_event_used ON onchain_acc
 -- ut1… address matching `onchain_accounts.address`) had its stake
 -- delegated. Deliberately no FK: delegations can reference accounts
 -- from any event/season, and the source table wasn't scoped that way.
+-- HISTORY MODEL: every period is kept. The invariant is the partial
+-- unique index below — at most one OPEN period (`ended_at IS NULL`) per
+-- account — not a full unique on `account`; re-delegation inserts a new
+-- row and closed rows are immutable history (SPEC 1451's audit trail).
 CREATE TABLE IF NOT EXISTS account_delegation_periods (
   id          BIGSERIAL PRIMARY KEY,
-  account     VARCHAR(255) NOT NULL UNIQUE,
+  account     VARCHAR(255) NOT NULL,
   started_at  TIMESTAMPTZ NOT NULL,
   ended_at    TIMESTAMPTZ,
   created_at  TIMESTAMPTZ,
   updated_at  TIMESTAMPTZ
 );
+-- Existing databases converge from the pre-history model: drop the old
+-- column-level unique (its rows are already valid under the new
+-- invariant — one row per account trivially has at most one open one).
+ALTER TABLE account_delegation_periods DROP CONSTRAINT IF EXISTS account_delegation_periods_account_key;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_account_delegation_periods_open
+  ON account_delegation_periods (account) WHERE ended_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_account_delegation_periods_account_ended ON account_delegation_periods (account, ended_at);
 
 -- `leaderboard_snapshots` — point-in-time leaderboard rows, one per
