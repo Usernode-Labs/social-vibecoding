@@ -2133,6 +2133,14 @@ async function submitUpdate(deps, params, proposalId) {
   // submission named — or, when that first submission named nothing, of the
   // app's home page. Omitted keys leave the stored routes alone.
   const testing = params.testing || {};
+  // The request this update implements travels WITH it (#1310), closing the
+  // gap #1217 left: the create path has sent `linkedIssues` since then, but
+  // an update dropped the task's request number on the floor — so a
+  // work-order continuation of a dev session promoted to a PR with no
+  // `Closes #N`, and the request it implemented never closed on merge.
+  // Empty for a task that names no request, which sends nothing and leaves
+  // the stored linkage alone.
+  const linkedIssues = linkedIssuesFor(task);
   const updated = await updateProposal(slug, proposalId, {
     branch,
     forkRepo: params.forkRepo ? String(params.forkRepo).trim() : null,
@@ -2143,6 +2151,7 @@ async function submitUpdate(deps, params, proposalId) {
     // names the pull request created at propose time; on a target with a PR
     // it renames it (imported PRs keep their external author's title).
     ...(params.title ? { title: String(params.title) } : {}),
+    ...(linkedIssues.length ? { linkedIssues } : {}),
   });
   if (!updated || !updated.ok) {
     const body = (updated && updated.body) || {};
@@ -2223,6 +2232,10 @@ async function submitUpdate(deps, params, proposalId) {
     // name (false on proposals — they already have one — and on a repeat of
     // the stored value).
     titleUpdated: result.titleUpdated === true,
+    // Whether the task's request number was newly recorded on the target
+    // (#1310) — false when the row already carried it, or the task names no
+    // request.
+    linkedIssuesUpdated: result.linkedIssuesUpdated === true,
     // 'proposal' | 'session' | null — what the push actually landed on, as
     // decided under the lock rather than as the work order predicted.
     targetKind: result.targetKind || null,

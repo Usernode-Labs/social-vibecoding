@@ -3371,7 +3371,12 @@ test('an update is submitted through the platform route, and its answer is passe
   assert.deepEqual(calls, [{
     slug: 'recipe-box',
     id: 512,
-    payload: { branch: 'my-fix', forkRepo: null, expectedHeadSha: BASE_SHA },
+    payload: {
+      branch: 'my-fix', forkRepo: null, expectedHeadSha: BASE_SHA,
+      // #1310: the task's request travels with the update, exactly as the
+      // create path has sent it since #1217. TASK_ROW's issue_number is 4.
+      linkedIssues: [4],
+    },
   }], 'the lease value is lowercased once, here, so the route compares like with like');
   assert.equal(result.proposalId, 512);
   assert.equal(result.headSha, 'aaaa'.repeat(10));
@@ -3400,16 +3405,23 @@ test('an update carries the testing metadata it was given, and omits what it was
     expectedHeadSha: null,
     testingPaths: testing.testingPaths,
     testingSteps: '1. Open the invite dialog.',
+    linkedIssues: [4],
   });
 
   // Omitted stays omitted rather than being sent as null: the route reads an
   // absent field as "leave the proposal's stored routes alone", and a null
   // would be a different instruction.
   const bare = await submitUpdateWork({});
-  assert.deepEqual(Object.keys(bare.calls[0].payload).sort(), ['branch', 'expectedHeadSha', 'forkRepo']);
+  assert.deepEqual(Object.keys(bare.calls[0].payload).sort(), ['branch', 'expectedHeadSha', 'forkRepo', 'linkedIssues']);
   const stepsOnly = await submitUpdateWork({ testing: { testingSteps: 'Just steps.' } });
   assert.equal('testingPaths' in stepsOnly.calls[0].payload, false);
   assert.equal(stepsOnly.calls[0].payload.testingSteps, 'Just steps.');
+
+  // A task that names no request sends nothing (#1310) — the route reads an
+  // absent field as "leave the stored linkage alone", exactly like the
+  // testing metadata above.
+  const noIssue = await submitUpdateWork({}, { rows: [{ ...UPDATE_TASK, issue_number: null }] });
+  assert.equal('linkedIssues' in noIssue.calls[0].payload, false);
 });
 
 test('a resubmit that moved no commit reports what it DID do', async () => {

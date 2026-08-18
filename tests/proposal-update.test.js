@@ -1661,3 +1661,169 @@ test('a GitHub rename failure keeps the panel rename and never fails the update'
   assert.equal(result.titleUpdated, true, 'the panel — what voters see — is renamed either way');
   assert.equal(renames.length, 1);
 });
+
+// ── 13. The request linkage (#1310) ────────────────────────────────────
+//
+// #1217 linked a proposal to the request it implements — `Closes #N` in the
+// PR body, `chat_sessions.linked_issues` on the row — but only on the CREATE
+// path. An update dropped the task's request number on the floor, the same
+// shape of loss #1199 names for the capture routes. The failure that shipped:
+// a work-order continuation of a dev SESSION has no PR yet, its PR is built
+// at promote time from chat_sessions.linked_issues, and nothing had written
+// them — so the PR opened without its closing line, GitHub never linked the
+// issue, and it had to be closed by hand after the merge (recipebot #45).
+
+test('applyLinkedIssues: a row with no PR stores the union and touches GitHub not at all', async () => {
+  const writes = [];
+  const pool = fakePool([
+    ['SET linked_issues', (params) => { writes.push(params); return []; }],
+  ]);
+  const session = { id: 3430, source: 'native', linked_issues: [], pr_number: null };
+  const gh = { getPR: async () => { throw new Error('must not run'); } };
+  const changed = await svc.applyLinkedIssues({
+    pool, gh, session, owner: 'o', repo: 'r', linkedIssues: [45],
+  });
+  assert.equal(changed, true);
+  assert.deepEqual(session.linked_issues, [45],
+    'promote reads THIS object when it assembles the PR — the in-memory row must not lag the write');
+  assert.deepEqual(writes, [[[45], 3430]]);
+});
+
+test('applyLinkedIssues: omission is not erasure, and a number already linked is a no-op', async () => {
+  const pool = { query: async () => { throw new Error('must not run'); } };
+  const session = { id: 1, source: 'native', linked_issues: [45], pr_number: null };
+  const gh = {};
+  assert.equal(await svc.applyLinkedIssues({ pool, gh, session, owner: 'o', repo: 'r', linkedIssues: [] }), false);
+  assert.equal(await svc.applyLinkedIssues({ pool, gh, session, owner: 'o', repo: 'r' }), false);
+  assert.equal(await svc.applyLinkedIssues({ pool, gh, session, owner: 'o', repo: 'r', linkedIssues: [45] }), false);
+  assert.deepEqual(session.linked_issues, [45], 'nothing was removed and nothing was doubled');
+});
+
+test('applyLinkedIssues: a live PR gets the closing line appended, hand-written keywords not doubled', async () => {
+  const writes = [];
+  const bodies = [];
+  const pool = fakePool([
+    ['SET linked_issues', (params) => { writes.push(['linked', params]); return []; }],
+    ['SET pr_linked_issues_applied', (params) => { writes.push(['applied', params]); return []; }],
+  ]);
+  const session = {
+    id: 501, source: 'native', linked_issues: [], pr_number: 42, pr_linked_issues_applied: [],
+  };
+  const gh = {
+    getPR: async () => ({ state: 'open', merged: false, body: 'Adds the thing.\n\nFixes #7' }),
+    updatePR: async (owner, repo, prNumber, patch) => { bodies.push(patch.body); },
+  };
+  const changed = await svc.applyLinkedIssues({
+    pool, gh, session, owner: 'o', repo: 'r', linkedIssues: [7, 45],
+  });
+  assert.equal(changed, true);
+  assert.deepEqual(session.linked_issues, [7, 45]);
+  // #7 is already declared by the author's own "Fixes #7" — only #45 lands,
+  // via the same parser the migrate-time backfill trusts.
+  assert.deepEqual(bodies, ['Adds the thing.\n\nFixes #7\n\nCloses #45']);
+  // But BOTH are recorded as reflected in the body, so pr-metadata's drift
+  // gate does not rewrite a body that is already right.
+  assert.deepEqual(session.pr_linked_issues_applied, [7, 45]);
+});
+
+test('applyLinkedIssues: a merged or closed PR is left alone — only an open body can still close anything', async () => {
+  const pool = fakePool([
+    ['SET linked_issues', () => []],
+  ]);
+  const session = { id: 501, source: 'native', linked_issues: [], pr_number: 42, pr_linked_issues_applied: [] };
+  const gh = {
+    getPR: async () => ({ state: 'closed', merged: true, body: '' }),
+    updatePR: async () => { throw new Error('must not run'); },
+  };
+  assert.equal(await svc.applyLinkedIssues({ pool, gh, session, owner: 'o', repo: 'r', linkedIssues: [45] }), true);
+  assert.deepEqual(session.pr_linked_issues_applied, [], 'nothing was pretended to be in the body');
+});
+
+test('applyLinkedIssues: an imported PR keeps its author\'s body — the row is still linked', async () => {
+  const writes = [];
+  const pool = fakePool([
+    ['SET linked_issues', (params) => { writes.push(params); return []; }],
+  ]);
+  const session = { id: 601, source: 'imported', linked_issues: [], pr_number: 91 };
+  const gh = { getPR: async () => { throw new Error('must not run'); } };
+  assert.equal(await svc.applyLinkedIssues({ pool, gh, session, owner: 'o', repo: 'r', linkedIssues: [12] }), true);
+  assert.deepEqual(session.linked_issues, [12],
+    'the close watcher and the Dev board read the row, whoever owns the body');
+});
+
+test('applyLinkedIssues: neither a DB failure nor a GitHub failure escapes', async () => {
+  // The write failing means the linkage did not take — say so, lie to nobody.
+  const broken = fakePool([
+    ['SET linked_issues', () => { throw new Error('column is on fire'); }],
+  ]);
+  const s1 = { id: 1, source: 'native', linked_issues: [], pr_number: null };
+  assert.equal(await svc.applyLinkedIssues({
+    pool: broken, gh: {}, session: s1, owner: 'o', repo: 'r', linkedIssues: [45],
+  }), false);
+  assert.deepEqual(s1.linked_issues, [], 'the in-memory row is not lied to either');
+
+  // The body patch failing does NOT undo the stored linkage: the row is the
+  // source of truth, and the drift gate catches the body up later.
+  const pool = fakePool([
+    ['SET linked_issues', () => []],
+  ]);
+  const s2 = { id: 2, source: 'native', linked_issues: [], pr_number: 42, pr_linked_issues_applied: [] };
+  const gh = { getPR: async () => { throw new Error('GitHub is down'); } };
+  assert.equal(await svc.applyLinkedIssues({
+    pool, gh, session: s2, owner: 'o', repo: 'r', linkedIssues: [45],
+  }), true);
+  assert.deepEqual(s2.linked_issues, [45]);
+  assert.deepEqual(s2.pr_linked_issues_applied, [], 'not marked applied when the body was never patched');
+});
+
+test('an update that carries linkedIssues stores them before the tails, on every path', async () => {
+  // Behavioural half: the promoted-native path end to end.
+  const log = {};
+  const order = [];
+  const session = nativeSession({ linked_issues: [], pr_linked_issues_applied: [] });
+  const pool = fakePool([
+    ['FROM chat_sessions cs JOIN apps a', [session]],
+    ['FROM pr_votes', [{ n: 4 }]],
+    ['SET linked_issues', (params) => { order.push(['linked', params]); return []; }],
+    ['SET pr_linked_issues_applied', () => []],
+  ]);
+  const result = await run({
+    session, pool,
+    gh: {
+      getPR: async () => ({ state: 'open', merged: false, body: 'Dev session by evan via Usernode' }),
+      updatePR: async (owner, repo, prNumber, patch) => { order.push(['body', patch.body]); },
+    },
+    votes: {
+      reconcileNativeReviewedHead: async () => { order.push(['reconcile']); return { updated: true }; },
+    },
+  }, { linkedIssues: [45] }, log);
+  assert.equal(result.ok, true);
+  assert.equal(result.linkedIssuesUpdated, true);
+  assert.deepEqual(session.linked_issues, [45]);
+  assert.deepEqual(order.map((o) => o[0]), ['linked', 'body', 'reconcile'],
+    'stored, then the live body patched, then the tail — never the other way round');
+  assert.equal(order[1][1], 'Dev session by evan via Usernode\n\nCloses #45');
+
+  // Source half, for the ORDER on the paths the stubs above do not read
+  // (same reasoning as the testing-metadata order test).
+  const fn = CODE.slice(
+    CODE.indexOf('async function advanceAppRepoBranch'),
+    CODE.indexOf('async function settleActiveSession')
+  );
+  const applied = fn.indexOf('applyLinkedIssues');
+  assert.ok(applied > 0, 'the app-repo path stores the linkage');
+  for (const tail of ['syncImportedProposal', 'settleActiveSession', 'settlePausedSession', 'reconcileNativeReviewedHead']) {
+    assert.ok(fn.indexOf(tail) > applied, `${tail} runs after the linkage is stored`);
+  }
+  const resubmit = CODE.slice(
+    CODE.indexOf('async function resubmitUnchanged'),
+    CODE.indexOf('async function advanceAppRepoBranch')
+  );
+  assert.match(resubmit, /applyLinkedIssues/,
+    'a same-commit resubmit is also how a dropped linkage arrives');
+  const fork = CODE.slice(
+    CODE.indexOf('async function advanceForkHead'),
+    CODE.indexOf('async function checkAncestry')
+  );
+  assert.match(fork, /applyLinkedIssues/, 'an imported proposal is linked too');
+});

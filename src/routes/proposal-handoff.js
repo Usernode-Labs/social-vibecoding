@@ -302,7 +302,7 @@ function requireCliMiddleware(req, res, next) {
 // were accepted by submit_work, dropped here, and every revised proposal
 // silently fell back to home-page screenshots.
 function parseUpdateFromForkBody(body) {
-  exactKeys(body, ['branch', 'forkRepo', 'expectedHeadSha', 'testingPaths', 'testingSteps', 'title'], 'body');
+  exactKeys(body, ['branch', 'forkRepo', 'expectedHeadSha', 'testingPaths', 'testingSteps', 'title', 'linkedIssues'], 'body');
   const branch = boundedText(body.branch, { label: 'branch', min: 1, max: 255, trim: true });
   const forkRepo = body.forkRepo == null
     ? null
@@ -328,8 +328,21 @@ function parseUpdateFromForkBody(body) {
   const title = body.title == null
     ? null
     : boundedText(body.title, { label: 'title', min: 1, max: 256, trim: true });
+  // The request(s) this revision implements (#1310) — the same field, cap and
+  // sanitizer the pr-import route takes (#1217), so the create path and the
+  // update path cannot disagree about what a linked issue is. Shape only
+  // here, exactly like testingPaths: a wrong TYPE is a caller bug worth a
+  // 400, while an individual unusable entry is silently dropped by the
+  // shared sanitizer.
+  if (body.linkedIssues != null && !Array.isArray(body.linkedIssues)) {
+    throw new ValidationError('linkedIssues must be an array of issue numbers');
+  }
+  const { parseImportLinkedIssues } = require('./votes');
+  const linkedIssues = body.linkedIssues == null
+    ? []
+    : parseImportLinkedIssues({ linkedIssues: body.linkedIssues });
   const testing = require('../services/testing-notes').parseSubmitted(body);
-  return { branch, forkRepo, expectedHeadSha, testing, title };
+  return { branch, forkRepo, expectedHeadSha, testing, title, linkedIssues };
 }
 
 function repoCoordinates(app) {
@@ -604,6 +617,7 @@ function proposalHandoffRoutes(config) {
           expectedHeadSha: input.expectedHeadSha,
           testing: input.testing,
           title: input.title,
+          linkedIssues: input.linkedIssues,
           origin: config.cliAuthOrigin || null,
         }
       );
