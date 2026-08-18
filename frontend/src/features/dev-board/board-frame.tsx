@@ -84,7 +84,12 @@ export interface DevBoardFrameProps {
  */
 function viewToggleBtnCls(active: boolean): string {
   return (
-    'dev-view-btn w-7 h-7 flex items-center justify-center transition-colors ' +
+    // #1288: 36px boxes + the kit's 44px tap halo. The outer-corner rounding
+    // lives on the first/last segments (7px = the container's 8px rounded-lg
+    // minus its 1px border) because the container must NOT clip overflow —
+    // overflow-hidden would cut the un-touch-target halos back to the box.
+    'dev-view-btn un-touch-target w-9 h-9 flex items-center justify-center transition-colors ' +
+    'first:rounded-l-[7px] last:rounded-r-[7px] ' +
     (active
       ? 'bg-violet-600 text-white'
       : 'text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800')
@@ -123,7 +128,7 @@ function ViewToggle({
 }) {
   return (
     <div
-      className="inline-flex items-center rounded-lg border border-zinc-200 dark:border-zinc-700 overflow-hidden mr-1"
+      className="inline-flex items-center rounded-lg border border-zinc-200 dark:border-zinc-700"
       role="group"
       aria-label="Dev view mode"
     >
@@ -138,7 +143,7 @@ function ViewToggle({
           aria-label={title}
           onClick={() => onSelect(mode)}
         >
-          <Glyph className="w-4 h-4" aria-hidden="true" d={VIEW_ICON_PATHS[mode]} />
+          <Glyph className="w-5 h-5" aria-hidden="true" d={VIEW_ICON_PATHS[mode]} />
         </button>
       ))}
     </div>
@@ -241,7 +246,7 @@ export function DevBoardFrame({
           header now says "Dev" a few pixels above this row, and printing it
           twice reads as a bug. The flex-1 spacer keeps the toggle and "+"
           right-aligned either way. */}
-      <div className="flex items-center gap-2 px-3 py-1.5 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
+      <div className="flex items-center gap-3 px-3 py-2 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
         {selfHosted ? (
           <span className="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider flex-1">
             Dev
@@ -255,7 +260,7 @@ export function DevBoardFrame({
             id="dev-plus-btn"
             aria-haspopup="true"
             aria-expanded="false"
-            className="rounded-lg bg-violet-600 hover:bg-violet-500 w-7 h-7 flex items-center justify-center text-base font-bold leading-none text-white transition-colors"
+            className="un-touch-target rounded-lg bg-violet-600 hover:bg-violet-500 w-9 h-9 flex items-center justify-center text-lg font-bold leading-none text-white transition-colors"
             title={
               readOnly
                 ? 'Fork this app'
@@ -266,7 +271,7 @@ export function DevBoardFrame({
           </button>
           <div
             id="dev-plus-menu"
-            className="hidden absolute right-0 top-9 z-30 w-64 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-2xl overflow-hidden"
+            className="hidden absolute right-0 top-11 z-30 w-64 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-2xl overflow-hidden"
           >
             {readOnly ? null : (
               <>
