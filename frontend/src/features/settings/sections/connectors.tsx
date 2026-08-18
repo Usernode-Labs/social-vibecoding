@@ -103,7 +103,19 @@ export function ConnectorsSection() {
             width="flex"
             mono
           />
-          <Button id="connector-url-copy" type="button" layout="shrink">
+          {/*
+              This one KEEPS the violet fill: it is the section's primary
+              action, and the two blocks below stepping down to `outline` is
+              what makes that legible again (#1290). The min-heights are a
+              no-op on desktop, where the button already measures ~38px.
+          */}
+          <Button
+            id="connector-url-copy"
+            type="button"
+            layout="shrink"
+            className="min-h-[44px] sm:min-h-[36px]"
+            aria-label="Copy the connector URL"
+          >
             Copy
           </Button>
         </div>
@@ -240,12 +252,34 @@ export function ConnectorsSection() {
             <p className="text-xs text-zinc-500 dark:text-zinc-500 mb-2 leading-relaxed">
               Add this to your own <code className="font-mono text-zinc-600 dark:text-zinc-400">~/.claude/settings.json</code>. It is the only one of the three that covers <strong className="font-semibold text-zinc-600 dark:text-zinc-400">every</strong> repo at once, including repos Usernode never made.
             </p>
-            <div className="flex gap-2">
-              <pre id="connector-allow-rules" className="flex-1 min-w-0 overflow-x-auto text-xs font-mono text-zinc-600 dark:text-zinc-400 bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-md p-2">{PERSONAL_ALLOW_RULES}</pre>
-              <Button id="connector-allow-rules-copy" type="button" layout="shrink">
+            {/*
+                #1290: Copy lives in a header row ABOVE the block, not beside
+                it. Beside it, the button was a flex sibling of a twelve-line
+                <pre> and `align-items: stretch` made it a ~210px violet slab
+                — louder than #connector-url-copy, which is the section's real
+                primary action — while taking ~80px of width off a block that
+                already scrolls sideways on a phone. The row is the idiom
+                sections/agent-files.tsx uses for its upload controls, and it
+                is also where the destination filename belongs: the two blocks
+                are byte-identical, so the file each one is for is the only
+                thing that distinguishes them.
+            */}
+            <div className="flex items-center justify-between gap-2 mb-1">
+              <span className="font-mono text-[11px] text-zinc-500 dark:text-zinc-500 truncate">~/.claude/settings.json</span>
+              <Button
+                id="connector-allow-rules-copy"
+                type="button"
+                layout="shrink"
+                variant="outline"
+                size="xsText"
+                ink="muted"
+                className="inline-flex items-center justify-center min-h-[44px] sm:min-h-[36px]"
+                aria-label="Copy the allow rules for your personal settings file"
+              >
                 Copy
               </Button>
             </div>
+            <pre id="connector-allow-rules" className="min-w-0 overflow-x-auto text-xs font-mono text-zinc-600 dark:text-zinc-400 bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-md p-2">{PERSONAL_ALLOW_RULES}</pre>
           </div>
 
           <div id="connector-case-cc-web" className="mb-3">
@@ -255,12 +289,24 @@ export function ConnectorsSection() {
             <p className="text-xs text-zinc-500 dark:text-zinc-500 mb-2 leading-relaxed">
               A web session gets a fresh container each time, so a settings file on your own machine is not in it and last session&rsquo;s approvals are gone. What the container does carry is the repo it checks out &mdash; so commit the same block as <code className="font-mono text-zinc-600 dark:text-zinc-400">.claude/settings.json</code> in the app repo. Usernode writes that file into every app repo it creates, imports or forks; repos that already existed before it shipped do not have one, and adding it is an ordinary commit.
             </p>
-            <div className="flex gap-2 mb-2">
-              <pre id="connector-repo-allow-rules" className="flex-1 min-w-0 overflow-x-auto text-xs font-mono text-zinc-600 dark:text-zinc-400 bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-md p-2">{PERSONAL_ALLOW_RULES}</pre>
-              <Button id="connector-repo-allow-rules-copy" type="button" layout="shrink">
+            {/* Same header row as the case above — see the note there. */}
+            <div className="flex items-center justify-between gap-2 mb-1">
+              <span className="font-mono text-[11px] text-zinc-500 dark:text-zinc-500 truncate">.claude/settings.json</span>
+              <Button
+                id="connector-repo-allow-rules-copy"
+                type="button"
+                layout="shrink"
+                variant="outline"
+                size="xsText"
+                ink="muted"
+                className="inline-flex items-center justify-center min-h-[44px] sm:min-h-[36px]"
+                aria-label="Copy the allow rules to commit in your app repo"
+              >
                 Copy
               </Button>
             </div>
+            {/* `mb-2` was the flex row's; the trailing paragraph still needs it. */}
+            <pre id="connector-repo-allow-rules" className="min-w-0 overflow-x-auto text-xs font-mono text-zinc-600 dark:text-zinc-400 bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-md p-2 mb-2">{PERSONAL_ALLOW_RULES}</pre>
             <p className="text-xs text-zinc-500 dark:text-zinc-500 leading-relaxed">
               Claude Code may still ask you to trust the workspace once per container before a repo-level file takes effect. Whether that dialog appears in every web session has not been settled &mdash; if you are still prompted after committing the file, that is the reason, and the case above is the fix that does not depend on it.
             </p>

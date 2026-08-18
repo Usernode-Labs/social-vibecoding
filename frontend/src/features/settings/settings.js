@@ -191,45 +191,57 @@
 
       // Copy the connector URL — the one thing the user has to carry over
       // into Claude.ai / ChatGPT by hand.
-      const connectorCopy = document.getElementById('connector-url-copy');
-      if (connectorCopy) {
-        connectorCopy.addEventListener('click', async () => {
+      this._wireCopyControl('connector-url-copy', {
+        read: () => {
           const field = document.getElementById('connector-url');
-          if (!field) return;
-          try {
-            await navigator.clipboard.writeText(field.value);
-          } catch {
-            // Clipboard permission denied / insecure context: select the
-            // text so the user can copy it themselves.
-            field.select();
-          }
-          connectorCopy.textContent = 'Copied';
-          setTimeout(() => { connectorCopy.textContent = 'Copy'; }, 1500);
-        });
-      }
+          return field ? field.value : null;
+        },
+        successMessage: 'Connector URL copied',
+        failureMessage: 'Could not copy the connector URL',
+        selectOnFail: () => {
+          const field = document.getElementById('connector-url');
+          if (field) field.select();
+        },
+      });
 
       // Copy the read-only allow rules. Two blocks with identical content and
       // different destinations: the user's PERSONAL ~/.claude/settings.json,
       // which covers every repo on their machine, and the per-repo
       // .claude/settings.json, which is the copy a fresh web container can
-      // actually see. Same shape as the URL copy above, reading textContent
-      // because each block is a <pre>, not an input — and no select()
-      // fallback for the same reason, so a denied clipboard just leaves the
-      // visible text to be copied by hand.
+      // actually see. Byte-identical content is exactly why the toast names
+      // the DESTINATION rather than saying "Copied" (#1290) — the label swap
+      // alone cannot tell the two buttons apart, and on a phone the thumb is
+      // over it anyway.
+      const RULE_BLOCKS = {
+        'connector-allow-rules': {
+          success: 'Copied — paste it into ~/.claude/settings.json',
+          failure: 'Could not copy the allow rules',
+        },
+        'connector-repo-allow-rules': {
+          success: 'Copied — commit it as .claude/settings.json in your app repo',
+          failure: 'Could not copy the allow rules',
+        },
+      };
       for (const id of ['connector-allow-rules', 'connector-repo-allow-rules']) {
-        const rulesCopy = document.getElementById(`${id}-copy`);
-        if (!rulesCopy) continue;
-        rulesCopy.addEventListener('click', async () => {
-          const block = document.getElementById(id);
-          if (!block) return;
-          let ok = true;
-          try {
-            await navigator.clipboard.writeText(block.textContent);
-          } catch {
-            ok = false;
-          }
-          rulesCopy.textContent = ok ? 'Copied' : 'Copy failed';
-          setTimeout(() => { rulesCopy.textContent = 'Copy'; }, 1500);
+        this._wireCopyControl(`${id}-copy`, {
+          // Read at CLICK time, not wire time: _wireConnectorNameSpelling()
+          // rewrites these blocks in place, and the copy has to be whatever
+          // the user is actually looking at.
+          read: () => {
+            const block = document.getElementById(id);
+            return block ? block.textContent : null;
+          },
+          successMessage: RULE_BLOCKS[id].success,
+          failureMessage: RULE_BLOCKS[id].failure,
+          selectOnFail: () => {
+            const block = document.getElementById(id);
+            if (!block || !window.getSelection || !document.createRange) return;
+            const range = document.createRange();
+            range.selectNodeContents(block);
+            const sel = window.getSelection();
+            sel.removeAllRanges();
+            sel.addRange(range);
+          },
         });
       }
 
@@ -1253,6 +1265,61 @@
     //
     // textContent throughout, never innerHTML — the value being written comes
     // from a text input.
+    /**
+     * Wire one Copy button (#1290).
+     *
+     * Three of them live on this screen — the connector URL and the two
+     * allow-rule blocks — and before this they were three ad-hoc handlers
+     * that each got something wrong: the URL one wrote 'Copied' even when
+     * `writeText` had rejected, none of them went through
+     * `PlatformUI.copyText` (so an insecure origin or a locked-down webview
+     * failed silently instead of taking the execCommand fallback every other
+     * copy on the platform gets), none toasted, and none held onto the reset
+     * timer, so a second press cut the first press's confirmation short.
+     *
+     * `read` and `selectOnFail` are called at CLICK time so the source can
+     * change under the button — which it does: the name-spelling field
+     * rewrites both <pre> blocks in place.
+     *
+     * textContent only, never innerHTML: these buttons are rendered by
+     * Shell.tsx and a glyph would need markup React owns.
+     */
+    _wireCopyControl(buttonId, { read, successMessage, failureMessage, selectOnFail }) {
+      const btn = document.getElementById(buttonId);
+      if (!btn) return;
+      // The label React rendered, restored rather than a hardcoded 'Copy'.
+      const restLabel = btn.textContent;
+      let resetTimer = null;
+      btn.addEventListener('click', async () => {
+        const text = read();
+        if (text == null) return;
+        const ok = window.PlatformUI && PlatformUI.copyText
+          ? await PlatformUI.copyText(text)
+          : await (async () => {
+            try {
+              await navigator.clipboard.writeText(text);
+              return true;
+            } catch {
+              return false;
+            }
+          })();
+        if (!ok && selectOnFail) {
+          // Leave the text selected so Ctrl/Cmd-C still works.
+          try { selectOnFail(); } catch {}
+        }
+        if (window.PlatformUI && PlatformUI.toast) {
+          PlatformUI.toast(ok ? successMessage : failureMessage,
+            ok ? {} : { error: true });
+        }
+        btn.textContent = ok ? 'Copied' : 'Copy failed';
+        if (resetTimer) clearTimeout(resetTimer);
+        resetTimer = setTimeout(() => {
+          resetTimer = null;
+          btn.textContent = restLabel;
+        }, 1500);
+      });
+    },
+
     _wireConnectorNameSpelling() {
       const field = document.getElementById('connector-name-spelling');
       if (!field) return;

@@ -423,9 +423,69 @@ test('both copy buttons copy their own block', () => {
   // the other block is indistinguishable from one that works.
   const settingsJs = read('frontend/src/features/settings/settings.js');
   assert.match(settingsJs, /\['connector-allow-rules', 'connector-repo-allow-rules'\]/);
-  assert.match(settingsJs, /getElementById\(`\$\{id\}-copy`\)/);
+  assert.match(settingsJs, /_wireCopyControl\(`\$\{id\}-copy`/);
   assert.match(settingsJs, /getElementById\(id\)/);
-  assert.match(settingsJs, /clipboard\.writeText\(block\.textContent\)/);
+  // #1290 deliberately re-points this from `clipboard.writeText(...)` to the
+  // shared helper. `PlatformUI.copyText` carries the off-screen-textarea
+  // execCommand fallback every other copy on the platform gets, so an
+  // insecure origin or a locked-down webview copies instead of failing
+  // silently — and it resolves a boolean instead of throwing, which is what
+  // lets the handler stop claiming success on a rejected write. Still read
+  // from `block.textContent` at click time, because the name-spelling field
+  // rewrites the block in place.
+  assert.match(settingsJs, /PlatformUI\.copyText/);
+  assert.match(settingsJs, /block\.textContent/);
+});
+
+test('each allow-rules block names the file it is for, above the block', () => {
+  // #1290. Beside the block, the button was a flex sibling of a twelve-line
+  // <pre> and `align-items: stretch` made it a ~210px violet slab that also
+  // took ~80px of width off a block already scrolling sideways on a phone.
+  // A `flex-1` <pre> is the tell that the button is back to being a sibling.
+  for (const id of ['connector-allow-rules', 'connector-repo-allow-rules']) {
+    const pre = CONNECTORS_TSX.match(new RegExp(`<pre id="${id}" className="([^"]*)"`));
+    assert.ok(pre, `#${id} is a <pre> with a class string`);
+    assert.ok(!/\bflex-1\b/.test(pre[1]),
+      `#${id} spans the panel rather than sharing a row with its Copy button`);
+  }
+  // The two blocks are byte-identical, so the destination file is the only
+  // thing that distinguishes them — it is rendered, not just described in the
+  // paragraph above.
+  assert.match(CONNECTORS_TSX,
+    /<span className="font-mono[^"]*">~\/\.claude\/settings\.json<\/span>/);
+  assert.match(CONNECTORS_TSX,
+    /<span className="font-mono[^"]*">\.claude\/settings\.json<\/span>/);
+  // And the copy buttons step down off the violet fill, which #connector-url-copy
+  // (the section's real primary action) keeps.
+  for (const id of ['connector-allow-rules-copy', 'connector-repo-allow-rules-copy']) {
+    const btn = CONNECTORS_TSX.match(new RegExp(`id="${id}"[\\s\\S]{0,400}?</Button>`));
+    assert.ok(btn, `#${id} is a Button`);
+    assert.match(btn[0], /variant="outline"/, `#${id} is the neutral bordered control`);
+    assert.match(btn[0], /min-h-\[44px\] sm:min-h-\[36px\]/,
+      `#${id} keeps a 44px tap target on a phone`);
+  }
+});
+
+test('the three copy buttons are distinguishable to a screen reader', () => {
+  // All three said only "Copy", on a screen where two of them act on
+  // byte-identical JSON (#1290).
+  const labels = (CONNECTORS_TSX.match(/aria-label="Copy[^"]*"/g) || []);
+  assert.equal(new Set(labels).size, 3,
+    'the connector URL and both allow-rule blocks each have their own name');
+});
+
+test('copying reports the destination, and reports failure honestly', () => {
+  const settingsJs = read('frontend/src/features/settings/settings.js');
+  // The label swap alone cannot say WHICH file you copied for, and on a phone
+  // the thumb is over it — so the toast names the destination.
+  assert.match(settingsJs, /Copied — paste it into ~\/\.claude\/settings\.json/);
+  assert.match(settingsJs, /Copied — commit it as \.claude\/settings\.json in your app repo/);
+  assert.match(settingsJs, /Connector URL copied/);
+  // The URL button used to write 'Copied' even when writeText had rejected.
+  assert.match(settingsJs, /'Copy failed'/);
+  assert.match(settingsJs, /\{ error: true \}/);
+  // A second press must not cut the first press's confirmation short.
+  assert.match(settingsJs, /clearTimeout\(resetTimer\)/);
 });
 
 test('the scaffolded README points at the personal settings file too', () => {
