@@ -825,7 +825,7 @@ async function advanceAppRepoBranch(ctx) {
   // worse than no tick), tear the stale preview down, and tell the caller the
   // session has to be reopened for the rest to happen.
   if (kind === 'session') {
-    await settlePausedSession({ pool, session, sessionId, parts });
+    await settlePausedSession({ pool, session, sessionId, headSha: verified.headSha, parts });
     log.info('proposal-update', 'advanced a paused session from its author\'s fork', {
       sessionId, owner, repo, targetBranch, previousHeadSha: liveHead,
       headSha: verified.headSha,
@@ -929,9 +929,11 @@ async function settleActiveSession({ config, pool, session, sessionId, headSha, 
     [headSha, sessionId, session.checks_commit_sha || null]
   );
   if (!adopted.rowCount) {
-    await settlePausedSession({ pool, session, sessionId, parts });
+    await settlePausedSession({ pool, session, sessionId, headSha, parts });
     return { rebuilding: false };
   }
+
+  await recordChangesReadyCard({ pool, session, sessionId, headSha });
 
   const pending = await visuals.setChecksPending(pool, sessionId, headSha, 'building', 'commit-push')
     .catch((err) => {
@@ -975,7 +977,7 @@ async function settleActiveSession({ config, pool, session, sessionId, headSha, 
 // verdict was about, and the resume path compares it against the branch head
 // to decide that a re-check is owed. Null it here and the session comes back
 // looking like it had never been checked at all.
-async function settlePausedSession({ pool, session, sessionId, parts }) {
+async function settlePausedSession({ pool, session, sessionId, headSha, parts }) {
   const { lifecycle: sessionLifecycle, pushSessionUpdate } = parts;
   // The same column list the CLI commit-upload route clears for a commit
   // nothing has run yet, minus the 'pending' verdict itself — nothing IS
@@ -998,6 +1000,8 @@ async function settlePausedSession({ pool, session, sessionId, parts }) {
     sessionId, err: err.message,
   }));
 
+  await recordChangesReadyCard({ pool, session, sessionId, headSha });
+
   // Best effort: a leaked container is retried by the stale-preview sweeper
   // through the same chokepoint, and a teardown failure must not be reported
   // as a failed update — the commit is already on the branch.
@@ -1014,6 +1018,37 @@ async function settlePausedSession({ pool, session, sessionId, parts }) {
   } catch (err) {
     log.warn('proposal-update', 'session-update notify failed (non-fatal)', { sessionId, err: err.message });
   }
+}
+
+// Every platform path that lands a reviewable commit into a session persists
+// a `changesReady: true` system row — the marker the dev chat renders as the
+// "Changes ready" card, which carries the Preview / Test / **Propose to
+// group** buttons (see the #361/#183 parity notes around the build tails in
+// routes/sessions.js). An external agent's update reaches the same
+// committed-and-pushed state, so it must leave the same marker: the chat's
+// synthetic fallback (_hydrateChangesReadyFromSession) needs a staging URL or
+// a CLI-handoff head, and a session advanced only through submit_work has
+// neither — leaving its owner with no way to put the change up for a vote at
+// all (session 3401). Best-effort: the push already landed, so a failed
+// insert is logged, never fatal.
+async function recordChangesReadyCard({ pool, session, sessionId, headSha }) {
+  const sha8 = SHA_RE.test(String(headSha || '')) ? String(headSha).slice(0, 8) : null;
+  await pool.query(
+    `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+     VALUES ($1, 'system', $2, $3)`,
+    [sessionId,
+      sha8
+        ? `Changes ready — commit ${sha8} arrived from your coding agent.`
+        : 'Changes ready — an update arrived from your coding agent.',
+      JSON.stringify({
+        changesReady: true,
+        externalUpdate: true,
+        prNumber: session.pr_number || null,
+        prUrl: session.pr_url || null,
+      })]
+  ).catch((err) => log.warn('proposal-update', 'changes-ready card insert failed (non-fatal)', {
+    sessionId, err: err.message,
+  }));
 }
 
 // ── The imported pull request ──────────────────────────────────────────

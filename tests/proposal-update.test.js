@@ -1438,3 +1438,89 @@ test('the metadata write happens before the tails, and the resubmit path clears 
   assert.doesNotMatch(resubmit, /countVotes|pr_votes|reconcileNativeReviewedHead|pushForkBranchToAppBranch/,
     'a resubmit that moves no commit touches neither the votes nor the branch');
 });
+
+// ── 12. The Changes-ready card (session 3401) ──────────────────────────
+//
+// The dev chat's ONLY route to "Propose to group" is the Changes-ready card,
+// and the card renders off a persisted `changesReady: true` system row (or a
+// synthetic fallback that needs a staging URL or a CLI-handoff head — see
+// _hydrateChangesReadyFromSession). A session advanced ONLY through
+// submit_work had none of those: the paused tail tears staging down and the
+// active tail starts with neither, so the owner of a work-order-built
+// session had no way to put the change up for a vote at all. Both session
+// tails now persist the same marker every build tail does.
+
+function cardPool(session, cards, extra = []) {
+  return fakePool([
+    ['FROM chat_sessions cs JOIN apps a', [session]],
+    ['UPDATE chat_sessions', [{ id: session.id }]],
+    ['INSERT INTO chat_session_messages', (params) => { cards.push(params); return []; }],
+    ...extra,
+  ]);
+}
+
+test('a paused-session update persists the Changes-ready card its reopen promotes from', async () => {
+  const log = {};
+  const cards = [];
+  const session = sessionRow('paused');
+  const result = await runSession('paused', { session, pool: cardPool(session, cards) }, log);
+  assert.equal(result.ok, true);
+  assert.equal(result.resumeRequired, true);
+  assert.equal(cards.length, 1, 'exactly one card per landed update');
+  const [sid, content, metaJson] = cards[0];
+  assert.equal(sid, 501);
+  assert.match(content, /bbbbbbbb/, 'the card names the commit that arrived');
+  const meta = JSON.parse(metaJson);
+  assert.equal(meta.changesReady, true, 'the flag the dev chat card renders off');
+  assert.equal(meta.externalUpdate, true);
+  assert.equal(meta.prNumber, null, 'a session has no PR yet — promote creates it lazily');
+});
+
+test('an active-session update persists the card too, ahead of the staging rebuild', async () => {
+  // Without the row the card only appears once the pipeline sets staging_url
+  // (the synthetic fallback) — and disappears again when the idle sweeper
+  // reclaims the preview, taking Propose with it.
+  const log = {};
+  const cards = [];
+  const session = sessionRow('active');
+  const result = await runSession('active', { session, pool: cardPool(session, cards) }, log);
+  assert.equal(result.ok, true);
+  assert.equal(result.checksRerun, true);
+  assert.equal(cards.length, 1);
+  assert.equal(JSON.parse(cards[0][2]).changesReady, true);
+});
+
+test('a card insert that fails never fails the update that landed', async () => {
+  const log = {};
+  const session = sessionRow('paused');
+  const pool = fakePool([
+    ['FROM chat_sessions cs JOIN apps a', [session]],
+    ['UPDATE chat_sessions', [{ id: session.id }]],
+    ['INSERT INTO chat_session_messages', () => { throw new Error('table is on fire'); }],
+  ]);
+  const result = await runSession('paused', { session, pool }, log);
+  assert.equal(result.ok, true);
+  assert.equal(result.resumeRequired, true);
+});
+
+test('the card is written by both session tails and only the session tails', () => {
+  // Source-level, matching the tails-order test above: a future refactor that
+  // dropped one call would still pass a behavioural test whose pool stubs
+  // swallow the insert.
+  const active = CODE.slice(
+    CODE.indexOf('async function settleActiveSession'),
+    CODE.indexOf('async function settlePausedSession')
+  );
+  const paused = CODE.slice(
+    CODE.indexOf('async function settlePausedSession'),
+    CODE.indexOf('async function recordChangesReadyCard')
+  );
+  assert.match(active, /recordChangesReadyCard\(/, 'the active tail records the card');
+  assert.match(paused, /recordChangesReadyCard\(/, 'the paused tail records the card');
+  const beforeTails = CODE.slice(
+    CODE.indexOf('async function advanceAppRepoBranch'),
+    CODE.indexOf('function sessionParts')
+  );
+  assert.doesNotMatch(beforeTails, /recordChangesReadyCard/,
+    'promoted proposals keep their own re-review machinery — no session card');
+});
