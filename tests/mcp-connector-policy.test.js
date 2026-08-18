@@ -264,6 +264,32 @@ test('promote is on the list only because the route is owner-scoped', () => {
   );
 });
 
+test('resume is on the list only because the route is owner-scoped', () => {
+  // Same reasoning again: submit_work's `propose: true` reopens a paused
+  // session before promoting it (an external update usually lands on one).
+  // What makes the entry safe is the handler — its ownership probe answers
+  // before any platform-wide bookkeeping runs, and the resuming UPDATE
+  // itself matches (id, user_id, 'paused'). If either loosens, this entry
+  // has to come back off.
+  const SESSIONS_SRC = fs.readFileSync(
+    path.join(__dirname, '../src/routes/sessions.js'), 'utf8'
+  );
+  const handler = SESSIONS_SRC.slice(
+    SESSIONS_SRC.indexOf("router.post('/api/sessions/:id/resume'")
+  );
+  assert.ok(handler.length > 0, 'the resume handler exists');
+  assert.match(
+    handler.slice(0, 1200),
+    /WHERE id = \$1 AND user_id = \$2/,
+    'the ownership probe answers first'
+  );
+  assert.match(
+    handler.slice(0, 4200),
+    /WHERE id = \$1 AND user_id = \$2 AND status = 'paused'/,
+    'the resuming UPDATE is owner-scoped too'
+  );
+});
+
 test('the promoted-session cap the import route lacks is applied by the connector', () => {
   // POST /api/apps/:slug/pr-import predates this and does not enforce the
   // promoted-session cap — importing used to be a one-at-a-time human

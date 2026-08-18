@@ -544,7 +544,7 @@ function shapeBranch(session) {
     // "submit an update" was the part every agent had to guess.
     updateWith: canPush
       ? 'push to that branch, then call submit_work with proposalId and branch so the votes and checks are reset now rather than on the next sweep'
-      : 'push to a branch in your own fork, then call submit_work with proposalId and that branch — Usernode moves the proposal onto it',
+      : 'push to a branch in your own fork, then call submit_work with proposalId and that branch — Usernode moves the proposal onto it; a dev session that is not yet up for a vote can also carry propose: true to be promoted the moment the update lands',
   };
 }
 
@@ -2175,7 +2175,7 @@ function registerTools(server, ctx) {
   // ── submit_work ──────────────────────────────────────────────────────
   server.registerTool('submit_work', {
     title: 'Submit finished work — a pushed branch, a patch, or an open PR',
-    description: "Turn finished work into a Usernode proposal: opens the pull request, builds a staging preview, runs the app's checks and puts it to the group's vote. FOUR SHAPES, each complete as written — (1) `taskId` plus the `branch` you actually pushed, whatever it is called; (2) `taskId` plus `patch`, when GitHub or the sandbox refused the push: Usernode applies the patch at the recorded base commit in the app's own repository and opens the pull request itself, so NO GitHub write access is needed on your side; (3) `slug` plus `prNumber` for a pull request that is already open; (4) `proposalId` plus `branch` to UPDATE a proposal of the user's that is already up for a vote — for fixing a failing check or acting on review comments — which advances that same proposal onto your new commit instead of opening a second one, and clears the votes it has collected. Shape (4) needs no `slug`: naming the proposal names the app. A task belongs to the USER'S USERNODE ACCOUNT, not to one chat — any session connected as that account, including a coding agent's own connector, can submit it, and doing so is the expected path. Only work from the user's own GitHub account is submitted under their name.",
+    description: "Turn finished work into a Usernode proposal: opens the pull request, builds a staging preview, runs the app's checks and puts it to the group's vote. FOUR SHAPES, each complete as written — (1) `taskId` plus the `branch` you actually pushed, whatever it is called; (2) `taskId` plus `patch`, when GitHub or the sandbox refused the push: Usernode applies the patch at the recorded base commit in the app's own repository and opens the pull request itself, so NO GitHub write access is needed on your side; (3) `slug` plus `prNumber` for a pull request that is already open; (4) `proposalId` plus `branch` to UPDATE a proposal of the user's that is already up for a vote — for fixing a failing check or acting on review comments — which advances that same proposal onto your new commit instead of opening a second one, and clears the votes it has collected. Shape (4) needs no `slug`: naming the proposal names the app. When shape (4)'s target is a dev SESSION (a work-order continuation that is not yet up for a vote), it also takes `propose: true`: once the update lands, Usernode promotes the session — the same act as the owner's Propose-to-group button, reopening a paused session first — so pass it only when the user has asked for the change to go to the vote; landing quietly stays the default. A task belongs to the USER'S USERNODE ACCOUNT, not to one chat — any session connected as that account, including a coding agent's own connector, can submit it, and doing so is the expected path. Only work from the user's own GitHub account is submitted under their name.",
     inputSchema: {
       taskId: z.number().int().positive().optional()
         .describe('The task id from prepare_work — or printed in the work order text you were handed, which is the usual source when you are the coding agent. It belongs to the user’s Usernode account, not to the chat that gave it to you, so you can submit it yourself.'),
@@ -2200,6 +2200,8 @@ function registerTools(server, ctx) {
         .describe('A few short numbered lines telling a person what to click to see the change, shown beside the staging preview. Markdown.'),
       expectedHeadSha: z.string().optional()
         .describe('Only for an update: the proposal’s current commit as you last read it, from get_proposal’s `branch.headSha`. Pass it and Usernode refuses with `branch_moved` if somebody advanced the proposal while you were working, instead of building on a head you have not seen. Optional — omitted, your branch still has to sit on top of whatever the current head is.'),
+      propose: z.boolean().optional()
+        .describe('Only with proposalId, when its target is a dev SESSION (a work-order continuation that is not yet up for a vote): after the update lands, promote the session to a group vote — the same act as the owner\'s "Propose to group" button, reopening the session first when it is paused. Pass it only when the user asked for this change to go to the vote; landing quietly stays the default, because the session is their workspace and they may want more turns on it. Ignored on a proposal that is already up for a vote.'),
       agent: z.enum(['claude-code', 'codex', 'external']).optional()
         .describe('Which coding agent wrote it. Inferred from the connected chat product when omitted.'),
     },
@@ -2233,13 +2235,19 @@ function registerTools(server, ctx) {
       // no-op in the answer the agent reads.
       testingUpdated: z.boolean().nullable(),
       captureRerun: z.boolean().nullable(),
+      // Set only by an UPDATE that carried `propose: true`: whether the
+      // session was promoted to a vote, and — when it was not — the
+      // platform's own words for why. `null` means propose was not requested
+      // or the target was already a proposal (nothing to promote).
+      proposed: z.boolean().nullable(),
+      proposeError: z.string().nullable(),
       nextStep: z.string(),
     },
     annotations: writeAnnotations,
     _meta: ACTING_TOOL_META,
   }, async ({
     taskId, slug, prNumber, proposalId, branch, forkRepo, patch, source, title, description, agent,
-    testingPaths, testingSteps, expectedHeadSha,
+    testingPaths, testingSteps, expectedHeadSha, propose,
   }) => {
     const guard = scopeGuard(WRITE_SCOPE);
     if (guard) return guard;
@@ -2379,6 +2387,58 @@ function registerTools(server, ctx) {
         : 'The proposal was already at that commit and the testing routes you passed are the ones it already had, '
           + `so nothing changed and no votes were affected.${shotOn} If you meant to change the code, commit and `
           + 'push first, then submit again.';
+
+      // The review boundary, crossed on the owner's explicit ask. A session
+      // continuation deliberately lands quietly — the work order tells the
+      // agent the person who started the session promotes it when it is
+      // ready — but when that person has ALREADY asked for the vote, handing
+      // the job back for one button press serves nobody (and until #1306
+      // that button did not even render). This runs the same promote the
+      // button runs, as a loopback under this caller's own token, so the
+      // route — not this module — applies every gate: ownership, active
+      // status, the promoted-session cap. A paused session is reopened
+      // first (an external update usually lands on one — nobody is watching
+      // it by definition); promote answers 404 for a session that is not
+      // active, so the reopen also runs as the recovery when the update
+      // itself moved nothing and never reported a status.
+      let proposed = null;
+      let proposeError = null;
+      if (propose === true && result.targetKind !== 'proposal') {
+        const promoteOnce = () => callPlatform(
+          baseUrl, accessToken, 'POST', `/api/sessions/${proposalId}/promote`, {}
+        );
+        let attempt = result.resumeRequired ? null : await promoteOnce();
+        if (!attempt || (!attempt.ok && attempt.status === 404)) {
+          const resumed = await callPlatform(
+            baseUrl, accessToken, 'POST', `/api/sessions/${proposalId}/resume`, {}
+          );
+          attempt = resumed.ok ? await promoteOnce() : resumed;
+        }
+        if (attempt.ok) {
+          proposed = true;
+          // Promote may have lazily created the PR (a session has none until
+          // this moment) — fold it in so the answer names what the group is
+          // now voting on.
+          const b = attempt.body || {};
+          if (b.prNumber) {
+            result.prNumber = b.prNumber;
+            if (b.prUrl) result.prUrl = b.prUrl;
+          }
+        } else {
+          // The update itself landed; only the promotion did not. Reported,
+          // never thrown — failing the whole call would tell the author
+          // their work did not arrive when it did.
+          proposed = false;
+          const b = attempt.body || {};
+          proposeError = String(b.error || b.message || `HTTP ${attempt.status}`);
+        }
+      }
+      const proposeNote = proposed === true
+        ? ` And it is now UP FOR THE GROUP'S VOTE${result.prNumber ? ` as PR #${result.prNumber}` : ''} — checks and the staging preview build automatically; follow them with get_proposal.`
+        : proposed === false
+          ? ` The update landed, but putting it up for the vote did not: ${proposeError} The commit is safe on the session — fix the cause and call submit_work again with propose: true (the same commit is fine), or propose it from the session page.`
+          : (propose === true ? ' propose: true had nothing to do — this target is already up for the group\'s vote.' : '');
+
       return toolResult({
         proposalId: result.proposalId,
         appSlug: result.appSlug,
@@ -2392,6 +2452,8 @@ function registerTools(server, ctx) {
         testingPathsRejected: testing.rejectedPaths || result.testingPathsRejected || null,
         testingUpdated: result.testingUpdated === true,
         captureRerun: result.captureRerun === true,
+        proposed,
+        proposeError,
         webPath: result.proposalId
           ? `${origin}/#app/${result.appSlug}/dev/sessions/${result.proposalId}`
           : `${origin}/#app/${result.appSlug}`,
@@ -2401,7 +2463,7 @@ function registerTools(server, ctx) {
             ? ` The ${cleared} vote${cleared === 1 ? '' : 's'} it had collected were cleared, because they were cast on the old code`
             : ' Any votes it had collected were cleared, because they were cast on the old code'}`
             + ' — reviewers have been asked to look again. Checks and the staging preview rebuild automatically; '
-            + `use get_proposal to follow them.${shotOn}`) + rejectedNote,
+            + `use get_proposal to follow them.${shotOn}`) + rejectedNote + proposeNote,
       });
     }
 
@@ -2425,6 +2487,8 @@ function registerTools(server, ctx) {
         testingPathsRejected: testing.rejectedPaths || null,
         testingUpdated: null,
         captureRerun: null,
+        proposed: null,
+        proposeError: null,
         webPath: result.proposalId
           ? `${origin}/#app/${result.appSlug}/dev/sessions/${result.proposalId}`
           : `${origin}/#app/${result.appSlug}`,
@@ -2450,6 +2514,10 @@ function registerTools(server, ctx) {
       testingPathsRejected: testing.rejectedPaths || null,
       testingUpdated: null,
       captureRerun: null,
+      // A first submission is promoted by the import itself — `propose` is
+      // the session-update opt-in, so there is nothing extra to report here.
+      proposed: null,
+      proposeError: null,
       webPath: result.proposalId
         ? `${origin}/#app/${result.appSlug}/dev/sessions/${result.proposalId}`
         : `${origin}/#app/${result.appSlug}`,

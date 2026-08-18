@@ -140,6 +140,12 @@ const CONNECTOR_ALLOWED_ROUTES = Object.freeze([
   { method: 'POST', pattern: '/api/apps/:slug/issues/:number/headless-session' },
   { method: 'POST', pattern: '/api/sessions/:id/clone-headless' },
   { method: 'POST', pattern: '/api/sessions/:id/promote' },
+  // submit_work's `propose: true` reopens a paused session before promoting
+  // it — an external update usually lands on a paused one. Owner-scoped like
+  // promote: the handler's probe and its resuming UPDATE both match
+  // (id, user_id), so a connector can only ever reopen the caller's own
+  // session (see the owner-scope tests beside promote's).
+  { method: 'POST', pattern: '/api/sessions/:id/resume' },
 ]);
 
 function matchesPattern(pathname, pattern) {

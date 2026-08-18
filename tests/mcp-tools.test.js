@@ -913,6 +913,9 @@ test('submit_work takes shape (4) exactly as documented: proposalId + branch', a
     assert.notEqual(res.isError, true, 'no slug, and no refusal');
     assert.equal(res.structuredContent.proposalId, 3140);
     assert.equal(res.structuredContent.votesCleared, 2);
+    // Without `propose`, the update lands quietly — the review boundary is
+    // the owner's to cross, so the default answer says nothing about a vote.
+    assert.equal(res.structuredContent.proposed, null);
     // Resolved to the app the proposal is on, and pushed through the
     // platform's own update route.
     assert.equal(calls.at(-1).pathname, '/api/apps/recipe-box/proposals/3140/update-from-fork');
@@ -920,6 +923,160 @@ test('submit_work takes shape (4) exactly as documented: proposalId + branch', a
     restore();
     gh.isEnabled = realGhEnabled;
     githubLink.isEnabled = realLinkEnabled;
+  }
+});
+
+// ── submit_work `propose: true` — the review boundary, on the owner's ask ──
+//
+// A session continuation deliberately lands quietly; until now the ONLY way
+// to put it up for a vote was the dev chat's Propose-to-group button (#1306),
+// so an owner who had already told the agent "put it up for the vote" got the
+// change landed and then had to go press a button themselves. `propose: true`
+// runs the same POST /api/sessions/:id/promote the button runs, under the
+// caller's own token — the route applies every gate — reopening a paused
+// session first, since an external update usually lands on one.
+
+function proposeHarness(platform) {
+  const gh = require('../src/services/github');
+  const githubLink = require('../src/services/github-link');
+  const realGhEnabled = gh.isEnabled;
+  const realLinkEnabled = githubLink.isEnabled;
+  gh.isEnabled = () => true;
+  githubLink.isEnabled = () => true;
+  const pool = { async query() { return { rows: [{ app_slug: 'recipe-box' }] }; } };
+  const { handlers, calls, restore } = connector(platform, { scopes: [READ_SCOPE, WRITE_SCOPE], pool });
+  return {
+    handlers,
+    calls,
+    restore: () => {
+      restore();
+      gh.isEnabled = realGhEnabled;
+      githubLink.isEnabled = realLinkEnabled;
+    },
+  };
+}
+
+test('submit_work propose: true reopens a paused session and puts it up for the vote', async () => {
+  const h = proposeHarness((method, pathname) => {
+    if (pathname.endsWith('/update-from-fork')) {
+      return {
+        updated: true, proposalId: 3140, appSlug: 'recipe-box', prNumber: null,
+        headSha: 'b1344508506dd8dc4a655f10c96c51389fcc30bb', votesCleared: 0,
+        submittedVia: 'update_branch', targetKind: 'session', resumeRequired: true,
+      };
+    }
+    if (pathname.endsWith('/resume')) return { ok: true };
+    if (pathname.endsWith('/promote')) {
+      return { prNumber: 77, prUrl: 'https://github.com/o/r/pull/77', prTitle: 'T' };
+    }
+    return {};
+  });
+  try {
+    const res = await h.handlers.get('submit_work')({ proposalId: 3140, branch: 'my-fix', propose: true });
+    assert.notEqual(res.isError, true);
+    assert.equal(res.structuredContent.proposed, true);
+    assert.equal(res.structuredContent.proposeError, null);
+    // The PR the promote lazily created is folded in — it is what the group
+    // is voting on now, and the agent should relay it.
+    assert.equal(res.structuredContent.prNumber, 77);
+    assert.match(res.structuredContent.nextStep, /UP FOR THE GROUP'S VOTE/);
+    // Resume BEFORE promote (`resumeRequired` said the session is paused);
+    // both through the platform's own routes, never a local reimplementation.
+    assert.deepEqual(h.calls.map((c) => c.pathname).slice(-3), [
+      '/api/apps/recipe-box/proposals/3140/update-from-fork',
+      '/api/sessions/3140/resume',
+      '/api/sessions/3140/promote',
+    ]);
+  } finally {
+    h.restore();
+  }
+});
+
+test('a promote the platform refuses is reported beside a landed update, never as a failed one', async () => {
+  const h = proposeHarness((method, pathname) => {
+    if (pathname.endsWith('/update-from-fork')) {
+      return {
+        updated: true, proposalId: 3140, appSlug: 'recipe-box', prNumber: null,
+        headSha: 'b1344508506dd8dc4a655f10c96c51389fcc30bb', votesCleared: 0,
+        submittedVia: 'update_branch', targetKind: 'session', resumeRequired: false,
+      };
+    }
+    if (pathname.endsWith('/promote')) {
+      return { __http: { ok: false, status: 429, body: { error: 'You already have 3 PRs up for vote.' } } };
+    }
+    return {};
+  });
+  try {
+    const res = await h.handlers.get('submit_work')({ proposalId: 3140, branch: 'my-fix', propose: true });
+    assert.notEqual(res.isError, true, 'the commit landed — that is never reported as a failure');
+    assert.equal(res.structuredContent.proposed, false);
+    // The platform's own words, so the agent can relay the actual reason.
+    assert.match(res.structuredContent.proposeError, /3 PRs up for vote/);
+    assert.match(res.structuredContent.nextStep, /putting it up for the vote did not/);
+  } finally {
+    h.restore();
+  }
+});
+
+test('a promote 404 is recovered by reopening — the paused case the update could not report', async () => {
+  // An unchanged resubmit carries no targetKind/resumeRequired, so the first
+  // promote answers 404 (the session is paused, not active). The recovery is
+  // the same reopen the dev chat performs on entry, then one more promote.
+  const paths = [];
+  const h = proposeHarness((method, pathname) => {
+    paths.push(pathname);
+    if (pathname.endsWith('/update-from-fork')) {
+      return {
+        updated: false, unchanged: true, proposalId: 3140, appSlug: 'recipe-box',
+        prNumber: null, headSha: 'b1344508506dd8dc4a655f10c96c51389fcc30bb',
+        votesCleared: 0, submittedVia: 'update_branch',
+      };
+    }
+    if (pathname.endsWith('/promote')) {
+      // 404 while paused; success once resumed.
+      return paths.filter((p) => p.endsWith('/resume')).length
+        ? { prNumber: 78, prUrl: 'https://github.com/o/r/pull/78' }
+        : { __http: { ok: false, status: 404, body: { error: 'Active session not found' } } };
+    }
+    if (pathname.endsWith('/resume')) return { ok: true };
+    return {};
+  });
+  try {
+    const res = await h.handlers.get('submit_work')({ proposalId: 3140, branch: 'my-fix', propose: true });
+    assert.notEqual(res.isError, true);
+    assert.equal(res.structuredContent.proposed, true);
+    assert.equal(res.structuredContent.prNumber, 78);
+    assert.deepEqual(h.calls.map((c) => c.pathname).slice(-4), [
+      '/api/apps/recipe-box/proposals/3140/update-from-fork',
+      '/api/sessions/3140/promote',
+      '/api/sessions/3140/resume',
+      '/api/sessions/3140/promote',
+    ]);
+  } finally {
+    h.restore();
+  }
+});
+
+test('propose on a target that is already a proposal promotes nothing', async () => {
+  const h = proposeHarness((method, pathname) => {
+    if (pathname.endsWith('/update-from-fork')) {
+      return {
+        updated: true, proposalId: 3140, appSlug: 'recipe-box', prNumber: 52,
+        headSha: 'b1344508506dd8dc4a655f10c96c51389fcc30bb', votesCleared: 2,
+        submittedVia: 'update_branch', targetKind: 'proposal',
+      };
+    }
+    return {};
+  });
+  try {
+    const res = await h.handlers.get('submit_work')({ proposalId: 3140, branch: 'my-fix', propose: true });
+    assert.notEqual(res.isError, true);
+    assert.equal(res.structuredContent.proposed, null);
+    assert.match(res.structuredContent.nextStep, /already up for the group's vote/);
+    assert.ok(!h.calls.some((c) => c.pathname.includes('/promote')),
+      'a proposal already up for a vote is never re-promoted');
+  } finally {
+    h.restore();
   }
 });
 

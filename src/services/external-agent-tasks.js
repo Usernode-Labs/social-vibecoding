@@ -962,7 +962,10 @@ function buildWorkOrder({
               '   what moves it.']),
           '',
           'Do not open a pull request — this work is not up for a vote yet; the person',
-          'who started it promotes it from Usernode when it is ready.']
+          'who started it promotes it from Usernode when it is ready. If they have',
+          'ALREADY asked, in their own words, for this change to go to the group\'s',
+          'vote, pass `propose: true` on that same submit_work call — the session is',
+          'promoted the moment the update lands (a paused one is reopened first).']
         : ['7. THEN CHECK THE CHECKS. They GATE MERGE: a proposal whose checks are not',
           `   passing cannot merge however the vote goes. Call \`get_proposal\` with`,
           `   proposal id ${updateRef} — it reports \`checks\` with the state, the number`,
