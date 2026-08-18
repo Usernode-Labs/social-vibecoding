@@ -397,6 +397,13 @@ const App = {
     // #982: paint the drawer's Profile row with the viewer's picture.
     App.applyUserAvatar();
 
+    // #1284: a feedback draft that a failed screenshot capture left behind in
+    // sessionStorage — tell the user it is still there. Optional call: the
+    // feedback island publishes this when it wires up, which may be after
+    // this point on a slow boot, in which case there is nothing to announce
+    // anyway (the draft is handed back on the next open regardless).
+    try { App.noticeRescuedFeedbackDraft?.(); } catch (err) { /* ignore */ }
+
     // Remember that this device is signed in, so a later boot that can't
     // reach /api/auth/me still knows which shell to paint (#1021). Skipped
     // when the shell is running FROM the snapshot — re-writing it then
@@ -739,7 +746,8 @@ const App = {
     let shot = null;
     try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
     if (shot !== 'feedback' && shot !== 'feedback-spent'
-        && shot !== 'feedback-offline' && shot !== 'feedback-queued') return;
+        && shot !== 'feedback-offline' && shot !== 'feedback-queued'
+        && shot !== 'feedback-capture-failed') return;
     const spent = shot === 'feedback-spent';
     // #1054: the two offline variants. `feedback-offline` is the dialog as a
     // disconnected user meets it (the hint, and Submit reading "Save for
@@ -750,6 +758,14 @@ const App = {
     // written to the device and nothing is ever filed.
     const offline = shot === 'feedback-offline' || shot === 'feedback-queued';
     const queued = shot === 'feedback-queued';
+    // #1284: the dialog as a phone user meets it when "Take screenshot"
+    // fails. Seeds a draft, then runs the controller's real capture round
+    // trip with a capture that throws the way the native bridge does — so
+    // what gets photographed is the retained text, the restored dialog and
+    // the actual notice copy. Display-only: no bridge call, no upload, and
+    // the draft is typed into the field, never stashed (the stash skips any
+    // ?shot= route on purpose) and never filed.
+    const captureFailed = shot === 'feedback-capture-failed';
     // Seed and pin synchronously, BEFORE enterAuthed() reaches its
     // FeedbackQueue.flush('signin') call below. Delaying all of this with the
     // modal used to leave a 50 ms window where the real persisted queue could
@@ -780,6 +796,17 @@ const App = {
           Kudos.Budget.refresh = () => Promise.resolve();
         }
         App.openFeedbackModal();
+        if (captureFailed) {
+          const text = document.getElementById('feedback-text');
+          // Assigned, not typed: dispatching `input` would start the live
+          // title generation, and a display-only shot must not call the LLM.
+          if (text) text.value = 'The board scrolls back to the top when I drag a card.';
+          // One more tick so the dialog has settled (and its own open-time
+          // resets have run) before the failing attempt starts.
+          setTimeout(() => {
+            try { App._simulateFeedbackCaptureFailure?.(); } catch (err) { /* ignore */ }
+          }, 50);
+        }
       } catch (err) { /* ignore */ }
     }, 50);
   },

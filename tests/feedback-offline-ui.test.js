@@ -254,3 +254,39 @@ test('the two screenshot deep links exist and are display-only', () => {
     );
   }
 });
+
+test('the failed-capture deep link is reviewable and display-only (#1284)', () => {
+  const shot = appJs.slice(appJs.indexOf('_applyFeedbackShot() {'), appJs.indexOf('renderAdminButton() {'));
+  assert.match(shot, /shot !== 'feedback-capture-failed'/, 'the new state joins the same guard');
+  assert.match(shot, /const captureFailed = shot === 'feedback-capture-failed'/);
+  // Seeded words, then the controller's REAL capture round trip with a
+  // capture that throws the way the native bridge does — so the photograph
+  // shows the shipping notice and the retained draft, not a mock of them.
+  assert.match(shot, /The board scrolls back to the top when I drag a card\./);
+  assert.match(shot, /App\._simulateFeedbackCaptureFailure\?\.\(\)/);
+  // Display-only: nothing typed (an input event would start the title LLM),
+  // no bridge call, and the stash skips ?shot= routes so a synthetic draft
+  // cannot follow the reviewer into a real session.
+  assert.ok(!shot.includes("dispatchEvent(new Event('input'"),
+    'the seeded description is assigned, not typed');
+  const inject = feedbackJs.slice(feedbackJs.indexOf('App._simulateFeedbackCaptureFailure'));
+  assert.match(inject, /err\.code = 'capture_failed'/);
+  assert.ok(!/usernode\.captureScreenshot/.test(inject), 'the injected failure calls no bridge');
+
+  const paths = dapp.tests.map((t) => t.path);
+  assert.equal(paths.filter((p) => p === '/?shot=feedback-capture-failed').length, 2,
+    'both the notice and the still-usable Submit are checked');
+  const checks = dapp.tests.filter((t) => t.path === '/?shot=feedback-capture-failed');
+  // The dialog is still THERE — that is the whole bug — with its status line
+  // showing and Submit ready to send the words that survived. Both selectors
+  // reach the card through `body:has(...)` rather than through the root,
+  // because the kit lifts the card OUT of #feedback-modal when it presents
+  // it — the same reason the offline checks above key off `body.is-offline`.
+  for (const check of checks) {
+    assert.match(check.expectSelector, /^body:has\(#feedback-modal:not\(\.hidden\)\) /,
+      'the card is not a descendant of the root once the kit has adopted it');
+  }
+  assert.ok(checks.some((c) => /#feedback-status:not\(\.hidden\)$/.test(c.expectSelector)));
+  assert.ok(checks.some((c) => /#feedback-submit:not\(:disabled\)$/.test(c.expectSelector)));
+  assert.ok(checks.some((c) => c.expectText === 'your feedback is safe'));
+});

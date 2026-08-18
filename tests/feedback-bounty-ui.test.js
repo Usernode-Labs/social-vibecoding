@@ -108,8 +108,17 @@ test('the open half resets the row and refreshes the budget', () => {
 test('cancelling the dialog clears any pledge intent', () => {
   // Cancel, the backdrop, a kit dismiss and the two post-submit auto-closes
   // all land in the same dismiss half now (useDialog's onClose).
-  const cancel = feedbackJs.slice(feedbackJs.indexOf('Feedback._reset = () => {'));
-  assert.match(cancel.slice(0, 900), /bountyCheckbox\.checked = false/);
+  const cancel = feedbackJs.slice(
+    feedbackJs.indexOf('Feedback._reset = () => {'),
+    // The whole dismiss half, rather than a fixed number of characters into
+    // it: #1284 added a guard at the top and the pledge reset is the LAST
+    // line, so a length window just measures the comments above it.
+    feedbackJs.indexOf("feedbackBtn.addEventListener('click', submitFeedback)"),
+  );
+  assert.match(cancel, /bountyCheckbox\.checked = false/);
+  // Unconditionally — a pledge is always a deliberate tick, and #1284's
+  // mid-capture guard covers the draft, not the bounty.
+  assert.ok(!/if \(!captureInFlight\) \{[^}]*bountyCheckbox/s.test(cancel));
 });
 
 // ── Submit ───────────────────────────────────────────────────────────

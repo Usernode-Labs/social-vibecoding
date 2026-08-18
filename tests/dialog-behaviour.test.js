@@ -180,6 +180,33 @@ test('suspend/resume move the dialog without running the lifecycle', () => {
     'the screenshot path must not write `hidden` on the root itself any more');
 });
 
+test('a late kit dismissal cannot tear down a newer presentation (#1284)', () => {
+  // presentModal().dismiss() calls back when its exit animation ends —
+  // transitionend, or a 300ms fallback timer. suspend()/resume() closes and
+  // reopens inside that window on every mobile screenshot attempt, so the
+  // OLD presentation's onDismiss arrives while the NEW one is on screen. It
+  // used to run dismissFromKit, which restored the card out of the live kit
+  // shell and called onKitDismiss -> close() -> Feedback._reset(): the
+  // draft the screenshot was being attached to, gone.
+  assert.match(STATIC_MODAL, /const generationRef = useRef\(0\)/);
+  // Each presentation captures the generation it was created with...
+  assert.match(STATIC_MODAL, /const generation = \(generationRef\.current \+= 1\);/);
+  assert.match(STATIC_MODAL, /stillOwns,/, 'and hands the guard to the shared lift');
+  assert.match(STATIC_MODAL, /const stillOwns = \(\) => generationRef\.current === generation;/);
+  // ...and the close branch retires it, which is what makes the callback a
+  // no-op when a reopen has already installed a newer one.
+  const closeBranch = STATIC_MODAL.slice(
+    STATIC_MODAL.indexOf('} else {'),
+    STATIC_MODAL.indexOf("root.classList.add('hidden')"),
+  );
+  assert.match(closeBranch, /generationRef\.current \+= 1;/,
+    'the generation must be retired where the dismissal is requested');
+  // adoptKitSurface checks it after onDismissStart and before undo(), so a
+  // stale teardown leaves the DOM completely alone — the hamburger drawer's
+  // guard from #977, now the dialogs' too.
+  assert.match(KIT_SURFACE, /if \(options\.stillOwns && !options\.stillOwns\(\)\) return;/);
+});
+
 test('canClose can veto a dismiss, and import-pr uses it', () => {
   assert.match(USE_DIALOG, /if \(opts\.current\.canClose && !opts\.current\.canClose\(\)\) return;/);
   assert.match(dialog('import-pr.tsx'), /canClose: \(\) => !busyRef\.current/);

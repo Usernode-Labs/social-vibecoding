@@ -84,8 +84,22 @@ export function isDismissGuarded(root: HTMLElement | null | undefined): boolean 
  * what `app.css` keys the legacy scrim off), that the card must return to its
  * exact position rather than to `<body>`, and that the gate is kit presence
  * rather than touch.
+ *
+ * `stillOwns` is the guard against a LATE dismissal from a presentation that
+ * has already been replaced. `presentModal().dismiss()` finishes its exit
+ * animation before it calls back — `transitionend`, or a 300ms fallback timer
+ * — so a dialog that closes and reopens inside that window has two live
+ * presentations for a moment, and the older one's `onDismiss` would otherwise
+ * tear down the newer one's adoption (and run its island's onClose). The
+ * feedback dialog does exactly that on every mobile screenshot attempt that
+ * fails fast: suspend, capture, resume (#1284). The hamburger drawer got the
+ * same guard in #977; this is the dialogs' copy of it.
  */
-function present(root: HTMLElement, onDismiss: () => void): KitAdoption | null {
+function present(
+  root: HTMLElement,
+  onDismiss: () => void,
+  stillOwns: () => boolean,
+): KitAdoption | null {
   const backdrop = root.querySelector('[data-modal-backdrop]');
   const card = ((backdrop && backdrop.firstElementChild) || root.firstElementChild) as
     | HTMLElement
@@ -99,6 +113,7 @@ function present(root: HTMLElement, onDismiss: () => void): KitAdoption | null {
     home: 'placeholder',
     gate: 'kit',
     hugDesignWidth: true,
+    stillOwns,
     onDismiss,
   });
 }
@@ -147,6 +162,10 @@ export function useStaticModal(
   options: StaticModalOptions = {},
 ): void {
   const adoptionRef = useRef<KitAdoption | null>(null);
+  // Bumped on EVERY open/close transition, so each presentation can recognise
+  // its own teardown and ignore one that arrived after it was replaced — see
+  // `present`'s note on `stillOwns`.
+  const generationRef = useRef(0);
   const opts = useRef(options);
   opts.current = options;
 
@@ -166,7 +185,11 @@ export function useStaticModal(
     if (open) {
       root.dataset.openedAt = String(Date.now());
       if (root.classList.contains('hidden')) root.classList.remove('hidden');
-      if (!adoptionRef.current) adoptionRef.current = present(root, dismissFromKit);
+      if (!adoptionRef.current) {
+        const generation = (generationRef.current += 1);
+        const stillOwns = () => generationRef.current === generation;
+        adoptionRef.current = present(root, dismissFromKit, stillOwns);
+      }
     } else {
       const adoption = adoptionRef.current;
       adoptionRef.current = null;
@@ -174,6 +197,10 @@ export function useStaticModal(
         adoption.restore();
         adoption.dismiss();
       }
+      // The dismissal we just asked for calls back asynchronously. Retiring
+      // the generation here is what makes that callback a no-op if a reopen
+      // has already installed a newer presentation.
+      generationRef.current += 1;
       if (!root.classList.contains('hidden')) root.classList.add('hidden');
     }
   }, [rootRef, open, dismissFromKit]);
@@ -202,6 +229,7 @@ export function useStaticModal(
         adoption.restore();
         adoption.dismiss();
       }
+      generationRef.current += 1;
     },
     [],
   );
