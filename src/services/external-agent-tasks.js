@@ -2140,8 +2140,8 @@ async function submitUpdate(deps, params, proposalId) {
     ...(testing.testingPaths ? { testingPaths: testing.testingPaths } : {}),
     ...(testing.testingSteps ? { testingSteps: testing.testingSteps } : {}),
     // The agent's own name for the change. On a session it is stored and
-    // names the pull request created at propose time; a proposal that
-    // already has a PR keeps its title (the route ignores it there).
+    // names the pull request created at propose time; on a target with a PR
+    // it renames it (imported PRs keep their external author's title).
     ...(params.title ? { title: String(params.title) } : {}),
   });
   if (!updated || !updated.ok) {

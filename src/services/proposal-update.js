@@ -467,15 +467,56 @@ function normalizeProposedTitle(title) {
   return t || null;
 }
 
-// Store the submitted title as the name the lazily-created PR will take at
-// propose time (chat_sessions.proposed_pr_title; used by routes/votes.js's
-// promote path via pr-metadata's preferredTitle). Sessions only: a row that
-// already has a PR has a title of its own — updating a promoted proposal
-// never renames it. Mirrors applyTestingMetadata's contract: mutates the
-// in-memory row, no-ops on same-value, and a failed write is logged, never
-// fatal to an update that landed.
-async function applyProposedTitle({ pool, session, title }) {
-  if (!title || session.pr_number) return false;
+// Apply the submitted title. Two cases, both author-initiated (the update
+// path's ownership gate has already run):
+//
+//   - No PR yet: store it as the name the lazily-created PR will take at
+//     propose time (chat_sessions.proposed_pr_title; used by
+//     routes/votes.js's promote path via pr-metadata's preferredTitle).
+//   - A PR exists: RENAME it — pr_title/session_title in the panel, the PR
+//     on GitHub best-effort after. This is how an auto-titled proposal
+//     ("Initialize repository" over a Klondike rebuild — PR #171) gets its
+//     real name back: the title-heal sweeper already renames PRs while
+//     votes stand, so an author's own rename moves nothing new, and not one
+//     line of code changes with it. Clearing pr_title_fallback keeps the
+//     sweeper from re-renaming a deliberate name. Imported rows are skipped
+//     — that PR and its title belong to an external author on GitHub.
+//
+// Mirrors applyTestingMetadata's contract: mutates the in-memory row,
+// no-ops on same-value, and a failed write is logged, never fatal to an
+// update that landed.
+async function applyProposedTitle({ pool, gh, session, owner, repo, title }) {
+  if (!title) return false;
+  if (session.pr_number) {
+    if (String(session.source) === 'imported') return false;
+    if ((session.pr_title || null) === title) return false;
+    try {
+      await pool.query(
+        'UPDATE chat_sessions SET pr_title = $1, session_title = $1, pr_title_fallback = FALSE WHERE id = $2',
+        [title, Number(session.id)]
+      );
+    } catch (err) {
+      log.error('proposal-update', 'could not rename the proposal', {
+        sessionId: Number(session.id), err: err.message,
+      });
+      return false;
+    }
+    session.pr_title = title;
+    session.session_title = title;
+    session.pr_title_fallback = false;
+    // The panel is renamed either way; GitHub is the cosmetic mirror.
+    try {
+      await gh.updatePR(owner, repo, session.pr_number, { title });
+    } catch (err) {
+      log.warn('proposal-update', 'panel renamed but the GitHub PR title update failed', {
+        sessionId: Number(session.id), prNumber: session.pr_number, err: err.message,
+      });
+    }
+    log.info('proposal-update', 'renamed the proposal to the submitted title', {
+      sessionId: Number(session.id), prNumber: session.pr_number,
+    });
+    return true;
+  }
   if ((session.proposed_pr_title || null) === title) return false;
   try {
     await pool.query(
@@ -563,13 +604,14 @@ async function applyTestingMetadata({ pool, session, testing }) {
 // votes: not one line of code changed, so the tally is still about the code the
 // group read.
 async function resubmitUnchanged(ctx, headSha, via) {
-  const { pool, config, session, sessionId } = ctx;
+  const { pool, config, gh, session, sessionId, owner, repo } = ctx;
   const base = unchanged(session, headSha, via);
   const applied = await applyTestingMetadata({ pool, session, testing: ctx.testing });
   // Same-commit resubmits are also how a title correction arrives — the
   // update that should have carried it may already have landed (#1199's
-  // reasoning, applied to the name instead of the screenshots).
-  const titleApplied = await applyProposedTitle({ pool, session, title: ctx.title });
+  // reasoning, applied to the name instead of the screenshots). On a row
+  // that already has a PR this RENAMES it, votes untouched.
+  const titleApplied = await applyProposedTitle({ pool, gh, session, owner, repo, title: ctx.title });
   const reported = {
     ...base,
     testingUpdated: applied.changed,
@@ -769,10 +811,9 @@ async function advanceAppRepoBranch(ctx) {
   // BEFORE the tails, every one of which ends in a capture that reads the
   // routes off this session object (#1199).
   const testingApplied = await applyTestingMetadata({ pool, session, testing: ctx.testing });
-  // And the submitted title, which the promote-time lazy PR creation reads
-  // off the row — sessions only; applyProposedTitle no-ops when a PR (and
-  // so a real title) already exists.
-  const titleApplied = await applyProposedTitle({ pool, session, title: ctx.title });
+  // And the submitted title: stored for the promote-time lazy PR creation
+  // when the row has no PR yet, or a rename of the existing PR when it does.
+  const titleApplied = await applyProposedTitle({ pool, gh, session, owner, repo, title: ctx.title });
 
   // Everything the three tails agree on. They differ only in what they do to
   // the session afterwards and in the three booleans that describe it.
