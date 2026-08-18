@@ -31,7 +31,7 @@ export function DevChatSubView({ backHref, onBackClick }: DevChatSubViewProps) {
       <div className="flex items-center gap-2 px-3 py-1.5 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
         <a
           id="dev-chat-back"
-          className="inline-flex items-center text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 text-sm"
+          className="inline-flex items-center un-touch-target text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 text-sm"
           title="Back to the dev page"
           href={backHref}
           onClick={onBackClick}

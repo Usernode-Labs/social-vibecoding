@@ -136,7 +136,7 @@ export function PlatformHeader() {
               in the native WebView that would push a plain tap out to the
               system browser.
           */}
-          <a id="back-btn" className="inline-flex items-center text-zinc-400 hover:text-zinc-100 hidden" aria-label="Home">
+          <a id="back-btn" className="inline-flex items-center text-zinc-400 hover:text-zinc-100 un-touch-target hidden" aria-label="Home">
             <HomeIcon id="back-icon-home" className="w-5 h-5" />
             <ChevronLeftIcon id="back-icon-arrow" className="w-5 h-5 hidden" />
           </a>
@@ -210,7 +210,7 @@ export function PlatformHeader() {
               role="radio"
               aria-checked="false"
               data-tab="app"
-              className="app-mode-seg flex items-center rounded-md px-2.5 transition-colors"
+              className="app-mode-seg un-touch-target flex items-center rounded-md px-3 transition-colors"
             >
               App
             </button>
@@ -219,17 +219,17 @@ export function PlatformHeader() {
               role="radio"
               aria-checked="false"
               data-tab="dev"
-              className="app-mode-seg flex items-center rounded-md px-2.5 transition-colors"
+              className="app-mode-seg un-touch-target flex items-center rounded-md px-3 transition-colors"
             >
               Dev
             </button>
           </div>
           <button
             id="dev-console-btn"
-            className="hidden relative text-zinc-400 hover:text-zinc-200 mr-2"
+            className="hidden relative w-7 h-7 flex items-center justify-center un-touch-target text-zinc-400 hover:text-zinc-200 mr-2.5"
             aria-label="Open developer console"
           >
-            <TerminalIcon className="w-5 h-5" />
+            <TerminalIcon className="w-6 h-6" />
             <span
               id="dev-console-badge"
               className="hidden absolute -top-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-red-500 text-white text-[0.65rem] font-bold flex items-center justify-center"
@@ -241,8 +241,8 @@ export function PlatformHeader() {
               into the dev-chat tab's "Edit" section (see AppView.renderDevChatTab).
               The badge it used to show now lives on the in-tab button.
           */}
-          <button id="feedback-btn" className="relative text-zinc-400 hover:text-zinc-200 mr-2" aria-label="Send feedback">
-            <ChatIcon className="w-5 h-5" />
+          <button id="feedback-btn" className="relative w-7 h-7 flex items-center justify-center un-touch-target text-zinc-400 hover:text-zinc-200 mr-2.5" aria-label="Send feedback">
+            <ChatIcon className="w-6 h-6" />
             {/*
                 #1054: feedback saved offline and still waiting to send. The
                 only ambient sign that an unsent message exists — app.js
@@ -273,11 +273,11 @@ export function PlatformHeader() {
           */}
           <button
             id="work-drawer-btn"
-            className="relative text-zinc-400 hover:text-zinc-200 mr-2"
+            className="relative w-7 h-7 flex items-center justify-center un-touch-target text-zinc-400 hover:text-zinc-200 mr-2.5"
             aria-label="Your sessions and proposals"
             title="Your sessions and proposals"
           >
-            <CogIcon id="work-drawer-icon" className="w-5 h-5" />
+            <CogIcon id="work-drawer-icon" className="w-6 h-6" />
             <span
               id="notifications-badge-ai"
               className="hidden absolute -top-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-emerald-500 text-white text-[0.65rem] font-bold flex items-center justify-center"
@@ -286,10 +286,10 @@ export function PlatformHeader() {
           </button>
           <button
             id="notifications-btn"
-            className="relative text-zinc-400 hover:text-zinc-200 mr-2"
+            className="relative w-7 h-7 flex items-center justify-center un-touch-target text-zinc-400 hover:text-zinc-200 mr-2.5"
             aria-label="Notifications"
           >
-            <BellIcon className="w-5 h-5" />
+            <BellIcon className="w-6 h-6" />
             <span
               id="notifications-badge"
               className="hidden absolute -top-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-red-500 text-white text-[0.65rem] font-bold flex items-center justify-center"
@@ -308,11 +308,11 @@ export function PlatformHeader() {
           */}
           <button
             id="header-menu-btn"
-            className="relative text-zinc-400 hover:text-zinc-200 mr-2"
+            className="relative w-7 h-7 flex items-center justify-center un-touch-target text-zinc-400 hover:text-zinc-200 mr-2.5"
             aria-label="Open menu"
             aria-expanded="false"
           >
-            <Bars3Icon className="w-5 h-5" />
+            <Bars3Icon className="w-6 h-6" />
             <span
               id="header-menu-deploy-dot"
               className="hidden absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-amber-500"
