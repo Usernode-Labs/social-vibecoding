@@ -118,7 +118,14 @@ function makeHarness({ previewTitle = 'Partial Title' } = {}) {
     PlatformUI: { pullToRefresh: () => {}, toast: () => {} },
     // The controller reads these off `window` at wire time; only their
     // presence matters here (`App` must be truthy or init() early-returns).
-    App: new Proxy({}, { get: () => undefined, set: () => true }),
+    // Assignments have to STICK: since #1284 init() publishes
+    // App.noticeRescuedFeedbackDraft and immediately calls it, so a proxy
+    // that swallowed sets (set: () => true) made init() throw and all five
+    // tests below fail. Unset properties still read as undefined.
+    App: new Proxy({}, {
+      get: (t, p) => t[p],
+      set: (t, p, v) => { t[p] = v; return true; },
+    }),
     alert: () => {},
   };
   sandbox.window = sandbox;

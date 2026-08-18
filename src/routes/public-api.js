@@ -31,7 +31,7 @@ const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const { clientIp } = require('../services/client-ip');
-const { waitlistJoinLimiter } = require('../middleware/rate-limits');
+const { waitlistJoinLimiter, waitlistTokenLimiter } = require('../middleware/rate-limits');
 const waitlist = require('../services/waitlist');
 const questions = require('../services/waitlist-questions');
 const { sendWaitlistJoinMail } = require('../services/topochain/mailer');
@@ -218,7 +218,7 @@ function publicApiRoutes(config) {
   // delivered to the address being confirmed — following it is the proof.
   // Registered BEFORE the /more/:token routes for clarity; Express matches
   // on the literal segment either way.
-  router.get('/api/public/waitlist/confirm/:token', waitlistJoinLimiter, async (req, res) => {
+  router.get('/api/public/waitlist/confirm/:token', waitlistTokenLimiter, async (req, res) => {
     const token = req.params.token;
     try {
       const row = await waitlist.confirmSignupByMoreToken(pool, token);
@@ -246,7 +246,7 @@ function publicApiRoutes(config) {
   // re-openable and prefills) plus which OAuth connects are available /
   // already verified. The token is an unguessable capability from the
   // join response / email; an invalid token 404s.
-  router.get('/api/public/waitlist/more/:token', waitlistJoinLimiter, async (req, res) => {
+  router.get('/api/public/waitlist/more/:token', waitlistTokenLimiter, async (req, res) => {
     try {
       const row = await waitlist.getSignupByMoreToken(pool, req.params.token);
       if (!row) return res.status(404).json({ error: 'Unknown or expired link.' });
@@ -268,7 +268,7 @@ function publicApiRoutes(config) {
   // POST /api/public/waitlist/more/:token — merge stage-2 answers.
   // Everything optional; sections merge (a later visit can fill in what
   // an earlier one skipped). Mirrors topochain's storeMore.
-  router.post('/api/public/waitlist/more/:token', waitlistJoinLimiter, async (req, res) => {
+  router.post('/api/public/waitlist/more/:token', waitlistTokenLimiter, async (req, res) => {
     const stage2 = questions.validateStage2(req.body || {});
     if (!stage2.ok) {
       return res.status(422).json({ error: stage2.error });
