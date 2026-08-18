@@ -204,3 +204,84 @@ test('schema and route mounting enforce privacy, uniqueness, replay safety, and 
   const mcpAt = SERVER.indexOf('app.use(mcpBrowserRoutes(config));');
   assert.ok(authAt < identityAt && identityAt < mcpAt);
 });
+
+test('pendingStateInfo reports only live-state timestamps, never hashes or verifiers (#1291)', async () => {
+  const calls = [];
+  const pool = {
+    query: async (sql, params) => {
+      calls.push({ sql, params });
+      return {
+        rows: [
+          { provider: 'x', created_at: new Date('2026-08-18T10:00:00Z') },
+          { provider: 'github', created_at: new Date('2026-08-18T11:00:00Z') },
+          { provider: 'not-a-provider', created_at: new Date() },
+          { provider: 'x', created_at: null },
+        ],
+      };
+    },
+  };
+  const pending = await identity.pendingStateInfo(pool, 7);
+  assert.deepEqual(pending, {
+    x: '2026-08-18T10:00:00.000Z',
+    github: '2026-08-18T11:00:00.000Z',
+  });
+  assert.equal(calls.length, 1);
+  // Only unexpired (unconsumed rows are deleted on use) states count, and the
+  // helper selects timestamps only — the PKCE material stays in the table.
+  assert.match(calls[0].sql, /expires_at > NOW\(\)/);
+  assert.match(calls[0].sql, /SELECT provider, created_at/);
+  assert.doesNotMatch(calls[0].sql, /state_hash|verifier|challenge/);
+  assert.deepEqual(calls[0].params, [7]);
+});
+
+test('X misconfiguration diagnostics are admin-only and the probe endpoint is fully gated (#1291)', () => {
+  // The diagnostics object (credential source + callback URL) attaches only
+  // for admin requesters, inside statusPayload's isAdmin branch.
+  const adminAt = ROUTES.indexOf('if (user.isAdmin)');
+  const diagnosticsAt = ROUTES.indexOf('providers.x.diagnostics');
+  const payloadEndAt = ROUTES.indexOf('return { providers, entitlement };');
+  assert.ok(adminAt > 0, 'statusPayload gates diagnostics on user.isAdmin');
+  assert.ok(diagnosticsAt > adminAt && diagnosticsAt < payloadEndAt,
+    'x diagnostics attach inside the admin branch');
+
+  // A stranded attempt only surfaces once it is stale — a flow started
+  // seconds ago in another tab is not a misconfiguration signal.
+  assert.match(ROUTES, /PENDING_ATTEMPT_MIN_AGE_MS = 60 \* 1000/);
+  const pendingAt = ROUTES.indexOf('pendingAttemptAt = pending[provider]');
+  const ageGateAt = ROUTES.indexOf('Date.now() - startedAt >= PENDING_ATTEMPT_MIN_AGE_MS');
+  assert.ok(ageGateAt > 0 && pendingAt > ageGateAt,
+    'pendingAttemptAt is age-gated before it reaches the payload');
+
+  // The live credential probe: POST, rate-limited, 401/staging-404/CSRF/403
+  // in the same order the rest of the file uses, and never echoing secrets.
+  const checkAt = ROUTES.indexOf("router.post('/api/me/social-identities/x/check', userRate");
+  assert.ok(checkAt > 0, 'the check endpoint exists, is a POST, and is rate-limited');
+  const unlinkAt = ROUTES.indexOf('const unlink =', checkAt);
+  const checkSrc = ROUTES.slice(checkAt, unlinkAt);
+  assert.match(checkSrc, /if \(!req\.user\) return res\.status\(401\)/);
+  assert.match(checkSrc, /if \(IS_STAGING\) return res\.status\(404\)/);
+  assert.match(checkSrc, /browserCsrf\(config, req, res\)/);
+  assert.match(checkSrc, /if \(!req\.user\.isAdmin\) return res\.status\(403\)/);
+  assert.match(checkSrc, /checkClientCredentials\(config\)/);
+  assert.doesNotMatch(checkSrc, /clientSecret|client_secret/);
+});
+
+test('the identity-x-misconfigured demo mode round-trips between route and client (#1291)', () => {
+  const SETTINGS = fs.readFileSync(
+    path.join(__dirname, '../frontend/src/features/settings/settings.js'), 'utf8'
+  );
+  // The staging route accepts the mode, its fixture carries both the admin
+  // diagnostics and a stale pending attempt, and the client forwards it.
+  for (const mode of [
+    'identity-connected', 'identity-unverified', 'identity-legacy',
+    'identity-x-misconfigured',
+  ]) {
+    assert.ok(ROUTES.includes(`'${mode}'`), `route accepts demo=${mode}`);
+    assert.ok(SETTINGS.includes(`'${mode}'`), `settings client forwards demo=${mode}`);
+  }
+  const fixtureAt = ROUTES.indexOf("mode === 'identity-x-misconfigured'");
+  const fixtureSrc = ROUTES.slice(fixtureAt, ROUTES.indexOf('} else if', fixtureAt));
+  assert.match(fixtureSrc, /pendingAttemptAt/);
+  assert.match(fixtureSrc, /credentialSource: 'waitlist'/);
+  assert.match(fixtureSrc, /callbackUrl: '[^']*\/api\/me\/x\/callback'/);
+});

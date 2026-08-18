@@ -217,6 +217,26 @@ async function clearIdentity(pool, userId, provider) {
   });
 }
 
+// When did this user last start an OAuth round-trip that never came back?
+// Providers reject a misregistered redirect_uri on their own page and never
+// call us back, so the unconsumed state row is the only server-side trace
+// of that failure (#1291). Timestamps only — hashes and verifiers stay put.
+async function pendingStateInfo(pool, userId) {
+  const { rows } = await pool.query(
+    `SELECT provider, created_at
+       FROM social_identity_oauth_states
+      WHERE user_id = $1 AND expires_at > NOW()`,
+    [Number(userId)]
+  );
+  const pending = {};
+  for (const row of rows) {
+    if (PROVIDER_SET.has(row.provider) && row.created_at) {
+      pending[row.provider] = new Date(row.created_at).toISOString();
+    }
+  }
+  return pending;
+}
+
 function serializeIdentity(row) {
   return {
     provider: row.provider,
@@ -293,6 +313,7 @@ module.exports = {
   codeChallenge,
   createOauthState,
   consumeOauthState,
+  pendingStateInfo,
   normalizeIdentity,
   saveIdentity,
   clearIdentity,

@@ -42,6 +42,76 @@ function isEnabled(config) {
   return !!oauthCredentials(config);
 }
 
+// Which pair oauthCredentials() would hand out, for diagnostics: the
+// account-linking flow silently reuses the waitlist X app's credentials
+// when no dedicated pair is set, and that app only works here if its
+// developer-portal registration also lists the /api/me/x/callback URL
+// (#1291). Mirrors oauthCredentials' precedence exactly, including the
+// partial-dedicated-pair ⇒ disabled rule.
+function credentialSource(config) {
+  const dedicatedId = (config && config.xLinkClientId)
+    || process.env.X_LINK_CLIENT_ID || '';
+  const dedicatedSecret = (config && config.xLinkClientSecret)
+    || process.env.X_LINK_CLIENT_SECRET || '';
+  if (dedicatedId || dedicatedSecret) {
+    return dedicatedId && dedicatedSecret ? 'dedicated' : null;
+  }
+  const fallbackId = (config && config.waitlistXClientId)
+    || process.env.WAITLIST_X_CLIENT_ID || '';
+  const fallbackSecret = (config && config.waitlistXClientSecret)
+    || process.env.WAITLIST_X_CLIENT_SECRET || '';
+  return fallbackId && fallbackSecret ? 'waitlist' : null;
+}
+
+// A dedicated pair whose client id equals the waitlist pair's is the same
+// X app pasted under a different variable name — the callback-registration
+// requirement still applies. Client ids only; secrets never compared.
+function sameAppAsWaitlist(config) {
+  if (credentialSource(config) !== 'dedicated') return false;
+  const waitlistId = (config && config.waitlistXClientId)
+    || process.env.WAITLIST_X_CLIENT_ID || '';
+  const creds = oauthCredentials(config);
+  return !!waitlistId && !!creds && creds.clientId === waitlistId;
+}
+
+// Live probe of the active pair against X's token endpoint, using a
+// deliberately bogus authorization code. The grant always fails; what the
+// failure looks like tells the pair's validity apart: a 401 (or an
+// explicit invalid_client) means X rejected the Basic auth — the pair is
+// wrong — while any other 4xx means client auth passed and only the grant
+// was refused, as expected. No user token is ever minted.
+async function checkClientCredentials(config) {
+  const creds = oauthCredentials(config);
+  if (!creds) return 'indeterminate';
+  const form = new URLSearchParams({
+    grant_type: 'authorization_code',
+    code: 'diagnostic-probe-invalid-code',
+    redirect_uri: 'https://invalid.example/api/me/x/callback',
+    code_verifier: 'p'.repeat(43),
+    client_id: creds.clientId,
+  });
+  try {
+    const resp = await fetchJson(TOKEN_URL, {
+      method: 'POST',
+      headers: {
+        authorization: basicAuth(creds),
+        'content-type': 'application/x-www-form-urlencoded',
+        accept: 'application/json',
+      },
+      body: form.toString(),
+    });
+    const errorCode = resp.body && typeof resp.body.error === 'string'
+      ? resp.body.error
+      : '';
+    if (resp.status === 401 || errorCode === 'invalid_client') return 'rejected';
+    if (resp.status >= 400 && resp.status < 500) return 'ok';
+    return 'indeterminate';
+  } catch (err) {
+    log.warn('x-link', 'credential check unreachable', { err: err.message });
+    return 'indeterminate';
+  }
+}
+
 function authorizeUrl(config, { redirectUri, state, challenge }) {
   const creds = oauthCredentials(config);
   if (!creds || !socialIdentity.STATE_RE.test(String(state || ''))
@@ -128,7 +198,16 @@ async function exchangeCode(config, { code, redirectUri, verifier }) {
     body: form.toString(),
   });
   const token = tokenResp.body && tokenResp.body.access_token;
-  if (!tokenResp.ok || typeof token !== 'string' || !token) return null;
+  if (!tokenResp.ok || typeof token !== 'string' || !token) {
+    // The code/verifier never leave this function; X's own error strings
+    // are what an admin needs to tell a bad pair from a bad grant.
+    log.warn('x-link', 'token exchange refused', {
+      status: tokenResp.status,
+      error: String((tokenResp.body && tokenResp.body.error) || '').slice(0, 64),
+      description: String((tokenResp.body && tokenResp.body.error_description) || '').slice(0, 200),
+    });
+    return null;
+  }
 
   try {
     if (!scopeIsExact(tokenResp.body.scope)) {
@@ -154,6 +233,9 @@ module.exports = {
   PROVIDER_TIMEOUT_MS,
   USERNAME_RE,
   oauthCredentials,
+  credentialSource,
+  sameAppAsWaitlist,
+  checkClientCredentials,
   isEnabled,
   authorizeUrl,
   exchangeCode,

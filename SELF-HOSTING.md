@@ -1411,6 +1411,17 @@ minimum X requires for `GET /2/users/me`), stores the immutable id + current
 username, calls `/2/oauth2/revoke`, and discards the token. Set the dedicated
 `X_LINK_*` pair, or leave both unset to use a complete `WAITLIST_X_*` pair.
 
+**Symptom: X shows "Something went wrong — You weren't able to give access
+to the App" at the authorize step.** That page means the authorize request
+carried a callback URI the X app has not registered, or an unknown client
+ID — X refuses on its own page and never redirects back, so nothing reaches
+the platform's logs. First stop: the admin diagnostics panel under the X row
+in Settings → Social accounts & connectors, which names the credential pair
+in use (dedicated vs. reused waitlist), shows the exact callback URI the X
+app must register, and can live-check the pair against X's token endpoint.
+When reusing the waitlist app, the fix is registering the second callback
+described in step 3 of "Creating the X app" below (#880, #1291).
+
 ### Activating the tiered policy
 
 1. Deploy the schema and provider configuration with
