@@ -7,8 +7,10 @@
 // body it sweeps every active regular event on an active season. This is
 // the only trigger — there is deliberately no scheduler in this repo yet,
 // so snapshot production stays an explicit operator action that cannot
-// race the external ETL unprompted (each run writes a NEW snapshot_at;
-// nothing existing is touched).
+// race the external ETL unprompted (each run writes a NEW snapshot_at
+// and rewrites nothing; retention then keeps only the newest 10
+// snapshot timestamps per event, so repeated triggers age out older
+// history — ETL-imported rows included).
 //
 // Reads are covered by the router-wide adminReadGate in ../admin.js; the
 // one route here is a mutation, so it carries `adminWriteGate` like every

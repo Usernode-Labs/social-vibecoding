@@ -54,6 +54,11 @@ function reconstructEpochBoundaries(rows, { defaultDurationMs = DEFAULT_EPOCH_DU
   const meanDuration = last.epoch > first.epoch
     ? (last.startMs - first.startMs) / (last.epoch - first.epoch)
     : defaultDurationMs;
+  // Degenerate telemetry (a batch stamping several epochs with one slot
+  // time, or clock skew inverting them) would make every span
+  // zero/negative-length and silently zero all block points downstream —
+  // fall back to no-timing mode instead.
+  if (!(meanDuration > 0)) return boundaries;
 
   // The epochs to emit: the observed ones, plus every epoch of fillRange.
   const epochs = new Set(sorted.map((r) => r.epoch));
@@ -178,6 +183,13 @@ function computeChallengeScore({ weights, K, ratios, multipliers, basePoints }) 
   };
 }
 
+// The offchain weight as both write paths must read it off
+// season_events.scoring_formula: missing/NaN → 0 (a weightless event
+// scores no offchain points, it never errors).
+function resolveOffchainWeight(scoringFormula) {
+  return Number(scoringFormula?.offchain_weight) || 0;
+}
+
 // The admin refresh-totals arithmetic, verbatim (see the route's own
 // JUDGMENT CALL comment for which snapshot columns count as
 // offchain-derived): the six INTEGER category columns each round their
@@ -200,6 +212,8 @@ function computeOffchainColumns(byType, offchainWeight) {
 
 module.exports = {
   DEFAULT_EPOCH_DURATION_MS,
+  round2,
+  resolveOffchainWeight,
   epochRatio,
   reconstructEpochBoundaries,
   computeEpochWeights,

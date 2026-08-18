@@ -73,6 +73,23 @@ function freshDb() {
         scoring_formula: { metrics: [], offchain_weight: 1 },
         disclaimer: null, display_leaderboard: true,
       },
+      {
+        // A fat-fingered end_epoch: iterating this range would wedge the
+        // process, so the builder must refuse it outright.
+        id: 105, name: 'Typo Epoch Range', season_id: 10, type: 'regular', is_active: true, internal: false,
+        starts_at: T(-10), ends_at: T(10), start_epoch: 1, end_epoch: 1_000_000_000, chain_id: 'chain-1',
+        scoring_formula: { metrics: [], offchain_weight: 1 },
+        disclaimer: null, display_leaderboard: true,
+      },
+      {
+        // season_id is nullable in the schema — the event must still be
+        // addressable explicitly (LEFT JOIN), guarded like an inactive
+        // season rather than 422ing as an unknown id.
+        id: 106, name: 'Season-less Sprint', season_id: null, type: 'regular', is_active: true, internal: false,
+        starts_at: T(-10), ends_at: T(10), start_epoch: 1, end_epoch: 4, chain_id: 'chain-1',
+        scoring_formula: { metrics: [], offchain_weight: 1 },
+        disclaimer: null, display_leaderboard: true,
+      },
     ],
     challengeTemplates: [
       { id: 900, goal: 'Produce every block', metric_type: 'blocks_produced', schedule_start: null, schedule_end: null },
@@ -134,14 +151,21 @@ function handleQuery(rawSql, params = []) {
   if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') return { rows: [] };
 
   // Builder: candidate events (season joined for the activity guard).
-  if (sql.includes('s.is_active AS season_is_active')) {
+  if (sql.includes('AS season_is_active')) {
     const id = params[0] ?? null;
     const rows = db.seasonEvents
       .filter((e) => (id === null
         ? e.type === 'regular' && e.is_active && db.seasons.find((s) => s.id === e.season_id)?.is_active
         : e.id === id))
       .sort((a, b) => a.id - b.id)
-      .map((e) => ({ ...e, season_is_active: !!db.seasons.find((s) => s.id === e.season_id)?.is_active }));
+      // BIGSERIAL columns come back from pg as strings — emulate that so
+      // the builder's normalization is what these tests exercise.
+      .map((e) => ({
+        ...e,
+        id: String(e.id),
+        season_id: e.season_id === null ? null : String(e.season_id),
+        season_is_active: !!db.seasons.find((s) => s.id === e.season_id)?.is_active,
+      }));
     return { rows };
   }
 
@@ -486,6 +510,31 @@ test('builder: explicit target reports its guard; force bypasses activity guards
 
   const closedSeason = await buildSnapshots(currentMockPool, { seasonEventId: 104, now: new Date() });
   assert.equal(closedSeason.events[0].skipped, 'inactive_season');
+});
+
+test('builder: refuses an epoch range too large to iterate', async () => {
+  const result = await buildSnapshots(currentMockPool, { seasonEventId: 105, force: true, now: new Date() });
+  assert.equal(result.events[0].skipped, 'epoch_range_too_large');
+});
+
+test('builder: a season-less event is addressable — guarded like an inactive season, force aggregates it', async () => {
+  const guarded = await buildSnapshots(currentMockPool, { seasonEventId: 106, now: new Date() });
+  assert.equal(guarded.events[0].skipped, 'inactive_season');
+
+  const forced = await buildSnapshots(currentMockPool, { seasonEventId: 106, force: true, now: new Date() });
+  assert.equal(forced.events[0].skipped, undefined);
+  // Same chain/window stats as event 100 (3 producing users), no ledger
+  // rows of its own; season_id stays NULL on the written rows.
+  assert.equal(forced.events[0].users, 3);
+  assert.equal(db.leaderboardSnapshots.every((s) => s.season_id === null), true);
+});
+
+test('builder: pg string ids are normalized to numbers in summaries and skip records', async () => {
+  const result = await buildSnapshots(currentMockPool, { now: new Date() });
+  for (const e of result.events) assert.equal(typeof e.season_event_id, 'number');
+  const aggregated = result.events.find((e) => e.season_event_id === 100);
+  assert.equal(aggregated.users, 4);
+  assert.equal(byUser(db.leaderboardSnapshots, 2).season_id, 10);
 });
 
 test('builder: snapshots it writes serve the public leaderboard endpoint', async () => {

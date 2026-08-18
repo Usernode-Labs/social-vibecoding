@@ -25,13 +25,19 @@
 //      scoring), reported as `missing_epoch_range`.
 //
 // Triggering is admin-only (POST /api/v4/admin/leaderboard/aggregate):
-// each run writes a NEW shared snapshot_at and never touches rows an
-// earlier run (or the ETL) wrote, so the two writers can coexist; reads
-// always pick the latest snapshot_at per (event, user).
+// each run writes a NEW shared snapshot_at — it never REWRITES rows an
+// earlier run (or the ETL) wrote, so the two writers can coexist and
+// reads always pick the latest snapshot_at per (event, user). Retention
+// does delete, though: after every run the event keeps only its newest
+// KEEP_SNAPSHOTS distinct snapshot_at values (the source system's own
+// prune rule), ETL-imported history included — repeated triggers age
+// older timestamps out of the time series.
 'use strict';
 
 const { assignSharedRanks } = require('./standings');
 const {
+  round2,
+  resolveOffchainWeight,
   epochRatio,
   reconstructEpochBoundaries,
   computeEpochWeights,
@@ -42,6 +48,10 @@ const {
 
 const DEFAULT_BLOCK_POINTS = 5000; // the source system's produce_every_block
 const KEEP_SNAPSHOTS = 10; // distinct snapshot_at values kept per event
+// Epoch windows are iterated (weights, boundary fill), so a fat-fingered
+// BIGINT end_epoch must be refused outright rather than wedging the
+// process. Epochs are ~daily: 100k epochs is centuries of headroom.
+const MAX_EPOCH_RANGE = 100_000;
 
 // Candidate events. With $1 NULL this is the default sweep (active
 // regular events on active seasons — never a hardcoded id, the smell the
@@ -50,9 +60,9 @@ const KEEP_SNAPSHOTS = 10; // distinct snapshot_at values kept per event
 const EVENTS_SQL = `
   SELECT se.id, se.name, se.season_id, se.start_epoch, se.end_epoch, se.chain_id,
          se.scoring_formula, se.is_active, se.internal, se.type,
-         s.is_active AS season_is_active
+         COALESCE(s.is_active, FALSE) AS season_is_active
     FROM season_events se
-    JOIN seasons s ON s.id = se.season_id
+    LEFT JOIN seasons s ON s.id = se.season_id
    WHERE ($1::bigint IS NULL AND se.type = 'regular' AND se.is_active = TRUE AND s.is_active = TRUE)
       OR se.id = $1
    ORDER BY se.id ASC
@@ -159,17 +169,18 @@ const PRUNE_SQL = `
      )
 `;
 
-const round2 = (n) => Math.round(n * 100) / 100;
-
 // Guard an event and return a skip reason, or null to aggregate. `force`
 // bypasses the two ACTIVITY guards only (a final pass over a just-ended
 // or paused event) — never the structural ones.
 function skipReason(event, force) {
   if (event.type !== 'regular') return 'not_regular';
   if (!force && !event.is_active) return 'inactive_event';
+  // A NULL season_id reports as season_is_active FALSE (LEFT JOIN +
+  // COALESCE above) and lands here too — force can still address it.
   if (!force && !event.season_is_active) return 'inactive_season';
   if (event.start_epoch === null || event.end_epoch === null
     || Number(event.end_epoch) < Number(event.start_epoch)) return 'missing_epoch_range';
+  if (Number(event.end_epoch) - Number(event.start_epoch) + 1 > MAX_EPOCH_RANGE) return 'epoch_range_too_large';
   if (!event.chain_id || !String(event.chain_id).trim()) return 'missing_chain_id';
   return null;
 }
@@ -179,9 +190,14 @@ const toMs = (v) => (v === null || v === undefined ? null : new Date(v).getTime(
 async function aggregateEvent(pool, event, now) {
   const startEpoch = Number(event.start_epoch);
   const endEpoch = Number(event.end_epoch);
+  // season_events.chain_id is a comma-separated list per the ingest
+  // route's own precedent (GET /onchain-accounts unnests it, SPEC 1481);
+  // a single-chain value is the common case and works unchanged. NOTE:
+  // the public epoch-breakdown route still matches the column literally,
+  // so multi-chain events cannot drill down there yet.
   const chains = String(event.chain_id).split(',').map((c) => c.trim()).filter(Boolean);
   const formula = event.scoring_formula || {};
-  const offchainWeight = Number(formula.offchain_weight) || 0;
+  const offchainWeight = resolveOffchainWeight(formula);
   const basePoints = Number(formula.produce_every_block_points) || DEFAULT_BLOCK_POINTS;
 
   const [challengesRes, statsRes, timingRes, activityRes] = await Promise.all([
@@ -230,6 +246,20 @@ async function aggregateEvent(pool, event, now) {
   }
 
   const nowMs = now.getTime();
+
+  // Challenge windows are user-independent: resolve schedule bounds and
+  // epoch weights once per challenge, not once per (user, challenge).
+  const scoredChallenges = challengesRes.rows.map((challenge) => {
+    const scheduleStartMs = toMs(challenge.schedule_start);
+    const scheduleEndMs = toMs(challenge.schedule_end);
+    const { weights, K } = computeEpochWeights({
+      startEpoch, endEpoch, boundaries, scheduleStartMs, scheduleEndMs,
+    });
+    return {
+      challenge, weights, K, ended: scheduleEndMs !== null && scheduleEndMs <= nowMs,
+    };
+  });
+
   const rows = userIds
     // Users deleted from `users` have no podium flag row — their history
     // stays in the raw tables but they no longer board.
@@ -248,12 +278,7 @@ async function aggregateEvent(pool, event, now) {
 
       const challengeDetails = [];
       let blockPoints = 0;
-      for (const challenge of challengesRes.rows) {
-        const scheduleStartMs = toMs(challenge.schedule_start);
-        const scheduleEndMs = toMs(challenge.schedule_end);
-        const { weights, K } = computeEpochWeights({
-          startEpoch, endEpoch, boundaries, scheduleStartMs, scheduleEndMs,
-        });
+      for (const { challenge, weights, K, ended } of scoredChallenges) {
         const score = computeChallengeScore({
           weights, K, ratios, multipliers, basePoints,
         });
@@ -266,7 +291,7 @@ async function aggregateEvent(pool, event, now) {
           rate: round2(score.rate),
           points: score.points,
           points_multiplier: round2(score.pointsMultiplier),
-          ended: scheduleEndMs !== null && scheduleEndMs <= nowMs,
+          ended,
         });
       }
 
@@ -351,10 +376,17 @@ async function aggregateEvent(pool, event, now) {
 async function buildSnapshots(pool, { seasonEventId = null, force = false, now = new Date() } = {}) {
   const { rows: events } = await pool.query(EVENTS_SQL, [seasonEventId]);
   const results = [];
-  for (const event of events) {
+  for (const raw of events) {
+    // BIGSERIAL ids arrive from pg as strings — normalize once so the
+    // summary/skip records and every downstream query bind numbers.
+    const event = {
+      ...raw,
+      id: Number(raw.id),
+      season_id: raw.season_id === null || raw.season_id === undefined ? null : Number(raw.season_id),
+    };
     const reason = skipReason(event, force);
     if (reason) {
-      results.push({ season_event_id: Number(event.id), name: event.name, skipped: reason });
+      results.push({ season_event_id: event.id, name: event.name, skipped: reason });
       continue;
     }
     results.push(await aggregateEvent(pool, event, now));

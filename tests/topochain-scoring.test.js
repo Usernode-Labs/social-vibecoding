@@ -84,6 +84,22 @@ test('boundaries: fillRange with no observations still yields an empty map (no-t
   assert.equal(b.size, 0);
 });
 
+test('boundaries: non-increasing observed starts degrade to the empty map instead of zero-length spans', () => {
+  const t0 = 1_000_000_000_000;
+  // A batch-ingested telemetry burst can stamp several epochs with one
+  // shared slot time (meanDuration 0), or clock skew can invert them
+  // (meanDuration < 0). Both must fall back to no-timing mode — zero
+  // -length spans would silently zero every user's block points.
+  assert.equal(reconstructEpochBoundaries([
+    { epoch: 1, first_slot_time_ms: t0 },
+    { epoch: 2, first_slot_time_ms: t0 },
+  ]).size, 0);
+  assert.equal(reconstructEpochBoundaries([
+    { epoch: 1, first_slot_time_ms: t0 },
+    { epoch: 2, first_slot_time_ms: t0 - HOUR },
+  ]).size, 0);
+});
+
 // ─── computeEpochWeights ──────────────────────────────────────────────
 
 test('weights: without timing data every in-window epoch weighs 1 and K is the epoch count', () => {

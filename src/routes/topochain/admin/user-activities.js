@@ -19,7 +19,7 @@ const { getPool } = require('../../../db/pool');
 const log = require('../../../services/logger');
 const { adminWriteGate } = require('./auth');
 const { toIntId, toDate } = require('./util');
-const { computeOffchainColumns } = require('../../../services/topochain/scoring');
+const { computeOffchainColumns, resolveOffchainWeight } = require('../../../services/topochain/scoring');
 const {
   ok, fail, iso, num, paginate, meta, ValidationError,
 } = require('../helpers');
@@ -466,7 +466,7 @@ function userActivitiesAdminRoutes(config) {
         return fail(res, 400, 'Refresh totals is only available for ended events. Active events are managed automatically.');
       }
 
-      const offchainWeight = Number(event.scoring_formula?.offchain_weight) || 0;
+      const offchainWeight = resolveOffchainWeight(event.scoring_formula);
 
       const { rows: sumRows } = await client.query(
         `SELECT user_id, activity_type, COALESCE(SUM(points), 0) AS total_points
