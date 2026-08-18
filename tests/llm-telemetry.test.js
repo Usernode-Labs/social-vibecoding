@@ -633,7 +633,8 @@ test('Claude coding-agent telemetry captures run latency, turns, tool workload, 
     state.requestContentBlockCount = 1;
     state.requestTextCharacters = 1234;
     state.requestUserTextCharacters = 1234;
-    state.requestPayloadCharacters = 1234;
+    state.requestSystemCharacters = 9876;
+    state.requestPayloadCharacters = 11110;
     worker.parseLine(JSON.stringify({
       type: 'system', subtype: 'init', session_id: 'runtime-session',
       tools: ['Read', 'Bash', 'Task'],
@@ -699,6 +700,8 @@ test('Claude coding-agent telemetry captures run latency, turns, tool workload, 
     assert.equal(row.request_mode, 'agent_resume');
     assert.equal(row.request_text_characters, 1234);
     assert.equal(row.request_user_text_characters, 1234);
+    assert.equal(row.request_system_characters, 9876);
+    assert.equal(row.request_payload_characters, 11110);
     assert.equal(row.provider_duration_ms, 5000);
     assert.equal(row.agent_reported_duration_ms, 9000);
     assert.ok(row.time_to_first_output_ms >= 0);
@@ -1044,6 +1047,7 @@ test('coding-agent component context is persisted for retry and restart attribut
   for (const field of [
     'telemetryComponent', 'telemetryCorrelationId', 'telemetryAttemptNumber',
     'telemetryRequestMode', 'telemetryRequestTextCharacters',
+    'telemetryRequestSystemCharacters', 'telemetryRequestPayloadCharacters',
     'telemetryModelContextWindowTokens', 'telemetryModelMaxOutputTokens',
   ]) {
     assert.match(workerSource, new RegExp(field));

@@ -18,6 +18,8 @@
 #
 # Required env (passed via -e on `docker exec`):
 #   PROMPT_FILE, BRANCH, SESSION_ID, PLATFORM_URL
+#   SYSTEM_PROMPT_FILE         required for build; authoritative platform
+#                              handbook appended to Claude's system prompt
 #
 #   PROMPT_FILE points at the dispatch prompt the host materialized into
 #   the CC volume before this exec (see worker.js writeTurnPrompt). The
@@ -71,7 +73,10 @@ die() {
 : "${COMMIT_MSG:=Changes via Usernode}"
 : "${PAT:=}"
 : "${CLAUDE_RESUME_SESSION_ID:=}"
+: "${SYSTEM_PROMPT_FILE:=}"
 : "${BROWSER_MCP_CONFIG:=/home/node/.usernode-mcp.json}"
+
+SYSTEM_PROMPT_FLAGS=""
 
 # Scout is deliberately read-only and receives no general worker token.
 # Build/sync still require the token for their platform push callbacks.
@@ -82,6 +87,19 @@ if [ "$MODE" = "scout" ]; then
   WORKER_JWT=""
 fi
 export WORKER_JWT
+
+# Every hosted build has a shortened task prompt and therefore requires the
+# separate authoritative system context. Fail before invoking Claude if the
+# host omitted it or failed to materialize it; there is no reduced-context
+# fallback that could silently drop platform rules.
+if [ "$MODE" = "build" ] && [ -z "$SYSTEM_PROMPT_FILE" ]; then
+  die "SYSTEM_PROMPT_FILE required for build mode"
+fi
+if [ -n "$SYSTEM_PROMPT_FILE" ]; then
+  [ -s "$SYSTEM_PROMPT_FILE" ] \
+    || die "system prompt file missing or empty: $SYSTEM_PROMPT_FILE"
+  SYSTEM_PROMPT_FLAGS="--append-system-prompt-file $SYSTEM_PROMPT_FILE"
+fi
 
 WORKSPACE_DIR="${WORKSPACE_DIR:-/home/node/workspace}"
 cd "$WORKSPACE_DIR" || die "no workspace: $WORKSPACE_DIR"
@@ -302,19 +320,19 @@ fi
 # move the host-side E2BIG failure here.
 if [ -n "$CLAUDE_RESUME_SESSION_ID" ]; then
   echo "__USERNODE_PHASE__ claude (resume $CLAUDE_RESUME_SESSION_ID, mode $MODE)"
-  claude --print $PERMISSION_FLAGS $BROWSER_MCP_FLAGS --verbose \
+  claude --print $PERMISSION_FLAGS $BROWSER_MCP_FLAGS $SYSTEM_PROMPT_FLAGS --verbose \
     --resume "$CLAUDE_RESUME_SESSION_ID" \
     --model "$MODEL" --output-format stream-json < "$PROMPT_FILE"
   CC_EXIT=$?
   if [ "$CC_EXIT" -ne 0 ]; then
     echo "__USERNODE_WARN__ resume failed (exit $CC_EXIT); retrying fresh"
-    claude --print $PERMISSION_FLAGS $BROWSER_MCP_FLAGS --verbose \
+    claude --print $PERMISSION_FLAGS $BROWSER_MCP_FLAGS $SYSTEM_PROMPT_FLAGS --verbose \
       --model "$MODEL" --output-format stream-json < "$PROMPT_FILE"
     CC_EXIT=$?
   fi
 else
   echo "__USERNODE_PHASE__ claude (mode $MODE)"
-  claude --print $PERMISSION_FLAGS $BROWSER_MCP_FLAGS --verbose \
+  claude --print $PERMISSION_FLAGS $BROWSER_MCP_FLAGS $SYSTEM_PROMPT_FLAGS --verbose \
     --model "$MODEL" --output-format stream-json < "$PROMPT_FILE"
   CC_EXIT=$?
 fi

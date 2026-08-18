@@ -1,5 +1,6 @@
-// Tests for the file-based dispatch-prompt transport (prod session 2538
-// incident): the prompt used to travel as a single `docker exec -e
+// Tests for the file-based dispatch prompt and hosted-Claude system-context
+// transports (the prompt path originated in prod session 2538): the task
+// prompt used to travel as a single `docker exec -e
 // PROMPT=<value>` argument, and Linux caps one argv/env string at
 // 128 KiB (MAX_ARG_STRLEN) — a session whose spec doc grew past ~60 KB
 // (on top of the ~68 KB conventions block) E2BIG'd every dispatch before
@@ -10,7 +11,7 @@
 //   1. Unit tests for the pure prompt-file script builder (base64
 //      round-trip at >200KB — the size class the old path could not
 //      dispatch).
-//   2. Behavioral test of writeTurnPrompt against a mocked
+//   2. Behavioral tests of both required file writers against a mocked
 //      docker.execShellStdin.
 //   3. Source guards: execInWorker writes the prompt file BEFORE the
 //      detached dispatch and no longer puts the prompt in the exec env;
@@ -23,11 +24,16 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 
 const docker = require('../src/services/docker');
 const worker = require('../src/services/worker');
-const { describeTurnError } = require('../src/routes/sessions');
+const {
+  buildCodingAgentConventionsContext,
+  describeTurnError,
+} = require('../src/routes/sessions');
 
 const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 
@@ -38,6 +44,23 @@ function decodeScriptPayload(script) {
     .map((m) => m[1]);
   return Buffer.from(chunks.join(''), 'base64').toString('utf8');
 }
+
+test('hosted Claude receives conventions once as system context, while unchanged backends keep them inline', () => {
+  const conventions = 'SENTINEL platform rule\nsecond rule';
+
+  const hosted = buildCodingAgentConventionsContext({ conventions });
+  assert.match(hosted.systemPrompt, /SENTINEL platform rule/);
+  assert.doesNotMatch(hosted.promptBlock, /SENTINEL platform rule/);
+  assert.match(hosted.promptBlock, /supplied separately as authoritative\nsystem instructions/);
+
+  const local = buildCodingAgentConventionsContext({ runLocally: true, conventions });
+  assert.equal(local.systemPrompt, null);
+  assert.match(local.promptBlock, /SENTINEL platform rule/);
+
+  const codex = buildCodingAgentConventionsContext({ isCodexSession: true, conventions });
+  assert.equal(codex.systemPrompt, null);
+  assert.match(codex.promptBlock, /SENTINEL platform rule/);
+});
 
 // ── 1. buildTurnPromptScript ────────────────────────────────────────────
 
@@ -73,6 +96,17 @@ test('buildTurnPromptScript base64 payload never contains quote characters (safe
   }
 });
 
+test('buildTurnSystemPromptScript round-trips the full conventions at its separate path', () => {
+  const systemPrompt = `==== PLATFORM CONVENTIONS ====\n${'rules\n'.repeat(30000)}`;
+  const script = worker.buildTurnSystemPromptScript(systemPrompt);
+
+  assert.equal(decodeScriptPayload(script), systemPrompt);
+  assert.match(script, new RegExp(
+    `base64 -d < ${worker.TURN_SYSTEM_PROMPT_PATH}\\.b64 > ${worker.TURN_SYSTEM_PROMPT_PATH}\n`
+  ));
+  assert.doesNotMatch(script, new RegExp(`${worker.TURN_PROMPT_PATH}\\.b64`));
+});
+
 // ── 2. writeTurnPrompt (mocked docker boundary) ─────────────────────────
 
 test('writeTurnPrompt materializes the prompt via stdin into the session worker', async () => {
@@ -105,6 +139,29 @@ test('writeTurnPrompt rejects when no warm worker is registered (required file, 
   );
 });
 
+test('writeTurnSystemPrompt materializes required system context in the same worker volume', async () => {
+  const SID = 990003;
+  worker.adoptWarmWorker(SID);
+
+  const calls = [];
+  const orig = docker.execShellStdin;
+  docker.execShellStdin = async (containerName, script, opts) => {
+    calls.push({ containerName, script, opts });
+  };
+  try {
+    const systemPrompt = `CONVENTIONS ${'c'.repeat(140 * 1024)}`;
+    await worker.writeTurnSystemPrompt(SID, systemPrompt);
+
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].containerName, `usernode-worker-${SID}`);
+    assert.equal(decodeScriptPayload(calls[0].script), systemPrompt);
+    assert.equal(calls[0].opts.label, 'writeTurnSystemPrompt');
+  } finally {
+    docker.execShellStdin = orig;
+    worker.evictWorker(SID);
+  }
+});
+
 // ── 3. Source guards — worker.js dispatch wiring ────────────────────────
 
 test('execInWorker writes the prompt file before the detached dispatch and never puts the prompt in exec env', () => {
@@ -114,6 +171,7 @@ test('execInWorker writes the prompt file before the detached dispatch and never
   // short constant path.
   assert.doesNotMatch(src, /PROMPT:\s*prompt/);
   assert.match(src, /PROMPT_FILE:\s*TURN_PROMPT_PATH/);
+  assert.match(src, /SYSTEM_PROMPT_FILE:\s*systemPrompt \? TURN_SYSTEM_PROMPT_PATH : ''/);
 
   // Ordering: the file write happens before the `docker exec -d`
   // dispatch inside execInWorker.
@@ -122,6 +180,9 @@ test('execInWorker writes the prompt file before the detached dispatch and never
   assert.ok(writeIdx !== -1, 'execInWorker awaits writeTurnPrompt');
   assert.ok(dispatchIdx !== -1, 'detached dispatch present');
   assert.ok(writeIdx < dispatchIdx, 'prompt file is written before the dispatch args are built');
+  const writeSystemIdx = src.indexOf('await writeTurnSystemPrompt(sessionId, systemPrompt)');
+  assert.ok(writeSystemIdx !== -1 && writeSystemIdx < dispatchIdx,
+    'required system context is written before detached dispatch');
 
   // The detached wrapper removes the consumed prompt file when the turn
   // ends, except for the structured missing-thread hand-off: attempt two
@@ -130,6 +191,9 @@ test('execInWorker writes the prompt file before the detached dispatch and never
   // launch attempt two; otherwise the old wrapper can delete its prompt.
   assert.match(src, /grep -qE [^\n]*agent_retry_fresh=1/);
   assert.match(src, /rm -f "\$PROMPT_FILE" 2>\/dev\/null; fi/);
+  assert.match(src, /rm -f "\$SYSTEM_PROMPT_FILE" 2>\/dev\/null; fi/);
+  assert.match(src, /filesToRemove\.push\(TURN_PROMPT_PATH, TURN_SYSTEM_PROMPT_PATH\)/,
+    'durable recovery cleanup owns and removes both shared turn-context files');
   const retryDecisionIdx = src.indexOf('if ! grep -qE');
   const exitMarkerIdx = src.indexOf('__USERNODE_EXIT__ $TURN_EXIT');
   const promptCleanupIdx = src.indexOf('rm -f "$PROMPT_FILE" 2>/dev/null; fi');
@@ -157,9 +221,111 @@ test('run-cc.sh pipes the prompt file to claude on stdin, never as a -p argument
   assert.match(cc, /\$\{PROMPT_FILE:\?PROMPT_FILE required\}/);
   assert.match(cc, /\[ -s "\$PROMPT_FILE" \] \|\| die "prompt file missing or empty/);
 
+  // A supplied system-prompt path is required and applied to every physical
+  // Claude invocation, including resume failure's fresh retry.
+  assert.match(cc, /\[ "\$MODE" = "build" \] && \[ -z "\$SYSTEM_PROMPT_FILE" \]/,
+    'hosted builds fail closed if the system-context transport is omitted');
+  assert.match(cc, /\[ -s "\$SYSTEM_PROMPT_FILE" \]/);
+  const systemPromptInvocations = cc.match(/\$SYSTEM_PROMPT_FLAGS --verbose/g) || [];
+  assert.equal(systemPromptInvocations.length, 3,
+    'resume, resume-retry-fresh, and fresh invocations all append system context');
+
   // The in-container sync-conflict prompt is small and locally built —
   // it legitimately stays an inline argument.
   assert.match(cc, /-p "\$SYNC_PROMPT"/);
+});
+
+test('run-cc.sh sends the system file on resume and its fresh fallback', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-system-prompt-'));
+  const bin = path.join(dir, 'bin');
+  const workspace = path.join(dir, 'workspace');
+  const prompt = path.join(dir, 'prompt.txt');
+  const systemPrompt = path.join(dir, 'system-prompt.txt');
+  const invocationLog = path.join(dir, 'invocations.log');
+  fs.mkdirSync(bin, { recursive: true });
+  fs.mkdirSync(workspace, { recursive: true });
+  fs.writeFileSync(prompt, 'build the requested change');
+  fs.writeFileSync(systemPrompt, 'authoritative platform rules');
+  fs.writeFileSync(path.join(bin, 'git'), '#!/bin/sh\nexit 1\n');
+  fs.writeFileSync(path.join(bin, 'claude'), `#!/bin/sh
+printf '%s\\n' "$*" >> "$INVOCATION_LOG"
+cat >/dev/null
+if printf '%s\\n' "$*" | grep -q -- '--resume'; then exit 2; fi
+echo '{"type":"result","result":"ok","session_id":"fresh-session"}'
+exit 0
+`);
+  fs.chmodSync(path.join(bin, 'git'), 0o755);
+  fs.chmodSync(path.join(bin, 'claude'), 0o755);
+
+  const result = spawnSync('sh', [path.join(__dirname, '..', 'worker', 'run-cc.sh')], {
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      PATH: `${bin}:${process.env.PATH}`,
+      INVOCATION_LOG: invocationLog,
+      PROMPT_FILE: prompt,
+      SYSTEM_PROMPT_FILE: systemPrompt,
+      CLAUDE_RESUME_SESSION_ID: 'stale-session',
+      MODE: 'scout',
+      BRANCH: 'test',
+      SESSION_ID: '1',
+      PLATFORM_URL: 'http://platform',
+      WORKSPACE_DIR: workspace,
+    },
+  });
+
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const invocations = fs.readFileSync(invocationLog, 'utf8').trim().split('\n');
+  assert.equal(invocations.length, 2, 'one resume and one fresh physical invocation');
+  for (const invocation of invocations) {
+    assert.match(invocation, new RegExp(
+      `--append-system-prompt-file ${systemPrompt.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`
+    ));
+  }
+  assert.match(invocations[0], /--resume stale-session/);
+  assert.doesNotMatch(invocations[1], /--resume/);
+});
+
+test('run-cc.sh refuses omitted or missing build system context before invoking Claude', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-missing-system-prompt-'));
+  const bin = path.join(dir, 'bin');
+  const workspace = path.join(dir, 'workspace');
+  const prompt = path.join(dir, 'prompt.txt');
+  const invocationLog = path.join(dir, 'invocations.log');
+  fs.mkdirSync(bin, { recursive: true });
+  fs.mkdirSync(workspace, { recursive: true });
+  fs.writeFileSync(prompt, 'shortened hosted build prompt');
+  fs.writeFileSync(path.join(bin, 'claude'), `#!/bin/sh
+printf 'invoked\\n' >> "$INVOCATION_LOG"
+exit 0
+`);
+  fs.chmodSync(path.join(bin, 'claude'), 0o755);
+
+  const baseEnv = {
+    ...process.env,
+    PATH: `${bin}:${process.env.PATH}`,
+    INVOCATION_LOG: invocationLog,
+    PROMPT_FILE: prompt,
+    MODE: 'build',
+    BRANCH: 'test',
+    SESSION_ID: '1',
+    WORKER_JWT: 'test-worker-jwt',
+    PLATFORM_URL: 'http://platform',
+    WORKSPACE_DIR: workspace,
+  };
+  const omitted = spawnSync('sh', [path.join(__dirname, '..', 'worker', 'run-cc.sh')], {
+    encoding: 'utf8', env: { ...baseEnv, SYSTEM_PROMPT_FILE: '' },
+  });
+  assert.notEqual(omitted.status, 0);
+  assert.match(omitted.stdout, /SYSTEM_PROMPT_FILE required for build mode/);
+
+  const missingSystemPrompt = path.join(dir, 'does-not-exist.txt');
+  const missing = spawnSync('sh', [path.join(__dirname, '..', 'worker', 'run-cc.sh')], {
+    encoding: 'utf8', env: { ...baseEnv, SYSTEM_PROMPT_FILE: missingSystemPrompt },
+  });
+  assert.notEqual(missing.status, 0);
+  assert.match(missing.stdout, /system prompt file missing or empty/);
+  assert.equal(fs.existsSync(invocationLog), false, 'Claude was never invoked');
 });
 
 // ── 4. describeTurnError E2BIG mapping ──────────────────────────────────

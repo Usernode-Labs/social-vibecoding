@@ -45,7 +45,10 @@ const WORKER_JWT_TTL = platformJwt.WORKER_TTL;
 // v6 disables Codex's incompatible nested Linux sandbox and adds per-model
 // OpenRouter metadata; every v5 warm container must be replaced to pick up
 // both runner changes.
-const WORKER_BOOTSTRAP_ENV_VERSION = 'v6';
+// v7 moves hosted Claude's platform handbook into an appended system-prompt
+// file. An older runner would ignore that file and receive only the compact
+// task prompt, so every v6 warm container must be replaced before dispatch.
+const WORKER_BOOTSTRAP_ENV_VERSION = 'v7';
 
 // Mint the auth token the worker container uses to call back into the
 // platform's internal API. Scoped to a single session id; the
@@ -764,6 +767,7 @@ function newWatchState() {
     requestToolResultTextCharacters: null,
     requestThinkingCharacters: null,
     requestPayloadCharacters: null,
+    requestSystemCharacters: null,
     requestToolDefinitionCount: null,
     requestMcpServerCount: null,
     requestAgentDefinitionCount: null,
@@ -944,6 +948,7 @@ function recordClaudeCodingRun({
     requestToolResultTextCharacters: result && result.requestToolResultTextCharacters,
     requestThinkingCharacters: result && result.requestThinkingCharacters,
     requestPayloadCharacters: result && result.requestPayloadCharacters,
+    requestSystemCharacters: result && result.requestSystemCharacters,
     requestToolDefinitionCount: result && result.requestToolDefinitionCount,
     requestMcpServerCount: result && result.requestMcpServerCount,
     requestAgentDefinitionCount: result && result.requestAgentDefinitionCount,
@@ -1062,26 +1067,40 @@ function turnJournalPath(turnId) {
 // disk. Lives outside the repo checkout, so `git add -A` can't commit
 // it; the detached wrapper rm's it when the turn ends.
 const TURN_PROMPT_PATH = '/home/node/.claude/turn-prompt.txt';
+// Hosted Claude build turns load the platform handbook from this separate
+// appended-system-prompt file. Keeping it out of TURN_PROMPT_PATH prevents a
+// resumed conversation from accumulating another ~130 KB user message every
+// turn, while Claude Code still re-applies the current rules after compaction.
+const TURN_SYSTEM_PROMPT_PATH = '/home/node/.claude/turn-system-prompt.txt';
 
-// Shell script that writes `prompt` to TURN_PROMPT_PATH. The base64
+// Shell script that writes arbitrary turn context to a fixed private path.
+// The base64
 // payload is split into bounded chunks appended by `printf` (a shell
 // builtin — no exec, so no MAX_ARG_STRLEN exposure) so the script works
 // for prompts of any size regardless of the container shell's line
 // handling. Pure — exported for unit tests.
 const PROMPT_B64_CHUNK = 64 * 1024;
-function buildTurnPromptScript(prompt) {
-  const b64 = Buffer.from(String(prompt), 'utf8').toString('base64');
+function buildTurnContextFileScript(content, targetPath) {
+  const b64 = Buffer.from(String(content), 'utf8').toString('base64');
   const lines = [
     'set -e',
     'mkdir -p /home/node/.claude',
-    `: > ${TURN_PROMPT_PATH}.b64`,
+    `: > ${targetPath}.b64`,
   ];
   for (let i = 0; i < b64.length; i += PROMPT_B64_CHUNK) {
-    lines.push(`printf '%s' '${b64.slice(i, i + PROMPT_B64_CHUNK)}' >> ${TURN_PROMPT_PATH}.b64`);
+    lines.push(`printf '%s' '${b64.slice(i, i + PROMPT_B64_CHUNK)}' >> ${targetPath}.b64`);
   }
-  lines.push(`base64 -d < ${TURN_PROMPT_PATH}.b64 > ${TURN_PROMPT_PATH}`);
-  lines.push(`rm -f ${TURN_PROMPT_PATH}.b64`);
+  lines.push(`base64 -d < ${targetPath}.b64 > ${targetPath}`);
+  lines.push(`rm -f ${targetPath}.b64`);
   return lines.join('\n') + '\n';
+}
+
+function buildTurnPromptScript(prompt) {
+  return buildTurnContextFileScript(prompt, TURN_PROMPT_PATH);
+}
+
+function buildTurnSystemPromptScript(systemPrompt) {
+  return buildTurnContextFileScript(systemPrompt, TURN_SYSTEM_PROMPT_PATH);
 }
 
 // Materialize the dispatch prompt into the warm worker's CC volume ahead
@@ -1095,6 +1114,20 @@ async function writeTurnPrompt(sessionId, prompt) {
   }
   await docker.execShellStdin(meta.containerName, buildTurnPromptScript(prompt), {
     timeoutMs: 20000, label: 'writeTurnPrompt',
+  });
+}
+
+// Required companion to writeTurnPrompt for hosted Claude builds. A failure
+// aborts before active_turn is persisted or the provider is dispatched; the
+// platform must never silently run a shortened task prompt without its
+// authoritative conventions.
+async function writeTurnSystemPrompt(sessionId, systemPrompt) {
+  const meta = _registryGet(sessionId);
+  if (!meta) {
+    throw new Error(`writeTurnSystemPrompt: no warm worker registered for session ${sessionId}`);
+  }
+  await docker.execShellStdin(meta.containerName, buildTurnSystemPromptScript(systemPrompt), {
+    timeoutMs: 20000, label: 'writeTurnSystemPrompt',
   });
 }
 
@@ -1341,7 +1374,7 @@ async function finishTurn(sessionId, { journal = null, turnId = null } = {}) {
   // An idempotent call after the row is already gone may remove only UUID-
   // unique journals; it never owns the shared prompt path.
   const filesToRemove = [...journalPaths];
-  if (ownsCleanup) filesToRemove.push(TURN_PROMPT_PATH);
+  if (ownsCleanup) filesToRemove.push(TURN_PROMPT_PATH, TURN_SYSTEM_PROMPT_PATH);
   if (filesToRemove.length) {
     const containerName = _registryGet(sessionId)?.containerName
       || workerContainerName(sessionId);
@@ -1722,6 +1755,10 @@ async function ensureWorker(sessionId, {
 async function execInWorker(sessionId, {
   mode = 'build',
   prompt,
+  // Hosted Claude build-only appended system context. The caller keeps this
+  // null for Codex, scouts, sync and local turns. Materialized separately so
+  // it is a stable system layer rather than another conversation message.
+  systemPrompt = null,
   // Restart recovery can reuse the prompt file deliberately retained by a
   // runner that emitted agent_retry_fresh=1. Live calls keep writing the
   // supplied prompt exactly as before.
@@ -1792,6 +1829,9 @@ async function execInWorker(sessionId, {
   if (!prompt && !reusePromptFile) {
     throw new Error('execInWorker: prompt required');
   }
+  if (systemPrompt != null && (typeof systemPrompt !== 'string' || !systemPrompt.trim())) {
+    throw new Error('execInWorker: systemPrompt must be a non-empty string');
+  }
   const containerName = meta.containerName;
   const durableTurnId = logicalTurnId || turnUuid || turnLifecycle.newTurnId();
   const dispatchSetupStartedMs = Date.now();
@@ -1840,6 +1880,12 @@ async function execInWorker(sessionId, {
   // One backend decision for this whole dispatch (review Commit 1 /
   // plan 3.1): all runner/token/env/active-turn choices derive from it.
   const { backend: resolvedBackend, isCodex, isClaude } = resolveTurnBackend(agentBackend);
+  if (systemPrompt && !isClaude) {
+    throw new Error('execInWorker: systemPrompt is only supported for Claude turns');
+  }
+  if (isClaude && mode === 'build' && !systemPrompt) {
+    throw new Error('execInWorker: hosted Claude build requires systemPrompt');
+  }
   const useAnthropicProxy = isClaude && !anthropicApiKey;
   const measuredTelemetryComponent = llmTelemetry.collectionComponent(telemetryComponent);
   const measuredTelemetryCorrelationId = isClaude && measuredTelemetryComponent
@@ -1883,6 +1929,10 @@ async function execInWorker(sessionId, {
   if (!reusePromptFile) {
     await writeTurnPrompt(sessionId, prompt);
   }
+  // A reused task prompt is a Codex recovery concern today, but keep this
+  // write independent so any future Claude recovery cannot point the runner
+  // at an absent or stale system-context file.
+  if (systemPrompt) await writeTurnSystemPrompt(sessionId, systemPrompt);
 
   // Anthropic-proxy: when the caller provides a BYOK key (anthropicApiKey
   // truthy), the worker hits api.anthropic.com directly with that key
@@ -1909,6 +1959,7 @@ async function execInWorker(sessionId, {
   });
   const safeEnv = {
     PROMPT_FILE: TURN_PROMPT_PATH,
+    SYSTEM_PROMPT_FILE: systemPrompt ? TURN_SYSTEM_PROMPT_PATH : '',
     MODE: mode,
     BRANCH: branchName || '',
     COMMIT_MSG: commitMsg || 'Changes via Usernode',
@@ -1989,6 +2040,7 @@ async function execInWorker(sessionId, {
       // removes it immediately as before.
       + 'if ! grep -qE "^__USERNODE_RESULT__ .*agent_retry_fresh=1([[:space:]]|$)" "$TURN_JOURNAL"; then '
       + 'rm -f "$PROMPT_FILE" 2>/dev/null; fi; '
+      + 'if [ -n "$SYSTEM_PROMPT_FILE" ]; then rm -f "$SYSTEM_PROMPT_FILE" 2>/dev/null; fi; '
       + 'echo "__USERNODE_EXIT__ $TURN_EXIT" >> "$TURN_JOURNAL"; exit "$TURN_EXIT"',
   ];
 
@@ -2019,6 +2071,12 @@ async function execInWorker(sessionId, {
     telemetryAttemptNumber: measuredTelemetryAttemptNumber || undefined,
     telemetryRequestMode: resumeSessionId ? 'agent_resume' : 'agent_new',
     telemetryRequestTextCharacters: typeof prompt === 'string' ? prompt.length : undefined,
+    telemetryRequestSystemCharacters: typeof systemPrompt === 'string'
+      ? systemPrompt.length
+      : undefined,
+    telemetryRequestPayloadCharacters: typeof prompt === 'string'
+      ? prompt.length + (typeof systemPrompt === 'string' ? systemPrompt.length : 0)
+      : undefined,
     telemetryModelContextWindowTokens: agentModelMetadata?.contextWindow ?? undefined,
     telemetryModelMaxOutputTokens: agentModelMetadata?.maxOutputTokens ?? undefined,
     model: persistedModel,
@@ -2114,7 +2172,10 @@ async function execInWorker(sessionId, {
     state.requestContentBlockCount = typeof prompt === 'string' ? 1 : null;
     state.requestTextCharacters = typeof prompt === 'string' ? prompt.length : null;
     state.requestUserTextCharacters = typeof prompt === 'string' ? prompt.length : null;
-    state.requestPayloadCharacters = typeof prompt === 'string' ? prompt.length : null;
+    state.requestSystemCharacters = typeof systemPrompt === 'string' ? systemPrompt.length : null;
+    state.requestPayloadCharacters = typeof prompt === 'string'
+      ? prompt.length + (state.requestSystemCharacters || 0)
+      : null;
     if (persistedModel) state.providerModelCount = 1;
     state.modelContextWindowTokens = agentModelMetadata?.contextWindow ?? null;
     state.modelMaxOutputTokens = agentModelMetadata?.maxOutputTokens ?? null;
@@ -2600,6 +2661,8 @@ async function resumeTurnFromJournal(sessionId, {
   telemetryAttemptNumber = null,
   telemetryRequestMode = null,
   telemetryRequestTextCharacters = null,
+  telemetryRequestSystemCharacters = null,
+  telemetryRequestPayloadCharacters = null,
   telemetryModelContextWindowTokens = null,
   telemetryModelMaxOutputTokens = null,
   requestedModel = null,
@@ -2655,7 +2718,11 @@ async function resumeTurnFromJournal(sessionId, {
   state.requestContentBlockCount = telemetryRequestTextCharacters == null ? null : 1;
   state.requestTextCharacters = telemetryRequestTextCharacters;
   state.requestUserTextCharacters = telemetryRequestTextCharacters;
-  state.requestPayloadCharacters = telemetryRequestTextCharacters;
+  state.requestSystemCharacters = telemetryRequestSystemCharacters;
+  state.requestPayloadCharacters = telemetryRequestPayloadCharacters
+    ?? (telemetryRequestTextCharacters == null
+      ? null
+      : telemetryRequestTextCharacters + (telemetryRequestSystemCharacters || 0));
   state.modelContextWindowTokens = telemetryModelContextWindowTokens;
   state.modelMaxOutputTokens = telemetryModelMaxOutputTokens;
   if (requestedModel) state.providerModelCount = 1;
@@ -3097,6 +3164,9 @@ module.exports = {
   buildTurnSecretEnv,
   // file-based dispatch-prompt transport (E2BIG fix; exported for tests)
   TURN_PROMPT_PATH,
+  TURN_SYSTEM_PROMPT_PATH,
   buildTurnPromptScript,
+  buildTurnSystemPromptScript,
   writeTurnPrompt,
+  writeTurnSystemPrompt,
 };

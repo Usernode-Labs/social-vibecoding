@@ -150,6 +150,7 @@ function warmSession(worker, sessionId) {
 const DISPATCH_ARGS = {
   mode: 'build',
   prompt: 'do the thing',
+  systemPrompt: 'authoritative platform conventions',
   model: 'claude-opus-5',
   commitMsg: 'wip',
   branchName: 'dev/test',
@@ -469,6 +470,20 @@ test('with no stop pending, a dispatch proceeds and issues no kill', async () =>
     assert.ok(dispatch.args.includes('COMMIT_MSG=wip'),
       'the requested commit message reaches the runner as non-secret configuration');
     assert.ok(!calls.some(isStopScript), 'and nothing kills a healthy turn');
+  } finally { restore(); }
+});
+
+test('a hosted Claude build cannot dispatch without authoritative system context', async () => {
+  const { worker, calls, restore } = loadWorker();
+  try {
+    warmSession(worker, 8302);
+
+    await assert.rejects(
+      () => worker.execInWorker(8302, { ...DISPATCH_ARGS, systemPrompt: null }),
+      /hosted Claude build requires systemPrompt/
+    );
+
+    assert.equal(calls.length, 0, 'validation fails before either context file or the provider is touched');
   } finally { restore(); }
 });
 

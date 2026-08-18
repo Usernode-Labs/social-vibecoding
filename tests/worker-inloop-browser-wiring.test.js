@@ -82,8 +82,9 @@ test('run-cc.sh gates the MCP flags on MODE=build and uses --strict-mcp-config',
 test('run-cc.sh applies the MCP flags to the build/scout claude invocations', () => {
   const cc = read('run-cc.sh');
   // the three non-sync invocations (resume, resume-retry, fresh) carry the
-  // (possibly empty) browser flag var right after PERMISSION_FLAGS
-  const matches = cc.match(/claude --print \$PERMISSION_FLAGS \$BROWSER_MCP_FLAGS --verbose/g) || [];
+  // (possibly empty) browser flag var right after PERMISSION_FLAGS. The
+  // independently optional system-prompt flags follow it.
+  const matches = cc.match(/claude --print \$PERMISSION_FLAGS \$BROWSER_MCP_FLAGS \$SYSTEM_PROMPT_FLAGS --verbose/g) || [];
   assert.equal(matches.length, 3);
 });
 

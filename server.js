@@ -3272,6 +3272,8 @@ async function resumeDetachedTurnInner({
       telemetryAttemptNumber: activeTurn.telemetryAttemptNumber || activeTurn.attemptNumber || 1,
       telemetryRequestMode: activeTurn.telemetryRequestMode || null,
       telemetryRequestTextCharacters: activeTurn.telemetryRequestTextCharacters ?? null,
+      telemetryRequestSystemCharacters: activeTurn.telemetryRequestSystemCharacters ?? null,
+      telemetryRequestPayloadCharacters: activeTurn.telemetryRequestPayloadCharacters ?? null,
       telemetryModelContextWindowTokens: activeTurn.telemetryModelContextWindowTokens ?? null,
       telemetryModelMaxOutputTokens: activeTurn.telemetryModelMaxOutputTokens ?? null,
       requestedModel: activeTurn.model || null,
