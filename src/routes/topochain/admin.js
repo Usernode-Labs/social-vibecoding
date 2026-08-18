@@ -36,6 +36,7 @@ const { dbToolsAdminRoutes } = require('./admin/db-tools');
 const { delegationsAdminRoutes } = require('./admin/delegations');
 const { waitlistAdminRoutes } = require('./admin/waitlist');
 const { apiCatalogAdminRoutes } = require('./admin/api-catalog');
+const { leaderboardAdminRoutes } = require('./admin/leaderboard');
 
 function topochainAdminRoutes(config) {
   const router = Router();
@@ -147,6 +148,13 @@ function topochainAdminRoutes(config) {
   // elsewhere, and it introspects Express's router stack rather than
   // touching the database, so mount order is irrelevant to it.
   router.use(apiCatalogAdminRoutes(config));
+
+  // The snapshot builder's trigger (POST /leaderboard/aggregate). Its
+  // `/leaderboard` path is unused by every other admin group — the
+  // public/mobile leaderboard reads live at the unprefixed
+  // `/api/v4/leaderboard`, a different literal path behind different
+  // auth.
+  router.use(leaderboardAdminRoutes(config));
 
   return router;
 }

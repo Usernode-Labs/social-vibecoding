@@ -1011,6 +1011,13 @@
       "preview": "`SELECT ${columnList} FROM ${table} ORDER BY 1`"
     },
     {
+      "source": "src/services/topochain/snapshot-builder.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "8bc6a43a6ca98c6d2fe8",
+      "count": 1,
+      "preview": "SNAPSHOT_UPSERT_SQL"
+    },
+    {
       "source": "src/services/topochain/sql-console.js",
       "kind": "runtime-built-identifier",
       "fingerprint": "adbf45b08ad6468aa147",

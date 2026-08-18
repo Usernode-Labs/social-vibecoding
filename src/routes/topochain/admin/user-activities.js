@@ -19,6 +19,7 @@ const { getPool } = require('../../../db/pool');
 const log = require('../../../services/logger');
 const { adminWriteGate } = require('./auth');
 const { toIntId, toDate } = require('./util');
+const { computeOffchainColumns, resolveOffchainWeight } = require('../../../services/topochain/scoring');
 const {
   ok, fail, iso, num, paginate, meta, ValidationError,
 } = require('../helpers');
@@ -465,7 +466,7 @@ function userActivitiesAdminRoutes(config) {
         return fail(res, 400, 'Refresh totals is only available for ended events. Active events are managed automatically.');
       }
 
-      const offchainWeight = Number(event.scoring_formula?.offchain_weight) || 0;
+      const offchainWeight = resolveOffchainWeight(event.scoring_formula);
 
       const { rows: sumRows } = await client.query(
         `SELECT user_id, activity_type, COALESCE(SUM(points), 0) AS total_points
@@ -490,14 +491,9 @@ function userActivitiesAdminRoutes(config) {
       await client.query('BEGIN');
       try {
         for (const [userId, byType] of perUser.entries()) {
-          const totalAll = Object.values(byType).reduce((a, b) => a + b, 0);
-          const extraPoints = Math.round(totalAll * offchainWeight * 100) / 100;
-          const bugReportPoints = Math.round((byType.bug_report || 0) * offchainWeight);
-          const invitingPoints = Math.round((byType.inviting_new_participant || 0) * offchainWeight);
-          const communityPoints = Math.round((byType.community_contribution || 0) * offchainWeight);
-          const firstBlockPoints = Math.round((byType.first_block || 0) * offchainWeight);
-          const top3Points = Math.round((byType.top_3 || 0) * offchainWeight);
-          const success50Points = Math.round((byType.success_50_percent || 0) * offchainWeight);
+          // Shared with the snapshot builder (scoring.js) so this route
+          // and buildSnapshots can never disagree on the offchain scale.
+          const offchain = computeOffchainColumns(byType, offchainWeight);
 
           // Only the LATEST snapshot per user for this event is rewritten
           // — the current, displayed one — matching the "latest snapshot
@@ -514,8 +510,9 @@ function userActivitiesAdminRoutes(config) {
                   ORDER BY user_id, snapshot_at DESC, id DESC
                ) latest
               WHERE ls.id = latest.id`,
-            [seasonEventId, userId, extraPoints, bugReportPoints, invitingPoints, communityPoints,
-              firstBlockPoints, top3Points, success50Points]
+            [seasonEventId, userId, offchain.extra_points, offchain.bug_report_points,
+              offchain.inviting_new_participant_points, offchain.community_contribution_points,
+              offchain.first_block_points, offchain.top_3_points, offchain.success_50_percent_points]
           );
           if (rowCount > 0) updatedCount += 1;
         }
