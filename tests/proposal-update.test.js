@@ -1524,3 +1524,76 @@ test('the card is written by both session tails and only the session tails', () 
   assert.doesNotMatch(beforeTails, /recordChangesReadyCard/,
     'promoted proposals keep their own re-review machinery — no session card');
 });
+
+// ── 13. The submitted title ────────────────────────────────────────────
+//
+// submit_work's `title` used to be dropped on the update path, so the PR
+// lazily created at propose time was born "<user>'s changes · auto-title
+// pending". A session update now stores it (proposed_pr_title), and the
+// promote path hands it to pr-metadata as preferredTitle. A proposal that
+// already has a PR keeps its title — updating one never renames it.
+
+test('a session update stores the submitted title for the lazily-created PR', async () => {
+  const log = {};
+  const titles = [];
+  const session = sessionRow('paused');
+  const pool = fakePool([
+    ['SET proposed_pr_title', (params) => { titles.push(params); return []; }],
+    ['FROM chat_sessions cs JOIN apps a', [session]],
+    ['UPDATE chat_sessions', [{ id: session.id }]],
+    ['INSERT INTO chat_session_messages', []],
+  ]);
+  const result = await runSession('paused', { session, pool }, log,
+    { title: '  Klondike Solitaire:   canvas board for mobile  ' });
+  assert.equal(result.ok, true);
+  assert.equal(result.titleUpdated, true);
+  assert.deepEqual(titles[0], ['Klondike Solitaire: canvas board for mobile', 501],
+    'trimmed and single-spaced, the shape the PR will carry');
+  assert.equal(session.proposed_pr_title, 'Klondike Solitaire: canvas board for mobile',
+    'the in-memory row is mutated too — promote reads it off the session');
+});
+
+test('a same-commit resubmit is how a title correction arrives', async () => {
+  // The update that should have carried the title may already have landed —
+  // same reasoning as #1199's capture routes, applied to the name.
+  const log = {};
+  const titles = [];
+  const session = sessionRow('paused');
+  const pool = fakePool([
+    ['SET proposed_pr_title', (params) => { titles.push(params); return []; }],
+    ['FROM chat_sessions cs JOIN apps a', [session]],
+    ['UPDATE chat_sessions', [{ id: session.id }]],
+  ]);
+  const result = await runSession('paused',
+    { session, pool, gh: { getBranchSha: async () => FORK_HEAD } }, log,
+    { title: 'Klondike Solitaire: canvas board for mobile' });
+  assert.equal(result.ok, true);
+  assert.equal(result.unchanged, true);
+  assert.equal(result.titleUpdated, true);
+  assert.equal(titles.length, 1);
+
+  // And repeating the stored value is a no-op, not a rewrite.
+  const log2 = {};
+  const titles2 = [];
+  const session2 = sessionRow('paused', { proposed_pr_title: 'Klondike Solitaire: canvas board for mobile' });
+  const pool2 = fakePool([
+    ['SET proposed_pr_title', (params) => { titles2.push(params); return []; }],
+    ['FROM chat_sessions cs JOIN apps a', [session2]],
+    ['UPDATE chat_sessions', [{ id: session2.id }]],
+  ]);
+  const r2 = await runSession('paused',
+    { session: session2, pool: pool2, gh: { getBranchSha: async () => FORK_HEAD } }, log2,
+    { title: 'Klondike Solitaire: canvas board for mobile' });
+  assert.equal(r2.ok, true);
+  assert.equal(r2.titleUpdated, false);
+  assert.equal(titles2.length, 0);
+});
+
+test('updating a proposal that already has a PR never renames it', async () => {
+  const log = {};
+  const result = await run({}, { title: 'A different name' }, log);
+  assert.equal(result.ok, true);
+  assert.equal(result.titleUpdated, false);
+  assert.ok(!sqlsOf(log).some((s) => /proposed_pr_title/.test(s)),
+    'a row with a PR keeps the title the group is voting under');
+});

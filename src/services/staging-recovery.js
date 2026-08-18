@@ -287,6 +287,9 @@ async function rebuildSessionStaging({ config, pool, session, reason }) {
         apiKey: metadataApiKey,
         userId: session.user_id,
         allowModelGeneration: metadataGenerationAllowed,
+        // Same as the promote-time lazy creation: an author-submitted title
+        // names the recovered PR verbatim.
+        preferredTitle: session.proposed_pr_title || null,
         broadcast: (event, data) =>
           broadcastGlobal({ type: 'session_event', sessionId: session.id, event, ...data }),
       });

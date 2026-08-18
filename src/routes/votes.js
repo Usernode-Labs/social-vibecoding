@@ -1658,6 +1658,10 @@ function voteRoutes(config) {
             apiKey: metadataApiKey,
             userId: req.user.id,
             allowModelGeneration: metadataGenerationAllowed,
+            // A title the author submitted with the work (submit_work's
+            // `title`, stored at update time) names the PR verbatim instead
+            // of "<user>'s changes · auto-title pending".
+            preferredTitle: session.proposed_pr_title || null,
           });
         } catch (err) {
           prError = err;

@@ -2192,7 +2192,7 @@ function registerTools(server, ctx) {
         .describe('The change as a patch, for when GitHub refused the push — the output of `git format-patch <baseSha>..HEAD --stdout`, or a plain `git diff`. Usernode applies it at the task’s recorded base commit, commits it in the app’s own repository and opens the pull request, so you need no GitHub write access at all. Requires taskId. Roughly 250 KB max; push a branch for anything larger.'),
       source: z.enum(['work_order', 'assistant']).optional()
         .describe('Set to "work_order" when you are the coding agent submitting your own finished work, "assistant" when a human relayed it to you. Advisory only.'),
-      title: z.string().optional().describe('A short title for the proposal. Defaults to the task description.'),
+      title: z.string().optional().describe('A short title for the proposal. Defaults to the task description. On a SESSION update (shape 4 targeting a work-order continuation) it is stored and names the pull request created when the session is proposed — with or without propose: true — instead of the "<user>\'s changes" placeholder; a proposal that already has a PR keeps its title.'),
       description: z.string().optional().describe('What changed and why, for the people voting on it.'),
       testingPaths: z.array(z.string()).optional()
         .describe('The in-app routes this change is visible on, most important first — e.g. ["/board?demo=1", "/settings"]. Usernode shoots a before/after screenshot pair of each one for the people voting. Point them at the SCREEN YOU CHANGED, never the home page; a route may carry " @mobile" to be shot in a phone-sized viewport. Up to 3 are used. Omit only if the change has no visible screen — otherwise the voters see screenshots of the app\'s home page, which show nothing of your change. On an UPDATE these replace the proposal\'s stored routes and the screenshots are re-shot on them; omit them there to keep the ones it already has. The answer reports back `testingPaths` — what will actually be shot — and `testingPathsRejected` for anything it could not use, so check them rather than waiting for get_proposal\'s `captureDefaultedToRoot`.'),
@@ -2438,6 +2438,11 @@ function registerTools(server, ctx) {
         : proposed === false
           ? ` The update landed, but putting it up for the vote did not: ${proposeError} The commit is safe on the session — fix the cause and call submit_work again with propose: true (the same commit is fine), or propose it from the session page.`
           : (propose === true ? ' propose: true had nothing to do — this target is already up for the group\'s vote.' : '');
+      // Only worth a line when a vote is NOT already reporting the name: a
+      // proposed session's PR carries the title, and the note above names it.
+      const titleNote = result.titleUpdated === true && proposed !== true
+        ? ' Your title is stored and will name the pull request created when the session is proposed.'
+        : '';
 
       return toolResult({
         proposalId: result.proposalId,
@@ -2463,7 +2468,7 @@ function registerTools(server, ctx) {
             ? ` The ${cleared} vote${cleared === 1 ? '' : 's'} it had collected were cleared, because they were cast on the old code`
             : ' Any votes it had collected were cleared, because they were cast on the old code'}`
             + ' — reviewers have been asked to look again. Checks and the staging preview rebuild automatically; '
-            + `use get_proposal to follow them.${shotOn}`) + rejectedNote + proposeNote,
+            + `use get_proposal to follow them.${shotOn}`) + rejectedNote + titleNote + proposeNote,
       });
     }
 

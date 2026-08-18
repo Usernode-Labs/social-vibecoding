@@ -909,7 +909,9 @@ test('submit_work takes shape (4) exactly as documented: proposalId + branch', a
     submittedVia: 'update_branch',
   }), { scopes: [READ_SCOPE, WRITE_SCOPE], pool });
   try {
-    const res = await handlers.get('submit_work')({ proposalId: 3140, branch: 'my-fix' });
+    const res = await handlers.get('submit_work')({
+      proposalId: 3140, branch: 'my-fix', title: 'Klondike Solitaire: canvas board for mobile',
+    });
     assert.notEqual(res.isError, true, 'no slug, and no refusal');
     assert.equal(res.structuredContent.proposalId, 3140);
     assert.equal(res.structuredContent.votesCleared, 2);
@@ -919,6 +921,10 @@ test('submit_work takes shape (4) exactly as documented: proposalId + branch', a
     // Resolved to the app the proposal is on, and pushed through the
     // platform's own update route.
     assert.equal(calls.at(-1).pathname, '/api/apps/recipe-box/proposals/3140/update-from-fork');
+    // The agent's title travels WITH the update — it used to be dropped
+    // here, which is how a proposed session's PR was born "<user>'s
+    // changes · auto-title pending".
+    assert.equal(calls.at(-1).body.title, 'Klondike Solitaire: canvas board for mobile');
   } finally {
     restore();
     gh.isEnabled = realGhEnabled;

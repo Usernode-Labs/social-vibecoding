@@ -531,6 +531,15 @@ async function applyPrMetadata({
   effectBillingByok = !!apiKey,
   metadataMode = null,
   allowModelGeneration = true,
+  // A title the AUTHOR explicitly submitted with the work (an external
+  // agent's submit_work `title`, stored as chat_sessions.proposed_pr_title).
+  // Used verbatim for the PR title instead of the generated one, and never
+  // marked as a fallback — the title-heal sweeper must not overwrite a
+  // deliberate name with a generated guess. The body is still generated as
+  // usual. Passed by the lazy-PR call sites (promote, staging recovery,
+  // title heal); the interactive turn path deliberately does NOT pass it —
+  // a session that keeps evolving keeps its regenerating titles.
+  preferredTitle = null,
 }) {
   if (!repoOwner || !repoName) return null;
 
@@ -615,11 +624,20 @@ async function applyPrMetadata({
       ...generationArgs, closingBlock, testingBlock, visualsBlock,
     });
   }
-  const { title: prTitle, body: prBody } = meta;
+  const { title: generatedTitle, body: prBody } = meta;
+  // An author-submitted title outranks the generated one (see the
+  // preferredTitle note in the signature). Normalized the way the route
+  // bounded it: trimmed, single-spaced, GitHub's title length.
+  const chosenTitle = typeof preferredTitle === 'string'
+    ? preferredTitle.trim().replace(/\s+/g, ' ').slice(0, 256)
+    : '';
+  const prTitle = chosenTitle || generatedTitle;
   // True when the title/body came from the fallback template (LLM
   // unavailable). Persisted to chat_sessions.pr_title_fallback so the
-  // title-heal sweeper retries later and the UI marks the placeholder.
-  const isFallback = !!meta.fallback;
+  // title-heal sweeper retries later and the UI marks the placeholder. A
+  // preferred title is never a fallback: it is the author's own name for
+  // the change, and the sweeper must leave it alone.
+  const isFallback = chosenTitle ? false : !!meta.fallback;
   // Plain-language user-facing summary (optional, empty string when absent).
   // Stored to chat_sessions.pr_summary_md and rendered at the top of the
   // in-app proposal view; the same string already leads the PR body above.
