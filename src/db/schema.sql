@@ -2951,6 +2951,17 @@ COMMENT ON TABLE chat_session_drafts IS 'staging:private';
 -- the placeholder isn't the real description of the change.
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_title_fallback BOOLEAN NOT NULL DEFAULT FALSE;
 
+-- The title an external agent submitted with a session update
+-- (submit_work's `title`, stored by services/proposal-update.js). Used
+-- verbatim when the session's pull request is lazily created at propose
+-- time, instead of generating one — the fresh-task path already uses the
+-- agent's title verbatim (prTitleFor), so a proposed session starting life
+-- as "<user>'s changes · auto-title pending" was an asymmetry, not a
+-- choice. One-shot: once a PR exists its own title governs, and later
+-- interactive turns keep regenerating it as they always did. NULL for
+-- sessions never updated through submit_work.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS proposed_pr_title TEXT;
+
 -- Feedback issues filed with the fallback title ("Feedback from Usernode")
 -- because the Haiku title call failed (routes/feedback.js). The issue is
 -- filed immediately regardless — never block feedback on LLM availability —

@@ -22,6 +22,7 @@ function loadWithStubs({
   usage,
   costCents = 0,
   findOpenPrByBranch,
+  generate,
 }) {
   const llmPath = require.resolve('../src/services/llm');
   const ghPath = require.resolve('../src/services/github');
@@ -38,6 +39,7 @@ function loadWithStubs({
       estimateCostCents: () => costCents,
       generatePrMetadata: async (args) => {
         onGenerate(args);
+        if (generate) return generate(args);
         return { title: 'Cumulative title', body: 'Cumulative body', summary, usage, model: 'claude-haiku-4-5' };
       },
     },
@@ -852,6 +854,85 @@ test('applyPrMetadata re-throws createPR "github_unavailable" for honest caller 
       'the typed github_unavailable error propagates to the caller'
     );
     assert.equal(session.pr_number, null, 'no PR was persisted');
+  } finally {
+    restore();
+  }
+});
+
+// ── preferredTitle — the author's own name for the change ──────────────
+//
+// An external agent's submit_work `title` is stored on the session
+// (proposed_pr_title) and handed here by the lazy-PR call sites. It names
+// the PR verbatim — the fresh-task path already uses the agent's title
+// verbatim (prTitleFor), so a proposed session starting life as
+// "<user>'s changes" was an asymmetry, not a choice — and it never counts
+// as a fallback, or the title-heal sweeper would overwrite the deliberate
+// name with a generated guess.
+
+test('a preferred title names the PR verbatim and outranks the generated one', async () => {
+  const githubCalls = [];
+  const { subject, restore } = loadWithStubs({ onGenerate: () => {}, githubCalls });
+  try {
+    const pool = mockPool([{ role: 'user', content: 'Make Klondike a canvas', metadata: {} }]);
+    const session = { id: 9, branch_name: 'dev/klondike', pr_number: null };
+    await subject.applyPrMetadata({
+      pool, session, repoOwner: 'acme', repoName: 'app',
+      userMessage: 'Make Klondike a canvas', ccSummary: '', username: 'evan',
+      preferredTitle: '  Klondike Solitaire:   canvas board for mobile  ',
+    });
+    assert.equal(githubCalls[0].type, 'create');
+    assert.equal(githubCalls[0].opts.title, 'Klondike Solitaire: canvas board for mobile',
+      'trimmed and single-spaced, never the generated "Cumulative title"');
+    assert.equal(session.pr_title, 'Klondike Solitaire: canvas board for mobile');
+    assert.equal(session.session_title, 'Klondike Solitaire: canvas board for mobile');
+    assert.equal(session.pr_title_fallback, false);
+    // Only the NAME was submitted — the body still comes from generation.
+    assert.match(githubCalls[0].opts.body, /Cumulative body/);
+  } finally {
+    restore();
+  }
+});
+
+test('a preferred title is never marked as a fallback, even when generation falls back', async () => {
+  // The exact scenario that produced "evan's changes · auto-title pending":
+  // the LLM call failed, so the fallback template fired. With a preferred
+  // title the template still supplies the body, but the NAME is the
+  // author's and the heal sweeper has nothing to fix.
+  const githubCalls = [];
+  const { subject, restore } = loadWithStubs({
+    onGenerate: () => {}, githubCalls,
+    generate: () => { throw new Error('credits exhausted'); },
+  });
+  try {
+    const pool = mockPool([{ role: 'user', content: 'x', metadata: {} }]);
+    const session = { id: 9, branch_name: 'dev/klondike', pr_number: null };
+    await subject.applyPrMetadata({
+      pool, session, repoOwner: 'acme', repoName: 'app',
+      userMessage: 'x', ccSummary: '', username: 'evan',
+      preferredTitle: 'Klondike Solitaire: canvas board for mobile',
+    });
+    assert.equal(githubCalls[0].opts.title, 'Klondike Solitaire: canvas board for mobile');
+    assert.equal(session.pr_title_fallback, false,
+      'a deliberate name is not a placeholder — the sweeper must leave it alone');
+  } finally {
+    restore();
+  }
+});
+
+test('without a preferred title the fallback path still heals as before', async () => {
+  const githubCalls = [];
+  const { subject, restore } = loadWithStubs({
+    onGenerate: () => {}, githubCalls,
+    generate: () => { throw new Error('credits exhausted'); },
+  });
+  try {
+    const pool = mockPool([{ role: 'user', content: 'x', metadata: {} }]);
+    const session = { id: 9, branch_name: 'dev/klondike', pr_number: null };
+    await subject.applyPrMetadata({
+      pool, session, repoOwner: 'acme', repoName: 'app',
+      userMessage: 'x', ccSummary: '', username: 'evan',
+    });
+    assert.equal(session.pr_title_fallback, true, 'the placeholder is still flagged for the sweeper');
   } finally {
     restore();
   }

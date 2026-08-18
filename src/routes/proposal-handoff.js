@@ -302,7 +302,7 @@ function requireCliMiddleware(req, res, next) {
 // were accepted by submit_work, dropped here, and every revised proposal
 // silently fell back to home-page screenshots.
 function parseUpdateFromForkBody(body) {
-  exactKeys(body, ['branch', 'forkRepo', 'expectedHeadSha', 'testingPaths', 'testingSteps'], 'body');
+  exactKeys(body, ['branch', 'forkRepo', 'expectedHeadSha', 'testingPaths', 'testingSteps', 'title'], 'body');
   const branch = boundedText(body.branch, { label: 'branch', min: 1, max: 255, trim: true });
   const forkRepo = body.forkRepo == null
     ? null
@@ -322,8 +322,14 @@ function parseUpdateFromForkBody(body) {
   if (body.testingSteps != null) {
     boundedText(body.testingSteps, { label: 'testingSteps', max: 16 * 1024 });
   }
+  // The name the lazily-created PR takes when the session is proposed
+  // (GitHub's own title cap). Optional; the service ignores it for a row
+  // that already has a PR.
+  const title = body.title == null
+    ? null
+    : boundedText(body.title, { label: 'title', min: 1, max: 256, trim: true });
   const testing = require('../services/testing-notes').parseSubmitted(body);
-  return { branch, forkRepo, expectedHeadSha, testing };
+  return { branch, forkRepo, expectedHeadSha, testing, title };
 }
 
 function repoCoordinates(app) {
@@ -597,6 +603,7 @@ function proposalHandoffRoutes(config) {
           forkRepo: input.forkRepo,
           expectedHeadSha: input.expectedHeadSha,
           testing: input.testing,
+          title: input.title,
           origin: config.cliAuthOrigin || null,
         }
       );

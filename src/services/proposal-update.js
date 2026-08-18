@@ -361,6 +361,7 @@ async function updateProposalFromForkBranch(deps, params) {
         session, owner, repo, forkOwner: link.login, forkRepo, branch,
         expectedLogin: link.login, expectedHeadSha, sessionId,
         testing: normalizeTesting(params.testing),
+        title: normalizeProposedTitle(params.title),
         // The one module the same-commit resubmit path needs and no other
         // path does: re-running the checks against corrected capture routes
         // is the same operation the "Re-run checks" button performs.
@@ -457,6 +458,43 @@ function rejectedPaths(testing) {
   return require('./testing-notes').explainDrops(testing && testing.dropped);
 }
 
+// The title the agent submitted with the work, in the shape the PR will
+// carry it: trimmed, single-spaced, GitHub's title length. Null when absent
+// or empty — the caller then leaves the stored value alone.
+function normalizeProposedTitle(title) {
+  if (typeof title !== 'string') return null;
+  const t = title.trim().replace(/\s+/g, ' ').slice(0, 256);
+  return t || null;
+}
+
+// Store the submitted title as the name the lazily-created PR will take at
+// propose time (chat_sessions.proposed_pr_title; used by routes/votes.js's
+// promote path via pr-metadata's preferredTitle). Sessions only: a row that
+// already has a PR has a title of its own — updating a promoted proposal
+// never renames it. Mirrors applyTestingMetadata's contract: mutates the
+// in-memory row, no-ops on same-value, and a failed write is logged, never
+// fatal to an update that landed.
+async function applyProposedTitle({ pool, session, title }) {
+  if (!title || session.pr_number) return false;
+  if ((session.proposed_pr_title || null) === title) return false;
+  try {
+    await pool.query(
+      'UPDATE chat_sessions SET proposed_pr_title = $1 WHERE id = $2',
+      [title, Number(session.id)]
+    );
+  } catch (err) {
+    log.error('proposal-update', 'could not store the revision\'s proposed title', {
+      sessionId: Number(session.id), err: err.message,
+    });
+    return false;
+  }
+  session.proposed_pr_title = title;
+  log.info('proposal-update', 'stored the revision\'s proposed title', {
+    sessionId: Number(session.id),
+  });
+  return true;
+}
+
 // Writes only the columns the caller actually supplied, and mutates the
 // in-memory row to match. Returns { changed, pathsChanged, stepsChanged,
 // paths } — `changed` false when nothing was supplied OR when what was
@@ -528,12 +566,17 @@ async function resubmitUnchanged(ctx, headSha, via) {
   const { pool, config, session, sessionId } = ctx;
   const base = unchanged(session, headSha, via);
   const applied = await applyTestingMetadata({ pool, session, testing: ctx.testing });
+  // Same-commit resubmits are also how a title correction arrives — the
+  // update that should have carried it may already have landed (#1199's
+  // reasoning, applied to the name instead of the screenshots).
+  const titleApplied = await applyProposedTitle({ pool, session, title: ctx.title });
   const reported = {
     ...base,
     testingUpdated: applied.changed,
     testingPaths: displayPaths(applied.paths),
     testingPathsRejected: rejectedPaths(ctx.testing),
     captureRerun: false,
+    titleUpdated: titleApplied,
   };
   if (!applied.changed) return reported;
 
@@ -726,6 +769,10 @@ async function advanceAppRepoBranch(ctx) {
   // BEFORE the tails, every one of which ends in a capture that reads the
   // routes off this session object (#1199).
   const testingApplied = await applyTestingMetadata({ pool, session, testing: ctx.testing });
+  // And the submitted title, which the promote-time lazy PR creation reads
+  // off the row — sessions only; applyProposedTitle no-ops when a PR (and
+  // so a real title) already exists.
+  const titleApplied = await applyProposedTitle({ pool, session, title: ctx.title });
 
   // Everything the three tails agree on. They differ only in what they do to
   // the session afterwards and in the three booleans that describe it.
@@ -752,6 +799,7 @@ async function advanceAppRepoBranch(ctx) {
     testingUpdated: testingApplied.changed,
     testingPaths: displayPaths(testingApplied.paths),
     testingPathsRejected: rejectedPaths(ctx.testing),
+    titleUpdated: titleApplied,
   };
 
   // ── Tail 1a: an IMPORTED proposal on a bot-owned branch (#1196) ─────

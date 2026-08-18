@@ -2139,6 +2139,10 @@ async function submitUpdate(deps, params, proposalId) {
     expectedHeadSha,
     ...(testing.testingPaths ? { testingPaths: testing.testingPaths } : {}),
     ...(testing.testingSteps ? { testingSteps: testing.testingSteps } : {}),
+    // The agent's own name for the change. On a session it is stored and
+    // names the pull request created at propose time; a proposal that
+    // already has a PR keeps its title (the route ignores it there).
+    ...(params.title ? { title: String(params.title) } : {}),
   });
   if (!updated || !updated.ok) {
     const body = (updated && updated.body) || {};
@@ -2215,6 +2219,10 @@ async function submitUpdate(deps, params, proposalId) {
       ? result.testingPathsRejected.map((p) => String(p))
       : null,
     captureRerun: result.captureRerun === true,
+    // Whether the submitted title was stored as the session's proposed PR
+    // name (false on proposals — they already have one — and on a repeat of
+    // the stored value).
+    titleUpdated: result.titleUpdated === true,
     // 'proposal' | 'session' | null — what the push actually landed on, as
     // decided under the lock rather than as the work order predicted.
     targetKind: result.targetKind || null,

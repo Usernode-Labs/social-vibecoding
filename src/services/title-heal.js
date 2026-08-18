@@ -85,6 +85,10 @@ async function healPrTitles(pool, { limit = 5, dataKey } = {}) {
         username: session.heal_username,
         apiKey,
         userId: billedUserId,
+        // A PR that got its fallback title before the author's submitted
+        // title could reach it (e.g. minted by staging recovery pre-update)
+        // heals to that title rather than to a generated guess.
+        preferredTitle: session.proposed_pr_title || null,
       });
       // applyPrMetadata mutates session in place; the flag flips to false
       // only when generation actually succeeded (fallback keeps it TRUE).

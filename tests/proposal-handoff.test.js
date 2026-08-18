@@ -517,6 +517,17 @@ test('an update may re-aim the screenshots, and still refuses what it does not k
       }).testing.testingPaths,
       [{ path: '/keep', viewport: 'desktop' }]
     );
+
+    // The submitted title rides the same update (stored for the PR the
+    // propose path lazily creates); absent stays null, and GitHub's own
+    // title cap is enforced here rather than discovered at createPR time.
+    assert.equal(subject.parseUpdateFromForkBody({
+      branch: 'dev/x', title: ' Klondike canvas board ',
+    }).title, 'Klondike canvas board');
+    assert.equal(subject.parseUpdateFromForkBody({ branch: 'dev/x' }).title, null);
+    assert.throws(() => subject.parseUpdateFromForkBody({
+      branch: 'dev/x', title: 'x'.repeat(257),
+    }), /title/);
   } finally { restore(); }
 });
 
