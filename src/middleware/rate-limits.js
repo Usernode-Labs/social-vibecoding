@@ -460,6 +460,19 @@ const waitlistJoinLimiter = makeLimiter({
   message: 'Too many signups from this address — try again in a few minutes.',
 });
 
+// Waitlist token routes (confirm link, stage-2 survey read/save): these are
+// authenticated by an unguessable 48-hex token, so the IP bucket only has to
+// bound token scanning, not stop a genuine visitor. Kept separate from
+// waitlist-join on purpose — one real journey (join, survey save, emailed
+// confirm click, survey reload) makes 5+ requests, which used to exhaust the
+// 5/15-min join bucket and bounce the user's own confirm link (#1296).
+const waitlistTokenLimiter = makeLimiter({
+  windowMs: 15 * 60 * 1000,
+  max: 60,
+  name: 'waitlist-token',
+  message: 'Too many waitlist requests from this address — try again in a few minutes.',
+});
+
 // Exact public-profile reads deliberately have no directory/search endpoint;
 // this IP bucket additionally bounds brute-force username enumeration.
 const publicProfileReadLimiter = makeLimiter({
@@ -537,4 +550,4 @@ const userDirectoryLimiter = makeLimiter({
   message: 'Too many directory lookups — please slow down.',
 });
 
-module.exports = { userDirectoryLimiter, dbExportLimiter, authLimiter, homePanelPrefLimiter, homeLayoutLimiter, draftWriteLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, groupChatWriteLimiter, conversationMessageLimiter, conversationActionLimiter, conversationSafetyLimiter, conversationInviteLimiter, conversationReactionLimiter, conversationReportLimiter, messageBookmarkLimiter, attributeVoteLimiter, attachmentUploadLimiter, appFileUploadLimiter, feedbackTitleLimiter, boardOrderLimiter, issueScreenshotLimiter, profileWriteLimiter, publicProfileReadLimiter, profileReportLimiter, topochainMobileAuthLimiter, topochainMobilePushRegistrationLimiter, reportAiLimiter, reportSnapshotLimiter, waitlistJoinLimiter, mailTestLimiter };
+module.exports = { userDirectoryLimiter, dbExportLimiter, authLimiter, homePanelPrefLimiter, homeLayoutLimiter, draftWriteLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, groupChatWriteLimiter, conversationMessageLimiter, conversationActionLimiter, conversationSafetyLimiter, conversationInviteLimiter, conversationReactionLimiter, conversationReportLimiter, messageBookmarkLimiter, attributeVoteLimiter, attachmentUploadLimiter, appFileUploadLimiter, feedbackTitleLimiter, boardOrderLimiter, issueScreenshotLimiter, profileWriteLimiter, publicProfileReadLimiter, profileReportLimiter, topochainMobileAuthLimiter, topochainMobilePushRegistrationLimiter, reportAiLimiter, reportSnapshotLimiter, waitlistJoinLimiter, waitlistTokenLimiter, mailTestLimiter };

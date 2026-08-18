@@ -83,7 +83,10 @@ export function MoreScreen() {
   useVisibilityHiddenClass(rootRef, AUTH_SCREEN_IDS.more, false);
 
   // 'idle' is the prerendered state: neither the form nor the notice is shown.
-  const [status, setStatus] = useState<'idle' | 'invalid' | 'ready'>('idle');
+  // 'throttled' is a rate-limited load — the token may be perfectly fine, so
+  // it gets its own copy instead of the bad-link notice (#1296).
+  const [status, setStatus] = useState<'idle' | 'invalid' | 'throttled' | 'ready'>('idle');
+  const [retryText, setRetryText] = useState('a few minutes');
   const [opts, setOpts] = useState<WaitlistOptions | null>(null);
   const [tools, setTools] = useState<string[]>([]);
   const [lossHad, setLossHad] = useState<string | null>(null);
@@ -205,6 +208,21 @@ export function MoreScreen() {
       fetch('/api/public/waitlist/more/' + encodeURIComponent(value)).catch(() => null),
     ]);
     if (!loaded || !res || !res.ok) {
+      // A 429 is the rate limiter talking, not a verdict on the token —
+      // clicking the emailed confirm link right after joining and saving
+      // the survey can land here. Say so instead of "bad link" (#1296).
+      if (res && res.status === 429) {
+        const body = await res.json().catch(() => null);
+        const secs = Number(body?.retryAfterSeconds);
+        if (Number.isFinite(secs) && secs > 0) {
+          const mins = Math.ceil(secs / 60);
+          setRetryText(mins > 1 ? `about ${mins} minutes` : 'about a minute');
+        } else {
+          setRetryText('a few minutes');
+        }
+        setStatus('throttled');
+        return;
+      }
       setStatus('invalid');
       return;
     }
@@ -348,20 +366,29 @@ export function MoreScreen() {
         than the order you signed up in. Every one is optional, and you can
         come back and add to this any time.
         </p>
-        {/* Bad/expired token state */}
+        {/* Bad/expired token state — also hosts the rate-limited copy */}
         <div
           id="more-invalid"
           className={hiddenFirst(
-            status !== 'invalid',
+            status !== 'invalid' && status !== 'throttled',
             'mt-6 rounded-lg border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 p-4 text-sm text-amber-800 dark:text-amber-300',
           )}
         >
-          This link doesn't look right — use the one from your waitlist email,
-        or
-          <a href="#landing" className="underline">
-            join the waitlist
-          </a>
-          first.
+          {status === 'throttled' ? (
+            <>
+              Your link is fine — we&rsquo;re limiting requests from your
+              address right now. Try again in {retryText}, or just reopen the
+              link from your waitlist email then.
+            </>
+          ) : (
+            <>
+              {"This link doesn't look right — use the one from your waitlist email, or "}
+              <a href="#landing" className="underline">
+                join the waitlist
+              </a>
+              {' first.'}
+            </>
+          )}
         </div>
         <form
           id="more-form"
