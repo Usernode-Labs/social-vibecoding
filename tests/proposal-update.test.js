@@ -1625,8 +1625,7 @@ test('a same-commit resubmit with a title renames an existing PR, votes untouche
   assert.ok(!sqlsOf(log).some((s) => /proposed_pr_title/.test(s)),
     'a row with a PR is renamed directly — nothing is deferred to a promote that already happened');
 
-  // Repeating the current title is a no-op, and an imported PR is never
-  // renamed at all — that title belongs to its external author on GitHub.
+  // Repeating the current title is a no-op.
   const log2 = {};
   const session2 = nativeSession({ pr_title: 'Initialize repository' });
   const pool2 = fakePool([['FROM chat_sessions cs JOIN apps a', [session2]]]);
@@ -1635,11 +1634,17 @@ test('a same-commit resubmit with a title renames an existing PR, votes untouche
     gh: { getBranchSha: async () => FORK_HEAD, updatePR: async () => { throw new Error('must not run'); } },
   }, { title: 'Initialize repository' }, log2);
   assert.equal(r2.titleUpdated, false);
+  // #1319. WHOSE pull request it is decides the rename — not whether the row
+  // is imported. Reading the source alone disabled the rename for every
+  // proposal an agent pushes from its author's own fork, because
+  // branchHomeOf marks a row 'user_fork' only when it IS imported.
   const fn = CODE.slice(
     CODE.indexOf('async function applyProposedTitle'),
     CODE.indexOf('async function applyTestingMetadata')
   );
-  assert.match(fn, /=== 'imported'/, "an imported PR's title belongs to its external author");
+  assert.match(fn, /callerOwnsPr/, 'the rename asks whose PR it is');
+  assert.doesNotMatch(fn, /=== 'imported'/,
+    'source alone is not the question — it is true of every fork-tracked proposal');
 });
 
 test('a GitHub rename failure keeps the panel rename and never fails the update', async () => {
@@ -1660,6 +1665,106 @@ test('a GitHub rename failure keeps the panel rename and never fails the update'
   assert.equal(result.ok, true);
   assert.equal(result.titleUpdated, true, 'the panel — what voters see — is renamed either way');
   assert.equal(renames.length, 1);
+});
+
+// #1319. The rename reached applyProposedTitle and stopped there for the
+// entire external-agent path. `branchHomeOf` marks a row 'user_fork' ONLY
+// when `source === 'imported'`, so the "imported PRs keep their external
+// author's title" guard skipped every proposal an agent had pushed from its
+// author's OWN fork — the ordinary shape of connector work. Game Corner's
+// PR #173 grew from one game's board to a migration of all 33 plus their
+// controls; three submit_work calls carrying the new title were accepted,
+// dropped, and reported as success, and the group kept voting under the old
+// name. The fork path made it worse: it never called applyProposedTitle at
+// all, so the ordinary head-moving update dropped the name too.
+
+test('a fork-tracked proposal is the author\'s own, and its title is theirs to fix', async () => {
+  const log = {};
+  const renames = [];
+  const ghRenames = [];
+  // The agent's own shape: an imported row whose head branch lives in the
+  // fork owned by the caller's verified GitHub login.
+  const session = importedSession({
+    imported_pr_head_repo: 'evan-gh/r',
+    pr_title: 'Canvas wave 1: Spider and Mahjong boards',
+  });
+  const pool = fakePool([
+    ['SET pr_title', (params) => { renames.push(params); return []; }],
+    ['FROM chat_sessions cs JOIN apps a', [session]],
+  ]);
+  const result = await run({
+    session, pool,
+    gh: {
+      getBranchSha: async () => NATIVE_HEAD,
+      updatePR: async (...args) => { ghRenames.push(args); },
+    },
+  }, { branch: 'usernode/add-a-button', title: 'Canvas everywhere: boards and controls' }, log);
+  assert.equal(result.ok, true);
+  assert.equal(result.titleUpdated, true, 'the author renames their own proposal');
+  assert.equal(result.titleRejected, undefined);
+  assert.equal(result.votesCleared, 0, 'a rename moves no code');
+  assert.deepEqual(renames[0], ['Canvas everywhere: boards and controls', 601]);
+  assert.equal(session.pr_title, 'Canvas everywhere: boards and controls');
+  assert.deepEqual(ghRenames[0], ['o', 'r', 91, { title: 'Canvas everywhere: boards and controls' }]);
+});
+
+test('somebody else\'s pull request keeps its title, and the caller is TOLD it did', async () => {
+  const log = {};
+  // The head branch is in a repository the caller does not own — a genuine
+  // outside contribution imported onto the board.
+  const session = importedSession({
+    imported_pr_head_repo: 'other-person/r',
+    pr_title: 'Their own name for it',
+  });
+  const pool = fakePool([['FROM chat_sessions cs JOIN apps a', [session]]]);
+  const result = await run({
+    session, pool,
+    gh: {
+      getBranchSha: async () => NATIVE_HEAD,
+      updatePR: async () => { throw new Error('must not rename an external author\'s PR'); },
+    },
+  }, { branch: 'usernode/add-a-button', title: 'A name of my own choosing' }, log);
+  assert.equal(result.ok, true);
+  assert.equal(result.titleUpdated, false);
+  assert.equal(result.titleRejected, 'imported_pr',
+    'a refusal reported as success is what made this invisible for three attempts');
+  assert.equal(session.pr_title, 'Their own name for it');
+});
+
+test('the fork path applies the title when the head MOVES, not only on a resubmit', async () => {
+  const log = {};
+  const renames = [];
+  const session = importedSession({
+    imported_pr_head_repo: 'evan-gh/r',
+    pr_title: 'Canvas wave 1: Spider and Mahjong boards',
+  });
+  const pool = fakePool([
+    ['SET pr_title', (params) => { renames.push(params); return []; }],
+    ['FROM chat_sessions cs JOIN apps a', [session]],
+    ['FROM pr_votes', [{ n: 2 }]],
+  ]);
+  const result = await run({
+    session, pool,
+    // A new commit on the fork branch: the ordinary way an agent revises.
+    gh: {
+      getBranchSha: async () => FORK_HEAD,
+      updatePR: async () => {},
+    },
+  }, { branch: 'usernode/add-a-button', title: 'Canvas everywhere: boards and controls' }, log);
+  assert.equal(result.ok, true);
+  assert.equal(result.submittedVia, 'update_fork_head');
+  assert.equal(result.titleUpdated, true,
+    'an update that moves the head carries the name with it');
+  assert.deepEqual(renames[0], ['Canvas everywhere: boards and controls', 601]);
+
+  // Structural, so the call cannot be dropped from the path again — the same
+  // guard #1310 keeps over applyLinkedIssues.
+  const fork = CODE.slice(
+    CODE.indexOf('async function advanceForkHead'),
+    CODE.indexOf('async function checkAncestry')
+  );
+  assert.match(fork, /applyProposedTitle/, 'the fork path applies the submitted title');
+  assert.match(fork, /titleUpdated/, 'and reports whether it landed');
 });
 
 // ── 13. The request linkage (#1310) ────────────────────────────────────
