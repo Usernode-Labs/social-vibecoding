@@ -362,6 +362,7 @@ async function updateProposalFromForkBranch(deps, params) {
         expectedLogin: link.login, expectedHeadSha, sessionId,
         testing: normalizeTesting(params.testing),
         title: normalizeProposedTitle(params.title),
+        linkedIssues: normalizeLinkedIssues(params.linkedIssues),
         // The one module the same-commit resubmit path needs and no other
         // path does: re-running the checks against corrected capture routes
         // is the same operation the "Re-run checks" button performs.
@@ -587,6 +588,108 @@ async function applyTestingMetadata({ pool, session, testing }) {
   return { changed: true, pathsChanged, stepsChanged, paths: testing.testingPaths || null };
 }
 
+// ── The request this revision implements (#1310) ───────────────────────
+//
+// #1217 linked a proposal to the request it was built from — the task's issue
+// number becomes `Closes #N` in the PR body and `chat_sessions.linked_issues`
+// on the row — but only on the CREATE path. An update dropped it on the
+// floor, the same shape of loss #1199 names for the capture routes above.
+//
+// The case that shipped broken (recipebot-33b169 issue #45): a work-order
+// continuation of a dev SESSION has no PR yet. Its PR is created lazily at
+// promote time by pr-metadata's applyPrMetadata, whose `Closes #N` block is
+// built from chat_sessions.linked_issues — which nothing on the update path
+// had written. The PR opened without the closing line, GitHub never linked
+// the issue, and it had to be closed by hand after the merge.
+//
+// Same properties as the testing pair above: omission is not erasure (an
+// update that names no request leaves the stored set alone, and nothing is
+// ever REMOVED here — a scope cut is declared on a build turn, #733); the
+// write happens before the tails (promotion reads the row this mutates); and
+// it is never the reason an update fails.
+//
+// Re-sanitized here whatever the route already did, for normalizeTesting's
+// reason: this service is also called by the browser twin, and nothing
+// unvalidated may reach an integer[] column. pr-metadata is required lazily —
+// it pulls in the LLM stack, and only this pair of functions needs it.
+function normalizeLinkedIssues(linkedIssues) {
+  return require('./pr-metadata').sanitizeIssueNumbers(linkedIssues);
+}
+
+async function applyLinkedIssues({ pool, gh, session, owner, repo, linkedIssues }) {
+  const prMetadata = require('./pr-metadata');
+  const adds = prMetadata.sanitizeIssueNumbers(linkedIssues);
+  if (!adds.length) return false;
+  const merged = prMetadata.applyIssueDeclarations(session.linked_issues, adds, []);
+  if (prMetadata.sameIssueSet(merged, session.linked_issues)) return false;
+  try {
+    await pool.query(
+      'UPDATE chat_sessions SET linked_issues = $1 WHERE id = $2',
+      [merged, Number(session.id)]
+    );
+  } catch (err) {
+    log.error('proposal-update', 'could not store the revision\'s linked issues', {
+      sessionId: Number(session.id), err: err.message,
+    });
+    return false;
+  }
+  session.linked_issues = merged;
+  log.info('proposal-update', 'stored the revision\'s linked issues', {
+    sessionId: Number(session.id), linkedIssues: merged,
+  });
+
+  // A row with no PR is done: the closing block is assembled from the row
+  // when the PR is created (pr-metadata.applyPrMetadata at promote time). A
+  // row with a LIVE PR gets a targeted body append instead — GitHub only
+  // acts on a closing keyword while the PR is open, so waiting for the next
+  // full body regeneration (a dev turn this proposal may never take) could
+  // miss the merge. Only numbers the body does not already declare are
+  // appended, via the same parser the migrate-time backfill trusts, so a
+  // hand-written "Fixes #N" is never doubled. Imported PRs are skipped:
+  // that body belongs to its external author on GitHub. Best-effort like
+  // the GitHub rename above — the row is the source of truth either way.
+  if (session.pr_number && String(session.source) !== 'imported') {
+    try {
+      const pr = await gh.getPR(owner, repo, Number(session.pr_number));
+      const open = pr && !pr.merged && (!pr.state || pr.state === 'open');
+      const body = pr && typeof pr.body === 'string' ? pr.body : '';
+      const declared = prMetadata.parseClosingKeywords(body);
+      const missing = adds.filter((n) => !declared.includes(n));
+      if (open) {
+        if (missing.length) {
+          await gh.updatePR(owner, repo, Number(session.pr_number), {
+            body: body
+              ? `${body}\n\n${prMetadata.buildClosingBlock(missing)}`
+              : prMetadata.buildClosingBlock(missing),
+          });
+          log.info('proposal-update', 'appended the closing block to the live PR body', {
+            sessionId: Number(session.id), prNumber: Number(session.pr_number), missing,
+          });
+        }
+        // Keep pr-metadata's drift gate truthful: every add is now reflected
+        // in the live body (patched above, or already declared by the body's
+        // own keywords), so record them as applied — otherwise the next
+        // applyPrMetadata turn would rewrite a body that is already right.
+        const applied = prMetadata.applyIssueDeclarations(
+          session.pr_linked_issues_applied, adds, []
+        );
+        if (!prMetadata.sameIssueSet(applied, session.pr_linked_issues_applied)) {
+          await pool.query(
+            'UPDATE chat_sessions SET pr_linked_issues_applied = $1 WHERE id = $2',
+            [applied, Number(session.id)]
+          );
+          session.pr_linked_issues_applied = applied;
+        }
+      }
+    } catch (err) {
+      log.warn('proposal-update', 'stored the linked issues but could not patch the PR body', {
+        sessionId: Number(session.id), prNumber: Number(session.pr_number), err: err.message,
+      });
+    }
+  }
+  return true;
+}
+
 // ── A resubmit that moves nothing (#1199) ──────────────────────────────
 //
 // The fork branch is already this proposal's head. That has always been a
@@ -612,6 +715,12 @@ async function resubmitUnchanged(ctx, headSha, via) {
   // reasoning, applied to the name instead of the screenshots). On a row
   // that already has a PR this RENAMES it, votes untouched.
   const titleApplied = await applyProposedTitle({ pool, gh, session, owner, repo, title: ctx.title });
+  // And the request linkage (#1310): a same-commit resubmit is also how a
+  // dropped `Closes #N` arrives once the agent (or a fixed platform) knows
+  // to send it.
+  const linkedApplied = await applyLinkedIssues({
+    pool, gh, session, owner, repo, linkedIssues: ctx.linkedIssues,
+  });
   const reported = {
     ...base,
     testingUpdated: applied.changed,
@@ -619,6 +728,7 @@ async function resubmitUnchanged(ctx, headSha, via) {
     testingPathsRejected: rejectedPaths(ctx.testing),
     captureRerun: false,
     titleUpdated: titleApplied,
+    linkedIssuesUpdated: linkedApplied,
   };
   if (!applied.changed) return reported;
 
@@ -814,6 +924,12 @@ async function advanceAppRepoBranch(ctx) {
   // And the submitted title: stored for the promote-time lazy PR creation
   // when the row has no PR yet, or a rename of the existing PR when it does.
   const titleApplied = await applyProposedTitle({ pool, gh, session, owner, repo, title: ctx.title });
+  // And the request linkage (#1310) — BEFORE the tails for the same reason
+  // as the routes: a session tail's promote path builds the PR's `Closes #N`
+  // block off this row.
+  const linkedApplied = await applyLinkedIssues({
+    pool, gh, session, owner, repo, linkedIssues: ctx.linkedIssues,
+  });
 
   // Everything the three tails agree on. They differ only in what they do to
   // the session afterwards and in the three booleans that describe it.
@@ -841,6 +957,7 @@ async function advanceAppRepoBranch(ctx) {
     testingPaths: displayPaths(testingApplied.paths),
     testingPathsRejected: rejectedPaths(ctx.testing),
     titleUpdated: titleApplied,
+    linkedIssuesUpdated: linkedApplied,
   };
 
   // ── Tail 1a: an IMPORTED proposal on a bot-owned branch (#1196) ─────
@@ -1247,6 +1364,13 @@ async function advanceForkHead(ctx) {
   // Before applyHeadChange, whose own tail re-runs the SHA-pinned checks off
   // this session object (#1199).
   const testingApplied = await applyTestingMetadata({ pool, session, testing: ctx.testing });
+  // The request linkage (#1310). On an imported row this stores the DB half
+  // only — the close watcher and the Dev board read it — and applyLinkedIssues
+  // itself leaves the PR body alone, exactly as the rename path does: that
+  // body belongs to the pull request's author on GitHub.
+  const linkedApplied = await applyLinkedIssues({
+    pool, gh, session, owner, repo, linkedIssues: ctx.linkedIssues,
+  });
 
   // The existing imported-head machinery, unchanged: it advances the tracked
   // SHA, clears the tally, re-classifies dapp.json admins, posts the
@@ -1288,6 +1412,7 @@ async function advanceForkHead(ctx) {
     testingUpdated: testingApplied.changed,
     testingPaths: displayPaths(testingApplied.paths),
     testingPathsRejected: rejectedPaths(ctx.testing),
+    linkedIssuesUpdated: linkedApplied,
   };
 }
 
@@ -1376,4 +1501,6 @@ module.exports = {
   isContinuableStatus,
   withProposalLock,
   updateProposalFromForkBranch,
+  // The request-linking half of an update (#1310), unit-tested directly.
+  applyLinkedIssues,
 };

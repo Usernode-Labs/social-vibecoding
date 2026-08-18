@@ -528,6 +528,18 @@ test('an update may re-aim the screenshots, and still refuses what it does not k
     assert.throws(() => subject.parseUpdateFromForkBody({
       branch: 'dev/x', title: 'x'.repeat(257),
     }), /title/);
+
+    // The request linkage rides the same update (#1310), through the same
+    // sanitizer the pr-import route trusts (#1217): junk entries are dropped,
+    // a wrong TYPE is a 400, and absence is the empty set — "leave the
+    // stored linkage alone", never an erasure.
+    assert.deepEqual(subject.parseUpdateFromForkBody({
+      branch: 'dev/x', linkedIssues: [45, '45', 0, -3, null, 'x', 1.5, 12],
+    }).linkedIssues, [12, 45]);
+    assert.deepEqual(subject.parseUpdateFromForkBody({ branch: 'dev/x' }).linkedIssues, []);
+    assert.throws(() => subject.parseUpdateFromForkBody({
+      branch: 'dev/x', linkedIssues: '45',
+    }), /linkedIssues/);
   } finally { restore(); }
 });
 
