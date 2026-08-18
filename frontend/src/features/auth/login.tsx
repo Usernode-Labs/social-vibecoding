@@ -872,7 +872,7 @@ export function LoginScreen() {
             id="register-link"
             className={hiddenLast(!base, 'text-center text-sm text-zinc-500 dark:text-zinc-400 mt-6')}
           >
-            Have an activation code?
+            {'Have an activation code? '}
             <a href="#register" className="text-violet-400 hover:text-violet-300">
               Register
             </a>
@@ -917,7 +917,7 @@ export function LoginScreen() {
             </div>
             <div id="otp-step-code" className={hiddenFirst(otpStep !== 'code', 'space-y-3')}>
               <p className="text-sm text-zinc-500 dark:text-zinc-400">
-                Enter the 6-digit code we sent to
+                {'Enter the 6-digit code we sent to '}
                 <span id="otp-email-echo" className="font-medium text-zinc-700 dark:text-zinc-300">
                   {otpEmailEcho}
                 </span>

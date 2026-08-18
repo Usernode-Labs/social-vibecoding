@@ -149,13 +149,11 @@ export function WaitingScreen() {
           </p>
           <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/60 p-5 text-left space-y-3">
             <p className="text-sm">
-              Your account
+              {'Your account '}
               <span id="waiting-who" className="font-semibold">
                 {who}
               </span>
-              doesn't have
-            platform access yet. We let people in from the waitlist in batches —
-            you'll get in automatically when your turn comes.
+              {" doesn't have platform access yet. We let people in from the waitlist in batches — you'll get in automatically when your turn comes."}
             </p>
             <p className="text-sm text-zinc-500 dark:text-zinc-400">
               This page checks for you every so often; you can also just come back later.
