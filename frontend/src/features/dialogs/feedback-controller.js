@@ -288,6 +288,61 @@ export function init() {
     // so an offline submit has to carry the blob itself into the outbox and
     // upload it at flush time. Held until the attachment is cleared.
     let screenshotBlob = null;
+    // #1284: true for the whole round trip of a native capture — from the
+    // moment the dialog is suspended until the attempt has resolved one way
+    // or the other. `suspendDialog()` closes the kit presentation, and the
+    // kit calls back when its exit animation ends (~300 ms); a capture that
+    // fails faster than that has already resumed by then, so the late
+    // dismissal is stale. useStaticModal's generation guard drops it — this
+    // flag is the second belt: if a dismissal DOES reach `_reset` mid-capture,
+    // the draft the screenshot was being attached to survives it.
+    let captureInFlight = false;
+
+    // #1284: the last-ditch copy of the draft, in sessionStorage, for the
+    // failure the flag above cannot cover — a capture that takes the whole
+    // page down with it (a native screenshot that OOMs the web view, a tab
+    // evicted while the camera roll is open). Text only: never the screenshot
+    // bytes, never the collected app state.
+    const CAPTURE_DRAFT_KEY = 'usernode.feedbackCaptureDraft';
+    // Older than this and handing the words back is a surprise, not a rescue.
+    const CAPTURE_DRAFT_MAX_AGE_MS = 10 * 60 * 1000;
+    // The ?shot= deep links are photographs of states, not real sessions —
+    // stashing from one would hand a synthetic draft to the next real visit.
+    const onShotRoute = () => {
+      try { return new URLSearchParams(window.location.search).has('shot'); }
+      catch { return false; }
+    };
+    const stashCaptureDraft = () => {
+      if (onShotRoute()) return;
+      try {
+        const description = feedbackText.value;
+        const title = feedbackTitle.value;
+        if (!description.trim() && !title.trim()) return;
+        window.sessionStorage.setItem(CAPTURE_DRAFT_KEY, JSON.stringify({
+          description,
+          title,
+          titleDirty,
+          target: feedbackTarget,
+          savedAt: Date.now(),
+        }));
+      } catch { /* private mode or quota — the words are still on screen */ }
+    };
+    const clearCaptureDraft = () => {
+      try { window.sessionStorage.removeItem(CAPTURE_DRAFT_KEY); } catch { /* ignore */ }
+    };
+    const readCaptureDraft = () => {
+      try {
+        const raw = window.sessionStorage.getItem(CAPTURE_DRAFT_KEY);
+        if (!raw) return null;
+        const draft = JSON.parse(raw);
+        if (!draft || typeof draft.description !== 'string') return null;
+        if (!(draft.savedAt > 0) || Date.now() - draft.savedAt > CAPTURE_DRAFT_MAX_AGE_MS) {
+          clearCaptureDraft();
+          return null;
+        }
+        return draft;
+      } catch { return null; }
+    };
 
     const showFeedbackNotice = (text, isError) => {
       feedbackStatus.textContent = text;
@@ -381,59 +436,117 @@ export function init() {
       } catch { /* Photos remains available; the next open probes again. */ }
     };
 
-    screenshotBtn.addEventListener('click', async () => {
-      if (screenshotBtn.disabled) return;
+    // #1284: one capture round trip, whatever produced the bytes. `capture`
+    // is handed a `hide` callback so a display-capture attempt can suspend
+    // the dialog only once the browser's grant lands, while a native attempt
+    // has to suspend first (the phone photographs whatever is on screen).
+    // Extracted from the button handler so the ?shot=feedback-capture-failed
+    // reviewable state exercises this exact path — notice copy, dialog
+    // restore and draft retention included — rather than a mock of it.
+    const runCapture = async (capture, { nativeAttempt }) => {
       setScreenshotActionsDisabled(true);
-      const nativeAttempt = nativeCaptureSupported;
+      captureInFlight = true;
+      // Where the cursor was. A suspend/resume moves focus off the textarea,
+      // so without this the draft comes back with the caret at 0 and the
+      // user's next keystroke lands at the top of their own sentence.
+      const caretWasHere = document.activeElement === feedbackText;
+      const caretStart = feedbackText.selectionStart;
+      const caretEnd = feedbackText.selectionEnd;
+      // The kit focuses the card itself one frame AFTER it presents (see the
+      // requestAnimationFrame in presentModal, public/usernode-native/v1/
+      // native.js), and the resume that re-presents it is a React state
+      // update — so the caret has to be re-claimed over a few frames rather
+      // than once. Re-focusing an element that already has focus is a no-op,
+      // so the extra passes cost nothing when there is no kit to lose to.
+      const restoreCaret = (framesLeft) => {
+        if (feedbackText.disabled) return;
+        try {
+          feedbackText.focus();
+          feedbackText.setSelectionRange(caretStart, caretEnd);
+        } catch { /* a browser that refuses the range still has the text */ }
+        if (framesLeft > 0) requestAnimationFrame(() => restoreCaret(framesLeft - 1));
+      };
       let modalHidden = false;
+      const hideDialog = () => {
+        if (modalHidden) return;
+        // Armed before the dialog goes away, because from here on the page
+        // itself might not come back.
+        stashCaptureDraft();
+        suspendDialog();
+        modalHidden = true;
+      };
       const restoreDialog = () => {
         if (!modalHidden) return;
         modalHidden = false;
         resumeDialog();
+        // Not synchronously: `resume()` is a React state update, so the card
+        // is reparented back into the kit shell on a later render — and
+        // reparenting a focused node blurs it. (The selection offsets survive
+        // the move; the focus does not.)
+        if (caretWasHere) requestAnimationFrame(() => restoreCaret(2));
       };
       try {
         let blob;
         if (nativeAttempt) {
-          suspendDialog();
-          modalHidden = true;
+          hideDialog();
           await waitForHiddenDialogPaint();
-          const payload = await window.usernode.captureScreenshot();
-          blob = screenshotTools.blobFromNativeCapture(payload);
+          blob = await capture();
         } else {
-          // getDisplayMedia is called synchronously inside start() so the
-          // click's transient activation is preserved; hide only after grant.
-          ({ blob } = await screenshotTools.start({
-            onCaptureStart: () => { suspendDialog(); modalHidden = true; },
-          }));
+          blob = await capture(hideDialog);
         }
         restoreDialog();
         await attachScreenshotBlob(blob);
       } catch (err) {
         restoreDialog();
+        // Every one of these says what happened to the SCREENSHOT and then
+        // says the words are still there, because the words are what a user
+        // is afraid of losing — the screenshot they can retake (#1284).
         if (err && err.code === 'denied') {
-          showFeedbackNotice('Screen capture was declined — nothing was attached.', false);
+          showFeedbackNotice('Screen capture was declined — nothing was attached, and your feedback is safe.', false);
         } else if (err && err.code === 'register_failed') {
-          showFeedbackNotice("Couldn't locate this page in the shared window — keep it fully visible and try again.", true);
+          showFeedbackNotice("Couldn't locate this page in the shared window — keep it fully visible and try again. Your feedback is safe.", true);
         } else if (err && err.code === 'too-large') {
-          showFeedbackNotice('That screenshot is larger than 4 MB.', true);
+          showFeedbackNotice('That screenshot is larger than 4 MB — your feedback is safe, attach a smaller one.', true);
         } else if (nativeAttempt) {
-          showFeedbackNotice("Couldn't take a screenshot — choose one from Photos instead.", true);
+          showFeedbackNotice("Couldn't take a screenshot — but your feedback is safe. Choose one from Photos, or just send it as it is.", true);
         } else if (err && err.code !== 'cancelled') {
-          showFeedbackNotice('Screenshot capture failed — please try again.', true);
+          showFeedbackNotice('Screenshot capture failed — but your feedback is safe. Try again, or send it without one.', true);
         }
       } finally {
+        // The round trip is over: the page survived it, so the stash has
+        // nothing left to rescue and a later close is a real close.
+        captureInFlight = false;
+        clearCaptureDraft();
         if (!screenshotBlob) setScreenshotActionsDisabled(false);
       }
+    };
+
+    screenshotBtn.addEventListener('click', () => {
+      if (screenshotBtn.disabled) return;
+      const nativeAttempt = nativeCaptureSupported;
+      void runCapture(nativeAttempt
+        ? async () => screenshotTools.blobFromNativeCapture(await window.usernode.captureScreenshot())
+        // getDisplayMedia is called synchronously inside start() so the
+        // click's transient activation is preserved; hide only after grant.
+        : async (hide) => (await screenshotTools.start({ onCaptureStart: hide })).blob,
+      { nativeAttempt });
     });
 
     screenshotPickerBtn.addEventListener('click', () => {
-      if (!screenshotPickerBtn.disabled) screenshotInput.click();
+      if (screenshotPickerBtn.disabled) return;
+      // #1284: the camera roll is a full-screen native surface and this tab
+      // can be evicted behind it. Nothing suspends the dialog here, so there
+      // is no dismissal to race — only the page's own death to insure
+      // against. Cleared again by the change handler below.
+      stashCaptureDraft();
+      screenshotInput.click();
     });
 
     screenshotInput.addEventListener('change', async () => {
       const file = screenshotInput.files && screenshotInput.files[0];
       screenshotInput.value = '';
-      if (!file) return;
+      // A cancelled pick came back with the page intact — nothing to rescue.
+      if (!file) { clearCaptureDraft(); return; }
       setScreenshotActionsDisabled(true);
       try {
         const blob = await screenshotTools.prepareFile(file);
@@ -447,6 +560,7 @@ export function init() {
           showFeedbackNotice("Couldn't attach that image — please try another.", true);
         }
       } finally {
+        clearCaptureDraft();
         if (!screenshotBlob) setScreenshotActionsDisabled(false);
       }
     });
@@ -604,6 +718,8 @@ export function init() {
       queueLineText = '';
       feedbackText.value = '';
       feedbackTitle.value = '';
+      // #1284: safe in the outbox now — the capture stash has nothing to add.
+      clearCaptureDraft();
       resetTitleGenState();
       resetScreenshotState();
       feedbackText.disabled = true;
@@ -799,6 +915,8 @@ export function init() {
           feedbackStatus.classList.remove('hidden');
           feedbackText.value = '';
           feedbackTitle.value = '';
+          // #1284: filed — there is nothing left to rescue.
+          clearCaptureDraft();
           // Discard any in-flight title preview so it can't repopulate
           // the cleared field during the "Thanks!" grace window.
           resetTitleGenState();
@@ -954,6 +1072,25 @@ export function init() {
         }).catch(() => { /* nothing to hand back */ });
       }
 
+      // #1284: a capture that took the page down with it left the words in
+      // sessionStorage. Hand them back — into an empty, editable field only,
+      // the same "live text always wins" rule the outbox hand-back above
+      // follows, and read once so a dismissed rescue does not keep returning.
+      const rescued = readCaptureDraft();
+      if (rescued) {
+        clearCaptureDraft();
+        if (!feedbackText.disabled && !feedbackText.value.trim()) {
+          feedbackText.value = rescued.description;
+          if (rescued.title && !feedbackTitle.value.trim()) {
+            feedbackTitle.value = rescued.title;
+            titleDirty = rescued.titleDirty !== false;
+          }
+          if (rescued.target === 'app' && !feedbackTargetApp.disabled) setFeedbackTarget('app');
+          showFeedbackNotice("The screenshot didn't make it, but your feedback is safe — here it is again.", false);
+          queueLineText = '';
+        }
+      }
+
       feedbackText.focus();
     };
     document.getElementById('feedback-btn').addEventListener('click', () => App.openFeedbackModal());
@@ -970,13 +1107,20 @@ export function init() {
     // classList.add('hidden') that used to be this handler's first line
     // belongs to useStaticModal.
     Feedback._reset = () => {
-      feedbackText.value = '';
-      feedbackTitle.value = '';
+      // #1284: a dismissal that lands mid-capture is the stale teardown of
+      // the presentation `suspendDialog()` closed, not the user closing the
+      // dialog — so the draft, the title and the notice stay. (The screenshot
+      // half below resets either way: that attempt is over.)
+      if (!captureInFlight) {
+        feedbackText.value = '';
+        feedbackTitle.value = '';
+        feedbackStatus.classList.add('hidden');
+        resetTitleGenState();
+        clearCaptureDraft();
+      }
       feedbackText.disabled = false;
       feedbackTitle.disabled = false;
       feedbackBtn.disabled = false; feedbackBtn.textContent = 'Submit';
-      feedbackStatus.classList.add('hidden');
-      resetTitleGenState();
       // #683: cancelling discards the attachment client-side; an already
       // uploaded (now orphaned) row is GC'd server-side after 24h.
       screenshotProbeSequence += 1;
@@ -1014,4 +1158,35 @@ export function init() {
     if (island) { island.open(opts); return; }
     Feedback._open(opts);
   };
+
+  // #1284: a capture stash that survived a reload means the page died
+  // mid-attempt, so say so at boot rather than leaving the user to guess that
+  // reopening the dialog will bring their words back.
+  //
+  // Called from BOTH `App.enterAuthed()` (with `?.()`, since app.js boots
+  // whether or not this island has mounted) and the end of this init(),
+  // because their order is not fixed: hydration normally publishes this after
+  // /api/auth/me has already run enterAuthed, and a slow bundle reverses it.
+  // Hence the once-per-boot flag, and the session check — a visitor who is
+  // not signed in has no feedback dialog to be pointed at.
+  let bootDraftAnnounced = false;
+  App.noticeRescuedFeedbackDraft = () => {
+    if (bootDraftAnnounced || !App.user) return;
+    if (!readCaptureDraft()) return;
+    bootDraftAnnounced = true;
+    try {
+      PlatformUI?.toast?.('Your feedback draft was saved — reopen Send feedback to finish it.');
+    } catch { /* the draft is in the stash either way */ }
+  };
+  App.noticeRescuedFeedbackDraft();
+
+  // #1284: the ?shot=feedback-capture-failed reviewable state. Runs the REAL
+  // capture round trip with a capture that fails the way a phone's does, so
+  // the retained draft, the restored dialog and the notice copy are all
+  // photographed from the code that ships. Display-only: it touches no
+  // bridge, uploads nothing and files nothing.
+  App._simulateFeedbackCaptureFailure = () => runCapture(
+    async () => { const err = new Error('capture failed'); err.code = 'capture_failed'; throw err; },
+    { nativeAttempt: true },
+  );
 }
