@@ -35,11 +35,14 @@ test('worker runtime contract invalidates warm images from before the new runner
 
   const match = workerHost.match(/const WORKER_BOOTSTRAP_ENV_VERSION = '(v\d+)'/);
   assert.ok(match, 'warm-worker contract version is declared');
-  assert.ok(Number(match[1].slice(1)) >= 6,
-    'v5 containers carry the nested bwrap runner and must be evicted');
+  assert.ok(Number(match[1].slice(1)) >= 7,
+    'pre-v7 containers cannot consume the required Claude system-prompt file and must be evicted');
   assert.match(workerHost,
     /labels\['usernode\.proxy'\] !== WORKER_BOOTSTRAP_ENV_VERSION/,
     'the warm path compares the persisted container contract label');
+  const claudeRunner = fs.readFileSync(CLAUDE_RUNNER, 'utf8');
+  assert.match(claudeRunner, /--append-system-prompt-file/,
+    'the v7 runner consumes the system-prompt file required by the shortened build prompt');
   assert.match(workerRun, /rm -f \/home\/node\/\.claude\/codex-home\/config\.toml/,
     'a fixed bootstrap removes the v4-generated config from the persistent volume');
   assert.match(workerRun, /openrouter-model-catalog\.json/,

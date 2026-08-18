@@ -8611,6 +8611,8 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
       telemetryAttemptNumber: activeTurn.telemetryAttemptNumber || activeTurn.attemptNumber || 1,
       telemetryRequestMode: activeTurn.telemetryRequestMode || null,
       telemetryRequestTextCharacters: activeTurn.telemetryRequestTextCharacters ?? null,
+      telemetryRequestSystemCharacters: activeTurn.telemetryRequestSystemCharacters ?? null,
+      telemetryRequestPayloadCharacters: activeTurn.telemetryRequestPayloadCharacters ?? null,
       telemetryModelContextWindowTokens: activeTurn.telemetryModelContextWindowTokens ?? null,
       telemetryModelMaxOutputTokens: activeTurn.telemetryModelMaxOutputTokens ?? null,
       requestedModel: activeTurn.model || null,
@@ -11480,6 +11482,42 @@ function describeStagingFailure(stagingErr) {
   return { fix, missingKeys, errMsg, errName };
 }
 
+// Hosted Claude build turns carry the platform handbook as appended system
+// context instead of repeating its full ~130 KB inside every user message.
+// Claude Code keeps system context outside conversation history and reloads it
+// after compaction, so resumed sessions retain one authoritative copy without
+// accumulating another copy per dispatch. Local Claude and Codex/OpenRouter
+// keep the legacy inline block until their transports have an equivalent,
+// independently verified system-context path.
+//
+// Pure and exported for deterministic transport tests.
+function buildCodingAgentConventionsContext({
+  runLocally = false,
+  isCodexSession = false,
+  conventions = getAppConventions(),
+} = {}) {
+  const fullBlock = `==== PLATFORM CONVENTIONS (authoritative) ====
+
+${conventions}
+
+==== END PLATFORM CONVENTIONS ====`;
+
+  if (runLocally || isCodexSession) {
+    return { promptBlock: fullBlock, systemPrompt: null };
+  }
+
+  return {
+    promptBlock: `==== PLATFORM CONVENTIONS (authoritative) ====
+
+The complete platform conventions are supplied separately as authoritative
+system instructions for this invocation. They override conflicting personal
+or repository guidance on platform-wide rules.
+
+==== END PLATFORM CONVENTIONS ====`,
+    systemPrompt: fullBlock,
+  };
+}
+
 async function runClaudeCodeTool({
   pool, config, req, res, session, selectedModel,
   userMessage, toolPromptArg,
@@ -11718,12 +11756,12 @@ PERSONAL AGENT FILES: the user who dispatched this run has personal
 instruction files (already loaded for you at \`~/.claude/CLAUDE.md\`)
 and/or personal skills (under \`~/.claude/skills/\`). Treat them as the
 dispatching user's personal preferences: follow them wherever they don't
-conflict with the PLATFORM CONVENTIONS block above (which always wins)
+conflict with the platform conventions supplied to this run (which always win)
 or the repo's own \`CLAUDE.md\` on app-specific matters.`
     : '';
   const platformIssueHelperNote = isCodexSession
     ? 'The `usernode-report-platform-issue` helper is NOT available on this backend; do not call it.'
-    : `A build-turn helper \`usernode-report-platform-issue\` is also available (run it via Bash): \`usernode-report-platform-issue "<short title>"\` with the issue detail on stdin. Use it for anything that needs a change OUTSIDE this app's repo — both platform-level breakage (the shared bridge, wallet / native mobile WebView, the staging/preview pipeline, the checks gate) AND missing platform capabilities the app needs (feature requests: a bridge API that doesn't exist, data the platform doesn't expose, a limit blocking a legitimate feature) — see "Platform-level problems & missing capabilities: escalate, don't file workarounds" in the conventions above. It does NOT file anything directly: it posts a draft report card into the dev chat that the user must tap to confirm (or dismiss) before an issue is filed on the platform repo. It de-dupes against open reports and earlier drafts. The one hard rule: never use it for something you can fix in this app itself.`;
+    : `A build-turn helper \`usernode-report-platform-issue\` is also available (run it via Bash): \`usernode-report-platform-issue "<short title>"\` with the issue detail on stdin. Use it for anything that needs a change OUTSIDE this app's repo — both platform-level breakage (the shared bridge, wallet / native mobile WebView, the staging/preview pipeline, the checks gate) AND missing platform capabilities the app needs (feature requests: a bridge API that doesn't exist, data the platform doesn't expose, a limit blocking a legitimate feature) — see "Platform-level problems & missing capabilities: escalate, don't file workarounds" in the supplied platform conventions. It does NOT file anything directly: it posts a draft report card into the dev chat that the user must tap to confirm (or dismiss) before an issue is filed on the platform repo. It de-dupes against open reports and earlier drafts. The one hard rule: never use it for something you can fix in this app itself.`;
   const taskBlock = directSessionTurn
     ? `DIRECT USER TURN:\n${userMessage}${attachmentsBlock}${discussionBlock}`
     : `USER REQUEST: "${userMessage}"\n\nCODING TASK (from the Mayor):\n${toolPromptArg}${attachmentsBlock}${discussionBlock}`;
@@ -11744,26 +11782,27 @@ or the repo's own \`CLAUDE.md\` on app-specific matters.`
 - After all changes are made, stage everything with "git add -A" and commit
   with a clear message describing what was built.
 - Do NOT ask questions or request clarification. Just build it.`;
+  const conventionsContext = buildCodingAgentConventionsContext({
+    runLocally,
+    isCodexSession,
+  });
   const claudePrompt = `${taskBlock}
 
-==== PLATFORM CONVENTIONS (authoritative) ====
-
-${getAppConventions()}
-
-==== END PLATFORM CONVENTIONS ====
+${conventionsContext.promptBlock}
 ${specBlock}${failingChecksBlock}
 
 A \`CLAUDE.md\` at the repo root, if present, contains **app-specific**
 guidance: product intent, domain terms, opt-in policies, style. Follow
 it for app-specific matters. On any platform-wide rule (auth,
-public/private tables, USERNODE_ENV, do-not-push, etc.) the block above
-is authoritative and overrides CLAUDE.md if they conflict.
+public/private tables, USERNODE_ENV, do-not-push, etc.) the platform
+conventions supplied to this run are authoritative and override
+CLAUDE.md if they conflict.
 
 The repo's \`CLAUDE.md\` may reference a hosted copy of the platform
 conventions at \`https://${process.env.USERNODE_DOMAIN || 'social-vibecoding.usernodelabs.org'}/claude.md\` —
-in dev-chat you already have those rules injected above, so ignore
-that instruction here. It's for humans or coding-agent invocations
-that run against this repo outside the harness.${personalFilesNote}
+in dev-chat those rules are already supplied by the harness, so ignore
+that instruction here. It's for humans or coding-agent invocations that
+run against this repo outside the harness.${personalFilesNote}
 
 A read-only helper \`usernode-issues\` is available (run it via Bash) — it prints the repo's open GitHub issues as JSON (\`{ issues: [{ number, title, body, labels, updatedAt, htmlUrl }], truncatedList }\`); long bodies are clipped with a "[truncated …]" marker, and \`usernode-issues <number>\` fetches that one issue with its FULL body plus BOTH of its discussion surfaces (\`{ issue, comments, commentsTruncated, usernodeThread?, usernodeThreadTruncated?, note? }\` — \`comments\` are the GitHub comments, \`usernodeThread\` is the issue's Discussion thread on the platform, where people often answer clarifying questions). Consult it if an open issue is relevant to what you're building; do not try to reach GitHub any other way. ${SCREENSHOT_FETCH_NOTE}
 
@@ -11805,8 +11844,8 @@ path: /another/changed/view
     screenshot-state deep link — a query/hash param the app handles at
     boot to enter that state deterministically (e.g.
     "/?shot=settlement-sheet" starts a demo match on a fixed seed and
-    opens the settlement panel) — per the conventions section
-    "Make the changed screen URL-reachable" above. Point "path:" at it, add a
+    opens the settlement panel) — per "Make the changed screen URL-reachable"
+    in the supplied platform conventions. Point "path:" at it, add a
     dapp.json test asserting it renders, and verify it in the in-loop
     browser before committing. A "path: /" screenshot of an
     interaction-gated change is as good as no testing block.
@@ -12401,6 +12440,12 @@ path: /another/changed/view
         return worker.execInWorker(session.id, {
           mode: 'build',
           prompt: claudePrompt,
+          // Hosted Claude gets the same authoritative handbook on every
+          // invocation as stable system context. New, resumed, compacted and
+          // resume-fallback-fresh runs therefore all use the current version
+          // without adding another copy to conversation history. Codex and
+          // local Claude retain the inline block above.
+          systemPrompt: isClaudeDispatch ? conventionsContext.systemPrompt : null,
           model: turnModel,
           commitMsg,
           resumeSessionId: resumeThreadId,
@@ -13629,4 +13674,4 @@ CMD ["node", "server.js"]
   return { containerId, stagingUrl, hostname };
 }
 
-module.exports = { runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, advanceSharedReviewAfterSync, advanceReviewAfterPlatformSync, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, stripFakeCompletionMarker, buildMayorMessages, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };
+module.exports = { runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, advanceSharedReviewAfterSync, advanceReviewAfterPlatformSync, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };
