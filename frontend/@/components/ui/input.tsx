@@ -88,6 +88,20 @@ const inputVariants = cva('', {
       // container.
       inset:
         'rounded bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-2 py-1',
+      // A field inside a native-kit inset-grouped row (#1285): the ROW is the
+      // box. `.un-group` draws the card fill and radius, `.un-group-row` the
+      // hairline and the `px-4` that lines it up, so the field itself
+      // contributes no fill, no border and no horizontal padding — anything it
+      // did contribute would draw a second box inside the first. Pair it with
+      // `ring={false}`: `.un-group` is `overflow: hidden`, which clips an
+      // outward focus ring, so the focus cue is a `focus-within:` tint on the
+      // row instead.
+      //
+      // Call sites: #profile-edit-name, #profile-edit-bio (through Textarea),
+      // #profile-edit-github, #profile-edit-x and #profile-edit-username, all
+      // in features/profile/profile-edit-sheet.tsx.
+      groupRow:
+        'bg-transparent border-0 px-0 py-2 text-sm text-zinc-900 dark:text-zinc-100',
     },
     // The placeholder colour, written between the box and the focus ring in
     // every string that has it. Named `hint`, not `placeholder`, because

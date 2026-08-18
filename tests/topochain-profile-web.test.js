@@ -229,22 +229,139 @@ test('the username is shown read-only, with the reason', () => {
   assert.doesNotMatch(save.slice(0, 2500), /username:/);
 });
 
-test('the edit sheet degrades when the native sheet kit is absent', () => {
-  // The lift goes through lib/kit-surface.ts now, which returns null when the
-  // kit is missing or refuses — the same `|| null` shape
-  // Settings.showTermsSheet handles. The editor must still be reachable, so
-  // the panel simply stays where React rendered it: inside #profile-root.
-  assert.match(profileSheetTsx, /adoptKitSurface\(\{/);
-  assert.match(profileSheetTsx, /kind: 'sheet'/);
-  assert.match(profileSheetTsx, /home: 'placeholder'/,
+// This file's header comments discuss the retired `kind: 'sheet'` and the kit's
+// class vocabulary on purpose — that is where the reasoning lives — so the
+// #1285 assertions below read the CODE, with both comment forms stripped.
+const sheetCode = profileSheetTsx
+  .replace(/\/\*[\s\S]*?\*\//g, '')
+  .replace(/^\s*\/\/.*$/gm, '');
+
+test('the edit card degrades when the native modal kit is absent', () => {
+  // The lift goes through lib/kit-surface.ts, which returns null when the kit
+  // is missing or refuses — the same `|| null` shape Settings.showTermsSheet
+  // handles. The editor must still be reachable, so the card simply stays
+  // where React rendered it: inside #profile-root.
+  assert.match(sheetCode, /adoptKitSurface\(\{/);
+  // `kind: 'sheet'` until #1285, and the swap is the fix, not a preference.
+  // `.platform-sheet-adopted` pins `max-height: 70vh` and `.un-sheet` sets
+  // `touch-action: none` with no scroller detection, so a form this tall was
+  // clipped and the drag that tried to scroll it dismissed it instead.
+  // `.un-modal` is a real keyboard-aware scroller. Same move as #915's
+  // sheet→panel for the hamburger drawer.
+  assert.match(sheetCode, /kind: 'modal'/);
+  assert.doesNotMatch(sheetCode, /kind: 'sheet'/);
+  // The kit takes the CARD and the flag goes on the ROOT — the dialogs' split,
+  // and here it is forced: `.platform-modal-adopted` is `display: none
+  // !important`, so it cannot land on the node the kit is showing.
+  assert.match(sheetCode, /adoptedOn: flagEl/);
+  assert.match(sheetCode, /id="profile-edit-root"/);
+  assert.match(sheetCode, /home: 'placeholder'/,
     'its home is #profile-root — that IS the no-kit presentation');
-  assert.match(profileSheetTsx, /setAdopted\(!!adoption\)/);
-  // And the card chrome the kit shell would have drawn goes on by hand when
-  // it did not, through classList — never a rendered className, which would
-  // drop platform-sheet-adopted on the next render.
-  assert.match(profileSheetTsx, /useClassToggle\(panelRef, 'rounded-xl', !adopted\)/);
   assert.match(profileViewTsx, /<ProfileEditSheet/,
     'rendered inside #profile-root, above the identity card');
+});
+
+test('both kit-written nodes render a CONSTANT className (#1285)', () => {
+  // `adoptKitSurface` writes `platform-modal-adopted` to the root and
+  // `platform-modal-card` to the card, through classList. React writes the
+  // whole attribute whenever the prop changes, so a computed string on either
+  // node drops the kit's class mid-presentation. That is also why the five
+  // `useClassToggle(panelRef, …)` calls that used to draw the no-kit chrome are
+  // gone: the chrome is now a constant on the root, which the kit hides for
+  // free while it owns the card.
+  assert.match(sheetCode, /const ROOT_CLASS = '[^']*'/);
+  assert.match(sheetCode, /const CARD_CLASS = '[^']*'/);
+  assert.match(sheetCode, /id="profile-edit-root" ref=\{rootRef\} className=\{ROOT_CLASS\}/);
+  assert.match(sheetCode, /id="profile-edit-sheet" ref=\{panelRef\} className=\{CARD_CLASS\}/);
+  assert.doesNotMatch(sheetCode, /useClassToggle/,
+    'the no-kit chrome is a constant on the root now, not a runtime toggle');
+});
+
+test('the edit card is a column, and says so in its own class string (#1285)', () => {
+  // THE bug in #1285. `app.css`'s `.platform-sheet-adopted` wrote
+  // `display: flex !important` with no `flex-direction`, so this card — whose
+  // whole class string was `px-4 pb-5` — laid its dozen children out in a ROW:
+  // heading, photo group, every field and both buttons side by side, with
+  // Cancel off-screen. The other adopted surfaces survived because each spells
+  // `flex flex-col` itself (ANCHORED_PANEL_CLASS does), which the `!important`
+  // on `display` alone cannot undo. This card now spells it too, so its layout
+  // no longer depends on what an adopted class happens to set.
+  const card = sheetCode.match(/const CARD_CLASS = '([^']*)'/);
+  assert.ok(card, 'CARD_CLASS is a single-quoted literal');
+  const tokens = card[1].split(/\s+/);
+  assert.ok(tokens.includes('flex'), 'the card declares flex');
+  assert.ok(tokens.includes('flex-col'), 'and the direction — that is the fix');
+});
+
+test('the form body is the kit inset-grouped list, by the kit rules (#1285)', () => {
+  // `.un-group` / `.un-group-header` / `.un-group-row` come from native.css,
+  // the same vocabulary features/settings/sections/alerts.tsx reaches into. The
+  // heading-and-card pair is emitted once, by the local <Group>, so the section
+  // count is its call sites.
+  const group = sheetCode.slice(sheetCode.indexOf('function Group('));
+  assert.match(group, /className="un-group-header"/);
+  assert.match(group, /className="un-group"/);
+  const sections = sheetCode.match(/<Group title="/g) || [];
+  assert.ok(sections.length >= 4,
+    `four labelled sections at least, saw ${sections.length}`);
+
+  // Every class string that names a row also names px-4: the hairline
+  // pseudo-element is drawn at `left: 16px` and `.un-group-header`'s own
+  // padding is `0 16px 7px`, so a row without it puts its content off that
+  // line.
+  const rows = sheetCode.match(/'[^']*un-group-row[^']*'/g) || [];
+  assert.ok(rows.length >= 3, `saw ${rows.length} row class strings`);
+  for (const decl of rows) {
+    assert.match(decl, /\bpx-4\b/, `a row must line up with the hairline: ${decl}`);
+  }
+
+  // No Tailwind fill on a `.un-group` element. `tailwind.css` loads AFTER
+  // `native.css`, so a `bg-*` utility beats `var(--un-group-bg)` — the token
+  // that makes the card read as raised against the modal's `--un-sheet-bg`,
+  // and the only one that tracks the platform's dark mode. Tokenised, so a
+  // row's own `focus-within:bg-*` (token `un-group-row`) is not caught.
+  for (const decl of sheetCode.match(/'[^']*'|"[^"]*"/g) || []) {
+    const tokens = decl.slice(1, -1).split(/\s+/);
+    if (!tokens.includes('un-group')) continue;
+    for (const t of tokens) {
+      assert.doesNotMatch(t, /^(dark:)?bg-/,
+        `--un-group-bg draws the card, not ${t}`);
+    }
+  }
+});
+
+test('the group rows get their field box from the primitive (#1285)', () => {
+  // The row IS the box, so the field contributes no fill, no border and no
+  // horizontal padding — routed through inputVariants rather than hand-written,
+  // per tests/shell-primitive-adoption.test.js.
+  const input = read('frontend/@/components/ui/input.tsx');
+  assert.match(input, /groupRow:\n\s*'[^']*'/,
+    'a complete literal — Tailwind extracts class names with a regex');
+  const box = input.match(/groupRow:\s*\n?\s*'([^']*)'/);
+  const tokens = box[1].split(/\s+/);
+  for (const required of ['bg-transparent', 'border-0', 'px-0']) {
+    assert.ok(tokens.includes(required), `groupRow must clear ${required}`);
+  }
+  assert.match(sheetCode, /box="groupRow"/);
+  // `.un-group` is `overflow: hidden`, which clips an outward focus ring, so
+  // every row field drops it and the row tints instead.
+  const rings = sheetCode.match(/box="groupRow"\s*\n\s*ring=\{false\}/g) || [];
+  const boxes = sheetCode.match(/box="groupRow"/g) || [];
+  assert.equal(rings.length, boxes.length,
+    'a clipped ring is no focus cue — focus-within tints the row');
+  assert.match(sheetCode, /focus-within:bg-violet-50/);
+});
+
+test('the hidden file input sits OUTSIDE the group (#1285)', () => {
+  // `.un-group-row + .un-group-row::after` is an ADJACENT-sibling selector, so
+  // a non-row child between two rows silently drops the hairline between them.
+  // #profile-edit-file is a real child wherever it sits.
+  const group = sheetCode.slice(
+    sheetCode.indexOf('id="profile-edit-file"'),
+    sheetCode.indexOf('id="profile-edit-choose"'),
+  );
+  assert.match(group, /<Group title="Photo">/,
+    'the file input is declared before the group it feeds, not inside it');
 });
 
 test('the photo is downscaled client-side before upload', () => {
