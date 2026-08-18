@@ -1932,11 +1932,16 @@ const DevChat = {
     });
   },
 
+  // The selector must be the marker wizardHtml actually renders. It used to
+  // be the PICKER's data-flow-card marker, which #1093 retired with the
+  // picker itself — so the walkthrough card was rendered but never wired,
+  // and every button on it ("Fork on GitHub", "Copy work order", …) did
+  // nothing (#1304). tests/dev-flow-select.test.js pins the two together.
   _wireDevFlowCard() {
     if (!window.DevFlowSelect) return;
     const container = document.getElementById('dc-messages');
     if (!container) return;
-    container.querySelectorAll('[data-flow-card]').forEach((el) => {
+    container.querySelectorAll('[data-flow-wizard]').forEach((el) => {
       DevFlowSelect.wire(el, {
         onAction: (action) => DevChat._devFlowAction(action),
       });

@@ -530,6 +530,28 @@ test('a node with neither attribute is ignored', () => {
   assert.deepEqual(seen, []);
 });
 
+test('the dev chat wires the marker the wizard actually renders (#1304)', () => {
+  // #1093 retired the picker card together with its data-flow-card="1"
+  // marker, but the transcript wiring kept selecting [data-flow-card] — so
+  // the walkthrough rendered with dead buttons: "Fork on GitHub" opened
+  // nothing, "Copy work order" copied nothing, "Check again" checked
+  // nothing. Pin the wiring selector to the attribute wizardHtml emits, in
+  // every state it renders, so renaming either side breaks this test
+  // instead of the card.
+  for (const [name, state] of [
+    ['loading', { agent: 'claude-code', status: null }],
+    ['unavailable', { agent: 'claude-code', status: { available: false, reason: 'no_repository' } }],
+    ['steps', { status: fullStatus() }],
+  ]) {
+    assert.match(DevFlowSelect.wizardHtml(state), /data-flow-wizard="1"/,
+      `the ${name} card carries the marker the wiring selects`);
+  }
+  assert.match(DEV_CHAT_SRC, /querySelectorAll\('\[data-flow-wizard\]'\)/,
+    'dev-chat.js must wire the marker the wizard renders');
+  assert.ok(!DEV_CHAT_SRC.includes('[data-flow-card]'),
+    'the picker marker is gone from the markup, so selecting it wires nothing');
+});
+
 test('the dev chat is the module\'s only consumer, and owns the fetching', () => {
   // The split this file relies on: DevFlowSelect renders, dev-chat.js talks
   // to the server. A fetch appearing in the module would make these tests
