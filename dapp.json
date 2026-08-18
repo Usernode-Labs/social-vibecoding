@@ -456,6 +456,12 @@
       "expectSelector": "#profile-edit-sheet #profile-edit-username[disabled]"
     },
     {
+      "name": "Edit profile is a scrolling card of inset-grouped rows (#1285)",
+      "path": "/?shot=profile-edit#profile",
+      "expectSelector": "#profile-edit-sheet .un-group .un-group-row #profile-edit-username[disabled]",
+      "expectText": "Change photo"
+    },
+    {
       "name": "A sidebar tap lands on the destination with no competing screen animation (#977)",
       "path": "/?shot=menu-nav&un-platform=ios",
       "expectSelector": "#leaderboard-screen:not(.hidden)[data-entered=\"none\"]"
