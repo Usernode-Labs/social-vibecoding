@@ -1,3 +1,5 @@
+import * as React from 'react';
+
 import { Button } from '@/components/ui/button';
 import { SectionHeading, StatusLine } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
@@ -49,6 +51,34 @@ const PERSONAL_ALLOW_RULES = `{
   }
 }`;
 
+/**
+ * One numbered row of the setup walkthroughs below (#1289). A presentational
+ * helper, not an island: the whole walkthrough is static prose, so it renders
+ * once and nothing ever writes into it. The <ol>/<li> structure is real —
+ * screen readers announce "list, N items" — with the number drawn as a badge
+ * because the two products' own docs count steps the same way.
+ */
+function SetupStep({ n, title, children }: {
+  n: number;
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <li className="flex gap-2.5">
+      <span aria-hidden="true" className="mt-px flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-zinc-200 dark:bg-zinc-700 text-[10px] font-semibold leading-none text-zinc-600 dark:text-zinc-300">
+        {n}
+      </span>
+      <span className="min-w-0 text-xs text-zinc-500 dark:text-zinc-500 leading-relaxed">
+        {/* The separating space lives INSIDE the <strong> — a bare {' '}
+            between it and {children} would be a second adjacent text child,
+            which the prerender merges and hydration then mismatches on. */}
+        <strong className="font-semibold text-zinc-600 dark:text-zinc-400">{`${title} `}</strong>
+        {children}
+      </span>
+    </li>
+  );
+}
+
 export function ConnectorsSection() {
   return (
     <div data-settings-section="connectors" className="hidden">
@@ -77,8 +107,80 @@ export function ConnectorsSection() {
             Copy
           </Button>
         </div>
+        {/*
+            #1289: the one-line "Settings → Connectors, paste the URL" summary
+            assumed both products still bury custom MCP servers one menu deep,
+            and it skipped every step a first-time user actually stalls on —
+            ChatGPT's Developer mode gate, Claude's per-conversation toggle,
+            the Team/Enterprise Owner requirement. So each product gets its
+            own numbered walkthrough, current as of the flows the issue
+            documents. Wherever the products' generic docs say "your MCP
+            server URL", these steps point back at the #connector-url field
+            above — that field is the dynamic, per-deployment value, so the
+            copy never hardcodes a URL that a fork or a config change would
+            stale. Static prose, deliberately NOT filtered by which product
+            is already connected (unlike #connector-prompt-help's cases):
+            these are pre-connection instructions, so the reader by
+            definition hasn't told us which product they're in yet.
+        */}
+        <div className="mb-2 rounded-md border border-zinc-200 dark:border-zinc-800 p-3">
+          <h4 className="text-xs font-semibold text-zinc-700 dark:text-zinc-300 mb-2">
+            Set up in Claude &mdash; claude.ai on the web
+          </h4>
+          <ol className="space-y-2">
+            <SetupStep n={1} title="Open connector settings.">
+              Go to <strong className="font-semibold text-zinc-600 dark:text-zinc-400">Customize &rarr; Connectors</strong> in Claude (<code className="font-mono text-zinc-600 dark:text-zinc-400">claude.ai/customize/connectors</code>). This is where both directory connectors and your own custom ones live.
+            </SetupStep>
+            <SetupStep n={2} title="Start a custom connector.">
+              Click the <code className="font-mono text-zinc-600 dark:text-zinc-400">+</code> button, then choose &ldquo;Add custom connector&rdquo;. On Team or Enterprise plans this option isn&rsquo;t there for members &mdash; an Owner adds it first from Organization settings &rarr; Connectors (Add &rarr; hover &ldquo;Custom&rdquo; &rarr; &ldquo;Web&rdquo;).
+            </SetupStep>
+            <SetupStep n={3} title="Paste your MCP server URL.">
+              For Usernode that is the connector URL in the field above &mdash; a public HTTPS endpoint ending in <code className="font-mono text-zinc-600 dark:text-zinc-400">/mcp</code>. A custom server must be reachable from Anthropic&rsquo;s cloud, not just from your machine.
+            </SetupStep>
+            <SetupStep n={4} title="Add OAuth credentials if needed.">
+              If a server requires OAuth, open &ldquo;Advanced settings&rdquo; and enter your OAuth Client ID and Client Secret. Skip this for Usernode &mdash; it uses dynamic client registration, so there is nothing to enter.
+            </SetupStep>
+            <SetupStep n={5} title="Save and authenticate.">
+              Click &ldquo;Add&rdquo; to finish configuring, then click &ldquo;Connect&rdquo; next to the connector. You&rsquo;ll be redirected through the OAuth flow; review the scopes it asks for before approving.
+            </SetupStep>
+            <SetupStep n={6} title="Enable it in a conversation.">
+              In a chat, use the <code className="font-mono text-zinc-600 dark:text-zinc-400">+</code> button at the lower left, then &ldquo;Connectors&rdquo;, and toggle your connector on. Toggles are per-conversation, so you control which chats can reach it.
+            </SetupStep>
+          </ol>
+        </div>
+        <div className="mb-2 rounded-md border border-zinc-200 dark:border-zinc-800 p-3">
+          <h4 className="text-xs font-semibold text-zinc-700 dark:text-zinc-300 mb-2">
+            Set up in ChatGPT &mdash; on the web
+          </h4>
+          <ol className="space-y-2">
+            <SetupStep n={1} title="Use ChatGPT on the web.">
+              Open ChatGPT in your browser. Custom MCP setup is currently a web feature.
+            </SetupStep>
+            <SetupStep n={2} title="Turn on Developer mode.">
+              In ChatGPT, go to <strong className="font-semibold text-zinc-600 dark:text-zinc-400">Profile &rarr; Settings &rarr; Security and login &rarr; Developer mode</strong> and turn Developer mode on.
+            </SetupStep>
+            <SetupStep n={3} title="Open the ChatGPT Plugins page.">
+              After Developer mode is enabled, open <strong className="font-semibold text-zinc-600 dark:text-zinc-400">ChatGPT Plugins</strong>.
+            </SetupStep>
+            <SetupStep n={4} title="Click the + button.">
+              The <code className="font-mono text-zinc-600 dark:text-zinc-400">+</code> button lets you add your own MCP-backed app.
+            </SetupStep>
+            <SetupStep n={5} title="Enter your MCP server details.">
+              Enter the URL of the remote MCP server &mdash; for Usernode, the connector URL in the field above &mdash; and configure authentication if required. The server must be reachable by ChatGPT; one running only on <code className="font-mono text-zinc-600 dark:text-zinc-400">localhost</code> will not work directly.
+            </SetupStep>
+            <SetupStep n={6} title="Create the app.">
+              ChatGPT connects to the MCP server and discovers the tools it exposes. Once that succeeds, save/create the app.
+            </SetupStep>
+            <SetupStep n={7} title="Use the MCP server in a chat.">
+              Start a <strong className="font-semibold text-zinc-600 dark:text-zinc-400">new ChatGPT conversation</strong> and open the <code className="font-mono text-zinc-600 dark:text-zinc-400">+</code> / tools menu next to the message box. Select Developer mode, then select the MCP app you just created. Now ask ChatGPT to perform something that uses one of the tools &mdash; for example: <em>&ldquo;Use my MCP server to list the open support tickets.&rdquo;</em> When appropriate, ChatGPT will call the tools your MCP server exposes and use their results in the conversation.
+            </SetupStep>
+          </ol>
+          <p className="mt-3 pt-2 border-t border-zinc-200 dark:border-zinc-800 text-xs text-zinc-500 dark:text-zinc-500 leading-relaxed">
+            <strong className="font-semibold text-zinc-600 dark:text-zinc-400">In short:</strong> Settings &rarr; Security and login &rarr; Developer mode ON &rarr; ChatGPT Plugins &rarr; <code className="font-mono text-zinc-600 dark:text-zinc-400">+</code> &rarr; Enter MCP server URL &rarr; Create &rarr; New chat &rarr; <code className="font-mono text-zinc-600 dark:text-zinc-400">+</code> &rarr; Developer mode &rarr; select your MCP app &rarr; Ask ChatGPT to use it.
+          </p>
+        </div>
         <p className="text-xs text-zinc-500 dark:text-zinc-500 mb-2 leading-relaxed">
-          In Claude.ai: Settings &rarr; Connectors &rarr; Add custom connector. In ChatGPT: Settings &rarr; Connectors. Paste the URL above, then approve the connection in the browser page that opens. You can disconnect here at any time.
+          Either way, approve the connection in the browser page that opens. You can disconnect here at any time.
         </p>
         {/*
             #1218: the Name field in Claude.ai's "Add custom connector" dialog
