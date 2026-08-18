@@ -2277,6 +2277,17 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
           telemetryComponent: turnLifecycle.phaseOf(goneTurn) === turnLifecycle.PHASE_DISPATCH_PENDING
             ? null
             : goneTurn.telemetryComponent || null,
+          telemetryMetrics: {
+            requestMode: goneTurn.telemetryRequestMode || null,
+            requestMessageCount: goneTurn.telemetryRequestTextCharacters == null ? null : 1,
+            requestUserMessageCount: goneTurn.telemetryRequestTextCharacters == null ? null : 1,
+            requestContentBlockCount: goneTurn.telemetryRequestTextCharacters == null ? null : 1,
+            requestTextCharacters: goneTurn.telemetryRequestTextCharacters ?? null,
+            requestUserTextCharacters: goneTurn.telemetryRequestTextCharacters ?? null,
+            requestPayloadCharacters: goneTurn.telemetryRequestTextCharacters ?? null,
+            modelContextWindowTokens: goneTurn.telemetryModelContextWindowTokens ?? null,
+            modelMaxOutputTokens: goneTurn.telemetryModelMaxOutputTokens ?? null,
+          },
         });
       } catch (ledgerErr) {
         const disposition = await recoveryRetry.retainOrQuarantineRecoveryError({
@@ -3259,6 +3270,10 @@ async function resumeDetachedTurnInner({
           : activeTurn.mode === 'build' ? 'coding_agent_build' : null),
       telemetryCorrelationId: activeTurn.telemetryCorrelationId || activeTurn.turnId || null,
       telemetryAttemptNumber: activeTurn.telemetryAttemptNumber || activeTurn.attemptNumber || 1,
+      telemetryRequestMode: activeTurn.telemetryRequestMode || null,
+      telemetryRequestTextCharacters: activeTurn.telemetryRequestTextCharacters ?? null,
+      telemetryModelContextWindowTokens: activeTurn.telemetryModelContextWindowTokens ?? null,
+      telemetryModelMaxOutputTokens: activeTurn.telemetryModelMaxOutputTokens ?? null,
       requestedModel: activeTurn.model || null,
       startedAt: activeTurn.startedAt || null,
       attemptNumber: activeTurn.attemptNumber || 1,
@@ -3277,12 +3292,26 @@ async function resumeDetachedTurnInner({
     if (activeTurn?.backend === 'codex_openrouter' && activeTurn?.turnUuid) {
       const agentTurn = require('./src/services/agent-turn');
       try {
-        await agentTurn.completeCodexTurn({
+        await agentTurn.completeCodexAttempt({
           pool,
           turnUuid: activeTurn.turnUuid,
           status: 'failed',
           errorCode: agentTurn.classifyErrorCode(err),
           errorDetail: agentTurn.sanitizeError(err),
+          telemetryComponent: turnLifecycle.phaseOf(activeTurn) === turnLifecycle.PHASE_DISPATCH_PENDING
+            ? null
+            : activeTurn.telemetryComponent || null,
+          telemetryMetrics: {
+            requestMode: activeTurn.telemetryRequestMode || null,
+            requestMessageCount: activeTurn.telemetryRequestTextCharacters == null ? null : 1,
+            requestUserMessageCount: activeTurn.telemetryRequestTextCharacters == null ? null : 1,
+            requestContentBlockCount: activeTurn.telemetryRequestTextCharacters == null ? null : 1,
+            requestTextCharacters: activeTurn.telemetryRequestTextCharacters ?? null,
+            requestUserTextCharacters: activeTurn.telemetryRequestTextCharacters ?? null,
+            requestPayloadCharacters: activeTurn.telemetryRequestTextCharacters ?? null,
+            modelContextWindowTokens: activeTurn.telemetryModelContextWindowTokens ?? null,
+            modelMaxOutputTokens: activeTurn.telemetryModelMaxOutputTokens ?? null,
+          },
         });
       } catch (ledgerErr) {
         const disposition = await recoveryRetry.retainOrQuarantineRecoveryError({

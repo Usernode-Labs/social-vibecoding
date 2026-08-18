@@ -118,7 +118,13 @@ function nonFatalDiagnostic(msg) {
 
 function emitDiagnosticOrError(state, msg) {
   const warning = nonFatalDiagnostic(msg);
-  if (warning) return { kind: 'warning', text: `⚠ ${warning}` };
+  if (warning) {
+    return {
+      kind: 'warning',
+      text: `⚠ ${warning}`,
+      diagnostic: /^Reconnecting/.test(String(msg || '')) ? 'provider_retry' : 'provider_warning',
+    };
+  }
   return emitError(state, msg);
 }
 
@@ -138,7 +144,7 @@ function normalizeCodexLine(line, state) {
     return [{ kind: 'thread_started', text: '[agent]', threadId: tid || null }];
   }
   if (ev.type === 'turn.started') {
-    return [{ kind: 'phase', text: '[agent]' }];
+    return [{ kind: 'phase', text: '[agent]', lifecycle: 'turn_started' }];
   }
   if (ev.type === 'item.started') {
     const item = ev.item || {};
@@ -147,19 +153,33 @@ function normalizeCodexLine(line, state) {
       const cmd = item.command || '';
       const label = cmd ? `$ ${String(cmd).slice(0, 150)}` : 'Running command';
       if (item.id) state.toolUses.set(item.id, { label, kind: 'command' });
-      return [{ kind: 'command_started', text: label }];
+      return [{
+        kind: 'command_started', text: label, lifecycle: 'started',
+        itemId: item.id || null, toolName: 'command',
+      }];
     }
     if (t === 'file_change' || t === 'file.edit' || t === 'file.write') {
       const path = item.path || item.file_path || '';
-      return [{ kind: 'file_changed', text: path ? `Editing ${path}` : 'Editing file' }];
+      return [{
+        kind: 'file_changed', text: path ? `Editing ${path}` : 'Editing file',
+        lifecycle: 'started', itemId: item.id || null,
+        toolName: 'file_change', resourcePath: path || null,
+      }];
     }
     if (t === 'file_read') {
       const path = item.path || '';
-      return [{ kind: 'file_read', text: path ? `Reading ${path}` : 'Reading file' }];
+      return [{
+        kind: 'file_read', text: path ? `Reading ${path}` : 'Reading file',
+        lifecycle: 'started', itemId: item.id || null,
+        toolName: 'file_read', resourcePath: path || null,
+      }];
     }
     if (t === 'mcp_tool_call') {
       const name = item.tool || item.server || 'browser';
-      return [{ kind: 'mcp_started', text: `Using ${name}` }];
+      return [{
+        kind: 'mcp_started', text: `Using ${name}`, lifecycle: 'started',
+        itemId: item.id || null, toolName: String(name),
+      }];
     }
     return [];
   }
@@ -173,6 +193,8 @@ function normalizeCodexLine(line, state) {
           kind: 'agent_message',
           text: String(txt).slice(0, 300),
           fullText: String(txt),
+          lifecycle: 'completed',
+          itemId: item.id || null,
         }];
       }
       return [];
@@ -186,12 +208,34 @@ function normalizeCodexLine(line, state) {
         : null;
       if (!changes) {
         const path = item.path || '';
-        return [{ kind: 'file_changed', text: path ? `Editing ${path}` : 'Editing file' }];
+        return [{
+          kind: 'file_changed', text: path ? `Editing ${path}` : 'Editing file',
+          lifecycle: 'completed', itemId: item.id || null,
+          toolName: 'file_change', resourcePath: path || null, countCompletion: true,
+        }];
       }
-      return changes.map((change) => ({
+      return changes.map((change, index) => ({
         kind: 'file_changed',
         text: `${verbFor(change.kind)} ${change.path}`,
+        lifecycle: 'completed',
+        itemId: item.id || null,
+        toolName: 'file_change',
+        resourcePath: change.path || null,
+        countCompletion: index === 0,
       }));
+    }
+    if (t === 'file_read') {
+      const path = item.path || item.file_path || '';
+      return [{
+        kind: 'file_read_completed',
+        // Completion was previously silent; telemetry observes it without
+        // adding a duplicate progress line to the user-visible stream.
+        text: null,
+        status: item.status || null,
+        lifecycle: 'completed',
+        itemId: item.id || null,
+        toolName: 'file_read', resourcePath: path || null, countCompletion: true,
+      }];
     }
     if (t === 'command_execution' || t === 'function_call') {
       const summary = summarizeResult(item.aggregated_output);
@@ -200,12 +244,21 @@ function normalizeCodexLine(line, state) {
         text: `  ⎿ ${summary}`,
         exitCode: item.exit_code != null ? item.exit_code : null,
         status: item.status || null,
+        lifecycle: 'completed',
+        itemId: item.id || null,
+        toolName: 'command',
+        countCompletion: true,
       }];
     }
     if (t === 'mcp_tool_call') {
       return [{
         kind: 'mcp_completed',
         text: item.status ? `MCP ${item.status}` : 'MCP complete',
+        status: item.status || null,
+        lifecycle: 'completed',
+        itemId: item.id || null,
+        toolName: String(item.tool || item.server || 'mcp'),
+        countCompletion: true,
       }];
     }
     return [];

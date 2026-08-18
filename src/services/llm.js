@@ -128,6 +128,237 @@ function usageMetric(usage, key) {
   return Number.isFinite(value) && value >= 0 ? value : null;
 }
 
+// Count the request's JSON-shaped payload without materializing a second copy
+// of it. Mayor requests can contain megabytes of repository/tool context; a
+// telemetry-only JSON.stringify would temporarily double that memory and add
+// avoidable work immediately before dispatch. This structural count includes
+// keys, scalar values and JSON punctuation. String escaping can make the
+// provider's encoded byte length slightly larger, so the metric deliberately
+// describes characters in the in-memory JSON shape rather than wire bytes.
+function serializedCharacters(value, seen = new WeakSet(), depth = 0) {
+  if (value == null) return 4;
+  if (typeof value === 'string') return value.length + 2;
+  if (typeof value === 'number') return Number.isFinite(value) ? String(value).length : 4;
+  if (typeof value === 'boolean') return value ? 4 : 5;
+  if (typeof value !== 'object' || depth > 64) return 0;
+  if (seen.has(value)) return 0;
+  seen.add(value);
+  try {
+    if (Array.isArray(value)) {
+      let characters = 2 + Math.max(0, value.length - 1);
+      for (const entry of value) characters += serializedCharacters(entry, seen, depth + 1);
+      return characters;
+    }
+    const entries = Object.entries(value).filter(([, entry]) => (
+      entry !== undefined && typeof entry !== 'function' && typeof entry !== 'symbol'
+    ));
+    let characters = 2 + Math.max(0, entries.length - 1);
+    for (const [key, entry] of entries) {
+      characters += key.length + 3; // quoted key plus colon
+      characters += serializedCharacters(entry, seen, depth + 1);
+    }
+    return characters;
+  } finally {
+    seen.delete(value);
+  }
+}
+
+function textCharacters(value) {
+  return typeof value === 'string' ? value.length : 0;
+}
+
+function cacheBreakpointMetrics({ system, messages, tools }) {
+  const metrics = { total: 0, fiveMinute: 0, oneHour: 0 };
+  const visitContent = (value, depth = 0) => {
+    if (!value || depth > 4) return;
+    if (Array.isArray(value)) {
+      for (const entry of value) visitContent(entry, depth + 1);
+      return;
+    }
+    if (typeof value !== 'object') return;
+    if (value.cache_control && typeof value.cache_control === 'object') {
+      metrics.total += 1;
+      if (value.cache_control.ttl === '1h') metrics.oneHour += 1;
+      else metrics.fiveMinute += 1;
+    }
+    // A tool_result may itself contain provider content blocks. Do not walk
+    // arbitrary tool inputs or JSON schemas: a user field named
+    // `cache_control` is data, not an Anthropic cache breakpoint.
+    if (value.type === 'tool_result' && Array.isArray(value.content)) {
+      visitContent(value.content, depth + 1);
+    }
+  };
+  visitContent(system);
+  for (const message of Array.isArray(messages) ? messages : []) {
+    visitContent(message && message.content);
+  }
+  for (const tool of Array.isArray(tools) ? tools : []) {
+    visitContent(tool);
+  }
+  return metrics;
+}
+
+function anthropicRequestMetrics(params, { requestMode = 'single', fallbackModelCount = 0 } = {}) {
+  try {
+    const messages = Array.isArray(params && params.messages) ? params.messages : [];
+    const system = params && params.system;
+    const tools = Array.isArray(params && params.tools) ? params.tools : [];
+    const toolSchemaCharacters = serializedCharacters(tools);
+    const metrics = {
+      requestMode,
+      requestMessageCount: messages.length,
+      requestUserMessageCount: 0,
+      requestAssistantMessageCount: 0,
+      requestContentBlockCount: 0,
+      requestTextCharacters: 0,
+      requestUserTextCharacters: 0,
+      requestAssistantTextCharacters: 0,
+      requestToolResultTextCharacters: 0,
+      requestThinkingCharacters: 0,
+      // Reuse the tool traversal for both totals so large JSON schemas are
+      // never walked twice solely for telemetry.
+      requestPayloadCharacters: serializedCharacters({ system, messages })
+        + toolSchemaCharacters,
+      requestSystemCharacters: 0,
+      requestToolDefinitionCount: tools.length,
+      requestToolSchemaCharacters: toolSchemaCharacters,
+      requestToolCallCount: 0,
+      requestToolResultCount: 0,
+      requestImageCount: 0,
+      requestDocumentCount: 0,
+      maxOutputTokens: params && params.max_tokens,
+      temperature: params && params.temperature,
+      topP: params && params.top_p,
+      topK: params && params.top_k,
+      stopSequenceCount: Array.isArray(params && params.stop_sequences)
+        ? params.stop_sequences.length
+        : 0,
+      fallbackModelCount,
+      toolChoiceMode: params && params.tool_choice && params.tool_choice.type
+        ? params.tool_choice.type
+        : 'unset',
+      outputFormat: params && params.output_config && params.output_config.format
+        ? (params.output_config.format.type || 'unknown')
+        : (params && params.tool_choice && params.tool_choice.type === 'tool' ? 'tool' : 'text'),
+      thinkingMode: params && params.thinking && params.thinking.type
+        ? params.thinking.type
+        : 'unset',
+      thinkingBudgetTokens: params && params.thinking && params.thinking.budget_tokens,
+      requestedServiceTier: params && params.service_tier,
+      requestedInferenceRegion: params && params.inference_geo,
+      reasoningEffort: params && params.output_config && params.output_config.effort,
+    };
+
+    const inspectContent = (content, {
+      systemContent = false, role = null, toolResultContent = false,
+    } = {}) => {
+      const blocks = Array.isArray(content) ? content : [content];
+      for (const block of blocks) {
+        if (block == null) continue;
+        metrics.requestContentBlockCount += 1;
+        if (typeof block === 'string') {
+          metrics.requestTextCharacters += block.length;
+          if (systemContent) metrics.requestSystemCharacters += block.length;
+          if (role === 'user') metrics.requestUserTextCharacters += block.length;
+          if (role === 'assistant') metrics.requestAssistantTextCharacters += block.length;
+          if (toolResultContent) metrics.requestToolResultTextCharacters += block.length;
+          continue;
+        }
+        if (typeof block !== 'object') continue;
+        const thinkingChars = textCharacters(block.thinking);
+        const chars = textCharacters(block.text)
+          + thinkingChars
+          + (typeof block.content === 'string' ? block.content.length : 0);
+        metrics.requestTextCharacters += chars;
+        metrics.requestThinkingCharacters += thinkingChars;
+        if (systemContent) metrics.requestSystemCharacters += chars;
+        if (role === 'user') metrics.requestUserTextCharacters += chars;
+        if (role === 'assistant') metrics.requestAssistantTextCharacters += chars;
+        if (toolResultContent) metrics.requestToolResultTextCharacters += chars;
+        if (block.type === 'tool_result') {
+          metrics.requestToolResultCount += 1;
+          if (typeof block.content === 'string' && !toolResultContent) {
+            metrics.requestToolResultTextCharacters += block.content.length;
+          }
+          if (Array.isArray(block.content)) {
+            inspectContent(block.content, { systemContent, role, toolResultContent: true });
+          }
+        } else if (block.type === 'tool_use' || block.type === 'server_tool_use'
+            || block.type === 'mcp_tool_use') {
+          metrics.requestToolCallCount += 1;
+        } else if (block.type === 'image') {
+          metrics.requestImageCount += 1;
+        } else if (block.type === 'document') {
+          metrics.requestDocumentCount += 1;
+        }
+      }
+    };
+
+    inspectContent(system, { systemContent: true });
+    for (const message of messages) {
+      if (message && message.role === 'user') metrics.requestUserMessageCount += 1;
+      else if (message && message.role === 'assistant') metrics.requestAssistantMessageCount += 1;
+      inspectContent(message && message.content, { role: message && message.role });
+    }
+    const cache = cacheBreakpointMetrics({ system, messages, tools });
+    metrics.requestCacheBreakpointCount = cache.total;
+    metrics.requestCache5mBreakpointCount = cache.fiveMinute;
+    metrics.requestCache1hBreakpointCount = cache.oneHour;
+    return metrics;
+  } catch {
+    // Request-shape observation must never affect a valid provider request.
+    return { requestMode };
+  }
+}
+
+function anthropicResponseMetrics(response) {
+  try {
+    const content = Array.isArray(response && response.content) ? response.content : [];
+    const metrics = {
+      responseContentBlockCount: content.length,
+      responseTextBlockCount: 0,
+      responseTextCharacters: 0,
+      responseToolCallCount: 0,
+      responseServerToolCallCount: 0,
+      responseThinkingBlockCount: 0,
+      responseThinkingCharacters: 0,
+      responseRedactedThinkingBlockCount: 0,
+      serviceTier: response && response.usage && response.usage.service_tier,
+      inferenceRegion: response && response.usage && response.usage.inference_geo,
+    };
+    for (const block of content) {
+      if (!block || typeof block !== 'object') continue;
+      if (block.type === 'text') {
+        metrics.responseTextBlockCount += 1;
+        metrics.responseTextCharacters += textCharacters(block.text);
+      } else if (block.type === 'tool_use') {
+        metrics.responseToolCallCount += 1;
+      } else if (block.type === 'server_tool_use' || block.type === 'mcp_tool_use') {
+        metrics.responseServerToolCallCount += 1;
+      } else if (block.type === 'thinking') {
+        metrics.responseThinkingBlockCount += 1;
+        metrics.responseThinkingCharacters += textCharacters(block.thinking);
+      } else if (block.type === 'redacted_thinking') {
+        metrics.responseRedactedThinkingBlockCount += 1;
+      }
+    }
+    return metrics;
+  } catch {
+    return {};
+  }
+}
+
+function anthropicUsageDetails(usage) {
+  const cache = usage && usage.cache_creation;
+  const serverTools = usage && usage.server_tool_use;
+  return {
+    cacheWrite5mInputTokens: usageMetric(cache, 'ephemeral_5m_input_tokens'),
+    cacheWrite1hInputTokens: usageMetric(cache, 'ephemeral_1h_input_tokens'),
+    serverWebSearchCount: usageMetric(serverTools, 'web_search_requests'),
+    serverWebFetchCount: usageMetric(serverTools, 'web_fetch_requests'),
+  };
+}
+
 function telemetryCostUsd(usage, model) {
   const input = usageMetric(usage, 'input_tokens');
   const output = usageMetric(usage, 'output_tokens');
@@ -157,7 +388,9 @@ function telemetryBase(context, defaults, apiKey) {
 
 function recordAnthropicResponse({
   context, requestedModel, response, startedAt, durationMs, attemptNumber,
+  requestMetrics = {}, timeToFirstOutputMs = null,
 }) {
+  if (!llmTelemetry.isCollectionEnabled()) return 1;
   try {
     const outerUsage = response && response.usage;
     const iterations = Array.isArray(outerUsage && outerUsage.iterations)
@@ -166,6 +399,7 @@ function recordAnthropicResponse({
       : null;
     const usageRows = iterations || [outerUsage || null];
     const boundary = fallbackBoundary(response && response.content);
+    const responseMetrics = anthropicResponseMetrics(response);
 
     usageRows.forEach((entry, index) => {
       const usage = entry && entry.usage ? entry.usage : entry;
@@ -205,12 +439,19 @@ function recordAnthropicResponse({
         cacheWriteInputTokens: usageMetric(effectiveUsage, 'cache_creation_input_tokens'),
         outputTokens: usageMetric(effectiveUsage, 'output_tokens'),
         reasoningOutputTokens: null,
+        ...anthropicUsageDetails(effectiveUsage),
+        providerTurnCount: 1,
+        providerModelCount: 1,
         costUsd,
         costSource: costUsd == null ? 'unavailable' : 'platform_estimate',
         // A server-side fallback exposes one duration for the enclosing API
         // request, not per model iteration. Attribute it once to the final
         // iteration instead of duplicating it across attempts.
         durationMs: isLast ? durationMs : null,
+        providerDurationMs: isLast ? durationMs : null,
+        timeToFirstOutputMs: isLast ? timeToFirstOutputMs : null,
+        ...requestMetrics,
+        ...(isLast ? responseMetrics : {}),
         outcome: anthropicOutcome(stopReason),
         stopReason,
         attemptNumber: eventAttempt,
@@ -244,9 +485,29 @@ function isAnthropicCancellation(error) {
   ));
 }
 
+function anthropicErrorClass(error) {
+  if (isAnthropicCancellation(error)) return 'cancelled';
+  const status = Number(error && (error.status || error.statusCode));
+  if (status === 400 || status === 422) return 'invalid_request';
+  if (status === 401) return 'authentication';
+  if (status === 402) return 'billing';
+  if (status === 403) return 'permission';
+  if (status === 404) return 'not_found';
+  if (status === 408) return 'timeout';
+  if (status === 429) return 'rate_limited';
+  if (status === 529) return 'overloaded';
+  if (status >= 500 && status <= 599) return 'provider';
+  const code = typeof (error && error.code) === 'string' ? error.code.toUpperCase() : '';
+  if (['ETIMEDOUT', 'ESOCKETTIMEDOUT', 'UND_ERR_CONNECT_TIMEOUT'].includes(code)) return 'timeout';
+  if (['ECONNRESET', 'ECONNREFUSED', 'ENETUNREACH', 'EAI_AGAIN'].includes(code)) return 'network';
+  return 'unknown';
+}
+
 function recordAnthropicError({
   context, requestedModel, startedAt, durationMs, attemptNumber, error,
+  requestMetrics = {}, timeToFirstOutputMs = null,
 }) {
+  if (!llmTelemetry.isCollectionEnabled()) return;
   try {
     const cancelled = isAnthropicCancellation(error);
     void llmTelemetry.record(context.pool, {
@@ -262,8 +523,12 @@ function recordAnthropicError({
       billingPath: context.billingPath,
       costSource: 'unavailable',
       durationMs,
+      providerDurationMs: durationMs,
+      timeToFirstOutputMs,
+      ...requestMetrics,
       outcome: cancelled ? 'cancelled' : 'error',
       stopReason: cancelled ? 'cancelled' : null,
+      errorClass: anthropicErrorClass(error),
       attemptNumber,
       correlationId: context.correlationId,
     });
@@ -279,6 +544,9 @@ async function createMessageWithTelemetry({
   const context = telemetryBase(telemetryContext, defaults, apiKey);
   const startedAt = new Date();
   const startedMs = Date.now();
+  const requestMetrics = llmTelemetry.isCollectionEnabled()
+    ? anthropicRequestMetrics(params, { requestMode: 'single' })
+    : {};
   try {
     // Preserve the provider call's arity as well as its params object. Some
     // SDK stubs distinguish create(params) from create(params, undefined).
@@ -292,6 +560,7 @@ async function createMessageWithTelemetry({
       startedAt,
       durationMs: Date.now() - startedMs,
       attemptNumber: context.attemptNumber,
+      requestMetrics,
     });
     return response;
   } catch (error) {
@@ -302,6 +571,7 @@ async function createMessageWithTelemetry({
       durationMs: Date.now() - startedMs,
       attemptNumber: context.attemptNumber,
       error,
+      requestMetrics,
     });
     throw error;
   }
@@ -347,9 +617,23 @@ async function streamChat({ messages, systemPrompt, model, tools, toolChoice, on
       // the model from calling tools again after a tool_result round-trip.
       if (toolChoice) params.tool_choice = toolChoice;
 
+      const observeTelemetry = llmTelemetry.isCollectionEnabled();
+      const requestMetrics = observeTelemetry
+        ? anthropicRequestMetrics(params, {
+          requestMode: 'stream',
+          fallbackModelCount: withFallbacks ? 1 : 0,
+        })
+        : {};
+
       const startedAt = new Date();
       const startedMs = Date.now();
       const attemptNumber = nextAttemptNumber;
+      let timeToFirstOutputMs = null;
+      const markFirstOutput = () => {
+        if (observeTelemetry && timeToFirstOutputMs == null) {
+          timeToFirstOutputMs = Date.now() - startedMs;
+        }
+      };
       try {
         const stream = withFallbacks
           ? activeClient.beta.messages.stream({
@@ -359,7 +643,19 @@ async function streamChat({ messages, systemPrompt, model, tools, toolChoice, on
           }, requestOptions)
           : activeClient.messages.stream(params, requestOptions);
 
+        // `streamEvent` sees thinking/tool blocks as well as text, whereas the
+        // existing `text` callback alone would overstate first-output latency
+        // for thinking-heavy or tool-only turns. Older SDK/test streams simply
+        // ignore the event name.
+        if (observeTelemetry) {
+          stream.on('streamEvent', (event) => {
+            if (event && (event.type === 'content_block_start'
+                || event.type === 'content_block_delta')) markFirstOutput();
+          });
+        }
+
         stream.on('text', (text) => {
+          markFirstOutput();
           fullText += text;
           if (onToken) onToken(text);
         });
@@ -372,6 +668,8 @@ async function streamChat({ messages, systemPrompt, model, tools, toolChoice, on
           startedAt,
           durationMs: Date.now() - startedMs,
           attemptNumber,
+          requestMetrics,
+          timeToFirstOutputMs,
         });
         return finalMessage;
       } catch (error) {
@@ -382,6 +680,8 @@ async function streamChat({ messages, systemPrompt, model, tools, toolChoice, on
           durationMs: Date.now() - startedMs,
           attemptNumber,
           error,
+          requestMetrics,
+          timeToFirstOutputMs,
         });
         nextAttemptNumber += 1;
         throw error;
@@ -1250,7 +1550,7 @@ ${stripLoneSurrogates(description).trim()}`,
       }],
     },
     telemetryContext,
-    defaults: { backend: 'helper', component: 'other_helper' },
+    defaults: { backend: 'helper', component: 'issue_title' },
     apiKey,
   });
   const title = ((resp.content || []).find((b) => b.type === 'text')?.text || '').trim();
@@ -1364,7 +1664,7 @@ ${inputJson}`;
       output_config: { format: { type: 'json_schema', schema: REPORT_SUMMARY_SCHEMA } },
     },
     telemetryContext,
-    defaults: { backend: 'helper', component: 'other_helper' },
+    defaults: { backend: 'helper', component: 'report_summary' },
     apiKey,
   });
 

@@ -309,7 +309,7 @@ async function runAppChange({ campaign, app, exemplarSummary, onUsage }) {
       telemetryContext: {
         appId: app.id,
         backend: 'helper',
-        component: 'other_helper',
+        component: 'fleet_maintenance',
       },
     });
     if (onUsage && res.usage) {

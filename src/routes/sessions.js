@@ -127,13 +127,14 @@ function recordLocalCodingInvocation(pool, {
   session, turnId, turn, outcome, component, attemptNumber, correlationId, startedAt,
 }) {
   if (!turnId) return;
-  if (!['completed', 'failed', 'stopped', 'aborted'].includes(outcome)) return;
+  if (!['completed', 'failed', 'stopped', 'aborted', 'abandoned'].includes(outcome)) return;
   // A queued/offered turn that was declined before acceptance never invoked
   // the local model. Likewise, a vanished/abandoned offer is not enough
   // evidence to claim a provider invocation; only run-terminal outcomes are.
   const acceptedAt = turn && turn.accepted_at ? new Date(turn.accepted_at) : null;
   if (!acceptedAt || !Number.isFinite(acceptedAt.getTime())) return;
   const finishedAt = turn && turn.finished_at ? new Date(turn.finished_at) : new Date();
+  const createdAt = turn && turn.created_at ? new Date(turn.created_at) : null;
   const durationMs = acceptedAt && Number.isFinite(acceptedAt.getTime())
     && Number.isFinite(finishedAt.getTime())
     ? Math.max(0, finishedAt.getTime() - acceptedAt.getTime())
@@ -141,6 +142,10 @@ function recordLocalCodingInvocation(pool, {
   const normalizedOutcome = outcome === 'completed'
     ? 'success'
     : (outcome === 'stopped' || outcome === 'aborted') ? 'cancelled' : 'error';
+  const requestCharacters = typeof turn.prompt === 'string' ? turn.prompt.length : null;
+  const responseText = typeof turn.spec_md === 'string'
+    ? turn.spec_md
+    : (typeof turn.summary === 'string' ? turn.summary : null);
   void llmTelemetry.record(pool, {
     invocationKey: `local_agent:${turnId}`,
     timestamp: acceptedAt || startedAt,
@@ -157,11 +162,29 @@ function recordLocalCodingInvocation(pool, {
     cacheWriteInputTokens: null,
     outputTokens: null,
     reasoningOutputTokens: null,
+    requestMode: 'agent_new',
+    requestMessageCount: requestCharacters == null ? null : 1,
+    requestUserMessageCount: requestCharacters == null ? null : 1,
+    requestContentBlockCount: requestCharacters == null ? null : 1,
+    requestTextCharacters: requestCharacters,
+    requestUserTextCharacters: requestCharacters,
+    requestPayloadCharacters: requestCharacters,
+    responseContentBlockCount: responseText == null ? null : 1,
+    responseTextBlockCount: responseText == null ? null : 1,
+    responseTextCharacters: responseText == null ? null : responseText.length,
+    agentReportedDurationMs: durationMs,
+    queueDurationMs: createdAt && Number.isFinite(createdAt.getTime())
+      ? Math.max(0, acceptedAt.getTime() - createdAt.getTime())
+      : null,
     costUsd: null,
     costSource: 'unavailable',
     durationMs,
     outcome: normalizedOutcome,
     stopReason: outcome || null,
+    errorClass: normalizedOutcome === 'cancelled'
+      ? 'cancelled'
+      : (outcome === 'abandoned' ? 'network'
+        : (normalizedOutcome === 'error' ? 'worker' : null)),
     attemptNumber,
     correlationId,
   });
@@ -8586,6 +8609,10 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
           : activeTurn.mode === 'build' ? 'coding_agent_build' : null),
       telemetryCorrelationId: activeTurn.telemetryCorrelationId || activeTurn.turnId || null,
       telemetryAttemptNumber: activeTurn.telemetryAttemptNumber || activeTurn.attemptNumber || 1,
+      telemetryRequestMode: activeTurn.telemetryRequestMode || null,
+      telemetryRequestTextCharacters: activeTurn.telemetryRequestTextCharacters ?? null,
+      telemetryModelContextWindowTokens: activeTurn.telemetryModelContextWindowTokens ?? null,
+      telemetryModelMaxOutputTokens: activeTurn.telemetryModelMaxOutputTokens ?? null,
       requestedModel: activeTurn.model || null,
       startedAt: activeTurn.startedAt || null,
       attemptNumber: activeTurn.attemptNumber || 1,
@@ -11039,6 +11066,7 @@ async function runCodexAttemptLoop({
         ? (telemetryComponent
           || (mode === 'scout' ? 'coding_agent_scout' : 'coding_agent_build'))
         : null,
+      telemetryMetrics: result || null,
       errorCode: err
         ? agentTurn.classifyErrorCode(err)
         : result?.agentRetryFresh ? 'resume_thread_missing' : null,
@@ -11310,6 +11338,17 @@ async function forceStopSession(pool, sessionId, username, handle) {
               telemetryComponent: turnLifecycle.phaseOf(activeTurn) === turnLifecycle.PHASE_DISPATCH_PENDING
                 ? null
                 : activeTurn.telemetryComponent || null,
+              telemetryMetrics: {
+                requestMode: activeTurn.telemetryRequestMode || null,
+                requestMessageCount: activeTurn.telemetryRequestTextCharacters == null ? null : 1,
+                requestUserMessageCount: activeTurn.telemetryRequestTextCharacters == null ? null : 1,
+                requestContentBlockCount: activeTurn.telemetryRequestTextCharacters == null ? null : 1,
+                requestTextCharacters: activeTurn.telemetryRequestTextCharacters ?? null,
+                requestUserTextCharacters: activeTurn.telemetryRequestTextCharacters ?? null,
+                requestPayloadCharacters: activeTurn.telemetryRequestTextCharacters ?? null,
+                modelContextWindowTokens: activeTurn.telemetryModelContextWindowTokens ?? null,
+                modelMaxOutputTokens: activeTurn.telemetryModelMaxOutputTokens ?? null,
+              },
             });
           } catch (ledgerErr) {
             ledgerReady = false;
@@ -13590,4 +13629,4 @@ CMD ["node", "server.js"]
   return { containerId, stagingUrl, hostname };
 }
 
-module.exports = { runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, advanceSharedReviewAfterSync, advanceReviewAfterPlatformSync, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, stripFakeCompletionMarker, buildMayorMessages, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError };
+module.exports = { runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, advanceSharedReviewAfterSync, advanceReviewAfterPlatformSync, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, stripFakeCompletionMarker, buildMayorMessages, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };
