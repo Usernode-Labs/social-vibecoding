@@ -2191,6 +2191,12 @@
       "expectText": "Claude — claude.ai"
     },
     {
+      "name": "Connector setup walks Claude web and ChatGPT web through numbered onboarding steps (#1289)",
+      "path": "/?demo=1#settings/connectors",
+      "expectSelector": "[data-settings-section=\"connectors\"]:not(.hidden) #connectors-section ol",
+      "expectText": "Turn on Developer mode."
+    },
+    {
       "name": "Offline: the signed-in shell keeps a visible offline strip above everything (#1021)",
       "path": "/?shot=offline",
       "expectSelector": "body.is-offline #offline-banner:not(.hidden)",
