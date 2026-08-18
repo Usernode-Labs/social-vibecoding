@@ -1574,7 +1574,8 @@
       try {
         const demo = new URLSearchParams(window.location.search).get('demo');
         if (demo === '1' || demo === 'identity-connected'
-            || demo === 'identity-unverified' || demo === 'identity-legacy') {
+            || demo === 'identity-unverified' || demo === 'identity-legacy'
+            || demo === 'identity-x-misconfigured') {
           return `?demo=${encodeURIComponent(demo)}`;
         }
       } catch { /* ordinary production read */ }
@@ -1740,7 +1741,125 @@
       }
       row.append(text, actions);
       wrap.append(row, this._socialIdentityAuditNote(provider));
+      // A provider that rejects our callback address errors on its own page
+      // and never redirects back, so the only trace of that failure is the
+      // stranded attempt the server spotted (#1291).
+      if (link.pendingAttemptAt) {
+        const stranded = document.createElement('p');
+        stranded.id = `${provider}-link-pending-note`;
+        stranded.className = 'text-xs text-amber-600 dark:text-amber-400 mt-2';
+        stranded.textContent = `Your last ${name} connection attempt didn't complete. `
+          + `If ${name} showed "Something went wrong — You weren't able to give access to the App", `
+          + `the platform's callback address isn't registered on the ${name} developer app — `
+          + 'an administrator needs to update that app’s settings.';
+        wrap.appendChild(stranded);
+      }
+      if (link.diagnostics) {
+        wrap.appendChild(this._socialIdentityDiagnostics(provider, link.diagnostics, demo));
+      }
       return wrap;
+    },
+
+    // Admin-only configuration panel for a provider whose OAuth setup can
+    // fail invisibly on the provider's own page (#1291): names the
+    // credential pair in use, the exact callback URL the developer app must
+    // register, and a live check of the pair against X's token endpoint.
+    _socialIdentityDiagnostics(provider, diagnostics, demo) {
+      const name = provider === 'github' ? 'GitHub' : 'X';
+      const panel = document.createElement('div');
+      panel.id = `${provider}-link-diagnostics`;
+      panel.className = 'mt-2 rounded-md border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 px-2.5 py-2 text-xs';
+
+      const source = document.createElement('div');
+      source.className = 'font-medium text-zinc-700 dark:text-zinc-300';
+      if (diagnostics.credentialSource === 'waitlist') {
+        source.textContent = `Reusing the waitlist ${name} app’s credentials.`;
+      } else if (diagnostics.credentialSource === 'dedicated') {
+        source.textContent = diagnostics.sameAppAsWaitlist
+          ? `Dedicated ${name} credentials — same app as the waitlist pair.`
+          : `Dedicated ${name} app credentials.`;
+      } else {
+        source.textContent = `No complete ${name} credential pair is configured.`;
+      }
+      panel.appendChild(source);
+
+      const cbRow = document.createElement('div');
+      cbRow.className = 'mt-1 flex items-center gap-2 min-w-0';
+      const cbLabel = document.createElement('span');
+      cbLabel.className = 'text-zinc-500 dark:text-zinc-400 shrink-0';
+      cbLabel.textContent = 'Callback URI:';
+      const cbCode = document.createElement('code');
+      cbCode.className = 'truncate text-zinc-700 dark:text-zinc-300 bg-zinc-100 dark:bg-zinc-800 rounded px-1 py-0.5';
+      cbCode.textContent = diagnostics.callbackUrl || '';
+      const cbCopy = document.createElement('button');
+      cbCopy.type = 'button';
+      cbCopy.className = 'shrink-0 rounded border border-zinc-300 dark:border-zinc-600 px-1.5 py-0.5 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors';
+      cbCopy.textContent = 'Copy';
+      cbCopy.addEventListener('click', async () => {
+        try {
+          await navigator.clipboard.writeText(diagnostics.callbackUrl || '');
+          cbCopy.textContent = 'Copied';
+          setTimeout(() => { cbCopy.textContent = 'Copy'; }, 1500);
+        } catch { /* clipboard unavailable — the address is still visible */ }
+      });
+      cbRow.append(cbLabel, cbCode, cbCopy);
+      panel.appendChild(cbRow);
+
+      const warning = document.createElement('p');
+      warning.className = 'mt-1 text-zinc-500 dark:text-zinc-400';
+      warning.textContent = `If this address isn’t registered as a callback URI on the ${name} developer app, `
+        + `${name} shows "Something went wrong" before sign-in and never redirects back here.`;
+      panel.appendChild(warning);
+
+      const checkRow = document.createElement('div');
+      checkRow.className = 'mt-2 flex items-start gap-2';
+      const checkButton = document.createElement('button');
+      checkButton.type = 'button';
+      checkButton.id = `${provider}-link-check`;
+      checkButton.className = 'shrink-0 rounded-md border border-violet-400 dark:border-violet-700 px-2 py-1 font-medium text-violet-700 dark:text-violet-300 hover:bg-violet-50 dark:hover:bg-violet-950 disabled:opacity-50 transition-colors';
+      checkButton.textContent = 'Run configuration check';
+      const checkResult = document.createElement('span');
+      checkResult.className = 'text-zinc-500 dark:text-zinc-400 pt-1';
+      checkButton.addEventListener('click', async () => {
+        checkButton.disabled = true;
+        checkResult.className = 'text-zinc-500 dark:text-zinc-400 pt-1';
+        checkResult.textContent = 'Checking…';
+        try {
+          let verdict;
+          if (demo) {
+            verdict = { clientAuth: 'ok' };
+          } else {
+            const response = await fetch('/api/me/social-identities/x/check', {
+              method: 'POST',
+              credentials: 'same-origin',
+              cache: 'no-store',
+            });
+            if (!response.ok) throw new Error(`Check failed (${response.status})`);
+            verdict = await response.json();
+          }
+          if (verdict.clientAuth === 'ok') {
+            checkResult.className = 'text-emerald-600 dark:text-emerald-400 pt-1';
+            checkResult.textContent = `${name} accepted the platform’s client credentials. `
+              + `If connecting still fails on ${name}’s own page, the callback address above `
+              + `is not registered on the ${name} app.`;
+          } else if (verdict.clientAuth === 'rejected') {
+            checkResult.className = 'text-red-600 dark:text-red-400 pt-1';
+            checkResult.textContent = `${name} rejected the platform’s client ID or secret — `
+              + 'the configured credential pair is wrong.';
+          } else {
+            checkResult.className = 'text-amber-600 dark:text-amber-400 pt-1';
+            checkResult.textContent = `Couldn’t reach ${name} to verify the credentials. Try again shortly.`;
+          }
+        } catch {
+          checkResult.className = 'text-red-600 dark:text-red-400 pt-1';
+          checkResult.textContent = 'The configuration check failed to run. Try again shortly.';
+        } finally {
+          checkButton.disabled = false;
+        }
+      });
+      checkRow.append(checkButton, checkResult);
+      panel.appendChild(checkRow);
+      return panel;
     },
 
     // "Don't take our word for it": GitHub's own page lists what every

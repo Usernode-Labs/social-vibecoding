@@ -48,13 +48,40 @@ function settingsUrl(config, status, provider) {
   return `${config.cliAuthOrigin}/#settings/connectors?${params.toString()}`;
 }
 
-async function statusPayload(pool, config, userId) {
-  const [providers, entitlement] = await Promise.all([
+// A connect attempt younger than this is a flow still in flight in another
+// tab, not a stranded one worth flagging.
+const PENDING_ATTEMPT_MIN_AGE_MS = 60 * 1000;
+
+async function statusPayload(pool, config, user) {
+  const userId = user.id;
+  const [providers, entitlement, pending] = await Promise.all([
     socialIdentity.identityStatus(pool, userId),
     limits.getUserCreditEntitlement(pool, userId),
+    socialIdentity.pendingStateInfo(pool, userId),
   ]);
   for (const provider of socialIdentity.PROVIDERS) {
     providers[provider].available = providerAdapter(provider).isEnabled(config);
+    // A provider that rejects our redirect_uri errors on its own page and
+    // never calls back, so a stale unconsumed state row is the only trace
+    // a user's stranded attempt leaves (#1291).
+    const startedAt = pending[provider] ? Date.parse(pending[provider]) : NaN;
+    if (Number.isFinite(startedAt)
+        && Date.now() - startedAt >= PENDING_ATTEMPT_MIN_AGE_MS) {
+      providers[provider].pendingAttemptAt = pending[provider];
+    }
+  }
+  if (user.isAdmin) {
+    // Not secrets (the client id rides in every authorize redirect, the
+    // callback URL is public routing) — admin-only to keep the regular
+    // panel uncluttered.
+    providers.x.diagnostics = {
+      credentialSource: xLink.credentialSource(config),
+      callbackUrl: callbackUri(config, 'x'),
+      sameAppAsWaitlist: xLink.sameAppAsWaitlist(config),
+    };
+    providers.github.credentialSource = githubLink.isEnabled(config)
+      ? 'dedicated'
+      : null;
   }
   return { providers, entitlement };
 }
@@ -81,6 +108,20 @@ function demoPayload(mode) {
       linkedAt,
       reconnectRequired: true,
     };
+  } else if (mode === 'identity-x-misconfigured') {
+    // Fixture for the #1291 diagnostics: an admin viewing an X connection
+    // that reuses the waitlist app's credentials, after an attempt that
+    // never came back from X's authorize page.
+    providers.x = {
+      ...providers.x,
+      pendingAttemptAt: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
+      diagnostics: {
+        credentialSource: 'waitlist',
+        callbackUrl: 'https://staging-demo.example/api/me/x/callback',
+        sameAppAsWaitlist: false,
+      },
+    };
+    providers.github.credentialSource = 'dedicated';
   } else if (mode !== 'identity-unverified') {
     providers.github = {
       ...providers.github,
@@ -135,7 +176,8 @@ function socialIdentityRoutes(config) {
     const demo = typeof req.query.demo === 'string' ? req.query.demo : '';
     if (IS_STAGING) {
       if (demo === '1' || demo === 'identity-connected'
-          || demo === 'identity-unverified' || demo === 'identity-legacy') {
+          || demo === 'identity-unverified' || demo === 'identity-legacy'
+          || demo === 'identity-x-misconfigured') {
         return res.json(demoPayload(demo));
       }
       const payload = demoPayload('identity-unverified');
@@ -149,7 +191,7 @@ function socialIdentityRoutes(config) {
       return res.json(payload);
     }
     try {
-      return res.json(await statusPayload(pool, config, req.user.id));
+      return res.json(await statusPayload(pool, config, req.user));
     } catch (err) {
       log.warn('social-identity', 'status read failed', {
         userId: req.user.id, message: err.message,
@@ -171,7 +213,7 @@ function socialIdentityRoutes(config) {
       });
     }
     try {
-      const payload = await statusPayload(pool, config, req.user.id);
+      const payload = await statusPayload(pool, config, req.user);
       const github = payload.providers.github;
       return res.json({
         linked: github.linked,
@@ -209,6 +251,16 @@ function socialIdentityRoutes(config) {
         challenge: pending.challenge,
       });
       if (!url) return res.status(404).json({ error: 'not_found' });
+      // Providers reject a misregistered redirect_uri on their own page and
+      // never call back — this start entry is what lets an admin correlate
+      // a stranded attempt with the credential pair that made it (#1291).
+      log.info('social-identity', 'link start', {
+        provider,
+        userId: req.user.id,
+        credentialSource: provider === 'x'
+          ? xLink.credentialSource(config)
+          : 'dedicated',
+      });
       res.setHeader('Referrer-Policy', 'no-referrer');
       return res.redirect(302, url);
     } catch (err) {
@@ -277,6 +329,32 @@ function socialIdentityRoutes(config) {
     (req, res) => finishLink(req, res, 'github'));
   router.get('/api/me/x/callback', userRate,
     (req, res) => finishLink(req, res, 'x'));
+
+  // Admin-only live probe of the configured X pair against X's token
+  // endpoint (#1291). X can't be asked which callbacks an app registered,
+  // but proving the client id/secret are accepted narrows a failed connect
+  // to the one remaining cause. POST because it makes an outbound provider
+  // call from an explicit button press.
+  router.post('/api/me/social-identities/x/check', userRate, async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'not_authenticated' });
+    if (IS_STAGING) return res.status(404).json({ error: 'not_found' });
+    if (!browserCsrf(config, req, res)) return undefined;
+    if (!req.user.isAdmin) return res.status(403).json({ error: 'forbidden' });
+    if (!xLink.isEnabled(config)) return res.status(404).json({ error: 'not_found' });
+    try {
+      const clientAuth = await xLink.checkClientCredentials(config);
+      return res.json({
+        credentialSource: xLink.credentialSource(config),
+        callbackUrl: callbackUri(config, 'x'),
+        clientAuth,
+      });
+    } catch (err) {
+      log.warn('social-identity', 'x credential check failed', {
+        userId: req.user.id, message: err.message,
+      });
+      return res.status(503).json({ error: 'temporarily_unavailable' });
+    }
+  });
 
   const unlink = async (req, res, explicitProvider) => {
     if (!req.user) return res.status(401).json({ error: 'not_authenticated' });

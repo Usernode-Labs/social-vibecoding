@@ -698,6 +698,12 @@
       "expectText": "reconnect once"
     },
     {
+      "name": "X misconfiguration self-diagnoses: stranded-attempt note and admin config panel (#1291)",
+      "path": "/?demo=identity-x-misconfigured#settings/connectors",
+      "expectSelector": "[data-settings-section=\"connectors\"]:not(.hidden) #x-link-diagnostics #x-link-check",
+      "expectText": "connection attempt didn't complete"
+    },
+    {
       "name": "Claude Code on the web is told to commit the repo file, not edit one on its machine (#1219)",
       "path": "/?demo=connectors-claude#settings/connectors",
       "expectSelector": "[data-settings-section=\"connectors\"]:not(.hidden) #connector-case-cc-web:not(.hidden) #connector-repo-allow-rules",
