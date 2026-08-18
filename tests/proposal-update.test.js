@@ -1530,8 +1530,11 @@ test('the card is written by both session tails and only the session tails', () 
 // submit_work's `title` used to be dropped on the update path, so the PR
 // lazily created at propose time was born "<user>'s changes · auto-title
 // pending". A session update now stores it (proposed_pr_title), and the
-// promote path hands it to pr-metadata as preferredTitle. A proposal that
-// already has a PR keeps its title — updating one never renames it.
+// promote path hands it to pr-metadata as preferredTitle. A target that
+// already has a PR is RENAMED instead — the author's fix for a wrong
+// auto-generated name ("Initialize repository" over a Klondike rebuild,
+// PR #171) — with the votes untouched, exactly as the title-heal sweeper
+// already renames under a standing tally.
 
 test('a session update stores the submitted title for the lazily-created PR', async () => {
   const log = {};
@@ -1589,11 +1592,72 @@ test('a same-commit resubmit is how a title correction arrives', async () => {
   assert.equal(titles2.length, 0);
 });
 
-test('updating a proposal that already has a PR never renames it', async () => {
+test('a same-commit resubmit with a title renames an existing PR, votes untouched', async () => {
+  // The PR #171 case: the auto-titler landed "Initialize repository" on a
+  // promoted proposal, and the author's agent resubmits the same commit
+  // with the real name.
   const log = {};
-  const result = await run({}, { title: 'A different name' }, log);
+  const renames = [];
+  const ghRenames = [];
+  const session = nativeSession({ pr_title: 'Initialize repository', pr_title_fallback: false });
+  const pool = fakePool([
+    ['SET pr_title', (params) => { renames.push(params); return []; }],
+    ['FROM chat_sessions cs JOIN apps a', [session]],
+  ]);
+  const result = await run({
+    session, pool,
+    gh: {
+      getBranchSha: async () => FORK_HEAD,
+      updatePR: async (...args) => { ghRenames.push(args); },
+    },
+  }, { title: '  Klondike Solitaire:   canvas board for mobile  ' }, log);
   assert.equal(result.ok, true);
-  assert.equal(result.titleUpdated, false);
+  assert.equal(result.unchanged, true);
+  assert.equal(result.titleUpdated, true);
+  assert.equal(result.votesCleared, 0, 'a rename is not a code change — the tally stands');
+  assert.deepEqual(renames[0], ['Klondike Solitaire: canvas board for mobile', 501]);
+  assert.equal(session.pr_title, 'Klondike Solitaire: canvas board for mobile');
+  assert.equal(session.session_title, 'Klondike Solitaire: canvas board for mobile');
+  assert.equal(session.pr_title_fallback, false,
+    'the heal sweeper must not re-rename a deliberate name');
+  assert.deepEqual(ghRenames[0], ['o', 'r', 42, { title: 'Klondike Solitaire: canvas board for mobile' }],
+    'the GitHub PR is renamed too');
   assert.ok(!sqlsOf(log).some((s) => /proposed_pr_title/.test(s)),
-    'a row with a PR keeps the title the group is voting under');
+    'a row with a PR is renamed directly — nothing is deferred to a promote that already happened');
+
+  // Repeating the current title is a no-op, and an imported PR is never
+  // renamed at all — that title belongs to its external author on GitHub.
+  const log2 = {};
+  const session2 = nativeSession({ pr_title: 'Initialize repository' });
+  const pool2 = fakePool([['FROM chat_sessions cs JOIN apps a', [session2]]]);
+  const r2 = await run({
+    session: session2, pool: pool2,
+    gh: { getBranchSha: async () => FORK_HEAD, updatePR: async () => { throw new Error('must not run'); } },
+  }, { title: 'Initialize repository' }, log2);
+  assert.equal(r2.titleUpdated, false);
+  const fn = CODE.slice(
+    CODE.indexOf('async function applyProposedTitle'),
+    CODE.indexOf('async function applyTestingMetadata')
+  );
+  assert.match(fn, /=== 'imported'/, "an imported PR's title belongs to its external author");
+});
+
+test('a GitHub rename failure keeps the panel rename and never fails the update', async () => {
+  const log = {};
+  const renames = [];
+  const session = nativeSession({ pr_title: 'Initialize repository' });
+  const pool = fakePool([
+    ['SET pr_title', (params) => { renames.push(params); return []; }],
+    ['FROM chat_sessions cs JOIN apps a', [session]],
+  ]);
+  const result = await run({
+    session, pool,
+    gh: {
+      getBranchSha: async () => FORK_HEAD,
+      updatePR: async () => { throw new Error('GitHub is down'); },
+    },
+  }, { title: 'Klondike Solitaire: canvas board for mobile' }, log);
+  assert.equal(result.ok, true);
+  assert.equal(result.titleUpdated, true, 'the panel — what voters see — is renamed either way');
+  assert.equal(renames.length, 1);
 });
