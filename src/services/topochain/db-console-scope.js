@@ -115,6 +115,7 @@ const FULLY_READABLE_CONSOLE_TABLES = new Set([
   'mobile_push_deliveries',
   'mobile_push_deployment_state',
   'mobile_push_installation_mutations',
+  'mobile_push_registration_events',
   'cli_auth_audit_events',
   'cli_auth_rate_limits',
   'mcp_clients',

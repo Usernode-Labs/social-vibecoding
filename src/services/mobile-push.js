@@ -90,7 +90,19 @@ async function synchronizeDeploymentState(pool, config) {
       // FCM registrations are minted for one Firebase project. Flutter will
       // register a fresh receive token after it observes the new identity.
       await client.query(
-        'DELETE FROM mobile_push_registrations WHERE environment = $1',
+        `WITH removed AS (
+           DELETE FROM mobile_push_registrations
+            WHERE environment = $1
+          RETURNING id, user_id, environment, installation_id, platform,
+                    permission_status
+         )
+         INSERT INTO mobile_push_registration_events (
+           user_id, registration_id, environment, installation_id, platform,
+           permission_status, event_kind, reason_code
+         )
+         SELECT user_id, id, environment, installation_id, platform,
+                permission_status, 'firebase_project_reset', 'firebase_project_changed'
+           FROM removed`,
         [environment]
       );
     }

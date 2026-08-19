@@ -3986,7 +3986,7 @@ CREATE INDEX IF NOT EXISTS idx_mobile_auth_tokens_user ON mobile_auth_tokens (us
 -- Mobile push notifications — sender identity, registrations, deliveries (#844)
 --
 -- This header also bounds the topochain block above for
--- tests/topochain-schema.test.js: the six mobile_push_* tables below are
+-- tests/topochain-schema.test.js: the seven mobile_push_* tables below are
 -- NOT part of the SPEC §3.4 topochain migration and must not count toward
 -- its 22-table pin.
 
@@ -4048,6 +4048,50 @@ CREATE TABLE IF NOT EXISTS mobile_push_registrations (
 );
 CREATE INDEX IF NOT EXISTS idx_mobile_push_registrations_user
   ON mobile_push_registrations (user_id, environment);
+
+-- Short-lived, privacy-safe registration history for support diagnostics.
+-- The registration id is retained as an ordinary scalar so an event survives
+-- deletion of the registration it describes. Provider tokens, ciphertext and
+-- token hashes deliberately never enter this table.
+CREATE TABLE IF NOT EXISTS mobile_push_registration_events (
+  id                BIGSERIAL PRIMARY KEY,
+  user_id           INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  registration_id   BIGINT,
+  environment       VARCHAR(32) NOT NULL CHECK (BTRIM(environment) <> ''),
+  installation_id   UUID NOT NULL,
+  platform          VARCHAR(16) NOT NULL CHECK (platform IN ('android', 'ios')),
+  permission_status VARCHAR(24) NOT NULL CHECK (
+                      permission_status IN (
+                        'authorized', 'provisional', 'denied', 'not_determined'
+                      )
+                    ),
+  event_kind        VARCHAR(32) NOT NULL CHECK (event_kind IN (
+                      'registration_created', 'registration_updated',
+                      'token_replaced', 'registration_reassigned',
+                      'client_unregistered', 'provider_invalidated',
+                      'registration_corrupt', 'session_expired',
+                      'firebase_project_reset'
+                    )),
+  reason_code       VARCHAR(96) CHECK (
+                      reason_code IS NULL OR reason_code IN (
+                        'client_request', 'notifications_disabled',
+                        'permission_denied', 'signed_out', 'account_changed',
+                        'identity_boundary', 'terminal_reset',
+                        'configuration_unavailable', 'installation_reassigned',
+                        'token_reassigned', 'messaging/invalid-recipient',
+                        'messaging/invalid-registration-token',
+                        'messaging/mismatched-credential',
+                        'messaging/registration-token-not-registered',
+                        'registration_decrypt_failed', 'mobile_session_expired',
+                        'firebase_project_changed'
+                      )
+                    ),
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_mobile_push_registration_events_user
+  ON mobile_push_registration_events (user_id, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_mobile_push_registration_events_retention
+  ON mobile_push_registration_events (created_at, id);
 
 -- Closed notification-kind policy. The notification INSERT trigger and the
 -- sender both read this table, so a future inbox kind is push-disabled until
@@ -4203,6 +4247,7 @@ CREATE INDEX IF NOT EXISTS idx_mobile_push_deliveries_registration
 COMMENT ON TABLE mobile_push_deployment_state IS 'staging:private';
 COMMENT ON TABLE mobile_push_installation_mutations IS 'staging:private';
 COMMENT ON TABLE mobile_push_registrations IS 'staging:private';
+COMMENT ON TABLE mobile_push_registration_events IS 'staging:private';
 COMMENT ON TABLE mobile_push_deliveries IS 'staging:private';
 
 -- Capture the push outbox in the same transaction as the canonical
