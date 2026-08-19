@@ -260,14 +260,15 @@
   // An action with an href renders as a REAL ANCHOR, not a button that
   // window.open()s it. The two differ only off desktop, which is where it
   // matters (#1312): mobile popup heuristics eat a scripted window.open the
-  // moment anything about the tap looks indirect, and the Usernode app's
-  // webview is bound to the platform's own domains, so github.com and
-  // claude.ai can ONLY leave for the system browser the way a plain
-  // target="_blank" link does — a scripted open goes nowhere, silently.
-  // Every other GitHub trip in this transcript ("View on GitHub", the PR
-  // link) is already an anchor for the same reason. `busy` keeps the
-  // existing disabled-button rendering: an anchor cannot be disabled, and
-  // the trip out is supposed to be unavailable mid-request anyway.
+  // moment anything about the tap looks indirect, and inside the Usernode
+  // app the anchor is what nav-link.js's delegated listener routes through
+  // the bridge's openExternal — the app's webview is bound to the
+  // platform's own domains and cannot navigate to github.com itself, by
+  // anchor or window.open alike. Every other GitHub trip in this
+  // transcript ("View on GitHub", the PR link) is an anchor for the same
+  // reason. `busy` keeps the existing disabled-button rendering: an anchor
+  // cannot be disabled, and the trip out is supposed to be unavailable
+  // mid-request anyway.
   function actionHtml(action, busy) {
     var cls = 'dc-pr-btn dc-flow-action' + (action.primary ? ' dc-flow-action-primary' : '');
     if (action.href && !busy) {

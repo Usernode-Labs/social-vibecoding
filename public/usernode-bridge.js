@@ -4431,6 +4431,52 @@
     });
   };
 
+  // openExternal(url) → true. Hands an http/https URL to the system
+  // browser. This is the ONE road out of the app's webview: iOS binds it
+  // to the platform's own domains (App-Bound Domains, NATIVE-BRIDGE.md),
+  // so an in-page navigation to github.com — a target="_blank" anchor and
+  // a window.open alike — is refused by the engine itself, silently. The
+  // native handler is pre-existing v1 (wallet era); this wrapper was
+  // simply never exposed, which left every external link in the app dead
+  // (#1312). Same no-op-proof contract as openNativeScreen: REJECTS on
+  // non-native and on old builds, so a caller can fall back to the plain
+  // anchor behaviour that is correct everywhere else.
+  window.usernode.openExternal = function (url) {
+    var parsed = String(url == null ? "" : url);
+    if (!/^https?:\/\//i.test(parsed)) {
+      return Promise.reject(new Error("openExternal requires an http(s) URL"));
+    }
+    if (!window.usernode.isNative) {
+      return Promise.reject(new Error(
+        "openExternal is only available inside the Usernode mobile app."
+      ));
+    }
+    return new Promise(function (resolve, reject) {
+      var done = false;
+      var timer = setTimeout(function () {
+        if (done) return;
+        done = true;
+        reject(new Error(
+          "openExternal is not supported by this app build"
+        ));
+      }, _CHROME_PROBE_TIMEOUT_MS);
+      callNative("openExternal", { url: parsed }).then(
+        function (v) {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          resolve(v);
+        },
+        function (err) {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          reject(err);
+        }
+      );
+    });
+  };
+
   // =====================================================================
   //  Public API: native profile & settings (bridge v3)
   //  (usernode.getProfileInfo / getSettingsState / setNodeSleepEnabled /

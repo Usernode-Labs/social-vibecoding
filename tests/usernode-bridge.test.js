@@ -220,3 +220,23 @@ test('hosted bridge injects the back-to-platform pill on share views', () => {
   // domain (keeps self-hosted forks correct).
   assert.match(bridge, /document\.currentScript/);
 });
+
+// External links can only leave the app's webview through the system
+// browser (#1312): iOS App-Bound Domains refuse an in-page navigation to
+// any non-bound domain, anchors and window.open alike. The native
+// openExternal handler is pre-existing v1 — this pins the web wrapper that
+// was never exposed, and the contract nav-link.js's external-link routing
+// depends on.
+test('hosted bridge exposes openExternal for the trip out of the webview', () => {
+  const bridge = readBridge(versionedBridgePath);
+
+  assert.match(bridge, /window\.usernode\.openExternal = function \(url\)/);
+  // http/https only, enforced before the channel is touched — same rule
+  // NATIVE-BRIDGE.md states for the native side.
+  assert.match(bridge, /openExternal requires an http\(s\) URL/);
+  // REJECTS on non-native and on old builds (no-op-proof, like
+  // openNativeScreen) so callers can fall back to plain anchor behaviour.
+  assert.match(bridge, /openExternal is only available inside the Usernode mobile app\./);
+  assert.match(bridge, /openExternal is not supported by this app build/);
+  assert.match(bridge, /callNative\("openExternal", \{ url: parsed \}\)/);
+});

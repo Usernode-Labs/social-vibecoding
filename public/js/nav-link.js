@@ -159,5 +159,48 @@
     },
   };
 
+  // ── External links inside the Usernode app (#1312) ───────────────────
+  //
+  // The app's webview is bound to the platform's own domains (iOS
+  // App-Bound Domains — NATIVE-BRIDGE.md): it cannot navigate to
+  // github.com or claude.ai itself, so a target="_blank" anchor that works
+  // in every browser does NOTHING there, and neither does window.open. The
+  // bridge's openExternal is the one road out — it hands the URL to the
+  // system browser. This one delegated listener routes every external
+  // target="_blank" anchor through it, so screens keep writing plain
+  // anchors and stay correct everywhere: in a browser the bridge reports
+  // non-native and the listener never engages.
+  //
+  // Only target="_blank" PLUS a different http(s) origin is intercepted:
+  // same-origin hash routes are the SPA's own navigation, and a control
+  // wired by bind()/wireModified() never carries target="_blank" (see the
+  // note at the top), so the two mechanisms cannot collide. Capture phase
+  // on purpose — transcript anchors stop propagation so their row handlers
+  // don't fire (e.g. the session list's PR link), which would starve a
+  // bubble listener; preventDefault in capture still cancels the
+  // navigation while letting those inner handlers run unchanged.
+  if (typeof document !== 'undefined') {
+    document.addEventListener('click', (e) => {
+      if (NavLink.isNativeClick(e)) return; // modified: the browser's business
+      const bridge = window.usernode;
+      if (!bridge || !bridge.isNative || typeof bridge.openExternal !== 'function') return;
+      const anchor = e.target && e.target.closest
+        ? e.target.closest('a[target="_blank"]')
+        : null;
+      if (!anchor) return;
+      let url;
+      try { url = new URL(anchor.href, window.location.href); } catch { return; }
+      if (url.protocol !== 'http:' && url.protocol !== 'https:') return;
+      if (url.origin === window.location.origin) return;
+      e.preventDefault();
+      bridge.openExternal(url.href).catch(() => {
+        // An app build without the handler: retry the popup path rather
+        // than stranding the tap — at worst it does what the anchor would
+        // have done on its own.
+        if (window.open) window.open(url.href, '_blank', 'noopener');
+      });
+    }, true);
+  }
+
   window.NavLink = NavLink;
 })();
