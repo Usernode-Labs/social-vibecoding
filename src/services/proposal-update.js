@@ -140,6 +140,22 @@ function authorCanPush(session, viewerLogin) {
   return externalAgentHead.sameLogin(owner, login);
 }
 
+// Is the pull request under this row the CALLER's OWN (#1319)? Only an
+// imported row can carry somebody else's — a native proposal's PR is one the
+// platform opened for this author — and for an imported one the honest test
+// is the head repository's owner against the caller's freshly-read GitHub
+// login, the same comparison authorCanPush makes. An unknown owner or an
+// unknown login leaves nothing to disprove, and ownershipGate has already
+// established that the caller owns the row, so it answers true rather than
+// refusing an author their own name.
+function callerOwnsPr(session, viewerLogin) {
+  if (String(session && session.source) !== 'imported') return true;
+  const owner = headRepoOwnerOf(session);
+  const login = String(viewerLogin == null ? '' : viewerLogin).trim();
+  if (!owner || !login) return true;
+  return externalAgentHead.sameLogin(owner, login);
+}
+
 function fail(code, message, extra = {}) {
   return { ok: false, code, message, ...extra };
 }
@@ -480,17 +496,34 @@ function normalizeProposedTitle(title) {
 //     real name back: the title-heal sweeper already renames PRs while
 //     votes stand, so an author's own rename moves nothing new, and not one
 //     line of code changes with it. Clearing pr_title_fallback keeps the
-//     sweeper from re-renaming a deliberate name. Imported rows are skipped
-//     — that PR and its title belong to an external author on GitHub.
+//     sweeper from re-renaming a deliberate name.
 //
-// Mirrors applyTestingMetadata's contract: mutates the in-memory row,
-// no-ops on same-value, and a failed write is logged, never fatal to an
-// update that landed.
-async function applyProposedTitle({ pool, gh, session, owner, repo, title }) {
-  if (!title) return false;
+// WHOSE PULL REQUEST IS IT (#1319). `source === 'imported'` is NOT the same
+// question as "somebody else's pull request", and reading it as one disabled
+// the rename for the entire external-agent path: branchHomeOf marks a row
+// 'user_fork' ONLY when it is imported, so every proposal an agent pushes
+// from its author's own fork is an imported row. The question that actually
+// separates the two is whose repository the head branch sits in — the one
+// authorCanPush asks, and the one advanceForkHead has already answered by the
+// time a rename reaches here. An external contributor's pull request keeps
+// its author's title, and the caller is TOLD that it did.
+//
+// Returns { changed, rejected }: `rejected` names why a rename was refused,
+// so the caller reports it instead of returning a success shape that quietly
+// dropped the field. Mirrors applyTestingMetadata's contract otherwise:
+// mutates the in-memory row, no-ops on same-value, and a failed write is
+// logged, never fatal to an update that landed.
+async function applyProposedTitle({ pool, gh, session, owner, repo, title, viewerLogin }) {
+  const nothing = { changed: false, rejected: null };
+  if (!title) return nothing;
   if (session.pr_number) {
-    if (String(session.source) === 'imported') return false;
-    if ((session.pr_title || null) === title) return false;
+    if (!callerOwnsPr(session, viewerLogin)) {
+      log.info('proposal-update', 'left an imported proposal\'s title to its external author', {
+        sessionId: Number(session.id), prNumber: session.pr_number,
+      });
+      return { changed: false, rejected: 'imported_pr' };
+    }
+    if ((session.pr_title || null) === title) return nothing;
     try {
       await pool.query(
         'UPDATE chat_sessions SET pr_title = $1, session_title = $1, pr_title_fallback = FALSE WHERE id = $2',
@@ -500,7 +533,7 @@ async function applyProposedTitle({ pool, gh, session, owner, repo, title }) {
       log.error('proposal-update', 'could not rename the proposal', {
         sessionId: Number(session.id), err: err.message,
       });
-      return false;
+      return { changed: false, rejected: 'write_failed' };
     }
     session.pr_title = title;
     session.session_title = title;
@@ -516,9 +549,9 @@ async function applyProposedTitle({ pool, gh, session, owner, repo, title }) {
     log.info('proposal-update', 'renamed the proposal to the submitted title', {
       sessionId: Number(session.id), prNumber: session.pr_number,
     });
-    return true;
+    return { changed: true, rejected: null };
   }
-  if ((session.proposed_pr_title || null) === title) return false;
+  if ((session.proposed_pr_title || null) === title) return nothing;
   try {
     await pool.query(
       'UPDATE chat_sessions SET proposed_pr_title = $1 WHERE id = $2',
@@ -528,13 +561,13 @@ async function applyProposedTitle({ pool, gh, session, owner, repo, title }) {
     log.error('proposal-update', 'could not store the revision\'s proposed title', {
       sessionId: Number(session.id), err: err.message,
     });
-    return false;
+    return { changed: false, rejected: 'write_failed' };
   }
   session.proposed_pr_title = title;
   log.info('proposal-update', 'stored the revision\'s proposed title', {
     sessionId: Number(session.id),
   });
-  return true;
+  return { changed: true, rejected: null };
 }
 
 // Writes only the columns the caller actually supplied, and mutates the
@@ -714,7 +747,9 @@ async function resubmitUnchanged(ctx, headSha, via) {
   // update that should have carried it may already have landed (#1199's
   // reasoning, applied to the name instead of the screenshots). On a row
   // that already has a PR this RENAMES it, votes untouched.
-  const titleApplied = await applyProposedTitle({ pool, gh, session, owner, repo, title: ctx.title });
+  const titleApplied = await applyProposedTitle({
+    pool, gh, session, owner, repo, title: ctx.title, viewerLogin: ctx.expectedLogin,
+  });
   // And the request linkage (#1310): a same-commit resubmit is also how a
   // dropped `Closes #N` arrives once the agent (or a fixed platform) knows
   // to send it.
@@ -727,7 +762,8 @@ async function resubmitUnchanged(ctx, headSha, via) {
     testingPaths: displayPaths(applied.paths),
     testingPathsRejected: rejectedPaths(ctx.testing),
     captureRerun: false,
-    titleUpdated: titleApplied,
+    titleUpdated: titleApplied.changed,
+    ...(titleApplied.rejected ? { titleRejected: titleApplied.rejected } : {}),
     linkedIssuesUpdated: linkedApplied,
   };
   if (!applied.changed) return reported;
@@ -923,7 +959,9 @@ async function advanceAppRepoBranch(ctx) {
   const testingApplied = await applyTestingMetadata({ pool, session, testing: ctx.testing });
   // And the submitted title: stored for the promote-time lazy PR creation
   // when the row has no PR yet, or a rename of the existing PR when it does.
-  const titleApplied = await applyProposedTitle({ pool, gh, session, owner, repo, title: ctx.title });
+  const titleApplied = await applyProposedTitle({
+    pool, gh, session, owner, repo, title: ctx.title, viewerLogin: ctx.expectedLogin,
+  });
   // And the request linkage (#1310) — BEFORE the tails for the same reason
   // as the routes: a session tail's promote path builds the PR's `Closes #N`
   // block off this row.
@@ -956,7 +994,8 @@ async function advanceAppRepoBranch(ctx) {
     testingUpdated: testingApplied.changed,
     testingPaths: displayPaths(testingApplied.paths),
     testingPathsRejected: rejectedPaths(ctx.testing),
-    titleUpdated: titleApplied,
+    titleUpdated: titleApplied.changed,
+    ...(titleApplied.rejected ? { titleRejected: titleApplied.rejected } : {}),
     linkedIssuesUpdated: linkedApplied,
   };
 
@@ -1366,10 +1405,19 @@ async function advanceForkHead(ctx) {
   const testingApplied = await applyTestingMetadata({ pool, session, testing: ctx.testing });
   // The request linkage (#1310). On an imported row this stores the DB half
   // only — the close watcher and the Dev board read it — and applyLinkedIssues
-  // itself leaves the PR body alone, exactly as the rename path does: that
-  // body belongs to the pull request's author on GitHub.
+  // itself leaves the PR body alone: that body belongs to the pull request's
+  // author on GitHub.
   const linkedApplied = await applyLinkedIssues({
     pool, gh, session, owner, repo, linkedIssues: ctx.linkedIssues,
+  });
+  // And the submitted title (#1319). This path had no title call at all, so
+  // an update that MOVED the head — the ordinary way an agent revises a
+  // fork-tracked proposal — dropped the name silently even when the author
+  // owned every part of it. applyProposedTitle decides whether the rename is
+  // the caller's to make; the fork gate above has already proved the head
+  // repository is theirs, so for this path it answers yes.
+  const titleApplied = await applyProposedTitle({
+    pool, gh, session, owner, repo, title: ctx.title, viewerLogin: ctx.expectedLogin,
   });
 
   // The existing imported-head machinery, unchanged: it advances the tracked
@@ -1409,6 +1457,8 @@ async function advanceForkHead(ctx) {
     checksRerun: true,
     previewRebuilding: true,
     submittedVia: 'update_fork_head',
+    titleUpdated: titleApplied.changed,
+    ...(titleApplied.rejected ? { titleRejected: titleApplied.rejected } : {}),
     testingUpdated: testingApplied.changed,
     testingPaths: displayPaths(testingApplied.paths),
     testingPathsRejected: rejectedPaths(ctx.testing),
