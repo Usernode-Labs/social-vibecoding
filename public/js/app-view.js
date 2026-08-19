@@ -12008,6 +12008,10 @@ const AppView = {
       // /api/auth/me, so the card offers only what this deployment supports.
       externalFlowsAvailable: !!(typeof App !== 'undefined' && App.user
         && App.user.externalFlowsAvailable),
+      // #1281: the session-CLI bridge is opt-in, so it only appears in the
+      // card's "Are you a developer?" half for a user who turned it on.
+      sessionBridgeEnabled: !!(typeof App !== 'undefined' && App.user
+        && App.user.sessionBridgeEnabled),
     };
     root.innerHTML = `
       <div class="min-h-full flex items-center justify-center p-4">

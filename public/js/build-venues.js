@@ -19,12 +19,19 @@
  *
  * What this module is NOT:
  *
- *   • It is not a schema change. `id` here is a presentation key. The
- *     persisted values are untouched — 'claude_code' / 'codex_openrouter'
- *     in chat_sessions.agent_backend, 'claude-code' / 'codex' in
+ *   • It was not a schema change, with ONE exception since (#1281).
+ *     `id` here is a presentation key and the other persisted values are
+ *     untouched — 'claude_code' / 'codex_openrouter' in
+ *     chat_sessions.agent_backend, 'claude-code' / 'codex' in
  *     users.dev_flow_preference and external_agent, 'imported' in
  *     chat_sessions.source. `mechanism` on each row is the mapping, and
- *     it is the only place the two vocabularies meet.
+ *     it is the only place the two vocabularies meet. The exception is
+ *     chat_sessions.build_venue, which stores one of these ids verbatim
+ *     because #1281 needs a state none of those columns can express: a
+ *     session handed to a web agent or to your own tools and not yet
+ *     submitted. That column, its CHECK, and BUILD_VENUES in
+ *     src/routes/sessions.js are the three copies of this id list, and
+ *     tests/build-venue-route.test.js pins them together.
  *   • It is not an allowlist. Nothing here is sent to a server as a
  *     venue id; callers translate through `preselect()` first.
  *
@@ -86,8 +93,9 @@
   //   lease    → session_agent_leases (#907), set up from the CLI card
   //   import   → POST /api/apps/:slug/pr-import → source='imported'
   //
-  // `requires` is the single state flag that has to be truthy for the row
-  // to be offered at all. null means always available.
+  // `requires` is the state flag that has to be truthy for the row to be
+  // offered at all — or an ARRAY of flags, all of which must be. null means
+  // always available.
   var VENUES = [
     {
       id: 'usernode-claude',
@@ -119,7 +127,11 @@
       label: 'Your computer · Usernode session',
       group: 'in-chat',
       mechanism: { kind: 'lease', hash: SETTINGS_HASHES.localTool },
-      requires: 'cliAuthEnabled',
+      // TWO flags, both required (#1281). The deployment has to offer the
+      // CLI surface at all, AND the user has to have opted in — the spec
+      // marks this venue settings-gated and "most users: no", and it is the
+      // only one that wants software installed before it can do anything.
+      requires: ['cliAuthEnabled', 'sessionBridgeEnabled'],
       defaultable: true,
       chat: true,
       blurb: 'The Usernode CLI runs this session’s turns on your machine and your own Claude plan. Same chat, same branch, same proposal — the work just executes locally.',
@@ -177,10 +189,31 @@
   // defaults it), but no turn ever ran through it and none ever will, so
   // reading the backend here would report a venue that is not merely
   // unused but structurally unreachable.
+  // Order is: structural facts, then the stored choice, then derivation.
+  //
+  //   imported    — structural. The session has no Usernode chat at all and
+  //                 never will, so nothing overrides it.
+  //   localAgent  — a live lease. This describes what IS happening right
+  //                 now (a machine is taking turns), which outranks a
+  //                 preference about what should.
+  //   buildVenue  — #1281: the owner's stored CHOICE, from
+  //                 chat_sessions.build_venue. It sits above the derived
+  //                 cases because it is the only one that can say "handed
+  //                 to Claude Code, not submitted yet" — external_agent is
+  //                 stamped at submission and is null for precisely the
+  //                 period the launchpad is on screen.
+  //   the rest    — derived from the columns, exactly as before, which is
+  //                 what keeps every pre-#1281 row correct with no backfill.
+  //
+  // An unrecognised stored value is IGNORED rather than trusted: the column
+  // has a CHECK, but a row written by an older or newer deployment must
+  // degrade to the derivation rather than paint a venue this build has
+  // never heard of.
   function currentVenue(state) {
     var s = state || {};
     if (s.source === 'imported') return 'own-tools-pr';
     if (s.localAgent) return 'local';
+    if (s.buildVenue && venue(s.buildVenue)) return s.buildVenue;
     if (s.externalAgent === 'claude-code') return 'web-claude-code';
     if (s.externalAgent === 'codex') return 'web-codex';
     if (s.agentBackend === 'codex_openrouter') return 'usernode-openrouter';
@@ -324,6 +357,8 @@
   //   mode                    — one of MODES; anything else reads as 'start'
   //   openrouterAvailable     — GET /api/auth/me: flag + beta + credential
   //   cliAuthEnabled          — deployment offers /api/cli/* at all
+  //   sessionBridgeEnabled    — the user opted in to the bridge (#1281);
+  //                             `local` needs this AND cliAuthEnabled
   //   externalFlowsAvailable  — deployment can offer the web hand-offs
   //   canCollaborate          — viewer may push branches to this app
   //   blockedReason           — 'blocked' mode: why usernode-claude is out
@@ -336,7 +371,14 @@
     var current = s.current || null;
     return VENUES.filter(function (v) {
       if (!v.requires) return true;
-      return !!s[v.requires];
+      var needed = [].concat(v.requires);
+      // Every flag, not any: a venue that names two prerequisites needs
+      // both, and a caller that forgot to pass one gets the row DROPPED
+      // rather than offered on a half-checked gate.
+      for (var i = 0; i < needed.length; i += 1) {
+        if (!s[needed[i]]) return false;
+      }
+      return true;
     }).map(function (v) {
       // In 'blocked' mode the platform-billed venue is the one that just
       // refused the turn. It stays visible and struck through: the user

@@ -343,17 +343,212 @@ const DevChat = {
   //
   // Everything the derivation needs already lives on the session row or in
   // the status poll; build-venues.js owns the precedence (imported first,
-  // then a live lease, then the hand-off, then the backend) so this module
-  // and the session cards can't disagree about the same session.
+  // then a live lease, then the stored choice, then the hand-off, then the
+  // backend) so this module and the session cards can't disagree about the
+  // same session.
   _currentVenueId() {
     if (!window.BuildVenues) return 'usernode-claude';
     const s = DevChat.currentSession || {};
+    const shot = DevChat._shotVenue();
+    if (shot) return shot;
     return BuildVenues.currentVenue({
       source: s.source,
       localAgent: DevChat._localAgent || null,
+      // #1281: the owner's stored choice, which is the only thing that can
+      // say "handed over, not submitted yet" — and therefore the only thing
+      // that keeps a launchpad on screen across a reload.
+      buildVenue: s.build_venue,
       externalAgent: s.external_agent,
       agentBackend: DevChat._agentBackend(s),
     });
+  },
+
+  // Screenshot-state deep link `?shot=launchpad&venue=<id>` (#1281).
+  //
+  // Same shape and the same rationale as ?shot=venue-fallback above. The
+  // launchpad is a property of a session's stored venue, and a staging
+  // clone's sessions have none — the column is empty on every seeded row,
+  // and a reviewer has no way to pick a venue for a session they do not
+  // own. So the URL names it.
+  //
+  // Ungated by environment, for the same reason its neighbour is: it paints
+  // a panel derived from the session already on screen, reads nothing and
+  // writes nothing. Nothing is persisted — only picking a venue calls
+  // _persistBuildVenue — so a shot URL cannot change what anyone's session
+  // is. A value that is not a launchpad venue renders nothing rather than
+  // hiding the composer for a venue that keeps it.
+  _shotVenue() {
+    let shot = null;
+    try { shot = new URLSearchParams(location.search).get('shot'); } catch { return null; }
+    if (shot !== 'launchpad') return null;
+    let venue = null;
+    try { venue = new URLSearchParams(location.search).get('venue'); } catch { return null; }
+    return (window.Launchpad && Launchpad.isLaunchpad(venue)) ? venue : null;
+  },
+
+  // ── The launchpad (#1281) ────────────────────────────────────────────
+  //
+  // Three venues build somewhere else, and for all three a composer is the
+  // wrong primary control: no turn will ever run here, so a text box that
+  // looks like it starts one is a lie the wireframes deliberately remove.
+  // These three methods are the swap. public/js/launchpad.js owns the
+  // markup for `own-tools-pr`; the two web hand-offs reuse the walkthrough
+  // that has existed since #1049, re-sited from the transcript into the
+  // composer's place.
+  //
+  // Returns the venue id when this session is in one, else null — which is
+  // also the "should the composer be hidden?" question, asked once.
+  _launchpadVenue() {
+    if (!window.Launchpad) return null;
+    const venue = DevChat._currentVenueId();
+    if (Launchpad.isLaunchpad(venue)) return venue;
+    // A saved 'claude-code' / 'codex' default makes an untouched session a
+    // hand-off before anything is stored on it — _devFlowTarget already
+    // honours that, and the walkthrough it produces is a launchpad wherever
+    // it renders. Without this the same card would appear under a live
+    // composer in one case and instead of it in the other.
+    const target = DevChat._devFlowTarget();
+    if (!target || target.mode !== 'wizard') return null;
+    return target.agent === 'codex' ? 'web-codex' : 'web-claude-code';
+  },
+
+  // The brief a hand-off starts from when the user has typed nothing: the
+  // session's own title, which for a session opened from a request is that
+  // request's title. Empty for a blank session, which is honest — there is
+  // nothing to say yet.
+  _defaultFlowBrief() {
+    const s = DevChat.currentSession || {};
+    return String(s.session_title || s.pr_title || '').trim();
+  },
+
+  _launchpadHtml() {
+    const venue = DevChat._launchpadVenue();
+    if (!venue) return '';
+    if (venue === 'own-tools-pr') {
+      const session = DevChat.currentSession || {};
+      return Launchpad.ownToolsHtml({
+        origin: (typeof window !== 'undefined' && window.location)
+          ? window.location.origin : '',
+        slug: App.currentApp || '',
+        // The request this session was opened from, when there was one —
+        // that is the whole of the prefill's brief, and the reason the
+        // block a user pastes into their agent says something more useful
+        // than "build the thing".
+        issueNumber: session.created_from_issue_number || null,
+        sessionTitle: session.session_title || session.pr_title || '',
+        canImport: !(typeof AppView !== 'undefined' && AppView.readOnly),
+      });
+    }
+    // web-claude-code / web-codex: the five-step walkthrough, which already
+    // resolves every step from the server and resumes where the user left
+    // off. _devFlowHtml kicks the status read on first paint.
+    return DevChat._devFlowHtml();
+  },
+
+  // Repaint whichever surface the walkthrough is currently living on.
+  //
+  // Every dev-flow action used to end in renderMessages(), because the card
+  // was the last row of the transcript. In a hand-off venue it is the
+  // launchpad instead (#1281) and renderMessages deliberately omits it, so
+  // repainting that way would leave the card frozen on the state it had
+  // before the click — the "Check again" button would do nothing visible,
+  // which is exactly the #1304 class of bug.
+  _repaintDevFlow() {
+    // Carry the half-typed brief across the rebuild.
+    const typed = document.querySelector('[data-flow-brief]');
+    if (typed) DevChat._devFlow.brief = String(typed.value || '');
+
+    const host = document.getElementById('dc-launchpad-slot');
+    const inLaunchpad = !!DevChat._launchpadVenue();
+    const composer = document.getElementById('dc-composer-controls');
+    // If the SWAP itself changed — "Build on Usernode instead" dismissing
+    // the card, say — the whole bar has to repaint, or the composer stays
+    // hidden behind a launchpad that is no longer there.
+    if (composer && inLaunchpad !== composer.hasAttribute('hidden')) {
+      DevChat.renderChatView();
+      return;
+    }
+    if (inLaunchpad && host) {
+      host.innerHTML = DevChat._launchpadHtml();
+      DevChat._wireLaunchpad();
+      return;
+    }
+    DevChat.renderMessages();
+  },
+
+  _wireLaunchpad() {
+    const host = document.getElementById('dc-launchpad-slot');
+    if (!host) return;
+    if (window.Launchpad) {
+      host.querySelectorAll('[data-launchpad]').forEach((el) => {
+        Launchpad.wire(el, {
+          onCopy: (key, text, button) => DevChat._launchpadCopy(text, button),
+          onAction: (action) => {
+            if (action !== 'import') return;
+            if (typeof AppView !== 'undefined' && AppView.openImportPrModal) {
+              AppView.openImportPrModal();
+            } else {
+              window.location.hash = '#settings/cli';
+            }
+          },
+        });
+      });
+    }
+    // The walkthrough renders here now rather than in the transcript, so it
+    // needs wiring here too — _wireDevFlowCard only ever scans #dc-messages,
+    // and a card wired by nobody is the #1304 failure again.
+    if (window.DevFlowSelect) {
+      host.querySelectorAll('[data-flow-wizard]').forEach((el) => {
+        DevFlowSelect.wire(el, {
+          onAction: (action) => DevChat._devFlowAction(action),
+        });
+      });
+    }
+  },
+
+  // Copy, with the button itself as the receipt. No toast: the button is
+  // under the user's finger and a toast for a copy is noise on a phone.
+  _launchpadCopy(text, button) {
+    const done = (ok) => {
+      if (!button) return;
+      const original = button.textContent;
+      button.textContent = ok ? 'Copied.' : 'Press ⌘C to copy';
+      setTimeout(() => { button.textContent = original; }, 1500);
+    };
+    try {
+      navigator.clipboard.writeText(text).then(() => done(true), () => done(false));
+    } catch { done(false); }
+  },
+
+  // Persist the venue this session is being built in (#1281).
+  //
+  // Fire-and-forget on purpose: the caller has already repainted from the
+  // picked venue, and a failed write must not undo a switch the user can
+  // see. The next reload derives from the columns, which is the same place
+  // it started — a lost choice degrades to today's behaviour rather than to
+  // a wrong one.
+  async _persistBuildVenue(venueId) {
+    const session = DevChat.currentSession;
+    if (!session || !session.id) return;
+    try {
+      const res = await fetch(`/api/sessions/${session.id}/build-venue`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ venue: venueId }),
+      });
+      if (!res.ok) return;
+      const data = await res.json().catch(() => ({}));
+      if (!data.session) return;
+      // Only the venue column is folded back in. The response is the whole
+      // row, but a session the user has been typing into must not have its
+      // live fields replaced by a snapshot taken before the last keystroke.
+      if (DevChat.currentSession && Number(DevChat.currentSession.id) === Number(session.id)) {
+        DevChat.currentSession.build_venue = data.session.build_venue;
+      }
+      const cached = DevChat.sessions.find((s) => Number(s.id) === Number(session.id));
+      if (cached) cached.build_venue = data.session.build_venue;
+    } catch { /* see above: a lost choice degrades to the derivation */ }
   },
 
   _agentBillingNote(session) {
@@ -1000,6 +1195,7 @@ const DevChat = {
         globalOut: DevChat._globalBudgetOut(),
         verificationRequired: false,
         externalFlowsAvailable: DevChat._externalFlowsAvailable(),
+        sessionBridgeEnabled: DevChat._sessionBridgeEnabled(),
       },
       created_at: new Date().toISOString(),
     });
@@ -1178,6 +1374,7 @@ const DevChat = {
             verificationRequired: true,
             globalOut: false,
             externalFlowsAvailable: DevChat._externalFlowsAvailable(),
+            sessionBridgeEnabled: DevChat._sessionBridgeEnabled(),
           }) : ''}
         </div>`;
     }
@@ -1190,6 +1387,7 @@ const DevChat = {
             verificationRequired: false,
             globalOut: false,
             externalFlowsAvailable: DevChat._externalFlowsAvailable(),
+            sessionBridgeEnabled: DevChat._sessionBridgeEnabled(),
           }) : ''}
         </div>`;
     }
@@ -1209,6 +1407,7 @@ const DevChat = {
           hasApiKey: !!(window.Settings && Settings.state && Settings.state.hasApiKey),
           globalOut: !userOut,
           externalFlowsAvailable: DevChat._externalFlowsAvailable(),
+          sessionBridgeEnabled: DevChat._sessionBridgeEnabled(),
         }) : ''}
       </div>`;
   },
@@ -1278,6 +1477,7 @@ const DevChat = {
     hasApiKey: false,
     globalOut: false,
     externalFlowsAvailable: DevChat._externalFlowsAvailable(),
+    sessionBridgeEnabled: DevChat._sessionBridgeEnabled(),
   })}
       </div>`;
   },
@@ -1353,6 +1553,14 @@ const DevChat = {
     return !!(typeof App !== 'undefined' && App.user && App.user.externalFlowsAvailable);
   },
 
+  // #1281: whether this user opted in to the session-CLI bridge. Per-user
+  // rather than per-deployment, and default false — so unlike the flag
+  // above, a page that has not loaded /api/auth/me yet correctly reports
+  // "no" rather than briefly offering a venue the user never enabled.
+  _sessionBridgeEnabled() {
+    return !!(typeof App !== 'undefined' && App.user && App.user.sessionBridgeEnabled);
+  },
+
   _wireCreditsBanner() {
     // Every route is rendered and wired by CreditOptions, which does the hash
     // navigation — real navigations, so the browser / device back gesture
@@ -1398,7 +1606,7 @@ const DevChat = {
     flow.dismissed = false;
     flow.error = null;
     flow.notice = null;
-    DevChat.renderMessages();
+    DevChat._repaintDevFlow();
     DevChat._devFlowEnsureStatus(true);
   },
 
@@ -1471,6 +1679,11 @@ const DevChat = {
       // is no request to 404 behind it. Production is unaffected: the flag
       // is only honoured where the page already carries it.
       cliAuthEnabled: user.cliAuthEnabled !== false || !!DevChat._demoQS(),
+      // #1281: the user's own opt-in, which `local` needs on top of the
+      // deployment flag. ?demo=1 paints it for the same reason it paints
+      // cliAuthEnabled — a staging reviewer has no way to flip a preference
+      // on a clone, and the row opens a copy card that fetches nothing.
+      sessionBridgeEnabled: !!user.sessionBridgeEnabled || !!DevChat._demoQS(),
       externalFlowsAvailable: DevChat._externalFlowsAvailable(),
       localAgent: DevChat._localAgent || null,
       sessionId: session.id || null,
@@ -1541,6 +1754,7 @@ const DevChat = {
       // to this user at all, and whether they may push branches to this app
       // (importing writes to them).
       cliAuthEnabled: base.cliAuthEnabled,
+      sessionBridgeEnabled: base.sessionBridgeEnabled,
       externalFlowsAvailable: base.externalFlowsAvailable,
       openrouterAvailable: !!user.openrouterAvailable,
       canCollaborate: !(typeof AppView !== 'undefined' && AppView.readOnly),
@@ -1562,6 +1776,13 @@ const DevChat = {
       onPick: (pick, row) => {
         if (!pick || row.current) return;
         if (pick.kind === 'backend') {
+          // Coming back in-chat CLEARS the stored venue rather than storing
+          // an in-chat one (#1281). agent_backend already says which of the
+          // two it is, and currentVenue() derives it — so a stored
+          // 'usernode-claude' would be a second, staler answer to a question
+          // the column already answers, and would mask a later switch to
+          // OpenRouter made from anywhere else.
+          DevChat._persistBuildVenue(null);
           // Claude needs no further detail, so it switches outright. The
           // OpenRouter row still opens the model/effort chooser: a backend
           // alone is not a complete answer for it.
@@ -1586,18 +1807,23 @@ const DevChat = {
           // this a second decision ("remember this choice"); the sheet is
           // the deliberate act, so the save rides along with it.
           DevChat._saveDevFlowPreference(pick.flow);
+          // #1281: and it answers it for THIS session, which is what turns
+          // the chat into a launchpad and keeps it one across a reload.
+          if (DevChat.currentSession) DevChat.currentSession.build_venue = pick.venue;
+          DevChat._persistBuildVenue(pick.venue);
           DevChat._devFlowFromCredits(pick.flow, row.targetId);
+          DevChat.renderChatView();
           return;
         }
         if (pick.kind === 'import') {
-          // The one venue with no chat: the work happens in the user's own
-          // tools and arrives as a pull request. Opening the picker is the
-          // whole action — there is nothing to switch this session to.
-          if (typeof AppView !== 'undefined' && AppView.openImportPrModal) {
-            AppView.openImportPrModal();
-          } else if (pick.hash) {
-            window.location.hash = pick.hash;
-          }
+          // #1281: this venue used to jump straight to the import modal,
+          // which asked for a pull request the user had not built yet. It
+          // switches the session to its launchpad instead — connect your
+          // agent to the MCP, tell it what to build, and import when it is
+          // done — and the import modal is that launchpad's last step.
+          if (DevChat.currentSession) DevChat.currentSession.build_venue = pick.venue;
+          DevChat._persistBuildVenue(pick.venue);
+          DevChat.renderChatView();
         }
       },
       onUnavailable: (row) => PlatformUI.toast(row.reason),
@@ -1846,6 +2072,7 @@ const DevChat = {
     // "Build on Usernode instead" / "Build here" — hide the card for the
     // rest of this session without writing a preference.
     dismissed: false,
+    brief: null,
   },
 
   // Deep link: ?flow=claude-code|codex opens straight into that
@@ -1872,6 +2099,10 @@ const DevChat = {
       error: null,
       notice: null,
       dismissed: false,
+      // #1281: what to build, typed into the walkthrough's own field.
+      // null means "not typed yet", which is what lets the session title
+      // seed it once without overwriting an edit.
+      brief: null,
     };
   },
 
@@ -1894,6 +2125,15 @@ const DevChat = {
     const flow = DevChat._devFlow;
     if (flow.dismissed) return null;
     if (flow.mode === 'wizard' && flow.agent) return { mode: 'wizard', agent: flow.agent };
+    // #1281: the session's OWN stored venue, which is the half that survives
+    // a reload — `flow.mode` is in-memory and gone with the tab. It sits
+    // ABOVE the untouched-session gate below on purpose: a hand-off chosen
+    // halfway through a session is still a hand-off, and the launchpad has
+    // to come back for a session that already has messages or a PR.
+    const stored = window.BuildVenues && session.build_venue
+      ? BuildVenues.preselect(session.build_venue)
+      : null;
+    if (stored && stored.flow) return { mode: 'wizard', agent: stored.flow };
     // A saved 'claude-code' / 'codex' default is still honoured, in the one
     // place it can be: an untouched session, before anything has been built
     // here. That is the same door the picker used to sit in front of — the
@@ -1929,6 +2169,9 @@ const DevChat = {
       busy: flow.busy,
       error: flow.error,
       notice: flow.notice,
+      // Seeded from the session's own title the first time, so a session
+      // opened from a request arrives with its brief already written.
+      brief: flow.brief != null ? flow.brief : DevChat._defaultFlowBrief(),
     });
   },
 
@@ -1981,7 +2224,7 @@ const DevChat = {
       if (Number(live.sessionId) === Number(session.id)) live.status = status;
       // Only repaint if we're still looking at the session we asked about.
       if (DevChat.currentSession && Number(DevChat.currentSession.id) === Number(session.id)) {
-        DevChat.renderMessages();
+        DevChat._repaintDevFlow();
       }
     }
   },
@@ -1992,11 +2235,31 @@ const DevChat = {
     flow.notice = null;
     if (action === 'cancel') {
       flow.dismissed = true;
-      DevChat.renderMessages();
+      DevChat._repaintDevFlow();
       return;
     }
     if (action === 'link-github') {
       window.location.hash = '#settings/connectors';
+      return;
+    }
+    // #1281: the vendor toggle at the top of the launchpad. Switching is
+    // cheap and loses nothing — an external task is minted per vendor when
+    // the work order is prepared, and the status read re-derives every step
+    // for whichever one is now selected. The saved default moves with it,
+    // for the same reason picking a venue in the sheet moves it: the toggle
+    // IS the deliberate act.
+    if (action === 'vendor-claude-code' || action === 'vendor-codex') {
+      const next = action === 'vendor-codex' ? 'codex' : 'claude-code';
+      if (flow.agent === next) return;
+      flow.agent = next;
+      flow.mode = 'wizard';
+      flow.status = null;
+      DevChat._saveDevFlowPreference(next);
+      const venue = next === 'codex' ? 'web-codex' : 'web-claude-code';
+      if (DevChat.currentSession) DevChat.currentSession.build_venue = venue;
+      DevChat._persistBuildVenue(venue);
+      DevChat.renderChatView();
+      DevChat._devFlowEnsureStatus(true);
       return;
     }
     if (action === 'refresh' || action === 'open-fork' || action === 'open-agent') {
@@ -2011,7 +2274,7 @@ const DevChat = {
       const text = task ? task.workOrder : '';
       if (!text) {
         flow.error = 'No work order to copy yet.';
-        DevChat.renderMessages();
+        DevChat._repaintDevFlow();
         return;
       }
       let copied = false;
@@ -2021,7 +2284,7 @@ const DevChat = {
       } catch { copied = false; }
       if (copied) flow.notice = 'Work order copied — paste it into your agent.';
       else flow.error = 'Could not reach the clipboard. Open the work order below and copy it by hand.';
-      DevChat.renderMessages();
+      DevChat._repaintDevFlow();
       return;
     }
     if (action === 'prepare') return DevChat._devFlowPrepare();
@@ -2040,16 +2303,29 @@ const DevChat = {
   async _devFlowPrepare() {
     const flow = DevChat._devFlow;
     const slug = App.currentApp;
-    const input = document.getElementById('dc-input');
+    // #1281: the walkthrough carries its own brief field, because in a
+    // launchpad venue the composer is hidden and #dc-input is not something
+    // the user can reach. The composer stays the fallback for the one place
+    // the walkthrough still renders in the transcript.
+    const box = document.querySelector('[data-flow-brief]');
+    const input = box || document.getElementById('dc-input');
     const brief = input ? String(input.value || '').trim() : '';
     if (!brief) {
-      flow.error = 'Describe the change in the message box below first — the work order needs something to hand your agent.';
-      DevChat.renderMessages();
-      if (input) input.focus();
+      flow.error = box
+        ? 'Say what to build first — the work order needs something to hand your agent.'
+        : 'Describe the change in the message box below first — the work order needs something to hand your agent.';
+      DevChat._repaintDevFlow();
+      // Repainting replaced the node, so focus what is on screen NOW rather
+      // than the detached element captured above.
+      const live = document.querySelector('[data-flow-brief]') || document.getElementById('dc-input');
+      if (live) live.focus();
       return;
     }
+    // Survive the repaints below: every _repaintDevFlow rebuilds the card,
+    // and a brief the user typed must not vanish under them.
+    flow.brief = brief;
     flow.busy = true;
-    DevChat.renderMessages();
+    DevChat._repaintDevFlow();
     try {
       const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/external-tasks`, {
         method: 'POST',
@@ -2080,7 +2356,7 @@ const DevChat = {
     } finally {
       flow.busy = false;
       await DevChat._devFlowEnsureStatus(true);
-      DevChat.renderMessages();
+      DevChat._repaintDevFlow();
     }
   },
 
@@ -2092,11 +2368,11 @@ const DevChat = {
     const task = flow.status && flow.status.task;
     if (!task) {
       flow.error = 'No work order to submit yet.';
-      DevChat.renderMessages();
+      DevChat._repaintDevFlow();
       return;
     }
     flow.busy = true;
-    DevChat.renderMessages();
+    DevChat._repaintDevFlow();
     try {
       const res = await fetch(
         `/api/apps/${encodeURIComponent(slug)}/external-tasks/${encodeURIComponent(task.id)}/submit`,
@@ -2124,7 +2400,7 @@ const DevChat = {
       flow.error = `Network error: ${err.message}`;
     } finally {
       flow.busy = false;
-      DevChat.renderMessages();
+      DevChat._repaintDevFlow();
     }
   },
 
@@ -2142,11 +2418,11 @@ const DevChat = {
     const target = task && task.targetProposal;
     if (!task || !target || !target.id) {
       flow.error = 'No proposal to update yet.';
-      DevChat.renderMessages();
+      DevChat._repaintDevFlow();
       return;
     }
     flow.busy = true;
-    DevChat.renderMessages();
+    DevChat._repaintDevFlow();
     try {
       const res = await fetch(
         `/api/apps/${encodeURIComponent(slug)}/external-tasks/${encodeURIComponent(task.id)}/submit-update`,
@@ -2171,7 +2447,7 @@ const DevChat = {
         // the user is waiting on, and dismissing the walkthrough here would
         // take away the only place to press again.
         flow.notice = 'Nothing new to submit — this session is already on that commit.';
-        DevChat.renderMessages();
+        DevChat._repaintDevFlow();
         return;
       }
       if (data.resumeRequired) {
@@ -2197,7 +2473,7 @@ const DevChat = {
       flow.error = `Network error: ${err.message}`;
     } finally {
       flow.busy = false;
-      DevChat.renderMessages();
+      DevChat._repaintDevFlow();
     }
   },
 
@@ -3175,6 +3451,7 @@ const DevChat = {
               globalOut: DevChat._globalBudgetOut(),
               verificationRequired: !!data.verificationRequired,
               externalFlowsAvailable: DevChat._externalFlowsAvailable(),
+              sessionBridgeEnabled: DevChat._sessionBridgeEnabled(),
             },
             created_at: new Date().toISOString(),
           });
@@ -5857,7 +6134,12 @@ const DevChat = {
       // assignment for the same reason the flow card is — one write, one
       // repaint — and because an appended-afterwards node is exactly what
       // used to get wiped by every re-render.
-    }).join('') + DevChat._devFlowHtml() + DevChat._activityHtml();
+    }).join('')
+      // #1281: in a hand-off venue the walkthrough IS the launchpad and
+      // renders in the composer's place instead of at the end of the
+      // transcript — rendering it here as well would show it twice.
+      + (DevChat._launchpadVenue() ? '' : DevChat._devFlowHtml())
+      + DevChat._activityHtml();
 
     DevChat._wireDevFlowCard();
     DevChat._bindDevFlowVisibility();
@@ -7267,6 +7549,11 @@ const DevChat = {
       })
       : '';
     DevChat._venueFallbackReason = null;
+    // #1281: a hand-off venue swaps the composer for the launchpad. The
+    // venue LINE above it is untouched, which is what makes the swap
+    // reversible — "Change how this is built" is the way back to a chat.
+    const launchpadHtml = DevChat._launchpadHtml();
+    const inLaunchpad = !!DevChat._launchpadVenue();
     const claudeVenue = venueId === 'usernode-claude';
     const openRouterVenue = venueId === 'usernode-openrouter';
     const openRouterModel = String(DevChat.currentSession.agent_model || '').trim();
@@ -7304,6 +7591,16 @@ const DevChat = {
                  venue and one of which was not. Filled from the session
                  row, so it is right on first paint. -->
             <div id="dc-venue-slot" class="dc-venue-slot">${venueLineHtml}</div>
+            <!-- #1281: the launchpad stands where the composer does when
+                 the work is happening somewhere else. Both are always in
+                 the DOM and exactly one is shown: every public/js/** and
+                 chat-helper module below looks its controls up by id
+                 (#dc-input, #dc-form, #dc-budget, #dc-runner…), and a
+                 getElementById that starts returning null would throw on a
+                 route the checks load — a console error fails them. So the
+                 composer is HIDDEN here, never removed. -->
+            <div id="dc-launchpad-slot" class="dc-launchpad-slot">${launchpadHtml}</div>
+            <div id="dc-composer-controls"${inLaunchpad ? ' hidden' : ''}>
             <div class="flex flex-wrap items-center gap-2 mb-2">
               <input type="file" id="dc-file-input" class="hidden" multiple>
               <button type="button" id="dc-attach-btn" title="Attach files — images (≤4 MB), text/code files (≤200 KB), zip archives (≤20 MB), or any other file (≤10 MB); up to 4 per message" aria-label="Attach files"
@@ -7378,6 +7675,7 @@ const DevChat = {
                  site reaches. Sourced from the constant so the two can
                  never drift apart. -->
             <div class="text-xs text-zinc-600 mt-1 text-right" id="dc-shortcut-hint">${DevChat.SHORTCUT_HINT_SEND}</div>
+            </div>
           </div>
         </div>
         <div id="dc-spec-resizer" class="dc-spec-resizer ${viewerOpen ? 'dc-spec-resizer-open' : ''}" role="separator" aria-orientation="vertical" aria-label="Resize spec viewer"></div>
@@ -7394,6 +7692,7 @@ const DevChat = {
     // banner + meter once fresh figures land.
     DevChat._wireCreditsBanner();
     DevChat._wireCreditsLowBanner();
+    DevChat._wireLaunchpad();
     DevChat.refreshBudget();
     // Attach tracker first so the scroll set below is observed, then
     // restore the session's last known position (or fall through to

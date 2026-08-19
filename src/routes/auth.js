@@ -332,6 +332,10 @@ function authRoutes(config) {
         // Experimental: opt-in AI progress estimate for coding runs
         // (Settings → Experimental). Default OFF.
         aiProgressEstimate: !!req.user.aiProgressEstimate,
+        // #1281: opt-in for the session-CLI bridge, the bottom rung of the
+        // spec's routing tree. build-venues.js requires this AND the
+        // deployment's cliAuthEnabled before offering the `local` venue.
+        sessionBridgeEnabled: !!req.user.sessionBridgeEnabled,
         // Platform-level language preference (issue #757): a BCP-47 tag or
         // null when unset. Settings → Language renders from this; apps read
         // it via the iframe JWT `locale` claim and the bridge's
@@ -548,6 +552,28 @@ function authRoutes(config) {
       res.json({ ok: true, enabled });
     } catch (err) {
       log.error('settings', 'Failed to toggle AI progress estimate', { userId: req.user.id, err: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // #1281: opt in to the session-CLI bridge (Settings -> Experimental).
+  // Same shape as the progress-estimate toggle above; see
+  // users.session_bridge_enabled in schema.sql for why it defaults off.
+  router.post('/api/me/session-bridge', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    const { enabled } = req.body || {};
+    if (typeof enabled !== 'boolean') {
+      return res.status(400).json({ error: 'enabled must be a boolean' });
+    }
+    try {
+      await pool.query(
+        'UPDATE users SET session_bridge_enabled = $1 WHERE id = $2',
+        [enabled, req.user.id]
+      );
+      log.info('settings', 'Session bridge toggled', { userId: req.user.id, enabled });
+      res.json({ ok: true, enabled });
+    } catch (err) {
+      log.error('settings', 'Failed to toggle session bridge', { userId: req.user.id, err: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });

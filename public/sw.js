@@ -151,6 +151,7 @@ const SHELL_ASSETS = [
   '/js/social-push.js',
   '/js/build-venues.js',
   '/js/credit-options.js',
+  '/js/launchpad.js',
   // The profile screen's renderer used to be listed here. #1083 chunk F moved
   // it into the React bundle, so /shell/assets/shell.js above is what
   // precaches it now.

@@ -31,6 +31,18 @@ const limits = require('../services/limits');
 const { effectiveSessionCaps } = require('../services/session-caps');
 const events = require('../services/events');
 const modelFallback = require('../services/model-fallback');
+
+// The six build venues (#1281). The browser's copy is VENUES in
+// public/js/build-venues.js and it is the authoritative list; this is the
+// server-side domain for chat_sessions.build_venue, and
+// tests/build-venue-route.test.js scrapes that file to keep the two in
+// step, the same way tests/dev-flow-preference.test.js pins the three
+// dev_flow_preference values across their three homes. The CHECK
+// constraint in schema.sql is the third copy and the last line of defence.
+const BUILD_VENUES = [
+  'usernode-claude', 'usernode-openrouter', 'local',
+  'web-claude-code', 'web-codex', 'own-tools-pr',
+];
 const { getActiveUserStats } = require('../services/active-users');
 const { chatLimiter, attachmentUploadLimiter } = require('../middleware/rate-limits');
 const attachmentsSvc = require('../services/attachments');
@@ -2829,6 +2841,60 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       res.json({ ok: true, session: updatedRow, message: contextMessage });
     } catch (err) {
       log.error('sessions', 'reset-agent-context failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // POST /api/sessions/:id/build-venue
+  //   Persist WHERE this session is being built (#1281).
+  //
+  //   The six venue ids were a presentation key until now — #1086 said so
+  //   deliberately, because every venue was already expressible through a
+  //   column that existed. #1281 asks for the one state none of them can
+  //   express: a session whose owner has decided to hand the work to Claude
+  //   Code, Codex or their own tools and has NOT done it yet. That decision
+  //   is what the launchpad renders from, and `external_agent` cannot serve
+  //   it — that column is stamped at submission, so it is null for exactly
+  //   the period the launchpad is on screen. See chat_sessions.build_venue
+  //   in schema.sql.
+  //
+  //   Deliberately NOT part of reset-agent-context: that route switches the
+  //   in-chat backend and, by design, throws away the agent thread and
+  //   evicts the warm worker. Choosing to build somewhere else must do
+  //   neither — the transcript, the branch and the proposal all stay exactly
+  //   as they are, which is the promise the venue sheet makes when it says
+  //   an in-chat venue "keeps this chat, this branch and this proposal".
+  router.post('/api/sessions/:id/build-venue', drainGuard, async (req, res) => {
+    try {
+      const sessionId = parseInt(req.params.id, 10);
+      if (!Number.isFinite(sessionId)) {
+        return res.status(400).json({ error: 'Bad session id' });
+      }
+      const venue = typeof (req.body || {}).venue === 'string' ? req.body.venue : null;
+      // Clearing is legitimate: it returns the session to "nobody has
+      // chosen", where BuildVenues.currentVenue() derives from the columns
+      // exactly as it did before this route existed.
+      if (venue !== null && !BUILD_VENUES.includes(venue)) {
+        return res.status(400).json({ error: 'Unknown build venue' });
+      }
+      const { rows } = await pool.query(
+        `UPDATE chat_sessions
+            SET build_venue = $3
+          WHERE id = $1 AND user_id = $2
+            AND status NOT IN ('archived', 'merged')
+        RETURNING *`,
+        [sessionId, req.user.id, venue],
+      );
+      const updated = rows[0];
+      if (!updated) {
+        // Either it is not theirs, or it is closed. Both are a 404 here for
+        // the same reason the archive routes make them one: an owner who
+        // cannot see the session must not learn it exists.
+        return res.status(404).json({ error: 'Session not found' });
+      }
+      res.json({ ok: true, session: updated });
+    } catch (err) {
+      log.error('sessions', 'build-venue failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -13765,4 +13831,4 @@ CMD ["node", "server.js"]
   return { containerId, stagingUrl, hostname };
 }
 
-module.exports = { runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, advanceSharedReviewAfterSync, advanceReviewAfterPlatformSync, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };
+module.exports = { BUILD_VENUES, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, advanceSharedReviewAfterSync, advanceReviewAfterPlatformSync, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };

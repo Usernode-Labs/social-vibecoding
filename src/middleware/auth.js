@@ -189,7 +189,7 @@ function authMiddleware(config) {
     if (cookieToken) {
       try {
         const { rows } = await pool.query(
-          `SELECT s.user_id, s.expires_at, u.username, u.is_admin, u.admin_readonly, u.app_quota, u.ai_progress_estimate, u.locale, u.has_platform_access
+          `SELECT s.user_id, s.expires_at, u.username, u.is_admin, u.admin_readonly, u.app_quota, u.ai_progress_estimate, u.session_bridge_enabled, u.locale, u.has_platform_access
            FROM sessions s JOIN users u ON s.user_id = u.id
            WHERE s.token = $1`,
           [cookieToken]
@@ -257,6 +257,8 @@ function authMiddleware(config) {
             // Experimental per-user opt-in (default FALSE) — read by
             // runClaudeCodeTool to gate the Haiku progress estimator.
             aiProgressEstimate: !!rows[0].ai_progress_estimate,
+            // #1281: opt-in for the session-CLI bridge venue. Default FALSE.
+            sessionBridgeEnabled: !!rows[0].session_bridge_enabled,
             // Platform-level language preference (issue #757): a BCP-47
             // tag or null when unset. Surfaced via /api/auth/me.
             locale: rows[0].locale || null,
@@ -334,7 +336,7 @@ async function tryMintSessionFromIframeJwt(pool, config, jwtToken, res) {
   let userRow;
   try {
     const { rows } = await pool.query(
-      'SELECT id, username, is_admin, admin_readonly, app_quota, ai_progress_estimate, locale, has_platform_access FROM users WHERE id = $1',
+      'SELECT id, username, is_admin, admin_readonly, app_quota, ai_progress_estimate, session_bridge_enabled, locale, has_platform_access FROM users WHERE id = $1',
       [payload.id]
     );
     userRow = rows[0];
@@ -387,6 +389,7 @@ async function tryMintSessionFromIframeJwt(pool, config, jwtToken, res) {
     canAdminWrite: !!userRow.is_admin && !userRow.admin_readonly,
     appQuota: userRow.app_quota ?? 0,
     aiProgressEstimate: !!userRow.ai_progress_estimate,
+    sessionBridgeEnabled: !!userRow.session_bridge_enabled,
     locale: userRow.locale || null,
     hasPlatformAccess: !!userRow.has_platform_access,
   };

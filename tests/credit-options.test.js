@@ -37,21 +37,32 @@ const INDEX_SRC = fs.readFileSync(
   path.join(__dirname, '../public/index.html'), 'utf8'
 );
 
-test('offers exactly four routes, in the documented order', () => {
+test('offers exactly three routes by default, in the documented order', () => {
   // Without the #1049 hand-offs (a deployment with no GitHub-link support)
-  // this is the original list with ONE change: the single "use a coding
-  // tool on your computer" row is now the two venues it always covered —
+  // this is the original list with TWO changes. The single "use a coding
+  // tool on your computer" row became the two venues it always covered —
   // `local` continues this session on your machine, `own-tools-pr` is you
-  // working alone and importing a pull request, with no Usernode chat.
+  // working alone and importing a pull request, with no Usernode chat. And
+  // since #1281 `local` is opt-in (users.session_bridge_enabled, default
+  // FALSE), so the DEFAULT list is three: it is the bottom rung of the
+  // spec's routing tree and it wants the CLI installed before it can do
+  // anything, which is not a thing to put in front of somebody who has just
+  // been told their credits ran out.
   const options = CreditOptions.options({});
-  assert.equal(options.length, 4);
+  assert.equal(options.length, 3);
   assert.deepEqual(
     options.map((o) => o.id),
-    ['api-key', 'local', 'own-tools-pr', 'connector']
+    ['api-key', 'own-tools-pr', 'connector']
   );
   assert.deepEqual(
     options.map((o) => o.hash),
-    ['#settings/api-key', '#settings/cli', '#settings/cli', '#settings/connectors']
+    ['#settings/api-key', '#settings/cli', '#settings/connectors']
+  );
+  // Opting in puts it back, in its old position — the gate changes who is
+  // offered the row, never where it sits.
+  assert.deepEqual(
+    CreditOptions.options({ sessionBridgeEnabled: true }).map((o) => o.id),
+    ['api-key', 'local', 'own-tools-pr', 'connector']
   );
   // Every entry must be renderable: a blank title or CTA would ship an
   // unlabelled button.
@@ -67,7 +78,9 @@ test('offers exactly four routes, in the documented order', () => {
 // or ChatGPT subscription they already pay for — lead, and each carries a
 // `flow` the surface can act on in place.
 test('with the external flows available, the hand-offs lead', () => {
-  const options = CreditOptions.options({ externalFlowsAvailable: true });
+  const options = CreditOptions.options({
+    externalFlowsAvailable: true, sessionBridgeEnabled: true,
+  });
   assert.deepEqual(
     options.map((o) => o.id),
     ['web-claude-code', 'web-codex', 'api-key', 'local', 'own-tools-pr'],
@@ -93,9 +106,15 @@ test('with the external flows available, the hand-offs lead', () => {
 });
 
 test('the intro sentence counts the routes actually offered', () => {
-  assert.match(CreditOptions.cardHtml({}), /Four ways to keep building/);
+  assert.match(CreditOptions.cardHtml({}), /Three ways to keep building/);
   assert.match(
     CreditOptions.cardHtml({ externalFlowsAvailable: true }),
+    /Four ways to keep building/
+  );
+  // #1281: opting in to the bridge adds a route, and the sentence moves
+  // with it — the count is spelled from the list, never frozen.
+  assert.match(
+    CreditOptions.cardHtml({ externalFlowsAvailable: true, sessionBridgeEnabled: true }),
     /Five ways to keep building/
   );
   // Gating is by OMISSION, so a deployment with no CLI and a read-only
@@ -170,7 +189,7 @@ test('the lead distinguishes your allowance from the shared platform budget', ()
   assert.match(CreditOptions.lead({ globalOut: true }), /shared daily ai budget/i);
   // Both states still offer every route: all of them bypass the platform
   // budget.
-  assert.equal(CreditOptions.options({ globalOut: true }).length, 4);
+  assert.equal(CreditOptions.options({ globalOut: true }).length, 3);
 });
 
 test('the platform error text is escaped, never injected', () => {
@@ -335,7 +354,12 @@ test('the Generate-proposal path shows the card instead of a bare toast', () => 
 // about the split.
 
 test('the two routes that need a terminal are the developer ones', () => {
-  const options = CreditOptions.options({ externalFlowsAvailable: true });
+  // sessionBridgeEnabled so BOTH terminal routes are present — the point of
+  // this test is which side of the expander each lands on, which needs them
+  // both in the list to be worth asserting.
+  const options = CreditOptions.options({
+    externalFlowsAvailable: true, sessionBridgeEnabled: true,
+  });
   const byId = Object.fromEntries(options.map((o) => [o.id, o]));
 
   // Derived from the venue's mechanism (lease / import), not from a list of
@@ -370,7 +394,9 @@ test('the two routes that need a terminal are the developer ones', () => {
 });
 
 test('the card shows the primary routes first and hides the developer ones', () => {
-  const card = CreditOptions.cardHtml({ externalFlowsAvailable: true });
+  const card = CreditOptions.cardHtml({
+    externalFlowsAvailable: true, sessionBridgeEnabled: true,
+  });
   const expander = card.indexOf('data-credits-dev="1"');
   assert.ok(expander > -1, 'the card carries the expander');
   assert.match(card, /Are you a developer\?/);
@@ -392,7 +418,7 @@ test('the card shows the primary routes first and hides the developer ones', () 
   // hash; this proves hiding them did not turn them into plain text.
   assert.equal(
     (card.match(/class="dc-pr-btn dc-credits-go"/g) || []).length,
-    CreditOptions.options({ externalFlowsAvailable: true }).length,
+    CreditOptions.options({ externalFlowsAvailable: true, sessionBridgeEnabled: true }).length,
     'every route keeps its button'
   );
 });
@@ -401,7 +427,9 @@ test('the count still spells the whole list, not just the visible half', () => {
   // Three rows and an expander over "Five ways to keep building right now"
   // is a promise the card keeps. Counting only the visible three would hide
   // that the other two exist — the discovery failure this card exists for.
-  const card = CreditOptions.cardHtml({ externalFlowsAvailable: true });
+  const card = CreditOptions.cardHtml({
+    externalFlowsAvailable: true, sessionBridgeEnabled: true,
+  });
   assert.match(card, /Five ways to keep building/);
 });
 
@@ -421,12 +449,13 @@ test('the compact banner stays flat', () => {
   // the screen where the choice is made. Putting a disclosure widget in the
   // surface with the least room to explain itself would cost two clicks to
   // reach a route that is one click away today.
-  const banner = CreditOptions.bannerActionsHtml({ externalFlowsAvailable: true });
+  const state = { externalFlowsAvailable: true, sessionBridgeEnabled: true };
+  const banner = CreditOptions.bannerActionsHtml(state);
   assert.doesNotMatch(banner, /data-credits-dev/);
   assert.doesNotMatch(banner, /<details/);
   assert.equal(
     (banner.match(/data-credits-hash="/g) || []).length,
-    CreditOptions.options({ externalFlowsAvailable: true }).length,
+    CreditOptions.options(state).length,
     'the banner still offers every route'
   );
 });
@@ -435,7 +464,9 @@ test('the expander needs no wiring — the browser owns the toggle', () => {
   // wire() looks for [data-credits-flow] / [data-credits-hash]. The summary
   // matches neither, so the click falls through to the browser instead of
   // being preventDefault()ed into a dead control.
-  const card = CreditOptions.cardHtml({ externalFlowsAvailable: true });
+  const card = CreditOptions.cardHtml({
+    externalFlowsAvailable: true, sessionBridgeEnabled: true,
+  });
   const summary = card.match(/<summary[^>]*>/)[0];
   assert.doesNotMatch(summary, /data-credits-hash/);
   assert.doesNotMatch(summary, /data-credits-flow/);

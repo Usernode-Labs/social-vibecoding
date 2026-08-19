@@ -347,6 +347,11 @@
         mode: 'blocked',
         openrouterAvailable: s.openrouterAvailable,
         cliAuthEnabled: s.cliAuthEnabled !== false,
+        // #1281: the bridge is opt-in, so it is absent from the developer
+        // expander unless this user turned it on. Unlike the flags around
+        // it this one does NOT default true — an opt-in that defaults to
+        // on is not an opt-in.
+        sessionBridgeEnabled: !!s.sessionBridgeEnabled,
         externalFlowsAvailable: s.externalFlowsAvailable,
         canCollaborate: s.canCollaborate !== false,
         blockedReason: s.error || null,
