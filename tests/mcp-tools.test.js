@@ -2422,3 +2422,84 @@ test('an update refusal carries the commit the caller has to act on', () => {
   assert.match(block, /expectedBase/);
   assert.match(block, /headSha/);
 });
+
+// ── #1323: what the connector tells an agent about its own proposal ───────
+//
+// Four gaps found while an agent drove a proposal to green. Two of them did
+// not merely slow the work down, they produced a WRONG diagnosis: every test
+// in a 153-result run had failed identically with
+// `net::ERR_NAME_NOT_RESOLVED` — the signature of a preview that never
+// resolved — and the connector reported fifty names, no reasons, and a
+// `total` that made it look like a hundred tests had passed.
+
+test('a failing check reports WHY, not just its name', () => {
+  const shaped = tools.shapeChecks({
+    check_state: 'failing',
+    test_results: [
+      { name: 'Home loads', status: 'pass' },
+      {
+        name: 'Lobby renders',
+        path: '/',
+        status: 'fail',
+        failureReason: 'Page failed to load: net::ERR_NAME_NOT_RESOLVED at http://' + 'a'.repeat(64) + ':3000/',
+      },
+    ],
+  });
+  assert.equal(shaped.failures.length, 1);
+  assert.ok(shaped.failures[0].reason.includes('ERR_NAME_NOT_RESOLVED'),
+    'the reason is the whole diagnosis when every test fails the same way');
+  assert.ok(shaped.failures[0].reason.startsWith('<untrusted-content>'),
+    'it comes from the app\'s own build output, so it is borrowed text like the names');
+  assert.ok(shaped.failures[0].name.includes('Lobby renders'));
+  assert.ok(shaped.failures[0].path.includes('/'));
+});
+
+test('a console-error failure falls back to the console, which IS its reason', () => {
+  // "loads with no console errors" fails with no failureReason at all: the
+  // console rows are the finding, and dropping them left the agent with a
+  // failure that named no cause anywhere.
+  const shaped = tools.shapeChecks({
+    test_results: [{
+      name: 'Main screen loads with no console errors',
+      status: 'fail',
+      consoleErrors: [{ kind: 'error', message: 'Uncaught TypeError: c.map is not a function' }],
+    }],
+  });
+  assert.ok(shaped.failures[0].reason.includes('c.map is not a function'));
+  // And a failure that genuinely recorded nothing reports null rather than ''.
+  const silent = tools.shapeChecks({ test_results: [{ name: 'x', status: 'fail' }] });
+  assert.equal(silent.failures[0].reason, null);
+});
+
+test('the failing list says how many failed and whether it was cut', () => {
+  const many = tools.shapeChecks({
+    test_results: Array.from({ length: 153 }, (_, i) => ({ name: `check ${i}`, status: 'fail' })),
+  });
+  assert.equal(many.failing.length, 50, 'the list itself is still capped');
+  assert.equal(many.failingTotal, 153, 'and the count is the truth behind the cap');
+  assert.equal(many.failingTruncated, true);
+  assert.equal(many.total, 153);
+  // failingTotal === total is the tell: not "50 failed and 103 passed", which
+  // is exactly the misreading the bare cap invited.
+  assert.equal(many.failingTotal, many.total);
+
+  const few = tools.shapeChecks({
+    test_results: [{ name: 'a', status: 'fail' }, { name: 'b', status: 'pass' }],
+  });
+  assert.equal(few.failingTruncated, false);
+  assert.equal(few.failingTotal, 1);
+  assert.equal(few.total, 2);
+});
+
+test('a proposal reports the description the group is voting on', () => {
+  const shaped = tools.shapeProposal(
+    { id: 7, app_slug: 'recipe-box', pr_title: 'A title', pr_body: 'What changed and why.' },
+    ORIGIN
+  );
+  assert.ok(shaped.description.includes('What changed and why.'));
+  assert.ok(shaped.description.startsWith('<untrusted-content>'),
+    'the body is written by people and read back to a model');
+  // A row from before the mirror reports null — which is knowably "unknown",
+  // not knowably "empty".
+  assert.equal(tools.shapeProposal({ id: 8, app_slug: 'recipe-box' }, ORIGIN).description, null);
+});

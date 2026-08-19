@@ -200,6 +200,19 @@ function upsertVisualsBlock(body, block) {
   return base ? `${base}\n\n${block}` : block;
 }
 
+// The marker-delimited visuals block as it stands in a body, or '' when the
+// body carries none (#1323). upsertVisualsBlock can REPLACE that block, but a
+// caller rewriting the prose around it first has to lift it out — otherwise
+// rewriting a description silently drops the before/after screenshots the
+// group is voting on.
+function extractVisualsBlock(body) {
+  const base = typeof body === 'string' ? body : '';
+  const start = base.indexOf(VISUALS_MARKER_START);
+  const end = base.indexOf(VISUALS_MARKER_END);
+  if (start === -1 || end === -1 || end <= start) return '';
+  return base.slice(start, end + VISUALS_MARKER_END.length);
+}
+
 // Extract the issue numbers a PR body declares it closes via GitHub's
 // closing keywords (close/closes/closed, fix/fixes/fixed, resolve/resolves/
 // resolved), optionally followed by a colon, e.g. "Closes #75", "fixed: #80".
@@ -826,6 +839,6 @@ async function applyPrMetadata({
 module.exports = {
   generatePrMetadata, applyPrMetadata, deterministicPrMetadataDraft, sanitizeIssueNumbers,
   buildClosingBlock, buildTestingBlock, parseClosingKeywords,
-  buildVisualsBlock, upsertVisualsBlock,
+  buildVisualsBlock, upsertVisualsBlock, extractVisualsBlock,
   applyIssueDeclarations, stripClosingLines, sameIssueSet,
 };

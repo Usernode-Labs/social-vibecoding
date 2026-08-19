@@ -1767,6 +1767,99 @@ test('the fork path applies the title when the head MOVES, not only on a resubmi
   assert.match(fork, /titleUpdated/, 'and reports whether it landed');
 });
 
+// ── #1323: the description, and asking for a re-check ──────────────────
+//
+// submit_work has always ACCEPTED a description on an update and, until now,
+// submitUpdate never forwarded it — so the body the group votes on kept
+// whatever the FIRST submission said, silently. Same shape as the title bug
+// (#1319), on the surface that matters more. And the only way to get a fresh
+// verdict on an unchanged commit was to CHANGE a capture route, because the
+// re-run sat behind the testing-metadata early return.
+
+test('an author\'s description rewrites the PR body and keeps its managed blocks', async () => {
+  const log = {};
+  const bodies = [];
+  const mirrors = [];
+  const session = importedSession({ imported_pr_head_repo: 'evan-gh/r' });
+  const pool = fakePool([
+    ['SET pr_body', (params) => { mirrors.push(params); return []; }],
+    ['FROM chat_sessions cs JOIN apps a', [session]],
+  ]);
+  const result = await run({
+    session, pool,
+    gh: {
+      getBranchSha: async () => NATIVE_HEAD,
+      getPR: async () => ({
+        state: 'open', merged: false, html_url: 'https://github.com/o/r/pull/91',
+        head: { ref: 'usernode/add-a-button', sha: FORK_HEAD, repo: { owner: { login: 'evan-gh' } } },
+        body: 'The old description.\n\nCloses #91\n\n<!-- usernode:visuals -->\nBEFORE/AFTER\n<!-- /usernode:visuals -->',
+      }),
+      updatePR: async (o, r, n, patch) => { bodies.push(patch); },
+    },
+  }, { branch: 'usernode/add-a-button', description: '  The new description.  ' }, log);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.descriptionUpdated, true);
+  assert.equal(result.descriptionRejected, undefined);
+  assert.equal(result.votesCleared, 0, 'rewriting prose moves no code');
+  const written = bodies[0].body;
+  assert.match(written, /The new description\./);
+  assert.doesNotMatch(written, /The old description/);
+  // The two managed blocks SURVIVE. Dropping the visuals block would delete
+  // the before/after screenshots the group is looking at — a worse bug than
+  // the one being fixed.
+  assert.match(written, /<!-- usernode:visuals -->[\s\S]*BEFORE\/AFTER[\s\S]*<!-- \/usernode:visuals -->/);
+  assert.match(written, /Closes #91/);
+  assert.equal(mirrors[0][0], written, 'and the row mirrors it so get_proposal can report it');
+});
+
+test('somebody else\'s pull request keeps its body, and the caller is told', async () => {
+  const log = {};
+  const session = importedSession({ imported_pr_head_repo: 'other-person/r' });
+  const pool = fakePool([['FROM chat_sessions cs JOIN apps a', [session]]]);
+  const result = await run({
+    session, pool,
+    gh: {
+      getBranchSha: async () => NATIVE_HEAD,
+      updatePR: async () => { throw new Error('must not rewrite an external author\'s body'); },
+    },
+  }, { branch: 'usernode/add-a-button', description: 'Mine now' }, log);
+  assert.equal(result.ok, true);
+  assert.equal(result.descriptionUpdated, false);
+  assert.equal(result.descriptionRejected, 'imported_pr');
+});
+
+test('recheck re-runs the checks on a commit that did not move', async () => {
+  const log = {};
+  const session = nativeSession();
+  const pool = fakePool([['FROM chat_sessions cs JOIN apps a', [session]]]);
+  const rechecks = [];
+  const result = await run({
+    session, pool,
+    gh: { getBranchSha: async () => FORK_HEAD },
+    recovery: { recheckSessionChecks: async (args) => { rechecks.push(args.reason); return true; } },
+  }, { recheck: true }, log);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.unchanged, true, 'no commit moved');
+  assert.equal(result.votesCleared, 0, 'and no vote was cast on anything different');
+  assert.equal(result.checksRerun, true);
+  assert.equal(rechecks.length, 1, 'the same run the "Re-run checks" button performs');
+
+  // Without it, an unchanged resubmit that changes no testing metadata still
+  // re-runs NOTHING — the early return this flag exists to reach past.
+  const quiet = [];
+  const session2 = nativeSession();
+  const r2 = await run({
+    session: session2,
+    pool: fakePool([['FROM chat_sessions cs JOIN apps a', [session2]]]),
+    gh: { getBranchSha: async () => FORK_HEAD },
+    recovery: { recheckSessionChecks: async () => { quiet.push(1); return true; } },
+  }, {}, {});
+  assert.notEqual(r2.checksRerun, true, 'the base reports it plainly as not re-run');
+  assert.equal(quiet.length, 0, 'and nothing was asked to run');
+});
+
 // ── 13. The request linkage (#1310) ────────────────────────────────────
 //
 // #1217 linked a proposal to the request it implements — `Closes #N` in the

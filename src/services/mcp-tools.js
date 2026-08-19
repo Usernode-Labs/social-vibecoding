@@ -54,6 +54,13 @@ const PLATFORM_INTERNAL_URL = process.env.PLATFORM_INTERNAL_URL || 'http://usern
 const MAX_LIST_ITEMS = 50;
 const MAX_TITLE_CHARS = 200;
 const MAX_BODY_CHARS = 2000;
+// #1323. A failing check's REASON, and how many of them carry one. The names
+// alone say that a run failed without saying why, and the reason is the whole
+// diagnosis when every test failed the same way (a preview that never
+// resolved, a build that never booted). Fewer entries than the name list and
+// a tight per-reason clip: this is a diagnosis, not a log.
+const MAX_FAILURE_DETAILS = 10;
+const MAX_FAILURE_REASON_CHARS = 400;
 
 // list_requests pages, and its default page carries no bodies (#1217).
 //
@@ -472,8 +479,21 @@ const MAX_CHECK_ERROR_CHARS = 1000;
 // value was already stored as NULL and never reaches here. Test names and the
 // error detail are not — they come from the app's own dapp.json and its build
 // output — so they keep the same envelope as every other free text here.
+// What the capture recorded about ONE failing test. `failureReason` is the
+// assertion or navigation error; a "loads with no console errors" check fails
+// with no reason at all and its console rows ARE the reason, so they are the
+// fallback rather than a second field nobody reads.
+function failureReasonOf(result) {
+  const direct = String(result.failureReason == null ? '' : result.failureReason).trim();
+  if (direct) return direct;
+  const errors = Array.isArray(result.consoleErrors) ? result.consoleErrors : [];
+  const first = errors.find((e) => e && e.message);
+  return first ? String(first.message) : '';
+}
+
 function shapeChecks(session) {
   const results = Array.isArray(session.test_results) ? session.test_results : [];
+  const failed = results.filter((t) => t && t.status && t.status !== 'pass');
   const ranOn = session.checks_commit_sha || null;
   const head = headShaOf(session);
   return {
@@ -486,10 +506,24 @@ function shapeChecks(session) {
     // mismatch must not read as a proven one.
     ranOnCommit: ranOn,
     stale: !!(ranOn && head && ranOn.toLowerCase() !== head.toLowerCase()),
-    failing: results
-      .filter((t) => t && t.status && t.status !== 'pass')
+    failing: failed
       .slice(0, MAX_LIST_ITEMS)
       .map((t) => untrusted(t.name || t.path || 'unnamed test', MAX_TITLE_CHARS)),
+    // #1323. How many failed, and whether the list above is all of them.
+    // `total` counts every RESULT, so `failing: [50 names]` against
+    // `total: 153` reads as "50 failed, 103 passed" — the reading that sent a
+    // real investigation down a deploy-race theory when in fact all 153 had
+    // failed identically, which is the signature of a broken preview and
+    // nothing else.
+    failingTotal: failed.length,
+    failingTruncated: failed.length > MAX_LIST_ITEMS,
+    // And WHY they failed, which the capture stored per row and this shape
+    // used to drop on the floor.
+    failures: failed.slice(0, MAX_FAILURE_DETAILS).map((t) => ({
+      name: untrusted(t.name || t.path || 'unnamed test', MAX_TITLE_CHARS),
+      path: t.path ? untrusted(String(t.path), MAX_TITLE_CHARS) : null,
+      reason: untrusted(failureReasonOf(t), MAX_FAILURE_REASON_CHARS) || null,
+    })),
     total: results.length,
     error: session.check_error_detail
       ? untrusted(session.check_error_detail, MAX_CHECK_ERROR_CHARS)
@@ -672,6 +706,13 @@ function shapeProposal(session, origin) {
     proposalId: session.id,
     appSlug: session.app_slug || null,
     title: untrusted(session.pr_title || session.session_title, MAX_TITLE_CHARS),
+    // #1323. What the people voting actually READ. An agent can write this
+    // through submit_work and, until this field existed, had no way to confirm
+    // what landed — the same blind write the title had. Mirrored onto the row
+    // from the pull request body, so reporting it costs no GitHub call on a
+    // path agents poll; null on a proposal whose body predates the mirror,
+    // which is not the same as an empty description.
+    description: untrusted(session.pr_body, MAX_BODY_CHARS) || null,
     status: session.status || null,
     prNumber: session.pr_number || null,
     prUrl: session.pr_url || null,
@@ -1719,6 +1760,8 @@ function registerTools(server, ctx) {
       proposalId: z.number(),
       appSlug: z.string().nullable(),
       title: z.string(),
+      description: z.string().nullable()
+        .describe('The description the group is voting on, as last written through submit_work or the panel. Null on a proposal whose body predates the mirror.'),
       status: z.string().nullable(),
       prNumber: z.number().nullable(),
       prUrl: z.string().nullable(),
@@ -1750,8 +1793,20 @@ function registerTools(server, ctx) {
           .describe('True when ranOnCommit is no longer the head, so even a passing verdict describes superseded '
             + 'code. False when either side is unknown — an unprovable mismatch is not a proven one.'),
         failing: z.array(z.string())
-          .describe('Names of the tests that are not passing. While state is pending these are left over from the '
-            + 'PREVIOUS run and may already be fixed.'),
+          .describe('Names of the tests that are not passing, capped at 50. While state is pending these are left '
+            + 'over from the PREVIOUS run and may already be fixed.'),
+        failingTotal: z.number()
+          .describe('How many tests are not passing — the length of the list above BEFORE its cap. Compare it with '
+            + '`total`: equal means every test failed, which is a broken preview rather than a broken change.'),
+        failingTruncated: z.boolean()
+          .describe('True when `failing` was cut at the cap and names more failures than it lists.'),
+        failures: z.array(z.object({
+          name: z.string(),
+          path: z.string().nullable(),
+          reason: z.string().nullable(),
+        })).describe('WHY the first few failed — the navigation or assertion error the run recorded, falling back '
+          + 'to the first console error. When every entry carries the same reason, that reason is the whole '
+          + 'diagnosis and no test needs fixing.'),
         total: z.number()
           .describe('How many tests reported. While pending, 0 means none has reported yet — never that this '
             + 'proposal has no checks.'),
@@ -2200,6 +2255,8 @@ function registerTools(server, ctx) {
         .describe('A few short numbered lines telling a person what to click to see the change, shown beside the staging preview. Markdown.'),
       expectedHeadSha: z.string().optional()
         .describe('Only for an update: the proposal’s current commit as you last read it, from get_proposal’s `branch.headSha`. Pass it and Usernode refuses with `branch_moved` if somebody advanced the proposal while you were working, instead of building on a head you have not seen. Optional — omitted, your branch still has to sit on top of whatever the current head is.'),
+      recheck: z.boolean().optional()
+        .describe('Only with proposalId, on the commit already there: re-run the automated checks and re-shoot the screenshots — the same act as the panel\'s "Re-run checks" button. No code moves and NO votes are cleared. Use it when the verdict is stale for a reason outside this proposal (a platform-side fix, a preview that had died) instead of pushing a commit to provoke a run.'),
       propose: z.boolean().optional()
         .describe('Only with proposalId, when its target is a dev SESSION (a work-order continuation that is not yet up for a vote): after the update lands, promote the session to a group vote — the same act as the owner\'s "Propose to group" button, reopening the session first when it is paused. Pass it only when the user asked for this change to go to the vote; landing quietly stays the default, because the session is their workspace and they may want more turns on it. Ignored on a proposal that is already up for a vote.'),
       agent: z.enum(['claude-code', 'codex', 'external']).optional()
@@ -2247,7 +2304,7 @@ function registerTools(server, ctx) {
     _meta: ACTING_TOOL_META,
   }, async ({
     taskId, slug, prNumber, proposalId, branch, forkRepo, patch, source, title, description, agent,
-    testingPaths, testingSteps, expectedHeadSha, propose,
+    testingPaths, testingSteps, expectedHeadSha, propose, recheck,
   }) => {
     const guard = scopeGuard(WRITE_SCOPE);
     if (guard) return guard;
@@ -2349,6 +2406,7 @@ function registerTools(server, ctx) {
       agent,
       title,
       body: testing.description,
+      recheck: recheck === true,
       // The same shaped metadata the import above carries. An UPDATE used to
       // drop it (#1199), so every revised proposal kept the routes its FIRST
       // submission named — or, when it named none, '/' — and the group voted
@@ -2452,6 +2510,17 @@ function registerTools(server, ctx) {
           : result.titleRejected === 'write_failed'
             ? ' Your commit landed but the title could not be stored — send the same commit again with just the title to retry the rename.'
             : '';
+      // #1323. The description gets the same treatment: a rewrite the group
+      // will read is worth a line, and a refusal is worth more than one.
+      const descNote = result.descriptionUpdated === true
+        ? ' Its description now reads as you submitted it.'
+        : result.descriptionRejected === 'imported_pr'
+          ? ' Your description was NOT applied: this proposal tracks a pull request opened by another GitHub account, and its body belongs to that author.'
+          : result.descriptionRejected === 'no_pr_yet'
+            ? ' Your description was not applied: this target has no pull request yet, and its body is written when the session is proposed.'
+            : (result.descriptionRejected === 'github_unreadable' || result.descriptionRejected === 'github_write_failed')
+              ? ' Your commit landed but the description could not be written to GitHub — send the same commit again with just the description to retry.'
+              : '';
 
       return toolResult({
         proposalId: result.proposalId,
@@ -2467,6 +2536,8 @@ function registerTools(server, ctx) {
         testingUpdated: result.testingUpdated === true,
         titleUpdated: result.titleUpdated === true,
         titleRejected: result.titleRejected || null,
+        descriptionUpdated: result.descriptionUpdated === true,
+        descriptionRejected: result.descriptionRejected || null,
         captureRerun: result.captureRerun === true,
         proposed,
         proposeError,
@@ -2479,7 +2550,7 @@ function registerTools(server, ctx) {
             ? ` The ${cleared} vote${cleared === 1 ? '' : 's'} it had collected were cleared, because they were cast on the old code`
             : ' Any votes it had collected were cleared, because they were cast on the old code'}`
             + ' — reviewers have been asked to look again. Checks and the staging preview rebuild automatically; '
-            + `use get_proposal to follow them.${shotOn}`) + rejectedNote + titleNote + proposeNote,
+            + `use get_proposal to follow them.${shotOn}`) + rejectedNote + titleNote + descNote + proposeNote,
       });
     }
 
