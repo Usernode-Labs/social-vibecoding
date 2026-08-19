@@ -2627,6 +2627,14 @@ html, body {
   color: var(--text-secondary);
   border: 1px solid var(--border);
 }
+/* The href-bearing actions ("Fork on GitHub", "Open Claude Code") are real
+   anchors, not buttons — the scripted window.open they replaced never left
+   the page on mobile (#1312). Same box as the buttons beside them. */
+a.dc-flow-action {
+  display: inline-block;
+  text-decoration: none;
+  line-height: normal;
+}
 .dc-flow-action:hover { background: var(--bg-tertiary); }
 .dc-flow-action:disabled { opacity: 0.5; cursor: not-allowed; }
 

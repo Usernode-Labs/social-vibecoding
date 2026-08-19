@@ -2000,8 +2000,9 @@ const DevChat = {
       return;
     }
     if (action === 'refresh' || action === 'open-fork' || action === 'open-agent') {
-      // The two "open …" actions already opened their tab in DevFlowSelect;
-      // re-reading the status is what makes coming back feel watched.
+      // The two "open …" actions are real anchors — the browser owns the
+      // trip out (#1312); re-reading the status is what makes coming back
+      // feel watched.
       await DevChat._devFlowEnsureStatus(true);
       return;
     }
