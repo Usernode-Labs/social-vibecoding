@@ -680,6 +680,16 @@
       "expectText": "Explore in dev chat"
     },
     {
+      "name": "A proposal opened by DIRECT URL has a working \u22ef menu (#1324)",
+      "path": "/?demo=1&shot=card-menu&card=proposal:9000043#app/usernode-2d5619/dev/proposals/9000043",
+      "expectSelector": ".dev-card-menu [data-menu-idx]"
+    },
+    {
+      "name": "A directly-opened proposal's \u22ef rows still open their picker (#1324)",
+      "path": "/?demo=1&shot=card-menu&card=proposal:9000043&row=assignee#app/usernode-2d5619/dev/proposals/9000043",
+      "expectSelector": "#attr-popover #attr-assignee-input"
+    },
+    {
       "name": "GitHub linking asks for no repository access, and holds no token",
       "path": "/?demo=1#settings/connectors",
       "expectSelector": "[data-settings-section=\"connectors\"]:not(.hidden) #github-link-section #github-link-no-token",
