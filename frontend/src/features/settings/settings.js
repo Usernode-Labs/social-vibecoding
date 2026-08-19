@@ -4753,35 +4753,59 @@
     // The native terms screen is gone; the current published terms and
     // the consent write now live on the session-authed /challenges-api
     // twins of the v4 terms endpoints (src/routes/topochain/mobile.js).
-    // Shared by the About & legal section below and profile.js's gated
-    // token-allocation notice. `onAccepted` fires after a successful
-    // accept so callers can refresh their own terms-gated UI.
-    async showTermsSheet(onAccepted) {
-      let payload = null;
-      try {
-        const res = await fetch('/challenges-api/terms/current', {
-          credentials: 'same-origin',
-        });
-        const body = await res.json().catch(() => ({}));
-        if (res.status === 404) {
-          // No published terms version — nothing to accept.
-          if (window.PlatformUI) PlatformUI.toast('No terms to review right now');
+    // Shared by the About & legal section below, profile.js's gated
+    // token-allocation notice, and the first-run prompt (issue #1297,
+    // ./terms-first-run.js + app.js's ?shot=terms-consent). `onAccepted`
+    // fires after a successful accept so callers can refresh their own
+    // terms-gated UI.
+    //
+    // opts (all optional):
+    //   firstRun — first-arrival framing: an intro line explaining why
+    //     the sheet appeared, plus a Decline button that records
+    //     status 'refused' (the upsert on (user, version) means a later
+    //     accept from the profile notice still works). A backdrop
+    //     dismissal / Close records nothing, so an unanswered prompt
+    //     comes back on the next page load.
+    //   payload — a pre-fetched (or fixed) /terms/current data object;
+    //     skips the fetch. The first-run trigger passes the payload it
+    //     already fetched, and the ?shot=terms-consent screenshot state
+    //     passes a fixed one so the shot does no fetch and no writes.
+    async showTermsSheet(onAccepted, opts) {
+      opts = opts || {};
+      const firstRun = opts.firstRun === true;
+      let payload = opts.payload || null;
+      if (!payload) {
+        try {
+          const res = await fetch('/challenges-api/terms/current', {
+            credentials: 'same-origin',
+          });
+          const body = await res.json().catch(() => ({}));
+          if (res.status === 404) {
+            // No published terms version — nothing to accept.
+            if (window.PlatformUI) PlatformUI.toast('No terms to review right now');
+            return;
+          }
+          if (!res.ok || !body.success) {
+            throw new Error(body.error || `HTTP ${res.status}`);
+          }
+          payload = body.data;
+        } catch (err) {
+          console.warn('[settings] terms fetch failed:', err);
+          if (window.PlatformUI) PlatformUI.toast('Could not load the terms');
           return;
         }
-        if (!res.ok || !body.success) {
-          throw new Error(body.error || `HTTP ${res.status}`);
-        }
-        payload = body.data;
-      } catch (err) {
-        console.warn('[settings] terms fetch failed:', err);
-        if (window.PlatformUI) PlatformUI.toast('Could not load the terms');
-        return;
       }
 
       const el = (tag, cls, text) => this._unEl(tag, cls, text);
       const panel = el('div', 'px-4 pb-5');
       panel.appendChild(el('div', 'text-lg font-bold py-3',
         payload.title || 'Terms'));
+      if (firstRun) {
+        panel.appendChild(el('p',
+          'text-sm text-zinc-600 dark:text-zinc-400 mb-2',
+          'Reviewing the terms is part of joining the platform. Your ' +
+          'token allocation stays paused until you accept.'));
+      }
       const meta = [];
       if (payload.version) meta.push(`Version ${payload.version}`);
       if (payload.published_at) {
@@ -4818,11 +4842,14 @@
 
       let sheet = null;
       if (!accepted) {
-        const acceptBtn = el('button',
-          'w-full rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 ' +
-          'text-sm font-medium text-white', 'Accept the terms');
-        acceptBtn.addEventListener('click', async () => {
-          acceptBtn.disabled = true;
+        // Both buttons post through here so a double-click (or a tap on
+        // Decline while Accept is in flight) can't file two answers —
+        // the endpoint upserts on (user, version) anyway, but disabled
+        // buttons are the honest UI. No app_version is sent: that field
+        // belongs to the mobile client.
+        const consentButtons = [];
+        const postConsent = async (status, onOk) => {
+          consentButtons.forEach((b) => { b.disabled = true; });
           try {
             const res = await fetch('/challenges-api/terms/consent', {
               method: 'POST',
@@ -4830,23 +4857,52 @@
               credentials: 'same-origin',
               body: JSON.stringify({
                 terms_version_id: payload.id,
-                status: 'accepted',
+                status,
               }),
             });
             const body = await res.json().catch(() => ({}));
             if (!res.ok || !body.success) {
               throw new Error(body.error || `HTTP ${res.status}`);
             }
-            if (window.PlatformUI) PlatformUI.toast('Terms accepted');
             if (sheet && sheet.dismiss) sheet.dismiss();
-            if (typeof onAccepted === 'function') onAccepted();
+            onOk();
           } catch (err) {
             console.warn('[settings] terms consent failed:', err);
             if (window.PlatformUI) PlatformUI.toast('Could not record your consent');
-            acceptBtn.disabled = false;
+            consentButtons.forEach((b) => { b.disabled = false; });
           }
-        });
+        };
+
+        const acceptBtn = el('button',
+          'w-full rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 ' +
+          'text-sm font-medium text-white', 'Accept the terms');
+        acceptBtn.addEventListener('click', () => postConsent('accepted',
+          () => {
+            if (window.PlatformUI) PlatformUI.toast('Terms accepted');
+            if (typeof onAccepted === 'function') onAccepted();
+          }));
+        consentButtons.push(acceptBtn);
         panel.appendChild(acceptBtn);
+
+        if (firstRun) {
+          // A recorded refusal is what stops the prompt from nagging:
+          // status becomes non-null so ./terms-first-run.js never asks
+          // again for this version, while the profile notice remains the
+          // way back to accepting later.
+          const declineBtn = el('button',
+            'w-full rounded-lg border border-zinc-300 dark:border-zinc-700 ' +
+            'px-4 py-2 mt-2 text-sm font-medium text-zinc-700 ' +
+            'dark:text-zinc-200', 'Decline');
+          declineBtn.addEventListener('click', () => postConsent('refused',
+            () => {
+              if (window.PlatformUI) {
+                PlatformUI.toast('Your token allocation stays paused — ' +
+                  'you can accept later from your profile');
+              }
+            }));
+          consentButtons.push(declineBtn);
+          panel.appendChild(declineBtn);
+        }
       }
       const closeBtn = el('button',
         'w-full px-4 py-2 mt-2 text-sm text-zinc-500 dark:text-zinc-400',
