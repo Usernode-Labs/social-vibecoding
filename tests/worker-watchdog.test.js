@@ -133,10 +133,11 @@ test('newWatchState initializes markerlessCause to null', () => {
 test('parseLine: __USERNODE_WARN__ forwards to onProgress with ⚠ prefix and still logs', () => {
   const progressLines = [];
   const warns = [];
+  const state = worker.newWatchState();
+  state.telemetryDiagnosticsEnabled = true;
   const origWarn = log.warn;
   log.warn = (cat, msg, data) => warns.push({ cat, msg, data });
   try {
-    const state = worker.newWatchState();
     worker.parseLine(
       '__USERNODE_WARN__ resume failed (exit 2); retrying fresh',
       (t) => progressLines.push(t),
@@ -148,6 +149,8 @@ test('parseLine: __USERNODE_WARN__ forwards to onProgress with ⚠ prefix and st
   assert.deepEqual(progressLines, ['⚠ resume failed (exit 2); retrying fresh']);
   assert.equal(warns.length, 1);
   assert.equal(warns[0].msg, 'resume failed (exit 2); retrying fresh');
+  assert.equal(state.providerRetryCount, 1,
+    'the aggregate telemetry can measure how often resumed runs need a fresh retry');
 });
 
 test('parseLine: non-warn marker lines keep their existing behavior', () => {

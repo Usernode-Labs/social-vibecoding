@@ -32,6 +32,8 @@ const docker = require('../src/services/docker');
 const worker = require('../src/services/worker');
 const {
   buildCodingAgentConventionsContext,
+  buildCodingAgentSpecContext,
+  canReuseHostedClaudeScoutSpec,
   describeTurnError,
 } = require('../src/routes/sessions');
 
@@ -60,6 +62,49 @@ test('hosted Claude receives conventions once as system context, while unchanged
   const codex = buildCodingAgentConventionsContext({ isCodexSession: true, conventions });
   assert.equal(codex.systemPrompt, null);
   assert.match(codex.promptBlock, /SENTINEL platform rule/);
+});
+
+test('spec context keeps a complete user-level fallback and a content-free resumed reference', () => {
+  const sentinel = 'SENTINEL exact saved spec\nwith a second line';
+  const context = buildCodingAgentSpecContext({
+    currentSpec: sentinel,
+    specTaskReference: 'The coding task selects this turn',
+  });
+
+  assert.match(context.fullBlock, /SENTINEL exact saved spec/);
+  assert.match(context.fullBlock, /authoritative for what to build/);
+  assert.doesNotMatch(context.resumedBlock, /SENTINEL exact saved spec/);
+  assert.match(context.resumedBlock, /immediately preceding assistant response/);
+  assert.match(context.resumedBlock, /The coding task selects this turn/);
+  assert.deepEqual(
+    buildCodingAgentSpecContext({ currentSpec: '   ' }),
+    { fullBlock: '', resumedBlock: '' },
+  );
+});
+
+test('scout-to-build reuse requires the latest exact hosted-Claude publication receipt', async () => {
+  const calls = [];
+  const pool = {
+    async query(sql, params) {
+      calls.push({ sql, params });
+      return { rows: [{ reusable: true }] };
+    },
+  };
+
+  assert.equal(await canReuseHostedClaudeScoutSpec(pool, 717, '# Exact spec'), true);
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].params, [717, '# Exact spec']);
+  assert.match(calls[0].sql, /scoutConversationSpecExact/);
+  assert.match(calls[0].sql, /agentBackend' = 'claude_code'/);
+  assert.match(calls[0].sql, /NOT \(metadata \? 'runner'\)/);
+  assert.match(calls[0].sql, /content = 'Claude Code progress'/);
+  assert.match(calls[0].sql, /ORDER BY id DESC\s+LIMIT 1/);
+
+  assert.equal(await canReuseHostedClaudeScoutSpec({
+    query: async () => ({ rows: [{ reusable: false }] }),
+  }, 717, '# Changed spec'), false);
+  assert.equal(await canReuseHostedClaudeScoutSpec(pool, 717, ''), false);
+  assert.equal(calls.length, 1, 'an empty spec never reaches the database');
 });
 
 // ── 1. buildTurnPromptScript ────────────────────────────────────────────
@@ -105,6 +150,18 @@ test('buildTurnSystemPromptScript round-trips the full conventions at its separa
     `base64 -d < ${worker.TURN_SYSTEM_PROMPT_PATH}\\.b64 > ${worker.TURN_SYSTEM_PROMPT_PATH}\n`
   ));
   assert.doesNotMatch(script, new RegExp(`${worker.TURN_PROMPT_PATH}\\.b64`));
+});
+
+test('buildTurnResumeFallbackPromptScript round-trips the complete fresh-run prompt separately', () => {
+  const fallbackPrompt = `FULL SPEC ${'f'.repeat(180 * 1024)}`;
+  const script = worker.buildTurnResumeFallbackPromptScript(fallbackPrompt);
+
+  assert.equal(decodeScriptPayload(script), fallbackPrompt);
+  assert.match(script, new RegExp(
+    `base64 -d < ${worker.TURN_RESUME_FALLBACK_PROMPT_PATH}\\.b64 > ${worker.TURN_RESUME_FALLBACK_PROMPT_PATH}\\n`
+  ));
+  assert.doesNotMatch(script, new RegExp(`${worker.TURN_PROMPT_PATH}\\.b64`));
+  assert.doesNotMatch(script, new RegExp(`${worker.TURN_SYSTEM_PROMPT_PATH}\\.b64`));
 });
 
 // ── 2. writeTurnPrompt (mocked docker boundary) ─────────────────────────
@@ -162,6 +219,29 @@ test('writeTurnSystemPrompt materializes required system context in the same wor
   }
 });
 
+test('writeTurnResumeFallbackPrompt materializes the complete fallback in the same worker volume', async () => {
+  const SID = 990004;
+  worker.adoptWarmWorker(SID);
+
+  const calls = [];
+  const orig = docker.execShellStdin;
+  docker.execShellStdin = async (containerName, script, opts) => {
+    calls.push({ containerName, script, opts });
+  };
+  try {
+    const fallbackPrompt = `FULL SPEC ${'f'.repeat(160 * 1024)}`;
+    await worker.writeTurnResumeFallbackPrompt(SID, fallbackPrompt);
+
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].containerName, `usernode-worker-${SID}`);
+    assert.equal(decodeScriptPayload(calls[0].script), fallbackPrompt);
+    assert.equal(calls[0].opts.label, 'writeTurnResumeFallbackPrompt');
+  } finally {
+    docker.execShellStdin = orig;
+    worker.evictWorker(SID);
+  }
+});
+
 // ── 3. Source guards — worker.js dispatch wiring ────────────────────────
 
 test('execInWorker writes the prompt file before the detached dispatch and never puts the prompt in exec env', () => {
@@ -171,6 +251,7 @@ test('execInWorker writes the prompt file before the detached dispatch and never
   // short constant path.
   assert.doesNotMatch(src, /PROMPT:\s*prompt/);
   assert.match(src, /PROMPT_FILE:\s*TURN_PROMPT_PATH/);
+  assert.match(src, /RESUME_FALLBACK_PROMPT_FILE:\s*resumeFallbackPrompt/);
   assert.match(src, /SYSTEM_PROMPT_FILE:\s*systemPrompt \? TURN_SYSTEM_PROMPT_PATH : ''/);
 
   // Ordering: the file write happens before the `docker exec -d`
@@ -183,6 +264,11 @@ test('execInWorker writes the prompt file before the detached dispatch and never
   const writeSystemIdx = src.indexOf('await writeTurnSystemPrompt(sessionId, systemPrompt)');
   assert.ok(writeSystemIdx !== -1 && writeSystemIdx < dispatchIdx,
     'required system context is written before detached dispatch');
+  const writeFallbackIdx = src.indexOf(
+    'await writeTurnResumeFallbackPrompt(sessionId, resumeFallbackPrompt)',
+  );
+  assert.ok(writeFallbackIdx !== -1 && writeFallbackIdx < dispatchIdx,
+    'the complete fresh fallback is written before detached dispatch');
 
   // The detached wrapper removes the consumed prompt file when the turn
   // ends, except for the structured missing-thread hand-off: attempt two
@@ -191,9 +277,10 @@ test('execInWorker writes the prompt file before the detached dispatch and never
   // launch attempt two; otherwise the old wrapper can delete its prompt.
   assert.match(src, /grep -qE [^\n]*agent_retry_fresh=1/);
   assert.match(src, /rm -f "\$PROMPT_FILE" 2>\/dev\/null; fi/);
+  assert.match(src, /rm -f "\$RESUME_FALLBACK_PROMPT_FILE" 2>\/dev\/null; fi/);
   assert.match(src, /rm -f "\$SYSTEM_PROMPT_FILE" 2>\/dev\/null; fi/);
-  assert.match(src, /filesToRemove\.push\(TURN_PROMPT_PATH, TURN_SYSTEM_PROMPT_PATH\)/,
-    'durable recovery cleanup owns and removes both shared turn-context files');
+  assert.match(src, /filesToRemove\.push\([\s\S]*TURN_PROMPT_PATH,[\s\S]*TURN_SYSTEM_PROMPT_PATH,[\s\S]*TURN_RESUME_FALLBACK_PROMPT_PATH/,
+    'durable recovery cleanup owns and removes all shared turn-context files');
   const retryDecisionIdx = src.indexOf('if ! grep -qE');
   const exitMarkerIdx = src.indexOf('__USERNODE_EXIT__ $TURN_EXIT');
   const promptCleanupIdx = src.indexOf('rm -f "$PROMPT_FILE" 2>/dev/null; fi');
@@ -212,14 +299,18 @@ test('run-cc.sh pipes the prompt file to claude on stdin, never as a -p argument
   // `-p "$PROMPT"` would just move the 128KiB E2BIG inside the container.
   assert.doesNotMatch(cc, /-p "\$PROMPT"/);
   assert.doesNotMatch(cc, /\$\{PROMPT:\?/);
-  const stdinInvocations = cc.match(/--output-format stream-json < "\$PROMPT_FILE"/g) || [];
-  assert.equal(stdinInvocations.length, 3,
-    'resume, resume-retry-fresh, and fresh invocations all read the prompt file');
+  const ordinaryPromptInvocations = cc.match(/--output-format stream-json < "\$PROMPT_FILE"/g) || [];
+  assert.equal(ordinaryPromptInvocations.length, 2,
+    'resume and ordinary fresh invocations read the normal prompt file');
+  assert.match(cc, /--output-format stream-json < "\$RETRY_PROMPT_FILE"/,
+    'the resume failure reads the selected complete fallback prompt');
 
   // Required-env guard: fail fast when the host did not materialize the
   // file (or wrote it empty).
   assert.match(cc, /\$\{PROMPT_FILE:\?PROMPT_FILE required\}/);
   assert.match(cc, /\[ -s "\$PROMPT_FILE" \] \|\| die "prompt file missing or empty/);
+  assert.match(cc, /\[ -s "\$RESUME_FALLBACK_PROMPT_FILE" \]/);
+  assert.match(cc, /RESUME_FALLBACK_PROMPT_FILE requires CLAUDE_RESUME_SESSION_ID/);
 
   // A supplied system-prompt path is required and applied to every physical
   // Claude invocation, including resume failure's fresh retry.
@@ -235,21 +326,32 @@ test('run-cc.sh pipes the prompt file to claude on stdin, never as a -p argument
   assert.match(cc, /-p "\$SYNC_PROMPT"/);
 });
 
-test('run-cc.sh sends the system file on resume and its fresh fallback', () => {
+test('run-cc.sh uses compact input for resume and the complete input for its fresh fallback', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-system-prompt-'));
   const bin = path.join(dir, 'bin');
   const workspace = path.join(dir, 'workspace');
   const prompt = path.join(dir, 'prompt.txt');
+  const fallbackPrompt = path.join(dir, 'fallback-prompt.txt');
   const systemPrompt = path.join(dir, 'system-prompt.txt');
   const invocationLog = path.join(dir, 'invocations.log');
+  const inputLog = path.join(dir, 'input');
   fs.mkdirSync(bin, { recursive: true });
   fs.mkdirSync(workspace, { recursive: true });
-  fs.writeFileSync(prompt, 'build the requested change');
+  fs.writeFileSync(prompt, 'compact: use the preceding scout spec');
+  fs.writeFileSync(fallbackPrompt, 'complete: FULL SPEC and requested change');
   fs.writeFileSync(systemPrompt, 'authoritative platform rules');
-  fs.writeFileSync(path.join(bin, 'git'), '#!/bin/sh\nexit 1\n');
+  fs.writeFileSync(path.join(bin, 'git'), `#!/bin/sh
+case "$*" in
+  *"rev-parse --abbrev-ref HEAD"*) echo test ;;
+  *"rev-list --count"*) echo 0 ;;
+  *"rev-parse HEAD"*) echo test-sha ;;
+esac
+exit 0
+`);
   fs.writeFileSync(path.join(bin, 'claude'), `#!/bin/sh
 printf '%s\\n' "$*" >> "$INVOCATION_LOG"
-cat >/dev/null
+COUNT=$(wc -l < "$INVOCATION_LOG" | tr -d ' ')
+cat > "$INPUT_LOG.$COUNT"
 if printf '%s\\n' "$*" | grep -q -- '--resume'; then exit 2; fi
 echo '{"type":"result","result":"ok","session_id":"fresh-session"}'
 exit 0
@@ -263,12 +365,15 @@ exit 0
       ...process.env,
       PATH: `${bin}:${process.env.PATH}`,
       INVOCATION_LOG: invocationLog,
+      INPUT_LOG: inputLog,
       PROMPT_FILE: prompt,
+      RESUME_FALLBACK_PROMPT_FILE: fallbackPrompt,
       SYSTEM_PROMPT_FILE: systemPrompt,
       CLAUDE_RESUME_SESSION_ID: 'stale-session',
-      MODE: 'scout',
+      MODE: 'build',
       BRANCH: 'test',
       SESSION_ID: '1',
+      WORKER_JWT: 'test-worker-jwt',
       PLATFORM_URL: 'http://platform',
       WORKSPACE_DIR: workspace,
     },
@@ -284,6 +389,8 @@ exit 0
   }
   assert.match(invocations[0], /--resume stale-session/);
   assert.doesNotMatch(invocations[1], /--resume/);
+  assert.equal(fs.readFileSync(`${inputLog}.1`, 'utf8'), 'compact: use the preceding scout spec');
+  assert.equal(fs.readFileSync(`${inputLog}.2`, 'utf8'), 'complete: FULL SPEC and requested change');
 });
 
 test('run-cc.sh refuses omitted or missing build system context before invoking Claude', () => {
@@ -325,6 +432,21 @@ exit 0
   });
   assert.notEqual(missing.status, 0);
   assert.match(missing.stdout, /system prompt file missing or empty/);
+
+  const validSystemPrompt = path.join(dir, 'system-prompt.txt');
+  fs.writeFileSync(validSystemPrompt, 'authoritative platform rules');
+  const missingFallbackPrompt = path.join(dir, 'does-not-exist-fallback.txt');
+  const missingFallback = spawnSync('sh', [path.join(__dirname, '..', 'worker', 'run-cc.sh')], {
+    encoding: 'utf8',
+    env: {
+      ...baseEnv,
+      SYSTEM_PROMPT_FILE: validSystemPrompt,
+      CLAUDE_RESUME_SESSION_ID: 'stale-session',
+      RESUME_FALLBACK_PROMPT_FILE: missingFallbackPrompt,
+    },
+  });
+  assert.notEqual(missingFallback.status, 0);
+  assert.match(missingFallback.stdout, /resume fallback prompt file missing or empty/);
   assert.equal(fs.existsSync(invocationLog), false, 'Claude was never invoked');
 });
 

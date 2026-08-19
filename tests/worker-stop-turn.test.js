@@ -487,6 +487,36 @@ test('a hosted Claude build cannot dispatch without authoritative system context
   } finally { restore(); }
 });
 
+test('a complete resume fallback is accepted only for a resumed hosted-Claude build', async () => {
+  const { worker, calls, restore } = loadWorker();
+  try {
+    warmSession(worker, 8303);
+    await assert.rejects(
+      () => worker.execInWorker(8303, {
+        ...DISPATCH_ARGS,
+        resumeFallbackPrompt: 'complete prompt with full spec',
+      }),
+      /resumeFallbackPrompt requires resumeSessionId/,
+    );
+
+    warmSession(worker, 8304);
+    await assert.rejects(
+      () => worker.execInWorker(8304, {
+        mode: 'build',
+        prompt: 'compact prompt',
+        resumeFallbackPrompt: 'complete prompt with full spec',
+        resumeSessionId: 'codex-thread',
+        branchName: 'dev/openrouter-test',
+        agentBackend: 'codex_openrouter',
+      }),
+      /resumeFallbackPrompt is only supported for Claude turns/,
+    );
+
+    assert.equal(calls.length, 0,
+      'invalid fallback transport fails before context files or a provider are touched');
+  } finally { restore(); }
+});
+
 test('Codex dispatch forwards OpenRouter model metadata without exposing its key in argv', async () => {
   const { worker, calls, restore } = loadWorker({
     journalLines: ['__USERNODE_EXIT__ 0'],
