@@ -685,7 +685,7 @@
       "expectSelector": ".dev-card-menu [data-menu-idx]"
     },
     {
-      "name": "A directly-opened proposal's \u22ef rows still open their picker (#1324)",
+      "name": "A directly-opened proposal opens its assignee picker (#1324, #1330)",
       "path": "/?demo=1&shot=card-menu&card=proposal:9000043&row=assignee#app/usernode-2d5619/dev/proposals/9000043",
       "expectSelector": "#attr-popover #attr-assignee-input"
     },

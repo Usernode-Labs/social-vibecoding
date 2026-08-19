@@ -612,9 +612,25 @@ const AppView = {
           if (wantRow && AppView._openCardMenu) {
             // Clicking the row closes the menu and opens the popover, so a
             // retry re-opens the menu from scratch — no half state to unwind.
-            document.querySelector(
+            const menuRow = document.querySelector(
               `.dev-card-menu [data-menu-idx][data-menu-row="${wantRow}"]:not([disabled])`
-            )?.click();
+            );
+            if (menuRow) { menuRow.click(); return; }
+            // #1330: no such row — and on the detail head there never is one.
+            // `row=` names the PICKER, not one affordance for opening it, and
+            // the two surfaces deliberately offer different ones: a dense card
+            // omits an unset chip and demotes it to a ⋯ row (_attrMenuItems),
+            // while the topic head renders all three chips set or not
+            // (`omitUnset: !noNav`) and so drops the rows (_proposalMenuItems'
+            // `if (!st.noNav)`). Fall back to the chip, preferring the head's
+            // when one is mounted. Without this the link resolved to nothing on
+            // a topic route — which is exactly how #1324 shipped a check that
+            // asserted a row the product deliberately does not render.
+            AppView._closeCardMenu();
+            const chipSel = `[data-attr-chip][data-attr-field="${wantRow}"]`;
+            const chip = document.querySelector(`#gc-thread-head ${chipSel}`)
+              || document.querySelector(chipSel);
+            chip?.click();
             return;
           }
           // Unnamed: scoped to the ACTIVE column, because below 640px the
