@@ -10316,6 +10316,23 @@ async function seedStagingTopochain(pool, config) {
        ON CONFLICT (id) DO NOTHING`,
       [USERS.seasonWide1, USERS.eventA1]
     );
+    // Every OTHER cloned user gets an accepted consent too. The web shell
+    // now auto-prompts any signed-in user whose consent for the current
+    // published version is null (issue #1297,
+    // frontend/src/features/settings/terms-first-run.js) — without this
+    // blanket row the sheet would slide over EVERY staging preview route,
+    // including the ones the declared checks screenshot. The deliberate way
+    // to see the sheet in a preview is ?shot=terms-consent (public/js/
+    // app.js). `user_terms_consents` is staging:private — truncated on
+    // clone — so this collides with nothing real, and the natural-key
+    // arbiter keeps re-boots (and the two explicit rows above) idempotent.
+    await pool.query(
+      `INSERT INTO user_terms_consents
+         (user_id, terms_version_id, status, responded_at, created_at, updated_at)
+       SELECT u.id, 900500, 'accepted', NOW() - INTERVAL '7 days', NOW(), NOW()
+         FROM users u
+       ON CONFLICT (user_id, terms_version_id) DO NOTHING`
+    );
 
     // ─── App version config (1 per OS) ─────────────────────────────────
     // The only table in this seed whose natural key can already be taken by

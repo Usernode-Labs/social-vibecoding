@@ -2192,7 +2192,7 @@ function registerTools(server, ctx) {
         .describe('The change as a patch, for when GitHub refused the push — the output of `git format-patch <baseSha>..HEAD --stdout`, or a plain `git diff`. Usernode applies it at the task’s recorded base commit, commits it in the app’s own repository and opens the pull request, so you need no GitHub write access at all. Requires taskId. Roughly 250 KB max; push a branch for anything larger.'),
       source: z.enum(['work_order', 'assistant']).optional()
         .describe('Set to "work_order" when you are the coding agent submitting your own finished work, "assistant" when a human relayed it to you. Advisory only.'),
-      title: z.string().optional().describe('A short title for the proposal. Defaults to the task description. On a SESSION update (shape 4 targeting a work-order continuation) it is stored and names the pull request created when the session is proposed — with or without propose: true — instead of the "<user>\'s changes" placeholder. On a target that already has a PR it RENAMES it (panel and GitHub; votes untouched) — a same-commit resubmit with just a title is the fix for a wrong auto-generated name. Imported PRs keep their external author\'s title.'),
+      title: z.string().optional().describe('A short title for the proposal. Defaults to the task description. On a SESSION update (shape 4 targeting a work-order continuation) it is stored and names the pull request created when the session is proposed — with or without propose: true — instead of the "<user>\'s changes" placeholder. On a target that already has a PR it RENAMES it (panel and GitHub; votes untouched) — a same-commit resubmit with just a title is the fix for a wrong auto-generated name, and it works on a fork-tracked proposal too. The answer reports `titleUpdated`, and `titleRejected` when the rename was refused: `imported_pr` means the pull request was opened by a different GitHub account and keeps its own author\'s title.'),
       description: z.string().optional().describe('What changed and why, for the people voting on it.'),
       testingPaths: z.array(z.string()).optional()
         .describe('The in-app routes this change is visible on, most important first — e.g. ["/board?demo=1", "/settings"]. Usernode shoots a before/after screenshot pair of each one for the people voting. Point them at the SCREEN YOU CHANGED, never the home page; a route may carry " @mobile" to be shot in a phone-sized viewport. Up to 3 are used. Omit only if the change has no visible screen — otherwise the voters see screenshots of the app\'s home page, which show nothing of your change. On an UPDATE these replace the proposal\'s stored routes and the screenshots are re-shot on them; omit them there to keep the ones it already has. The answer reports back `testingPaths` — what will actually be shot — and `testingPathsRejected` for anything it could not use, so check them rather than waiting for get_proposal\'s `captureDefaultedToRoot`.'),
@@ -2444,7 +2444,14 @@ function registerTools(server, ctx) {
         ? (result.prNumber
           ? ` The proposal (PR #${result.prNumber}) now carries your title.`
           : ' Your title is stored and will name the pull request created when the session is proposed.')
-        : '';
+        // #1319. A refused title has to be SAID. Silence here reads as
+        // success, and the proposal then goes to the vote under a name its
+        // author already tried to correct.
+        : result.titleRejected === 'imported_pr'
+          ? ' Your title was NOT applied: this proposal tracks a pull request opened by another GitHub account, and its title belongs to that author. Ask them to rename it.'
+          : result.titleRejected === 'write_failed'
+            ? ' Your commit landed but the title could not be stored — send the same commit again with just the title to retry the rename.'
+            : '';
 
       return toolResult({
         proposalId: result.proposalId,
@@ -2458,6 +2465,8 @@ function registerTools(server, ctx) {
         testingPaths: result.testingPaths || null,
         testingPathsRejected: testing.rejectedPaths || result.testingPathsRejected || null,
         testingUpdated: result.testingUpdated === true,
+        titleUpdated: result.titleUpdated === true,
+        titleRejected: result.titleRejected || null,
         captureRerun: result.captureRerun === true,
         proposed,
         proposeError,

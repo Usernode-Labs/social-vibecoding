@@ -22,7 +22,7 @@ async function deploy(config, {
 }) {
   if (mode(config) === 'docker') {
     await docker.stopAndRemove(dockerName).catch(() => {});
-    const runtimeName = await docker.runContainer(dockerName, {
+    await docker.runContainer(dockerName, {
       image: imageRef, env, port, memory, cpus, labels,
     });
     await docker.waitForHealthy(dockerName, port, '/health');
@@ -35,7 +35,12 @@ async function deploy(config, {
       const hostPort = await docker.getHostPort(dockerName, port);
       if (hostPort) url = `http://localhost:${hostPort}`;
     }
-    return { runtimeKind: 'docker', runtimeName, imageRef, hostname, url };
+    // Docker returns the container's full ID from `docker run`, but that ID
+    // is not a name Docker's embedded DNS resolves from peer containers.
+    // `runtimeName` is used both for later Docker commands (which accept the
+    // stable --name value) and as the proposal-check capture hostname, so
+    // persist the deterministic name rather than the opaque run result.
+    return { runtimeKind: 'docker', runtimeName: dockerName, imageRef, hostname, url };
   }
   return kubernetes.deployApplication(config, { app, environment, sessionId, imageRef, env });
 }

@@ -680,6 +680,16 @@
       "expectText": "Explore in dev chat"
     },
     {
+      "name": "A proposal opened by DIRECT URL has a working \u22ef menu (#1324)",
+      "path": "/?demo=1&shot=card-menu&card=proposal:9000043#app/usernode-2d5619/dev/proposals/9000043",
+      "expectSelector": ".dev-card-menu [data-menu-idx]"
+    },
+    {
+      "name": "A directly-opened proposal's \u22ef rows still open their picker (#1324)",
+      "path": "/?demo=1&shot=card-menu&card=proposal:9000043&row=assignee#app/usernode-2d5619/dev/proposals/9000043",
+      "expectSelector": "#attr-popover #attr-assignee-input"
+    },
+    {
       "name": "GitHub linking asks for no repository access, and holds no token",
       "path": "/?demo=1#settings/connectors",
       "expectSelector": "[data-settings-section=\"connectors\"]:not(.hidden) #github-link-section #github-link-no-token",
@@ -1755,6 +1765,24 @@
       "path": "/?shot=notif-permissions#settings/usernode",
       "expectSelector": ".un-sheet[data-un-ghost-click=\"dispatched\"] .un-sheet-body button",
       "expectText": "Allow notifications"
+    },
+    {
+      "name": "First-run terms sheet presents with its title (issue #1297)",
+      "path": "/?shot=terms-consent",
+      "expectSelector": ".un-sheet .un-sheet-body",
+      "expectText": "Staging Demo Terms of Service"
+    },
+    {
+      "name": "First-run terms sheet carries the Accept button (issue #1297)",
+      "path": "/?shot=terms-consent",
+      "expectSelector": ".un-sheet .un-sheet-body button",
+      "expectText": "Accept the terms"
+    },
+    {
+      "name": "First-run terms sheet carries the Decline button (issue #1297)",
+      "path": "/?shot=terms-consent",
+      "expectSelector": ".un-sheet .un-sheet-body button",
+      "expectText": "Decline"
     },
     {
       "name": "A settings history traversal routes once, so nothing pre-empts the transition snapshot (#1102)",

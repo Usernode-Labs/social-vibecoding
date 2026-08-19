@@ -71,7 +71,12 @@ test('in staging: every INSERT the seeder issues contains an ON CONFLICT guard',
   const inserts = pool.calls.filter((c) => /INSERT INTO/.test(c.sql));
   assert.ok(inserts.length >= 15, 'most/all calls should be INSERT statements');
   for (const call of inserts) {
-    assert.match(call.sql, /ON CONFLICT \(id\) DO NOTHING/,
+    // The blanket terms-consent INSERT (issue #1297) arbiters on its
+    // natural key — its BIGSERIAL id is generated, so `(id)` would guard
+    // nothing there. Every fixture keyed on an invented 9005xx id keeps
+    // the `(id)` arbiter.
+    assert.match(call.sql,
+      /ON CONFLICT \((id|user_id, terms_version_id)\) DO NOTHING/,
       `INSERT without ON CONFLICT: ${call.sql.slice(0, 80)}`);
   }
 });
@@ -147,10 +152,15 @@ test('best-effort: the whole seed body is wrapped in try/catch with log.warn on 
 
 test('every INSERT INTO in the seeder has a matching ON CONFLICT guard (idempotent on reboot)', () => {
   const inserts = body.match(/INSERT INTO \w+/g) || [];
-  const conflicts = body.match(/ON CONFLICT \(id\) DO NOTHING/g) || [];
+  // Two arbiter shapes: `(id)` for every fixture keyed on an invented
+  // 9005xx id, and the natural key for the blanket terms-consent
+  // INSERT ... SELECT (issue #1297), whose BIGSERIAL id is generated so
+  // `(id)` would guard nothing there.
+  const conflicts = body.match(
+    /ON CONFLICT \((id|user_id, terms_version_id)\) DO NOTHING/g) || [];
   assert.ok(inserts.length >= 15, `expected a substantial number of INSERT statements, got ${inserts.length}`);
   assert.equal(inserts.length, conflicts.length,
-    'every INSERT INTO must be paired with exactly one ON CONFLICT (id) DO NOTHING');
+    'every INSERT INTO must be paired with exactly one ON CONFLICT ... DO NOTHING guard');
 });
 
 test('fixed ids used throughout live in the obviously-fake 900500+ range', () => {
@@ -525,12 +535,25 @@ test('leaderboard_snapshots: 2 snapshot times x 6 users, plus 4 on the ended eve
   assert.equal(endedRows, 4, '4 standings rows on the fully-past event');
 });
 
-test('1 terms_version + 2 user_terms_consents', () => {
+test('1 terms_version + 2 explicit user_terms_consents', () => {
   assert.equal((body.match(/INSERT INTO terms_versions/g) || []).length, 1);
   const start = body.indexOf('INSERT INTO user_terms_consents');
   const block = body.slice(start, body.indexOf('ON CONFLICT (id) DO NOTHING', start));
   const ids = block.match(/^\s*\(9005\d\d,/gm) || [];
   assert.equal(ids.length, 2);
+});
+
+test('blanket accepted consent for every remaining cloned user (issue #1297)', () => {
+  // The web shell auto-prompts any signed-in user whose consent for the
+  // current published version is null, so the seed must erase that state
+  // for every cloned account or the sheet slides over every preview route
+  // the declared checks screenshot. Natural-key arbiter, not (id): the
+  // blanket rows ride the BIGSERIAL default.
+  const start = body.indexOf('SELECT u.id, 900500, \'accepted\'');
+  assert.ok(start > 0, 'the blanket INSERT ... SELECT over users must exist');
+  const block = body.slice(body.lastIndexOf('INSERT INTO user_terms_consents', start), start + 400);
+  assert.match(block, /FROM users u/);
+  assert.match(block, /ON CONFLICT \(user_id, terms_version_id\) DO NOTHING/);
 });
 
 test('1 app_version_config per OS (ios, android)', () => {

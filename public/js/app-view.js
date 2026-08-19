@@ -623,10 +623,20 @@ const AppView = {
           // since the card being asked for sits in whichever column owns it
           // (sessions are always In progress) and pinning the request to the
           // active column would just never match.
+          //
+          // #1324: fall back to the TOPIC HEAD. A proposal or issue page
+          // opened by its own URL has no board behind it, so neither
+          // #dev-body nor a kanban column is mounted — yet that page carries
+          // a ⋯ trigger of its own (see _cardRailHtml's chevron:false
+          // variants), and it is exactly the surface whose menu was dead
+          // there. Without this the link resolves to nothing on a topic
+          // route and a before/after capture shows two identical pictures of
+          // a button, one of which happens not to work. On the board both
+          // lookups above still match, so nothing changes there.
           const scope = kind
             ? document.getElementById('dev-body')
             : (document.querySelector('.dev-kanban-col-active') || document.getElementById('dev-body'));
-          scope?.querySelector(want)?.click();
+          (scope || document.getElementById('gc-thread-head'))?.querySelector(want)?.click();
         }, 300);
       }
       if (shot === 'preview-loading' || shot === 'preview-rebuilding') {
@@ -1742,6 +1752,25 @@ const AppView = {
     // Set once here rather than per branch — they all replace #app-content.
     AppView._setSurface('platform');
 
+    // #1324: both installers are DOCUMENT-level and one-shot, so they belong
+    // HERE — above the sub-view branches — not in the card-list branch alone.
+    // Every branch below returns early, so installing them down there meant a
+    // direct deep link to a topic page (#app/<slug>/dev/proposals/<id> pasted,
+    // shared, reloaded, or followed from a notification) never ran them: the
+    // proposal's ⋯ "More actions" menu, its priority / category / assignee
+    // chips and its "How voting works" affordances were all dead on click.
+    // The SAME page reached by tapping a card on the board worked, because the
+    // card list had rendered first and installed them as a side effect — which
+    // is also why the gap survived so long, since that is how you arrive when
+    // you are working on the board. Both are guarded by their own _*Inited
+    // flag, so running them on every Dev render costs nothing.
+    //
+    // Keep them in this order: _cardMenuInit's rows open the #attr-popover
+    // that _attrInit's dismissers own (see _cardMenuActingEvent), so the two
+    // are a pair and neither is useful on a topic page without the other.
+    AppView._attrInit();
+    AppView._cardMenuInit();
+
     // #1085 chunk H: PARK the app frame, don't drop it. Dev mode takes
     // #app-content over, but the app the user was just looking at is still the
     // app they are working on — hiding its host leaves its document, its
@@ -1831,8 +1860,6 @@ const AppView = {
     }
     // _wireViewToggle is gone: <DevBoardFrame/> binds the toggle's onClick and
     // routes it to _selectViewMode below (#1084 chunk G).
-    AppView._attrInit();
-    AppView._cardMenuInit();
     document.getElementById('dev-chat-card').addEventListener('click', () => {
       App.switchTab('dev', null, 'chat');
     });
@@ -2828,6 +2855,11 @@ const AppView = {
   // menu. Idempotent, and bound on `document` rather than #dev-body so the
   // same menus work on the board, the list feed, the PM view AND the topic
   // detail head (which has no delegated container of its own).
+  //
+  // #1324: called from the TOP of renderDevView, ahead of its sub-view
+  // branches — binding on `document` only pays off if something actually
+  // runs this, and a deep-linked topic page returns long before the
+  // card-list branch.
   _cardMenuInit() {
     if (AppView._cardMenuInited) return;
     AppView._cardMenuInited = true;
@@ -10301,7 +10333,11 @@ const AppView = {
   },
 
   // Install the one-time document-level handlers that open / close the
-  // chip dropdown. Idempotent — safe to call on every renderDevView.
+  // chip dropdown (and the voting-help popover). Idempotent — safe to call
+  // on every renderDevView, which is exactly where it is called from: the
+  // TOP of it, ahead of the sub-view branches, so a topic page opened by
+  // direct URL is wired the same as one reached through the card list
+  // (#1324).
   _attrInit() {
     if (AppView._attrInited) return;
     AppView._attrInited = true;

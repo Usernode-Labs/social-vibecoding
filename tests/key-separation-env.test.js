@@ -350,11 +350,14 @@ test('the production app-container env contract leaks nothing', async () => {
     delete require.cache[ids.subject];
 
     const { runExistingImage } = require('../src/services/app-respawn');
-    const cid = await runExistingImage(poisonedConfig(), {
+    const runtimeName = await runExistingImage(poisonedConfig(), {
       id: 7, slug: 'demo-app', db_password: 'pw', manifest_snapshot: { secrets: [] },
     });
 
-    assert.equal(cid, 'cid-1');
+    // Runtime callers need the deterministic Docker name: it works for
+    // Docker lifecycle commands and is resolvable by peer containers,
+    // unlike `docker run`'s opaque full ID.
+    assert.equal(runtimeName, 'usernode-app-demo-app');
     assert.ok(captured, 'runContainer must have been reached');
     assertNoLeak('runExistingImage env', captured);
     // Sanity: the env really was assembled (an empty object would pass

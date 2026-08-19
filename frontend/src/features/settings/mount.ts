@@ -25,6 +25,10 @@ import { flushSync } from 'react-dom';
 
 import { createPlaceholderHome, type PlaceholderHome } from '../../lib/kit-surface';
 import './settings.js';
+// First-run terms-consent trigger (issue #1297): rides in the bundle here,
+// after settings.js, because it presents Settings.showTermsSheet on the
+// once-per-document `sv:authed` boot signal.
+import './terms-first-run.js';
 import { settingsNavStore } from './settings-nav-store.js';
 
 settingsNavStore.setFlush(flushSync);

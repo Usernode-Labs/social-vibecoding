@@ -2149,7 +2149,9 @@ async function submitUpdate(deps, params, proposalId) {
     ...(testing.testingSteps ? { testingSteps: testing.testingSteps } : {}),
     // The agent's own name for the change. On a session it is stored and
     // names the pull request created at propose time; on a target with a PR
-    // it renames it (imported PRs keep their external author's title).
+    // it renames it — including a fork-tracked one, which is how an agent's
+    // own proposal is shaped (#1319). Only somebody ELSE's pull request keeps
+    // its author's title, and then `titleRejected` says so.
     ...(params.title ? { title: String(params.title) } : {}),
     ...(linkedIssues.length ? { linkedIssues } : {}),
   });
@@ -2228,10 +2230,16 @@ async function submitUpdate(deps, params, proposalId) {
       ? result.testingPathsRejected.map((p) => String(p))
       : null,
     captureRerun: result.captureRerun === true,
-    // Whether the submitted title was stored as the session's proposed PR
-    // name (false on proposals — they already have one — and on a repeat of
-    // the stored value).
+    // Whether the submitted title landed — stored as the session's proposed
+    // PR name, or applied as a rename of the proposal that already has one
+    // (false on a repeat of the value already stored).
     titleUpdated: result.titleUpdated === true,
+    // #1319. And when it did NOT land, WHY. A title that is accepted, dropped
+    // and reported as success is indistinguishable from one that applied: the
+    // agent has no signal, and the wrong name is what the group votes under.
+    // 'imported_pr' — the pull request belongs to another author on GitHub;
+    // 'write_failed' — the update landed but the rename could not be stored.
+    titleRejected: result.titleRejected || null,
     // Whether the task's request number was newly recorded on the target
     // (#1310) — false when the row already carried it, or the task names no
     // request.
