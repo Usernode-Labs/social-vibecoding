@@ -35,8 +35,8 @@ test('worker runtime contract invalidates warm images from before the new runner
 
   const match = workerHost.match(/const WORKER_BOOTSTRAP_ENV_VERSION = '(v\d+)'/);
   assert.ok(match, 'warm-worker contract version is declared');
-  assert.ok(Number(match[1].slice(1)) >= 7,
-    'pre-v7 containers cannot consume the required Claude system-prompt file and must be evicted');
+  assert.ok(Number(match[1].slice(1)) >= 8,
+    'pre-v8 containers cannot consume the complete resume-fallback prompt and must be evicted');
   assert.match(workerHost,
     /labels\['usernode\.proxy'\] !== WORKER_BOOTSTRAP_ENV_VERSION/,
     'the warm path compares the persisted container contract label');

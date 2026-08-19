@@ -109,6 +109,7 @@ test('scout publication replays one atomic spec version and transcript card', as
     turnId: '00000000-0000-4000-8000-000000000008',
     sessionId: 42,
     content: '# Plan\n\n## User-facing changes\n\nOne.\n\n## Technical implementation\n\nTwo.',
+    conversationContent: '# Plan\n\n## User-facing changes\n\nOne.\n\n## Technical implementation\n\nTwo.',
     hadSpec: false,
   };
 
@@ -123,6 +124,24 @@ test('scout publication replays one atomic spec version and transcript card', as
   assert.equal(pool.specs.length, 1, 'recovery cannot create a second immutable version');
   assert.equal(pool.messages.length, 1, 'recovery cannot post a second scout card');
   assert.equal(pool.messages[0].metadata.specVersion, 1);
+  assert.equal(pool.messages[0].metadata.scoutConversationSpecExact, true,
+    'the publication records that the resumed Claude response contains this exact spec');
+});
+
+test('scout publication does not certify a spec normalized from different conversation text', async () => {
+  const { persistScoutPublication } = require('../src/routes/sessions');
+  const pool = makePool();
+  const content = '# Plan\n\n## User-facing changes\n\nOne.';
+
+  await persistScoutPublication({
+    pool,
+    turnId: '00000000-0000-4000-8000-000000000009',
+    sessionId: 42,
+    content,
+    conversationContent: `\`\`\`markdown\n${content}\n\`\`\``,
+  });
+
+  assert.equal(pool.messages[0].metadata.scoutConversationSpecExact, undefined);
 });
 
 test('an external effect remains pending until its owner completes it', async () => {

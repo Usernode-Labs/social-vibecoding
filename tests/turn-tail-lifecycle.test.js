@@ -214,6 +214,7 @@ test('finishTurn removes shared files while cleanup ownership still blocks dispa
     assert.ok(rm.args.includes('/home/node/.claude/turn-777.log'));
     assert.ok(rm.args.includes(worker.TURN_PROMPT_PATH));
     assert.ok(rm.args.includes(worker.TURN_SYSTEM_PROMPT_PATH));
+    assert.ok(rm.args.includes(worker.TURN_RESUME_FALLBACK_PROMPT_PATH));
     assert.ok(rm.args.includes('usernode-worker-2954'),
       'targets the session\'s own worker container');
 
@@ -250,6 +251,8 @@ test('idempotent finish may remove a unique journal but never the shared prompt'
       'a stale/idempotent owner cannot delete a replacement turn\'s shared prompt');
     assert.ok(!rm.args.includes(worker.TURN_SYSTEM_PROMPT_PATH),
       'a stale/idempotent owner cannot delete replacement system context');
+    assert.ok(!rm.args.includes(worker.TURN_RESUME_FALLBACK_PROMPT_PATH),
+      'a stale/idempotent owner cannot delete a replacement resume fallback');
   } finally { restore(); }
 });
 
@@ -270,6 +273,8 @@ test('finishTurn does not claim shared cleanup when the row vanished during CAS'
       'an already-cleared CAS result never grants ownership of the shared path');
     assert.ok(!rm.args.includes(worker.TURN_SYSTEM_PROMPT_PATH),
       'an already-cleared CAS result never grants system-context ownership');
+    assert.ok(!rm.args.includes(worker.TURN_RESUME_FALLBACK_PROMPT_PATH),
+      'an already-cleared CAS result never grants fallback-prompt ownership');
   } finally { restore(); }
 });
 
@@ -284,6 +289,7 @@ test('finishTurn with an exact turn id needs no journal and still owns prompt cl
     assert.ok(rm, 'the exact owner still removes the shared prompt');
     assert.ok(rm.args.includes(worker.TURN_PROMPT_PATH));
     assert.ok(rm.args.includes(worker.TURN_SYSTEM_PROMPT_PATH));
+    assert.ok(rm.args.includes(worker.TURN_RESUME_FALLBACK_PROMPT_PATH));
     assert.ok(!rm.args.some((arg) => /turn-.*\.log$/.test(arg)),
       'no journal path is invented');
     assert.ok(queries.some((q) => /active_turn = NULL/.test(q.sql)));

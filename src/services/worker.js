@@ -85,9 +85,11 @@ const WORKER_JWT_TTL_MS = platformJwt.WORKER_TTL_S * 1000;
 // OpenRouter metadata; every v5 warm container must be replaced to pick up
 // both runner changes.
 // v7 moves hosted Claude's platform handbook into an appended system-prompt
-// file. An older runner would ignore that file and receive only the compact
-// task prompt, so every v6 warm container must be replaced before dispatch.
-const WORKER_BOOTSTRAP_ENV_VERSION = 'v7';
+// file, outside the accumulating user-message history.
+// v8 adds the separate complete user-prompt fallback for optimized resumed
+// builds. A v7 runner would retry a stale --resume with the compact prompt and
+// no scout history, so every older warm container must be replaced first.
+const WORKER_BOOTSTRAP_ENV_VERSION = 'v8';
 
 // Mint the auth token the worker container uses to call back into the
 // platform's internal API. Scoped to a single session id; the
@@ -641,6 +643,14 @@ function parseLine(line, onProgress, state) {
   if (line.startsWith('__USERNODE_WARN__')) {
     const msg = line.replace('__USERNODE_WARN__', '').trim();
     log.warn('worker', msg);
+    // run-cc.sh performs exactly one physical fresh invocation after a failed
+    // --resume. Count that retry in the existing content-free diagnostic so
+    // telemetry can reveal stale-resume frequency without storing ids, prompt
+    // text, or provider errors. Ordinary warnings remain unclassified.
+    if (state.telemetryDiagnosticsEnabled === true
+        && /^resume failed \(exit -?\d+\); retrying fresh$/.test(msg)) {
+      state.providerRetryCount = (state.providerRetryCount || 0) + 1;
+    }
     // Surface runner warnings ("resume failed (exit N); retrying fresh",
     // "push failed", …) in the session's progress log too — both the
     // interactive and headless paths persist onProgress lines, so a
@@ -1126,6 +1136,12 @@ const TURN_PROMPT_PATH = '/home/node/.claude/turn-prompt.txt';
 // resumed conversation from accumulating another ~130 KB user message every
 // turn, while Claude Code still re-applies the current rules after compaction.
 const TURN_SYSTEM_PROMPT_PATH = '/home/node/.claude/turn-system-prompt.txt';
+// A resumed hosted-Claude build may omit a spec that is already the preceding
+// assistant response in that exact Claude conversation. If --resume is stale,
+// run-cc.sh retries without conversation history and must use this complete
+// user-level prompt instead. Keeping the fallback separate preserves both the
+// context saving on resume and the old fully-specified fresh-run behavior.
+const TURN_RESUME_FALLBACK_PROMPT_PATH = '/home/node/.claude/turn-resume-fallback-prompt.txt';
 
 // Shell script that writes arbitrary turn context to a fixed private path.
 // The base64
@@ -1155,6 +1171,10 @@ function buildTurnPromptScript(prompt) {
 
 function buildTurnSystemPromptScript(systemPrompt) {
   return buildTurnContextFileScript(systemPrompt, TURN_SYSTEM_PROMPT_PATH);
+}
+
+function buildTurnResumeFallbackPromptScript(prompt) {
+  return buildTurnContextFileScript(prompt, TURN_RESUME_FALLBACK_PROMPT_PATH);
 }
 
 // Materialize the dispatch prompt into the warm worker's CC volume ahead
@@ -1187,6 +1207,30 @@ async function writeTurnSystemPrompt(sessionId, systemPrompt) {
   await docker.execShellStdin(meta.containerName, buildTurnSystemPromptScript(systemPrompt), {
     timeoutMs: 20000, label: 'writeTurnSystemPrompt',
   });
+}
+
+// Complete user-level prompt used only when a hosted Claude --resume attempt
+// fails and run-cc.sh retries fresh. It is required whenever supplied: failing
+// to materialize it aborts before dispatch rather than running without the
+// session's authoritative spec.
+async function writeTurnResumeFallbackPrompt(sessionId, prompt) {
+  const meta = _registryGet(sessionId);
+  if (!meta) {
+    throw new Error(`writeTurnResumeFallbackPrompt: no warm worker registered for session ${sessionId}`);
+  }
+  if (usesKubernetesWorkers()) {
+    await execWorkerCommand(
+      meta.containerName,
+      ['sh', '-s'],
+      buildTurnResumeFallbackPromptScript(prompt),
+    );
+  } else {
+    await docker.execShellStdin(
+      meta.containerName,
+      buildTurnResumeFallbackPromptScript(prompt),
+      { timeoutMs: 20000, label: 'writeTurnResumeFallbackPrompt' },
+    );
+  }
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -1432,7 +1476,11 @@ async function finishTurn(sessionId, { journal = null, turnId = null } = {}) {
   // An idempotent call after the row is already gone may remove only UUID-
   // unique journals; it never owns the shared prompt path.
   const filesToRemove = [...journalPaths];
-  if (ownsCleanup) filesToRemove.push(TURN_PROMPT_PATH, TURN_SYSTEM_PROMPT_PATH);
+  if (ownsCleanup) filesToRemove.push(
+    TURN_PROMPT_PATH,
+    TURN_SYSTEM_PROMPT_PATH,
+    TURN_RESUME_FALLBACK_PROMPT_PATH,
+  );
   if (filesToRemove.length) {
     const containerName = _registryGet(sessionId)?.containerName
       || workerContainerName(sessionId);
@@ -1829,6 +1877,11 @@ async function ensureWorker(sessionId, {
 async function execInWorker(sessionId, {
   mode = 'build',
   prompt,
+  // Complete task prompt for the one fresh retry run-cc.sh performs when a
+  // hosted Claude --resume id is stale. Null for ordinary builds and every
+  // non-Claude backend. This remains user-level input; it is never promoted
+  // into the authoritative system-context transport below.
+  resumeFallbackPrompt = null,
   // Hosted Claude build-only appended system context. The caller keeps this
   // null for Codex, scouts, sync and local turns. Materialized separately so
   // it is a stable system layer rather than another conversation message.
@@ -1906,6 +1959,10 @@ async function execInWorker(sessionId, {
   if (systemPrompt != null && (typeof systemPrompt !== 'string' || !systemPrompt.trim())) {
     throw new Error('execInWorker: systemPrompt must be a non-empty string');
   }
+  if (resumeFallbackPrompt != null
+      && (typeof resumeFallbackPrompt !== 'string' || !resumeFallbackPrompt.trim())) {
+    throw new Error('execInWorker: resumeFallbackPrompt must be a non-empty string');
+  }
   const containerName = meta.containerName;
   const durableTurnId = logicalTurnId || turnUuid || turnLifecycle.newTurnId();
   const dispatchSetupStartedMs = Date.now();
@@ -1957,6 +2014,15 @@ async function execInWorker(sessionId, {
   if (systemPrompt && !isClaude) {
     throw new Error('execInWorker: systemPrompt is only supported for Claude turns');
   }
+  if (resumeFallbackPrompt && !isClaude) {
+    throw new Error('execInWorker: resumeFallbackPrompt is only supported for Claude turns');
+  }
+  if (resumeFallbackPrompt && mode !== 'build') {
+    throw new Error('execInWorker: resumeFallbackPrompt is only supported for build turns');
+  }
+  if (resumeFallbackPrompt && !resumeSessionId) {
+    throw new Error('execInWorker: resumeFallbackPrompt requires resumeSessionId');
+  }
   if (isClaude && mode === 'build' && !systemPrompt) {
     throw new Error('execInWorker: hosted Claude build requires systemPrompt');
   }
@@ -2003,6 +2069,9 @@ async function execInWorker(sessionId, {
   if (!reusePromptFile) {
     await writeTurnPrompt(sessionId, prompt);
   }
+  if (resumeFallbackPrompt) {
+    await writeTurnResumeFallbackPrompt(sessionId, resumeFallbackPrompt);
+  }
   // A reused task prompt is a Codex recovery concern today, but keep this
   // write independent so any future Claude recovery cannot point the runner
   // at an absent or stale system-context file.
@@ -2042,6 +2111,9 @@ async function execInWorker(sessionId, {
     ...(isClaude ? {
       MODEL: models.resolve(model),
       CLAUDE_RESUME_SESSION_ID: resumeSessionId || '',
+      RESUME_FALLBACK_PROMPT_FILE: resumeFallbackPrompt
+        ? TURN_RESUME_FALLBACK_PROMPT_PATH
+        : '',
       // Retarget the Anthropic SDK through the proxy only for Claude when
       // not BYOK. Never set for Codex.
       ...(useAnthropicProxy
@@ -2114,6 +2186,8 @@ async function execInWorker(sessionId, {
       // removes it immediately as before.
       + 'if ! grep -qE "^__USERNODE_RESULT__ .*agent_retry_fresh=1([[:space:]]|$)" "$TURN_JOURNAL"; then '
       + 'rm -f "$PROMPT_FILE" 2>/dev/null; fi; '
+      + 'if [ -n "$RESUME_FALLBACK_PROMPT_FILE" ]; then '
+      + 'rm -f "$RESUME_FALLBACK_PROMPT_FILE" 2>/dev/null; fi; '
       + 'if [ -n "$SYSTEM_PROMPT_FILE" ]; then rm -f "$SYSTEM_PROMPT_FILE" 2>/dev/null; fi; '
       + 'echo "__USERNODE_EXIT__ $TURN_EXIT" >> "$TURN_JOURNAL"; exit "$TURN_EXIT"',
   ];
@@ -3306,8 +3380,11 @@ module.exports = {
   // file-based dispatch-prompt transport (E2BIG fix; exported for tests)
   TURN_PROMPT_PATH,
   TURN_SYSTEM_PROMPT_PATH,
+  TURN_RESUME_FALLBACK_PROMPT_PATH,
   buildTurnPromptScript,
   buildTurnSystemPromptScript,
+  buildTurnResumeFallbackPromptScript,
   writeTurnPrompt,
   writeTurnSystemPrompt,
+  writeTurnResumeFallbackPrompt,
 };

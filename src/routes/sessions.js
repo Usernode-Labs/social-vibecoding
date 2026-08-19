@@ -780,6 +780,7 @@ async function persistScoutPublication({
   sessionId,
   turnId = null,
   content,
+  conversationContent = null,
   hadSpec = false,
   durationMs = null,
   quickReplies = null,
@@ -813,6 +814,10 @@ async function persistScoutPublication({
       specPreview: buildSpecPreview(ccText),
       specLines: lineCount,
       scoutOutput: ccText,
+      ...(typeof conversationContent === 'string'
+          && conversationContent.trim() === ccText
+        ? { scoutConversationSpecExact: true }
+        : {}),
       specVersion,
       ...(durationMs != null ? { durationMs } : {}),
       ...(quickReplies ? { quickReplies } : {}),
@@ -8729,6 +8734,7 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
           sessionId: session.id,
           turnId: recoveryActiveTurn.turnId || null,
           content: ccText,
+          conversationContent: result.lastResultText || '',
           hadSpec: !!(session.spec_md || '').trim(),
           agentBackend: recoveryActiveTurn.backend || session.agent_backend || 'claude_code',
           agentModel: recoveryActiveTurn.model || session.agent_model || null,
@@ -10903,6 +10909,7 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
         sessionId: session.id,
         turnId: durableTurnId,
         content: ccText,
+        conversationContent: result.lastResultText || '',
         hadSpec: !!existingSpec,
         durationMs: Date.now() - turnStartedMs,
         localAgentLabel: runLocally ? lease.label : null,
@@ -11518,6 +11525,79 @@ or repository guidance on platform-wide rules.
   };
 }
 
+// Build the two user-level spec representations a hosted Claude build may
+// need. The full block is the behavior every backend had before this helper.
+// The resumed block is safe only when canReuseHostedClaudeScoutSpec proves
+// that the exact current spec is already the immediately preceding response
+// in the same hosted Claude conversation. Keeping both as ordinary prompt
+// content avoids elevating user/repository text into system instructions.
+function buildCodingAgentSpecContext({ currentSpec = '', specTaskReference = '' } = {}) {
+  const spec = String(currentSpec || '');
+  if (!spec.trim()) return { fullBlock: '', resumedBlock: '' };
+
+  const fullBlock = `
+
+==== SPEC DOC (planning context, authoritative for what to build) ====
+
+${spec}
+
+==== END SPEC DOC ====
+
+The SPEC DOC above is the user's planning record for this session,
+refined collaboratively with the Mayor. Treat it as the authoritative
+description of WHAT to build and HOW IT SHOULD BEHAVE. ${specTaskReference}
+tells you which request to handle in this turn — it is NOT a substitute
+for the spec, and you should
+not re-derive intent from it when the spec covers the same ground.
+Platform conventions still override the spec on any platform-wide
+rule (auth, public/private tables, etc.).`;
+
+  const resumedBlock = `
+
+==== SPEC DOC (planning context, authoritative for what to build) ====
+
+The immediately preceding assistant response in this resumed hosted-Claude
+conversation is the exact current SPEC DOC saved by the platform. Continue
+from that already-loaded spec; do not re-derive it or ask for another copy.
+
+==== END SPEC DOC ====
+
+That existing SPEC DOC is the user's planning record for this session,
+refined collaboratively with the Mayor. Treat it as the authoritative
+description of WHAT to build and HOW IT SHOULD BEHAVE. ${specTaskReference}
+tells you which request to handle in this turn — it is NOT a substitute
+for the spec. Platform conventions still override the spec on any
+platform-wide rule (auth, public/private tables, etc.).`;
+
+  return { fullBlock, resumedBlock };
+}
+
+// Reuse the scout response only at a deliberately narrow, provable boundary:
+// the latest coding-agent activity is a completed hosted-Claude scout whose
+// stored output exactly equals the live spec. A later build/scout progress row,
+// a local/Codex scout, a changed spec, or legacy metadata all fail closed.
+// The query returns only the boolean comparison; it never selects prompt text.
+async function canReuseHostedClaudeScoutSpec(pool, sessionId, currentSpec) {
+  const spec = String(currentSpec || '');
+  if (!pool || typeof pool.query !== 'function' || !sessionId || !spec.trim()) return false;
+  const { rows } = await pool.query(
+    `SELECT (
+       metadata ? 'scoutOutput'
+       AND metadata->>'agentBackend' = 'claude_code'
+       AND NOT (metadata ? 'runner')
+       AND metadata->>'scoutConversationSpecExact' = 'true'
+       AND metadata->>'scoutOutput' = $2
+     ) AS reusable
+       FROM chat_session_messages
+      WHERE session_id = $1
+        AND (metadata ? 'scoutOutput' OR content = 'Claude Code progress')
+      ORDER BY id DESC
+      LIMIT 1`,
+    [sessionId, spec],
+  );
+  return rows[0]?.reusable === true;
+}
+
 async function runClaudeCodeTool({
   pool, config, req, res, session, selectedModel,
   userMessage, toolPromptArg,
@@ -11711,24 +11791,23 @@ async function runClaudeCodeTool({
   const specTaskReference = directSessionTurn
     ? 'The DIRECT USER TURN above'
     : 'The "CODING TASK (from the Mayor)" line above';
-  const specBlock = currentSpec.trim()
-    ? `
-
-==== SPEC DOC (planning context, authoritative for what to build) ====
-
-${currentSpec}
-
-==== END SPEC DOC ====
-
-The SPEC DOC above is the user's planning record for this session,
-refined collaboratively with the Mayor. Treat it as the authoritative
-description of WHAT to build and HOW IT SHOULD BEHAVE. ${specTaskReference}
-tells you which request to handle in this turn — it is NOT a substitute
-for the spec, and you should
-not re-derive intent from it when the spec covers the same ground.
-Platform conventions still override the spec on any platform-wide
-rule (auth, public/private tables, etc.).`
-    : '';
+  const specContext = buildCodingAgentSpecContext({ currentSpec, specTaskReference });
+  let reuseHostedScoutSpec = false;
+  if (!runLocally && !isCodexSession && session.cc_session_id && currentSpec.trim()) {
+    try {
+      reuseHostedScoutSpec = await canReuseHostedClaudeScoutSpec(
+        pool,
+        session.id,
+        currentSpec,
+      );
+    } catch (err) {
+      // Optimization only: uncertainty keeps the complete spec in this turn.
+      log.warn('sessions', 'Scout-to-build context check failed (using full spec)', {
+        sessionId: session.id,
+        err: err.message,
+      });
+    }
+  }
 
   // #460: the dispatching user's personal agent files. Loaded here (by
   // session OWNER — headless sessions with no resolvable owner simply
@@ -11786,10 +11865,10 @@ or the repo's own \`CLAUDE.md\` on app-specific matters.`
     runLocally,
     isCodexSession,
   });
-  const claudePrompt = `${taskBlock}
+  const renderClaudePrompt = (renderedSpecBlock) => `${taskBlock}
 
 ${conventionsContext.promptBlock}
-${specBlock}${failingChecksBlock}
+${renderedSpecBlock}${failingChecksBlock}
 
 A \`CLAUDE.md\` at the repo root, if present, contains **app-specific**
 guidance: product intent, domain terms, opt-in policies, style. Follow
@@ -11888,6 +11967,14 @@ path: /another/changed/view
     testable purely against production-cloned data need no seeding.
   - The block must be the LAST thing in your final message. Skip the block
     entirely for changes with nothing user-visible to test.`;
+
+  const fullClaudePrompt = renderClaudePrompt(specContext.fullBlock);
+  const claudePrompt = reuseHostedScoutSpec
+    ? renderClaudePrompt(specContext.resumedBlock)
+    : fullClaudePrompt;
+  // run-cc.sh reads this only after --resume fails. A fresh session therefore
+  // gets the exact complete task it received before this optimization.
+  const claudeResumeFallbackPrompt = reuseHostedScoutSpec ? fullClaudePrompt : null;
 
   const commitMsg = github.safeMention(`Changes: ${userMessage.substring(0, 50)}`);
 
@@ -12440,6 +12527,10 @@ path: /another/changed/view
         return worker.execInWorker(session.id, {
           mode: 'build',
           prompt: claudePrompt,
+          // Present only for the first hosted-Claude build after an exact
+          // matching scout. If --resume is unavailable, the runner retries
+          // fresh with this complete spec-bearing user prompt.
+          resumeFallbackPrompt: isClaudeDispatch ? claudeResumeFallbackPrompt : null,
           // Hosted Claude gets the same authoritative handbook on every
           // invocation as stable system context. New, resumed, compacted and
           // resume-fallback-fresh runs therefore all use the current version
@@ -13674,4 +13765,4 @@ CMD ["node", "server.js"]
   return { containerId, stagingUrl, hostname };
 }
 
-module.exports = { runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, advanceSharedReviewAfterSync, advanceReviewAfterPlatformSync, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };
+module.exports = { runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, advanceSharedReviewAfterSync, advanceReviewAfterPlatformSync, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };

@@ -20,6 +20,9 @@
 #   PROMPT_FILE, BRANCH, SESSION_ID, PLATFORM_URL
 #   SYSTEM_PROMPT_FILE         required for build; authoritative platform
 #                              handbook appended to Claude's system prompt
+#   RESUME_FALLBACK_PROMPT_FILE optional for a resumed build; complete task
+#                              prompt used only if --resume fails and this
+#                              runner retries Claude without history
 #
 #   PROMPT_FILE points at the dispatch prompt the host materialized into
 #   the CC volume before this exec (see worker.js writeTurnPrompt). The
@@ -74,6 +77,7 @@ die() {
 : "${PAT:=}"
 : "${CLAUDE_RESUME_SESSION_ID:=}"
 : "${SYSTEM_PROMPT_FILE:=}"
+: "${RESUME_FALLBACK_PROMPT_FILE:=}"
 : "${BROWSER_MCP_CONFIG:=/home/node/.usernode-mcp.json}"
 
 SYSTEM_PROMPT_FLAGS=""
@@ -99,6 +103,14 @@ if [ -n "$SYSTEM_PROMPT_FILE" ]; then
   [ -s "$SYSTEM_PROMPT_FILE" ] \
     || die "system prompt file missing or empty: $SYSTEM_PROMPT_FILE"
   SYSTEM_PROMPT_FLAGS="--append-system-prompt-file $SYSTEM_PROMPT_FILE"
+fi
+if [ -n "$RESUME_FALLBACK_PROMPT_FILE" ]; then
+  [ "$MODE" = "build" ] \
+    || die "RESUME_FALLBACK_PROMPT_FILE is only valid for build mode"
+  [ -n "$CLAUDE_RESUME_SESSION_ID" ] \
+    || die "RESUME_FALLBACK_PROMPT_FILE requires CLAUDE_RESUME_SESSION_ID"
+  [ -s "$RESUME_FALLBACK_PROMPT_FILE" ] \
+    || die "resume fallback prompt file missing or empty: $RESUME_FALLBACK_PROMPT_FILE"
 fi
 
 WORKSPACE_DIR="${WORKSPACE_DIR:-/home/node/workspace}"
@@ -326,8 +338,12 @@ if [ -n "$CLAUDE_RESUME_SESSION_ID" ]; then
   CC_EXIT=$?
   if [ "$CC_EXIT" -ne 0 ]; then
     echo "__USERNODE_WARN__ resume failed (exit $CC_EXIT); retrying fresh"
+    RETRY_PROMPT_FILE="$PROMPT_FILE"
+    if [ -n "$RESUME_FALLBACK_PROMPT_FILE" ]; then
+      RETRY_PROMPT_FILE="$RESUME_FALLBACK_PROMPT_FILE"
+    fi
     claude --print $PERMISSION_FLAGS $BROWSER_MCP_FLAGS $SYSTEM_PROMPT_FLAGS --verbose \
-      --model "$MODEL" --output-format stream-json < "$PROMPT_FILE"
+      --model "$MODEL" --output-format stream-json < "$RETRY_PROMPT_FILE"
     CC_EXIT=$?
   fi
 else
