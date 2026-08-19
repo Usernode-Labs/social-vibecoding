@@ -239,6 +239,27 @@ function beforeContainerName(config, slug) {
     : `usernode-app-${slug}`;
 }
 
+// A stored runtime name that is a bare 64-hex string is a container ID, not a
+// hostname. `docker run` prints the ID, and every deploy before eec6adf
+// returned it as `runtimeName` — so it was persisted into
+// chat_sessions.staging_runtime_name and apps.runtime_name for the whole of
+// that window. Docker's embedded DNS resolves container NAMES and network
+// aliases and never the full ID, so a capture aimed at one dies with
+// ERR_NAME_NOT_RESOLVED on every route, before a byte of app code runs.
+//
+// That is not self-healing: those columns are only rewritten by a full
+// staging BUILD, and a re-check reuses a live container rather than
+// rebuilding it, so an affected proposal repeats the same broken hostname
+// forever and the only escape is a new commit — which clears its votes.
+// Refusing the ID here falls back to the deterministic name the container
+// actually carries, which fixes every row written in that window with no
+// migration, no rebuild and no vote lost.
+const CONTAINER_ID_RE = /^[0-9a-f]{64}$/i;
+function usableRuntimeName(name) {
+  const value = String(name == null ? '' : name).trim();
+  return !value || CONTAINER_ID_RE.test(value) ? null : value;
+}
+
 function isFrontendFile(file) {
   const f = String(file || '').replace(/\\/g, '/');
   const ext = path.extname(f).toLowerCase();
@@ -1475,10 +1496,14 @@ async function captureForSession(config, session, app, commitHash, stagingResult
 
     const kubernetesCapture = config.captureRuntime === 'kubernetes';
     const appNamespace = config.kubernetes?.appNamespace || 'social-apps';
-    const stagingName = stagingResult?.runtimeName || session.staging_runtime_name
+    const stagingName = usableRuntimeName(stagingResult?.runtimeName)
+      || usableRuntimeName(session.staging_runtime_name)
       || `usernode-staging-${app.slug}--${session.id}`;
     const isSelfApp = app.slug === config.selfAppSlug;
-    const prodName = app.runtime_name || beforeContainerName(config, app.slug);
+    // The "before" half is exposed the same way: apps.runtime_name was written
+    // by the same deploy, so a production container deployed in that window
+    // poisons the before-screenshot origin too.
+    const prodName = usableRuntimeName(app.runtime_name) || beforeContainerName(config, app.slug);
     const prodRuntimeKind = app.runtime_kind || 'docker';
     const prodRunning = (await applicationRuntime.status(config, {
       runtimeKind: prodRuntimeKind, runtimeName: prodName,
@@ -2216,6 +2241,10 @@ function notifyChecks(sessionId, result, commitSha, send) {
 
 module.exports = {
   captureForSession,
+  // Exported for the regression test: the capture hostname is the only
+  // consumer of these columns that needs a NAME rather than any handle
+  // `docker` accepts, so the guard lives here and is asserted here.
+  usableRuntimeName,
   hasInFlightCapture,
   storeArtifacts,
   getForSession,

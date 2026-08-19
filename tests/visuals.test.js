@@ -15,6 +15,52 @@ const ID_A = 'a'.repeat(32);
 const ID_B = 'b'.repeat(32);
 const DOMAIN = 'example.test';
 
+// ── usableRuntimeName: the capture hostname (#1321) ────────────────────
+//
+// Deploys before eec6adf returned `docker run`'s 64-hex container ID as the
+// runtime name, and it was persisted into chat_sessions.staging_runtime_name
+// and apps.runtime_name. The capture builds `http://<name>:3000`, and Docker's
+// embedded DNS resolves container names and aliases but never the full ID, so
+// every route in the run died with ERR_NAME_NOT_RESOLVED before any app code
+// ran. Those columns are rewritten only by a full staging BUILD and a re-check
+// reuses a live container, so an affected proposal repeated the same broken
+// hostname forever (Game Corner PR #173: three complete runs, 153 results,
+// every one of them that failure).
+
+test('a stored 64-hex container ID is not a usable capture hostname', () => {
+  assert.equal(visuals.usableRuntimeName('a'.repeat(64)), null);
+  assert.equal(visuals.usableRuntimeName('A'.repeat(64)), null, 'Docker prints lowercase, but do not depend on it');
+  assert.equal(visuals.usableRuntimeName(`  ${'f0'.repeat(32)}  `), null, 'a padded id is still an id');
+});
+
+test('a real runtime name survives, and so does anything not shaped like an id', () => {
+  assert.equal(
+    visuals.usableRuntimeName('usernode-staging-puzzlechain-6cf8ff--3431'),
+    'usernode-staging-puzzlechain-6cf8ff--3431'
+  );
+  assert.equal(visuals.usableRuntimeName('usernode-app-recipe-box'), 'usernode-app-recipe-box');
+  // Near misses stay usable: only the exact 64-hex shape is a container id.
+  assert.equal(visuals.usableRuntimeName('a'.repeat(63)), 'a'.repeat(63));
+  assert.equal(visuals.usableRuntimeName('a'.repeat(65)), 'a'.repeat(65));
+  assert.equal(visuals.usableRuntimeName(`deadbeef-${'a'.repeat(56)}`), `deadbeef-${'a'.repeat(56)}`);
+});
+
+test('an absent name falls through to the caller\'s deterministic default', () => {
+  for (const empty of [null, undefined, '', '   ']) {
+    assert.equal(visuals.usableRuntimeName(empty), null, String(empty));
+  }
+});
+
+test('both capture origins are guarded, not just the staging one', () => {
+  const src = require('fs').readFileSync(require.resolve('../src/services/visuals'), 'utf8');
+  const region = src.slice(src.indexOf('const kubernetesCapture ='), src.indexOf('const prodOrigin ='));
+  assert.match(region, /usableRuntimeName\(stagingResult\?\.runtimeName\)/);
+  assert.match(region, /usableRuntimeName\(session\.staging_runtime_name\)/);
+  // apps.runtime_name was written by the same deploy, so the "before" half
+  // is exposed identically.
+  assert.match(region, /usableRuntimeName\(app\.runtime_name\)/);
+});
+
 // ── isFrontendFile / isUiAffecting ─────────────────────────────────────
 
 test('frontend extensions count regardless of location', () => {
