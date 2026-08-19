@@ -93,6 +93,9 @@ function importParams(status, prNumber, linkedIssues = [1217]) {
     '1. Open the board', '/board?demo=1',
     JSON.stringify([{ path: '/board?demo=1', viewport: 'desktop' }]),
     linkedIssues,
+    // #1333. The imported PR's body, mirrored so get_proposal can report the
+    // description a voter reads without a GitHub round trip.
+    'What this pull request changes, in the author\'s own words.',
   ];
 }
 

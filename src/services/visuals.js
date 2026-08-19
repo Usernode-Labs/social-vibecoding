@@ -1136,9 +1136,15 @@ async function patchPrBody(pool, session, repoOwner, repoName, block) {
   if (next !== body) {
     await github.updatePR(repoOwner, repoName, session.pr_number, { body: next });
   }
+  // #1333. The body just changed, so the mirror get_proposal reports as
+  // `description` moves with it — otherwise it goes stale the moment
+  // screenshots land, which reads worse than the null it replaced. Written
+  // whether or not GitHub needed the patch: `next` is the body either way,
+  // and this is also how a row that predates the mirror heals.
+  session.pr_body = next;
   await pool.query(
-    `UPDATE chat_sessions SET pr_visuals_applied = $1 WHERE id = $2`,
-    [block || null, session.id]
+    `UPDATE chat_sessions SET pr_visuals_applied = $1, pr_body = $2 WHERE id = $3`,
+    [block || null, next, session.id]
   );
 }
 

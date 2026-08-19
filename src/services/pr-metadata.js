@@ -714,9 +714,14 @@ async function applyPrMetadata({
       session.session_title = prTitle;
       session.pr_summary_md = prSummary || null;
       session.pr_title_fallback = isFallback;
+      // #1333. Mirror the body too. get_proposal reports it as `description`
+      // — what the group is actually voting on — and #1323 wired only the
+      // author's own update, so every proposal read back null until somebody
+      // happened to send one.
+      session.pr_body = prBody || null;
       await pool.query(
-        `UPDATE chat_sessions SET pr_number = $1, pr_url = $2, pr_title = $3, session_title = $3, pr_linked_issues_applied = $4, pr_testing_applied = $5, pr_visuals_applied = $6, pr_summary_md = $7, pr_title_fallback = $8 WHERE id = $9`,
-        [pr.number, pr.html_url, prTitle, linkedIssues, testingBlock || null, visualsBlock || null, prSummary || null, isFallback, session.id]
+        `UPDATE chat_sessions SET pr_number = $1, pr_url = $2, pr_title = $3, session_title = $3, pr_linked_issues_applied = $4, pr_testing_applied = $5, pr_visuals_applied = $6, pr_summary_md = $7, pr_title_fallback = $8, pr_body = $9 WHERE id = $10`,
+        [pr.number, pr.html_url, prTitle, linkedIssues, testingBlock || null, visualsBlock || null, prSummary || null, isFallback, prBody || null, session.id]
       );
       if (broadcast) broadcast('pr_created', { prNumber: pr.number, prUrl: pr.html_url, prTitle });
       return { prNumber: pr.number, prUrl: pr.html_url, prTitle };
@@ -754,9 +759,12 @@ async function applyPrMetadata({
         // keeps the session display name consistent in the meantime).
         session.pr_title = existing.title || null;
         session.session_title = existing.title || session.session_title;
+        // #1333. Adopting a PR adopts its body as well — the row is learning
+        // what is already on GitHub, and the description is part of that.
+        session.pr_body = existing.body || null;
         await pool.query(
-          `UPDATE chat_sessions SET pr_number = $1, pr_url = $2, pr_title = $3, session_title = COALESCE($3, session_title) WHERE id = $4`,
-          [existing.number, existing.html_url, existing.title || null, session.id]
+          `UPDATE chat_sessions SET pr_number = $1, pr_url = $2, pr_title = $3, session_title = COALESCE($3, session_title), pr_body = $4 WHERE id = $5`,
+          [existing.number, existing.html_url, existing.title || null, existing.body || null, session.id]
         );
         log.info('pr-metadata', 'Adopted existing PR after pr_exists', {
           sessionId: session.id, prNumber: existing.number, branch: session.branch_name,
