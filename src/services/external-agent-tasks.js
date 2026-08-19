@@ -2153,6 +2153,15 @@ async function submitUpdate(deps, params, proposalId) {
     // own proposal is shaped (#1319). Only somebody ELSE's pull request keeps
     // its author's title, and then `titleRejected` says so.
     ...(params.title ? { title: String(params.title) } : {}),
+    // #1323. The description too. submit_work has always accepted one on an
+    // update and this call never carried it, so the body the group votes on
+    // kept whatever the FIRST submission said — the title bug of #1319 on the
+    // surface that matters more.
+    ...(params.body ? { description: String(params.body) } : {}),
+    // #1323. And an explicit re-run of the checks against the commit already
+    // on the proposal, which until now could only be had by CHANGING a capture
+    // route so the testing-metadata write triggered one as a side effect.
+    ...(params.recheck ? { recheck: true } : {}),
     ...(linkedIssues.length ? { linkedIssues } : {}),
   });
   if (!updated || !updated.ok) {
@@ -2240,6 +2249,14 @@ async function submitUpdate(deps, params, proposalId) {
     // 'imported_pr' — the pull request belongs to another author on GitHub;
     // 'write_failed' — the update landed but the rename could not be stored.
     titleRejected: result.titleRejected || null,
+    // #1323. The same honesty for the description: whether it landed, and when
+    // it did not, why. 'imported_pr' — the pull request belongs to another
+    // author; 'no_pr_yet' — a session's body is built at promote time, so
+    // there is nothing to rewrite yet; 'github_unreadable' /
+    // 'github_write_failed' — the update landed, the body did not, and the
+    // same call retries it.
+    descriptionUpdated: result.descriptionUpdated === true,
+    descriptionRejected: result.descriptionRejected || null,
     // Whether the task's request number was newly recorded on the target
     // (#1310) — false when the row already carried it, or the task names no
     // request.

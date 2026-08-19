@@ -378,6 +378,9 @@ async function updateProposalFromForkBranch(deps, params) {
         expectedLogin: link.login, expectedHeadSha, sessionId,
         testing: normalizeTesting(params.testing),
         title: normalizeProposedTitle(params.title),
+        description: normalizeProposedDescription(params.description),
+        // #1323. A re-run of the checks against the commit already there.
+        recheck: params.recheck === true,
         linkedIssues: normalizeLinkedIssues(params.linkedIssues),
         // The one module the same-commit resubmit path needs and no other
         // path does: re-running the checks against corrected capture routes
@@ -484,6 +487,14 @@ function normalizeProposedTitle(title) {
   return t || null;
 }
 
+// The description the group reads, clipped to the same 4000 the create path's
+// PR body takes. Empty after trimming is "said nothing", never "blank it".
+function normalizeProposedDescription(description) {
+  if (typeof description !== 'string') return null;
+  const t = description.trim().slice(0, 4000);
+  return t || null;
+}
+
 // Apply the submitted title. Two cases, both author-initiated (the update
 // path's ownership gate has already run):
 //
@@ -566,6 +577,74 @@ async function applyProposedTitle({ pool, gh, session, owner, repo, title, viewe
   session.proposed_pr_title = title;
   log.info('proposal-update', 'stored the revision\'s proposed title', {
     sessionId: Number(session.id),
+  });
+  return { changed: true, rejected: null };
+}
+
+// Apply the submitted description (#1323). submit_work has always ACCEPTED a
+// description on an update and never done anything with it: submitUpdate did
+// not forward it, so the body the group votes on kept whatever the FIRST
+// submission said. That is the title bug (#1319) on the surface that matters
+// more — voters read the description — and it was invisible for the same
+// reason, a success-shaped answer that mentioned nothing.
+//
+// Whose PR it is decides this exactly as it decides a rename, through the same
+// callerOwnsPr: an external contributor's body is theirs.
+//
+// The two MANAGED blocks survive. `Closes #N` is rebuilt from the keywords
+// already in the body, and the marker-delimited "Before / after" block the
+// capture upserts is carried across verbatim — replacing a body wholesale
+// would drop the screenshots the group is looking at, which is a worse bug
+// than the one being fixed.
+async function applyProposedDescription({ pool, gh, session, owner, repo, description, viewerLogin }) {
+  const nothing = { changed: false, rejected: null };
+  if (!description) return nothing;
+  if (!session.pr_number) {
+    // No PR yet: the body is built at promote time from the task, so there is
+    // nothing to rewrite and nothing to mirror.
+    return { changed: false, rejected: 'no_pr_yet' };
+  }
+  if (!callerOwnsPr(session, viewerLogin)) return { changed: false, rejected: 'imported_pr' };
+
+  const prMetadata = require('./pr-metadata');
+  let existing = '';
+  try {
+    const pr = await gh.getPR(owner, repo, session.pr_number);
+    existing = String((pr && pr.body) || '');
+  } catch (err) {
+    log.warn('proposal-update', 'could not read the pull request body to rewrite it', {
+      sessionId: Number(session.id), prNumber: session.pr_number, err: err.message,
+    });
+    return { changed: false, rejected: 'github_unreadable' };
+  }
+
+  const visuals = prMetadata.extractVisualsBlock(existing);
+  const closing = prMetadata.buildClosingBlock(prMetadata.parseClosingKeywords(existing));
+  let body = closing ? `${description}\n\n${closing}` : description;
+  if (visuals) body = prMetadata.upsertVisualsBlock(body, visuals);
+  if (body === existing) return nothing;
+
+  try {
+    await gh.updatePR(owner, repo, session.pr_number, { body });
+  } catch (err) {
+    log.warn('proposal-update', 'could not rewrite the pull request body', {
+      sessionId: Number(session.id), prNumber: session.pr_number, err: err.message,
+    });
+    return { changed: false, rejected: 'github_write_failed' };
+  }
+  // Mirrored so get_proposal can report it without a GitHub call on a path
+  // agents poll. Best-effort: the body on GitHub is the source of truth and it
+  // is already updated, so a failed mirror must not fail the update.
+  try {
+    await pool.query('UPDATE chat_sessions SET pr_body = $1 WHERE id = $2', [body, Number(session.id)]);
+    session.pr_body = body;
+  } catch (err) {
+    log.warn('proposal-update', 'pull request body updated but the mirror write failed', {
+      sessionId: Number(session.id), err: err.message,
+    });
+  }
+  log.info('proposal-update', 'rewrote the proposal description', {
+    sessionId: Number(session.id), prNumber: session.pr_number,
   });
   return { changed: true, rejected: null };
 }
@@ -750,6 +829,10 @@ async function resubmitUnchanged(ctx, headSha, via) {
   const titleApplied = await applyProposedTitle({
     pool, gh, session, owner, repo, title: ctx.title, viewerLogin: ctx.expectedLogin,
   });
+  // And the description the group reads (#1323), by the same ownership rule.
+  const descApplied = await applyProposedDescription({
+    pool, gh, session, owner, repo, description: ctx.description, viewerLogin: ctx.expectedLogin,
+  });
   // And the request linkage (#1310): a same-commit resubmit is also how a
   // dropped `Closes #N` arrives once the agent (or a fixed platform) knows
   // to send it.
@@ -764,9 +847,16 @@ async function resubmitUnchanged(ctx, headSha, via) {
     captureRerun: false,
     titleUpdated: titleApplied.changed,
     ...(titleApplied.rejected ? { titleRejected: titleApplied.rejected } : {}),
+    descriptionUpdated: descApplied.changed,
+    ...(descApplied.rejected ? { descriptionRejected: descApplied.rejected } : {}),
     linkedIssuesUpdated: linkedApplied,
   };
-  if (!applied.changed) return reported;
+  // #1323. Until `recheck` existed, THIS early return was the reason an agent
+  // could not ask for a fresh verdict: the re-run below was reachable only as
+  // a side effect of changing a capture route, so correcting a stale verdict
+  // meant editing a route that was already right. An explicit ask reaches it
+  // now, and nothing else about the path changes.
+  if (!applied.changed && !ctx.recheck) return reported;
 
   // A paused session has no container and no preview to shoot against, and
   // starting a build for one is the thing settlePausedSession exists to avoid.
@@ -800,8 +890,9 @@ async function resubmitUnchanged(ctx, headSha, via) {
     });
     return reported;
   }
-  log.info('proposal-update', 'same-commit resubmit re-ran the checks against new testing routes', {
+  log.info('proposal-update', 'same-commit resubmit re-ran the checks', {
     sessionId, headSha, via, paths: displayPaths(applied.paths),
+    because: applied.changed ? 'new testing routes' : 'recheck requested',
   });
   return { ...reported, captureRerun: true, checksRerun: true };
 }
@@ -962,6 +1053,10 @@ async function advanceAppRepoBranch(ctx) {
   const titleApplied = await applyProposedTitle({
     pool, gh, session, owner, repo, title: ctx.title, viewerLogin: ctx.expectedLogin,
   });
+  // And the description the group reads (#1323), by the same ownership rule.
+  const descApplied = await applyProposedDescription({
+    pool, gh, session, owner, repo, description: ctx.description, viewerLogin: ctx.expectedLogin,
+  });
   // And the request linkage (#1310) — BEFORE the tails for the same reason
   // as the routes: a session tail's promote path builds the PR's `Closes #N`
   // block off this row.
@@ -996,6 +1091,8 @@ async function advanceAppRepoBranch(ctx) {
     testingPathsRejected: rejectedPaths(ctx.testing),
     titleUpdated: titleApplied.changed,
     ...(titleApplied.rejected ? { titleRejected: titleApplied.rejected } : {}),
+    descriptionUpdated: descApplied.changed,
+    ...(descApplied.rejected ? { descriptionRejected: descApplied.rejected } : {}),
     linkedIssuesUpdated: linkedApplied,
   };
 
@@ -1419,6 +1516,10 @@ async function advanceForkHead(ctx) {
   const titleApplied = await applyProposedTitle({
     pool, gh, session, owner, repo, title: ctx.title, viewerLogin: ctx.expectedLogin,
   });
+  // And the description the group reads (#1323), by the same ownership rule.
+  const descApplied = await applyProposedDescription({
+    pool, gh, session, owner, repo, description: ctx.description, viewerLogin: ctx.expectedLogin,
+  });
 
   // The existing imported-head machinery, unchanged: it advances the tracked
   // SHA, clears the tally, re-classifies dapp.json admins, posts the
@@ -1459,6 +1560,8 @@ async function advanceForkHead(ctx) {
     submittedVia: 'update_fork_head',
     titleUpdated: titleApplied.changed,
     ...(titleApplied.rejected ? { titleRejected: titleApplied.rejected } : {}),
+    descriptionUpdated: descApplied.changed,
+    ...(descApplied.rejected ? { descriptionRejected: descApplied.rejected } : {}),
     testingUpdated: testingApplied.changed,
     testingPaths: displayPaths(testingApplied.paths),
     testingPathsRejected: rejectedPaths(ctx.testing),

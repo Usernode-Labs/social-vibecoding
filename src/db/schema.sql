@@ -2972,6 +2972,11 @@ ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_title_fallback BOOLEAN NOT
 -- interactive turns keep regenerating it as they always did. NULL for
 -- sessions never updated through submit_work.
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS proposed_pr_title TEXT;
+-- #1323. The proposal's DESCRIPTION, mirrored from the pull request body so
+-- get_proposal can report what the group is actually reading without a GitHub
+-- round trip on a polled read path. Written by the create path and by an
+-- author's own update; never the source of truth, which stays the PR itself.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_body TEXT;
 
 -- Feedback issues filed with the fallback title ("Feedback from Usernode")
 -- because the Haiku title call failed (routes/feedback.js). The issue is
