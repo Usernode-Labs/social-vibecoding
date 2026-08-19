@@ -302,7 +302,7 @@ function requireCliMiddleware(req, res, next) {
 // were accepted by submit_work, dropped here, and every revised proposal
 // silently fell back to home-page screenshots.
 function parseUpdateFromForkBody(body) {
-  exactKeys(body, ['branch', 'forkRepo', 'expectedHeadSha', 'testingPaths', 'testingSteps', 'title', 'linkedIssues'], 'body');
+  exactKeys(body, ['branch', 'forkRepo', 'expectedHeadSha', 'testingPaths', 'testingSteps', 'title', 'description', 'linkedIssues', 'recheck'], 'body');
   const branch = boundedText(body.branch, { label: 'branch', min: 1, max: 255, trim: true });
   const forkRepo = body.forkRepo == null
     ? null
@@ -337,12 +337,27 @@ function parseUpdateFromForkBody(body) {
   if (body.linkedIssues != null && !Array.isArray(body.linkedIssues)) {
     throw new ValidationError('linkedIssues must be an array of issue numbers');
   }
+  // #1323. The description the people voting read. Same cap as the create
+  // path's PR body (services/external-agent-tasks.js prBodyFor), so an update
+  // cannot store something the first submission would have clipped.
+  const description = body.description == null
+    ? null
+    : boundedText(body.description, { label: 'description', min: 1, max: 4000, trim: true });
+  // #1323. A re-run of the checks against the commit already on the proposal.
+  // Until this existed the only way an agent could get one was to CHANGE a
+  // capture route so the testing-metadata write happened to trigger it.
+  if (body.recheck != null && typeof body.recheck !== 'boolean') {
+    throw new ValidationError('recheck must be true or false');
+  }
+  const recheck = body.recheck === true;
   const { parseImportLinkedIssues } = require('./votes');
   const linkedIssues = body.linkedIssues == null
     ? []
     : parseImportLinkedIssues({ linkedIssues: body.linkedIssues });
   const testing = require('../services/testing-notes').parseSubmitted(body);
-  return { branch, forkRepo, expectedHeadSha, testing, title, linkedIssues };
+  return { branch, forkRepo, expectedHeadSha, testing, title,
+    description,
+    recheck, linkedIssues };
 }
 
 function repoCoordinates(app) {
@@ -617,6 +632,8 @@ function proposalHandoffRoutes(config) {
           expectedHeadSha: input.expectedHeadSha,
           testing: input.testing,
           title: input.title,
+          description: input.description,
+          recheck: input.recheck,
           linkedIssues: input.linkedIssues,
           origin: config.cliAuthOrigin || null,
         }
