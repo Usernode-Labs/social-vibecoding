@@ -457,9 +457,10 @@ test('an existing connector is mentioned but never required', () => {
 
 // ── wire() ─────────────────────────────────────────────────────────────
 //
-// Minimal DOM stand-ins: enough to prove one handler is attached, that the
-// "remember" box is read at click time, and that an href is opened here
-// (they are just links) while still being reported to the caller.
+// Minimal DOM stand-ins: enough to prove one handler is attached, that a
+// real anchor's navigation is left to the browser (#1312) while still being
+// reported to the caller, and that the non-anchor fallback still opens its
+// data-flow-href.
 
 function fakeRoot(box) {
   const listeners = [];
@@ -497,7 +498,11 @@ test('a pick button is no longer something this module answers', () => {
   assert.deepEqual(seen, [], 'a data-flow-pick click reaches nothing');
 });
 
-test('an action with an href opens it and still reports the action', () => {
+test('a non-anchor node with a data-flow-href still opens it (fallback)', () => {
+  // The rendered markup gives href actions a real <a> now, but wire() is
+  // deliberately tolerant of straggler non-anchor markup (a stale render,
+  // a fixture): a button carrying data-flow-href keeps the old scripted
+  // trip out, and the action is reported either way.
   const seen = [];
   const opened = [];
   const root = fakeRoot();
@@ -520,6 +525,84 @@ test('an action with an href opens it and still reports the action', () => {
     'the trip out is a new tab with noopener, so the chat survives it');
   assert.deepEqual(seen, ['open-agent', 'refresh'],
     'the caller still hears about the click, so it can re-poll on return');
+});
+
+test('an href action renders as a real anchor, never a scripted button (#1312)', () => {
+  // A button that window.open()s never leaves the page on mobile: popup
+  // heuristics eat the scripted open in mobile browsers, and the Usernode
+  // app's webview is bound to the platform's own domains, so github.com and
+  // claude.ai can only leave for the system browser the way a plain
+  // target="_blank" anchor does. "Fork on GitHub" was the report (#1312);
+  // "Open Claude Code" / "Open Codex" share the path.
+  const forkHtml = DevFlowSelect.wizardHtml({
+    status: fullStatus({
+      fork: { state: 'missing', owner: 'octo-contributor', repo: 'demo', pageUrl: 'https://github.com/usernode-apps/demo/fork' },
+      task: null,
+      branch: null,
+    }),
+  });
+  const fork = forkHtml.match(/<a [^>]*data-flow-action="open-fork"[^>]*>/);
+  assert.ok(fork, '"Fork on GitHub" is an anchor');
+  assert.match(fork[0], /href="https:\/\/github\.com\/usernode-apps\/demo\/fork"/);
+  assert.match(fork[0], /target="_blank"/, 'the trip out stays a new tab');
+  assert.match(fork[0], /rel="noopener"/, 'and the chat survives it');
+  assert.ok(!forkHtml.includes('data-flow-href'),
+    'no scripted-open attribute remains for the browser-owned navigation');
+
+  const handoffHtml = DevFlowSelect.wizardHtml({ status: fullStatus({ branch: null }) });
+  const agent = handoffHtml.match(/<a [^>]*data-flow-action="open-agent"[^>]*>/);
+  assert.ok(agent, '"Open Claude Code" is an anchor too');
+  assert.match(agent[0], /href="https:\/\/claude\.ai\/code"/);
+  assert.match(handoffHtml, /<button [^>]*data-flow-action="copy"/,
+    'actions with no destination stay buttons');
+  assert.match(handoffHtml, /<button [^>]*data-flow-action="refresh"/);
+});
+
+test('busy keeps the disabled-button rendering for href actions', () => {
+  // An anchor cannot be disabled, and while a request is running the trip
+  // out is supposed to be unavailable like every other action — so busy
+  // falls back to the button form, exactly as before.
+  const html = DevFlowSelect.wizardHtml({ status: fullStatus({ branch: null }), busy: true });
+  assert.ok(!/<a [^>]*data-flow-action="open-agent"/.test(html));
+  const btn = html.match(/<button [^>]*data-flow-action="open-agent"[^>]*>/);
+  assert.ok(btn, 'the busy form is a button again');
+  assert.match(btn[0], /disabled/);
+});
+
+test('an anchor click is left to the browser and still reported (#1312)', () => {
+  // preventDefault or a scripted window.open here would take the navigation
+  // back from the browser — the exact path mobile drops. The caller still
+  // hears about the click so it can re-poll after the trip out.
+  const seen = [];
+  const opened = [];
+  let prevented = 0;
+  const root = fakeRoot();
+  DevFlowSelect.wire(root, { onAction: (action) => seen.push(action) });
+
+  const originalWindow = global.window;
+  global.window = { open: (...args) => opened.push(args) };
+  try {
+    const attrs = {
+      'data-flow-action': 'open-fork',
+      href: 'https://github.com/usernode-apps/demo/fork',
+    };
+    root.listeners[0]({
+      target: {
+        closest: () => ({
+          tagName: 'A',
+          getAttribute: (name) => (name in attrs ? attrs[name] : null),
+        }),
+      },
+      preventDefault() { prevented += 1; },
+    });
+  } finally {
+    if (originalWindow === undefined) delete global.window;
+    else global.window = originalWindow;
+  }
+
+  assert.deepEqual(seen, ['open-fork'], 'the caller can re-poll on return');
+  assert.deepEqual(opened, [], 'no scripted open rides along with the navigation');
+  assert.equal(prevented, 0, 'the browser keeps the activation');
 });
 
 test('a node with neither attribute is ignored', () => {

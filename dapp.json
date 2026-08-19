@@ -2293,6 +2293,12 @@
       "expectText": "Check again"
     },
     {
+      "name": "The walkthrough's trips out are real links a mobile webview can follow (#1312)",
+      "path": "/?demo=1&flow=claude-code#app/usernode-2d5619/dev/sessions/990404",
+      "expectSelector": "[data-flow-wizard] a[data-flow-action=\"open-agent\"][target=\"_blank\"]",
+      "expectText": "Open Claude Code"
+    },
+    {
       "name": "Settings can answer the build-flow question for good (#1049)",
       "path": "/#settings/connectors",
       "expectSelector": "#settings-dev-flow option[value=\"claude-code\"]",

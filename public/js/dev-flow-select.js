@@ -257,8 +257,25 @@
     return actions;
   }
 
+  // An action with an href renders as a REAL ANCHOR, not a button that
+  // window.open()s it. The two differ only off desktop, which is where it
+  // matters (#1312): mobile popup heuristics eat a scripted window.open the
+  // moment anything about the tap looks indirect, and the Usernode app's
+  // webview is bound to the platform's own domains, so github.com and
+  // claude.ai can ONLY leave for the system browser the way a plain
+  // target="_blank" link does — a scripted open goes nowhere, silently.
+  // Every other GitHub trip in this transcript ("View on GitHub", the PR
+  // link) is already an anchor for the same reason. `busy` keeps the
+  // existing disabled-button rendering: an anchor cannot be disabled, and
+  // the trip out is supposed to be unavailable mid-request anyway.
   function actionHtml(action, busy) {
     var cls = 'dc-pr-btn dc-flow-action' + (action.primary ? ' dc-flow-action-primary' : '');
+    if (action.href && !busy) {
+      return '<a class="' + cls + '" href="' + escapeHtml(action.href) + '"'
+        + ' target="_blank" rel="noopener"'
+        + ' data-flow-action="' + escapeHtml(action.action) + '">'
+        + escapeHtml(action.label) + '</a>';
+    }
     var attrs = ' data-flow-action="' + escapeHtml(action.action) + '"'
       + (action.href ? ' data-flow-href="' + escapeHtml(action.href) + '"' : '')
       + (busy ? ' disabled' : '');
@@ -352,9 +369,10 @@
   //
   // `handlers`:
   //   onAction(action, button)  – a walkthrough button; 'open-fork' and
-  //                               'open-agent' are handled here (they are
-  //                               just links) and still reported, so the
-  //                               caller can re-poll after the trip out.
+  //                               'open-agent' are anchors whose navigation
+  //                               the BROWSER owns (see actionHtml) and are
+  //                               still reported, so the caller can re-poll
+  //                               after the trip out.
   function wire(root, handlers) {
     if (!root || typeof root.addEventListener !== 'function') return;
     if (root.__devFlowWired) return;
@@ -368,10 +386,19 @@
 
       var action = target.getAttribute('data-flow-action');
       if (!action) return;
-      event.preventDefault();
-      var href = target.getAttribute('data-flow-href');
-      if (href && typeof window !== 'undefined' && window.open) {
-        window.open(href, '_blank', 'noopener');
+      // A real anchor's activation stays with the browser: preventDefault
+      // here would put the trip out back through script, which is exactly
+      // the path mobile drops (#1312). Everything else is a button, where
+      // preventDefault is inert and the data-flow-href fallback keeps any
+      // straggler non-anchor markup working.
+      var isLink = String(target.tagName || '').toUpperCase() === 'A'
+        && !!target.getAttribute('href');
+      if (!isLink) {
+        event.preventDefault();
+        var href = target.getAttribute('data-flow-href');
+        if (href && typeof window !== 'undefined' && window.open) {
+          window.open(href, '_blank', 'noopener');
+        }
       }
       if (typeof h.onAction === 'function') h.onAction(action, target);
     });
