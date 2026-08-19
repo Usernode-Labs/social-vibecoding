@@ -78,13 +78,21 @@ const DDL = `
     testing_md           TEXT,
     testing_path         VARCHAR(512),
     testing_paths        JSONB,
-    linked_issues        INTEGER[] NOT NULL DEFAULT '{}'
+    linked_issues        INTEGER[] NOT NULL DEFAULT '{}',
+    pr_body              TEXT
   )`;
 
-// The same 14-element parameter shape the handler binds ($10 is the head
+// The same 15-element parameter shape the handler binds ($10 is the head
 // repository #1196 records, which is what decides whether the proposal's head
 // is in the author's fork or in the app's own repository; $14 is the request
-// the work order was prepared from, #1217).
+// the work order was prepared from, #1217; $15 is the pull request's body,
+// mirrored so get_proposal can report a description, #1333).
+//
+// NOTE the DDL above is hand-copied from src/db/schema.sql on purpose, so a
+// column added to the INSERT must be added there too — that omission is
+// exactly what this suite exists to catch, and it only fails where a real
+// postgres is reachable (it SKIPS otherwise, so a sandbox without one reports
+// a clean run).
 function importParams(status, prNumber, linkedIssues = [1217]) {
   return [
     1, 2, 'pr-import-test-branch', prNumber, 'https://github.com/acme/demo/pull/' + prNumber,
@@ -93,6 +101,9 @@ function importParams(status, prNumber, linkedIssues = [1217]) {
     '1. Open the board', '/board?demo=1',
     JSON.stringify([{ path: '/board?demo=1', viewport: 'desktop' }]),
     linkedIssues,
+    // #1333. The imported PR's body, mirrored so get_proposal can report the
+    // description a voter reads without a GitHub round trip.
+    'What this pull request changes, in the author\'s own words.',
   ];
 }
 
