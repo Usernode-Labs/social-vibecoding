@@ -17,6 +17,7 @@ const stagingReap = require('../services/staging-reap');
 const stagingEnv = require('../services/staging-env');
 const mail = require('../services/mail');
 const mobilePushDiagnostics = require('../services/mobile-push-diagnostics');
+const applicationRuntime = require('../services/application-runtime');
 const {
   accountRecovery,
   withTransaction,
@@ -221,12 +222,12 @@ function adminRoutes(config) {
 
   router.post('/api/admin/staging-reap', requireAdminWrite, drainGuard, async (req, res) => {
     try {
-      // A staging preview has no docker socket (SELF-HOSTING.md Phase 2g),
-      // so it cannot manage other previews. Explicit refusal beats a sweep
-      // that sees an empty inventory and silently reports success.
-      if (stagingReap.isStagingEnv()) {
+      // This fleet-wide inventory sweep is Docker-specific. Kubernetes
+      // previews are managed through their runtime records instead of a
+      // Docker socket, so do not report a misleading successful no-op.
+      if (stagingReap.isStagingEnv() || applicationRuntime.mode(config) !== 'docker') {
         return res.status(400).json({
-          error: 'The stale-preview sweep is unavailable in staging previews.',
+          error: 'Stale-preview administration is not implemented for this runtime.',
         });
       }
       const { started, job } = stagingReap.start(config, {
@@ -252,6 +253,7 @@ function adminRoutes(config) {
   // admins can watch a sweep, they just can't start one.
   router.get('/api/admin/staging-reap', async (req, res) => {
     try {
+      const runtimeKind = applicationRuntime.mode(config);
       // Staging mock data (request-time demo injection): a preview has no
       // docker socket, so this section would screenshot empty. Never
       // persisted, strictly a no-op outside staging.
@@ -265,6 +267,9 @@ function adminRoutes(config) {
           ...stagingReap.demoCounts(),
           demo: true,
           staging,
+          runtimeKind,
+          available: false,
+          unavailableReason: 'staging',
           concurrency: stagingReap.concurrency(),
         });
       }
@@ -280,6 +285,9 @@ function adminRoutes(config) {
         expectedFingerprint: stagingEnv.expectedStagingFingerprint(config),
         automatic: stagingReap.readAutomatic(),
         staging,
+        runtimeKind,
+        available: !staging && runtimeKind === 'docker',
+        unavailableReason: staging ? 'staging' : (runtimeKind === 'kubernetes' ? 'kubernetes' : null),
         concurrency: stagingReap.concurrency(),
       });
     } catch (err) {
@@ -1209,7 +1217,7 @@ function adminRoutes(config) {
   // platform-wide, blocked outright in staging, and an append-only
   // `db_exports` row for every attempt — written BEFORE anything runs.
   //
-  // Mechanics live in src/services/db-export.js (spawn + docker exec +
+  // Mechanics live in src/services/db-export.js (networked pg_dump +
   // in-process gzip + ticket store + single-flight guard); this file owns
   // auth and audit. NOTE: the audited/reported byte count is the COMPRESSED
   // size — what actually left the server — so history rows are comparable
@@ -1372,9 +1380,10 @@ function adminRoutes(config) {
     noteDbExportPreDenials, requireAdminWrite, dbExportLimiter,
     async (req, res) => {
       try {
-        // Layer 2 of the staging block (layer 1 is structural: staging
-        // containers never receive /var/run/docker.sock, so docker exec
-        // cannot work there at all; layer 3 is the disabled button).
+        // Layer 2 of the staging block. Kubernetes made the export transport
+        // runtime-neutral (networked pg_dump), so this explicit environment
+        // denial remains the real boundary: previews must never receive a
+        // platform-database export even when they can reach PostgreSQL.
         if (dbExport.isStaging()) {
           await recordExportAudit(req, { status: 'denied', deniedReason: 'staging' });
           return res.status(403).json({

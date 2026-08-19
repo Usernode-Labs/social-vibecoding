@@ -119,13 +119,15 @@ log.setLevel(config.logLevel);
 
 const app = express();
 
-// Child apps share the platform's Docker network, so trusting every direct
-// peer's X-Forwarded-For would let one spoof security rate-limit identities.
-// Express therefore never trusts forwarding headers globally. This narrow
-// middleware resolves the configured Caddy peer and exposes req.clientIp;
-// direct child/worker calls retain their real socket address.
+// Express never trusts forwarding headers globally. Docker mode resolves one
+// configured proxy peer; Kubernetes mode lets Cilium/Envoy supply the client
+// address without a proxy hostname. Direct child/worker calls carry no
+// forwarding header and therefore retain their real socket address.
 app.set('trust proxy', false);
-app.use(trustedProxyClientIp({ hostname: config.trustedProxyHost }));
+app.use(trustedProxyClientIp({
+  hostname: config.trustedProxyHost,
+  trustDirectPeer: config.appRuntime === 'kubernetes',
+}));
 
 // Global CLI authentication has a hard staging/enablement gate before any
 // body parser, cookie lookup, bearer lookup, or static fallback. Public
@@ -158,9 +160,10 @@ app.use(mcpPreAuthRoutes(config));
 const EXPLORER_UPSTREAM =
   process.env.EXPLORER_UPSTREAM || 'testnet-explorer.usernodelabs.org';
 const EXPLORER_UPSTREAM_BASE = process.env.EXPLORER_UPSTREAM_BASE || '/api';
-const EXPLORER_USE_HTTP = /^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01]))/.test(
-  EXPLORER_UPSTREAM.replace(/:\d+$/, '')
-);
+const EXPLORER_USE_HTTP = process.env.EXPLORER_USE_HTTP === 'true'
+  || /^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01]))/.test(
+    EXPLORER_UPSTREAM.replace(/:\d+$/, '')
+  );
 
 app.use('/explorer-api', (req, res) => {
   const transport = EXPLORER_USE_HTTP ? require('http') : require('https');
@@ -304,7 +307,7 @@ app.get('/api/version', (_req, res) => {
   res.json({
     sha: process.env.GIT_SHA || 'dev',
     name: process.env.USERNODE_PROJECT_NAME || 'usernode',
-    repoUrl: process.env.USERNODE_REPO_URL || 'https://github.com/Usernode-Labs/social-vibecoding',
+    repoUrl: config.platformRepoUrl,
     deployProgress: deployStatus.read(),
     // Which environment this build is: 'staging' | 'production' | null.
     // Only used to NAME the no-SHA state in the drawer's "Platform
@@ -1084,7 +1087,11 @@ async function start() {
   // to the lock_timeout retry INSIDE migrate() (applySchemaWithLockRetry):
   // this serializes the two colors against each other; that one survives
   // lock contention with pg_dump'ing staging clones.
-  await withMigrationLock(getPool(config), () => migrate(config));
+  // Kubernetes runs the same migration through a bounded pre-deploy Job;
+  // Docker/single-server mode keeps the advisory-lock boot migration.
+  if (process.env.RUN_MIGRATIONS_ON_STARTUP !== 'false') {
+    await withMigrationLock(getPool(config), () => migrate(config));
+  }
   await mobilePush.initialize(config);
   await github.init(config);
   // Configure the collection kill switch even on deployments with no
