@@ -14,6 +14,18 @@
  * three call sites pick it up for free — which is the whole reason this
  * module exists instead of three inlined strings.
  *
+ * #1281 added the one thing that is NOT shared: how the card DISCLOSES the
+ * list. `options()` still returns every route to every surface, but the two
+ * that need a terminal — the CLI lease and importing your own pull request
+ * — render inside an "Are you a developer?" expander rather than in the
+ * flat list, so the routes anyone can follow are the ones a normal user
+ * meets first. `partition()` is that split, and it is derived from the
+ * venue's mechanism rather than from a list of ids kept in step by hand.
+ * The compact banner is deliberately left flat: it is a one-line strip of
+ * affordances next to the refusal, not the screen where the choice is made,
+ * and a disclosure widget inside it would hide routes behind two clicks in
+ * the surface with the least room to explain itself.
+ *
  * Every destination is a real Settings hash route (Settings.SECTIONS in
  * public/js/settings.js declares the same keys), so clicking one is an
  * ordinary hash navigation and the device back gesture returns to the
@@ -247,6 +259,41 @@
       + ' of ' + money(s.limitCents) + ' left today.';
   }
 
+  // ── Who each route is for (#1281) ──────────────────────────────────
+  //
+  // Running out of credits is the moment the venue question finally has to
+  // be asked, and #1281's answer is to route by WHO YOU ARE rather than to
+  // list every mechanism at once. Two of the ways out need a terminal: the
+  // CLI lease (`local`) wants the Usernode CLI installed, and importing a
+  // pull request (`own-tools-pr`) wants a fork, a branch and git. Shown
+  // flat next to "use your Claude plan", they read as the price of
+  // continuing rather than as the specialist routes they are — which is
+  // the discovery problem this card had.
+  //
+  // So the list stays whole (`options()` is unchanged, and every surface
+  // still gets every route) and only the CARD's disclosure changes: the
+  // routes anyone can follow render first, and these two sit behind an
+  // "Are you a developer?" expander.
+  //
+  // Derived from the venue's mechanism, never a hand-kept id list — a
+  // seventh venue in public/js/build-venues.js lands on the correct side
+  // of the expander by declaring what it is, not by being remembered here.
+  //
+  //   lease  → session_agent_leases: the Usernode CLI on your machine
+  //   import → POST /api/apps/:slug/pr-import: your own tools, your own PR
+  var DEVELOPER_MECHANISMS = { lease: true, import: true };
+
+  // Split a route list into the two halves the card discloses separately.
+  // Order within each half is preserved, so the primary group still leads
+  // with whatever `options()` decided leads.
+  function partition(list) {
+    var all = list || [];
+    return {
+      primary: all.filter(function (opt) { return !opt.developer; }),
+      developer: all.filter(function (opt) { return !!opt.developer; }),
+    };
+  }
+
   // The ways out. `hasApiKey` flips the API-key entry: limits.loadUserApiKey
   // treats a decrypt failure as "no key on file", so a user WITH a saved key
   // can still be refused — telling them to "add a key" they already added is
@@ -278,6 +325,7 @@
         : 'Paste a key in Settings → API key and Usernode keeps working exactly as it does now, billed to your Anthropic account instead of your daily allowance.',
       cta: hasApiKey ? 'Check API key' : 'Add API key',
       hash: SETTINGS_HASHES.apiKey,
+      developer: false,
     };
     // Every route out of here except the API key IS a build venue, so the
     // list comes from public/js/build-venues.js in `blocked` mode rather
@@ -312,6 +360,7 @@
         cta: row.cta,
         flow: row.mechanism.flow || null,
         hash: row.mechanism.hash || SETTINGS_HASHES.localTool,
+        developer: !!DEVELOPER_MECHANISMS[row.mechanism.kind],
       };
     };
     // Running out of credits is the moment someone is most willing to try
@@ -334,6 +383,7 @@
         blurb: 'Connect Usernode to Claude or ChatGPT and let Claude Code on the web or Codex do the work on the plan you already pay for.',
         cta: 'Connect Claude or ChatGPT',
         hash: SETTINGS_HASHES.connector,
+        developer: false,
       });
     }
     if (s.verificationRequired) {
@@ -343,6 +393,7 @@
         blurb: 'Connect GitHub or X to prove control of that account. Either one unlocks the same $10/day tier; they do not stack, and Usernode keeps no provider token.',
         cta: 'Connect GitHub or X',
         hash: SETTINGS_HASHES.connector,
+        developer: false,
       });
     }
     return out;
@@ -374,6 +425,47 @@
       : "You're out of today's free AI credits.";
   }
 
+  function optionRowHtml(opt) {
+    return ''
+      + '<div class="dc-credits-option">'
+      + '<div class="dc-credits-option-text">'
+      + '<div class="dc-credits-option-title">' + escapeHtml(opt.title) + '</div>'
+      + '<div class="dc-credits-option-blurb">' + escapeHtml(opt.blurb) + '</div>'
+      + '</div>'
+      + '<button type="button" class="dc-pr-btn dc-credits-go"'
+      + (opt.flow ? ' data-credits-flow="' + escapeHtml(opt.flow) + '"' : '')
+      + ' data-credits-hash="' + escapeHtml(opt.hash) + '">'
+      + escapeHtml(opt.cta) + '</button>'
+      + '</div>';
+  }
+
+  function optionsHtml(list) {
+    return '<div class="dc-credits-options">'
+      + (list || []).map(optionRowHtml).join('')
+      + '</div>';
+  }
+
+  // The "Are you a developer?" half (#1281). A plain <details>, so the
+  // disclosure costs no JavaScript and needs nothing from wire(): a click
+  // on the summary matches neither selector the delegated handler looks
+  // for, so it falls through and the browser toggles the element itself.
+  //
+  // The routes inside are REAL entries of the same list, with the same
+  // `data-credits-hash` / `data-credits-flow` attributes as the rows above
+  // — expanding is the only difference. That is what keeps every surface
+  // honest about offering the same ways out.
+  function developerHtml(list) {
+    if (!list || !list.length) return '';
+    return ''
+      + '<details class="dc-credits-dev" data-credits-dev="1">'
+      + '<summary class="dc-credits-dev-summary">Are you a developer?</summary>'
+      + '<div class="dc-credits-dev-hint">'
+      + 'Build it with the tools on your own computer instead.'
+      + '</div>'
+      + optionsHtml(list)
+      + '</details>';
+  }
+
   // The in-chat card. Rendered INSTEAD of an assistant markdown bubble by
   // DevChat.renderMessages when a message carries `creditsCard`.
   //
@@ -384,19 +476,11 @@
   function cardHtml(state) {
     var s = state || {};
     var list = options(s);
-    var rows = list.map(function (opt) {
-      return ''
-        + '<div class="dc-credits-option">'
-        + '<div class="dc-credits-option-text">'
-        + '<div class="dc-credits-option-title">' + escapeHtml(opt.title) + '</div>'
-        + '<div class="dc-credits-option-blurb">' + escapeHtml(opt.blurb) + '</div>'
-        + '</div>'
-        + '<button type="button" class="dc-pr-btn dc-credits-go"'
-        + (opt.flow ? ' data-credits-flow="' + escapeHtml(opt.flow) + '"' : '')
-        + ' data-credits-hash="' + escapeHtml(opt.hash) + '">'
-        + escapeHtml(opt.cta) + '</button>'
-        + '</div>';
-    }).join('');
+    // #1281: the count still spells the WHOLE list. Three rows and an
+    // expander over "Five ways to keep building right now" is a promise the
+    // card keeps; counting only the visible three would hide that the other
+    // two exist, which is the discovery failure this card was written for.
+    var split = partition(list);
     return ''
       + '<div class="dc-credits-card" data-credits-card="1">'
       + '<div class="dc-credits-card-lead">' + escapeHtml(lead(s)) + '</div>'
@@ -404,7 +488,8 @@
         ? '<div class="dc-credits-card-detail">' + escapeHtml(s.error) + '</div>'
         : '')
       + '<div class="dc-credits-card-intro">' + escapeHtml(introFor(list)) + '</div>'
-      + '<div class="dc-credits-options">' + rows + '</div>'
+      + optionsHtml(split.primary)
+      + developerHtml(split.developer)
       + '</div>';
   }
 
@@ -468,6 +553,7 @@
     meterTone: meterTone,
     lowLead: lowLead,
     options: options,
+    partition: partition,
     introFor: introFor,
     lead: lead,
     cardHtml: cardHtml,

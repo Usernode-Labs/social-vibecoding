@@ -2201,6 +2201,18 @@
       "expectText": "reset at midnight UTC"
     },
     {
+      "name": "Out of credits: the routes anyone can follow render first (#1281)",
+      "path": "/?demo=1#app/usernode-2d5619/dev/sessions/990402",
+      "expectSelector": "#dc-messages .dc-credits-card > .dc-credits-options [data-credits-hash=\"#settings/api-key\"]",
+      "expectText": "Add API key"
+    },
+    {
+      "name": "Out of credits: the terminal routes sit behind \"Are you a developer?\" (#1281)",
+      "path": "/?demo=1#app/usernode-2d5619/dev/sessions/990402",
+      "expectSelector": "#dc-messages .dc-credits-card details[data-credits-dev=\"1\"] > summary",
+      "expectText": "Are you a developer?"
+    },
+    {
       "name": "The composer meter states what is LEFT, not just what is spent (#593)",
       "path": "/?shot=credits-low#app/usernode-2d5619/dev/sessions/990403",
       "expectSelector": "#dc-budget [data-credits-remaining]",

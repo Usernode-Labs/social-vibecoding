@@ -2428,6 +2428,40 @@ html, body {
 }
 .dc-credits-go:hover { background: #6d28d9; }
 
+/* The "Are you a developer?" half of the out-of-credits card (#1281).
+   The routes that need a terminal — the CLI lease and importing your own
+   pull request — live in here rather than in the flat list above, so the
+   ways anyone can follow are the ones met first. A plain <details>: the
+   disclosure is the browser's, not ours. Styled as a quiet footer to the
+   card, never as a fourth option, because it is a question about the
+   reader rather than another thing to click. */
+.dc-credits-dev {
+  margin-top: 10px;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+
+.dc-credits-dev-summary {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.dc-credits-dev-summary:hover { color: var(--text-primary); }
+
+.dc-credits-dev-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 4px;
+  line-height: 1.4;
+}
+
+/* The expanded rows sit flush under the hint rather than repeating the
+   list's own top margin, which would read as a gap the closed state
+   doesn't have. */
+.dc-credits-dev .dc-credits-options { margin-top: 6px; }
+
 /* Banner variant: three small buttons inside the red exhausted banner.
    The row wraps onto its own line under the message on a phone (the
    banner itself is flex-wrap, and the message keeps a min-width), rather
