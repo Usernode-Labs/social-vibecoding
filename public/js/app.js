@@ -470,14 +470,16 @@ const App = {
     // The fragment-scoped `?shot=` states, applied for whatever fragment is
     // live now and re-applied whenever it changes — see _applyRouteShots.
     App._applyRouteShots();
-    // The three that DRIVE something instead of painting a state stay
+    // The four that DRIVE something instead of painting a state stay
     // once-per-document: _applyMenuNavShot clicks a drawer row and
     // _applySettingsBackShot assigns a hash and traverses back out of it, so
     // re-running either on the hashchange it just caused would loop, and
-    // _applyNotifPermissionsShot presents an overlay that would stack.
+    // _applyNotifPermissionsShot / _applyTermsConsentShot present overlays
+    // that would stack.
     App._applyMenuNavShot();
     App._applySettingsBackShot();
     App._applyNotifPermissionsShot();
+    App._applyTermsConsentShot();
     // #1054: a verified session is the first moment a queued submit can
     // actually be filed — /api/feedback is session-gated, so flushing any
     // earlier would only burn 401s. Everything after this is event- and
@@ -697,6 +699,39 @@ const App = {
         const el = document.querySelector('.un-sheet');
         if (el) el.setAttribute('data-un-ghost-click', 'dispatched');
       }, 150);
+    }, 50);
+  },
+
+  // Screenshot-state deep link `?shot=terms-consent` (issue #1297): present
+  // the first-run terms sheet — Accept / Decline framing included — from a
+  // fixed inline payload. The real prompt only ever appears to a signed-in
+  // user whose consent row for the current published version is null, a
+  // state the staging seed deliberately erases for every cloned account
+  // (src/db/migrate.js records blanket accepted consents so the auto-prompt
+  // can't slide over unrelated preview screenshots), so this link is the one
+  // URL-reachable way to see the sheet. Passing `payload` skips the fetch
+  // and no button is pressed, so it is pure UI state with no writes —
+  // ungated for the same reason as ?shot=notif-permissions above. The
+  // trigger module (frontend/src/features/settings/terms-first-run.js)
+  // skips any route carrying a shot param, so the sheet presents exactly
+  // once here.
+  _applyTermsConsentShot() {
+    let shot = null;
+    try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
+    if (shot !== 'terms-consent') return;
+    setTimeout(() => {
+      if (!window.Settings || typeof Settings.showTermsSheet !== 'function') return;
+      Settings.showTermsSheet(null, {
+        firstRun: true,
+        payload: {
+          id: 900500,
+          version: 'staging-demo-v1',
+          title: 'Staging Demo Terms of Service',
+          terms_link: 'https://staging-demo.example.invalid/terms',
+          published_at: '2026-07-15T00:00:00.000Z',
+          consent: { status: null, accepted: false, responded_at: null },
+        },
+      });
     }, 50);
   },
 

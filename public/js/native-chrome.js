@@ -736,6 +736,15 @@
       return NativeChrome._iosPushPermissionStatus();
     },
 
+    // Public accessor for the same reason: the terms first-run trigger
+    // (frontend/src/features/settings/terms-first-run.js, issue #1297)
+    // enforces one first-run overlay per launch — on a launch where the
+    // "Set up your device" sheet was presented, the terms prompt waits
+    // for the next one — and it must not reach into an underscore-private.
+    firstRunSheetPresented() {
+      return NativeChrome._firstRunSheetPresented === true;
+    },
+
     // ── The notification-permission tap ──────────────────────────────
     //
     // Pure, so it is unit-testable without a WebView (same discipline as

@@ -1757,6 +1757,24 @@
       "expectText": "Allow notifications"
     },
     {
+      "name": "First-run terms sheet presents with its title (issue #1297)",
+      "path": "/?shot=terms-consent",
+      "expectSelector": ".un-sheet .un-sheet-body",
+      "expectText": "Staging Demo Terms of Service"
+    },
+    {
+      "name": "First-run terms sheet carries the Accept button (issue #1297)",
+      "path": "/?shot=terms-consent",
+      "expectSelector": ".un-sheet .un-sheet-body button",
+      "expectText": "Accept the terms"
+    },
+    {
+      "name": "First-run terms sheet carries the Decline button (issue #1297)",
+      "path": "/?shot=terms-consent",
+      "expectSelector": ".un-sheet .un-sheet-body button",
+      "expectText": "Decline"
+    },
+    {
       "name": "A settings history traversal routes once, so nothing pre-empts the transition snapshot (#1102)",
       "path": "/?shot=settings-back#settings",
       "expectSelector": "#settings-screen:not(.hidden)[data-settings-route=\"skipped\"] #settings-section-content [data-settings-section=\"api-key\"]:not(.hidden)"
