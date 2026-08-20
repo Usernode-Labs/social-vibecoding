@@ -983,6 +983,12 @@
       "expectText": "committed and pushed to PR #36"
     },
     {
+      "name": "A group-shared spec renders in another viewer's spec panel",
+      "path": "/?shot=spec-viewer#app/usernode-2d5619/dev/sessions/900830",
+      "expectSelector": "#dc-spec-viewer .dc-spec-viewer-tabs",
+      "expectText": "Staging demo shared spec"
+    },
+    {
       "name": "The code-landed breadcrumb offers Propose, not \"Try that again\"",
       "path": "/#app/usernode-2d5619/dev/sessions/900822",
       "expectSelector": "#dc-quick-replies.dc-quick-replies-active .dc-quick-pill",

@@ -101,6 +101,9 @@ async function migrate(config) {
   await seedStagingGroupChatAttachments(pool, config);
   await seedStagingAppFiles(pool);
   await seedStagingSpecViewerSessions(pool, config);
+  // Must run AFTER seedStagingDemoUser — the fixture session is owned by
+  // the demo user so the check viewer exercises the NON-owner spec panel.
+  await seedStagingSharedSpecPanelSession(pool, config);
   await seedStagingDemoProposal(pool, config);
   await seedStagingSpecUserShareFixtures(pool, config);
   await seedStagingHeadlessFixtures(pool, config);
@@ -7646,6 +7649,147 @@ async function seedStagingSpecViewerSessions(pool, config) {
     owner: owner.username,
     total: fixtures.length,
     inserted,
+  });
+}
+
+// NON-owner spec panel fixture: a session owned by staging-demo-user whose
+// spec has an UNSHARED v1 draft, a group-shared v2, and a live spec_md that
+// has moved ahead of v2. The dapp.json check opens it as
+// usernode-capture-admin — an admin, so the session view answers, but a
+// non-owner, so GET /spec takes its shared-visibility arm — and asserts the
+// shared v2 renders (the exact production bug: session 3455's group-shared
+// spec showed "No spec yet" to every viewer but the owner). v1 and the
+// spec_md draft must stay invisible on that screen; their marker strings
+// say so if they ever leak. Fixed id 900830 so the check route is stable
+// across staging rebuilds (the 9008xx convention). chat_sessions /
+// chat_session_messages / chat_session_specs are staging:private, hence
+// the seed. Idempotent via the branch existence check, which also
+// re-asserts the demo-user ownership a tester might have mutated.
+async function seedStagingSharedSpecPanelSession(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: appRows } = await pool.query(
+    'SELECT id FROM apps WHERE slug = $1',
+    [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) {
+    log.warn('db', 'Staging shared-spec-panel fixture skipped: self-app row missing', {
+      slug: config.selfAppSlug,
+    });
+    return;
+  }
+
+  // Owner must be the synthetic demo user, never the check viewer — a
+  // fixture owned by the visitor would exercise the owner path and prove
+  // nothing (the "never seed the visitor" rule).
+  const { rows: demoRows } = await pool.query(
+    'SELECT id FROM users WHERE username = $1', ['staging-demo-user']
+  );
+  const demoUserId = demoRows[0]?.id;
+  if (!demoUserId) {
+    log.warn('db', 'Staging shared-spec-panel fixture skipped: demo user missing');
+    return;
+  }
+
+  const sharedV2 = [
+    '# Staging demo shared spec (v2)',
+    '',
+    'This version was shared to the group — any viewer of this session',
+    'should see it in the spec panel, share buttons and all owner',
+    'affordances hidden.',
+    '',
+    '## User-facing changes',
+    '',
+    '- A viewer who does not own this session still sees this shared spec.',
+    '- The version dropdown lists only the shared versions.',
+    '',
+    '## Technical implementation',
+    '',
+    '- GET /api/sessions/:id/spec takes its shared-visibility arm here.',
+  ].join('\n');
+
+  const privateV1 = [
+    '# Staging demo PRIVATE draft (v1)',
+    '',
+    'Never shared. If a non-owner can read this line the shared-visibility',
+    'gate has leaked an unshared draft.',
+    '',
+    '## User-facing changes',
+    '',
+    '- (private draft)',
+    '',
+    '## Technical implementation',
+    '',
+    '- (private draft)',
+  ].join('\n');
+
+  // The live buffer is AHEAD of the last shared version — the owner-only
+  // shape from the production report. A non-owner must get v2, not this.
+  const draftAhead = sharedV2
+    .replace('(v2)', '(unshared v3 draft)')
+    .replace('This version was shared to the group', 'This revision was NOT shared yet');
+
+  const fixtureBranch = 'staging-fixture/shared-spec-panel';
+  const sessionId = 900830;
+  const { rows: existing } = await pool.query(
+    'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
+    [appId, fixtureBranch]
+  );
+  if (existing.length) {
+    await pool.query(
+      'UPDATE chat_sessions SET user_id = $1 WHERE id = $2',
+      [demoUserId, existing[0].id]
+    );
+  } else {
+    await pool.query(
+      `INSERT INTO chat_sessions
+         (id, app_id, user_id, branch_name, session_title, status, spec_md, created_at)
+       VALUES ($1, $2, $3, $4,
+               '[staging fixture] Staging demo: spec shared to the group', 'paused',
+               $5, NOW() - INTERVAL '2 hours')`,
+      [sessionId, appId, demoUserId, fixtureBranch, draftAhead]
+    );
+
+    const transcript = [
+      ['user', '[staging fixture] Plan the shared-spec change and post it to the group.', {}, 110],
+      ['system', 'Spec drafted', {
+        specPreview: sharedV2.slice(0, 400), specLines: sharedV2.split('\n').length, specVersion: 2,
+      }, 100],
+      ['assistant', '[staging fixture] Spec v2 is in the viewer — I shared it with the group.', {}, 99],
+    ];
+    for (const [role, content, metadata, mins] of transcript) {
+      await pool.query(
+        `INSERT INTO chat_session_messages (session_id, role, content, metadata, created_at)
+         VALUES ($1, $2, $3, $4::jsonb, NOW() - (($5::int) * INTERVAL '1 minute'))`,
+        [sessionId, role, content, JSON.stringify(metadata), mins]
+      );
+    }
+  }
+
+  const specSessionId = existing.length ? existing[0].id : sessionId;
+  await pool.query(
+    `INSERT INTO chat_session_specs (session_id, version, content, built_at)
+     VALUES ($1, 1, $2, NOW() - INTERVAL '105 minutes')
+     ON CONFLICT (session_id, version) DO NOTHING`,
+    [specSessionId, privateV1]
+  );
+  await pool.query(
+    `INSERT INTO chat_session_specs (session_id, version, content, built_at, shared_to_group_at)
+     VALUES ($1, 2, $2, NOW() - INTERVAL '100 minutes', NOW() - INTERVAL '95 minutes')
+     ON CONFLICT (session_id, version) DO NOTHING`,
+    [specSessionId, sharedV2]
+  );
+  // Self-heal the share flag on re-runs — the whole fixture hangs off it.
+  await pool.query(
+    `UPDATE chat_session_specs
+        SET shared_to_group_at = COALESCE(shared_to_group_at, NOW() - INTERVAL '95 minutes')
+      WHERE session_id = $1 AND version = 2`,
+    [specSessionId]
+  );
+
+  log.info('db', 'Staging shared-spec-panel fixture seeded', {
+    appId, sessionId: specSessionId,
   });
 }
 
