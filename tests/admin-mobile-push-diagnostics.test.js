@@ -22,6 +22,7 @@ const islandSource = fs.readFileSync(
 );
 
 test('lookup accepts exact username/email/id text and rejects oversized input', () => {
+  assert.equal(diagnostics.RECENT_REGISTRATION_EVENT_LIMIT, 50);
   assert.equal(diagnostics.normalizeLookup(undefined), null);
   assert.equal(diagnostics.normalizeLookup('  '), null);
   assert.deepEqual(diagnostics.normalizeLookup('  alice  '), {
@@ -91,6 +92,17 @@ function diagnosticPool() {
       if (source.includes('SELECT policy.category')) {
         return { rows: [{ category: 'direct_interactions', enabled: true }] };
       }
+      if (source.includes('FROM mobile_push_registration_events')) {
+        assert.deepEqual(params, [7]);
+        return { rows: [{
+          id: '41', registration_id: '21', environment: 'production',
+          installation_id: '11111111-1111-1111-1111-111111111111',
+          platform: 'ios', permission_status: 'authorized',
+          event_kind: 'provider_invalidated',
+          reason_code: 'messaging/registration-token-not-registered',
+          created_at: '2026-08-11T10:02:00Z',
+        }] };
+      }
       if (source.includes('WITH recent AS')) {
         const base = {
           notification_id: 91, kind: 'mention', read_at: null,
@@ -128,6 +140,22 @@ test('gather correlates one inbox notification with per-platform outcomes', asyn
   assert.equal(result.lookup.found, true);
   assert.equal(result.user.username, 'alice');
   assert.equal(result.notifications.length, 1);
+  assert.deepEqual(result.registrationEvents, [{
+    id: '41',
+    registrationId: '21',
+    environment: 'production',
+    installationId: '11111111-1111-1111-1111-111111111111',
+    platform: 'ios',
+    permissionStatus: 'authorized',
+    eventKind: 'provider_invalidated',
+    reasonCode: 'messaging/registration-token-not-registered',
+    createdAt: '2026-08-11T10:02:00Z',
+  }]);
+  const eventQuery = pool.calls.find(({ sql }) => (
+    sql.includes('FROM mobile_push_registration_events')
+  ));
+  assert.match(eventQuery.sql, /ORDER BY created_at DESC, id DESC/);
+  assert.match(eventQuery.sql, /LIMIT 50/);
   assert.deepEqual(
     result.notifications[0].deliveries.map((row) => [row.platform, row.status]),
     [['ios', 'dead'], ['android', 'sent']]
@@ -142,6 +170,42 @@ test('gather correlates one inbox notification with per-platform outcomes', asyn
       && row.code === 'provider_accepted'
       && row.severity === 'success'
   )));
+});
+
+test('diagnostics do not infer missing historical delivery state from current registrations', () => {
+  const diagnosticsRows = diagnostics.diagnose(
+    [{ platform: 'ios', delivery_eligible: true, permission_status: 'authorized' }],
+    [{ kind: 'mention', deliveries: [] }]
+  );
+  const missing = diagnosticsRows.find((row) => (
+    row.platform === 'ios' && row.area === 'delivery'
+  ));
+  assert.equal(missing.code, 'delivery_missing');
+  assert.match(missing.message, /cannot determine whether one was never created or was later removed/);
+  assert.doesNotMatch(missing.message, /was not eligible|because no eligible/);
+});
+
+test('pending, sending and cancelled delivery copy states only what Social recorded', () => {
+  const notification = (status, errorCode = null) => [{
+    kind: 'mention',
+    deliveries: [{
+      platform: 'ios', status, errorCode, attempts: 0,
+      createdAt: '2026-08-11T10:00:00Z',
+    }],
+  }];
+  const pending = diagnostics.diagnose([], notification('pending'))
+    .find((row) => row.platform === 'ios' && row.area === 'delivery');
+  assert.equal(pending.code, 'provider_retrying');
+  assert.match(pending.message, /queued or waiting for retry/);
+
+  const sending = diagnostics.diagnose([], notification('sending'))
+    .find((row) => row.platform === 'ios' && row.area === 'delivery');
+  assert.match(sending.message, /marked .* as sending; no FCM acceptance is recorded/);
+
+  const cancelled = diagnostics.diagnose([], notification('cancelled', 'sender_interrupted'))
+    .find((row) => row.platform === 'ios' && row.area === 'delivery');
+  assert.match(cancelled.message, /no FCM acceptance is recorded/);
+  assert.doesNotMatch(cancelled.message, /before provider acceptance/);
 });
 
 test('diagnostics queries and UI never expose provider registrations or credentials', () => {
@@ -179,4 +243,12 @@ test('Push delivery is a lifecycle-managed admin section', () => {
     /if \(typeof window !== 'undefined'\) window\.AdminPush = AdminPush;/);
   assert.match(moduleSource, /username, email address or numeric user ID/);
   assert.match(serviceSource, /device presentation is not confirmed/);
+  assert.match(moduleSource, /Recent registration lifecycle/);
+  assert.match(moduleSource, /Short-lived, best-effort debugging history/);
+  assert.match(moduleSource, /missing events do not prove that nothing happened/);
+  assert.match(moduleSource, /FCM acceptance does not confirm device receipt/);
+  assert.match(moduleSource, /No retained delivery row is available/);
+  assert.match(moduleSource, /event\.registrationId/);
+  assert.match(moduleSource, /event\.permissionStatus/);
+  assert.doesNotMatch(moduleSource, /event\.firebaseProjectId|event\.previousPermissionStatus/);
 });

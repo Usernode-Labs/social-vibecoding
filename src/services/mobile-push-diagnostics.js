@@ -2,6 +2,7 @@
 
 const MAX_LOOKUP_LENGTH = 255;
 const RECENT_NOTIFICATION_LIMIT = 30;
+const RECENT_REGISTRATION_EVENT_LIMIT = 50;
 
 class MobilePushDiagnosticsInputError extends Error {
   constructor(message) {
@@ -94,7 +95,7 @@ function registrationDiagnosis(platform, registrations) {
       area: 'registration',
       severity: 'success',
       code: 'registration_active',
-      message: `${label} has ${eligible.length} active, delivery-eligible registration${eligible.length === 1 ? '' : 's'}.`,
+      message: `${label} has ${eligible.length} current registration${eligible.length === 1 ? '' : 's'} with an eligible permission and unexpired Social session.`,
     };
   }
   if (matches.every((row) => !['authorized', 'provisional'].includes(row.permission_status))) {
@@ -128,17 +129,12 @@ function deliveryDiagnosis(platform, registrations, notifications) {
         message: `No recent push-capable inbox activity is available to evaluate for ${label}.`,
       };
     }
-    const hasEligible = registrations.some((row) => (
-      row.platform === platform && row.delivery_eligible === true
-    ));
     return {
       platform,
       area: 'delivery',
       severity: 'warning',
       code: 'delivery_missing',
-      message: hasEligible
-        ? `Recent inbox activity produced no ${label} delivery row; this registration was not eligible when those notifications were inserted.`
-        : `Recent inbox activity produced no ${label} delivery because no eligible registration was available.`,
+      message: `No recent ${label} delivery record is retained. This view cannot determine whether one was never created or was later removed.`,
     };
   }
   const suffix = latest.errorCode ? ` (${latest.errorCode})` : '';
@@ -157,7 +153,7 @@ function deliveryDiagnosis(platform, registrations, notifications) {
         area: 'delivery',
         severity: 'warning',
         code: latest.errorCode || 'provider_retrying',
-        message: `The latest ${label} ${latest.kind} delivery is waiting for retry${suffix}.`,
+        message: `The latest ${label} ${latest.kind} delivery is queued or waiting for retry${suffix}.`,
       };
     case 'sending':
       return {
@@ -165,7 +161,7 @@ function deliveryDiagnosis(platform, registrations, notifications) {
         area: 'delivery',
         severity: 'info',
         code: 'provider_sending',
-        message: `The latest ${label} ${latest.kind} delivery is currently being sent.`,
+        message: `Social marked the latest ${label} ${latest.kind} delivery as sending; no FCM acceptance is recorded.`,
       };
     case 'dead':
       return {
@@ -181,7 +177,7 @@ function deliveryDiagnosis(platform, registrations, notifications) {
         area: 'delivery',
         severity: 'error',
         code: latest.errorCode || 'delivery_cancelled',
-        message: `The latest ${label} ${latest.kind} delivery was cancelled before provider acceptance${suffix}.`,
+        message: `Social marked the latest ${label} ${latest.kind} delivery as cancelled${suffix}; no FCM acceptance is recorded.`,
       };
     default:
       return {
@@ -258,7 +254,7 @@ async function resolveUser(pool, lookup) {
 }
 
 async function loadUser(pool, user) {
-  const [registrations, preferences, notificationRows] = await Promise.all([
+  const [registrations, preferences, notificationRows, registrationEventRows] = await Promise.all([
     pool.query(
       `SELECT id, installation_id, environment, platform, permission_status,
               session_expires_at, last_seen_at, created_at, updated_at,
@@ -316,6 +312,15 @@ async function loadUser(pool, user) {
                  delivery.id ASC`,
       [user.id]
     ),
+    pool.query(
+      `SELECT id, registration_id, environment, installation_id, platform,
+              permission_status, event_kind, reason_code, created_at
+         FROM mobile_push_registration_events
+        WHERE user_id = $1
+        ORDER BY created_at DESC, id DESC
+        LIMIT ${RECENT_REGISTRATION_EVENT_LIMIT}`,
+      [user.id]
+    ),
   ]);
   const notifications = groupNotificationRows(notificationRows.rows);
   return {
@@ -323,6 +328,17 @@ async function loadUser(pool, user) {
     registrations: registrations.rows,
     preferences: preferences.rows,
     notifications,
+    registrationEvents: registrationEventRows.rows.map((row) => ({
+      id: row.id,
+      registrationId: row.registration_id,
+      environment: row.environment,
+      installationId: row.installation_id,
+      platform: row.platform,
+      permissionStatus: row.permission_status,
+      eventKind: row.event_kind,
+      reasonCode: row.reason_code,
+      createdAt: row.created_at,
+    })),
     diagnostics: diagnose(registrations.rows, notifications),
   };
 }
@@ -349,6 +365,7 @@ async function gather(pool, rawLookup) {
 module.exports = {
   MAX_LOOKUP_LENGTH,
   RECENT_NOTIFICATION_LIMIT,
+  RECENT_REGISTRATION_EVENT_LIMIT,
   MobilePushDiagnosticsInputError,
   normalizeLookup,
   groupNotificationRows,

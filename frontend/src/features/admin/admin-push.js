@@ -43,6 +43,10 @@ const AdminPush = (() => {
     }
   }
 
+  function deliveryStatusLabel(status) {
+    return status === 'sent' ? 'FCM accepted' : status;
+  }
+
   function diagnosticClasses(severity) {
     switch (severity) {
       case 'success':
@@ -64,7 +68,7 @@ const AdminPush = (() => {
         <div class="flex items-center justify-between gap-2 flex-wrap">
           <code class="font-mono text-xs">${esc(row.environment)}</code>
           <span class="${row.send_enabled ? AdminUI.badge.success : AdminUI.badge.destructive}">
-            ${row.send_enabled ? 'sending' : 'disabled'}
+            ${row.send_enabled ? 'enabled' : 'disabled'}
           </span>
         </div>
         <dl class="mt-2 space-y-1 text-xs">
@@ -108,7 +112,7 @@ const AdminPush = (() => {
         <div class="${AdminUI.card} p-4">
           <div class="flex items-center justify-between gap-2">
             <span class="font-medium">${label}</span>
-            <span class="${Number(row.eligible) > 0 ? AdminUI.badge.success : AdminUI.badge.warn}">${esc(row.eligible)} eligible</span>
+            <span class="${Number(row.eligible) > 0 ? AdminUI.badge.success : AdminUI.badge.warn}">${esc(row.eligible)} permission/session eligible</span>
           </div>
           <div class="text-2xl font-semibold mt-2">${esc(row.total)}</div>
           <div class="text-xs text-gray-500 mt-1">registrations · last seen ${esc(fmtTime(row.last_seen_at))}</div>
@@ -120,7 +124,7 @@ const AdminPush = (() => {
         <div class="min-w-0">
           <div class="flex items-center gap-2 flex-wrap">
             <span class="font-medium">${esc(row.platform)}</span>
-            <span class="${badge(row.status)}">${esc(row.status)}</span>
+            <span class="${badge(row.status)}">${esc(deliveryStatusLabel(row.status))}</span>
             ${row.last_error_code ? `<code class="font-mono text-xs break-all">${esc(row.last_error_code)}</code>` : ''}
           </div>
           <div class="text-xs text-gray-500 mt-1">last updated ${esc(fmtTime(row.last_updated_at))}</div>
@@ -130,10 +134,10 @@ const AdminPush = (() => {
 
     return `
       <section>
-        <h3 class="${AdminUI.sectionTitle} mb-3">Last 24 hours</h3>
+        <h3 class="${AdminUI.sectionTitle} mb-3">Current registrations</h3>
         <div class="grid gap-3 sm:grid-cols-2">${cards}</div>
         <div class="${AdminUI.card} p-4 mt-3">
-          <div class="font-medium mb-2">Delivery outcomes</div>
+          <div class="font-medium mb-2">Delivery outcomes · last 24 hours</div>
           ${activity ? `<ul>${activity}</ul>` : `<p class="${AdminUI.muted}">No delivery activity recorded.</p>`}
         </div>
       </section>`;
@@ -160,7 +164,7 @@ const AdminPush = (() => {
           <div class="flex items-center gap-2">
             <span class="font-semibold">${esc(row.platform)}</span>
             <span class="${row.delivery_eligible ? AdminUI.badge.success : AdminUI.badge.destructive}">
-              ${row.delivery_eligible ? 'eligible' : 'inactive'}
+              ${row.delivery_eligible ? 'permission/session eligible' : 'inactive'}
             </span>
             <span class="${badge(row.permission_status)}">${esc(row.permission_status)}</span>
           </div>
@@ -176,12 +180,43 @@ const AdminPush = (() => {
       </article>`).join('');
   }
 
+  function renderRegistrationEvents(events) {
+    if (!(events || []).length) {
+      return `<p class="${AdminUI.muted}">No recent registration lifecycle events are available.</p>`;
+    }
+    return events.map((event) => {
+      const registration = event.registrationId == null
+        ? ''
+        : `<div><dt class="inline text-gray-500">Registration: </dt><dd class="inline font-mono">#${esc(event.registrationId)}</dd></div>`;
+      const permission = event.permissionStatus
+        ? `<div><dt class="inline text-gray-500">Permission: </dt><dd class="inline">${esc(event.permissionStatus)}</dd></div>`
+        : '';
+      return `
+        <article class="rounded-lg border border-gray-200 dark:border-gray-800 p-4 text-sm">
+          <div class="flex items-start justify-between gap-3 flex-wrap">
+            <div class="flex items-center gap-2 flex-wrap">
+              <span class="font-semibold">${esc(event.platform || 'unknown')}</span>
+              <span class="${AdminUI.badge.secondary}">${esc(String(event.eventKind || 'unknown').replace(/_/g, ' '))}</span>
+              ${event.reasonCode ? `<code class="font-mono text-xs break-all">${esc(event.reasonCode)}</code>` : ''}
+            </div>
+            <span class="text-xs text-gray-500">${esc(fmtTime(event.createdAt))}</span>
+          </div>
+          <dl class="mt-2 grid gap-1 text-xs">
+            <div><dt class="inline text-gray-500">Environment: </dt><dd class="inline font-mono">${esc(event.environment || 'unknown')}</dd></div>
+            <div><dt class="inline text-gray-500">Installation: </dt><dd class="inline font-mono break-all">${esc(event.installationId || 'unknown')}</dd></div>
+            ${registration}
+            ${permission}
+          </dl>
+        </article>`;
+    }).join('');
+  }
+
   function renderDelivery(delivery) {
     return `
       <div class="rounded-lg bg-gray-50 dark:bg-gray-800/60 border border-gray-200 dark:border-gray-800 p-3 text-xs">
         <div class="flex items-center gap-2 flex-wrap">
           <span class="font-semibold">${esc(delivery.platform)}</span>
-          <span class="${badge(delivery.status)}">${esc(delivery.status)}</span>
+          <span class="${badge(delivery.status)}">${esc(deliveryStatusLabel(delivery.status))}</span>
           <span>${esc(delivery.attempts)} attempt${Number(delivery.attempts) === 1 ? '' : 's'}</span>
           ${delivery.errorCode ? `<code class="font-mono break-all">${esc(delivery.errorCode)}</code>` : ''}
         </div>
@@ -189,7 +224,7 @@ const AdminPush = (() => {
           <span>Environment <code class="font-mono">${esc(delivery.environment)}</code></span>
           <span>Installation <code class="font-mono break-all">${esc(delivery.installationId)}</code></span>
           <span>Created ${esc(fmtTime(delivery.createdAt))}</span>
-          <span>Sent ${esc(fmtTime(delivery.sentAt))}</span>
+          ${delivery.sentAt ? `<span>FCM accepted ${esc(fmtTime(delivery.sentAt))}</span>` : ''}
           <span>Updated ${esc(fmtTime(delivery.updatedAt))}</span>
         </div>
       </div>`;
@@ -206,7 +241,7 @@ const AdminPush = (() => {
             <div class="flex items-center gap-2 flex-wrap">
               <span class="font-semibold">${esc(notification.kind)}</span>
               <span class="${notification.pushEnabled ? AdminUI.badge.success : AdminUI.badge.warn}">
-                ${notification.pushEnabled ? 'push enabled' : 'push disabled'}
+                current preference: ${notification.pushEnabled ? 'on' : 'off'}
               </span>
               <span class="${AdminUI.badge.secondary}">${esc(notification.category)}</span>
             </div>
@@ -217,7 +252,7 @@ const AdminPush = (() => {
         <div class="grid gap-2 mt-3">
           ${notification.deliveries.length
     ? notification.deliveries.map(renderDelivery).join('')
-    : '<div class="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 p-3 text-sm text-amber-900 dark:text-amber-200">No delivery row was created for this notification.</div>'}
+    : '<div class="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 p-3 text-sm text-amber-900 dark:text-amber-200">No retained delivery row is available for this notification.</div>'}
         </div>
       </article>`).join('');
   }
@@ -252,6 +287,11 @@ const AdminPush = (() => {
         <div>
           <h3 class="${AdminUI.sectionTitle} mb-3">Current registrations</h3>
           <div class="grid gap-3 lg:grid-cols-2">${renderRegistrations(data.registrations)}</div>
+        </div>
+        <div>
+          <h3 class="${AdminUI.sectionTitle} mb-1">Recent registration lifecycle</h3>
+          <p class="${AdminUI.muted} mb-3">Short-lived, best-effort debugging history. It may be incomplete, and missing events do not prove that nothing happened.</p>
+          <div class="grid gap-3 lg:grid-cols-2">${renderRegistrationEvents(data.registrationEvents || [])}</div>
         </div>
         <div>
           <h3 class="${AdminUI.sectionTitle} mb-3">Recent push-capable inbox activity</h3>
@@ -302,7 +342,7 @@ const AdminPush = (() => {
         <div class="space-y-6">
           <div>
             <h2 class="text-2xl font-semibold text-gray-900 dark:text-gray-100">Push delivery</h2>
-            <p class="${AdminUI.muted} mt-1">Trace Social inbox activity from device registration through Firebase provider acceptance. Provider tokens and credentials are never shown.</p>
+            <p class="${AdminUI.muted} mt-1">Inspect current registrations, recent delivery records and short-lived lifecycle events. FCM acceptance does not confirm device receipt or notification presentation. Provider tokens and credentials are never shown.</p>
           </div>
           <div id="admin-push-overview" class="grid gap-4"></div>
           <section class="${AdminUI.card} p-5">
