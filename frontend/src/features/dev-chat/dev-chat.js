@@ -1717,6 +1717,37 @@ const DevChat = {
     DevChat._devFlowEnsureStatus(true);
   },
 
+  // The inverse of _devFlowFromCredits: the user has chosen to build HERE,
+  // so the walkthrough this tab is holding stops applying (#1348 follow-up).
+  //
+  // Clearing the session's build_venue column is NOT enough, and that is
+  // the bug this exists for. _devFlowTarget() answers from this in-memory
+  // object BEFORE it reads the column, so a tab that has ever opened the
+  // web launchpad keeps answering "wizard" — the venue row ticked
+  // On-Platform, the backend switched underneath, and the screen went on
+  // rendering the Claude/Codex launchpad.
+  //
+  // `dismissed` is the lever rather than a cleared `mode`, because
+  // _devFlowTarget checks it FIRST and so short-circuits all three ways a
+  // launchpad comes back: this in-memory wizard, the session's stored
+  // venue, and a saved dev_flow_preference on an untouched session. Only
+  // the first is being cleared here — the other two are still true, and
+  // without `dismissed` the very next paint would answer "wizard" from one
+  // of them and put the launchpad straight back.
+  //
+  // It is per-tab and per-session by construction: _resetDevFlow() rebuilds
+  // this object when the session changes, and picking a web venue again
+  // sets dismissed back to false.
+  _devFlowReturnToChat() {
+    const flow = DevChat._devFlow;
+    flow.mode = null;
+    flow.agent = null;
+    flow.targetId = null;
+    flow.error = null;
+    flow.notice = null;
+    flow.dismissed = true;
+  },
+
   // Same wiring for every credits CARD currently in the transcript.
   // Called after each renderMessages; CreditOptions.wire is idempotent
   // per node, so re-running it never stacks handlers.
@@ -1931,6 +1962,15 @@ const DevChat = {
           // launchpad on screen after picking On-Platform.
           if (DevChat.currentSession) DevChat.currentSession.build_venue = null;
           DevChat._persistBuildVenue(null);
+          // …and the in-memory walkthrough, which outranks the column.
+          DevChat._devFlowReturnToChat();
+          // Repaint NOW rather than leaving it to the switch below: that
+          // one repaints only after its round trip, and only if the round
+          // trip succeeds. The choice has already been made locally, so the
+          // composer should come back on the click — a network failure can
+          // cost the backend switch, but it must not strand the user on a
+          // launchpad they have left.
+          DevChat.renderChatView();
           // No backend named: the server applies whichever in-chat agent
           // this user ran last, and says so if that preference no longer
           // validates. The coarse row asks "on the platform"; which of the
