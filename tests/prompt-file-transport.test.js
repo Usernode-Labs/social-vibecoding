@@ -23,6 +23,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -31,11 +32,13 @@ const { spawnSync } = require('node:child_process');
 const docker = require('../src/services/docker');
 const worker = require('../src/services/worker');
 const {
+  buildCodingAgentBuildGuidance,
   buildCodingAgentConventionsContext,
   buildCodingAgentSpecContext,
   canReuseHostedClaudeScoutSpec,
   describeTurnError,
 } = require('../src/routes/sessions');
+const { IN_LOOP_BROWSER_GUIDANCE } = require('../src/services/in-loop-browser');
 
 const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 
@@ -62,6 +65,55 @@ test('hosted Claude receives conventions once as system context, while unchanged
   const codex = buildCodingAgentConventionsContext({ isCodexSession: true, conventions });
   assert.equal(codex.systemPrompt, null);
   assert.match(codex.promptBlock, /SENTINEL platform rule/);
+});
+
+test('hosted Claude references system build guidance while local and Codex prompts stay byte-identical', () => {
+  const hosted = buildCodingAgentBuildGuidance({ authoritativeSystemContext: true });
+  const local = buildCodingAgentBuildGuidance();
+  const codex = buildCodingAgentBuildGuidance();
+  const hostedText = `${hosted.browserGuidance}\n${hosted.testingGuidance}`;
+  const localText = `${local.browserGuidance}\n${local.testingGuidance}`;
+
+  assert.deepEqual(codex, local, 'local Claude and Codex retain the same inline block');
+  assert.equal(local.browserGuidance, IN_LOOP_BROWSER_GUIDANCE);
+  assert.equal(
+    crypto.createHash('sha256').update(localText).digest('hex'),
+    '3782d7e71930a9ab074e624f99a1ccfc6b13fb7148aaaeed0e8a0da902851655',
+    'the unchanged backends retain their exact pre-optimization guidance',
+  );
+
+  assert.match(hostedText, /authoritative system instructions/);
+  assert.match(hostedText, /usernode-run-checks --changed/);
+  assert.match(hostedText, /==== TESTING ====/);
+  assert.match(hostedText, /one to three relative "path:" lines/);
+  assert.match(hostedText, /The block must be LAST/);
+  assert.doesNotMatch(hostedText, /A BLANK or empty-looking page/);
+  assert.doesNotMatch(hostedText, /Standalone server pages/);
+  assert.ok(
+    localText.length - hostedText.length >= 7000,
+    `hosted guidance should remove at least 7,000 repeated characters (saved ${localText.length - hostedText.length})`,
+  );
+
+  const conventions = read('src/prompts/app-conventions.md');
+  assert.match(conventions, /## In-loop browser \(build turns\)/);
+  assert.match(conventions, /## Proposal tests/);
+  assert.match(conventions, /## Staging mock data/);
+  assert.match(conventions, /### Make the changed screen URL-reachable/);
+
+  for (const options of [{}, { runLocally: true }, { isCodexSession: true }]) {
+    const context = buildCodingAgentConventionsContext({
+      ...options,
+      conventions: 'SENTINEL platform rule',
+    });
+    const guidance = buildCodingAgentBuildGuidance({
+      authoritativeSystemContext: Boolean(context.systemPrompt),
+    });
+    assert.equal(
+      context.systemPrompt !== null,
+      guidance.browserGuidance !== IN_LOOP_BROWSER_GUIDANCE,
+      'compact guidance is used exactly when the authoritative handbook is system context',
+    );
+  }
 });
 
 test('spec context keeps a complete user-level fallback and a content-free resumed reference', () => {

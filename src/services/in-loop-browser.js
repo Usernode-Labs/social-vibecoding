@@ -5,13 +5,14 @@
 // The worker image ships Playwright + a pinned Chromium and the Playwright
 // MCP server (see worker/Dockerfile), wired into `claude` for MODE=build
 // only (see worker/run-cc.sh + worker/worker-run.sh). This module is the
-// JS-side source of truth for two things the host owns:
+// JS-side source of truth for three things the host owns:
 //
-//   1. IN_LOOP_BROWSER_GUIDANCE — the prompt block injected into the build
-//      turn's INSTRUCTIONS (src/routes/sessions.js). It offers the browser
-//      as a tool the agent MAY use at its discretion for user-visible
-//      changes — NOT a mandatory gate on every turn.
-//   2. browserEnvForMode(mode) — the INLOOP_* env the agent uses to boot
+//   1. IN_LOOP_BROWSER_GUIDANCE — the complete inline prompt block used by
+//      local Claude and Codex/OpenRouter builds.
+//   2. HOSTED_CLAUDE_IN_LOOP_BROWSER_GUIDANCE — a short build-turn reminder
+//      for hosted Claude, whose required system handbook already contains the
+//      complete browser, proposal-check, staging-data, and screenshot rules.
+//   3. browserEnvForMode(mode) — the INLOOP_* env the agent uses to boot
 //      the edited app locally (port, USERNODE_ENV, throwaway DB pointer).
 //      Build-only; scout (read-only) and sync (bookkeeping) get nothing.
 //
@@ -128,10 +129,27 @@ const IN_LOOP_BROWSER_GUIDANCE = `- OPTIONAL in-loop browser (encouraged, NOT re
     local DB lacks data that REAL staging seeds is worth double-checking
     against the seed conventions before "fixing".`;
 
+// Hosted Claude builds fail closed unless the authoritative platform handbook
+// is supplied through --append-system-prompt-file. Repeating the handbook's
+// full browser/checks summary in every user turn therefore adds history but no
+// information. Keep a high-salience pointer plus the runner syntax that is not
+// currently spelled out in the handbook. Local Claude and Codex/OpenRouter do
+// not have this independently verified system-context transport and continue
+// to receive IN_LOOP_BROWSER_GUIDANCE unchanged.
+const HOSTED_CLAUDE_IN_LOOP_BROWSER_GUIDANCE = `- Follow the complete "In-loop browser (build turns)", "Proposal tests",
+  "Staging mock data", and screenshot-state rules supplied in the authoritative
+  system instructions. The browser remains optional for ordinary work and is
+  expected when verifying a screenshot-state deep link added this turn.
+  - If you changed \`dapp.json\` tests or a screen covered by one, boot the app
+    as described there and run \`usernode-run-checks --changed\`. Use
+    \`--filter <substr>\` to narrow by name/path; no flags runs the full declared
+    suite. \`npm test\` does not run these proposal checks.`;
+
 module.exports = {
   INLOOP_PORT,
   INLOOP_DATABASE_URL,
   browserToolingEnabledForMode,
   browserEnvForMode,
   IN_LOOP_BROWSER_GUIDANCE,
+  HOSTED_CLAUDE_IN_LOOP_BROWSER_GUIDANCE,
 };
