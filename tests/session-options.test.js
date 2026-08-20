@@ -364,11 +364,16 @@ test('both screenshot states are declared checks', () => {
 test('all three hand-off states have a declared check (#1071)', () => {
   // One fixture per state, because the difference is entirely in the copy
   // and no single session can show three of them.
+  // #1348 coarsened the row's NOUN — one "Claude or Codex WebUI" answer
+  // standing for both vendors, which the launchpad then picks between — but
+  // the verb in front of it is the one thing that had to survive: it is
+  // where a phone user reads whether this continues their work or starts
+  // fresh, and a tooltip cannot say it on a touch action sheet.
   const expected = [
-    ['990405', 'Continue this session with Claude Code on the web'],
-    ['990407', 'Continue this session with Claude Code on the web'],
-    ['990406', 'Continue this proposal with Claude Code on the web'],
-    ['990408', 'Start new work with Claude Code on the web'],
+    ['990405', 'Continue this session with Claude or Codex WebUI'],
+    ['990407', 'Continue this session with Claude or Codex WebUI'],
+    ['990406', 'Continue this proposal with Claude or Codex WebUI'],
+    ['990408', 'Start new work with Claude or Codex WebUI'],
   ];
   for (const [sessionId, text] of expected) {
     assert.ok(

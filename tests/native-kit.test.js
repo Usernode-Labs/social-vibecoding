@@ -1623,3 +1623,20 @@ test('the conventions document names exactly the icons the kit ships', () => {
     'the documented icon names and the kit registry have drifted',
   );
 });
+
+test('an icon row lets its label wrap, exactly as a bare label always did', () => {
+  // A menu row before icons existed was a text node in a block button, so a
+  // long label ran to a second line. Wrapping the label in a span to sit
+  // beside an icon is the moment that could silently become an ellipsis —
+  // and it would hide the end of every long row on the platform, on the
+  // rows that need reading most. `min-width: 0` is what lets a flex child
+  // wrap rather than push the icon out.
+  const at = NATIVE_CSS.indexOf('.un-item-label {');
+  assert.ok(at !== -1, '.un-item-label must be styled');
+  const rule = NATIVE_CSS.slice(at, NATIVE_CSS.indexOf('}', at));
+  assert.match(rule, /min-width:\s*0/);
+  assert.doesNotMatch(rule, /white-space:\s*nowrap/,
+    'a menu label must keep wrapping');
+  assert.doesNotMatch(rule, /text-overflow:\s*ellipsis/,
+    'a menu label must not be truncated');
+});

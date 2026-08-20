@@ -498,7 +498,9 @@ test('the sheet asks one coarse question, four rows, no headings (#1348)', async
   assert.equal(items.length, 4, `four choices, got ${items.map((i) => i.label).join(' / ')}`);
   assert.deepEqual(items.map((i) => i.label.replace(' ✓', '')), [
     'On-Platform',
-    'Claude or Codex WebUI',
+    // The web row carries #1071's target verb; the other three are bare
+    // answers to the sheet's question. See the verb test below.
+    'Continue this session with Claude or Codex WebUI',
     'Your Own Developer Tooling',
     'Local CLI Bridge',
   ]);
@@ -655,5 +657,42 @@ test('with no kit the sheet resolves null rather than throwing', async () => {
     assert.equal(await BV.open({ state: OPEN }), null);
   } finally {
     delete global.window;
+  }
+});
+
+test('the web row keeps its target verb through the recut (#1071/#1348)', () => {
+  // The consequence sentence is a tooltip, and a touch action sheet has no
+  // tooltips — so the label is the ONLY place a phone user learns whether
+  // this hand-off continues their work or starts something new. Coarsening
+  // the sheet must not quietly drop that.
+  const web = (state) => BV.choicesFor(state).find((r) => r.id === 'web-agent').label;
+  const base = { ...OPEN, mode: 'switch', hasBranch: true, sessionId: 7 };
+  assert.equal(web({ ...base, sessionStatus: 'active' }),
+    'Continue this session with Claude or Codex WebUI');
+  assert.equal(web({ ...base, sessionStatus: 'paused' }),
+    'Continue this session with Claude or Codex WebUI');
+  assert.equal(web({ ...base, sessionStatus: 'promoted' }),
+    'Continue this proposal with Claude or Codex WebUI');
+  assert.equal(web({ ...base, sessionStatus: 'archived', hasBranch: false }),
+    'Start new work with Claude or Codex WebUI');
+});
+
+test('the verb is dropped where it would misread', () => {
+  const web = (state) => BV.choicesFor(state).find((r) => r.id === 'web-agent').label;
+  // The row you are already in confirms; it does not instruct.
+  assert.equal(
+    web({ ...OPEN, mode: 'switch', current: 'web-claude-code', sessionStatus: 'active' }),
+    'Claude or Codex WebUI',
+  );
+  // And outside a switch there is no session to continue.
+  assert.equal(web({ ...OPEN, mode: 'blocked', sessionStatus: 'active' }),
+    'Claude or Codex WebUI');
+});
+
+test('only the web row is verbed — the rest answer the question plainly', () => {
+  const rows = BV.choicesFor({ ...OPEN, mode: 'switch', sessionStatus: 'active', hasBranch: true });
+  for (const row of rows.filter((r) => r.id !== 'web-agent')) {
+    assert.doesNotMatch(row.label, /^(Continue|Start new work|Move to)\b/,
+      `${row.id} should read as a bare answer, got "${row.label}"`);
   }
 });

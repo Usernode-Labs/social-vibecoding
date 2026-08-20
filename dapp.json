@@ -2433,22 +2433,22 @@
     {
       "name": "The venue sheet hands this session's own code to the web agent (#1071)",
       "path": "/?demo=1&shot=venue-sheet#app/usernode-2d5619/dev/sessions/990405",
-      "expectText": "Continue this session with Claude Code on the web"
+      "expectText": "Continue this session with Claude or Codex WebUI"
     },
     {
       "name": "A paused session is still continuable on the web (#1071)",
       "path": "/?demo=1&shot=venue-sheet#app/usernode-2d5619/dev/sessions/990407",
-      "expectText": "Continue this session with Claude Code on the web"
+      "expectText": "Continue this session with Claude or Codex WebUI"
     },
     {
       "name": "A promoted proposal is continued rather than restarted (#1071)",
       "path": "/?demo=1&shot=venue-sheet#app/usernode-2d5619/dev/sessions/990406",
-      "expectText": "Continue this proposal with Claude Code on the web"
+      "expectText": "Continue this proposal with Claude or Codex WebUI"
     },
     {
       "name": "An archived session starts new work instead of resurrecting itself (#1071)",
       "path": "/?demo=1&shot=venue-sheet#app/usernode-2d5619/dev/sessions/990408",
-      "expectText": "Start new work with Claude Code on the web"
+      "expectText": "Start new work with Claude or Codex WebUI"
     },
     {
       "name": "Session options name the key already on file (#1055)",
@@ -2467,10 +2467,10 @@
       "expectText": "Change how this is built"
     },
     {
-      "name": "The venue sheet keeps its group headings on touch, where grouping matters most (#1086)",
+      "name": "All four venue choices reach the touch action sheet, icons and all (#1348)",
       "path": "/?demo=1&shot=venue-sheet&un-platform=ios#app/usernode-2d5619/dev/sessions/990405",
-      "expectSelector": ".un-action-sheet .un-action-card .un-action-btn",
-      "expectText": "— Somewhere else —"
+      "expectSelector": ".un-action-sheet .un-action-card .un-action-btn.un-has-icon > svg.un-item-icon + .un-item-label",
+      "expectText": "Your Own Developer Tooling"
     },
     {
       "name": "Native-iOS performance scope activates from a URL (#787)",

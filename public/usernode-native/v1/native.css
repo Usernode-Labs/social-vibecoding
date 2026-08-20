@@ -789,12 +789,13 @@ html.un-kb .un-action-sheet {
 .un-item-icon-empty {
   opacity: 0;
 }
-/* The label is the half that gives way when a menu is narrow. */
+/* The label WRAPS — it does not truncate. A menu row before icons existed
+   was a bare text node in a block button, so a long label has always run to
+   a second line, and an ellipsis here would newly hide the end of every long
+   row on the platform. `min-width: 0` is what lets it wrap inside the flex
+   row instead of forcing the icon out. */
 .un-item-label {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 /* ── Anchored popover / dropdown menu ──────────────────────────────────
