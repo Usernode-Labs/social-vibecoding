@@ -330,3 +330,24 @@ test('dapp.json points at the credits indicator and the warning', () => {
   assert.ok(named.some((t) => /dc-credits-banner \[data-credits-reset\]/.test(t.expectSelector || '')),
     'and the exhausted banner’s reset statement');
 });
+
+test('?shot=credits-exhausted reaches the refusal state (#1348)', () => {
+  // The two-door bar IS that state's whole interface now, so it needs a
+  // route the checks and the vote screenshots can open without a reviewer
+  // burning a real daily allowance.
+  const { DevChat } = makeDevChat({ search: '?shot=credits-exhausted' });
+  const fixture = DevChat._shotCreditsLowBudget();
+  assert.ok(fixture, 'the shot answers with a fixture budget');
+  assert.equal(fixture.spentCents, fixture.limitCents, 'spent meets the cap');
+  assert.equal(fixture.remainingCents, 0);
+  // The low shot is still the low shot — one fixture shape, two states.
+  const low = makeDevChat({ search: '?shot=credits-low' }).DevChat._shotCreditsLowBudget();
+  assert.ok(low.spentCents < low.limitCents, 'the warning is not the refusal');
+  // And the exhausted fixture actually trips the banner.
+  DevChat.budget = fixture;
+  assert.equal(DevChat._creditsExhausted(), true);
+  const html = DevChat._renderCreditsBannerHtml();
+  assert.match(html, /Add API key/);
+  assert.match(html, /data-credits-venue="1"/);
+  assert.equal((html.match(/<button/g) || []).length, 2);
+});

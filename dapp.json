@@ -2242,6 +2242,16 @@
       "expectText": "Connect your agent to Usernode"
     },
     {
+      "name": "The launchpad is pinned above the transcript, not in the composer bar (#1348)",
+      "path": "/?shot=launchpad&venue=own-tools-pr#app/usernode-2d5619/dev/sessions/990401",
+      "expectSelector": "#dc-tab-chat > #dc-launchpad-slot + #dc-messages"
+    },
+    {
+      "name": "A web hand-off launchpad is pinned above the transcript too (#1348)",
+      "path": "/?shot=launchpad&venue=web-codex#app/usernode-2d5619/dev/sessions/990401",
+      "expectSelector": "#dc-tab-chat > #dc-launchpad-slot + #dc-messages"
+    },
+    {
       "name": "Own-tools launchpad carries the copyable \"tell your agent\" block (#1281)",
       "path": "/?shot=launchpad&venue=own-tools-pr#app/usernode-2d5619/dev/sessions/990401",
       "expectSelector": "#dc-launchpad-slot [data-launchpad-copy=\"prefill\"]",
@@ -2253,10 +2263,10 @@
       "expectSelector": "#dc-composer-controls[hidden] #dc-form"
     },
     {
-      "name": "The venue line stays visible in a launchpad — it is the way back (#1281)",
+      "name": "The venue dropdown stays visible in a launchpad — it is the way back (#1281)",
       "path": "/?shot=launchpad&venue=own-tools-pr#app/usernode-2d5619/dev/sessions/990401",
-      "expectSelector": "#dc-venue-slot [data-venue-change]",
-      "expectText": "Change how this is built"
+      "expectSelector": "#dc-session-header #dc-venue-select[data-venue-change]",
+      "expectText": "Your computer · your own tools"
     },
     {
       "name": "Web hand-off launchpad offers the Claude / ChatGPT toggle (#1281)",
@@ -2342,19 +2352,19 @@
     {
       "name": "Every session states the venue it is building in, unasked (#1086)",
       "path": "/#app/usernode-2d5619/dev/sessions/990403",
-      "expectSelector": "#dc-venue-slot [data-venue-line=\"usernode-claude\"] .dc-venue-name",
-      "expectText": "Building in"
+      "expectSelector": "#dc-venue-select[data-venue-current=\"usernode-claude\"] .dc-venue-name",
+      "expectText": "Usernode · Claude"
     },
     {
-      "name": "The venue line carries the only control that changes it (#1086)",
+      "name": "The venue dropdown sits in the session header, top right (#1348)",
       "path": "/#app/usernode-2d5619/dev/sessions/990403",
-      "expectSelector": "#dc-venue-slot .dc-venue-line button.dc-venue-change[data-venue-change]",
-      "expectText": "Change how this is built"
+      "expectSelector": "#dc-session-header > button#dc-venue-select[data-venue-change][aria-haspopup=\"menu\"]:last-child",
+      "expectText": "Usernode · Claude"
     },
     {
       "name": "A pinned OpenRouter session says so, and shows its model (#1086)",
       "path": "/#app/usernode-2d5619/dev/sessions/990409",
-      "expectSelector": "#dc-tab-chat:has(#dc-venue-slot [data-venue-line=\"usernode-openrouter\"]) #dc-venue-detail #dc-openrouter-model-change",
+      "expectSelector": "body:has(#dc-venue-select[data-venue-current=\"usernode-openrouter\"]) #dc-tab-chat #dc-venue-detail #dc-openrouter-model-change",
       "expectText": "openai/gpt-5.3-codex"
     },
     {
@@ -2364,25 +2374,31 @@
       "expectText": "this deployment has it turned off"
     },
     {
-      "name": "The change control opens one sheet with both venue groups (#1086)",
+      "name": "The header dropdown opens the one venue sheet (#1086)",
       "path": "/?demo=1&shot=venue-sheet#app/usernode-2d5619/dev/sessions/990403",
       "expectSelector": ".un-popover .un-popover-item, .un-popover [role=\"menuitem\"]",
-      "expectText": "Where should the rest of this be built?"
+      "expectText": "Where do you want to work on this?"
     },
     {
-      "name": "The sheet names the in-chat group and ticks the current venue (#1086)",
+      "name": "The sheet asks where you want to work, and ticks where you are (#1348)",
       "path": "/?demo=1&shot=venue-sheet#app/usernode-2d5619/dev/sessions/990403",
-      "expectText": "— In this chat —"
+      "expectText": "Where do you want to work on this?"
     },
     {
-      "name": "The sheet's other group is the three places that are not this chat (#1086)",
+      "name": "The coarse sheet leads with the row that keeps this chat (#1348)",
       "path": "/?demo=1&shot=venue-sheet#app/usernode-2d5619/dev/sessions/990403",
-      "expectText": "— Somewhere else —"
+      "expectSelector": ".un-popover [role=\"menuitem\"]:first-of-type .un-item-label, .un-action-sheet .un-action-btn:first-of-type .un-item-label",
+      "expectText": "On-Platform"
     },
     {
-      "name": "Your own tools are offered as a venue, with no chat promised (#1086)",
+      "name": "Every row in the sheet carries a kit icon (#1348)",
       "path": "/?demo=1&shot=venue-sheet#app/usernode-2d5619/dev/sessions/990403",
-      "expectText": "Your computer · your own tools"
+      "expectSelector": ".un-popover-item.un-has-icon > svg.un-item-icon + .un-item-label, .un-action-btn.un-has-icon > svg.un-item-icon + .un-item-label"
+    },
+    {
+      "name": "Your own developer tooling is one of the four answers (#1348)",
+      "path": "/?demo=1&shot=venue-sheet#app/usernode-2d5619/dev/sessions/990403",
+      "expectText": "Your Own Developer Tooling"
     },
     {
       "name": "Choosing Claude Code opens a five-step walkthrough with one step live (#1049)",
@@ -2427,22 +2443,30 @@
     {
       "name": "The venue sheet hands this session's own code to the web agent (#1071)",
       "path": "/?demo=1&shot=venue-sheet#app/usernode-2d5619/dev/sessions/990405",
-      "expectText": "Continue this session with Claude Code on the web"
+      "expectSelector": "[role=\"menuitem\"][title*=\"pushes its work back onto this session\"]",
+      "expectText": "Claude or Codex WebUI"
     },
     {
       "name": "A paused session is still continuable on the web (#1071)",
       "path": "/?demo=1&shot=venue-sheet#app/usernode-2d5619/dev/sessions/990407",
-      "expectText": "Continue this session with Claude Code on the web"
+      "expectSelector": "[role=\"menuitem\"][title*=\"pushes its work back onto this session\"]",
+      "expectText": "Claude or Codex WebUI"
     },
     {
       "name": "A promoted proposal is continued rather than restarted (#1071)",
       "path": "/?demo=1&shot=venue-sheet#app/usernode-2d5619/dev/sessions/990406",
-      "expectText": "Continue this proposal with Claude Code on the web"
+      "expectSelector": "[role=\"menuitem\"][title*=\"pushes back onto the same proposal\"]"
     },
     {
       "name": "An archived session starts new work instead of resurrecting itself (#1071)",
       "path": "/?demo=1&shot=venue-sheet#app/usernode-2d5619/dev/sessions/990408",
-      "expectText": "Start new work with Claude Code on the web"
+      "expectSelector": "[role=\"menuitem\"][title*=\"comes back as its own proposal\"]"
+    },
+    {
+      "name": "The out-of-credits bar offers two doors, not one per venue (#1348)",
+      "path": "/?shot=credits-exhausted#app/usernode-2d5619/dev/sessions/990405",
+      "expectSelector": "#dc-credits-banner .dc-credits-banner-actions > button#dc-credits-add-key + button[data-credits-venue=\"1\"]:last-child",
+      "expectText": "Change session type"
     },
     {
       "name": "Session options name the key already on file (#1055)",
@@ -2461,10 +2485,10 @@
       "expectText": "Change how this is built"
     },
     {
-      "name": "The venue sheet keeps its group headings on touch, where grouping matters most (#1086)",
+      "name": "All four venue choices reach the touch action sheet, icons and all (#1348)",
       "path": "/?demo=1&shot=venue-sheet&un-platform=ios#app/usernode-2d5619/dev/sessions/990405",
-      "expectSelector": ".un-action-sheet .un-action-card .un-action-btn",
-      "expectText": "— Somewhere else —"
+      "expectSelector": ".un-action-sheet .un-action-card .un-action-btn.un-has-icon > svg.un-item-icon + .un-item-label",
+      "expectText": "Your Own Developer Tooling"
     },
     {
       "name": "Native-iOS performance scope activates from a URL (#787)",

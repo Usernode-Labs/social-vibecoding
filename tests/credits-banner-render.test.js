@@ -91,21 +91,23 @@ const budget = (over) => ({
   ...over,
 });
 
-test('allowance spent + no key → banner offers all three ways to keep going', () => {
+test('allowance spent + no key → banner offers the two ways out (#1348)', () => {
   const { DevChat } = makeDevChat();
   DevChat.budget = budget({ spentCents: 2500 });
   assert.equal(DevChat._creditsExhausted(), true);
   const html = DevChat._renderCreditsBannerHtml();
   assert.match(html, /dc-credits-banner/, 'banner element present');
   assert.match(html, /free AI credits/, 'names the actual problem');
-  // BYOK is no longer the only escape hatch: a coding tool on the user's
-  // own machine and a connected Claude.ai / ChatGPT subscription both
-  // bypass the allowance too, so the banner offers all three.
+  // Two doors, not one per venue: pay for it yourself, or build it
+  // somewhere else. The bar used to carry a button for every route, which
+  // made the strip a menu you had to read to escape a refusal. Which
+  // "somewhere else" is the venue sheet's question now.
   assert.match(html, /dc-credits-add-key/, 'the API-key CTA keeps its stable id');
   assert.match(html, /Add API key/, 'own-key CTA label present');
   assert.match(html, /#settings\/api-key/, 'deep-links the API-key section');
-  assert.match(html, /#settings\/cli/, 'deep-links the local coding-tool section');
-  assert.match(html, /#settings\/connectors/, 'deep-links the Claude/ChatGPT connectors section');
+  assert.match(html, /data-credits-venue="1"/, 'and opens the venue sheet in place');
+  assert.match(html, /Change session type/);
+  assert.equal((html.match(/<button/g) || []).length, 2, 'exactly two buttons');
 });
 
 test('exhausted meter keeps the $spent/$limit pair, styled red', () => {
@@ -144,10 +146,11 @@ test('global cap spent (user under) → banner with the shared-budget copy', () 
   assert.equal(DevChat._creditsExhausted(), true);
   const html = DevChat._renderCreditsBannerHtml();
   assert.match(html, /shared daily AI budget/, 'global-cap copy variant');
-  // All three routes bypass the shared cap, so all three stay on offer.
+  // Every route out bypasses the shared cap, so both doors stay on offer —
+  // the venue one leads to all of them (#1348).
   assert.match(html, /dc-credits-add-key/, 'CTA still offered — BYOK bypasses the global cap');
-  assert.match(html, /#settings\/cli/, 'a local coding tool bypasses it too');
-  assert.match(html, /#settings\/connectors/, 'so does a connected chat subscription');
+  assert.match(html, /data-credits-venue="1"/, 'and the venues that bypass it too');
+  assert.equal((html.match(/<button/g) || []).length, 2, 'exactly two buttons');
 });
 
 test('no budget fetched yet → stays quiet', () => {

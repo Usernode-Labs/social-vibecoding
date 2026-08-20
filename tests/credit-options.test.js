@@ -202,35 +202,54 @@ test('the platform error text is escaped, never injected', () => {
 test('the hand-off buttons carry the flow the surface acts on', () => {
   const state = { externalFlowsAvailable: true };
   const card = CreditOptions.cardHtml(state);
-  const banner = CreditOptions.bannerActionsHtml(state);
   for (const flow of ['claude-code', 'codex']) {
     assert.ok(card.includes(`data-credits-flow="${flow}"`), `card marks ${flow}`);
-    assert.ok(banner.includes(`data-credits-flow="${flow}"`), `banner marks ${flow}`);
   }
   // The BYOK and local-tool rows stay plain hash navigations — there is no
   // in-place walkthrough for either.
   assert.equal((card.match(/data-credits-flow="/g) || []).length, 2);
-  assert.equal((banner.match(/data-credits-flow="/g) || []).length, 2);
+  // #1348: the BANNER carries no flows at all now. It offers one venue
+  // door rather than a button per venue, and the sheet behind it dispatches
+  // the walkthrough — so a flow attribute here would be a second, staler
+  // way into the same thing.
+  const banner = CreditOptions.bannerActionsHtml(state);
+  assert.equal((banner.match(/data-credits-flow="/g) || []).length, 0);
+  assert.match(banner, /data-credits-venue="1"/);
 });
 
-test('card and banner render one actionable control per route', () => {
+test('the CARD renders one actionable control per route', () => {
+  // The card is where every route is spelled out with its blurb — #1348
+  // moved that job here alone, so this assertion moved with it.
   const card = CreditOptions.cardHtml({});
-  const banner = CreditOptions.bannerActionsHtml({});
   for (const option of CreditOptions.options({})) {
     assert.ok(
       card.includes(`data-credits-hash="${option.hash}"`),
       `card links ${option.hash}`
     );
-    assert.ok(
-      banner.includes(`data-credits-hash="${option.hash}"`),
-      `banner links ${option.hash}`
-    );
   }
   // The card is identifiable so dev-chat can wire it after each render.
   assert.match(card, /data-credits-card="1"/);
+});
+
+test('the banner offers exactly two doors: pay for it, or build elsewhere (#1348)', () => {
+  const banner = CreditOptions.bannerActionsHtml({ externalFlowsAvailable: true, sessionBridgeEnabled: true });
+  const buttons = banner.match(/<button/g) || [];
+  assert.equal(buttons.length, 2, 'the bar is two buttons whatever the deployment offers');
+  assert.match(banner, /Add API key/);
+  assert.match(banner, /Change session type/);
   // The banner keeps the historical id on its first button so any existing
   // selector against it still resolves.
   assert.match(banner, /id="dc-credits-add-key"/);
+});
+
+test('an unverified account is asked to connect before it is asked to pay', () => {
+  // It cannot spend credits at all yet, so "Add API key" is not the lead
+  // remedy — but the second door is the same one.
+  const banner = CreditOptions.bannerActionsHtml({ verificationRequired: true });
+  assert.equal((banner.match(/<button/g) || []).length, 2);
+  assert.match(banner, /Connect GitHub or X/);
+  assert.match(banner, /Change session type/);
+  assert.doesNotMatch(banner, /Add API key/);
 });
 
 test('wire() navigates by hash and is idempotent per node', () => {
@@ -453,10 +472,13 @@ test('the compact banner stays flat', () => {
   const banner = CreditOptions.bannerActionsHtml(state);
   assert.doesNotMatch(banner, /data-credits-dev/);
   assert.doesNotMatch(banner, /<details/);
-  assert.equal(
-    (banner.match(/data-credits-hash="/g) || []).length,
-    CreditOptions.options(state).length,
-    'the banner still offers every route'
+  // #1348: and it no longer grows with the deployment either. Every route
+  // used to be a button here, so a deployment with more venues got a wider
+  // strip; the second door is one button whatever is behind it.
+  assert.equal((banner.match(/data-credits-hash="/g) || []).length, 2);
+  assert.ok(
+    CreditOptions.options(state).length > 2,
+    'this only means something while the full list is longer than the bar',
   );
 });
 

@@ -925,6 +925,71 @@ const DevChat = {
     }
   },
 
+  // Switch this session to whichever on-platform agent the user ran last
+  // (#1348).
+  //
+  // The same endpoint as _switchCurrentCodingAgent, with NO backend key —
+  // which POST reset-agent-context reads as "resolve my stored preference",
+  // the way POST /sessions already does at creation. It is a separate method
+  // rather than a flag on that one because the two differ in what they can
+  // answer: an explicit switch knows its backend up front and can say "that
+  // one is already selected"; this one only learns the answer from the
+  // response, and the answer may be a FALLBACK — a stored OpenRouter
+  // preference whose flag, beta access, model or key no longer stands. That
+  // reason goes to the same sentence above the composer a new session uses,
+  // which is the only place it is ever explained.
+  async _switchToLastUsedPlatformAgent() {
+    const session = DevChat.currentSession;
+    if (!session || DevChat.isStreaming) return;
+    try {
+      const response = await fetch(`/api/sessions/${session.id}/reset-agent-context`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        // Deliberately empty: a `backend: null` would be a VALUE, and the
+        // route reads a named backend as an explicit choice.
+        body: JSON.stringify({}),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        PlatformUI.toast(data.error || 'Could not switch to the platform agent.');
+        return;
+      }
+      if (!DevChat.currentSession || DevChat.currentSession.id !== session.id) return;
+      // EVERY column except build_venue. This response is a whole session
+      // row read on the server, and the caller is clearing the venue
+      // through a DIFFERENT route at the same time — so the row can carry
+      // the venue this switch is leaving, and assigning it wholesale puts
+      // the launchpad back on screen a moment after the pick removed it.
+      // reset-agent-context owns the agent columns; build_venue is
+      // /build-venue's, and the local clear above is the newer answer.
+      const { build_venue: leavingVenue, ...agentFields } = data.session || {};
+      void leavingVenue;
+      Object.assign(DevChat.currentSession, agentFields);
+      const cached = DevChat.sessions.find((s) => Number(s.id) === Number(session.id));
+      if (cached) Object.assign(cached, agentFields);
+      if (data.message) DevChat.messages.push(data.message);
+      if (data.agentFallbackReason) {
+        DevChat._venueFallbackReason = data.agentFallbackReason;
+      }
+      DevChat.renderChatView();
+      PlatformUI.toast(`This session now uses ${DevChat._agentName(DevChat._agentBackend(DevChat.currentSession))}.`);
+    } catch {
+      PlatformUI.toast('Network error while switching coding agents.');
+    }
+  },
+
+  // Which session a web hand-off pushes back onto — null when it starts
+  // separate work. Read off the shared derivation rather than carried on a
+  // row, now that the sheet's rows are coarse (#1348).
+  _webHandoffTargetId() {
+    if (!window.BuildVenues) return null;
+    const state = DevChat._venueSheetState();
+    return BuildVenues.webTargetKind(state) !== 'new' && state.sessionId != null
+      ? state.sessionId
+      : null;
+  },
+
   // ── #907: where the next coding turn runs ────────────────────────────
   //
   // The platform, not this page, decides: if a machine holds a lease on the
@@ -1528,7 +1593,12 @@ const DevChat = {
   _wireCreditsLowBanner() {
     const banner = document.getElementById('dc-credits-low-banner');
     if (banner && window.CreditOptions) {
-      CreditOptions.wire(banner, { onFlow: (flow) => DevChat._devFlowFromCredits(flow) });
+      CreditOptions.wire(banner, {
+        onFlow: (flow) => DevChat._devFlowFromCredits(flow),
+        // NOT blocked: credits are low, not gone — the in-chat venue still
+        // works, and marking it unavailable would be a lie told early.
+        onVenue: (button) => DevChat.openVenueSheet(button),
+      });
     }
   },
 
@@ -1546,16 +1616,28 @@ const DevChat = {
   // reads nothing and writes nothing, and any other ?shot= value leaves
   // the real budget read alone. That is what keeps a production "before"
   // shot of this banner obtainable.
+  // Two shots, one fixture shape: `credits-low` is the 80% warning and
+  // `credits-exhausted` is the refusal (#1348). Both are properties of how
+  // much THIS viewer has spent, which no seeded row can stand in for —
+  // llm_usage is real accounting, and writing spend a reviewer did not
+  // incur is exactly what the staging-seed rule forbids. So the URL names
+  // the state and the client answers the budget read from a fixture.
+  //
+  // The exhausted one exists because the bar it paints is now the whole of
+  // that state's UI — two doors and a sentence — and a route the checks
+  // and the before/after screenshots can reach is the only way anybody
+  // reviews it without burning a day's allowance.
   _shotCreditsLowBudget() {
     let shot = null;
     try { shot = new URLSearchParams(location.search).get('shot'); } catch { return null; }
-    if (shot !== 'credits-low') return null;
+    if (shot !== 'credits-low' && shot !== 'credits-exhausted') return null;
     const reset = new Date();
     reset.setUTCHours(24, 0, 0, 0);
+    const exhausted = shot === 'credits-exhausted';
     return {
-      spentCents: 2000,
+      spentCents: exhausted ? 2500 : 2000,
       limitCents: 2500,
-      remainingCents: 500,
+      remainingCents: exhausted ? 0 : 500,
       globalSpentCents: 4000,
       globalLimitCents: 100000,
       byokSpentCents: 0,
@@ -1588,7 +1670,12 @@ const DevChat = {
     // place instead: they start the walkthrough right here.
     const banner = document.getElementById('dc-credits-banner');
     if (banner && window.CreditOptions) {
-      CreditOptions.wire(banner, { onFlow: (flow) => DevChat._devFlowFromCredits(flow) });
+      CreditOptions.wire(banner, {
+        onFlow: (flow) => DevChat._devFlowFromCredits(flow),
+        // #1348: blocked, so the sheet marks the venue that just refused
+        // the turn instead of offering it as a way out of its own refusal.
+        onVenue: (button) => DevChat.openVenueSheet(button, { blocked: true }),
+      });
     }
   },
 
@@ -1750,19 +1837,28 @@ const DevChat = {
     }
   },
 
-  // ── The one venue question (#1086) ─────────────────────────────────
+  // ── The one venue question (#1086, recut #1348) ────────────────────
   //
   // Every surface that used to ask its own version of "which agent?" opens
-  // THIS: the venue line above the composer, the "…" menu's one row, and
-  // the out-of-credits card. Six rows, two groups, gated by omission — the
-  // list and the copy are build-venues.js's; the four things a pick can
-  // actually DO are this module's, because each one already existed and
-  // already worked. Nothing here is new mechanism.
+  // THIS: the venue dropdown in the session header, the "…" menu's one
+  // row, and the out-of-credits card. FOUR coarse rows now, gated by
+  // omission — the list and the copy are build-venues.js's; the four
+  // things a pick can actually DO are this module's, because each one
+  // already existed and already worked. Nothing here is new mechanism.
   //
-  //   backend → reset-agent-context, keeping branch + transcript (#906)
-  //   lease   → the CLI instructions card (#907)
-  //   flow    → the web-agent walkthrough, in place (#1049/#1071)
-  //   import  → the PR-import picker (#687)
+  //   on-platform → reset-agent-context with no backend: the server picks
+  //                 whichever in-chat agent this user ran last (#1348),
+  //                 keeping branch + transcript (#906)
+  //   cli-bridge  → the CLI instructions card (#907)
+  //   web-agent   → the web-agent walkthrough, in place (#1049/#1071),
+  //                 which carries its own Claude/Codex toggle (#1281)
+  //   own-tools   → the own-tools launchpad, ending in the PR-import
+  //                 picker (#687/#1281)
+  //
+  // The six VENUES underneath are untouched: the header chip still names
+  // the specific one, the out-of-credits card still lists them all with
+  // their own CTAs, and preselect() still maps a venue to its mechanism.
+  // Only the SHEET got coarser.
   _venueSheetState() {
     const base = DevChat._sessionOptionsState();
     const user = (typeof App !== 'undefined' && App.user) || {};
@@ -1786,33 +1882,65 @@ const DevChat = {
     };
   },
 
-  openVenueSheet(anchorEl) {
+  // `blocked` opens the sheet in the mode build-venues.js already has for
+  // a refused turn: the On-Platform row comes back marked unavailable and
+  // carrying the reason, so the sheet states the refusal rather than
+  // offering the venue that caused it. Everything else is pickable.
+  // The sentence the blocked sheet puts under the On-Platform row. Built
+  // from the same credit state the banner reads, so the row and the bar
+  // that opened it cannot disagree about why.
+  _creditRefusalReason() {
+    const CO = window.CreditOptions;
+    const state = CO ? DevChat._creditState() : null;
+    if (state && state.level === 'locked') {
+      return 'Connect GitHub or X to unlock $10/day of Usernode credits.';
+    }
+    const reset = DevChat._creditResetSentence();
+    const lead = DevChat._globalBudgetOut()
+      ? 'The platform\u2019s shared daily AI budget is used up.'
+      : 'You\u2019ve used up today\u2019s free AI credits.';
+    return reset ? `${lead} ${reset}` : lead;
+  },
+
+  openVenueSheet(anchorEl, { blocked = false } = {}) {
     if (!window.BuildVenues) return;
     DevChat._closeSessionOptions();
     const state = DevChat._venueSheetState();
+    if (blocked) {
+      state.mode = 'blocked';
+      state.blockedReason = DevChat._creditRefusalReason();
+    }
     BuildVenues.open({
-      anchorEl: anchorEl || document.querySelector('#dc-venue-slot [data-venue-change]') || undefined,
+      anchorEl: anchorEl || document.getElementById('dc-venue-select') || undefined,
       state,
-      onPick: (pick, row) => {
-        if (!pick || row.current) return;
-        if (pick.kind === 'backend') {
-          // Coming back in-chat CLEARS the stored venue rather than storing
-          // an in-chat one (#1281). agent_backend already says which of the
-          // two it is, and currentVenue() derives it — so a stored
-          // 'usernode-claude' would be a second, staler answer to a question
-          // the column already answers, and would mask a later switch to
-          // OpenRouter made from anywhere else.
+      onPick: (row) => {
+        if (!row || row.current) return;
+        // #1348: the sheet answers coarsely now. `row.venue` is the venue a
+        // choice resolves to, or null for the one the SERVER resolves.
+        if (row.venue === null) {
+          // On-Platform. Coming back in-chat CLEARS the stored venue rather
+          // than storing an in-chat one (#1281). agent_backend already says
+          // which of the two it is, and currentVenue() derives it — so a
+          // stored 'usernode-claude' would be a second, staler answer to a
+          // question the column already answers, and would mask a later
+          // switch to OpenRouter made from anywhere else.
+          // Locally FIRST, then persist — the same order the other three
+          // branches use. _persistBuildVenue only folds the column back in
+          // when its response lands, and the repaint below does not wait
+          // for it: leaving the stale venue in place is what kept a
+          // launchpad on screen after picking On-Platform.
+          if (DevChat.currentSession) DevChat.currentSession.build_venue = null;
           DevChat._persistBuildVenue(null);
-          // Claude needs no further detail, so it switches outright. The
-          // OpenRouter row still opens the model/effort chooser: a backend
-          // alone is not a complete answer for it.
-          DevChat._switchCurrentCodingAgent(
-            pick.backend === 'claude_code'
-              ? { backend: 'claude_code', model: null, reasoningEffort: null }
-              : null
-          );
+          // No backend named: the server applies whichever in-chat agent
+          // this user ran last, and says so if that preference no longer
+          // validates. The coarse row asks "on the platform"; which of the
+          // two that means is not a question worth putting to someone who
+          // has only ever had one of them.
+          DevChat._switchToLastUsedPlatformAgent();
           return;
         }
+        const pick = BuildVenues.preselect(row.venue);
+        if (!pick) return;
         if (pick.kind === 'lease') {
           if (!window.SessionOptions) return;
           DevChat._optionsCard = SessionOptions.openInstructions({
@@ -1831,7 +1959,7 @@ const DevChat = {
           // the chat into a launchpad and keeps it one across a reload.
           if (DevChat.currentSession) DevChat.currentSession.build_venue = pick.venue;
           DevChat._persistBuildVenue(pick.venue);
-          DevChat._devFlowFromCredits(pick.flow, row.targetId);
+          DevChat._devFlowFromCredits(pick.flow, DevChat._webHandoffTargetId());
           DevChat.renderChatView();
           return;
         }
@@ -1971,7 +2099,7 @@ const DevChat = {
     let shot = null;
     try { shot = new URLSearchParams(location.search).get('shot'); } catch { return; }
     if (shot !== 'venue-sheet') return;
-    const anchor = () => document.querySelector('#dc-venue-slot [data-venue-change]');
+    const anchor = () => document.getElementById('dc-venue-select');
     // Already armed for this session: the hold owns the reopen, but a
     // re-render is the one moment worth asking for it NOW rather than at
     // the next tick.
@@ -2131,9 +2259,9 @@ const DevChat = {
   // The PICKER used to live here: a card at the top of every untouched
   // session asking "build here, or hand this to Claude Code / Codex?"
   // before a word had been typed. It was one of three prompts asking the
-  // venue question at creation time, and it is gone — the venue line above
-  // the composer states the answer instead, and the sheet behind it asks
-  // the question whenever the user actually wants to change it. What
+  // venue question at creation time, and it is gone — the venue dropdown in
+  // the session header states the answer instead, and the sheet behind it
+  // asks the question whenever the user actually wants to change it. What
   // survives is the WALKTHROUGH: once a hand-off is chosen, the five steps
   // run in place, in this transcript, and that is a card.
   //
@@ -2159,7 +2287,7 @@ const DevChat = {
     // here. That is the same door the picker used to sit in front of — the
     // difference is that it no longer asks, because the user already
     // answered. 'platform' and null both mean "build here", which is what
-    // the venue line already says.
+    // the venue dropdown already says.
     if (session.pr_number) return null;
     if (session.status !== 'active') return null;
     if (DevChat.messages.some((m) => m.role === 'user')) return null;
@@ -2796,9 +2924,9 @@ const DevChat = {
   // and the only honest answer to "which agent" before you know what the
   // work is, is "whichever one you already told me". So the saved default
   // is applied silently by the server (resolveDefaultAgentPreference) and
-  // the answer is STATED afterwards, on first paint, by the venue line
-  // above the composer — with "Change how this is built" beside it. One
-  // question, asked once, changeable any time.
+  // the answer is STATED afterwards, on first paint, by the venue dropdown
+  // in the session header (#1348) — which is also what opens the sheet that
+  // changes it. One question, asked once, changeable any time.
   //
   // `agentChoice` survives for the callers that DID make an explicit pick
   // (the venue sheet itself, and the out-of-credits card). No key is sent
@@ -2827,8 +2955,8 @@ const DevChat = {
         PlatformUI.toast(data.error || 'Failed to create session');
         return null;
       }
-      // The one thing the venue line cannot work out on its own: WHY this
-      // session isn't in the venue the user's default named.
+      // The one thing the venue dropdown cannot work out on its own: WHY
+      // this session isn't in the venue the user's default named.
       if (data.agentFallbackReason && window.BuildVenues) {
         DevChat._venueFallbackReason = data.agentFallbackReason;
       }
@@ -4482,10 +4610,11 @@ const DevChat = {
         ? DevChat._busyComposerPlaceholder()
         : DevChat.COMPOSER_PLACEHOLDER;
     }
-    // #1086: the venue control replaced the coding-agent button here, and
-    // inherits its guard — a turn in flight holds the worker, so the venue
-    // cannot move until it lands.
-    const venueChange = document.querySelector('#dc-venue-slot [data-venue-change]');
+    // #1086: the venue control replaced the coding-agent button that used
+    // to sit here, and inherits its guard — a turn in flight holds the
+    // worker, so the venue cannot move until it lands. #1348 moved the
+    // control to the header; the guard follows it.
+    const venueChange = document.getElementById('dc-venue-select');
     if (venueChange) venueChange.disabled = !!streaming;
     const openRouterModelChange = document.getElementById('dc-openrouter-model-change');
     if (openRouterModelChange) openRouterModelChange.disabled = !!streaming;
@@ -7568,34 +7697,47 @@ const DevChat = {
       : '';
     const agentBillingNote = DevChat._agentBillingNote(DevChat.currentSession);
     const venueId = DevChat._currentVenueId();
-    const venueLineHtml = window.BuildVenues
-      ? BuildVenues.lineHtml({
-        current: venueId,
-        // Reported once, on the paint after creation: the server resolved a
-        // venue other than the one the user's default named, and this is
-        // the only place that says why. Cleared below so a later repaint of
-        // the same session doesn't keep re-explaining a settled fact.
-        fallbackReason: DevChat._venueFallbackReason || DevChat._shotVenueFallbackReason(),
-      })
+    // #1348: the venue control is the header dropdown, top right. What is
+    // left down by the composer is the fallback sentence alone — reported
+    // once, on the paint after creation, when the server resolved a venue
+    // other than the one the user's default named. Cleared below so a later
+    // repaint of the same session doesn't keep re-explaining a settled fact.
+    const venueFallbackReason =
+      DevChat._venueFallbackReason || DevChat._shotVenueFallbackReason();
+    const venueSelectHtml = window.BuildVenues
+      ? BuildVenues.selectorHtml({ current: venueId })
+      : '';
+    const venueNoteHtml = window.BuildVenues
+      ? BuildVenues.noteHtml({ fallbackReason: venueFallbackReason })
       : '';
     DevChat._venueFallbackReason = null;
     // #1281: a hand-off venue swaps the composer for the launchpad. The
-    // venue LINE above it is untouched, which is what makes the swap
-    // reversible — "Change how this is built" is the way back to a chat.
+    // venue dropdown lives in the header, outside the swap, which is what
+    // makes it reversible — it is the way back to a chat.
     const launchpadHtml = DevChat._launchpadHtml();
     const inLaunchpad = !!DevChat._launchpadVenue();
+    // Is there anything left in the bottom bar to draw a border around?
+    // The composer is hidden in a launchpad and the venue note is usually
+    // absent, and an empty bordered strip reads as a broken composer.
+    const barEmpty = inLaunchpad && !venueNoteHtml;
     const claudeVenue = venueId === 'usernode-claude';
     const openRouterVenue = venueId === 'usernode-openrouter';
     const openRouterModel = String(DevChat.currentSession.agent_model || '').trim();
 
     content.innerHTML = `
-      <div class="flex items-center gap-2 px-3 py-2 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
+      <div id="dc-session-header" class="flex items-center gap-2 px-3 py-2 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
         <a id="dc-back" class="text-zinc-400 hover:text-zinc-200 text-sm" href="${App.currentApp ? `#app/${escapeHtml(App.currentApp)}/dev` : ''}">&larr;</a>
         <span class="text-xs text-zinc-400 truncate flex-1" title="${escapeHtml(DevChat.currentSession.branch_name || '')}">${escapeHtml(DevChat.currentSession.session_title || DevChat.currentSession.pr_title || DevChat.currentSession.branch_name || 'Session')}</span>
         ${DevChat.currentSession.pr_number
           ? `<button id="dc-pr-header-link" class="text-xs text-violet-400 hover:text-violet-300" title="This session's pull request — every change in this chat goes to PR #${DevChat.currentSession.pr_number}. Use “Start a new change” for separate work.">PR #${DevChat.currentSession.pr_number}</button>`
           : '<span class="text-xs text-zinc-500" title="This chat is one change → one pull request. A PR opens after the first build.">New change</span>'}
         ${DevChat._renderHeaderStatusPill(DevChat.currentSession)}
+        <!-- #1348: where this session is built, top right of the session
+             area. It states the venue and opens the sheet that changes it,
+             which is the pair the composer caption used to carry. Here it
+             survives the launchpad swap below, and it is not competing with
+             the meter, the runner and the budget menu for the same strip. -->
+        ${venueSelectHtml}
       </div>
       ${DevChat._renderSyncBannerHtml(DevChat.currentSession)}
       ${DevChat._renderNewChangeBannerHtml(DevChat.currentSession)}
@@ -7603,33 +7745,57 @@ const DevChat = {
       ${DevChat._renderCreditsLowBannerHtml()}
       <div class="dc-session-body flex-1 flex min-h-0">
         <div id="dc-tab-chat" class="dc-chat-pane flex-1 flex flex-col min-h-0">
+            <!-- #1348: the launchpad is PINNED TO THE TOP of the chat area.
+                 It stood in the composer's place at the bottom (#1281),
+                 which is where you look to type — but a launchpad is not a
+                 composer: it is the screen's subject, a walkthrough you
+                 work down while the transcript behind it is the reference.
+                 At the bottom the first step sat furthest from the eye and
+                 a long card pushed itself off the fold. Above the
+                 scroller it holds still while the transcript moves under
+                 it, and step 1 is the first thing on screen.
+
+                 It stays OUTSIDE #dc-messages on purpose: inside, it would
+                 scroll away with the transcript and stop being a
+                 launchpad. The slot collapses when empty
+                 (.dc-launchpad-slot:empty), so an ordinary session's chat
+                 pane is exactly what it was. -->
+          <div id="dc-launchpad-slot" class="dc-launchpad-slot">${launchpadHtml}</div>
           <div id="dc-messages" class="dc-messages-container flex-1 overflow-y-auto py-2"></div>
+          <!-- No backticks in the comment below: it lives inside a
+               template literal, and one would close it. -->
           <!-- platform-safe-bar (app.css): this block is the bottom of
                the screen on a phone, so it carries the home-indicator
                inset on top of its own p-2 — the strip below the Send row
                is part of this bar rather than dead space under it. The
                message scroller above keeps the height that used to be
-               reserved on #app-view. (No backticks in this comment: it
-               lives inside a template literal, and one would close it.) -->
-          <div class="shrink-0 border-t border-zinc-200 dark:border-zinc-800 p-2 platform-safe-bar">
-            <!-- The venue statement (#1086). One line, always painted,
-                 naming where this session builds and offering the only
-                 control that changes it. It replaces the "Coding agent:"
-                 button that used to sit beside a second provider dropdown —
-                 two controls, adjacent, answering two different
-                 questions in the same visual weight, one of which was the
-                 venue and one of which was not. Filled from the session
-                 row, so it is right on first paint. -->
-            <div id="dc-venue-slot" class="dc-venue-slot">${venueLineHtml}</div>
-            <!-- #1281: the launchpad stands where the composer does when
-                 the work is happening somewhere else. Both are always in
-                 the DOM and exactly one is shown: every public/js/** and
+               reserved on #app-view.
+
+               In a launchpad the composer is hidden and the venue note is
+               usually absent, which would leave a bordered, padded strip
+               framing nothing — so those are dropped when there is nothing
+               to frame. The SAFE-AREA INSET is not: this is still the
+               bottom of the screen, and the transcript must not run under
+               the home indicator. Written as a conditional class rather
+               than a CSS override because app.css loses equal-specificity
+               conflicts to Tailwind (see AGENTS.md), so the p-2 utility
+               would win. -->
+          <div id="dc-composer-bar" class="shrink-0 platform-safe-bar${barEmpty ? '' : ' border-t border-zinc-200 dark:border-zinc-800 p-2'}">
+            <!-- What is left of the venue statement (#1086) once the
+                 control itself moved to the header (#1348): the sentence
+                 explaining a venue you did NOT get. It is a whole
+                 explanation rather than a label, so it stays here where it
+                 can wrap, and the slot collapses (.dc-venue-slot:empty) in
+                 the ordinary case where there is nothing to confess. -->
+            <div id="dc-venue-slot" class="dc-venue-slot">${venueNoteHtml}</div>
+            <!-- #1281: the launchpad stands INSTEAD of the composer when
+                 the work is happening somewhere else — it renders at the
+                 top of the pane now (#1348), and the composer is HIDDEN
+                 here rather than removed: every public/js/** and
                  chat-helper module below looks its controls up by id
                  (#dc-input, #dc-form, #dc-budget, #dc-runner…), and a
                  getElementById that starts returning null would throw on a
-                 route the checks load — a console error fails them. So the
-                 composer is HIDDEN here, never removed. -->
-            <div id="dc-launchpad-slot" class="dc-launchpad-slot">${launchpadHtml}</div>
+                 route the checks load — a console error fails them. -->
             <div id="dc-composer-controls"${inLaunchpad ? ' hidden' : ''}>
             <div class="flex flex-wrap items-center gap-2 mb-2">
               <input type="file" id="dc-file-input" class="hidden" multiple>
@@ -7778,7 +7944,7 @@ const DevChat = {
     }
     DevChat._maybeOpenShotOptions(optionsWereOpen);
 
-    const venueChange = document.querySelector('#dc-venue-slot [data-venue-change]');
+    const venueChange = document.getElementById('dc-venue-select');
     if (venueChange) {
       // Mid-turn the venue is not changeable: a running turn holds the
       // worker, and moving it under itself is the failure the old

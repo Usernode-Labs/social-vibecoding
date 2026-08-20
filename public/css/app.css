@@ -2514,9 +2514,32 @@ html, body {
    renders whichever into #dc-launchpad-slot and hides
    #dc-composer-controls beside it.
 
-   Deliberately quiet: this sits in the composer's place at the bottom of
-   the screen, and a panel styled as an alert there would read as something
+   Deliberately quiet: a panel styled as an alert would read as something
    having gone wrong rather than as the normal state of a hand-off. */
+
+/* #1348: PINNED TO THE TOP of the chat pane, above the message scroller
+   rather than in the composer's old place at the bottom.
+
+   `flex: none` is the pin — the slot keeps its own height and the
+   transcript below it takes what is left and scrolls. The cap reserves a
+   FIXED strip for the transcript rather than splitting the pane by
+   fraction: in a launchpad the card is the subject and the transcript is
+   reference, so the card should have everything it can use, and a
+   proportional cap (60%, say) would hold back half the pane from a
+   five-step walkthrough to show messages nobody came here to read. Past
+   the cap the card scrolls internally. The percentage resolves because
+   every ancestor up to .dc-session-body is a flex item with min-h-0, so
+   the pane's height is definite.
+
+   It carries its own padding now: it used to sit inside the bottom bar's
+   p-2 and has no wrapper of its own up here. */
+.dc-launchpad-slot {
+  flex: none;
+  max-height: calc(100% - 5rem);
+  overflow-y: auto;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--border);
+}
 .dc-launchpad-slot:empty { display: none; }
 
 .dc-launchpad {
@@ -7465,76 +7488,104 @@ body.is-offline [data-offline-disabled] {
   cursor: not-allowed;
 }
 
-/* ── The venue line above the composer ────────────────────────────────
-   One quiet sentence stating where this session is built, and one button
-   to change it. It replaces three separate prompts that each asked that
-   question before any work existed (the flow picker card, the agent
-   chooser modal at creation, and the composer's own agent dropdown), so
-   it is deliberately not a control that draws the eye: it reads as a
-   caption, and only the verb is clickable.
+/* ── The venue selector in the session header (#1348) ─────────────────
+   Where this session is built, stated and changed from the top right of
+   the session area. It began (#1086) as a caption above the composer —
+   "Building in X" with a "Change how this is built" link — which put it in
+   the same strip as the meter, the runner and the budget menu and made it
+   read as one more piece of composer furniture. In the header it is where
+   a "what kind of session is this?" control is looked for, and it is
+   outside the launchpad swap (#1281) that hides the composer entirely for
+   the three hand-off venues.
 
-   It sits ABOVE the composer's status row rather than in it. Inside the
-   row it would have been one more chip among the meter, the runner and
-   the budget menu — which is the arrangement that made it invisible. */
-.dc-venue-slot:empty {
-  display: none;
-}
-
-.dc-venue-line {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 0.4rem;
-  padding: 0.25rem 0.1rem 0.35rem;
-  font-size: 12px;
-  line-height: 1.35;
-  color: var(--text-muted);
-}
-
-.dc-venue-name {
-  color: var(--text-primary);
-  font-weight: 600;
-}
-
-/* A link, not a button: the row is a sentence, and a second filled
-   control beside the composer's send button competes with it. */
-.dc-venue-change {
+   Quiet, not loud: a bordered chip in muted text, the venue name carrying
+   the only emphasis. It shares the header with the session title, so it
+   caps its own width and truncates rather than pushing the title out. */
+.dc-venue-select {
+  display: inline-flex;
+  align-items: center;
   flex: none;
-  padding: 0;
-  border: 0;
+  gap: 0.25rem;
+  max-width: min(45%, 14rem);
+  padding: 0.1rem 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: 0.375rem;
   background: none;
-  color: #8b5cf6;
-  font-size: 12px;
-  font-family: inherit;
-  line-height: inherit;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 11px;
+  line-height: 1.5;
   cursor: pointer;
-  text-decoration: underline;
-  text-underline-offset: 2px;
 }
 
-.dc-venue-change:hover {
-  color: #a78bfa;
+.dc-venue-select:hover {
+  border-color: #8b5cf6;
+  color: var(--text-primary);
 }
 
-.dc-venue-change:focus-visible {
+.dc-venue-select:focus-visible {
   outline: none;
-  border-radius: 3px;
   box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.35);
 }
 
 /* Mid-turn the venue cannot change — the running turn is already in one.
    Same treatment the composer's other controls get while streaming. */
-.dc-venue-change:disabled {
+.dc-venue-select:disabled {
   opacity: 0.45;
   cursor: not-allowed;
-  text-decoration: none;
+}
+
+.dc-venue-select:disabled:hover {
+  border-color: var(--border);
+  color: var(--text-muted);
+}
+
+/* On a phone the header already carries the back arrow, the title, the PR
+   pill and the status pill, and 45% of 390px is more than the venue needs.
+   10.5rem is not an aesthetic round number: it is the narrowest width at
+   which the two "Your computer · …" venues are still told apart — below it
+   both ellipsize to the same string, and the control stops answering the
+   question it exists to answer. */
+@media (max-width: 30rem) {
+  .dc-venue-select {
+    max-width: 10.5rem;
+  }
+}
+
+/* The venue's own name is the part worth reading; it is also the part
+   that has to give way when the header is narrow. */
+.dc-venue-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-primary);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dc-venue-caret {
+  flex: none;
+  font-size: 9px;
+  line-height: 1;
+  opacity: 0.7;
+}
+
+/* The slot above the composer, which now carries the fallback sentence
+   and nothing else — empty on every session that got the venue it asked
+   for, and collapsed rather than left as a gap above the composer. */
+.dc-venue-slot {
+  padding: 0.25rem 0.1rem 0.35rem;
+}
+
+.dc-venue-slot:empty {
+  display: none;
 }
 
 /* "Your OpenRouter key is not set, so this turn ran on Usernode · Claude"
-   — the one place a venue the user did not choose is confessed. Full
-   width so it wraps under the sentence rather than beside it. */
+   — the one place a venue the user did not choose is confessed. A whole
+   sentence, so it lives above the composer where it can wrap, rather than
+   in the header control that names the venue. */
 .dc-venue-note {
-  flex-basis: 100%;
   color: var(--text-muted);
   font-size: 11px;
   line-height: 1.4;

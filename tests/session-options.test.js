@@ -331,11 +331,18 @@ test('the composer paints the button statically and wires it', () => {
   assert.match(DEV_CHAT_SRC, /onVenue: \(\) => DevChat\.openVenueSheet\(anchorEl\)/);
   // …and the target id still travels with the agent (#1071): without it the
   // prepare call would open new work for a row that said "continue this
-  // session". That now happens where the sheet dispatches a `flow` pick.
+  // session". That now happens where the sheet dispatches a `flow` pick —
+  // read off the shared derivation rather than carried on the row, because
+  // #1348's rows are coarse and no longer per-venue.
   assert.match(
     DEV_CHAT_SRC,
-    /DevChat\._devFlowFromCredits\(pick\.flow, row\.targetId\)/
+    /DevChat\._devFlowFromCredits\(pick\.flow, DevChat\._webHandoffTargetId\(\)\)/
   );
+  const target = DEV_CHAT_SRC.match(/_webHandoffTargetId\(\) \{[\s\S]*?\n  \},/);
+  assert.ok(target, '_webHandoffTargetId must exist');
+  assert.match(target[0], /BuildVenues\.webTargetKind\(state\) !== 'new'/,
+    'a hand-off only carries a target when it is continuing something');
+  assert.match(target[0], /state\.sessionId/);
 });
 
 test('the shell loads the module and the button has styles', () => {
@@ -357,17 +364,27 @@ test('both screenshot states are declared checks', () => {
 test('all three hand-off states have a declared check (#1071)', () => {
   // One fixture per state, because the difference is entirely in the copy
   // and no single session can show three of them.
+  //
+  // #1348 made the row a bare noun — "Claude or Codex WebUI" — so the verb
+  // that used to carry this ("Continue this session with…" / "Start new
+  // work with…") is gone from the label. The distinction itself is NOT:
+  // continuing this session, continuing the proposal and starting fresh
+  // are different promises, and picking the wrong one costs somebody their
+  // branch. It lives in the row's own explanation now, which is what these
+  // checks read. Worth knowing: that explanation is the row's tooltip, so
+  // on a touch action sheet — which has no tooltips — the sheet no longer
+  // distinguishes the three. The launchpad it opens still does.
   const expected = [
-    ['990405', 'Continue this session with Claude Code on the web'],
-    ['990407', 'Continue this session with Claude Code on the web'],
-    ['990406', 'Continue this proposal with Claude Code on the web'],
-    ['990408', 'Start new work with Claude Code on the web'],
+    ['990405', 'pushes its work back onto this session'],
+    ['990407', 'pushes its work back onto this session'],
+    ['990406', 'pushes back onto the same proposal'],
+    ['990408', 'comes back as its own proposal'],
   ];
-  for (const [sessionId, text] of expected) {
+  for (const [sessionId, note] of expected) {
     assert.ok(
       DAPP.tests.some((t) => (t.path || '').includes(`/dev/sessions/${sessionId}`)
-        && t.expectText === text),
-      `session ${sessionId} has a check asserting "${text}"`
+        && (t.expectSelector || '').includes(note)),
+      `session ${sessionId} has a check pinning "${note}"`
     );
   }
 });

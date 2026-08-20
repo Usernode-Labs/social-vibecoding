@@ -3475,8 +3475,8 @@ const AppView = {
     // is gone: two rows in one menu that both mean "propose a change" made
     // the venue a fork in the road before the work existed, and it could
     // only name two of the six venues. One row starts the session; the
-    // venue line above the composer says where it will be built and opens
-    // the full list on demand.
+    // venue selector in the session header says where it will be built and
+    // opens the full list on demand.
     //
     // import-pr renders only when can_collaborate, so (like members/fork)
     // its handler needs an existence check.
@@ -12191,8 +12191,8 @@ const AppView = {
       // The clone is a NEW session with its own venue, resolved from the
       // cloner's default rather than inherited from the auto session — so
       // the one place to say where their copy will build is here, before
-      // they land in it. (The venue line above the composer says it again
-      // on every paint; this covers the fallback the line can't explain.)
+      // they land in it. (The venue selector in the session header says it
+      // again on every paint; this covers the fallback it can't explain.)
       AppView._reportVenueFallback(data.agentFallbackReason);
       DevChat.sessions.unshift(data.session);
       if (typeof App !== 'undefined' && App.switchTab) {

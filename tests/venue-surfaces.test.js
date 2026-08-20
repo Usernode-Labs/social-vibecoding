@@ -5,8 +5,9 @@
 // tests/build-venues.test.js pins the list and its gating; this file pins
 // the three surfaces that put the answer in front of somebody:
 //
-//   1. the line above the composer, which states the venue on first paint
-//      and carries the only control that changes it;
+//   1. the dropdown at the top right of the session header (#1348), which
+//      states the venue on first paint and carries the only control that
+//      changes it;
 //   2. the chip on a session card in the dev feed, so the answer is
 //      readable from the list without opening the chat;
 //   3. the fallback note, for the one case where the venue you got is not
@@ -49,15 +50,15 @@ function loadBuildVenues() {
 
 const BV = loadBuildVenues();
 
-// ── 1. The line above the composer ───────────────────────────────────
+// ── 1. The dropdown in the session header ────────────────────────────
 
-test('the line states a venue for every session, with no empty case', () => {
-  // Every venue must produce a line. A venue that rendered '' would put
-  // the composer back exactly where it was: no statement, and no door to
-  // the sheet either, since the change button lives inside the line.
+test('the selector states a venue for every session, with no empty case', () => {
+  // Every venue must produce a control. A venue that rendered '' would put
+  // the session back exactly where it was before #1086: no statement, and
+  // no door to the sheet either, since the change button IS the statement.
   for (const v of BV.VENUES) {
-    const html = BV.lineHtml({ current: v.id });
-    assert.ok(html.includes('data-venue-line="' + v.id + '"'), `${v.id} renders a line`);
+    const html = BV.selectorHtml({ current: v.id });
+    assert.ok(html.includes('data-venue-current="' + v.id + '"'), `${v.id} renders a control`);
     assert.ok(html.includes(v.label), `${v.id} names itself`);
     assert.ok(html.includes('data-venue-change="1"'), `${v.id} offers the change control`);
   }
@@ -65,25 +66,40 @@ test('the line states a venue for every session, with no empty case', () => {
 
 test('an unknown venue id renders nothing rather than a half sentence', () => {
   // `current` is derived from session columns, which are server data. A
-  // value this list does not know about must not produce "Building in ".
-  assert.equal(BV.lineHtml({ current: 'nonsense' }), '');
-  assert.equal(BV.lineHtml({ current: 'constructor' }), '',
+  // value this list does not know about must not produce an empty chip.
+  assert.equal(BV.selectorHtml({ current: 'nonsense' }), '');
+  assert.equal(BV.selectorHtml({ current: 'constructor' }), '',
     'including the prototype-chain members a bare lookup would answer');
 });
 
-test('the composer paints the line above its status row, not inside it', () => {
-  // Inside the row it would be one chip among the meter, the runner and
-  // the budget menu — the arrangement that made the venue invisible.
-  const slot = DEV_CHAT_SRC.indexOf('id="dc-venue-slot"');
-  const runner = DEV_CHAT_SRC.indexOf('id="dc-runner"');
-  const budget = DEV_CHAT_SRC.indexOf('id="dc-budget"');
-  assert.ok(slot !== -1, 'the slot exists');
-  assert.ok(slot < runner && slot < budget, 'and it precedes the status row');
-  assert.match(DEV_CHAT_SRC, /BuildVenues\.lineHtml\(\{/,
+test('the selector is painted in the session header, top right (#1348)', () => {
+  // Not in the composer's bottom bar, where it was one caption among the
+  // meter, the runner and the budget menu — the arrangement that made the
+  // venue invisible. And after the status pill, so it lands on the right.
+  const header = DEV_CHAT_SRC.indexOf('id="dc-session-header"');
+  const pill = DEV_CHAT_SRC.indexOf('_renderHeaderStatusPill(DevChat.currentSession)');
+  const select = DEV_CHAT_SRC.indexOf('${venueSelectHtml}');
+  const body = DEV_CHAT_SRC.indexOf('class="dc-session-body');
+  assert.ok(header !== -1, 'the session header row is addressable');
+  assert.ok(select !== -1, 'the selector is painted');
+  assert.ok(header < select && select < body,
+    'the selector sits inside the header row, before the chat body opens');
+  assert.ok(pill < select, 'and last in that row, so it is the top-right control');
+  assert.match(DEV_CHAT_SRC, /BuildVenues\.selectorHtml\(\{/,
     'filled from the shared module, not retyped');
 });
 
-test('the line is painted from the session row, so first paint is right', () => {
+test('the selector survives the launchpad swap that hides the composer', () => {
+  // #1281 hides #dc-composer-controls for the three hand-off venues. A
+  // venue control inside it would be hidden by exactly the state it exists
+  // to undo, stranding the session in its launchpad.
+  const select = DEV_CHAT_SRC.indexOf('${venueSelectHtml}');
+  const swap = DEV_CHAT_SRC.indexOf('id="dc-composer-controls"');
+  assert.ok(select !== -1 && swap !== -1);
+  assert.ok(select < swap, 'the selector is painted outside the swapped region');
+});
+
+test('the selector is painted from the session row, so first paint is right', () => {
   // Not from a status poll: a session whose venue only appeared after a
   // round trip would show the wrong venue for as long as that took, which
   // is precisely the moment someone is deciding whether to type.
@@ -103,7 +119,7 @@ test('the change control is disabled mid-turn, in both places that paint it', ()
   // sync — and a guard on only one of them is a guard that opens itself
   // on the next repaint.
   const sites = DEV_CHAT_SRC.match(
-    /#dc-venue-slot \[data-venue-change\]/g
+    /getElementById\('dc-venue-select'\)/g
   ) || [];
   assert.ok(sites.length >= 2, `expected the render and the sync to both find it (got ${sites.length})`);
   assert.match(DEV_CHAT_SRC, /venueChange\.disabled = DevChat\.isStreaming/,
@@ -211,8 +227,10 @@ test('the client keeps the reason across the navigation into the session', () =>
   // is what carries it across — and clearing it on paint is what stops it
   // reappearing on every later re-render of the same session.
   assert.match(DEV_CHAT_SRC, /DevChat\._venueFallbackReason = data\.agentFallbackReason/);
-  assert.match(DEV_CHAT_SRC, /fallbackReason: DevChat\._venueFallbackReason \|\| /,
-    'the stash is what the line reads');
+  assert.match(DEV_CHAT_SRC, /DevChat\._venueFallbackReason \|\| DevChat\._shotVenueFallbackReason\(\)/,
+    'the stash is what the note reads');
+  assert.match(DEV_CHAT_SRC, /BuildVenues\.noteHtml\(\{/,
+    'and it renders through the shared module');
   assert.match(DEV_CHAT_SRC, /DevChat\._venueFallbackReason = null;/,
     'cleared once painted');
 });
@@ -253,11 +271,11 @@ test('the headless routes report their fallback too', () => {
 
 test('every class these surfaces render has a rule', () => {
   // The shell's Tailwind is compiled and these are hand-written classes in
-  // app.css; one that is not there simply has no styles, and the line
-  // would render as an unstyled run of text under the composer.
+  // app.css; one that is not there simply has no styles, and the venue
+  // control would render as an unstyled run of text in the header.
   for (const cls of [
-    'dc-venue-slot', 'dc-venue-line', 'dc-venue-name',
-    'dc-venue-change', 'dc-venue-note', 'dc-venue-detail', 'dc-venue-chip',
+    'dc-venue-slot', 'dc-venue-select', 'dc-venue-name',
+    'dc-venue-caret', 'dc-venue-note', 'dc-venue-detail', 'dc-venue-chip',
     'dc-openrouter-model', 'dc-openrouter-model-change',
   ]) {
     assert.ok(new RegExp('\\.' + cls + '[\\s,:{]').test(APP_CSS),

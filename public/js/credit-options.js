@@ -312,10 +312,11 @@
   // `state.externalFlowsAvailable` comes from GET /api/auth/me — a deployment
   // with no GitHub-link support cannot offer them, and then this is exactly
   // the pre-#1049 list.
-  function options(state) {
-    var s = state || {};
-    var hasApiKey = !!s.hasApiKey;
-    var apiKey = {
+  // The two remedies that are NOT build venues, factored out because the
+  // banner (#1348) shows one of them and nothing else from this list.
+  function apiKeyOption(state) {
+    var hasApiKey = !!(state || {}).hasApiKey;
+    return {
       id: 'api-key',
       title: hasApiKey
         ? "Your saved key couldn't be used"
@@ -327,6 +328,22 @@
       hash: SETTINGS_HASHES.apiKey,
       developer: false,
     };
+  }
+
+  function socialOption() {
+    return {
+      id: 'social-identity',
+      title: 'Unlock $10/day with a social account',
+      blurb: 'Connect GitHub or X to prove control of that account. Either one unlocks the same $10/day tier; they do not stack, and Usernode keeps no provider token.',
+      cta: 'Connect GitHub or X',
+      hash: SETTINGS_HASHES.connector,
+      developer: false,
+    };
+  }
+
+  function options(state) {
+    var s = state || {};
+    var apiKey = apiKeyOption(s);
     // Every route out of here except the API key IS a build venue, so the
     // list comes from public/js/build-venues.js in `blocked` mode rather
     // than being retyped here. That is what stopped "use a coding tool on
@@ -392,14 +409,7 @@
       });
     }
     if (s.verificationRequired) {
-      out.unshift({
-        id: 'social-identity',
-        title: 'Unlock $10/day with a social account',
-        blurb: 'Connect GitHub or X to prove control of that account. Either one unlocks the same $10/day tier; they do not stack, and Usernode keeps no provider token.',
-        cta: 'Connect GitHub or X',
-        hash: SETTINGS_HASHES.connector,
-        developer: false,
-      });
+      out.unshift(socialOption());
     }
     return out;
   }
@@ -501,14 +511,44 @@
   // Compact button row for the existing red banner. The first button keeps
   // the historical `dc-credits-add-key` id so anything already selecting it
   // (and the banner's own wiring) keeps resolving.
+  // #1348: the banner offers exactly TWO routes, not one button per venue.
+  //
+  // It used to render all of options() — five or six buttons wrapping
+  // across a strip that is already carrying a sentence, where the venue
+  // ones were long ("Continue this session with Claude Code on the web")
+  // and the reader had to weigh a whole menu to get out of a refusal. The
+  // two are the only genuinely different answers: pay for it yourself, or
+  // build it somewhere else. Which somewhere is the venue sheet's
+  // question, and it is better at asking it — grouped, ticked, with a
+  // consequence per row, and it MARKS the venue that just refused the turn
+  // rather than silently dropping it.
+  //
+  // The full list has not gone anywhere: cardHtml() still renders every
+  // route with its blurb, and that card is posted into the transcript on
+  // the refusal itself. This is the bar; that is the page.
   function bannerActionsHtml(state) {
     var s = state || {};
+    var actions = [
+      // Whichever remedy leads in this state: an unverified account cannot
+      // spend credits at all, so connecting one comes before paying.
+      s.verificationRequired ? socialOption() : apiKeyOption(s),
+      {
+        id: 'venue',
+        cta: 'Change session type',
+        // No hash: this one opens the sheet in place. The fallback exists
+        // because wire() falls through to a hash for surfaces that handle
+        // nothing, and Settings is where a venue is otherwise changed.
+        hash: SETTINGS_HASHES.localTool,
+        venue: true,
+      },
+    ];
     return '<div class="dc-credits-banner-actions">'
-      + options(s).map(function (opt, index) {
+      + actions.map(function (opt, index) {
         return '<button type="button"'
           + (index === 0 ? ' id="dc-credits-add-key"' : '')
           + ' class="dc-credits-banner-btn' + (index === 0 ? ' dc-credits-banner-btn-primary' : '')
-          + '"' + (opt.flow ? ' data-credits-flow="' + escapeHtml(opt.flow) + '"' : '')
+          + '"' + (opt.venue ? ' data-credits-venue="1"' : '')
+          + (opt.flow ? ' data-credits-flow="' + escapeHtml(opt.flow) + '"' : '')
           + ' data-credits-hash="' + escapeHtml(opt.hash) + '">'
           + escapeHtml(opt.cta) + '</button>';
       }).join('')
@@ -531,9 +571,18 @@
     var h = handlers || {};
     root.addEventListener('click', function (event) {
       var target = event.target && event.target.closest
-        ? event.target.closest('[data-credits-flow],[data-credits-hash]')
+        ? event.target.closest('[data-credits-venue],[data-credits-flow],[data-credits-hash]')
         : null;
       if (!target || !root.contains(target)) return;
+      // #1348: "Change session type" opens the venue sheet on the surface
+      // that mounted us, anchored to the button it was clicked on. Falls
+      // through to the hash when a surface wires no handler, which is the
+      // same contract onFlow has.
+      if (target.getAttribute('data-credits-venue') && typeof h.onVenue === 'function') {
+        event.preventDefault();
+        h.onVenue(target);
+        return;
+      }
       var flow = target.getAttribute('data-credits-flow');
       if (flow && typeof h.onFlow === 'function') {
         event.preventDefault();
@@ -557,6 +606,8 @@
     meterParts: meterParts,
     meterTone: meterTone,
     lowLead: lowLead,
+    apiKeyOption: apiKeyOption,
+    socialOption: socialOption,
     options: options,
     partition: partition,
     introFor: introFor,

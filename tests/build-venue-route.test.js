@@ -155,10 +155,18 @@ test('the browser stores a hand-off and CLEARS on the way back in-chat', () => {
   // Storing an in-chat venue would be a second, staler answer to a question
   // agent_backend already answers — and would mask a later switch made from
   // anywhere else.
+  // #1348: the in-chat answer is the coarse On-Platform row, and its
+  // `venue` is null because the SERVER resolves which of the two backends
+  // it means. That null is the branch, and it still clears the column.
   assert.match(
     DEV_CHAT_SRC,
-    /pick\.kind === 'backend'[\s\S]{0,600}_persistBuildVenue\(null\)/,
+    /row\.venue === null[\s\S]{0,900}_persistBuildVenue\(null\)/,
     'coming back in-chat clears the stored venue',
+  );
+  assert.match(
+    DEV_CHAT_SRC,
+    /row\.venue === null[\s\S]{0,2000}_switchToLastUsedPlatformAgent\(\)/,
+    'and switches to the backend the user ran last, resolved server-side',
   );
   for (const kind of ['flow', 'import']) {
     assert.match(
@@ -194,4 +202,43 @@ test('the stored venue is what brings the launchpad back after a reload', () => 
     /buildVenue: s\.build_venue/,
     'and so does the venue the whole chat view paints from',
   );
+});
+
+// ── #1348: picking On-Platform actually returns to the chat ─────────
+//
+// It did not. Two independent requests run on that pick — POST
+// /build-venue clearing the column, and POST /reset-agent-context
+// switching the backend — and the repaint hangs off the SECOND one. So
+// the column was still 'own-tools-pr' (or a web venue) when the render
+// asked, _launchpadVenue() answered it, and the launchpad stayed on screen
+// after the user had chosen to leave it.
+
+test('picking On-Platform clears the venue locally, before anything repaints', () => {
+  // _persistBuildVenue only folds the column back in when its response
+  // lands, and nothing repaints when it does — so the local write is what
+  // the render actually reads.
+  const branch = DEV_CHAT_SRC.match(/if \(row\.venue === null\) \{[\s\S]*?\n {8}\}/);
+  assert.ok(branch, 'the On-Platform branch must exist');
+  const local = branch[0].indexOf('DevChat.currentSession.build_venue = null');
+  const persist = branch[0].indexOf('_persistBuildVenue(null)');
+  assert.ok(local > -1, 'the venue must be cleared on the local session object');
+  assert.ok(persist > -1, 'and still persisted');
+  assert.ok(local < persist, 'locally FIRST — the repaint does not wait for the round trip');
+});
+
+test('the switch response cannot put the venue it is leaving back', () => {
+  // reset-agent-context answers with a whole session row read on the
+  // server. The venue clear is in flight on another route, so that row can
+  // still carry the launchpad venue — and assigning it wholesale would put
+  // the launchpad back a moment after the pick removed it.
+  const fn = DEV_CHAT_SRC.match(/async _switchToLastUsedPlatformAgent\(\)[\s\S]*?\n {2}\},/);
+  assert.ok(fn, '_switchToLastUsedPlatformAgent must exist');
+  assert.match(fn[0], /const \{ build_venue: \w+, \.\.\.agentFields \} = data\.session \|\| \{\}/,
+    'build_venue must be split off the response');
+  assert.doesNotMatch(fn[0], /Object\.assign\(DevChat\.currentSession, data\.session/,
+    'the whole row must never be assigned');
+  assert.doesNotMatch(fn[0], /Object\.assign\(cached, data\.session/,
+    'nor onto the cached copy, which the session list renders from');
+  assert.equal((fn[0].match(/Object\.assign\([^)]*agentFields\)/g) || []).length, 2,
+    'both the live session and the cached one take the agent columns');
 });

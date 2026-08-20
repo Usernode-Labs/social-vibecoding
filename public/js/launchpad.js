@@ -11,9 +11,10 @@
  *
  * So this module owns the panel that stands in its place, and dev-chat.js
  * swaps the composer for it whenever `isLaunchpad(venue)` is true. The
- * venue line above it stays exactly where it was, which is the way back:
- * "Change how this is built" is the persistent control the spec asks for,
- * and picking an in-chat venue restores the composer.
+ * venue selector is untouched by that swap — it is in the session header
+ * (#1348), above everything this module replaces — which is the way back:
+ * it is the persistent control the spec asks for, and picking an in-chat
+ * venue restores the composer.
  *
  * Division of labour with public/js/dev-flow-select.js:
  *
