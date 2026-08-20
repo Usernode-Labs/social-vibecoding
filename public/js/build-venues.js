@@ -568,14 +568,6 @@
     {
       id: 'web-agent',
       label: 'Claude or Codex WebUI',
-      // #1071, kept through #1348's recut: in a session already under way,
-      // "start new work with" and "continue this proposal with" are
-      // different promises, and the LABEL is the only place a phone user
-      // sees which one this is — the consequence sentence is a tooltip, and
-      // a touch action sheet has no tooltips. So this one row's noun takes
-      // the state verb in front of it, while the other three read as bare
-      // answers to the sheet's own question.
-      verbed: true,
       icon: 'globe',
       venue: 'web-claude-code',
       matches: ['web-claude-code', 'web-codex'],
@@ -639,13 +631,6 @@
       }
       return true;
     }).map(function (c) {
-      // The verb is dropped on the row you are already in — "Continue this
-      // session with X ✓" reads as an instruction where this row's whole
-      // job is to confirm — and outside 'switch' mode, where there is no
-      // session to continue yet.
-      var label = (c.verbed && mode === 'switch' && current !== c.id)
-        ? webVerb(webTargetKind(s)) + c.label
-        : c.label;
       // The consequence sentence still comes from the venue underneath,
       // so the "does this keep my chat?" answer cannot drift from the
       // venue list. For the pair that resolves server-side, Claude stands
@@ -654,7 +639,7 @@
       var because = consequence(underlying, mode, s);
       var out = {
         id: c.id,
-        label: label,
+        label: c.label,
         icon: c.icon,
         venue: c.venue,
         title: c.blurb + ' ' + because,

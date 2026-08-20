@@ -223,11 +223,22 @@ test('the dev-chat composer bar carries platform-safe-bar', () => {
   // session, which is where the dead band used to be.
   const idx = DEV_CHAT.indexOf('id="dc-messages"');
   assert.ok(idx > -1, '#dc-messages is missing from dev-chat.js');
-  const after = DEV_CHAT.slice(idx, idx + 1200);
-  const bar = /<div class="shrink-0 border-t[^"]*"/.exec(after);
+  const after = DEV_CHAT.slice(idx, idx + 2000);
+  const bar = /<div id="dc-composer-bar" class="([^"]*)"/.exec(after);
   assert.ok(bar, "the dev-chat composer's bar wrapper moved — re-anchor this test");
-  assert.match(bar[0], /platform-safe-bar/,
+  assert.match(bar[1], /platform-safe-bar/,
     'the dev-chat composer must sit above the home indicator');
+  // #1348: the border and padding are dropped when a launchpad has emptied
+  // the bar, so that they do not frame nothing. The INSET is not part of
+  // that — it is the bottom of the screen either way, and a transcript
+  // running under the home indicator is the bug this test exists for. So
+  // platform-safe-bar must sit OUTSIDE the conditional, unlike border-t.
+  const conditional = /\$\{barEmpty \? '' : '([^']*)'\}/.exec(bar[1]);
+  assert.ok(conditional, 'the empty-bar case must still be expressed here');
+  assert.doesNotMatch(conditional[1], /platform-safe-bar/,
+    'the safe-area inset must never be conditional');
+  assert.match(conditional[1], /border-t/,
+    'the border is the part that goes when there is nothing to frame');
 });
 
 test('the general-chat composer bar carries platform-safe-bar', () => {

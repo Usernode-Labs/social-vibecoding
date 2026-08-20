@@ -364,22 +364,27 @@ test('both screenshot states are declared checks', () => {
 test('all three hand-off states have a declared check (#1071)', () => {
   // One fixture per state, because the difference is entirely in the copy
   // and no single session can show three of them.
-  // #1348 coarsened the row's NOUN — one "Claude or Codex WebUI" answer
-  // standing for both vendors, which the launchpad then picks between — but
-  // the verb in front of it is the one thing that had to survive: it is
-  // where a phone user reads whether this continues their work or starts
-  // fresh, and a tooltip cannot say it on a touch action sheet.
+  //
+  // #1348 made the row a bare noun — "Claude or Codex WebUI" — so the verb
+  // that used to carry this ("Continue this session with…" / "Start new
+  // work with…") is gone from the label. The distinction itself is NOT:
+  // continuing this session, continuing the proposal and starting fresh
+  // are different promises, and picking the wrong one costs somebody their
+  // branch. It lives in the row's own explanation now, which is what these
+  // checks read. Worth knowing: that explanation is the row's tooltip, so
+  // on a touch action sheet — which has no tooltips — the sheet no longer
+  // distinguishes the three. The launchpad it opens still does.
   const expected = [
-    ['990405', 'Continue this session with Claude or Codex WebUI'],
-    ['990407', 'Continue this session with Claude or Codex WebUI'],
-    ['990406', 'Continue this proposal with Claude or Codex WebUI'],
-    ['990408', 'Start new work with Claude or Codex WebUI'],
+    ['990405', 'pushes its work back onto this session'],
+    ['990407', 'pushes its work back onto this session'],
+    ['990406', 'pushes back onto the same proposal'],
+    ['990408', 'comes back as its own proposal'],
   ];
-  for (const [sessionId, text] of expected) {
+  for (const [sessionId, note] of expected) {
     assert.ok(
       DAPP.tests.some((t) => (t.path || '').includes(`/dev/sessions/${sessionId}`)
-        && t.expectText === text),
-      `session ${sessionId} has a check asserting "${text}"`
+        && (t.expectSelector || '').includes(note)),
+      `session ${sessionId} has a check pinning "${note}"`
     );
   }
 });

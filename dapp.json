@@ -2242,6 +2242,16 @@
       "expectText": "Connect your agent to Usernode"
     },
     {
+      "name": "The launchpad is pinned above the transcript, not in the composer bar (#1348)",
+      "path": "/?shot=launchpad&venue=own-tools-pr#app/usernode-2d5619/dev/sessions/990401",
+      "expectSelector": "#dc-tab-chat > #dc-launchpad-slot + #dc-messages"
+    },
+    {
+      "name": "A web hand-off launchpad is pinned above the transcript too (#1348)",
+      "path": "/?shot=launchpad&venue=web-codex#app/usernode-2d5619/dev/sessions/990401",
+      "expectSelector": "#dc-tab-chat > #dc-launchpad-slot + #dc-messages"
+    },
+    {
       "name": "Own-tools launchpad carries the copyable \"tell your agent\" block (#1281)",
       "path": "/?shot=launchpad&venue=own-tools-pr#app/usernode-2d5619/dev/sessions/990401",
       "expectSelector": "#dc-launchpad-slot [data-launchpad-copy=\"prefill\"]",
@@ -2433,22 +2443,24 @@
     {
       "name": "The venue sheet hands this session's own code to the web agent (#1071)",
       "path": "/?demo=1&shot=venue-sheet#app/usernode-2d5619/dev/sessions/990405",
-      "expectText": "Continue this session with Claude or Codex WebUI"
+      "expectSelector": "[role=\"menuitem\"][title*=\"pushes its work back onto this session\"]",
+      "expectText": "Claude or Codex WebUI"
     },
     {
       "name": "A paused session is still continuable on the web (#1071)",
       "path": "/?demo=1&shot=venue-sheet#app/usernode-2d5619/dev/sessions/990407",
-      "expectText": "Continue this session with Claude or Codex WebUI"
+      "expectSelector": "[role=\"menuitem\"][title*=\"pushes its work back onto this session\"]",
+      "expectText": "Claude or Codex WebUI"
     },
     {
       "name": "A promoted proposal is continued rather than restarted (#1071)",
       "path": "/?demo=1&shot=venue-sheet#app/usernode-2d5619/dev/sessions/990406",
-      "expectText": "Continue this proposal with Claude or Codex WebUI"
+      "expectSelector": "[role=\"menuitem\"][title*=\"pushes back onto the same proposal\"]"
     },
     {
       "name": "An archived session starts new work instead of resurrecting itself (#1071)",
       "path": "/?demo=1&shot=venue-sheet#app/usernode-2d5619/dev/sessions/990408",
-      "expectText": "Start new work with Claude or Codex WebUI"
+      "expectSelector": "[role=\"menuitem\"][title*=\"comes back as its own proposal\"]"
     },
     {
       "name": "Session options name the key already on file (#1055)",

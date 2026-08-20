@@ -7655,6 +7655,10 @@ const DevChat = {
     // makes it reversible — it is the way back to a chat.
     const launchpadHtml = DevChat._launchpadHtml();
     const inLaunchpad = !!DevChat._launchpadVenue();
+    // Is there anything left in the bottom bar to draw a border around?
+    // The composer is hidden in a launchpad and the venue note is usually
+    // absent, and an empty bordered strip reads as a broken composer.
+    const barEmpty = inLaunchpad && !venueNoteHtml;
     const claudeVenue = venueId === 'usernode-claude';
     const openRouterVenue = venueId === 'usernode-openrouter';
     const openRouterModel = String(DevChat.currentSession.agent_model || '').trim();
@@ -7680,15 +7684,42 @@ const DevChat = {
       ${DevChat._renderCreditsLowBannerHtml()}
       <div class="dc-session-body flex-1 flex min-h-0">
         <div id="dc-tab-chat" class="dc-chat-pane flex-1 flex flex-col min-h-0">
+            <!-- #1348: the launchpad is PINNED TO THE TOP of the chat area.
+                 It stood in the composer's place at the bottom (#1281),
+                 which is where you look to type — but a launchpad is not a
+                 composer: it is the screen's subject, a walkthrough you
+                 work down while the transcript behind it is the reference.
+                 At the bottom the first step sat furthest from the eye and
+                 a long card pushed itself off the fold. Above the
+                 scroller it holds still while the transcript moves under
+                 it, and step 1 is the first thing on screen.
+
+                 It stays OUTSIDE #dc-messages on purpose: inside, it would
+                 scroll away with the transcript and stop being a
+                 launchpad. The slot collapses when empty
+                 (.dc-launchpad-slot:empty), so an ordinary session's chat
+                 pane is exactly what it was. -->
+          <div id="dc-launchpad-slot" class="dc-launchpad-slot">${launchpadHtml}</div>
           <div id="dc-messages" class="dc-messages-container flex-1 overflow-y-auto py-2"></div>
+          <!-- No backticks in the comment below: it lives inside a
+               template literal, and one would close it. -->
           <!-- platform-safe-bar (app.css): this block is the bottom of
                the screen on a phone, so it carries the home-indicator
                inset on top of its own p-2 — the strip below the Send row
                is part of this bar rather than dead space under it. The
                message scroller above keeps the height that used to be
-               reserved on #app-view. (No backticks in this comment: it
-               lives inside a template literal, and one would close it.) -->
-          <div class="shrink-0 border-t border-zinc-200 dark:border-zinc-800 p-2 platform-safe-bar">
+               reserved on #app-view.
+
+               In a launchpad the composer is hidden and the venue note is
+               usually absent, which would leave a bordered, padded strip
+               framing nothing — so those are dropped when there is nothing
+               to frame. The SAFE-AREA INSET is not: this is still the
+               bottom of the screen, and the transcript must not run under
+               the home indicator. Written as a conditional class rather
+               than a CSS override because app.css loses equal-specificity
+               conflicts to Tailwind (see AGENTS.md), so the p-2 utility
+               would win. -->
+          <div id="dc-composer-bar" class="shrink-0 platform-safe-bar${barEmpty ? '' : ' border-t border-zinc-200 dark:border-zinc-800 p-2'}">
             <!-- What is left of the venue statement (#1086) once the
                  control itself moved to the header (#1348): the sentence
                  explaining a venue you did NOT get. It is a whole
@@ -7696,15 +7727,14 @@ const DevChat = {
                  can wrap, and the slot collapses (.dc-venue-slot:empty) in
                  the ordinary case where there is nothing to confess. -->
             <div id="dc-venue-slot" class="dc-venue-slot">${venueNoteHtml}</div>
-            <!-- #1281: the launchpad stands where the composer does when
-                 the work is happening somewhere else. Both are always in
-                 the DOM and exactly one is shown: every public/js/** and
+            <!-- #1281: the launchpad stands INSTEAD of the composer when
+                 the work is happening somewhere else — it renders at the
+                 top of the pane now (#1348), and the composer is HIDDEN
+                 here rather than removed: every public/js/** and
                  chat-helper module below looks its controls up by id
                  (#dc-input, #dc-form, #dc-budget, #dc-runner…), and a
                  getElementById that starts returning null would throw on a
-                 route the checks load — a console error fails them. So the
-                 composer is HIDDEN here, never removed. -->
-            <div id="dc-launchpad-slot" class="dc-launchpad-slot">${launchpadHtml}</div>
+                 route the checks load — a console error fails them. -->
             <div id="dc-composer-controls"${inLaunchpad ? ' hidden' : ''}>
             <div class="flex flex-wrap items-center gap-2 mb-2">
               <input type="file" id="dc-file-input" class="hidden" multiple>

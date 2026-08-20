@@ -2514,9 +2514,32 @@ html, body {
    renders whichever into #dc-launchpad-slot and hides
    #dc-composer-controls beside it.
 
-   Deliberately quiet: this sits in the composer's place at the bottom of
-   the screen, and a panel styled as an alert there would read as something
+   Deliberately quiet: a panel styled as an alert would read as something
    having gone wrong rather than as the normal state of a hand-off. */
+
+/* #1348: PINNED TO THE TOP of the chat pane, above the message scroller
+   rather than in the composer's old place at the bottom.
+
+   `flex: none` is the pin — the slot keeps its own height and the
+   transcript below it takes what is left and scrolls. The cap reserves a
+   FIXED strip for the transcript rather than splitting the pane by
+   fraction: in a launchpad the card is the subject and the transcript is
+   reference, so the card should have everything it can use, and a
+   proportional cap (60%, say) would hold back half the pane from a
+   five-step walkthrough to show messages nobody came here to read. Past
+   the cap the card scrolls internally. The percentage resolves because
+   every ancestor up to .dc-session-body is a flex item with min-h-0, so
+   the pane's height is definite.
+
+   It carries its own padding now: it used to sit inside the bottom bar's
+   p-2 and has no wrapper of its own up here. */
+.dc-launchpad-slot {
+  flex: none;
+  max-height: calc(100% - 5rem);
+  overflow-y: auto;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--border);
+}
 .dc-launchpad-slot:empty { display: none; }
 
 .dc-launchpad {

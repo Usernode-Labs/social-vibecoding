@@ -498,9 +498,7 @@ test('the sheet asks one coarse question, four rows, no headings (#1348)', async
   assert.equal(items.length, 4, `four choices, got ${items.map((i) => i.label).join(' / ')}`);
   assert.deepEqual(items.map((i) => i.label.replace(' ✓', '')), [
     'On-Platform',
-    // The web row carries #1071's target verb; the other three are bare
-    // answers to the sheet's question. See the verb test below.
-    'Continue this session with Claude or Codex WebUI',
+    'Claude or Codex WebUI',
     'Your Own Developer Tooling',
     'Local CLI Bridge',
   ]);
@@ -660,39 +658,34 @@ test('with no kit the sheet resolves null rather than throwing', async () => {
   }
 });
 
-test('the web row keeps its target verb through the recut (#1071/#1348)', () => {
-  // The consequence sentence is a tooltip, and a touch action sheet has no
-  // tooltips — so the label is the ONLY place a phone user learns whether
-  // this hand-off continues their work or starts something new. Coarsening
-  // the sheet must not quietly drop that.
-  const web = (state) => BV.choicesFor(state).find((r) => r.id === 'web-agent').label;
-  const base = { ...OPEN, mode: 'switch', hasBranch: true, sessionId: 7 };
-  assert.equal(web({ ...base, sessionStatus: 'active' }),
-    'Continue this session with Claude or Codex WebUI');
-  assert.equal(web({ ...base, sessionStatus: 'paused' }),
-    'Continue this session with Claude or Codex WebUI');
-  assert.equal(web({ ...base, sessionStatus: 'promoted' }),
-    'Continue this proposal with Claude or Codex WebUI');
-  assert.equal(web({ ...base, sessionStatus: 'archived', hasBranch: false }),
-    'Start new work with Claude or Codex WebUI');
-});
-
-test('the verb is dropped where it would misread', () => {
-  const web = (state) => BV.choicesFor(state).find((r) => r.id === 'web-agent').label;
-  // The row you are already in confirms; it does not instruct.
-  assert.equal(
-    web({ ...OPEN, mode: 'switch', current: 'web-claude-code', sessionStatus: 'active' }),
-    'Claude or Codex WebUI',
-  );
-  // And outside a switch there is no session to continue.
-  assert.equal(web({ ...OPEN, mode: 'blocked', sessionStatus: 'active' }),
-    'Claude or Codex WebUI');
-});
-
-test('only the web row is verbed — the rest answer the question plainly', () => {
+test('every row is a bare answer to the sheet\'s question (#1348)', () => {
+  // No verbs at all now: under "Where do you want to work on this?" a bare
+  // noun IS the answer, and "Move to …" / "Continue this session with …"
+  // read as instructions bolted onto one.
   const rows = BV.choicesFor({ ...OPEN, mode: 'switch', sessionStatus: 'active', hasBranch: true });
-  for (const row of rows.filter((r) => r.id !== 'web-agent')) {
+  for (const row of rows) {
     assert.doesNotMatch(row.label, /^(Continue|Start new work|Move to)\b/,
       `${row.id} should read as a bare answer, got "${row.label}"`);
   }
+});
+
+test('the web row still explains WHICH work the hand-off takes (#1071)', () => {
+  // The label stopped saying it (#1348), so this is the only place left on
+  // this surface: continuing this session, continuing the proposal, and
+  // starting fresh are different promises, and picking the wrong one costs
+  // somebody their branch. Desktop shows it as the row's tooltip.
+  const note = (state) => BV.choicesFor(state).find((r) => r.id === 'web-agent').consequence;
+  const base = { ...OPEN, mode: 'switch', hasBranch: true, sessionId: 7 };
+  assert.match(note({ ...base, sessionStatus: 'active' }),
+    /pushes its work back onto this session/);
+  assert.match(note({ ...base, sessionStatus: 'paused' }),
+    /pushes its work back onto this session/);
+  assert.match(note({ ...base, sessionStatus: 'promoted' }),
+    /pushes back onto the same proposal/);
+  assert.match(note({ ...base, sessionStatus: 'archived', hasBranch: false }),
+    /comes back as its own proposal/);
+  // All four must stay distinguishable from one another.
+  const notes = ['active', 'promoted', 'archived']
+    .map((sessionStatus) => note({ ...base, sessionStatus, hasBranch: sessionStatus !== 'archived' }));
+  assert.equal(new Set(notes).size, 3, 'the three target states must not collapse into one sentence');
 });
