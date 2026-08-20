@@ -331,11 +331,18 @@ test('the composer paints the button statically and wires it', () => {
   assert.match(DEV_CHAT_SRC, /onVenue: \(\) => DevChat\.openVenueSheet\(anchorEl\)/);
   // …and the target id still travels with the agent (#1071): without it the
   // prepare call would open new work for a row that said "continue this
-  // session". That now happens where the sheet dispatches a `flow` pick.
+  // session". That now happens where the sheet dispatches a `flow` pick —
+  // read off the shared derivation rather than carried on the row, because
+  // #1348's rows are coarse and no longer per-venue.
   assert.match(
     DEV_CHAT_SRC,
-    /DevChat\._devFlowFromCredits\(pick\.flow, row\.targetId\)/
+    /DevChat\._devFlowFromCredits\(pick\.flow, DevChat\._webHandoffTargetId\(\)\)/
   );
+  const target = DEV_CHAT_SRC.match(/_webHandoffTargetId\(\) \{[\s\S]*?\n  \},/);
+  assert.ok(target, '_webHandoffTargetId must exist');
+  assert.match(target[0], /BuildVenues\.webTargetKind\(state\) !== 'new'/,
+    'a hand-off only carries a target when it is continuing something');
+  assert.match(target[0], /state\.sessionId/);
 });
 
 test('the shell loads the module and the button has styles', () => {

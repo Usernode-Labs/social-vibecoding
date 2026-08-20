@@ -2066,6 +2066,24 @@ Loading `native.js` sets `html.un-ios` / `html.un-android` /
   on touch platforms and an anchored popover on desktop — one call
   site, both idioms, no `unNative.platform` branching. Always resolves
   the chosen item or `null`.
+- **Menu-row icons.** Any row in `menu()` / `popover()` /
+  `actionSheet()` takes an optional `icon: '<name>'` from the kit's own
+  set — `home`, `globe`, `terminal`, `link`, `laptop`, `cloud`, `trash`
+  — or `iconEl: <Element>` for artwork the kit doesn't ship (a node,
+  not a string, and a fresh one per row: it is used, not cloned).
+  Icons are stroked in `currentColor`, so a destructive row's icon goes
+  red and a disabled row's dims with no work from you. **Give the whole
+  menu icons or don't** — the kit aligns every label to a common left
+  edge as soon as ONE row has an icon, spacing the icon-less rows out
+  so they line up, but a menu where only one row in six drew a glyph
+  reads as a mistake rather than a style. A row with no icon in a menu
+  with no icons renders exactly the DOM it always did, so adding this
+  changed nothing for existing callers. An unknown name draws nothing —
+  it does not throw and does not fall back to some other icon, so check
+  the list above rather than inventing a name. The set is deliberately
+  small and grows additively in `/v1`; if your app needs one that isn't
+  there, that's a platform request, not an `iconEl` workaround you keep
+  forever.
 - **Keyboard avoidance (automatic).** On mobile the kit tracks the
   on-screen keyboard via `visualViewport` and maintains
   `--un-kb-inset` (the keyboard's occlusion of the layout viewport,

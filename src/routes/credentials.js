@@ -23,6 +23,7 @@ const credentialStore = require('../services/credential-store');
 const openrouterClient = require('../services/openrouter-client');
 const agentModels = require('../services/agent-models');
 const registry = require('../agents/registry');
+const agentPreferences = require('../services/agent-preferences');
 
 function credentialRoutes(config) {
   const router = Router();
@@ -126,19 +127,9 @@ function credentialRoutes(config) {
       const prefClient = await pool.connect();
       try {
         await prefClient.query('BEGIN');
-        await prefClient.query(
-          `UPDATE user_agent_preferences SET is_default = FALSE
-           WHERE user_id = $1 AND backend = 'codex_openrouter' AND is_default = TRUE`,
-          [req.user.id],
-        );
-        await prefClient.query(
-          `INSERT INTO user_agent_preferences
-             (user_id, backend, model_id, reasoning_effort, is_default)
-           VALUES ($1, 'claude_code', NULL, NULL, TRUE)
-           ON CONFLICT (user_id, backend) DO UPDATE SET
-             is_default = TRUE, updated_at = NOW()`,
-          [req.user.id],
-        );
+        await agentPreferences.setDefaultBackend(prefClient, req.user.id, {
+          backend: 'claude_code',
+        });
         await prefClient.query('COMMIT');
       } catch (prefErr) {
         await prefClient.query('ROLLBACK').catch(() => {});
@@ -230,23 +221,24 @@ function credentialRoutes(config) {
       // backend is already the default, because the ON CONFLICT fires
       // after the INSERT attempts a second is_default=TRUE row.
       if (defaultBackend) {
+        await agentPreferences.setDefaultBackend(pool, req.user.id, {
+          backend, model, reasoningEffort,
+        });
+      } else {
+        // Behaviour preserved verbatim from before the helper existed: this
+        // branch upserts is_default = TRUE WITHOUT clearing the others.
         await pool.query(
-          `UPDATE user_agent_preferences SET is_default = FALSE
-           WHERE user_id = $1 AND is_default = TRUE AND backend <> $2`,
-          [req.user.id, backend],
+          `INSERT INTO user_agent_preferences
+             (user_id, backend, model_id, reasoning_effort, is_default)
+          VALUES ($1, $2, $3, $4, TRUE)
+           ON CONFLICT (user_id, backend) DO UPDATE SET
+             model_id = EXCLUDED.model_id,
+             reasoning_effort = EXCLUDED.reasoning_effort,
+             is_default = EXCLUDED.is_default,
+             updated_at = NOW()`,
+          [req.user.id, backend, model || null, reasoningEffort || null],
         );
       }
-      await pool.query(
-        `INSERT INTO user_agent_preferences
-           (user_id, backend, model_id, reasoning_effort, is_default)
-        VALUES ($1, $2, $3, $4, TRUE)
-         ON CONFLICT (user_id, backend) DO UPDATE SET
-           model_id = EXCLUDED.model_id,
-           reasoning_effort = EXCLUDED.reasoning_effort,
-           is_default = EXCLUDED.is_default,
-           updated_at = NOW()`,
-        [req.user.id, backend, model || null, reasoningEffort || null],
-      );
       res.json({ ok: true });
     } catch (err) {
       log.error('credentials', 'coding-agent prefs write failed', { userId: req.user.id, err: err.message });

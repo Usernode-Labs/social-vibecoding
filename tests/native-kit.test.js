@@ -1529,3 +1529,97 @@ test('native.js: only pointerdown/touchstart count as a real backdrop press', ()
   assert.match(fn, /stopPropagation\(\)/);
   assert.match(fn, /preventDefault\(\)/);
 });
+
+// ── Menu-row icons (additive /v1) ───────────────────────────────────
+//
+// The kit's menus grew an optional icon. Two things have to stay true or
+// the addition is not additive: a row that asks for no icon must render
+// the DOM it rendered before this existed, and a menu where only SOME
+// rows carry one must still line its labels up.
+
+test('the icon registry answers only its own names', () => {
+  assert.ok(physics.ICON_NAMES.length > 0, 'the set is not empty');
+  for (const name of physics.ICON_NAMES) {
+    const paths = physics.iconPaths(name);
+    assert.ok(Array.isArray(paths) && paths.length > 0, `${name} has no geometry`);
+    for (const d of paths) {
+      assert.equal(typeof d, 'string');
+      // A path that does not start with a move-to is a path the browser
+      // silently drops — the icon would be an invisible hole in the row.
+      assert.match(d, /^M/, `${name}: path does not open with a move-to`);
+    }
+  }
+});
+
+test('an unknown icon name is nothing, including a prototype member', () => {
+  // `icon` is caller data. A bare property lookup would answer `toString`
+  // with a function, and `constructor` with a constructor — neither is an
+  // icon, and both would throw inside the renderer.
+  for (const bogus of ['', null, undefined, 'nope', 'toString', 'constructor', '__proto__']) {
+    assert.equal(physics.iconPaths(bogus), null, `iconPaths(${JSON.stringify(bogus)})`);
+  }
+});
+
+test('rowHasIcon is the single answer both idioms ask', () => {
+  // The action sheet and the popover must never disagree about whether a
+  // menu is an icon menu — one of them aligning and the other not is the
+  // failure this shared predicate exists to prevent.
+  assert.equal(physics.rowHasIcon({ label: 'x' }), false);
+  assert.equal(physics.rowHasIcon({ label: 'x', icon: 'nope' }), false);
+  assert.equal(physics.rowHasIcon({ label: 'x', icon: 'home' }), true);
+  // A caller-supplied node counts, but only a real element.
+  assert.equal(physics.rowHasIcon({ label: 'x', iconEl: { nodeType: 1 } }), true);
+  assert.equal(physics.rowHasIcon({ label: 'x', iconEl: 'not a node' }), false);
+  assert.equal(physics.rowHasIcon({ label: 'x', iconEl: null }), false);
+  assert.equal(physics.rowHasIcon(null), false);
+  assert.equal(physics.rowHasIcon(undefined), false);
+});
+
+test('native.js: a row with no icon renders exactly what it always did', () => {
+  // The whole additive claim rests on this line. Every app on the platform
+  // has menus built before icons existed, and some of their checks select
+  // on a row's text — so the no-icon path stays a bare textContent
+  // assignment producing a single text node, not a wrapped span.
+  const at = NATIVE_JS.indexOf('function fillRowButton(');
+  assert.ok(at !== -1, 'fillRowButton must exist');
+  const fn = NATIVE_JS.slice(at, NATIVE_JS.indexOf('\n  // Does this menu', at));
+  assert.match(fn, /if \(!icon && !aligned\) \{\s*\n\s*btn\.textContent = item\.label;/,
+    'the no-icon, no-alignment path must assign textContent directly');
+  // …and with an icon, the label still has to be readable as the button's
+  // own text, which is only true while the icon contributes none.
+  assert.match(fn, /createElement\('span'\)/, 'the label is wrapped for truncation');
+  assert.match(NATIVE_JS.slice(NATIVE_JS.indexOf('function buildRowIcon(')),
+    /createElementNS\(SVG_NS, 'svg'\)/,
+    'the kit icon is an SVG, which contributes no text to textContent');
+});
+
+test('native.js: both menu idioms fill their rows through the shared builder', () => {
+  // Two call sites, one builder. A copy in either would be a second place
+  // for the icon contract to be forgotten.
+  const calls = (NATIVE_JS.match(/(?<!function )fillRowButton\(btn, (?:action|item), \w+\)/g) || []);
+  assert.equal(calls.length, 2,
+    `the action sheet and the popover both fill through it (got ${calls.length})`);
+  assert.match(NATIVE_JS, /var sheetAligned = menuHasIcons\(actions\)/);
+  assert.match(NATIVE_JS, /var popoverAligned = menuHasIcons\(opts\.items\)/);
+});
+
+test('the conventions document names exactly the icons the kit ships', () => {
+  // Apps pick an icon by reading the handbook, and an unknown name draws
+  // nothing rather than throwing — so a doc that lags the registry costs
+  // an app a silent blank row, and a doc that runs ahead of it costs the
+  // same. This is the only place the two lists meet.
+  const doc = fs.readFileSync(
+    path.join(__dirname, '..', 'src/prompts/app-conventions.md'), 'utf8'
+  );
+  const at = doc.indexOf('- **Menu-row icons.**');
+  assert.ok(at !== -1, 'the conventions must document menu-row icons');
+  const entry = doc.slice(at, doc.indexOf('\n- **', at + 4));
+  const documented = (entry.match(/`([a-z]+)`/g) || [])
+    .map((m) => m.slice(1, -1))
+    .filter((name) => physics.ICON_NAMES.includes(name));
+  assert.deepEqual(
+    [...new Set(documented)].sort(),
+    [...physics.ICON_NAMES].sort(),
+    'the documented icon names and the kit registry have drifted',
+  );
+});

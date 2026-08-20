@@ -19,6 +19,7 @@ const caddy = require('../services/caddy');
 const worker = require('../services/worker');
 const agentTurn = require('../services/agent-turn');
 const registry = require('../agents/registry');
+const agentPreferences = require('../services/agent-preferences');
 const workerProgress = require('../services/worker-progress');
 const sessionLifecycle = require('../services/session-lifecycle');
 const stagingRecovery = require('../services/staging-recovery');
@@ -2790,13 +2791,31 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // (plan 8.1). Backend resolution, feature/allowlist checks, and the
       // OpenRouter credential + model validation can call out over the
       // network (or decrypt); they must NOT run while holding a row lock.
+      //
+      // NO `backend` KEY MEANS "whichever on-platform agent I used last"
+      // (#1348). The venue sheet asks a coarse question now — one
+      // "On-Platform" row standing for both in-chat backends — so it sends
+      // no backend and the answer is resolved here, from the user's stored
+      // preference, exactly as creating a session does. Omitted, not
+      // nulled: a literal null is a value, and the same distinction POST
+      // /sessions already draws.
+      //
+      // The two resolvers are not interchangeable and the difference is the
+      // point. An EXPLICIT pick must get that backend or a 4xx explaining
+      // why not. A resolved one is lenient: a stored OpenRouter preference
+      // that no longer validates (flag off, beta access gone, no model, key
+      // revoked) falls back to Claude with a `fallbackReason` rather than
+      // refusing to switch, and the client says why above the composer.
+      const wantsStoredDefault = backend == null;
       let pref;
       try {
-        pref = await resolveExplicitAgentPreference(pool, req.user.id, config, {
-          backend: backend || registry.DEFAULT_BACKEND,
-          model,
-          reasoningEffort,
-        });
+        pref = wantsStoredDefault
+          ? await resolveDefaultAgentPreference(pool, req.user.id, config)
+          : await resolveExplicitAgentPreference(pool, req.user.id, config, {
+            backend,
+            model,
+            reasoningEffort,
+          });
       } catch (err) {
         if (err instanceof AgentSelectionError) {
           return res.status(err.statusCode).json({ error: err.message });
@@ -2907,7 +2926,41 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           log.warn('sessions', 'reset-agent-context eviction warning', { sessionId, err: evErr.message });
         });
       }
-      res.json({ ok: true, session: updatedRow, message: contextMessage });
+
+      // #1348: an EXPLICIT pick is also the answer to "which one did you
+      // use last", so it is remembered. This is the rule the venue sheet
+      // already applies to the other group — picking a web hand-off saves
+      // dev_flow_preference, because "asked once" means the answer counts
+      // for next time — extended to the in-chat pair now that one coarse
+      // row stands for both.
+      //
+      // AFTER the commit and best-effort: the switch has already happened,
+      // and a preference that failed to save must not turn a successful
+      // switch into a 500. A resolved switch writes nothing — it was read
+      // FROM the preference and has no new answer to record.
+      if (!wantsStoredDefault) {
+        try {
+          await agentPreferences.setDefaultBackend(pool, req.user.id, {
+            backend: pref.backend,
+            model: pref.model,
+            reasoningEffort: pref.reasoningEffort,
+          });
+        } catch (prefErr) {
+          log.warn('sessions', 'reset-agent-context: default not remembered', {
+            sessionId, userId: req.user.id, err: prefErr.message,
+          });
+        }
+      }
+
+      res.json({
+        ok: true,
+        session: updatedRow,
+        message: contextMessage,
+        // Present only when a stored OpenRouter preference could not be
+        // honoured. The client turns it into the sentence above the
+        // composer — the same surface a new session's fallback uses.
+        ...(pref.fallbackReason ? { agentFallbackReason: pref.fallbackReason } : {}),
+      });
     } catch (err) {
       log.error('sessions', 'reset-agent-context failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });

@@ -159,9 +159,10 @@
         <div class="flex flex-wrap items-center gap-3">
           <button id="popover-btn" class="px-4 py-2.5 rounded-lg text-sm font-medium text-white" style="background:var(--un-accent)" aria-haspopup="menu">Anchored menu</button>
           <button id="adaptive-menu-btn" class="px-4 py-2.5 rounded-lg text-sm font-medium border border-zinc-300 dark:border-zinc-700" aria-haspopup="menu">Adaptive menu</button>
+          <button id="icon-menu-btn" class="px-4 py-2.5 rounded-lg text-sm font-medium border border-zinc-300 dark:border-zinc-700" aria-haspopup="menu">Icon menu</button>
           <button id="popover-edge-btn" class="ml-auto px-4 py-2.5 rounded-lg text-sm font-medium border border-zinc-300 dark:border-zinc-700" aria-haspopup="menu">Edge clamp/flip</button>
         </div>
-        <p id="popover-result" class="text-xs text-zinc-500 mt-2">The desktop menu idiom: opens attached to its button, flipped/clamped to stay in the viewport, dismissed by outside-click / Escape / scroll — click the button again to toggle it closed. Arrow keys walk the entries. "Edge clamp/flip" sits at the right edge (and flips above when there's no room below — scroll it near the bottom). "Adaptive menu" is ONE <code>unNative.menu()</code> call: a bottom action sheet on touch (<code>?un-platform=ios</code>), this popover on desktop.</p>
+        <p id="popover-result" class="text-xs text-zinc-500 mt-2">The desktop menu idiom: opens attached to its button, flipped/clamped to stay in the viewport, dismissed by outside-click / Escape / scroll — click the button again to toggle it closed. Arrow keys walk the entries. "Edge clamp/flip" sits at the right edge (and flips above when there's no room below — scroll it near the bottom). "Adaptive menu" is ONE <code>unNative.menu()</code> call: a bottom action sheet on touch (<code>?un-platform=ios</code>), this popover on desktop. "Icon menu" adds <code>icon:</code> to the rows — a name from the kit's set, or <code>iconEl</code> for your own node; a row without one is still aligned, and the glyph inherits the row's colour, so the destructive row's icon is red.</p>
       </section>
 
       <!-- Toasts -->
@@ -545,6 +546,19 @@
           { label: 'Delete', destructive: true },
         ];
       }
+      // Same menu with icons. "Duplicate" keeps NO icon on purpose: it is
+      // the row that demonstrates the spacer — every label in an icon menu
+      // starts at the same x whether or not its own row drew a glyph.
+      function demoIconMenuItems() {
+        return [
+          { label: 'On-Platform', icon: 'home' },
+          { label: 'Open on the web', icon: 'globe' },
+          { label: 'Duplicate', title: 'No icon — aligned by the spacer' },
+          { label: 'Your own tooling', icon: 'terminal' },
+          { label: 'Local CLI bridge', icon: 'link' },
+          { label: 'Delete', icon: 'trash', destructive: true },
+        ];
+      }
       function reportMenuChoice(kind) {
         return function (item) {
           popResult.textContent = kind + ': ' + (item ? item.label : 'dismissed.');
@@ -569,6 +583,13 @@
           title: 'Demo item',
           items: demoMenuItems(),
         }).then(reportMenuChoice('Adaptive menu'));
+      });
+      document.getElementById('icon-menu-btn').addEventListener('click', function (e) {
+        unNative.menu({
+          anchorEl: e.currentTarget,
+          title: 'Where do you want to work on this?',
+          items: demoIconMenuItems(),
+        }).then(reportMenuChoice('Icon menu'));
       });
 
       // ── Centered modal ─────────────────────────────────────────────

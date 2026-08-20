@@ -570,6 +570,78 @@
     };
   }
 
+  /* ────────────────────────────────────────────────────────────────────
+   * Menu-row icons (additive, /v1).
+   *
+   * Rows in menu() / popover() / actionSheet() may carry `icon: '<name>'`
+   * naming one of these, or `iconEl: <Element>` for artwork the kit does
+   * not ship. A row with NEITHER renders exactly as it did before this
+   * existed — one text node, same class, same DOM — so every caller and
+   * every selector written against one is untouched.
+   *
+   * Stroke geometry on a 24 grid, drawn in `currentColor`: the row's own
+   * colour carries the icon, so a destructive row tints its icon red and
+   * a disabled row dims it without a single per-icon rule.
+   *
+   * Deliberately a SMALL set. A name that ships here is one every app on
+   * the platform can rely on and none of them can restyle, so the set
+   * grows by being needed, not by being anticipated — /v1 takes additive
+   * names in place.
+   * ──────────────────────────────────────────────────────────────────── */
+  var ICONS = {
+    home: [
+      'M3 10.4 12 3.2l9 7.2',
+      'M5.4 9.3V20.8h13.2V9.3',
+      'M9.6 20.8v-6.2h4.8v6.2',
+    ],
+    globe: [
+      'M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z',
+      'M3 12h18',
+      'M12 3c2.4 2.7 3.6 5.7 3.6 9s-1.2 6.3-3.6 9c-2.4-2.7-3.6-5.7-3.6-9S9.6 5.7 12 3z',
+    ],
+    terminal: [
+      'M4 5.5h16A1.5 1.5 0 0 1 21.5 7v10a1.5 1.5 0 0 1-1.5 1.5H4A1.5 1.5 0 0 1 2.5 17V7A1.5 1.5 0 0 1 4 5.5z',
+      'M6.6 9.6 9.6 12l-3 2.4',
+      'M12.6 14.8h4.8',
+    ],
+    link: [
+      'M10.2 13.6a4 4 0 0 0 5.7 0l2.9-2.9a4 4 0 1 0-5.7-5.7l-1.6 1.7',
+      'M13.8 10.4a4 4 0 0 0-5.7 0l-2.9 2.9a4 4 0 1 0 5.7 5.7l1.6-1.7',
+    ],
+    laptop: [
+      'M5.2 6.4h13.6v9.2H5.2z',
+      'M2.6 18.6h18.8',
+    ],
+    cloud: [
+      'M7.2 18.4h9.4a4.1 4.1 0 0 0 .6-8.1 6.1 6.1 0 0 0-11.6-.6 3.8 3.8 0 0 0 1.6 8.7z',
+    ],
+    // The one icon here that is not about WHERE something runs: a
+    // destructive row is the most-iconed row in any app's menus, and it is
+    // what proves the glyph takes the row's colour rather than its own.
+    trash: [
+      'M4 6.8h16',
+      'M9.2 6.8V4.6h5.6v2.2',
+      'M6.4 6.8 7.3 20a1.2 1.2 0 0 0 1.2 1.1h7a1.2 1.2 0 0 0 1.2-1.1l.9-13.2',
+      'M10.3 10.6v6.6',
+      'M13.7 10.6v6.6',
+    ],
+  };
+
+  // hasOwnProperty, not a bare lookup: `name` is caller data, and a bare
+  // one answers `toString` / `constructor` with a prototype member that is
+  // not an icon.
+  function iconPaths(name) {
+    return Object.prototype.hasOwnProperty.call(ICONS, name) ? ICONS[name] : null;
+  }
+
+  // Does this row want the kit to draw something to the left of its label?
+  // One answer, so the sheet and the popover can never disagree about it.
+  function rowHasIcon(item) {
+    if (!item) return false;
+    if (item.iconEl && item.iconEl.nodeType === 1) return true;
+    return !!iconPaths(item.icon);
+  }
+
   var physics = {
     PRESETS: PRESETS,
     DECEL_RATE: DECEL_RATE,
@@ -604,6 +676,9 @@
     createToastSlot: createToastSlot,
     zoomPose: zoomPose,
     zoomRectUsable: zoomRectUsable,
+    ICON_NAMES: Object.keys(ICONS),
+    iconPaths: iconPaths,
+    rowHasIcon: rowHasIcon,
   };
 
   // Node (unit tests): export the math and stop — no DOM below this line.
@@ -3287,12 +3362,90 @@
   }
 
   /* ────────────────────────────────────────────────────────────────────
+   * Menu-row content — the one place a row's label (and its optional
+   * icon) is put into a button, shared by the action sheet and the
+   * popover so the two idioms cannot drift.
+   * ──────────────────────────────────────────────────────────────────── */
+
+  var SVG_NS = 'http://www.w3.org/2000/svg';
+
+  // A row's icon element, or null when it has none. `iconEl` wins over a
+  // named icon: a caller that supplied artwork meant it. The node is used
+  // as given, not cloned, so supply a fresh one per row — a menu is built
+  // from scratch on every open, which is where callers naturally do.
+  function buildRowIcon(item) {
+    if (item.iconEl && item.iconEl.nodeType === 1) {
+      item.iconEl.classList.add('un-item-icon');
+      return item.iconEl;
+    }
+    var paths = iconPaths(item.icon);
+    if (!paths) return null;
+    var svg = document.createElementNS(SVG_NS, 'svg');
+    svg.setAttribute('class', 'un-item-icon');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('fill', 'none');
+    svg.setAttribute('stroke', 'currentColor');
+    svg.setAttribute('stroke-width', '1.7');
+    svg.setAttribute('stroke-linecap', 'round');
+    svg.setAttribute('stroke-linejoin', 'round');
+    // Decorative: the label beside it already names the row, so a screen
+    // reader that announced the icon too would say everything twice.
+    svg.setAttribute('aria-hidden', 'true');
+    paths.forEach(function (d) {
+      var path = document.createElementNS(SVG_NS, 'path');
+      path.setAttribute('d', d);
+      svg.appendChild(path);
+    });
+    return svg;
+  }
+
+  // Fill a row button. `aligned` is the menu-level answer to "does ANY row
+  // here carry an icon" — when one does, the rows that don't get an empty
+  // spacer so every label in the menu starts at the same x. Without it a
+  // mixed menu reads as a mistake.
+  //
+  // The no-icon, no-alignment path is a bare textContent assignment: the
+  // DOM a row had before icons existed, to the node.
+  function fillRowButton(btn, item, aligned) {
+    var icon = buildRowIcon(item);
+    if (!icon && !aligned) {
+      btn.textContent = item.label;
+      return;
+    }
+    btn.classList.add('un-has-icon');
+    if (icon) {
+      btn.appendChild(icon);
+    } else {
+      var spacer = document.createElement('span');
+      spacer.className = 'un-item-icon un-item-icon-empty';
+      spacer.setAttribute('aria-hidden', 'true');
+      btn.appendChild(spacer);
+    }
+    // A span, not a text node beside the icon: the label is the part that
+    // truncates, and `btn.textContent` still answers the label alone
+    // because an SVG contributes no text — so a caller asserting on a
+    // row's text keeps working.
+    var text = document.createElement('span');
+    text.className = 'un-item-label';
+    text.textContent = item.label;
+    btn.appendChild(text);
+  }
+
+  // Does this menu need its labels aligned to a common left edge?
+  function menuHasIcons(items) {
+    for (var i = 0; i < items.length; i += 1) {
+      if (rowHasIcon(items[i])) return true;
+    }
+    return false;
+  }
+
+  /* ────────────────────────────────────────────────────────────────────
    * Action sheet — iOS stack of actions + separate Cancel card. Resolves
    * with the chosen action object, or null on cancel/backdrop.
    * ──────────────────────────────────────────────────────────────────── */
 
-  // actionSheet({ title?, actions: [{ label, destructive?, handler? }],
-  // cancelLabel? }) — returns a Promise.
+  // actionSheet({ title?, actions: [{ label, icon?, iconEl?, destructive?,
+  // handler? }], cancelLabel? }) — returns a Promise.
   function actionSheet(options) {
     var opts = options || {};
     var actions = opts.actions || [];
@@ -3310,11 +3463,12 @@
         title.textContent = opts.title;
         card.appendChild(title);
       }
+      var sheetAligned = menuHasIcons(actions);
       actions.forEach(function (action) {
         var btn = document.createElement('button');
         btn.type = 'button';
         btn.className = 'un-action-btn' + (action.destructive ? ' un-destructive' : '');
-        btn.textContent = action.label;
+        fillRowButton(btn, action, sheetAligned);
         btn.addEventListener('click', function () { settle(action); });
         card.appendChild(btn);
       });
@@ -3407,7 +3561,8 @@
   // title?, headerEl?, placement?, onDismiss? }).
   //
   // Items share the actionSheet shape plus popover extensions:
-  // { label, destructive?, disabled?, keepOpen?, title?, handler? } —
+  // { label, icon?, iconEl?, destructive?, disabled?, keepOpen?, title?,
+  //   handler? } —
   // disabled renders an inert row, keepOpen runs handler without
   // dismissing (in-place feedback flows), and handler receives the row's
   // <button> element. headerEl is adopted verbatim (it brings its own
@@ -3459,12 +3614,13 @@
 
     if (itemsMode) {
       el.setAttribute('role', 'menu');
+      var popoverAligned = menuHasIcons(opts.items);
       opts.items.forEach(function (item) {
         var btn = document.createElement('button');
         btn.type = 'button';
         btn.className = 'un-popover-item' + (item.destructive ? ' un-destructive' : '');
         btn.setAttribute('role', 'menuitem');
-        btn.textContent = item.label;
+        fillRowButton(btn, item, popoverAligned);
         if (item.title) btn.title = item.title;
         if (item.disabled) {
           btn.disabled = true;

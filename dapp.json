@@ -2364,25 +2364,31 @@
       "expectText": "this deployment has it turned off"
     },
     {
-      "name": "The change control opens one sheet with both venue groups (#1086)",
+      "name": "The header dropdown opens the one venue sheet (#1086)",
       "path": "/?demo=1&shot=venue-sheet#app/usernode-2d5619/dev/sessions/990403",
       "expectSelector": ".un-popover .un-popover-item, .un-popover [role=\"menuitem\"]",
-      "expectText": "Where should the rest of this be built?"
+      "expectText": "Where do you want to work on this?"
     },
     {
-      "name": "The sheet names the in-chat group and ticks the current venue (#1086)",
+      "name": "The sheet asks where you want to work, and ticks where you are (#1348)",
       "path": "/?demo=1&shot=venue-sheet#app/usernode-2d5619/dev/sessions/990403",
-      "expectText": "— In this chat —"
+      "expectText": "Where do you want to work on this?"
     },
     {
-      "name": "The sheet's other group is the three places that are not this chat (#1086)",
+      "name": "The coarse sheet leads with the row that keeps this chat (#1348)",
       "path": "/?demo=1&shot=venue-sheet#app/usernode-2d5619/dev/sessions/990403",
-      "expectText": "— Somewhere else —"
+      "expectSelector": ".un-popover [role=\"menuitem\"]:first-of-type .un-item-label, .un-action-sheet .un-action-btn:first-of-type .un-item-label",
+      "expectText": "On-Platform"
     },
     {
-      "name": "Your own tools are offered as a venue, with no chat promised (#1086)",
+      "name": "Every row in the sheet carries a kit icon (#1348)",
       "path": "/?demo=1&shot=venue-sheet#app/usernode-2d5619/dev/sessions/990403",
-      "expectText": "Your computer · your own tools"
+      "expectSelector": ".un-popover-item.un-has-icon > svg.un-item-icon + .un-item-label, .un-action-btn.un-has-icon > svg.un-item-icon + .un-item-label"
+    },
+    {
+      "name": "Your own developer tooling is one of the four answers (#1348)",
+      "path": "/?demo=1&shot=venue-sheet#app/usernode-2d5619/dev/sessions/990403",
+      "expectText": "Your Own Developer Tooling"
     },
     {
       "name": "Choosing Claude Code opens a five-step walkthrough with one step live (#1049)",

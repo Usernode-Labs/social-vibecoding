@@ -925,6 +925,62 @@ const DevChat = {
     }
   },
 
+  // Switch this session to whichever on-platform agent the user ran last
+  // (#1348).
+  //
+  // The same endpoint as _switchCurrentCodingAgent, with NO backend key —
+  // which POST reset-agent-context reads as "resolve my stored preference",
+  // the way POST /sessions already does at creation. It is a separate method
+  // rather than a flag on that one because the two differ in what they can
+  // answer: an explicit switch knows its backend up front and can say "that
+  // one is already selected"; this one only learns the answer from the
+  // response, and the answer may be a FALLBACK — a stored OpenRouter
+  // preference whose flag, beta access, model or key no longer stands. That
+  // reason goes to the same sentence above the composer a new session uses,
+  // which is the only place it is ever explained.
+  async _switchToLastUsedPlatformAgent() {
+    const session = DevChat.currentSession;
+    if (!session || DevChat.isStreaming) return;
+    try {
+      const response = await fetch(`/api/sessions/${session.id}/reset-agent-context`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        // Deliberately empty: a `backend: null` would be a VALUE, and the
+        // route reads a named backend as an explicit choice.
+        body: JSON.stringify({}),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        PlatformUI.toast(data.error || 'Could not switch to the platform agent.');
+        return;
+      }
+      if (!DevChat.currentSession || DevChat.currentSession.id !== session.id) return;
+      Object.assign(DevChat.currentSession, data.session || {});
+      const cached = DevChat.sessions.find((s) => Number(s.id) === Number(session.id));
+      if (cached) Object.assign(cached, data.session || {});
+      if (data.message) DevChat.messages.push(data.message);
+      if (data.agentFallbackReason) {
+        DevChat._venueFallbackReason = data.agentFallbackReason;
+      }
+      DevChat.renderChatView();
+      PlatformUI.toast(`This session now uses ${DevChat._agentName(DevChat._agentBackend(DevChat.currentSession))}.`);
+    } catch {
+      PlatformUI.toast('Network error while switching coding agents.');
+    }
+  },
+
+  // Which session a web hand-off pushes back onto — null when it starts
+  // separate work. Read off the shared derivation rather than carried on a
+  // row, now that the sheet's rows are coarse (#1348).
+  _webHandoffTargetId() {
+    if (!window.BuildVenues) return null;
+    const state = DevChat._venueSheetState();
+    return BuildVenues.webTargetKind(state) !== 'new' && state.sessionId != null
+      ? state.sessionId
+      : null;
+  },
+
   // ── #907: where the next coding turn runs ────────────────────────────
   //
   // The platform, not this page, decides: if a machine holds a lease on the
@@ -1750,19 +1806,28 @@ const DevChat = {
     }
   },
 
-  // ── The one venue question (#1086) ─────────────────────────────────
+  // ── The one venue question (#1086, recut #1348) ────────────────────
   //
   // Every surface that used to ask its own version of "which agent?" opens
   // THIS: the venue dropdown in the session header, the "…" menu's one
-  // row, and the out-of-credits card. Six rows, two groups, gated by
+  // row, and the out-of-credits card. FOUR coarse rows now, gated by
   // omission — the list and the copy are build-venues.js's; the four
   // things a pick can actually DO are this module's, because each one
   // already existed and already worked. Nothing here is new mechanism.
   //
-  //   backend → reset-agent-context, keeping branch + transcript (#906)
-  //   lease   → the CLI instructions card (#907)
-  //   flow    → the web-agent walkthrough, in place (#1049/#1071)
-  //   import  → the PR-import picker (#687)
+  //   on-platform → reset-agent-context with no backend: the server picks
+  //                 whichever in-chat agent this user ran last (#1348),
+  //                 keeping branch + transcript (#906)
+  //   cli-bridge  → the CLI instructions card (#907)
+  //   web-agent   → the web-agent walkthrough, in place (#1049/#1071),
+  //                 which carries its own Claude/Codex toggle (#1281)
+  //   own-tools   → the own-tools launchpad, ending in the PR-import
+  //                 picker (#687/#1281)
+  //
+  // The six VENUES underneath are untouched: the header chip still names
+  // the specific one, the out-of-credits card still lists them all with
+  // their own CTAs, and preselect() still maps a venue to its mechanism.
+  // Only the SHEET got coarser.
   _venueSheetState() {
     const base = DevChat._sessionOptionsState();
     const user = (typeof App !== 'undefined' && App.user) || {};
@@ -1793,26 +1858,28 @@ const DevChat = {
     BuildVenues.open({
       anchorEl: anchorEl || document.getElementById('dc-venue-select') || undefined,
       state,
-      onPick: (pick, row) => {
-        if (!pick || row.current) return;
-        if (pick.kind === 'backend') {
-          // Coming back in-chat CLEARS the stored venue rather than storing
-          // an in-chat one (#1281). agent_backend already says which of the
-          // two it is, and currentVenue() derives it — so a stored
-          // 'usernode-claude' would be a second, staler answer to a question
-          // the column already answers, and would mask a later switch to
-          // OpenRouter made from anywhere else.
+      onPick: (row) => {
+        if (!row || row.current) return;
+        // #1348: the sheet answers coarsely now. `row.venue` is the venue a
+        // choice resolves to, or null for the one the SERVER resolves.
+        if (row.venue === null) {
+          // On-Platform. Coming back in-chat CLEARS the stored venue rather
+          // than storing an in-chat one (#1281). agent_backend already says
+          // which of the two it is, and currentVenue() derives it — so a
+          // stored 'usernode-claude' would be a second, staler answer to a
+          // question the column already answers, and would mask a later
+          // switch to OpenRouter made from anywhere else.
           DevChat._persistBuildVenue(null);
-          // Claude needs no further detail, so it switches outright. The
-          // OpenRouter row still opens the model/effort chooser: a backend
-          // alone is not a complete answer for it.
-          DevChat._switchCurrentCodingAgent(
-            pick.backend === 'claude_code'
-              ? { backend: 'claude_code', model: null, reasoningEffort: null }
-              : null
-          );
+          // No backend named: the server applies whichever in-chat agent
+          // this user ran last, and says so if that preference no longer
+          // validates. The coarse row asks "on the platform"; which of the
+          // two that means is not a question worth putting to someone who
+          // has only ever had one of them.
+          DevChat._switchToLastUsedPlatformAgent();
           return;
         }
+        const pick = BuildVenues.preselect(row.venue);
+        if (!pick) return;
         if (pick.kind === 'lease') {
           if (!window.SessionOptions) return;
           DevChat._optionsCard = SessionOptions.openInstructions({
@@ -1831,7 +1898,7 @@ const DevChat = {
           // the chat into a launchpad and keeps it one across a reload.
           if (DevChat.currentSession) DevChat.currentSession.build_venue = pick.venue;
           DevChat._persistBuildVenue(pick.venue);
-          DevChat._devFlowFromCredits(pick.flow, row.targetId);
+          DevChat._devFlowFromCredits(pick.flow, DevChat._webHandoffTargetId());
           DevChat.renderChatView();
           return;
         }

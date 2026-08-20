@@ -155,10 +155,18 @@ test('the browser stores a hand-off and CLEARS on the way back in-chat', () => {
   // Storing an in-chat venue would be a second, staler answer to a question
   // agent_backend already answers — and would mask a later switch made from
   // anywhere else.
+  // #1348: the in-chat answer is the coarse On-Platform row, and its
+  // `venue` is null because the SERVER resolves which of the two backends
+  // it means. That null is the branch, and it still clears the column.
   assert.match(
     DEV_CHAT_SRC,
-    /pick\.kind === 'backend'[\s\S]{0,600}_persistBuildVenue\(null\)/,
+    /row\.venue === null[\s\S]{0,900}_persistBuildVenue\(null\)/,
     'coming back in-chat clears the stored venue',
+  );
+  assert.match(
+    DEV_CHAT_SRC,
+    /row\.venue === null[\s\S]{0,1200}_switchToLastUsedPlatformAgent\(\)/,
+    'and switches to the backend the user ran last, resolved server-side',
   );
   for (const kind of ['flow', 'import']) {
     assert.match(

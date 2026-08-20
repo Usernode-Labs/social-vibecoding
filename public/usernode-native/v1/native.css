@@ -760,6 +760,43 @@ html.un-kb .un-action-sheet {
   font-weight: 600;
 }
 
+/* ── Menu-row icons ────────────────────────────────────────────────────
+   Rows given `icon` / `iconEl` draw the glyph to the left of the label.
+   The class lands on EVERY row of a menu where at least one row has an
+   icon, so the rows that don't get an empty spacer and all the labels
+   still start at the same x — a menu with the icons only half applied
+   reads as a bug rather than a style.
+
+   The icon inherits `currentColor`, which is what makes a destructive
+   row's icon red and a disabled row's icon dim with no rule of its own.
+   The sheet centres the icon+label pair (iOS action sheets centre their
+   labels); the popover leaves it ranged left. */
+.un-action-btn.un-has-icon,
+.un-popover-item.un-has-icon {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.un-action-btn.un-has-icon {
+  justify-content: center;
+}
+.un-item-icon {
+  flex: none;
+  width: 1.15em;
+  height: 1.15em;
+  opacity: 0.75;
+}
+.un-item-icon-empty {
+  opacity: 0;
+}
+/* The label is the half that gives way when a menu is narrow. */
+.un-item-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ── Anchored popover / dropdown menu ──────────────────────────────────
    unNative.popover(): the desktop menu idiom. No backdrop and no
    entrance animation on purpose (menus are high-frequency UI — see the

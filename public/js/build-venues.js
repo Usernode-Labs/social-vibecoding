@@ -517,6 +517,147 @@
       : '';
   }
 
+  /* ── The four choices the sheet actually offers (#1348) ─────────────
+   *
+   * The sheet used to be the VENUES list itself: six rows under two
+   * headings. That put the platform's own vocabulary in front of the
+   * user — "Usernode · Claude" vs "Usernode · OpenRouter" is a backend
+   * question, and "Your computer · Usernode session" vs "Your computer ·
+   * your own tools" differ by a word most people would read straight
+   * past. So the sheet asks the coarse question now — WHERE do you want
+   * to work on this — and each answer resolves to a venue underneath.
+   *
+   * The six venues have NOT gone anywhere: `currentVenue()` still
+   * derives them, `preselect()` still maps them to mechanisms, and the
+   * header chip still names the specific one, because "you are on
+   * OpenRouter" is worth knowing at a glance even when picking it is a
+   * coarser act. This layer sits on top; it does not replace them.
+   *
+   * Two choices stand for a PAIR of venues, and neither asks a second
+   * question here:
+   *
+   *   on-platform  — the two in-chat backends. The pick sends no backend
+   *                  at all and the server answers with whichever one
+   *                  this user ran last (POST reset-agent-context with no
+   *                  `backend` key, #1348). Most people have only Claude —
+   *                  OpenRouter is flag + beta + credential gated — so for
+   *                  them there was never a question to ask; for the rest
+   *                  the honest default is what they were already using,
+   *                  not whichever the list happens to name first.
+   *   web-agent    — Claude Code and Codex on the web. The launchpad this
+   *                  opens already carries its own Claude/ChatGPT toggle
+   *                  (#1281), so asking here would ask twice.
+   *
+   * `venue` is the venue a pick resolves to, or null when the server
+   * resolves it. `matches` is the reverse: which venues make THIS choice
+   * the current one, so the sheet can tick the row you are already in.
+   *
+   * Gating stays by OMISSION — see the header. `requires` is read exactly
+   * as VENUES' is.
+   */
+  var CHOICES = [
+    {
+      id: 'on-platform',
+      label: 'On-Platform',
+      icon: 'home',
+      venue: null,
+      matches: ['usernode-claude', 'usernode-openrouter'],
+      requires: null,
+      blurb: 'Usernode runs the turns right here, in this chat — on your daily AI credits, or your own key once they run out.',
+    },
+    {
+      id: 'web-agent',
+      label: 'Claude or Codex WebUI',
+      icon: 'globe',
+      venue: 'web-claude-code',
+      matches: ['web-claude-code', 'web-codex'],
+      requires: 'externalFlowsAvailable',
+      blurb: 'Usernode writes the work order and Claude Code or Codex builds it on the plan you already pay for, then pushes back here. You pick which of the two on the next screen.',
+    },
+    {
+      id: 'own-tools',
+      label: 'Your Own Developer Tooling',
+      icon: 'terminal',
+      venue: 'own-tools-pr',
+      matches: ['own-tools-pr'],
+      requires: 'canCollaborate',
+      blurb: 'Build it however you like — Cursor, Zed, vim, any agent — push a branch, then bring the pull request in.',
+    },
+    {
+      // Last on purpose, and absent unless the deployment offers the CLI
+      // AND this user opted in: it is the one venue that wants software
+      // installed before it can do anything, so it is the rare answer
+      // rather than a peer of the other three.
+      id: 'cli-bridge',
+      label: 'Local CLI Bridge',
+      icon: 'link',
+      venue: 'local',
+      matches: ['local'],
+      requires: ['cliAuthEnabled', 'sessionBridgeEnabled'],
+      blurb: 'The Usernode CLI runs this session’s turns on your machine and your own Claude plan. Same chat, same branch, same proposal — the work just executes locally.',
+    },
+  ];
+
+  var CHOICE_BY_ID = {};
+  CHOICES.forEach(function (c) { CHOICE_BY_ID[c.id] = c; });
+
+  function choice(id) {
+    return Object.prototype.hasOwnProperty.call(CHOICE_BY_ID, id) ? CHOICE_BY_ID[id] : null;
+  }
+
+  // Which coarse row is the venue this session is in? Null when the
+  // current venue has no row — which is not hypothetical: `own-tools-pr`
+  // is collaborator-only and `local` is settings-gated, so a session CAN
+  // sit in a venue this viewer is not offered.
+  function currentChoice(state) {
+    var id = (state && state.current) || currentVenue(state);
+    for (var i = 0; i < CHOICES.length; i += 1) {
+      if (CHOICES[i].matches.indexOf(id) !== -1) return CHOICES[i].id;
+    }
+    return null;
+  }
+
+  // The offered rows. Same gating rule as venuesFor(): every flag in
+  // `requires` must be truthy or the row is ABSENT, never disabled.
+  function choicesFor(state) {
+    var s = state || {};
+    var mode = MODES.indexOf(s.mode) === -1 ? 'start' : s.mode;
+    var current = currentChoice(s);
+    return CHOICES.filter(function (c) {
+      if (!c.requires) return true;
+      var needed = [].concat(c.requires);
+      for (var i = 0; i < needed.length; i += 1) {
+        if (!s[needed[i]]) return false;
+      }
+      return true;
+    }).map(function (c) {
+      // The consequence sentence still comes from the venue underneath,
+      // so the "does this keep my chat?" answer cannot drift from the
+      // venue list. For the pair that resolves server-side, Claude stands
+      // for the pair — both in-chat venues give the same answer.
+      var underlying = c.venue || 'usernode-claude';
+      var because = consequence(underlying, mode, s);
+      var out = {
+        id: c.id,
+        label: c.label,
+        icon: c.icon,
+        venue: c.venue,
+        title: c.blurb + ' ' + because,
+        blurb: c.blurb,
+        consequence: because,
+        current: current === c.id,
+        unavailable: false,
+        reason: null,
+      };
+      if (mode === 'blocked' && c.id === 'on-platform') {
+        out.unavailable = true;
+        out.reason = s.blockedReason
+          || 'Today’s AI credits are spent. They reset at midnight UTC.';
+      }
+      return out;
+    });
+  }
+
   // ── The sheet ──────────────────────────────────────────────────────
   //
   // Built imperatively, and deliberately NOT as a React island: this sheet's
@@ -526,44 +667,46 @@
   // inside React (frontend/src/lib/static-modal.ts); this venue sheet has no
   // static root to own, so it stays as it is. See AGENTS.md.
   //
-  // `opts`: { anchorEl, state, onPick(preselect), onUnavailable(row) }.
+  // FOUR rows, one question, no group headings (#1348). The headings were
+  // load-bearing while the rows were six venue names that did not say what
+  // they did — "In this chat" was the only thing telling you that
+  // "Usernode · Claude" kept your transcript. The coarse labels say it
+  // themselves, and the rows are ordered so the two that keep this chat
+  // still come first.
+  //
+  // `opts`: { anchorEl, state, onPick(row), onUnavailable(row) }.
   // Resolves whatever the kit's menu resolves; null when there is no kit.
   function open(opts) {
     var o = opts || {};
     var state = o.state || {};
-    var rows = venuesFor(state);
+    var rows = choicesFor(state);
     if (!rows.length) return Promise.resolve(null);
     var kit = (typeof window !== 'undefined' && window.PlatformUI) || null;
     if (!kit || !kit.hasKit()) return Promise.resolve(null);
 
-    // The kit's menu takes a flat action list with no heading primitive,
-    // so each group announces itself with a non-interactive separator
-    // row. NOT a `disabled: true` row — the touch action sheet drops
-    // those, which would silently delete the headings on exactly the
-    // platform where the grouping matters most.
-    var actions = [];
-    GROUPS.forEach(function (group) {
-      var inGroup = rows.filter(function (r) { return r.group === group.id; });
-      if (!inGroup.length) return;
-      actions.push({ label: '— ' + group.label + ' —', handler: function () {} });
-      inGroup.forEach(function (row) {
-        actions.push({
-          label: row.label + (row.current ? ' ✓' : '') + (row.unavailable ? ' (unavailable)' : ''),
-          title: row.unavailable ? row.reason : row.title,
-          handler: function () {
-            if (row.unavailable) {
-              if (typeof o.onUnavailable === 'function') o.onUnavailable(row);
-              return;
-            }
-            if (typeof o.onPick === 'function') o.onPick(preselect(row.id), row);
-          },
-        });
-      });
+    var actions = rows.map(function (row) {
+      return {
+        // The kit sets labels with textContent, so the tick and the
+        // unavailable note ride in the label exactly as they did before.
+        label: row.label + (row.current ? ' ✓' : '') + (row.unavailable ? ' (unavailable)' : ''),
+        // #1348: the kit draws the glyph from its own set, in the row's own
+        // colour. A name it does not know draws nothing rather than
+        // throwing, so a row is never worse than it was without one.
+        icon: row.icon,
+        title: row.unavailable ? row.reason : row.title,
+        handler: function () {
+          if (row.unavailable) {
+            if (typeof o.onUnavailable === 'function') o.onUnavailable(row);
+            return;
+          }
+          if (typeof o.onPick === 'function') o.onPick(row);
+        },
+      };
     });
 
     return kit.menu({
       anchorEl: o.anchorEl || undefined,
-      title: state.mode === 'switch' ? 'Where should the rest of this be built?' : 'Where should this be built?',
+      title: 'Where do you want to work on this?',
       items: actions,
     });
   }
@@ -576,6 +719,10 @@
     venue: venue,
     venuesFor: venuesFor,
     currentVenue: currentVenue,
+    CHOICES: CHOICES,
+    choice: choice,
+    choicesFor: choicesFor,
+    currentChoice: currentChoice,
     defaultableVenues: defaultableVenues,
     preselect: preselect,
     consequence: consequence,

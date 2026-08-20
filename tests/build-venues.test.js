@@ -475,7 +475,7 @@ test('interpolated state is escaped', () => {
 
 // ── The sheet ───────────────────────────────────────────────────────
 
-test('the sheet groups the rows under non-interactive headings, not disabled ones', async () => {
+test('the sheet asks one coarse question, four rows, no headings (#1348)', async () => {
   const calls = [];
   global.window = {
     PlatformUI: {
@@ -490,38 +490,94 @@ test('the sheet groups the rows under non-interactive headings, not disabled one
   }
   assert.equal(calls.length, 1);
   const items = calls[0].items;
-  assert.equal(calls[0].title, 'Where should the rest of this be built?');
-  assert.equal(items[0].label, '— In this chat —');
-  assert.equal(items[4].label, '— Somewhere else —');
-  assert.equal(items.length, 8, 'six venues plus two headings');
-  // The headings are inert by having a no-op handler, NOT by `disabled` —
-  // the touch action sheet drops disabled rows, which would silently delete
-  // the headings on exactly the platform where the grouping matters most.
+  assert.equal(calls[0].title, 'Where do you want to work on this?');
+  // The group headings were load-bearing while the rows were six venue
+  // names that did not say what they did. The coarse labels say it, so
+  // there is nothing left for a heading to explain — and every row is a
+  // real answer now, not a separator with a no-op handler.
+  assert.equal(items.length, 4, `four choices, got ${items.map((i) => i.label).join(' / ')}`);
+  assert.deepEqual(items.map((i) => i.label.replace(' ✓', '')), [
+    'On-Platform',
+    'Claude or Codex WebUI',
+    'Your Own Developer Tooling',
+    'Local CLI Bridge',
+  ]);
   for (const item of items) {
     assert.ok(!('disabled' in item), `${item.label} carries a disabled flag`);
     assert.equal(typeof item.handler, 'function');
+    assert.ok(!/^—/.test(item.label), 'no separator rows survive');
   }
 });
 
-test('picking a row hands back the mechanism, never the venue id alone', async () => {
+test('every row carries a kit icon the kit actually ships (#1348)', async () => {
+  // An icon name the kit does not know draws nothing — no throw, no
+  // fallback glyph — so a typo here is a silently iconless row.
+  const { physics } = require('../public/usernode-native/v1/native.js');
+  let items = null;
+  global.window = {
+    PlatformUI: {
+      hasKit: () => true,
+      menu: (opts) => { items = opts.items; return Promise.resolve(null); },
+    },
+  };
+  try {
+    await BV.open({ state: { ...OPEN, mode: 'switch' } });
+  } finally {
+    delete global.window;
+  }
+  assert.equal(items.length, 4);
+  for (const item of items) {
+    assert.ok(item.icon, `${item.label} has no icon`);
+    assert.ok(physics.ICON_NAMES.includes(item.icon),
+      `${item.label}: '${item.icon}' is not in the kit's set`);
+  }
+});
+
+test('picking a row hands back the choice, with the venue it resolves to', async () => {
   const picked = [];
   global.window = {
     PlatformUI: {
       hasKit: () => true,
       menu: (opts) => {
-        opts.items.find((i) => i.label === 'Usernode · OpenRouter').handler();
+        opts.items.find((i) => /Your Own Developer Tooling/.test(i.label)).handler();
         return Promise.resolve(null);
       },
     },
   };
   try {
-    await BV.open({ state: OPEN, onPick: (pre, row) => picked.push([pre, row]) });
+    await BV.open({ state: OPEN, onPick: (row) => picked.push(row) });
   } finally {
     delete global.window;
   }
   assert.equal(picked.length, 1);
-  assert.equal(picked[0][0].backend, 'codex_openrouter');
-  assert.equal(picked[0][1].id, 'usernode-openrouter');
+  assert.equal(picked[0].id, 'own-tools');
+  assert.equal(picked[0].venue, 'own-tools-pr',
+    'the caller still gets a venue id it can preselect() through');
+});
+
+test('the on-platform row resolves its venue server-side, not here', async () => {
+  // Its `venue` is null on purpose: which of the two in-chat backends this
+  // means is the user's last-used one, and only the server knows that.
+  const picked = [];
+  global.window = {
+    PlatformUI: {
+      hasKit: () => true,
+      menu: (opts) => {
+        opts.items.find((i) => /On-Platform/.test(i.label)).handler();
+        return Promise.resolve(null);
+      },
+    },
+  };
+  try {
+    // `current: 'web-codex'` so the on-platform row is not the current one
+    // — a row you are already in is not pickable.
+    await BV.open({ state: { ...OPEN, current: 'web-codex' }, onPick: (row) => picked.push(row) });
+  } finally {
+    delete global.window;
+  }
+  assert.equal(picked.length, 1);
+  assert.equal(picked[0].id, 'on-platform');
+  assert.equal(picked[0].venue, null);
 });
 
 test('an unavailable row explains itself instead of being picked', async () => {
@@ -531,7 +587,7 @@ test('an unavailable row explains itself instead of being picked', async () => {
     PlatformUI: {
       hasKit: () => true,
       menu: (opts) => {
-        const row = opts.items.find((i) => /Usernode · Claude/.test(i.label));
+        const row = opts.items.find((i) => /On-Platform/.test(i.label));
         assert.match(row.label, /unavailable/);
         row.handler();
         return Promise.resolve(null);
@@ -547,12 +603,14 @@ test('an unavailable row explains itself instead of being picked', async () => {
   } finally {
     delete global.window;
   }
-  assert.equal(picked.length, 0, 'a blocked venue must not be selectable');
+  assert.equal(picked.length, 0, 'a blocked choice must not be selectable');
   assert.equal(refused.length, 1);
-  assert.equal(refused[0].id, 'usernode-claude');
+  assert.equal(refused[0].id, 'on-platform');
 });
 
-test('the current venue is ticked in the sheet', async () => {
+test('the current venue ticks the coarse row that contains it', async () => {
+  // `local` is one venue inside the Local CLI Bridge row — the tick has to
+  // follow the containment, not an id match.
   let items = null;
   global.window = {
     PlatformUI: {
@@ -567,7 +625,27 @@ test('the current venue is ticked in the sheet', async () => {
   }
   const ticked = items.filter((i) => /✓/.test(i.label));
   assert.equal(ticked.length, 1);
-  assert.match(ticked[0].label, /Your computer · Usernode session/);
+  assert.match(ticked[0].label, /Local CLI Bridge/);
+});
+
+test('either in-chat venue ticks On-Platform, because the row is the pair', async () => {
+  for (const venue of ['usernode-claude', 'usernode-openrouter']) {
+    let items = null;
+    global.window = {
+      PlatformUI: {
+        hasKit: () => true,
+        menu: (opts) => { items = opts.items; return Promise.resolve(null); },
+      },
+    };
+    try {
+      await BV.open({ state: { ...OPEN, current: venue } });
+    } finally {
+      delete global.window;
+    }
+    const ticked = items.filter((i) => /✓/.test(i.label));
+    assert.equal(ticked.length, 1, `${venue} ticks exactly one row`);
+    assert.match(ticked[0].label, /On-Platform/, `${venue} ticks On-Platform`);
+  }
 });
 
 test('with no kit the sheet resolves null rather than throwing', async () => {
