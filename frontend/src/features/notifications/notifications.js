@@ -552,6 +552,15 @@ const Notifications = {
       }
       return;
     }
+    if (item.kind === 'openrouter_key_created' || item.kind === 'openrouter_key_review') {
+      Notifications._dismissSheetForNav();
+      if (typeof App !== 'undefined' && App.navigateToAdminConsole) {
+        App.navigateToAdminConsole('users');
+      } else {
+        window.location.hash = '#admin/users';
+      }
+      return;
+    }
     // #161/#194: completion notifications deep-link to their dev
     // sub-tab. session_done opens the dev session itself;
     // auto_solve_done opens the Issues tab with that issue's accordion
@@ -1282,6 +1291,28 @@ function rowView(n) {
         { t: 'strong', v: conversation },
       ],
       body,
+    };
+  }
+
+  if (n.kind === 'openrouter_key_created' || n.kind === 'openrouter_key_review') {
+    const review = n.kind === 'openrouter_key_review';
+    return {
+      ...base,
+      wrap: true,
+      icon: review ? '⚠️' : '🔑',
+      segments: [
+        { t: 'strong', v: who },
+        { t: 'text', v: review
+          ? 'has a company OpenRouter key that needs manual review'
+          : 'received a company OpenRouter key' },
+      ],
+      body: {
+        text: review
+          ? 'Open Admin → Users to block or remove it if needed.'
+          : 'Ownership, daily limit, status, and controls are in Admin → Users.',
+        medium: false,
+        mention: false,
+      },
     };
   }
 

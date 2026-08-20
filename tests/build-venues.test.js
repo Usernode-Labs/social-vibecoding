@@ -48,8 +48,8 @@ const idsFor = (state) => BV.venuesFor(state).map((r) => r.id);
 
 test('six venues, in-chat first, in menu order', () => {
   assert.deepEqual(BV.VENUES.map((v) => v.id), [
-    'usernode-claude',
     'usernode-openrouter',
+    'usernode-claude',
     'local',
     'web-claude-code',
     'web-codex',
@@ -125,7 +125,10 @@ test('each capability flag adds exactly its own venue, and never a disabled row'
     ['canCollaborate', 'own-tools-pr'],
   ];
   for (const [flag, id] of cases) {
-    assert.deepEqual(idsFor({ [flag]: true }), ['usernode-claude', id], `${flag} → ${id}`);
+    const expected = flag === 'openrouterAvailable'
+      ? [id, 'usernode-claude']
+      : ['usernode-claude', id];
+    assert.deepEqual(idsFor({ [flag]: true }), expected, `${flag} → ${id}`);
   }
   // #1281: `local` is the one venue behind TWO flags — the deployment has to
   // offer the CLI surface and the user has to have opted in. Either alone
@@ -196,7 +199,7 @@ test('the current venue is marked on its row and on no other', () => {
 
 test('own-tools-pr cannot be a default, and every other venue can', () => {
   assert.deepEqual(BV.defaultableVenues().map((v) => v.id), [
-    'usernode-claude', 'usernode-openrouter', 'local', 'web-claude-code', 'web-codex',
+    'usernode-openrouter', 'usernode-claude', 'local', 'web-claude-code', 'web-codex',
   ]);
   assert.ok(!BV.defaultableVenues().some((v) => v.id === 'own-tools-pr'));
 });
@@ -241,8 +244,8 @@ test('three modes, and anything unrecognised reads as start', () => {
 
 test('start mode labels the venue and nothing else', () => {
   assert.deepEqual(BV.venuesFor({ ...OPEN, mode: 'start' }).map((r) => r.label), [
-    'Usernode · Claude',
     'Usernode · OpenRouter',
+    'Usernode · Claude',
     'Your computer · Usernode session',
     'Claude Code on the web',
     'Codex on the web',

@@ -9,6 +9,7 @@ const limits = require('../services/limits');
 const socialIdentity = require('../services/social-identity');
 const githubLink = require('../services/github-link');
 const xLink = require('../services/x-link');
+const managedOpenRouter = require('../services/openrouter-managed-keys');
 
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 const PROVIDER_ADAPTERS = Object.freeze({ github: githubLink, x: xLink });
@@ -364,6 +365,16 @@ function socialIdentityRoutes(config) {
     if (!providerAdapter(provider)) return res.status(404).json({ error: 'not_found' });
     try {
       await socialIdentity.clearIdentity(pool, req.user.id, provider);
+      // Identity loss does not automatically revoke a paid child key. It
+      // creates a deduplicated admin review notification so a human can
+      // decide whether to block or delete it from the Users console.
+      await managedOpenRouter.notifyIdentityReview({
+        pool, userId: req.user.id,
+      }).catch((err) => {
+        log.warn('social-identity', 'managed OpenRouter review notification failed', {
+          provider, userId: req.user.id, message: err.message,
+        });
+      });
       log.info('social-identity', 'account unlinked', { provider, userId: req.user.id });
       return res.status(204).end();
     } catch (err) {

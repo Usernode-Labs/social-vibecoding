@@ -18,6 +18,7 @@ const stagingEnv = require('../services/staging-env');
 const mail = require('../services/mail');
 const mobilePushDiagnostics = require('../services/mobile-push-diagnostics');
 const applicationRuntime = require('../services/application-runtime');
+const managedOpenRouter = require('../services/openrouter-managed-keys');
 const {
   accountRecovery,
   withTransaction,
@@ -303,11 +304,25 @@ function adminRoutes(config) {
       const { rows } = await pool.query(
         `SELECT u.id, u.username, u.is_admin, u.admin_readonly, u.app_quota, u.created_at,
                 u.daily_limit_cents, u.usernode_pubkey,
+                EXISTS (
+                  SELECT 1 FROM user_social_identities identity
+                   WHERE identity.user_id = u.id
+                ) AS social_verified,
+                managed.id AS openrouter_key_id,
+                managed.status AS openrouter_key_status,
+                managed.remote_key_hash AS openrouter_key_hash,
+                managed.remote_label AS openrouter_key_label,
+                managed.daily_limit_usd AS openrouter_daily_limit_usd,
+                managed.limit_reset AS openrouter_limit_reset,
+                managed.issued_at AS openrouter_issued_at,
+                managed.disabled_at AS openrouter_disabled_at,
+                managed.deleted_at AS openrouter_deleted_at,
                 (u.id = $1) AS is_self,
                 ac.code as activation_code,
                 COALESCE(lu.total_cost_cents, 0) as cost_today_cents,
                 COALESCE(ac2.n, 0) AS apps_created
          FROM users u
+         LEFT JOIN credentials.managed_openrouter_keys managed ON managed.user_id = u.id
          LEFT JOIN activation_codes ac ON ac.used_by = u.id
          LEFT JOIN llm_usage lu ON lu.user_id = u.id AND lu.date = CURRENT_DATE
          LEFT JOIN (
@@ -322,6 +337,47 @@ function adminRoutes(config) {
     } catch (err) {
       log.error('admin', 'List users failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Company OpenRouter child-key controls. Raw keys are deliberately absent
+  // from every admin response: ownership is correlated by local id + remote
+  // hash, while the management credential performs provider mutations.
+  router.patch('/api/admin/openrouter-keys/:id', requireAdminWrite, async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isSafeInteger(id) || id <= 0 || typeof req.body?.disabled !== 'boolean') {
+      return res.status(400).json({ error: 'A valid key id and boolean disabled value are required.' });
+    }
+    try {
+      const key = await managedOpenRouter.setDisabled({
+        pool, id, disabled: req.body.disabled, config, actorId: req.user.id,
+      });
+      return res.json({ ok: true, key });
+    } catch (err) {
+      if (err instanceof managedOpenRouter.ManagedOpenRouterError) {
+        return res.status(err.statusCode).json({ error: err.message, code: err.code });
+      }
+      log.error('admin', 'Managed OpenRouter key update failed', { id, message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.delete('/api/admin/openrouter-keys/:id', requireAdminWrite, async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isSafeInteger(id) || id <= 0) {
+      return res.status(400).json({ error: 'A valid key id is required.' });
+    }
+    try {
+      const key = await managedOpenRouter.remove({
+        pool, id, config, actorId: req.user.id,
+      });
+      return res.json({ ok: true, key });
+    } catch (err) {
+      if (err instanceof managedOpenRouter.ManagedOpenRouterError) {
+        return res.status(err.statusCode).json({ error: err.message, code: err.code });
+      }
+      log.error('admin', 'Managed OpenRouter key removal failed', { id, message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
     }
   });
 
@@ -526,6 +582,17 @@ function adminRoutes(config) {
       if (!existing.length) {
         await client.query('ROLLBACK');
         return res.status(404).json({ error: 'User not found' });
+      }
+      const { rows: managedKeys } = await client.query(
+        `SELECT id FROM credentials.managed_openrouter_keys
+          WHERE user_id = $1 AND status <> 'deleted'`,
+        [userId],
+      );
+      if (managedKeys.length) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({
+          error: 'Delete this user\'s company OpenRouter key before deleting the account.',
+        });
       }
       // Only a FULL admin counts toward the "at least one admin" invariant
       // (issue #311) — deleting a view-only admin never threatens it.

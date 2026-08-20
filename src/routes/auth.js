@@ -257,6 +257,7 @@ function authRoutes(config) {
     let hasApiKey = false;
     let keyLast4 = null;
     let usernodePubkey = null;
+    let openrouterAvailable = false;
     // Profile customization (#982): the editable identity fields plus the
     // content-addressed avatar URL. Read HERE rather than in
     // middleware/auth.js's per-request session hydration — this endpoint
@@ -278,6 +279,13 @@ function authRoutes(config) {
       const { rows } = await pool.query(
         `SELECT u.anthropic_key_enc, u.anthropic_key_last4, u.usernode_pubkey,
                 u.display_name, u.bio, u.github, u.x, u.dev_flow_preference,
+                EXISTS (
+                  SELECT 1 FROM credentials.user_ai_credentials credential
+                   WHERE credential.user_id = u.id
+                     AND credential.provider = 'openrouter'
+                     AND credential.purpose = 'coding_agent'
+                     AND credential.status = 'valid'
+                ) AS openrouter_credential_valid,
                 av.id AS avatar_id
            FROM users u
            LEFT JOIN user_avatars av ON av.user_id = u.id
@@ -289,6 +297,11 @@ function authRoutes(config) {
         keyLast4 = rows[0].anthropic_key_last4 || null;
       }
       usernodePubkey = rows[0]?.usernode_pubkey || null;
+      const inOpenRouterBeta = !config.openrouterBetaUserIds?.length
+        || config.openrouterBetaUserIds.includes(String(req.user.id));
+      openrouterAvailable = config.codexOpenrouterEnabled === true
+        && inOpenRouterBeta
+        && rows[0]?.openrouter_credential_valid === true;
       devFlowPreference = DEV_FLOWS.includes(rows[0]?.dev_flow_preference)
         ? rows[0].dev_flow_preference
         : null;
@@ -355,6 +368,9 @@ function authRoutes(config) {
         hasPlatformAccess: !!req.user.hasPlatformAccess || !!req.user.isAdmin,
         hasApiKey,
         keyLast4,
+        // In-chat venue availability: feature flag + beta eligibility + a
+        // currently usable personal or company OpenRouter credential.
+        openrouterAvailable,
         // Marks the two fields above as the staging fixture rather than
         // real state, the same way every other ?demo=1 payload labels
         // itself (services/local-agent-demo.js, GET /api/budget).

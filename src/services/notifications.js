@@ -12,7 +12,8 @@
 // 'auto_solve_done' (#161 — a headless auto-solve run finished; `detail`
 // holds the outcome: spec | code | spec_code (#170) | question | failed)
 // and 'spec_shared' (#86 — someone privately shared a spec version with
-// you; `detail` carries the version number as a string).
+// you; `detail` carries the version number as a string). Managed OpenRouter
+// ownership/review events use openrouter_key_created/openrouter_key_review.
 
 const log = require('./logger');
 const { listActiveUserIds } = require('./active-users');
@@ -284,6 +285,44 @@ async function createSpecSharedNotification(pool, { recipientId, appId, sessionI
      RETURNING id, user_id, app_id, session_id, source_user_id, kind, detail, created_at`,
     [recipientId, appId, sessionId, sharerId || null, String(version).slice(0, 32)]
   );
+  return rows;
+}
+
+// Company-funded OpenRouter keys are security/billing objects, so every
+// platform admin receives an ownership record when one is created and a
+// review nudge when its user loses their last verified identity. `detail`
+// carries only the local managed-key id; the raw child key never enters the
+// notification table, logs, WebSocket payload, or admin UI.
+async function createManagedOpenRouterAdminNotifications(pool, {
+  sourceUserId, managedKeyId, kind = 'openrouter_key_created',
+}) {
+  if (!sourceUserId || !managedKeyId
+      || !['openrouter_key_created', 'openrouter_key_review'].includes(kind)) return [];
+  const { rows } = await pool.query(
+    `INSERT INTO notifications (user_id, source_user_id, kind, detail)
+     SELECT admin.id, $1, $2, $3
+       FROM users admin
+      WHERE admin.is_admin = TRUE
+        AND (
+          $2 <> 'openrouter_key_review'
+          OR NOT EXISTS (
+            SELECT 1 FROM notifications existing
+             WHERE existing.user_id = admin.id
+               AND existing.source_user_id = $1
+               AND existing.kind = $2
+               AND existing.detail = $3
+               AND existing.read_at IS NULL
+          )
+        )
+     RETURNING id, user_id, source_user_id, kind, detail, created_at`,
+    [sourceUserId, kind, String(managedKeyId).slice(0, 32)],
+  );
+  return rows;
+}
+
+async function notifyManagedOpenRouterAdmins(pool, args) {
+  const rows = await createManagedOpenRouterAdminNotifications(pool, args);
+  await Promise.all(rows.map((row) => hydrateAndPush(pool, row)));
   return rows;
 }
 
@@ -857,6 +896,8 @@ module.exports = {
   createSessionDoneNotification,
   createAutoSolveDoneNotification,
   createSpecSharedNotification,
+  createManagedOpenRouterAdminNotifications,
+  notifyManagedOpenRouterAdmins,
   hydrateAndPush,
   createPrProposedNotifications,
   createCollabInviteNotification,

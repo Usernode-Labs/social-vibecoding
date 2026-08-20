@@ -268,6 +268,10 @@ const PLATFORM_ENV_UNWRITABLE = new Set([
   'GITHUB_BOT_TOKEN',
   // Model access and the platform's own dapp keypair.
   'ANTHROPIC_API_KEY',
+  // OpenRouter organization-level credential. This may create, disable and
+  // delete child keys, so it is deploy-owned and can never be entered in the
+  // platform-variable UI.
+  'OPENROUTER_MANAGEMENT_API_KEY',
   'USERNODE_APP_PUBKEY',
   'USERNODE_APP_SECRET_KEY',
   // Ingress / TLS, owned by the Caddy half of the deploy.

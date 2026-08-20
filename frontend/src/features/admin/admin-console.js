@@ -2448,6 +2448,38 @@ const AdminConsole = {
             placeholder="none" ${canWrite ? '' : 'disabled'}>
         </div>`;
 
+      const managedKeyId = user.openrouter_key_id;
+      const managedStatus = user.openrouter_key_status || null;
+      const managedHash = user.openrouter_key_hash || '';
+      const managedLimit = user.openrouter_daily_limit_usd == null
+        ? '' : `$${Number(user.openrouter_daily_limit_usd).toFixed(2)}/day`;
+      const managedStatusLabel = {
+        provisioning: 'Provisioning', active: 'Active', disabled: 'Blocked',
+        deleted: 'Deleted', needs_review: 'Needs review',
+      }[managedStatus] || managedStatus || 'None';
+      let managedActions = '';
+      if (canWrite && managedKeyId && managedHash && managedStatus !== 'deleted') {
+        const toggle = managedStatus === 'active'
+          ? `<button class="admin-openrouter-toggle ${AdminUI.btn.outlineSm}" data-key-id="${managedKeyId}" data-disabled="true">Block</button>`
+          : (managedStatus === 'disabled'
+            ? `<button class="admin-openrouter-toggle ${AdminUI.btn.outlineSm}" data-key-id="${managedKeyId}" data-disabled="false">Enable</button>`
+            : '');
+        managedActions = `${toggle}<button class="admin-openrouter-delete ${AdminUI.btn.destructiveSm}" data-key-id="${managedKeyId}">Delete</button>`;
+      }
+      const openrouterHtml = managedKeyId ? `
+        <div class="mt-2 rounded-md border border-gray-200 dark:border-gray-800 bg-gray-50/70 dark:bg-gray-900/40 px-3 py-2 text-xs">
+          <div class="flex flex-wrap items-center gap-2">
+            <span class="font-medium">Company OpenRouter key</span>
+            <span class="rounded px-1.5 py-0.5 bg-gray-200 dark:bg-gray-800">${esc(managedStatusLabel)}</span>
+            ${managedLimit ? `<span class="text-gray-500">${esc(managedLimit)}</span>` : ''}
+            <span class="text-gray-500">${user.social_verified ? 'verified identity' : 'identity no longer verified'}</span>
+            <div class="ml-auto flex gap-2">${managedActions}</div>
+          </div>
+          <div class="mt-1 text-gray-500 break-all">
+            ${managedHash ? `OpenRouter hash: <code>${esc(managedHash)}</code>` : 'No confirmed remote hash; reconcile this user label in the OpenRouter dashboard.'}
+          </div>
+        </div>` : '';
+
       // Per-row actions in a "…" overflow menu; only full admins get one
       // (view-only admins have no actions). Delete stays hidden for admins.
       const deleteItem = !user.is_admin
@@ -2467,6 +2499,7 @@ const AdminConsole = {
           <div class="min-w-0">
             <div class="font-medium break-words">${esc(user.username)}</div>
             <div class="text-sm text-gray-500 truncate">$${costToday} spent today ${codeInfo}</div>
+            ${openrouterHtml}
           </div>
           <!-- Stacked under the name on narrow screens; from xl the console
                is full width, so the controls sit on the same line, pushed
@@ -2487,6 +2520,58 @@ const AdminConsole = {
 
   _wireUserRows(list) {
     const esc = AdminConsole.esc;
+
+    list.querySelectorAll('.admin-openrouter-toggle').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const disabled = btn.dataset.disabled === 'true';
+        const action = disabled ? 'block' : 'enable';
+        const ok = await AdminConsole._confirm({
+          title: `${disabled ? 'Block' : 'Enable'} company OpenRouter key?`,
+          message: `This will ${action} the child key at OpenRouter immediately.`,
+          confirmLabel: disabled ? 'Block key' : 'Enable key',
+          danger: disabled,
+        });
+        if (!ok) return;
+        btn.disabled = true;
+        try {
+          const res = await fetch(`/api/admin/openrouter-keys/${btn.dataset.keyId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ disabled }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) AdminConsole._alert(data.error || `Update failed (HTTP ${res.status})`);
+          else await AdminConsole.loadUsers();
+        } catch (err) {
+          AdminConsole._alert(`Update failed: ${err.message}`);
+        } finally {
+          btn.disabled = false;
+        }
+      });
+    });
+
+    list.querySelectorAll('.admin-openrouter-delete').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const ok = await AdminConsole._confirm({
+          title: 'Delete company OpenRouter key?',
+          message: 'This permanently deletes the child key at OpenRouter. The user cannot claim another company key, but may add a personal key later.',
+          confirmLabel: 'Delete key',
+          danger: true,
+        });
+        if (!ok) return;
+        btn.disabled = true;
+        try {
+          const res = await fetch(`/api/admin/openrouter-keys/${btn.dataset.keyId}`, { method: 'DELETE' });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) AdminConsole._alert(data.error || `Delete failed (HTTP ${res.status})`);
+          else await AdminConsole.loadUsers();
+        } catch (err) {
+          AdminConsole._alert(`Delete failed: ${err.message}`);
+        } finally {
+          btn.disabled = false;
+        }
+      });
+    });
 
     list.querySelectorAll('.admin-user-limit-input').forEach((inp) => {
       // Save on blur or Enter. Empty string clears the override. Input is
@@ -2688,6 +2773,10 @@ const AdminConsole = {
         if (!ok) return;
         const res = await fetch(`/api/admin/users/${btn.dataset.deleteId}`, { method: 'DELETE' });
         if (res.ok) AdminConsole.loadUsers();
+        else {
+          const data = await res.json().catch(() => ({}));
+          AdminConsole._alert(data.error || `Delete failed (HTTP ${res.status})`);
+        }
       });
     });
 

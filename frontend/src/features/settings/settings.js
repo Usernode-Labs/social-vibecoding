@@ -134,12 +134,12 @@
       // looking for and the only one that needs no explanation.
       { key: 'theme', label: 'Theme', group: 'Preferences' },
 
+      { key: 'openrouter', label: 'OpenRouter', group: 'AI & agents' },
       { key: 'api-key', label: 'Anthropic API key', group: 'AI & agents' },
       // Own section (not folded into 'cli') so the out-of-credits card can
       // deep-link #settings/connectors as one of its three routes; see
       // public/js/credit-options.js.
       { key: 'connectors', label: 'Social accounts & connectors', group: 'AI & agents' },
-      { key: 'openrouter', label: 'OpenRouter', group: 'AI & agents' },
       { key: 'app-ai', label: 'App AI permissions', group: 'AI & agents' },
       { key: 'agent-files', label: 'Agent instructions & skills', group: 'AI & agents' },
 
@@ -186,11 +186,17 @@
       // existence so the section degrades cleanly if the feature flag is
       // off server-side (the section markup stays, the controls no-op).
       const orSave = document.getElementById('settings-openrouter-save');
+      const orClaim = document.getElementById('settings-openrouter-claim');
+      const orCopy = document.getElementById('settings-openrouter-copy');
+      const orDismissReveal = document.getElementById('settings-openrouter-dismiss-reveal');
       const orRemove = document.getElementById('settings-openrouter-remove');
       const orSetDefault = document.getElementById('settings-openrouter-set-default');
       const orModel = document.getElementById('settings-openrouter-model');
       const claudeSetDefault = document.getElementById('settings-claude-set-default');
       if (orSave) orSave.addEventListener('click', () => this._saveOpenRouterKey());
+      if (orClaim) orClaim.addEventListener('click', () => this._claimManagedOpenRouterKey());
+      if (orCopy) orCopy.addEventListener('click', () => this._copyManagedOpenRouterKey());
+      if (orDismissReveal) orDismissReveal.addEventListener('click', () => this._dismissManagedOpenRouterReveal());
       if (orRemove) orRemove.addEventListener('click', () => this._removeOpenRouterKey());
       if (orSetDefault) orSetDefault.addEventListener('click', () => this._saveOpenRouterDefault());
       if (orModel) orModel.addEventListener('change', () => this._syncOpenRouterModelDetails());
@@ -2492,7 +2498,7 @@
       const modelLabel = section.querySelector('label[for="settings-openrouter-model"]');
       if (heading) heading.textContent = 'OpenRouter';
       if (intro) {
-        intro.textContent = 'Use any compatible model exposed by your OpenRouter key for all chat and coding in an OpenRouter session. These sessions do not use your platform Claude allowance. Your key is encrypted at rest, injected only for each turn, and removed completely when you delete it here.';
+        intro.textContent = 'Use any compatible model for all chat and coding in an OpenRouter session. These sessions do not use your platform Claude allowance. OpenRouter is preferred after you add or claim a key; GLM 5.3 is selected when available, while the complete key-visible model list stays available. Keys are encrypted at rest and injected only for each turn.';
       }
       if (modelLabel) modelLabel.textContent = 'OpenRouter model';
       const betaGate = document.getElementById('settings-openrouter-beta-gated');
@@ -2574,6 +2580,10 @@
       const input = document.getElementById('settings-openrouter-key');
       const saveBtn = document.getElementById('settings-openrouter-save');
       const modelsWrap = document.getElementById('settings-openrouter-models-wrap');
+      const managedCard = document.getElementById('settings-openrouter-managed-card');
+      const managedMessage = document.getElementById('settings-openrouter-managed-message');
+      const claimBtn = document.getElementById('settings-openrouter-claim');
+      const personalControls = document.getElementById('settings-openrouter-personal-controls');
       try {
         const r = await fetch('/api/me/coding-agent', { credentials: 'same-origin' });
         const prefs = r.ok ? await r.json() : {};
@@ -2584,17 +2594,43 @@
       try {
         const r = await fetch('/api/me/credentials/openrouter', { credentials: 'same-origin' });
         const j = r.ok ? await r.json() : {};
+        const managed = j.managed || null;
+        const provisioning = j.managedProvisioning || {};
+        if (managedCard) managedCard.classList.toggle('hidden', !provisioning.available && !managed);
+        if (claimBtn) claimBtn.classList.toggle('hidden', !provisioning.canClaim);
+        if (managedMessage) {
+          if (managed?.status === 'active') {
+            managedMessage.textContent = `Your Usernode-managed key is active with a $${Number(managed.dailyLimitUsd || 0).toFixed(2)} daily limit. Admins can block or remove it; you may choose any available model.`;
+          } else if (managed?.status === 'disabled') {
+            managedMessage.textContent = 'An admin has blocked this company key. Contact the platform admins if it should be enabled again.';
+          } else if (managed?.status === 'deleted') {
+            managedMessage.textContent = 'Your included key was deleted by an admin. Included keys are issued once, but you may add a personal key below.';
+          } else if (managed?.status === 'needs_review' || managed?.status === 'provisioning') {
+            managedMessage.textContent = 'This key needs admin review. Usernode did not retry the provider request, which prevents accidental duplicate keys.';
+          } else if (!provisioning.verified) {
+            managedMessage.textContent = 'Connect and verify GitHub or X in Social accounts & connectors to claim one limited company key.';
+          } else if (!provisioning.available) {
+            managedMessage.textContent = 'Included keys are not configured by the platform administrator yet.';
+          } else if (provisioning.reason === 'personal_key_configured') {
+            managedMessage.textContent = 'Remove your personal key first if you want to claim the included company key.';
+          } else {
+            managedMessage.textContent = `Verified users can create one included key with a $${Number(provisioning.dailyLimitUsd || 0).toFixed(2)} daily limit.`;
+          }
+        }
+        const managedOwnsCredential = !!managed && managed.status !== 'deleted';
+        if (personalControls) personalControls.classList.toggle('hidden', managedOwnsCredential);
         if (j.configured) {
           if (display) display.classList.remove('hidden');
           if (last4) last4.textContent = j.last4 || '••••';
-          if (removeBtn) removeBtn.classList.remove('hidden');
+          if (removeBtn) removeBtn.classList.toggle('hidden', managedOwnsCredential);
           if (input) { input.placeholder = 'Paste a new key to replace'; input.value = ''; }
           if (saveBtn) saveBtn.textContent = 'Replace';
-          if (info && j.keyInfo) {
+          if (info && (j.keyInfo || managed)) {
             info.classList.remove('hidden');
-            const lim = j.keyInfo.limit != null ? `$${j.keyInfo.limit}` : '';
-            const rem = j.keyInfo.limitRemaining != null ? `$${j.keyInfo.limitRemaining}` : '';
-            info.textContent = lim ? `Key limit: ${lim} · Remaining: ${rem}` : (j.keyInfo.label || '');
+            const lim = j.keyInfo?.limit != null ? `$${j.keyInfo.limit}` : '';
+            const rem = j.keyInfo?.limitRemaining != null ? `$${j.keyInfo.limitRemaining}` : '';
+            const owner = managedOwnsCredential ? 'Usernode-managed' : 'Personal key';
+            info.textContent = lim ? `${owner} · Daily limit: ${lim} · Remaining: ${rem}` : `${owner} · ${j.keyInfo?.label || ''}`;
           }
           await this._loadOpenRouterModels();
         } else {
@@ -2606,6 +2642,56 @@
           if (modelsWrap) modelsWrap.classList.add('hidden');
         }
       } catch {}
+    },
+
+    async _claimManagedOpenRouterKey() {
+      const btn = document.getElementById('settings-openrouter-claim');
+      if (btn) btn.disabled = true;
+      this._setOrStatus('Creating your limited OpenRouter key…', 'info');
+      try {
+        const r = await fetch('/api/me/credentials/openrouter/managed', {
+          method: 'POST', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: '{}',
+        });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          this._setOrStatus(j.error || 'Could not create the key.', 'error');
+          await this._refreshOpenRouter();
+          return;
+        }
+        const reveal = document.getElementById('settings-openrouter-reveal');
+        const key = document.getElementById('settings-openrouter-revealed-key');
+        if (key) key.value = j.apiKey || '';
+        if (reveal) reveal.classList.remove('hidden');
+        if (typeof App !== 'undefined' && App.user) App.user.openrouterAvailable = true;
+        this._setOrStatus(`Created and selected OpenRouter${j.defaultModel ? ` with ${j.defaultModel}` : ''} as your default. Save the displayed key now.`, 'ok');
+        await this._refreshOpenRouter();
+      } catch (err) {
+        this._setOrStatus(`Network error: ${err.message}`, 'error');
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    },
+
+    async _copyManagedOpenRouterKey() {
+      const key = document.getElementById('settings-openrouter-revealed-key');
+      if (!key?.value) return;
+      try {
+        await navigator.clipboard.writeText(key.value);
+        this._setOrStatus('Key copied. Keep it somewhere secure.', 'ok');
+      } catch {
+        key.select();
+        document.execCommand('copy');
+        this._setOrStatus('Key copied. Keep it somewhere secure.', 'ok');
+      }
+    },
+
+    _dismissManagedOpenRouterReveal() {
+      const reveal = document.getElementById('settings-openrouter-reveal');
+      const key = document.getElementById('settings-openrouter-revealed-key');
+      if (key) key.value = '';
+      if (reveal) reveal.classList.add('hidden');
     },
 
     async _loadOpenRouterModels() {
@@ -2661,7 +2747,8 @@
         });
         const j = await r.json();
         if (!r.ok) { this._setOrStatus(j.error || 'Failed to save key.', 'error'); return; }
-        this._setOrStatus('Saved and encrypted. OpenRouter sessions bill to this key.', 'ok');
+        this._setOrStatus('Saved, encrypted, and selected as your default coding agent.', 'ok');
+        if (typeof App !== 'undefined' && App.user) App.user.openrouterAvailable = true;
         input.value = '';
         await this._refreshOpenRouter();
       } catch (err) {
@@ -2680,6 +2767,7 @@
         if (!r.ok) { this._setOrStatus(j.error || 'Failed to remove key.', 'error'); return; }
         const note = j.defaultReset ? ' Key removed; your default agent was reset to Claude Code.' : '';
         this._setOrStatus('Key removed.' + note, 'ok');
+        if (typeof App !== 'undefined' && App.user) App.user.openrouterAvailable = false;
         this._openRouterModels = [];
         await this._refreshOpenRouter();
       } catch {
