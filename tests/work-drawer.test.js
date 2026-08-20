@@ -749,3 +749,41 @@ test('a session row carries at most one status tag, and never beside "working…
   assert.equal(byId(4).label, null, '"working…" wins over the paused tag');
   assert.equal(byId(4).busy, true);
 });
+
+// ── #1329: navigating rows dismiss the touch bottom sheet ────────────────
+//
+// On touch the drawer rides in a modal kit sheet; a session/proposal row is
+// a plain hash link, so without a dismiss the sheet stayed presented over
+// the screen the link opened. The dismiss is SHEET-GATED: on desktop no
+// sheet exists and the anchored dropdown keeps its keep-open behaviour.
+// (The pinned "Needs attention" rows route through the bell's shared
+// _onItemClick, whose own dismiss covers a presented WorkDrawer sheet —
+// pinned in tests/notifications-sheet-dismiss-on-nav.test.js.)
+
+test('#1329 _dismissSheetForNav hides only when the kit sheet is presented', () => {
+  const sb = loadAll();
+  const W = sb.WorkDrawer;
+  const calls = [];
+  W.hide = () => calls.push('hide');
+  W._sheet = null;
+  W._dismissSheetForNav();
+  assert.deepEqual(calls, [], 'no sheet → strict no-op (desktop keep-open preserved)');
+  W._sheet = { dismiss: () => {} };
+  W._dismissSheetForNav();
+  assert.deepEqual(calls, ['hide'], 'presented sheet → hide() dismisses it');
+});
+
+test('#1329 both row anchors wire the dismiss without preventing the hash navigation', () => {
+  const LIST_SRC = fs.readFileSync(
+    path.join(FEATURES, 'work-drawer', 'work-drawer-list.tsx'), 'utf8'
+  );
+  assert.match(LIST_SRC, /function dismissSheetForNav/, 'the renderer-side helper exists');
+  assert.match(LIST_SRC, /_dismissSheetForNav\?\.\(\)/, 'it routes through the controller');
+  const anchors = LIST_SRC.match(/<a href=\{row\.href\}[^>]*>/g) || [];
+  assert.equal(anchors.length, 2, 'both the session and proposal row anchors found');
+  for (const anchor of anchors) {
+    assert.match(anchor, /onClick=\{dismissSheetForNav\}/, `dismiss wired on: ${anchor}`);
+  }
+  assert.doesNotMatch(LIST_SRC, /preventDefault/,
+    'default is not prevented — the hash navigation stays the anchor\'s job');
+});

@@ -11,8 +11,9 @@
  *
  * `setFlush(flushSync)` because the legacy callers read the DOM on the line
  * after they render: `_onItemClick` marks a row read and then routes, and
- * `_acceptInvite` re-renders the invites section and then asks the kit to
- * re-measure the sheet it lives in. Batched, both would look at the previous
+ * `_acceptInvite` re-renders the invites section before it navigates (the
+ * kit sheet re-measures itself via presentSheet's ResizeObserver watch, so
+ * nothing here has to ask for it). Batched, both would look at the previous
  * frame.
  *
  * `Notifications._store` is the plant that makes the controller's two render
