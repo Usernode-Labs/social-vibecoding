@@ -34,6 +34,10 @@ const BV = require('../public/js/build-venues.js');
 const OPEN = {
   openrouterAvailable: true,
   cliAuthEnabled: true,
+  // #1281: `local` needs the deployment flag AND the user's own opt-in, so
+  // "everything on" has to include the opt-in or the maximal deployment
+  // would quietly be a five-venue one.
+  sessionBridgeEnabled: true,
   externalFlowsAvailable: true,
   canCollaborate: true,
 };
@@ -118,12 +122,23 @@ test('a bare deployment offers only what needs nothing', () => {
 test('each capability flag adds exactly its own venue, and never a disabled row', () => {
   const cases = [
     ['openrouterAvailable', 'usernode-openrouter'],
-    ['cliAuthEnabled', 'local'],
     ['canCollaborate', 'own-tools-pr'],
   ];
   for (const [flag, id] of cases) {
     assert.deepEqual(idsFor({ [flag]: true }), ['usernode-claude', id], `${flag} → ${id}`);
   }
+  // #1281: `local` is the one venue behind TWO flags — the deployment has to
+  // offer the CLI surface and the user has to have opted in. Either alone
+  // offers nothing, which is the whole point of a gate that defaults off.
+  assert.deepEqual(idsFor({ cliAuthEnabled: true }), ['usernode-claude'],
+    'the deployment flag alone does not offer the bridge');
+  assert.deepEqual(idsFor({ sessionBridgeEnabled: true }), ['usernode-claude'],
+    'the opt-in alone does not offer it on a deployment without the CLI');
+  assert.deepEqual(
+    idsFor({ cliAuthEnabled: true, sessionBridgeEnabled: true }),
+    ['usernode-claude', 'local'],
+    'both together → the bridge',
+  );
   // One flag, two venues: the web hand-offs share a deployment capability.
   assert.deepEqual(
     idsFor({ externalFlowsAvailable: true }),

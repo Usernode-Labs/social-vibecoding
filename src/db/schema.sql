@@ -80,6 +80,19 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS daily_limit_cents INTEGER;
 -- POST /api/me/ai-progress-estimate.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS ai_progress_estimate BOOLEAN NOT NULL DEFAULT FALSE;
 
+-- #1281: the session-CLI bridge is opt-in, per user.
+--
+-- The spec marks the bridge SETTINGS-GATED and "most users: no" — it is the
+-- platform dev-chat UX driven from your own machine, and it wants the
+-- Usernode CLI installed and attached before it does anything at all.
+-- Until now the only gate was the DEPLOYMENT's cliAuthEnabled, so the venue
+-- was offered to everyone on a deployment that merely supports the CLI.
+-- Default FALSE, deliberately: an option nobody has asked for should not be
+-- in a list everybody reads, and this one is bottom of the spec's routing
+-- tree for that exact reason. Settings -> Developer -> Experimental turns
+-- it on; the deployment gate still applies on top.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS session_bridge_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+
 -- Home-screen panels the viewer has dismissed (issue #911) — the keys of
 -- the cards that sit on the home screen next to the app grid ('challenges'
 -- today; see PANEL_REGISTRY in src/routes/home-panels.js, the only reader
@@ -5055,6 +5068,41 @@ WHERE agent_backend = 'claude_code'
     agent_thread_id IS DISTINCT FROM cc_session_id
     OR agent_provider IS DISTINCT FROM 'anthropic'
   );
+
+-- ── The session's chosen build venue (#1281) ─────────────────────────
+-- #1086 introduced the six-venue vocabulary in public/js/build-venues.js
+-- and stated, correctly for that change, that a venue id is a PRESENTATION
+-- key that never travels to the server: every venue was already expressible
+-- through a column that existed (agent_backend for the two in-chat Usernode
+-- venues, a live lease for `local`, source='imported' for a pull request
+-- somebody brought in).
+--
+-- #1281 breaks that tie, because it asks for something none of those
+-- columns can say: a session whose owner has DECIDED to build it somewhere
+-- else and has not done it yet. `external_agent` is stamped at SUBMISSION
+-- (services/external-agent-tasks.js) — it is provenance, the answer to
+-- "where did this proposal come from", and it is null for the whole period
+-- the launchpad is the thing the user is looking at. Deriving the venue
+-- from the other columns therefore reverts a hand-off session to
+-- "Usernode · Claude" on the next reload, taking its launchpad with it.
+--
+-- So the CHOICE is persisted here, and it is the only place a venue id is
+-- stored. Nullable on purpose: NULL means "nobody has chosen", and
+-- BuildVenues.currentVenue() then derives exactly as it does today, which
+-- is what keeps every existing row correct with no backfill. The CHECK
+-- pins the domain to the six ids in build-venues.js; adding a seventh
+-- venue means editing this list on purpose, the same bargain
+-- users.dev_flow_preference already makes.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS build_venue TEXT;
+
+DO $$
+BEGIN
+  ALTER TABLE chat_sessions DROP CONSTRAINT IF EXISTS chat_sessions_build_venue_chk;
+  ALTER TABLE chat_sessions ADD CONSTRAINT chat_sessions_build_venue_chk
+    CHECK (build_venue IS NULL
+           OR build_venue IN ('usernode-claude', 'usernode-openrouter', 'local',
+                              'web-claude-code', 'web-codex', 'own-tools-pr'));
+END $$;
 
 -- ── Generic user AI credentials (plan.md PR2) ────────────────────────
 -- Generalization of users.anthropic_key_enc/_last4 so a second provider
