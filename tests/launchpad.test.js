@@ -327,3 +327,37 @@ test('dismissing a launchpad repaints the whole bar, not just the slot', () => {
     'a changed swap falls through to renderChatView');
   assert.match(fn[0], /renderChatView\(\)/);
 });
+
+test('the web launchpad takes its vendor from the VENUE, not the flow target', () => {
+  // Regression: _launchpadHtml delegated to _devFlowHtml, which asks
+  // _devFlowTarget() which vendor this is. That answers null in cases where
+  // the launchpad is legitimately up — a ?shot=launchpad URL stores no
+  // venue, and the saved-preference path additionally wants an untouched
+  // session, a linked deployment and no PR — so the panel rendered EMPTY.
+  // The venue is what put the launchpad on screen, so it is what knows the
+  // vendor.
+  const fn = DEV_CHAT_SRC.match(/_launchpadHtml\(\)\s*\{[\s\S]*?\n  \},/);
+  assert.ok(fn, '_launchpadHtml must exist');
+  const body = fn[0];
+  assert.match(body, /agent: venue === 'web-codex' \? 'codex' : 'claude-code'/,
+    'the vendor is derived from the venue');
+  assert.doesNotMatch(body, /_devFlowHtml\(\)/,
+    'and not routed through the target-gated helper');
+  assert.match(body, /_devFlowEnsureStatus\(\)/,
+    'the status read still has to be kicked on first paint');
+});
+
+test('the walkthrough carries its vendor toggle in every state', () => {
+  // A staging page paints before the status read resolves, and a clone
+  // often answers "unavailable" — so a toggle that only rendered on the
+  // live card would be missing exactly where a reviewer looks first.
+  const DevFlowSelect = require('../public/js/dev-flow-select.js');
+  const states = [null, { available: false, reason: 'no_repository' }, { github: { linked: true } }];
+  for (const status of states) {
+    const html = DevFlowSelect.wizardHtml({ agent: 'codex', status });
+    assert.match(html, /dc-flow-vendors/, `toggle missing for ${JSON.stringify(status)}`);
+    assert.match(html, /data-flow-action="vendor-claude-code"/);
+    // The vendor you are already on is a statement, so it is inert.
+    assert.match(html, /dc-flow-vendor-on[^>]*>ChatGPT|ChatGPT<\/button>/);
+  }
+});

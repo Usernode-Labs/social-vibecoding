@@ -441,8 +441,28 @@ const DevChat = {
     }
     // web-claude-code / web-codex: the five-step walkthrough, which already
     // resolves every step from the server and resumes where the user left
-    // off. _devFlowHtml kicks the status read on first paint.
-    return DevChat._devFlowHtml();
+    // off.
+    //
+    // The agent comes from the VENUE, not from _devFlowTarget(). The venue
+    // is what put this launchpad on screen, so it is the thing that knows
+    // which vendor it is for — and the target answers null in cases the
+    // launchpad is legitimately up: a `?shot=launchpad` URL sets no stored
+    // venue, and the target's saved-preference path additionally wants an
+    // untouched session, a linked deployment and no PR. Going through it
+    // rendered an EMPTY panel for those, which is what the web-codex check
+    // caught.
+    const flow = DevChat._devFlow;
+    // The walkthrough paints "checking where you are" while the first read
+    // is in flight, so it has to be kicked here as well as by the picker.
+    if (!flow.status) DevChat._devFlowEnsureStatus();
+    return DevFlowSelect.wizardHtml({
+      agent: venue === 'web-codex' ? 'codex' : 'claude-code',
+      status: flow.status,
+      busy: flow.busy,
+      error: flow.error,
+      notice: flow.notice,
+      brief: flow.brief != null ? flow.brief : DevChat._defaultFlowBrief(),
+    });
   },
 
   // Repaint whichever surface the walkthrough is currently living on.
