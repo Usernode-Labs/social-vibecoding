@@ -132,41 +132,22 @@ run('credit-options offers the local pair as two distinct venues', () => {
   assert.ok(offline.includes(VENUE_LABELS['own-tools-pr']));
 });
 
-run('session-options borrows the vocabulary rather than keeping its own', () => {
-  // This menu used to enumerate the routes itself, one row per tool, which
-  // is one of the two places the two "Claude Code"s were offered inches
-  // apart. It now carries a single door and gets every name from the
-  // shared list, so there is nothing here left to drift.
-  const SessionOptions = loadBrowserModule('public/js/session-options.js', 'SessionOptions');
-  const rows = SessionOptions.items({
-    cliAuthEnabled: true,
-    externalFlowsAvailable: true,
-    sessionStatus: 'active',
-    hasBranch: true,
-    sessionId: 7,
-  });
-  const venueRow = rows.find((r) => r.id === 'venue');
-  assert.ok(venueRow, `no venue row in ${JSON.stringify(rows.map((r) => r.id))}`);
-  assert.strictEqual(venueRow.label, 'Change how this is built');
+run('session-options states no venue name of its own', () => {
+  // The "⋯" menu used to enumerate the routes itself, one row per tool,
+  // which is one of the two places the two "Claude Code"s were offered
+  // inches apart. It carried a single door to the shared list after #1086,
+  // and #1353 removed the button and the menu with it — what is left of the
+  // module is the local-CLI card. So the guard is that the file names no
+  // venue at all now: the card describes a lease, and the venue vocabulary
+  // is build-venues.js's alone.
+  const SRC = fs.readFileSync(path.join(__dirname, '..', 'public/js/session-options.js'), 'utf8');
+  const code = stripComments(SRC);
   for (const label of Object.values(VENUE_LABELS)) {
     assert.ok(
-      !rows.some((r) => r.label.includes(label)),
+      !code.includes(label),
       `session-options re-states the venue label ${label} instead of deferring to build-venues.js`,
     );
   }
-  // …but it does name the venue this session is already in, which is the
-  // one piece of the vocabulary the row itself has to say out loud.
-  const leased = SessionOptions.items({
-    cliAuthEnabled: true,
-    sessionStatus: 'active',
-    hasBranch: true,
-    sessionId: 7,
-    agentBackend: 'codex_openrouter',
-  }).find((r) => r.id === 'venue');
-  assert.ok(
-    leased.title.includes(VENUE_LABELS['usernode-openrouter']),
-    `venue row does not name the current venue: ${leased.title}`,
-  );
 });
 
 // A retired label may legitimately appear inside a comment that EXPLAINS

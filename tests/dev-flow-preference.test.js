@@ -231,38 +231,49 @@ test('Settings disables the hand-offs when the deployment cannot offer them', ()
     'a deployment with no GitHub link must not offer a preference it cannot honour');
 });
 
-test('the dev chat honours the preference instead of asking again', () => {
+test('the dev chat asks nothing at creation, and assumes nothing either', () => {
   const devChat = read('frontend/src/features/dev-chat/dev-chat.js');
-  // The saved value is no longer read as a raw string here: it is one input
-  // to BuildVenues.currentVenue, which resolves the whole precedence chain
-  // (imported > lease > backend > saved flow) in one place. 'platform' and
-  // an unset preference both come back as a venue with no `flow`, which is
-  // exactly the "build here, render nothing" case the old
-  // `pref === 'platform'` branch spelled out by hand.
-  assert.match(devChat, /devFlowPreference/, 'the gate reads the value from App.user');
-  assert.match(devChat, /BuildVenues\.preselect\(BuildVenues\.currentVenue\(/,
-    'the saved preference is resolved through the shared venue list');
   assert.doesNotMatch(devChat, /forcePicker/,
-    'nothing re-asks at creation time — the venue line is the door now');
+    'nothing re-asks at creation time — the venue dropdown is the door now');
+  // #1353: and nothing ANSWERS for the user either. The saved default used
+  // to turn any untouched session into a web hand-off before a word was
+  // typed — while the venue derivation, which never read the preference,
+  // went on telling the header and the sheet that the session was
+  // On-Platform. One preference, two screens, and the only way back was per
+  // tab. A hand-off is a choice made about THIS session now, through the
+  // dropdown, and recorded on it (chat_sessions.build_venue).
+  const target = devChat.match(/_devFlowTarget\(\) \{[\s\S]*?\n  \},/);
+  assert.ok(target, '_devFlowTarget must exist');
+  assert.doesNotMatch(target[0], /devFlowPreference/,
+    'the walkthrough is not summoned by a standing preference');
+  const venue = devChat.match(/_currentVenueId\(\) \{[\s\S]*?\n  \},/);
+  assert.ok(venue, '_currentVenueId must exist');
+  assert.doesNotMatch(venue[0], /devFlowPreference/,
+    'nor does the venue the whole session paints from claim one');
 });
 
-test('the walkthrough only appears where the hand-off can still be started', () => {
-  // Otherwise it would sit above a conversation already in progress, or on a
-  // session whose proposal exists — offering to start work somewhere else
-  // when the work is already underway here.
+test('the walkthrough appears exactly where the session says it is handed over', () => {
+  // The gates this used to check — no PR, still active, nothing typed —
+  // existed to keep a walkthrough summoned by a standing PREFERENCE from
+  // landing on work already under way. With that door closed (#1353) the
+  // walkthrough has one cause left: the venue this session is in, which is
+  // a deliberate act and outranks all three of those states by design
+  // (#1281 — a hand-off chosen halfway through a session is still a
+  // hand-off). So the assertion is that there is ONE input, not four.
   const devChat = read('frontend/src/features/dev-chat/dev-chat.js');
   const fnStart = devChat.indexOf('_devFlowTarget() {');
   assert.ok(fnStart !== -1, '_devFlowTarget must exist');
   const fn = devChat.slice(fnStart, devChat.indexOf('\n  },', fnStart));
-  assert.match(fn, /pr_number/, 'a session with a proposal is past the choice');
-  assert.match(fn, /status !== 'active'/, 'an inactive session is past the choice');
-  assert.match(fn, /role === 'user'/, 'a session with a typed message is past the choice');
-  assert.match(fn, /externalFlowsAvailable/,
-    'with no hand-off available there is no choice to offer, so nothing renders');
-  // …but an EXPLICIT choice from the venue sheet outranks all of it: the
-  // user just asked for this flow, in this session, out loud.
-  assert.match(fn, /flow\.mode === 'wizard' && flow\.agent/,
-    'an explicit pick renders the walkthrough regardless of the gates above');
+  assert.match(fn, /DevChat\._currentVenueId\(\)/, 'the venue is the whole question');
+  assert.match(fn, /'web-codex'/);
+  assert.match(fn, /'web-claude-code'/);
+  assert.doesNotMatch(fn, /pr_number|status !== 'active'|role === 'user'/,
+    'no second set of gates to fall out of step with the header');
+  // And the surface asks the same one thing, which is the invariant
+  // tests/venue-surface-sync.test.js drives for real.
+  const launchpad = devChat.match(/_launchpadVenue\(\) \{[\s\S]*?\n  \},/);
+  assert.ok(launchpad, '_launchpadVenue must exist');
+  assert.match(launchpad[0], /DevChat\._currentVenueId\(\)/);
 });
 
 test('the "+" menu asks nothing about venue', () => {

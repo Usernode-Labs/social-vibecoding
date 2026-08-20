@@ -189,18 +189,30 @@ test('a failed store is swallowed, because the repaint already happened', () => 
 });
 
 test('the stored venue is what brings the launchpad back after a reload', () => {
-  // _devFlow.mode is in-memory and goes with the tab. If the target were
+  // _devFlow.mode is in-memory and goes with the tab. If the surface were
   // derived from that alone, reopening a hand-off session would show a
   // composer for a venue that never runs a turn here.
-  assert.match(
-    DEV_CHAT_SRC,
-    /_devFlowTarget\(\)[\s\S]{0,1200}session\.build_venue/,
-    'the walkthrough target reads the stored venue',
-  );
+  //
+  // Since #1353 there is ONE derivation to check rather than two: the
+  // walkthrough, the launchpad and the header dropdown all resolve through
+  // _currentVenueId(), which is where the column is read. That collapse is
+  // the fix — see tests/venue-surface-sync.test.js — so the assertion
+  // follows it rather than pinning a second reader that must not exist.
   assert.match(
     DEV_CHAT_SRC,
     /buildVenue: s\.build_venue/,
-    'and so does the venue the whole chat view paints from',
+    'the venue the whole chat view paints from reads the stored column',
+  );
+  const target = DEV_CHAT_SRC.match(/_devFlowTarget\(\) \{[\s\S]*?\n  \},/);
+  assert.ok(target, '_devFlowTarget must exist');
+  assert.match(target[0], /DevChat\._currentVenueId\(\)/,
+    'and the walkthrough asks that one derivation, not the columns again');
+  const launchpad = DEV_CHAT_SRC.match(/_launchpadVenue\(\) \{[\s\S]*?\n  \},/);
+  assert.ok(launchpad, '_launchpadVenue must exist');
+  assert.match(launchpad[0], /DevChat\._currentVenueId\(\)/);
+  assert.doesNotMatch(launchpad[0], /_devFlowTarget/,
+    'a second source here is exactly what let the screen and the header '
+      + 'disagree about the same session',
   );
 });
 

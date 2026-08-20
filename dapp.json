@@ -1408,10 +1408,20 @@
       "expectText": "to send"
     },
     {
-      "name": "Model selector caption shows what the model is for, not $/MTok (#800)",
+      "name": "The chat-model picker and the credit meter share one line (#1353)",
       "path": "/#app/usernode-2d5619/dev/sessions/990401",
-      "expectSelector": "#dc-model-note:not(.hidden)",
-      "expectText": "best for"
+      "expectSelector": "#dc-venue-detail ~ #dc-budget"
+    },
+    {
+      "name": "The attach button rides with the suggested replies (#1353)",
+      "path": "/#app/usernode-2d5619/dev/sessions/990401",
+      "expectSelector": ".dc-composer-actions > #dc-attach-btn + #dc-quick-replies"
+    },
+    {
+      "name": "…and that row sits directly above the send button (#1353)",
+      "path": "/#app/usernode-2d5619/dev/sessions/990401",
+      "expectSelector": ".dc-composer-actions ~ #dc-form #dc-send-btn",
+      "expectText": "Send"
     },
     {
       "name": "Opus 5 reads as the general coding pick, not big-or-tricky-only (#809)",
@@ -2275,12 +2285,6 @@
       "expectText": "Claude"
     },
     {
-      "name": "The composer meter states what is LEFT, not just what is spent (#593)",
-      "path": "/?shot=credits-low#app/usernode-2d5619/dev/sessions/990403",
-      "expectSelector": "#dc-budget [data-credits-remaining]",
-      "expectText": "$5.00 left"
-    },
-    {
       "name": "Nearly out of credits: the chat warns before a turn is refused (#593)",
       "path": "/?shot=credits-low#app/usernode-2d5619/dev/sessions/990403",
       "expectSelector": "#dc-credits-low-banner [data-credits-low-lead]",
@@ -2424,21 +2428,9 @@
       "expectText": "Built with Claude Code"
     },
     {
-      "name": "The composer's ⋯ opens session and billing options (#1055)",
-      "path": "/?demo=1&shot=session-options#app/usernode-2d5619/dev/sessions/990405",
-      "expectSelector": ".un-popover .dc-options-header .dc-options-title",
-      "expectText": "Session and billing options"
-    },
-    {
-      "name": "Session options paint an opaque surface (#1055)",
-      "path": "/?demo=1&shot=session-options#app/usernode-2d5619/dev/sessions/990405",
+      "name": "The venue sheet paints an opaque surface (#1055, #1353)",
+      "path": "/?demo=1&shot=venue-sheet#app/usernode-2d5619/dev/sessions/990405",
       "expectSelector": ".un-popover[data-surface=\"opaque\"]"
-    },
-    {
-      "name": "Session options ask about venue exactly once, in one row (#1086)",
-      "path": "/?demo=1&shot=session-options#app/usernode-2d5619/dev/sessions/990405",
-      "expectSelector": ".un-popover .un-popover-item, .un-popover [role=\"menuitem\"]",
-      "expectText": "Change how this is built"
     },
     {
       "name": "The venue sheet hands this session's own code to the web agent (#1071)",
@@ -2467,22 +2459,6 @@
       "path": "/?shot=credits-exhausted#app/usernode-2d5619/dev/sessions/990405",
       "expectSelector": "#dc-credits-banner .dc-credits-banner-actions > button#dc-credits-add-key + button[data-credits-venue=\"1\"]:last-child",
       "expectText": "Change session type"
-    },
-    {
-      "name": "Session options name the key already on file (#1055)",
-      "path": "/?demo=1&shot=session-options#app/usernode-2d5619/dev/sessions/990405",
-      "expectText": "Change your API key"
-    },
-    {
-      "name": "With no key on file the menu leads with setting one (#1055)",
-      "path": "/?shot=session-options#app/usernode-2d5619/dev/sessions/990405",
-      "expectText": "Set your Anthropic API key"
-    },
-    {
-      "name": "Session options open as an action sheet on touch (#1055)",
-      "path": "/?demo=1&shot=session-options&un-platform=ios#app/usernode-2d5619/dev/sessions/990405",
-      "expectSelector": ".un-action-sheet .un-action-card .un-action-btn",
-      "expectText": "Change how this is built"
     },
     {
       "name": "All four venue choices reach the touch action sheet, icons and all (#1348)",
