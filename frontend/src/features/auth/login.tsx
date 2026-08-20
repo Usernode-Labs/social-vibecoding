@@ -116,6 +116,17 @@ const STATUS = 'text-sm text-zinc-400';
 const EXPIRED_MSG =
   'This reset link is invalid or has expired. Go back to login and request a new one from "Forgot password?".';
 
+/**
+ * The emailed-reset confirmation is a success state, not ambient status text:
+ * a green-tinted rounded box (both palettes) so "the link was sent" is
+ * unmistakable. Whole class literals — the Tailwind extractor is a regex.
+ */
+const SENT_BOX =
+  'rounded-lg border border-green-300 bg-green-100 px-3 py-2 text-sm font-medium text-green-800 dark:border-green-800 dark:bg-green-950/60 dark:text-green-300';
+/** Anti-enumeration: the same copy whether or not the address matched. */
+const SENT_MSG =
+  'If that address matches an account, a reset link is on its way. It expires in 30 minutes.';
+
 /** The pre-email copy the frozen markup shipped, and its replacement. */
 const ADMIN_LEAD_SHIPPED =
   "Accounts here have no email on file, so a password can't be reset automatically from the web.";
@@ -308,9 +319,13 @@ export function LoginScreen() {
       } catch {
         shot = null;
       }
-      if (!openSignup && shot === 'password-recovery') {
+      if (!openSignup && (shot === 'password-recovery' || shot === 'password-recovery-sent')) {
         showRecovery();
         setRecoveryPath('email');
+        // `password-recovery-sent` also paints the post-submit confirmation
+        // so the green success box is URL-reachable for screenshots and
+        // checks. Display-only, no writes, works in every environment.
+        setEmailResetStatus(shot === 'password-recovery-sent' ? SENT_MSG : null);
       }
       // Wallet detection runs once, the first time the screen appears (needs
       // the native bridge; quietly does nothing on desktop web).
@@ -625,9 +640,7 @@ export function LoginScreen() {
       }
       // Anti-enumeration: the server answers the same whether or not the
       // address matched, and so does this copy.
-      setEmailResetStatus(
-        'If that address matches an account, a reset link is on its way. It expires in 30 minutes.',
-      );
+      setEmailResetStatus(SENT_MSG);
     } catch {
       setEmailResetError('Network error');
     } finally {
@@ -1080,7 +1093,13 @@ export function LoginScreen() {
                 id="recovery-email"
                 className={hiddenFirst(!(view === 'recovery' && recoveryPath === 'email'), 'space-y-3')}
               >
-                <p className={P}>
+                {/*
+                    The instruction line steps aside while the sent
+                    confirmation is up, so the message reads from exactly one
+                    place — the success box below the field (dev-chat request:
+                    it appeared to render twice).
+                */}
+                <p className={hiddenFirst(!!emailResetStatus, P)}>
                   Enter the email address on your account and we'll send you a link to choose a new password.
                 </p>
                 <div>
@@ -1097,7 +1116,7 @@ export function LoginScreen() {
                 <div id="recovery-email-error" className={hiddenLast(!emailResetError, ERROR)}>
                   {emailResetError}
                 </div>
-                <div id="recovery-email-status" className={hiddenLast(!emailResetStatus, STATUS)}>
+                <div id="recovery-email-status" className={hiddenLast(!emailResetStatus, SENT_BOX)}>
                   {emailResetStatus}
                 </div>
                 <Button

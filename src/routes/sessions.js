@@ -25,7 +25,10 @@ const stagingRecovery = require('../services/staging-recovery');
 const sessionBus = require('../services/session-bus');
 const { drainGuard } = require('../services/lifecycle');
 const { getAppConventions, getSelfHostedRefuseList } = require('../services/prompts');
-const { IN_LOOP_BROWSER_GUIDANCE } = require('../services/in-loop-browser');
+const {
+  IN_LOOP_BROWSER_GUIDANCE,
+  HOSTED_CLAUDE_IN_LOOP_BROWSER_GUIDANCE,
+} = require('../services/in-loop-browser');
 const models = require('../services/models');
 const limits = require('../services/limits');
 const { effectiveSessionCaps } = require('../services/session-caps');
@@ -11636,6 +11639,123 @@ function describeStagingFailure(stagingErr) {
   return { fix, missingKeys, errMsg, errName };
 }
 
+// Local Claude and Codex/OpenRouter do not have hosted Claude's independently
+// verified appended-system-prompt transport. Keep their existing browser and
+// testing guidance inline, byte-for-byte, so this optimization cannot change
+// those backends. Hosted Claude receives a compact pointer because every build
+// invocation is already required to carry the complete platform handbook as
+// system context.
+const INLINE_CODING_AGENT_TESTING_GUIDANCE = `- End your FINAL message with a testing block (optional, but strongly
+  encouraged whenever the change is user-visible) so reviewers can try the
+  change in the staging preview:
+
+==== TESTING ====
+path: /relative/path?demo=1
+path: /another/changed/view
+1. First step a tester should take.
+2. What they should see if the change works.
+==== END TESTING ====
+
+  Rules for the testing block:
+  - The "path:" line points the before/after screenshots (and the "Test
+    this change" button) at the route where the change is visible. Each
+    must be a RELATIVE path within the app (starts with "/", no scheme or
+    host).
+  - REQUIRED for user-visible changes: you MUST include at least one
+    "path:" line pointing at the SPECIFIC screen where the change is
+    actually VISIBLE — a deep route (with whatever query/hash params it
+    takes), not a reflexive "path: /". Omitting it makes the screenshots
+    default to the home page and show a screen your change never touched;
+    the platform records that default as a capture defect on the
+    proposal, so treat a missing "path:" as a bug in your reply, not a
+    shortcut. Omit "path:" only when the change genuinely renders on "/"
+    as the page loads.
+  - The screenshots and the button can only NAVIGATE — they never click,
+    play, or fill anything in. If no URL reaches the changed screen
+    (in-game state, a modal/sheet, a wizard step), ADD one: a
+    screenshot-state deep link — a query/hash param the app handles at
+    boot to enter that state deterministically (e.g.
+    "/?shot=settlement-sheet" starts a demo match on a fixed seed and
+    opens the settlement panel) — per "Make the changed screen URL-reachable"
+    in the supplied platform conventions. Point "path:" at it, add a
+    dapp.json test asserting it renders, and verify it in the in-loop
+    browser before committing. A "path: /" screenshot of an
+    interaction-gated change is as good as no testing block.
+  - Every "path:" is captured in BOTH frames automatically: the desktop
+    viewport (1280x800, still + animated recording) and a phone-sized
+    viewport (390x844, still image only). Mobile-only changes are
+    therefore covered without any annotation — just point "path:" at the
+    right route. The legacy "@mobile" annotation is still accepted but
+    is redundant now; never rely on the desktop frame alone for a
+    narrow-screen change.
+  - You may give MORE THAN ONE "path:" line (one per line, up to 3,
+    captured in the order written) when the change spans several views —
+    e.g. a new nav item plus the page it opens. Each becomes its own
+    labelled before/after row. The FIRST path is also the deep link the
+    "Test this change" button jumps to.
+  - SELF-APP (social-vibecoding) ONLY: this app is a hash-routed SPA — its
+    internal screens live in the URL fragment ("#app/<slug>/dev/...",
+    "#leaderboard"), NOT in the server pathname. Write the "path:" using
+    the in-app route segments exactly as they appear after the "#"
+    (e.g. "path: /app/<self-slug>/dev/proposals/<id>" or
+    "path: /leaderboard") — the platform moves it into the fragment when
+    capturing screenshots and when the "Test this change" button opens the
+    preview, so the shot lands on the changed screen instead of the home
+    feed. Standalone server pages ("/dashboard", "/admin", "/status",
+    "/node-status") stay as plain pathnames. (This only applies to the
+    self-app; ordinary apps are path-routed and need no special handling.)
+  - The steps are short markdown (numbered list preferred), written for a
+    non-technical tester looking at a staging preview seeded with a copy of
+    production data.
+  - DATA AVAILABILITY: before writing the steps, check what each step's
+    data actually looks like in staging — existing public tables carry a
+    copy of production data, but tables created by THIS change and
+    staging:private tables are EMPTY. If a step needs data that won't
+    exist, you MUST seed it in this same commit per the "Staging mock
+    data" convention above (IS_STAGING boot-time seed, or a
+    staging-gated ?demo=1 route — always a no-op in production), and
+    write the steps against the seeded entities by name ("Open the
+    thread 'Staging demo thread' and …"). Point "path:" at a view where
+    the seeded data is visible (or at the ?demo=1 route). Changes
+    testable purely against production-cloned data need no seeding.
+  - The block must be the LAST thing in your final message. Skip the block
+    entirely for changes with nothing user-visible to test.`;
+
+const HOSTED_CLAUDE_TESTING_GUIDANCE = `- End your FINAL message with a testing block (optional, but strongly
+  encouraged whenever the change is user-visible) so reviewers can try the
+  change in the staging preview:
+
+==== TESTING ====
+path: /relative/path?demo=1
+path: /another/changed/view
+1. First step a tester should take.
+2. What they should see if the change works.
+==== END TESTING ====
+
+  The authoritative system instructions contain the complete testing-path,
+  screenshot-state, self-app routing, mobile capture, staging-data, and seed
+  rules. Follow them. For this output block:
+  - Include one to three relative "path:" lines for the specific screen where
+    a user-visible change can be seen. The FIRST path drives the "Test this
+    change" button.
+  - Keep the steps short, numbered when practical, and understandable to a
+    non-technical tester.
+  - The block must be LAST in your final message. Skip it entirely for changes
+    with nothing user-visible to test.`;
+
+function buildCodingAgentBuildGuidance({ authoritativeSystemContext = false } = {}) {
+  if (!authoritativeSystemContext) {
+    return {
+      browserGuidance: IN_LOOP_BROWSER_GUIDANCE,
+      testingGuidance: INLINE_CODING_AGENT_TESTING_GUIDANCE,
+    };
+  }
+  return {
+    browserGuidance: HOSTED_CLAUDE_IN_LOOP_BROWSER_GUIDANCE,
+    testingGuidance: HOSTED_CLAUDE_TESTING_GUIDANCE,
+  };
+}
+
 // Hosted Claude build turns carry the platform handbook as appended system
 // context instead of repeating its full ~130 KB inside every user message.
 // Claude Code keeps system context outside conversation history and reloads it
@@ -12012,6 +12132,9 @@ or the repo's own \`CLAUDE.md\` on app-specific matters.`
     runLocally,
     isCodexSession,
   });
+  const buildGuidance = buildCodingAgentBuildGuidance({
+    authoritativeSystemContext: Boolean(conventionsContext.systemPrompt),
+  });
   const renderClaudePrompt = (renderedSpecBlock) => `${taskBlock}
 
 ${conventionsContext.promptBlock}
@@ -12038,82 +12161,8 @@ ${debugAccess.promptBlock()}
 ` : ''}
 INSTRUCTIONS:
 ${turnInstructions}
-${IN_LOOP_BROWSER_GUIDANCE}
-- End your FINAL message with a testing block (optional, but strongly
-  encouraged whenever the change is user-visible) so reviewers can try the
-  change in the staging preview:
-
-==== TESTING ====
-path: /relative/path?demo=1
-path: /another/changed/view
-1. First step a tester should take.
-2. What they should see if the change works.
-==== END TESTING ====
-
-  Rules for the testing block:
-  - The "path:" line points the before/after screenshots (and the "Test
-    this change" button) at the route where the change is visible. Each
-    must be a RELATIVE path within the app (starts with "/", no scheme or
-    host).
-  - REQUIRED for user-visible changes: you MUST include at least one
-    "path:" line pointing at the SPECIFIC screen where the change is
-    actually VISIBLE — a deep route (with whatever query/hash params it
-    takes), not a reflexive "path: /". Omitting it makes the screenshots
-    default to the home page and show a screen your change never touched;
-    the platform records that default as a capture defect on the
-    proposal, so treat a missing "path:" as a bug in your reply, not a
-    shortcut. Omit "path:" only when the change genuinely renders on "/"
-    as the page loads.
-  - The screenshots and the button can only NAVIGATE — they never click,
-    play, or fill anything in. If no URL reaches the changed screen
-    (in-game state, a modal/sheet, a wizard step), ADD one: a
-    screenshot-state deep link — a query/hash param the app handles at
-    boot to enter that state deterministically (e.g.
-    "/?shot=settlement-sheet" starts a demo match on a fixed seed and
-    opens the settlement panel) — per "Make the changed screen URL-reachable"
-    in the supplied platform conventions. Point "path:" at it, add a
-    dapp.json test asserting it renders, and verify it in the in-loop
-    browser before committing. A "path: /" screenshot of an
-    interaction-gated change is as good as no testing block.
-  - Every "path:" is captured in BOTH frames automatically: the desktop
-    viewport (1280x800, still + animated recording) and a phone-sized
-    viewport (390x844, still image only). Mobile-only changes are
-    therefore covered without any annotation — just point "path:" at the
-    right route. The legacy "@mobile" annotation is still accepted but
-    is redundant now; never rely on the desktop frame alone for a
-    narrow-screen change.
-  - You may give MORE THAN ONE "path:" line (one per line, up to 3,
-    captured in the order written) when the change spans several views —
-    e.g. a new nav item plus the page it opens. Each becomes its own
-    labelled before/after row. The FIRST path is also the deep link the
-    "Test this change" button jumps to.
-  - SELF-APP (social-vibecoding) ONLY: this app is a hash-routed SPA — its
-    internal screens live in the URL fragment ("#app/<slug>/dev/...",
-    "#leaderboard"), NOT in the server pathname. Write the "path:" using
-    the in-app route segments exactly as they appear after the "#"
-    (e.g. "path: /app/<self-slug>/dev/proposals/<id>" or
-    "path: /leaderboard") — the platform moves it into the fragment when
-    capturing screenshots and when the "Test this change" button opens the
-    preview, so the shot lands on the changed screen instead of the home
-    feed. Standalone server pages ("/dashboard", "/admin", "/status",
-    "/node-status") stay as plain pathnames. (This only applies to the
-    self-app; ordinary apps are path-routed and need no special handling.)
-  - The steps are short markdown (numbered list preferred), written for a
-    non-technical tester looking at a staging preview seeded with a copy of
-    production data.
-  - DATA AVAILABILITY: before writing the steps, check what each step's
-    data actually looks like in staging — existing public tables carry a
-    copy of production data, but tables created by THIS change and
-    staging:private tables are EMPTY. If a step needs data that won't
-    exist, you MUST seed it in this same commit per the "Staging mock
-    data" convention above (IS_STAGING boot-time seed, or a
-    staging-gated ?demo=1 route — always a no-op in production), and
-    write the steps against the seeded entities by name ("Open the
-    thread 'Staging demo thread' and …"). Point "path:" at a view where
-    the seeded data is visible (or at the ?demo=1 route). Changes
-    testable purely against production-cloned data need no seeding.
-  - The block must be the LAST thing in your final message. Skip the block
-    entirely for changes with nothing user-visible to test.`;
+${buildGuidance.browserGuidance}
+${buildGuidance.testingGuidance}`;
 
   const fullClaudePrompt = renderClaudePrompt(specContext.fullBlock);
   const claudePrompt = reuseHostedScoutSpec
@@ -13912,4 +13961,4 @@ CMD ["node", "server.js"]
   return { containerId, stagingUrl, hostname };
 }
 
-module.exports = { BUILD_VENUES, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, advanceSharedReviewAfterSync, advanceReviewAfterPlatformSync, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };
+module.exports = { BUILD_VENUES, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, advanceSharedReviewAfterSync, advanceReviewAfterPlatformSync, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildCodingAgentBuildGuidance, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };

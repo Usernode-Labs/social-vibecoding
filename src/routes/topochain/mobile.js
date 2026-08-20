@@ -60,6 +60,7 @@ const {
 } = require('./helpers');
 const { computeStandings, assignSharedRanks } = require('../../services/topochain/standings');
 const { topochainMobileAuthRoutes, computeLevel } = require('./mobile-auth');
+const { mobileIdentityHash } = require('../../services/mobile-identity-hash');
 const { mobilePushRegistrationRoutes } = require('./mobile-push-registration');
 const { verifyCompletion, ZkBridgeError } = require('../../services/topochain/zk-bridge');
 const { readDelegationState, setDelegationState } = require('../../services/topochain/delegations');
@@ -776,6 +777,12 @@ function topochainMobileRoutes(config) {
           has_platform_access: !!user.has_platform_access || !!user.is_admin,
           bp_requested: !!user.bp_requested_at,
           bp_released: !!user.bp_released_at,
+          // The namespace the app prefixes its local storage with. Every
+          // native identity is derived from this endpoint (the bridge's
+          // completeLogin resolves the bearer through it), so this is the one
+          // place the value has to be right. Stable for the life of the
+          // account — see src/services/mobile-identity-hash.js.
+          identity_hash: mobileIdentityHash(user),
         },
       });
     } catch (err) {

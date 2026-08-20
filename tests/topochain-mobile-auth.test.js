@@ -309,6 +309,9 @@ test('login: correct credentials -> 200 token + user (member level, no onchain a
     assert.ok(body.token.length > 0);
     assert.deepEqual(body.user, {
       id: 1, email: 'alice@example.com', display_name: 'Alice', email_confirmed: true, level: 'member',
+      // The mobile app's local-storage namespace; see
+      // tests/mobile-identity-hash.test.js for the stability contract.
+      identity_hash: 'a145a65507b14025',
     });
   });
 });

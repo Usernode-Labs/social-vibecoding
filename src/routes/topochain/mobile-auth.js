@@ -36,6 +36,7 @@ const log = require('../../services/logger');
 const { mobileTokenAuth, optionalSessionAuth, extractBearerToken } = require('../../middleware/topochain-auth');
 const { topochainMobileAuthLimiter } = require('../../middleware/rate-limits');
 const { sendOtpMail } = require('../../services/topochain/mailer');
+const { mobileIdentityHash } = require('../../services/mobile-identity-hash');
 const mail = require('../../services/mail');
 const waitlist = require('../../services/waitlist');
 const { ok, fail } = require('./helpers');
@@ -135,6 +136,9 @@ async function buildUserPayload(pool, user) {
     display_name: user.display_name,
     email_confirmed: !!user.email_confirmed,
     level,
+    // The namespace the app prefixes its local storage with. Stable for the
+    // life of the account — see src/services/mobile-identity-hash.js.
+    identity_hash: mobileIdentityHash(user),
   };
 }
 

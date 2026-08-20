@@ -70,15 +70,14 @@ const MANIFEST_FILENAME = 'dapp.json';
 // being dropped, which turns the over-ceiling guard into a blocker on every
 // subsequent proposal rather than a warning about a pathological manifest.
 //
-// Raised 400 → 430 when this repo's manifest reached 382 and the
-// "room to grow" guard in tests/proposal-tests-manifest.test.js (which
-// insists on 20 free slots) started failing. 430 is the LARGEST ceiling the
-// current budget clears without touching the deadlines: at the ~3.9s
-// marginal cost per check over a pool of 8 that is ~210s of ideal work
-// against a 420s TESTS_DEADLINE_MS — still the 2x margin
-// tests/checks-budget.test.js pins (430.7 is where 2x stops holding).
-// Raising it further means raising that deadline (and the container run
-// timeout above it) in the same change.
+// Raised 400 → 430 when the manifest reached 382 and the 20-slot headroom
+// floor tests/proposal-tests-manifest.test.js pins was crossed. 430 is the
+// most the UNCHANGED capture budget clears: at the ~3.9s marginal cost per
+// check over a pool of 8, a full 430-check suite is ~210s of ideal work
+// against the 420s TESTS_DEADLINE_MS — right at the 2x margin
+// tests/checks-budget.test.js pins. Raising it any further means raising
+// that deadline (and the container run timeout above it) in the same
+// change.
 const MAX_DECLARED_TESTS = 430;
 
 // The pre-pool cap, kept for exactly one purpose: services/check-history.js
