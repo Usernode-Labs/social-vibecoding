@@ -310,8 +310,10 @@ const App = {
     // `password-recovery` (#1158) opens the login screen's forgot-password
     // view (login.tsx reads the shot in loginOnShow); it needs the same
     // anonymous boot so the capture session can't strip #login to the feed.
+    // `password-recovery-sent` is the same view with the post-submit
+    // confirmation painted (the green "link is on its way" success box).
     if (shot !== 'anon' && shot !== 'waitlist-joined' && shot !== 'anon-back' &&
-        shot !== 'password-recovery') {
+        shot !== 'password-recovery' && shot !== 'password-recovery-sent') {
       return false;
     }
     if (shot === 'waitlist-joined' &&

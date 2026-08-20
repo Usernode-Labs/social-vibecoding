@@ -2313,6 +2313,12 @@
       "expectText": "issue you a temporary password"
     },
     {
+      "name": "Emailed-reset confirmation renders once, as a green success box",
+      "path": "/?shot=password-recovery-sent#login",
+      "expectSelector": "#recovery-view:not(.hidden) #recovery-email-status.bg-green-100:not(.hidden)",
+      "expectText": "a reset link is on its way"
+    },
+    {
       "name": "Back from a dev session is a real link you can open in a new tab (#1036)",
       "path": "/?demo=1#app/usernode-2d5619/dev/sessions/990402",
       "expectSelector": "a#dc-back[href=\"#app/usernode-2d5619/dev\"]"
