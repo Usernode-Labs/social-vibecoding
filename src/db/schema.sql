@@ -80,6 +80,19 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS daily_limit_cents INTEGER;
 -- POST /api/me/ai-progress-estimate.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS ai_progress_estimate BOOLEAN NOT NULL DEFAULT FALSE;
 
+-- #1281: the session-CLI bridge is opt-in, per user.
+--
+-- The spec marks the bridge SETTINGS-GATED and "most users: no" — it is the
+-- platform dev-chat UX driven from your own machine, and it wants the
+-- Usernode CLI installed and attached before it does anything at all.
+-- Until now the only gate was the DEPLOYMENT's cliAuthEnabled, so the venue
+-- was offered to everyone on a deployment that merely supports the CLI.
+-- Default FALSE, deliberately: an option nobody has asked for should not be
+-- in a list everybody reads, and this one is bottom of the spec's routing
+-- tree for that exact reason. Settings -> Developer -> Experimental turns
+-- it on; the deployment gate still applies on top.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS session_bridge_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+
 -- Home-screen panels the viewer has dismissed (issue #911) — the keys of
 -- the cards that sit on the home screen next to the app grid ('challenges'
 -- today; see PANEL_REGISTRY in src/routes/home-panels.js, the only reader
@@ -3986,7 +3999,7 @@ CREATE INDEX IF NOT EXISTS idx_mobile_auth_tokens_user ON mobile_auth_tokens (us
 -- Mobile push notifications — sender identity, registrations, deliveries (#844)
 --
 -- This header also bounds the topochain block above for
--- tests/topochain-schema.test.js: the six mobile_push_* tables below are
+-- tests/topochain-schema.test.js: the seven mobile_push_* tables below are
 -- NOT part of the SPEC §3.4 topochain migration and must not count toward
 -- its 22-table pin.
 
@@ -4048,6 +4061,50 @@ CREATE TABLE IF NOT EXISTS mobile_push_registrations (
 );
 CREATE INDEX IF NOT EXISTS idx_mobile_push_registrations_user
   ON mobile_push_registrations (user_id, environment);
+
+-- Short-lived, privacy-safe registration history for support diagnostics.
+-- The registration id is retained as an ordinary scalar so an event survives
+-- deletion of the registration it describes. Provider tokens, ciphertext and
+-- token hashes deliberately never enter this table.
+CREATE TABLE IF NOT EXISTS mobile_push_registration_events (
+  id                BIGSERIAL PRIMARY KEY,
+  user_id           INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  registration_id   BIGINT,
+  environment       VARCHAR(32) NOT NULL CHECK (BTRIM(environment) <> ''),
+  installation_id   UUID NOT NULL,
+  platform          VARCHAR(16) NOT NULL CHECK (platform IN ('android', 'ios')),
+  permission_status VARCHAR(24) NOT NULL CHECK (
+                      permission_status IN (
+                        'authorized', 'provisional', 'denied', 'not_determined'
+                      )
+                    ),
+  event_kind        VARCHAR(32) NOT NULL CHECK (event_kind IN (
+                      'registration_created', 'registration_updated',
+                      'token_replaced', 'registration_reassigned',
+                      'client_unregistered', 'provider_invalidated',
+                      'registration_corrupt', 'session_expired',
+                      'firebase_project_reset'
+                    )),
+  reason_code       VARCHAR(96) CHECK (
+                      reason_code IS NULL OR reason_code IN (
+                        'client_request', 'notifications_disabled',
+                        'permission_denied', 'signed_out', 'account_changed',
+                        'identity_boundary', 'terminal_reset',
+                        'configuration_unavailable', 'installation_reassigned',
+                        'token_reassigned', 'messaging/invalid-recipient',
+                        'messaging/invalid-registration-token',
+                        'messaging/mismatched-credential',
+                        'messaging/registration-token-not-registered',
+                        'registration_decrypt_failed', 'mobile_session_expired',
+                        'firebase_project_changed'
+                      )
+                    ),
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_mobile_push_registration_events_user
+  ON mobile_push_registration_events (user_id, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_mobile_push_registration_events_retention
+  ON mobile_push_registration_events (created_at, id);
 
 -- Closed notification-kind policy. The notification INSERT trigger and the
 -- sender both read this table, so a future inbox kind is push-disabled until
@@ -4203,6 +4260,7 @@ CREATE INDEX IF NOT EXISTS idx_mobile_push_deliveries_registration
 COMMENT ON TABLE mobile_push_deployment_state IS 'staging:private';
 COMMENT ON TABLE mobile_push_installation_mutations IS 'staging:private';
 COMMENT ON TABLE mobile_push_registrations IS 'staging:private';
+COMMENT ON TABLE mobile_push_registration_events IS 'staging:private';
 COMMENT ON TABLE mobile_push_deliveries IS 'staging:private';
 
 -- Capture the push outbox in the same transaction as the canonical
@@ -5010,6 +5068,41 @@ WHERE agent_backend = 'claude_code'
     agent_thread_id IS DISTINCT FROM cc_session_id
     OR agent_provider IS DISTINCT FROM 'anthropic'
   );
+
+-- ── The session's chosen build venue (#1281) ─────────────────────────
+-- #1086 introduced the six-venue vocabulary in public/js/build-venues.js
+-- and stated, correctly for that change, that a venue id is a PRESENTATION
+-- key that never travels to the server: every venue was already expressible
+-- through a column that existed (agent_backend for the two in-chat Usernode
+-- venues, a live lease for `local`, source='imported' for a pull request
+-- somebody brought in).
+--
+-- #1281 breaks that tie, because it asks for something none of those
+-- columns can say: a session whose owner has DECIDED to build it somewhere
+-- else and has not done it yet. `external_agent` is stamped at SUBMISSION
+-- (services/external-agent-tasks.js) — it is provenance, the answer to
+-- "where did this proposal come from", and it is null for the whole period
+-- the launchpad is the thing the user is looking at. Deriving the venue
+-- from the other columns therefore reverts a hand-off session to
+-- "Usernode · Claude" on the next reload, taking its launchpad with it.
+--
+-- So the CHOICE is persisted here, and it is the only place a venue id is
+-- stored. Nullable on purpose: NULL means "nobody has chosen", and
+-- BuildVenues.currentVenue() then derives exactly as it does today, which
+-- is what keeps every existing row correct with no backfill. The CHECK
+-- pins the domain to the six ids in build-venues.js; adding a seventh
+-- venue means editing this list on purpose, the same bargain
+-- users.dev_flow_preference already makes.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS build_venue TEXT;
+
+DO $$
+BEGIN
+  ALTER TABLE chat_sessions DROP CONSTRAINT IF EXISTS chat_sessions_build_venue_chk;
+  ALTER TABLE chat_sessions ADD CONSTRAINT chat_sessions_build_venue_chk
+    CHECK (build_venue IS NULL
+           OR build_venue IN ('usernode-claude', 'usernode-openrouter', 'local',
+                              'web-claude-code', 'web-codex', 'own-tools-pr'));
+END $$;
 
 -- ── Generic user AI credentials (plan.md PR2) ────────────────────────
 -- Generalization of users.anthropic_key_enc/_last4 so a second provider

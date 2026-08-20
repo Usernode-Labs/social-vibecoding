@@ -342,7 +342,18 @@ test('busy disables the buttons rather than reordering the card', () => {
   const status = fullStatus({ task: null, branch: null });
   const idle = DevFlowSelect.wizardHtml({ status });
   const busy = DevFlowSelect.wizardHtml({ status, busy: true });
-  assert.ok(!idle.includes('disabled'), 'nothing is disabled while idle');
+  // #1281: scoped to the STEP actions. The vendor toggle above them always
+  // renders the CURRENT vendor disabled — that button is a statement of
+  // where you are rather than an offer — so a bare "no 'disabled' anywhere"
+  // check now fails on correct markup. What this test is about is that an
+  // in-flight request disables the action that started it, and that is
+  // still exactly what is asserted.
+  const stepButtons = (html) => html.match(/<button[^>]*data-flow-action="(?!vendor-)[^"]*"[^>]*>/g) || [];
+  assert.ok(stepButtons(idle).length > 0, 'the idle card offers at least one step action');
+  assert.ok(
+    !stepButtons(idle).some((b) => /disabled/.test(b)),
+    'no step action is disabled while idle',
+  );
   assert.match(busy, /data-flow-action="prepare"[^>]*disabled/,
     'the in-flight action is disabled, so it cannot be fired twice');
   // Same steps, same order — only the buttons change.

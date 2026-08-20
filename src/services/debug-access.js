@@ -57,6 +57,7 @@ const DENIED_TABLES = new Set([
   'mobile_push_deployment_state', // trusted push deployment identity and activation state
   'mobile_push_installation_mutations', // private device mutation fences
   'mobile_push_registrations', // encrypted FCM destinations
+  'mobile_push_registration_events', // private device registration lifecycle metadata
   'mobile_push_deliveries', // private notification/device delivery metadata
   'cli_device_authorizations', // global CLI device codes and request IPs
   'cli_access_tokens',   // global CLI bearer hashes and hints

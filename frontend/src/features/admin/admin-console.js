@@ -257,6 +257,10 @@ const AdminConsole = {
     { key: 'estimator', label: 'Estimator accuracy', group: 'Insights' },
     { key: 'gallery', label: 'Screenshot gallery', group: 'Insights' },
     { key: 'features', label: 'Submitted features', group: 'Insights' },
+    // The last full end-to-end sweep of the product against production.
+    // A generated REPORT, not a runner — the counterpart to the unit and
+    // dapp suites, which cover components rather than journeys.
+    { key: 'e2e', label: 'E2E coverage', group: 'Insights' },
 
     { key: 'campaigns', label: 'Maintenance campaigns', group: 'Platform' },
     // The home screen's "Featured apps" row. NOT the `features` key
@@ -1025,6 +1029,7 @@ const AdminConsole = {
     campaigns: 'AdminCampaigns',
     mail: 'AdminMail',
     push: 'AdminPush',
+    e2e: 'AdminE2E',
     // The ten promoted programme screens (#1179) all render through
     // admin-topochain.js — the section key names the screen, and the
     // module reads it back in its render(). The programme's Users screen

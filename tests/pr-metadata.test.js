@@ -604,7 +604,10 @@ test('createPR pr_exists → the existing open PR is adopted and brought up to d
     createPR: prExists,
     findOpenPrByBranch: async (owner, repo, branch) => {
       githubCalls.push({ type: 'find', owner, repo, branch });
-      return { number: 77, html_url: 'https://example/pr/77', title: 'Old GitHub title' };
+      return {
+        number: 77, html_url: 'https://example/pr/77', title: 'Old GitHub title',
+        body: 'The body already on GitHub.',
+      };
     },
   });
   try {
@@ -623,7 +626,10 @@ test('createPR pr_exists → the existing open PR is adopted and brought up to d
     // later failure can't lose the link again.
     const adopt = pool.queries.find((q) => /UPDATE chat_sessions SET pr_number = \$1, pr_url = \$2, pr_title = \$3, session_title = COALESCE/.test(q.sql));
     assert.ok(adopt, 'adoption UPDATE persisted');
-    assert.deepEqual(adopt.params, [77, 'https://example/pr/77', 'Old GitHub title', 1]);
+    // #1333: adopting a PR adopts its BODY too, so get_proposal can report
+    // the description this proposal is being voted on.
+    assert.deepEqual(adopt.params, [77, 'https://example/pr/77', 'Old GitHub title', 'The body already on GitHub.', 1]);
+    assert.equal(session.pr_body, 'The body already on GitHub.');
 
     // The generated title differs from the adopted one, so the normal
     // existing-PR update path fired against the adopted number.
@@ -933,6 +939,39 @@ test('without a preferred title the fallback path still heals as before', async 
       userMessage: 'x', ccSummary: '', username: 'evan',
     });
     assert.equal(session.pr_title_fallback, true, 'the placeholder is still flagged for the sweeper');
+  } finally {
+    restore();
+  }
+});
+
+// ── #1333: the description mirror on the create path ─────────────────────
+//
+// get_proposal reports chat_sessions.pr_body as `description`. #1323 taught
+// the author's own update to write it and nothing else, so a freshly opened
+// proposal reported no description at all — the field was correct and always
+// empty. The body is right here when the PR is created; mirroring it costs a
+// column in a write that was already happening.
+
+test('creating a PR mirrors its body so the proposal can report a description', async () => {
+  const githubCalls = [];
+  const { subject, restore } = loadWithStubs({ onGenerate: () => {}, githubCalls });
+  try {
+    const pool = mockPool([{ role: 'user', content: 'x', metadata: {} }]);
+    const session = { id: 1, branch_name: 'feat/x', pr_number: null };
+    await subject.applyPrMetadata({
+      pool, session, repoOwner: 'acme', repoName: 'app',
+      userMessage: 'x', ccSummary: 'y', username: 'evan',
+    });
+    const created = githubCalls.find((c) => c.type === 'create');
+    assert.ok(created, 'a PR was created');
+    const write = pool.queries.find((q) => /UPDATE chat_sessions SET pr_number = \$1/.test(q.sql));
+    assert.ok(write, 'the row learned the PR');
+    assert.ok(/pr_body/.test(write.sql), 'and the write carries the body');
+    // The body written to the row is the body sent to GitHub — one value, so
+    // the mirror cannot drift from the pull request at birth.
+    assert.ok(write.params.includes(created.opts.body),
+      'the mirrored body is the body the PR was opened with');
+    assert.equal(session.pr_body, created.opts.body);
   } finally {
     restore();
   }

@@ -46,6 +46,11 @@ const RETIRED_IDS = {
 
 // Ids a conversion chunk deliberately added, each with the reason.
 const ADDED_IDS = {
+  // #1281 — the session-CLI bridge opt-in. The spec marks that venue
+  // settings-gated and "most users: no", so the gate needs somewhere to
+  // live: Settings → Experimental, beside the other per-user preview flag.
+  'session-bridge-enabled': 'Opt-in switch for the session-CLI bridge venue (#1281).',
+  'session-bridge-status': 'Save/error line for the session-bridge switch (#1281).',
   'settings-mobile-push-preferences': 'Account-level Social mobile-push category controls in Settings → Alerts.',
   'drawer-row-native-app-version': 'Installed Flutter app version in the drawer footer (#1101).',
   'native-app-version-slot': 'Mobile app version/build rendered through the native bridge (#1101).',

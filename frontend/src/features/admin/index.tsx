@@ -133,6 +133,7 @@ import './admin-gallery.js';
 import './admin-campaigns.js';
 import './admin-push.js';
 import './admin-mail.js';
+import './admin-e2e.js';
 import './admin-topochain.js';
 
 export function AdminScreen() {

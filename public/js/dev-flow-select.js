@@ -136,7 +136,12 @@
         done: !!task,
         detail: task
           ? prepareDetail(task, target, targetKind)
-          : 'Describe the change in the message box below, then Usernode writes the work order — the repository, the branch, the exact base commit and the platform rules your agent has to follow.',
+          : 'Usernode writes the work order — the repository, the fork, the branch, the exact base commit and the platform rules your agent has to follow. Say what to build and it mints one.',
+        // #1281: the field lives HERE rather than in the composer. In a
+        // launchpad venue the composer is hidden — no turn will run in this
+        // session — so a step that told you to type in it would be pointing
+        // at something that is not on the screen.
+        brief: !task,
         actions: task ? [] : [{ action: 'prepare', label: 'Prepare work order', primary: true }],
       },
       {
@@ -175,6 +180,9 @@
         title: step.title,
         state: state,
         detail: step.detail,
+        // Only on the step you are ON, for the same reason its actions are:
+        // a brief box under a step nobody can act on is furniture.
+        brief: !!step.brief && state === 'current',
         // Only the step you are on offers buttons: three live "Check again"
         // buttons down the card is noise, and acting on a later step out of
         // order just produces an error the user did not need to see.
@@ -284,6 +292,37 @@
       + escapeHtml(action.label) + '</button>';
   }
 
+  // ── The vendor toggle (#1281) ───────────────────────────────────────
+  //
+  // The spec's type 2 wireframe puts Claude / ChatGPT at the TOP of the
+  // launchpad, with every step below adapting: "pick Claude or ChatGPT up
+  // top; every step below adapts". Until now the vendor was fixed the
+  // moment the flow was entered, and changing it meant backing out to the
+  // venue sheet and picking the other row — which discards nothing, but
+  // reads as leaving rather than as switching.
+  //
+  // Rendered as two buttons rather than a <select> so the current one is
+  // legible without opening anything, which is the whole point of a toggle
+  // on a phone. The inactive one carries the action; the active one is a
+  // statement and is inert.
+  function vendorToggleHtml(agent, busy) {
+    var vendors = [
+      { id: 'claude-code', label: 'Claude' },
+      { id: 'codex', label: 'ChatGPT' },
+    ];
+    return '<div class="dc-flow-vendors" role="group" aria-label="Which agent builds this">'
+      + vendors.map(function (v) {
+        var on = v.id === agent;
+        return '<button type="button" class="dc-flow-vendor'
+          + (on ? ' dc-flow-vendor-on' : '') + '"'
+          + (on ? ' aria-current="true"' : '')
+          + (on || busy ? ' disabled' : '')
+          + ' data-flow-action="vendor-' + escapeHtml(v.id) + '">'
+          + escapeHtml(v.label) + '</button>';
+      }).join('')
+      + '</div>';
+  }
+
   // The walkthrough card.
   //
   // `state`:
@@ -302,6 +341,7 @@
     if (!s.status) {
       return '<div class="dc-flow-card dc-flow-wizard" data-flow-wizard="1">'
         + '<div class="dc-flow-card-lead">Building with ' + escapeHtml(label) + '</div>'
+        + vendorToggleHtml(agent, true)
         + '<div class="dc-flow-card-detail">Checking where you are&hellip;</div>'
         + '</div>';
     }
@@ -309,6 +349,7 @@
     if (s.status.available === false) {
       return '<div class="dc-flow-card dc-flow-wizard" data-flow-wizard="1">'
         + '<div class="dc-flow-card-lead">Building with ' + escapeHtml(label) + '</div>'
+        + vendorToggleHtml(agent, true)
         + '<div class="dc-flow-card-detail">'
         + escapeHtml(unavailableNote(s.status.reason) || 'This flow is unavailable right now.')
         + '</div>'
@@ -326,6 +367,11 @@
           + step.actions.map(function (a) { return actionHtml(a, !!s.busy); }).join('')
           + '</div>'
         : '';
+      var brief = step.brief
+        ? '<textarea class="dc-flow-brief" data-flow-brief="1" rows="3"'
+          + (s.busy ? ' disabled' : '')
+          + ' placeholder="What should it build?">' + escapeHtml(s.brief || '') + '</textarea>'
+        : '';
       return ''
         + '<div class="dc-flow-step dc-flow-step-' + step.state + '" data-flow-step="'
         + escapeHtml(step.key) + '" data-flow-step-state="' + step.state + '">'
@@ -333,6 +379,7 @@
         + '<div class="dc-flow-step-body">'
         + '<div class="dc-flow-step-title">' + escapeHtml(step.title) + '</div>'
         + '<div class="dc-flow-step-detail">' + escapeHtml(step.detail) + '</div>'
+        + brief
         + actions
         + '</div>'
         + '</div>';
@@ -354,6 +401,7 @@
     return ''
       + '<div class="dc-flow-card dc-flow-wizard" data-flow-wizard="1">'
       + '<div class="dc-flow-card-lead">Building with ' + escapeHtml(label) + '</div>'
+      + vendorToggleHtml(agent, !!s.busy)
       + (s.error ? '<div class="dc-flow-error">' + escapeHtml(s.error) + '</div>' : '')
       + (s.notice ? '<div class="dc-flow-notice">' + escapeHtml(s.notice) + '</div>' : '')
       + '<div class="dc-flow-steps">' + rows + '</div>'
@@ -412,6 +460,7 @@
     agentUrl: agentUrl,
     unavailableNote: unavailableNote,
     steps: steps,
+    vendorToggleHtml: vendorToggleHtml,
     wizardHtml: wizardHtml,
     wire: wire,
     escapeHtml: escapeHtml,

@@ -112,13 +112,22 @@ run('dev-flow-select titles are the three venues it owns', () => {
 
 run('credit-options offers the local pair as two distinct venues', () => {
   const CreditOptions = loadBrowserModule('public/js/credit-options.js', 'CreditOptions');
-  const titles = CreditOptions.options({ externalFlowsAvailable: true }).map((o) => o.title);
+  // sessionBridgeEnabled since #1281: the CLI-lease venue is opt-in now, so
+  // the flag has to be on for it to be in any list at all. What this test
+  // pins is unchanged — that the two "on your computer" answers are two
+  // distinct venues with the shared vocabulary's names, not one row saying
+  // "use a coding tool on your computer" about both.
+  const titles = CreditOptions.options({
+    externalFlowsAvailable: true, sessionBridgeEnabled: true,
+  }).map((o) => o.title);
   assert.ok(titles.includes(VENUE_LABELS.local), 'missing the CLI-lease venue');
   assert.ok(titles.includes(VENUE_LABELS['own-tools-pr']), 'missing the own-tools/PR venue');
   assert.ok(titles.includes(VENUE_LABELS['web-claude-code']));
   assert.ok(titles.includes(VENUE_LABELS['web-codex']));
   // Both local venues survive the no-external-flows deployment too.
-  const offline = CreditOptions.options({ externalFlowsAvailable: false }).map((o) => o.title);
+  const offline = CreditOptions.options({
+    externalFlowsAvailable: false, sessionBridgeEnabled: true,
+  }).map((o) => o.title);
   assert.ok(offline.includes(VENUE_LABELS.local));
   assert.ok(offline.includes(VENUE_LABELS['own-tools-pr']));
 });
