@@ -17,6 +17,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const express = require('express');
+const { mobileIdentityHash } = require('../src/services/mobile-identity-hash');
 
 // ─── Fixture data ─────────────────────────────────────────────────────
 
@@ -520,8 +521,21 @@ test('GET /me: exact response shape, incl. level', async () => {
         // Onboarding flow alignment: the platform-access + block-producer
         // ladder ships on /me (fixture user has none of it granted).
         has_platform_access: false, bp_requested: false, bp_released: false,
+        // The mobile app's local-storage namespace. Pinned to the literal
+        // value, not recomputed: the app prefixes persisted state with it,
+        // so a change to the recipe orphans real installs and must be a
+        // deliberate edit here (and a versioned migration in the app).
+        identity_hash: mobileIdentityHash({ id: 1, email: 'alice@example.com' }),
       },
     });
+  });
+});
+
+test('GET /me: identity_hash is the pinned namespace for the fixture user', async () => {
+  await withServer(async (base) => {
+    const res = await getJson(base, '/api/v4/mobile/me', ALICE);
+    const body = await res.json();
+    assert.equal(body.data.identity_hash, 'a145a65507b14025');
   });
 });
 

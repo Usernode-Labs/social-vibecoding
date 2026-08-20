@@ -26,6 +26,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const express = require('express');
+const { mobileIdentityHash } = require('../src/services/mobile-identity-hash');
 const cookieParser = require('cookie-parser');
 
 // ─── Fixtures ─────────────────────────────────────────────────────────
@@ -201,6 +202,10 @@ test('valid session returns the /login response shape', async () => {
       display_name: WEB_USER.display_name,
       email_confirmed: true,
       level: 'member',
+      // The mobile app's local-storage namespace. The session-bridge login
+      // must hand back the SAME namespace as /login and /me for this user,
+      // or the app would resolve a second one and lose its local accounts.
+      identity_hash: mobileIdentityHash(WEB_USER),
     });
 
     // Only the sha256 of the raw token is persisted, ability 'session'.
