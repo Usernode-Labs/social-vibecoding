@@ -688,7 +688,10 @@
       return {
         // The kit sets labels with textContent, so the tick and the
         // unavailable note ride in the label exactly as they did before.
-        label: row.label + (row.current ? ' ✓' : '') + (row.unavailable ? ' (unavailable)' : ''),
+        // Never BOTH: "On-Platform ✓ (unavailable)" tells you that you are
+        // here and that you cannot be, in one breath. When a row is
+        // refusing you, that is the only thing it has to say.
+        label: row.label + (row.unavailable ? ' (unavailable)' : (row.current ? ' ✓' : '')),
         // #1348: the kit draws the glyph from its own set, in the row's own
         // colour. A name it does not know draws nothing rather than
         // throwing, so a row is never worse than it was without one.

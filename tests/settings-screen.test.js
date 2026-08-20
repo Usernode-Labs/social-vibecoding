@@ -548,8 +548,13 @@ test('the credits banner deep-links all three ways to keep building', () => {
   const fn = devChatJs.slice(devChatJs.indexOf('  _wireCreditsBanner() {'));
   // #1049 added a second argument: the two hand-off routes are handled in
   // place (they start the walkthrough in this chat) rather than navigated.
-  assert.match(fn.slice(0, 800), /CreditOptions\.wire\(banner, \{ onFlow:/,
+  // #1348 added a third: "Change session type" opens the venue sheet here
+  // too, in blocked mode — the bar is two buttons now, and that is the one
+  // standing in for every venue the bar used to list.
+  assert.match(fn.slice(0, 800), /CreditOptions\.wire\(banner, \{\s*\n?\s*onFlow:/,
     'the shared module wires the banner');
+  assert.match(fn.slice(0, 800), /onVenue: \(button\) => DevChat\.openVenueSheet\(button, \{ blocked: true \}\)/,
+    'and the venue door opens the sheet blocked, on the refusal banner');
   assert.doesNotMatch(fn.slice(0, 800), /Settings\.open\(/,
     'no direct module call any more');
 

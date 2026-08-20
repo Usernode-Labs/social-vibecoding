@@ -956,9 +956,18 @@ const DevChat = {
         return;
       }
       if (!DevChat.currentSession || DevChat.currentSession.id !== session.id) return;
-      Object.assign(DevChat.currentSession, data.session || {});
+      // EVERY column except build_venue. This response is a whole session
+      // row read on the server, and the caller is clearing the venue
+      // through a DIFFERENT route at the same time — so the row can carry
+      // the venue this switch is leaving, and assigning it wholesale puts
+      // the launchpad back on screen a moment after the pick removed it.
+      // reset-agent-context owns the agent columns; build_venue is
+      // /build-venue's, and the local clear above is the newer answer.
+      const { build_venue: leavingVenue, ...agentFields } = data.session || {};
+      void leavingVenue;
+      Object.assign(DevChat.currentSession, agentFields);
       const cached = DevChat.sessions.find((s) => Number(s.id) === Number(session.id));
-      if (cached) Object.assign(cached, data.session || {});
+      if (cached) Object.assign(cached, agentFields);
       if (data.message) DevChat.messages.push(data.message);
       if (data.agentFallbackReason) {
         DevChat._venueFallbackReason = data.agentFallbackReason;
@@ -1584,7 +1593,12 @@ const DevChat = {
   _wireCreditsLowBanner() {
     const banner = document.getElementById('dc-credits-low-banner');
     if (banner && window.CreditOptions) {
-      CreditOptions.wire(banner, { onFlow: (flow) => DevChat._devFlowFromCredits(flow) });
+      CreditOptions.wire(banner, {
+        onFlow: (flow) => DevChat._devFlowFromCredits(flow),
+        // NOT blocked: credits are low, not gone — the in-chat venue still
+        // works, and marking it unavailable would be a lie told early.
+        onVenue: (button) => DevChat.openVenueSheet(button),
+      });
     }
   },
 
@@ -1602,16 +1616,28 @@ const DevChat = {
   // reads nothing and writes nothing, and any other ?shot= value leaves
   // the real budget read alone. That is what keeps a production "before"
   // shot of this banner obtainable.
+  // Two shots, one fixture shape: `credits-low` is the 80% warning and
+  // `credits-exhausted` is the refusal (#1348). Both are properties of how
+  // much THIS viewer has spent, which no seeded row can stand in for —
+  // llm_usage is real accounting, and writing spend a reviewer did not
+  // incur is exactly what the staging-seed rule forbids. So the URL names
+  // the state and the client answers the budget read from a fixture.
+  //
+  // The exhausted one exists because the bar it paints is now the whole of
+  // that state's UI — two doors and a sentence — and a route the checks
+  // and the before/after screenshots can reach is the only way anybody
+  // reviews it without burning a day's allowance.
   _shotCreditsLowBudget() {
     let shot = null;
     try { shot = new URLSearchParams(location.search).get('shot'); } catch { return null; }
-    if (shot !== 'credits-low') return null;
+    if (shot !== 'credits-low' && shot !== 'credits-exhausted') return null;
     const reset = new Date();
     reset.setUTCHours(24, 0, 0, 0);
+    const exhausted = shot === 'credits-exhausted';
     return {
-      spentCents: 2000,
+      spentCents: exhausted ? 2500 : 2000,
       limitCents: 2500,
-      remainingCents: 500,
+      remainingCents: exhausted ? 0 : 500,
       globalSpentCents: 4000,
       globalLimitCents: 100000,
       byokSpentCents: 0,
@@ -1644,7 +1670,12 @@ const DevChat = {
     // place instead: they start the walkthrough right here.
     const banner = document.getElementById('dc-credits-banner');
     if (banner && window.CreditOptions) {
-      CreditOptions.wire(banner, { onFlow: (flow) => DevChat._devFlowFromCredits(flow) });
+      CreditOptions.wire(banner, {
+        onFlow: (flow) => DevChat._devFlowFromCredits(flow),
+        // #1348: blocked, so the sheet marks the venue that just refused
+        // the turn instead of offering it as a way out of its own refusal.
+        onVenue: (button) => DevChat.openVenueSheet(button, { blocked: true }),
+      });
     }
   },
 
@@ -1851,10 +1882,34 @@ const DevChat = {
     };
   },
 
-  openVenueSheet(anchorEl) {
+  // `blocked` opens the sheet in the mode build-venues.js already has for
+  // a refused turn: the On-Platform row comes back marked unavailable and
+  // carrying the reason, so the sheet states the refusal rather than
+  // offering the venue that caused it. Everything else is pickable.
+  // The sentence the blocked sheet puts under the On-Platform row. Built
+  // from the same credit state the banner reads, so the row and the bar
+  // that opened it cannot disagree about why.
+  _creditRefusalReason() {
+    const CO = window.CreditOptions;
+    const state = CO ? DevChat._creditState() : null;
+    if (state && state.level === 'locked') {
+      return 'Connect GitHub or X to unlock $10/day of Usernode credits.';
+    }
+    const reset = DevChat._creditResetSentence();
+    const lead = DevChat._globalBudgetOut()
+      ? 'The platform\u2019s shared daily AI budget is used up.'
+      : 'You\u2019ve used up today\u2019s free AI credits.';
+    return reset ? `${lead} ${reset}` : lead;
+  },
+
+  openVenueSheet(anchorEl, { blocked = false } = {}) {
     if (!window.BuildVenues) return;
     DevChat._closeSessionOptions();
     const state = DevChat._venueSheetState();
+    if (blocked) {
+      state.mode = 'blocked';
+      state.blockedReason = DevChat._creditRefusalReason();
+    }
     BuildVenues.open({
       anchorEl: anchorEl || document.getElementById('dc-venue-select') || undefined,
       state,
@@ -1869,6 +1924,12 @@ const DevChat = {
           // stored 'usernode-claude' would be a second, staler answer to a
           // question the column already answers, and would mask a later
           // switch to OpenRouter made from anywhere else.
+          // Locally FIRST, then persist — the same order the other three
+          // branches use. _persistBuildVenue only folds the column back in
+          // when its response lands, and the repaint below does not wait
+          // for it: leaving the stale venue in place is what kept a
+          // launchpad on screen after picking On-Platform.
+          if (DevChat.currentSession) DevChat.currentSession.build_venue = null;
           DevChat._persistBuildVenue(null);
           // No backend named: the server applies whichever in-chat agent
           // this user ran last, and says so if that preference no longer

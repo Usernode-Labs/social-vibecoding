@@ -689,3 +689,27 @@ test('the web row still explains WHICH work the hand-off takes (#1071)', () => {
     .map((sessionStatus) => note({ ...base, sessionStatus, hasBranch: sessionStatus !== 'archived' }));
   assert.equal(new Set(notes).size, 3, 'the three target states must not collapse into one sentence');
 });
+
+test('a refused row says only that, not that you are also standing in it', async () => {
+  // Blocked mode marks the venue that just refused the turn — which is by
+  // definition the one you are in, so the tick and the note would always
+  // land together. "On-Platform ✓ (unavailable)" is two answers to one
+  // question.
+  let items = null;
+  global.window = {
+    PlatformUI: {
+      hasKit: () => true,
+      menu: (opts) => { items = opts.items; return Promise.resolve(null); },
+    },
+  };
+  try {
+    await BV.open({ state: { ...OPEN, mode: 'blocked', current: 'usernode-claude' } });
+  } finally {
+    delete global.window;
+  }
+  const row = items.find((i) => /On-Platform/.test(i.label));
+  assert.match(row.label, /\(unavailable\)/);
+  assert.doesNotMatch(row.label, /✓/, 'no tick on a row that is refusing you');
+  // …while an ordinary current row still ticks.
+  assert.equal(items.filter((i) => /✓/.test(i.label)).length, 0);
+});

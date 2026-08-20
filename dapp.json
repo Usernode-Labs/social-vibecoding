@@ -2463,6 +2463,12 @@
       "expectSelector": "[role=\"menuitem\"][title*=\"comes back as its own proposal\"]"
     },
     {
+      "name": "The out-of-credits bar offers two doors, not one per venue (#1348)",
+      "path": "/?shot=credits-exhausted#app/usernode-2d5619/dev/sessions/990405",
+      "expectSelector": "#dc-credits-banner .dc-credits-banner-actions > button#dc-credits-add-key + button[data-credits-venue=\"1\"]:last-child",
+      "expectText": "Change session type"
+    },
+    {
       "name": "Session options name the key already on file (#1055)",
       "path": "/?demo=1&shot=session-options#app/usernode-2d5619/dev/sessions/990405",
       "expectText": "Change your API key"
