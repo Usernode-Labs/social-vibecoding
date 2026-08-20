@@ -383,6 +383,72 @@ function stagingMockSpecVersion(version) {
   };
 }
 
+// Same #1012 convention, for the version-LIST endpoint (GET /spec): a
+// prod-cloned staging DB has zero chat_session_specs rows, so a reviewer
+// opening a session's spec panel would always hit the empty state. The
+// mock list is what a NON-OWNER would see after the shared-visibility
+// filter: two shared versions with a gap where an unshared v2 would sit,
+// so the non-contiguous dropdown (the filter's visible effect) is
+// exercised too. Request-time only, never persisted, and reached only
+// when the real lookup found nothing.
+function stagingMockSpecList() {
+  const meta = (v) => ({
+    version: v.version,
+    built_at: v.built_at,
+    commit_sha: v.commit_sha,
+    pr_number: v.pr_number,
+    shared_to_group_at: v.shared_to_group_at,
+    char_count: v.content.length,
+  });
+  const latest = stagingMockSpecVersion(3);
+  const older = stagingMockSpecVersion(1);
+  return { spec: latest.content, versions: [meta(latest), meta(older)] };
+}
+
+// The single source of truth for "is this frozen spec version visible to
+// a viewer who does not own the session?" — shared to the app's group
+// chat, privately shared with this exact viewer (#86), or shared into a
+// conversation the viewer is an active member of (excluding blocked
+// direct pairs). Interpolated (never parameterised) into both spec read
+// routes — GET /api/sessions/:id/spec and GET /api/sessions/:id/specs/
+// :version — so the list gate and the content gate cannot drift apart.
+// `specAlias` is the chat_session_specs alias in the caller's query and
+// `viewerParam` the $n placeholder carrying req.user.id.
+function specVersionSharedVisibilitySql(specAlias, viewerParam) {
+  return `(${specAlias}.shared_to_group_at IS NOT NULL
+                OR EXISTS (
+                  SELECT 1 FROM chat_session_spec_user_shares us
+                   WHERE us.session_id = ${specAlias}.session_id
+                     AND us.version = ${specAlias}.version
+                     AND us.recipient_id = ${viewerParam}
+                ) OR EXISTS (
+                  SELECT 1
+                    FROM chat_session_spec_conversation_shares scs
+                    JOIN conversations shared_conversation
+                      ON shared_conversation.id = scs.conversation_id
+                     AND shared_conversation.status = 'active'
+                    JOIN conversation_members cm
+                      ON cm.conversation_id = scs.conversation_id
+                   WHERE scs.session_id = ${specAlias}.session_id
+                     AND scs.version = ${specAlias}.version
+                     AND cm.user_id = ${viewerParam}
+                     AND cm.status = 'member'
+                     AND NOT EXISTS (
+                       SELECT 1
+                         FROM conversations direct_conversation
+                         JOIN conversation_direct_pairs direct_pair
+                           ON direct_pair.conversation_id = direct_conversation.id
+                         JOIN user_blocks direct_block
+                           ON (direct_block.blocker_id = direct_pair.user_low_id
+                               AND direct_block.blocked_user_id = direct_pair.user_high_id)
+                            OR (direct_block.blocker_id = direct_pair.user_high_id
+                               AND direct_block.blocked_user_id = direct_pair.user_low_id)
+                        WHERE direct_conversation.id = scs.conversation_id
+                          AND direct_conversation.kind = 'direct'
+                     )
+                ))`;
+}
+
 function stagingMockTranscript(sessionId) {
   if (!STAGING_MOCK_TRANSCRIPT_IDS.has(sessionId)) return null;
   const t = (minsAgo) => new Date(Date.now() - minsAgo * 60 * 1000).toISOString();
@@ -5570,33 +5636,76 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   // dispatch the coding agent in chat — there is no in-UI "Build from
   // spec" button.
   //
-  // Read-only fetch returning the latest spec content (spec_md, == the
-  // latest version) plus metadata for every past version so the dev-chat
-  // can populate its version selector without a second round-trip; full
-  // content of older versions comes from GET /specs/:version below.
+  // Read-only fetch returning the latest spec content plus metadata for
+  // every visible version so the dev-chat can populate its version
+  // selector without a second round-trip; full content of older versions
+  // comes from GET /specs/:version below.
+  //
+  // Access rule (mirrors GET /specs/:version, which this list feeds):
+  //   - Owner: the live draft (spec_md, == the latest version's content)
+  //     plus ALL frozen versions — drafts stay private until shared.
+  //   - Anyone else (admins included — sharing is the explicit act that
+  //     makes a spec visible, same rule as the single-version gate):
+  //     only versions matching specVersionSharedVisibilitySql, with
+  //     `spec` set to the newest VISIBLE version's content — never
+  //     spec_md, which can be ahead of the last shared version. Zero
+  //     visible versions keeps today's 404, so nothing new is revealed
+  //     about sessions whose specs were never shared.
   router.get('/api/sessions/:id/spec', async (req, res) => {
     try {
       const { rows: sessionRows } = await pool.query(
-        `SELECT cs.id, cs.spec_md
+        `SELECT cs.id, cs.user_id, cs.spec_md
          FROM chat_sessions cs
-         WHERE cs.id = $1 AND cs.user_id = $2`,
-        [req.params.id, req.user.id]
-      );
-      if (!sessionRows.length) return res.status(404).json({ error: 'Session not found' });
-
-      const { rows: versions } = await pool.query(
-        `SELECT version, built_at, commit_sha, pr_number, shared_to_group_at,
-                LENGTH(content) AS char_count
-         FROM chat_session_specs
-         WHERE session_id = $1
-         ORDER BY version DESC`,
+         WHERE cs.id = $1`,
         [req.params.id]
       );
 
-      res.json({
-        spec: sessionRows[0].spec_md || '',
-        versions,
-      });
+      if (sessionRows.length && sessionRows[0].user_id === req.user.id) {
+        const { rows: versions } = await pool.query(
+          `SELECT version, built_at, commit_sha, pr_number, shared_to_group_at,
+                  LENGTH(content) AS char_count
+           FROM chat_session_specs
+           WHERE session_id = $1
+           ORDER BY version DESC`,
+          [req.params.id]
+        );
+        return res.json({
+          spec: sessionRows[0].spec_md || '',
+          versions,
+        });
+      }
+
+      if (sessionRows.length) {
+        // Non-owner: shared versions only. `content` rides along so the
+        // newest visible version can serve as `spec` without a second
+        // query, then is stripped from the metadata rows.
+        const { rows } = await pool.query(
+          `SELECT version, built_at, commit_sha, pr_number, shared_to_group_at,
+                  LENGTH(content) AS char_count, content
+           FROM chat_session_specs s
+           WHERE s.session_id = $1
+             AND ${specVersionSharedVisibilitySql('s', '$2')}
+           ORDER BY version DESC`,
+          [req.params.id, req.user.id]
+        );
+        if (rows.length) {
+          return res.json({
+            spec: rows[0].content || '',
+            versions: rows.map(({ content, ...meta }) => meta),
+          });
+        }
+      }
+
+      // (#1012) Staging-only demo fallback (?demo=1): chat_session_specs
+      // is staging:private, so a non-owner's spec panel has nothing real
+      // to list in a preview. Read-path only, gated on staging + the
+      // explicit demo flag, and reached only when no real data matched —
+      // production and any real spec are untouched.
+      if (process.env.USERNODE_ENV === 'staging' && req.query.demo === '1') {
+        return res.json(stagingMockSpecList());
+      }
+
+      return res.status(404).json({ error: 'Session not found' });
     } catch (err) {
       log.error('sessions', 'Failed to get spec', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -5626,6 +5735,9 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   //     via POST /specs/:version/share-user — the
   //     chat_session_spec_user_shares row is the authorization source
   //     of truth, scoped to (session, version, recipient).
+  // The non-owner arm lives in specVersionSharedVisibilitySql, shared
+  // verbatim with the version-list route (GET /spec) above so the two
+  // gates cannot drift.
   router.get('/api/sessions/:id/specs/:version', async (req, res) => {
     const sessionId = parseInt(req.params.id, 10);
     const version = parseInt(req.params.version, 10);
@@ -5639,38 +5751,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
          JOIN chat_sessions cs ON cs.id = s.session_id
          WHERE s.session_id = $1
            AND s.version = $2
-           AND (cs.user_id = $3 OR s.shared_to_group_at IS NOT NULL
-                OR EXISTS (
-                  SELECT 1 FROM chat_session_spec_user_shares us
-                   WHERE us.session_id = s.session_id
-                     AND us.version = s.version
-                     AND us.recipient_id = $3
-                ) OR EXISTS (
-                  SELECT 1
-                    FROM chat_session_spec_conversation_shares scs
-                    JOIN conversations shared_conversation
-                      ON shared_conversation.id = scs.conversation_id
-                     AND shared_conversation.status = 'active'
-                    JOIN conversation_members cm
-                      ON cm.conversation_id = scs.conversation_id
-                   WHERE scs.session_id = s.session_id
-                     AND scs.version = s.version
-                     AND cm.user_id = $3
-                     AND cm.status = 'member'
-                     AND NOT EXISTS (
-                       SELECT 1
-                         FROM conversations direct_conversation
-                         JOIN conversation_direct_pairs direct_pair
-                           ON direct_pair.conversation_id = direct_conversation.id
-                         JOIN user_blocks direct_block
-                           ON (direct_block.blocker_id = direct_pair.user_low_id
-                               AND direct_block.blocked_user_id = direct_pair.user_high_id)
-                            OR (direct_block.blocker_id = direct_pair.user_high_id
-                               AND direct_block.blocked_user_id = direct_pair.user_low_id)
-                        WHERE direct_conversation.id = scs.conversation_id
-                          AND direct_conversation.kind = 'direct'
-                     )
-                ))`,
+           AND (cs.user_id = $3 OR ${specVersionSharedVisibilitySql('s', '$3')})`,
         [sessionId, version, req.user.id]
       );
       if (!rows.length) {

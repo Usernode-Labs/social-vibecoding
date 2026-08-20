@@ -3081,7 +3081,17 @@ const DevChat = {
       // already mounted. The data fetch is kicked off in the
       // background by _loadSpecViewer; the empty side-panel renders
       // immediately and fills in once the spec_md round-trip lands.
-      if (DevChat._readSpecViewerOpen(sessionId)) {
+      //
+      // `?shot=spec-viewer` is the screenshot-state deep link for the
+      // panel: its open state otherwise lives only in localStorage, so no
+      // URL could reach it for checks/screenshots (which only navigate).
+      // Pure UI state — it reads nothing and writes nothing — so like
+      // ?shot=menu it is deliberately ungated by environment.
+      let shotSpecViewer = false;
+      try {
+        shotSpecViewer = new URLSearchParams(location.search).get('shot') === 'spec-viewer';
+      } catch { /* ignore */ }
+      if (shotSpecViewer || DevChat._readSpecViewerOpen(sessionId)) {
         DevChat.specViewer.open = true;
         DevChat.specViewer.sessionId = sessionId;
         DevChat.specViewer.viewVersion = 'latest';
@@ -9123,7 +9133,9 @@ const DevChat = {
     DevChat._renderSpecViewer();
 
     try {
-      const resp = await fetch(`/api/sessions/${sid}/spec`);
+      // ?demo=1 rides along (same pass-through as /status) so a staging
+      // preview's non-owner spec panel can serve the #1012 mock list.
+      const resp = await fetch(`/api/sessions/${sid}/spec${DevChat._demoQS()}`);
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const data = await resp.json();
       if (!DevChat.currentSession || DevChat.currentSession.id !== sid) return;
@@ -9149,10 +9161,19 @@ const DevChat = {
     if (DevChat.specViewer.sessionId != null
         && Number(DevChat.specViewer.sessionId) !== Number(DevChat.currentSession.id)) return;
 
+    // Sharing back out (to the group, to a user) and dispatching a build
+    // are the OWNER's affordances; a non-owner viewer reaches this panel
+    // legitimately (admins can open any session view) but only ever
+    // reads the versions the server's shared-visibility gate returned.
+    const isOwner = DevChat._ownsSession(DevChat.currentSession);
+
     // Numbered versions are the single spec surface now (#69). The
     // dropdown lists v1…vN; the highest is the live latest and its
     // content is byte-identical to chat_sessions.spec_md, which we
     // already have cached in `draftContent` (no extra fetch needed).
+    // For a non-owner the server substitutes the newest SHARED version's
+    // content as `spec` and filters the list, so "latest" reads as
+    // "latest visible to you" (version numbers may be non-contiguous).
     // 'latest' is a sentinel that follows the highest version as new
     // ones are auto-created on each Mayor spec edit.
     const versions = DevChat.specViewer.versions; // DESC sorted
@@ -9187,11 +9208,15 @@ const DevChat = {
     // Header action: [Share to group] for the selected version (any
     // version is shareable now — the redundant draft/Save-version step
     // was removed in #69). Disabled + "Shared" once already posted.
+    // Owner-only: the share routes are owner-scoped server-side, so for
+    // a non-owner the button could only ever fail.
     const isEmpty = !displayContent || !displayContent.trim();
     const alreadyShared = !!(selectedVersion && selectedVersion.shared_to_group_at);
-    const shareBtnHtml = (!selectedVersion || isEmpty)
-      ? `<button class="dc-spec-action-btn" disabled title="No spec version to share yet">Share to group</button>`
-      : `<button id="dc-spec-viewer-share" class="dc-spec-action-btn" ${alreadyShared ? 'disabled' : ''} title="${alreadyShared ? 'Already shared to group chat' : 'Post a card linking to this spec in the group chat'}">${alreadyShared ? 'Shared' : 'Share to group'}</button>`;
+    const shareBtnHtml = !isOwner
+      ? ''
+      : (!selectedVersion || isEmpty)
+        ? `<button class="dc-spec-action-btn" disabled title="No spec version to share yet">Share to group</button>`
+        : `<button id="dc-spec-viewer-share" class="dc-spec-action-btn" ${alreadyShared ? 'disabled' : ''} title="${alreadyShared ? 'Already shared to group chat' : 'Post a card linking to this spec in the group chat'}">${alreadyShared ? 'Shared' : 'Share to group'}</button>`;
 
     // (#1012) Copy the WHOLE selected version as raw markdown — both
     // halves and the marker headings, regardless of which tab is open
@@ -9207,9 +9232,12 @@ const DevChat = {
     // notification deep-linking to the read-only spec panel. Repeatable
     // (no alreadyShared disabling — the owner can share with several
     // people one at a time) and independent of the group-share state.
-    const shareUserBtnHtml = (!selectedVersion || isEmpty)
-      ? `<button class="dc-spec-action-btn" disabled title="No spec version to share yet">Share to user</button>`
-      : `<button id="dc-spec-viewer-share-user" class="dc-spec-action-btn" title="Privately share this spec version with one person">Share to user</button>`;
+    // Owner-only, same as the group share above.
+    const shareUserBtnHtml = !isOwner
+      ? ''
+      : (!selectedVersion || isEmpty)
+        ? `<button class="dc-spec-action-btn" disabled title="No spec version to share yet">Share to user</button>`
+        : `<button id="dc-spec-viewer-share-user" class="dc-spec-action-btn" title="Privately share this spec version with one person">Share to user</button>`;
 
     // #196: a conforming spec (BOTH marker headings present — see
     // public/js/spec-sections.js) renders as two tabs so non-technical
@@ -9240,19 +9268,24 @@ const DevChat = {
     } else if (displayContent) {
       specBodyHtml = `<div class="dc-spec-viewer-body">${DevChat.renderMarkdown(displayContent, { breaks: false })}</div>`;
     }
+    // Non-owners can't ask the AI in someone else's session, so their
+    // empty state says what actually gates them: nothing shared yet.
+    const emptyCopy = isOwner
+      ? 'No spec yet. Ask the AI to draft one.'
+      : 'No spec has been shared for this session yet.';
     const bodyHtml = DevChat.specViewer.isLoading && !displayContent
       ? `<div class="p-4 text-sm text-zinc-500">Loading spec…</div>`
       : displayContent
         ? specBodyHtml
-        : `<div class="p-4 text-sm text-zinc-500">No spec yet. Ask the AI to draft one.</div>`;
+        : `<div class="p-4 text-sm text-zinc-500">${emptyCopy}</div>`;
 
     // Spec planning and building are two separate steps: drafting a spec
     // does NOT build anything. Make the handoff explicit so a finished
     // spec doesn't read as a finished change (there is no in-UI build
-    // button — the user asks the Mayor in chat). Only shown while viewing
-    // the non-empty latest version, where the next action is to dispatch
-    // a build.
-    const buildHintHtml = isLatest && !isEmpty
+    // button — the user asks the Mayor in chat). Only shown to the OWNER
+    // (dispatching a build is theirs to do) while viewing the non-empty
+    // latest version, where the next action is to dispatch a build.
+    const buildHintHtml = isOwner && isLatest && !isEmpty
       ? `<div class="dc-spec-viewer-build-hint">This is a plan, not a built change. Ready? Ask the AI in chat to build it.</div>`
       : '';
 
@@ -9265,13 +9298,13 @@ const DevChat = {
         ${shareUserBtnHtml}
         ${shareBtnHtml}
         <button id="dc-spec-viewer-close" class="dc-spec-viewer-close" aria-label="Close spec viewer">×</button>
-        <div id="dc-spec-share-pop" class="dc-spec-share-pop hidden">
+        ${isOwner ? `<div id="dc-spec-share-pop" class="dc-spec-share-pop hidden">
           <input id="dc-spec-share-input" class="dc-spec-share-input" type="text"
                  placeholder="Username…" autocomplete="off" spellcheck="false" maxlength="32" />
           <div id="dc-spec-share-suggestions" class="dc-spec-share-suggestions"></div>
           <div id="dc-spec-share-error" class="dc-spec-share-error hidden"></div>
           <button id="dc-spec-share-send" class="dc-spec-action-btn dc-spec-share-send">Send</button>
-        </div>
+        </div>` : ''}
       </div>
       <div class="dc-spec-viewer-body-wrap">
         ${bodyHtml}

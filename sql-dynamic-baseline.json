@@ -411,6 +411,20 @@
     {
       "source": "src/routes/sessions.js",
       "kind": "structural-template",
+      "fingerprint": "031bf907bfa049c90235",
+      "count": 1,
+      "preview": "`SELECT version, built_at, commit_sha, pr_number, shared_to_group_at, LENGTH(content) AS char_count, content FROM chat_session_specs s WHERE s.session_id = $1 A"
+    },
+    {
+      "source": "src/routes/sessions.js",
+      "kind": "structural-template",
+      "fingerprint": "2252c6068a154006e298",
+      "count": 1,
+      "preview": "`SELECT s.version, s.content, s.built_at, s.commit_sha, s.pr_number, s.shared_to_group_at FROM chat_session_specs s JOIN chat_sessions cs ON cs.id = s.session_i"
+    },
+    {
+      "source": "src/routes/sessions.js",
+      "kind": "structural-template",
       "fingerprint": "53cbf4a100d8fd060870",
       "count": 1,
       "preview": "`UPDATE chat_sessions SET ${sets.join(', ')} WHERE id = $2`"
