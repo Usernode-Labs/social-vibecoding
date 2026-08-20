@@ -4816,10 +4816,24 @@
     //     accept from the profile notice still works). A backdrop
     //     dismissal / Close records nothing, so an unanswered prompt
     //     comes back on the next page load.
+    //   blocking — the native-app gate (#1328): present a NON-dismissible
+    //     centered modal instead of the sheet — no backdrop tap, no
+    //     Escape, no Close button. Accept and Decline are the only exits;
+    //     a failed POST re-enables them with the overlay still up. Falls
+    //     back to the dismissible sheet when the kit modal is unavailable
+    //     (better than presenting nothing), and is ignored when the
+    //     current version is already accepted (there would be no exit).
+    //   onAnswered(status) — fires after ANY successful consent POST
+    //     ('accepted' or 'refused'); the first-run trigger uses it to
+    //     stop re-checking this document.
+    //   onClosed — fires when the overlay is torn down (answered or
+    //     quietly dismissed); the trigger uses it to allow a later
+    //     re-offer.
     //   payload — a pre-fetched (or fixed) /terms/current data object;
     //     skips the fetch. The first-run trigger passes the payload it
-    //     already fetched, and the ?shot=terms-consent screenshot state
-    //     passes a fixed one so the shot does no fetch and no writes.
+    //     already fetched, and the ?shot=terms-consent /
+    //     ?shot=terms-consent-blocking screenshot states pass a fixed one
+    //     so the shots do no fetch and no writes.
     async showTermsSheet(onAccepted, opts) {
       opts = opts || {};
       const firstRun = opts.firstRun === true;
@@ -4879,6 +4893,9 @@
       }
 
       const accepted = !!(payload.consent && payload.consent.accepted);
+      // Blocking gate (#1328): meaningless once this version is accepted —
+      // a non-dismissible overlay with no consent buttons has no exit.
+      const blocking = opts.blocking === true && !accepted;
       const statusEl = el('p', 'text-sm mb-3 ' + (accepted
         ? 'text-emerald-600 dark:text-emerald-400'
         : 'text-zinc-600 dark:text-zinc-400'),
@@ -4915,6 +4932,7 @@
               throw new Error(body.error || `HTTP ${res.status}`);
             }
             if (sheet && sheet.dismiss) sheet.dismiss();
+            if (typeof opts.onAnswered === 'function') opts.onAnswered(status);
             onOk();
           } catch (err) {
             console.warn('[settings] terms consent failed:', err);
@@ -4954,17 +4972,37 @@
           panel.appendChild(declineBtn);
         }
       }
-      const closeBtn = el('button',
-        'w-full px-4 py-2 mt-2 text-sm text-zinc-500 dark:text-zinc-400',
-      'Close');
-      closeBtn.addEventListener('click', () => {
-        if (sheet && sheet.dismiss) sheet.dismiss();
-      });
-      panel.appendChild(closeBtn);
+      if (!blocking) {
+        const closeBtn = el('button',
+          'w-full px-4 py-2 mt-2 text-sm text-zinc-500 dark:text-zinc-400',
+        'Close');
+        closeBtn.addEventListener('click', () => {
+          if (sheet && sheet.dismiss) sheet.dismiss();
+        });
+        panel.appendChild(closeBtn);
+      }
 
-      sheet = window.PlatformUI && PlatformUI.sheet
-        ? PlatformUI.sheet({ contentEl: panel })
-        : null;
+      const onClosed = typeof opts.onClosed === 'function'
+        ? opts.onClosed : null;
+      if (blocking && window.PlatformUI &&
+          typeof PlatformUI.modal === 'function') {
+        // Non-dismissible modal (#1328): no backdrop tap, no Escape, no
+        // Close — Accept/Decline are the only exits, and a failed POST
+        // re-enables them with the overlay still up. The programmatic
+        // dismiss() in postConsent (on success) is the one way out.
+        sheet = PlatformUI.modal({
+          contentEl: panel,
+          dismissible: false,
+          onDismiss: onClosed,
+        });
+      }
+      if (!sheet) {
+        // Web — and the degraded-kit fallback for a blocking ask, where
+        // the dismissible sheet still beats presenting nothing.
+        sheet = window.PlatformUI && PlatformUI.sheet
+          ? PlatformUI.sheet({ contentEl: panel, onDismiss: onClosed })
+          : null;
+      }
     },
 
     // `readError` / `loading` only matter when there is NO snapshot: the

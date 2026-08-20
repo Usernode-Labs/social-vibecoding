@@ -1,20 +1,29 @@
-// The first-run terms-consent prompt (issue #1297), as wiring.
+// The first-run terms-consent gate (issues #1297, #1328), as wiring.
 //
-// New web accounts reached the full shell without ever seeing the published
+// New accounts reached the full shell without ever seeing the published
 // terms — the only entry points were the profile token-gated notice and a
 // Settings row that renders inside the native app only, so consent stayed
-// null forever. The fix is a trigger module riding the shell bundle
+// null forever. #1297 added a trigger module riding the shell bundle
 // (frontend/src/features/settings/terms-first-run.js) that checks
-// /challenges-api/terms/current on the once-per-document `sv:authed` boot
-// and presents Settings.showTermsSheet in a new first-run mode: Accept
-// posts 'accepted', Decline posts 'refused', a quiet dismissal records
-// nothing.
+// /challenges-api/terms/current on the authed boot and presents
+// Settings.showTermsSheet in a first-run mode: Accept posts 'accepted',
+// Decline posts 'refused'.
+//
+// #1328 hardened the mobile side, where the WebView keeps one document
+// alive for days so "next page load" meant "next app restart": the ask is
+// SEQUENCED after the "Set up your device" sheet in the same launch
+// (NativeChrome.firstRunSheetSettled), presented as a BLOCKING modal on
+// native (no backdrop/Escape/Close — Accept and Decline are the only
+// exits), and RE-EVALUATED on throttled foreground/online transitions
+// until the current version is answered. Web keeps the dismissible sheet,
+// once per document.
 //
 // There is no DOM harness for these files, so — like
 // tests/feedback-offline-ui.test.js — this pins the seams as source text.
 // The text assertions are not decoration: the dapp.json checks for
-// /?shot=terms-consent match on these exact strings, so a reword that
-// breaks them fails here, next to the code, instead of in a proposal check.
+// /?shot=terms-consent and /?shot=terms-consent-blocking match on these
+// exact strings, so a reword that breaks them fails here, next to the
+// code, instead of in a proposal check.
 //
 // Run with: node --test tests/terms-first-run.test.js
 
@@ -45,9 +54,12 @@ test('the trigger rides the settings bundle, not a new public/js script', () => 
 test('prompts only when the current version was never answered', () => {
   // 'accepted' AND 'refused' both count as an answer — a recorded decline
   // is what stops the nagging, and a new published version (no consent row
-  // yet) naturally re-prompts.
-  assert.match(triggerJs, /consent\.status !== null\) return;/);
-  // 404 = nothing published = nothing to ask about.
+  // yet) naturally re-prompts. An answer also memoizes (#1328) so the
+  // native foreground re-check stops asking this document.
+  assert.match(triggerJs,
+    /payload\.consent\.status !== null\) \{\s*\n\s*TermsFirstRun\._answered = true;/);
+  // 404 = nothing published = nothing to ask about — but NOT an answer,
+  // so a native re-check notices a later publish without a restart.
   assert.match(triggerJs, /if \(res\.status === 404\) return;/);
 });
 
@@ -62,19 +74,59 @@ test('boot pattern: init now if authed, else the once-per-document sv:authed', (
     /addEventListener\('sv:authed',\s*\(\) => TermsFirstRun\.maybePrompt\(\), \{ once: true \}\)/);
 });
 
-test('one first-run overlay per launch inside the native app', () => {
-  // Waits out the device-permissions run, then defers to it via the PUBLIC
-  // accessor — never the underscore-private.
+test('the native launch SEQUENCES device setup → terms, never skip-until-restart (#1328)', () => {
+  // Waits out the device-permissions run, then that sheet's DISMISSAL,
+  // then a ghost-click window — all via the PUBLIC accessors, never the
+  // underscore-privates. The old behaviour (return when the sheet was
+  // presented, deferring consent to the next app restart) is the #1328 bug.
   assert.match(triggerJs, /await NativeChrome\.maybeShowFirstRunPermissions\(\);/);
   assert.match(triggerJs, /NativeChrome\.firstRunSheetPresented\(\)/);
+  assert.match(triggerJs, /await NativeChrome\.firstRunSheetSettled\(\);/);
+  assert.match(triggerJs, /SETTLE_DELAY_MS/);
   assert.ok(!triggerJs.includes('_firstRunSheetPresented'),
     'the trigger must not reach into the underscore-private flag');
-  assert.match(nativeChromeJs, /firstRunSheetPresented\(\) \{\s*\n\s*return NativeChrome\._firstRunSheetPresented === true;/);
+  assert.ok(!triggerJs.includes('_firstRunSettledPromise'),
+    'the trigger must not reach into the underscore-private promise');
+  assert.match(nativeChromeJs,
+    /firstRunSheetPresented\(\) \{\s*\n\s*return NativeChrome\._firstRunSheetPresented === true;/);
+  assert.match(nativeChromeJs,
+    /firstRunSheetSettled\(\) \{\s*\n\s*return NativeChrome\._firstRunSettledPromise \|\| Promise\.resolve\(\);/);
+  // Settlement resolves on EVERY dismissal — including a ghost-click one
+  // that leaves the one-shot marker unwritten — and only a presented
+  // sheet installs the promise.
+  assert.match(nativeChromeJs, /settled\(\);\s*\n\s*\},/);
+  assert.match(nativeChromeJs,
+    /NativeChrome\._firstRunSheetPresented = true;\s*\n\s*NativeChrome\._firstRunSettledPromise = settledPromise;/);
 });
 
-test('the trigger presents the sheet in first-run mode with its own payload', () => {
-  // Passing the payload through avoids fetching /terms/current twice.
-  assert.match(triggerJs, /showTermsSheet\(null, \{ firstRun: true, payload \}\)/);
+test('the trigger presents first-run mode, blocking on native only (#1328)', () => {
+  // Passing the payload through avoids fetching /terms/current twice;
+  // `blocking` derives from the bridge's isNative flag, so web keeps the
+  // dismissible sheet. The callbacks are what replace the once-per-document
+  // latch: an answer memoizes, a teardown allows a later re-offer.
+  assert.match(triggerJs, /window\.usernode\.isNative === true/);
+  assert.match(triggerJs, /firstRun: true,\s*\n\s*blocking: native,\s*\n\s*payload,/);
+  assert.match(triggerJs, /onAnswered: \(\) => \{ TermsFirstRun\._answered = true; \}/);
+  assert.match(triggerJs, /onClosed: \(\) => \{ TermsFirstRun\._presented = false; \}/);
+});
+
+test('warm-entry re-check: native-gated, throttled, on foreground and online (#1328)', () => {
+  // The mobile WebView document persists across background/foreground for
+  // days — the re-check is what stops a fresh consent requirement (or a
+  // failed boot fetch) from waiting for an app restart. Web stays
+  // once-per-document: _recheck bails out unless native.
+  assert.match(triggerJs, /_recheck\(\) \{\s*\n\s*if \(!TermsFirstRun\._isNative\(\)\) return;/);
+  assert.match(triggerJs, /document\.visibilityState === 'hidden'\) return;/);
+  assert.match(triggerJs,
+    /Date\.now\(\) - TermsFirstRun\._lastCheckAt <\s*\n\s*TermsFirstRun\.RECHECK_MIN_MS\) return;/);
+  assert.match(triggerJs,
+    /addEventListener\('visibilitychange',\s*\n\s*\(\) => TermsFirstRun\._recheck\(\)\)/);
+  assert.match(triggerJs, /addEventListener\('online', \(\) => TermsFirstRun\._recheck\(\)\)/);
+  // The overlay/in-flight/answered guards replace the old _ran latch.
+  assert.match(triggerJs,
+    /TermsFirstRun\._inFlight \|\| TermsFirstRun\._presented \|\|\s*\n\s*TermsFirstRun\._answered\) return;/);
+  assert.ok(!triggerJs.includes('_ran'),
+    'the once-per-document latch is gone — guards + memo replaced it');
 });
 
 test('every dead end is silent — console.warn at most, never console.error', () => {
@@ -84,7 +136,7 @@ test('every dead end is silent — console.warn at most, never console.error', (
   assert.match(triggerJs, /console\.warn\('\[terms-first-run\]/);
 });
 
-// ─── The sheet's first-run mode (settings.js) ────────────────────────────
+// ─── The sheet's first-run + blocking modes (settings.js) ────────────────
 
 test('first-run mode adds the intro line and a Decline that records refusal', () => {
   assert.match(settingsJs,
@@ -99,9 +151,30 @@ test('first-run mode adds the intro line and a Decline that records refusal', ()
     'the Decline button must be gated on firstRun');
 });
 
+test('blocking mode is a NON-dismissible modal with no Close (#1328)', () => {
+  // Only meaningful while unanswered — an accepted version renders no
+  // consent buttons, so a non-dismissible overlay would have no exit.
+  assert.match(settingsJs, /const blocking = opts\.blocking === true && !accepted;/);
+  // The kit modal is the only presenter with a non-dismissible mode
+  // (presentSheet is always drag/backdrop dismissible).
+  assert.match(settingsJs,
+    /PlatformUI\.modal\(\{\s*\n\s*contentEl: panel,\s*\n\s*dismissible: false,/);
+  // No Close button in blocking mode; degraded-kit fallback keeps the
+  // dismissible sheet rather than presenting nothing.
+  assert.match(settingsJs, /if \(!blocking\) \{\s*\n\s*const closeBtn/);
+  assert.match(settingsJs,
+    /if \(!sheet\) \{[\s\S]{0,220}PlatformUI\.sheet\(\{ contentEl: panel, onDismiss: onClosed \}\)/);
+});
+
 test('accept keeps its behaviour, and both answers share one in-flight lock', () => {
   assert.match(settingsJs, /postConsent\('accepted',/);
   assert.match(settingsJs, /consentButtons\.forEach\(\(b\) => \{ b\.disabled = true; \}\);/);
+  // Any successful answer — accept OR decline — reports back to the
+  // trigger's memo, and only a success dismisses; a failed POST re-enables
+  // the buttons with the overlay still up (what makes blocking safe on a
+  // flaky connection).
+  assert.match(settingsJs,
+    /sheet\.dismiss\(\);\s*\n\s*if \(typeof opts\.onAnswered === 'function'\) opts\.onAnswered\(status\);/);
   // No app_version rides along — that field belongs to the mobile client.
   const sheetBody = settingsJs.slice(
     settingsJs.indexOf('async showTermsSheet('),
@@ -110,32 +183,46 @@ test('accept keeps its behaviour, and both answers share one in-flight lock', ()
     'the web sheet must not send app_version');
 });
 
-test('a pre-fetched payload skips the fetch (what makes the shot write-free)', () => {
+test('a pre-fetched payload skips the fetch (what makes the shots write-free)', () => {
   assert.match(settingsJs, /let payload = opts\.payload \|\| null;/);
   assert.match(settingsJs, /if \(!payload\) \{/);
 });
 
-// ─── The screenshot state (?shot=terms-consent) ──────────────────────────
+// ─── The screenshot states (?shot=terms-consent[-blocking]) ──────────────
 
-test('the shot presents the first-run sheet from a fixed payload, no fetch', () => {
+test('the shots present both variants from a fixed payload, no fetch', () => {
   const shot = appJs.slice(
     appJs.indexOf('_applyTermsConsentShot() {'),
     appJs.indexOf('_applyLaunchShot() {'));
   assert.ok(shot.length > 100, 'located _applyTermsConsentShot');
-  assert.match(shot, /shot !== 'terms-consent'\) return;/);
+  assert.match(shot,
+    /shot !== 'terms-consent' && shot !== 'terms-consent-blocking'\) return;/);
+  // The blocking modal is otherwise derived from the bridge's isNative
+  // flag, so this link is its only URL-reachable state.
+  assert.match(shot, /const blocking = shot === 'terms-consent-blocking';/);
   assert.match(shot, /firstRun: true,/);
+  assert.match(shot, /blocking,/);
   assert.match(shot, /consent: \{ status: null, accepted: false, responded_at: null \}/);
   assert.ok(!shot.includes('fetch('), 'the shot must not fetch');
   // Once-per-document: it presents an overlay that would stack.
   assert.match(appJs, /App\._applyTermsConsentShot\(\);/);
 });
 
-test('the dapp.json checks cover title, Accept and Decline on the shot route', () => {
-  const checks = (dapp.tests || []).filter((t) => t.path === '/?shot=terms-consent');
-  assert.equal(checks.length, 3);
-  const texts = checks.map((t) => t.expectText);
-  assert.ok(texts.includes('Staging Demo Terms of Service'));
-  assert.ok(texts.includes('Accept the terms'));
-  assert.ok(texts.includes('Decline'));
-  for (const c of checks) assert.match(c.expectSelector, /\.un-sheet/);
+test('the dapp.json checks cover title, Accept and Decline on both shot routes', () => {
+  const sheetChecks = (dapp.tests || []).filter((t) => t.path === '/?shot=terms-consent');
+  assert.equal(sheetChecks.length, 3);
+  const sheetTexts = sheetChecks.map((t) => t.expectText);
+  assert.ok(sheetTexts.includes('Staging Demo Terms of Service'));
+  assert.ok(sheetTexts.includes('Accept the terms'));
+  assert.ok(sheetTexts.includes('Decline'));
+  for (const c of sheetChecks) assert.match(c.expectSelector, /\.un-sheet/);
+
+  const modalChecks = (dapp.tests || []).filter(
+    (t) => t.path === '/?shot=terms-consent-blocking');
+  assert.equal(modalChecks.length, 3);
+  const modalTexts = modalChecks.map((t) => t.expectText);
+  assert.ok(modalTexts.includes('Staging Demo Terms of Service'));
+  assert.ok(modalTexts.includes('Accept the terms'));
+  assert.ok(modalTexts.includes('Decline'));
+  for (const c of modalChecks) assert.match(c.expectSelector, /\.un-modal/);
 });

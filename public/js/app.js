@@ -702,27 +702,32 @@ const App = {
     }, 50);
   },
 
-  // Screenshot-state deep link `?shot=terms-consent` (issue #1297): present
-  // the first-run terms sheet — Accept / Decline framing included — from a
-  // fixed inline payload. The real prompt only ever appears to a signed-in
-  // user whose consent row for the current published version is null, a
-  // state the staging seed deliberately erases for every cloned account
-  // (src/db/migrate.js records blanket accepted consents so the auto-prompt
-  // can't slide over unrelated preview screenshots), so this link is the one
-  // URL-reachable way to see the sheet. Passing `payload` skips the fetch
-  // and no button is pressed, so it is pure UI state with no writes —
-  // ungated for the same reason as ?shot=notif-permissions above. The
-  // trigger module (frontend/src/features/settings/terms-first-run.js)
-  // skips any route carrying a shot param, so the sheet presents exactly
-  // once here.
+  // Screenshot-state deep links `?shot=terms-consent` (issue #1297) and
+  // `?shot=terms-consent-blocking` (issue #1328): present the first-run
+  // terms UI — Accept / Decline framing included — from a fixed inline
+  // payload. The blocking variant renders the native app's non-dismissible
+  // modal, which is otherwise derived from the bridge's isNative flag and
+  // so has no other URL-reachable state. The real prompt only ever appears
+  // to a signed-in user whose consent row for the current published version
+  // is null, a state the staging seed deliberately erases for every cloned
+  // account (src/db/migrate.js records blanket accepted consents so the
+  // auto-prompt can't slide over unrelated preview screenshots), so these
+  // links are the only URL-reachable ways to see the ask. Passing `payload`
+  // skips the fetch and no button is pressed, so both are pure UI state
+  // with no writes — ungated for the same reason as ?shot=notif-permissions
+  // above. The trigger module
+  // (frontend/src/features/settings/terms-first-run.js) skips any route
+  // carrying a shot param, so the overlay presents exactly once here.
   _applyTermsConsentShot() {
     let shot = null;
     try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
-    if (shot !== 'terms-consent') return;
+    if (shot !== 'terms-consent' && shot !== 'terms-consent-blocking') return;
+    const blocking = shot === 'terms-consent-blocking';
     setTimeout(() => {
       if (!window.Settings || typeof Settings.showTermsSheet !== 'function') return;
       Settings.showTermsSheet(null, {
         firstRun: true,
+        blocking,
         payload: {
           id: 900500,
           version: 'staging-demo-v1',

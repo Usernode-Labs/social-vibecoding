@@ -687,6 +687,10 @@
     _FIRST_RUN_KEY: 'sv:onboarding_permissions_done',
     _firstRunPromise: null,
     _firstRunSheetPresented: false,
+    // Settlement signal for the terms first-run gate (#1328): set only
+    // when a sheet was actually presented this launch, resolved when that
+    // sheet is dismissed. firstRunSheetSettled() below is the public read.
+    _firstRunSettledPromise: null,
     // Delay between post-grant permission-status re-reads (the native
     // caches settle asynchronously after the OS dialog).
     _FIRST_RUN_RECHECK_MS: 800,
@@ -736,13 +740,23 @@
       return NativeChrome._iosPushPermissionStatus();
     },
 
-    // Public accessor for the same reason: the terms first-run trigger
-    // (frontend/src/features/settings/terms-first-run.js, issue #1297)
-    // enforces one first-run overlay per launch — on a launch where the
-    // "Set up your device" sheet was presented, the terms prompt waits
-    // for the next one — and it must not reach into an underscore-private.
+    // Public accessor for the same reason: the terms first-run gate
+    // (frontend/src/features/settings/terms-first-run.js, issues #1297 and
+    // #1328) presents one overlay at a time — on a launch where the
+    // "Set up your device" sheet was presented, the terms prompt waits for
+    // its dismissal — and it must not reach into an underscore-private.
     firstRunSheetPresented() {
       return NativeChrome._firstRunSheetPresented === true;
+    },
+
+    // Public, same reason: resolves when this launch's "Set up your
+    // device" sheet has been dismissed — or immediately when no sheet was
+    // presented. The terms first-run gate (#1328) SEQUENCES itself behind
+    // this instead of skipping the launch, so a fresh install sees device
+    // setup → terms consent in one session rather than deferring the ask
+    // to the next app restart.
+    firstRunSheetSettled() {
+      return NativeChrome._firstRunSettledPromise || Promise.resolve();
     },
 
     // ── The notification-permission tap ──────────────────────────────
@@ -928,6 +942,8 @@
         return;
       }
 
+      let settled = null;
+      const settledPromise = new Promise((resolve) => { settled = resolve; });
       const handle = NativeChrome.presentPermissionsSheet({
         perms,
         isAndroid,
@@ -941,16 +957,25 @@
         // prompt forever, so it does not ride on that guard alone: leave
         // it unwritten and let a later launch offer the sheet again.
         onDismiss: (info) => {
-          if (!info.interacted &&
-              info.elapsedMs < NativeChrome._FIRST_RUN_MIN_SEEN_MS) return;
-          NativeChrome._markFirstRunDone();
+          if (info.interacted ||
+              info.elapsedMs >= NativeChrome._FIRST_RUN_MIN_SEEN_MS) {
+            NativeChrome._markFirstRunDone();
+          }
+          // Settlement fires on EVERY dismissal, ghost clicks included —
+          // it reports "the sheet is gone", not "the marker was written".
+          // The terms first-run gate (#1328) awaits it to present in the
+          // same launch instead of deferring to the next app restart.
+          settled();
         },
       });
       // Kit unavailable (degraded shell): present nothing and record
       // nothing — burning the one-shot marker here silenced the iOS
       // notification prompt forever. A later healthy launch retries;
       // the permanent Settings rows remain the in-session fallback.
-      if (handle) NativeChrome._firstRunSheetPresented = true;
+      if (handle) {
+        NativeChrome._firstRunSheetPresented = true;
+        NativeChrome._firstRunSettledPromise = settledPromise;
+      }
     },
 
     // The "Set up your device" sheet itself, split out from the trigger
