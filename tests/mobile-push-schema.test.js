@@ -14,6 +14,7 @@ const PRIVATE_TABLES = [
   'mobile_push_deployment_state',
   'mobile_push_installation_mutations',
   'mobile_push_registrations',
+  'mobile_push_registration_events',
   'mobile_push_deliveries',
 ];
 
@@ -38,6 +39,44 @@ test('push schema keeps deployment and user device state private with bounded ex
   );
   assert.match(schema, /UNIQUE \(notification_id, environment, installation_id\)/);
   assert.match(schema, /CHECK \(NOT send_enabled OR send_not_before IS NOT NULL\)/);
+});
+
+test('registration lifecycle history is transient and contains no provider secret', () => {
+  const table = schema.match(
+    /CREATE TABLE IF NOT EXISTS mobile_push_registration_events \([\s\S]*?\n\);/
+  )?.[0];
+  assert.ok(table, 'registration event table exists');
+  assert.match(table, /registration_id\s+BIGINT,/,
+    'the deleted registration id is retained only as a scalar');
+  assert.doesNotMatch(table, /registration_id\s+BIGINT\s+REFERENCES/);
+  assert.doesNotMatch(table,
+    /^\s*(?:registration_(?:enc|hash)|provider_token|raw_token|ciphertext|credential)\s/m);
+  for (const kind of [
+    'registration_created', 'registration_updated', 'token_replaced',
+    'registration_reassigned', 'client_unregistered', 'provider_invalidated',
+    'registration_corrupt', 'session_expired', 'firebase_project_reset',
+  ]) {
+    assert.match(table, new RegExp(`'${kind}'`), `${kind} is a closed event kind`);
+  }
+  for (const reason of [
+    'client_request', 'notifications_disabled', 'permission_denied',
+    'signed_out', 'account_changed', 'identity_boundary', 'terminal_reset',
+    'configuration_unavailable', 'installation_reassigned', 'token_reassigned',
+    'messaging/invalid-recipient', 'messaging/invalid-registration-token',
+    'messaging/mismatched-credential',
+    'messaging/registration-token-not-registered',
+    'registration_decrypt_failed', 'mobile_session_expired',
+    'firebase_project_changed',
+  ]) {
+    assert.match(table, new RegExp(`'${reason.replace('/', '\\/')}'`),
+      `${reason} is a closed reason code`);
+  }
+  assert.match(table, /reason_code IS NULL OR reason_code IN/,
+    'arbitrary diagnostic text cannot be stored');
+  assert.match(schema,
+    /idx_mobile_push_registration_events_user[\s\S]*user_id, created_at DESC, id DESC/);
+  assert.match(schema,
+    /idx_mobile_push_registration_events_retention[\s\S]*created_at, id/);
 });
 
 test('closed database kind registry matches the reviewed service mapping and defaults', () => {

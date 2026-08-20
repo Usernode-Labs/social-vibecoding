@@ -685,7 +685,7 @@
       "expectSelector": ".dev-card-menu [data-menu-idx]"
     },
     {
-      "name": "A directly-opened proposal's \u22ef rows still open their picker (#1324)",
+      "name": "A directly-opened proposal opens its assignee picker (#1324, #1330)",
       "path": "/?demo=1&shot=card-menu&card=proposal:9000043&row=assignee#app/usernode-2d5619/dev/proposals/9000043",
       "expectSelector": "#attr-popover #attr-assignee-input"
     },
@@ -2217,6 +2217,46 @@
       "path": "/?demo=1#app/usernode-2d5619/dev/sessions/990402",
       "expectSelector": "#dc-credits-banner [data-credits-reset]",
       "expectText": "reset at midnight UTC"
+    },
+    {
+      "name": "Out of credits: the routes anyone can follow render first (#1281)",
+      "path": "/?demo=1#app/usernode-2d5619/dev/sessions/990402",
+      "expectSelector": "#dc-messages .dc-credits-card > .dc-credits-options [data-credits-hash=\"#settings/api-key\"]"
+    },
+    {
+      "name": "Out of credits: the terminal routes sit behind \"Are you a developer?\" (#1281)",
+      "path": "/?demo=1#app/usernode-2d5619/dev/sessions/990402",
+      "expectSelector": "#dc-messages .dc-credits-card details[data-credits-dev=\"1\"] > summary",
+      "expectText": "Are you a developer?"
+    },
+    {
+      "name": "Own-tools venue: the chat becomes a launchpad, not a composer (#1281)",
+      "path": "/?shot=launchpad&venue=own-tools-pr#app/usernode-2d5619/dev/sessions/990401",
+      "expectSelector": "#dc-launchpad-slot [data-launchpad=\"own-tools-pr\"] .dc-launchpad-step-title",
+      "expectText": "Connect your agent to Usernode"
+    },
+    {
+      "name": "Own-tools launchpad carries the copyable \"tell your agent\" block (#1281)",
+      "path": "/?shot=launchpad&venue=own-tools-pr#app/usernode-2d5619/dev/sessions/990401",
+      "expectSelector": "#dc-launchpad-slot [data-launchpad-copy=\"prefill\"]",
+      "expectText": "Copy instructions"
+    },
+    {
+      "name": "A hand-off session hides the composer it will never use (#1281)",
+      "path": "/?shot=launchpad&venue=own-tools-pr#app/usernode-2d5619/dev/sessions/990401",
+      "expectSelector": "#dc-composer-controls[hidden] #dc-form"
+    },
+    {
+      "name": "The venue line stays visible in a launchpad — it is the way back (#1281)",
+      "path": "/?shot=launchpad&venue=own-tools-pr#app/usernode-2d5619/dev/sessions/990401",
+      "expectSelector": "#dc-venue-slot [data-venue-change]",
+      "expectText": "Change how this is built"
+    },
+    {
+      "name": "Web hand-off launchpad offers the Claude / ChatGPT toggle (#1281)",
+      "path": "/?shot=launchpad&venue=web-codex#app/usernode-2d5619/dev/sessions/990401",
+      "expectSelector": "#dc-launchpad-slot .dc-flow-vendors [data-flow-action=\"vendor-claude-code\"]",
+      "expectText": "Claude"
     },
     {
       "name": "The composer meter states what is LEFT, not just what is spent (#593)",

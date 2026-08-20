@@ -2314,12 +2314,12 @@ function voteRoutes(config) {
            (app_id, user_id, branch_name, pr_number, pr_url, pr_title, status,
             source, imported_pr_head_sha, imported_pr_author, imported_pr_head_repo,
             promoted_at, shared_at, created_at,
-            testing_md, testing_path, testing_paths, linked_issues)
+            testing_md, testing_path, testing_paths, linked_issues, pr_body)
          VALUES ($1, $2, $3, $4, $5, $6, $7::text,
             'imported', $8, $9, $10,
             CASE WHEN $7::text = 'promoted' THEN NOW() END,
             CASE WHEN $7::text = 'active' THEN NOW() END,
-            NOW(), $11, $12, $13::jsonb, $14)
+            NOW(), $11, $12, $13::jsonb, $14, $15)
          RETURNING id, status`,
         [
           app.id, req.user.id, headBranch, prNumber, pr.html_url || null,
@@ -2332,15 +2332,35 @@ function voteRoutes(config) {
           // array the omitted column used to default to — byte-identical to
           // the row this route wrote before the field existed.
           importLinkedIssues,
+          // #1333. The imported PR's body, mirrored on the way in. The route
+          // already holds `pr`, so this costs no extra GitHub call and the
+          // proposal reports a description from its very first read.
+          pr.body || null,
         ]
       );
       const sessionId = inserted[0].id;
       const session = {
         id: sessionId, app_id: app.id, app_slug: app.slug, user_id: req.user.id,
         branch_name: headBranch, pr_number: prNumber, pr_title: pr.title || null,
+        pr_body: pr.body || null,
         repo_url: app.repo_url, staging_url: null, source: 'imported',
         status: initialStatus, imported_pr_head_sha: headSha,
         imported_pr_head_repo: headRepoFullName,
+        // #1330: the capture reads its routes off THIS object — the INSERT
+        // above is not what it consults. kickImportedChecks hands this literal
+        // to visuals.captureForSession, which derives both `pathDefaulted` and
+        // `capturePaths` from `session.testing_paths` / `session.testing_path`.
+        // Leaving them off meant EVERY connector submission's before/after pair
+        // was shot on the app's home page, however carefully its `testingPaths`
+        // named the screen that changed — and `submit_work` still echoed the
+        // routes back as accepted, because they genuinely were: the row had
+        // them all along. That is also why only the FIRST capture was wrong.
+        // syncImportedProposal re-captures from a session loaded with
+        // `SELECT cs.*`, so a later re-shoot used the routes; the one the
+        // voters actually look at never did.
+        testing_md: importTesting.testingMd,
+        testing_path: importTesting.testingPath,
+        testing_paths: importTesting.testingPaths,
       };
 
       if (promote) {

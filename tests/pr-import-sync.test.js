@@ -374,3 +374,63 @@ test('syncImportedProposal: native rows are skipped', async () => {
   assert.equal(res, 'skipped');
   assert.equal(pool.calls.length, 0);
 });
+
+// ── #1333: the description mirror ────────────────────────────────────────
+//
+// get_proposal reports chat_sessions.pr_body as `description` — what the
+// group is voting on. #1323 wired only the author's own submit_work update,
+// so the field read null on essentially every proposal. The sweep already
+// holds a fresh PR on every pass, which makes it the one place that can heal
+// rows written before the column existed, at no extra API cost.
+
+test('syncImportedProposal: a changed body is mirrored even when the head has not moved', async () => {
+  await withStubs([
+    [fakeGithub, 'getPR', async () => ({
+      head: { sha: 'a'.repeat(40), ref: 'feature/x' }, base: { ref: 'main' }, mergeable: true,
+      body: 'The description as it now reads on GitHub.',
+    })],
+  ], async () => {
+    const pool = recordingPool();
+    const session = { ...SESSION, pr_body: null };
+    const res = await prImportSync.syncImportedProposal({ config: {}, pool, session });
+    // Still 'unchanged' — mirroring a description is not a revision.
+    assert.equal(res, 'unchanged');
+    const write = pool.calls.find((c) => /SET pr_body/.test(c.sql));
+    assert.ok(write, 'the row learned the description');
+    assert.deepEqual(write.params, ['The description as it now reads on GitHub.', 321]);
+    assert.equal(session.pr_body, 'The description as it now reads on GitHub.',
+      'and the in-memory row matches, like every other mirror here');
+  });
+});
+
+test('syncImportedProposal: an unchanged body still writes nothing', async () => {
+  await withStubs([
+    [fakeGithub, 'getPR', async () => ({
+      head: { sha: 'a'.repeat(40), ref: 'feature/x' }, base: { ref: 'main' }, mergeable: true,
+      body: 'Same as it ever was.',
+    })],
+  ], async () => {
+    const pool = recordingPool();
+    const res = await prImportSync.syncImportedProposal({
+      config: {}, pool, session: { ...SESSION, pr_body: 'Same as it ever was.' },
+    });
+    assert.equal(res, 'unchanged');
+    assert.equal(pool.calls.length, 0,
+      'the no-writes guarantee for an unchanged head survives the mirror');
+  });
+});
+
+test('syncImportedProposal: a failed mirror write never fails the sweep', async () => {
+  await withStubs([
+    [fakeGithub, 'getPR', async () => ({
+      head: { sha: 'a'.repeat(40), ref: 'feature/x' }, base: { ref: 'main' }, mergeable: true,
+      body: 'New words.',
+    })],
+  ], async () => {
+    const pool = { query: async () => { throw new Error('database is having a moment'); } };
+    const res = await prImportSync.syncImportedProposal({
+      config: {}, pool, session: { ...SESSION, pr_body: null },
+    });
+    assert.equal(res, 'unchanged', 'a display field must never wedge the poller');
+  });
+});

@@ -100,6 +100,24 @@ async function syncImportedProposal({ config, pool, session }) {
       return 'skipped';
     }
 
+    // #1333. Every sweep already has a fresh PR in hand, so the description
+    // mirror is refreshed here BEFORE the head check returns. That is what
+    // heals rows written before the column existed — and what keeps the
+    // description current when an author edits it on GitHub rather than
+    // through submit_work. Best-effort: a sweep must never fail over a
+    // display field.
+    const freshBody = typeof pr.body === 'string' ? pr.body : null;
+    if (freshBody !== (session.pr_body == null ? null : session.pr_body)) {
+      try {
+        await pool.query('UPDATE chat_sessions SET pr_body = $1 WHERE id = $2', [freshBody, session.id]);
+        session.pr_body = freshBody;
+      } catch (err) {
+        log.warn('pr-import-sync', 'description mirror refresh failed (non-fatal)', {
+          sessionId: session.id, err: err.message,
+        });
+      }
+    }
+
     const newHead = pr.head && pr.head.sha ? pr.head.sha : null;
     if (!newHead) return 'skipped';
     const oldHead = session.imported_pr_head_sha || null;

@@ -53,7 +53,7 @@
     // otherwise 'platform' | 'claude-code' | 'codex'. `externalFlowsAvailable`
     // says whether this deployment can offer the Claude Code / Codex
     // hand-off at all — the server decides, we only render what it reports.
-    state: { hasApiKey: false, demoKey: false, keyLast4: null, usernodePubkey: null, walletLinkEnabled: false, aiProgressEstimate: false, locale: null, devFlowPreference: null, externalFlowsAvailable: false },
+    state: { hasApiKey: false, demoKey: false, keyLast4: null, usernodePubkey: null, walletLinkEnabled: false, aiProgressEstimate: false, sessionBridgeEnabled: false, locale: null, devFlowPreference: null, externalFlowsAvailable: false },
     _walletPollTimer: null,
     _alertsTestTimer: null,
     _walletExpiresAt: null,
@@ -283,6 +283,14 @@
         estimateToggle.addEventListener('change', (e) => this._saveAiProgressEstimate(e.target.checked));
       }
 
+      // #1281: the session-bridge opt-in, same shape as the toggle above —
+      // POST on change so the venue appears (or stops appearing) on the next
+      // paint of any picker, without closing the modal.
+      const bridgeToggle = document.getElementById('session-bridge-enabled');
+      if (bridgeToggle) {
+        bridgeToggle.addEventListener('change', (e) => this._saveSessionBridge(e.target.checked));
+      }
+
       // Platform-level language preference (issue #757). Server-side
       // per-user BCP-47 tag (default unset = "Auto"); apps read it via
       // the iframe JWT claim and usernode.getUserLocale(). Fires the
@@ -411,6 +419,7 @@
         this.state.usernodePubkey = j.user?.usernodePubkey || null;
         this.state.walletLinkEnabled = !!j.user?.walletLinkEnabled;
         this.state.aiProgressEstimate = !!j.user?.aiProgressEstimate;
+        this.state.sessionBridgeEnabled = !!j.user?.sessionBridgeEnabled;
         this.state.locale = j.user?.locale || null;
         this.state.devFlowPreference = j.user?.devFlowPreference || null;
         this.state.externalFlowsAvailable = !!j.user?.externalFlowsAvailable;
@@ -925,6 +934,10 @@
       if (toggle) toggle.checked = !!this.state.aiProgressEstimate;
       const status = document.getElementById('ai-progress-estimate-status');
       if (status) { status.classList.add('hidden'); status.textContent = ''; }
+      const bridge = document.getElementById('session-bridge-enabled');
+      if (bridge) bridge.checked = !!this.state.sessionBridgeEnabled;
+      const bridgeStatus = document.getElementById('session-bridge-status');
+      if (bridgeStatus) { bridgeStatus.classList.add('hidden'); bridgeStatus.textContent = ''; }
       this._renderLocalAgentsSection();
     },
 
@@ -2195,6 +2208,43 @@
           return fail(j.error || 'Failed to save.');
         }
         this.state.aiProgressEstimate = !!enabled;
+        if (status) { status.classList.add('hidden'); status.textContent = ''; }
+      } catch (err) {
+        fail(`Network error: ${err.message}`);
+      }
+    },
+
+    // #1281: opt in to the session-CLI bridge. A failed save reverts the
+    // checkbox to the stored value rather than leaving it showing a
+    // preference the server never took — the venue list is painted from
+    // App.user, so a lying checkbox would be a venue that never appears.
+    async _saveSessionBridge(enabled) {
+      const toggle = document.getElementById('session-bridge-enabled');
+      const status = document.getElementById('session-bridge-status');
+      const fail = (msg) => {
+        if (toggle) toggle.checked = !!this.state.sessionBridgeEnabled;
+        if (status) {
+          status.textContent = msg;
+          status.classList.remove('hidden', 'text-emerald-500', 'text-zinc-500');
+          status.classList.add('text-red-500');
+        }
+      };
+      try {
+        const r = await fetch('/api/me/session-bridge', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ enabled: !!enabled }),
+        });
+        if (!r.ok) {
+          const j = await r.json().catch(() => ({}));
+          return fail(j.error || 'Failed to save.');
+        }
+        this.state.sessionBridgeEnabled = !!enabled;
+        // The venue pickers read App.user, not Settings.state, so the live
+        // object has to move with it or the next sheet opened in this same
+        // page load would still be missing the row that was just enabled.
+        if (typeof App !== 'undefined' && App.user) App.user.sessionBridgeEnabled = !!enabled;
         if (status) { status.classList.add('hidden'); status.textContent = ''; }
       } catch (err) {
         fail(`Network error: ${err.message}`);

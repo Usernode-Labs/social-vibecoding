@@ -200,7 +200,11 @@ test('auth middleware selects the column and maps req.user.locale', () => {
   assert.match(mw, /u\.locale/, 'session SELECT must include the column');
   // has_platform_access rides the same by-id lookup since the onboarding
   // flow alignment (platform-access gate).
-  assert.match(mw, /ai_progress_estimate, locale, has_platform_access FROM users WHERE id = \$1/);
+  // The columns between ai_progress_estimate and locale are not this test's
+  // business — #1281 added session_bridge_enabled there. What matters is
+  // that locale is still selected by the by-id lookup and still arrives
+  // beside has_platform_access, so the pattern spans whatever sits between.
+  assert.match(mw, /ai_progress_estimate,[\w\s,]*locale, has_platform_access FROM users WHERE id = \$1/);
   assert.match(mw, /locale: rows\[0\]\.locale \|\| null/);
   assert.match(mw, /locale: userRow\.locale \|\| null/);
 });

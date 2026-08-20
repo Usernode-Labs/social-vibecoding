@@ -284,6 +284,17 @@ const WorkDrawer = {
     WorkDrawer.open = false;
   },
 
+  // #1329: same contract as Notifications._dismissSheetForNav — the touch
+  // bottom sheet is modal over the destination screen, so a row that
+  // navigates dismisses it first. Sheet-gated: with no sheet presented this
+  // is a no-op, so the desktop anchored dropdown keeps its keep-open
+  // behaviour. Called by the row anchors in ./work-drawer-list.tsx; the
+  // pinned "Needs attention" rows go through Notifications._onItemClick,
+  // which dismisses a presented WorkDrawer sheet itself.
+  _dismissSheetForNav() {
+    if (WorkDrawer._sheet) WorkDrawer.hide();
+  },
+
   // Nudge from notifications.js whenever its items store changes (WS
   // arrival, mark-read, cross-tab refresh) — the cog badge itself is
   // painted by Notifications._renderBadge; this just repaints the open

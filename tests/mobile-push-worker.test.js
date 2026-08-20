@@ -32,6 +32,7 @@ function delivery(overrides = {}) {
     deployment_firebase_project_id: 'social-prod',
     installation_id: '123e4567-e89b-12d3-a456-426614174000',
     registration_environment: 'production',
+    registration_platform: 'android',
     registration_hash: 'a'.repeat(64),
     registration_enc: encrypt('opaque-fcm-token', DATA_KEY),
     permission_status: 'authorized',
@@ -57,17 +58,25 @@ function harness({
   row = delivery(),
   send = async () => 'provider-id',
   deleteRowCount = 1,
+  registrationExists = true,
 } = {}) {
-  const calls = { sent: [], finished: [], deleted: [] };
+  const calls = { sent: [], finished: [], deleted: [], events: [] };
   const pool = {
     async query(sql, params) {
-      if (sql.startsWith('DELETE FROM mobile_push_registrations')) {
+      if (sql.includes('DELETE FROM mobile_push_registrations')
+          && sql.includes('INSERT INTO mobile_push_registration_events')) {
         calls.deleted.push({
           id: params[0],
           registrationHash: params[1],
           registrationEnc: params[2],
         });
+        if (deleteRowCount === 1) {
+          calls.events.push({ eventKind: params[3], reasonCode: params[4] });
+        }
         return { rows: [], rowCount: deleteRowCount };
+      }
+      if (sql.startsWith('SELECT 1 FROM mobile_push_registrations')) {
+        return { rows: registrationExists ? [{ '?column?': 1 }] : [] };
       }
       throw new Error(`unexpected pool query: ${sql}`);
     },
@@ -250,6 +259,7 @@ test('delivery reload includes the current deployment state and activation times
   assert.match(seen.sql, /state\.send_enabled AS deployment_send_enabled/);
   assert.match(seen.sql, /state\.send_not_before AS deployment_send_not_before/);
   assert.match(seen.sql, /state\.firebase_project_id AS deployment_firebase_project_id/);
+  assert.match(seen.sql, /r\.platform AS registration_platform/);
   // Send-time context for the contextual notification copy (#3289): the same
   // joins the in-app dropdown uses, all LEFT so a missing row can never make
   // an otherwise-valid delivery vanish.
@@ -302,6 +312,9 @@ test('invalid provider token deletes the live registration and kills this delive
   }]);
   assert.equal(calls.finished[0].status, 'dead');
   assert.equal(calls.finished[0].code, err.code);
+  assert.deepEqual(calls.events, [{
+    eventKind: 'provider_invalidated', reasonCode: err.code,
+  }]);
 });
 
 test('a refreshed registration survives a permanent result from a stale provider call', async () => {
@@ -330,11 +343,29 @@ test('decrypt failures conditionally delete only the registration that was loade
   }]);
   assert.equal(deleted.calls.finished[0].status, 'dead');
   assert.equal(deleted.calls.finished[0].code, 'registration_decrypt_failed');
+  assert.deepEqual(deleted.calls.events, [{
+    eventKind: 'registration_corrupt', reasonCode: 'registration_decrypt_failed',
+  }]);
 
   const refreshed = harness({ row: stale, deleteRowCount: 0 });
   await refreshed.worker.processDelivery(JOB);
   assert.equal(refreshed.calls.finished[0].status, 'pending');
   assert.equal(refreshed.calls.finished[0].code, 'registration_refreshed');
+});
+
+test('a concurrent invalidation preserves the permanent provider outcome', async () => {
+  const err = Object.assign(new Error('provider rejected token'), {
+    code: 'messaging/registration-token-not-registered',
+  });
+  const { worker, calls } = harness({
+    send: async () => { throw err; },
+    deleteRowCount: 0,
+    registrationExists: false,
+  });
+  await worker.processDelivery(JOB);
+  assert.equal(calls.finished[0].status, 'dead');
+  assert.equal(calls.finished[0].code, err.code);
+  assert.deepEqual(calls.events, [], 'the winning deletion records the shared event');
 });
 
 test('transient failures use bounded backoff and keep retrying until delivery expiry', async () => {
@@ -400,7 +431,7 @@ test('maintenance resets interrupted work and performs bounded retention', async
     options: { retentionDays: 14, retentionBatchSize: 25 },
   });
   await worker.maintain();
-  assert.equal(queries.length, 4);
+  assert.equal(queries.length, 5);
   assert.doesNotMatch(queries[0].sql, /attempts\s*>=/);
   assert.doesNotMatch(queries[0].sql, /lease_expires_at/);
   assert.match(queries[0].sql, /status = 'sending'/);
@@ -412,6 +443,8 @@ test('maintenance resets interrupted work and performs bounded retention', async
     queries[1].sql,
     /DELETE FROM mobile_push_registrations r USING doomed\s+WHERE r\.id = doomed\.id\s+AND r\.session_expires_at <= NOW\(\)/
   );
+  assert.match(queries[1].sql, /INSERT INTO mobile_push_registration_events/);
+  assert.match(queries[1].sql, /'session_expired', 'mobile_session_expired'/);
   assert.deepEqual(queries[1].params, [25]);
   assert.match(queries[2].sql, /status IN \('sent', 'dead', 'cancelled'\)/);
   assert.match(queries[2].sql, /ORDER BY id LIMIT \$2/);
@@ -422,4 +455,8 @@ test('maintenance resets interrupted work and performs bounded retention', async
   assert.match(queries[3].sql, /m\.latest_mutation_revision = doomed\.latest_mutation_revision/);
   assert.match(queries[3].sql, /LIMIT \$2/);
   assert.deepEqual(queries[3].params, [14, 25]);
+  assert.match(queries[4].sql, /FROM mobile_push_registration_events/);
+  assert.match(queries[4].sql, /ORDER BY created_at, id/);
+  assert.match(queries[4].sql, /DELETE FROM mobile_push_registration_events/);
+  assert.deepEqual(queries[4].params, [14, 25]);
 });

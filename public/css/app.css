@@ -2428,6 +2428,40 @@ html, body {
 }
 .dc-credits-go:hover { background: #6d28d9; }
 
+/* The "Are you a developer?" half of the out-of-credits card (#1281).
+   The routes that need a terminal — the CLI lease and importing your own
+   pull request — live in here rather than in the flat list above, so the
+   ways anyone can follow are the ones met first. A plain <details>: the
+   disclosure is the browser's, not ours. Styled as a quiet footer to the
+   card, never as a fourth option, because it is a question about the
+   reader rather than another thing to click. */
+.dc-credits-dev {
+  margin-top: 10px;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+
+.dc-credits-dev-summary {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.dc-credits-dev-summary:hover { color: var(--text-primary); }
+
+.dc-credits-dev-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 4px;
+  line-height: 1.4;
+}
+
+/* The expanded rows sit flush under the hint rather than repeating the
+   list's own top margin, which would read as a gap the closed state
+   doesn't have. */
+.dc-credits-dev .dc-credits-options { margin-top: 6px; }
+
 /* Banner variant: three small buttons inside the red exhausted banner.
    The row wraps onto its own line under the message on a phone (the
    banner itself is flex-wrap, and the message keeps a min-width), rather
@@ -2473,6 +2507,178 @@ html, body {
    Markup comes from public/js/dev-flow-select.js. Reuses the out-of-credits
    card's geometry on purpose: both are "here are your routes forward"
    cards in the message stream, and they render metres apart. */
+/* ── The launchpad (#1281) ───────────────────────────────────────────────
+   What a session shows instead of a composer when the work is happening
+   somewhere else. Markup comes from public/js/launchpad.js (own-tools-pr)
+   and public/js/dev-flow-select.js (the two web hand-offs); dev-chat.js
+   renders whichever into #dc-launchpad-slot and hides
+   #dc-composer-controls beside it.
+
+   Deliberately quiet: this sits in the composer's place at the bottom of
+   the screen, and a panel styled as an alert there would read as something
+   having gone wrong rather than as the normal state of a hand-off. */
+.dc-launchpad-slot:empty { display: none; }
+
+.dc-launchpad {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-secondary);
+  padding: 12px 14px;
+  margin: 6px 0;
+}
+
+.dc-launchpad-lead {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.dc-launchpad-sub {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 4px;
+  line-height: 1.45;
+}
+
+.dc-launchpad-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.dc-launchpad-step { display: flex; gap: 10px; align-items: flex-start; }
+
+/* The numeral. Fixed square so a two-column step body keeps its left edge
+   whatever the digit is. */
+.dc-launchpad-step-mark {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--bg-primary);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 18px;
+  text-align: center;
+}
+
+.dc-launchpad-step-body { flex: 1 1 auto; min-width: 0; }
+
+.dc-launchpad-step-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.dc-launchpad-step-detail {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 2px;
+  line-height: 1.45;
+}
+
+/* A copyable block: the text, then its own button. The <pre> scrolls
+   rather than stretching the panel — the "tell your agent" prefill is a
+   dozen lines and this sits above the home indicator on a phone. */
+.dc-launchpad-copy { margin-top: 6px; }
+
+.dc-launchpad-pre {
+  max-height: 168px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin: 0;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.dc-launchpad-copy-btn,
+.dc-launchpad-btn {
+  margin-top: 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 10px;
+  cursor: pointer;
+}
+.dc-launchpad-copy-btn:hover,
+.dc-launchpad-btn:hover { border-color: #7c3aed; color: #7c3aed; }
+
+.dc-launchpad-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+
+/* The walkthrough's own brief field (#1281). It lives in the card rather
+   than in the composer, because a hand-off session hides the composer —
+   see the launchpad block above. Sized to three lines: enough to see a
+   sentence, small enough that the steps under it stay on screen. */
+.dc-flow-brief {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.45;
+  resize: vertical;
+}
+.dc-flow-brief::placeholder { color: var(--text-muted); }
+.dc-flow-brief:focus {
+  outline: none;
+  border-color: #7c3aed;
+  box-shadow: 0 0 0 2px rgba(124, 58, 237, 0.25);
+}
+.dc-flow-brief:disabled { opacity: 0.6; }
+
+/* ── The vendor toggle (#1281) ───────────────────────────────────────────
+   Claude / ChatGPT at the top of the type 2 launchpad. Two buttons rather
+   than a select so the current one is legible without opening anything,
+   which is the whole point of a toggle on a phone. The active one is
+   `disabled` — it is a statement, not an offer — so it must not be styled
+   as a dead control the way a disabled button normally is. */
+.dc-flow-vendors {
+  display: inline-flex;
+  margin-top: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.dc-flow-vendor {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 14px;
+  border: 0;
+  background: var(--bg-primary);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.dc-flow-vendor:hover:not(:disabled) { color: var(--text-primary); }
+
+.dc-flow-vendor-on,
+.dc-flow-vendor-on:disabled {
+  background: #7c3aed;
+  color: #fff;
+  cursor: default;
+  opacity: 1;
+}
+
 .dc-flow-card {
   border: 1px solid var(--border);
   border-radius: 10px;

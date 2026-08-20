@@ -73,6 +73,21 @@ const LINK_CLASS = 'flex items-center gap-2 px-3 py-2.5 border-b border-zinc-200
 const APP_CLASS = 'text-xs font-medium text-zinc-500 dark:text-zinc-400 shrink-0 max-w-[30%] truncate';
 const TITLE_CLASS = 'text-sm text-zinc-800 dark:text-zinc-200 flex-1 min-w-0 truncate';
 
+/**
+ * #1329: the session/proposal rows are plain hash links, and on touch the
+ * drawer rides inside a modal kit bottom sheet that would otherwise stay
+ * presented over the screen the link opens. The controller's dismiss is
+ * sheet-gated, so the desktop dropdown's keep-open behaviour is untouched —
+ * and default is deliberately NOT prevented: the hash navigation stays the
+ * anchor's job. Reached off `window` for the same reason
+ * ../notifications/notifications-list.tsx reads its controller that way:
+ * ./work-drawer.js must stay reachable as a classic-script-shaped global.
+ */
+function dismissSheetForNav(): void {
+  const wd = typeof window !== 'undefined' ? (window as any).WorkDrawer : null;
+  wd?._dismissSheetForNav?.();
+}
+
 function SectionHeader({ label }: { label: string }): ReactNode {
   return (
     <div className="px-3 py-1.5 text-[0.7rem] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400 border-b border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950/40">{label}</div>
@@ -91,7 +106,7 @@ function BusyTag(): ReactNode {
 
 function SessionRow({ row }: { row: SessionRowView }): ReactNode {
   return (
-    <a href={row.href} className={LINK_CLASS}>
+    <a href={row.href} className={LINK_CLASS} onClick={dismissSheetForNav}>
       <span className={APP_CLASS}>{row.appName}</span>
       <span className={TITLE_CLASS}>{row.title}</span>
       {row.time ? (
@@ -131,7 +146,7 @@ function Pill({ pill }: { pill: PillView }): ReactNode {
 
 function ProposalRow({ row }: { row: ProposalRowView }): ReactNode {
   return (
-    <a href={row.href} className={LINK_CLASS}>
+    <a href={row.href} className={LINK_CLASS} onClick={dismissSheetForNav}>
       <span className={APP_CLASS}>{row.appName}</span>
       <span className={TITLE_CLASS}>{row.title}</span>
       {row.fallback ? (

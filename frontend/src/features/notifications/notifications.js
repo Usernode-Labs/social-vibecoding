@@ -433,6 +433,20 @@ const Notifications = {
     Notifications.open = false;
   },
 
+  // #1329: the touch bottom sheet is MODAL — it covers the screen a drawer
+  // action navigates to, so leaving it presented strands the user under a
+  // stuck, mostly-empty sheet over a dimmed backdrop. Every action below
+  // that actually routes calls this first. Sheet-gated on purpose: `_sheet`
+  // only exists on touch, so the desktop anchored panel keeps its documented
+  // keep-open behaviour (see _onItemClick). The cog drawer's pinned "Needs
+  // attention" rows route through this module's _onItemClick too, so a
+  // presented WorkDrawer sheet is dismissed here as well — at most one of
+  // the two sheets ever exists (each drawer's show() hides the other).
+  _dismissSheetForNav() {
+    if (Notifications._sheet) Notifications.hide();
+    if (window.WorkDrawer && WorkDrawer._sheet && WorkDrawer.hide) WorkDrawer.hide();
+  },
+
   // --- mark read -------------------------------------------------------
 
   async markAllRead() {
@@ -547,10 +561,13 @@ const Notifications = {
   _onItemClick(id) {
     const item = Notifications.items.find((n) => n.id === id);
     if (!item) return;
-    // Deliberately do NOT hide the drawer here: it stays open over the
-    // navigated-to view so the user can keep clicking through other
-    // notifications. The drawer only dismisses via outside-click or the
-    // explicit close button.
+    // Desktop: deliberately do NOT hide the anchored panel here — it stays
+    // open over the navigated-to view so the user can keep clicking through
+    // other notifications, and only dismisses via outside-click or the
+    // explicit close button. Touch is the opposite contract (#1329): the kit
+    // bottom sheet is modal and would COVER the destination screen, so each
+    // branch below that actually routes calls _dismissSheetForNav() first —
+    // a no-op when no sheet is presented.
     Notifications._markOneRead(id);
     // Platform conversations are never routed through an app tab. Prefer the
     // React bridge because it re-renders even when this is the current hash;
@@ -560,6 +577,7 @@ const Notifications = {
       const conversationId = Number(item.conversationId);
       if (Number.isSafeInteger(conversationId) && conversationId > 0
           && conversationId <= 2147483647) {
+        Notifications._dismissSheetForNav();
         const messages = window.UsernodeReact?.messages;
         if (messages?.open) messages.open(conversationId);
         else window.location.hash = `#messages/${conversationId}`;
@@ -571,6 +589,7 @@ const Notifications = {
     // auto_solve_done opens the Issues tab with that issue's accordion
     // expanded.
     if (item.kind === 'session_done' && item.appSlug && item.sessionId) {
+      Notifications._dismissSheetForNav();
       if (typeof App !== 'undefined' && App.openAppTab) {
         App.openAppTab(item.appSlug, 'dev', { subTab: 'sessions', sessionId: item.sessionId });
       } else {
@@ -594,6 +613,7 @@ const Notifications = {
           title: `Spec v${version}`,
         });
       }
+      Notifications._dismissSheetForNav();
       if (typeof App !== 'undefined' && App.openAppTab) {
         App.openAppTab(item.appSlug, 'dev', { subTab: 'chat' });
       } else {
@@ -602,6 +622,7 @@ const Notifications = {
       return;
     }
     if (item.kind === 'auto_solve_done' && item.appSlug) {
+      Notifications._dismissSheetForNav();
       if (typeof App !== 'undefined' && App.openAppTab) {
         App.openAppTab(item.appSlug, 'dev', {
           subTab: 'issues',
@@ -615,6 +636,10 @@ const Notifications = {
       return;
     }
     if (item.appSlug) {
+      // Every path below navigates (the topic sub-branch returns after
+      // routing; an invalid topic ref falls through to the chat/proposals
+      // navigation), so one dismiss covers the whole block.
+      Notifications._dismissSheetForNav();
       // Mentions/replies/reactions land on the app's Dev → Chat — unless
       // the message lives in a topic thread (#194 parity), in which case
       // the click opens that issue/proposal/governance discussion where
@@ -768,6 +793,9 @@ const Notifications = {
   _onSavedClick(messageId) {
     const saved = Notifications.saved.find((s) => s.messageId === messageId);
     if (!saved || !saved.appSlug) return;
+    // Both branches below navigate — see _onItemClick for the touch-sheet
+    // contract (#1329).
+    Notifications._dismissSheetForNav();
     const kindMap = { issue: 'issue', session: 'proposal', governance: 'gov' };
     const topicKind = kindMap[saved.threadType];
     const topicId = parseInt(saved.threadRef, 10);
@@ -868,6 +896,9 @@ const Notifications = {
       }
       const target = data.appSlug || slug;
       if (target && typeof App !== 'undefined' && App.openAppTab) {
+        // About to navigate — on touch the sheet would otherwise stay
+        // presented over the app screen this opens (#1329).
+        Notifications._dismissSheetForNav();
         App.openAppTab(target, 'group-chat');
       }
     } catch (err) {
