@@ -13,8 +13,9 @@
  * the walkthrough behind it. The picker is gone. It was one of three
  * prompts asking the venue question before a word had been typed, and it
  * could only offer three of the six venues that exist. The question is
- * asked once now, by public/js/build-venues.js, from the venue line above
- * the composer. What is left here is the part that has no other home: once
+ * asked once now, by public/js/build-venues.js, from the venue selector in
+ * the session header. What is left here is the part that has no other
+ * home: once
  * a hand-off is chosen, five steps run in place in the transcript and
  * watch the user's progress through them.
  *

@@ -222,14 +222,18 @@ test('the composer is HIDDEN, never removed', () => {
   );
 });
 
-test('the venue line stays outside the swap — it is the way back', () => {
-  // "Change how this is built" is the persistent control the spec asks for.
-  // If it were inside #dc-composer-controls it would be hidden by exactly
-  // the state it exists to undo, stranding the session in its launchpad.
-  const bar = DEV_CHAT_SRC.match(
-    /<div id="dc-venue-slot"[\s\S]*?<div id="dc-composer-controls"/,
-  );
-  assert.ok(bar, 'the venue slot renders before the composer wrapper opens');
+test('the venue control stays outside the swap — it is the way back', () => {
+  // The venue selector is the persistent control the spec asks for. If it
+  // were inside #dc-composer-controls it would be hidden by exactly the
+  // state it exists to undo, stranding the session in its launchpad. #1348
+  // moved it further out of reach of the swap, into the session header.
+  const select = DEV_CHAT_SRC.indexOf('${venueSelectHtml}');
+  const header = DEV_CHAT_SRC.indexOf('id="dc-session-header"');
+  const swap = DEV_CHAT_SRC.indexOf('id="dc-composer-controls"');
+  assert.ok(select !== -1, 'the venue selector is painted');
+  assert.ok(header !== -1 && header < select,
+    'inside the session header, which no venue swaps out');
+  assert.ok(select < swap, 'and before the composer wrapper opens');
 });
 
 test('the walkthrough repaints on whichever surface it is living on', () => {

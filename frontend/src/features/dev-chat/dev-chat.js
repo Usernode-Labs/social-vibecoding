@@ -1753,11 +1753,11 @@ const DevChat = {
   // ── The one venue question (#1086) ─────────────────────────────────
   //
   // Every surface that used to ask its own version of "which agent?" opens
-  // THIS: the venue line above the composer, the "…" menu's one row, and
-  // the out-of-credits card. Six rows, two groups, gated by omission — the
-  // list and the copy are build-venues.js's; the four things a pick can
-  // actually DO are this module's, because each one already existed and
-  // already worked. Nothing here is new mechanism.
+  // THIS: the venue dropdown in the session header, the "…" menu's one
+  // row, and the out-of-credits card. Six rows, two groups, gated by
+  // omission — the list and the copy are build-venues.js's; the four
+  // things a pick can actually DO are this module's, because each one
+  // already existed and already worked. Nothing here is new mechanism.
   //
   //   backend → reset-agent-context, keeping branch + transcript (#906)
   //   lease   → the CLI instructions card (#907)
@@ -1791,7 +1791,7 @@ const DevChat = {
     DevChat._closeSessionOptions();
     const state = DevChat._venueSheetState();
     BuildVenues.open({
-      anchorEl: anchorEl || document.querySelector('#dc-venue-slot [data-venue-change]') || undefined,
+      anchorEl: anchorEl || document.getElementById('dc-venue-select') || undefined,
       state,
       onPick: (pick, row) => {
         if (!pick || row.current) return;
@@ -1971,7 +1971,7 @@ const DevChat = {
     let shot = null;
     try { shot = new URLSearchParams(location.search).get('shot'); } catch { return; }
     if (shot !== 'venue-sheet') return;
-    const anchor = () => document.querySelector('#dc-venue-slot [data-venue-change]');
+    const anchor = () => document.getElementById('dc-venue-select');
     // Already armed for this session: the hold owns the reopen, but a
     // re-render is the one moment worth asking for it NOW rather than at
     // the next tick.
@@ -2131,9 +2131,9 @@ const DevChat = {
   // The PICKER used to live here: a card at the top of every untouched
   // session asking "build here, or hand this to Claude Code / Codex?"
   // before a word had been typed. It was one of three prompts asking the
-  // venue question at creation time, and it is gone — the venue line above
-  // the composer states the answer instead, and the sheet behind it asks
-  // the question whenever the user actually wants to change it. What
+  // venue question at creation time, and it is gone — the venue dropdown in
+  // the session header states the answer instead, and the sheet behind it
+  // asks the question whenever the user actually wants to change it. What
   // survives is the WALKTHROUGH: once a hand-off is chosen, the five steps
   // run in place, in this transcript, and that is a card.
   //
@@ -2159,7 +2159,7 @@ const DevChat = {
     // here. That is the same door the picker used to sit in front of — the
     // difference is that it no longer asks, because the user already
     // answered. 'platform' and null both mean "build here", which is what
-    // the venue line already says.
+    // the venue dropdown already says.
     if (session.pr_number) return null;
     if (session.status !== 'active') return null;
     if (DevChat.messages.some((m) => m.role === 'user')) return null;
@@ -2796,9 +2796,9 @@ const DevChat = {
   // and the only honest answer to "which agent" before you know what the
   // work is, is "whichever one you already told me". So the saved default
   // is applied silently by the server (resolveDefaultAgentPreference) and
-  // the answer is STATED afterwards, on first paint, by the venue line
-  // above the composer — with "Change how this is built" beside it. One
-  // question, asked once, changeable any time.
+  // the answer is STATED afterwards, on first paint, by the venue dropdown
+  // in the session header (#1348) — which is also what opens the sheet that
+  // changes it. One question, asked once, changeable any time.
   //
   // `agentChoice` survives for the callers that DID make an explicit pick
   // (the venue sheet itself, and the out-of-credits card). No key is sent
@@ -2827,8 +2827,8 @@ const DevChat = {
         PlatformUI.toast(data.error || 'Failed to create session');
         return null;
       }
-      // The one thing the venue line cannot work out on its own: WHY this
-      // session isn't in the venue the user's default named.
+      // The one thing the venue dropdown cannot work out on its own: WHY
+      // this session isn't in the venue the user's default named.
       if (data.agentFallbackReason && window.BuildVenues) {
         DevChat._venueFallbackReason = data.agentFallbackReason;
       }
@@ -4482,10 +4482,11 @@ const DevChat = {
         ? DevChat._busyComposerPlaceholder()
         : DevChat.COMPOSER_PLACEHOLDER;
     }
-    // #1086: the venue control replaced the coding-agent button here, and
-    // inherits its guard — a turn in flight holds the worker, so the venue
-    // cannot move until it lands.
-    const venueChange = document.querySelector('#dc-venue-slot [data-venue-change]');
+    // #1086: the venue control replaced the coding-agent button that used
+    // to sit here, and inherits its guard — a turn in flight holds the
+    // worker, so the venue cannot move until it lands. #1348 moved the
+    // control to the header; the guard follows it.
+    const venueChange = document.getElementById('dc-venue-select');
     if (venueChange) venueChange.disabled = !!streaming;
     const openRouterModelChange = document.getElementById('dc-openrouter-model-change');
     if (openRouterModelChange) openRouterModelChange.disabled = !!streaming;
@@ -7568,20 +7569,23 @@ const DevChat = {
       : '';
     const agentBillingNote = DevChat._agentBillingNote(DevChat.currentSession);
     const venueId = DevChat._currentVenueId();
-    const venueLineHtml = window.BuildVenues
-      ? BuildVenues.lineHtml({
-        current: venueId,
-        // Reported once, on the paint after creation: the server resolved a
-        // venue other than the one the user's default named, and this is
-        // the only place that says why. Cleared below so a later repaint of
-        // the same session doesn't keep re-explaining a settled fact.
-        fallbackReason: DevChat._venueFallbackReason || DevChat._shotVenueFallbackReason(),
-      })
+    // #1348: the venue control is the header dropdown, top right. What is
+    // left down by the composer is the fallback sentence alone — reported
+    // once, on the paint after creation, when the server resolved a venue
+    // other than the one the user's default named. Cleared below so a later
+    // repaint of the same session doesn't keep re-explaining a settled fact.
+    const venueFallbackReason =
+      DevChat._venueFallbackReason || DevChat._shotVenueFallbackReason();
+    const venueSelectHtml = window.BuildVenues
+      ? BuildVenues.selectorHtml({ current: venueId })
+      : '';
+    const venueNoteHtml = window.BuildVenues
+      ? BuildVenues.noteHtml({ fallbackReason: venueFallbackReason })
       : '';
     DevChat._venueFallbackReason = null;
     // #1281: a hand-off venue swaps the composer for the launchpad. The
-    // venue LINE above it is untouched, which is what makes the swap
-    // reversible — "Change how this is built" is the way back to a chat.
+    // venue dropdown lives in the header, outside the swap, which is what
+    // makes it reversible — it is the way back to a chat.
     const launchpadHtml = DevChat._launchpadHtml();
     const inLaunchpad = !!DevChat._launchpadVenue();
     const claudeVenue = venueId === 'usernode-claude';
@@ -7589,13 +7593,19 @@ const DevChat = {
     const openRouterModel = String(DevChat.currentSession.agent_model || '').trim();
 
     content.innerHTML = `
-      <div class="flex items-center gap-2 px-3 py-2 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
+      <div id="dc-session-header" class="flex items-center gap-2 px-3 py-2 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
         <a id="dc-back" class="text-zinc-400 hover:text-zinc-200 text-sm" href="${App.currentApp ? `#app/${escapeHtml(App.currentApp)}/dev` : ''}">&larr;</a>
         <span class="text-xs text-zinc-400 truncate flex-1" title="${escapeHtml(DevChat.currentSession.branch_name || '')}">${escapeHtml(DevChat.currentSession.session_title || DevChat.currentSession.pr_title || DevChat.currentSession.branch_name || 'Session')}</span>
         ${DevChat.currentSession.pr_number
           ? `<button id="dc-pr-header-link" class="text-xs text-violet-400 hover:text-violet-300" title="This session's pull request — every change in this chat goes to PR #${DevChat.currentSession.pr_number}. Use “Start a new change” for separate work.">PR #${DevChat.currentSession.pr_number}</button>`
           : '<span class="text-xs text-zinc-500" title="This chat is one change → one pull request. A PR opens after the first build.">New change</span>'}
         ${DevChat._renderHeaderStatusPill(DevChat.currentSession)}
+        <!-- #1348: where this session is built, top right of the session
+             area. It states the venue and opens the sheet that changes it,
+             which is the pair the composer caption used to carry. Here it
+             survives the launchpad swap below, and it is not competing with
+             the meter, the runner and the budget menu for the same strip. -->
+        ${venueSelectHtml}
       </div>
       ${DevChat._renderSyncBannerHtml(DevChat.currentSession)}
       ${DevChat._renderNewChangeBannerHtml(DevChat.currentSession)}
@@ -7612,15 +7622,13 @@ const DevChat = {
                reserved on #app-view. (No backticks in this comment: it
                lives inside a template literal, and one would close it.) -->
           <div class="shrink-0 border-t border-zinc-200 dark:border-zinc-800 p-2 platform-safe-bar">
-            <!-- The venue statement (#1086). One line, always painted,
-                 naming where this session builds and offering the only
-                 control that changes it. It replaces the "Coding agent:"
-                 button that used to sit beside a second provider dropdown —
-                 two controls, adjacent, answering two different
-                 questions in the same visual weight, one of which was the
-                 venue and one of which was not. Filled from the session
-                 row, so it is right on first paint. -->
-            <div id="dc-venue-slot" class="dc-venue-slot">${venueLineHtml}</div>
+            <!-- What is left of the venue statement (#1086) once the
+                 control itself moved to the header (#1348): the sentence
+                 explaining a venue you did NOT get. It is a whole
+                 explanation rather than a label, so it stays here where it
+                 can wrap, and the slot collapses (.dc-venue-slot:empty) in
+                 the ordinary case where there is nothing to confess. -->
+            <div id="dc-venue-slot" class="dc-venue-slot">${venueNoteHtml}</div>
             <!-- #1281: the launchpad stands where the composer does when
                  the work is happening somewhere else. Both are always in
                  the DOM and exactly one is shown: every public/js/** and
@@ -7778,7 +7786,7 @@ const DevChat = {
     }
     DevChat._maybeOpenShotOptions(optionsWereOpen);
 
-    const venueChange = document.querySelector('#dc-venue-slot [data-venue-change]');
+    const venueChange = document.getElementById('dc-venue-select');
     if (venueChange) {
       // Mid-turn the venue is not changeable: a running turn holds the
       // worker, and moving it under itself is the failure the old

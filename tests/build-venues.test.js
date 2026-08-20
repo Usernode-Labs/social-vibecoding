@@ -412,33 +412,46 @@ test('an unknown fallback reason renders nothing at all', () => {
   }
 });
 
-// ── The rendered line ───────────────────────────────────────────────
+// ── The rendered selector (#1348) ───────────────────────────────────
 
-test('the venue line states where this is building, with a way to change it', () => {
-  const html = BV.lineHtml({ agentBackend: 'codex_openrouter' });
-  assert.match(html, /data-venue-line="usernode-openrouter"/);
-  assert.match(html, /Building in/);
+test('the selector states where this is building, and is the way to change it', () => {
+  const html = BV.selectorHtml({ agentBackend: 'codex_openrouter' });
+  assert.match(html, /id="dc-venue-select"/);
+  assert.match(html, /data-venue-current="usernode-openrouter"/);
   assert.match(html, /Usernode · OpenRouter/);
   assert.match(html, /data-venue-change="1"/);
-  assert.match(html, /Change how this is built/);
-  // No fallback → no note.
+  // It opens a menu, so it says so — the kit draws an action sheet on touch
+  // and a popover on a pointer, and neither is a native <select>.
+  assert.match(html, /aria-haspopup="menu"/);
+  // The visible LABEL is the venue and nothing else: this control sits in
+  // the header beside a truncating session title, so the caption sentence
+  // the old line carried survives only as the hover title.
+  const label = html.slice(html.indexOf('>', html.indexOf('<span class="dc-venue-name"')));
+  assert.ok(!/Building in/.test(label), 'the caption sentence is not in the label');
+  assert.match(html, /title="Building in Usernode · OpenRouter\./,
+    'it is in the tooltip, where the whole sentence still fits');
+  // The note is a separate render — the selector never carries it.
   assert.ok(!/dc-venue-note/.test(html));
 });
 
-test('the venue line carries the fallback sentence when the server sent one', () => {
-  const html = BV.lineHtml({ agentBackend: 'claude_code', fallbackReason: 'no_credential' });
+test('the fallback sentence renders on its own, away from the header', () => {
+  const html = BV.noteHtml({ agentBackend: 'claude_code', fallbackReason: 'no_credential' });
   assert.match(html, /dc-venue-note/);
   assert.match(html, /OpenRouter key is missing/);
+  // No fallback → nothing at all, so .dc-venue-slot:empty collapses.
+  assert.equal(BV.noteHtml({ agentBackend: 'claude_code' }), '');
+  assert.equal(BV.noteHtml({}), '');
+  assert.equal(BV.noteHtml(), '');
 });
 
-test('an imported proposal reports its own venue in the line', () => {
-  const html = BV.lineHtml({ source: 'imported', agentBackend: 'claude_code' });
-  assert.match(html, /data-venue-line="own-tools-pr"/);
+test('an imported proposal reports its own venue in the selector', () => {
+  const html = BV.selectorHtml({ source: 'imported', agentBackend: 'claude_code' });
+  assert.match(html, /data-venue-current="own-tools-pr"/);
   assert.match(html, /Your computer · your own tools/);
 });
 
-test('the line and the chip refuse an unknown venue instead of half-rendering', () => {
-  assert.equal(BV.lineHtml({ current: 'nope' }), '');
+test('the selector and the chip refuse an unknown venue instead of half-rendering', () => {
+  assert.equal(BV.selectorHtml({ current: 'nope' }), '');
   assert.equal(BV.chipHtml('nope'), '');
   assert.equal(BV.chipHtml(undefined), '');
 });
@@ -455,8 +468,9 @@ test('interpolated state is escaped', () => {
   assert.equal(BV.escapeHtml('<img src=x onerror=1>'), '&lt;img src=x onerror=1&gt;');
   assert.equal(BV.escapeHtml('a"b\'c&d'), 'a&quot;b&#39;c&amp;d');
   assert.equal(BV.escapeHtml(null), '');
-  const html = BV.lineHtml({ current: 'usernode-claude', fallbackReason: 'flag_off' });
+  const html = BV.selectorHtml({ current: 'usernode-claude' });
   assert.ok(!/<script/i.test(html));
+  assert.ok(!/<script/i.test(BV.noteHtml({ current: 'usernode-claude', fallbackReason: 'flag_off' })));
 });
 
 // ── The sheet ───────────────────────────────────────────────────────

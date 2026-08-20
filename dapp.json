@@ -2253,10 +2253,10 @@
       "expectSelector": "#dc-composer-controls[hidden] #dc-form"
     },
     {
-      "name": "The venue line stays visible in a launchpad — it is the way back (#1281)",
+      "name": "The venue dropdown stays visible in a launchpad — it is the way back (#1281)",
       "path": "/?shot=launchpad&venue=own-tools-pr#app/usernode-2d5619/dev/sessions/990401",
-      "expectSelector": "#dc-venue-slot [data-venue-change]",
-      "expectText": "Change how this is built"
+      "expectSelector": "#dc-session-header #dc-venue-select[data-venue-change]",
+      "expectText": "Your computer · your own tools"
     },
     {
       "name": "Web hand-off launchpad offers the Claude / ChatGPT toggle (#1281)",
@@ -2342,19 +2342,19 @@
     {
       "name": "Every session states the venue it is building in, unasked (#1086)",
       "path": "/#app/usernode-2d5619/dev/sessions/990403",
-      "expectSelector": "#dc-venue-slot [data-venue-line=\"usernode-claude\"] .dc-venue-name",
-      "expectText": "Building in"
+      "expectSelector": "#dc-venue-select[data-venue-current=\"usernode-claude\"] .dc-venue-name",
+      "expectText": "Usernode · Claude"
     },
     {
-      "name": "The venue line carries the only control that changes it (#1086)",
+      "name": "The venue dropdown sits in the session header, top right (#1348)",
       "path": "/#app/usernode-2d5619/dev/sessions/990403",
-      "expectSelector": "#dc-venue-slot .dc-venue-line button.dc-venue-change[data-venue-change]",
-      "expectText": "Change how this is built"
+      "expectSelector": "#dc-session-header > button#dc-venue-select[data-venue-change][aria-haspopup=\"menu\"]:last-child",
+      "expectText": "Usernode · Claude"
     },
     {
       "name": "A pinned OpenRouter session says so, and shows its model (#1086)",
       "path": "/#app/usernode-2d5619/dev/sessions/990409",
-      "expectSelector": "#dc-tab-chat:has(#dc-venue-slot [data-venue-line=\"usernode-openrouter\"]) #dc-venue-detail #dc-openrouter-model-change",
+      "expectSelector": "body:has(#dc-venue-select[data-venue-current=\"usernode-openrouter\"]) #dc-tab-chat #dc-venue-detail #dc-openrouter-model-change",
       "expectText": "openai/gpt-5.3-codex"
     },
     {

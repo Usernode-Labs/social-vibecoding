@@ -436,26 +436,53 @@
     };
   }
 
-  // ── The one-line venue statement ───────────────────────────────────
+  // ── The venue selector, top right of the session (#1348) ─────────
   //
-  // Rendered above the composer on a session's FIRST paint and never
-  // hidden behind a preference: the whole reason the old "Propose with
-  // Claude Code or Codex" door could be removed is that this line is
-  // always there to replace it. It is a statement with a change control,
-  // not a question — the question is only asked when the user opens it.
-  function lineHtml(state) {
+  // The control that states where this session builds AND opens the sheet
+  // that changes it. It used to be a caption above the composer — the
+  // sentence "Building in X" with a "Change how this is built" link beside
+  // it — sharing the bottom bar with the meter, the runner and the budget
+  // menu. It is a dropdown in the session header now, top right, which is
+  // where a "what kind of session is this?" control is looked for and the
+  // one place on the screen that is never swapped out: the launchpad
+  // replaces the composer for the three hand-off venues (#1281), so a
+  // control living down there is hidden by exactly the state it exists to
+  // undo.
+  //
+  // It is a menu button rather than a <select>: the sheet it opens is
+  // grouped, ticks the current venue, carries a consequence sentence per
+  // row and strikes an unavailable one through — none of which a native
+  // dropdown can render, and on touch the kit draws it as an action sheet.
+  // `data-venue-change` is the hook every caller already looked the old
+  // link up by, kept so the wiring reads the same.
+  function selectorHtml(state) {
     var s = state || {};
     var id = s.current || currentVenue(s);
     var v = venue(id);
     if (!v) return '';
-    var note = s.fallbackReason ? fallbackNote(s.fallbackReason) : '';
+    var title = 'Building in ' + v.label + '. ' + v.blurb
+      + ' Pick a different venue — on Usernode, on your computer, or handed to'
+      + ' Claude Code or Codex on the web.';
     return ''
-      + '<div class="dc-venue-line" data-venue-line="' + escapeHtml(v.id) + '">'
-      + '<span class="dc-venue-line-text">Building in <span class="dc-venue-name">'
-      + escapeHtml(v.label) + '</span></span>'
-      + '<button type="button" class="dc-venue-change" data-venue-change="1">Change how this is built</button>'
-      + (note ? '<div class="dc-venue-note">' + escapeHtml(note) + '</div>' : '')
-      + '</div>';
+      + '<button type="button" id="dc-venue-select" class="dc-venue-select"'
+      + ' data-venue-change="1" data-venue-current="' + escapeHtml(v.id) + '"'
+      + ' aria-haspopup="menu" title="' + escapeHtml(title) + '">'
+      + '<span class="dc-venue-name">' + escapeHtml(v.label) + '</span>'
+      + '<span class="dc-venue-caret" aria-hidden="true">\u25be</span>'
+      + '</button>';
+  }
+
+  // The fallback sentence, which stays above the composer.
+  //
+  // It is a whole explanation ("your default is X, but …"), so it does not
+  // belong inside a header control that has to stay one short line. Empty
+  // whenever there is nothing to confess — `.dc-venue-slot:empty` collapses
+  // the slot, so the composer keeps its old spacing in the normal case.
+  function noteHtml(state) {
+    var s = state || {};
+    var note = s.fallbackReason ? fallbackNote(s.fallbackReason) : '';
+    if (!note) return '';
+    return '<div class="dc-venue-note">' + escapeHtml(note) + '</div>';
   }
 
   // The compact chip for a session card / the composer footer.
@@ -556,7 +583,8 @@
     webTargetKind: webTargetKind,
     webVerb: webVerb,
     webNote: webNote,
-    lineHtml: lineHtml,
+    selectorHtml: selectorHtml,
+    noteHtml: noteHtml,
     chipHtml: chipHtml,
     fallbackNote: fallbackNote,
     open: open,
