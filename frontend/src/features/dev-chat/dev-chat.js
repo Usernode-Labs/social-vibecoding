@@ -1009,8 +1009,18 @@ const DevChat = {
       if (data.agentFallbackReason) {
         DevChat._venueFallbackReason = data.agentFallbackReason;
       }
+      // No toast on the way out (#1348 follow-up). A successful pick used to
+      // pop "This session now uses Usernode · Claude." here — and only here:
+      // the sheet's other three rows change the session in silence, so the
+      // same act announced itself in one state out of four. The screen is
+      // already the announcement. The repaint above swaps a launchpad back
+      // for the composer, the header dropdown names the venue that resolved
+      // (which is how somebody with both in-chat agents sees WHICH one this
+      // was), reset-agent-context's own message lands in the transcript, and
+      // a preference that no longer validates says so in the sentence above
+      // the composer. A failed switch still speaks, in both branches around
+      // this one: nothing on screen changes when the round trip fails.
       DevChat.renderChatView();
-      PlatformUI.toast(`This session now uses ${DevChat._agentName(DevChat._agentBackend(DevChat.currentSession))}.`);
     } catch {
       PlatformUI.toast('Network error while switching coding agents.');
     }

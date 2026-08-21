@@ -177,6 +177,35 @@ test('the browser stores a hand-off and CLEARS on the way back in-chat', () => {
   }
 });
 
+test('a venue pick that works is silent — in all four states (#1348 follow-up)', () => {
+  // Three of the four rows changed the session without a word, because the
+  // screen is the announcement: the composer swaps for a launchpad or back,
+  // and the header dropdown names the venue. On-Platform alone popped
+  // "This session now uses Usernode · Claude." over that, so the same act
+  // reported itself in one state out of four.
+  const onPick = DEV_CHAT_SRC.match(/onPick: \(row\) => \{[\s\S]*?\n      \},\n      onUnavailable/);
+  assert.ok(onPick, 'the sheet must have a pick handler');
+  assert.doesNotMatch(onPick[0], /PlatformUI\.toast/,
+    'no branch of the pick announces itself');
+
+  const fn = DEV_CHAT_SRC.match(/async _switchToLastUsedPlatformAgent\(\)[\s\S]*?\n {2}\},/);
+  assert.ok(fn, '_switchToLastUsedPlatformAgent must exist');
+  assert.doesNotMatch(fn[0], /toast\(`This session now uses/,
+    'nor does the switch it dispatches');
+
+  // A FAILURE still speaks, in both directions, because a switch that did
+  // not happen changes nothing on screen — there is no other signal.
+  assert.match(fn[0], /toast\(data\.error \|\| 'Could not switch to the platform agent\.'\)/);
+  assert.match(fn[0], /toast\('Network error while switching coding agents\.'\)/);
+  // As does a row the sheet is refusing.
+  assert.match(DEV_CHAT_SRC, /onUnavailable: \(row\) => PlatformUI\.toast\(row\.reason\)/);
+  // And the two things that DO report the outcome are still wired: the
+  // reset's own transcript message, and the fallback sentence for a stored
+  // preference that no longer validates.
+  assert.match(fn[0], /if \(data\.message\) DevChat\.messages\.push\(data\.message\)/);
+  assert.match(fn[0], /DevChat\._venueFallbackReason = data\.agentFallbackReason/);
+});
+
 test('a failed store is swallowed, because the repaint already happened', () => {
   const fn = DEV_CHAT_SRC.match(/async _persistBuildVenue\([\s\S]*?\n  \},/);
   assert.ok(fn, '_persistBuildVenue must exist');
