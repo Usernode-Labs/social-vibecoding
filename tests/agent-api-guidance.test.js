@@ -118,6 +118,9 @@ test('shared Usernode skills retain API safety and scope the hook UI to Codex CL
   assert.match(proposal, /\*\*OpenCode:\*\*/);
   assert.match(proposal, /OpenCode has no Codex `\/hooks` trust procedure/);
   assert.match(proposal, /proposal_promote/);
+  assert.match(proposal, /How to test \/ observe/);
+  assert.match(proposal, /staging route or fixture/);
+  assert.match(proposal, /Structured command results do not replace/);
 });
 
 test('machine-local agent setup artifacts are ignored', () => {

@@ -18,6 +18,9 @@ const APP_VIEW_SRC = fs.readFileSync(
 const VOTES_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'src', 'routes', 'votes.js'), 'utf8'
 );
+const MIGRATE_SRC = fs.readFileSync(
+  path.join(__dirname, '..', 'src', 'db', 'migrate.js'), 'utf8'
+);
 
 function makeAppView(renderMarkdown) {
   const sandbox = {
@@ -68,6 +71,17 @@ test('both live and completed proposal rows include the full PR body', () => {
     /_proposalSummaryHtml\(item\)[\s\S]*?_proposalBodyHtml\(item\)[\s\S]*?_proposalDetailsHtml\(item\)/,
     'the focused topic places the full body between its summary and metadata'
   );
+});
+
+test('the proposal staging fixture carries a reviewable full body', () => {
+  const fixture = MIGRATE_SRC.slice(
+    MIGRATE_SRC.indexOf('async function seedStagingExternalAgentProposal'),
+    MIGRATE_SRC.indexOf('\nasync function ', MIGRATE_SRC.indexOf('async function seedStagingExternalAgentProposal') + 1)
+  );
+  assert.match(fixture, /agent: 'codex',[\s\S]*?body: '## What changed/);
+  assert.match(fixture, /pr_summary_md, pr_body/);
+  assert.match(fixture, /SET source = 'imported'[\s\S]*?pr_body = \$5/,
+    'existing staging rows are restamped, not only newly inserted rows');
 });
 
 test('legacy and blank PR bodies render no disclosure', () => {
