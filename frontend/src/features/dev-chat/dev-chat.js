@@ -274,7 +274,6 @@ const DevChat = {
       .join('');
     sel.innerHTML = options;
     sel.value = DevChat.selectedModel;
-    DevChat._renderModelNote();
   },
 
   // ── Session-pinned coding-agent choice ────────────────────────────
@@ -339,19 +338,24 @@ const DevChat = {
     return target;
   },
 
-  // The venue THIS session is building in, in the shared vocabulary.
+  // The venue THIS session is building in, in the shared vocabulary — and
+  // the ONE answer every surface of the session reads (#1353). The header
+  // dropdown states it, the sheet ticks it, and _launchpadVenue() decides
+  // from it alone whether this session gets a composer or a launchpad.
   //
   // Everything the derivation needs already lives on the session row or in
   // the status poll; build-venues.js owns the precedence (imported first,
   // then a live lease, then the stored choice, then the hand-off, then the
   // backend) so this module and the session cards can't disagree about the
-  // same session.
+  // same session. The one thing that list cannot know about is a hand-off
+  // picked in THIS tab and not yet recorded on any column, which is what
+  // _pickedHandoffVenue() adds below.
   _currentVenueId() {
     if (!window.BuildVenues) return 'usernode-claude';
     const s = DevChat.currentSession || {};
     const shot = DevChat._shotVenue();
     if (shot) return shot;
-    return BuildVenues.currentVenue({
+    const derived = BuildVenues.currentVenue({
       source: s.source,
       localAgent: DevChat._localAgent || null,
       // #1281: the owner's stored choice, which is the only thing that can
@@ -361,6 +365,31 @@ const DevChat = {
       externalAgent: s.external_agent,
       agentBackend: DevChat._agentBackend(s),
     });
+    // A recorded hand-off outranks an in-memory one for the same reason it
+    // outranks everything else: it is the half that survives the tab.
+    if (window.Launchpad && Launchpad.isLaunchpad(derived)) return derived;
+    return DevChat._pickedHandoffVenue() || derived;
+  },
+
+  // The hand-off this TAB has picked for this session, before anything has
+  // been stored about it — the out-of-credits card's "Use Claude Code", the
+  // "+" menu's flow door, a shared `?flow=` link. All three set the
+  // in-memory wizard and nothing else, so the column cannot answer for them.
+  //
+  // A SAVED DEFAULT is deliberately NOT one of them (#1353). It used to put
+  // the walkthrough on screen for any untouched session, while the venue
+  // derivation above — which never read it — went on saying Usernode ·
+  // Claude: the header and the sheet said "On-Platform" over a WebUI
+  // launchpad, and the only way out was to pick another venue and come back,
+  // once per tab, because a preference is not a choice about THIS session
+  // and nothing recorded that you had left it. The default still names the
+  // vendor a hand-off starts with, and the venue dropdown in the header is
+  // where a session is handed over — deliberately, once, and recorded.
+  _pickedHandoffVenue() {
+    const flow = DevChat._devFlow;
+    if (!flow || flow.dismissed) return null;
+    if (flow.mode !== 'wizard' || !flow.agent) return null;
+    return flow.agent === 'codex' ? 'web-codex' : 'web-claude-code';
   },
 
   // Screenshot-state deep link `?shot=launchpad&venue=<id>` (#1281).
@@ -398,18 +427,18 @@ const DevChat = {
   //
   // Returns the venue id when this session is in one, else null — which is
   // also the "should the composer be hidden?" question, asked once.
+  //
+  // It is asked of the VENUE and of nothing else (#1353). This used to
+  // carry a second source — a wizard target derived from the user's saved
+  // default — which _currentVenueId() knew nothing about, so the screen and
+  // the session type it states could answer differently about the same
+  // session: "On-Platform" in the header, the WebUI walkthrough underneath
+  // it. One question, one answer, and _currentVenueId() is where every
+  // input to it now meets.
   _launchpadVenue() {
     if (!window.Launchpad) return null;
     const venue = DevChat._currentVenueId();
-    if (Launchpad.isLaunchpad(venue)) return venue;
-    // A saved 'claude-code' / 'codex' default makes an untouched session a
-    // hand-off before anything is stored on it — _devFlowTarget already
-    // honours that, and the walkthrough it produces is a launchpad wherever
-    // it renders. Without this the same card would appear under a live
-    // composer in one case and instead of it in the other.
-    const target = DevChat._devFlowTarget();
-    if (!target || target.mode !== 'wizard') return null;
-    return target.agent === 'codex' ? 'web-codex' : 'web-claude-code';
+    return Launchpad.isLaunchpad(venue) ? venue : null;
   },
 
   // The brief a hand-off starts from when the user has typed nothing: the
@@ -571,12 +600,20 @@ const DevChat = {
     } catch { /* see above: a lost choice degrades to the derivation */ }
   },
 
+  // What an OpenRouter session bills, in one sentence — the model is the
+  // user's and so is the invoice, and none of that spend passes through the
+  // platform meter, so nothing else on the composer can state it.
+  //
+  // A Usernode · Claude session had a sentence here too and no longer does
+  // (#1353): "Chat and coding use Usernode · Claude and its normal credit
+  // rules" sat under a meter counting those very credits, beside a picker
+  // labelled Chat model, in a session whose header names the venue. Four
+  // ways of saying the same thing, on the surface with the least room for
+  // any of them. Empty string for every venue that is not OpenRouter.
   _agentBillingNote(session) {
-    if (DevChat._agentBackend(session) === 'codex_openrouter') {
-      const model = String(session?.agent_model || '').trim();
-      return `All chat and coding in this session use ${model || 'your selected model'} through OpenRouter and bill your OpenRouter key.`;
-    }
-    return 'Chat and coding use Usernode · Claude and its normal credit rules.';
+    if (DevChat._agentBackend(session) !== 'codex_openrouter') return '';
+    const model = String(session?.agent_model || '').trim();
+    return `All chat and coding in this session use ${model || 'your selected model'} through OpenRouter and bill your OpenRouter key.`;
   },
 
   _busyComposerPlaceholder() {
@@ -1139,7 +1176,12 @@ const DevChat = {
     return `${label} — ${hint}`;
   },
 
-  // Full-sentence caption for the currently selected model. Returns ''
+  // Full-sentence caption for a model. The COMPOSER no longer renders one
+  // (#1353): the sentence it painted under the dropdown restated, at
+  // greater length, the guidance already on the option the user had just
+  // chosen, and it did it on every render of every session. This is still
+  // the Generate-proposal popup's caption (app-view.js), where the picker
+  // is met once and the reader has not seen the option list. Returns ''
   // when there's no guidance to show, and the caller hides the line.
   modelNoteText(meta) {
     if (!meta || typeof meta !== 'object') return '';
@@ -1150,19 +1192,6 @@ const DevChat = {
     // at a time: …" once it follows the label.
     const guidance = long.charAt(0).toLowerCase() + long.slice(1);
     return `${label} — best for ${guidance}`;
-  },
-
-  // Fill/hide the caption under the composer's model dropdown. Called on
-  // render and from the select's change handler.
-  _renderModelNote() {
-    const el = document.getElementById('dc-model-note');
-    if (!el) return;
-    const text = DevChat.modelNoteText(DevChat.MODELS[DevChat.selectedModel]);
-    el.textContent = text;
-    el.title = text ? DevChat.MODEL_GUIDANCE_TOOLTIP : '';
-    if (typeof el.classList?.toggle === 'function') {
-      el.classList.toggle('hidden', !text);
-    }
   },
 
   // Clears all per-app state. Called when the user leaves an app (via
@@ -1333,13 +1362,12 @@ const DevChat = {
       el.innerHTML = '';
       return;
     }
-    // #593: what is LEFT, rendered rather than hidden in a tooltip. The
-    // remainder and the reset time were both title-only, which means
-    // invisible on touch and absent from every screenshot — and they are
-    // the two figures someone deciding whether to start another turn is
-    // actually looking for.
+    // #593: the reset time, rendered rather than hidden in a tooltip — it
+    // is what someone deciding whether to start another turn is looking
+    // for, and a title attribute is invisible on touch and absent from
+    // every screenshot. (The remainder was rendered here too until #1353;
+    // see below.)
     const state = DevChat._creditState();
-    const CO = typeof window !== 'undefined' && window.CreditOptions;
     const hasApiKey = !!window.Settings?.state?.hasApiKey;
     if (state && state.level === 'locked') {
       if (hasApiKey) {
@@ -1356,14 +1384,13 @@ const DevChat = {
         : '<span class="text-amber-400" title="Platform credit eligibility could not be verified. Try again shortly.">credits temporarily unavailable</span>';
       return;
     }
-    const leftPart = state && CO
-      ? (CO.meterParts(state).find((p) => p.key === 'remaining') || null)
-      : null;
-    const leftHtml = leftPart
-      ? `<span class="text-zinc-600"> · </span><span class="dc-budget-left${
-        state.level === 'exhausted' ? ' text-red-400' : state.level === 'low' ? ' text-yellow-400' : ' text-zinc-400'
-      }" data-credits-remaining="1">${escapeHtml(leftPart.text)}</span>`
-      : '';
+    // #1353: no "· $X left" alongside the pair. The remainder is $limit
+    // minus $spent — both of which are right there, two characters apart —
+    // so the meter was stating the same fact twice on the narrowest strip
+    // in the app, and the second statement was the one that wrapped. The
+    // header drawer's credits row still spells the remainder out (it has
+    // the room, and it is read away from a session), and the low-balance
+    // and exhausted banners still say it in words when it starts to matter.
     const resetTip = DevChat._creditResetSentence();
     // BYOK (#30/#119/#212): billing is limit-first — the daily platform
     // allowance is consumed before any spend hits the user's own key —
@@ -1389,10 +1416,6 @@ const DevChat = {
         + `. The daily limit is used first; your key (…${last4}) takes over once it runs out. `
         + (resetTip || 'Resets at midnight UTC.');
       let html = `<span class="text-zinc-600">limit </span><span class="${color}">$${spent}</span><span class="text-zinc-600">/$${limit}</span>`;
-      // A key-holder whose allowance is spent is not out of anything — the
-      // key took over — so the remainder is only worth stating while there
-      // is a remainder. The tooltip explains the hand-over either way.
-      if (state && state.level !== 'exhausted') html += leftHtml;
       if (byokCents > 0) {
         html += `<span class="text-zinc-600"> · </span><span class="text-emerald-400">your key $${byok}</span>`;
       }
@@ -1408,14 +1431,14 @@ const DevChat = {
     if (DevChat._creditsExhausted()) {
       const tip = `Your free daily AI credits are used up. ${
         resetTip || 'Resets at midnight UTC.'} Or add your own Anthropic API key in Settings to keep working now.`;
-      el.innerHTML = `<span title="${escapeHtml(tip)}"><span class="text-red-500 font-semibold">$${spent}</span><span class="text-red-400">/$${limit}</span></span>${leftHtml}`;
+      el.innerHTML = `<span title="${escapeHtml(tip)}"><span class="text-red-500 font-semibold">$${spent}</span><span class="text-red-400">/$${limit}</span></span>`;
       return;
     }
     const pct = Math.min(100, (DevChat.budget.spentCents / DevChat.budget.limitCents) * 100);
     const color = pct > 80 ? 'text-red-400' : pct > 50 ? 'text-yellow-400' : 'text-emerald-400';
     const tip = `Today: $${spent} of your $${limit} free daily AI credits. ${
       resetTip || 'Resets at midnight UTC.'}`;
-    el.innerHTML = `<span title="${escapeHtml(tip)}"><span class="${color}">$${spent}</span><span class="text-zinc-600">/$${limit}</span>${leftHtml}</span>`;
+    el.innerHTML = `<span title="${escapeHtml(tip)}"><span class="${color}">$${spent}</span><span class="text-zinc-600">/$${limit}</span></span>`;
   },
 
   // #463: true when the signed-in user is out of free credits AND has no
@@ -1764,15 +1787,21 @@ const DevChat = {
     });
   },
 
-  // ── Session and billing options — the "⋯" beside the meter (#1055) ─
+  // ── The local-CLI card, and the state every venue surface reads (#1055) ─
   //
   // All copy, gating and markup live in public/js/session-options.js; this
-  // is the state assembly and the plumbing back into the session. The
-  // button is static markup in renderChatView (see #dc-budget-options), so
-  // it exists in every state of the meter — including the empty one, which
-  // is the state someone with no key and no spend yet is looking at.
+  // is the state assembly and the plumbing back into the session.
+  //
+  // There was a "⋯" beside the meter that opened a "Session and billing
+  // options" menu over this state, and #1353 removed it. Every row on it
+  // had a better door by then: "Change how this is built" is the venue
+  // dropdown in the session header (#1348), the two key rows are Settings
+  // links the credits banner already offers at the moment they matter, the
+  // local-CLI card is what picking the CLI venue opens, and handing turns
+  // back to Usernode is the runner select's own "Run on: Usernode". A menu
+  // whose every row is a second way to somewhere else is a menu of
+  // duplicates — on the strip with the least room in the app.
 
-  _optionsMenu: null,
   _optionsCard: null,
   // #1146: the two `?shot=` latches below are keyed on the fragment they
   // were applied at, NOT on the document. Both used to be booleans, which
@@ -1836,36 +1865,9 @@ const DevChat = {
   },
 
   _closeSessionOptions() {
-    const menu = DevChat._optionsMenu;
-    DevChat._optionsMenu = null;
-    if (menu && typeof menu.dismiss === 'function') menu.dismiss();
     const card = DevChat._optionsCard;
     DevChat._optionsCard = null;
     if (card && typeof card.dismiss === 'function') card.dismiss();
-  },
-
-  // anchorEl: the "⋯" button, so the desktop popover toggles closed on a
-  // re-click. Touch gets the kit's action sheet from the same call.
-  openSessionOptions(anchorEl) {
-    if (!window.SessionOptions) return;
-    DevChat._closeSessionOptions();
-    const menu = SessionOptions.open({
-      anchorEl: anchorEl || document.getElementById('dc-budget-options') || undefined,
-      state: DevChat._sessionOptionsState(),
-      onNavigate: (hash) => { window.location.hash = hash; },
-      onInstructions: (state) => {
-        DevChat._optionsCard = SessionOptions.openInstructions({
-          state,
-          onClose: () => { DevChat._optionsCard = null; },
-        });
-      },
-      onHandBack: () => DevChat._handBackToUsernode(),
-      onVenue: () => DevChat.openVenueSheet(anchorEl),
-    });
-    DevChat._optionsMenu = menu;
-    if (menu && typeof menu.then === 'function') {
-      menu.then(() => { if (DevChat._optionsMenu === menu) DevChat._optionsMenu = null; });
-    }
   },
 
   // ── The one venue question (#1086, recut #1348) ────────────────────
@@ -2151,23 +2153,30 @@ const DevChat = {
         return !!(btn && btn.offsetParent !== null && window.BuildVenues);
       },
       showing: () => DevChat._shotSurfaceShowing(),
-      open: () => DevChat.openVenueSheet(anchor()),
+      open: () => {
+        DevChat.openVenueSheet(anchor());
+        requestAnimationFrame(() => DevChat._assertMenuSurfaceOpaque());
+      },
     });
   },
 
-  // Screenshot-state deep links (#1055):
-  //   ?shot=session-options               → the menu itself, open
-  //   ?shot=session-options-instructions  → the CLI instructions card
-  // Armed once per addressed session (see _shotOptionsHash) and held up the
-  // same way. `restore` is renderChatView telling us it just dismissed a
-  // menu that was open a moment ago: reopening what was already open is not
-  // popping anything open, so the hold is ticked immediately instead of
-  // leaving the composer bare until the next one.
+  // Screenshot-state deep link `?shot=session-options-instructions` (#1055):
+  // the local-CLI card, open. Armed once per addressed session (see
+  // _shotOptionsHash) and held up the same way. `restore` is renderChatView
+  // telling us it just dismissed a card that was open a moment ago:
+  // reopening what was already open is not popping anything open, so the
+  // hold is ticked immediately instead of leaving the composer bare until
+  // the next one.
+  //
+  // The readiness anchor is the venue dropdown, not the composer: the card
+  // is reached by picking the CLI venue now (#1353 retired the "⋯" this
+  // used to wait for), and the dropdown is the one control that survives
+  // every venue's swap.
   _maybeOpenShotOptions(restore) {
     const addr = DevChat._addressKey();
     let shot = null;
     try { shot = new URLSearchParams(location.search).get('shot'); } catch { /* ignore */ }
-    if (shot !== 'session-options' && shot !== 'session-options-instructions') return;
+    if (shot !== 'session-options-instructions') return;
     if (DevChat._shotOptionsHash === addr) {
       if (restore) DevChat._tickShotHold();
       return;
@@ -2175,20 +2184,15 @@ const DevChat = {
     DevChat._shotOptionsHash = addr;
     DevChat._holdShotSurface(`options:${shot}`, addr, {
       ready: () => {
-        const btn = document.getElementById('dc-budget-options');
+        const btn = document.getElementById('dc-venue-select');
         return !!(btn && btn.offsetParent !== null && window.SessionOptions);
       },
-      showing: () => DevChat._shotOptionsShowing(shot),
+      showing: () => DevChat._shotOptionsShowing(),
       open: () => {
-        if (shot === 'session-options-instructions') {
-          DevChat._optionsCard = SessionOptions.openInstructions({
-            state: DevChat._sessionOptionsState(),
-            onClose: () => { DevChat._optionsCard = null; },
-          });
-          return;
-        }
-        DevChat.openSessionOptions(document.getElementById('dc-budget-options'));
-        requestAnimationFrame(() => DevChat._assertOptionsMenuOpaque());
+        DevChat._optionsCard = SessionOptions.openInstructions({
+          state: DevChat._sessionOptionsState(),
+          onClose: () => { DevChat._optionsCard = null; },
+        });
       },
     });
   },
@@ -2196,22 +2200,24 @@ const DevChat = {
   // With a kit present openInstructions hands its panel to the kit's modal
   // shell and never attaches the overlay it built, so a truthy handle is
   // not evidence the card is on screen; the card's own `<pre>` is. (A modal
-  // is not scroll-dismissed either, so that variant's hold only ever waits
-  // for the open — it never has to repair one.)
-  _shotOptionsShowing(shot) {
-    if (shot === 'session-options-instructions') {
-      const pre = document.getElementById('dc-options-commands');
-      return !!(pre && pre.isConnected);
-    }
-    return DevChat._shotSurfaceShowing();
+  // is not scroll-dismissed either, so its hold only ever waits for the
+  // open — it never has to repair one.)
+  _shotOptionsShowing() {
+    const pre = document.getElementById('dc-options-commands');
+    return !!(pre && pre.isConnected);
   },
 
   // Same regression lock as home.js's card menu (#847): a translucent
   // surface is invisible to a selector/text check — every row is present
-  // and correct, you just read the composer through them. Stamp the
-  // verdict for the dapp.json check and console.error on a violation so
-  // the baseline no-console-errors check trips on the same route.
-  _assertOptionsMenuOpaque() {
+  // and correct, you just read the session through them. Stamp the verdict
+  // for the dapp.json check and console.error on a violation so the
+  // baseline no-console-errors check trips on the same route.
+  //
+  // It guarded the "⋯" menu's popover until #1353 retired that button. The
+  // property it was guarding is `--un-popover-bg`, which every kit popover
+  // in the session shares, so it moved to the venue sheet — the popover
+  // this screen still opens.
+  _assertMenuSurfaceOpaque() {
     const pop = document.querySelector('.un-popover');
     if (!pop) return; // touch idiom: an action sheet over the kit's backdrop
     const bg = getComputedStyle(pop).backgroundColor || '';
@@ -2222,7 +2228,7 @@ const DevChat = {
     pop.dataset.surface = opaque ? 'opaque' : 'translucent';
     if (!opaque) {
       console.error(
-        `[dev-chat] session options menu surface is translucent (${bg}) — the`
+        `[dev-chat] the session's menu surface is translucent (${bg}) — the`
         + ' composer reads through it. --un-popover-bg must resolve to an opaque color.'
       );
     }
@@ -2305,38 +2311,24 @@ const DevChat = {
   // survives is the WALKTHROUGH: once a hand-off is chosen, the five steps
   // run in place, in this transcript, and that is a card.
   //
-  // So the only gate left is "is this session still untouched" — a
-  // walkthrough belongs to work that hasn't started here yet.
+  // So the only gate left is the VENUE (#1353): a walkthrough belongs to a
+  // session that is being handed to a web agent, and _currentVenueId() is
+  // the one place that decides whether this one is — the stored column, a
+  // pick made in this tab, an imported row, all of it. Reading any of those
+  // inputs a second time here is how the screen and the session type it
+  // states came to answer differently about the same session.
+  //
+  // It is normally the LAUNCHPAD that renders this (#1281), which is why
+  // renderMessages() drops the card whenever _launchpadVenue() answers. The
+  // transcript keeps it for the one case that has no launchpad to put it
+  // in: public/js/launchpad.js failing to load.
   _devFlowTarget() {
     const session = DevChat.currentSession;
     if (!session || !window.DevFlowSelect) return null;
-    const flow = DevChat._devFlow;
-    if (flow.dismissed) return null;
-    if (flow.mode === 'wizard' && flow.agent) return { mode: 'wizard', agent: flow.agent };
-    // #1281: the session's OWN stored venue, which is the half that survives
-    // a reload — `flow.mode` is in-memory and gone with the tab. It sits
-    // ABOVE the untouched-session gate below on purpose: a hand-off chosen
-    // halfway through a session is still a hand-off, and the launchpad has
-    // to come back for a session that already has messages or a PR.
-    const stored = window.BuildVenues && session.build_venue
-      ? BuildVenues.preselect(session.build_venue)
-      : null;
-    if (stored && stored.flow) return { mode: 'wizard', agent: stored.flow };
-    // A saved 'claude-code' / 'codex' default is still honoured, in the one
-    // place it can be: an untouched session, before anything has been built
-    // here. That is the same door the picker used to sit in front of — the
-    // difference is that it no longer asks, because the user already
-    // answered. 'platform' and null both mean "build here", which is what
-    // the venue dropdown already says.
-    if (session.pr_number) return null;
-    if (session.status !== 'active') return null;
-    if (DevChat.messages.some((m) => m.role === 'user')) return null;
-    const user = (typeof App !== 'undefined' && App.user) ? App.user : null;
-    if (!user || !user.externalFlowsAvailable) return null;
-    const pref = window.BuildVenues
-      ? BuildVenues.preselect(BuildVenues.currentVenue({ externalAgent: user.devFlowPreference }))
-      : null;
-    return pref && pref.flow ? { mode: 'wizard', agent: pref.flow } : null;
+    const venue = DevChat._currentVenueId();
+    if (venue === 'web-codex') return { mode: 'wizard', agent: 'codex' };
+    if (venue === 'web-claude-code') return { mode: 'wizard', agent: 'claude-code' };
+    return null;
   },
 
   // Only the walkthrough renders in the transcript now — see _devFlowTarget
@@ -2422,8 +2414,18 @@ const DevChat = {
     flow.error = null;
     flow.notice = null;
     if (action === 'cancel') {
-      flow.dismissed = true;
-      DevChat._repaintDevFlow();
+      // "Build here instead" / "Build on Usernode instead" — the same act as
+      // picking On-Platform in the venue sheet, so it does the same two
+      // things (#1353). Dismissing the in-memory wizard alone left a session
+      // whose venue column had already been stored answering "handed to
+      // Claude Code" on the very next paint: the button said Usernode, the
+      // header said the web, and the launchpad never left.
+      if (DevChat.currentSession && DevChat.currentSession.build_venue) {
+        DevChat.currentSession.build_venue = null;
+        DevChat._persistBuildVenue(null);
+      }
+      DevChat._devFlowReturnToChat();
+      DevChat.renderChatView();
       return;
     }
     if (action === 'link-github') {
@@ -7837,12 +7839,31 @@ const DevChat = {
                  getElementById that starts returning null would throw on a
                  route the checks load — a console error fails them. -->
             <div id="dc-composer-controls"${inLaunchpad ? ' hidden' : ''}>
+            <!-- #1353: ONE status line. It used to be two — the runner and
+                 the meter on top, the model picker and a sentence about
+                 billing on a second row underneath — for two controls and
+                 one number that all answer "what is about to run, and on
+                 whose money". The model select sits in it now, on the left
+                 where the strip starts, and the meter stays right. What
+                 left with the second row: the "⋯" that duplicated the
+                 header's venue door beside two Settings links, the billing
+                 sentence (the meter IS the billing statement), and the
+                 model caption, whose text is on the option you picked. -->
             <div class="flex flex-wrap items-center gap-2 mb-2">
-              <input type="file" id="dc-file-input" class="hidden" multiple>
-              <button type="button" id="dc-attach-btn" title="Attach files — images (≤4 MB), text/code files (≤200 KB), zip archives (≤20 MB), or any other file (≤10 MB); up to 4 per message" aria-label="Attach files"
-                class="dc-attach-btn rounded border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-900 text-zinc-500 hover:text-violet-400 hover:border-violet-500 px-1.5 py-1 shrink-0 transition-colors">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
-              </button>
+              <!-- The venue's own settings. Claude and OpenRouter are
+                   deliberately separate: Claude gets the platform chat-model
+                   picker; OpenRouter gets the exact model pinned to the
+                   whole session and a direct way to reopen the OpenRouter
+                   catalog. Local and web venues have no model setting here,
+                   and OpenRouter's pair is too wide for this strip, so it
+                   keeps its own row below. -->
+              ${claudeVenue ? `
+              <div id="dc-venue-detail" class="dc-venue-detail dc-venue-detail-inline">
+                <label class="text-xs text-zinc-500" for="dc-model-select">Chat model:</label>
+                <select id="dc-model-select" class="rounded bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-2 py-1 text-xs text-zinc-700 dark:text-zinc-300 focus:outline-none focus:ring-2 focus:ring-violet-500">
+                  ${modelOptions}
+                </select>
+              </div>` : ''}
               <!-- #907: where the next coding turn runs. Painted empty and
                    filled by _renderRunnerControls() from the session status
                    poll, so a reload lands on the truth rather than on a
@@ -7850,39 +7871,32 @@ const DevChat = {
               <span id="dc-runner" class="dc-runner"></span>
               <span class="flex-1"></span>
               <span id="dc-budget" class="text-xs font-mono"></span>
-              <!-- #1055: session and billing options. STATIC markup rather
-                   than something renderBudget() appends, because
-                   renderBudget() returns early when there is nothing to
-                   paint — and "no key, no spend yet" is exactly the state
-                   this menu exists for. -->
-              <button type="button" id="dc-budget-options" title="Session and billing options" aria-label="Session and billing options" aria-haspopup="menu"
-                class="dc-budget-options">&#8943;</button>
             </div>
-            <!-- The venue's own settings, one level down from the statement
-                 above. Claude and OpenRouter are deliberately separate:
-                 Claude gets the platform chat-model picker; OpenRouter gets
-                 the exact model pinned to the whole session and a direct way
-                 to reopen the OpenRouter catalog. Local and web venues have
-                 no model setting here. -->
-            ${claudeVenue ? `
-            <div id="dc-venue-detail" class="dc-venue-detail">
-              <div class="flex flex-wrap items-center gap-2">
-                <label class="text-xs text-zinc-500" for="dc-model-select">Chat model:</label>
-                <select id="dc-model-select" class="rounded bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-2 py-1 text-xs text-zinc-700 dark:text-zinc-300 focus:outline-none focus:ring-2 focus:ring-violet-500">
-                  ${modelOptions}
-                </select>
-              </div>
-              <div id="dc-agent-note" class="mt-1 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">${escapeHtml(agentBillingNote)}</div>
-              <span id="dc-model-note" class="dc-model-note hidden"></span>
-            </div>` : (openRouterVenue ? `
+            ${openRouterVenue ? `
             <div id="dc-venue-detail" class="dc-venue-detail">
               <span class="text-xs text-zinc-500">OpenRouter model:</span>
               <span id="dc-openrouter-model" class="dc-openrouter-model" title="${escapeHtml(openRouterModel || 'No model is pinned')}">${escapeHtml(openRouterModel || 'No model is pinned')}</span>
               <button type="button" id="dc-openrouter-model-change" class="dc-openrouter-model-change" ${DevChat.isStreaming ? 'disabled' : ''}>Change model</button>
               <div id="dc-agent-note" class="basis-full text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">${escapeHtml(agentBillingNote)}</div>
-            </div>` : '')}
+            </div>` : ''}
             <div id="dc-drafts" class="dc-drafts"></div>
-            <div id="dc-quick-replies" class="dc-quick-replies"></div>
+            <!-- #1353: the attach button rides with the suggested replies,
+                 one line above the send row. It sat in the status strip at
+                 the top of the composer, which is the furthest point in the
+                 block from the text box it attaches to; here the three
+                 things you reach for while writing a message — a pill, a
+                 file, the send button — are the three lines nearest your
+                 thumb. The pills scroll horizontally inside their own
+                 element (.dc-quick-replies), so the button is a sibling
+                 rather than a child: a child would scroll away with them. -->
+            <div class="dc-composer-actions">
+              <input type="file" id="dc-file-input" class="hidden" multiple>
+              <button type="button" id="dc-attach-btn" title="Attach files — images (≤4 MB), text/code files (≤200 KB), zip archives (≤20 MB), or any other file (≤10 MB); up to 4 per message" aria-label="Attach files"
+                class="dc-attach-btn rounded border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-900 text-zinc-500 hover:text-violet-400 hover:border-violet-500 px-1.5 py-1 shrink-0 transition-colors">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+              </button>
+              <div id="dc-quick-replies" class="dc-quick-replies"></div>
+            </div>
             <div id="dc-attachments" class="dc-attach-strip"></div>
             <div id="dc-attach-error" class="dc-attach-error hidden"></div>
             <form id="dc-form" class="flex gap-2 items-end">
@@ -7961,27 +7975,19 @@ const DevChat = {
     // — isStreaming stays false, so nothing can be sent or stopped.
     else if (DevChat._wantsBusyShot()) DevChat._setStreamingUI(true, 'claude');
 
-    // #800: caption describing the selected Claude model, kept in sync
-    // below. OpenRouter has its own pinned-model readout instead.
-    if (claudeVenue) DevChat._renderModelNote();
     // #907: repaint from whatever the last status poll told us. The poll
     // itself runs a beat later; painting here means a re-render of an already
     // open session doesn't drop the chip for a second.
     DevChat._renderRunnerControls();
 
-    // #1055: the "⋯" beside the meter. Any menu left open by a previous
-    // render is anchored to a button that no longer exists, so it is
-    // dismissed here rather than left floating over the new composer.
-    // Whether it WAS open is remembered, because on a `?shot=` deep link the
-    // open menu is the thing being rendered: without this, a second render
-    // (any status poll) closed it for good and the capture came back showing
-    // a plain composer (#1071).
-    const optionsWereOpen = !!(DevChat._optionsMenu || DevChat._optionsCard);
+    // Any surface left open by a previous render is anchored to markup that
+    // no longer exists, so it is dismissed here rather than left floating
+    // over the new composer. Whether one WAS open is remembered, because on
+    // a `?shot=` deep link the open card is the thing being rendered:
+    // without this, a second render (any status poll) closed it for good and
+    // the capture came back showing a plain composer (#1071).
+    const optionsWereOpen = !!DevChat._optionsCard;
     DevChat._closeSessionOptions();
-    const optionsBtn = document.getElementById('dc-budget-options');
-    if (optionsBtn) {
-      optionsBtn.addEventListener('click', () => DevChat.openSessionOptions(optionsBtn));
-    }
     DevChat._maybeOpenShotOptions(optionsWereOpen);
 
     const venueChange = document.getElementById('dc-venue-select');
@@ -8012,7 +8018,6 @@ const DevChat = {
         // in try/catch so private-mode browsers or quota errors don't
         // break the selector.
         try { localStorage.setItem(MODEL_STORAGE_KEY, e.target.value); } catch {}
-        DevChat._renderModelNote();
       });
     }
 

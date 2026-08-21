@@ -128,18 +128,25 @@ test('_devFlowReturnToChat brings the composer back', () => {
   assert.equal(DevChat._launchpadVenue(), null, 'the session is a chat again');
 });
 
-test('it also beats a saved dev_flow_preference on an untouched session', () => {
-  // The third way a launchpad comes back, and the reason `dismissed` is the
-  // lever rather than a cleared `mode`: this branch reads the user's stored
-  // default and would answer "wizard" on the very next paint.
+test('a saved dev_flow_preference is no longer a third way back in', () => {
+  // It WAS the third way, and the reason `dismissed` had to be the lever
+  // rather than a cleared `mode`: that branch read the user's stored default
+  // and answered "wizard" on the very next paint. It also meant a launchpad
+  // nothing had recorded, under a header that said On-Platform — so #1353
+  // closed the door instead of out-ranking it, and `dismissed` now has only
+  // the in-memory wizard left to clear. See tests/venue-surface-sync.test.js.
   const { DevChat, sandbox } = makeDevChat();
   sandbox.App.user.devFlowPreference = 'claude-code';
-  assert.equal(DevChat._launchpadVenue(), 'web-claude-code',
-    'a saved default makes an untouched session a hand-off');
-
-  DevChat._devFlowReturnToChat();
   assert.equal(DevChat._launchpadVenue(), null,
-    'choosing On-Platform outranks the standing default for this session');
+    'a standing preference is not a decision about THIS session');
+  assert.equal(DevChat._currentVenueId(), 'usernode-claude',
+    'and the header agrees, which is the whole point');
+
+  // Picking the hand-off is still one click, and still comes back.
+  DevChat._devFlowFromCredits('claude-code', null);
+  assert.equal(DevChat._launchpadVenue(), 'web-claude-code');
+  DevChat._devFlowReturnToChat();
+  assert.equal(DevChat._launchpadVenue(), null);
 });
 
 test('it also beats a stored own-tools venue coming back through the flow', () => {

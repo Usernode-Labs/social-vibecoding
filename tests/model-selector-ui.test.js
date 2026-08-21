@@ -13,10 +13,11 @@
 //   2. Each option reads "<label> — <what kind of work it is for>", and
 //      the copy positions Opus and Fable as peers (heavy coding vs.
 //      design/taste) rather than a size ladder.
-//   3. The caption under the dropdown describes the SELECTED model in a
-//      full sentence and follows the selection when it changes.
-//   4. Missing guidance degrades to bare labels with the caption hidden
-//      — never a crash.
+//   3. The composer paints NO caption under the dropdown (#1353 removed
+//      it — the option the user picked already carries the guidance), while
+//      the sentence itself survives for app-view's Generate-proposal popup,
+//      where the list is met once.
+//   4. Missing guidance degrades to bare labels — never a crash.
 //   5. The guidance copy in dev-chat.js's seed map has not drifted from
 //      src/services/models.js, which is authoritative.
 //
@@ -36,8 +37,8 @@ const SRC = fs.readFileSync(
 // ── Minimal fake DOM ────────────────────────────────────────────────
 // Registry-backed like the streaming-reset harness (getElementById keeps
 // returning the same handle across innerHTML rewrites), plus real
-// listener capture and a real classList.toggle so the caption's
-// show/hide can be asserted.
+// listener capture and a real classList.toggle, so a class the composer
+// toggles at runtime can be asserted.
 function makeElement(id) {
   const classes = new Set();
   const listeners = new Map();
@@ -322,45 +323,54 @@ test('modelOptionText degrades to the bare label without guidance', () => {
   assert.equal(DevChat.modelOptionText(null), '');
 });
 
-// ── 3. the caption ──────────────────────────────────────────────────
+// ── 3. the caption the composer no longer paints ────────────────────
 
-test('the caption describes the selected model in a full sentence', () => {
-  const { getEl } = render({ selected: 'claude-opus-5' });
-  const note = getEl('dc-model-note');
-  // Locks modelNoteText's first-character lower-casing against the new
-  // strings: "Anything from …" has to read as "best for anything from …".
-  assert.equal(
-    note.textContent,
-    'Opus 5 — best for anything from a quick fix to a multi-file feature, a refactor, or debugging that needs real digging.'
-  );
-  assert.equal(note.classList.contains('hidden'), false);
+test('the composer paints no model caption at all (#1353)', () => {
+  // It said "Opus 5 — best for anything from a quick fix to a multi-file
+  // feature, a refactor, or debugging that needs real digging." directly
+  // under an <option> reading "Opus 5 — general coding work", on every
+  // render of every session. Two sentences of the same advice, and the
+  // longer one was between the picker and the text box.
+  const { html, getEl, DevChat } = render({ selected: 'claude-opus-5' });
+  assert.ok(!html.includes('dc-model-note'), 'no caption element is rendered');
+  assert.ok(!html.includes('best for'), 'and none of its copy either');
+  assert.equal(getEl('dc-model-note').textContent, '', 'nothing fills one after render');
+  assert.equal(typeof DevChat._renderModelNote, 'undefined',
+    'and the filler is gone rather than left pointing at an absent element');
 });
 
-test('the caption carries the guidance tooltip, not the old size-ladder wording', () => {
-  const { getEl } = render();
-  const note = getEl('dc-model-note');
-  assert.match(note.title, /general coding pick/);
-  assert.match(note.title, /genuinely difficult/);
-  assert.match(note.title, /A suggestion, not a rule/);
+test('the caption text itself survives, for the picker that is met once', () => {
+  // app-view.js's Generate-proposal popup renders it: there the model list
+  // is new to the reader, and a full sentence is worth its line. The
+  // lower-casing of the first character is what makes it read as one
+  // sentence after the label.
+  const { DevChat } = makeHarness();
+  assert.equal(
+    DevChat.modelNoteText(DevChat.MODELS['claude-opus-5']),
+    'Opus 5 — best for anything from a quick fix to a multi-file feature, '
+      + 'a refactor, or debugging that needs real digging.'
+  );
+  assert.equal(
+    DevChat.modelNoteText(DevChat.MODELS['claude-sonnet-5']),
+    'Sonnet 5 — best for one small thing at a time: a text tweak, a colour, a single file.'
+  );
+  assert.equal(DevChat.modelNoteText({ label: 'Opus 5' }), '', 'no guidance, no sentence');
+  assert.match(DevChat.MODEL_GUIDANCE_TOOLTIP, /general coding pick/);
+  assert.match(DevChat.MODEL_GUIDANCE_TOOLTIP, /genuinely difficult/);
   assert.ok(
-    !/Bigger models/i.test(note.title),
+    !/Bigger models/i.test(DevChat.MODEL_GUIDANCE_TOOLTIP),
     'tooltip reverted to the superseded "bigger models cost more" framing'
   );
+  const APP_VIEW = fs.readFileSync(
+    path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf8'
+  );
+  assert.match(APP_VIEW, /DevChat\.modelNoteText\(chosen\)/, 'and that popup still calls it');
 });
 
-test('the caption follows the selection when the dropdown changes', () => {
+test('the dropdown still follows the selection without a caption to update', () => {
   const { DevChat, getEl } = render({ selected: 'claude-opus-5' });
-  const note = getEl('dc-model-note');
-  assert.match(note.textContent, /^Opus 5 —/);
-
   getEl('dc-model-select')._fire('change', { target: { value: 'claude-fable-5' } });
-
   assert.equal(DevChat.selectedModel, 'claude-fable-5');
-  assert.equal(
-    note.textContent,
-    'Fable 5 — best for design and taste — how a screen looks, reads, and feels — '
-      + 'plus the most difficult coding work.'
-  );
 });
 
 test('the Fable option owns difficult coding without displacing Opus as the general pick', () => {
@@ -374,26 +384,14 @@ test('the Fable option owns difficult coding without displacing Opus as the gene
   assert.ok(html.includes('Opus 5 — general coding work'));
 });
 
-test('the Sonnet caption stays the small-change pick', () => {
-  const { getEl } = render({ selected: 'claude-sonnet-5' });
-  assert.equal(
-    getEl('dc-model-note').textContent,
-    'Sonnet 5 — best for one small thing at a time: a text tweak, a colour, a single file.'
-  );
-});
-
 // ── 4. missing guidance degrades, never crashes ─────────────────────
 
-test('a model with no guidance renders a bare label with the caption hidden', () => {
+test('a model with no guidance renders a bare label', () => {
   const models = { 'claude-opus-5': { label: 'Opus 5' } };
-  const { html, getEl } = render({ models });
+  const { html } = render({ models });
 
   assert.ok(html.includes('>Opus 5</option>'), 'expected a bare label option');
   assert.ok(!html.includes('best for'));
-
-  const note = getEl('dc-model-note');
-  assert.equal(note.textContent, '');
-  assert.equal(note.classList.contains('hidden'), true);
 });
 
 test('a garbage MODELS entry does not throw the whole chat view', () => {

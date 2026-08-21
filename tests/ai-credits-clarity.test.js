@@ -221,13 +221,20 @@ function makeDevChat({ hasApiKey = false, search = '' } = {}) {
   return { DevChat: sandbox.__DevChat, meterHtml: () => budgetHtml };
 }
 
-test('the composer meter renders the remainder instead of hiding it', () => {
+test('the composer meter is the pair and the reset, and nothing else', () => {
+  // #593 rendered the remainder here rather than hiding it in a tooltip.
+  // #1353 took it back out of THIS meter alone: $25.00 minus $10.00 is the
+  // same fact as "$15.00 left", stated two characters away, on the
+  // narrowest strip in the app — and the remainder was the half that
+  // wrapped. The drawer row below still spells it out, and the low-balance
+  // and exhausted banners still say it in words once it starts to matter.
   const { DevChat, meterHtml } = makeDevChat();
   DevChat.budget = budget({ spentCents: 1000 });
   DevChat.renderBudget();
-  assert.match(meterHtml(), /data-credits-remaining/, 'a stable hook, so a check can see it');
-  assert.match(meterHtml(), /\$15\.00 left/, 'rendered text, not a title attribute');
-  assert.match(meterHtml(), /\$10\.00/, 'the spend/cap pair is still there');
+  assert.match(meterHtml(), /\$10\.00/, 'the spend/cap pair is what the meter is');
+  assert.match(meterHtml(), /\$25\.00/);
+  assert.doesNotMatch(meterHtml(), /data-credits-remaining/);
+  assert.doesNotMatch(meterHtml(), /left/, 'no second statement of the same figure');
   assert.match(meterHtml(), /title="[^"]*reset at midnight UTC/,
     'and the tooltip still answers "when do they come back?"');
 });
@@ -290,7 +297,9 @@ test('?shot=credits-low paints the warning without a fetch or a write', () => {
   DevChat.budget = fixture;
   assert.equal(DevChat._creditsLow(), true);
   DevChat.renderBudget();
-  assert.match(meterHtml(), /\$5\.00 left/);
+  assert.match(meterHtml(), /\$20\.00/, 'the meter paints the fixture spend');
+  assert.match(DevChat._renderCreditsLowBannerHtml(), /\$5\.00 of \$25\.00 left today/,
+    'and the WARNING is what states the headroom (#1353)');
 
   // Pure UI: no environment gate (a production "before" shot has to be
   // obtainable) and no other ?shot= value hijacks the real budget read.
@@ -324,7 +333,8 @@ test('dapp.json points at the credits indicator and the warning', () => {
   const shot = named.filter((t) => /shot=credits-low/.test(t.path));
   assert.ok(shot.length >= 2, 'the screenshot-state deep link is checked, not just added');
   assert.ok(named.some((t) => /data-credits-remaining/.test(t.expectSelector || '')),
-    'the visible remainder has a check');
+    'the visible remainder has a check — the drawer row\'s, since #1353 took '
+      + 'the composer meter\'s copy of the figure out');
   assert.ok(named.some((t) => /dc-credits-low-banner/.test(t.expectSelector || '')),
     'so does the low-balance warning');
   assert.ok(named.some((t) => /dc-credits-banner \[data-credits-reset\]/.test(t.expectSelector || '')),

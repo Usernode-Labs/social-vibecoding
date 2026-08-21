@@ -230,7 +230,9 @@ test('a shot surface is held up for a bounded window, not opened once', () => {
   assert.match(showing, /getElementById\('dc-options-commands'\)/,
     "the instructions card's own <pre> — the element the #1055 check asserts");
   assert.match(showing, /pre\.isConnected/);
-  assert.match(showing, /return DevChat\._shotSurfaceShowing\(\);/, 'and the menu variant reads its surface');
+  // The venue sheet is a kit surface rather than a card of ours, so it is
+  // read off the document. (The "⋯" menu was the other one; #1353 retired
+  // the button, and the card and the sheet are what is left.)
   assert.match(body(devChat, '  _shotSurfaceShowing() {'), /querySelector\('\.un-popover, \.un-action-sheet'\)/,
     'which is the popover on desktop and the action sheet on touch');
 });
