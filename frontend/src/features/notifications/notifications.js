@@ -391,6 +391,20 @@ const Notifications = {
   // nowhere else. Pair it with ?demo=1 in staging so the pinned sections have
   // mock rows to render. Once per page load — reopening after a manual
   // dismiss would fight the user, and refresh() runs again on live events.
+  //
+  // OPENING THE DRAWER IS NO LONGER ENOUGH (#1367). The notifications section
+  // is collapsed by default now, and a collapsed section is `hidden` — which
+  // keeps its ids in the document (so an `expectSelector` still resolves) but
+  // takes its text out of `document.body.innerText`, which is what a check's
+  // `expectText` reads. #1280's two saved-message assertions went red on
+  // exactly that: the rows were there, and invisible.
+  //
+  // So this deep link expands the section as well as opening the drawer. That
+  // is the same job it already had — "make a state that only exists behind a
+  // gesture reachable from a URL" — with one more gesture to stand in for.
+  // Dispatched AFTER show(), and the ordering matters: show() opens the drawer,
+  // which announces `sv:drawer-open`, which is what re-collapses the section on
+  // every open. Both are synchronous, so expanding second is what sticks.
   _shotOpened: false,
   _maybeShotOpen() {
     if (Notifications._shotOpened || Notifications.open) return;
@@ -399,6 +413,9 @@ const Notifications = {
     if (shot !== 'notifications') return;
     Notifications._shotOpened = true;
     Notifications.show();
+    try {
+      document.dispatchEvent(new CustomEvent('sv:notifications-expand'));
+    } catch (err) { /* ignore — a browser too old for CustomEvent */ }
   },
 
   // #1329: a presented drawer is MODAL on touch — it covers the screen the

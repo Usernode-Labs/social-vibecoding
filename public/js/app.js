@@ -2048,11 +2048,11 @@ const App = {
   // unguarded refreshDeployDot() / setAppOpen() callers below would throw on
   // a bare getter. Forwarding no-ops instead, which is what those calls did
   // when the drawer was not on screen anyway.
-  // The home screen shows the PLATFORM's Improve button (#1363) — "improve
+  // The home screen shows the PLATFORM's Improve button (#1367) — "improve
   // Social Vibecoding itself", pointed at its own self-hosted app row.
   //
-  // THE UI OVERHAUL shipped this once and reverted it, and the revert is why
-  // the publish does NOT live here. That version re-targeted the platform row
+  // THE UI OVERHAUL shipped this once and #1363 reverted it, and that revert
+  // is why the publish does NOT live here. That version re-targeted the platform row
   // on the RETURN paths only, so a cold boot at `/` never published a target:
   // the button appeared after backing out of an app and vanished on refresh,
   // which every reporter read as a stale leftover from the app they had just
@@ -3613,7 +3613,7 @@ const App = {
       // than being hidden one by one as drawer rows were. This clears the
       // app's target; the line below immediately republishes home's own.
       App.DrawerStatus.setAppOpen(false);
-      // Home's Improve button is the PLATFORM's (#1363). Published here so
+      // Home's Improve button is the PLATFORM's (#1367). Published here so
       // backing out of an app swaps the target in the same frame the app's
       // was cleared, rather than leaving a gap until the next grid paint.
       // This is a re-publish, NOT the only publish — that was the bug the
@@ -3806,7 +3806,7 @@ const App = {
     App.currentSubTab = tab === 'dev' ? (subTab || 'forum') : null;
     // The `.app-mode-seg` repaint that used to sit here went with the switch
     // itself. There IS a control reflecting the active tab again — the
-    // App/Feed/Kanban toggle (#1363) — but it is React-rendered from the
+    // App/Feed/Kanban toggle (#1367) — but it is React-rendered from the
     // Improve store, so this publishes the fact instead of repainting a node:
     // one owner for the attribute, which is the whole ownership rule.
     window.Improve?.setTab(tab);

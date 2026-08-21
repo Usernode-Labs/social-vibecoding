@@ -295,7 +295,7 @@ test('a dapp check pins the drawer to the panel on a forced-touch route', () => 
     'and that the drawer is the adopted content, not an empty panel');
 });
 
-// ── #1363: what the drawer looks like the moment it opens ────────────
+// ── #1367: what the drawer looks like the moment it opens ────────────
 //
 // Two changes, both about where your eye and your thumb land. Neither has a
 // runtime assertion that would catch a regression — a collapsed section that
@@ -369,4 +369,41 @@ test('notifications anchor to the top of the drawer, the nav rows to the bottom'
     'and the notifications block must not be squeezed to make room');
   assert.ok(!/\bmt-auto\b/.test(notifTag),
     'nothing may push the notifications block off the top');
+});
+
+test('the ?shot=notifications deep link EXPANDS the section, not just the drawer', () => {
+  // The failure this exists to prevent, in one sentence: a collapsed section
+  // is `hidden`, which keeps its ids in the document — so `expectSelector`
+  // still resolves — but takes its text out of `document.body.innerText`,
+  // which is what a check's `expectText` reads. #1280's two saved-message
+  // assertions went red on exactly that: the rows were present and invisible.
+  //
+  // So the deep link that exists to make a gesture-only state reachable from a
+  // URL now has one more gesture to stand in for.
+  const notificationsJs = fs.readFileSync(
+    path.join(root, 'frontend/src/features/notifications/notifications.js'), 'utf8');
+  const at = notificationsJs.indexOf('  _maybeShotOpen() {');
+  assert.ok(at !== -1, '_maybeShotOpen went missing');
+  const body = notificationsJs.slice(at, notificationsJs.indexOf('\n  },', at));
+
+  // ORDER IS THE CONTRACT. show() opens the drawer, which announces
+  // 'sv:drawer-open', which is what re-collapses the section on every open.
+  // Both are synchronous, so the expand has to come SECOND to stick.
+  const showAt = body.indexOf('Notifications.show();');
+  const expandAt = body.indexOf("'sv:notifications-expand'");
+  assert.ok(showAt !== -1, 'the deep link must still open the drawer');
+  assert.ok(expandAt !== -1, 'and must now expand the notifications section');
+  assert.ok(showAt < expandAt,
+    'expand must be dispatched AFTER show(), or the open re-collapses it');
+
+  // And the island has to be listening — with the listener torn down.
+  assert.match(headerMenuTsx, /addEventListener\('sv:notifications-expand'/);
+  assert.match(headerMenuTsx, /removeEventListener\('sv:notifications-expand'/);
+
+  // The two dapp.json checks that caught this stay text-based on that route,
+  // so the regression cannot come back unnoticed.
+  const shotTests = dapp.tests.filter(
+    (t) => (t.path || '').includes('shot=notifications') && t.expectText);
+  assert.ok(shotTests.length >= 2,
+    'the saved-message assertions must keep reading VISIBLE text on that route');
 });

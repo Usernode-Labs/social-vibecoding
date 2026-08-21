@@ -101,7 +101,7 @@ const buttonVariants = cva('', {
       tap: 'px-3 min-h-[44px]',
       // #browse-detail-open, whose label is an arrow glyph beside a word.
       iconRow: 'inline-flex items-center gap-2',
-      // #improve-row-feedback — the Improve panel's "Give feedback" (#1363).
+      // #improve-row-feedback — the Improve panel's "Give feedback" (#1367).
       // The same glyph-beside-a-word row as iconRow, spanning the panel's
       // width and centred in it, which is what makes it read as the panel's
       // one primary action rather than as another list row.

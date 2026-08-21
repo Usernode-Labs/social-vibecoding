@@ -75,14 +75,14 @@ const INITIAL = {
   target: null,
   /**
    * The target's slug — the open app's, or the platform's own self-hosted row
-   * while home is on screen (#1363, published by Home.publishImproveTarget).
+   * while home is on screen (#1367, published by Home.publishImproveTarget).
    */
   slug: null,
   /**
    * Which half of the open app is on screen: its App tab or its Dev area.
    *
    * Republished from `App.switchTab()` — the one place `App.currentTab` is
-   * assigned — because the App/Feed/Kanban toggle (#1363) has to render which
+   * assigned — because the App/Feed/Kanban toggle (#1367) has to render which
    * one is active, and a control that reflects state needs that state to be
    * reactive. THE UI OVERHAUL deleted the `.app-mode-seg` repaint that used to
    * sit in switchTab for exactly this reason, noting "there is no control in

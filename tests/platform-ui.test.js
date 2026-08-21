@@ -361,7 +361,7 @@ test('setAppOpen publishes the Improve target instead of toggling a switch', () 
 });
 
 test('home publishes the PLATFORM Improve target, from render and not only on return', () => {
-  // #1363 put an Improve button on the home screen, scoped to the platform's
+  // #1367 put an Improve button on the home screen, scoped to the platform's
   // own self-hosted row — "improve Social Vibecoding itself".
   //
   // THE UI OVERHAUL shipped that once and reverted it, and this test pins the
@@ -424,7 +424,7 @@ test('home publishes the PLATFORM Improve target, from render and not only on re
     'the hash-fallback home landing must clear the app target too');
 });
 
-// ── #1363: the App/Feed/Kanban toggle, and what it replaced ──────────
+// ── #1367: the App/Feed/Kanban toggle, and what it replaced ──────────
 
 test('the Improve panel leads with a feedback BUTTON and the view toggle', () => {
   const panel = read('frontend/src/features/improve/improve-panel.tsx');

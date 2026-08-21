@@ -9,10 +9,10 @@
  *
  * TWO publishers put one there. `setAppOpen()` does it for an open app, and
  * `Home.publishImproveTarget()` does it for the platform's own self-hosted row
- * while home is on screen (#1363) — "improve Social Vibecoding itself".
+ * while home is on screen (#1367) — "improve Social Vibecoding itself".
  *
- * That second one shipped once before and was reverted, which is worth knowing
- * before touching it: the first version re-targeted only on the RETURN paths,
+ * That second one shipped once before and was reverted (#1363), which is worth
+ * knowing before touching it: the first version re-targeted only on the RETURN paths,
  * so a cold boot at `/` never published anything and the button read as a
  * stale leftover of the app just closed. It publishes from `Home.render()`
  * now — the call every path funnels through — so the button is either there on
@@ -60,7 +60,7 @@ const IMPROVE_BTN_CLASS =
 export function ImproveButton() {
   const { target, open } = useStoreState(improveStore);
   // "this app" is wrong on home, where the target is the platform itself
-  // (#1363). The visible label stays the single word "Improve" at both — what
+  // (#1367). The visible label stays the single word "Improve" at both — what
   // is being improved is named in the panel's own header.
   const label = target === 'platform' ? 'Improve the platform' : 'Improve this app';
 

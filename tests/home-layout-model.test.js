@@ -97,7 +97,7 @@ test('MAX_COLS narrows to the rendered count, and the schema still admits the ol
   assert.match(SCHEMA, /CONSTRAINT user_home_layout_col CHECK \(grid_col >= 0 AND grid_col < cols\)/);
 });
 
-test('the two-row default counts rows that HOLD apps, not row indices (#1363)', () => {
+test('the two-row default counts rows that HOLD apps, not row indices (#1367)', () => {
   const app = (slug, col, row) => ({ type: 'app', slug, col, row });
 
   // THE COMMON CASE IS UNCHANGED. Apps packed onto rows 0 and 1 bound at 1,

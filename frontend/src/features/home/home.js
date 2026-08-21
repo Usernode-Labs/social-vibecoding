@@ -571,13 +571,13 @@ const Home = {
     // Screenshot-state deep link: paint the drag overlay in its resting
     // visible state so the gesture-only surface is capturable and testable.
     Home._maybeShowShotGrid(listEl);
-    // The header's Improve button, pointed at the PLATFORM (#1363). Published
+    // The header's Improve button, pointed at the PLATFORM (#1367). Published
     // from render() on purpose — see publishImproveTarget for why that is the
     // one call that makes it consistent.
     Home.publishImproveTarget();
   },
 
-  // ── The home screen's Improve button (#1363) ───────────────────────
+  // ── The home screen's Improve button (#1367) ───────────────────────
   //
   // "Improve" on home means the PLATFORM: the same panel every app gets,
   // scoped to Social Vibecoding's own self-hosted row. Feedback, its dev
@@ -586,8 +586,8 @@ const Home = {
   //
   // ── Why this is called from render(), and why that matters ─────────
   //
-  // THE UI OVERHAUL shipped this once and pulled it back out, and the bug is
-  // worth naming because it is the whole design constraint here: the old
+  // THE UI OVERHAUL shipped this once and #1363 pulled it back out, and that
+  // bug is worth naming because it is the whole design constraint here: the old
   // version re-targeted the platform row on the RETURN paths only —
   // navigateHome() after backing out of an app. A cold boot at `/` never
   // published anything, so the button appeared only after you had visited an

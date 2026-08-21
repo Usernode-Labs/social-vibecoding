@@ -193,7 +193,7 @@ export function PlatformHeader() {
           */}
           {/*
               The App / Feed / Kanban toggle, immediately LEFT of the Improve
-              button (#1363), on wide screens only — the component carries its
+              button (#1367), on wide screens only — the component carries its
               own `hidden sm:inline-flex`, and below that breakpoint the copy
               inside the Improve panel is the one on screen. Switching views is
               the thing people do most often in an app, and behind a sheet it

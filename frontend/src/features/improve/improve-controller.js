@@ -96,7 +96,7 @@ const Improve = {
   //
   // Called from App.DrawerStatus.setAppOpen() for an open app, and from
   // Home.publishImproveTarget() for the platform's own self-hosted row while
-  // home is on screen (#1363). Passing null clears the target, which hides the
+  // home is on screen (#1367). Passing null clears the target, which hides the
   // header button — every OTHER screen does that.
   //
   // Home's publisher lives in Home.render() rather than on the navigation

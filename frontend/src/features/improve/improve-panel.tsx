@@ -187,7 +187,7 @@ export function ImprovePanel() {
       >
       </div>
       {/* "this app" is wrong on home, where the target is the platform itself
-          (#1363), so the label follows the target rather than assuming one.
+          (#1367), so the label follows the target rather than assuming one.
           #improve-target-name inside the header spells out which app. */}
       <div
         id="improve-panel"
@@ -225,7 +225,7 @@ export function ImprovePanel() {
 
         {/*
             A COLUMN FLEX, so #improve-footer can be bottom-anchored with
-            `mt-auto` (#1363): the version, GitHub and Share block hugs the
+            `mt-auto` (#1367): the version, GitHub and Share block hugs the
             foot of the panel whenever the rows above it leave free space, and
             degrades to "just at the end of the scroll" when they do not — a
             long session list, a short viewport, the kit sheet. One rule, both
@@ -237,7 +237,7 @@ export function ImprovePanel() {
           className="flex-1 min-h-0 overflow-y-auto overscroll-contain platform-safe-scroll flex flex-col"
         >
           {/*
-              ── The two controls at the top (#1363) ────────────────────
+              ── The two controls at the top (#1367) ────────────────────
 
               Feedback first, and deliberately: it is the one action that needs
               nothing of the viewer — no collaborator bit, no session, no repo.
@@ -318,7 +318,7 @@ export function ImprovePanel() {
           )}
 
           {/*
-              THE "DEVELOPMENT" SECTION'S TWO NAVIGATION ROWS ARE GONE (#1363).
+              THE "DEVELOPMENT" SECTION'S TWO NAVIGATION ROWS ARE GONE (#1367).
 
               `#improve-row-kanban` and `#improve-row-feed` were list rows with
               a chevron — "Development kanban" and "Latest development
@@ -361,7 +361,7 @@ export function ImprovePanel() {
           </div>
 
           {/*
-              `mt-auto` (#1363) — the version, GitHub and Share block is pinned
+              `mt-auto` (#1367) — the version, GitHub and Share block is pinned
               to the FOOT of the panel whenever the rows above it leave free
               space, which on a tall desktop sidebar with one session is most
               of it. #improve-body is the column flex that makes it work; when

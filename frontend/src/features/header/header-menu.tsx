@@ -13,7 +13,7 @@
  * The list is rendered by the same components from the same store, so
  * ../notifications/notifications.js is unchanged.
  *
- * ── What #1363 changed ────────────────────────────────────────────────
+ * ── What #1367 changed ────────────────────────────────────────────────
  *
  * Two things, both about where your eye and your thumb land when the drawer
  * opens. The notifications section is COLLAPSED by default and re-collapses on
@@ -112,7 +112,7 @@ import './header-menu-controller.js';
 import '../notifications/mount';
 
 export function HeaderMenu() {
-  // ── Notifications: COLLAPSED by default (#1363) ──────────────────────
+  // ── Notifications: COLLAPSED by default (#1367) ──────────────────────
   //
   // The drawer opens on the navigation rows, not on a wall of notifications.
   // The list is still the first thing in the panel and still one tap away —
@@ -183,7 +183,20 @@ export function HeaderMenu() {
     // only moment either side agrees the drawer became visible.
     const collapse = () => setNotificationsOpen(false);
     document.addEventListener('sv:drawer-open', collapse);
-    return () => document.removeEventListener('sv:drawer-open', collapse);
+    // …and the one thing that has to override that default: the
+    // `?shot=notifications` deep link, whose whole job is making a
+    // gesture-only state reachable from a URL for the capture pipeline and
+    // the declared checks. A collapsed section is `hidden`, so its text is
+    // absent from `document.body.innerText` — which is what a check's
+    // `expectText` reads — and #1280's saved-message assertions read exactly
+    // that text. ../notifications/notifications.js dispatches this straight
+    // after opening the drawer, so it lands after the collapse above.
+    const expand = () => setNotificationsOpen(true);
+    document.addEventListener('sv:notifications-expand', expand);
+    return () => {
+      document.removeEventListener('sv:drawer-open', collapse);
+      document.removeEventListener('sv:notifications-expand', expand);
+    };
   }, []);
 
   return (
@@ -213,7 +226,7 @@ export function HeaderMenu() {
         </div>
         {/*
             Panel body — ONE scroller, laid out as a COLUMN FLEX with its two
-            blocks anchored to OPPOSITE ENDS (#1363): notifications at the top,
+            blocks anchored to OPPOSITE ENDS (#1367): notifications at the top,
             the navigation rows at the bottom via `mt-auto`. The free space
             between them belongs to neither, so a viewer with three
             notifications gets their nav rows under their thumb instead of
@@ -230,7 +243,7 @@ export function HeaderMenu() {
         */}
         <div id="header-menu-rows" className="flex-1 min-h-0 overflow-y-auto flex flex-col">
           {/*
-              NOTIFICATIONS, anchored to the TOP of the drawer (#1363).
+              NOTIFICATIONS, anchored to the TOP of the drawer (#1367).
 
               THE UI OVERHAUL merged the bell into the hamburger: two
               top-right drawers that opened the same way, one slot apart,
@@ -313,7 +326,7 @@ export function HeaderMenu() {
             </div>
           </div>
           {/*
-              THE NAVIGATION ROWS, anchored to the BOTTOM (#1363).
+              THE NAVIGATION ROWS, anchored to the BOTTOM (#1367).
 
               `mt-auto` inside #header-menu-rows' column flex collects the
               free space ABOVE this block, so the rows hug the foot of the

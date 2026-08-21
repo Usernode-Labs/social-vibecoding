@@ -54,7 +54,7 @@ const RETIRED_IDS = {
   'work-drawer-icon': 'The cog glyph, retired with its button. The spinning-while-busy cue is the per-row busy dot in the Improve panel now.',
   'dev-console-btn': 'Header terminal icon retired — the Improve panel\'s "Developer terminal" row is shown on the same DevConsole signal. #staging-dev-console-btn survives; the staging overlay has its own chrome.',
   'dev-console-badge': 'Unseen-error count on the retired header terminal icon. #staging-dev-console-badge survives.',
-  // ── #1363: two Improve rows became a segmented toggle ────────────
+  // ── #1367: two Improve rows became a segmented toggle ────────────
   // "Development kanban" and "Latest development activity" were list rows
   // with a chevron. They are two segments of the App/Feed/Kanban control now
   // (frontend/src/features/improve/view-toggle.tsx), which renders inside the

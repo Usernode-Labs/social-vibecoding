@@ -1,5 +1,5 @@
 /**
- * The App / Feed / Kanban toggle (#1363) — one component, two homes.
+ * The App / Feed / Kanban toggle (#1367) — one component, two homes.
  *
  * It replaces two rows of the Improve panel's "Development" section. Kanban and
  * "Latest development activity" were list rows with a chevron, which said

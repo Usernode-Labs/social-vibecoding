@@ -77,7 +77,7 @@ const DrawerStatus = {
       // out of an app.
       //
       // Home immediately republishes the PLATFORM's own row on top of this
-      // (#1363, Home.publishImproveTarget) — so on home the clear is a swap,
+      // (#1367, Home.publishImproveTarget) — so on home the clear is a swap,
       // not an absence. Every other screen leaves it cleared.
       window.Improve?.setTarget(null);
     }
@@ -192,7 +192,7 @@ const HeaderMenu = {
   // went with it: settings.js dispatches `usernode:settings-section` from
   // _renderContent(), which is the equivalent moment there.
   //
-  // #1363 gave the drawer a second thing that has to reset on every open —
+  // #1367 gave the drawer a second thing that has to reset on every open —
   // the notifications section, which is collapsed by default — so the
   // announcement is back, under the name that says what happened rather than
   // which element it happened to. ./header-menu.tsx listens; see the

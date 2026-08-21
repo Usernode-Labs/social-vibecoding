@@ -146,7 +146,7 @@ const HomeLayout = {
     return last;
   },
 
-  // ── The collapsed grid's row bound (#1363) ─────────────────────────
+  // ── The collapsed grid's row bound (#1367) ─────────────────────────
   //
   // Home.render() shows a COLLAPSED grid by default and offers "Show all N
   // apps" to reveal the rest. This answers the one question that view has to
