@@ -84,6 +84,18 @@ test('the proposal staging fixture carries a reviewable full body', () => {
     'existing staging rows are restamped, not only newly inserted rows');
 });
 
+test('the default open-proposal fixture also exposes the disclosure', () => {
+  const start = MIGRATE_SRC.indexOf('async function seedStagingMyOpenPr');
+  const fixture = MIGRATE_SRC.slice(
+    start,
+    MIGRATE_SRC.indexOf('\nasync function ', start + 1)
+  );
+  assert.match(fixture, /const prBody = '## What changed/);
+  assert.match(fixture, /pr_summary_md, pr_body, status/);
+  assert.match(fixture, /conflict_checked_at = NOW\(\),\s*pr_body = \$2/,
+    'the first/default fixture is restamped when it already exists');
+});
+
 test('legacy and blank PR bodies render no disclosure', () => {
   const AppView = makeAppView(() => {
     assert.fail('blank bodies must not reach the Markdown renderer');

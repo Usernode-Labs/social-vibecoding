@@ -8495,6 +8495,7 @@ async function seedStagingMyOpenPr(pool, config) {
   const target = users[0];
 
   const branch = 'staging-fixture/my-open-pr';
+  const prBody = '## What changed\n\nThe proposal improves the Dev voting experience while preserving the existing vote and merge workflow.\n\n## How to test\n\n1. Review the proposal summary and merge status.\n2. Cast or clear a vote.\n3. Confirm the proposal remains open with the updated tally.';
   let sessionId;
   const { rows: existing } = await pool.query(
     'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
@@ -8505,14 +8506,15 @@ async function seedStagingMyOpenPr(pool, config) {
   } else {
     const { rows } = await pool.query(
       `INSERT INTO chat_sessions
-         (app_id, user_id, branch_name, pr_number, pr_title, pr_summary_md, status,
+         (app_id, user_id, branch_name, pr_number, pr_title, pr_summary_md, pr_body, status,
           votes_required, created_at)
        VALUES
          ($1, $2, $3, 9200, '[staging fixture] My open PR — awaiting votes',
-          $5, 'promoted', $4, NOW() - INTERVAL '15 minutes')
+          $5, $6, 'promoted', $4, NOW() - INTERVAL '15 minutes')
        RETURNING id`,
       [appId, target.id, branch, Math.max(1, Math.ceil(users.length / 2)),
-       'In plain terms: this proposed change makes the app a little nicer to use. Open it to read the details and cast your vote.']
+       'In plain terms: this proposed change makes the app a little nicer to use. Open it to read the details and cast your vote.',
+       prBody]
     );
     sessionId = rows[0].id;
   }
@@ -8547,9 +8549,10 @@ async function seedStagingMyOpenPr(pool, config) {
         SET merge_conflict_state = 'conflict',
             conflict_files = '["src/app.js","public/index.html"]'::jsonb,
             behind_main = 2,
-            conflict_checked_at = NOW()
+            conflict_checked_at = NOW(),
+            pr_body = $2
       WHERE id = $1`,
-    [sessionId]
+    [sessionId, prBody]
   );
 
   // #361: two sibling promoted fixtures so all the new badge states show
