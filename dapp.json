@@ -1633,7 +1633,7 @@
     {
       "name": "Theme is the first setting, and a bare #settings opens it",
       "path": "/#settings",
-      "expectSelector": "[data-settings-section=\"theme\"]:not(.hidden) #drawer-theme-track",
+      "expectSelector": "#settings-section-content [data-settings-section=\"theme\"]:not(.hidden) #drawer-theme-track",
       "expectText": "Theme"
     },
     {
@@ -1743,8 +1743,8 @@
       "expectText": "AI & agents"
     },
     {
-      "name": "Bare #settings lands on the Anthropic API key section",
-      "path": "/#settings",
+      "name": "The Anthropic API key section renders at its deep link",
+      "path": "/#settings/api-key",
       "expectSelector": "#settings-section-content [data-settings-section=\"api-key\"]:not(.hidden) #settings-api-key"
     },
     {
