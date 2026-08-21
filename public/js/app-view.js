@@ -2418,7 +2418,9 @@ const AppView = {
       // of the proposal body region, above proposer / linked issues / roster
       // and the discussion thread — mirroring _issueBodyHtml for issues.
       bodyHtml = AppView._detailActionsHtml('proposal', item)
-        + AppView._proposalSummaryHtml(item) + AppView._proposalDetailsHtml(item)
+        + AppView._proposalSummaryHtml(item)
+        + AppView._proposalBodyHtml(item)
+        + AppView._proposalDetailsHtml(item)
         // shared_at (and so transcript_shared) survives promotion and
         // merge, so a proposal whose owner published the dev chat keeps
         // offering it here — the "how did this change come about?" read,
@@ -6343,6 +6345,38 @@ const AppView = {
       ? (s) => DevChat.renderMarkdown(s)
       : (s) => `<pre class="whitespace-pre-wrap font-sans">${escapeHtml(s)}</pre>`;
     return `<div class="dev-issue-body text-xs text-zinc-600 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3 mt-2">${renderMd(md)}</div>`;
+  },
+
+  // The complete GitHub PR description is deliberately quieter than the
+  // generated summary above: reviewers can expand it when they need the
+  // implementation and testing detail without making every proposal topic
+  // start with a wall of text. Keep the disclosure state outside the DOM so
+  // checks polling and websocket-driven topic repaints do not collapse it.
+  _proposalBodyOpen: new Set(),
+
+  _setProposalBodyOpen(proposalId, open) {
+    const id = Number(proposalId);
+    if (!Number.isInteger(id) || id <= 0) return;
+    if (open) AppView._proposalBodyOpen.add(id);
+    else AppView._proposalBodyOpen.delete(id);
+  },
+
+  _proposalBodyHtml(pr) {
+    const md = pr && typeof pr.pr_body === 'string' ? pr.pr_body.trim() : '';
+    if (!md) return '';
+    const id = Number(pr && pr.id);
+    const hasStableId = Number.isInteger(id) && id > 0;
+    const open = hasStableId && AppView._proposalBodyOpen.has(id);
+    const renderMd = (typeof DevChat !== 'undefined' && DevChat.renderMarkdown)
+      ? (s) => DevChat.renderMarkdown(s)
+      : (s) => `<pre class="whitespace-pre-wrap font-sans">${escapeHtml(s)}</pre>`;
+    const toggle = hasStableId
+      ? ` ontoggle="AppView._setProposalBodyOpen(${id}, this.open)"`
+      : '';
+    return `<details class="border border-zinc-200 dark:border-zinc-800 rounded-xl mt-2 overflow-hidden"${open ? ' open' : ''}${toggle}>
+      <summary class="cursor-pointer select-none px-3 py-2 text-xs font-medium text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-900/50">Full proposal details</summary>
+      <div class="dev-issue-body text-xs text-zinc-600 dark:text-zinc-300 border-t border-zinc-200 dark:border-zinc-800 p-3">${renderMd(md)}</div>
+    </details>`;
   },
 
   // The placeholder-title marker (AI naming was unavailable when this
