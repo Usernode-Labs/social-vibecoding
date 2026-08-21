@@ -128,3 +128,38 @@ test('the offline-app checks do not depend on a real running app', () => {
   assert.match(app, /_applyOfflineAppShot\(\)/, 'the shot handler is called from init');
   assert.match(view, /showOfflineAppShot\(ready\)/, 'and paints through app-view');
 });
+
+// ── The contract generated apps are told about ──────────────────────────
+//
+// The shell half of this is invisible from inside an app: an author has no
+// way to discover that loading the bridge plus registering a worker is what
+// buys an offline launch, or that an offline load arrives with no token.
+// Todo List shipped a complete offline layer AND no bridge tag, which is
+// precisely the gap an undocumented capability produces. Same guard shape as
+// tests/app-conventions-shutdown.test.js.
+const CONVENTIONS = fs.readFileSync(
+  path.join(root, 'src', 'prompts', 'app-conventions.md'), 'utf8',
+);
+
+function conventionsSection(heading) {
+  const start = CONVENTIONS.indexOf(`\n## ${heading}\n`);
+  assert.notStrictEqual(start, -1, `missing "## ${heading}" section`);
+  const next = CONVENTIONS.indexOf('\n## ', start + heading.length + 5);
+  return CONVENTIONS.slice(start, next === -1 ? CONVENTIONS.length : next);
+}
+
+test('the conventions document the offline-launch contract', () => {
+  const s = conventionsSection('Offline — apps that open with no connection');
+  assert.match(s, /navigator\.serviceWorker\.controller/,
+    'names the signal the shell actually reads');
+  assert.match(s, /bridge/i, 'and that the bridge tag is required to announce it');
+  assert.match(s, /token/i, 'an offline load carries no token — apps must expect that');
+});
+
+test('the essentials say the bridge tag is unconditional', () => {
+  // This one is extracted into every work order, so it is the copy an agent
+  // building a new app is most likely to be reading.
+  const essentials = conventionsSection('Essentials — the offline excerpt');
+  assert.match(essentials, /bridge tag is not conditional/i,
+    'an app that calls no bridge API still has to load it');
+});
