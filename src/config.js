@@ -194,6 +194,14 @@ function load() {
     console.error('[config] OPENROUTER_API_BASE must be an HTTPS URL without credentials, query parameters, or a fragment.');
     process.exit(1);
   }
+  const openrouterManagedDailyLimitUsd = Number(
+    process.env.OPENROUTER_MANAGED_DAILY_LIMIT_USD || '1',
+  );
+  if (!Number.isFinite(openrouterManagedDailyLimitUsd)
+      || openrouterManagedDailyLimitUsd <= 0) {
+    console.error('[config] OPENROUTER_MANAGED_DAILY_LIMIT_USD must be a positive dollar amount.');
+    process.exit(1);
+  }
   let cliAuthOrigin = null;
   let cliAuthEnabled = !staging;
   if (cliAuthEnabled && cliLocalMode) {
@@ -244,9 +252,9 @@ function load() {
     iframeJwtPublicKey: (process.env.IFRAME_JWT_PUBLIC_KEY || '').replace(/\\n/g, '\n'),
     workerJwtSecret: process.env.WORKER_JWT_SECRET || '',
     edgeJwtSecret: process.env.EDGE_JWT_SECRET || '',
-    // OpenRouter BYOK + Codex backend. Available alongside Claude by
-    // default; this is an availability/kill switch, never a global provider
-    // choice. Each user explicitly chooses the backend for their session.
+    // OpenRouter + Codex backend. OpenRouter is the preferred backend once a
+    // user has a usable key; Claude remains the safe fallback for accounts
+    // that have not configured or claimed one.
     codexOpenrouterEnabled: String(process.env.CODEX_OPENROUTER_ENABLED || 'true') === 'true',
     // #717: collection-only emergency switch. Reporting remains readable so
     // operators can inspect already-recorded aggregates after disabling new
@@ -254,10 +262,16 @@ function load() {
     llmTelemetryEnabled: String(process.env.LLM_TELEMETRY_ENABLED || 'true') === 'true',
     openrouterBetaUserIds: (process.env.CODEX_OPENROUTER_BETA_USER_IDS || '')
       .split(',').map((s) => s.trim()).filter(Boolean),
-    openrouterDefaultCodexModel: process.env.OPENROUTER_DEFAULT_CODEX_MODEL || '',
+    openrouterDefaultCodexModel: process.env.OPENROUTER_DEFAULT_CODEX_MODEL || 'z-ai/glm-5.3',
     openrouterApiBase,
     openrouterAllowInsecureBase: String(process.env.OPENROUTER_ALLOW_INSECURE_BASE || 'false') === 'true',
     openrouterOrigin: process.env.OPENROUTER_ORIGIN || 'https://usernode.dev',
+    // Management credentials stay in the platform process only. They create
+    // and administer limited child keys; unlike child keys, a management key
+    // cannot be used for model inference.
+    openrouterManagementApiKey: process.env.OPENROUTER_MANAGEMENT_API_KEY || '',
+    openrouterManagedDailyLimitUsd,
+    openrouterManagedWorkspaceId: process.env.OPENROUTER_MANAGED_WORKSPACE_ID || '',
     // The former single shared JWT_SECRET is GONE. All four token
     // authorities (app identity RS256, worker, edge grant, edge cookie)
     // read their own key from env via services/platform-jwt.js, and a
@@ -593,6 +607,9 @@ function load() {
   console.log(`  GITHUB_APP_ID=${config.githubAppId || '(not set)'}`);
   console.log(`  ANTHROPIC_API_KEY=${mask(config.anthropicApiKey)}`);
   console.log(`  ANTHROPIC_ADMIN_KEY=${mask(config.anthropicAdminKey)}`);
+  console.log(`  OPENROUTER_MANAGEMENT_API_KEY=${mask(config.openrouterManagementApiKey)}`);
+  console.log(`  OPENROUTER_MANAGED_DAILY_LIMIT_USD=${config.openrouterManagedDailyLimitUsd} OPENROUTER_MANAGED_WORKSPACE_ID=${config.openrouterManagedWorkspaceId || '(default workspace)'}`);
+  console.log(`  OPENROUTER_DEFAULT_CODEX_MODEL=${config.openrouterDefaultCodexModel}`);
   console.log(`  IDENTITY_CREDIT_POLICY=${config.identityCreditPolicy}`);
   console.log(`  GITHUB_LINK=${config.githubLinkClientId && config.githubLinkClientSecret ? '(enabled)' : '(disabled)'}`);
   console.log(`  X_LINK=${(config.xLinkClientId && config.xLinkClientSecret) || (config.waitlistXClientId && config.waitlistXClientSecret) ? '(enabled)' : '(disabled)'}`);

@@ -6,9 +6,10 @@
  * button inherits its lifecycle exactly. That control was shown by
  * `App.DrawerStatus.setAppOpen()` and hidden everywhere else; this one is shown
  * whenever ../improve/improve-store.js carries a TARGET, which the same call
- * publishes. The difference is that the home screen now publishes one too — the
- * platform's own self-hosted row — so Improve is present there and means
- * "improve Social Vibecoding itself".
+ * publishes — an open app, and nowhere else. Home included: it briefly
+ * re-targeted the platform's own self-hosted row there, but only on the return
+ * paths, so the button read as a stale leftover of the app just closed (and
+ * vanished on refresh). Home publishes no target now, on every path.
  *
  * ── Why a labelled pill and not a fifth icon ───────────────────────────
  *

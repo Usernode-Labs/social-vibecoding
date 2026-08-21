@@ -36,7 +36,7 @@ const PURPOSES = ['coding_agent', 'app_llm'];
 // non-usable states we constrain at the store boundary.
 const VALID_STATUS = 'valid';
 const REVOKED_STATUS = 'revoked';
-const SUPPORTED_STATUSES = [VALID_STATUS, REVOKED_STATUS, 'unverified', 'invalid', 'expired'];
+const SUPPORTED_STATUSES = [VALID_STATUS, REVOKED_STATUS, 'unverified', 'invalid', 'expired', 'disabled'];
 
 // Legacy column pair that the Anthropic coding-agent credential predates.
 const LEGACY_ANTHROPIC_COLUMNS = {
@@ -158,6 +158,77 @@ async function upsert(opts) {
   return withTransaction(pool, (client) => upsertOnClient({ client, ...opts }));
 }
 
+// Managed OpenRouter provisioning needs the encrypted credential write and
+// its ownership metadata in the same transaction as the managed-key record.
+// Keeping this helper here avoids duplicating the encryption/fingerprint
+// contract in the provisioning service.
+async function writeOpenRouterCodingAgentOnClient({
+  client, userId, apiKey, dataKey, metadata = {},
+}) {
+  const encrypted = secrets.encrypt(apiKey, dataKey);
+  const saved = await upsertOnClient({
+    client,
+    userId,
+    provider: 'openrouter',
+    purpose: 'coding_agent',
+    secretEnc: encrypted,
+    secretLast4: apiKey.slice(-4),
+    secretFingerprint: fingerprint(apiKey, dataKey),
+    status: VALID_STATUS,
+    verified: true,
+  });
+  await client.query(
+    `UPDATE credentials.user_ai_credentials
+        SET metadata = $2, updated_at = NOW()
+      WHERE id = $1`,
+    [saved.id, metadata],
+  );
+  return saved;
+}
+
+// Disable/re-enable a retained credential without exposing or replacing its
+// ciphertext. Only valid credentials are decryptable by readSecret().
+async function setStatusOnClient({ client, userId, provider, purpose, status }) {
+  assertProviderPurpose(provider, purpose);
+  if (![VALID_STATUS, 'disabled'].includes(status)) {
+    throw new Error(`credential-store: cannot retain secret with status ${status}`);
+  }
+  const { rows } = await client.query(
+    `UPDATE credentials.user_ai_credentials
+        SET status = $4::varchar(16),
+            verified_at = CASE WHEN $4::varchar(16) = 'valid' THEN NOW() ELSE NULL END,
+            last_error_code = CASE WHEN $4::varchar(16) = 'disabled' THEN 'admin_disabled' ELSE NULL END,
+            revision = revision + 1,
+            updated_at = NOW()
+      WHERE user_id = $1 AND provider = $2 AND purpose = $3
+        AND secret_enc IS NOT NULL
+      RETURNING id, revision, status, secret_last4`,
+    [userId, provider, purpose, status],
+  );
+  return rows[0] || null;
+}
+
+async function revokeOnClient({ client, userId, provider, purpose }) {
+  assertProviderPurpose(provider, purpose);
+  const { rows } = await client.query(
+    `INSERT INTO credentials.user_ai_credentials
+       (user_id, provider, purpose, status, revision, revoked_at)
+     VALUES ($1, $2, $3, 'revoked', 1, NOW())
+     ON CONFLICT (user_id, provider, purpose) DO UPDATE SET
+       secret_enc = NULL,
+       secret_last4 = NULL,
+       secret_fingerprint = NULL,
+       status = 'revoked',
+       verified_at = NULL,
+       revoked_at = NOW(),
+       revision = credentials.user_ai_credentials.revision + 1,
+       updated_at = NOW()
+     RETURNING id, revision, status`,
+    [userId, provider, purpose],
+  );
+  return rows[0] || null;
+}
+
 // Revoke (tombstone) a credential row. Authoritative: clears the generic
 // secret AND, for the Anthropic coding-agent credential, the legacy
 // users.anthropic_key_* columns in the same transaction, so a tombstoned
@@ -174,26 +245,7 @@ async function revoke({ pool, userId, provider, purpose }) {
     // yet, we INSERT (and thereby lock) the tombstone row — a plain UPDATE
     // would affect zero rows and acquire no lock, letting a delete commit
     // after a save while the generic key stays valid (review F1).
-    const { rows } = await client.query(
-      `INSERT INTO credentials.user_ai_credentials
-         (user_id, provider, purpose, status, revision, revoked_at)
-       VALUES ($1, $2, $3, 'revoked', 1, NOW())
-       ON CONFLICT (user_id, provider, purpose) DO UPDATE SET
-         secret_enc = NULL,
-         secret_last4 = NULL,
-         secret_fingerprint = NULL,
-         status = 'revoked',
-         -- The valid_verified CHECK requires non-valid rows to have
-         -- verified_at NULL; a revoked row that still carries verified_at
-         -- would violate it and make the whole upsert fail (500 + key
-         -- left active). Clear it here (review P1).
-         verified_at = NULL,
-         revoked_at = NOW(),
-         revision = credentials.user_ai_credentials.revision + 1,
-         updated_at = NOW()
-       RETURNING revision, status`,
-      [userId, provider, purpose]
-    );
+    const revoked = await revokeOnClient({ client, userId, provider, purpose });
     // Authoritative revocation must also clear any stale legacy ciphertext
     // so a later legacy-first fallback can't re-expose the deleted key.
     if (provider === 'anthropic' && purpose === 'coding_agent') {
@@ -204,7 +256,7 @@ async function revoke({ pool, userId, provider, purpose }) {
         [userId]
       );
     }
-    return rows[0] || null;
+    return revoked;
   });
 }
 
@@ -356,6 +408,9 @@ module.exports = {
   fingerprint,
   withTransaction,
   upsert,
+  writeOpenRouterCodingAgentOnClient,
+  setStatusOnClient,
+  revokeOnClient,
   revoke,
   readMetadata,
   readSecret,

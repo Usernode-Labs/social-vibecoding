@@ -98,17 +98,6 @@
   // always available.
   var VENUES = [
     {
-      id: 'usernode-claude',
-      label: 'Usernode · Claude',
-      group: 'in-chat',
-      mechanism: { kind: 'backend', backend: 'claude_code' },
-      requires: null,
-      defaultable: true,
-      chat: true,
-      blurb: 'Usernode runs the turns right here, on your daily AI credits — or your own Anthropic key once they run out.',
-      cta: 'Build it here',
-    },
-    {
       id: 'usernode-openrouter',
       label: 'Usernode · OpenRouter',
       group: 'in-chat',
@@ -119,8 +108,19 @@
       requires: 'openrouterAvailable',
       defaultable: true,
       chat: true,
-      blurb: 'The same chat, driven through your own OpenRouter key — you pick the model and how hard it thinks.',
+      blurb: 'The preferred in-chat option: use included daily credits or your own OpenRouter key, and pick any available model.',
       cta: 'Use OpenRouter',
+    },
+    {
+      id: 'usernode-claude',
+      label: 'Usernode · Claude',
+      group: 'in-chat',
+      mechanism: { kind: 'backend', backend: 'claude_code' },
+      requires: null,
+      defaultable: true,
+      chat: true,
+      blurb: 'Usernode runs the turns right here, on your daily Claude credits — or your own Anthropic key once they run out.',
+      cta: 'Use Claude',
     },
     {
       id: 'local',

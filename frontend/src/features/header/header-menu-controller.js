@@ -56,8 +56,7 @@ const DrawerStatus = {
     // replaced. That exclusion existed because the row's App mode had no
     // reachable iframe target, which made a two-option control a control with
     // one dead option. Improve has no such problem — everything it offers
-    // works on the platform's own row, and that row is precisely what the
-    // home screen's Improve button points at.
+    // works on the platform's own row, opened like any other app.
     const appData = window.AppView?.appData;
     if (open && appData?.slug) {
       window.Improve?.setTarget({
@@ -73,9 +72,11 @@ const DrawerStatus = {
       });
     } else if (!open) {
       // Cleared here rather than per-screen: every navigation away from an
-      // app already funnels through this call. App.navigateHome() re-publishes
-      // the platform's own row straight after, which is what keeps Improve on
-      // the home screen.
+      // app already funnels through this call, home included — which is what
+      // keeps the Improve button from lingering in the header after backing
+      // out of an app. (Home used to re-publish the platform's own row right
+      // after this; that re-target was retired — see the DrawerStatus note in
+      // public/js/app.js.)
       window.Improve?.setTarget(null);
     }
     DrawerStatus.refreshDeployDot();

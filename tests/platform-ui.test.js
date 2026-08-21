@@ -332,8 +332,8 @@ test('the Improve button ships hidden and opens the panel', () => {
   assert.ok(m, 'missing #improve-btn');
   const el = m[0];
   // Ships hidden for the same reason the switch did: there is nothing to
-  // improve until a target is published. The publisher is the same call —
-  // App.DrawerStatus.setAppOpen — plus App._improveHome() on the home screen.
+  // improve until a target is published. The one publisher is
+  // App.DrawerStatus.setAppOpen — an open app, and nowhere else.
   assert.ok(el.includes('hidden'), 'ships hidden — a published target reveals it');
   assert.ok(el.includes('aria-haspopup="dialog"'), 'it opens a dialog surface');
   assert.ok(el.includes('aria-expanded="false"'), 'closed state reaches the a11y tree');
@@ -353,23 +353,36 @@ test('setAppOpen publishes the Improve target instead of toggling a switch', () 
   assert.ok(fn.includes('setTarget(null)'),
     'closing an app must clear the target, or the button outlives its subject');
   // Unlike the switch it replaced, the self-hosted platform row is NOT
-  // excluded: everything Improve offers works on it, and that row is exactly
-  // what the home screen's Improve button points at.
+  // excluded: everything Improve offers works on it, opened like any other
+  // app.
   assert.ok(fn.includes('self_hosted'), 'the platform row is still classified');
   assert.ok(!/self_hosted[\s\S]{0,120}classList\.toggle\('hidden'/.test(fn),
     'the platform row must no longer be hidden out of the header');
 });
 
-test('the home screen points Improve at the platform\'s own app row', () => {
+test('returning home clears the Improve target instead of re-publishing one', () => {
+  // The home screen shows NO Improve button. It used to re-target the
+  // platform's own row (App._improveHome), but only on the return paths — a
+  // cold boot at `/` never published one — so the button appeared after
+  // backing out of an app and vanished on refresh, reading as a stale
+  // leftover of the app just closed. The fix is the consistent absence: the
+  // helper is gone, and both home entry points clear the target through
+  // App.DrawerStatus.setAppOpen(false).
   const src = read('public/js/app.js');
-  assert.ok(src.includes('_improveHome()'), 'the helper went missing');
-  const fn = src.slice(src.indexOf('_improveHome() {'), src.indexOf('DrawerStatus: {'));
-  assert.ok(fn.includes('App.user?.platformApp'),
-    'the slug comes from /api/auth/me — GET /api/apps hides self-hosted rows');
-  assert.ok(fn.includes("kind: 'platform'"), 'the target is classified as the platform');
-  // Both entry points: a cold boot landing on home, and every later return.
-  assert.ok(src.indexOf('App._improveHome();') !== src.lastIndexOf('App._improveHome();'),
-    'both navigateHome and the restoreFromHash home fallback must publish it');
+  assert.ok(!src.includes('_improveHome'),
+    'the home re-target helper is retired — home publishes no Improve target');
+  // navigateHome: the transition callback clears the target and never
+  // publishes a new one before the header title is set.
+  const navStart = src.indexOf('navigateHome() {');
+  const nav = src.slice(navStart, src.indexOf('after: () => {', navStart));
+  assert.ok(/App\.DrawerStatus\.setAppOpen\(false\);[\s\S]{0,60}App\.setHeaderTitle\('dApps'\)/.test(nav),
+    'navigateHome must clear the target (setAppOpen(false)) with no re-target before the home title');
+  // The restoreFromHash unrecognised-hash fallback lands on home too, and a
+  // lingering target there is the same bug in a different door.
+  const fallbackIdx = src.indexOf("App._showOnlyScreen('home-screen');");
+  const fallback = src.slice(fallbackIdx, src.indexOf('Home.load();', fallbackIdx));
+  assert.ok(fallback.includes('App.DrawerStatus.setAppOpen(false);'),
+    'the hash-fallback home landing must clear the target too');
 });
 
 test('app.css drops the tab-bar rules and draws the Improve panel', () => {

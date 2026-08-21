@@ -937,7 +937,10 @@ async function persistScoutPublication({
 // creation path — ordinary dev-chat, headless auto-session, and clone — so
 // "default coding agent" means the same thing regardless of how a session
 // was spawned. Falls back to the legacy claude_code schema default when the
-// user has never set a default. Best-effort: never throws.
+// user has never set a default but already owns a usable OpenRouter key,
+// OpenRouter is preferred; otherwise the safe fallback is Claude. Best-
+// effort provider fallbacks never throw, while a preference-query DB error
+// still propagates so it cannot be mistaken for "no preference".
 // Resolve the default coding-agent preference for a NEW session WITHOUT
 // mutating the session (plan 9.1). A Codex default is applied only when it
 // is actually usable (feature enabled, user in the beta allowlist, valid
@@ -963,8 +966,8 @@ async function resolveDefaultAgentPreference(client, userId, config) {
     [userId],
   );
   const pref = prefRows[0];
-  if (!pref || pref.backend !== 'codex_openrouter') {
-    // No preference or a Claude default → Claude session (schema default).
+  if (pref && pref.backend !== 'codex_openrouter') {
+    // An explicit Claude preference always wins.
     return {
       backend: 'claude_code',
       provider: 'anthropic',
@@ -979,7 +982,7 @@ async function resolveDefaultAgentPreference(client, userId, config) {
     provider: 'anthropic',
     model: null,
     reasoningEffort: null,
-    fallbackReason: reason,
+    ...(pref ? { fallbackReason: reason } : {}),
   });
 
   if (!config || !config.codexOpenrouterEnabled) {
@@ -992,7 +995,7 @@ async function resolveDefaultAgentPreference(client, userId, config) {
     return claudeFallback('not_in_beta');
   }
 
-  let modelId = pref.model_id;
+  let modelId = pref?.model_id;
   if (!modelId) {
     modelId = (config && config.openrouterDefaultCodexModel) || null;
   }
@@ -1010,6 +1013,24 @@ async function resolveDefaultAgentPreference(client, userId, config) {
       log.warn('sessions', 'Codex default not applied: missing/invalid credential', { userId });
       return claudeFallback('no_credential');
     }
+    // Accounts with a usable key but no preference predate the
+    // OpenRouter-default migration. Resolve their first new session against
+    // the live key-visible catalog so a configured future model can fall
+    // back safely until OpenRouter publishes it.
+    if (!pref) {
+      const apiKey = await credentialStore.readSecret({
+        pool: client, userId, provider: 'openrouter', purpose: 'coding_agent',
+        dataKey: config.dataEncryptionKey,
+      });
+      if (!apiKey) return claudeFallback('no_credential');
+      const agentModels = require('../services/agent-models');
+      const catalog = await agentModels.listOpenRouterModels({
+        pool: client, userId, credentialRevision: meta.revision,
+        apiKey, config, forceRefresh: false,
+      });
+      modelId = catalog.recommendedModelId || modelId;
+      if (!modelId) return claudeFallback('model_unavailable');
+    }
   } catch (err) {
     log.warn('sessions', 'Codex default not applied: credential check failed', { userId, err: err.message });
     return claudeFallback('no_credential');
@@ -1019,7 +1040,7 @@ async function resolveDefaultAgentPreference(client, userId, config) {
     backend: 'codex_openrouter',
     provider: 'openrouter',
     model: modelId,
-    reasoningEffort: pref.reasoning_effort || null,
+    reasoningEffort: pref?.reasoning_effort || null,
   };
 }
 

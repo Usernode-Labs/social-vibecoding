@@ -94,11 +94,12 @@ const Improve = {
 
   // ── What the panel is about ──────────────────────────────────────
   //
-  // Called from App.DrawerStatus.setAppOpen() for an open app, and from
-  // App.navigateHome() with the platform's own self-hosted row so that
-  // "Improve" on the home screen means "improve Social Vibecoding itself".
-  // Passing null clears the target, which hides the header button — that is
-  // what every other platform screen (settings, admin, profile…) does.
+  // Called from App.DrawerStatus.setAppOpen() for an open app. Passing null
+  // clears the target, which hides the header button — that is what every
+  // screen that is not an open app does, home included: home briefly
+  // re-published the platform's own self-hosted row here, but only on the
+  // return paths, which left the button lingering after backing out of an app
+  // while a refresh hid it. It was retired for the consistent no-button home.
   setTarget(target) {
     if (!target || !target.slug) {
       if (improveStore.get().open) Improve.close();
@@ -359,12 +360,12 @@ const Improve = {
   /**
    * Put the panel's TARGET on screen, then run `then` against it.
    *
-   * Improve can be opened for an app that is not the one currently rendered —
-   * on the home screen it is about the platform's own row, and nothing has
-   * loaded `/api/apps/<platform>` at that point. So the actions that need
-   * `AppView.appData` navigate first and await the same promise the router
-   * awaits, rather than firing at an `AppView` that is still describing the
-   * previous app (or none).
+   * Improve can be opened for an app whose `/api/apps/<slug>` payload is not
+   * the one `AppView` currently describes (a target published before the
+   * app's own fetch settles). So the actions that need `AppView.appData`
+   * navigate first and await the same promise the router awaits, rather than
+   * firing at an `AppView` that is still describing the previous app (or
+   * none).
    */
   async _withApp(then, opts) {
     const { slug } = improveStore.get();
@@ -400,8 +401,7 @@ const Improve = {
       return;
     }
     // Otherwise there is no open app for "This app" to mean, so the dialog
-    // opens on its Platform default — which is correct on the home screen,
-    // where the target IS the platform.
+    // opens on its Platform default.
     window.App.openFeedbackModal();
   },
 

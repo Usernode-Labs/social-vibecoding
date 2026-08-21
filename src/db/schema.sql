@@ -5231,6 +5231,35 @@ WHERE g.provider = 'anthropic'
 -- (same treatment the legacy users.anthropic_key_enc already gets).
 COMMENT ON TABLE  credentials.user_ai_credentials IS 'staging:private';
 
+-- One company-funded OpenRouter child key reservation per verified Usernode
+-- account. The row is deliberately retained after remote deletion: its
+-- UNIQUE(user_id) tombstone is the durable "issued once" guarantee, while
+-- the child secret itself lives only in user_ai_credentials (encrypted).
+-- Management keys are deploy secrets and never enter either table.
+CREATE TABLE IF NOT EXISTS credentials.managed_openrouter_keys (
+  id                   BIGSERIAL PRIMARY KEY,
+  user_id              BIGINT NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+  credential_id        BIGINT UNIQUE REFERENCES credentials.user_ai_credentials(id) ON DELETE SET NULL,
+  remote_key_hash      VARCHAR(128) UNIQUE,
+  remote_label         VARCHAR(255),
+  workspace_id         VARCHAR(128),
+  status               VARCHAR(24) NOT NULL DEFAULT 'provisioning'
+                         CHECK (status IN ('provisioning', 'active', 'disabled',
+                                           'deleted', 'needs_review')),
+  daily_limit_usd      NUMERIC(18,8) NOT NULL CHECK (daily_limit_usd > 0),
+  limit_reset          VARCHAR(16) NOT NULL DEFAULT 'daily'
+                         CHECK (limit_reset = 'daily'),
+  last_error_code      VARCHAR(64),
+  issued_at            TIMESTAMPTZ,
+  disabled_at          TIMESTAMPTZ,
+  deleted_at           TIMESTAMPTZ,
+  created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS managed_openrouter_keys_status_idx
+  ON credentials.managed_openrouter_keys (status, updated_at DESC);
+COMMENT ON TABLE credentials.managed_openrouter_keys IS 'staging:private';
+
 -- ═══════════════════════════════════════════════════════════════════════
 -- Profile customization (issue #982) — the editable half of the #profile
 -- screen: a short bio and a profile picture.
