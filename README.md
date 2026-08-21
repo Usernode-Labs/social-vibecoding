@@ -314,9 +314,9 @@ node scripts/check-sql.js --write-dynamic-baseline
 Proposal unit suites run the same gate against the worker image's isolated
 PostgreSQL 17 instance before `npm test`.
 
-### Codex and Claude Code CLI authentication and MCP
+### Codex, Claude Code, and OpenCode CLI authentication and MCP
 
-Ask Codex or Claude Code for the platform operation directly, for example:
+Ask Codex, Claude Code, or OpenCode for the platform operation directly, for example:
 
 ```text
 Pull the open issues for app demo.
@@ -324,14 +324,17 @@ Pull the open issues for app demo from local.
 Create and promote a proposal for app demo.
 ```
 
-Repository guidance makes either agent use production by default. It selects the
+Repository guidance makes each agent use production by default. It selects the
 immutable built-in `local` profile only when the prompt explicitly says local.
 For local requests it checks health and runs `make up` when necessary. It
 configures its project-local MCP server if missing and can finish the current
 request through the generic CLI API client while a new MCP configuration waits
-for the next client reload. Codex writes its ignored project configuration;
-Claude Code uses its private `local` MCP scope through the installed `claude`
-CLI. You do not need to run either setup command yourself.
+for the next client reload. Codex and OpenCode write ignored project
+configuration; Claude Code uses its private `local` MCP scope through the
+installed `claude` CLI. OpenCode reads `AGENTS.md` and `.agents/skills/`
+directly, and its symlinked project plugin applies the same proposal-promotion
+boundary through OpenCode's hook API. You do not need to run any setup command
+yourself.
 
 The agent also handles authentication. If the selected profile has no usable
 credential, it starts device login and waits. The only expected manual step is
@@ -351,9 +354,11 @@ outside the checkout. The ignored `.codex/config.toml` contains absolute
 launcher paths and a reviewed tool allowlist, but no credential or server
 origin. Claude Code stores the equivalent server in its private project-local
 configuration; the ignored `.claude/social-vibecoding-mcp.local.json` is only a
-credential-free ownership marker used for safe, idempotent updates. Both
-clients load MCP configuration only for a trusted project; do not authenticate
-from an unreviewed or unexpectedly modified checkout.
+credential-free ownership marker used for safe, idempotent updates. OpenCode's
+ignored `.opencode/opencode.jsonc` likewise holds only absolute launcher paths,
+the reviewed tool allowlist, and the manual approval rule for promotion. All
+three clients load project configuration only from a trusted checkout; do not
+authenticate from an unreviewed or unexpectedly modified checkout.
 
 Optional diagnostic commands:
 

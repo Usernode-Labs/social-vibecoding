@@ -27,6 +27,7 @@ If the MCP tools are unavailable, configure the active client:
 
 - For ChatGPT desktop or Codex CLI, run `node ./tools/social-vibecoding codex setup`.
 - For Claude Code, run `node ./tools/social-vibecoding claude setup`.
+- For OpenCode, run `node ./tools/social-vibecoding opencode setup`.
 
 Pass `--profile production` unless the user explicitly requested local; then pass `--profile local`. Finish the request with `node ./tools/social-vibecoding api <METHOD> <PATH> --profile <profile>`.
 
