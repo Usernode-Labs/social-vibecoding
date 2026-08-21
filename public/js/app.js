@@ -1884,6 +1884,37 @@ const App = {
   // unguarded refreshDeployDot() / setAppOpen() callers below would throw on
   // a bare getter. Forwarding no-ops instead, which is what those calls did
   // when the drawer was not on screen anyway.
+  // Point the Improve panel at the platform's own app row.
+  //
+  // THE UI OVERHAUL put Improve on the home screen, where it means "improve
+  // Social Vibecoding itself" rather than any app the viewer has open. The
+  // slug comes from /api/auth/me's `platformApp` (services/platform-app.js)
+  // because it is not otherwise knowable client-side: GET /api/apps hides
+  // self-hosted rows from non-admins on purpose.
+  //
+  // Silently a no-op when the deployment has no self-hosted row (a fresh
+  // install, a staging clone before its apps table is seeded) — the button
+  // simply does not appear, which is the honest answer.
+  _improveHome() {
+    const platformApp = App.user?.platformApp;
+    if (!platformApp?.slug) return;
+    window.Improve?.setTarget({
+      kind: 'platform',
+      slug: platformApp.slug,
+      name: platformApp.name || 'Social Vibecoding',
+      selfHosted: true,
+      repoUrl: platformApp.repoUrl || null,
+      version: platformApp.version || null,
+      deploying: false,
+      // The home screen cannot know whether this viewer may collaborate on
+      // the platform row, and guessing wrong in the permissive direction only
+      // costs a row that answers 403 on tap. AppView republishes the real
+      // value through setAppOpen the moment the app is actually opened.
+      readOnly: false,
+      canShare: false,
+    });
+  },
+
   DrawerStatus: {
     setAppOpen(open) { window.DrawerStatus?.setAppOpen(open); },
     setForkVisible(visible) { window.DrawerStatus?.setForkVisible(visible); },
@@ -2022,35 +2053,14 @@ const App = {
     // `App.openFeedbackModal`, so `App._applyFeedbackShot` and the Dev "+"
     // menu's "New issue" item still reach the dialog by name.
 
-    // Header App/Dev switch (#app-mode-switch), successor to the bottom
-    // tab bar. Tapping the ALREADY-ACTIVE App segment is a no-op: the
-    // switch now sits inches from the icons people tap constantly, and
-    // switchTab('app') re-runs renderAppTab(), which replaces
-    // #app-content's innerHTML and therefore RELOADS the embedded app —
-    // losing whatever the user had on screen inside it. The Dev segment
-    // deliberately has no such guard: re-tapping it backs out of a
-    // session / chat / topic sub-view to the card list, which is the
-    // conventional "tap the active tab to go to its root" behaviour the
-    // bottom bar already had.
-    //
-    // #1036: these segments stay <button role="radio"> — an anchor
-    // cannot carry that ARIA role inside a role="radiogroup" — so the
-    // new-tab gesture is intercepted by hand (NavLink mechanism B)
-    // rather than delegated to an href. The "re-tapping the active App
-    // segment is a no-op" guard above applies to the PLAIN click only:
-    // a cmd-click on the active segment isn't re-mounting this tab's
-    // iframe, so it should still open the app view in a new one.
-    document.querySelectorAll('.app-mode-seg').forEach((btn) => {
-      const hrefFor = () => (App.currentApp
-        ? `#app/${App.currentApp}/${btn.dataset.tab === 'dev' ? 'dev' : 'app'}`
-        : null);
-      const activate = () => {
-        if (btn.dataset.tab === 'app' && App.currentTab === 'app') return;
-        App.switchTab(btn.dataset.tab);
-      };
-      if (window.NavLink) NavLink.wireModified(btn, hrefFor, activate);
-      else btn.addEventListener('click', activate);
-    });
+    // The header's App/Dev segmented switch (#app-mode-switch) used to be
+    // wired here. THE UI OVERHAUL retired it: an app is just an app now, and
+    // "Dev" is a destination the Improve panel links to rather than a mode the
+    // header toggles. Both tabs still exist as ROUTES — #app/<slug>/app and
+    // #app/<slug>/dev — so every deep link, notification target and history
+    // entry keeps working; what is gone is the control that flipped between
+    // them in place. features/improve/improve-controller.js's openDev() is the
+    // caller that takes its place, and it goes through the same switchTab().
 
     // popstate fires on browser/device back when the new history
     // entry was created with pushState; hashchange fires when only the
@@ -2460,6 +2470,10 @@ const App = {
         App._showOnlyScreen('home-screen');
         document.getElementById('back-btn').classList.add('hidden');
         App.setHeaderTitle('dApps');
+        // The home screen's Improve button is about the platform itself. This
+        // is the branch a COLD boot at `/` lands in (navigateHome covers every
+        // later return), so the target has to be published on both paths.
+        App._improveHome();
         Home.load();
       }
     } finally {
@@ -3472,6 +3486,11 @@ const App = {
       if (drgH) drgH.classList.add('hidden');
       if (drsH) drsH.classList.add('hidden');
       App.DrawerStatus.setAppOpen(false);
+      // …and immediately re-target Improve at the PLATFORM's own app row.
+      // setAppOpen(false) above clears the target, which is right for every
+      // other screen; home is the one place where leaving an app does not
+      // mean there is nothing to improve. See App._improveHome().
+      App._improveHome();
       App.setHeaderTitle('dApps');
     }, {
       type: App._entryTransition('zoom-out', av),
@@ -3655,14 +3674,9 @@ const App = {
     // (see AppView.readOnly).
     App.currentTab = tab;
     App.currentSubTab = tab === 'dev' ? (subTab || 'forum') : null;
-    document.querySelectorAll('.app-mode-seg').forEach((btn) => {
-      const on = btn.dataset.tab === tab;
-      btn.classList.toggle('app-mode-seg-active', on);
-      // The switch is a radiogroup, so the checked state has to be in
-      // the a11y tree too — the raised face alone tells a screen reader
-      // nothing. Also what the dapp.json checks assert on.
-      btn.setAttribute('aria-checked', on ? 'true' : 'false');
-    });
+    // The `.app-mode-seg` repaint that used to sit here is gone with the
+    // switch itself — there is no control in the header reflecting which tab
+    // is active any more, because there is no in-place toggle between them.
 
     // Tear down the cross-app active-sessions poll when leaving the
     // Sessions sub-tab. renderDevChatTab will spin it back up on

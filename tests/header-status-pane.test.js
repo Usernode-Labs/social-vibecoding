@@ -80,8 +80,11 @@ test('none of the drawer status slots are duplicated in the header', () => {
 });
 
 test('the header keeps navigation + alerting only, hamburger last', () => {
-  const order = ['dev-console-btn', 'feedback-btn', 'work-drawer-btn',
-    'notifications-btn', 'header-menu-btn'];
+  // THE UI OVERHAUL took four controls out of this group — #app-mode-switch,
+  // #feedback-btn, #work-drawer-btn and #dev-console-btn — and put the whole
+  // of what they did behind #improve-btn. What is left is Improve, the bell
+  // and the hamburger, in that order.
+  const order = ['improve-btn', 'notifications-btn', 'header-menu-btn'];
   let prev = -1;
   for (const id of order) {
     const at = header.indexOf(`id="${id}"`);
@@ -93,16 +96,26 @@ test('the header keeps navigation + alerting only, hamburger last', () => {
   const menu = header.indexOf('id="header-menu-btn"');
   const bell = header.indexOf('id="notifications-btn"');
   assert.ok(menu > bell, 'the hamburger is the rightmost header control');
+  // The retired four must not creep back in as a second way to do the same
+  // things — that split is exactly what the overhaul removed.
+  for (const id of ['app-mode-switch', 'feedback-btn', 'work-drawer-btn',
+    'dev-console-btn']) {
+    assert.equal(header.indexOf(`id="${id}"`), -1,
+      `#${id} was retired into the Improve panel and must not return to the header`);
+  }
 });
 
 // ─── The deploy dot ──────────────────────────────────────────────────────
 
 // ─── Badge geometry ──────────────────────────────────────────────────────
 
-test("the cog's green badge sits exactly where the bell's red one does", () => {
+test("the work badge sits exactly where the bell's unread one does", () => {
+  // #notifications-badge-ai used to ride the work cog. The cog is retired, so
+  // it rides the hamburger — same badge, same writer, new parent. The geometry
+  // rule below is unchanged and is the whole point of the test.
   const cog = header.match(/<span id="notifications-badge-ai"[^>]*>/);
   const bell = header.match(/<span id="notifications-badge"[^>]*>/);
-  assert.ok(cog, '#notifications-badge-ai is on the cog');
+  assert.ok(cog, '#notifications-badge-ai is on the hamburger');
   assert.ok(bell, '#notifications-badge is on the bell');
 
   // Two badges side by side in the same header read as one convention
@@ -117,7 +130,7 @@ test("the cog's green badge sits exactly where the bell's red one does", () => {
 
   // Pin the corner explicitly so the equality check above can't be
   // satisfied by moving BOTH badges somewhere unintended.
-  assert.match(cog[0], /-top-1 -right-1/, 'the cog badge is top-right');
+  assert.match(cog[0], /-top-1 -right-1/, 'the work badge is top-right');
   assert.match(bell[0], /-top-1 -right-1/, 'the bell badge is top-right');
   // …and keep the colours themselves distinct.
   assert.match(cog[0], /bg-emerald-500/, 'the cog badge stays green');

@@ -680,7 +680,7 @@
       "expectText": "Explore in dev chat"
     },
     {
-      "name": "A proposal opened by DIRECT URL has a working \u22ef menu (#1324)",
+      "name": "A proposal opened by DIRECT URL has a working ⋯ menu (#1324)",
       "path": "/?demo=1&shot=card-menu&card=proposal:9000043#app/usernode-2d5619/dev/proposals/9000043",
       "expectSelector": ".dev-card-menu [data-menu-idx]"
     },
@@ -1289,15 +1289,15 @@
       "expectText": "Staging demo admin roster"
     },
     {
-      "name": "Header App/Dev switch marks App active on an app's App view",
+      "name": "Improve button is present on an app view",
       "path": "/app/staging-demo-admins",
-      "expectSelector": "#app-mode-switch [data-tab='app'][aria-checked='true']",
+      "expectSelector": "#improve-btn:not(.hidden)",
       "allowConsoleErrors": true
     },
     {
-      "name": "Header App/Dev switch marks Dev active on an app's Dev view",
+      "name": "Improve button is present on an app Dev view",
       "path": "/app/staging-demo-admins/dev",
-      "expectSelector": "#app-mode-switch [data-tab='dev'][aria-checked='true']"
+      "expectSelector": "#improve-btn:not(.hidden)"
     },
     {
       "name": "The self-hosted platform row keeps its DEV caption (no header switch)",
@@ -1587,9 +1587,9 @@
       "expectText": "Unsave"
     },
     {
-      "name": "Header cog (your-work drawer) button renders with its icon",
+      "name": "Improve panel carries the feedback row",
       "path": "/",
-      "expectSelector": "#work-drawer-btn #work-drawer-icon"
+      "expectSelector": "#improve-panel #improve-row-feedback"
     },
     {
       "name": "Your-work drawer panel ships in the shell with its list + mark-all",
@@ -1597,14 +1597,14 @@
       "expectSelector": "#work-drawer-panel #work-drawer-list"
     },
     {
-      "name": "Cog badge span moved off the bell onto the cog button",
+      "name": "Work-in-flight badge moved off the cog onto the hamburger",
       "path": "/",
-      "expectSelector": "#work-drawer-btn #notifications-badge-ai"
+      "expectSelector": "#header-menu-btn #notifications-badge-ai"
     },
     {
-      "name": "Cog badge is VISIBLE when a finished dev session is unread",
+      "name": "Work-in-flight badge is VISIBLE when a finished dev session is unread",
       "path": "/?demo=1",
-      "expectSelector": "#work-drawer-btn #notifications-badge-ai:not(.hidden)[data-session-done]:not([data-session-done=\"0\"])"
+      "expectSelector": "#header-menu-btn #notifications-badge-ai:not(.hidden)[data-session-done]:not([data-session-done=\"0\"])"
     },
     {
       "name": "Admin/moderation row renders in the drawer for admins (#588)",

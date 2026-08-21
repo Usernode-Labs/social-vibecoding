@@ -384,25 +384,23 @@ test('#browse-detail-back keeps its own layout as an anchor', () => {
 
 // ── The rows that stay buttons / divs ──────────────────────────────────
 
-test('the App/Dev switch stays a radiogroup and intercepts by hand', () => {
-  // An <a> cannot carry role="radio" inside a role="radiogroup"; that is
-  // why this one control uses mechanism B.
-  assert.match(html, /<button[^>]*role="radio"[^>]*class="[^"]*app-mode-seg/,
-    'the segments must remain buttons with their ARIA role');
-  const at = appJs.indexOf(".querySelectorAll('.app-mode-seg')");
-  assert.ok(at !== -1, 'the switch wiring went missing');
-  const body = appJs.slice(at, at + 900);
-  assert.match(body, /NavLink\.wireModified\(btn, hrefFor, activate\)/,
-    'the switch routes through the interception helper');
-  assert.match(body, /#app\/\$\{App\.currentApp\}\/\$\{btn\.dataset\.tab === 'dev' \? 'dev' : 'app'\}/,
-    'the target is resolved at click time — App.currentApp is not stable at wiring time');
-  assert.match(body, /App\.currentApp\s*\?/,
-    'no open app means no target rather than "#app/null/app"');
-  // The "re-tapping the active App segment is a no-op" guard belongs to
-  // the plain path only: a cmd-click is not re-mounting this tab's iframe.
-  const activate = body.slice(body.indexOf('const activate'));
-  assert.match(activate.slice(0, 200), /btn\.dataset\.tab === 'app' && App\.currentTab === 'app'\) return/,
-    'the no-op guard survives on the plain-click path');
+// The App/Dev switch used to be tested here as the one control that had to
+// use NavLink mechanism B (hand interception) rather than a plain href: an
+// <a> cannot carry role="radio" inside a role="radiogroup". THE UI OVERHAUL
+// retired the switch, so the exception is gone with it — every navigating
+// control in the shell is an anchor or goes through App's router now.
+//
+// #improve-btn is deliberately NOT a new exception. It opens a panel rather
+// than navigating, so there is no destination for a cmd-click to open; the
+// panel's own rows are where navigation happens, and those ARE anchors
+// (see features/improve/improve-panel.tsx's SessionRow and ImproveRow).
+test('the retired App/Dev switch left no interception behind', () => {
+  assert.equal(appJs.indexOf(".querySelectorAll('.app-mode-seg')"), -1,
+    'the switch wiring is gone from app.js');
+  assert.equal(html.indexOf('id="app-mode-switch"'), -1,
+    'the switch markup is gone from the shell');
+  assert.doesNotMatch(html, /class="[^"]*app-mode-seg/,
+    'no orphan segment survived the retirement');
 });
 
 const ROWS = [

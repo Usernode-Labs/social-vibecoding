@@ -114,11 +114,14 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // LockIcon — the landing screen's waitlist badge, rendered only once the
     // waitlist form is open.
     'M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z',
-    // DiscussionIcon and ChevronRightIcon — the Dev board frame, which is
-    // mounted by lib/interim-root.ts on the Dev route rather than by <Shell/>,
-    // so it is not part of the prerender at all.
+    // DiscussionIcon — the Dev board frame, which is mounted by
+    // lib/interim-root.ts on the Dev route rather than by <Shell/>, so it is
+    // not part of the prerender at all.
+    //
+    // ChevronRightIcon used to sit here for the same reason. It prerenders now:
+    // THE UI OVERHAUL's Improve panel is part of <Shell/> and uses it as the
+    // affordance on its two navigating rows.
     'M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z',
-    'M9 5l7 7-7 7',
     // CheckIcon and ArrowRightShortIcon — the browse screen's Add button and
     // its detail page's Open pill (#1191 slice 6). Both render from row/detail
     // descriptors that are null until the first fetch lands, so the prerendered

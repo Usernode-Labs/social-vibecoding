@@ -232,6 +232,33 @@ export const UserGroupIcon = stroked(
 
 // ── Tooling ──────────────────────────────────────────────────────────────
 
+/**
+ * Board columns — the Dev screen's Kanban tab, and the Improve panel's row
+ * that opens it.
+ *
+ * Transcribed verbatim from `VIEW_ICON_PATHS.kanban` in
+ * features/dev-board/board-frame.tsx, which is where this glyph has been drawn
+ * since the board shipped. THE UI OVERHAUL gave it a second call site (the
+ * Improve panel), and a second inline copy of a path is exactly the drift this
+ * module exists to prevent — so it became an export rather than a duplicate.
+ */
+export const BoardIcon = stroked('BoardIcon', 'M4 5h4v14H4zM10 5h4v9h-4zM16 5h4v6h-4z');
+
+/**
+ * Three equal rules — the Dev screen's Feed tab, and the Improve panel's row
+ * that opens it.
+ *
+ * The same path `VIEW_ICON_PATHS.list` drew for the retired List view, kept
+ * deliberately: Feed IS that surface, refocused on recent activity, and giving
+ * it a new glyph would have said "something else lives here now" to everyone
+ * who already knew where to look.
+ *
+ * Identical to Bars3Icon's path, which is not a mistake — the hamburger and a
+ * list of rules are the same three lines. Two names, because the call sites
+ * mean different things and a `Bars3Icon` in a Feed row would read as a bug.
+ */
+export const ListLinesIcon = stroked('ListLinesIcon', 'M4 6h16M4 12h16M4 18h16');
+
 export const TerminalIcon = stroked(
   'TerminalIcon',
   'M8 9l3 3-3 3m5 0h3M4 6h16a1 1 0 011 1v10a1 1 0 01-1 1H4a1 1 0 01-1-1V7a1 1 0 011-1z',

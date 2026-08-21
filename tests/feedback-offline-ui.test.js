@@ -35,6 +35,7 @@ const queueJs = read('public', 'js', 'feedback-queue.js');
 const indexHtml = read('public', 'index.html');
 const shellTsx = read('frontend', 'src', 'Shell.tsx');
 const headerTsx = read('frontend', 'src', 'features', 'header', 'platform-header.tsx');
+const improveBtnTsx = read('frontend', 'src', 'features', 'improve', 'improve-button.tsx');
 const swJs = read('public', 'sw.js');
 const dapp = JSON.parse(read('dapp.json'));
 
@@ -186,10 +187,19 @@ test('the queued shot seeds the store before it pins connectivity', () => {
 });
 
 test('the header dot is markup, hidden, and toggled from the store', () => {
-  assert.match(headerTsx, /id="feedback-queue-dot"/);
-  assert.match(headerTsx, /<button id="feedback-btn" className="relative /, 'the dot is positioned against the button');
-  const dot = headerTsx.slice(headerTsx.indexOf('id="feedback-queue-dot"'));
-  assert.match(dot.slice(0, 200), /className="hidden absolute/, 'ships hidden: an island renders empty/hidden markup');
+  // THE UI OVERHAUL retired #feedback-btn: the dialog opens from the Improve
+  // panel now. The dot moved onto #improve-btn rather than going with it,
+  // because that button is the only remaining way to reach the dialog from the
+  // header — an unsent draft with no visible cue is exactly what it exists to
+  // prevent. Same id, same writer, same publish seam; new host component.
+  assert.match(improveBtnTsx, /id="feedback-queue-dot"/);
+  assert.match(improveBtnTsx, /const IMPROVE_BTN_CLASS =\n  'relative /,
+    'the dot is positioned against the button');
+  const dot = improveBtnTsx.slice(improveBtnTsx.indexOf('id="feedback-queue-dot"'));
+  assert.match(dot.slice(0, 200), /className="hidden absolute/,
+    'ships hidden: an island renders empty/hidden markup');
+  assert.doesNotMatch(headerTsx, /id="feedback-queue-dot"/,
+    'exactly one host for the dot — it did not get left behind in the header');
   // The generated document carries it too (build:shell was run).
   assert.match(indexHtml, /id="feedback-queue-dot"/);
 });
@@ -204,8 +214,8 @@ test('the dot travels through the visibility store, not a classList write', () =
   assert.match(feedbackJs, /publishVisibility\('feedback-queue-dot', n > 0\)/);
   assert.doesNotMatch(feedbackJs, /getElementById\('feedback-queue-dot'\)/,
     'no direct DOM write may sneak back in beside the publish');
-  assert.match(headerTsx, /useVisibilityHiddenClass\(feedbackDotRef, 'feedback-queue-dot', false\)/);
-  assert.match(headerTsx, /ref=\{feedbackDotRef\} id="feedback-queue-dot"/);
+  assert.match(improveBtnTsx, /useVisibilityHiddenClass\(dotRef, 'feedback-queue-dot', false\)/);
+  assert.match(improveBtnTsx, /ref=\{dotRef\}\n\s+id="feedback-queue-dot"/);
 });
 
 test('the queue module loads before app.js and is precached', () => {

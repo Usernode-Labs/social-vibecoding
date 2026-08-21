@@ -8,9 +8,10 @@
  * to this subtree from React's side.
  *
  * Everything INSIDE this bar is still written by public/js/app.js by id
- * (App.setBackIcon on #back-btn, the title text, #app-mode-switch's visibility,
- * the badges), so React must never reconcile over those nodes: every class
- * string below is a constant prop, rendered once at hydration and never again.
+ * (App.setBackIcon on #back-btn, the title text, the badges), so React must
+ * never reconcile over those nodes: every class string below is a constant
+ * prop, rendered once at hydration and never again. The ONE exception is
+ * <ImproveButton/>, which is React-owned end to end — see its own header.
  *
  * The bar's OWN visibility is the one piece of state it holds. Chromeless mode
  * (`#app/<slug>/app`) hides the whole header, and App.setChromeless used to do
@@ -30,16 +31,14 @@ import { useRef } from 'react';
 import {
   Bars3Icon,
   BellIcon,
-  ChatIcon,
   ChevronLeftIcon,
-  CogIcon,
   HomeIcon,
-  TerminalIcon,
 } from '@/components/ui/icons';
 
 import { useHiddenClass } from '../../lib/legacy-dom';
-import { useVisibility, useVisibilityHiddenClass } from '../../lib/visibility-store';
+import { useVisibility } from '../../lib/visibility-store';
 import { ChromelessPill } from './chromeless-pill';
+import { ImproveButton } from '../improve/improve-button';
 import { useHeaderLayout } from './use-header-layout';
 
 export function PlatformHeader() {
@@ -57,16 +56,6 @@ export function PlatformHeader() {
   // its place; App.setChromeless publishes the flag, this reads it.
   const visible = useVisibility('platform-header', true);
   useHiddenClass(headerRef, !visible);
-
-  // #1054: the feedback outbox dot. Its writer (paintQueueDot in
-  // features/dialogs/feedback-controller.js) publishes through the
-  // visibility store instead of toggling the class by id, because a
-  // pre-hydration classList write is a mismatch React 19 patches back to
-  // the constant `className="hidden …"`. This subscription applies the
-  // published state synchronously with each publish AND once on mount, so
-  // a publish that lands before hydration still paints. Ships hidden.
-  const feedbackDotRef = useRef<HTMLSpanElement>(null);
-  useVisibilityHiddenClass(feedbackDotRef, 'feedback-queue-dot', false);
 
   return (
     <>
@@ -159,9 +148,26 @@ export function PlatformHeader() {
               (#drawer-footer). The trophy (#leaderboard-btn) became
               #drawer-row-leaderboard and the admin shield
               (#admin-dashboard-btn) became #drawer-row-admin.
-              
-              What's left here is navigation + alerting only, in DOM order:
-              dev console, feedback, work cog, bell, hamburger (last).
+
+              THE UI OVERHAUL took four more out, and they all went to the
+              same place — the Improve panel:
+
+                #app-mode-switch   the App/Dev segmented control. An app is
+                                   just an app now; "Dev" is a destination the
+                                   panel links to rather than a mode the header
+                                   toggles. `#improve-btn` inherits its exact
+                                   show/hide lifecycle.
+                #feedback-btn      → the panel's "Give feedback" row. Its
+                                   outbox dot (#feedback-queue-dot) moved onto
+                                   #improve-btn, keeping its id and its writer.
+                #work-drawer-btn   → the panel's session sections, split into
+                                   this app's and everything else.
+                #dev-console-btn   → the panel's "Developer terminal" row,
+                                   shown on the same DevConsole signal that
+                                   used to show the button.
+
+              What is left here is navigation + alerting only, in DOM order:
+              improve, bell, hamburger (last).
           */}
           {/*
               Node status + wallet (native app chrome absorbed into SV,
@@ -172,118 +178,20 @@ export function PlatformHeader() {
               availability change their contents, never whether the rows exist.
           */}
           {/*
-              App/Dev mode switch — replaced the full-width bottom tab bar
-              that used to sit at the foot of #app-view. It MUST
-              stay inside this right-group div: rightGroupRef is what
-              use-header-layout.ts measures as the title's right side group, so
-              a control moved out of it stops counting towards the clearance
-              the centering measurement needs. (Until #1079 chunk B the group
-              was resolved as the <h1>'s nextElementSibling, and a sibling
-              wedged in between broke the measurement silently; the ref removed
-              that particular trap, not the requirement.)
-              
-              Visibility is owned by App.DrawerStatus.setAppOpen() — shown
-              only while an app is open, and never for the self-hosted
-              platform row (whose App mode has no iframe target).
-              
-              `h-7` is load-bearing, not decoration: this control is the only
-              thing that appears in the header when an app opens, so its
-              height IS the header's height there. It used to be sized by its
-              segments' `py-1` (24px) plus `p-0.5` (4px) plus its 1px border
-              top and bottom = 30px, which quietly made the in-app header 2px
-              taller than every other screen's. Pinned to the header's 28px
-              content row instead; the segments stretch to fill it
-              (`items-stretch` + `flex items-center` on each, no vertical
-              padding of their own) so the tap area still spans the track and
-              the labels stay centred. Keep it 28px — the header's height and
-              the `top-14` anchoring of #notifications-panel /
-              #work-drawer-panel both depend on it.
+              The Improve button. It MUST stay inside this right-group div:
+              rightGroupRef is what use-header-layout.ts measures as the
+              title's right side group, so a control moved out of it stops
+              counting towards the clearance the centering measurement needs.
+              (Until #1079 chunk B the group was resolved as the <h1>'s
+              nextElementSibling, and a sibling wedged in between broke the
+              measurement silently; the ref removed that particular trap, not
+              the requirement.)
+
+              Unlike everything else in this bar it is React-owned end to end —
+              no public/js/** module writes to it — so its className is
+              rendered rather than constant. See ../improve/improve-button.tsx.
           */}
-          <div
-            id="app-mode-switch"
-            role="radiogroup"
-            aria-label="App mode"
-            className="hidden relative flex items-stretch h-7 p-0.5 mr-3 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-xs font-medium"
-          >
-            <button
-              type="button"
-              role="radio"
-              aria-checked="false"
-              data-tab="app"
-              className="app-mode-seg un-touch-target flex items-center rounded-md px-3 transition-colors"
-            >
-              App
-            </button>
-            <button
-              type="button"
-              role="radio"
-              aria-checked="false"
-              data-tab="dev"
-              className="app-mode-seg un-touch-target flex items-center rounded-md px-3 transition-colors"
-            >
-              Dev
-            </button>
-          </div>
-          <button
-            id="dev-console-btn"
-            className="hidden relative w-7 h-7 flex items-center justify-center un-touch-target text-zinc-400 hover:text-zinc-200 mr-2.5"
-            aria-label="Open developer console"
-          >
-            <TerminalIcon className="w-6 h-6" />
-            <span
-              id="dev-console-badge"
-              className="hidden absolute -top-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-red-500 text-white text-[0.65rem] font-bold flex items-center justify-center"
-            >
-            </span>
-          </button>
-          {/*
-              App secrets used to live as a header icon here; it's been moved
-              into the dev-chat tab's "Edit" section (see AppView.renderDevChatTab).
-              The badge it used to show now lives on the in-tab button.
-          */}
-          <button id="feedback-btn" className="relative w-7 h-7 flex items-center justify-center un-touch-target text-zinc-400 hover:text-zinc-200 mr-2.5" aria-label="Send feedback">
-            <ChatIcon className="w-6 h-6" />
-            {/*
-                #1054: feedback saved offline and still waiting to send. The
-                only ambient sign that an unsent message exists — app.js
-                toggles `hidden` from the public/js/feedback-queue.js store, so
-                this ships hidden and carries no number (the dialog states the
-                count). Deliberately a plain dot, not the counted badge
-                #dev-console-badge uses: the actionable figure is "any", and a
-                second red badge two icons apart would read as an error.
-            */}
-            <span ref={feedbackDotRef} id="feedback-queue-dot" className="hidden absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-violet-500" />
-          </button>
-          {/*
-              Header cog: the "your work" drawer
-              (features/work-drawer/work-drawer.js) —
-              the viewer's sessions & proposals plus their session-related
-              notifications, rerouted out of the bell. The icon spins (CSS
-              class work-cog-spinning) while an AI turn or a merge-pipeline
-              step is in flight for the viewer. Carries the green badge that
-              used to sit on the bell (same #notifications-badge-ai id — it's
-              still painted by Notifications._renderBadge).
-              
-              The badge is positioned IDENTICALLY to the bell's
-              #notifications-badge below — same top-right corner, same size,
-              same pill geometry — so the two read as one badge convention
-              rather than two. Only the colour differs (emerald = your work in
-              flight, red = unread notifications). It sat at -bottom-1 until
-              the header slim-down; keep the two class lists in sync.
-          */}
-          <button
-            id="work-drawer-btn"
-            className="relative w-7 h-7 flex items-center justify-center un-touch-target text-zinc-400 hover:text-zinc-200 mr-2.5"
-            aria-label="Your sessions and proposals"
-            title="Your sessions and proposals"
-          >
-            <CogIcon id="work-drawer-icon" className="w-6 h-6" />
-            <span
-              id="notifications-badge-ai"
-              className="hidden absolute -top-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-emerald-500 text-white text-[0.65rem] font-bold flex items-center justify-center"
-            >
-            </span>
-          </button>
+          <ImproveButton />
           <button
             id="notifications-btn"
             className="relative w-7 h-7 flex items-center justify-center un-touch-target text-zinc-400 hover:text-zinc-200 mr-2.5"
@@ -313,6 +221,24 @@ export function PlatformHeader() {
             aria-expanded="false"
           >
             <Bars3Icon className="w-6 h-6" />
+            {/*
+                The green "an AI turn or a merge step is in flight for YOU"
+                badge, moved here from the retired work cog. It keeps its id
+                and its writer (Notifications._renderBadge) — only its parent
+                changed. The hamburger is where it belongs now: that drawer is
+                the catch-all, and it is about to become the notifications
+                surface too.
+
+                Positioned IDENTICALLY to #notifications-badge on the bell —
+                same corner, same size, same pill geometry — so the two read
+                as one badge convention rather than two. Only the colour
+                differs (emerald = your work in flight, red = unread).
+            */}
+            <span
+              id="notifications-badge-ai"
+              className="hidden absolute -top-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-emerald-500 text-white text-[0.65rem] font-bold flex items-center justify-center"
+            >
+            </span>
             <span
               id="header-menu-deploy-dot"
               className="hidden absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-amber-500"

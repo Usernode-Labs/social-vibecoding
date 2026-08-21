@@ -116,30 +116,24 @@ test('FLOOR: the lead back-button wrapper is 28px tall (and still 20px wide)', (
   }
 });
 
-test('CEILING: the App/Dev switch is exactly the 28px row, segments stretch to fill', () => {
-  const tag = html.match(/<div id="app-mode-switch"[\s\S]*?>/)[0];
-  // Was 30px (24px segments + 4px p-0.5 + 2px border) — the whole of #909.
+test('CEILING: the Improve button is exactly the 28px row', () => {
+  // THE UI OVERHAUL replaced #app-mode-switch with #improve-btn, and the
+  // invariant transferred WITH it: this is the one child that appears in the
+  // bar when an app opens, so its height IS the in-app header height. The
+  // switch it replaced was 30px for a while (24px segments + 4px p-0.5 + 2px
+  // border), which quietly made the in-app header 2px taller than every other
+  // screen's — the whole of #909. Pinning the replacement to h-7 is what stops
+  // that recurring with a differently-shaped control.
+  const tag = html.match(/<button id="improve-btn"[\s\S]*?>/)[0];
   assert.match(tag, /\bh-7\b/,
-    'the App/Dev switch is pinned to the header\'s 28px content row');
-  assert.match(tag, /\bitems-stretch\b/,
-    'segments stretch to the track height instead of being sized by their own padding');
-  assert.doesNotMatch(tag, /\bitems-center\b/,
-    'items-center would let the segments size the control again');
-  // The switch is the only child that appears when an app opens, so its
-  // height IS the in-app header height. Vertical padding on the segments
-  // is exactly what made the bar 2px taller than every other screen.
-  const segs = html.match(/class="app-mode-seg[^"]*"/g) || [];
-  assert.equal(segs.length, 2, 'two App/Dev segments');
-  for (const seg of segs) {
-    assert.doesNotMatch(seg, /\b(?:sm:)?py-\d/,
-      'App/Dev segments carry no vertical padding — the h-7 track owns the height');
-    assert.doesNotMatch(seg, /\b(?:sm:)?h-\d/,
-      'App/Dev segments take their height from the stretched track, not their own h-*');
-    // They still have to be tappable across the full track and keep their
-    // labels centred, which is what flex items-center buys.
-    assert.match(seg, /\bflex\b/, 'App/Dev segment is a flex box');
-    assert.match(seg, /\bitems-center\b/, 'App/Dev segment centres its label vertically');
-  }
+    "the Improve button is pinned to the header's 28px content row");
+  assert.doesNotMatch(tag, /\b(?:sm:)?py-\d/,
+    'the Improve button carries no vertical padding — h-7 owns the height');
+  // It has a text label as well as a glyph, so it must centre its content
+  // vertically rather than letting the two children set their own baseline.
+  assert.match(tag, /\bitems-center\b/,
+    'the Improve button centres its glyph and label vertically');
+  assert.match(tag, /\binline-flex\b/, 'the Improve button is a flex box');
 });
 
 test('CEILING: the landing CTAs stay 28px at every width', () => {
@@ -214,15 +208,15 @@ test('the invariant is documented where the next editor will look', () => {
   assert.match(head, /28px/, 'the block states the content-row height');
   assert.match(head, /header-layout/,
     'the block warns that the w-5 width is measured by the header-layout code');
-  // The stale "Kept at 28px tall" claim on #app-mode-switch was wrong for as
-  // long as it existed (it omitted the border) — the shell comment must now
-  // describe the pinned height instead of asserting an arithmetic result.
-  const switchComment = html.slice(
-    html.lastIndexOf('<!--', html.indexOf('<div id="app-mode-switch"')),
-    html.indexOf('<div id="app-mode-switch"'),
-  );
-  assert.match(switchComment, /h-7/,
-    'the App/Dev switch comment points at the class that pins its height');
+  // The stale "Kept at 28px tall" claim on the retired #app-mode-switch was
+  // wrong for as long as it existed (it omitted the border), so the rule is
+  // that the source comment names the CLASS that pins the height rather than
+  // asserting an arithmetic result. #improve-btn inherited both the slot and
+  // the rule — see features/improve/improve-button.tsx.
+  const buttonSrc = fs.readFileSync(
+    path.join(root, 'frontend/src/features/improve/improve-button.tsx'), 'utf8');
+  assert.match(buttonSrc, /h-7` matches the header's 28px content-row ceiling|h-7`? matches the header/,
+    'the Improve button comment points at the class that pins its height');
 });
 
 test('no JS sets a header height — the contract lives entirely in markup + CSS', () => {

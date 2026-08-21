@@ -25,6 +25,10 @@ const { isCliSurfaceEnabled } = require('./cli-auth');
 // whether that link is configurable at all decides whether /api/auth/me
 // advertises the Claude Code / Codex flows (#1049).
 const githubLink = require('../services/github-link');
+// The platform's own self-hosted app row. The home screen's Improve button is
+// about the PLATFORM, and the client has no other way to learn that row's slug
+// — GET /api/apps hides self-hosted rows from non-admins on purpose.
+const { getPlatformApp } = require('../services/platform-app');
 // Deliberately NOT destructured: tests (and the never-throws mail contract)
 // swap sendPasswordResetMail on the module object.
 const mail = require('../services/mail');
@@ -312,6 +316,9 @@ function authRoutes(config) {
         canCreateApps = (req.user.appQuota ?? 0) > 0 && liveCount < (req.user.appQuota ?? 0);
       } catch {}
     }
+    // Memoised for 30s inside the service, so this costs nothing on the boot
+    // path of every tab; null is a perfectly good answer (the button hides).
+    const platformApp = await getPlatformApp(pool);
     res.json({
       user: {
         id: req.user.id,
@@ -389,6 +396,14 @@ function authRoutes(config) {
         // available:false unless the request carries the ?demo=1 fixture
         // flag — so the card only appears where a reviewer asks for it.
         externalFlowsAvailable: IS_STAGING || githubLink.isEnabled(config),
+        // The platform's own app row — slug, display name, repo and deployed
+        // short sha — or null on a deployment that has no self-hosted row.
+        // This is what the home screen's Improve button targets, which is how
+        // "Improve" there means "improve Social Vibecoding itself" rather than
+        // nothing at all. Same shape as walletLinkEnabled / cliAuthEnabled
+        // above: a DEPLOYMENT fact riding the user payload, because the client
+        // renders what the server reports and never sniffs its environment.
+        platformApp,
       },
     });
   });

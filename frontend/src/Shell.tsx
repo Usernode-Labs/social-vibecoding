@@ -58,6 +58,7 @@ import { WaitlistScreen } from './features/auth/waitlist';
 import { MoreScreen } from './features/auth/more';
 import { DevConsolePanel } from './features/dev-console';
 import { HomeScreen } from './features/home';
+import { ImproveIsland } from './features/improve';
 import { LeaderboardScreen } from './features/leaderboard';
 import { HeaderMenu } from './features/header/header-menu';
 import { PlatformHeader } from './features/header/platform-header';
@@ -334,6 +335,22 @@ export function Shell() {
           notifications panel, same story: features/work-drawer owns it and
           public/js/work-drawer.js is retired (#1079 chunk B). */}
       <WorkDrawerPanel />
+      {/*
+          The Improve panel — the UI overhaul's centrepiece, and the one
+          surface for everything you do *to* the app on screen rather than
+          *with* it. It replaced the header's App/Dev segmented switch, the
+          feedback bubble, the work cog and the terminal icon, and it absorbed
+          the drawer's GitHub / Share / version footer.
+
+          A FULLY React-owned island: nothing in public/js/** writes a node
+          inside it, so it holds real state (features/improve/improve-store.js).
+          The classic scripts publish what it is about through window.Improve.
+
+          One element, two idioms: a right-edge slide-over at `sm` and up, a
+          bottom sheet below it (public/css/app.css), and a real native-kit
+          sheet on touch where the kit is loaded.
+      */}
+      <ImproveIsland />
       {/* Developer console (slide-up panel, anchored to bottom) — an ISLAND
           since #1079 chunk B: features/dev-console owns the whole subtree and
           public/js/dev-console.js is retired. */}

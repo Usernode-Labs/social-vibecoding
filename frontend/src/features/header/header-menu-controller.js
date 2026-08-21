@@ -44,23 +44,39 @@ const DrawerStatus = {
     // Fork lineage is app-scoped too — closing an app can never leave
     // the previous app's "Forked from" line behind.
     if (!open) DrawerStatus.setForkVisible(false);
-    // Self-hosted apps (the platform's own row) have no App mode at
-    // all — appData.url maps to a slug-derived subdomain that doesn't
-    // resolve, so switchTab coerces them to the Dev forum. A switch
-    // with one reachable option is noise, so hide the whole control
-    // rather than shipping a dead segment. setAppOpen(true) runs after
-    // the /api/apps/:slug fetch resolves, so self_hosted is known by
-    // the time this reads it.
-    const modeSwitch = document.getElementById('app-mode-switch');
-    if (modeSwitch) {
-      const show = !!open && !window.AppView?.appData?.self_hosted;
-      modeSwitch.classList.toggle('hidden', !show);
-      // The control materially changes the header's right-group width,
-      // which is one of the two inputs to the title's centered-vs-flow
-      // decision. The group's ResizeObserver would catch this on its
-      // own a frame later; the explicit hook exists so the title
-      // doesn't visibly jump.
-      window.HeaderLayout?.refresh?.();
+    // THE UI OVERHAUL: this used to show and hide #app-mode-switch, the
+    // App/Dev segmented control. There is no App/Dev switch any more — an
+    // app is just an app, and "Dev" is somewhere the Improve panel links to.
+    // What this call publishes now is that panel's TARGET, which is what
+    // decides whether #improve-btn exists at all, so the header control still
+    // rides exactly this one lifecycle: it already covers openApp,
+    // navigateHome, AppView.close() and all six other-screen navigations.
+    //
+    // The self-hosted platform row is NOT excluded here, unlike the switch it
+    // replaced. That exclusion existed because the row's App mode had no
+    // reachable iframe target, which made a two-option control a control with
+    // one dead option. Improve has no such problem — everything it offers
+    // works on the platform's own row, and that row is precisely what the
+    // home screen's Improve button points at.
+    const appData = window.AppView?.appData;
+    if (open && appData?.slug) {
+      window.Improve?.setTarget({
+        kind: appData.self_hosted ? 'platform' : 'app',
+        slug: appData.slug,
+        name: appData.name || appData.slug,
+        selfHosted: !!appData.self_hosted,
+        repoUrl: appData.repo_url || null,
+        version: appData.main_sha ? appData.main_sha.slice(0, 7) : null,
+        deploying: appData.status === 'deploying',
+        readOnly: !!window.AppView?.readOnly,
+        canShare: appData.status === 'running' && !!appData.url,
+      });
+    } else if (!open) {
+      // Cleared here rather than per-screen: every navigation away from an
+      // app already funnels through this call. App.navigateHome() re-publishes
+      // the platform's own row straight after, which is what keeps Improve on
+      // the home screen.
+      window.Improve?.setTarget(null);
     }
     DrawerStatus.refreshDeployDot();
   },
