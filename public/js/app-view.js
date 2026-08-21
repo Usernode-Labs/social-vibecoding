@@ -1572,6 +1572,44 @@ const AppView = {
     document.getElementById('back-btn')?.classList.remove('hidden');
   },
 
+  // Screenshot-state deep links `?shot=offline-app` / `?shot=offline-app-blocked`
+  // (#487 follow-up): the two outcomes of the offline App tab — an app whose
+  // own service worker can serve its document gets its frame mounted, one
+  // without keeps the reconnect placeholder.
+  //
+  // SYNTHESISED, like showLaunchCoverShot above and for the same reason. This
+  // screen needs a RUNNING app with a live origin behind the preview, and a
+  // checks database has no guarantee of one. Pointing these links at a real
+  // slug is exactly what made them fail on every proposal after #1356:
+  // renderAppTab never reached either branch, so the new state AND the
+  // unchanged one were both reported missing. Nothing here touches the real
+  // decision — offlineReadyFor and renderAppTab are the code under test.
+  //
+  // The record is fake and its frame points at the shell's own /health: same
+  // origin, trivially small, and on the service worker's bypass list. What
+  // these states are ABOUT is whether the shell mounts a frame at all, so a
+  // fabricated cross-origin URL would add nothing but a failed load.
+  showOfflineAppShot(ready) {
+    const slug = 'staging-demo-offline';
+    AppView.markOfflineReady(slug, !!ready);
+    AppView.appData = {
+      slug,
+      name: 'Staging demo app',
+      icon_emoji: '📴',
+      status: 'running',
+      url: location.origin,
+      self_hosted: false,
+    };
+    // buildAppIframeSrc resolves the inner path against the app origin, so
+    // this is what keeps the frame off the shell's own SPA root — which would
+    // otherwise load the whole platform inside itself.
+    AppView.pendingInnerPath = '/health';
+    AppView.renderAppTab();
+    App._setScreenVisible('home-screen', false);
+    App._setScreenVisible('app-view', true);
+    document.getElementById('back-btn')?.classList.remove('hidden');
+  },
+
   renderAppTab() {
     const content = document.getElementById('app-content');
     const appData = AppView.appData;
