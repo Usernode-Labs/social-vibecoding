@@ -24,6 +24,7 @@ const { installAppCard } = require('./helpers/app-card');
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 const { HOME_SRC, PANELS_SRC } = require('./helpers/home-modules');
+const LAYOUT_SRC = read('frontend/src/features/home/home-layout.js');
 const INDEX = read('public/index.html');
 const CSS = read('public/css/app.css');
 const ROUTE = read('src/routes/home-panels.js');
@@ -330,21 +331,43 @@ test('renderAppCard: home mode is unchanged (default, menu badge)', () => {
 
 // ── index.html section shells ────────────────────────────────────
 
-test('index.html retires the two trailing sections for in-grid widgets', () => {
-  // Both are widgets now — placeable anywhere in the grid rather than
-  // pinned below everything — so their section shells are gone.
-  for (const id of ['home-find-more', 'home-create-section',
-    'home-featured-list', 'home-featured-empty', 'home-create-body']) {
-    assert.equal(INDEX.indexOf(`id="${id}"`), -1, `#${id} should be gone`);
-  }
-  // The grid and the fallback widget host remain, in that order.
+test('index.html stacks the four home areas in order', () => {
+  // This assertion has now inverted twice. Discover and Create app began as
+  // fixed trailing sections below the grid; #911 made them WIDGETS, placeable
+  // anywhere on the launcher canvas, and the section shells went; THE UI
+  // OVERHAUL made them fixed sections again — deliberately, and with the
+  // reasoning that settles it: a home screen with a reading order is a page,
+  // and the same four things at wherever-you-dropped-them was a canvas that
+  // made every one of them feel optional.
   const grid = INDEX.indexOf('id="app-list"');
-  const panels = INDEX.indexOf('id="home-panels"');
-  assert.ok(grid > 0 && panels > grid);
-  // And the iOS widget-editing strip moved ABOVE the grid: a full-width
-  // flow item cannot coexist with explicit cell placement.
+  const discover = INDEX.indexOf('id="home-discover-section"');
+  const challenges = INDEX.indexOf('id="home-challenges-section"');
+  const create = INDEX.indexOf('id="home-create-section"');
+  assert.ok(grid > 0, 'the launcher grid is present');
+  assert.ok(discover > grid, 'Discover comes after the apps grid');
+  assert.ok(challenges > discover, 'Challenges after Discover');
+  assert.ok(create > challenges, 'Create app last');
+  // The widgets' fallback host is gone with the placement it existed for: it
+  // caught the moment before the first grid paint and the active-search view,
+  // because a widget INSIDE #app-list vanished whenever #app-list did.
+  assert.equal(INDEX.indexOf('id="home-panels"'), -1,
+    'the fallback stack is retired');
+  // The iOS widget-editing strip stays ABOVE the grid, where explicit cell
+  // placement forced it and where it still belongs.
   const strip = INDEX.indexOf('id="home-widget-strip-section"');
   assert.ok(strip > 0 && strip < grid);
+});
+
+test('the apps grid is four columns at every width, two rows by default', () => {
+  const tag = INDEX.match(/<div id="app-list"[^>]*>/)[0];
+  assert.match(tag, /\bgrid-cols-4\b/, 'four columns');
+  assert.doesNotMatch(tag, /sm:grid-cols-\d/,
+    'and no second breakpoint — one column count is the point');
+  // The two-row default is a cap on what is SHOWN, with a way out.
+  assert.match(LAYOUT_SRC, /DEFAULT_ROWS: 2,/);
+  assert.match(HOME_SRC, /Show all \$\{count\} apps/);
+  assert.equal(INDEX.indexOf('id="home-apps-more"') > 0, true,
+    'the expander has a host outside #app-list');
 });
 
 test('Discover is one bordered block: lanes under a bar that carries the browse link', () => {
@@ -373,20 +396,22 @@ test('Discover is one bordered block: lanes under a bar that carries the browse 
 // edge to edge (inside the section's own px-3 gutter) and share their
 // left edge with the "Your apps" grid above. The heading stays a plain
 // sibling above the card.
-test('every widget is one bordered block, sized by the cells it occupies', () => {
-  // The widget's box fills whatever rectangle the layout gave it, rather
-  // than sitting at its natural height in the top-left of a 2x2 block.
-  assert.match(CSS, /\.home-panel-slot \{[^}]*display: flex/);
-  assert.match(CSS, /\.home-panel-slot > \.home-panel,[\s\S]*?width: 100%/);
-  // Footprints come from the server registry, per column count. Challenges
-  // is ASYMMETRIC (#968): one row on a phone, where a two-row footprint made
-  // its content-height block hand its height to whitespace instead of to the
-  // page; its original two on desktop, where it is a tile among app icons.
-  assert.match(ROUTE, /sizes: \{ 4: \[4, 1\], 5: \[2, 2\] \}/);   // challenges
-  // Discover is ASYMMETRIC (#949) the same way, and for the same reason.
-  assert.match(ROUTE, /sizes: \{ 4: \[4, 1\], 5: \[2, 2\] \}/);
-  // The create widget is a single desktop cell and a full-width phone ROW.
-  assert.match(ROUTE, /sizes: \{ 4: \[4, 1\], 5: \[1, 1\] \}/);   // create
+test('every block is one bordered box, sized by its own content', () => {
+  // A block's box used to fill whatever rectangle the layout gave it — a
+  // `.home-panel-slot` grid host with `display: flex` and a 100%-width child,
+  // so a short block stretched rather than sitting in the top-left of a 2x2
+  // cell — and the rectangle itself came from a per-column-count footprint
+  // table in the server registry (`sizes`, asymmetric for two of the three).
+  // THE UI OVERHAUL made all three fixed <section>s, so both went: nothing is
+  // placed, and a section is as tall as it draws.
+  assert.doesNotMatch(CSS, /^\.home-panel-slot[\s,{]/m);
+  assert.doesNotMatch(ROUTE, /sizes:/);
+  // What each host DOES still carry is the key of the block it is for — the
+  // hook the dapp.json checks and the screenshot assertions select on.
+  for (const key of ['discover', 'challenges', 'create']) {
+    assert.match(INDEX, new RegExp(`<section id="home-${key}-section" data-panel-slot="${key}"`),
+      `${key}: its section names it`);
+  }
 });
 
 // Short feed on a tall screen: the trailing sections sit at the BOTTOM of
@@ -468,12 +493,18 @@ test('the create widget renders in both states, and only one is tappable', () =>
   assert.doesNotMatch(off, /<button[^>]*\sdisabled/);
 });
 
-test('the create widget IS in the grid, for every account', () => {
-  // The inverse of the old assertion: it used to be banished from the grid
-  // into a trailing section, and it is a first-class grid item again.
+test('Create app is a fixed section, for every account', () => {
+  // This assertion has inverted twice with the surface: banished from the
+  // grid into a trailing section, then a first-class grid item (#911), and
+  // now a fixed section again. What never changed is the part that matters —
+  // it exists for EVERY account, and app quota decides whether it is
+  // tappable, never whether it is there.
   assert.match(PANELS_SRC, /renderCreatePanel\(panel\) \{/);
-  assert.match(HOME_SRC, /data-panel-slot="\$\{escapeHtml\(item\.key\)\}"/);
-  // The server places it unconditionally: no viewer argument reaches the
+  assert.match(PANELS_SRC, /create: 'home-create-section'/,
+    'it renders into its own fixed host');
+  assert.doesNotMatch(HOME_SRC, /data-panel-slot="/,
+    'and the grid plants no widget slots any more');
+  // The server builds it unconditionally: no viewer argument reaches the
   // registry, so app quota can never decide whether it exists.
   const registry = ROUTE.match(/const PANEL_REGISTRY = \[[\s\S]*?\n\];/)[0];
   assert.match(registry, /key: 'create'/);

@@ -16,7 +16,10 @@
  *   * features/dev-console/store.ts — the dev console panel (`sheet`);
  *   * features/header/header-menu-controller.js — the hamburger drawer
  *     (`panel`);
- *   * features/work-drawer/work-drawer.js — the cog drawer (`sheet`).
+ *   * features/work-drawer/work-drawer.js — the cog drawer (`sheet`),
+ *     retired by THE UI OVERHAUL along with the drawer itself. The Improve
+ *     panel (features/improve/improve-controller.js) is the third caller
+ *     now, and it presents as a `sheet` for the same reason.
  *
  * They agreed on the shape and disagreed on the details, which is the failure
  * mode this module exists to end: only one of the four rolled the class back

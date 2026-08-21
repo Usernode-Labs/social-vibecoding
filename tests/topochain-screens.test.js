@@ -114,7 +114,7 @@ test('both panes and the shared event bar live inside the Leaderboard screen', (
   assert.ok(html.includes('id="standings-tabs"'), 'the screen carries the section tab strip');
 });
 
-test('one drawer row reaches all three surfaces', () => {
+test('one entry point reaches all three surfaces', () => {
   // The separate Topochain-leaderboard, Challenges and Topochain-seasons
   // rows are all gone: Leaderboard is the single entry point now.
   for (const id of ['drawer-row-topochain-leaderboard', 'drawer-row-challenges',
@@ -122,8 +122,22 @@ test('one drawer row reaches all three surfaces', () => {
     assert.ok(!new RegExp(`id="${id}"`).test(html),
       `the separate ${id} row is retired`);
   }
-  assert.match(html, /<a id="drawer-row-leaderboard" href="#leaderboard"/,
-    'a real anchor links to #leaderboard, like the Profile drawer row');
+  // …and so is #drawer-row-leaderboard, the hamburger row that replaced them.
+  // THE UI OVERHAUL moved the entry point to the HOME SCREEN, into the
+  // Challenges area — beside the shared progress it links to, rather than in
+  // a menu you have to open from memory. The area's title bar carries the
+  // link and its standings preview carries per-row ones; both go through
+  // HomePanels.goToLeaderboard, which is the one owner of the hash.
+  assert.ok(!/id="drawer-row-leaderboard"/.test(html),
+    'the hamburger row is retired with everything else that was not navigation');
+  assert.match(html, /<section id="home-challenges-section"/,
+    'the Challenges area is in the shell, above the fold of the home screen');
+  const panels = fs.readFileSync(
+    path.join(root, 'frontend/src/features/home/home-panels.js'), 'utf8');
+  assert.match(panels, /class="home-panel-lb-browse[^"]*"[\s\S]*?aria-label="Open leaderboard"/,
+    'the area\u2019s title bar carries the link');
+  assert.match(panels, /goToLeaderboard\(kind\) \{[\s\S]*?location\.hash = kind === 'kudos' \? '#leaderboard\/users' : '#leaderboard'/,
+    'and it is a real hash navigation, so the device back gesture returns home');
 });
 
 // ─── app.js: router branch + state discipline ────────────────────────────

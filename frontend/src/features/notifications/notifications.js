@@ -74,7 +74,10 @@ const Notifications = {
   // operate on `items` alone.
   saved: [],
   unread: 0,
-  open: false,
+  // `open` is a GETTER now, defined beside show()/hide() below — the drawer
+  // owns the presentation, so this module derives the state rather than
+  // storing a flag that would disagree with the screen during the drawer's
+  // deferred exit. A plain `open: false` here would shadow it.
   // Pagination cursor for the per-group "Show more →" pager.
   nextBefore: null,  // { createdAt, id } | null
   hasMore: false,
@@ -99,21 +102,13 @@ const Notifications = {
   init() {
     Notifications._loadExpanded();
 
-    const btn = document.getElementById('notifications-btn');
-    if (btn) btn.addEventListener('click', Notifications.toggle);
-
+    // THE UI OVERHAUL merged the bell into the hamburger, so #notifications-btn
+    // is gone and so is the outside-click dismissal that used to live here:
+    // opening, closing and dismissing this list are all the drawer's business
+    // now (features/header/header-menu-controller.js). What is left is the
+    // "Mark all read" control, which is still this module's.
     const markAll = document.getElementById('notifications-mark-all');
     if (markAll) markAll.addEventListener('click', Notifications.markAllRead);
-
-    // Dismiss on outside click.
-    document.addEventListener('click', (e) => {
-      if (!Notifications.open) return;
-      const panel = document.getElementById('notifications-panel');
-      const btnEl = document.getElementById('notifications-btn');
-      if (!panel || !btnEl) return;
-      if (panel.contains(e.target) || btnEl.contains(e.target)) return;
-      Notifications.hide();
-    });
 
     // Anonymous SPA boot (fold-auth-pages-into-SPA): the initial fetch
     // waits for the authed boot stage instead of firing a guaranteed 401
@@ -224,14 +219,21 @@ const Notifications = {
       Notifications.nextBefore = data.nextBefore || null;
       Notifications._reconcileCompletionTitle();
       Notifications._renderBadge();
-      if (Notifications.open) {
-        Notifications._renderSaved();
-        Notifications._renderInvites();
-        Notifications._renderList();
-      }
+      // Rendered UNCONDITIONALLY now, where this was gated on `open`.
+      //
+      // The gate existed because the bell's panel was presented on demand and
+      // filled at that moment: show() rendered the three sections before
+      // handing the node to the kit, precisely so the sheet measured the right
+      // height. THE UI OVERHAUL moved the list into the hamburger, which is
+      // always mounted — translated off-screen rather than built on open — so
+      // there is no "before presenting" to render at, and no cost to keeping
+      // the store current. The payoff is that the drawer opens onto CURRENT
+      // rows instead of last-open's.
+      Notifications._renderSaved();
+      Notifications._renderInvites();
+      Notifications._renderList();
       // After the first populated refresh, so a deep-linked drawer opens
-      // onto real rows rather than an empty-state flash — same ordering
-      // WorkDrawer._maybeShotOpen() uses.
+      // onto real rows rather than an empty-state flash.
       Notifications._maybeShotOpen();
       return true;
     } catch (err) {
@@ -300,7 +302,7 @@ const Notifications = {
       }
       Notifications.hasMore = !!data.hasMore;
       Notifications.nextBefore = data.nextBefore || null;
-      if (Notifications.open) Notifications._renderList();
+      Notifications._renderList();
     } catch (err) {
       console.warn('[notifications] loadMore failed', err);
     } finally {
@@ -350,7 +352,24 @@ const Notifications = {
       return;
     }
     Notifications._renderBadge();
-    if (Notifications.open) Notifications._renderList();
+    Notifications._renderList();
+  },
+
+  // ── Presentation: the hamburger drawer ──────────────────────────
+  //
+  // This module used to own a surface of its own — #notifications-panel, an
+  // anchored dropdown on desktop and a kit bottom sheet on touch, both
+  // presented from here. THE UI OVERHAUL merged the bell into the hamburger,
+  // so the list is rendered inside #header-menu-panel and the DRAWER owns the
+  // presentation, including the kit adoption. These three forward to it so
+  // every existing caller — a notification click, a screenshot deep link, the
+  // native Social coordinator — keeps working unchanged.
+  //
+  // `open` is derived rather than stored for the same reason: the drawer's
+  // exit is deferred behind a spring (see HeaderMenu.isPresenting), so a flag
+  // set here would disagree with what is on screen for ~200ms after a close.
+  get open() {
+    return !!window.HeaderMenu?.isPresenting?.();
   },
 
   toggle() {
@@ -358,60 +377,20 @@ const Notifications = {
     else Notifications.show();
   },
 
-  _sheet: null,
-
   show() {
-    const panel = document.getElementById('notifications-panel');
-    if (!panel) return;
-    // One drawer at a time: opening the bell closes the cog drawer.
-    if (window.WorkDrawer && WorkDrawer.open) WorkDrawer.hide();
-    // Touch platforms: the panel rides inside a draggable kit bottom
-    // sheet instead of the top-right dropdown. (A top-sheet variant
-    // was tried and reverted — the bottom sheet felt better.) Desktop
-    // keeps the anchored panel below.
-    if (PlatformUI.isTouch() && !Notifications._sheet) {
-      panel.classList.remove('hidden');
-      panel.classList.add('platform-sheet-adopted');
-      // Render BEFORE presenting: the kit sheet measures its height
-      // once at present time to seed the slide-up spring. Presenting
-      // the panel empty and filling it afterwards made the FIRST-ever
-      // open "pop" (a grabber-height slide, then the content snapped
-      // in); later opens still held the previous render, so only the
-      // first one looked broken.
-      Notifications._renderSaved();
-      Notifications._renderInvites();
-      Notifications._renderList();
-      const sheet = PlatformUI.sheet({
-        contentEl: panel,
-        onDismiss: () => {
-          panel.classList.remove('platform-sheet-adopted');
-          panel.classList.add('hidden');
-          document.body.appendChild(panel);
-          Notifications._sheet = null;
-          Notifications.open = false;
-        },
-      });
-      if (sheet) {
-        Notifications._sheet = sheet;
-        Notifications.open = true;
-        return;
-      }
-      panel.classList.remove('platform-sheet-adopted');
-    }
-    panel.classList.remove('hidden');
-    Notifications.open = true;
-    Notifications._renderSaved();
-    Notifications._renderInvites();
-    Notifications._renderList();
+    window.HeaderMenu?.open?.();
   },
 
-  // Screenshot-state deep link (`?shot=notifications`): the drawer only
-  // exists behind a click on the header bell, so the capture pipeline and
-  // any dapp.json test would otherwise never see it — and #1280's saved
-  // section lives nowhere else. Same idiom as WorkDrawer._maybeShotOpen();
-  // pair it with ?demo=1 in staging so the pinned sections have mock rows
-  // to render. Once per page load — reopening after a manual dismiss would
-  // fight the user, and refresh() runs again on live events.
+  hide() {
+    window.HeaderMenu?.close?.();
+  },
+
+  // Screenshot-state deep link (`?shot=notifications`): the list only exists
+  // behind a click on the hamburger, so the capture pipeline and any dapp.json
+  // test would otherwise never see it — and #1280's saved section lives
+  // nowhere else. Pair it with ?demo=1 in staging so the pinned sections have
+  // mock rows to render. Once per page load — reopening after a manual
+  // dismiss would fight the user, and refresh() runs again on live events.
   _shotOpened: false,
   _maybeShotOpen() {
     if (Notifications._shotOpened || Notifications.open) return;
@@ -422,29 +401,18 @@ const Notifications = {
     Notifications.show();
   },
 
-  hide() {
-    if (Notifications._sheet) {
-      Notifications._sheet.dismiss();
-      return;
-    }
-    const panel = document.getElementById('notifications-panel');
-    if (!panel) return;
-    panel.classList.add('hidden');
-    Notifications.open = false;
-  },
-
-  // #1329: the touch bottom sheet is MODAL — it covers the screen a drawer
-  // action navigates to, so leaving it presented strands the user under a
-  // stuck, mostly-empty sheet over a dimmed backdrop. Every action below
-  // that actually routes calls this first. Sheet-gated on purpose: `_sheet`
-  // only exists on touch, so the desktop anchored panel keeps its documented
-  // keep-open behaviour (see _onItemClick). The cog drawer's pinned "Needs
-  // attention" rows route through this module's _onItemClick too, so a
-  // presented WorkDrawer sheet is dismissed here as well — at most one of
-  // the two sheets ever exists (each drawer's show() hides the other).
+  // #1329: a presented drawer is MODAL on touch — it covers the screen the
+  // action navigates to, so leaving it up strands the user under a stuck,
+  // mostly-empty sheet over a dimmed backdrop. Every action below that
+  // actually routes calls this first.
+  //
+  // It closes the drawer at EVERY width now. The rule used to be sheet-gated,
+  // so the desktop anchored dropdown could keep its documented keep-open
+  // behaviour; there is no anchored dropdown any more, and a side drawer left
+  // open over the screen you just navigated to is the same problem the touch
+  // sheet had.
   _dismissSheetForNav() {
-    if (Notifications._sheet) Notifications.hide();
-    if (window.WorkDrawer && WorkDrawer._sheet && WorkDrawer.hide) WorkDrawer.hide();
+    if (Notifications.open) Notifications.hide();
   },
 
   // --- mark read -------------------------------------------------------
@@ -540,7 +508,7 @@ const Notifications = {
       if (Notifications.unread > 0) Notifications.unread -= 1;
       Notifications._reconcileCompletionTitle();
       Notifications._renderBadge();
-      if (Notifications.open) Notifications._renderList();
+      Notifications._renderList();
     }
     try {
       const res = await fetch('/api/notifications/read', {
@@ -701,8 +669,9 @@ const Notifications = {
   },
 
   // Count of unread session-related items (session_done / auto_solve_done /
-  // stale_pr / check_failed) currently loaded — the green badge on the
-  // header cog (work-drawer.js). Counted from the loaded items page; the
+  // stale_pr / check_failed) currently loaded — the GREEN badge, which the
+  // hamburger carries now that the cog is retired. Counted from the loaded
+  // items page; the
   // unread-dedup keeps completions to one-per-session and they're recent,
   // so they sit within the first page in practice.
   _sessionUnread() {
@@ -712,7 +681,7 @@ const Notifications = {
   // Of those, the ones that are a finished dev session specifically. Only
   // used to publish the count on the badge as `data-session-done`, so a
   // route check can assert the green badge is showing BECAUSE a session
-  // finished rather than because some other cog-drawer kind is unread.
+  // finished rather than because some other session kind is unread.
   _sessionDoneUnread() {
     return Notifications.items.filter((n) => n && n.kind === 'session_done' && !n.readAt).length;
   },
@@ -724,11 +693,12 @@ const Notifications = {
   },
 
   _renderBadge() {
-    // Two badges. Green (on the header cog) = the viewer's unread
-    // session-related notifications; red (on the bell) = everything else
-    // (mentions/replies/reactions/kudos/votes) + pending invites. The green
-    // count is split OUT of the red one so the two never double-count, and
-    // each hides at zero.
+    // Two badges, BOTH on the hamburger since the bell and the cog merged
+    // into it. Green = the viewer's unread session-related notifications;
+    // red = everything else (mentions/replies/reactions/kudos/votes) +
+    // pending invites. The green count is split OUT of the red one so the two
+    // never double-count, and each hides at zero. Keeping them distinct is
+    // what lets one icon say "there are two different reasons to open me".
     const aiUnread = Notifications._sessionUnread();
     const redCount = Notifications._bellUnread() + Notifications.invites.length;
 
@@ -756,12 +726,10 @@ const Notifications = {
     const markAll = document.getElementById('notifications-mark-all');
     if (markAll) markAll.disabled = Notifications._bellUnread() === 0;
     Notifications._updateTitle();
-    // The cog drawer renders its pinned section from this same items
-    // store — nudge it whenever the store (and therefore the badges)
-    // changed, so an open drawer stays in sync.
-    if (window.WorkDrawer && WorkDrawer.onNotificationsChanged) {
-      WorkDrawer.onNotificationsChanged();
-    }
+    // The cog drawer used to render a pinned section from this same items
+    // store and was nudged here whenever the store changed. It is retired;
+    // the list in the hamburger is React-rendered from the store directly,
+    // so it re-renders on its own.
   },
 
   _updateTitle() {
@@ -931,13 +899,20 @@ const Notifications = {
   // become the collapsed header's preview). Both re-sorts are stable
   // partitions, so ordering inside each tier is unchanged; once a
   // completion is read it drops back to its chronological spot.
-  // Items the bell itself renders: everything EXCEPT the session-related
-  // kinds, which live in the header cog's drawer (work-drawer.js). The
-  // full items array stays the single source of truth — pagination,
-  // mark-read and the completion-title reconcile all keep operating on
-  // it; only the bell's rendering and badge math are filtered.
+  // Items the list renders: ALL of them.
+  //
+  // This used to exclude the session-related kinds (session_done,
+  // auto_solve_done, stale_pr, check_failed), because those rendered in the
+  // header cog's pinned "Needs attention" section instead. THE UI OVERHAUL
+  // retired the cog, so keeping the filter would make four notification kinds
+  // invisible everywhere — the one thing a drawer merge must not do.
+  //
+  // The BADGE split survives, and is why isSessionNotif is still here: the
+  // hamburger carries two counts (green = your work in flight, red =
+  // everything else + invites) and they must not double-count. What changed is
+  // only which of them decides what is RENDERED.
   _bellItems() {
-    return Notifications.items.filter((n) => !isSessionNotif(n));
+    return Notifications.items;
   },
 
   _groupByApp() {
@@ -1068,13 +1043,16 @@ function isPriorityNotif(n) {
   return !!n && PRIORITY_KINDS.has(n.kind) && !n.readAt;
 }
 
-// The session-related kinds that render in the header cog's drawer
-// (work-drawer.js) instead of the bell: the four system-generated
-// (source-user-less) notifications about the viewer's OWN sessions and
-// proposals. Everything social — mentions, replies, reactions, kudos,
-// vote nudges, invites, spec shares — stays in the bell. The canonical
-// set lives here (the bell filters on it); work-drawer.js carries a
-// matching literal fallback for standalone loading.
+// The four system-generated (source-user-less) notifications about the
+// viewer's OWN sessions and proposals. Everything social — mentions,
+// replies, reactions, kudos, vote nudges, invites, spec shares — is
+// everything else.
+//
+// These used to render in the header cog's drawer INSTEAD of the bell, and
+// this set was the filter that kept the two apart. THE UI OVERHAUL merged
+// both into the hamburger, so all of it renders in one list now and the set
+// survives for the BADGES alone: green counts these, red counts everything
+// else, and the split is what stops one icon double-counting.
 const SESSION_NOTIF_KINDS = new Set([
   'session_done', 'auto_solve_done', 'stale_pr', 'check_failed',
 ]);
@@ -1542,18 +1520,19 @@ function relativeTime(ts) {
   return `${Math.floor(diff / 86400)}d ago`;
 }
 
-// #1079 chunk B: the cog drawer's "Needs attention" section renders these very
-// same per-kind rows (WorkDrawer.pendingSection). While both files were classic
-// <script>s they shared one global scope and it simply called the row builder;
-// inside the bundle each module has its own scope, so it has to be published on
-// the object work-drawer already reaches through (Notifications.items,
-// ._onItemClick, ._renderBadge, …).
+// #1079 chunk B published this row builder on the object rather than leaving
+// it in file scope: the cog drawer's "Needs attention" section rendered these
+// very same per-kind rows, and once each module had its own scope inside the
+// bundle it could no longer just call a neighbour's function.
 //
-// #1191 slice 6 conversion 4 converted that host too, so what crosses here is
-// the DESCRIPTOR rather than an HTML string: both drawers render these rows
-// with the same React component (NotificationRow in ./notifications-list.tsx),
-// which is why the HTML flavour of the row — `rowHtml`, its four class-string
-// helpers, `escapeHtml` and `renderMentionSnippet` — is gone from this file.
+// #1191 slice 6 conversion 4 then made what crosses here a DESCRIPTOR rather
+// than an HTML string, so both drawers rendered the rows with one React
+// component (NotificationRow in ./notifications-list.tsx).
+//
+// THE UI OVERHAUL retired the cog drawer and merged its pinned rows into this
+// list, so there is one caller again. The seam stays as it is: the descriptor
+// is what keeps ./notifications-list.tsx presentational, and it is what let the
+// list be lifted wholesale into the hamburger without this module noticing.
 Notifications._rowView = rowView;
 
 // Published exactly where the classic <script> published it: at module

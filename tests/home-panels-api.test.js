@@ -626,32 +626,29 @@ test('GET ?expand names ONE panel — an unknown name expands nothing', async ()
 
 // ─── Drag position ────────────────────────────────────────────────────
 
-// The registry is what Settings renders its checkboxes from and what the
-// grid places, so it has to describe EVERY widget — including the two
-// marker widgets that build no payload at all.
-test('the registry describes every widget, with its footprint and removability', async () => {
+// The registry is what says a block EXISTS at all — it is how the two marker
+// blocks, which build no payload, render — and which of them may be hidden.
+test('the registry describes every block and its removability', async () => {
   const { app } = makeApp({ season: SEASON, rows: [row()] }, { user: USER });
   const { body } = await get(app, '/api/home-panels');
   const byKey = Object.fromEntries(body.registry.map((r) => [r.key, r]));
   assert.deepEqual(Object.keys(byKey), ['challenges', 'discover', 'create']);
-  // Footprints are per column count and live server-side, so the layout
-  // route's overlap check and the client lay out against the same numbers.
-  // Challenges is asymmetric (#968): one row on a phone, where the widget is
-  // full width and a two-row footprint reserved space its content-height
-  // block never drew; its original two on desktop, where it is a tile among
-  // app icons and the leftover goes to the leaderboard fill.
-  assert.deepEqual(byKey.challenges.sizes, { 4: [4, 1], 5: [2, 2] });
-  // Discover is asymmetric (#949): one row on a phone, where it is full
-  // width and its content is a single lane; its original two on desktop,
-  // where the second row carries the Popular lane.
-  assert.deepEqual(byKey.discover.sizes, { 4: [4, 1], 5: [2, 2] });
-  // Create app takes a whole phone row (4 wide, 1 tall) and one desktop cell.
-  assert.deepEqual(byKey.create.sizes, { 4: [4, 1], 5: [1, 1] });
   // Discover is the shell's only door to the app directory.
   assert.equal(byKey.discover.removable, false);
   assert.equal(byKey.challenges.removable, true);
   assert.equal(byKey.create.removable, true);
-  // Placement is no longer this route's business.
+
+  // FOOTPRINTS ARE GONE. Each entry used to carry a per-column-count `sizes`
+  // table — asymmetric for two of the three, so a phone got a full-width row
+  // where a desktop got a 2x2 tile — and the layout route's overlap check ran
+  // on the same numbers, so a patched client could not persist a
+  // self-overlapping arrangement. THE UI OVERHAUL made all three fixed
+  // sections of the home screen, so nothing is placed and there is no
+  // footprint to agree on.
+  for (const entry of body.registry) {
+    assert.equal(entry.sizes, undefined, `${entry.key} carries no footprint`);
+  }
+  // Placement was already not this route's business.
   assert.equal(body.positions, undefined);
 });
 
@@ -914,15 +911,26 @@ test('the season board skips a podium-excluded leader in its podium rows', async
     'but the excluded viewer still sees their own rank-less line');
 });
 
-test('the fill is omitted when the tile is full, and when expanded', async () => {
-  // Four challenges fill the row budget: nothing left to fill.
+// THE FULL-LIST SKIP IS GONE. `challenges.length >= CHALLENGE_ROW_LIMIT`
+// returned early here — the server half of the subtraction the client did in
+// fillSlots() — and both were right while the block was a fixed 2x2 tile: the
+// fill spent whatever rectangle the challenge rows left, so a full list left
+// nothing. THE UI OVERHAUL made the block a section that grows and made this
+// preview the point of the Challenges area, and a full list is the ORDINARY
+// case (four is all this route sends), so the rule meant the standings were
+// usually absent from the one place that shows them.
+test('a full challenge list still gets the fill; an expanded one does not', async () => {
   const four = [row(), row({ id: 2 }), row({ id: 3 }), row({ id: 4 })];
   const full = makeApp({ season: SEASON, rows: four, event: EVENT, standings: STANDINGS },
     { user: USER });
   const { body: fullBody } = await get(full.app, '/api/home-panels');
-  assert.equal(fullBody.panels.find((p) => p.key === 'challenges').leaderboard, undefined);
+  const panel = fullBody.panels.find((p) => p.key === 'challenges');
+  assert.equal(panel.challenges.length, 4, 'the row budget is unchanged');
+  assert.ok(panel.leaderboard, 'and the standings ride along beside them');
+  assert.equal(panel.leaderboard.kind, 'topochain');
 
-  // Expanded is all challenges — the fill steps aside.
+  // Expanded is all challenges — a standings preview under thirty rows is not
+  // a preview, so the fill still steps aside there.
   const exp = makeApp({ season: SEASON, rows: [row()], event: EVENT, standings: STANDINGS },
     { user: USER });
   const { body: expBody } = await get(exp.app, '/api/home-panels?expand=challenges');
@@ -1077,12 +1085,18 @@ test('demoChallengesPanel: the few / none variants and their demo fill', () => {
   assert.equal(kudos.leaderboard.event, null);
   assert.equal(kudos.leaderboard.viewer.name, 'tester');
 
-  // No variant → byte-for-byte the payload that shipped before, with no fill
-  // (four rows leave no room), so the existing ?demo=1 check is untouched.
-  const base = demoChallengesPanel({});
+  // No variant → the four-row default, which now carries a fill too. It
+  // used to be the one demo payload WITHOUT one, because four rows left no
+  // room in the tile; the preview has its own budget now, and leaving the
+  // demo behind would make the ?demo=1 checks the last place the old
+  // subtraction rule survived.
+  const base = demoChallengesPanel({ username: 'tester' });
   assert.equal(base.challenges.length, 4);
   assert.equal(base.total, 7);
-  assert.equal(base.leaderboard, undefined);
+  assert.equal(base.leaderboard.kind, 'topochain');
+  assert.equal(base.leaderboard.viewer.name, 'tester');
+  // …but an EXPANDED demo still has none, matching the real builder.
+  assert.equal(demoChallengesPanel({ expanded: true, username: 'tester' }).leaderboard, null);
 
   // An unknown value falls through to that default rather than erroring.
   assert.equal(demoChallengesPanel({ variant: 'wat' }).challenges.length, 4);

@@ -1093,7 +1093,19 @@ export function init() {
 
       feedbackText.focus();
     };
-    document.getElementById('feedback-btn').addEventListener('click', () => App.openFeedbackModal());
+    // The header's #feedback-btn used to be wired here. THE UI OVERHAUL
+    // retired it: the dialog's entry point is the Improve panel's "Give
+    // feedback" row now (features/improve/improve-controller.js's
+    // giveFeedback(), which opens it with `fromDev: true` so the panel's own
+    // app is preselected as the target). `App.openFeedbackModal` is unchanged
+    // and still published below, so every other caller — the Dev "+" menu's
+    // "New issue", App._applyFeedbackShot, the rescued-draft notice — is
+    // untouched.
+    //
+    // The button's outbox dot moved rather than went: #feedback-queue-dot
+    // keeps its id and its writer (paintQueueDot) and now renders on
+    // #improve-btn, which is the only way to reach this dialog from the
+    // header.
     // Admin/moderation console (#588) is a drawer row now, not a header
     // button — its click handler is wired in HeaderMenu.init() (close the
     // drawer; the anchor's #admin href does the navigating). The row is

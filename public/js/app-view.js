@@ -53,33 +53,6 @@ const AppView = {
   _ghIssuesMeta: { truncatedList: false, note: null, repoUrl: null, myRemaining: null },
   _bountyInFlight: new Set(),
 
-  // #1100: Reporting-view caches. Deliberately SEPARATE from `_merged` /
-  // `_mergedHasMore` / `_mergedCursor`: the report pages the whole merged
-  // history, and writing that into `_merged` would silently extend the
-  // kanban Done column and retire its "Load more" footer as a side effect
-  // of visiting the report. null means "not paged yet" — _repaintReportView
-  // paints a placeholder and kicks _ensureReportData(). Invalidated on every
-  // successful _loadDevData and on app switch, so Refresh re-pages.
-  _reportMerged: null,
-  _reportLoading: false,
-  // True when the 500-row cap stopped the pager short of the full history.
-  _reportTruncated: false,
-  // The server's own `total` from page 1 — authoritative for "showing N of M"
-  // (see the staging first-page-only demo injection note in _ensureReportData).
-  _reportTotal: 0,
-  // True when paging FAILED and the report fell back to the board's first
-  // page, so the document can say it is showing partial history.
-  _reportPartial: false,
-  // Report period start (reporting-period): undefined = no explicit choice
-  // yet (resolves to the newest locked snapshot once _reportSnapshots
-  // loads, i.e. "Since last report"), null = "All history", string = ISO
-  // period start. Deliberately NOT cleared by _resetReportCaches — a data
-  // refresh must not discard the user's period choice; reset only on app
-  // switch (open()). _reportPeriodCustom keeps the dropdown on "Specific
-  // date…" while the date input is showing.
-  _reportSince: undefined,
-  _reportPeriodCustom: false,
-
   // #396: per-issue-number cache of the GitHub comment thread fetched
   // lazily when an issue topic opens, so _renderTopicHead's live-refreshes
   // (WS-driven) reuse it instead of refetching. Each entry is
@@ -212,18 +185,36 @@ const AppView = {
   // from 1024px (lg) because the board is worth having on a narrow
   // window even though the four columns only fit at their readable
   // width by scrolling sideways there (see the 640-1023px block in
-  // app.css) — and 'list' (the historical default) below it.
+  // app.css) — and 'feed' (the historical default) below it.
   // Read/written only through the two helpers below so the
   // localStorage access stays guarded in one place.
   VIEW_MODE_KEY: 'devViewMode',
   // The single whitelist of dev view modes, in switcher order. Every place
   // that resolves a mode — the ?view= override, the stored preference, the
-  // setter and the toggle's click handler — validates against THIS array
-  // instead of repeating an inline `(v === 'kanban' || v === 'pm')` chain,
-  // so adding a mode (#1100 added 'report') is one edit rather than four.
-  // 'list' is the terminal fallback for anything not in here.
-  VIEW_MODES: ['list', 'kanban', 'pm', 'report'],
+  // setter and the tab strip's click handler — validates against THIS array
+  // instead of repeating an inline chain, so changing the set is one edit
+  // rather than four. 'feed' is the terminal fallback for anything not here.
+  //
+  // THE UI OVERHAUL cut this from four modes to two. 'list' became 'feed'
+  // (the same surface, re-sorted into one recency-ordered activity stream
+  // that folds the Completed block in rather than parking it below), and
+  // 'pm' and 'report' were retired outright — a display preference toggle
+  // was carrying four genuinely different products, three of which almost
+  // nobody switched to. What is left is the two answers people actually
+  // want from a board: what just happened, and what is in flight.
+  VIEW_MODES: ['feed', 'kanban'],
   _isViewMode(v) { return AppView.VIEW_MODES.indexOf(v) !== -1; },
+  // Stored preferences from before the cut. A viewer who last left the board
+  // in PM or Reporting has a localStorage value naming a mode that no longer
+  // exists; without this they would silently land on the width default
+  // instead of the nearest surviving surface, which reads as "my setting was
+  // forgotten". 'list' is exactly 'feed'; the two retired overviews were
+  // board-shaped, so they resolve to the board.
+  RETIRED_VIEW_MODES: { list: 'feed', pm: 'kanban', report: 'kanban' },
+  _migrateViewMode(v) {
+    if (AppView._isViewMode(v)) return v;
+    return AppView.RETIRED_VIEW_MODES[v] || null;
+  },
   // The single source of truth in JS for where the board goes
   // side-by-side. Must stay in step with the two kanban media queries in
   // app.css (`max-width: 639px` for the tab strip, `min-width: 640px`
@@ -240,7 +231,7 @@ const AppView = {
   // page load (undefined = not parsed yet, null = nothing usable in the
   // URL). It exists so a fresh browser can be pointed straight at a given
   // view: the capture container boots with empty localStorage at the
-  // 390x844 phone frame, where the width default below resolves to 'list',
+  // 390x844 phone frame, where the width default below resolves to 'feed',
   // so without this no mobile screenshot could ever show the board.
   // Cleared by _setViewMode so an explicit toggle click always wins.
   _viewModeUrlOverride: undefined,
@@ -249,7 +240,9 @@ const AppView = {
     let v = null;
     try {
       const raw = new URLSearchParams(window.location.search).get('view');
-      if (AppView._isViewMode(raw)) v = raw;
+      // Migrated, not just validated: `?view=list` is in the wild (capture
+      // routes, bookmarks, the dapp.json checks) and must keep resolving.
+      v = AppView._migrateViewMode(raw);
     } catch { v = null; }
     AppView._viewModeUrlOverride = v;
     return v;
@@ -258,19 +251,20 @@ const AppView = {
     try {
       const override = AppView._readViewModeOverride();
       if (override) return override;
-      const stored = window.localStorage.getItem(AppView.VIEW_MODE_KEY);
-      if (AppView._isViewMode(stored)) return stored;
+      const stored = AppView._migrateViewMode(
+        window.localStorage.getItem(AppView.VIEW_MODE_KEY));
+      if (stored) return stored;
       if (AppView._viewModeAutoDefault === null) {
         AppView._viewModeAutoDefault =
           (typeof window.matchMedia === 'function'
             && window.matchMedia(AppView.KANBAN_MULTICOL_MEDIA).matches)
-            ? 'kanban' : 'list';
+            ? 'kanban' : 'feed';
       }
       return AppView._viewModeAutoDefault;
-    } catch { return 'list'; }
+    } catch { return 'feed'; }
   },
   _setViewMode(mode) {
-    const next = AppView._isViewMode(mode) ? mode : 'list';
+    const next = AppView._migrateViewMode(mode) || 'feed';
     // An explicit choice retires the URL override (#814) — otherwise
     // ?view= would keep winning over every later toggle click.
     AppView._viewModeUrlOverride = null;
@@ -402,11 +396,6 @@ const AppView = {
   // { issues: [{type,ref}], review: [{type,ref}] }; empty arrays mean the
   // default derived sort (today's board).
   _boardOrder: { issues: [], review: [] },
-  // Manual drag-and-drop order overlay for the PM view, keyed by the
-  // case-folded assignee (a person), loaded by _loadDevData from GET
-  // /pm-order. Shape { "<assignee_key>": [{type,ref}], … }; an absent key
-  // means that person's section uses the default derived (recency) sort.
-  _pmOrder: {},
   // One-shot flag set by the "Create proposal" button so the freshly
   // opened dev session renders a "promoting this PR creates the
   // proposal" hint.
@@ -447,14 +436,6 @@ const AppView = {
       Object.keys(AppView._govApplyTimers).forEach(AppView._clearGovApplyTimers);
       AppView._govApplying = Object.create(null);
       AppView._govDueSince = Object.create(null);
-      // #1100: the report's paged merged history is per-app — never carry
-      // one app's completed work into another app's report.
-      AppView._resetReportCaches();
-      AppView._reportTotal = 0;
-      // The report period is per-app too, and lives OUTSIDE
-      // _resetReportCaches so a data refresh keeps the user's choice.
-      AppView._reportSince = undefined;
-      AppView._reportPeriodCustom = false;
     }
     AppView.appData = appData;
 
@@ -3549,9 +3530,9 @@ const AppView = {
   // menu entry) was dissolved in #645 — Rename and App secrets now sit
   // directly in the "+" menu, alongside Members & visibility.
 
-  // ── View-mode toggle (list / kanban / pm / report) ───────────────────
+  // ── View-mode tabs (Feed / Kanban) ──────────────────────────────────
   //
-  // #1084 chunk G: the segmented control itself is React now — see
+  // #1084 chunk G: the control itself is React — see
   // frontend/src/features/dev-board/board-frame.tsx for the markup and
   // ./view-mode-store.ts for how the active mode gets there. Four helpers
   // retired with the template:
@@ -3563,14 +3544,34 @@ const AppView = {
   //                                           two-owners-of-one-attribute
   //                                           conflict the migration forbids.
   //
-  // What is left is the BEHAVIOUR the old click listener had, unchanged.
+  // THE UI OVERHAUL turned the four-icon segmented toggle into a two-tab
+  // strip. What is left here is the BEHAVIOUR the old click listener had,
+  // unchanged.
   _selectViewMode(v) {
-    const mode = AppView._isViewMode(v) ? v : 'list';
+    const mode = AppView._migrateViewMode(v) || 'feed';
     if (mode === AppView._getViewMode()) return;
     // _setViewMode publishes the new mode to the store, which is what
-    // repaints the four buttons.
+    // repaints the tab strip.
     AppView._setViewMode(mode);
     // Re-flow the already-cached data into the new layout. No refetch.
+    AppView._repaintDevBody();
+  },
+
+  // Open the Dev screen on a given tab.
+  //
+  // The Improve panel's entry point (features/improve/improve-controller.js's
+  // openDev), and the reason it is a method rather than that module reaching
+  // into _setViewMode itself: the panel navigates FIRST and then asks for a
+  // tab, so by the time this runs the board may not be mounted yet. Setting
+  // the mode before the repaint means the requested tab paints on the board's
+  // first frame instead of flashing the stored one.
+  //
+  // Safe to call when the board is already showing that tab (a no-op) and
+  // when #dev-body is not mounted at all (_repaintDevBody guards).
+  openDevView(mode) {
+    const next = AppView._migrateViewMode(mode);
+    if (!next) return;
+    AppView._setViewMode(next);
     AppView._repaintDevBody();
   },
 
@@ -4127,7 +4128,7 @@ const AppView = {
     if (!AppView.appData) return false;
     const slug = AppView.appData.slug;
     try {
-      const [ghRes, issuesRes, promotedRes, mergedRes, orderRes, pmOrderRes] = await Promise.all([
+      const [ghRes, issuesRes, promotedRes, mergedRes, orderRes] = await Promise.all([
         fetch(`/api/apps/${slug}/github-issues${AppView._demoQS()}`),
         // Forward ?demo=1 here too so the staging mock GOVERNANCE rows
         // (stagingMockGovernance — rename / secret / close-issue cards)
@@ -4146,10 +4147,6 @@ const AppView = {
         // failed order fetch from sinking the whole board load — an absent
         // order just means the default (derived) sort, i.e. today's board.
         fetch(`/api/apps/${slug}/board-order${AppView._demoQS()}`).catch(() => null),
-        // The PM view's per-person manual order overlay. Same tolerance +
-        // ?demo=1 forwarding as board-order; an absent map means every
-        // section uses the default recency sort (today's PM view).
-        fetch(`/api/apps/${slug}/pm-order${AppView._demoQS()}`).catch(() => null),
         // Session caches (own + shared + archived) ride along in the same
         // parallel load; the helper stores them on AppView directly, so
         // there's no destructured slot for it.
@@ -4173,13 +4170,6 @@ const AppView = {
         issues: (orderData && Array.isArray(orderData.issues)) ? orderData.issues : [],
         review: (orderData && Array.isArray(orderData.review)) ? orderData.review : [],
       };
-      // PM per-person order overlay. Shape { <assignee_key>: [{type,ref}] }.
-      // Tolerates a missing/failed fetch by defaulting to an empty map (every
-      // section falls back to the derived recency sort).
-      const pmOrderData = (pmOrderRes && pmOrderRes.ok) ? await pmOrderRes.json().catch(() => null) : null;
-      AppView._pmOrder = (pmOrderData && typeof pmOrderData === 'object' && !Array.isArray(pmOrderData))
-        ? pmOrderData : {};
-
       AppView._ghIssues = Array.isArray(ghData.issues) ? ghData.issues : [];
       AppView._ghIssuesMeta = {
         truncatedList: !!ghData.truncatedList,
@@ -4265,10 +4255,6 @@ const AppView = {
       AppView._mergedTotal = (typeof mergedData.total === 'number')
         ? mergedData.total
         : merged.length;
-      // #1100: a fresh dev-data load invalidates the report's own paged
-      // history, so the next Reporting paint (or Refresh) re-pages it.
-      AppView._resetReportCaches();
-      AppView._reportTotal = AppView._mergedTotal;
       // #607: keep the checks-in-progress polling fallback in sync with
       // what this load actually saw.
       AppView._syncChecksPoll(promoted);
@@ -4325,45 +4311,16 @@ const AppView = {
       AppView._repaintKanbanBoard();
       return;
     }
-    if (AppView._getViewMode() === 'pm') {
-      // PM view: a single scrolling container of per-assignee sections plus
-      // an Unassigned section. No #gc-merged block (merged + gov are
-      // excluded from this overview). #625: the kanban filter bar mounts
-      // here too — same two-node shell as the kanban branch, sharing
-      // _kanbanFilters and its per-app persistence, so filters survive the
-      // kanban↔PM toggle and the bar node stays stable across repaints.
-      if (!document.getElementById('dev-kanban-filterbar')
-          || !document.getElementById('dev-pm')) {
-        AppView._kanbanFilters = AppView._loadKanbanFilters(App.currentApp);
-        body.innerHTML = '<div id="dev-kanban-filterbar" class="mb-2"></div><div id="dev-pm"></div>';
-        AppView._renderKanbanFilterBar();
-      }
-      AppView._repaintPmView();
-      return;
+    // Feed mode: ONE container. The retired List mode built a two-node shell
+    // — #dev-feed plus a #gc-merged "Completed" block underneath it — and
+    // filled them separately. The completed rows are ordinary activity in the
+    // stream now (see _feedItems), so there is one node and one renderer, and
+    // the Kudos / Explore wiring that used to be applied twice is applied
+    // once by _rerenderFeed.
+    if (!document.getElementById('dev-feed')) {
+      body.innerHTML = '<div id="dev-feed"></div>';
     }
-    if (AppView._getViewMode() === 'report') {
-      // #1100: Reporting. A single stable node, mounted once and refilled by
-      // _repaintReportView on every repaint. Deliberately NO filter bar —
-      // a progress report is the whole picture by definition, and a filtered
-      // one would be a misleading document. _kanbanFilters is left untouched
-      // so switching back to kanban/PM restores the user's filters intact.
-      if (!document.getElementById('dev-report')) {
-        body.innerHTML = '<div id="dev-report"></div>';
-      }
-      AppView._repaintReportView();
-      return;
-    }
-    // List mode: rebuild the two-container shell, then fill it exactly as
-    // before. _rerenderFeed targets #dev-feed and re-attaches kudos/ask-AI
-    // there; the Completed block is filled + wired here.
-    body.innerHTML = '<div id="dev-feed"></div><div id="gc-merged" class="mt-4"></div>';
     AppView._rerenderFeed();
-    const mergedEl = document.getElementById('gc-merged');
-    if (mergedEl) {
-      mergedEl.innerHTML = (AppView._merged || []).length ? AppView._renderMergedInner() : '';
-      if (window.Kudos) Kudos.attach(mergedEl);
-      AppView._applyExploreChatAvailability(mergedEl);
-    }
     AppView._reanchorCardMenu();
   },
 
@@ -4379,71 +4336,83 @@ const AppView = {
       : '';
   },
 
-  // The feed's display order: fixed groups — proposals being voted on
-  // (PR promotions and governance proposals alike) above open issues —
-  // then auto-solve rank within the issues group (#227: 'generating'
-  // runs first, finished 'ready' runs awaiting review next, plain
-  // issues last — see _headlessRank), then most-recent-activity-first.
-  // Every item carries a lastActivity sort key = max(its own timestamp,
-  // the latest message in its thread); equal keys keep the per-source
-  // order (GitHub updated-desc for issues) via stable sort. The
-  // general-chat card and the viewer's session rows sit above this feed
-  // in the card list, so the full order the user sees is:
-  // chat → sessions → proposals → issues.
+  // The Feed's display order: STRICTLY most-recent-activity-first, across
+  // every kind of card at once.
+  //
+  // THE UI OVERHAUL is what changed this. The retired List view sorted by
+  // fixed GROUPS first — proposals being voted on above open issues — then by
+  // auto-solve rank inside the issues group, and only then by recency. That
+  // made it a prioritised worklist, which is a job the Kanban board does
+  // better and now does alone. What the second tab is for is the other
+  // question: what has been happening here lately. A grouped answer to that
+  // is the wrong answer — an issue commented on a minute ago sat below every
+  // open proposal, however stale.
+  //
+  // So: one stream, one sort key, and the COMPLETED rows folded in. Merged
+  // proposals and closed issues used to be parked in a separate `#gc-merged`
+  // block underneath everything, which is precisely where you would not look
+  // for "what just finished". They are activity like any other now.
+  //
+  // Every item carries a lastActivity key = max(its own timestamp, the latest
+  // message in its thread), so a card with a new comment rises exactly as a
+  // new card would. Array.prototype.sort is stable, so equal keys keep their
+  // per-source order (GitHub updated-desc for issues).
   _feedItems() {
     const ts = (v) => {
       const t = Date.parse(v || '');
       return Number.isFinite(t) ? t : 0;
     };
-    // Lower group renders first. Proposals (both kinds) share a group;
-    // other users' shared sessions live inside the issues group (their
-    // in-tier rank places them below the in-progress issues).
-    const GROUP = { proposal: 0, gov: 0, issue: 1, 'shared-session': 1 };
     const items = [];
     for (const issue of AppView._visibleGhIssues()) {
       items.push({
         kind: 'issue', id: issue.number, item: issue,
-        r: AppView._headlessRank(issue),
         t: Math.max(ts(issue.updatedAt), ts(issue.lastMessageAt)),
       });
     }
     for (const pr of AppView._proposals || []) {
       items.push({
-        // #388: pin PRs in the merge pipeline to the top of the proposal
-        // group — _proposalPinRank mirrors the badge precedence (merging >
-        // resolving > conflict-failed > normal), reusing the per-group `r`
-        // slot just like _headlessRank does for issues.
-        kind: 'proposal', id: pr.id, item: pr, r: AppView._proposalPinRank(pr),
+        // #388 used to pin merge-pipeline PRs to the top of the proposal
+        // group here, via _proposalPinRank. There is no proposal group any
+        // more, and pinning inside a chronological stream would be a lie
+        // about when something happened. The pipeline states it pinned for
+        // ("Merging…", "Resolving conflicts…", a failed check) all still
+        // render as the card's own state badge, and the Kanban board — which
+        // IS the prioritised view — still orders by them.
+        kind: 'proposal', id: pr.id, item: pr,
         t: Math.max(ts(pr.promoted_at || pr.created_at), ts(pr.last_message_at)),
       });
     }
     for (const g of AppView._govProposals || []) {
       items.push({
-        // Governance proposals have no merge/conflict state, so they sort
-        // in the normal (unpinned) tier alongside non-pipeline PRs (#388).
-        kind: 'gov', id: g.id, item: g, r: 3,
+        kind: 'gov', id: g.id, item: g,
         t: Math.max(ts(g.created_at), ts(g.last_message_at)),
       });
     }
     for (const s of AppView._sharedSessions || []) {
-      // Other users' shared sessions sit at the BOTTOM of the list's
-      // in-progress cluster: inside the issues group, ranked between
-      // 'ready' headless issues (1) and plain issues (2). Within the
-      // tier they order oldest-shared first (matching the kanban
-      // column), so t is the negated shared_at — the feed sorts t
-      // descending, and negation flips that into shared_at ascending.
+      // NOT negated any more. Under the retired grouping this key was
+      // -shared_at, a trick to flip the descending sort into oldest-first
+      // WITHIN the issues tier (matching the kanban column). With no tiers
+      // left, a negative key sorts below every real timestamp — i.e. every
+      // shared session would sink to the bottom of the stream forever. In an
+      // activity feed "shared" is the activity, so it sorts on when it
+      // happened, like everything else.
       items.push({
-        kind: 'shared-session', id: s.id, item: s, r: 1.5,
-        t: -(ts(s.shared_at)),
+        kind: 'shared-session', id: s.id, item: s,
+        t: Math.max(ts(s.shared_at), ts(s.last_message_at)),
       });
     }
-    // Array.prototype.sort is stable, so equal keys keep source order.
-    // Rank competes only within a group: the headless rank (0-2, with
-    // shared sessions at 1.5) inside the issues group, the merge-pipeline
-    // pin rank (0-3) inside the proposal group — the two never interleave
-    // because GROUP dominates.
-    return items.sort((a, b) =>
-      (GROUP[a.kind] - GROUP[b.kind]) || (a.r - b.r) || (b.t - a.t));
+    // Completed work — merged proposals and closed issues — from the stream
+    // that used to render as a separate "Completed" block below the feed.
+    // `row_type` is what tells the two apart; the renderer already switches
+    // on it, so this only has to preserve it.
+    for (const m of AppView._merged || []) {
+      items.push({
+        kind: 'merged', id: m.id, item: m,
+        t: Math.max(ts(m.merged_at || m.closed_at || m.created_at),
+          ts(m.last_message_at)),
+      });
+    }
+    return items.sort((a, b) => b.t - a.t);
   },
 
   _renderFeedInner() {
@@ -4459,7 +4428,7 @@ const AppView = {
       const note = meta.note
         ? 'Couldn&#39;t load open issues right now. '
         : '';
-      html += `<div class="text-xs text-zinc-500 dark:text-zinc-400 mb-2">${note}Nothing is open right now. Press <span class="font-medium text-violet-500">+</span> to propose a change or file an issue.</div>`;
+      html += `<div class="text-xs text-zinc-500 dark:text-zinc-400 mb-2">${note}No activity yet. Press <span class="font-medium text-violet-500">+</span> to propose a change or file an issue.</div>`;
       return html;
     }
 
@@ -4470,6 +4439,10 @@ const AppView = {
       if (it.kind === 'issue') html += AppView._renderIssueRow(it.item);
       else if (it.kind === 'proposal') html += AppView._renderProposalCard(it.item);
       else if (it.kind === 'shared-session') html += AppView._renderSharedSessionCard(it.item);
+      // Completed work, folded into the stream by _feedItems rather than
+      // parked in a block below it. _renderMergedRow is the same renderer
+      // the Completed block used, called one row at a time.
+      else if (it.kind === 'merged') html += AppView._renderMergedRow(it.item);
       else html += AppView._renderGovCard(it.item);
     }
     html += '</div>';
@@ -4477,10 +4450,16 @@ const AppView = {
     // Keep the generating-state poller in sync with what we just
     // rendered (idempotent set/clear of one timer).
 
-    // Paging footer: more local items, or a GitHub link when the repo
-    // has more open issues than the fetch ceiling.
+    // Paging footer: more local items first, then — once every cached row is
+    // on screen — the server's next keyset page of COMPLETED rows. Those used
+    // to be paged by the Completed block's own "Load more"; folding them into
+    // the stream means folding their pager in too, or the feed would silently
+    // stop at whatever the first page happened to contain.
     if (shown < items.length) {
       html += `<div class="mt-1"><button class="gc-vote-btn" onclick="AppView.showMoreFeed()">Show ${Math.min(10, items.length - shown)} more</button></div>`;
+    } else if (AppView._mergedHasMore) {
+      const loading = AppView._mergedLoadingMore;
+      html += `<div class="mt-1"><button class="gc-vote-btn" ${loading ? 'disabled' : ''} onclick="AppView.loadMoreMerged()">${loading ? 'Loading…' : 'Load more'}</button></div>`;
     } else if (meta.truncatedList && meta.repoUrl) {
       const issuesUrl = `${meta.repoUrl.replace(/\.git$/, '').replace(/\/$/, '')}/issues`;
       html += `<div class="mt-1"><a href="${issuesUrl}" target="_blank" rel="noopener" class="text-xs text-violet-400 hover:underline">More open issues on GitHub &rarr;</a></div>`;
@@ -4628,14 +4607,36 @@ const AppView = {
     const prT = (p) => Math.max(ts(p.promoted_at || p.created_at), ts(p.last_message_at));
     const govT = (g) => Math.max(ts(g.created_at), ts(g.last_message_at));
     const mergedT = (m) => Math.max(ts(m.created_at), ts(m.last_message_at));
-    // Mirror of _proposalPinRank, inlined to keep this helper self-contained
+    // Merge-pipeline pin rank (#388), and since THE UI OVERHAUL the board is
+    // the ONLY place it applies. It used to have a twin, AppView
+    // ._proposalPinRank, which ordered the retired List view's proposal
+    // group; the Feed that replaced it is pure recency, so pinning a
+    // pipeline state there would have been a lie about when something
+    // happened. The states this ranks all still render as the card's own
+    // state badge in both views — what is board-only is the ORDERING.
     // (merging > resolving > conflict-failed/merge-conflict > normal).
+    // The tiers deliberately match the card's own state-badge precedence
+    // (#361/#386: merging > resolving > failed), so a card's position in the
+    // column always agrees with the badge the viewer can see on it:
+    //   0 — 'merging'   ("Merging…")              being merged right now
+    //   1 — resolving   ("Resolving conflicts…")  auto-resolver sync in flight
+    //   2 — merge_conflict_state 'failed' / 'conflict': a real merge attempt
+    //       failed and the auto-resolver may never pick it up (it only touches
+    //       vote-eligible proposals), so the card must stay visible until the
+    //       creator finishes the merge
+    //   3 — #47: checks failing or errored. Blocks merge and needs the owner,
+    //       so it sits just below the conflict affordance rather than sinking
+    //       under ordinary chatter
+    //   4 — everything else (normal, by recency)
+    // A bare 'behind' snapshot is NOT pinned: it renders as the neutral
+    // "Behind main · N" badge, and many PRs can be behind main.
     const pinRank = (pr) => {
-      if (!pr) return 3;
+      if (!pr) return 4;
       if (pr.status === 'merging') return 0;
       if (pr.resolving) return 1;
       if (pr.merge_conflict_state === 'failed' || pr.merge_conflict_state === 'conflict') return 2;
-      return 3;
+      if (pr.check_state === 'failing' || pr.check_state === 'error') return 3;
+      return 4;
     };
 
     // Issue numbers an open promoted proposal card (Column 3) addresses.
@@ -4677,7 +4678,9 @@ const AppView = {
 
     const review = [];
     for (const p of proposals) review.push({ kind: 'proposal', item: p, _r: pinRank(p), _t: prT(p) });
-    for (const g of gov) review.push({ kind: 'gov', item: g, _r: 3, _t: govT(g) });
+    // Governance proposals have no merge or check state, so they sort in the
+    // normal (unpinned) tier alongside non-pipeline PRs.
+    for (const g of gov) review.push({ kind: 'gov', item: g, _r: 4, _t: govT(g) });
     review.sort((a, b) => (a._r - b._r) || (b._t - a._t));
 
     const done = merged.slice().sort((a, b) => mergedT(b) - mergedT(a));
@@ -4756,20 +4759,6 @@ const AppView = {
     return null;
   },
 
-  // Identity string for a PM-view card entry ({ kind, item }), matching the
-  // (card_type, card_ref) pairs the /pm-order server stores and the
-  // data-order-key attribute the drag handler reads. PM sections mix issues
-  // (ref = issue NUMBER) and proposals (ref = chat_sessions.id); no gov cards.
-  // A standalone fn (not `_cardOrderKey('issues', …)`) because both PM kinds
-  // arrive as { kind, item } entries, unlike the kanban Issues column's bare
-  // rows.
-  _pmCardOrderKey(entry) {
-    if (entry == null) return null;
-    const it = entry.item || {};
-    if (entry.kind === 'issue') return (it.number != null) ? `issue:${it.number}` : null;
-    if (entry.kind === 'proposal') return (it.id != null) ? `proposal:${it.id}` : null;
-    return null;
-  },
 
   // ── Kanban filters (#482) ───────────────────────────────────────────
   //
@@ -4932,17 +4921,18 @@ const AppView = {
         `<option value="${escapeAttr(name)}"${f.assignee === name ? ' selected' : ''}>${escapeHtml(name)}</option>`).join('');
   },
 
-  // #625: the filter bar is shared between the kanban and PM views, but
-  // each mode repaints a different surface. Every bar control routes its
-  // change through this dispatcher instead of calling _repaintKanbanBoard
-  // directly (which no-ops when #dev-kanban-board isn't mounted).
+  // #625 made the filter bar shared between the kanban and PM views, so every
+  // bar control routed its change through this dispatcher rather than calling
+  // _repaintKanbanBoard directly. The PM view is retired and the Feed carries
+  // no filter bar, so there is exactly one surface left — but the indirection
+  // stays: it is the single point every control already calls, and inlining it
+  // would be twelve edits to say the same thing.
   _repaintBoardSurface() {
-    if (AppView._getViewMode() === 'pm') AppView._repaintPmView();
-    else AppView._repaintKanbanBoard();
+    AppView._repaintKanbanBoard();
   },
 
   // Build the filter bar into #dev-kanban-filterbar and wire its controls.
-  // Called once per kanban / PM mount (and by Clear, to reset control
+  // Called once per kanban mount (and by Clear, to reset control
   // values); ordinary board repaints leave this node untouched so the
   // search input keeps its focus and text.
   _renderKanbanFilterBar() {
@@ -5085,28 +5075,16 @@ const AppView = {
     const list = item && item.closest('.dev-drag-list');
     if (!item || !list || !item.dataset.orderKey) return;
     e.preventDefault();
-    // PM view drags span multiple per-person lists (reorder within, reassign
-    // across); kanban drags stay inside one column. `scope` is the container
-    // the move handler hit-tests its sibling lists within.
-    const pmScope = item.closest && item.closest('#dev-pm');
-    if (pmScope) {
-      AppView._dragState = {
-        item, list, handle, pm: true,
-        scope: pmScope,
-        sourceList: list,
-        sourceAssignee: list.dataset.pmAssignee || null,
-        sourceName: list.dataset.pmName || null,
-        pointerId: e.pointerId,
-        moved: false,
-      };
-    } else {
-      AppView._dragState = {
-        item, list, handle,
-        column: list.dataset.orderCol,
-        pointerId: e.pointerId,
-        moved: false,
-      };
-    }
+    // Every drag stays inside ONE list now. The retired PM view was the only
+    // surface whose drags spanned several (reorder within a person's stack,
+    // reassign across two, unassign by dropping outside), which is what the
+    // `pm` branch and its cross-list hit-testing existed for.
+    AppView._dragState = {
+      item, list, handle,
+      column: list.dataset.orderCol,
+      pointerId: e.pointerId,
+      moved: false,
+    };
     try { handle.setPointerCapture(e.pointerId); } catch {}
     item.classList.add('opacity-50');
     handle.classList.add('cursor-grabbing');
@@ -5119,13 +5097,6 @@ const AppView = {
     const st = AppView._dragState;
     if (!st) return;
     st.moved = true;
-    // PM drags can cross into another person's list; re-target st.list to the
-    // drop list under the pointer first, so the card can move between sections
-    // (reassign) as well as within one (reorder). Kanban stays single-list.
-    if (st.pm) {
-      const target = AppView._pmListUnderPoint(st.scope, e.clientX, e.clientY);
-      if (target && target !== st.list) st.list = target;
-    }
     // Insert the dragged item before the first sibling whose vertical
     // midpoint is below the pointer; append when the pointer is past them
     // all. Direct children only, so nested cards never confuse the scan.
@@ -5144,24 +5115,6 @@ const AppView = {
     }
   },
 
-  // Find the PM drop list (.dev-drag-list) under a pointer within `scope`.
-  // Prefers a list whose bounding box contains the point; falls back to the
-  // list with the nearest vertical edge so a drop in the gap between sections
-  // still lands somewhere sensible. Returns null when there are no lists.
-  _pmListUnderPoint(scope, x, y) {
-    if (!scope) return null;
-    const lists = Array.from(scope.querySelectorAll('.dev-drag-list'));
-    if (!lists.length) return null;
-    let nearest = null;
-    let nearestDist = Infinity;
-    for (const list of lists) {
-      const r = list.getBoundingClientRect();
-      if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return list;
-      const dist = (y < r.top) ? (r.top - y) : (y > r.bottom ? y - r.bottom : 0);
-      if (dist < nearestDist) { nearestDist = dist; nearest = list; }
-    }
-    return nearest;
-  },
 
   _onDragPointerUp() {
     const st = AppView._dragState;
@@ -5172,10 +5125,9 @@ const AppView = {
     try { st.handle.releasePointerCapture(st.pointerId); } catch {}
     st.item.classList.remove('opacity-50');
     st.handle.classList.remove('cursor-grabbing');
-    const { list, column, moved, pm } = st;
+    const { list, column, moved } = st;
     AppView._dragState = null;
     if (!moved) return;
-    if (pm) { AppView._onPmDrop(st); return; }
     const keys = Array.from(list.children)
       .filter((el) => el.classList.contains('dev-drag-item'))
       .map((el) => el.dataset.orderKey)
@@ -5224,131 +5176,10 @@ const AppView = {
     }
   },
 
-  // ── PM view drag: reorder within / reassign across / unassign ─────────
-  //
-  // Reuses the shared pointer machinery above (_onDragPointerDown/Move/Up).
-  // A PM drag can end in three ways, decided purely from the source + drop
-  // list identities by _classifyPmDrop; _onPmDrop then performs the matching
-  // side effect (reassign = an assignee vote; unassign = withdraw that vote)
-  // plus a per-person order write for each affected section.
 
-  _initPmDrag(container) {
-    if (!container || container._dragBound) return;
-    if (AppView.readOnly) return; // no reordering for read-only viewers
-    container._dragBound = true;
-    container.addEventListener('pointerdown', AppView._onDragPointerDown);
-  },
 
-  // Pure classification of a completed PM drag. Given the source section key
-  // and the drop list's dataset ({ pmAssignee, pmName, pmUnassigned }),
-  // returns { action, ... }: 'reorder' (same person), 'reassign' (new person,
-  // carries destName), or 'unassign' (dropped on the Unassigned list). No DOM,
-  // no state — unit-tested directly.
-  _classifyPmDrop(sourceKey, destData) {
-    const d = destData || {};
-    if (d.pmUnassigned === '1' || d.pmUnassigned === true) return { action: 'unassign' };
-    const destKey = d.pmAssignee || null;
-    if (destKey == null) return { action: 'none' };
-    if (destKey === sourceKey) return { action: 'reorder' };
-    return { action: 'reassign', destName: d.pmName || destKey };
-  },
 
-  // Card identity keys ('issue:123' / 'proposal:45') currently in a list's DOM.
-  _pmListKeys(listEl) {
-    if (!listEl) return [];
-    return Array.from(listEl.children)
-      .filter((el) => el.classList && el.classList.contains('dev-drag-item'))
-      .map((el) => el.dataset && el.dataset.orderKey)
-      .filter(Boolean);
-  },
 
-  // Orchestrate a dropped PM card: classify, apply the reassign/unassign vote
-  // side effect, then persist the affected per-person orders. Optimistic —
-  // any failure reconciles by re-pulling the board (refreshDevData).
-  async _onPmDrop(st) {
-    const destList = st.list;
-    const cls = AppView._classifyPmDrop(st.sourceAssignee, destList && destList.dataset);
-    const ref = AppView._orderKeyToRef(st.item.dataset.orderKey);
-    // DOM already reflects the move: dest list holds the card, source doesn't.
-    const destKeys = AppView._pmListKeys(destList);
-    const sourceKeys = AppView._pmListKeys(st.sourceList);
-    const prev = AppView._pmOrder || {};
-    try {
-      if (cls.action === 'reorder') {
-        await AppView._commitPmOrder(st.sourceName, destKeys);
-      } else if (cls.action === 'reassign') {
-        if (ref) await AppView._castAssigneeForCard(ref.type, ref.ref, cls.destName);
-        await AppView._commitPmOrder(cls.destName, destKeys);
-        if (st.sourceName) await AppView._commitPmOrder(st.sourceName, sourceKeys);
-      } else if (cls.action === 'unassign') {
-        if (ref) await AppView._clearAssigneeForCard(ref.type, ref.ref);
-        if (st.sourceName) await AppView._commitPmOrder(st.sourceName, sourceKeys);
-        else AppView._repaintPmView();
-      } else {
-        AppView._repaintPmView();
-      }
-    } catch (err) {
-      AppView._pmOrder = prev;
-      // Reconcile against server truth (assignee summary + saved order) and
-      // repaint from the reloaded cache.
-      if (AppView.refreshDevData) AppView.refreshDevData('pm-order');
-      else AppView._repaintPmView();
-      PlatformUI.toast('Couldn’t save that change — reverted.');
-    }
-  },
-
-  // Persist one person's new card order. Optimistically updates _pmOrder +
-  // repaints (so the order sticks and grips re-bind), then POSTs. On failure,
-  // throws so _onPmDrop reverts + reconciles. `assigneeName` is the display
-  // name; the server case-folds it to the storage key.
-  async _commitPmOrder(assigneeName, keys) {
-    const key = String(assigneeName == null ? '' : assigneeName).trim().toLowerCase();
-    if (!key) return;
-    const order = (keys || []).map(AppView._orderKeyToRef).filter(Boolean);
-    AppView._pmOrder = { ...(AppView._pmOrder || {}), [key]: order };
-    AppView._repaintPmView();
-    const slug = AppView.appData && AppView.appData.slug;
-    if (!slug) return;
-    const res = await fetch(`/api/apps/${slug}/pm-order${AppView._demoQS()}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ assignee: assigneeName, order }),
-    });
-    if (!res.ok) throw new Error('pm-order save failed');
-    const data = await res.json().catch(() => null);
-    if (data && typeof data === 'object' && !Array.isArray(data)) {
-      AppView._pmOrder = data;
-      AppView._repaintPmView();
-    }
-  },
-
-  // Cast the viewer's assignee vote for a card (reassign-by-drag). Mirrors the
-  // chip popover's _castAttrVote POST, then writes the refreshed summary onto
-  // the cached item so the regroup places the card under the new person.
-  async _castAssigneeForCard(targetType, targetRef, name) {
-    const slug = AppView.appData && AppView.appData.slug;
-    if (!slug) throw new Error('no app');
-    const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/topics/${targetType}/${targetRef}/attributes`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ field: 'assignee', value: name }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || 'reassign failed');
-    AppView._applyAttrSummary(targetType, targetRef, 'assignee', data);
-  },
-
-  // Withdraw the viewer's assignee vote for a card (drag-to-Unassigned).
-  async _clearAssigneeForCard(targetType, targetRef) {
-    const slug = AppView.appData && AppView.appData.slug;
-    if (!slug) throw new Error('no app');
-    const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/topics/${targetType}/${targetRef}/attributes?field=assignee`, {
-      method: 'DELETE',
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || 'unassign failed');
-    AppView._applyAttrSummary(targetType, targetRef, 'assignee', data);
-  },
 
   // Render the kanban board (inner HTML for #dev-kanban-board) from cached
   // data. Reuses the exact per-card renderers the list mode uses, so every
@@ -5610,2020 +5441,43 @@ const AppView = {
       </div>`;
   },
 
-  // ── PM view (tasks by assignee) ──────────────────────────────────────
-  //
-  // Pure grouping of the cached dev data into a project-manager's
-  // assignment overview. No DOM, no AppView state reads — everything comes
-  // in via `data` — so it is unit-testable in isolation (see
-  // tests/dev-pm-groups.test.js), mirroring _bucketDevItems.
-  //
-  //   data = { issues, proposals }
-  //     issues    — visible GitHub issues (env-twin-filtered; both the
-  //                 Issues and In-progress kanban buckets — i.e. every
-  //                 open issue), each carrying an { assignee: { top } }
-  //     proposals — open promoted/merging PR proposals
-  //   (merged + governance are deliberately NOT passed: completed work
-  //    isn't an open assignment, and gov cards never carry an assignee.)
-  //
-  // Returns { groups, unassigned, unassignedTotal }:
-  //   groups          — [{ name, count, items: [{kind, item}] }] for every
-  //                     person with ≥1 assigned task, ordered by count desc
-  //                     then name asc; items within a group newest-first
-  //   unassigned      — [{kind, item}] with no assignee, newest-first,
-  //                     capped to PM_UNASSIGNED_MAX (override with
-  //                     opts.cap — #633 passes Infinity while the
-  //                     Unassigned filter is active)
-  //   unassignedTotal — the pre-cap count, for the "+N more" note
-  //
-  //   opts.pmOrder — optional per-person manual order overlay, shape
-  //                  { "<assignee_key>": [{type,ref}], … } (AppView._pmOrder).
-  //                  When present, each group's items are re-sorted by
-  //                  _applyManualOrder AFTER the recency sort: cards absent
-  //                  from a person's saved order lead (newest-first), ranked
-  //                  cards follow in stored order (#617). The Unassigned
-  //                  bucket is NEVER reordered. Passed in explicitly (not read
-  //                  off AppView) so this helper stays pure + unit-testable.
-  PM_UNASSIGNED_MAX: 10,
-  _groupByAssignee(data, opts) {
-    const d = data || {};
-    const issues = Array.isArray(d.issues) ? d.issues : [];
-    const proposals = Array.isArray(d.proposals) ? d.proposals : [];
-    const pmOrder = (opts && opts.pmOrder && typeof opts.pmOrder === 'object') ? opts.pmOrder : null;
-
-    const ts = (v) => {
-      const t = Date.parse(v || '');
-      return Number.isFinite(t) ? t : 0;
-    };
-    // Recency key per kind — mirrors _bucketDevItems' issueT / prT so the
-    // ordering matches the rest of the dev view.
-    const recency = (kind, it) => (kind === 'issue'
-      ? Math.max(ts(it.updatedAt), ts(it.lastMessageAt))
-      : Math.max(ts(it.promoted_at || it.created_at), ts(it.last_message_at)));
-
-    const assigneeTop = (it) => (it && it.assignee && it.assignee.top) || null;
-
-    // Flatten both kinds into one list carrying kind, item and its sort key.
-    const cards = [];
-    for (const i of issues) cards.push({ kind: 'issue', item: i, _t: recency('issue', i) });
-    for (const p of proposals) cards.push({ kind: 'proposal', item: p, _t: recency('proposal', p) });
-
-    // Bucket by case-folded assignee; first-seen casing is the display name.
-    const byKey = new Map(); // lower(top) -> { name, entries: [{kind,item,_t}] }
-    const unassigned = [];
-    for (const c of cards) {
-      const top = assigneeTop(c.item);
-      if (top == null || String(top).trim() === '') { unassigned.push(c); continue; }
-      const key = String(top).toLowerCase();
-      if (!byKey.has(key)) byKey.set(key, { name: String(top), entries: [] });
-      byKey.get(key).entries.push(c);
-    }
-
-    const groups = Array.from(byKey.values()).map((g) => {
-      const entries = g.entries.slice().sort((a, b) => b._t - a._t);
-      let items = entries.map((e) => ({ kind: e.kind, item: e.item }));
-      // Apply this person's manual order overlay on top of the recency sort.
-      if (pmOrder) {
-        const savedOrder = pmOrder[g.name.toLowerCase()];
-        if (Array.isArray(savedOrder) && savedOrder.length) {
-          items = AppView._applyManualOrder(items, savedOrder, AppView._pmCardOrderKey);
-        }
-      }
-      return { name: g.name, count: items.length, items };
-    });
-    groups.sort((a, b) => (b.count - a.count) || a.name.localeCompare(b.name));
-
-    const unassignedSorted = unassigned.slice().sort((a, b) => b._t - a._t);
-    const cap = (opts && opts.cap != null) ? opts.cap : AppView.PM_UNASSIGNED_MAX;
-    return {
-      groups,
-      unassigned: unassignedSorted.slice(0, cap).map((e) => ({ kind: e.kind, item: e.item })),
-      unassignedTotal: unassignedSorted.length,
-    };
-  },
-
-  // Render the PM view (inner HTML for #dev-pm) from cached data. Reuses the
-  // exact per-kind card renderers the list/kanban modes use, so every card
-  // keeps its buttons, badges, and data-*-row open hooks.
-  _renderPmInner() {
-    // #625: apply the shared filter bar BEFORE grouping — unlike kanban's
-    // post-bucket rule, PM grouping has no cross-item dedup, so a
-    // filtered-out card simply vanishes and each person's header count
-    // reflects exactly the cards rendered under it. _groupByAssignee stays
-    // pure and filter-unaware.
-    const f = AppView._kanbanFilters || {};
-    const filtering = AppView._kanbanFiltersActive();
-    let issues = AppView._visibleGhIssues();
-    let proposals = AppView._proposals || [];
-    if (filtering) {
-      issues = issues.filter((i) => AppView._devCardMatches('issue', i, f));
-      proposals = proposals.filter((p) => AppView._devCardMatches('proposal', p, f));
-    }
-    // #633: with the Unassigned filter active the section IS the view —
-    // lift the cap so the full unassigned backlog renders, no "+N more".
-    const unassignedOnly = f.assignee === AppView.KANBAN_ASSIGNEE_UNASSIGNED;
-    const { groups, unassigned, unassignedTotal } = AppView._groupByAssignee(
-      { issues, proposals },
-      { cap: unassignedOnly ? Infinity : undefined, pmOrder: AppView._pmOrder }
-    );
-    // Reorder/reassign by drag is offered unless the filter bar is active (a
-    // saved order applies to the full section, not a filtered subset —
-    // mirroring the kanban rule at _renderKanbanInner). Read-only viewers get
-    // no grips either: _wrapDraggable omits them and _initPmDrag never binds.
-    const reorder = !filtering && !AppView.readOnly;
-
-    // With a named-user filter active, the Unassigned section can never
-    // match — hide it rather than rendering a permanently-empty stub.
-    const showUnassigned = !f.assignee || unassignedOnly;
-    if (filtering && !groups.length && (!showUnassigned || unassignedTotal === 0)) {
-      return '<div class="space-y-5"><div class="text-xs text-zinc-400 dark:text-zinc-500 italic py-2">No cards match the current filters.</div></div>';
-    }
-
-    const renderCard = (c) => (c.kind === 'proposal'
-      ? AppView._renderProposalCard(c.item)
-      : AppView._renderIssueRow(c.item));
-    const sectionHead = (inner) => `<div class="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider mb-2 px-0.5 flex items-center gap-1.5">${inner}</div>`;
-
-    let html = '<div class="space-y-5">';
-
-    // Tasks-by-assignee area.
-    if (groups.length) {
-      for (const g of groups) {
-        const head = sectionHead(
-          `${AppView._assigneeAvatarHtml(g.name)}<span class="normal-case text-zinc-700 dark:text-zinc-200">@${escapeHtml(g.name)}</span>`
-          + `<span class="text-zinc-400 dark:text-zinc-500 font-mono">· ${g.count}</span>`
-        );
-        let body;
-        if (reorder) {
-          // Each person's section is a drop-target list keyed by their
-          // case-folded assignee (data-pm-assignee) + display name
-          // (data-pm-name, used to cast the assignee vote on a cross-section
-          // drop). Cards carry a grip + data-order-key via _wrapDraggable.
-          const key = g.name.toLowerCase();
-          body = `<div class="space-y-2 dev-drag-list" data-pm-assignee="${escapeAttr(key)}" data-pm-name="${escapeAttr(g.name)}">`
-            + g.items.map((c) => AppView._wrapDraggable(AppView._pmCardOrderKey(c), renderCard(c))).join('')
-            + '</div>';
-        } else {
-          body = `<div class="space-y-2">${g.items.map(renderCard).join('')}</div>`;
-        }
-        html += `<div>${head}${body}</div>`;
-      }
-    } else if (!filtering) {
-      // While filtering, an empty assigned area with matches below needs no
-      // placeholder — the Unassigned section speaks for itself.
-      html += '<div class="text-xs text-zinc-400 dark:text-zinc-500 italic py-2">No tasks are assigned to anyone yet.</div>';
-    }
-
-    // Unassigned section — shown unless a user filter is active; lists the
-    // most recent open work with no assignee, capped, with a "+N more" note
-    // when truncated. The cap and count apply AFTER filtering.
-    if (showUnassigned) {
-      const unHead = sectionHead(
-        `${AppView._assigneeAvatarPlaceholderHtml()}<span class="normal-case">Unassigned</span>`
-        + `<span class="text-zinc-400 dark:text-zinc-500 font-mono">· ${unassignedTotal}</span>`
-      );
-      let unBody;
-      if (unassigned.length) {
-        if (reorder) {
-          // The Unassigned section is a DROP TARGET (drop a card here to
-          // withdraw your assignee vote) but its own cards carry no grip —
-          // _wrapDraggable(null, …) yields a .dev-drag-item with no handle /
-          // order-key, so its internal order stays recency-only (not
-          // user-sortable), per the spec.
-          unBody = '<div class="space-y-2 dev-drag-list" data-pm-unassigned="1">'
-            + unassigned.map((c) => AppView._wrapDraggable(null, renderCard(c))).join('')
-            + '</div>';
-        } else {
-          unBody = `<div class="space-y-2">${unassigned.map(renderCard).join('')}</div>`;
-        }
-        if (unassignedTotal > unassigned.length) {
-          // #633: clicking the note switches the assignee filter to
-          // Unassigned, revealing the full uncapped list (wired in
-          // _repaintPmView after the paint).
-          const moreCount = unassignedTotal - unassigned.length;
-          unBody += `<div class="mt-2"><button type="button" id="dev-pm-more-unassigned"
-            class="text-xs text-zinc-400 dark:text-zinc-500 italic hover:text-violet-500 hover:underline"
-            title="Show all unassigned cards">+${moreCount} more unassigned</button></div>`;
-        }
-      } else {
-        unBody = '<div class="text-xs text-zinc-400 dark:text-zinc-500 italic py-2">Nothing unassigned.</div>';
-      }
-      html += `<div>${unHead}${unBody}</div>`;
-    }
-
-    html += '</div>';
-    return html;
-  },
-
-  // Repaint the PM container (#dev-pm) from cached data. Mirrors
-  // _repaintKanbanBoard: fill innerHTML, then re-attach kudos / ask-AI
-  // availability and keep the headless-state poller in sync.
-  _repaintPmView() {
-    // Never rebuild the PM view out from under an in-progress drag — a
-    // mid-drag innerHTML swap (e.g. a WS board_order_update from another user)
-    // would drop the pointer capture and strand the card. The commit that
-    // ends the drag repaints once it lands. Mirrors _repaintKanbanBoard.
-    if (AppView._dragState) return;
-    const el = document.getElementById('dev-pm');
-    if (!el) return;
-    // #625: every PM-mode filter-control change funnels through here (via
-    // _repaintBoardSurface), so — mirroring _repaintKanbanBoard — persist
-    // the shared per-app filters and keep the bar's Clear link / assignee
-    // options in sync after the paint.
-    AppView._saveKanbanFilters(App.currentApp);
-    el.innerHTML = AppView._renderPmInner();
-    // #633: "+N more unassigned" jumps to the Unassigned filter; rebuild the
-    // bar so the assignee select snaps to the new value, then repaint.
-    const more = el.querySelector('#dev-pm-more-unassigned');
-    if (more && more.addEventListener) {
-      more.addEventListener('click', () => {
-        AppView._kanbanFilters.assignee = AppView.KANBAN_ASSIGNEE_UNASSIGNED;
-        AppView._renderKanbanFilterBar();
-        AppView._repaintBoardSurface();
-      });
-    }
-    if (window.Kudos) Kudos.attach(el);
-    AppView._applyExploreChatAvailability(el);
-    AppView._updateKanbanFilterBarUI();
-    AppView._initPmDrag(el);
-    AppView._reanchorCardMenu();
-  },
-
-  // ══ Reporting view (#1100) ═══════════════════════════════════════════
-  //
-  // A fourth view mode that replaces the board with a generated, READ-ONLY
-  // progress report — Done / In progress / Backlog — plus a Download HTML
-  // export. Three deliberate properties:
-  //
-  //   * It reuses NONE of the card renderers. `#dev-body` has a delegated
-  //     click handler (renderDevView) that opens topics and fires card
-  //     actions off `data-issue-row` / `data-proposal-row` / `data-gov-row`
-  //     / `data-session-chip`. Emitting any of those here would turn every
-  //     report line into a live control, so the report's own markup uses
-  //     `ur-rpt-*` classes exclusively and its only interactive elements
-  //     are the two toolbar buttons and external GitHub links.
-  //   * The classification is DELEGATED to _bucketDevItems, so the report
-  //     can never disagree with the board about what is done / in review /
-  //     in progress / backlog — and the three sections are mutually
-  //     exclusive by construction.
-  //   * _buildReportModel and _renderReportHtml are pure (data in, plain
-  //     object / string out; no DOM, no AppView state reads), so they are
-  //     unit-tested in a vm sandbox (tests/dev-report.test.js) and port
-  //     unchanged when the dev board moves into the React bundle (#1084).
-
-  // Month labels for the Done section's group headings. An explicit table
-  // rather than toLocaleDateString(month:'long') so the heading is stable
-  // across runtimes with a trimmed ICU and assertable in tests.
-  REPORT_MONTHS: ['January', 'February', 'March', 'April', 'May', 'June',
-    'July', 'August', 'September', 'October', 'November', 'December'],
-
-  // Backlog priority groups, in report order. The first three mirror
-  // ATTR_PRIORITY_VALUES (highest first); the fourth catches issues the
-  // group has not voted a priority on.
-  REPORT_PRIORITY_GROUPS: [
-    { key: 'high', label: 'High' },
-    { key: 'medium', label: 'Medium' },
-    { key: 'low', label: 'Low' },
-    { key: 'none', label: 'No priority set' },
-  ],
-
-  // #1112: the seven work states as a printed report says them — lower-case
-  // fragments for a comma-joined meta line, where the chip's title-case
-  // "Needs an answer" would read as a heading. Same keys as
-  // _issueWorkState, so a state added there and not here prints nothing
-  // rather than a stale phrase.
-  REPORT_WORK_STATE_LABELS: {
-    in_review: 'in review',
-    working: 'being worked on',
-    auto_solving: 'auto-solving',
-    paused: 'paused',
-    answer_needed: 'needs an answer',
-    draft_ready: 'draft ready to review',
-    claimed: 'claimed',
-  },
-
-  // Hard cap on the merged-history pager: 10 sequential pages of 50 rows.
-  // Keeps one Reporting click from becoming a 40-request storm on a
-  // long-lived app; the overflow is DISCLOSED in the document rather than
-  // silently dropped.
-  REPORT_MERGED_PAGE: 50,
-  REPORT_MERGED_MAX_PAGES: 10,
-  REPORT_MERGED_MAX_ROWS: 500,
-
-  // Drop the report's paged history so the next paint (or an explicit
-  // Refresh) re-pages it. Called on every successful _loadDevData and on
-  // app switch — never mid-paint.
-  _resetReportCaches() {
-    AppView._reportMerged = null;
-    AppView._reportTruncated = false;
-    AppView._reportPartial = false;
-    // AI layer (report-ai): undefined = never fetched for this app/data
-    // cycle; null = fetched, none generated yet; object = cached summary.
-    AppView._reportAi = undefined;
-    AppView._reportAiGenerating = false;
-    // Locked snapshots (report-lock-share): undefined = never fetched.
-    AppView._reportSnapshots = undefined;
-    AppView._reportLocking = false;
-    // Discord copy panel (reporting-period): the composed text is built
-    // from the caches above, so a data refresh invalidates it. Note
-    // _reportSince deliberately survives — see its declaration.
-    AppView._reportDiscordMsg = null;
-    AppView._reportDiscordBusy = false;
-    AppView._reportDiscordFallback = false;
-  },
-
-  // ── Report period (reporting-period) ─────────────────────────────────
-  // The effective period start as an ISO string, or null for "All
-  // history". With no explicit choice, the default is "since the newest
-  // locked snapshot" — which upgrades from "All history" automatically
-  // when _reportSnapshots arrives, because the snapshot fetch already
-  // triggers a repaint.
-  _reportEffectiveSince() {
-    if (AppView._reportSince !== undefined) return AppView._reportSince;
-    const snaps = AppView._reportSnapshots;
-    if (Array.isArray(snaps) && snaps.length && snaps[0].lockedAt) {
-      return snaps[0].lockedAt;
-    }
-    return null;
-  },
-
-  // The same period as _buildReportModel opts: {} or { since: <ms> }.
-  _reportModelOpts() {
-    const iso = AppView._reportEffectiveSince();
-    const t = iso ? Date.parse(iso) : NaN;
-    return Number.isFinite(t) ? { since: t } : {};
-  },
-
-  _onReportPeriodChange(value) {
-    if (value === 'custom') {
-      // Reveal the date input; the effective period only changes once a
-      // date is actually picked.
-      AppView._reportPeriodCustom = true;
-    } else {
-      AppView._reportPeriodCustom = false;
-      AppView._reportSince = (value && value.indexOf('snap:') === 0)
-        ? value.slice(5)
-        : null; // 'all'
-      // Re-check the AI summary's staleness against the new period.
-      AppView._reportAi = undefined;
-    }
-    AppView._repaintReportView();
-  },
-
-  _onReportPeriodDate(value) {
-    // The date input yields 'YYYY-MM-DD'; interpret it at the viewer's
-    // LOCAL midnight (no timezone suffix → local time), then store ISO.
-    const t = Date.parse(value ? `${value}T00:00:00` : '');
-    if (!Number.isFinite(t) || t > Date.now()) return;
-    AppView._reportSince = new Date(t).toISOString();
-    AppView._reportAi = undefined;
-    AppView._repaintReportView();
-  },
-
-  // Page the full merged history into `_reportMerged` — the one fetch the
-  // report adds. `_merged` holds only the board's first page (20 rows) and
-  // `_mergedTotal` the true count, so the history has to be paged; it lands
-  // in a SEPARATE cache because writing it into `_merged` would silently
-  // extend the kanban Done column and retire its "Load more" footer as a
-  // side effect of visiting the report.
-  //
-  // Uses the same keyset cursor shape as loadMoreMerged (before /
-  // before_id / before_type) and forwards _demoQS() on every page. On
-  // failure it falls back to the board's first page and sets
-  // `_reportPartial`, so the document says it is showing partial history
-  // instead of quietly under-reporting.
-  async _ensureReportData() {
-    if (AppView._reportLoading) return;
-    if (AppView._reportMerged) return;
-    if (!AppView.appData) return;
-    const slug = AppView.appData.slug;
-    AppView._reportLoading = true;
-    const rowKey = (r) => `${r.row_type || 'pr'}:${r.id}`;
-    const rows = [];
-    const have = new Set();
-    let truncated = false;
-    let partial = false;
-    // Authoritative "of N": the FIRST page's own `total`. In staging the
-    // ?demo=1 injection is first-page-only (votes.js, gated on isFirstPage)
-    // and bumps `total` by the injected count, so recomputing a total from
-    // the rows we hold would contradict the server. Page 2+ of a demo
-    // report returns real rows only and the page-1 cursor may sit on a
-    // synthetic row — the (row_type, id) dedupe below covers the overlap.
-    let total = 0;
-    try {
-      let cursor = null;
-      for (let page = 0; page < AppView.REPORT_MERGED_MAX_PAGES; page++) {
-        const qs = AppView._demoQS();
-        const sep = qs ? '&' : '?';
-        let url = `/api/apps/${slug}/merged${qs}${sep}limit=${AppView.REPORT_MERGED_PAGE}`;
-        if (cursor) {
-          url += `&before=${encodeURIComponent(cursor.created_at)}`
-            + `&before_id=${encodeURIComponent(cursor.id)}`
-            + `&before_type=${encodeURIComponent(cursor.row_type || 'pr')}`;
-        }
-        const res = await fetch(url);
-        if (!res.ok) throw new Error(`merged page ${page} failed`);
-        const data = await res.json();
-        const batch = Array.isArray(data.merged) ? data.merged : [];
-        if (page === 0 && typeof data.total === 'number') total = data.total;
-        for (const r of batch) {
-          const k = rowKey(r);
-          if (have.has(k)) continue;
-          have.add(k);
-          rows.push(r);
-        }
-        if (rows.length >= AppView.REPORT_MERGED_MAX_ROWS) {
-          rows.length = AppView.REPORT_MERGED_MAX_ROWS;
-          truncated = !!data.hasMore || rows.length < total;
-          break;
-        }
-        if (!data.hasMore || !batch.length) break;
-        const last = batch[batch.length - 1];
-        cursor = { created_at: last.created_at, id: last.id, row_type: last.row_type || 'pr' };
-        // Ran out of pages before running out of history.
-        if (page === AppView.REPORT_MERGED_MAX_PAGES - 1) truncated = true;
-      }
-    } catch {
-      // Fall back to the board's first page and say so in the document.
-      rows.length = 0;
-      have.clear();
-      for (const r of (AppView._merged || [])) {
-        const k = rowKey(r);
-        if (have.has(k)) continue;
-        have.add(k);
-        rows.push(r);
-      }
-      partial = true;
-      total = AppView._mergedTotal || rows.length;
-    } finally {
-      AppView._reportLoading = false;
-    }
-    AppView._reportMerged = rows;
-    AppView._reportTruncated = truncated;
-    AppView._reportPartial = partial;
-    AppView._reportTotal = total || rows.length;
-    // Only repaint if the user is still looking at the report.
-    if (AppView._getViewMode() === 'report') AppView._repaintReportView();
-  },
-
-  // Fill `#dev-report` for the current caches. Paints a placeholder and
-  // kicks the pager while `_reportMerged` is null; every later
-  // (WS-driven) _repaintDevBody re-renders from cache with no re-paging.
-  _repaintReportView() {
-    const el = document.getElementById('dev-report');
-    if (!el) return;
-    if (!AppView._reportMerged) {
-      el.innerHTML = `<style id="dev-report-style">${AppView.REPORT_CSS}</style>`
-        + `<div class="${AppView._reportRootCls()}"><p class="ur-rpt-empty">Building report…</p></div>`;
-      AppView._ensureReportData();
-      return;
-    }
-    const model = AppView._buildReportModel(AppView._reportInputs(), AppView._reportModelOpts());
-    el.innerHTML = `<style id="dev-report-style">${AppView.REPORT_CSS}</style>`
-      + AppView._renderReportToolbar()
-      + `<div class="${AppView._reportRootCls()}">`
-      + AppView._renderReportDiscordPanelHtml()
-      + AppView._renderReportSnapshotsHtml(
-        AppView._reportSnapshots, !!(AppView.appData && AppView.appData.can_manage)
-      )
-      + `${AppView._renderReportHtml(model, { standalone: false, ai: AppView._reportAi === undefined ? null : AppView._reportAi })}</div>`;
-    // Wired after each paint alongside the body, the same way
-    // _repaintPmView wires #dev-pm-more-unassigned.
-    const dl = el.querySelector('#dev-report-download');
-    if (dl && dl.addEventListener) dl.addEventListener('click', () => AppView.downloadReport());
-    const rf = el.querySelector('#dev-report-refresh');
-    if (rf && rf.addEventListener) rf.addEventListener('click', () => AppView.refreshReport());
-    const ab = el.querySelector('#dev-report-ai');
-    if (ab && ab.addEventListener) ab.addEventListener('click', () => AppView.generateReportAi());
-    const lk = el.querySelector('#dev-report-lock');
-    if (lk && lk.addEventListener) lk.addEventListener('click', () => AppView.lockReport());
-    // Period selector (reporting-period).
-    const per = el.querySelector('#dev-report-period');
-    if (per && per.addEventListener) per.addEventListener('change', () => AppView._onReportPeriodChange(per.value));
-    const pd = el.querySelector('#dev-report-period-date');
-    if (pd && pd.addEventListener) pd.addEventListener('change', () => AppView._onReportPeriodDate(pd.value));
-    // Discord copy panel (reporting-period).
-    const dg = el.querySelector('#dev-report-discord');
-    if (dg && dg.addEventListener) dg.addEventListener('click', () => AppView.generateDiscordMessage());
-    const dc = el.querySelector('#dev-report-discord-copy');
-    if (dc && dc.addEventListener) dc.addEventListener('click', () => AppView.copyDiscordMessage());
-    const dx = el.querySelector('#dev-report-discord-close');
-    if (dx && dx.addEventListener) {
-      dx.addEventListener('click', () => { AppView._reportDiscordMsg = null; AppView._repaintReportView(); });
-    }
-    // Keep the user's in-place edits across WS-driven repaints: the panel
-    // re-renders from _reportDiscordMsg, so write every keystroke back.
-    const dt = el.querySelector('#dev-report-discord-text');
-    if (dt && dt.addEventListener) dt.addEventListener('input', () => { AppView._reportDiscordMsg = dt.value; });
-    const wire = (sel, fn) => {
-      const nodes = el.querySelectorAll(sel);
-      if (nodes && nodes.forEach) {
-        nodes.forEach((b) => b.addEventListener('click', () => fn(b)));
-      }
-    };
-    wire('[data-snap-share]', (b) => AppView.shareReportSnapshot(b.getAttribute('data-snap-share')));
-    wire('[data-snap-unshare]', (b) => AppView.unshareReportSnapshot(b.getAttribute('data-snap-unshare')));
-    wire('[data-snap-copy]', (b) => AppView.copyReportShareLink(b.getAttribute('data-snap-copy')));
-    AppView._ensureReportAi();
-    AppView._ensureReportSnapshots();
-  },
-
-  // `.ur-rpt--dark` follows the shell's `dark` class (darkMode: 'class').
-  // The EXPORT never sets it — a downloaded file is always light so it
-  // prints and reads well on paper and in other apps.
-  _reportRootCls() {
-    let dark = false;
-    try {
-      dark = !!(document.documentElement
-        && document.documentElement.classList
-        && document.documentElement.classList.contains('dark'));
-    } catch { dark = false; }
-    return dark ? 'ur-rpt ur-rpt--dark' : 'ur-rpt';
-  },
-
-  // The period dropdown: "Since last report" (the newest locked snapshot)
-  // is the default whenever one exists; every other snapshot gets its own
-  // entry (15 most recent — older start dates stay reachable via
-  // "Specific date…"); "All history" is today's behaviour and the default
-  // with no snapshots.
-  REPORT_PERIOD_MAX_SNAPS: 15,
-
-  _renderReportPeriodHtml() {
-    const snaps = (Array.isArray(AppView._reportSnapshots) ? AppView._reportSnapshots : [])
-      .filter((s) => s && s.lockedAt)
-      .slice(0, AppView.REPORT_PERIOD_MAX_SNAPS);
-    const chosen = AppView._reportSince;
-    let selVal = 'all';
-    if (AppView._reportPeriodCustom) {
-      selVal = 'custom';
-    } else if (chosen === undefined) {
-      selVal = snaps.length ? `snap:${snaps[0].lockedAt}` : 'all';
-    } else if (chosen !== null) {
-      selVal = snaps.some((s) => s.lockedAt === chosen) ? `snap:${chosen}` : 'custom';
-    }
-    // Disambiguate two snapshots locked on the same calendar day with the
-    // time-of-day; a lone snapshot on a day shows the date only.
-    const dayOf = (iso) => {
-      const ms = Date.parse(iso || '');
-      return Number.isFinite(ms) ? new Date(ms).toLocaleDateString() : 'undated';
-    };
-    const dayCounts = {};
-    snaps.forEach((s) => { const d = dayOf(s.lockedAt); dayCounts[d] = (dayCounts[d] || 0) + 1; });
-    const sel = (v) => (selVal === v ? ' selected' : '');
-    let options = '';
-    snaps.forEach((s, i) => {
-      const day = dayOf(s.lockedAt);
-      const ms = Date.parse(s.lockedAt);
-      const label = (dayCounts[day] > 1 && Number.isFinite(ms))
-        ? `${day} ${new Date(ms).toLocaleTimeString()}`
-        : day;
-      const text = i === 0 ? `Since last report — ${label}` : `Since report — ${label}`;
-      options += `<option value="snap:${escapeAttr(s.lockedAt)}"${sel(`snap:${s.lockedAt}`)}>${escapeHtml(text)}</option>`;
-    });
-    options += `<option value="custom"${sel('custom')}>Specific date…</option>`;
-    options += `<option value="all"${sel('all')}>All history</option>`;
-    // The date input pre-fills from a previously chosen custom start.
-    let dateVal = '';
-    if (selVal === 'custom' && typeof chosen === 'string') {
-      const t = Date.parse(chosen);
-      if (Number.isFinite(t)) {
-        const dt = new Date(t);
-        dateVal = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
-      }
-    }
-    return `<label class="text-xs opacity-70" for="dev-report-period">Period</label>`
-      + `<select id="dev-report-period" class="gc-vote-btn" title="What counts as completed: everything since this start date">${options}</select>`
-      + (selVal === 'custom'
-        ? `<input type="date" id="dev-report-period-date" class="gc-vote-btn" value="${escapeAttr(dateVal)}" max="${escapeAttr(new Date().toISOString().slice(0, 10))}" title="Report period start date">`
-        : '');
-  },
-
-  _renderReportToolbar() {
-    const busy = AppView._reportLoading;
-    const gen = AppView._reportAiGenerating;
-    const ai = AppView._reportAi;
-    const aiLabel = gen ? 'Generating…' : (ai ? 'Regenerate AI summary' : 'Generate AI summary');
-    const stale = !!(ai && ai.stale && !gen);
-    const canManage = !!(AppView.appData && AppView.appData.can_manage);
-    const locking = AppView._reportLocking;
-    const discordBusy = AppView._reportDiscordBusy;
-    return `
-      <div class="flex items-center gap-2 mb-3 flex-wrap">
-        <button id="dev-report-download" class="gc-vote-btn" title="Save this report as a self-contained HTML file">Download HTML</button>
-        <button id="dev-report-refresh" class="gc-vote-btn"${busy ? ' disabled' : ''} title="Re-pull the data and regenerate the report">${busy ? 'Refreshing…' : 'Refresh'}</button>
-        <button id="dev-report-ai" class="gc-vote-btn"${gen ? ' disabled' : ''} title="Ask the AI for a plain-language summary, risks and per-person highlights (uses your budget or API key)">${aiLabel}</button>
-        <button id="dev-report-discord" class="gc-vote-btn"${discordBusy || busy ? ' disabled' : ''} title="Compose a short, friendly progress update ready to paste into Discord">${discordBusy ? 'Generating…' : 'Generate Discord message'}</button>
-        ${canManage ? `<button id="dev-report-lock" class="gc-vote-btn"${locking || busy ? ' disabled' : ''} title="Freeze this report as a permanent dated snapshot in Previous reports">${locking ? 'Locking…' : 'Lock report'}</button>` : ''}
-        ${AppView._renderReportPeriodHtml()}
-        ${stale ? '<span class="text-xs opacity-60">Data has changed since the AI summary was generated.</span>' : ''}
-      </div>`;
-  },
-
-  // Everything _buildReportModel needs, read from the caches the board
-  // already holds. Kept separate from the pure builder so the builder
-  // never reads AppView state.
-  _reportInputs() {
-    const app = AppView.appData || {};
-    const meta = AppView._ghIssuesMeta || {};
-    const ctx = AppView._proposalsCtx || {};
-    return {
-      issues: AppView._visibleGhIssues(),
-      proposals: AppView._proposals || [],
-      gov: AppView._govProposals || [],
-      merged: AppView._reportMerged || AppView._merged || [],
-      mySessions: AppView._mySessions || [],
-      sharedSessions: AppView._sharedSessions || [],
-      app: {
-        name: app.name || 'This app',
-        slug: app.slug || '',
-        url: app.url || '',
-        repoUrl: app.repo_url || meta.repoUrl || '',
-      },
-      mergedTotal: AppView._reportTotal || 0,
-      mergedTruncated: !!AppView._reportTruncated,
-      mergedPartial: !!AppView._reportPartial,
-      issuesTruncated: !!meta.truncatedList,
-      majority: ctx.majority || 1,
-    };
-  },
-
-  // ── The report model: pure, DOM-free, unit-tested ───────────────────
-  //
-  // data in → plain object out, the same shape of helper as
-  // _bucketDevItems and _groupByAssignee. `opts.now` lets tests pin the
-  // clock for the month grouping and the 30-day counter.
-  _buildReportModel(data, opts) {
-    const d = data || {};
-    const o = opts || {};
-    const now = Number.isFinite(o.now) ? o.now : Date.now();
-    // Report period start in ms (reporting-period). null = all history.
-    // Only "Done" and the completed counts are period-scoped — Backlog,
-    // Awaiting review and Underway describe the present, not a period.
-    const since = Number.isFinite(o.since) && o.since > 0 ? o.since : null;
-    const num = (v) => { const n = parseInt(v, 10); return Number.isFinite(n) ? n : 0; };
-    const ts = (v) => { const t = Date.parse(v || ''); return Number.isFinite(t) ? t : 0; };
-
-    const buckets = AppView._bucketDevItems({
-      issues: d.issues,
-      proposals: d.proposals,
-      gov: d.gov,
-      merged: d.merged,
-      mySessions: d.mySessions,
-      sharedSessions: d.sharedSessions,
-    });
-
-    // ── Done ─────────────────────────────────────────────────────────
-    // #1264: proposal rows are dated by `merged_at` — the exact merge
-    // time checkAndMerge() records — and labelled "Merged". Rows merged
-    // before that column existed carry no merge time and keep the old
-    // `created_at` date, labelled "Started", forever (the history cannot
-    // be backfilled; see schema.sql). Applied close-issue rows carry
-    // payload.appliedAt and use it, labelled "Closed".
-    const allDoneEntries = buckets.done.map((m) => {
-      const closeIssue = (m.row_type || 'pr') === 'close_issue';
-      const payload = m.payload || {};
-      if (closeIssue) {
-        const at = payload.appliedAt || m.created_at;
-        return {
-          kind: 'close-issue',
-          title: payload.issueTitle || m.title || `Issue #${payload.issueNumber || m.id}`,
-          issueNumber: payload.issueNumber != null ? payload.issueNumber : null,
-          author: m.created_by_username || '',
-          yes: num(m.yes_count), no: num(m.no_count),
-          votesRequired: num(m.votes_required),
-          at, atMs: ts(at), dateLabel: 'Closed',
-          hasMergeDate: true,
-          kudos: 0,
-          chatCount: num(m.chat_count),
-          linkedIssues: [],
-          imported: false, importedAuthor: '', externalAgent: '',
-        };
-      }
-      const mergedMs = ts(m.merged_at);
-      const linked = Array.isArray(m.linked_issues)
-        ? m.linked_issues.map((n) => parseInt(n, 10)).filter((n) => Number.isFinite(n))
-        : [];
-      return {
-        kind: 'proposal',
-        title: m.pr_title || `Change by ${m.username || 'someone'}`,
-        prNumber: m.pr_number != null ? m.pr_number : null,
-        author: m.username || '',
-        yes: num(m.yes_count), no: num(m.no_count),
-        votesRequired: num(m.votes_required),
-        at: mergedMs ? m.merged_at : m.created_at,
-        atMs: mergedMs || ts(m.created_at),
-        dateLabel: mergedMs ? 'Merged' : 'Started',
-        hasMergeDate: !!mergedMs,
-        kudos: num(m.kudos_count),
-        chatCount: num(m.chat_count),
-        linkedIssues: linked,
-        imported: m.source === 'imported',
-        importedAuthor: m.imported_pr_author || '',
-        externalAgent: m.external_agent || '',
-      };
-    });
-    // Period filter: drop entries dated BEFORE the start. Undated entries
-    // (atMs 0 — an unparseable date) are KEPT: dropping them would
-    // silently hide real completed work.
-    const doneEntries = since
-      ? allDoneEntries.filter((e) => !e.atMs || e.atMs >= since)
-      : allDoneEntries;
-    // Month buckets over that same field, newest month first.
-    const monthOrder = [];
-    const monthMap = new Map();
-    for (const e of doneEntries) {
-      const dt = e.atMs ? new Date(e.atMs) : null;
-      const key = dt ? `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}` : 'unknown';
-      const label = dt
-        ? `${AppView.REPORT_MONTHS[dt.getMonth()]} ${dt.getFullYear()}`
-        : 'Undated';
-      if (!monthMap.has(key)) {
-        const g = { key, label, entries: [] };
-        monthMap.set(key, g);
-        monthOrder.push(g);
-      }
-      monthMap.get(key).entries.push(e);
-    }
-    // #1264: entries are dated by merge time now, so the server's
-    // created_at arrival order no longer implies month order — sort
-    // groups newest month first (Undated last) and each group's entries
-    // by their effective date, newest first.
-    monthOrder.sort((a, b) => {
-      if (a.key === b.key) return 0;
-      if (a.key === 'unknown') return 1;
-      if (b.key === 'unknown') return -1;
-      return a.key < b.key ? 1 : -1;
-    });
-    for (const g of monthOrder) {
-      g.entries.sort((a, b) => (b.atMs || 0) - (a.atMs || 0));
-    }
-    const THIRTY_DAYS = 30 * 24 * 60 * 60 * 1000;
-    const completedLast30 = allDoneEntries
-      .filter((e) => e.atMs && (now - e.atMs) <= THIRTY_DAYS).length;
-    // #1264: the 30 days BEFORE those, so the momentum line can say
-    // whether the pace is rising or falling instead of one bare number.
-    const completedPrev30 = allDoneEntries
-      .filter((e) => e.atMs
-        && (now - e.atMs) > THIRTY_DAYS
-        && (now - e.atMs) <= 2 * THIRTY_DAYS).length;
-    // #1264: the last six calendar months of completed work, zero-filled
-    // and oldest-first, for the "Completed by month" strip. Counted over
-    // ALL paged history rather than the period filter — the strip is a
-    // trend, and a period-scoped trend of one bar says nothing.
-    const monthly = [];
-    {
-      const ref = new Date(now);
-      const counts = new Map();
-      for (const e of allDoneEntries) {
-        if (!e.atMs) continue;
-        const dt = new Date(e.atMs);
-        const k = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}`;
-        counts.set(k, (counts.get(k) || 0) + 1);
-      }
-      for (let i = 5; i >= 0; i--) {
-        const dt = new Date(ref.getFullYear(), ref.getMonth() - i, 1);
-        const k = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}`;
-        monthly.push({
-          key: k,
-          label: `${AppView.REPORT_MONTHS[dt.getMonth()]} ${dt.getFullYear()}`,
-          shortLabel: AppView.REPORT_MONTHS[dt.getMonth()].slice(0, 3),
-          count: counts.get(k) || 0,
-        });
-      }
-    }
-    // #1264: true when any SHOWN proposal entry has no recorded merge
-    // time — the renderer keys the started-date disclaimer off this, so
-    // apps whose whole history has real merge dates never see it.
-    const anyUndatedMerge = doneEntries
-      .some((e) => e.kind === 'proposal' && !e.hasMergeDate);
-    // With a period set, the filtered count IS the total — the server's
-    // mergedTotal describes all history and would contradict the list.
-    const doneTotal = since
-      ? doneEntries.length
-      : Math.max(num(d.mergedTotal), allDoneEntries.length);
-    // The 500-row pager cap can hide part of a period that predates the
-    // oldest paged row — disclose that instead of silently under-counting.
-    let periodIncomplete = false;
-    if (since && d.mergedTruncated) {
-      let oldest = 0;
-      for (const e of allDoneEntries) {
-        if (e.atMs && (!oldest || e.atMs < oldest)) oldest = e.atMs;
-      }
-      if (!oldest || since < oldest) periodIncomplete = true;
-    }
-
-    // ── In progress ──────────────────────────────────────────────────
-    const review = [];
-    const gov = [];
-    // #1251: issue numbers the Awaiting-review section already accounts for,
-    // via the proposal that closes them. The BOARD deliberately shows such
-    // an issue in its In progress column — a column is a place you go
-    // looking for your issue, and dropping it there left it findable
-    // nowhere. A report is a document you read top to bottom, where the
-    // same work under two headings reads as two pieces of work and inflates
-    // the counts, so the report keeps the one-entity-one-section rule and
-    // filters them out below.
-    const reviewedIssues = new Set();
-    for (const entry of buckets.inReview) {
-      const it = entry.item || {};
-      if (entry.kind === 'proposal' && Array.isArray(it.linked_issues)) {
-        for (const n of it.linked_issues) {
-          const parsed = parseInt(n, 10);
-          if (Number.isFinite(parsed)) reviewedIssues.add(parsed);
-        }
-      }
-      if (entry.kind === 'gov') {
-        gov.push({
-          kind: 'gov',
-          govKind: it.kind || '',
-          govKindLabel: AppView._reportGovKindLabel(it.kind),
-          title: (it.kind === 'rename' && it.payload && it.payload.newName)
-            ? it.payload.newName
-            : (it.title || AppView._reportGovKindLabel(it.kind)),
-          issueNumber: it.github_issue_number != null ? it.github_issue_number : null,
-          author: it.created_by_username || '',
-          yes: num(it.yes_count), no: num(it.no_count),
-          votesRequired: num(it.votes_required),
-          mergeWindowEndsAt: it.merge_window_ends_at || null,
-          chatCount: num(it.chat_count),
-          // #1264: how long this has sat waiting on people.
-          waitingSinceMs: ts(it.created_at),
-        });
-        continue;
-      }
-      review.push({
-        kind: 'proposal',
-        title: it.pr_title || `Change by ${it.username || 'someone'}`,
-        prNumber: it.pr_number != null ? it.pr_number : null,
-        author: it.username || '',
-        status: it.status || '',
-        yes: num(it.yes_count), no: num(it.no_count),
-        votesRequired: num(it.votes_required) || num(d.majority),
-        checkState: it.check_state || null,
-        checkLabel: AppView._reportCheckLabel(it.check_state),
-        mergeWindowEndsAt: it.merge_window_ends_at || null,
-        chatCount: num(it.chat_count),
-        // #1264: promotion is when the proposal entered review; rows
-        // promoted before that column existed fall back to created_at.
-        waitingSinceMs: ts(it.promoted_at || it.created_at),
-      });
-    }
-
-    const sessions = [];
-    const workIssues = [];
-    for (const entry of buckets.inProgress) {
-      const it = entry.item || {};
-      if (entry.kind === 'issue') {
-        // Counted under Awaiting review already — see reviewedIssues above.
-        if (it.number != null && reviewedIssues.has(it.number)) continue;
-        const ip = it.in_progress || null;
-        const people = [];
-        const push = (u) => { if (u && !people.includes(u)) people.push(u); };
-        if (ip && Array.isArray(ip.users)) ip.users.forEach(push);
-        if (ip && Array.isArray(ip.claims)) ip.claims.forEach((c) => push(c && c.username));
-        const h = it.headless;
-        // #1112: the same derivation the chip uses, so a printed report and
-        // the board it was printed from name the same state.
-        const st = AppView._issueWorkState(it);
-        workIssues.push({
-          kind: 'work-issue',
-          number: it.number != null ? it.number : null,
-          title: it.title || `Issue #${it.number}`,
-          htmlUrl: it.htmlUrl || '',
-          people,
-          headless: !!(h && (h.status === 'generating' || h.status === 'ready')),
-          claimed: !!(ip && Array.isArray(ip.claims) && ip.claims.length),
-          state: st ? st.key : null,
-          stateLabel: st ? (AppView.REPORT_WORK_STATE_LABELS[st.key] || '') : '',
-          at: it.updatedAt || null, atMs: ts(it.updatedAt),
-          chatCount: num(it.chatCount),
-        });
-        continue;
-      }
-      // my-session | shared-session
-      sessions.push({
-        kind: entry.kind,
-        mine: entry.kind === 'my-session',
-        title: it.session_title || it.pr_title || it.branch_name || `Session #${it.id}`,
-        owner: it.username || '',
-        busy: !!it.busy,
-        at: it.last_activity_at || it.created_at || null,
-        atMs: ts(it.last_activity_at || it.created_at),
-        chatCount: num(it.chat_count),
-      });
-    }
-
-    // ── Backlog ──────────────────────────────────────────────────────
-    // buckets.issues is already (a) free of issues linked to an open
-    // proposal and (b) free of in-progress issues, so Backlog cannot
-    // overlap Awaiting review or Issues-under-work.
-    const backlogGroups = AppView.REPORT_PRIORITY_GROUPS.map((g) => ({
-      key: g.key, label: g.label, issues: [],
-    }));
-    const groupFor = (key) => backlogGroups.find((g) => g.key === key) || backlogGroups[backlogGroups.length - 1];
-    for (const i of buckets.issues) {
-      const top = (i.priority && i.priority.top) || null;
-      const g = groupFor(AppView.ATTR_PRIORITY_VALUES.indexOf(top) !== -1 ? top : 'none');
-      g.issues.push({
-        kind: 'issue',
-        number: i.number != null ? i.number : null,
-        title: i.title || `Issue #${i.number}`,
-        htmlUrl: i.htmlUrl || '',
-        priority: top,
-        priorityLabel: top ? ((AppView._priorityMeta(top) || {}).label || top) : null,
-        assignee: (i.assignee && i.assignee.top) || null,
-        category: (i.category && i.category.top) || null,
-        at: i.updatedAt || null, atMs: ts(i.updatedAt),
-        chatCount: num(i.chatCount),
-        // #1264: provenance — when the issue was filed, by whom, and
-        // whether anyone has put a bounty on it.
-        createdAtMs: ts(i.createdAt),
-        reporter: i.created_by_username || '',
-        bountyCount: num(i.bounty_count),
-      });
-    }
-    const backlogTotal = backlogGroups.reduce((n, g) => n + g.issues.length, 0);
-
-    // ── Needs attention (#1264) ──────────────────────────────────────
-    // A deterministic cross-reference layer, NOT a fifth bucket — every
-    // entry here also appears in its own section below. Three rules only:
-    // failing/errored checks, a merge window that closed without a merge,
-    // and an auto-solve run waiting on a human answer.
-    const attention = [];
-    const windowClosed = (e) => {
-      const ends = e.mergeWindowEndsAt ? Date.parse(e.mergeWindowEndsAt) : NaN;
-      return Number.isFinite(ends) && ends <= now;
-    };
-    for (const e of review) {
-      const reasons = [];
-      if (e.checkState === 'failing') reasons.push('checks failing');
-      if (e.checkState === 'error') reasons.push('checks could not run');
-      if (e.status !== 'merging' && windowClosed(e)) {
-        reasons.push('merge window closed without a merge');
-      }
-      if (reasons.length) {
-        attention.push({ kind: 'proposal', title: e.title, prNumber: e.prNumber, reasons });
-      }
-    }
-    for (const e of gov) {
-      if (windowClosed(e)) {
-        attention.push({
-          kind: 'gov', title: e.title, issueNumber: e.issueNumber,
-          reasons: ['merge window closed without a merge'],
-        });
-      }
-    }
-    for (const e of workIssues) {
-      if (e.state === 'answer_needed') {
-        attention.push({
-          kind: 'issue', title: e.title, number: e.number, htmlUrl: e.htmlUrl,
-          reasons: ['an auto-solve run is waiting on an answer'],
-        });
-      }
-    }
-
-    const shownDone = doneEntries.length;
-    const model = {
-      app: {
-        name: (d.app && d.app.name) || 'This app',
-        slug: (d.app && d.app.slug) || '',
-        url: (d.app && d.app.url) || '',
-        repoUrl: (d.app && d.app.repoUrl) || '',
-      },
-      generatedAtMs: now,
-      generatedAt: new Date(now).toISOString(),
-      // ms of the period start, or null in All-history mode. The renderer
-      // keys the "Covering …" header line and the completed-in-30-days
-      // suppression off this.
-      periodStartMs: since,
-      summary: {
-        completed: doneTotal,
-        awaitingReview: review.length + gov.length,
-        beingWorkedOn: sessions.length + workIssues.length,
-        backlog: backlogTotal,
-        // #1264: two more tiles — high-priority backlog straight off the
-        // priority groups; contributors is filled in below from `owners`
-        // so the tile and the Work-by-owner rows can never disagree.
-        backlogHighPriority:
-          (backlogGroups.find((g) => g.key === 'high') || { issues: [] }).issues.length,
-        contributors: 0,
-        completedLast30,
-        completedPrev30,
-      },
-      // #1264: six zero-filled months, oldest first, for the trend strip;
-      // `monthlyIncomplete` discloses when the 500-row pager (or its
-      // one-page fallback) may have under-counted the oldest months.
-      monthly,
-      monthlyIncomplete: !!d.mergedTruncated || !!d.mergedPartial,
-      attention,
-      done: {
-        groups: monthOrder,
-        shown: shownDone,
-        total: doneTotal,
-        // In period mode the filtered count IS the total, so the "showing
-        // N of M" note never applies; periodIncomplete carries the one
-        // honest caveat instead.
-        truncated: since ? false : (!!d.mergedTruncated || doneTotal > shownDone),
-        periodIncomplete,
-        partial: !!d.mergedPartial,
-        anyUndatedMerge,
-        empty: shownDone === 0,
-      },
-      // #1112: one model group still, but the renderer prints it as TWO
-      // sections — "Awaiting review" (review + gov, where the work is done
-      // and people are the bottleneck) and "Underway" (sessions + issues,
-      // where the work itself is still happening). `empty` keeps its old
-      // meaning (nothing in either); the two flags below drive the sections.
-      inProgress: {
-        review, gov, sessions, issues: workIssues,
-        emptyAwaiting: !(review.length || gov.length),
-        emptyWork: !(sessions.length || workIssues.length),
-        empty: !(review.length || gov.length || sessions.length || workIssues.length),
-      },
-      backlog: {
-        groups: backlogGroups.filter((g) => g.issues.length),
-        total: backlogTotal,
-        truncatedList: !!d.issuesTruncated,
-        empty: backlogTotal === 0,
-      },
-    };
-    // #1264: owner stats are part of the model now — the "Work by owner"
-    // section renders with or without an AI summary — and the
-    // Contributors tile is their count, computed from the same object.
-    model.owners = AppView._buildOwnerStats(model);
-    model.summary.contributors = model.owners.length;
-    return model;
-  },
-
-  _reportGovKindLabel(kind) {
-    switch (kind) {
-      case 'rename': return 'App rename';
-      case 'secret_change': return 'Secret change';
-      case 'close_issue': return 'Close an issue';
-      case 'maintenance_campaign': return 'Maintenance campaign';
-      default: return 'Governance proposal';
-    }
-  },
-
-  _reportCheckLabel(state) {
-    switch (state) {
-      case 'passing': return 'Checks passing';
-      case 'failing': return 'Checks failing';
-      case 'error': return 'Checks could not run';
-      case 'pending': return 'Checks running';
-      default: return null;
-    }
-  },
-
-  // ── Work-by-owner stats: pure, DOM-free ─────────────────────────────
-  // Deterministic counts per contributor, aggregated from the report
-  // model. The LLM writes per-owner PROSE only (report-ai); every number
-  // shown next to it comes from here, so the counts can never hallucinate.
-  _buildOwnerStats(model) {
-    const m = model || {};
-    const map = new Map();
-    const get = (u) => {
-      if (!map.has(u)) map.set(u, { username: u, completed: 0, inReview: 0, inProgress: 0, backlog: 0 });
-      return map.get(u);
-    };
-    for (const g of ((m.done || {}).groups || [])) {
-      for (const e of (g.entries || [])) if (e.author) get(e.author).completed++;
-    }
-    const ip = m.inProgress || {};
-    for (const e of (ip.review || [])) if (e.author) get(e.author).inReview++;
-    for (const e of (ip.gov || [])) if (e.author) get(e.author).inReview++;
-    for (const e of (ip.sessions || [])) if (e.owner) get(e.owner).inProgress++;
-    for (const e of (ip.issues || [])) for (const p of (e.people || [])) get(p).inProgress++;
-    for (const g of ((m.backlog || {}).groups || [])) {
-      for (const e of (g.issues || [])) if (e.assignee) get(e.assignee).backlog++;
-    }
-    const total = (s) => s.completed + s.inReview + s.inProgress + s.backlog;
-    return Array.from(map.values()).sort((a, b) => total(b) - total(a) || (a.username < b.username ? -1 : 1));
-  },
-
-  // ── AI layer renderer: pure, DOM-free ───────────────────────────────
-  // ai (server report-ai summary or null) in → HTML out: highlights,
-  // narrative, risks and the provenance note. The per-owner section moved
-  // into the deterministic document (#1264, _renderReportOwnersHtml) —
-  // the AI's only contribution there is the optional blurb per owner.
-  // Every LLM-authored string passes through escapeHtml and renders as
-  // plain text — no markdown, no links, no attributes. Same hard rule as
-  // the rest of the report: no live-card data-* hooks.
-  _renderReportAiHtml(ai) {
-    const eh = (s) => escapeHtml(s == null ? '' : String(s));
-    if (!ai) {
-      return `<p class="ur-rpt-empty">No AI summary yet &mdash; use &ldquo;Generate AI summary&rdquo; above to add a plain-language overview, risks and per-person highlights.</p>`;
-    }
-    let html = '';
-
-    // Progress highlights — the skimmable layer, placed first. Rendered
-    // only when the summary carries bullets (older cached summaries
-    // predate the field).
-    const bullets = (Array.isArray(ai.highlights) ? ai.highlights : [])
-      .map((b) => (b == null ? '' : String(b).trim())).filter(Boolean);
-    if (bullets.length) {
-      html += `<section class="ur-rpt-section" data-section="ai-highlights">`
-        + `<h2 class="ur-rpt-h2">Progress highlights</h2>`
-        + `<ul class="ur-rpt-bullets">${bullets.map((b) => `<li>${eh(b)}</li>`).join('')}</ul>`
-        + `</section>`;
-    }
-
-    // Narrative — the report's main body.
-    const paras = String(ai.narrative || '').split(/\n{2,}|\n/).map((p) => p.trim()).filter(Boolean);
-    html += `<section class="ur-rpt-section" data-section="ai-summary">`
-      + `<h2 class="ur-rpt-h2">Summary</h2>`
-      + paras.map((p) => `<p class="ur-rpt-ai-p">${eh(p)}</p>`).join('')
-      + `</section>`;
-
-    // Critical risks.
-    const risks = Array.isArray(ai.risks) ? ai.risks : [];
-    let riskBody = '';
-    if (!risks.length) {
-      riskBody = `<p class="ur-rpt-empty">No critical risks flagged.</p>`;
-    } else {
-      riskBody = `<ul class="ur-rpt-list">${risks.map((r) => {
-        const sev = ['high', 'medium', 'low'].indexOf(r && r.severity) !== -1 ? r.severity : 'medium';
-        return `<li class="ur-rpt-row">`
-          + `<div class="ur-rpt-title"><span class="ur-rpt-risk-sev ur-rpt-risk-sev--${sev}">${eh(sev)}</span>${eh(r && r.title)}</div>`
-          + `<div class="ur-rpt-meta"><span>${eh(r && r.detail)}</span></div>`
-          + `</li>`;
-      }).join('')}</ul>`;
-    }
-    html += `<section class="ur-rpt-section" data-section="ai-risks">`
-      + `<h2 class="ur-rpt-h2">Critical risks</h2>${riskBody}</section>`;
-
-    const genMs = Date.parse(ai.generatedAt || '');
-    const when = Number.isFinite(genMs) ? new Date(genMs).toLocaleDateString() : '';
-    // The cache is one shared row per app, so say which period it was
-    // generated for — another member may have selected it.
-    const psMs = Date.parse(ai.periodStart || '');
-    const psLabel = Number.isFinite(psMs) ? new Date(psMs).toLocaleDateString() : '';
-    html += `<p class="ur-rpt-ai-note">AI-written summary${ai.model ? ` (${eh(ai.model)})` : ''}${when ? `, generated ${eh(when)}` : ''}${psLabel ? `, covering since ${eh(psLabel)}` : ''}. Verify against the lists below.</p>`;
-    return html;
-  },
-
-  // ── Work by owner: pure, DOM-free (#1264) ───────────────────────────
-  // A deterministic section of the report proper — the counts come from
-  // _buildOwnerStats (model.owners), so it renders with or without an AI
-  // summary. When a summary exists, its per-owner blurb (already filtered
-  // server-side to known usernames by sanitizeReportSummary) rides along
-  // as prose under the counts. Same hard markup rules as the rest of the
-  // report: escaped text, no live-card data-* hooks.
-  _renderReportOwnersHtml(ownerStats, ai) {
-    const eh = (s) => escapeHtml(s == null ? '' : String(s));
-    const stats = Array.isArray(ownerStats) ? ownerStats : [];
-    const blurbs = new Map((ai && Array.isArray(ai.owners) ? ai.owners : [])
-      .map((o) => [o && o.username, o && o.blurb]));
-    let body = '';
-    if (!stats.length) {
-      body = `<p class="ur-rpt-empty">No attributable work yet.</p>`;
-    } else {
-      body = `<ul class="ur-rpt-list">${stats.map((s) => {
-        const parts = [];
-        if (s.completed) parts.push(`${s.completed} completed`);
-        if (s.inReview) parts.push(`${s.inReview} awaiting review`);
-        // #1112: "underway" matches the section this count comes from.
-        if (s.inProgress) parts.push(`${s.inProgress} underway`);
-        if (s.backlog) parts.push(`${s.backlog} assigned in backlog`);
-        const blurb = blurbs.get(s.username);
-        return `<li class="ur-rpt-row">`
-          + `<div class="ur-rpt-title">${eh(s.username)}<span class="ur-rpt-tag ur-rpt-owner-counts">${eh(parts.join(' · ') || 'no items')}</span></div>`
-          + (blurb ? `<div class="ur-rpt-meta"><span>${eh(blurb)}</span></div>` : '')
-          + `</li>`;
-      }).join('')}</ul>`;
-    }
-    return `<section class="ur-rpt-section" data-section="owners">`
-      + `<h2 class="ur-rpt-h2">Work by owner (${eh(stats.length)})</h2>${body}</section>`;
-  },
-
-  // ── Previous reports (locked snapshots): pure, DOM-free ─────────────
-  // snaps (server list rows) + canManage in → HTML out. Same read-only
-  // document rules as the report: no live-card data-* hooks, no inline
-  // handlers — the share/unshare/copy buttons carry data-snap-* markers
-  // that _repaintReportView wires after each paint. Rendered ONLY into
-  // the on-screen view (never the standalone export/lock document).
-  _renderReportSnapshotsHtml(snaps, canManage) {
-    const eh = (s) => escapeHtml(s == null ? '' : String(s));
-    const ea = (s) => escapeAttr(s == null ? '' : String(s));
-    const list = Array.isArray(snaps) ? snaps : [];
-    if (!list.length) return '';
-    const rows = list.map((s) => {
-      const ms = Date.parse(s.lockedAt || '');
-      const when = Number.isFinite(ms)
-        ? `${new Date(ms).toLocaleDateString()} ${new Date(ms).toLocaleTimeString()}`
-        : 'undated';
-      let actions = `<span><a href="${ea(s.htmlPath)}" target="_blank" rel="noopener">Open</a></span>`;
-      if (canManage) {
-        actions += s.shared
-          ? `<span><button type="button" class="ur-rpt-linklike" data-snap-copy="${ea(s.sharePath)}">Copy link</button></span>`
-            + `<span><button type="button" class="ur-rpt-linklike" data-snap-unshare="${ea(s.id)}">Unshare</button></span>`
-          : `<span><button type="button" class="ur-rpt-linklike" data-snap-share="${ea(s.id)}">Share</button></span>`;
-      }
-      return `<li class="ur-rpt-row">`
-        + `<div class="ur-rpt-title">${eh(when)}`
-        + (s.lockedBy ? `<span class="ur-rpt-tag">locked by ${eh(s.lockedBy)}</span>` : '')
-        + (s.shared ? `<span class="ur-rpt-tag">Shared</span>` : '')
-        + `</div>`
-        + `<div class="ur-rpt-meta">${actions}</div>`
-        + `</li>`;
-    }).join('');
-    return `<section class="ur-rpt-section" data-section="snapshots">`
-      + `<h2 class="ur-rpt-h2">Previous reports</h2>`
-      + `<ul class="ur-rpt-list">${rows}</ul></section>`;
-  },
-
-  // ── Report CSS ───────────────────────────────────────────────────────
-  // Plain CSS, every rule scoped under `.ur-rpt`, deliberately using NO
-  // Tailwind utilities. Injected once into #dev-report for the on-screen
-  // view AND inlined into the export, so the downloaded file is the exact
-  // layout that was previewed and cannot be broken by a Tailwind
-  // content-scan miss.
-  REPORT_CSS: [
-    '.ur-rpt{--rpt-fg:#18181b;--rpt-muted:#52525b;--rpt-faint:#71717a;--rpt-line:#e4e4e7;--rpt-bg:#ffffff;--rpt-card:#fafafa;--rpt-accent:#7c3aed;',
-    'color:var(--rpt-fg);background:var(--rpt-bg);font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;',
-    'font-size:14px;line-height:1.55;max-width:56rem;margin:0 auto;padding:1.5rem 1.25rem 3rem;-webkit-text-size-adjust:100%;}',
-    '.ur-rpt--dark{--rpt-fg:#f4f4f5;--rpt-muted:#a1a1aa;--rpt-faint:#8b8b93;--rpt-line:#3f3f46;--rpt-bg:transparent;--rpt-card:rgba(255,255,255,0.03);--rpt-accent:#a78bfa;}',
-    '.ur-rpt *{box-sizing:border-box;}',
-    '.ur-rpt a{color:var(--rpt-accent);text-decoration:none;}',
-    '.ur-rpt a:hover{text-decoration:underline;}',
-    '.ur-rpt-head{border-bottom:2px solid var(--rpt-line);padding-bottom:1rem;margin-bottom:1.25rem;}',
-    '.ur-rpt-app{font-size:1.5rem;font-weight:700;margin:0;letter-spacing:-0.01em;}',
-    '.ur-rpt-kicker{font-size:0.8125rem;font-weight:600;text-transform:uppercase;letter-spacing:0.08em;color:var(--rpt-accent);margin:0 0 0.25rem;}',
-    '.ur-rpt-gen{font-size:0.8125rem;color:var(--rpt-muted);margin:0.5rem 0 0;}',
-    '.ur-rpt-note{font-size:0.75rem;color:var(--rpt-faint);margin:0.25rem 0 0;}',
-    '.ur-rpt-summary{display:flex;flex-wrap:wrap;gap:0.75rem;margin:0 0 1.5rem;padding:0;list-style:none;}',
-    '.ur-rpt-stat{flex:1 1 8rem;border:1px solid var(--rpt-line);border-radius:0.5rem;background:var(--rpt-card);padding:0.625rem 0.75rem;}',
-    '.ur-rpt-stat-n{display:block;font-size:1.375rem;font-weight:700;line-height:1.15;}',
-    '.ur-rpt-stat-l{display:block;font-size:0.6875rem;text-transform:uppercase;letter-spacing:0.06em;color:var(--rpt-muted);margin-top:0.125rem;}',
-    '.ur-rpt-recent{font-size:0.8125rem;color:var(--rpt-muted);margin:-0.75rem 0 1.5rem;}',
-    '.ur-rpt-section{margin:0 0 1.75rem;}',
-    '.ur-rpt-h2{font-size:1.0625rem;font-weight:700;margin:0 0 0.125rem;padding-bottom:0.375rem;border-bottom:1px solid var(--rpt-line);}',
-    '.ur-rpt-sub{font-size:0.75rem;color:var(--rpt-faint);margin:0.375rem 0 0.75rem;}',
-    '.ur-rpt-h3{font-size:0.8125rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--rpt-muted);margin:1.125rem 0 0.5rem;}',
-    '.ur-rpt-list{list-style:none;margin:0;padding:0;}',
-    '.ur-rpt-row{border-bottom:1px solid var(--rpt-line);padding:0.5rem 0;}',
-    '.ur-rpt-row:last-child{border-bottom:0;}',
-    '.ur-rpt-title{font-weight:600;}',
-    '.ur-rpt-meta{font-size:0.75rem;color:var(--rpt-muted);margin-top:0.125rem;}',
-    '.ur-rpt-meta span+span::before{content:" \\00b7 ";color:var(--rpt-line);}',
-    '.ur-rpt-num{font-variant-numeric:tabular-nums;color:var(--rpt-muted);font-weight:400;}',
-    '.ur-rpt-tag{display:inline-block;font-size:0.6875rem;font-weight:600;border:1px solid var(--rpt-line);border-radius:0.25rem;padding:0 0.3125rem;margin-left:0.25rem;color:var(--rpt-muted);}',
-    '.ur-rpt-empty{font-size:0.8125rem;color:var(--rpt-faint);font-style:italic;margin:0.5rem 0;}',
-    // #1264: the "Completed by month" trend strip — label, proportional
-    // bar (inline width %), count. Plain scoped CSS like everything else.
-    '.ur-rpt-trend-list{list-style:none;margin:0.5rem 0 0;padding:0;}',
-    '.ur-rpt-trend-row{display:flex;align-items:center;gap:0.5rem;padding:0.125rem 0;}',
-    '.ur-rpt-trend-label{flex:0 0 2.5rem;font-size:0.75rem;color:var(--rpt-muted);}',
-    '.ur-rpt-trend-bar{flex:1 1 auto;height:0.5rem;border-radius:0.25rem;background:var(--rpt-card);border:1px solid var(--rpt-line);overflow:hidden;display:block;}',
-    '.ur-rpt-trend-fill{display:block;height:100%;background:var(--rpt-accent);border-radius:0.25rem;}',
-    '.ur-rpt-trend-n{flex:0 0 2rem;text-align:right;font-size:0.75rem;font-variant-numeric:tabular-nums;color:var(--rpt-muted);}',
-    '.ur-rpt-ai-p{margin:0.75rem 0 0;max-width:44rem;}',
-    '.ur-rpt-ai-note{font-size:0.75rem;color:var(--rpt-faint);font-style:italic;margin:-0.75rem 0 1.75rem;}',
-    '.ur-rpt-bullets{list-style:disc;margin:0.75rem 0 0;padding-left:1.25rem;}',
-    '.ur-rpt-bullets li{margin:0.25rem 0;}',
-    '.ur-rpt-linklike{background:none;border:0;padding:0;color:var(--rpt-accent);cursor:pointer;font:inherit;font-size:inherit;}',
-    '.ur-rpt-linklike:hover{text-decoration:underline;}',
-    '.ur-rpt-risk-sev{display:inline-block;font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;border-radius:0.25rem;padding:0 0.375rem;margin-right:0.5rem;vertical-align:1px;}',
-    '.ur-rpt-risk-sev--high{color:#b91c1c;border:1px solid #f87171;}',
-    '.ur-rpt-risk-sev--medium{color:#b45309;border:1px solid #fbbf24;}',
-    '.ur-rpt-risk-sev--low{color:#4d7c0f;border:1px solid #a3e635;}',
-    '.ur-rpt--dark .ur-rpt-risk-sev--high{color:#fca5a5;border-color:#7f1d1d;}',
-    '.ur-rpt--dark .ur-rpt-risk-sev--medium{color:#fcd34d;border-color:#78350f;}',
-    '.ur-rpt--dark .ur-rpt-risk-sev--low{color:#bef264;border-color:#365314;}',
-    '.ur-rpt-foot{border-top:2px solid var(--rpt-line);margin-top:2rem;padding-top:0.875rem;font-size:0.75rem;color:var(--rpt-faint);}',
-    '.ur-rpt-foot p{margin:0.25rem 0;}',
-    '.ur-rpt-discord-text{display:block;width:100%;min-height:11rem;margin-top:0.5rem;font:inherit;font-size:0.8125rem;line-height:1.5;color:var(--rpt-fg);background:var(--rpt-card);border:1px solid var(--rpt-line);border-radius:0.5rem;padding:0.625rem 0.75rem;resize:vertical;}',
-    '.ur-rpt-discord-actions{display:flex;gap:0.5rem;margin-top:0.5rem;}',
-  ].join(''),
-
-  REPORT_PRINT_CSS: [
-    '@media print{',
-    'body{background:#fff;}',
-    '.ur-rpt{max-width:none;padding:0;font-size:11pt;}',
-    '.ur-rpt-section{break-inside:auto;}',
-    '.ur-rpt-trend{break-inside:avoid;}',
-    '.ur-rpt-row{break-inside:avoid;}',
-    '.ur-rpt-h2,.ur-rpt-h3{break-after:avoid;}',
-    '.ur-rpt a{color:inherit;text-decoration:none;}',
-    '}',
-  ].join(''),
-
-  // ── Report rendering: pure, DOM-free, unit-tested ────────────────────
-  //
-  // model in → HTML string out. With `standalone: true` the same markup is
-  // wrapped in a full document (doctype, charset, title, inline CSS, print
-  // rules) so the download is self-contained and needs no network.
-  //
-  // HARD RULE: no `data-issue-row` / `data-proposal-row` / `data-gov-row` /
-  // `data-session-chip` attributes and no reuse of _renderIssueRow /
-  // _renderProposalCard — see the section header above.
-  _renderReportHtml(model, opts) {
-    const m = model || {};
-    const o = opts || {};
-    const standalone = !!o.standalone;
-    const app = m.app || {};
-    const sum = m.summary || {};
-    const eh = (s) => escapeHtml(s == null ? '' : String(s));
-    const ea = (s) => escapeAttr(s == null ? '' : String(s));
-    const genMs = Number.isFinite(m.generatedAtMs) ? m.generatedAtMs : Date.parse(m.generatedAt || '');
-    const gen = Number.isFinite(genMs) ? new Date(genMs) : null;
-    // The viewer's local timezone, via the browser's own formatter.
-    const genLabel = gen ? `${gen.toLocaleDateString()} ${gen.toLocaleTimeString()}` : '';
-    const dateOnly = (ms) => {
-      if (!ms) return 'undated';
-      try { return new Date(ms).toLocaleDateString(); } catch { return 'undated'; }
-    };
-    // Only external GitHub links navigate; everything else is inert text.
-    const link = (href, text) => (href
-      ? `<a href="${ea(href)}" target="_blank" rel="noopener">${eh(text)}</a>`
-      : eh(text));
-    const metaLine = (parts) => {
-      const kept = parts.filter((p) => p !== '' && p != null);
-      if (!kept.length) return '';
-      return `<div class="ur-rpt-meta">${kept.map((p) => `<span>${p}</span>`).join('')}</div>`;
-    };
-    const rows = (items) => `<ul class="ur-rpt-list">${items.join('')}</ul>`;
-    const voteText = (e) => {
-      const req = e.votesRequired || 0;
-      const yes = e.yes || 0;
-      const base = req ? `${yes} of ${req} yes` : `${yes} yes`;
-      return e.no ? `${base}, ${e.no} no` : base;
-    };
-    const countdown = (iso) => {
-      const ends = iso ? Date.parse(iso) : NaN;
-      if (!Number.isFinite(ends) || !Number.isFinite(genMs)) return '';
-      const left = ends - genMs;
-      if (left <= 0) return 'merge window closed';
-      const h = Math.floor(left / 3600000);
-      if (h >= 24) return `merges in ${Math.floor(h / 24)}d`;
-      if (h >= 1) return `merges in ${h}h`;
-      return `merges in ${Math.max(1, Math.round(left / 60000))}m`;
-    };
-
-    // ── Title block ───────────────────────────────────────────────────
-    let html = '';
-    // Period header line (reporting-period): named start → generated date.
-    const periodMs = Number.isFinite(m.periodStartMs) && m.periodStartMs > 0 ? m.periodStartMs : null;
-    html += `<header class="ur-rpt-head">`
-      + `<p class="ur-rpt-kicker">Progress report</p>`
-      + `<h1 class="ur-rpt-app">${eh(app.name)}</h1>`
-      + `<p class="ur-rpt-gen">Generated ${eh(genLabel)}</p>`
-      + (periodMs
-        ? `<p class="ur-rpt-gen">Covering ${eh(dateOnly(periodMs))} &rarr; ${eh(gen ? gen.toLocaleDateString() : 'today')}</p>`
-        : '')
-      + `<p class="ur-rpt-note">Open issues come from the app&rsquo;s GitHub repository; proposals and dev sessions come from Usernode.</p>`
-      + `</header>`;
-
-    // ── Summary strip ─────────────────────────────────────────────────
-    const stat = (n, label) => `<li class="ur-rpt-stat"><span class="ur-rpt-stat-n">${eh(n)}</span><span class="ur-rpt-stat-l">${eh(label)}</span></li>`;
-    html += `<ul class="ur-rpt-summary">`
-      + stat(sum.completed || 0, 'Completed')
-      + stat(sum.awaitingReview || 0, 'Awaiting review')
-      + stat(sum.beingWorkedOn || 0, 'Being worked on')
-      + stat(sum.backlog || 0, 'Backlog')
-      + stat(sum.contributors || 0, 'Contributors')
-      + stat(sum.backlogHighPriority || 0, 'High priority backlog')
-      + `</ul>`;
-    // With a period active, the Completed tile already answers "how much
-    // since the start date", so the momentum line is dropped. #1264: the
-    // bare 30-day count became a comparison against the 30 days before.
-    if (!periodMs) {
-      const last30 = sum.completedLast30 || 0;
-      const prev30 = sum.completedPrev30 || 0;
-      const pace = last30 > prev30 ? 'up' : (last30 < prev30 ? 'down' : 'steady');
-      html += `<p class="ur-rpt-recent">${eh(last30)} completed in the last 30 days vs ${eh(prev30)} in the 30 days before that &mdash; pace is ${pace}.</p>`;
-    }
-
-    // ── Completed by month (#1264) ────────────────────────────────────
-    // Six zero-filled months as label + proportional bar + count. Plain
-    // spans with an inline width — no script, no external asset — so the
-    // strip survives the standalone export and the sandboxed snapshot CSP.
-    // Skipped entirely when all six months are zero: an all-empty chart
-    // says less than no chart.
-    const monthly = Array.isArray(m.monthly) ? m.monthly : [];
-    const monthlyMax = monthly.reduce((x, mo) => Math.max(x, (mo && mo.count) || 0), 0);
-    if (monthlyMax > 0) {
-      const bars = monthly.map((mo) => {
-        const count = (mo && mo.count) || 0;
-        const pct = Math.round((count / monthlyMax) * 100);
-        return `<li class="ur-rpt-trend-row">`
-          + `<span class="ur-rpt-trend-label">${eh(mo.shortLabel || mo.label)}</span>`
-          + `<span class="ur-rpt-trend-bar"><span class="ur-rpt-trend-fill" style="width:${pct}%"></span></span>`
-          + `<span class="ur-rpt-trend-n">${eh(count)}</span>`
-          + `</li>`;
-      }).join('');
-      html += `<section class="ur-rpt-section ur-rpt-trend" data-section="monthly">`
-        + `<h2 class="ur-rpt-h2">Completed by month</h2>`
-        + `<ul class="ur-rpt-trend-list">${bars}</ul>`
-        + (m.monthlyIncomplete
-          ? `<p class="ur-rpt-sub">Not all history could be loaded, so the oldest months may be incomplete.</p>`
-          : '')
-        + `</section>`;
-    }
-
-    // ── Needs attention (#1264) ───────────────────────────────────────
-    // Deterministic cross-references into the sections below. The empty
-    // state is explicit so a reader knows the absence is deliberate.
-    const attn = Array.isArray(m.attention) ? m.attention : [];
-    let attnBody = '';
-    if (!attn.length) {
-      attnBody = `<p class="ur-rpt-empty">Nothing needs attention right now.</p>`;
-    } else {
-      attnBody = rows(attn.map((e) => `<li class="ur-rpt-row">`
-        + `<div class="ur-rpt-title">${eh(e.title)}</div>`
-        + metaLine([
-          e.prNumber != null
-            ? `<span class="ur-rpt-num">${link(app.repoUrl ? `${app.repoUrl}/pull/${e.prNumber}` : '', `PR #${e.prNumber}`)}</span>`
-            : '',
-          e.number != null
-            ? `<span class="ur-rpt-num">${link(e.htmlUrl, `#${e.number}`)}</span>`
-            : '',
-          e.issueNumber != null
-            ? `<span class="ur-rpt-num">${link(app.repoUrl ? `${app.repoUrl}/issues/${e.issueNumber}` : '', `#${e.issueNumber}`)}</span>`
-            : '',
-          eh((e.reasons || []).join(', ')),
-        ])
-        + `</li>`));
-    }
-    html += `<section class="ur-rpt-section" data-section="attention">`
-      + `<h2 class="ur-rpt-h2">Needs attention</h2>${attnBody}</section>`;
-
-    // ── AI layer (report-ai): highlights → narrative → risks ──────────
-    // Injected only when the caller passes a summary (or an explicit null
-    // for the invite line); legacy callers that omit `ai` entirely get
-    // the deterministic document unchanged, which is also what the
-    // standalone export does when no summary exists yet.
-    if (o.ai !== undefined) {
-      html += AppView._renderReportAiHtml(o.ai);
-    }
-
-    // ── Work by owner (#1264: deterministic, AI blurbs optional) ──────
-    html += AppView._renderReportOwnersHtml(m.owners, o.ai || null);
-
-    // ── Done ──────────────────────────────────────────────────────────
-    const done = m.done || {};
-    let doneBody = '';
-    if (done.empty) {
-      doneBody = `<p class="ur-rpt-empty">Nothing has been completed yet.</p>`;
-    } else {
-      for (const g of (done.groups || [])) {
-        doneBody += `<h3 class="ur-rpt-h3">${eh(g.label)} (${eh((g.entries || []).length)})</h3>`;
-        doneBody += rows((g.entries || []).map((e) => {
-          const head = e.kind === 'close-issue'
-            ? `Issue ${link(app.repoUrl && e.issueNumber ? `${app.repoUrl}/issues/${e.issueNumber}` : '', `#${e.issueNumber}`)} closed by vote`
-            : eh(e.title);
-          const pr = (e.kind !== 'close-issue' && e.prNumber != null)
-            ? `<span class="ur-rpt-num">${link(app.repoUrl ? `${app.repoUrl}/pull/${e.prNumber}` : '', `PR #${e.prNumber}`)}</span>`
-            : '';
-          // #1264: provenance tags ride on the title, like the board's
-          // own chips — an imported PR and/or the external agent used.
-          const tags = (e.imported
-            ? `<span class="ur-rpt-tag">Imported PR${e.importedAuthor ? ` by ${eh(e.importedAuthor)}` : ''}</span>`
-            : '')
-            + (e.externalAgent ? `<span class="ur-rpt-tag">built with ${eh(e.externalAgent)}</span>` : '');
-          // #1264: which issue(s) this change closed.
-          const closes = (e.linkedIssues && e.linkedIssues.length)
-            ? `closes ${e.linkedIssues.map((n) => link(app.repoUrl ? `${app.repoUrl}/issues/${n}` : '', `#${n}`)).join(', ')}`
-            : '';
-          return `<li class="ur-rpt-row">`
-            + `<div class="ur-rpt-title">${e.kind === 'close-issue' ? head : eh(e.title)}${tags}</div>`
-            + metaLine([
-              pr,
-              e.author ? eh(e.author) : '',
-              voteText(e),
-              closes,
-              e.kudos ? `${eh(e.kudos)} kudos` : '',
-              e.chatCount ? `${eh(e.chatCount)} in discussion` : '',
-              `${eh(e.dateLabel)} ${eh(dateOnly(e.atMs))}`,
-            ])
-            + `</li>`;
-        }));
-      }
-      const notes = [];
-      if (done.truncated && done.total > done.shown) {
-        notes.push(`Showing the ${done.shown} most recent of ${done.total} completed items.`);
-      }
-      if (done.periodIncomplete) {
-        notes.push('Only the most recent completed items could be loaded, so this period may be incomplete.');
-      }
-      if (done.partial) {
-        notes.push('The full history could not be loaded, so this section shows only the most recent page.');
-      }
-      // #1264: the platform records merge times now — only rows merged
-      // before that existed still fall back to their start date, so the
-      // disclaimer renders only when such a row is actually on screen.
-      if (done.anyUndatedMerge) {
-        notes.push('Items without a recorded merge time are dated by when the work was started.');
-      }
-      if (notes.length) doneBody += `<p class="ur-rpt-sub">${notes.map(eh).join(' ')}</p>`;
-    }
-    html += `<section class="ur-rpt-section" data-section="done">`
-      + `<h2 class="ur-rpt-h2">Done &mdash; completed work (${eh(done.total || 0)})</h2>${doneBody}</section>`;
-
-    // ── Awaiting review ───────────────────────────────────────────────
-    // #1112: split out of the old single "In progress" H2. These two lists
-    // are work that is FINISHED and waiting on people; the section below is
-    // work still happening. Printing both under one heading is what made a
-    // reader unable to tell whether anything needed them.
-    const ip = m.inProgress || {};
-    const arCount = (ip.review || []).length + (ip.gov || []).length;
-    let arBody = '';
-    if (ip.emptyAwaiting) {
-      arBody = `<p class="ur-rpt-empty">Nothing is waiting for review or a vote.</p>`;
-    } else {
-      if ((ip.review || []).length) {
-        arBody += `<h3 class="ur-rpt-h3">Awaiting review or vote (${eh(ip.review.length)})</h3>`;
-        arBody += rows(ip.review.map((e) => `<li class="ur-rpt-row">`
-          + `<div class="ur-rpt-title">${eh(e.title)}</div>`
-          + metaLine([
-            e.prNumber != null
-              ? `<span class="ur-rpt-num">${link(app.repoUrl ? `${app.repoUrl}/pull/${e.prNumber}` : '', `PR #${e.prNumber}`)}</span>`
-              : '',
-            e.author ? eh(e.author) : '',
-            voteText(e),
-            e.waitingSinceMs ? `waiting since ${eh(dateOnly(e.waitingSinceMs))}` : '',
-            e.checkLabel ? eh(e.checkLabel) : '',
-            e.chatCount ? `${eh(e.chatCount)} in discussion` : '',
-            e.status === 'merging' ? 'merging' : countdown(e.mergeWindowEndsAt),
-          ])
-          + `</li>`));
-      }
-      if ((ip.gov || []).length) {
-        arBody += `<h3 class="ur-rpt-h3">Governance proposals (${eh(ip.gov.length)})</h3>`;
-        arBody += rows(ip.gov.map((e) => `<li class="ur-rpt-row">`
-          + `<div class="ur-rpt-title">${eh(e.title)}<span class="ur-rpt-tag">${eh(e.govKindLabel)}</span></div>`
-          + metaLine([
-            e.issueNumber != null
-              ? `<span class="ur-rpt-num">${link(app.repoUrl ? `${app.repoUrl}/issues/${e.issueNumber}` : '', `#${e.issueNumber}`)}</span>`
-              : '',
-            e.author ? eh(e.author) : '',
-            voteText(e),
-            e.waitingSinceMs ? `waiting since ${eh(dateOnly(e.waitingSinceMs))}` : '',
-            e.chatCount ? `${eh(e.chatCount)} in discussion` : '',
-            countdown(e.mergeWindowEndsAt),
-          ])
-          + `</li>`));
-      }
-    }
-    html += `<section class="ur-rpt-section" data-section="awaiting-review">`
-      + `<h2 class="ur-rpt-h2">Awaiting review (${eh(arCount)})</h2>${arBody}</section>`;
-
-    // ── Underway ──────────────────────────────────────────────────────
-    // Work still happening: live sessions plus the issues somebody or
-    // something is on. Each issue row names its exact state rather than the
-    // old catch-all "in progress" note.
-    const uwCount = (ip.sessions || []).length + (ip.issues || []).length;
-    let ipBody = '';
-    if (ip.emptyWork) {
-      ipBody = `<p class="ur-rpt-empty">Nothing is underway.</p>`;
-    } else {
-      if ((ip.sessions || []).length) {
-        ipBody += `<h3 class="ur-rpt-h3">Being worked on right now (${eh(ip.sessions.length)})</h3>`;
-        ipBody += rows(ip.sessions.map((e) => `<li class="ur-rpt-row">`
-          + `<div class="ur-rpt-title">${eh(e.title)}${e.busy ? `<span class="ur-rpt-tag">agent running</span>` : ''}</div>`
-          + metaLine([
-            e.owner ? eh(e.owner) : '',
-            e.mine ? 'your session' : 'shared session',
-            e.atMs ? `last active ${eh(dateOnly(e.atMs))}` : '',
-            e.chatCount ? `${eh(e.chatCount)} in discussion` : '',
-          ])
-          + `</li>`));
-      }
-      if ((ip.issues || []).length) {
-        ipBody += `<h3 class="ur-rpt-h3">Issues with work underway (${eh(ip.issues.length)})</h3>`;
-        ipBody += rows(ip.issues.map((e) => `<li class="ur-rpt-row" data-work-state="${ea(e.state || '')}">`
-          + `<div class="ur-rpt-title">${eh(e.title)}</div>`
-          + metaLine([
-            e.number != null ? `<span class="ur-rpt-num">${link(e.htmlUrl, `#${e.number}`)}</span>` : '',
-            e.people && e.people.length ? eh(e.people.join(', ')) : '',
-            e.stateLabel ? eh(e.stateLabel) : '',
-            e.chatCount ? `${eh(e.chatCount)} in discussion` : '',
-          ])
-          + `</li>`));
-      }
-    }
-    html += `<section class="ur-rpt-section" data-section="inprogress">`
-      + `<h2 class="ur-rpt-h2">Underway (${eh(uwCount)})</h2>${ipBody}</section>`;
-
-    // ── Backlog ───────────────────────────────────────────────────────
-    const bl = m.backlog || {};
-    let blBody = '';
-    if (bl.empty) {
-      blBody = `<p class="ur-rpt-empty">The backlog is empty.</p>`;
-    } else {
-      for (const g of (bl.groups || [])) {
-        blBody += `<h3 class="ur-rpt-h3">${eh(g.label)} (${eh(g.issues.length)})</h3>`;
-        blBody += rows(g.issues.map((e) => `<li class="ur-rpt-row">`
-          + `<div class="ur-rpt-title">${eh(e.title)}${e.bountyCount
-            ? `<span class="ur-rpt-tag">${eh(e.bountyCount)} ${e.bountyCount === 1 ? 'bounty' : 'bounties'}</span>`
-            : ''}</div>`
-          + metaLine([
-            e.number != null ? `<span class="ur-rpt-num">${link(e.htmlUrl, `#${e.number}`)}</span>` : '',
-            e.createdAtMs
-              ? `filed ${eh(dateOnly(e.createdAtMs))}${e.reporter ? ` by ${eh(e.reporter)}` : ''}`
-              : (e.reporter ? `filed by ${eh(e.reporter)}` : ''),
-            e.assignee ? eh(e.assignee) : '',
-            e.category ? eh(e.category) : '',
-            e.atMs ? `active ${eh(dateOnly(e.atMs))}` : '',
-            e.chatCount ? `${eh(e.chatCount)} in discussion` : '',
-          ])
-          + `</li>`));
-      }
-      if (bl.truncatedList) {
-        const all = app.repoUrl ? `${app.repoUrl}/issues` : '';
-        blBody += `<p class="ur-rpt-sub">GitHub returned more open issues than the platform fetches, so this backlog is partial. `
-          + `${all ? `See the ${link(all, 'full issue list')}.` : ''}</p>`;
-      }
-    }
-    html += `<section class="ur-rpt-section" data-section="backlog">`
-      + `<h2 class="ur-rpt-h2">Backlog (${eh(bl.total || 0)})</h2>${blBody}</section>`;
-
-    // ── Footer ────────────────────────────────────────────────────────
-    html += `<footer class="ur-rpt-foot">`
-      + (app.url ? `<p>${eh(app.url)}</p>` : (app.slug ? `<p>${eh(app.slug)}</p>` : ''))
-      + `<p>${eh(sum.completed || 0)} completed &middot; ${eh(sum.awaitingReview || 0)} awaiting review &middot; `
-      + `${eh(sum.beingWorkedOn || 0)} being worked on &middot; ${eh(sum.backlog || 0)} in the backlog.</p>`
-      + `<p>This report reflects what the person who generated it can see, including their own private dev sessions.</p>`
-      + `</footer>`;
-
-    if (!standalone) return html;
-    const title = `${app.name || 'App'} — progress report`;
-    return `<!doctype html>\n<html lang="en"><head><meta charset="utf-8">`
-      + `<meta name="viewport" content="width=device-width, initial-scale=1">`
-      + `<title>${eh(title)}</title>`
-      + `<style>html,body{margin:0;padding:0;background:#fff;}${AppView.REPORT_CSS}${AppView.REPORT_PRINT_CSS}</style>`
-      + `</head><body><div class="ur-rpt">${html}</div></body></html>\n`;
-  },
-
-  // Save the report as a single self-contained file. Blob + temporary
-  // <a download> + revokeObjectURL, the pattern the admin CSV export
-  // already established (frontend/src/features/admin/admin-console.js).
-  downloadReport() {
-    if (!AppView._reportMerged) { AppView._ensureReportData(); return; }
-    const model = AppView._buildReportModel(AppView._reportInputs(), AppView._reportModelOpts());
-    // A summary is embedded when one exists; with none, the export omits
-    // the AI layer entirely (no "use the button above" invite in a
-    // standalone document).
-    const doc = AppView._renderReportHtml(
-      model,
-      AppView._reportAi
-        ? { standalone: true, ai: AppView._reportAi }
-        : { standalone: true }
-    );
-    const slug = (model.app && model.app.slug) || 'app';
-    const d = new Date(model.generatedAtMs);
-    const stamp = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    const name = `usernode-${slug}-progress-${stamp}.html`;
-    try {
-      const blob = new Blob([doc], { type: 'text/html;charset=utf-8' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = name;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
-    } catch {
-      if (window.PlatformUI && PlatformUI.toast) PlatformUI.toast('Could not save the report');
-    }
-  },
-
-  // Re-pull the merged history and regenerate in place.
-  refreshReport() {
-    if (AppView._reportLoading) return;
-    AppView._resetReportCaches();
-    AppView._repaintReportView();
-  },
-
-  // Fetch the shared AI summary once per report visit. GETs are cheap
-  // (server cache + staleness hash); errors degrade to the no-summary
-  // invite line rather than breaking the deterministic report.
-  async _ensureReportAi() {
-    if (AppView._reportAiFetching || AppView._reportAi !== undefined) return;
-    if (!AppView.appData) return;
-    AppView._reportAiFetching = true;
-    try {
-      // The staleness hash is computed server-side against the same
-      // period the client is looking at.
-      const sinceIso = AppView._reportEffectiveSince();
-      const qs = sinceIso ? `?since=${encodeURIComponent(sinceIso)}` : '';
-      const res = await fetch(`/api/apps/${AppView.appData.slug}/report-ai${qs}`);
-      const data = res.ok ? await res.json() : null;
-      AppView._reportAi = data && data.summary
-        ? { ...data.summary, stale: !!data.stale }
-        : null;
-    } catch {
-      AppView._reportAi = null;
-    } finally {
-      AppView._reportAiFetching = false;
-    }
-    if (AppView._getViewMode() === 'report') AppView._repaintReportView();
-  },
-
-  // Generate/regenerate the AI summary. Debited to the clicking user;
-  // the server 409s a concurrent generation and 429s budget/rate limits.
-  async generateReportAi() {
-    if (AppView._reportAiGenerating || !AppView.appData) return;
-    AppView._reportAiGenerating = true;
-    AppView._repaintReportView();
-    try {
-      const sinceIso = AppView._reportEffectiveSince();
-      const res = await fetch(`/api/apps/${AppView.appData.slug}/report-ai/generate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(sinceIso ? { since: sinceIso } : {}),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok && data.summary) {
-        AppView._reportAi = { ...data.summary, stale: false };
-      } else if (window.PlatformUI && PlatformUI.toast) {
-        PlatformUI.toast(data.error || 'Could not generate the AI summary');
-      }
-    } catch {
-      if (window.PlatformUI && PlatformUI.toast) PlatformUI.toast('Could not generate the AI summary');
-    } finally {
-      AppView._reportAiGenerating = false;
-      if (AppView._getViewMode() === 'report') AppView._repaintReportView();
-    }
-  },
-
-  // Fetch the locked-snapshot list once per report visit; errors degrade
-  // to an empty list (the section simply doesn't render).
-  async _ensureReportSnapshots() {
-    if (AppView._reportSnapshotsFetching || AppView._reportSnapshots !== undefined) return;
-    if (!AppView.appData) return;
-    AppView._reportSnapshotsFetching = true;
-    try {
-      const res = await fetch(`/api/apps/${AppView.appData.slug}/report-snapshots`);
-      const data = res.ok ? await res.json() : null;
-      AppView._reportSnapshots = data && Array.isArray(data.snapshots) ? data.snapshots : [];
-      // The default period just upgraded from "All history" to "Since
-      // last report" — re-check the AI staleness against it. One-shot:
-      // the guard above stops any refetch loop once _reportSnapshots is
-      // defined.
-      if (AppView._reportSince === undefined && AppView._reportSnapshots.length
-        && AppView._reportAi !== undefined && !AppView._reportAiFetching) {
-        AppView._reportAi = undefined;
-      }
-    } catch {
-      AppView._reportSnapshots = [];
-    } finally {
-      AppView._reportSnapshotsFetching = false;
-    }
-    if (AppView._getViewMode() === 'report') AppView._repaintReportView();
-  },
-
-  // Freeze the current report (same document the download builds) as a
-  // permanent dated snapshot. Admin-gated server-side; the button only
-  // renders for managers.
-  async lockReport() {
-    if (AppView._reportLocking || !AppView.appData) return;
-    if (!AppView._reportMerged) { AppView._ensureReportData(); return; }
-    AppView._reportLocking = true;
-    AppView._repaintReportView();
-    try {
-      const model = AppView._buildReportModel(AppView._reportInputs(), AppView._reportModelOpts());
-      const doc = AppView._renderReportHtml(
-        model,
-        AppView._reportAi
-          ? { standalone: true, ai: AppView._reportAi }
-          : { standalone: true }
-      );
-      const res = await fetch(`/api/apps/${AppView.appData.slug}/report-snapshots`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ html: doc }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok && data.snapshot) {
-        AppView._reportSnapshots = undefined; // refetch the list on repaint
-        if (window.PlatformUI && PlatformUI.toast) PlatformUI.toast('Report locked');
-      } else if (window.PlatformUI && PlatformUI.toast) {
-        PlatformUI.toast(data.error || 'Could not lock the report');
-      }
-    } catch {
-      if (window.PlatformUI && PlatformUI.toast) PlatformUI.toast('Could not lock the report');
-    } finally {
-      AppView._reportLocking = false;
-      if (AppView._getViewMode() === 'report') AppView._repaintReportView();
-    }
-  },
-
-  async shareReportSnapshot(id) {
-    if (!AppView.appData) return;
-    try {
-      const res = await fetch(
-        `/api/apps/${AppView.appData.slug}/report-snapshots/${encodeURIComponent(id)}/share`,
-        { method: 'POST' }
-      );
-      const data = await res.json().catch(() => ({}));
-      if (res.ok && data.sharePath) {
-        AppView._reportSnapshots = undefined;
-        AppView.copyReportShareLink(data.sharePath, 'Share link copied');
-      } else if (window.PlatformUI && PlatformUI.toast) {
-        PlatformUI.toast(data.error || 'Could not share the report');
-      }
-    } catch {
-      if (window.PlatformUI && PlatformUI.toast) PlatformUI.toast('Could not share the report');
-    }
-    if (AppView._getViewMode() === 'report') AppView._repaintReportView();
-  },
-
-  async unshareReportSnapshot(id) {
-    if (!AppView.appData) return;
-    try {
-      const res = await fetch(
-        `/api/apps/${AppView.appData.slug}/report-snapshots/${encodeURIComponent(id)}/unshare`,
-        { method: 'POST' }
-      );
-      const data = await res.json().catch(() => ({}));
-      if (res.ok) {
-        AppView._reportSnapshots = undefined;
-        if (window.PlatformUI && PlatformUI.toast) PlatformUI.toast('Share link revoked');
-      } else if (window.PlatformUI && PlatformUI.toast) {
-        PlatformUI.toast(data.error || 'Could not unshare the report');
-      }
-    } catch {
-      if (window.PlatformUI && PlatformUI.toast) PlatformUI.toast('Could not unshare the report');
-    }
-    if (AppView._getViewMode() === 'report') AppView._repaintReportView();
-  },
-
-  // Absolute URL built at click time (location.origin), so the pure list
-  // renderer stays origin-free. Clipboard failure falls back to toasting
-  // the URL itself so the admin can copy it by hand.
-  async copyReportShareLink(path, msg) {
-    const url = `${location.origin}${path}`;
-    try {
-      await navigator.clipboard.writeText(url);
-      if (window.PlatformUI && PlatformUI.toast) PlatformUI.toast(msg || 'Link copied');
-    } catch {
-      if (window.PlatformUI && PlatformUI.toast) PlatformUI.toast(url);
-    }
-  },
-
-  // ── Discord message (reporting-period): pure, DOM-free ──────────────
-  // model (+ possibly-null AI summary) in → plain string out, written for
-  // a general audience: no PR numbers, no merge windows, no check states.
-  // Uses only **bold**, _italics_ and `- ` bullets — Discord renders all
-  // three natively. Hard-capped at 1,900 characters (Discord's limit is
-  // 2,000), trimming bullets first.
-  _buildDiscordMessage(model, ai) {
-    const m = model || {};
-    const app = m.app || {};
-    const sum = m.summary || {};
-    const dateOnly = (ms) => {
-      try { return new Date(ms).toLocaleDateString(); } catch { return ''; }
-    };
-    const periodMs = Number.isFinite(m.periodStartMs) && m.periodStartMs > 0 ? m.periodStartMs : null;
-    let title = `**${app.name || 'This app'} — progress update**`;
-    if (periodMs) title += ` _(covering since ${dateOnly(periodMs)})_`;
-
-    // Non-technical nouns only — never "PR", "merge", "checks",
-    // "governance".
-    const c = sum.completed || 0;
-    const a = sum.awaitingReview || 0;
-    const w = sum.beingWorkedOn || 0;
-    const b = sum.backlog || 0;
-    const numbersLine = [
-      `${c} improvement${c === 1 ? '' : 's'} finished`,
-      `${a} change${a === 1 ? '' : 's'} waiting for votes`,
-      `${w} in progress`,
-      `${b} idea${b === 1 ? '' : 's'} in the backlog`,
-    ].join(' · ');
-
-    // What's new: the AI summary's plain-language highlights (cap 6), or —
-    // with no summary — up to 5 finished-item titles from the model.
-    const bullets = [];
-    if (ai) {
-      for (const h of (Array.isArray(ai.highlights) ? ai.highlights : [])) {
-        const t = h == null ? '' : String(h).trim();
-        if (t) bullets.push(t);
-        if (bullets.length >= 6) break;
-      }
-    } else {
-      for (const g of ((m.done || {}).groups || [])) {
-        for (const e of (g.entries || [])) {
-          const t = e && e.title ? String(e.title).trim() : '';
-          if (t) bullets.push(t);
-          if (bullets.length >= 5) break;
-        }
-        if (bullets.length >= 5) break;
-      }
-    }
-
-    // Needs attention: up to 3 plainly-worded risk titles (high/medium
-    // only); the section is omitted entirely when nothing qualifies.
-    const risks = ai
-      ? (Array.isArray(ai.risks) ? ai.risks : [])
-        .filter((r) => r && (r.severity === 'high' || r.severity === 'medium'))
-        .map((r) => String((r.title == null ? '' : r.title)).trim())
-        .filter(Boolean)
-        .slice(0, 3)
-      : [];
-
-    const assemble = (bl, rk) => {
-      const parts = [title];
-      if (bl.length) {
-        parts.push('', `**What's new**`);
-        for (const x of bl) parts.push(`- ${x}`);
-      }
-      parts.push('', '**By the numbers**', numbersLine);
-      if (rk.length) {
-        parts.push('', '**Needs attention**');
-        for (const x of rk) parts.push(`- ${x}`);
-      }
-      // The app's public link, and nothing else — never a share link (a
-      // draft report has none, and auto-including one could leak an
-      // unshared snapshot URL).
-      if (app.url) parts.push('', app.url);
-      return parts.join('\n');
-    };
-
-    const bl = bullets.slice();
-    const rk = risks.slice();
-    let msg = assemble(bl, rk);
-    while (msg.length > 1900 && (bl.length || rk.length)) {
-      if (bl.length) bl.pop(); else rk.pop();
-      msg = assemble(bl, rk);
-    }
-    if (msg.length > 1900) msg = msg.slice(0, 1900);
-    return msg;
-  },
-
-  // The editable copy panel, rendered inside the report root when a
-  // message has been composed. Read-only document rules still apply: the
-  // three controls are wired post-paint by _repaintReportView, like the
-  // snapshot buttons.
-  _renderReportDiscordPanelHtml() {
-    if (AppView._reportDiscordMsg == null) return '';
-    const note = AppView._reportDiscordFallback
-      ? 'Numbers-only version — the richer update with highlights needs the AI summary, which could not be generated.'
-      : 'Edit the text freely, then copy and paste it into Discord. Nothing is posted automatically.';
-    return `<section class="ur-rpt-section" data-section="discord">`
-      + `<h2 class="ur-rpt-h2">Discord message</h2>`
-      + `<p class="ur-rpt-sub">${escapeHtml(note)}</p>`
-      + `<textarea id="dev-report-discord-text" class="ur-rpt-discord-text" aria-label="Discord message">${escapeHtml(AppView._reportDiscordMsg)}</textarea>`
-      + `<div class="ur-rpt-discord-actions">`
-      + `<button type="button" id="dev-report-discord-copy" class="gc-vote-btn">Copy message</button>`
-      + `<button type="button" id="dev-report-discord-close" class="gc-vote-btn">Close</button>`
-      + `</div></section>`;
-  },
-
-  // Compose the Discord message: make sure a fresh AI summary exists for
-  // the selected period (the server returns the cache without an LLM call
-  // when the input hash is unchanged, so this never double-bills), fall
-  // back to the numbers-only version when it can't be generated, then
-  // open the panel.
-  async generateDiscordMessage() {
-    if (AppView._reportDiscordBusy || !AppView.appData) return;
-    if (!AppView._reportMerged) { AppView._ensureReportData(); return; }
-    AppView._reportDiscordBusy = true;
-    AppView._repaintReportView();
-    let ai = AppView._reportAi || null;
-    try {
-      if (!ai || ai.stale) {
-        const sinceIso = AppView._reportEffectiveSince();
-        const res = await fetch(`/api/apps/${AppView.appData.slug}/report-ai/generate`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(sinceIso ? { since: sinceIso } : {}),
-        });
-        const data = await res.json().catch(() => ({}));
-        if (res.ok && data.summary) {
-          AppView._reportAi = { ...data.summary, stale: false };
-          ai = AppView._reportAi;
-        } else {
-          ai = null;
-          if (window.PlatformUI && PlatformUI.toast) {
-            PlatformUI.toast(data.error || 'Could not generate the AI summary');
-          }
-        }
-      }
-    } catch {
-      ai = null;
-      if (window.PlatformUI && PlatformUI.toast) PlatformUI.toast('Could not generate the AI summary');
-    }
-    const model = AppView._buildReportModel(AppView._reportInputs(), AppView._reportModelOpts());
-    AppView._reportDiscordMsg = AppView._buildDiscordMessage(model, ai);
-    AppView._reportDiscordFallback = !ai;
-    AppView._reportDiscordBusy = false;
-    if (AppView._getViewMode() === 'report') AppView._repaintReportView();
-  },
-
-  // Copy the textarea's CURRENT value — the user may have edited it.
-  // Clipboard failure falls back to toasting the text itself, the same
-  // posture as copyReportShareLink.
-  async copyDiscordMessage() {
-    const ta = document.getElementById('dev-report-discord-text');
-    const text = ta ? ta.value : (AppView._reportDiscordMsg || '');
-    try {
-      await navigator.clipboard.writeText(text);
-      if (window.PlatformUI && PlatformUI.toast) PlatformUI.toast('Message copied');
-    } catch {
-      if (window.PlatformUI && PlatformUI.toast) PlatformUI.toast(text);
-    }
-  },
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
   // ── Session cards in the In progress area ──────────────────────────
   // The viewer's PRIVATE in-progress (active/paused, not-yet-promoted)
@@ -10928,16 +8782,15 @@ const AppView = {
   },
 
   // Repaint every surface that shows chips. #608: this used to repaint
-  // only #dev-feed / #gc-thread-head / #gc-merged, so in kanban and PM
-  // view modes (which mount #dev-kanban-board / #dev-pm instead) a vote
-  // updated the cache but the visible chips stayed stale until a reload.
-  // _repaintCards is mode-aware (list feed + Completed block, kanban
-  // board, PM view, plus the opened-topic head), all from cache. The
-  // popover lives on <body>, positioned by coordinates, so the repaint
-  // never removes it — but its chip's card can move (PM view regroups by
-  // assignee) or leave the board (kanban filter no longer matching), so
-  // re-anchor it to the freshly-rendered chip, or close it when the chip
-  // is gone.
+  // only #dev-feed / #gc-thread-head / #gc-merged, so in the board view
+  // (which mounts #dev-kanban-board instead) a vote updated the cache but
+  // the visible chips stayed stale until a reload. _repaintCards is
+  // mode-aware (the Feed, the Kanban board, plus the opened-topic head),
+  // all from cache. The popover lives on <body>, positioned by coordinates,
+  // so the repaint never removes it — but its chip's card can leave the
+  // board (a kanban filter no longer matching) or move in the Feed (a new
+  // comment re-sorts it), so re-anchor it to the freshly-rendered chip, or
+  // close it when the chip is gone.
   _refreshAttrCards() {
     AppView._repaintCards();
     AppView._reanchorAttrPopover();
@@ -11121,55 +8974,20 @@ const AppView = {
 
   // ---- Open Issues section ------------------------------------------------
 
-  // Auto-solve rank for the feed sort (#177/#227). Lower renders first
-  // within the issues group: an in-flight run ('generating') tops the
-  // list, a finished run awaiting review ('ready') follows, everything
-  // else — no headless session, or defensively any unknown/future
-  // status — sorts as a plain issue. 'failed' never reaches the client
-  // (the /github-issues query filters to generating/ready), so it lands
-  // in the plain bucket too. Ranking happens at render time (not
-  // server-side) because the optimistic auto-solve start and the
-  // headless poller both mutate `headless` in place and re-render
-  // without refetching.
-  _headlessRank(issue) {
-    const s = issue.headless && issue.headless.status;
-    return s === 'generating' ? 0 : s === 'ready' ? 1 : 2;
-  },
+  // _headlessRank (the auto-solve rank, #177/#227) used to live here. It
+  // ordered the retired List view's issues group — 'generating' first, then
+  // 'ready', then everything else. The Feed is pure recency and the Kanban
+  // board buckets by column rather than ranking within one, so nothing reads
+  // it any more. The auto-solve STATE is still rendered on every issue row.
 
-  // #388: merge-pipeline pin rank for the feed sort. Lower renders first
-  // within the proposal group, so a PR actually being merged (or having
-  // its conflicts resolved) surfaces at the top of the stack instead of
-  // sinking under proposals with newer chatter — "it's obvious it's the
-  // next one to merge". The precedence deliberately matches the card's
-  // state-badge precedence (#361/#386: merging > resolving > failed) so
-  // the list position always agrees with the badge the user sees:
-  //   0 — 'merging'  ("Merging…")            being merged right now
-  //   1 — resolving  ("Resolving conflicts…")  auto-resolver sync in flight
-  //   2 — merge_conflict_state 'failed' ("⚠ Conflict resolution failed") or
-  //       'conflict' ("⚠ Merge failed — conflict"): a real attempt failed
-  //       and the auto-resolver may never pick it up (it only touches
-  //       vote-eligible proposals), so the card must stay visible until the
-  //       creator finishes the merge.
-  //   3 — everything else (normal, by recency)
-  // A bare 'behind' snapshot is NOT pinned: it renders as the neutral
-  // "Behind main · N" badge, and many PRs can be behind main.
-  _proposalPinRank(pr) {
-    if (!pr) return 4;
-    if (pr.status === 'merging') return 0;
-    if (pr.resolving) return 1;
-    if (pr.merge_conflict_state === 'failed' || pr.merge_conflict_state === 'conflict') return 2;
-    // #47: a proposal whose checks failed / couldn't run blocks merge and
-    // needs the owner's attention — pin it just below the conflict-failed
-    // affordance so it stays visible above ordinary chatter.
-    if (pr.check_state === 'failing' || pr.check_state === 'error') return 3;
-    return 4;
-  },
+
 
   // The Open Issues list exactly as rendered: env-var-proposal twins
   // filtered out (#131 — those rows render in the dedicated Environment
-  // variables section). Ordering is owned by _feedItems(), whose
-  // comparator folds in the auto-solve rank (_headlessRank) ahead of
-  // recency. The filter runs on a copy, so _ghIssues itself keeps the
+  // variables section). Ordering is owned by _feedItems(), which is pure
+  // recency now — the auto-solve rank it used to fold in ahead of recency
+  // belongs to the Kanban comparator alone. The filter runs on a copy, so
+  // _ghIssues itself keeps the
   // canonical fetch order (GitHub updated-desc). The feed renderer and
   // the open-card index lookup must both use this helper so paging
   // counts match what's on screen.
@@ -11598,10 +9416,10 @@ const AppView = {
   // a show-more toggle, mirroring the Open Issues pattern above.
   _mergedShownDefault: 3,
 
-  // Build the inner HTML for the Merged section from the cached
-  // AppView._merged list. Rendered once inside loadVotePanel's bodyHtml and
-  // re-rendered in place (into #gc-merged) by toggleMergedPrs so the
-  // show-more/show-less toggle needs no refetch.
+  // Build the inner HTML for the Completed section from the cached
+  // AppView._merged list — the kanban Done column's only consumer since THE
+  // UI OVERHAUL folded completed rows into the Feed's own stream. The
+  // show-more/show-less toggle still needs no refetch.
   _renderMergedInner() {
     const merged = AppView._merged || [];
     const { majority, activeUsers } = AppView._mergedCtx || { majority: 1, activeUsers: 1 };
@@ -11652,16 +9470,11 @@ const AppView = {
     if (!AppView.appData || !AppView._mergedCursor) return;
     const slug = AppView.appData.slug;
     AppView._mergedLoadingMore = true;
-    // Reflect the disabled/"Loading…" state immediately. In kanban mode the
-    // Done-column footer lives in #dev-kanban (there is no #gc-merged), so
-    // repaint the whole board; in list mode update the Completed section in
-    // place.
-    if (AppView._getViewMode() === 'kanban') {
-      AppView._repaintDevBody();
-    } else {
-      const el0 = document.getElementById('gc-merged');
-      if (el0) el0.innerHTML = AppView._renderMergedInner();
-    }
+    // Reflect the disabled/"Loading…" state immediately. Both modes repaint
+    // the whole body now: the kanban Done-column footer lives in #dev-kanban,
+    // and the Feed's completed rows are inline in #dev-feed — the separate
+    // #gc-merged section this used to patch in place is gone.
+    AppView._repaintDevBody();
     try {
       const cur = AppView._mergedCursor;
       const qs = AppView._demoQS();
@@ -11701,18 +9514,25 @@ const AppView = {
       AppView._mergedLoadingMore = false;
       // Paint the freshly loaded cards into whichever view is active.
       // _repaintDevBody re-renders #dev-kanban and re-attaches Kudos /
-      // Ask-AI for the kanban Done column; list mode updates #gc-merged.
-      if (AppView._getViewMode() === 'kanban') {
-        AppView._repaintDevBody();
-      } else {
-        const el = document.getElementById('gc-merged');
-        if (el) {
-          el.innerHTML = AppView._renderMergedInner();
-          if (window.Kudos) Kudos.attach(el);
-          AppView._applyExploreChatAvailability(el);
-        }
-      }
+      // Ask-AI for the kanban Done column, and re-renders #dev-feed with the
+      // completed rows inline for the Feed.
+      AppView._repaintDevBody();
     }
+  },
+
+  // One COMPLETED row, whichever kind it is.
+  //
+  // The two renderers below have always existed side by side; what needed a
+  // dispatcher is the Feed, which folds completed work into the same stream
+  // as everything else (see _feedItems) and so meets the rows one at a time
+  // rather than as a block it can switch on itself. The kanban Done column
+  // and the retired Completed section both did this switch inline.
+  _renderMergedRow(row) {
+    if (!row) return '';
+    const majority = (AppView._mergedCtx && AppView._mergedCtx.majority) || 1;
+    return (row.row_type === 'close_issue')
+      ? AppView._renderCompletedCloseIssueCard(row)
+      : AppView._renderMergedCard(row, majority);
   },
 
   // One merged ("Completed") proposal card. Extracted from
@@ -11855,14 +9675,15 @@ const AppView = {
         </div>`;
   },
 
-  // Expand / collapse the Merged section in place (no panel reload).
+  // Expand / collapse the Completed section in place (no panel reload).
+  //
+  // Only the kanban Done column renders that section now — the Feed folds
+  // completed rows into its own stream and pages them with its own "Show
+  // more" — so this repaints the body rather than patching a #gc-merged node
+  // that no longer exists outside the board.
   toggleMergedPrs() {
     AppView._mergedExpanded = !AppView._mergedExpanded;
-    const el = document.getElementById('gc-merged');
-    if (el) {
-      el.innerHTML = AppView._renderMergedInner();
-      AppView._applyExploreChatAvailability(el);
-    }
+    AppView._repaintDevBody();
   },
 
   // "Give kudos" — pledge a bounty on a GitHub issue. Debits the shared

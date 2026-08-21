@@ -16,7 +16,7 @@
 //   2. The theme segmented control is genuinely React-owned now (see
 //      ThemeControl in ./header-menu.tsx), so _renderThemeButtons and its click
 //      wiring are gone from here. open() announces itself with a
-//      `usernode:header-menu-open` event instead, which is what that component
+//      `usernode:settings-section` event instead, which is what that component
 //      re-reads Theme.get() on — the same "reflect the mode on every open"
 //      contract, expressed as a subscription rather than a DOM write.
 //   3. init() is called from the island's layout effect rather than from
@@ -44,23 +44,39 @@ const DrawerStatus = {
     // Fork lineage is app-scoped too — closing an app can never leave
     // the previous app's "Forked from" line behind.
     if (!open) DrawerStatus.setForkVisible(false);
-    // Self-hosted apps (the platform's own row) have no App mode at
-    // all — appData.url maps to a slug-derived subdomain that doesn't
-    // resolve, so switchTab coerces them to the Dev forum. A switch
-    // with one reachable option is noise, so hide the whole control
-    // rather than shipping a dead segment. setAppOpen(true) runs after
-    // the /api/apps/:slug fetch resolves, so self_hosted is known by
-    // the time this reads it.
-    const modeSwitch = document.getElementById('app-mode-switch');
-    if (modeSwitch) {
-      const show = !!open && !window.AppView?.appData?.self_hosted;
-      modeSwitch.classList.toggle('hidden', !show);
-      // The control materially changes the header's right-group width,
-      // which is one of the two inputs to the title's centered-vs-flow
-      // decision. The group's ResizeObserver would catch this on its
-      // own a frame later; the explicit hook exists so the title
-      // doesn't visibly jump.
-      window.HeaderLayout?.refresh?.();
+    // THE UI OVERHAUL: this used to show and hide #app-mode-switch, the
+    // App/Dev segmented control. There is no App/Dev switch any more — an
+    // app is just an app, and "Dev" is somewhere the Improve panel links to.
+    // What this call publishes now is that panel's TARGET, which is what
+    // decides whether #improve-btn exists at all, so the header control still
+    // rides exactly this one lifecycle: it already covers openApp,
+    // navigateHome, AppView.close() and all six other-screen navigations.
+    //
+    // The self-hosted platform row is NOT excluded here, unlike the switch it
+    // replaced. That exclusion existed because the row's App mode had no
+    // reachable iframe target, which made a two-option control a control with
+    // one dead option. Improve has no such problem — everything it offers
+    // works on the platform's own row, and that row is precisely what the
+    // home screen's Improve button points at.
+    const appData = window.AppView?.appData;
+    if (open && appData?.slug) {
+      window.Improve?.setTarget({
+        kind: appData.self_hosted ? 'platform' : 'app',
+        slug: appData.slug,
+        name: appData.name || appData.slug,
+        selfHosted: !!appData.self_hosted,
+        repoUrl: appData.repo_url || null,
+        version: appData.main_sha ? appData.main_sha.slice(0, 7) : null,
+        deploying: appData.status === 'deploying',
+        readOnly: !!window.AppView?.readOnly,
+        canShare: appData.status === 'running' && !!appData.url,
+      });
+    } else if (!open) {
+      // Cleared here rather than per-screen: every navigation away from an
+      // app already funnels through this call. App.navigateHome() re-publishes
+      // the platform's own row straight after, which is what keeps Improve on
+      // the home screen.
+      window.Improve?.setTarget(null);
     }
     DrawerStatus.refreshDeployDot();
   },
@@ -76,16 +92,20 @@ const DrawerStatus = {
     row.classList.toggle('flex', !!visible);
   },
 
-  // Mirror "a deploy is in flight" onto the hamburger. Read straight
-  // off the rendered platform version row rather than threading state: its markup is
+  // Mirror "a deploy is in flight" onto the hamburger. Read straight off the
+  // rendered platform version row rather than threading state: its markup is
   // already the single source of truth for the platform deploying state.
-  // Scoped to #drawer-footer so a deploying dApp pill on a home tile can never
-  // light this dot.
+  //
+  // Scoped to #improve-footer — where THE UI OVERHAUL moved that row from the
+  // retired #drawer-footer — so a deploying dApp pill on a home tile can never
+  // light this dot. The dot itself stays on the hamburger: it is the ambient
+  // "something is happening" cue, and the hamburger is the one control present
+  // on every screen.
   refreshDeployDot() {
     const dot = document.getElementById('header-menu-deploy-dot');
     if (!dot) return;
     const deploying = !!document.querySelector(
-      '#drawer-footer .drawer-ver--deploying');
+      '#improve-footer .drawer-ver--deploying');
     dot.classList.toggle('hidden', !deploying);
   },
 };
@@ -162,17 +182,13 @@ const HeaderMenu = {
     }
   },
 
-  // Reflect the current theme mode every time the drawer opens (covers
-  // cross-tab changes and explicit values that happen to match the OS).
-  // The segmented control is a React component now, so this is an
-  // announcement rather than a DOM write — ThemeControl re-reads
-  // Theme.get() on it, which is the same contract _renderThemeButtons()
-  // had when it was called from here.
-  _announceOpen() {
-    try {
-      window.dispatchEvent(new CustomEvent('usernode:header-menu-open'));
-    } catch (err) { /* ignore */ }
-  },
+  // `_announceOpen()` used to dispatch `usernode:header-menu-open` here, so
+  // the theme segments could re-read Theme.get() on every drawer open — the
+  // same contract _renderThemeButtons() had when it was called from this
+  // file. THE UI OVERHAUL moved the control to Settings, and the announcement
+  // went with it: settings.js dispatches `usernode:settings-section` from
+  // _renderContent(), which is the equivalent moment there. Nothing else ever
+  // listened, so the drawer's open is silent again.
 
   open() {
     const panel = document.getElementById('header-menu-panel');
@@ -182,11 +198,12 @@ const HeaderMenu = {
     // A fresh presentation ends any "still sliding out" window the
     // legacy path was counting down (#977).
     HeaderMenu._closingAt = 0;
-    // #555: the AI-credit row only ever renders in this drawer, so
-    // opening it is exactly when its number matters. The refresh is
-    // throttled inside AiCredit, so this is cheap on every open —
-    // and it must run BEFORE the touch branch below, which returns.
-    if (window.AiCredit?.refreshAll) AiCredit.refreshAll();
+    // The #555 AI-credit refresh used to fire here, because the row only
+    // rendered in this drawer and opening it was exactly when the number
+    // mattered. The row is a Settings section now (Anthropic API key), so the
+    // refresh belongs to that screen's open — see Settings._refreshSpend's
+    // neighbours — and firing it from a drawer that no longer shows it would
+    // be a poll with no reader.
     // Touch platforms: present the drawer as a kit side panel — a
     // right-edge slide-in with 1:1 drag-to-dismiss, matching what
     // desktop's CSS slide-over already does positionally (it used to
@@ -239,7 +256,6 @@ const HeaderMenu = {
       // because the touch gate lives inside adoptKitSurface now; the one
       // listener (ThemeControl) just re-reads Theme.get(), so it does not
       // care which side of the present it fires on.
-      HeaderMenu._announceOpen();
       // The touch path used to return before the aria writes below,
       // leaving the button reading "Open menu" / collapsed while the
       // drawer was open.
@@ -254,7 +270,6 @@ const HeaderMenu = {
     panel.setAttribute('data-open', '');
     btn.setAttribute('aria-expanded', 'true');
     btn.setAttribute('aria-label', 'Close menu');
-    HeaderMenu._announceOpen();
     const closeBtn = document.getElementById('header-menu-close');
     if (closeBtn) closeBtn.focus();
   },
@@ -370,25 +385,21 @@ const HeaderMenu = {
       });
     }
     // Drawer row actions — each closes the menu after triggering its action.
-    document.getElementById('drawer-row-github')
-      .addEventListener('click', () => HeaderMenu.close());
-    // Leaderboard (the merged Kudos + Topochain + Challenges screen) —
-    // same real-anchor idiom as Profile below: navigation rides the
-    // anchor's hash, the click handler here just closes the drawer. The
-    // separate Challenges / Topochain-seasons rows that used to sit
-    // beside it are gone; they're tabs of this one screen now.
-    document.getElementById('drawer-row-leaderboard')
-      ?.addEventListener('click', () => HeaderMenu.close());
+    //
+    // THREE OF THESE ARE GONE, with the rows they bound. #drawer-row-github
+    // and #drawer-row-share moved into the Improve panel (every line in the
+    // drawer's footer was about an app, and that panel is the surface scoped
+    // to one), and #drawer-row-leaderboard moved to the home screen's
+    // Challenges area. Their listeners went WITH them rather than being left
+    // behind under a `?.`: a dead optional-chained binding reads as "this row
+    // might not be here", which is exactly the wrong thing to say about a row
+    // that is never here.
+    //
+    // Every binding below is optional-chained for a different and live
+    // reason — each row is rendered conditionally (admin gate, native build,
+    // signed-in state) — so the guard describes a real absence.
     document.getElementById('drawer-row-messages')
       ?.addEventListener('click', () => HeaderMenu.close());
-    // Share — a dialog of its own, so it waits for the drawer to be
-    // gone rather than fading in across the drawer's exit (#977).
-    document.getElementById('drawer-row-share')
-      .addEventListener('click', () => {
-        Promise.resolve(HeaderMenu.close()).then(() => {
-          if (window.AppView) AppView.openShareModal();
-        });
-      });
     // Settings — the #settings screen (settings-modal-to-screen
     // conversion). Same real-anchor idiom as Challenges / Profile above:
     // navigation rides the anchor's hash, this handler just closes the

@@ -296,72 +296,93 @@ test('header and app view carry safe-area classes', () => {
   );
 });
 
-test('the bottom App/Dev tab bar is gone, replaced by the header switch', () => {
+test('neither the bottom tab bar nor the header switch ships', () => {
+  // Two retirements, one test. The full-width bottom #app-tabs bar went first
+  // (replaced by the header's App/Dev switch); THE UI OVERHAUL then retired
+  // the switch too. An app is just an app now — Dev is a destination the
+  // Improve panel links to, not a mode the header toggles between.
   assert.ok(!INDEX.includes('id="app-tabs"'), 'the #app-tabs nav still ships');
   assert.ok(!INDEX.includes('class="app-tab'), 'an .app-tab button still ships');
-  assert.ok(INDEX.includes('id="app-mode-switch"'), 'the header switch is missing');
+  assert.ok(!INDEX.includes('id="app-mode-switch"'), 'the header switch still ships');
+  assert.ok(!/class="[^"]*app-mode-seg/.test(INDEX), 'an orphan segment still ships');
 });
 
-test('#app-mode-switch lives inside the header, before the icon group', () => {
+test('#improve-btn lives inside the header, leading the icon group', () => {
   const header = INDEX.slice(
     INDEX.indexOf('id="platform-header"'),
     INDEX.indexOf('</header>')
   );
-  // The header-layout code used to resolve the title's side groups as
-  // previousElementSibling / nextElementSibling, so the switch has to be
-  // INSIDE the existing right-group div — a sibling wedged between the
-  // <h1> and that div silently breaks the centering measurement.
-  assert.ok(header.includes('id="app-mode-switch"'), 'switch is outside the header');
+  // Same requirement the switch had, and for the same reason: the header
+  // layout code measures the title's right side group through a ref on that
+  // div, so a control moved out of it stops counting towards the clearance
+  // the centering measurement needs.
+  assert.ok(header.includes('id="improve-btn"'), 'Improve is outside the header');
   assert.ok(
-    header.indexOf('id="app-mode-switch"') > header.indexOf('id="header-title"'),
-    'switch must sit after the title, in the right group'
+    header.indexOf('id="improve-btn"') > header.indexOf('id="header-title"'),
+    'Improve must sit after the title, in the right group'
   );
   assert.ok(
-    header.indexOf('id="app-mode-switch"') < header.indexOf('id="feedback-btn"'),
-    'switch must lead the icon group'
+    header.indexOf('id="improve-btn"') < header.indexOf('id="header-menu-btn"'),
+    'Improve must lead the icon group'
   );
 });
 
-test('the App/Dev switch is a two-option radiogroup', () => {
-  const m = INDEX.match(/<div id="app-mode-switch"[\s\S]*?<\/div>/);
-  assert.ok(m, 'missing #app-mode-switch');
+test('the Improve button ships hidden and opens the panel', () => {
+  const m = INDEX.match(/<button id="improve-btn"[\s\S]*?<\/button>/);
+  assert.ok(m, 'missing #improve-btn');
   const el = m[0];
-  assert.ok(el.includes('role="radiogroup"'), el);
-  assert.ok(el.includes('hidden'), 'ships hidden — setAppOpen reveals it');
-  for (const tab of ['app', 'dev']) {
-    assert.ok(
-      new RegExp(`<button[^>]*role="radio"[^>]*data-tab="${tab}"[^>]*class="[^"]*app-mode-seg`).test(el)
-        || new RegExp(`<button[^>]*data-tab="${tab}"[^>]*app-mode-seg`).test(el),
-      `missing the ${tab} segment`
-    );
-  }
+  // Ships hidden for the same reason the switch did: there is nothing to
+  // improve until a target is published. The publisher is the same call —
+  // App.DrawerStatus.setAppOpen — plus App._improveHome() on the home screen.
+  assert.ok(el.includes('hidden'), 'ships hidden — a published target reveals it');
+  assert.ok(el.includes('aria-haspopup="dialog"'), 'it opens a dialog surface');
+  assert.ok(el.includes('aria-expanded="false"'), 'closed state reaches the a11y tree');
 });
 
-test('app.js wires the switch and guards the same-segment App tap', () => {
-  const src = read('public/js/app.js');
-  assert.ok(src.includes(".querySelectorAll('.app-mode-seg')"), 'not bound to .app-mode-seg');
-  assert.ok(src.includes("setAttribute('aria-checked'"), 'active state never reaches the a11y tree');
-  assert.ok(src.includes("app-mode-seg-active"), 'no active class applied');
-  // Re-tapping App would re-run renderAppTab() and reload the iframe.
-  assert.ok(
-    src.includes("if (btn.dataset.tab === 'app' && App.currentTab === 'app') return;"),
-    'missing the App-segment no-op guard'
-  );
-});
-
-test('setAppOpen owns the switch and hides it for self-hosted apps', () => {
+test('setAppOpen publishes the Improve target instead of toggling a switch', () => {
   // #1079 chunk B moved App.DrawerStatus into the React bundle alongside the
-  // drawer markup it drives; app.js keeps a forwarder.
+  // drawer markup it drives; app.js keeps a forwarder. THE UI OVERHAUL kept
+  // that lifecycle and changed only what it publishes — one call already
+  // covers openApp, navigateHome, AppView.close() and every other-screen
+  // navigation, which is why the header control still rides it.
   const src = read('frontend/src/features/header/header-menu-controller.js');
   const fn = src.slice(src.indexOf('setAppOpen(open) {'), src.indexOf('setForkVisible(visible)'));
-  assert.ok(fn.includes("getElementById('app-mode-switch')"), fn);
-  assert.ok(fn.includes('self_hosted'), 'self-hosted apps must not get a dead App segment');
-  assert.ok(fn.includes('HeaderLayout'), 'title should be remeasured when the group resizes');
+  assert.ok(!fn.includes("getElementById('app-mode-switch')"),
+    'the retired switch must not still be toggled here');
+  assert.ok(fn.includes('Improve?.setTarget'), fn);
+  assert.ok(fn.includes('setTarget(null)'),
+    'closing an app must clear the target, or the button outlives its subject');
+  // Unlike the switch it replaced, the self-hosted platform row is NOT
+  // excluded: everything Improve offers works on it, and that row is exactly
+  // what the home screen's Improve button points at.
+  assert.ok(fn.includes('self_hosted'), 'the platform row is still classified');
+  assert.ok(!/self_hosted[\s\S]{0,120}classList\.toggle\('hidden'/.test(fn),
+    'the platform row must no longer be hidden out of the header');
 });
 
-test('app.css drops the tab-bar rules and keeps the press opt-out', () => {
+test('the home screen points Improve at the platform\'s own app row', () => {
+  const src = read('public/js/app.js');
+  assert.ok(src.includes('_improveHome()'), 'the helper went missing');
+  const fn = src.slice(src.indexOf('_improveHome() {'), src.indexOf('DrawerStatus: {'));
+  assert.ok(fn.includes('App.user?.platformApp'),
+    'the slug comes from /api/auth/me — GET /api/apps hides self-hosted rows');
+  assert.ok(fn.includes("kind: 'platform'"), 'the target is classified as the platform');
+  // Both entry points: a cold boot landing on home, and every later return.
+  assert.ok(src.indexOf('App._improveHome();') !== src.lastIndexOf('App._improveHome();'),
+    'both navigateHome and the restoreFromHash home fallback must publish it');
+});
+
+test('app.css drops the tab-bar rules and draws the Improve panel', () => {
   const css = read('public/css/app.css');
   assert.ok(!/^\.app-tab\b/m.test(css), '.app-tab rules still present');
-  assert.ok(css.includes('.app-mode-seg:active'), 'press-state opt-out lost the switch');
-  assert.ok(css.includes('.app-mode-seg.app-mode-seg-active'), 'no active-segment styling');
+  // The .app-mode-seg rules went with the switch itself.
+  assert.ok(!css.includes('.app-mode-seg'), 'orphan App/Dev segment rules survive');
+  // Desktop side panel, mobile bottom sheet — one element, two idioms, and
+  // the requirement holds in a mobile browser with no native kit loaded.
+  assert.ok(css.includes('#improve-panel'), 'the Improve panel has no chrome');
+  assert.ok(css.includes('#improve-panel[data-open]'), 'nothing slides the panel in');
+  assert.ok(/@media \(max-width: 639px\)[\s\S]{0,900}#improve-panel[\s\S]{0,400}translateY/
+    .test(css), 'below sm the panel must come up from the bottom, not in from the side');
+  assert.ok(/#improve-panel \{[\s\S]{0,300}translateX/.test(css),
+    'at sm and up the panel must slide in from the side');
 });

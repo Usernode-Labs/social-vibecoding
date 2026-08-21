@@ -277,17 +277,27 @@ export class DevConsoleStore {
     const show = inIframeContext
       && (this.mode === this.MODE_ALWAYS || hasErrors || this.panelOpen);
 
-    // #dev-console-btn lives in #platform-header and #staging-dev-console-btn
-    // in #staging-overlay. #1085 chunk H made the staging overlay an island, so
-    // that one IS React-owned now — but this write stays legal, and stays
+    // #dev-console-btn is GONE from #platform-header — THE UI OVERHAUL moved
+    // the terminal into the Improve panel, as its "Developer terminal" row.
+    // The row is shown on exactly the signal computed above, so the button's
+    // retirement cost nothing: `Improve.setTerminalAvailable` is published
+    // instead of a class being toggled on an element. The panel is fully
+    // React-owned, which is why this is a store publish and not a DOM write.
+    const improve = (globalThis as unknown as {
+      Improve?: { setTerminalAvailable?(v: boolean): void };
+    }).Improve;
+    improve?.setTerminalAvailable?.(show);
+
+    // #staging-dev-console-btn survives, in #staging-overlay: the staging
+    // preview is a fullscreen surface with its own chrome and the Improve
+    // panel does not cover it. #1085 chunk H made that overlay an island, so
+    // it IS React-owned — but this write stays legal, and stays
     // getElementById + classList exactly as the classic module had it, because
     // the button's rendered `className` is CONSTANT and it renders no children:
     // React never issues an attribute update that could reconcile this class
     // away. Same for the badge's text below. See the note in
     // features/staging/staging-overlay.tsx's header.
-    const btn = doc()?.getElementById('dev-console-btn');
     const stagingBtn = doc()?.getElementById('staging-dev-console-btn');
-    if (btn) btn.classList.toggle('hidden', !show);
     if (stagingBtn) stagingBtn.classList.toggle('hidden', !show);
 
     if (!show && this.panelOpen) this.hide();
@@ -296,7 +306,9 @@ export class DevConsoleStore {
   _updateBadge(): void {
     const label = this.unseenErrors > 99 ? '99+' : String(this.unseenErrors);
     const show = this.unseenErrors > 0;
-    for (const id of ['dev-console-badge', 'staging-dev-console-badge']) {
+    // Only the staging one is left: the header badge went with
+    // #dev-console-btn (see _refreshButtonVisibility above).
+    for (const id of ['staging-dev-console-badge']) {
       const badge = doc()?.getElementById(id);
       if (!badge) continue;
       if (show) {

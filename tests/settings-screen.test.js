@@ -40,6 +40,12 @@ const settingsJs = read('frontend/src/features/settings/settings.js');
 // The halves the two nav hosts were split into by #1191 slice 6, conversion 8.
 const navTsx = read('frontend/src/features/settings/settings-nav.tsx');
 const navStoreJs = read('frontend/src/features/settings/settings-nav-store.js');
+
+// The section a bare #settings resolves to, read from the module rather than
+// repeated here — THE UI OVERHAUL moved Theme in from the hamburger and made
+// it the default, and a hard-coded copy would have silently kept asserting
+// the old one.
+const DEFAULT_SECTION = settingsJs.match(/DEFAULT_SECTION: '([a-z-]+)'/)[1];
 const mountTs = read('frontend/src/features/settings/mount.ts');
 const kitSurfaceTs = read('frontend/src/lib/kit-surface.ts');
 
@@ -654,7 +660,11 @@ test('dapp.json covers the settings screen and its deep links', () => {
   assert.match(back[0].expectSelector || '', /data-settings-route="skipped"/,
     'it asserts the SECOND dispatch was skipped — the marker is the only way to observe an '
     + 'ordering that is otherwise visible for one animation frame only');
-  assert.match(back[0].expectSelector || '', /data-settings-section="api-key"/,
+  // The DEFAULT section, whatever it is — THE UI OVERHAUL made that Theme,
+  // moving it out of the hamburger where it was the drawer's first row. Read
+  // from the registry rather than hard-coded, so the two cannot drift.
+  assert.match(back[0].expectSelector || '',
+    new RegExp(`data-settings-section="${DEFAULT_SECTION}"`),
     'and that the traversal landed back on the default section rather than the drilled-in one');
 });
 

@@ -5,15 +5,14 @@
  * ── Why a store, and not just a prop ───────────────────────────────────
  *
  * `AppView._updateViewToggleUI()` used to walk `.dev-view-btn` and assign
- * `btn.className` outright, so switching list ↔ kanban ↔ pm ↔ report could
- * restyle the four buttons without re-rendering the header bar. The header bar
+ * `btn.className` outright, so switching between modes could restyle the
+ * buttons without re-rendering the header bar. The header bar
  * is React-rendered now, and React writes the whole `class` attribute when the
  * prop changes — two owners of one attribute is precisely the conflict the
  * migration's ownership rule forbids. So the toggle's active mode is the one
  * piece of board state that genuinely changes hands, and it becomes real React
  * state: the module PUBLISHES the mode it just switched to and React renders
- * the four buttons, producing exactly the class strings
- * `AppView._viewToggleBtnCls()` produced.
+ * the tab strip.
  *
  * Deliberately mirrors ../leaderboard/section-store.ts, including the
  * `globalThis` key and the cached-snapshot dance. Read that file's header for
@@ -45,12 +44,20 @@ import { useSyncExternalStore } from 'react';
 
 export const DEV_VIEW_MODE_STORE_KEY = '__usernodeDevViewMode';
 
-/** Mirrors `AppView.VIEW_MODES`; 'list' is the fallback for an unknown value. */
-export const DEV_VIEW_MODES = ['list', 'kanban', 'pm', 'report'] as const;
+/**
+ * Mirrors `AppView.VIEW_MODES`; 'feed' is the fallback for an unknown value.
+ *
+ * THE UI OVERHAUL cut this from four modes to two — 'list' became 'feed' and
+ * 'pm' / 'report' were retired. The module keeps the migration table
+ * (`AppView.RETIRED_VIEW_MODES`) so a stored preference naming a retired mode
+ * still resolves; nothing here needs it, because everything that reaches this
+ * store has already been through `_setViewMode`.
+ */
+export const DEV_VIEW_MODES = ['feed', 'kanban'] as const;
 
 export type DevViewMode = (typeof DEV_VIEW_MODES)[number];
 
-export const DEFAULT_DEV_VIEW_MODE: DevViewMode = 'list';
+export const DEFAULT_DEV_VIEW_MODE: DevViewMode = 'feed';
 
 export function isDevViewMode(value: unknown): value is DevViewMode {
   return typeof value === 'string' && (DEV_VIEW_MODES as readonly string[]).includes(value);

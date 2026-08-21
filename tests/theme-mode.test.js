@@ -103,35 +103,56 @@ for (const page of THEMED_PAGES) {
   });
 }
 
-// ── Drawer control markup (index.html) ───────────────────────────────────
+// ── Control markup (index.html) ──────────────────────────────────────────
 
-test('index.html has the theme drawer row inside the header menu panel', () => {
+// The theme selector has moved twice. It was the LAST row of the hamburger
+// drawer; the header slim-down promoted it to the FIRST thing in that drawer's
+// body; THE UI OVERHAUL took it out of the drawer entirely and made it the
+// first SETTING. A live control that changes how the whole product looks is
+// not navigation, and the drawer is navigation plus notifications now.
+//
+// Position is the whole point of each of those moves, so it stays pinned —
+// only to a different container.
+test('the theme control lives in its own Settings section', () => {
   const src = read('index.html');
-  const panelIdx = src.indexOf('id="header-menu-panel"');
-  const rowIdx = src.indexOf('id="drawer-row-theme"');
-  assert.ok(panelIdx !== -1, 'header-menu-panel missing');
-  assert.ok(rowIdx !== -1, 'drawer-row-theme missing');
-  assert.ok(rowIdx > panelIdx, 'drawer-row-theme must live inside the header menu panel');
+  const pane = src.indexOf('data-settings-section="theme"');
+  const track = src.indexOf('id="drawer-theme-track"');
+  assert.ok(pane !== -1, 'the theme settings pane is missing');
+  assert.ok(track !== -1, 'drawer-theme-track missing');
+  assert.ok(track > pane, 'the track lives inside the theme settings pane');
+  // …and NOT in the drawer any more. Two copies would be two owners of one
+  // `--theme-caret-index`, and of the highlight the caret follows.
+  const panel = src.indexOf('id="header-menu-panel"');
+  const panelEnd = src.indexOf('id="drawer-row-profile"');
+  assert.ok(panel !== -1 && panelEnd > panel, 'the drawer is still in the document');
+  assert.ok(!(track > panel && track < panelEnd),
+    'the theme control must not still be in the hamburger drawer');
+  assert.equal(src.indexOf('id="drawer-row-theme"'), -1,
+    'the drawer row that wrapped it is retired');
 });
 
-// The theme selector was the LAST row in the drawer until the header
-// slim-down promoted it to the first thing in the menu body — above the
-// build/kudos status pane and above every navigation row. Position is
-// the whole point of that change, so pin it here: a later edit that
-// appends a row above it (or drops the control back to the bottom)
-// fails this rather than silently regressing the layout.
-test('the theme control is the FIRST thing in the drawer body', () => {
+// The ids did NOT change with the move: app.css keys the segmented track and
+// its sliding caret off exactly these, and renaming them would have been a
+// restyle of the one control this change is not restyling.
+test('the moved control keeps the ids app.css draws it with', () => {
   const src = read('index.html');
-  const theme = src.indexOf('id="drawer-row-theme"');
-  const scroller = src.indexOf('id="header-menu-rows"');
-  const status = src.indexOf('id="drawer-status-pane"');
-  const node = src.indexOf('id="drawer-row-node"');
-  assert.ok(scroller !== -1, 'header-menu-rows scroller missing');
-  assert.ok(status !== -1, 'drawer-status-pane missing');
-  assert.ok(node !== -1, 'drawer-row-node missing');
-  assert.ok(theme > scroller, 'the theme control lives inside the drawer scroller');
-  assert.ok(theme < status, 'the theme control comes before the status pane');
-  assert.ok(theme < node, 'the theme control comes before every navigation row');
+  for (const id of ['drawer-theme-track', 'drawer-theme-caret-track', 'drawer-theme-caret']) {
+    assert.ok(src.includes(`id="${id}"`), `#${id} survived the move`);
+  }
+});
+
+// It is the FIRST setting, and therefore the section a bare #settings opens.
+test('theme leads the settings registry and is the default section', () => {
+  const settings = fs.readFileSync(
+    path.join(__dirname, '..', 'frontend', 'src', 'features', 'settings', 'settings.js'),
+    'utf8',
+  );
+  const list = settings.slice(settings.indexOf('SECTIONS: ['));
+  const first = list.slice(0, list.indexOf(']'));
+  assert.match(first.split('\n').find((l) => l.includes("key: '")) || '', /key: 'theme'/,
+    'theme is the first entry in SECTIONS');
+  assert.match(settings, /DEFAULT_SECTION: 'theme'/,
+    'a bare #settings resolves to it');
 });
 
 test('index.html exposes the three data-theme-mode buttons', () => {
@@ -178,7 +199,7 @@ test('the selection caret ships exactly once, inside the track', () => {
 // the control at all. Same three contracts, read from the component.
 
 const themeControlSrc = () => fs.readFileSync(
-  path.join(__dirname, '..', 'frontend', 'src', 'features', 'header', 'header-menu.tsx'),
+  path.join(__dirname, '..', 'frontend', 'src', 'features', 'settings', 'sections', 'theme.tsx'),
   'utf8',
 );
 
@@ -199,7 +220,7 @@ test('the control drives the caret through the CSS custom property', () => {
   const src = themeControlSrc();
   const at = src.indexOf('function ThemeControl()');
   assert.ok(at !== -1, 'ThemeControl located');
-  const body = src.slice(at, src.indexOf('export function HeaderMenu()', at));
+  const body = src.slice(at, src.indexOf('export function ThemeSection()', at));
   assert.match(body, /setProperty\(\s*\n?\s*'--theme-caret-index'/,
     'the caret is positioned by writing --theme-caret-index on the track');
   assert.match(body, /theme-seg-active/,
@@ -244,7 +265,7 @@ test('the theme button click handler does NOT close the drawer', () => {
   // The segments are <button>s, not anchors, so the panel's delegated
   // a[href] close handler can never see them either.
   const at = src.indexOf('function ThemeControl()');
-  const body = src.slice(at, src.indexOf('export function HeaderMenu()', at));
+  const body = src.slice(at, src.indexOf('export function ThemeSection()', at));
   assert.ok(!/<a\b/.test(body),
     'an anchor here would be closed by the drawer\'s delegated link handler');
 });

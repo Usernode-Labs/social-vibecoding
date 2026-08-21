@@ -464,7 +464,7 @@
     {
       "name": "A sidebar tap lands on the destination with no competing screen animation (#977)",
       "path": "/?shot=menu-nav&un-platform=ios",
-      "expectSelector": "#leaderboard-screen:not(.hidden)[data-entered=\"none\"]"
+      "expectSelector": "#profile-screen:not(.hidden)[data-entered=\"none\"]"
     },
     {
       "name": "Challenges tab summarises the completed set (#981)",
@@ -478,15 +478,15 @@
       "expectText": "Whole-season standings"
     },
     {
-      "name": "Work notifications show a session's title, not its dev name (#971)",
-      "path": "/?shot=work-drawer&demo=1",
-      "expectSelector": "#work-drawer-panel:not(.hidden) #work-drawer-list",
-      "expectText": "[Mock] Session titled but not yet proposed"
+      "name": "Improve panel shows a session's title, not its dev name (#971)",
+      "path": "/?shot=improve&demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#improve-panel[data-open] #improve-body a[href$=\"/sessions/990101\"]",
+      "expectText": "[Mock] Your in-progress session"
     },
     {
-      "name": "Work drawer: a busy session row spins from live state (#1038)",
-      "path": "/?shot=work-drawer&demo=1",
-      "expectSelector": "#work-drawer-panel:not(.hidden) #work-drawer-list a[href$=\"/sessions/990102\"] .dc-status-spinner-arc"
+      "name": "Improve panel: a busy session row pulses from live state (#1038)",
+      "path": "/?shot=improve&demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#improve-panel[data-open] a[href$=\"/sessions/990102\"] .animate-pulse"
     },
     {
       "name": "Send Feedback offers a kudos bounty, unchecked by default (#964)",
@@ -530,7 +530,7 @@
     {
       "name": "Challenges widget: with nothing running it says so, and fills the rest (#947)",
       "path": "/?demo=1&challenges=none",
-      "expectSelector": "#app-list [data-panel-slot=\"challenges\"] article.home-panel[data-rows=\"0\"][data-fill=\"3\"] .home-panel-lb-row",
+      "expectSelector": "#home-body [data-panel-slot=\"challenges\"] article.home-panel[data-rows=\"0\"][data-fill=\"3\"] .home-panel-lb-row",
       "expectText": "No challenges are running right now"
     },
     {
@@ -680,7 +680,7 @@
       "expectText": "Explore in dev chat"
     },
     {
-      "name": "A proposal opened by DIRECT URL has a working \u22ef menu (#1324)",
+      "name": "A proposal opened by DIRECT URL has a working ⋯ menu (#1324)",
       "path": "/?demo=1&shot=card-menu&card=proposal:9000043#app/usernode-2d5619/dev/proposals/9000043",
       "expectSelector": ".dev-card-menu [data-menu-idx]"
     },
@@ -764,7 +764,7 @@
     {
       "name": "Challenges widget: the fill previews the Topochain standings (#962)",
       "path": "/?demo=1&challenges=none",
-      "expectSelector": "#app-list [data-panel-slot=\"challenges\"] article.home-panel .home-panel-fill[data-fill-kind=\"topochain\"] .home-panel-lb-row[data-lb-kind=\"topochain\"]",
+      "expectSelector": "#home-body [data-panel-slot=\"challenges\"] article.home-panel .home-panel-fill[data-fill-kind=\"topochain\"] .home-panel-lb-row[data-lb-kind=\"topochain\"]",
       "expectText": "staging-demo-validator"
     },
     {
@@ -775,12 +775,12 @@
     {
       "name": "The desktop slide-over suppresses the screen fade too (#977)",
       "path": "/?shot=menu-nav",
-      "expectSelector": "#leaderboard-screen:not(.hidden)[data-entered=\"none\"]"
+      "expectSelector": "#profile-screen:not(.hidden)[data-entered=\"none\"]"
     },
     {
       "name": "Challenges widget: with no standings at all the fill falls back to the Kudos board (#962)",
       "path": "/?demo=1&challenges=none&board=kudos",
-      "expectSelector": "#app-list [data-panel-slot=\"challenges\"] article.home-panel .home-panel-fill[data-fill-kind=\"kudos\"] .home-panel-lb-row[data-lb-kind=\"kudos\"]"
+      "expectSelector": "#home-body [data-panel-slot=\"challenges\"] article.home-panel .home-panel-fill[data-fill-kind=\"kudos\"] .home-panel-lb-row[data-lb-kind=\"kudos\"]"
     },
     {
       "name": "Bare #leaderboard renders all three tabs and opens on the standings (#962)",
@@ -788,32 +788,38 @@
       "expectSelector": "#leaderboard-screen:not(.hidden):has(#standings-tabs [data-standings-tab=\"challenges\"]) #topochain-leaderboard-root:not(.hidden) #tc-lb-body :is(table, [data-tc-lb-empty])"
     },
     {
-      "name": "The Create app widget sits in the grid and opens the create flow",
+      "name": "The Create app section sits below the grid and opens the create flow",
       "path": "/?demo=1",
-      "expectSelector": "#app-list [data-panel-slot=\"create\"][data-create-enabled=\"true\"] .home-create-btn[class*=\"sm:flex-col\"]",
+      "expectSelector": "#home-body [data-panel-slot=\"create\"][data-create-enabled=\"true\"] .home-create-btn[class*=\"flex-row\"]",
       "expectText": "Create app"
     },
     {
       "name": "The Create app widget is present but locked without app quota",
       "path": "/?demo=1&shot=create-disabled",
-      "expectSelector": "#app-list [data-panel-slot=\"create\"][data-create-enabled=\"false\"] .home-create-btn[aria-disabled=\"true\"]",
+      "expectSelector": "#home-body [data-panel-slot=\"create\"][data-create-enabled=\"false\"] .home-create-btn[aria-disabled=\"true\"]",
       "expectText": "Create app"
     },
     {
-      "name": "Discover renders both lanes: curated tiles, then Popular (#949)",
+      "name": "Discover renders both lanes at every width: curated tiles, then Popular",
       "path": "/?demo=1",
-      "expectSelector": "#app-list [data-panel-slot=\"discover\"] .home-panel .home-discover-popular .app-card:not(:has(.users-badge))",
+      "expectSelector": "#home-body [data-panel-slot=\"discover\"] .home-panel .home-discover-popular .app-card:not(:has(.users-badge))",
       "expectText": "Browse all apps"
     },
     {
       "name": "With nothing featured, Discover shows its compact note (?shot=discover-empty)",
       "path": "/?demo=1&shot=discover-empty",
-      "expectSelector": "#app-list [data-panel-slot=\"discover\"][data-featured=\"0\"] .home-panel-browse",
+      "expectSelector": "#home-body [data-panel-slot=\"discover\"][data-featured=\"0\"] .home-panel-browse",
       "expectText": "Nothing featured right now"
     },
     {
-      "name": "App tiles are placed at explicit grid cells, with iOS-sized two-line labels (#951)",
+      "name": "The launcher grid shows two rows by default, with a way to the rest",
       "path": "/?demo=1",
+      "expectSelector": "#home-body #home-apps-section #home-apps-more:not(.hidden) button",
+      "expectText": "Show all"
+    },
+    {
+      "name": "App tiles are placed at explicit grid cells, with iOS-sized two-line labels (#951)",
+      "path": "/?demo=1&shot=home-apps",
       "expectSelector": "#app-list .app-card[data-yours=\"true\"][style*=\"grid-row\"] .app-card-title",
       "expectText": "Staging demo photo album and journal"
     },
@@ -1289,15 +1295,15 @@
       "expectText": "Staging demo admin roster"
     },
     {
-      "name": "Header App/Dev switch marks App active on an app's App view",
+      "name": "Improve button is present on an app view",
       "path": "/app/staging-demo-admins",
-      "expectSelector": "#app-mode-switch [data-tab='app'][aria-checked='true']",
+      "expectSelector": "#improve-btn:not(.hidden)",
       "allowConsoleErrors": true
     },
     {
-      "name": "Header App/Dev switch marks Dev active on an app's Dev view",
+      "name": "Improve button is present on an app Dev view",
       "path": "/app/staging-demo-admins/dev",
-      "expectSelector": "#app-mode-switch [data-tab='dev'][aria-checked='true']"
+      "expectSelector": "#improve-btn:not(.hidden)"
     },
     {
       "name": "The self-hosted platform row keeps its DEV caption (no header switch)",
@@ -1330,38 +1336,36 @@
       "expectSelector": "#dev-kanban-tabs [data-kanban-tab=\"done\"]"
     },
     {
-      "name": "PM view toggle button renders in the dev view switcher",
+      "name": "Dev screen offers exactly two tabs, Feed and Kanban",
       "path": "/?demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-view-pm"
+      "expectSelector": "#dev-view-tabs #dev-view-feed[data-view=\"feed\"] + #dev-view-kanban[data-view=\"kanban\"]",
+      "expectText": "Kanban"
     },
     {
-      "name": "Reporting button renders in the dev view switcher (#1100)",
+      "name": "The Dev tabs sit under a Dev caption",
       "path": "/?demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-view-report[data-view=\"report\"]"
+      "expectSelector": "#dev-view-tabs[role=\"tablist\"]",
+      "expectText": "Dev"
     },
     {
-      "name": "Reporting view renders the progress report sections (#1100)",
-      "path": "/?demo=1&view=report#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-report .ur-rpt-section[data-section=\"done\"]",
-      "expectText": "Progress report"
+      "name": "Feed is the selected tab on a ?view=feed deep link",
+      "path": "/?demo=1&view=feed#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-view-feed[aria-selected=\"true\"]"
     },
     {
-      "name": "Reporting toolbar offers the period selector and the Discord button (reporting-period)",
-      "path": "/?demo=1&view=report#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-report select#dev-report-period",
-      "expectText": "Generate Discord message"
+      "name": "A retired ?view=list link still resolves onto the Feed",
+      "path": "/?demo=1&view=list#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-view-feed[aria-selected=\"true\"] ~ #dev-view-kanban[aria-selected=\"false\"]"
     },
     {
-      "name": "Progress report renders the six-tile summary and Needs attention (#1264)",
-      "path": "/?demo=1&view=report#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-report .ur-rpt-section[data-section=\"attention\"]",
-      "expectText": "High priority backlog"
+      "name": "Kanban is the selected tab on a ?view=kanban deep link",
+      "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-view-kanban[aria-selected=\"true\"]"
     },
     {
-      "name": "Progress report renders the monthly strip and Work by owner (#1264)",
-      "path": "/?demo=1&view=report#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-report .ur-rpt-section[data-section=\"monthly\"] .ur-rpt-trend-fill",
-      "expectText": "Work by owner"
+      "name": "The Feed renders activity rows into #dev-feed",
+      "path": "/?demo=1&view=feed#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-body #dev-feed"
     },
     {
       "name": "Kanban cards show the assignee initial-avatar",
@@ -1577,7 +1581,7 @@
     {
       "name": "Saved messages pin to the top of the notifications drawer (#1280)",
       "path": "/?shot=notifications&demo=1",
-      "expectSelector": "#notifications-panel:not(.hidden) #notifications-saved [data-saved-message]",
+      "expectSelector": "#header-menu-panel #notifications-saved [data-saved-message]",
       "expectText": "The deploy runbook lives in docs/deploy.md"
     },
     {
@@ -1587,24 +1591,24 @@
       "expectText": "Unsave"
     },
     {
-      "name": "Header cog (your-work drawer) button renders with its icon",
+      "name": "Improve panel carries the feedback row",
       "path": "/",
-      "expectSelector": "#work-drawer-btn #work-drawer-icon"
+      "expectSelector": "#improve-panel #improve-row-feedback"
     },
     {
-      "name": "Your-work drawer panel ships in the shell with its list + mark-all",
+      "name": "The hamburger carries the notifications list, first in the panel",
       "path": "/?demo=1",
-      "expectSelector": "#work-drawer-panel #work-drawer-list"
+      "expectSelector": "#header-menu-rows > #drawer-main-rows > #drawer-notifications #notifications-list"
     },
     {
-      "name": "Cog badge span moved off the bell onto the cog button",
+      "name": "Work-in-flight badge moved off the cog onto the hamburger",
       "path": "/",
-      "expectSelector": "#work-drawer-btn #notifications-badge-ai"
+      "expectSelector": "#header-menu-btn #notifications-badge-ai"
     },
     {
-      "name": "Cog badge is VISIBLE when a finished dev session is unread",
+      "name": "Work-in-flight badge is VISIBLE when a finished dev session is unread",
       "path": "/?demo=1",
-      "expectSelector": "#work-drawer-btn #notifications-badge-ai:not(.hidden)[data-session-done]:not([data-session-done=\"0\"])"
+      "expectSelector": "#header-menu-btn #notifications-badge-ai:not(.hidden)[data-session-done]:not([data-session-done=\"0\"])"
     },
     {
       "name": "Admin/moderation row renders in the drawer for admins (#588)",
@@ -1612,24 +1616,25 @@
       "expectSelector": "#drawer-row-admin:not(.hidden)"
     },
     {
-      "name": "Drawer footer renders the platform build as plain text, not a pill",
-      "path": "/?shot=menu",
-      "expectSelector": "#drawer-footer #drawer-row-platform-version #platform-version-pill-slot .drawer-ver"
+      "name": "Improve footer renders the platform build as plain text, not a pill",
+      "path": "/?shot=improve",
+      "expectSelector": "#improve-footer #drawer-row-platform-version #platform-version-pill-slot .drawer-ver"
     },
     {
-      "name": "Drawer status pane renders the kudos budget as inline text",
-      "path": "/",
-      "expectSelector": "#drawer-row-kudos #kudos-budget-slot a[href=\"#leaderboard/prs\"].drawer-meter"
+      "name": "Settings renders the AI-credit allowance as inline text",
+      "path": "/#settings/api-key",
+      "expectSelector": "#drawer-row-ai-budget #ai-budget-slot"
     },
     {
       "name": "Theme selector ships its 3-segment track and caret",
-      "path": "/",
-      "expectSelector": "#drawer-row-theme #drawer-theme-track[role=\"radiogroup\"] [data-theme-mode=\"system\"] ~ #drawer-theme-caret-track #drawer-theme-caret"
+      "path": "/#settings/theme",
+      "expectSelector": "#settings-theme-section #drawer-theme-track[role=\"radiogroup\"] [data-theme-mode=\"system\"] ~ #drawer-theme-caret-track #drawer-theme-caret"
     },
     {
-      "name": "Theme selector is the first thing in the menu, above the status pane",
-      "path": "/",
-      "expectSelector": "#drawer-main-rows > #drawer-row-theme:first-child + #drawer-status-pane"
+      "name": "Theme is the first setting, and a bare #settings opens it",
+      "path": "/#settings",
+      "expectSelector": "#settings-section-content [data-settings-section=\"theme\"]:not(.hidden) #drawer-theme-track",
+      "expectText": "Theme"
     },
     {
       "name": "Drawer footer distinguishes the mobile app version from the platform version",
@@ -1637,19 +1642,20 @@
       "expectText": "Platform version"
     },
     {
-      "name": "Drawer footer is bottom-anchored and holds GitHub + Share as its last two items",
-      "path": "/?shot=menu",
-      "expectSelector": "#header-menu-rows > #drawer-footer.mt-auto > #drawer-row-share:last-child"
+      "name": "Improve footer holds GitHub + Share above the version rows",
+      "path": "/?shot=improve&demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#improve-body > #improve-footer > #improve-row-github"
     },
     {
-      "name": "Main nav order is Profile, Messages, Leaderboard, Settings, Admin & moderation",
+      "name": "Main nav order is Profile, Messages, Settings, Admin & moderation",
       "path": "/?shot=menu",
-      "expectSelector": "#drawer-row-profile + #drawer-row-messages + #drawer-row-leaderboard + #drawer-row-settings + #drawer-row-admin"
+      "expectSelector": "#drawer-row-profile + #drawer-row-messages + #drawer-row-settings + #drawer-row-admin"
     },
     {
-      "name": "Leaderboard drawer row replaces the header trophy",
-      "path": "/",
-      "expectSelector": "#drawer-row-leaderboard[href=\"#leaderboard\"]"
+      "name": "The Challenges area is the way to the Leaderboard screen",
+      "path": "/?demo=1",
+      "expectSelector": "#home-challenges-section .home-panel-bar .home-panel-lb-browse[aria-label=\"Open leaderboard\"]",
+      "expectText": "Open leaderboard"
     },
     {
       "name": "Admin & moderation console page renders at #admin (#818)",
@@ -1737,8 +1743,8 @@
       "expectText": "AI & agents"
     },
     {
-      "name": "Bare #settings lands on the Anthropic API key section",
-      "path": "/#settings",
+      "name": "The Anthropic API key section renders at its deep link",
+      "path": "/#settings/api-key",
       "expectSelector": "#settings-section-content [data-settings-section=\"api-key\"]:not(.hidden) #settings-api-key"
     },
     {
@@ -1821,7 +1827,7 @@
     {
       "name": "A settings history traversal routes once, so nothing pre-empts the transition snapshot (#1102)",
       "path": "/?shot=settings-back#settings",
-      "expectSelector": "#settings-screen:not(.hidden)[data-settings-route=\"skipped\"] #settings-section-content [data-settings-section=\"api-key\"]:not(.hidden)"
+      "expectSelector": "#settings-screen:not(.hidden)[data-settings-route=\"skipped\"] #settings-section-content [data-settings-section=\"theme\"]:not(.hidden)"
     },
     {
       "name": "Settings deep-links the Password section",
@@ -2166,9 +2172,9 @@
       "expectSelector": ".un-panel[data-un-side=\"right\"] #header-menu-panel.platform-panel-adopted #header-menu-rows"
     },
     {
-      "name": "The drawer footer is reachable without scrolling in the panel",
+      "name": "The hamburger opens as a kit panel with notifications at its top",
       "path": "/?shot=menu&un-platform=ios",
-      "expectSelector": ".un-panel #header-menu-rows > #drawer-footer.mt-auto > #drawer-row-share:last-child"
+      "expectSelector": ".un-panel #header-menu-panel.platform-panel-adopted #header-menu-rows > #drawer-main-rows > #drawer-notifications"
     },
     {
       "name": "Hamburger status area shows the viewer's own AI credit (#555)",
@@ -2177,7 +2183,7 @@
     },
     {
       "name": "AI credit reads like the dev chat: limit $spent/$limit, no pill",
-      "path": "/?shot=menu&demo=1",
+      "path": "/?demo=1#settings/api-key",
       "expectText": "limit $"
     },
     {
@@ -2297,8 +2303,8 @@
       "expectText": "Add API key"
     },
     {
-      "name": "The drawer's AI-credit row shows the remaining allowance (#555, #593)",
-      "path": "/?shot=menu&demo=1",
+      "name": "The AI-credit row shows the remaining allowance (#555, #593)",
+      "path": "/?demo=1#settings/api-key",
       "expectSelector": "#drawer-row-ai-budget .ai-budget-meter [data-credits-remaining]",
       "expectText": "$6.40 left"
     },

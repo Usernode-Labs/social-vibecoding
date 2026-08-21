@@ -15,6 +15,31 @@ export function ApiKeySection() {
       <SectionHeading title="Anthropic API key">
         Bring your own Anthropic API key to keep working past the daily limit. Your platform daily allowance is used first; once it runs out, your key takes over automatically &mdash; even in the middle of a running turn &mdash; and usage bills directly to your Anthropic account.
       </SectionHeading>
+      {/*
+          The viewer's own daily AI allowance (#555), used vs. remaining.
+
+          THE UI OVERHAUL took this out of the hamburger drawer, where it was a
+          status row nobody acts on from a menu. It landed HERE rather than
+          being deleted with the row, because this section is already the page
+          about "what happens when your allowance runs out" — the sentence
+          above it says so — and the figure is the thing that sentence is
+          about. The renderer is unchanged: features/header/ai-credit.js
+          resolves #ai-budget-slot by id, so only its parent moved.
+
+          Ships EMPTY, exactly as the drawer row did: the me-scoped fetch that
+          fills it is what confirms there is an audience, so a signed-out
+          visitor never sees a stub.
+      */}
+      <div
+        id="drawer-row-ai-budget"
+        className="flex items-center gap-2 flex-wrap rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-xs mb-3 text-zinc-600 dark:text-zinc-400"
+      >
+        <span className="font-medium text-zinc-700 dark:text-zinc-300">
+          AI credit
+        </span>
+        <span id="ai-budget-slot" className="ml-auto grow min-w-0 text-right">
+        </span>
+      </div>
       <Label className="mb-1" htmlFor="settings-api-key">
         Anthropic API key
       </Label>

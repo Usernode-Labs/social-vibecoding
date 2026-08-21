@@ -42,6 +42,45 @@ const after = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
 const RETIRED_IDS = {
   'drawer-row-app-version': 'Per-dApp SHA removed from platform information; app versions remain on app cards.',
   'app-version-pill-slot': 'Drawer-only per-dApp SHA renderer removed with its row.',
+  // ── THE UI OVERHAUL: four header controls became one ──────────────
+  // An app is just an app now, and everything you do *to* it lives behind
+  // #improve-btn. Each id below moved to a row of that panel rather than
+  // simply going away; the behaviour it named is still reachable.
+  'app-mode-switch': 'App/Dev segmented switch retired — Dev is a destination the Improve panel links to, not a header mode. Both #app/<slug>/app and #app/<slug>/dev survive as routes.',
+  'app-mode-seg-app': 'Segment of the retired App/Dev switch.',
+  'app-mode-seg-dev': 'Segment of the retired App/Dev switch.',
+  'feedback-btn': 'Header feedback bubble retired — the dialog opens from the Improve panel\'s "Give feedback" row. App.openFeedbackModal is unchanged.',
+  'work-drawer-btn': 'Header work cog retired — its session list is the Improve panel\'s two session sections (this app, and an overflow for every other).',
+  'work-drawer-icon': 'The cog glyph, retired with its button. The spinning-while-busy cue is the per-row busy dot in the Improve panel now.',
+  'dev-console-btn': 'Header terminal icon retired — the Improve panel\'s "Developer terminal" row is shown on the same DevConsole signal. #staging-dev-console-btn survives; the staging overlay has its own chrome.',
+  'dev-console-badge': 'Unseen-error count on the retired header terminal icon. #staging-dev-console-badge survives.',
+  // ── THE UI OVERHAUL: three top-right drawers became one ──────────
+  // The bell and the cog merged INTO the hamburger. Nothing they carried was
+  // dropped without a new home; each entry below names it.
+  'notifications-btn': 'The bell. Its list is the first thing in the hamburger now, and both its badges ride that button.',
+  'notifications-panel': 'The bell dropdown. features/notifications keeps its store, list components and module — only the panel around them is gone.',
+  'work-drawer-panel': 'The cog drawer. Its session list is the Improve panel\'s (this app, plus an overflow for every other); its pinned rows are ordinary notifications in the merged hamburger.',
+  'work-drawer-close': 'Close button of the retired cog drawer.',
+  'work-drawer-mark-all': 'Mark-all-read of the retired cog drawer — the merged list has one, #notifications-mark-all.',
+  'work-drawer-list': 'Body of the retired cog drawer.',
+  'work-drawer-empty': 'Empty hint of the retired cog drawer.',
+  // ── …and the hamburger itself lost everything that was not navigation ──
+  'drawer-row-theme': 'Theme is a SETTING now, and the first one. A live control that changes how the whole product looks is not navigation. See features/settings/sections/theme.tsx — the track keeps its ids, so app.css draws it unchanged.',
+  'drawer-status-pane': 'The kudos + AI-credit meters were ambient numbers nobody acts on from a menu.',
+  'drawer-row-kudos': 'Kudos is a leaderboard concern; the home screen\'s Challenges area links there.',
+  'kudos-budget-slot': 'Slot of the retired kudos row. Kudos.Budget still resolves it by id and no-ops when absent, so the figure can be re-homed without touching the module.',
+  'drawer-row-leaderboard': 'Moved to the HOME SCREEN, into the Challenges area\'s header — beside the shared progress it links to, rather than in a menu you open from memory. #leaderboard is unchanged as a route.',
+  'drawer-footer': 'The bottom-anchored reference block moved wholesale into the Improve panel: every line in it was about an app, and that panel is the surface scoped to one.',
+  'drawer-row-github': 'View on GitHub — an Improve panel row now.',
+  'drawer-row-share': 'Share App — an Improve panel row now.',
+  // ── THE UI OVERHAUL: the home screen's widgets became four fixed areas ──
+  // Discover, Challenges and Create app were draggable blocks on the launcher
+  // canvas; they are sections in a fixed order under the grid now, so the
+  // hosts and settings that existed for the PLACEMENT go with it.
+  'home-panels': 'The widgets\' stacked FALLBACK host below the grid. It caught the moment before the first grid paint and the active-search view, because a block that lived IN #app-list vanished whenever #app-list did. The three sections are outside it and never re-rendered by a search keystroke, so there is nothing left to catch.',
+  'settings-home-panels-section': 'Settings → Home screen widgets. A checkbox per widget only made sense while the blocks were optional furniture a viewer arranged; they are three fixed areas of the screen now. The ⋮ menu on a block still hides one, and POST /api/home-panels/:key/visibility is untouched.',
+  'settings-home-panels-list': 'The checkbox list inside that retired section.',
+  'settings-home-panels-status': 'Save/error line of that retired section.',
 };
 
 // Ids a conversion chunk deliberately added, each with the reason.
@@ -57,6 +96,35 @@ const ADDED_IDS = {
   'feedback-queue-dot': 'Header dot for feedback saved offline and still waiting to send (#1054).',
   'feedback-screenshot-picker-btn': 'Photos fallback for mobile feedback screenshots (#824).',
   'feedback-screenshot-input': 'PNG/JPEG picker backing the mobile feedback fallback (#824).',
+  // ── THE UI OVERHAUL: the Improve panel ───────────────────────────
+  // One surface for everything you do *to* the app on screen rather than
+  // *with* it. It absorbed four header controls (see RETIRED_IDS above)
+  // plus the drawer's GitHub / Share / version footer. Fully React-owned,
+  // so unlike most of the shell it holds real state — nothing in
+  // public/js/** writes a node inside it.
+  'improve-btn': 'Header control that opens the Improve panel; inherits the retired App/Dev switch\'s show/hide lifecycle (App.DrawerStatus.setAppOpen).',
+  'improve-overlay': 'Backdrop behind the Improve panel. Never uses `hidden` — opacity fades it and pointer-events stops a closed backdrop eating clicks.',
+  'improve-panel': 'The panel root. Right-edge slide-over at `sm` and up, bottom sheet below it, and a real native-kit sheet on touch where the kit is loaded.',
+  'improve-target-name': 'Which app the panel is about — the platform\'s own row on the home screen.',
+  'improve-close': 'Close button in the Improve panel header.',
+  'improve-body': 'The panel\'s scroller.',
+  'improve-row-feedback': 'Opens the feedback dialog — the retired #feedback-btn.',
+  'improve-row-new-session': 'Starts a dev session — the Dev "+" menu\'s "Propose a change".',
+  'improve-row-kanban': 'Opens the Dev screen on its Kanban tab.',
+  'improve-row-feed': 'Opens the Dev screen on its Feed tab.',
+  'improve-footer': 'Reference block: View on GitHub, Share app, version — all three moved out of the hamburger drawer.',
+  'drawer-notifications': 'The notifications region at the top of the hamburger, where the bell dropdown\'s body now renders.',
+  'settings-theme-section': 'The Theme settings pane\'s inner node, matching every other section\'s wrapper/inner pair.',
+  // ── THE UI OVERHAUL: the home screen's four areas ────────────────
+  // Your apps, Discover, Challenges, Create app — stacked, in that order.
+  // The last three were draggable widgets on the launcher canvas; each is a
+  // fixed <section> host now, carrying the same `data-panel-slot` key its
+  // grid host did so the dapp.json checks still select on it.
+  'home-apps-section': 'Wraps the launcher grid and its "Show all" control, so area 1 is a section like the other three.',
+  'home-apps-more': '"Show all N apps" — revealed only when a viewer has more than the two-row default shows. The cap is on what is DRAWN, never on what they may have.',
+  'home-discover-section': 'Area 2: featured tiles, the Popular lane and the way into the app directory.',
+  'home-challenges-section': 'Area 3: the season\'s open challenges, and under them the leaderboard standings the retired #drawer-row-leaderboard used to point at.',
+  'home-create-section': 'Area 4: the create-an-app block, on every home screen regardless of quota.',
   // #1082 chunk E — the admin console's CHASSIS. These ids are not new to the
   // running page: admin-console.js._renderShell() has always created them, by
   // writing #admin-root.innerHTML on every open. They are new to
@@ -217,10 +285,77 @@ test('the ids the dev-console and staging overlay bind are present', () => {
   // particular lives deep inside #staging-overlay and is easy to lose in a
   // conversion, and its absence only shows up while previewing staging —
   // late, and far from the change that caused it.
+  // #dev-console-btn and #dev-console-badge are NOT in this list any more:
+  // THE UI OVERHAUL retired the header terminal icon in favour of the Improve
+  // panel's "Developer terminal" row, which is driven by the same
+  // DevConsole._refreshButtonVisibility signal. The staging twin is exactly
+  // the one this test was written for, so it matters more than ever.
   for (const id of [
-    'dev-console-btn', 'staging-dev-console-btn', 'dev-console-close',
+    'staging-dev-console-btn', 'dev-console-close',
     'dev-console-clear', 'dev-console-filter', 'dev-console-log',
   ]) {
     assert.ok(after.includes(`id="${id}"`), `the dev-console island binds #${id}, which is missing`);
   }
+});
+
+// ── No module may DEREFERENCE a retired id ────────────────────────────
+//
+// The regression guard for the worst kind of failure this whole inventory
+// exists to prevent, and one THE UI OVERHAUL actually shipped for a moment.
+//
+// Retiring an id is only half the job: something usually still looks it up.
+// `HeaderMenu.init()` kept two of them —
+//
+//   document.getElementById('drawer-row-github').addEventListener(…)
+//   document.getElementById('drawer-row-share').addEventListener(…)
+//
+// — after both rows moved into the Improve panel. Each threw on null. The
+// first one threw inside a React layout effect, which unmounted the whole
+// shell root; the second threw out of App.init() before it had fetched the
+// session. The page rendered nothing and 218 declared checks failed at once,
+// none of them naming the actual cause.
+//
+// So: a retired id may still be MENTIONED (the comments recording where each
+// one went are the point of RETIRED_IDS), and it may still be looked up
+// GUARDED — `?.`, or a `const el = …; if (el)` — because a module that
+// no-ops when its node is absent is exactly how a row gets re-homed without
+// touching it. What it may not be is dereferenced on the spot.
+test('no module dereferences a retired id without a guard', () => {
+  const roots = [];
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) { if (entry.name !== 'node_modules') walk(full); continue; }
+      if (/\.(js|ts|tsx)$/.test(entry.name)) roots.push(full);
+    }
+  };
+  walk(path.join(ROOT, 'public/js'));
+  walk(path.join(ROOT, 'frontend/src'));
+
+  const offenders = [];
+  for (const file of roots) {
+    const src = fs.readFileSync(file, 'utf8');
+    for (const id of Object.keys(RETIRED_IDS)) {
+      // `getElementById('x').`  /  `querySelector('#x').` — a dot that is not
+      // part of `?.` is an immediate dereference of a value that is null.
+      const lookups = [
+        new RegExp(`getElementById\\(\\s*['"]${id}['"]\\s*\\)\\s*(\\??\\.)`, 'g'),
+        new RegExp(`querySelector\\(\\s*['"]#${id}['"]\\s*\\)\\s*(\\??\\.)`, 'g'),
+      ];
+      for (const re of lookups) {
+        let m;
+        while ((m = re.exec(src)) !== null) {
+          if (m[1] === '?.') continue; // guarded — fine
+          const line = src.slice(0, m.index).split('\n').length;
+          offenders.push(`${path.relative(ROOT, file)}:${line} dereferences #${id}`);
+        }
+      }
+    }
+  }
+  assert.deepEqual(
+    offenders, [],
+    'a retired id is looked up and dereferenced on the spot, which throws on null. '
+    + 'Inside a React effect that unmounts the shell; inside App.init() it stops the boot. '
+    + 'Delete the lookup with the row it belonged to, or guard it with `?.`.',
+  );
 });

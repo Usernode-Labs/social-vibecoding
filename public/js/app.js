@@ -585,9 +585,57 @@ const App = {
     if (App._shotHash === location.hash) return;
     App._shotHash = location.hash;
     App._applyMenuShot();
+    App._applyImproveShot();
     App._applyLaunchShot();
     App._applyOfflineAppShot();
     App._applyFeedbackShot();
+  },
+
+  // Screenshot-state deep link `?shot=improve`: open the Improve panel at
+  // boot, so the surface THE UI OVERHAUL built — sessions, the dev links, the
+  // repo and version rows — is reachable by URL for the before/after
+  // screenshots, the "Test this change" button and the dapp.json checks. It is
+  // only reachable by TAPPING the header button otherwise, which no still
+  // frame and no plain route can do.
+  //
+  // Deliberately NOT env-gated, for exactly the reason ?shot=menu is not: pure
+  // UI state with no writes, and an IS_STAGING-only link would starve the
+  // production "before" shot forever while an ungated one starts working the
+  // moment it ships. Pair it with ?demo=1 in staging so the session sections
+  // have mock rows to render.
+  //
+  // It WAITS FOR A TARGET rather than firing on a fixed delay. Without one the
+  // panel refuses to open — correct behaviour, not something to work around —
+  // and on an #app/<slug> route the target is published by
+  // App.DrawerStatus.setAppOpen(), which runs after openApp()'s fetch has
+  // landed. A single 50ms tick (what ?shot=menu can afford, because the drawer
+  // needs nothing but a settled shell) fired long before that, so the panel
+  // stayed shut and both of its declared checks failed on an empty surface.
+  //
+  // Polls instead, on the checks runner's own budget: the home screen
+  // publishes its target during boot, so the first attempt usually wins, and
+  // an app route gets as long as the fetch needs. Bounded, so a route with no
+  // target at all (a screen the panel does not belong on) stops trying rather
+  // than spinning for the life of the page.
+  IMPROVE_SHOT_TRIES: 40,
+  IMPROVE_SHOT_INTERVAL_MS: 100,
+
+  _applyImproveShot() {
+    let shot = null;
+    try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
+    if (shot !== 'improve') return;
+    let tries = App.IMPROVE_SHOT_TRIES;
+    const attempt = () => {
+      try {
+        window.Improve?.open();
+        // open() is a no-op without a target, so the panel's own state is
+        // what says whether it took.
+        const panel = document.getElementById('improve-panel');
+        if (panel && panel.hasAttribute('data-open')) return;
+      } catch (err) { /* ignore */ }
+      if (--tries > 0) setTimeout(attempt, App.IMPROVE_SHOT_INTERVAL_MS);
+    };
+    setTimeout(attempt, 50);
   },
 
   _applyMenuShot() {
@@ -652,6 +700,12 @@ const App = {
   // shot forever. The row is a real anchor, so .click() follows its href
   // and the whole hash → restoreFromHash → navigate* path is exercised
   // exactly as a finger would.
+  //
+  // It clicked #drawer-row-leaderboard until THE UI OVERHAUL moved that row
+  // to the home screen's Challenges area. What this shot is about is the
+  // DRAWER's teardown, not any one destination, so it takes the first row
+  // that is always there instead: Profile is unconditional, where Settings
+  // and Admin are gated.
   _applyMenuNavShot() {
     let shot = null;
     try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
@@ -661,7 +715,7 @@ const App = {
       // After the entrance spring has settled, so the tap lands on a
       // presented drawer rather than one still sliding in.
       setTimeout(() => {
-        const row = document.getElementById('drawer-row-leaderboard');
+        const row = document.getElementById('drawer-row-profile');
         if (row) row.click();
       }, 200);
     }, 50);
@@ -1351,7 +1405,9 @@ const App = {
       Home.load();
     }
     if (window.Notifications) Notifications.refresh?.();
-    if (window.WorkDrawer) WorkDrawer.refresh?.();
+    // The cog drawer used to be refreshed here. It is retired; its session
+    // list is the Improve panel's, which reloads only while it is open.
+    if (window.Improve) Improve.onSessionStateChanged?.();
     // Messages owns a global drawer unread badge even while its screen is
     // closed, so reconcile its summary after a disconnect in every view.
     window.UsernodeReact?.messages?.refresh?.();
@@ -1406,10 +1462,12 @@ const App = {
       if (data.status === 'running' && AppView.appData) {
         AppView.appData.status = 'running';
         AppView.appData.url = data.url;
-        // The Share drawer row was hidden in openApp() because the app
-        // wasn't running yet. Now that we have a URL, surface it.
-        const drawerShareRow = document.getElementById('drawer-row-share');
-        if (drawerShareRow) drawerShareRow.classList.remove('hidden');
+        // Share lives in the Improve panel now, and the panel reads
+        // `canShare` off the same signal this branch is reacting to — so
+        // publishing the app's new state is what re-enables the row, in
+        // place of the `classList.remove('hidden')` on #drawer-row-share
+        // that used to sit here.
+        if (window.Improve) Improve.update({ canShare: true });
         AppView.refreshToken().then(() => {
           // Re-check the tab — the user may have switched to group/dev
           // chat while refreshToken() was in flight. Without this guard
@@ -1933,7 +1991,7 @@ const App = {
   // and already the live-update pattern — its cards carry activity
   // counts that these same events move).
   refreshHomeProposals() {
-    if (window.WorkDrawer && WorkDrawer.refresh) WorkDrawer.refresh();
+    if (window.Improve && Improve.onSessionStateChanged) Improve.onSessionStateChanged();
     const homeScreen = document.getElementById('home-screen');
     if (typeof Home !== 'undefined' && homeScreen && !homeScreen.classList.contains('hidden')) {
       Home.load();
@@ -1989,6 +2047,37 @@ const App = {
   // unguarded refreshDeployDot() / setAppOpen() callers below would throw on
   // a bare getter. Forwarding no-ops instead, which is what those calls did
   // when the drawer was not on screen anyway.
+  // Point the Improve panel at the platform's own app row.
+  //
+  // THE UI OVERHAUL put Improve on the home screen, where it means "improve
+  // Social Vibecoding itself" rather than any app the viewer has open. The
+  // slug comes from /api/auth/me's `platformApp` (services/platform-app.js)
+  // because it is not otherwise knowable client-side: GET /api/apps hides
+  // self-hosted rows from non-admins on purpose.
+  //
+  // Silently a no-op when the deployment has no self-hosted row (a fresh
+  // install, a staging clone before its apps table is seeded) — the button
+  // simply does not appear, which is the honest answer.
+  _improveHome() {
+    const platformApp = App.user?.platformApp;
+    if (!platformApp?.slug) return;
+    window.Improve?.setTarget({
+      kind: 'platform',
+      slug: platformApp.slug,
+      name: platformApp.name || 'Social Vibecoding',
+      selfHosted: true,
+      repoUrl: platformApp.repoUrl || null,
+      version: platformApp.version || null,
+      deploying: false,
+      // The home screen cannot know whether this viewer may collaborate on
+      // the platform row, and guessing wrong in the permissive direction only
+      // costs a row that answers 403 on tap. AppView republishes the real
+      // value through setAppOpen the moment the app is actually opened.
+      readOnly: false,
+      canShare: false,
+    });
+  },
+
   DrawerStatus: {
     setAppOpen(open) { window.DrawerStatus?.setAppOpen(open); },
     setForkVisible(visible) { window.DrawerStatus?.setForkVisible(visible); },
@@ -2115,35 +2204,14 @@ const App = {
     // `App.openFeedbackModal`, so `App._applyFeedbackShot` and the Dev "+"
     // menu's "New issue" item still reach the dialog by name.
 
-    // Header App/Dev switch (#app-mode-switch), successor to the bottom
-    // tab bar. Tapping the ALREADY-ACTIVE App segment is a no-op: the
-    // switch now sits inches from the icons people tap constantly, and
-    // switchTab('app') re-runs renderAppTab(), which replaces
-    // #app-content's innerHTML and therefore RELOADS the embedded app —
-    // losing whatever the user had on screen inside it. The Dev segment
-    // deliberately has no such guard: re-tapping it backs out of a
-    // session / chat / topic sub-view to the card list, which is the
-    // conventional "tap the active tab to go to its root" behaviour the
-    // bottom bar already had.
-    //
-    // #1036: these segments stay <button role="radio"> — an anchor
-    // cannot carry that ARIA role inside a role="radiogroup" — so the
-    // new-tab gesture is intercepted by hand (NavLink mechanism B)
-    // rather than delegated to an href. The "re-tapping the active App
-    // segment is a no-op" guard above applies to the PLAIN click only:
-    // a cmd-click on the active segment isn't re-mounting this tab's
-    // iframe, so it should still open the app view in a new one.
-    document.querySelectorAll('.app-mode-seg').forEach((btn) => {
-      const hrefFor = () => (App.currentApp
-        ? `#app/${App.currentApp}/${btn.dataset.tab === 'dev' ? 'dev' : 'app'}`
-        : null);
-      const activate = () => {
-        if (btn.dataset.tab === 'app' && App.currentTab === 'app') return;
-        App.switchTab(btn.dataset.tab);
-      };
-      if (window.NavLink) NavLink.wireModified(btn, hrefFor, activate);
-      else btn.addEventListener('click', activate);
-    });
+    // The header's App/Dev segmented switch (#app-mode-switch) used to be
+    // wired here. THE UI OVERHAUL retired it: an app is just an app now, and
+    // "Dev" is a destination the Improve panel links to rather than a mode the
+    // header toggles. Both tabs still exist as ROUTES — #app/<slug>/app and
+    // #app/<slug>/dev — so every deep link, notification target and history
+    // entry keeps working; what is gone is the control that flipped between
+    // them in place. features/improve/improve-controller.js's openDev() is the
+    // caller that takes its place, and it goes through the same switchTab().
 
     // popstate fires on browser/device back when the new history
     // entry was created with pushState; hashchange fires when only the
@@ -2553,6 +2621,10 @@ const App = {
         App._showOnlyScreen('home-screen');
         document.getElementById('back-btn').classList.add('hidden');
         App.setHeaderTitle('dApps');
+        // The home screen's Improve button is about the platform itself. This
+        // is the branch a COLD boot at `/` lands in (navigateHome covers every
+        // later return), so the target has to be published on both paths.
+        App._improveHome();
         Home.load();
       }
     } finally {
@@ -2793,10 +2865,9 @@ const App = {
   // callback only.
   _enterScreenChrome() {
     document.getElementById('back-btn').classList.remove('hidden');
-    const drg = document.getElementById('drawer-row-github');
-    const drs = document.getElementById('drawer-row-share');
-    if (drg) drg.classList.add('hidden');
-    if (drs) drs.classList.add('hidden');
+    // The GitHub and Share drawer rows were hidden by hand here. Both are
+    // Improve panel rows now, and setAppOpen(false) below clears the panel's
+    // target — which retires them for the same reason and in one move.
     App.DrawerStatus.setAppOpen(false);
   },
 
@@ -3498,20 +3569,15 @@ const App = {
       App.setHeaderTitle(AppView.appData.name);
     }
 
-    // Show the GitHub drawer row if app has a repo
-    const drg = document.getElementById('drawer-row-github');
-    if (drg && AppView.appData?.repo_url) {
-      drg.href = AppView.appData.repo_url;
-      drg.classList.remove('hidden');
-    }
-    // Show the Share drawer row only for apps that have a real running
-    // URL. Apps in `creating`/`error`/`awaiting_secrets` have no URL to
-    // share; the SSE handler re-shows the row when they flip to `running`.
-    const drs = document.getElementById('drawer-row-share');
-    if (drs && AppView.appData?.status === 'running' && AppView.appData?.url) {
-      drs.classList.remove('hidden');
-    }
-    // Publish the app-open lifecycle for the header mode switch and fork
+    // "View on GitHub" and "Share app" were drawer rows revealed by hand
+    // here — the first when the app had a repo_url, the second only for an
+    // app with a real running URL (one in `creating`/`error`/
+    // `awaiting_secrets` has nothing to share, and the SSE handler above
+    // re-enables it on the flip to `running`). Both are Improve panel rows
+    // now, and setAppOpen below carries the same two facts as `repoUrl` and
+    // `canShare`, so the panel decides what to draw from one publish.
+    //
+    // Publish the app-open lifecycle for the Improve panel and the fork
     // lineage. A particular dApp's SHA is intentionally not shown in the
     // platform-information footer.
     App.DrawerStatus.setAppOpen(true);
@@ -3560,11 +3626,14 @@ const App = {
       AppView.close();
       App._showOnlyScreen('home-screen', ['app-view']);
       document.getElementById('back-btn').classList.add('hidden');
-      const drgH = document.getElementById('drawer-row-github');
-      const drsH = document.getElementById('drawer-row-share');
-      if (drgH) drgH.classList.add('hidden');
-      if (drsH) drsH.classList.add('hidden');
+      // …and the GitHub / Share rows retire with the panel's target, rather
+      // than being hidden one by one as drawer rows were.
       App.DrawerStatus.setAppOpen(false);
+      // …and immediately re-target Improve at the PLATFORM's own app row.
+      // setAppOpen(false) above clears the target, which is right for every
+      // other screen; home is the one place where leaving an app does not
+      // mean there is nothing to improve. See App._improveHome().
+      App._improveHome();
       App.setHeaderTitle('dApps');
     }, {
       type: App._entryTransition('zoom-out', av),
@@ -3748,14 +3817,9 @@ const App = {
     // (see AppView.readOnly).
     App.currentTab = tab;
     App.currentSubTab = tab === 'dev' ? (subTab || 'forum') : null;
-    document.querySelectorAll('.app-mode-seg').forEach((btn) => {
-      const on = btn.dataset.tab === tab;
-      btn.classList.toggle('app-mode-seg-active', on);
-      // The switch is a radiogroup, so the checked state has to be in
-      // the a11y tree too — the raised face alone tells a screen reader
-      // nothing. Also what the dapp.json checks assert on.
-      btn.setAttribute('aria-checked', on ? 'true' : 'false');
-    });
+    // The `.app-mode-seg` repaint that used to sit here is gone with the
+    // switch itself — there is no control in the header reflecting which tab
+    // is active any more, because there is no in-place toggle between them.
 
     // Tear down the cross-app active-sessions poll when leaving the
     // Sessions sub-tab. renderDevChatTab will spin it back up on

@@ -532,7 +532,9 @@ test('_reanchorCardMenu is a no-op with no menu open', () => {
 // innerHTML an open menu's trigger lives in, so a `_closeCardMenu()` added
 // back to any of them silently restores the original bug.
 test('every repaint path re-anchors instead of dismissing', () => {
-  for (const fn of ['_repaintDevBody', '_repaintKanbanBoard', '_repaintPmView']) {
+  // _repaintPmView was a third repaint path until THE UI OVERHAUL retired the
+  // PM view; the two left are the Feed's and the board's.
+  for (const fn of ['_repaintDevBody', '_repaintKanbanBoard']) {
     const start = SRC.indexOf(`\n  ${fn}() {`);
     assert.ok(start > 0, `expected ${fn}`);
     const body = SRC.slice(start, SRC.indexOf('\n  },', start));

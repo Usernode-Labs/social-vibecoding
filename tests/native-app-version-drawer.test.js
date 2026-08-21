@@ -100,13 +100,25 @@ async function settle() {
 }
 
 test('the drawer island imports and initializes the native version renderer after hydration', () => {
+  // THE UI OVERHAUL moved the ROW into the Improve panel's footer — it is
+  // reference information about the platform, which is what that footer is —
+  // but the import and the init stay HERE. This island loads before anything
+  // else in the bundle, and the renderer is a side-effect module that has to
+  // install window.NativeAppVersion before app.js's own init looks for it;
+  // hanging it off a panel that may never be opened would be a boot-order
+  // regression dressed up as tidiness.
   assert.match(menuSource, /import '\.\/native-app-version\.js'/);
   assert.match(menuSource, /window\.NativeAppVersion\?\.init\(\)/,
     'layout-effect init prevents a pre-hydration class/text mutation');
 });
 
 test('the footer separates the mobile app version from the platform version', () => {
+  // The footer is the Improve panel's now, not the drawer's — same three rows,
+  // same order, same ids.
+  const footerAt = html.indexOf('id="improve-footer"');
+  assert.ok(footerAt > -1, 'the Improve panel has a footer');
   const revisionAt = html.indexOf('id="drawer-row-platform-version"');
+  assert.ok(revisionAt > footerAt, 'the version rows live inside it');
   const versionAt = html.indexOf('id="drawer-row-native-app-version"');
   const forkAt = html.indexOf('id="drawer-row-app-fork"');
   assert.ok(revisionAt > -1 && versionAt > revisionAt && forkAt > versionAt,

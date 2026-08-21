@@ -201,19 +201,29 @@ test('the section renders above the invites and the list, and only when non-empt
     'the prerendered state is empty, so the SSG pass and hydration agree');
 });
 
-test('the drawer renders the section on every path that opens it', () => {
-  // Three paths put content in the drawer: the desktop dropdown and the
-  // touch bottom sheet (both inside show(), which renders BEFORE presenting
-  // so the sheet measures the right height), and a refresh landing while it
-  // is already open.
+test('the section is rendered on every refresh, not on open', () => {
+  // This asserted the opposite until THE UI OVERHAUL. The bell's panel was
+  // presented on demand and FILLED at that moment — show() rendered all three
+  // sections before handing the node to the kit, precisely so the sheet
+  // measured the right height — so the paths that mattered were the two
+  // branches of show() plus a refresh landing while it was already open.
+  //
+  // The list lives in the hamburger now, which is always mounted (translated
+  // off-screen, not built on open). There is no "before presenting" to render
+  // at, so the render is unconditional and the drawer opens onto CURRENT rows
+  // rather than last-open's.
   const show = SRC.match(/\n  show\(\) \{([\s\S]*?)\n  \},/);
   assert.ok(show, 'show() found');
-  assert.equal((show[1].match(/_renderSaved\(\)/g) || []).length, 2,
-    'both the sheet and the dropdown branch render the saved section');
+  assert.equal((show[1].match(/_renderSaved\(\)/g) || []).length, 0,
+    'show() forwards to the drawer and renders nothing itself');
+  assert.match(show[1], /HeaderMenu\?\.open\?\(\)|HeaderMenu\?\.open\?\.\(\)/,
+    'it forwards to the drawer that actually presents the list');
   const refresh = SRC.match(/\n  async refresh\(options\) \{([\s\S]*?)\n  \},/);
   assert.ok(refresh, 'refresh() found');
   assert.match(refresh[1], /Notifications\._renderSaved\(\);/,
-    'a refresh into an open drawer repaints the section too');
+    'every refresh repaints the section');
+  assert.ok(!/if \(Notifications\.open\)[\s\S]{0,80}_renderSaved/.test(refresh[1]),
+    'and does so unconditionally — an always-mounted list has nothing to gate on');
 });
 
 test('unsaving is possible from the section as well as from the message', () => {

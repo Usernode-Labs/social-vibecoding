@@ -296,13 +296,26 @@ test('?view=kanban wins over the narrow-viewport list default', () => {
   assert.equal(AppView._getViewMode(), 'kanban');
 });
 
-test('?view=list wins over a stored kanban preference', () => {
+test('?view=feed wins over a stored kanban preference', () => {
+  const AppView = makeAppView({
+    search: '?view=feed',
+    matchMedia: () => ({ matches: true }),
+    localStorage: { getItem: () => 'kanban', setItem: () => {} },
+  });
+  assert.equal(AppView._getViewMode(), 'feed');
+});
+
+test('?view=list still resolves — the override is migrated, not just validated', () => {
+  // `?view=list` is in the wild: capture routes, bookmarks and the dapp.json
+  // checks all carry it, and #814's whole point was that a fresh browser can
+  // be pointed straight at a given view. Rejecting it would silently fall back
+  // to the width default, which at a desktop viewport is the OTHER tab.
   const AppView = makeAppView({
     search: '?view=list',
     matchMedia: () => ({ matches: true }),
     localStorage: { getItem: () => 'kanban', setItem: () => {} },
   });
-  assert.equal(AppView._getViewMode(), 'list');
+  assert.equal(AppView._getViewMode(), 'feed');
 });
 
 test('an unrecognized ?view= leaves the existing resolution untouched', () => {
@@ -324,15 +337,15 @@ test('toggling the view mode retires the ?view= override so the click sticks', (
     },
   });
   assert.equal(AppView._getViewMode(), 'kanban');
-  AppView._setViewMode('list');
-  assert.equal(AppView._getViewMode(), 'list', 'the explicit choice wins over the URL');
+  AppView._setViewMode('feed');
+  assert.equal(AppView._getViewMode(), 'feed', 'the explicit choice wins over the URL');
 });
 
 test('no ?view= at all keeps the #462 width default', () => {
   const wide = makeAppView({ search: '', matchMedia: () => ({ matches: true }) });
   assert.equal(wide._getViewMode(), 'kanban');
   const narrow = makeAppView({ search: '', matchMedia: () => ({ matches: false }) });
-  assert.equal(narrow._getViewMode(), 'list');
+  assert.equal(narrow._getViewMode(), 'feed');
 });
 
 // ── The single-column ↔ multi-column breakpoint ─────────────────────────────
