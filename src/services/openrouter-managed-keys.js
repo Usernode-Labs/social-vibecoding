@@ -291,8 +291,8 @@ async function setDisabled({ pool, id, disabled, config, actorId }) {
       if (!changed) throw new Error('managed credential material is unavailable');
       await client.query(
         `UPDATE credentials.managed_openrouter_keys
-            SET status = $2,
-                disabled_at = CASE WHEN $2 = 'disabled' THEN NOW() ELSE NULL END,
+            SET status = $2::varchar(24),
+                disabled_at = CASE WHEN $2::varchar(24) = 'disabled' THEN NOW() ELSE NULL END,
                 last_error_code = NULL, updated_at = NOW()
           WHERE id = $1`,
         [id, disabled ? 'disabled' : 'active'],

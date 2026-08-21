@@ -195,9 +195,9 @@ async function setStatusOnClient({ client, userId, provider, purpose, status }) 
   }
   const { rows } = await client.query(
     `UPDATE credentials.user_ai_credentials
-        SET status = $4,
-            verified_at = CASE WHEN $4 = 'valid' THEN NOW() ELSE NULL END,
-            last_error_code = CASE WHEN $4 = 'disabled' THEN 'admin_disabled' ELSE NULL END,
+        SET status = $4::varchar(16),
+            verified_at = CASE WHEN $4::varchar(16) = 'valid' THEN NOW() ELSE NULL END,
+            last_error_code = CASE WHEN $4::varchar(16) = 'disabled' THEN 'admin_disabled' ELSE NULL END,
             revision = revision + 1,
             updated_at = NOW()
       WHERE user_id = $1 AND provider = $2 AND purpose = $3

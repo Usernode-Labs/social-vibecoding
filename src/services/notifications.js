@@ -300,17 +300,17 @@ async function createManagedOpenRouterAdminNotifications(pool, {
       || !['openrouter_key_created', 'openrouter_key_review'].includes(kind)) return [];
   const { rows } = await pool.query(
     `INSERT INTO notifications (user_id, source_user_id, kind, detail)
-     SELECT admin.id, $1, $2, $3
+     SELECT admin.id, $1, $2::varchar(32), $3::varchar(32)
        FROM users admin
       WHERE admin.is_admin = TRUE
         AND (
-          $2 <> 'openrouter_key_review'
+          $2::varchar(32) <> 'openrouter_key_review'
           OR NOT EXISTS (
             SELECT 1 FROM notifications existing
              WHERE existing.user_id = admin.id
                AND existing.source_user_id = $1
-               AND existing.kind = $2
-               AND existing.detail = $3
+               AND existing.kind = $2::varchar(32)
+               AND existing.detail = $3::varchar(32)
                AND existing.read_at IS NULL
           )
         )
