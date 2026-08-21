@@ -85,9 +85,15 @@ const App = {
 
   // How long boot waits for /api/auth/me before falling back to the
   // snapshot. Deliberately just past the service worker's own API deadline
-  // (API_TIMEOUT_MS) so the SW gets first refusal at answering from cache;
-  // this only catches the no-SW / SW-bypassed cases.
-  BOOT_SESSION_TIMEOUT_MS: 5000,
+  // (API_TIMEOUT_MS, now 1000) so the SW gets first refusal at answering
+  // from cache; this only catches the no-SW / SW-bypassed cases.
+  //
+  // MOVE THIS WHENEVER API_TIMEOUT_MS MOVES. It is the last link in the
+  // serial chain a cold load walks — navigation, then the shell's scripts,
+  // then this — so leaving it at the old 5s would have made it the sole
+  // remaining multi-second wait on a weak connection and undone most of
+  // the retune on its own.
+  BOOT_SESSION_TIMEOUT_MS: 2000,
 
   saveSessionSnapshot(user) {
     if (!user || !user.id) return;
@@ -521,6 +527,10 @@ const App = {
     window.addEventListener('usernode:offline-change', (e) => {
       if (e.detail && e.detail.offline === false) App._reconcileSession();
     });
+
+    // The service worker answered a slow /api/* from cache and the real
+    // answer has now landed disagreeing with it (see _onApiUpdated).
+    window.addEventListener('usernode:api-updated', App._onApiUpdated);
 
     // Re-poll the platform version every 10s so the drawer's platform
     // row flips to its "deploying" state within seconds of a deploy
@@ -956,6 +966,72 @@ const App = {
       location.reload();
       return new Promise(() => {});
     });
+  },
+
+  // ── Late-arrival correction ─────────────────────────────────────────
+  // The service worker now answers a slow GET /api/* from cache rather than
+  // holding the screen (public/sw.js, API_TIMEOUT_MS), and posts
+  // `api-updated` when the real answer finally lands and DISAGREES with the
+  // copy it served. Without this handler that correction would sit in the
+  // cache until the next reload, and a faster first paint would just mean
+  // being wrong sooner.
+  //
+  // The worker only posts when it actually served stale bytes AND they
+  // actually changed, so on a healthy connection none of this ever runs.
+  _apiUpdateTimer: null,
+
+  _onApiUpdated() {
+    // Coalesce: one slow load can correct several endpoints a few ms apart,
+    // and the screen's loader re-pulls all of them anyway.
+    clearTimeout(App._apiUpdateTimer);
+    App._apiUpdateTimer = setTimeout(App.refreshActiveScreen, 250);
+  },
+
+  // Re-run the visible screen's own loader — the same one pull-to-refresh
+  // uses, so a correction can never diverge from a manual refresh.
+  //
+  // Bails when the tab is hidden or a sheet/drawer is presenting: a screen
+  // re-rendering underneath an open surface (or scrolling out from under a
+  // reader) is a worse failure than the stale row it would have fixed, and
+  // the next navigation re-pulls anyway.
+  refreshActiveScreen() {
+    try {
+      if (document.hidden) return;
+      if (App.HeaderMenu.isPresenting()) return;
+
+      const visible = (id) => {
+        const el = document.getElementById(id);
+        return !!el && !el.classList.contains('hidden');
+      };
+
+      if (App.currentApp && App.currentTab === 'dev'
+          && window.AppView && AppView.refreshDevData) {
+        AppView.refreshDevData('api-update');
+        return;
+      }
+      if (visible('browse-screen') && window.Browse) { Browse._load(); return; }
+      if (visible('leaderboard-screen')) { App._refreshLeaderboard(); return; }
+      if (visible('home-screen') && window.Home) { Home.load(); }
+    } catch (err) {
+      /* a correction that throws is just a screen that stays as served */
+    }
+  },
+
+  // The Leaderboard screen hosts three panes with three different loaders.
+  // Extracted so pull-to-refresh and the late-arrival correction above
+  // cannot drift apart.
+  _refreshLeaderboard() {
+    if (!window.Leaderboard) return Promise.resolve();
+    if (Leaderboard.section === 'topochain') {
+      if (!window.TopochainLeaderboard) return Promise.resolve();
+      return TopochainLeaderboard.loadLeaderboard();
+    }
+    if (Leaderboard.section === 'challenges') {
+      if (!window.TopochainChallenges) return Promise.resolve();
+      return TopochainChallenges.loadChallenges();
+    }
+    Leaderboard._cache.clear();
+    return Leaderboard._load();
   },
 
   // Four rendering states, all rendered as .drawer-ver text (see
@@ -1956,19 +2032,7 @@ const App = {
     // Leaderboard._cache.
     const lb = document.getElementById('leaderboard-screen');
     if (lb) {
-      PlatformUI.pullToRefresh(lb, () => {
-        if (!window.Leaderboard) return Promise.resolve();
-        if (Leaderboard.section === 'topochain') {
-          if (!window.TopochainLeaderboard) return Promise.resolve();
-          return TopochainLeaderboard.loadLeaderboard();
-        }
-        if (Leaderboard.section === 'challenges') {
-          if (!window.TopochainChallenges) return Promise.resolve();
-          return TopochainChallenges.loadChallenges();
-        }
-        Leaderboard._cache.clear();
-        return Leaderboard._load();
-      });
+      PlatformUI.pullToRefresh(lb, () => App._refreshLeaderboard());
     }
     // #notifications-list's pull-to-refresh moved with the panel (#1079
     // chunk B) — it is attached from the island's layout effect in

@@ -1,11 +1,11 @@
 // Platform-shell service worker — read-only offline mode (#487).
 //
 // Design contract (see the offline-mode spec):
-//   - ONLINE BEHAVIOUR STAYS AS CLOSE TO NO-SW AS IT USEFULLY CAN. Every
-//     strategy here is network-first, with ONE relaxation (#1021): a
-//     response that has not arrived within its deadline may be answered
-//     from cache, and the network response — which is still in flight —
-//     still replaces the cached copy when it lands. This preserves the
+//   - A GOOD CONNECTION STILL GETS THE NEWEST BUILD ON THIS LOAD; a bad
+//     one gets the cached one immediately. Every strategy is network-first
+//     against a DEADLINE (#1021): a response that has not arrived in time
+//     is answered from cache, and the network response — still in flight —
+//     replaces the cached copy when it lands. This preserves the
 //     platform's hard-learned freshness rule
 //     (src/services/static-cache.js): the next page load is fresh, and
 //     the drawer's stale-version pill (App.renderPlatformVersionPill)
@@ -13,6 +13,14 @@
 //     Without the deadline a stalled-but-open connection held the
 //     navigation (and every one of the shell's ~70 scripts) open forever
 //     while a complete cached copy sat unused — the reported white screen.
+//
+//     The deadlines are DELIBERATELY SHORTER THAN A ROUND TRIP for the
+//     shell (200ms), because being one deploy behind for one load is
+//     cheap and a blank screen is not; see the constants below for the
+//     full reasoning, and note the two mechanisms that keep it honest —
+//     shellFromCacheThisLoad, so one load cannot mix two builds, and the
+//     `api-updated` message, so a stale API answer corrects itself on
+//     screen instead of waiting for a reload.
 //   - Only GETs are ever intercepted. Writes, SSE streams, auth flows and
 //     credentials are hard-bypassed (see classifyRequest below).
 //   - Cached GET /api/* JSON lets previously-viewed screens (home feed,
@@ -72,13 +80,39 @@ const CACHED_AT_HEADER = 'sw-cached-at';
 // could evict the session itself.
 const IMMUNE_API_PATHS = ['/api/auth/me'];
 
-// Network deadlines (#1021). Well above a healthy same-origin round trip
-// — every shell asset is local and served with `no-cache,
-// must-revalidate`, so the common case is a 304 — but short enough that a
-// stalling connection reads as "showing saved content", not as a hang.
-const NAVIGATE_TIMEOUT_MS = 3000;
-const SHELL_TIMEOUT_MS = 3000;
-const API_TIMEOUT_MS = 4000;
+// Network deadlines. A deadline is how long a request may hold the page
+// before the CACHED copy is shown instead. The request itself is never
+// cancelled and its answer still refreshes the cache, so the deadline only
+// ever unlocks the cache — it never shortens a fetch.
+//
+// #1021 introduced these at 3s/3s/4s, which fixed the reported hang but
+// left the reported SLOWNESS, because the tiers run SERIALLY: nothing
+// requests a shell asset until index.html has parsed, and nothing calls
+// /api/auth/me until those scripts have run. Three patient tiers plus
+// App.BOOT_SESSION_TIMEOUT_MS was ~11 seconds to a painted signed-in shell
+// on a weak link — not a hang, just four individually-reasonable waits in
+// a row.
+//
+// 200ms is BELOW a healthy same-origin round trip on purpose. Every shell
+// asset is local and served with `no-cache, must-revalidate`
+// (src/services/static-cache.js), so a good connection answers a
+// conditional GET with a 304 well inside it and still gets the newest
+// build on THIS load; anything slower falls straight through to the cached
+// shell instead of holding a blank screen. Being one deploy behind for one
+// load is the accepted cost, and it already has a designed recovery — the
+// drawer's stale-version pill (App.renderPlatformVersionPill) and the
+// reload upgrade in App._refreshOrReload.
+//
+// The API tier keeps a real deadline (1s) because a stale answer there is
+// WRONG CONTENT, not merely an old build, and 200ms would sit under the
+// round trip of most mobile networks — turning "network-first" into
+// cache-first for everyone not on wifi while still claiming otherwise.
+// What makes serving a stale API answer safe at all is the notify path in
+// networkFirstApi: the page is told when the real answer lands and
+// disagrees. Do not shorten this one without keeping that.
+const NAVIGATE_TIMEOUT_MS = 200;
+const SHELL_TIMEOUT_MS = 200;
+const API_TIMEOUT_MS = 1000;
 
 // Same-origin shell assets precached on install so the very next offline
 // load works even for screens the session never touched. Must list every
@@ -363,6 +397,19 @@ async function raceNetworkAndCache({ startFetch, matchCache, timeoutMs, schedule
   }
 }
 
+// Whole-body compare, used to decide whether a late network answer
+// actually disagrees with the cached copy the page was already shown. The
+// bodies here are API JSON — a few KB — so a byte loop is cheaper than
+// hashing and, unlike a hash, has no false positives. Pure and exported so
+// tests/pwa-offline-cache.test.js can pin it directly.
+function bytesEqual(a, b) {
+  if (a.byteLength !== b.byteLength) return false;
+  const x = new Uint8Array(a);
+  const y = new Uint8Array(b);
+  for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return false;
+  return true;
+}
+
 /* ------------------------------------------------------------------ */
 /* Service-worker runtime (skipped when loaded in Node for tests).     */
 /* ------------------------------------------------------------------ */
@@ -371,6 +418,7 @@ if (typeof module !== 'undefined' && module.exports) {
     classifyRequest,
     isImmuneApiRequest,
     raceNetworkAndCache,
+    bytesEqual,
     SHELL_ASSETS,
     NO_FALLBACK_PAGES,
     NO_FALLBACK_PREFIXES,
@@ -386,21 +434,73 @@ if (typeof module !== 'undefined' && module.exports) {
 } else {
   const ORIGIN = self.location.origin;
 
+  // ── Per-page-load shell consistency ─────────────────────────────────
+  // The shell's assets are deliberately UNHASHED, so index.html does not
+  // pin the build its scripts come from: 38 assets each racing their own
+  // deadline independently can hand ONE load a mix of two deploys. The
+  // navigation is the first request of a load and answers the only
+  // question that matters — is this connection fast right now? — so it
+  // records its own outcome here and every shell asset in the same load
+  // follows it, instead of re-rolling the dice 38 more times.
+  //
+  // Heuristic, and deliberately so: a worker restart mid-load resets it,
+  // and two tabs loading at once share it. Both degrade to the `false`
+  // default, which is the pre-existing per-asset race — never to something
+  // that fails.
+  let shellFromCacheThisLoad = false;
+
   // Stamp a response copy with the cached-at time so activate() can prune
   // stale entries. Only used for the API cache. Takes an already-cloned
   // response (cloning must happen synchronously, before the page starts
   // consuming the original body).
-  async function stampAndPut(cache, request, response) {
+  //
+  // Returns true when the stored bytes DIFFER from the entry they replaced,
+  // but only when asked (`detectChange`) — the comparison costs an extra
+  // cache read and a full-body compare, and the only caller that needs the
+  // answer is the stale-serve path, where the entry being replaced is the
+  // very copy the page is currently rendering.
+  async function stampAndPut(cache, request, response, { detectChange = false } = {}) {
     try {
       const headers = new Headers(response.headers);
       headers.set(CACHED_AT_HEADER, String(Date.now()));
       const body = await response.arrayBuffer();
+      let changed = false;
+      if (detectChange) {
+        // Both fallbacks below resolve to "unchanged", i.e. stay quiet:
+        //   - no previous entry (evicted between the serve and now) means
+        //     there is nothing on screen this could be correcting;
+        //   - an unreadable previous body leaves us genuinely unable to
+        //     tell, and a re-render we cannot justify is worse than a
+        //     stale row the next navigation will fix anyway.
+        try {
+          const prev = await cache.match(request);
+          changed = !!prev && !bytesEqual(await prev.arrayBuffer(), body);
+        } catch { changed = false; }
+      }
       await cache.put(request, new Response(body, {
         status: response.status,
         statusText: response.statusText,
         headers,
       }));
+      return changed;
     } catch { /* quota or clone failure — offline copy just isn't saved */ }
+    return false;
+  }
+
+  // Tell every open tab that a cached answer we already served is now out
+  // of date. The worker gets exactly ONE response per request, so without
+  // this the corrected copy would sit in the cache until the next reload
+  // and "instant" would mean "instant and wrong".
+  //
+  // Broadcast rather than event.clientId: a second tab on this origin was
+  // served the same stale entry from the same cache and is just as wrong.
+  // The noise that buys is bounded on the page side — App.refreshActiveScreen
+  // bails on a hidden tab or an open sheet.
+  async function notifyClients(message) {
+    try {
+      const windows = await self.clients.matchAll({ type: 'window' });
+      for (const client of windows) client.postMessage(message);
+    } catch { /* best-effort — a missed correction is just a stale screen */ }
   }
 
   // Oldest-first eviction keeps the API cache bounded. Cache keys iterate
@@ -439,12 +539,31 @@ if (typeof module !== 'undefined' && module.exports) {
 
   async function networkFirstShell(event) {
     const cache = await caches.open(SHELL_CACHE);
+    const fetchAndCache = () => fetch(event.request).then((res) => {
+      // Clone synchronously, before the page can start reading the body.
+      if (res && res.ok) cache.put(event.request, res.clone()).catch(() => {});
+      return res;
+    });
+
+    // This load's navigation already lost its race, so the connection is
+    // known-slow AND the document being parsed is the cached one. Serve the
+    // cached asset outright rather than making all 38 of them re-discover
+    // the same fact one 200ms deadline at a time — that serial rediscovery
+    // is most of the reported slowness, and mixing a cached document with
+    // freshly-fetched scripts is the split-build hazard the flag exists to
+    // avoid. The network copy still lands in the cache for the next load.
+    if (shellFromCacheThisLoad) {
+      const hit = await cache.match(event.request, { ignoreSearch: true });
+      if (hit) {
+        event.waitUntil(fetchAndCache().catch(() => {}));
+        return hit;
+      }
+      // A miss here is a genuinely new asset (a deploy added one). Fall
+      // through: there is nothing cached to prefer.
+    }
+
     const { response, pending } = await raceNetworkAndCache({
-      startFetch: () => fetch(event.request).then((res) => {
-        // Clone synchronously, before the page can start reading the body.
-        if (res && res.ok) cache.put(event.request, res.clone()).catch(() => {});
-        return res;
-      }),
+      startFetch: fetchAndCache,
       matchCache: () => cache.match(event.request, { ignoreSearch: true }),
       timeoutMs: SHELL_TIMEOUT_MS,
       schedule: swSchedule,
@@ -461,18 +580,33 @@ if (typeof module !== 'undefined' && module.exports) {
     // the cached shell is the correct fallback for every route —
     // including the old standalone auth pages, which are redirect stubs
     // into the SPA's hash routes now (fold-auth-pages-into-SPA).
-    const { response, pending } = await raceNetworkAndCache({
+    const { response, fromCache, pending } = await raceNetworkAndCache({
       startFetch: () => fetch(event.request),
       matchCache: () => cache.match('/index.html'),
       timeoutMs: NAVIGATE_TIMEOUT_MS,
       schedule: swSchedule,
     });
+    // Publish the verdict for the ~38 shell assets this document is about
+    // to request. See shellFromCacheThisLoad.
+    shellFromCacheThisLoad = fromCache;
     if (pending) event.waitUntil(pending.catch(() => {}));
     return response;
   }
 
   async function networkFirstApi(event) {
     const cache = await caches.open(API_CACHE);
+    // Did we answer this request from cache while the network was still in
+    // flight? Only then is a late, DIFFERENT answer worth telling the page
+    // about — on an ordinary fresh load the page already HAS that answer,
+    // and posting anyway would re-render every screen on every load.
+    //
+    // Set inside matchCache rather than from the returned `fromCache`: the
+    // cache read completes before raceNetworkAndCache resolves, so the flag
+    // is already true by the time the late network response can run the
+    // handler below. Reading it afterwards would leave a window in which a
+    // just-missed response found it still false.
+    const served = { fromCache: false };
+
     const { response, pending } = await raceNetworkAndCache({
       startFetch: () => fetch(event.request).then((res) => {
         // Only genuine successes are worth replaying offline; 401/403/500
@@ -481,13 +615,21 @@ if (typeof module !== 'undefined' && module.exports) {
         if (res && res.status === 200) {
           const copy = res.clone();
           event.waitUntil((async () => {
-            await stampAndPut(cache, event.request, copy);
+            const changed = await stampAndPut(cache, event.request, copy,
+              { detectChange: served.fromCache });
             await trimApiCache(cache);
+            if (served.fromCache && changed) {
+              await notifyClients({ type: 'api-updated', url: event.request.url });
+            }
           })());
         }
         return res;
       }),
-      matchCache: () => cache.match(event.request),
+      matchCache: async () => {
+        const hit = await cache.match(event.request);
+        if (hit) served.fromCache = true;
+        return hit;
+      },
       timeoutMs: API_TIMEOUT_MS,
       schedule: swSchedule,
     });
