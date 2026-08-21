@@ -822,6 +822,143 @@ const AppView = {
     return AppView.iframeTokenSlug === slug ? AppView.iframeToken : null;
   },
 
+  // ── Offline-capable apps (#487 follow-up) ────────────────────────────
+  //
+  // renderAppTab used to refuse to mount ANY app frame while offline, on
+  // the reasoning that the app lives on a subdomain THIS origin's service
+  // worker cannot cache. That is true, and beside the point for an app
+  // that registers its OWN worker on that subdomain and precaches its own
+  // shell: the document we would be mounting is one the app's worker can
+  // serve from cache with no network at all. The blanket refusal meant an
+  // app's offline support could never be exercised, because the document
+  // that would have used it was never requested.
+  //
+  // The bridge announces `__usernode_offline_ready` from inside the app
+  // frame whenever a service worker is controlling the app document (see
+  // the __USERNODE_OFFLINE_READY block in usernode-bridge.js). That can
+  // only be heard while ONLINE — it comes from a frame we had to mount —
+  // so it is remembered here, on the platform origin, and read back on the
+  // next offline load.
+  //
+  // Conservative in both directions. An app we have never heard announce
+  // keeps today's placeholder, and a "not-ready" announcement (worker
+  // gone, or a registration the WebView refused) drops the flag rather
+  // than leaving the user in front of a frame that cannot paint.
+  OFFLINE_READY_KEY: 'usernode:offline-ready',
+  // Entries are dropped after this long unseen, so the map cannot grow
+  // without bound on a browser that visits many apps and a stale flag for
+  // an app that has since dropped its worker expires on its own.
+  OFFLINE_READY_TTL_MS: 60 * 24 * 60 * 60 * 1000,
+  OFFLINE_READY_MAX: 50,
+
+  _readOfflineReady() {
+    try {
+      const map = JSON.parse(localStorage.getItem(AppView.OFFLINE_READY_KEY));
+      return (map && typeof map === 'object' && !Array.isArray(map)) ? map : {};
+    } catch {
+      // Absent, unparseable, or storage denied. This is an optimisation
+      // over a placeholder, never state anything else depends on.
+      return {};
+    }
+  },
+
+  _writeOfflineReady(map) {
+    try {
+      localStorage.setItem(AppView.OFFLINE_READY_KEY, JSON.stringify(map));
+    } catch { /* quota or private mode — we simply forget */ }
+  },
+
+  // Expired entries out, then the oldest ones past the cap.
+  _pruneOfflineReady(map) {
+    const now = Date.now();
+    const out = {};
+    Object.keys(map)
+      .filter((s) => typeof map[s] === 'number'
+        && (now - map[s]) < AppView.OFFLINE_READY_TTL_MS)
+      .sort((a, b) => map[b] - map[a])
+      .slice(0, AppView.OFFLINE_READY_MAX)
+      .forEach((s) => { out[s] = map[s]; });
+    return out;
+  },
+
+  // Record — or withdraw — "this app's own service worker is serving it".
+  markOfflineReady(slug, ready) {
+    if (!slug) return;
+    const map = AppView._readOfflineReady();
+    const had = Object.prototype.hasOwnProperty.call(map, slug);
+    if (!ready) {
+      if (!had) return;
+      delete map[slug];
+    } else {
+      // This fires on every app open and the value only feeds a TTL, so
+      // re-stamp at most daily rather than writing storage every launch.
+      if (had && (Date.now() - map[slug]) < 24 * 60 * 60 * 1000) return;
+      map[slug] = Date.now();
+    }
+    AppView._writeOfflineReady(AppView._pruneOfflineReady(map));
+  },
+
+  // True when this app announced, on some previous online visit, that its
+  // own worker was serving it — i.e. mounting its frame with no network
+  // loads a document rather than an error page.
+  offlineReadyFor(slug) {
+    if (!slug) return false;
+    const at = AppView._readOfflineReady()[slug];
+    return typeof at === 'number'
+      && (Date.now() - at) < AppView.OFFLINE_READY_TTL_MS;
+  },
+
+  // Which apps this browser has opened is session data like any other —
+  // dropped with the cached feed when a session ends (App._dropCachedSession).
+  clearOfflineReady() {
+    try { localStorage.removeItem(AppView.OFFLINE_READY_KEY); } catch { /* ignore */ }
+  },
+
+  // Bridge -> shell. Mirrors handleIssueStateMessage: only the mounted
+  // PRODUCTION frame is believed, so a staging preview — its own iframe,
+  // running unmerged code — can never mark the production app as
+  // offline-capable.
+  handleOfflineReadyMessage(e) {
+    const data = e.data;
+    if (!data) return;
+    const type = data.__usernode_offline_ready;
+    if (type !== 'ready' && type !== 'not-ready') return;
+    const appIframe = document.getElementById('app-iframe');
+    if (!appIframe || e.source !== appIframe.contentWindow) return;
+    const slug = AppView.appData && AppView.appData.slug;
+    if (!slug) return;
+    AppView.markOfflineReady(slug, type === 'ready');
+  },
+
+  // A frame mounted with no token in its src (an offline mount, or any
+  // load whose mint didn't land) boots the app from its own cache, but
+  // every API call it makes will 401. So watch for the connection coming
+  // back, mint a token, and re-render: buildAppIframeSrc then composes a
+  // DIFFERENT src, frame.keeps() answers false, and the app reloads
+  // authenticated. An offline-capable app persists its unsent work —
+  // that is what makes it offline-capable — so the reload costs nothing.
+  //
+  // At most one armed at a time: renderAppTab can run repeatedly before
+  // the connection returns, and each run would otherwise add a listener.
+  _tokenlessReconnect: null,
+
+  _armTokenlessReconnect(appData) {
+    if (AppView._tokenlessReconnect) return;
+    const onChange = async (ev) => {
+      if (ev && ev.detail && ev.detail.offline) return;
+      window.removeEventListener('usernode:offline-change', onChange);
+      AppView._tokenlessReconnect = null;
+      // The viewer may have moved on while we were away.
+      if (AppView.appData !== appData) return;
+      await AppView.refreshToken(appData.slug);
+      if (AppView.appData !== appData) return;
+      if (!AppView.tokenForSlug(appData.slug)) return;
+      AppView.renderAppTab();
+    };
+    AppView._tokenlessReconnect = onChange;
+    window.addEventListener('usernode:offline-change', onChange);
+  },
+
   // Compose the production iframe src from the app origin, the pending
   // chromeless inner path (#743), and the iframe token — same URL-API
   // pattern as the staging buildSrc below, so an inner query composes
@@ -1013,7 +1150,10 @@ const AppView = {
   // non-app tab; offline) falls back to the old path untouched.
   canEagerLaunch(slug, tab) {
     if (tab && tab !== 'app') return false;
-    if (window.Offline && Offline.isOffline()) return false;
+    // Offline, only an app whose own service worker can serve the document
+    // (#487 follow-up). Anything else falls through to renderAppTab's
+    // placeholder rather than animating open onto a frame that can't paint.
+    if (window.Offline && Offline.isOffline() && !AppView.offlineReadyFor(slug)) return false;
     const rec = AppView.launchRecordFor(slug);
 
     // #1084 chunk G: this path replaces #app-content by hand, so retire any
@@ -1524,11 +1664,18 @@ const AppView = {
       return;
     }
 
-    // Offline mode (#487): the running app lives on its own subdomain —
-    // a different origin the platform's service worker can't cache — so
+    // Offline mode (#487): the running app lives on its own subdomain — a
+    // different origin the platform's service worker can't cache — so
     // offline the iframe would render a broken frame. Show a placeholder
     // instead and re-render automatically once connectivity returns.
-    if (window.Offline && Offline.isOffline()) {
+    //
+    // UNLESS the app brought its own worker (#487 follow-up). An app that
+    // has announced `__usernode_offline_ready` from this frame precaches
+    // its own shell on its own origin, so the document we are about to
+    // mount comes out of ITS cache and needs no network — and refusing to
+    // mount it was the one thing standing between the user and the offline
+    // support the app had already built. See offlineReadyFor().
+    if (window.Offline && Offline.isOffline() && !AppView.offlineReadyFor(appData.slug)) {
       AppView._teardownLaunch();
       // Same as the status branch above: offline, the frame would render a
       // broken cross-origin document, so it goes rather than parks.
@@ -1551,6 +1698,12 @@ const AppView = {
 
     const iframeSrc = AppView.buildAppIframeSrc();
     const frame = AppView._appFrame();
+
+    // Offline (or a mint that failed) leaves the src token-less — see
+    // _armTokenlessReconnect. Armed BEFORE the keeps() early return below,
+    // because a frame that is being kept is exactly the one still carrying
+    // the token-less document.
+    if (!AppView.tokenForSlug(appData.slug)) AppView._armTokenlessReconnect(appData);
 
     // #931: one-shot adoption. beginLaunch may already have mounted this
     // exact frame during the open animation; read the offer and null it in
@@ -15831,6 +15984,8 @@ if (typeof window !== 'undefined') {
     try { AppView.handleLlmBridgeMessage(e); } catch {}
     // #685: issue-state availability announcements from the app iframe.
     try { AppView.handleIssueStateMessage(e); } catch {}
+    // #487 follow-up: "my own service worker is serving this document".
+    try { AppView.handleOfflineReadyMessage(e); } catch {}
     // #752: file-storage relay (uploadFile/deleteFile/getStorageUsage).
     try { AppView.handleStorageBridgeMessage(e); } catch {}
     // #1195: user-directory relay (lookupUser/searchUsers).
