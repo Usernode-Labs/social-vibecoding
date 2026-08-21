@@ -297,3 +297,65 @@ test('the ids the dev-console and staging overlay bind are present', () => {
     assert.ok(after.includes(`id="${id}"`), `the dev-console island binds #${id}, which is missing`);
   }
 });
+
+// ── No module may DEREFERENCE a retired id ────────────────────────────
+//
+// The regression guard for the worst kind of failure this whole inventory
+// exists to prevent, and one THE UI OVERHAUL actually shipped for a moment.
+//
+// Retiring an id is only half the job: something usually still looks it up.
+// `HeaderMenu.init()` kept two of them —
+//
+//   document.getElementById('drawer-row-github').addEventListener(…)
+//   document.getElementById('drawer-row-share').addEventListener(…)
+//
+// — after both rows moved into the Improve panel. Each threw on null. The
+// first one threw inside a React layout effect, which unmounted the whole
+// shell root; the second threw out of App.init() before it had fetched the
+// session. The page rendered nothing and 218 declared checks failed at once,
+// none of them naming the actual cause.
+//
+// So: a retired id may still be MENTIONED (the comments recording where each
+// one went are the point of RETIRED_IDS), and it may still be looked up
+// GUARDED — `?.`, or a `const el = …; if (el)` — because a module that
+// no-ops when its node is absent is exactly how a row gets re-homed without
+// touching it. What it may not be is dereferenced on the spot.
+test('no module dereferences a retired id without a guard', () => {
+  const roots = [];
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) { if (entry.name !== 'node_modules') walk(full); continue; }
+      if (/\.(js|ts|tsx)$/.test(entry.name)) roots.push(full);
+    }
+  };
+  walk(path.join(ROOT, 'public/js'));
+  walk(path.join(ROOT, 'frontend/src'));
+
+  const offenders = [];
+  for (const file of roots) {
+    const src = fs.readFileSync(file, 'utf8');
+    for (const id of Object.keys(RETIRED_IDS)) {
+      // `getElementById('x').`  /  `querySelector('#x').` — a dot that is not
+      // part of `?.` is an immediate dereference of a value that is null.
+      const lookups = [
+        new RegExp(`getElementById\\(\\s*['"]${id}['"]\\s*\\)\\s*(\\??\\.)`, 'g'),
+        new RegExp(`querySelector\\(\\s*['"]#${id}['"]\\s*\\)\\s*(\\??\\.)`, 'g'),
+      ];
+      for (const re of lookups) {
+        let m;
+        while ((m = re.exec(src)) !== null) {
+          if (m[1] === '?.') continue; // guarded — fine
+          const line = src.slice(0, m.index).split('\n').length;
+          offenders.push(`${path.relative(ROOT, file)}:${line} dereferences #${id}`);
+        }
+      }
+    }
+  }
+  assert.deepEqual(
+    offenders, [],
+    'a retired id is looked up and dereferenced on the spot, which throws on null. '
+    + 'Inside a React effect that unmounts the shell; inside App.init() it stops the boot. '
+    + 'Delete the lookup with the row it belonged to, or guard it with `?.`.',
+  );
+});

@@ -183,6 +183,9 @@ const Improve = {
         onDismiss: () => {
           Improve._sheet = null;
           improveStore.set({ open: false });
+          // The kit's exit spring has run: anything chained on close() (the
+          // Share dialog) may present now.
+          Improve._resolveDismissWaiters();
         },
       });
       if (sheet) {
@@ -199,15 +202,56 @@ const Improve = {
     Improve.loadSessions();
   },
 
+  // The panel's own slide-out, matching #improve-panel's transition in
+  // app.css. A close that resolves BEFORE the panel is gone is the whole
+  // defect this pairs against — see close().
+  LEGACY_CLOSE_MS: 200,
+
+  // A hard cap on the completion promise, so a kit teardown that never fires
+  // cannot hang a chained presentation forever.
+  DISMISS_SAFETY_MS: 500,
+
+  _dismissWaiters: [],
+
+  /**
+   * Returns a promise that resolves once the panel is actually GONE — the kit
+   * teardown on the touch path, the CSS slide's end on the desktop one,
+   * immediately when nothing was open.
+   *
+   * This is HeaderMenu.close()'s contract (#977), and it is here for the same
+   * reason: the "Share app" row presents a DIALOG of its own, and a dialog
+   * that fades in while its host surface is still sliding out reads as two
+   * things moving at once. The row was the hamburger's until THE UI OVERHAUL
+   * moved the drawer's reference footer into this panel, so the rule had to
+   * travel with it — every other caller can keep ignoring the return value.
+   */
   close() {
     if (Improve._sheet) {
       // The kit runs its exit spring and calls onDismiss, which is what
       // publishes `open: false` — publishing it here as well would empty the
       // sheet a frame before it started animating out.
+      const done = Improve._afterDismiss();
       Improve._sheet.dismiss();
-      return;
+      return done;
     }
+    if (!improveStore.get().open) return Promise.resolve();
     improveStore.set({ open: false });
+    const done = Improve._afterDismiss();
+    setTimeout(() => Improve._resolveDismissWaiters(), Improve.LEGACY_CLOSE_MS);
+    return done;
+  },
+
+  _afterDismiss() {
+    return new Promise((resolve) => {
+      Improve._dismissWaiters.push(resolve);
+      setTimeout(resolve, Improve.DISMISS_SAFETY_MS);
+    });
+  },
+
+  _resolveDismissWaiters() {
+    const waiters = Improve._dismissWaiters;
+    Improve._dismissWaiters = [];
+    for (const resolve of waiters) resolve();
   },
 
   /**
@@ -381,9 +425,13 @@ const Improve = {
   },
 
   /** The retired `#drawer-row-share`, as a row. */
+  // Share — a dialog of its own, so it waits for the panel to be GONE rather
+  // than fading in across its exit (#977, carried over from the hamburger row
+  // this replaced).
   share() {
-    Improve.close();
-    window.AppView?.openShareModal?.();
+    Promise.resolve(Improve.close()).then(() => {
+      window.AppView?.openShareModal?.();
+    });
   },
 };
 

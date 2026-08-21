@@ -669,6 +669,12 @@ const App = {
   // shot forever. The row is a real anchor, so .click() follows its href
   // and the whole hash → restoreFromHash → navigate* path is exercised
   // exactly as a finger would.
+  //
+  // It clicked #drawer-row-leaderboard until THE UI OVERHAUL moved that row
+  // to the home screen's Challenges area. What this shot is about is the
+  // DRAWER's teardown, not any one destination, so it takes the first row
+  // that is always there instead: Profile is unconditional, where Settings
+  // and Admin are gated.
   _applyMenuNavShot() {
     let shot = null;
     try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
@@ -678,7 +684,7 @@ const App = {
       // After the entrance spring has settled, so the tap lands on a
       // presented drawer rather than one still sliding in.
       setTimeout(() => {
-        const row = document.getElementById('drawer-row-leaderboard');
+        const row = document.getElementById('drawer-row-profile');
         if (row) row.click();
       }, 200);
     }, 50);
@@ -1359,10 +1365,12 @@ const App = {
       if (data.status === 'running' && AppView.appData) {
         AppView.appData.status = 'running';
         AppView.appData.url = data.url;
-        // The Share drawer row was hidden in openApp() because the app
-        // wasn't running yet. Now that we have a URL, surface it.
-        const drawerShareRow = document.getElementById('drawer-row-share');
-        if (drawerShareRow) drawerShareRow.classList.remove('hidden');
+        // Share lives in the Improve panel now, and the panel reads
+        // `canShare` off the same signal this branch is reacting to — so
+        // publishing the app's new state is what re-enables the row, in
+        // place of the `classList.remove('hidden')` on #drawer-row-share
+        // that used to sit here.
+        if (window.Improve) Improve.update({ canShare: true });
         AppView.refreshToken().then(() => {
           // Re-check the tab — the user may have switched to group/dev
           // chat while refreshToken() was in flight. Without this guard
@@ -2772,10 +2780,9 @@ const App = {
   // callback only.
   _enterScreenChrome() {
     document.getElementById('back-btn').classList.remove('hidden');
-    const drg = document.getElementById('drawer-row-github');
-    const drs = document.getElementById('drawer-row-share');
-    if (drg) drg.classList.add('hidden');
-    if (drs) drs.classList.add('hidden');
+    // The GitHub and Share drawer rows were hidden by hand here. Both are
+    // Improve panel rows now, and setAppOpen(false) below clears the panel's
+    // target — which retires them for the same reason and in one move.
     App.DrawerStatus.setAppOpen(false);
   },
 
@@ -3477,20 +3484,15 @@ const App = {
       App.setHeaderTitle(AppView.appData.name);
     }
 
-    // Show the GitHub drawer row if app has a repo
-    const drg = document.getElementById('drawer-row-github');
-    if (drg && AppView.appData?.repo_url) {
-      drg.href = AppView.appData.repo_url;
-      drg.classList.remove('hidden');
-    }
-    // Show the Share drawer row only for apps that have a real running
-    // URL. Apps in `creating`/`error`/`awaiting_secrets` have no URL to
-    // share; the SSE handler re-shows the row when they flip to `running`.
-    const drs = document.getElementById('drawer-row-share');
-    if (drs && AppView.appData?.status === 'running' && AppView.appData?.url) {
-      drs.classList.remove('hidden');
-    }
-    // Publish the app-open lifecycle for the header mode switch and fork
+    // "View on GitHub" and "Share app" were drawer rows revealed by hand
+    // here — the first when the app had a repo_url, the second only for an
+    // app with a real running URL (one in `creating`/`error`/
+    // `awaiting_secrets` has nothing to share, and the SSE handler above
+    // re-enables it on the flip to `running`). Both are Improve panel rows
+    // now, and setAppOpen below carries the same two facts as `repoUrl` and
+    // `canShare`, so the panel decides what to draw from one publish.
+    //
+    // Publish the app-open lifecycle for the Improve panel and the fork
     // lineage. A particular dApp's SHA is intentionally not shown in the
     // platform-information footer.
     App.DrawerStatus.setAppOpen(true);
@@ -3539,10 +3541,8 @@ const App = {
       AppView.close();
       App._showOnlyScreen('home-screen', ['app-view']);
       document.getElementById('back-btn').classList.add('hidden');
-      const drgH = document.getElementById('drawer-row-github');
-      const drsH = document.getElementById('drawer-row-share');
-      if (drgH) drgH.classList.add('hidden');
-      if (drsH) drsH.classList.add('hidden');
+      // …and the GitHub / Share rows retire with the panel's target, rather
+      // than being hidden one by one as drawer rows were.
       App.DrawerStatus.setAppOpen(false);
       // …and immediately re-target Improve at the PLATFORM's own app row.
       // setAppOpen(false) above clears the target, which is right for every

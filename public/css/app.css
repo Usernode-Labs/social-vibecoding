@@ -1074,46 +1074,27 @@ html, body {
    reshaped the content to fit ONE 116px cell. All of it is gone with the
    placement. A section is as tall as it draws and as wide as .home-column.
 
-   HEIGHT — one thing survives the rectangle, and it is the collapsed
-   CEILING: --home-panel-max-h, "about two rows of app icons", derived from
-   the app tile's own tokens rather than measured at runtime. #922 deleted
-   exactly that kind of measure-on-render loop (Home.alignSections publishing
-   --home-section-indent), so this stays a constant a reader can check by
-   hand:
+   HEIGHT — nothing survives the rectangle. The block used to carry
+   --home-panel-max-h ("about two rows of app icons", 16rem, derived from
+   --home-cell-h), enforced by flex — flex-none title bar and footer, a rows
+   list with min-height: 0 and overflow: hidden — so content CLIPPED at the
+   ceiling instead of growing the tile, with .home-panel--expanded lifting it.
 
-     one app row  --home-cell-h              = 7.75rem (124px)
-     #app-list    gap-2         0.5rem between rows
-                  two app rows  7.75 + 0.5 + 7.75 = 16rem (256px)
+   A section grows. What bounds the collapsed block is the MARKUP:
+   visibleSlots() draws at most HomePanels.ROW_SLOTS challenge rows and the
+   footer's "See all N challenges" is the way past them. A second, invisible
+   ceiling on top of that had one remaining effect, and it was to clip the
+   thing this area now exists to show — see below.
 
-   It is a CEILING, not the drawn height, and it is what `.home-panel--expanded`
-   lifts: the collapsed block draws four challenge rows plus its chrome and the
-   cap stops a season with thirty of them from taking the whole page before the
-   viewer has asked for it. The block deliberately spends LESS than the cap:
-
-     border            1px top + 1px bottom          =   2px
-     title bar         py-1 8 + 16.5 line + 1 rule   =  25.5px
-     rows              4 x --home-panel-row-h (40)   = 160px
-     footer            26px min-height + 1 rule      =  27px
-                                                       -------
-                                                        214.5px
-
-   ~215px against a 256px cap. The slack is what absorbs a larger system text
-   size before the rows list starts to clip; growing the row past 40px spends
-   it directly. The cap is enforced by flexbox, not arithmetic: the title bar
-   is flex: none and the body takes the remainder with min-height: 0 +
-   overflow: hidden, so content clips at the cap instead of growing the block.
-
-   Whatever the challenge rows leave inside that budget goes to the
-   LEADERBOARD fill (see .home-panel-fill) — the standings preview that is
-   how the home screen shows the leaderboard now:
-
-     256 - border 2 - title bar 25.5 - footer 27           = 201.5px
-     a row is --home-panel-row-h (40); the fill label is 16
-     => fillRows = 4 - max(challengeRows, 1)
-
-   which is 3 rows at zero or one challenge, 2 at two, 1 at three, and 0 at
-   four — a 40px row plus its 16px label does not fit in the ~41px the
-   four-row state leaves, so that one state keeps its slack.
+   THE LEADERBOARD FILL is the standings preview under the challenge rows
+   (.home-panel-fill). It used to be sized by SUBTRACTION, and that was right
+   for a tile: `fillSlots(n) = 4 - max(n, 1)` spent whatever the challenge
+   rows left of the 201.5px inside the cap. THE UI OVERHAUL made the preview
+   the point of the area rather than its packing material — the hamburger's
+   Leaderboard row is gone, so these rows are how the home screen shows the
+   standings at all — and subtraction meant the ordinary case (four open
+   challenges, which is all the server sends) showed none of them. It is a
+   constant three rows now: HomePanels.FILL_SLOTS.
 
    NO WIDTH CAP any more. It was --home-panel-max-w, half of .home-column
    (512px of 1024px), and the argument for it was "a widget is not a section":
@@ -1124,14 +1105,13 @@ html, body {
    full-width app grid reads as a rendering fault, not as restraint. The
    lanes and rows inside them lay out against the width they are given.
 
-   If any of .app-card's own tokens changes, update --home-cell-h and
-   --home-panel-max-h together — tests/home-panels-render.test.js pins both
-   sides so a drift in one without the other fails rather than silently
-   mis-sizing the block. */
+   tests/home-panels-render.test.js pins the row budget and the tile tokens
+   it was derived from, so a drift fails rather than silently mis-sizing the
+   block. */
 :root {
   /* ONE APP-GRID ROW. Every other height on the home screen is derived from
-     it: the grid's own grid-auto-rows, the drag overlay's cells (which must
-     line up with real tiles to the pixel), and --home-panel-max-h below.
+     it: the grid's own grid-auto-rows and the drag overlay's cells, which
+     must line up with real tiles to the pixel.
 
      Desktop (>= 640px), from .app-card's own tokens in home.js renderAppCard:
        p-3        0.75rem x 2  = 1.5rem
@@ -1171,7 +1151,6 @@ html, body {
      calc() because every track in that template has to stay a single
      space-free token — see rowTemplate. */
   --home-blank-row-h: calc(var(--home-cell-h) / 2);
-  --home-panel-max-h: 16rem; /* two cells + the gap — see --home-cell-h */
   --home-panel-row-h: 2.5rem; /* 40px — see the budget above */
   /* The METER LANE: the strip along the bottom of every row in a panel
      that has at least one progress bar. The bar lives in it and the row's
@@ -1185,10 +1164,21 @@ html, body {
   --home-panel-bar-gap: 0.3125rem;   /* 5px — bar to the row divider */
 }
 
+/* NO HEIGHT CAP. `max-height: var(--home-panel-max-h)` lived here, and the
+   whole apparatus below it — .home-panel-rows' overflow: hidden, the
+   flex-none title bar and footer, .home-panel--expanded lifting the cap —
+   existed to make a block CLIP inside the two-app-row rectangle it occupied
+   on the launcher canvas.
+
+   A section has no rectangle. What bounds the collapsed block now is the
+   MARKUP: visibleSlots() renders at most ROW_SLOTS challenge rows and the
+   footer's "See all N challenges" is the way past them, so there is nothing
+   left for a second, invisible mechanism to bound. Keeping the cap after the
+   fill stopped being leftover-sized would have clipped the standings preview
+   the Challenges area now exists to show. */
 .home-panel {
   display: flex;
   flex-direction: column;
-  max-height: var(--home-panel-max-h);
 }
 
 /* THE TITLE BAR WAS THE DRAG HANDLE (#911) and is not one any more. It
@@ -1318,15 +1308,17 @@ html, body {
   min-height: 1.625rem; /* 26px */
 }
 
-/* EXPANDED: the cap is lifted so the block grows to fit every challenge,
-   including the organiser-finished ones the collapsed view filters out.
-   The rows list stops clipping too — the whole point of expanding is to
-   see past the cap, and the same control collapses it again. Deliberately
-   NOT a scroll container: a nested scroller inside the page scroller is
-   the touch trap this widget has avoided from the start. */
-.home-panel--expanded {
-  max-height: none;
-}
+/* EXPANDED: every challenge the season has, including the organiser-finished
+   ones the collapsed view filters out. The COUNT is markup — visibleSlots()
+   returns all of them rather than the first ROW_SLOTS — and this rule is the
+   CSS half: the rows list stops clipping, so a list longer than the flex
+   layout budgeted for is drawn rather than cut.
+
+   `max-height: none` sat here too, lifting --home-panel-max-h. Both are gone
+   with the cap (see .home-panel above): a section grows to its content, so
+   there is nothing left to lift. Deliberately NOT a scroll container either
+   way: a nested scroller inside the page scroller is the touch trap this
+   block has avoided from the start. */
 .home-panel--expanded .home-panel-rows {
   overflow: visible;
 }
@@ -1570,13 +1562,12 @@ html, body {
                                                        -------
                                                         192px
 
-   against --home-panel-max-h 16rem (256px) = two cells plus the gap. The
-   64px of slack is deliberately NOT a void at the bottom: both lanes are
-   `flex: 1 1 0`, so they split it into equal halves and each centres its
-   single row of tiles in its own band.
-
-   tests/home-panels-render.test.js pins both budgets against those tokens,
-   so don't move one number without the other.
+   which was measured against a 256px height cap while the block was a 2x2
+   tile. There is no cap now — the section is as tall as its two lanes — so
+   the sum is a description rather than a constraint, and the slack it used to
+   leave is simply not claimed. Both lanes stay `flex: 1 1 auto`, so anything
+   spare is still split evenly and each lane centres its single row of tiles
+   in its own band.
 
    SIX EXPLICIT TRACKS, NOT auto-fill. Each lane must be exactly one row:
    with a lane budgeted at one row, anything that wraps is clipped by
@@ -1599,11 +1590,19 @@ html, body {
      than hanging it off the top edge. */
   align-content: center;
 }
-/* Both lanes share the leftover height evenly instead of the first one
-   taking it all — `1 1 0` rather than .home-panel-rows' own `1 1 auto`, so
-   the basis is the band and not the content. */
+/* THE BASIS IS THE CONTENT, not the band. It was `1 1 0` while the block was
+   a fixed 2x2 TILE: there the article's height came from the grid cell, so a
+   zero basis was the way to make two lanes split a real, generous box evenly
+   instead of the first one taking it all.
+
+   A section sizes to ITS OWN CONTENT, and a zero basis in that direction is
+   circular — each lane contributed 0 to the height the article asked for, the
+   article collapsed to its title bar, and both lanes were then handed the
+   ~16px that was left and clipped their 44px tiles in half. `1 1 auto` reads
+   the same intent (share anything spare, evenly) against a basis that
+   actually exists. */
 .home-discover-lane {
-  flex: 1 1 0;
+  flex: 1 1 auto;
 }
 /* .app-card buys these tiles their tap/drag behaviour, but NOT its padding:
    that class is the 56px launcher tile, and its 8px (phone) / 12px (desktop)
@@ -1716,8 +1715,9 @@ html, body {
        block was a grid item whose phone footprint was a single row and a
        238px cap in a 116px cell would have let an oversized system text size
        paint the article over the app tiles below it. The blocks are fixed
-       sections outside the grid now — they overlap nothing — so the
-       collapsed ceiling is the same 16rem at every width. */
+       sections outside the grid now — they overlap nothing and they size to
+       their own content — so neither the override nor the token it narrowed
+       exists any more. */
   }
   .home-grid-overlay { gap: 0.375rem; }
   /* The doubled class is deliberate. This rule is what makes the phone

@@ -464,7 +464,7 @@
     {
       "name": "A sidebar tap lands on the destination with no competing screen animation (#977)",
       "path": "/?shot=menu-nav&un-platform=ios",
-      "expectSelector": "#leaderboard-screen:not(.hidden)[data-entered=\"none\"]"
+      "expectSelector": "#profile-screen:not(.hidden)[data-entered=\"none\"]"
     },
     {
       "name": "Challenges tab summarises the completed set (#981)",

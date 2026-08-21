@@ -911,15 +911,26 @@ test('the season board skips a podium-excluded leader in its podium rows', async
     'but the excluded viewer still sees their own rank-less line');
 });
 
-test('the fill is omitted when the tile is full, and when expanded', async () => {
-  // Four challenges fill the row budget: nothing left to fill.
+// THE FULL-LIST SKIP IS GONE. `challenges.length >= CHALLENGE_ROW_LIMIT`
+// returned early here — the server half of the subtraction the client did in
+// fillSlots() — and both were right while the block was a fixed 2x2 tile: the
+// fill spent whatever rectangle the challenge rows left, so a full list left
+// nothing. THE UI OVERHAUL made the block a section that grows and made this
+// preview the point of the Challenges area, and a full list is the ORDINARY
+// case (four is all this route sends), so the rule meant the standings were
+// usually absent from the one place that shows them.
+test('a full challenge list still gets the fill; an expanded one does not', async () => {
   const four = [row(), row({ id: 2 }), row({ id: 3 }), row({ id: 4 })];
   const full = makeApp({ season: SEASON, rows: four, event: EVENT, standings: STANDINGS },
     { user: USER });
   const { body: fullBody } = await get(full.app, '/api/home-panels');
-  assert.equal(fullBody.panels.find((p) => p.key === 'challenges').leaderboard, undefined);
+  const panel = fullBody.panels.find((p) => p.key === 'challenges');
+  assert.equal(panel.challenges.length, 4, 'the row budget is unchanged');
+  assert.ok(panel.leaderboard, 'and the standings ride along beside them');
+  assert.equal(panel.leaderboard.kind, 'topochain');
 
-  // Expanded is all challenges — the fill steps aside.
+  // Expanded is all challenges — a standings preview under thirty rows is not
+  // a preview, so the fill still steps aside there.
   const exp = makeApp({ season: SEASON, rows: [row()], event: EVENT, standings: STANDINGS },
     { user: USER });
   const { body: expBody } = await get(exp.app, '/api/home-panels?expand=challenges');
@@ -1074,12 +1085,18 @@ test('demoChallengesPanel: the few / none variants and their demo fill', () => {
   assert.equal(kudos.leaderboard.event, null);
   assert.equal(kudos.leaderboard.viewer.name, 'tester');
 
-  // No variant → byte-for-byte the payload that shipped before, with no fill
-  // (four rows leave no room), so the existing ?demo=1 check is untouched.
-  const base = demoChallengesPanel({});
+  // No variant → the four-row default, which now carries a fill too. It
+  // used to be the one demo payload WITHOUT one, because four rows left no
+  // room in the tile; the preview has its own budget now, and leaving the
+  // demo behind would make the ?demo=1 checks the last place the old
+  // subtraction rule survived.
+  const base = demoChallengesPanel({ username: 'tester' });
   assert.equal(base.challenges.length, 4);
   assert.equal(base.total, 7);
-  assert.equal(base.leaderboard, undefined);
+  assert.equal(base.leaderboard.kind, 'topochain');
+  assert.equal(base.leaderboard.viewer.name, 'tester');
+  // …but an EXPANDED demo still has none, matching the real builder.
+  assert.equal(demoChallengesPanel({ expanded: true, username: 'tester' }).leaderboard, null);
 
   // An unknown value falls through to that default rather than erroring.
   assert.equal(demoChallengesPanel({ variant: 'wat' }).challenges.length, 4);

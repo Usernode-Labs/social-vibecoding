@@ -103,20 +103,33 @@ const HomePanels = {
   // It used to be a per-breakpoint pair — four here, and a PHONE_ROW_SLOTS of
   // two for the single grid cell the block owned below 640px (#968). A fixed
   // section has no cell to fit into, so there is one budget at every width,
-  // and the phone half went with the placement.
-  //
-  // The number itself comes from app.css's own tokens, sized against two
-  // app-grid rows:
-  //   256 - border 2 - title bar 25.5 - footer 27  = 201.5px
-  //   a row is 40px (--home-panel-row-h); the fill's label costs 16px
+  // and the phone half went with the placement. Four survives as a PREVIEW
+  // cap; the footer's "See all N challenges" is the way past it.
   ROW_SLOTS: 4,
 
-  // Whatever the challenge rows leave goes to the LEADERBOARD fill:
-  // `4 - max(challengeRows, 1)` — 3 at zero or one challenge, 2 at two, 1 at
-  // three, 0 at four (a 40px row plus its 16px label does not fit in the
-  // ~41px the four-row state leaves).
-  fillSlots(challengeRows) {
-    return Math.max(0, HomePanels.ROW_SLOTS - Math.max(Number(challengeRows) || 0, 1));
+  // ── The leaderboard fill's budget ──────────────────────────────────
+  //
+  // THIS USED TO BE THE LEFTOVER, and that was right while the block was a
+  // fixed 2x2 tile among app icons: something had to spend the rectangle the
+  // challenge rows didn't, so `fillSlots(n) = 4 - max(n, 1)` handed the
+  // remainder to the standings — 3 rows at zero or one challenge, 0 at four.
+  //
+  // A section has no rectangle to spend, and THE UI OVERHAUL made this
+  // preview the POINT of the area rather than its packing material: the
+  // hamburger's Leaderboard row is gone, so these rows are how the home
+  // screen shows the standings at all. Leftover-sizing meant a season with
+  // four open challenges — the ordinary case, since the server sends at most
+  // four — showed none of them, which is the one outcome the move was
+  // supposed to prevent.
+  //
+  // So it is a CONSTANT now: the head of the board plus the viewer's own row
+  // (see renderFillBlock, which spends the last slot on them when they are
+  // not already in the head). That is what a standings preview is at any
+  // size.
+  FILL_SLOTS: 3,
+
+  fillSlots() {
+    return HomePanels.FILL_SLOTS;
   },
 
   // Escapes every character that is dangerous in EITHER a text node OR a
@@ -693,7 +706,7 @@ const HomePanels = {
       // for a finished-challenge list that would repopulate the block.
       if (HomePanels._expanded[panel.key]) HomePanels._expanded[panel.key] = false;
       const fillHtml = canFill
-        ? HomePanels.renderFillBlock(panel.leaderboard, HomePanels.fillSlots(0))
+        ? HomePanels.renderFillBlock(panel.leaderboard, HomePanels.fillSlots())
         : '';
       const fillRows = HomePanels._countFillRows(fillHtml);
       const noteHtml = `<p class="home-panel-rows home-panel-row flex items-center px-2.5 text-[13px] text-zinc-500 dark:text-zinc-400 cursor-pointer hover:bg-violet-500/[0.04] dark:hover:bg-violet-500/10 transition-colors" title="Go to the Challenges tab on the Leaderboard screen">No challenges are running right now</p>`;
@@ -734,7 +747,7 @@ const HomePanels = {
     // this list, so leaderboard rows never inherit the lane's padding.
     const metered = rows.some((c) => HomePanels.hasMeter(c));
     const fillHtml = canFill
-      ? HomePanels.renderFillBlock(panel.leaderboard, HomePanels.fillSlots(rows.length))
+      ? HomePanels.renderFillBlock(panel.leaderboard, HomePanels.fillSlots())
       : '';
     const fillRows = HomePanels._countFillRows(fillHtml);
 

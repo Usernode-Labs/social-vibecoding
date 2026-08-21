@@ -248,12 +248,30 @@ test('the Node and Wallet sheets present after the drawer is gone', () => {
   }
 });
 
-test('the Share dialog opens after the drawer is gone', () => {
+// "Share app" is an IMPROVE PANEL row now, not a drawer row: THE UI OVERHAUL
+// moved the drawer's whole reference footer there, because every line in it
+// was about an app and that panel is the surface scoped to one. The rule it
+// was pinned for travelled with it — a dialog of its own must not fade in
+// across its host surface's exit — so the assertion moves to the new owner
+// rather than being dropped.
+test('the Share dialog opens after the Improve panel is gone', () => {
+  const improve = read('frontend/src/features/improve/improve-controller.js');
+  const at = improve.search(/^ {2}share\(\) \{/m);
+  assert.ok(at !== -1, 'the Improve panel owns the share action');
+  // `?.()` as well as `()`: the panel reaches AppView off the window, which
+  // a vm-sandboxed test may not have published.
+  assert.match(improve.slice(at, at + 500),
+    /Promise\.resolve\(Improve\.close\(\)\)\.then\(\(\) => \{[\s\S]{0,200}?openShareModal\??\.?\(\)/,
+    'the share modal must not fade in across the panel\'s exit');
+  // …and close() has to actually REPORT when the panel is gone, or chaining
+  // on it resolves a frame after the request rather than after the exit.
+  assert.match(improve, /^ {2}close\(\) \{[\s\S]*?return done;/m,
+    'close() returns a completion promise, like HeaderMenu.close()');
+  // …and nothing in the drawer still binds the retired row. An unguarded
+  // getElementById on it is what took the whole boot down once.
   const init = headerMenuFn('init() {');
-  const share = init.slice(init.indexOf("getElementById('drawer-row-share')"));
-  assert.match(share.slice(0, 400),
-    /Promise\.resolve\(HeaderMenu\.close\(\)\)\.then\(\(\) => \{[\s\S]{0,160}?openShareModal\(\)/,
-    'the share modal must not fade in across the drawer\'s exit');
+  assert.doesNotMatch(init, /getElementById\('drawer-row-share'\)/);
+  assert.doesNotMatch(init, /getElementById\('drawer-row-github'\)/);
 });
 
 // ── The screenshot-state deep link + its checks ────────────────────────
@@ -264,7 +282,12 @@ test('?shot=menu-nav opens the drawer and taps a navigation row', () => {
   const fn = appJs.slice(at, appJs.indexOf('\n  },', at));
   assert.match(fn, /shot !== 'menu-nav'\) return/);
   assert.match(fn, /App\.HeaderMenu\.open\(\)/);
-  assert.match(fn, /getElementById\('drawer-row-leaderboard'\)[\s\S]{0,120}?\.click\(\)/,
+  // It clicked #drawer-row-leaderboard until THE UI OVERHAUL moved that row
+  // to the home screen's Challenges area. What this shot is about is the
+  // DRAWER's teardown, not any one destination, so it takes the first row
+  // that is always there: Profile is unconditional, where Settings and Admin
+  // are gated.
+  assert.match(fn, /getElementById\('drawer-row-profile'\)[\s\S]{0,120}?\.click\(\)/,
     'a real anchor click is what exercises the hash → navigate* path end to end');
   assert.ok(!/IS_STAGING|USERNODE_ENV/.test(fn),
     'pure UI state, ungated — an env-gated link starves the production "before" shot');

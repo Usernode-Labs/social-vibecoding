@@ -572,14 +572,18 @@ test('render: expanded lifts the cap, shows everything, and flips the toggle', (
   assert.match(html, /aria-expanded="true"/);
 });
 
-test('the expanded cap lift and the footer are declared in CSS', () => {
+test('expanding stops the rows list clipping, and there is no cap left to lift', () => {
   const css = read('public/css/app.css');
-  const rule = css.match(/\.home-panel--expanded \{[^}]*\}/)[0];
-  assert.match(rule, /max-height:\s*none/);
-  // The rows list must stop clipping too, or expanding would reveal
-  // nothing past the old cap.
+  // The rows list must stop clipping, or a list longer than the flex layout
+  // budgeted for would be cut instead of drawn.
   assert.match(css, /\.home-panel--expanded \.home-panel-rows \{[^}]*overflow:\s*visible/);
   assert.match(css, /\.home-panel-footer \{/);
+  // `.home-panel--expanded { max-height: none }` lifted --home-panel-max-h.
+  // Both went when the block became a SECTION that grows to its content —
+  // there is no ceiling to lift, and the collapsed size is bounded by the
+  // markup (visibleSlots draws at most ROW_SLOTS rows) instead.
+  assert.doesNotMatch(css, /\.home-panel--expanded \{/);
+  assert.doesNotMatch(css, /--home-panel-max-h:/);
 });
 
 test('render: the title bar carries the title, the counter and the ⋮ menu — no extra rows', () => {
@@ -1150,36 +1154,37 @@ test('openMenu goes through the kit\'s ADAPTIVE menu — one call site, both idi
 
 // ── Height cap ────────────────────────────────────────────────────
 
-test('the cap is a CSS constant, enforced by flex, and clips rather than grows', () => {
+// THE HEIGHT CAP IS GONE, and this is the regression guard for putting one
+// back. `--home-panel-max-h` (two app-grid cells plus the gap, 16rem) with
+// .home-panel-rows' overflow: hidden made a block CLIP inside the rectangle
+// it occupied on the launcher canvas. A section has no rectangle, and the
+// collapsed size is bounded by the MARKUP — visibleSlots() draws at most
+// ROW_SLOTS challenge rows and the footer's "See all N" is the way past them.
+//
+// Re-introducing it would clip the standings preview the Challenges area now
+// exists to show: four rows plus the chrome plus a three-row fill is ~350px,
+// well past the 256px the cap allowed.
+test('the block sizes to its content — no height cap to clip the fill', () => {
   const css = read('public/css/app.css');
-  // The cap is two app-grid CELLS plus the gap between them, and the cell
-  // is itself a constant now (--home-cell-h), so the two cannot drift.
-  assert.match(css, /--home-panel-max-h:\s*16rem/);
-  assert.match(css, /--home-cell-h:\s*7\.75rem/);
+  assert.doesNotMatch(css, /--home-panel-max-h:/);
   const panelRule = css.match(/\.home-panel \{[^}]*\}/)[0];
-  assert.match(panelRule, /max-height:\s*var\(--home-panel-max-h\)/);
+  assert.doesNotMatch(panelRule, /max-height/);
   assert.match(panelRule, /flex-direction:\s*column/);
-  // min-height: 0 is what lets overflow: hidden clip instead of the flex
-  // item refusing to compress and pushing the article past the cap.
-  const rowsRule = css.match(/\.home-panel-rows \{[^}]*\}/)[0];
-  assert.match(rowsRule, /min-height:\s*0/);
-  assert.match(rowsRule, /overflow:\s*hidden/);
-  // Uniform rows are what make the 4-slot budget exact, and the height is
-  // a variable so the budget comment above it has one number to check.
+  // Uniform rows are what make the slot budgets exact, and the height is a
+  // variable so the budget comment beside them has one number to check.
   assert.match(css.match(/\.home-panel-row \{[^}]*\}/)[0],
     /height:\s*var\(--home-panel-row-h\)/);
   assert.match(css, /--home-panel-row-h:\s*2\.5rem/);
-  // 4 rows + the chrome must still clear the cap with room to spare: 2px
-  // border + 25.5px title bar + 4 x 40px + 27px footer = 214.5. If a future
-  // row height eats the headroom it fails here, rather than clipping the
-  // fourth row in a browser nobody opened.
+  // The collapsed block a viewer actually gets — four challenge rows AND the
+  // three-row fill — is what a re-introduced 16rem cap would cut.
   const rowPx = parseFloat(css.match(/--home-panel-row-h:\s*([\d.]+)rem/)[1]) * 16;
-  const capPx = parseFloat(css.match(/--home-panel-max-h:\s*([\d.]+)rem/)[1]) * 16;
   const footerPx = parseFloat(
     css.match(/\.home-panel-footer \{[^}]*min-height:\s*([\d.]+)rem/)[1]) * 16;
-  const collapsed = 2 + 25.5 + 4 * rowPx + footerPx + 1;
-  assert.ok(collapsed <= capPx - 5,
-    `the collapsed block (${collapsed}px) must stay clear of the ${capPx}px cap`);
+  const rowSlots = Number(SRC.match(/ROW_SLOTS:\s*(\d+)/)[1]);
+  const fillSlots = Number(SRC.match(/FILL_SLOTS:\s*(\d+)/)[1]);
+  const collapsed = 2 + 25.5 + (rowSlots + fillSlots) * rowPx + 16 + footerPx + 1;
+  assert.ok(collapsed > 256,
+    `the collapsed block is ${collapsed}px — past the 16rem the old cap allowed`);
   // No runtime measurement — #922 deleted that mechanism for the width
   // axis and app.css says not to bring it back.
   assert.doesNotMatch(HOME, /alignSections|--home-section-indent/);
@@ -1211,7 +1216,9 @@ test('the blocks span the whole column — no half-width cap', () => {
 test('the grid host and its row-spanning rules are gone', () => {
   const css = read('public/css/app.css');
   assert.doesNotMatch(css, /^\.home-panel-slot[\s,{]/m);
-  assert.doesNotMatch(css, /#app-list[^{;]*\.home-panel-slot[^{;]*\{/);
+  // Rule-shaped and anchored: the comments recording what each rule did, and
+  // why it went, are the mentions that should survive.
+  assert.doesNotMatch(css, /^#app-list[^{;\n]*\.home-panel-slot[^{;\n]*\{/m);
   // What STAYS is the app tiles' own top-alignment: rows are a fixed height
   // whenever tiles alone define them, so this is a no-op today — and it is
   // still the rule that keeps a card from stretching to a track that is NOT a
@@ -1222,9 +1229,9 @@ test('the grid host and its row-spanning rules are gone', () => {
 test('the cell height still matches the app tile it is derived from', () => {
   // p-3 (0.75rem x 2) + 3.5rem icon + 0.375rem gap + 1.625rem name (two
   // 13px lines, #951) + 0.75rem caption lane = 7.75rem per cell; two cells
-  // + the grid's 0.5rem gap = 16rem. If any of these tokens moves,
-  // --home-cell-h and --home-panel-max-h have to move with it — that is the
-  // point of pinning both sides here.
+  // + the grid's 0.5rem gap = 16rem — the figure the retired height cap was
+  // derived from. --home-cell-h still drives the grid's rows and the drag
+  // overlay's cells, which is why both sides are pinned here.
   const card = HOME.match(/<div class="app-card app-card-draggable[^"]*"/)[0];
   assert.match(card, /\bp-3\b/, 'app tile padding feeds the 1.5rem term');
   assert.match(card, /\bgap-1\.5\b/, 'app tile gap feeds the 0.375rem term');
@@ -1251,14 +1258,12 @@ test('the cell height still matches the app tile it is derived from', () => {
   assert.match(grid, /\bp-2\b/);
   assert.match(CSS, /\.app-card\.app-card \{ padding: 0\.5rem; \}/);
   assert.match(CSS, /--home-cell-h: 7\.25rem/);
-  // …and the phone cap override is GONE (#968 introduced it: a block's phone
-  // footprint was a single row, so a two-cell cap would have let an oversized
-  // text size paint the article over the app tiles below it). The blocks are
-  // sections outside the grid now — they overlap nothing — so the collapsed
-  // ceiling is the same 16rem at every width.
-  const phoneBlock = CSS.slice(CSS.indexOf('@media (max-width: 639.98px)'));
-  assert.doesNotMatch(phoneBlock.slice(0, phoneBlock.indexOf('@media (min-width: 640px)')),
-    /--home-panel-max-h:/);
+  // …and the phone cap override is GONE with the cap itself (#968 introduced
+  // it: a block's phone footprint was a single grid row, so a two-cell cap
+  // would have let an oversized text size paint the article over the app
+  // tiles below it). The blocks are sections outside the grid now — they
+  // overlap nothing and they size to their own content.
+  assert.doesNotMatch(CSS, /--home-panel-max-h:/);
 });
 
 // ── Source pins ───────────────────────────────────────────────────
@@ -1672,8 +1677,12 @@ test('the Discover lanes fit the cells their footprint buys', () => {
   assert.match(css, /\.home-discover-tiles \{[^}]*grid-template-columns: repeat\(6, minmax\(0, 1fr\)\)/);
   assert.match(HOME, /FEATURED_LIMIT: 6/);
   assert.match(HOME, /POPULAR_LIMIT: 6/, 'the lane cap equals the track count');
-  // Both lanes split the leftover height instead of the first one taking it.
-  assert.match(css, /\.home-discover-lane \{[^}]*flex: 1 1 0/);
+  // Both lanes split anything spare instead of the first one taking it — but
+  // from a CONTENT basis (`1 1 auto`), not the `1 1 0` a fixed tile could
+  // afford. A zero basis in a section is circular: each lane contributed 0 to
+  // the height the article asked for, so the article collapsed to its title
+  // bar and both lanes clipped their tiles in half.
+  assert.match(css, /\.home-discover-lane \{[^}]*flex: 1 1 auto/);
   assert.match(css, /\.home-discover-tiles \{[^}]*align-content: center/);
   // The fluid icon caps at the 40px the tile always drew at — and the CAP
   // is on the WRAPPER. On the icon itself, `width: 100%` resolves against a
@@ -1693,19 +1702,23 @@ test('the Discover lanes fit the cells their footprint buys', () => {
   // classes deep because .app-card's padding is declared later in the file.
   assert.match(css, /\.home-discover-tiles \.home-discover-tile \{[^}]*padding: 0/);
 
-  // Budgets, against the tokens they have to fit inside: the PHONE cell
-  // (the tighter one, declared in the max-width:639.98px block) and the
-  // desktop two-cell slot.
-  const rem = (re) => parseFloat(css.match(re)[1]) * 16;
-  const phoneCell = rem(/@media \(max-width: 639\.98px\)[\s\S]*?--home-cell-h: ([\d.]+)rem/);
-  const deskCap = rem(/--home-panel-max-h: ([\d.]+)rem/);
+  // THE HEIGHT IS A SUM, not a budget any more. Both lanes used to have to
+  // fit inside a rectangle — one grid cell on a phone, the 16rem height cap
+  // on desktop — and this asserted they did. The block is a section that
+  // grows to its content now, so the same arithmetic describes what it DRAWS:
+  //
+  //   border 2 + title bar 27 + lane 72 + divider 19 + lane 72 = 192px
+  //
+  // Kept because the terms are still real tokens that can drift apart, and
+  // because a lane that stops summing (a zero flex basis, say) collapses the
+  // article and clips the tiles — which is exactly what shipped once.
   const bar = 27;      // py-1 8 + 18 line + 1px rule
   const lane = 72;     // 8 + 40 icon + 4 gap + 12 caption + 8
   const divider = 19;  // 1px rule + the ~18px "Popular" caption row
-  assert.ok(2 + bar + lane <= phoneCell,
-    `phone budget ${2 + bar + lane}px must fit the ${phoneCell}px cell`);
-  assert.ok(2 + bar + lane + divider + lane <= deskCap,
-    `desktop budget ${2 + bar + lane + divider + lane}px must fit the ${deskCap}px two-cell slot`);
+  assert.equal(2 + bar + lane + divider + lane, 192);
+  assert.match(css, /\+ second lane\s+=\s+72px/, 'and app.css shows the same sum');
+  // No ceiling either lane could be clipped by.
+  assert.doesNotMatch(css, /--home-panel-max-h:/);
 });
 
 // ── The breakpoint split (#947) ────────────────────────────────────
@@ -1765,28 +1778,34 @@ const withFill = (panelOver = {}) => ({
   panels: [panel({ leaderboard: fill(), ...panelOver })],
 });
 
-test('fillSlots: the row budget the desktop tile actually has', () => {
+// THE FILL'S BUDGET IS A CONSTANT. It was `4 - max(challengeRows, 1)` — the
+// leftover of the 201.5px inside a 2x2 tile's height cap, so 3 rows at zero
+// or one challenge and 0 at four. THE UI OVERHAUL made the block a section
+// that grows and made the standings preview the POINT of the Challenges area
+// (the hamburger's Leaderboard row is gone), and four open challenges is the
+// ORDINARY case — CHALLENGE_ROW_LIMIT is all the server sends — so
+// subtraction meant the standings were usually absent from the one place
+// that shows them.
+test('fillSlots: a constant, whatever the challenge rows cost', () => {
   const { HP } = makeHomePanels();
-  // 201.5px of rows area, 40px a row, 16px for the label:
-  // fillRows = 4 - max(challengeRows, 1).
-  assert.equal(HP.fillSlots(0), 3, 'the empty state spends a row on its note');
-  assert.equal(HP.fillSlots(1), 3);
-  assert.equal(HP.fillSlots(2), 2);
-  assert.equal(HP.fillSlots(3), 1);
-  assert.equal(HP.fillSlots(4), 0, 'a 40px row + 16px label does not fit in ~41px');
+  assert.equal(HP.FILL_SLOTS, 3, 'the head of the board plus the viewer');
+  assert.equal(HP.fillSlots(), 3);
+  // …and it takes no argument now. Called with the old one, it must not go
+  // back to subtracting.
+  assert.equal(HP.fillSlots(4), 3);
+  assert.equal(HP.fillSlots(0), 3);
 });
 
-test('desktop: leftover space becomes a LEADERBOARD section', () => {
-  const cases = [[1, 3], [2, 2], [3, 1], [4, 0]];
-  for (const [nChallenges, expectFill] of cases) {
+test('the standings preview draws under the rows, at every list length', () => {
+  for (const nChallenges of [1, 2, 3, 4]) {
     const rows = Array.from({ length: nChallenges }, (_, i) => challenge({ id: i + 1 }));
     const { html } = makeDesktop(withFill({ challenges: rows, total: nChallenges }));
     const drawn = (html.match(/home-panel-lb-row/g) || []).length;
-    assert.equal(drawn, expectFill, `${nChallenges} challenges → ${expectFill} fill rows`);
+    assert.equal(drawn, 3, `${nChallenges} challenges → the fill is still 3 rows`);
     assert.match(html, new RegExp(`data-rows="${nChallenges}"`));
-    assert.match(html, new RegExp(`data-fill="${expectFill}"`));
+    assert.match(html, new RegExp('data-fill="3"'));
     const labels = (html.match(/home-panel-fill-label/g) || []).length;
-    assert.equal(labels, expectFill ? 1 : 0, 'exactly one label, only when filled');
+    assert.equal(labels, 1, 'exactly one label');
   }
 });
 
@@ -2062,17 +2081,10 @@ test('the per-cell budgets and their hooks are gone', () => {
   // footprint each one claimed is what went.
   assert.doesNotMatch(ROUTE, /sizes:/);
 
-  // The collapsed ceiling STAYS, at 16rem, with no phone override — and the
-  // four-row block plus its chrome still clears it. 2 + 25.5 + 4x40 + 27 =
-  // 214.5px against 256px.
-  const rowPx = parseFloat(css.match(/--home-panel-row-h:\s*([\d.]+)rem/)[1]) * 16;
-  const capPx = parseFloat(css.match(/--home-panel-max-h:\s*([\d.]+)rem/)[1]) * 16;
-  const footerPx = parseFloat(
-    css.match(/\.home-panel-footer \{[^}]*min-height:\s*([\d.]+)rem/)[1]) * 16;
-  assert.equal(capPx, 256);
-  assert.ok(2 + 25.5 + 4 * rowPx + footerPx + 1 <= capPx - 5);
-  assert.equal((css.match(/--home-panel-max-h:/g) || []).length, 1,
-    'declared once, at :root — no per-breakpoint redefinition');
+  // …and so is the collapsed CEILING, which was the last thing in this file
+  // still sized against a grid rectangle. See 'the block sizes to its content'
+  // above for why re-introducing it would clip the standings preview.
+  assert.doesNotMatch(css, /--home-panel-max-h:/);
 });
 
 test('app.css: the body wrapper and fill block carry the budget’s geometry', () => {

@@ -350,17 +350,29 @@ async function buildLeaderboardFill(pool, user) {
   };
 }
 
-// Attach the fill when the collapsed list leaves room for it. Never fatal: a
-// leaderboard hiccup must not change the challenges panel, which is the
-// invariant this whole route is built on (one broken panel never blanks the
-// home screen). Skipped when EXPANDED — an expanded block is all challenges.
+// Attach the standings preview. Never fatal: a leaderboard hiccup must not
+// change the challenges panel, which is the invariant this whole route is
+// built on (one broken panel never blanks the home screen). Skipped when
+// EXPANDED — an expanded block is all challenges, and a standings preview
+// under thirty of them is not a preview.
+//
+// IT USED TO BE SKIPPED WHEN THE LIST WAS FULL TOO — `challenges.length >=
+// CHALLENGE_ROW_LIMIT` — the server half of the same subtraction the client
+// did in HomePanels.fillSlots(). Both were right while the block was a fixed
+// 2x2 tile on the launcher canvas: the fill spent whatever rectangle the
+// challenge rows left, so a full list left nothing to spend. THE UI OVERHAUL
+// made the block a section that grows and made this preview the POINT of the
+// Challenges area (the hamburger's Leaderboard row is gone), and a full list
+// is the ORDINARY case — CHALLENGE_ROW_LIMIT is what this route sends — so
+// the rule meant the standings were usually absent from the one place that
+// shows them. The client budget is a constant now (HomePanels.FILL_SLOTS)
+// and so is this: build it whenever the block is collapsed.
 //
 // Topochain first, kudos only if that board doesn't exist (or blew up) — the
 // two are tried independently so a standings failure degrades to the other
 // board rather than to no board.
 async function attachLeaderboardFill(pool, user, panel) {
   if (!panel || panel.expanded) return panel;
-  if ((panel.challenges || []).length >= CHALLENGE_ROW_LIMIT) return panel;
   let fill = null;
   try {
     fill = await buildTopochainFill(pool, user);
@@ -688,8 +700,6 @@ function demoChallengesPanel(opts) {
   // ones, which is exactly what the real builder does when it drops the
   // not-completed filter.
   //
-  // No `leaderboard` here: four rows fill the tile, so there is no room to
-  // fill and the existing ?demo=1 check sees exactly the markup it always saw.
   const all = expanded ? [...rows, ...overflow, ...finished] : rows;
   return {
     season: { id: 900500, name: 'Staging Demo Season — Topochain' },
@@ -698,6 +708,12 @@ function demoChallengesPanel(opts) {
     points_remaining: null,
     challenges: all,
     expanded,
+    // The full-list case carried NO `leaderboard` while the fill was sized by
+    // subtraction: four rows filled the tile, so there was nothing to spend on
+    // the standings. The preview has its own budget now, so the demo carries
+    // one here too — otherwise the ?demo=1 checks would be the only place the
+    // old rule survived.
+    leaderboard: expanded ? null : demoLeaderboardFill(username, board),
     demo: true,
   };
 }

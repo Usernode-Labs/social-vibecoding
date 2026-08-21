@@ -385,25 +385,21 @@ const HeaderMenu = {
       });
     }
     // Drawer row actions — each closes the menu after triggering its action.
-    document.getElementById('drawer-row-github')
-      .addEventListener('click', () => HeaderMenu.close());
-    // Leaderboard (the merged Kudos + Topochain + Challenges screen) —
-    // same real-anchor idiom as Profile below: navigation rides the
-    // anchor's hash, the click handler here just closes the drawer. The
-    // separate Challenges / Topochain-seasons rows that used to sit
-    // beside it are gone; they're tabs of this one screen now.
-    document.getElementById('drawer-row-leaderboard')
-      ?.addEventListener('click', () => HeaderMenu.close());
+    //
+    // THREE OF THESE ARE GONE, with the rows they bound. #drawer-row-github
+    // and #drawer-row-share moved into the Improve panel (every line in the
+    // drawer's footer was about an app, and that panel is the surface scoped
+    // to one), and #drawer-row-leaderboard moved to the home screen's
+    // Challenges area. Their listeners went WITH them rather than being left
+    // behind under a `?.`: a dead optional-chained binding reads as "this row
+    // might not be here", which is exactly the wrong thing to say about a row
+    // that is never here.
+    //
+    // Every binding below is optional-chained for a different and live
+    // reason — each row is rendered conditionally (admin gate, native build,
+    // signed-in state) — so the guard describes a real absence.
     document.getElementById('drawer-row-messages')
       ?.addEventListener('click', () => HeaderMenu.close());
-    // Share — a dialog of its own, so it waits for the drawer to be
-    // gone rather than fading in across the drawer's exit (#977).
-    document.getElementById('drawer-row-share')
-      .addEventListener('click', () => {
-        Promise.resolve(HeaderMenu.close()).then(() => {
-          if (window.AppView) AppView.openShareModal();
-        });
-      });
     // Settings — the #settings screen (settings-modal-to-screen
     // conversion). Same real-anchor idiom as Challenges / Profile above:
     // navigation rides the anchor's hash, this handler just closes the
