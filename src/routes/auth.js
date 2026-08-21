@@ -414,11 +414,14 @@ function authRoutes(config) {
         externalFlowsAvailable: IS_STAGING || githubLink.isEnabled(config),
         // The platform's own app row — slug, display name, repo and deployed
         // short sha — or null on a deployment that has no self-hosted row.
-        // This is what the home screen's Improve button targets, which is how
-        // "Improve" there means "improve Social Vibecoding itself" rather than
-        // nothing at all. Same shape as walletLinkEnabled / cliAuthEnabled
-        // above: a DEPLOYMENT fact riding the user payload, because the client
-        // renders what the server reports and never sniffs its environment.
+        // The home screen's Improve button used to target this (it shows no
+        // button now — the target cleared only on some return paths, so the
+        // button lingered after backing out of an app); the field stays
+        // because it is the one way a client can identify the self-hosted row
+        // (GET /api/apps hides it from non-admins on purpose). Same shape as
+        // walletLinkEnabled / cliAuthEnabled above: a DEPLOYMENT fact riding
+        // the user payload, because the client renders what the server
+        // reports and never sniffs its environment.
         platformApp,
       },
     });
