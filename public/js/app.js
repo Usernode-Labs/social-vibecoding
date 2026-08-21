@@ -127,6 +127,13 @@ const App = {
     try {
       navigator.serviceWorker?.controller?.postMessage({ type: 'clear-api-cache' });
     } catch (err) { /* no SW — nothing cached to drop */ }
+    // #487 follow-up: which apps this browser has opened offline-capable is
+    // the same kind of session residue as the cached feed, and it goes with
+    // it. Bare `AppView` — it is a classic-script top-level `const`, so
+    // `window.AppView` would silently be undefined (see resyncCurrentView).
+    try {
+      if (typeof AppView !== 'undefined') AppView.clearOfflineReady();
+    } catch (err) { /* ignore */ }
   },
 
   // True while the shell is running on the snapshot rather than a verified
@@ -339,12 +346,33 @@ const App = {
   _applyOfflineShot() {
     let shot = null;
     try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
-    if (shot !== 'offline' && shot !== 'offline-signin') return null;
+    if (shot !== 'offline' && shot !== 'offline-signin'
+        && shot !== 'offline-app' && shot !== 'offline-app-blocked') return null;
     if (shot === 'offline-signin' && (!location.hash || location.hash === '#')) {
       try { history.replaceState(null, '', location.search + '#login'); } catch (err) { /* ignore */ }
     }
     try { window.Offline?.forceOffline(); } catch (err) { /* ignore */ }
     return shot;
+  },
+
+  // Screenshot-state deep links `?shot=offline-app` / `?shot=offline-app-blocked`
+  // (#487 follow-up): the offline App tab, with and without an app whose own
+  // service worker can serve it. The offline state itself is pinned much
+  // earlier, by _applyOfflineShot above; painting the App tab needs the
+  // screens to exist, so it runs late, beside _applyLaunchShot.
+  //
+  // Both are self-contained — see AppView.showOfflineAppShot for why they
+  // synthesise the app record instead of naming a real slug.
+  //
+  // Bare `AppView`: classic-script top-level `const`, so `window.AppView`
+  // would silently be undefined (see resyncCurrentView).
+  _applyOfflineAppShot() {
+    let shot = null;
+    try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
+    if (shot !== 'offline-app' && shot !== 'offline-app-blocked') return;
+    try {
+      if (typeof AppView !== 'undefined') AppView.showOfflineAppShot(shot === 'offline-app');
+    } catch (err) { /* ignore */ }
   },
 
   // Swap the drawer's Profile row between the generic person glyph and the
@@ -549,6 +577,7 @@ const App = {
     App._applyMenuShot();
     App._applyImproveShot();
     App._applyLaunchShot();
+    App._applyOfflineAppShot();
     App._applyFeedbackShot();
   },
 

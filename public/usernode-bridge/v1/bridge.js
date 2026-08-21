@@ -5662,6 +5662,56 @@
   })();
   /* __USERNODE_ISSUE_STATE_END__ */
 
+  /* __USERNODE_OFFLINE_READY_BEGIN__ */
+  // ── Offline-capability announcement (#487 follow-up) ────────────────
+  //
+  // The shell cannot see inside this origin. An app's service worker is
+  // registered on the app's OWN subdomain, and the platform's worker and
+  // storage live on the platform origin, so while offline the shell used
+  // to refuse to mount any app frame at all: an app that had precached
+  // its own shell was told "This app needs a connection — reconnect to
+  // open it." alongside one that had never heard of a service worker.
+  //
+  // This announces the single fact the shell needs and cannot obtain for
+  // itself — a service worker is CONTROLLING this document right now, so
+  // reloading it with no network will be served from that worker's cache.
+  // The shell remembers it per app slug and, while offline, mounts the
+  // frame for those apps instead of the placeholder.
+  //
+  // OBSERVED, NEVER DECLARED. `navigator.serviceWorker.controller` is the
+  // browser's own statement that this document was served under a worker;
+  // an app cannot claim a capability it does not have. Both directions are
+  // sent, so an app that unregisters its worker — or one whose
+  // registration the WebView refuses — stops being opened offline on its
+  // next load rather than getting a frame that cannot paint.
+  (function () {
+    function post(kind) {
+      try {
+        window.parent.postMessage({ __usernode_offline_ready: kind }, "*");
+      } catch (_) { /* parent unreachable — nothing to announce to */ }
+    }
+
+    function announce() {
+      try {
+        post(navigator.serviceWorker.controller ? "ready" : "not-ready");
+      } catch (_) { /* serviceWorker access threw — say nothing */ }
+    }
+
+    try {
+      // Top-level pages (the shell itself, a bare app subdomain, a
+      // standalone dev server) have no parent to announce to.
+      if (!(window.parent && window.parent !== window)) return;
+      if (!navigator.serviceWorker) return;
+      // A worker registered during THIS load only takes control once it has
+      // activated and claimed, which is strictly after this script runs. So
+      // a first-ever load announces "not-ready" and corrects itself on
+      // controllerchange; every later load announces "ready" immediately.
+      navigator.serviceWorker.addEventListener("controllerchange", announce);
+      announce();
+    } catch (_) { /* serviceWorker unavailable in this context */ }
+  })();
+  /* __USERNODE_OFFLINE_READY_END__ */
+
   /* __USERNODE_PLATFORM_LINK_START__ */
   // ── Floating "Open in Usernode" pill (chromeless share views) ─────────
   //
