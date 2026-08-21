@@ -27,50 +27,54 @@ const kudosJs = fs.readFileSync(path.join(root, 'frontend/src/features/leaderboa
 const css = fs.readFileSync(path.join(root, 'public/css/app.css'), 'utf8');
 
 const header = html.slice(0, html.indexOf('</header>'));
-const DRAWER_SLOTS = [
+// THE UI OVERHAUL emptied the drawer of everything that was not navigation or
+// notifications. These four slots are the load-bearing survivors, and where
+// each one now lives is the thing this file pins:
+//
+//   #platform-version-pill-slot  → the Improve panel's footer (app-scoped
+//   #native-app-version-slot        reference information, which is what the
+//   #app-fork-badge-slot            panel is for)
+//   #kudos-budget-slot           → RETIRED with the drawer's status pane. The
+//                                  kudos figure lives on the Leaderboard,
+//                                  which the home screen's Challenges area
+//                                  links to.
+//   #ai-budget-slot              → Settings → Anthropic API key
+//
+// The load-bearing property is unchanged and is why they are pinned at all:
+// each kept its id while changing parent, because renderers across app.js /
+// app-view.js / kudos.js resolve them with getElementById. A well-meaning
+// rename would break the value silently.
+const IMPROVE_SLOTS = [
   'platform-version-pill-slot',
   'native-app-version-slot',
   'app-fork-badge-slot',
-  'kudos-budget-slot',
 ];
 
-// ─── The slots moved, and kept their ids ─────────────────────────────────
-
-// The sidebar reorg (#913) split the old status pane in two: the budget
-// slots (kudos, AI credit) stayed in #drawer-status-pane at the top,
-// while the version pills + fork badge moved to the anchored
-// #drawer-footer at the bottom of the panel. Same load-bearing property
-// as before: every slot keeps its id, exactly once, in its region.
-test('each drawer status slot exists exactly once in its assigned region', () => {
-  const paneStart = html.indexOf('id="drawer-status-pane"');
-  assert.ok(paneStart > -1, '#drawer-status-pane is missing from the shell');
-  // The pane runs until the first drawer navigation row after it.
-  const paneEnd = html.indexOf('id="drawer-row-node"');
-  assert.ok(paneEnd > paneStart, 'the status pane sits above the Node row');
-  const footerStart = html.indexOf('id="drawer-footer"');
-  assert.ok(footerStart > paneEnd, '#drawer-footer sits below the nav rows');
-
-  const PANE_SLOTS = ['kudos-budget-slot'];
-  const FOOTER_SLOTS = [
-    'platform-version-pill-slot', 'native-app-version-slot',
-    'app-fork-badge-slot',
-  ];
-  for (const id of DRAWER_SLOTS) {
+test('each surviving slot exists exactly once, in its new region', () => {
+  const improveStart = html.indexOf('id="improve-footer"');
+  assert.ok(improveStart > -1, '#improve-footer is missing from the shell');
+  for (const id of IMPROVE_SLOTS) {
     const hits = html.match(new RegExp(`id="${id}"`, 'g')) || [];
     assert.equal(hits.length, 1, `exactly one #${id} in the shell`);
-    const at = html.indexOf(`id="${id}"`);
-    if (PANE_SLOTS.includes(id)) {
-      assert.ok(at > paneStart && at < paneEnd,
-        `#${id} lives inside #drawer-status-pane`);
-    } else {
-      assert.ok(FOOTER_SLOTS.includes(id), `#${id} is assigned a region`);
-      assert.ok(at > footerStart, `#${id} lives inside #drawer-footer`);
-    }
+    assert.ok(html.indexOf(`id="${id}"`) > improveStart,
+      `#${id} lives inside the Improve panel's footer`);
+  }
+
+  // The AI-credit slot is a settings pane's now.
+  const apiKey = html.indexOf('data-settings-section="api-key"');
+  assert.ok(apiKey > -1, 'the api-key settings pane is missing');
+  assert.ok(html.indexOf('id="ai-budget-slot"') > apiKey,
+    '#ai-budget-slot lives inside the Anthropic API key section');
+
+  // And the drawer's status pane is gone outright, meters included.
+  for (const id of ['drawer-status-pane', 'drawer-row-kudos', 'kudos-budget-slot',
+    'drawer-footer', 'drawer-row-theme']) {
+    assert.equal(html.indexOf(`id="${id}"`), -1, `#${id} was retired`);
   }
 });
 
-test('none of the drawer status slots are duplicated in the header', () => {
-  for (const id of DRAWER_SLOTS) {
+test('none of the moved slots are duplicated in the header', () => {
+  for (const id of [...IMPROVE_SLOTS, 'ai-budget-slot', 'kudos-budget-slot']) {
     assert.ok(!header.includes(`id="${id}"`), `#${id} has left the header`);
   }
   assert.ok(!header.includes('id="leaderboard-btn"'),
@@ -84,7 +88,7 @@ test('the header keeps navigation + alerting only, hamburger last', () => {
   // #feedback-btn, #work-drawer-btn and #dev-console-btn — and put the whole
   // of what they did behind #improve-btn. What is left is Improve, the bell
   // and the hamburger, in that order.
-  const order = ['improve-btn', 'notifications-btn', 'header-menu-btn'];
+  const order = ['improve-btn', 'header-menu-btn'];
   let prev = -1;
   for (const id of order) {
     const at = header.indexOf(`id="${id}"`);
@@ -92,16 +96,14 @@ test('the header keeps navigation + alerting only, hamburger last', () => {
     assert.ok(at > prev, `#${id} comes after the previous header control`);
     prev = at;
   }
-  // The hamburger is the catch-all menu now, so it owns the last slot.
-  const menu = header.indexOf('id="header-menu-btn"');
-  const bell = header.indexOf('id="notifications-btn"');
-  assert.ok(menu > bell, 'the hamburger is the rightmost header control');
-  // The retired four must not creep back in as a second way to do the same
+  // Two controls left, and the hamburger owns the last slot: it is the
+  // catch-all menu AND the notifications surface now.
+  // The retired five must not creep back in as a second way to do the same
   // things — that split is exactly what the overhaul removed.
   for (const id of ['app-mode-switch', 'feedback-btn', 'work-drawer-btn',
-    'dev-console-btn']) {
+    'dev-console-btn', 'notifications-btn']) {
     assert.equal(header.indexOf(`id="${id}"`), -1,
-      `#${id} was retired into the Improve panel and must not return to the header`);
+      `#${id} was retired and must not return to the header`);
   }
 });
 
@@ -153,9 +155,12 @@ test('the deploy dot is derived from the rendered pills, not a duplicate flag', 
     path.join(root, 'frontend/src/features/header/header-menu-controller.js'), 'utf8');
   assert.match(headerMenuJs, /refreshDeployDot\(\)\s*\{/, 'DrawerStatus.refreshDeployDot is defined');
   const fn = headerMenuJs.slice(headerMenuJs.indexOf('  refreshDeployDot() {'));
-  // Post-#913 the version rows live in #drawer-footer and signal a
-  // rolling deploy with .drawer-ver--deploying instead of the pill class.
-  assert.match(fn.slice(0, 600), /#drawer-footer \.drawer-ver--deploying/,
+  // Post-#913 the version rows signalled a rolling deploy with
+  // .drawer-ver--deploying instead of the pill class; THE UI OVERHAUL moved
+  // those rows from #drawer-footer to the Improve panel's footer, so the
+  // scope moved with them. The DOT stays on the hamburger — it is the ambient
+  // "something is happening" cue, and the hamburger is on every screen.
+  assert.match(fn.slice(0, 700), /#improve-footer \.drawer-ver--deploying/,
     'reads the deploying state off the rendered pills — the single source of truth');
   // The platform-revision renderer and the drawer lifecycle both synchronize
   // the dot. dApp deploy pills live on home cards and are out of scope.
@@ -214,12 +219,13 @@ test('the fork row visibility is driven by renderForkBadge', () => {
 
 // ─── Status-pane rows are not clickable containers ───────────────────────
 
-test('status-pane rows are plain divs — the pills carry their own anchors', () => {
+test('reference rows are plain divs — the pills carry their own anchors', () => {
   // renderPlatformVersionPill's stale state renders a <button
   // onclick="location.reload()">, and the live state an <a>. Nesting
-  // those inside a clickable row would be invalid markup.
+  // those inside a clickable row would be invalid markup. The rule follows the
+  // rows to the Improve panel and to Settings; #drawer-row-kudos is retired.
   for (const id of ['drawer-row-platform-version',
-    'drawer-row-native-app-version', 'drawer-row-app-fork', 'drawer-row-kudos',
+    'drawer-row-native-app-version', 'drawer-row-app-fork',
     'drawer-row-ai-budget']) {
     const row = html.match(new RegExp(`<(\\w+) id="${id}"`));
     assert.ok(row, `${id} exists`);
@@ -229,25 +235,25 @@ test('status-pane rows are plain divs — the pills carry their own anchors', ()
 
 // ─── AI-credit row (#555) ────────────────────────────────────────────────
 
-// Every signed-in user sees their own daily AI allowance here. The row
-// ships hidden because its audience isn't known until the me-scoped
-// fetch answers. Pinned here alongside the older slots.
+// Every signed-in user sees their own daily AI allowance. The row ships EMPTY
+// because its audience isn't known until the me-scoped fetch answers.
+//
+// THE UI OVERHAUL moved it out of the drawer's status pane and into Settings →
+// Anthropic API key: it is a figure you read while deciding whether to add a
+// key, not something you act on from a navigation menu. Same module, same slot
+// id — see tests/ai-credit-drawer.test.js for the rest of the wiring.
 //
 // A sibling admin-only "Anthropic credits" row shipped in the same pane
 // and was removed again (it could only ever read "Not set up"); the
 // balance lives solely in the console's Spend limits section now.
 
-test('the AI-credit row lives in the status pane and ships hidden', () => {
-  const paneStart = html.indexOf('id="drawer-status-pane"');
-  const paneEnd = html.indexOf('id="drawer-row-node"');
+test('the AI-credit row lives in the Anthropic API key section', () => {
+  const paneStart = html.indexOf('data-settings-section="api-key"');
   const id = 'drawer-row-ai-budget';
   const hits = html.match(new RegExp(`id="${id}"`, 'g')) || [];
   assert.equal(hits.length, 1, `exactly one #${id} in the shell`);
-  const at = html.indexOf(`id="${id}"`);
-  assert.ok(at > paneStart && at < paneEnd, `#${id} lives inside #drawer-status-pane`);
-  const row = html.match(new RegExp(`<div id="${id}"[^>]*>`));
-  assert.ok(row, `#${id} is a <div>`);
-  assert.match(row[0], /class="hidden /, `#${id} ships hidden`);
+  assert.ok(html.indexOf(`id="${id}"`) > paneStart,
+    `#${id} lives inside the Anthropic API key pane`);
   // Its slot is resolved by getElementById, same contract as the older
   // pills — a rename would break the renderer silently.
   assert.equal((html.match(/id="ai-budget-slot"/g) || []).length, 1,
@@ -298,25 +304,33 @@ test('the drawer constrains a long pill so it cannot widen the 15rem panel', () 
     'and their value truncates rather than overflowing');
 });
 
-// ─── One scroller, with the theme control and status pane inside it ──────
+// ─── One scroller, with notifications first inside it ───────────────────
 
-test('the drawer body is one scroller holding the theme control and status pane', () => {
+test('the drawer body is one scroller, notifications leading', () => {
   const scroller = html.match(/<div id="header-menu-rows"[^>]*>/);
   assert.ok(scroller, '#header-menu-rows exists');
   assert.match(scroller[0], /overflow-y-auto/, 'the drawer body scrolls');
   assert.match(scroller[0], /min-h-0/,
     'min-h-0 is required for a flex child to actually scroll rather than grow');
   const at = html.indexOf('id="header-menu-rows"');
-  for (const id of ['drawer-row-theme', 'drawer-status-pane', 'drawer-row-admin']) {
+  for (const id of ['drawer-notifications', 'drawer-row-admin']) {
     assert.ok(html.indexOf(`id="${id}"`) > at, `#${id} is inside the scroller`);
   }
+  // Notifications lead: the bell merged INTO this drawer, and "what happened
+  // while I was away" is what the catch-all menu opens onto now.
+  assert.ok(html.indexOf('id="drawer-notifications"') < html.indexOf('id="drawer-row-node"'),
+    'notifications come before every navigation row');
 });
 
 // ─── The kudos badge no longer pokes at header layout ────────────────────
 
 test('the kudos badge stopped driving the header title measurement', () => {
   assert.ok(!/HeaderLayout\?\.refresh/.test(kudosJs),
-    'the badge is in the drawer now — it cannot affect the centred header title');
+    'the badge left the header long ago — it cannot affect the centred title');
+  // The renderer keeps its getElementById contract even though THE UI OVERHAUL
+  // retired the drawer row it painted into: it no-ops on a missing slot, and
+  // leaving the lookup intact is what lets the figure be re-homed later
+  // without touching the module.
   assert.match(kudosJs, /getElementById\('kudos-budget-slot'\)/,
     'and still resolves its slot by the unchanged id');
 });

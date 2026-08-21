@@ -15,15 +15,10 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
-const { runModules, workDrawerImports } = require('./helpers/bundle-module');
 
 const read = (f) => fs.readFileSync(path.join(__dirname, '..', 'public', 'js', f), 'utf8');
 const MERGE_STATUS_SRC = read('merge-status.js');
 const APP_VIEW_SRC = read('app-view.js');
-// #1079 chunk B moved this module into the React bundle (it is the same
-// file — see the note at the top of it); only the path changed here.
-const WORK_DRAWER_SRC = fs.readFileSync(
-  path.join(__dirname, '..', 'frontend', 'src', 'features', 'work-drawer', 'work-drawer.js'), 'utf8');
 
 // `opts.el` backs document.getElementById (the roster paints into it);
 // `opts.fetchData` backs fetch().json() (the roster endpoint's payload).
@@ -59,20 +54,6 @@ function makeAppView(opts) {
   const AppView = sandbox.__AppView;
   AppView._proposalsCtx = { majority: 3, activeUsers: 5, locked: false };
   return AppView;
-}
-
-// work-drawer.js is a bundle module and imports the kit-surface seam and (since
-// #1191 slice 6 conversion 4) its own store, neither of which a classic-script
-// `runInContext` can compile — runModules rewrites the imports into reads of
-// the stub table and leaves the rest of the source alone. See
-// tests/helpers/bundle-module.js.
-function makeWorkDrawer(opts) {
-  const sandbox = makeSandbox(opts);
-  return runModules(
-    sandbox,
-    [['merge-status.js', MERGE_STATUS_SRC], ['work-drawer.js', WORK_DRAWER_SRC]],
-    { imports: workDrawerImports(), tail: 'return WorkDrawer;' },
-  );
 }
 
 // The pill is a descriptor now, not a fragment of HTML. `{ yes, majority }` is
@@ -216,42 +197,8 @@ test('_votingHelpText: invited default-clock branch names the rule + advisory ta
   assert.match(txt, /2 advisory votes from non-approvers are recorded but don’t count/);
 });
 
-// ── header-cog drawer "Your proposals" section (ex-home strip) ────────
-
-test('cog drawer: pill uses the qualified tally vs votes_required, with the advisory chip', () => {
-  const WorkDrawer = makeWorkDrawer();
-  WorkDrawer.proposals = [{
-    id: 42, app_slug: 'demo', app_name: 'Demo App', pr_title: 'Add a thing',
-    status: 'promoted', yes_count: 2, no_count: 0,
-    qualified_yes_count: 0, qualified_no_count: 0,
-    approval_policy: 'invited', votes_required: 1, majority: 3,
-    check_state: 'passing',
-  }];
-  WorkDrawer.governance = [{
-    id: 300, app_slug: 'demo', app_name: 'Demo App', title: 'Set FOO_KEY',
-    up_count: 2, down_count: 0,
-    qualified_yes_count: 0, qualified_no_count: 0,
-    approval_policy: 'invited', votes_required: 1, majority: 3,
-  }];
-  const pills = pillsOf(WorkDrawer.proposalsSection());
-  // PR row: 0 (approver yes) / 1 (governed requirement), +2 advisory —
-  // NOT the raw-tally "2 / 3" (nor a false-green "2 / 1").
-  // Governance row gets the same treatment.
-  assert.deepEqual(pills, [
-    { yes: 0, majority: 1, advisory: 2 },
-    { yes: 0, majority: 1, advisory: 2 },
-  ]);
-});
-
-test('cog drawer: default-policy rows keep the raw tally, no advisory chip', () => {
-  const WorkDrawer = makeWorkDrawer();
-  WorkDrawer.proposals = [{
-    id: 42, app_slug: 'demo', app_name: 'Demo App', pr_title: 'Add a thing',
-    status: 'promoted', yes_count: 2, no_count: 0, majority: 3,
-    check_state: 'passing',
-  }];
-  WorkDrawer.governance = [];
-  // advisory: 0 is what makes the renderer omit the chip entirely.
-  assert.deepEqual(pillsOf(WorkDrawer.proposalsSection()),
-    [{ yes: 2, majority: 3, advisory: 0 }]);
-});
+// The header-cog drawer's "Your proposals" section was asserted here too —
+// it rendered the same advisory pill from the same descriptor. THE UI OVERHAUL
+// retired that drawer (its session list is the Improve panel's, its pinned rows
+// are ordinary notifications in the merged hamburger), so the pill has one
+// renderer again and AppView.voteCountPill above is the whole contract.

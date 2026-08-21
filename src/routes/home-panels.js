@@ -739,24 +739,6 @@ const PANEL_REGISTRY = [
     key: 'challenges',
     title: 'Challenges',
     removable: true,
-    // ASYMMETRIC ON PURPOSE (#968), for exactly the reason Discover's is
-    // below. #947 made the phone block draw at its CONTENT height, but the
-    // footprint stayed two rows — so the height it gave up became a band of
-    // blank grid between the widget and the first row of app icons rather
-    // than space handed back to the page. The between-seasons state was a
-    // ~68px box inside a 238px reservation.
-    //
-    //   4 columns (phone): [4, 1] — full width, so the row it gives back is
-    //     a clean full-width gap rather than a notch mid-grid. The client
-    //     reshapes the CONTENT to fit that one 116px cell (title bar with the
-    //     leaderboard link, up to two rows, no footer) — see
-    //     HomePanels.renderChallengesPanel's compact branch.
-    //   5 columns (desktop): [2, 2] — UNCHANGED, so no stored desktop
-    //     arrangement moves and the tile keeps its four rows, its footer and
-    //     the leaderboard fill that spends the leftover height.
-    //
-    // At four columns all three widgets are one row tall now.
-    sizes: { 4: [4, 1], 5: [2, 2] },
     build: buildChallengesPanel,
     demo: demoChallengesPanel,
   },
@@ -764,22 +746,6 @@ const PANEL_REGISTRY = [
     key: 'discover',
     title: 'Discover',
     removable: false,
-    // ASYMMETRIC ON PURPOSE (#949). Discover's curated lane is ONE row of
-    // 40px tiles, so two grid rows was half a widget of dead space at both
-    // widths — worst on a phone, where a viewer who has added the featured
-    // apps got a one-line note inside a 238px box.
-    //
-    //   4 columns (phone): [4, 1] — full width, so the row it gives back is
-    //     a clean full-width gap rather than a notch mid-grid.
-    //   5 columns (desktop): [2, 2] — UNCHANGED, so no stored desktop
-    //     arrangement moves. The second row is earned rather than trimmed:
-    //     the client fills it with the "Popular" lane (HomePanels
-    //     .renderDiscoverPanel + Home.popularApps).
-    //
-    // Differing heights per column count need no new mechanism: widgetSize()
-    // below, HomeLayout.sizeOf() and reflow() all read this map per-cols,
-    // and the two breakpoints' layouts are stored and validated separately.
-    sizes: { 4: [4, 1], 5: [2, 2] },
     build: async () => ({}),
     demo: () => ({ demo: true }),
   },
@@ -787,14 +753,6 @@ const PANEL_REGISTRY = [
     key: 'create',
     title: 'Create app',
     removable: true,
-    // Full-width strip on a phone, a single tile on desktop. At four columns
-    // a 1x1 create tile read as one more app icon in a row of app icons —
-    // the one thing on the grid that is an ACTION rather than a launcher had
-    // the least presence of anything on it. One row of its own at 4x1 gives
-    // it the same weight as the two full-width widgets without spending a
-    // second row; the tile itself lays its icon and label out side by side
-    // below 640px (see .home-create-tile in home-panels.js / app.css).
-    sizes: { 4: [4, 1], 5: [1, 1] },
     build: async () => ({}),
     demo: () => ({ demo: true }),
   },
@@ -802,27 +760,22 @@ const PANEL_REGISTRY = [
 
 const PANEL_KEYS = new Set(PANEL_REGISTRY.map((p) => p.key));
 
-// The registry as the layout route and the client need it — keys, titles,
-// removability and footprints, with no builders. Exported so
-// src/routes/home-layout.js validates footprints against the SAME numbers
-// the client lays out with.
+// The registry as the client needs it — keys, titles and removability, with
+// no builders.
+//
+// EACH ENTRY USED TO CARRY A `sizes` FOOTPRINT TABLE, per column count, and
+// the layout route exported `widgetSize(key, cols)` so its overlap check ran
+// on the SERVER's own numbers rather than sizes a patched client claimed. THE
+// UI OVERHAUL made Discover, Challenges and Create app fixed sections of the
+// home screen rather than items of the launcher grid, so nothing is placed
+// and there is no footprint to validate. The registry still says which blocks
+// exist, what they are called, and which may be hidden.
 function panelRegistryPublic() {
   return PANEL_REGISTRY.map((p) => ({
     key: p.key,
     title: p.title,
     removable: p.removable !== false,
-    sizes: { 4: [...p.sizes[4]], 5: [...p.sizes[5]] },
   }));
-}
-
-// Footprint of one widget at one column count, or null for an unknown key.
-// The layout route's overlap check runs on these, so a buggy or hostile
-// client can never persist a self-overlapping arrangement.
-function widgetSize(key, cols) {
-  const entry = PANEL_REGISTRY.find((p) => p.key === key);
-  if (!entry) return null;
-  const size = entry.sizes[cols] || entry.sizes[5];
-  return [size[0], size[1]];
 }
 
 // The viewer's dismissed keys, filtered to the live registry so a key
@@ -946,13 +899,14 @@ function homePanelRoutes() {
 
 module.exports = {
   homePanelRoutes,
-  // Exported for tests / future panels, and for src/routes/home-layout.js —
-  // which validates footprints against the SAME registry the client lays
-  // out with, so the two can't disagree about how big a widget is.
+  // Exported for tests / future blocks, and for src/routes/home-layout.js,
+  // which reads PANEL_KEYS to drop stored widget rows from a pre-overhaul
+  // arrangement. It used to import `widgetSize` too, and validated a written
+  // layout's overlaps against the SAME footprints the client laid out with;
+  // nothing is placed any more, so there is no footprint to agree on.
   PANEL_REGISTRY,
   PANEL_KEYS,
   panelRegistryPublic,
-  widgetSize,
   parseRewardPoints,
   resolveProgress,
   buildChallengeRow,

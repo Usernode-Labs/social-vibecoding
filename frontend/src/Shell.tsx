@@ -62,10 +62,8 @@ import { ImproveIsland } from './features/improve';
 import { LeaderboardScreen } from './features/leaderboard';
 import { HeaderMenu } from './features/header/header-menu';
 import { PlatformHeader } from './features/header/platform-header';
-import { NotificationsPanel } from './features/notifications';
 import { MessagesScreen } from './features/messages';
 import { SettingsScreen } from './features/settings';
-import { WorkDrawerPanel } from './features/work-drawer';
 import { Dialogs } from './features/dialogs';
 import { StagingOverlay, VisualCompareOverlay } from './features/staging';
 import { OfflineBanner, ViewAsNonAdminBanner } from './features/shell/banners';
@@ -327,14 +325,24 @@ export function Shell() {
           #app-content write — see features/app-frame/app-frame.tsx.
       */}
       <AppViewIsland />
-      {/* Notifications dropdown (top-right anchored) — an ISLAND since #1079
-          chunk B: features/notifications owns the whole subtree and
-          public/js/notifications.js is retired. */}
-      <NotificationsPanel />
-      {/* Header-cog "your work" drawer — same chrome and position as the
-          notifications panel, same story: features/work-drawer owns it and
-          public/js/work-drawer.js is retired (#1079 chunk B). */}
-      <WorkDrawerPanel />
+      {/*
+          #notifications-panel (the bell dropdown) and #work-drawer-panel (the
+          header-cog "your work" drawer) both used to be islands here — same
+          chrome, same top-right position, one icon apart. THE UI OVERHAUL
+          retired both roots:
+
+            * the notifications LIST moved into the hamburger, which is where
+              it renders now (features/header/header-menu.tsx, first thing in
+              the panel). features/notifications keeps its store, its list
+              components and its module — only the panel around them is gone.
+            * the cog drawer's contents were split by what they are ABOUT: its
+              session list is the Improve panel's, scoped to the app on screen
+              with an overflow area for every other, and its pinned "Needs
+              attention" rows are ordinary notifications in the merged drawer.
+
+          Three top-right drawers with three icons above them was the thing
+          the overhaul set out to remove; what is left is one.
+      */}
       {/*
           The Improve panel — the UI overhaul's centrepiece, and the one
           surface for everything you do *to* the app on screen rather than

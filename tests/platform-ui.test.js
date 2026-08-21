@@ -322,7 +322,7 @@ test('#improve-btn lives inside the header, leading the icon group', () => {
     'Improve must sit after the title, in the right group'
   );
   assert.ok(
-    header.indexOf('id="improve-btn"') < header.indexOf('id="notifications-btn"'),
+    header.indexOf('id="improve-btn"') < header.indexOf('id="header-menu-btn"'),
     'Improve must lead the icon group'
   );
 });

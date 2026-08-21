@@ -610,10 +610,18 @@ test('dapp.json checks the canonical routes and every legacy alias', () => {
     assert.ok(tests.some((t) => t.path === p), `a check exercises ${p}`);
   }
 
-  const drawerRow = tests.find(
-    (t) => typeof t.expectSelector === 'string' && t.expectSelector.includes('#drawer-row-leaderboard')
+  // The way IN. It was a hamburger row until THE UI OVERHAUL, which moved it
+  // to the home screen's Challenges area — beside the shared progress it
+  // links to, rather than in a menu you open from memory.
+  const entryPoint = tests.find(
+    (t) => typeof t.expectSelector === 'string'
+      && t.expectSelector.includes('#home-challenges-section')
+      && t.expectSelector.includes('home-panel-lb-browse')
   );
-  assert.ok(drawerRow, 'a check asserts the Leaderboard drawer row renders');
+  assert.ok(entryPoint, 'a check asserts the Challenges area\'s leaderboard link renders');
+  assert.ok(!tests.some((t) => typeof t.expectSelector === 'string'
+    && t.expectSelector.includes('#drawer-row-leaderboard')),
+  'and nothing still selects the retired drawer row');
 
   const shot = tests.find((t) => t.path === '/?shot=challenge-detail#leaderboard/challenges');
   assert.ok(shot, 'a check exercises the challenge-detail screenshot state');

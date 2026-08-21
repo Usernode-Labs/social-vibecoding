@@ -547,8 +547,35 @@ const App = {
     if (App._shotHash === location.hash) return;
     App._shotHash = location.hash;
     App._applyMenuShot();
+    App._applyImproveShot();
     App._applyLaunchShot();
     App._applyFeedbackShot();
+  },
+
+  // Screenshot-state deep link `?shot=improve`: open the Improve panel at
+  // boot, so the surface THE UI OVERHAUL built — sessions, the dev links, the
+  // repo and version rows — is reachable by URL for the before/after
+  // screenshots, the "Test this change" button and the dapp.json checks. It is
+  // only reachable by TAPPING the header button otherwise, which no still
+  // frame and no plain route can do.
+  //
+  // Deliberately NOT env-gated, for exactly the reason ?shot=menu is not: pure
+  // UI state with no writes, and an IS_STAGING-only link would starve the
+  // production "before" shot forever while an ungated one starts working the
+  // moment it ships. Pair it with ?demo=1 in staging so the session sections
+  // have mock rows to render.
+  //
+  // One tick after restoreFromHash, like ?shot=menu, so the panel opens over a
+  // settled shell — and so App.DrawerStatus.setAppOpen() has published a
+  // target on an #app/<slug> route. Without a target the panel refuses to open,
+  // which is the correct behaviour, not a failure to work around.
+  _applyImproveShot() {
+    let shot = null;
+    try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
+    if (shot !== 'improve') return;
+    setTimeout(() => {
+      try { window.Improve?.open(); } catch (err) { /* ignore */ }
+    }, 50);
   },
 
   _applyMenuShot() {
@@ -1246,7 +1273,9 @@ const App = {
       Home.load();
     }
     if (window.Notifications) Notifications.refresh?.();
-    if (window.WorkDrawer) WorkDrawer.refresh?.();
+    // The cog drawer used to be refreshed here. It is retired; its session
+    // list is the Improve panel's, which reloads only while it is open.
+    if (window.Improve) Improve.onSessionStateChanged?.();
     // Messages owns a global drawer unread badge even while its screen is
     // closed, so reconcile its summary after a disconnect in every view.
     window.UsernodeReact?.messages?.refresh?.();
@@ -1828,7 +1857,7 @@ const App = {
   // and already the live-update pattern — its cards carry activity
   // counts that these same events move).
   refreshHomeProposals() {
-    if (window.WorkDrawer && WorkDrawer.refresh) WorkDrawer.refresh();
+    if (window.Improve && Improve.onSessionStateChanged) Improve.onSessionStateChanged();
     const homeScreen = document.getElementById('home-screen');
     if (typeof Home !== 'undefined' && homeScreen && !homeScreen.classList.contains('hidden')) {
       Home.load();

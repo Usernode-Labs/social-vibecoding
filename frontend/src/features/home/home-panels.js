@@ -1,81 +1,81 @@
-// Home-screen panels (issue #911) — the widget blocks that live IN the
-// launcher grid alongside the app tiles. Three exist:
+// Home-screen sections (issue #911) — the three blocks stacked under the
+// launcher grid. THE UI OVERHAUL fixed their order and their hosts:
 //
-//   challenges — the season's open challenges with the viewer's progress.
-//   discover   — the admin-curated featured tiles, with "Browse all apps"
-//                as the block's footer. The shell's ONLY door to the app
+//   discover   — the admin-curated featured tiles, the Popular lane, and
+//                "Browse all apps". The shell's ONLY door to the app
 //                directory, which is why it cannot be hidden.
-//   create     — the create-an-app tile. On EVERY home screen, for every
-//                account: an account with no app quota gets the same widget,
+//   challenges — the season's open challenges with the viewer's progress,
+//                and under them the LEADERBOARD standings preview. That
+//                preview is where the standings live on the home screen now
+//                that the hamburger's Leaderboard row is gone.
+//   create     — the create-an-app block. On EVERY home screen, for every
+//                account: an account with no app quota gets the same block,
 //                dimmed, explaining itself on tap (see renderCreatePanel for
-//                why this is unconditional rather than conditionally placed).
+//                why this is unconditional rather than conditionally shown).
 //
-// PLACEMENT is not this module's business any more. Each widget occupies a
-// real (column, row) cell chosen by the viewer, stored per breakpoint and
-// written for the whole grid at once — see frontend/src/features/home/home-layout.js and
-// PUT /api/home-layout. This module owns the registry view (which widgets
-// exist, which are hidden, which may be hidden) and the CONTENT of each
-// block; home.js plants a slot per widget and this paints into it.
+// PLACEMENT IS GONE, and with it a whole dimension of this module. Each
+// block used to be a draggable ITEM of the launcher grid — home.js planted a
+// `[data-panel-slot="<key>"]` host inside #app-list at the viewer's stored
+// (column, row) cell, HomeLayout carried a per-breakpoint footprint table for
+// each one, and PUT /api/home-layout persisted where they had been dropped.
+// They are three fixed <section> hosts in a fixed order now, outside
+// #app-list, and the drag gesture belongs to app tiles alone. The hosts still
+// carry `data-panel-slot="<key>"` — the attribute names WHICH block a host is
+// for, which is as true of a section as it was of a grid cell, and it is what
+// the dapp.json checks and the screenshot assertions select on.
 //
-// NAMING — "panel", not "widget". home.js already owns a DIFFERENT
-// concept called "widget" (Home.renderWidgetSection / #widget-strip /
-// .widget-tile: the iOS home-screen widget's pinned app grid, whose UI
-// says "Usernode widget"). Both render on this same screen, so everything
-// here says `panel`. Nothing user-facing says it: the block is titled
-// "Challenges" and the Settings row is "Home screen widgets".
+// What that removed, in this file: `gridSlotKeys()`/`hasLayoutRegistry()`
+// (the placement membership list), the `#home-panels` stacked fallback host
+// (it existed only because a block inside #app-list vanished whenever
+// #app-list did — a search keystroke, or the moment before the first paint),
+// and the whole `inGrid` / `cols` split described below.
 //
-// LAYOUT — each panel is its OWN bordered <article class="home-panel">,
-// stacked with a gap, so a second widget lands as a distinct block rather
-// than another row inside a shared card. The title (and the ⋮ menu) travel
-// INSIDE each block: the panel area holds N widgets with N titles, so the
-// shared heading-above-the-section shape that "Featured apps" uses cannot
-// work here. Blocks are plain full-width children — .home-column bounds
-// the feed (see app.css; #922 removed the per-box bound).
+// NAMING — "panel", not "widget". home.js already owns a DIFFERENT concept
+// called "widget" (Home.renderWidgetSection / #widget-strip / .widget-tile:
+// the iOS home-screen widget's pinned app grid, whose UI says "Usernode
+// widget"). Both render on this same screen, so everything here says
+// `panel`. Nothing user-facing says either: the blocks are titled by their
+// own headings.
 //
-// DRAGGING — each block is an item of the app grid itself (home.js plants a
-// `[data-panel-slot="<key>"]` host inside #app-list at the widget's stored
-// cell), so ONE recognizer — the kit's attachGridPlacement the app tiles
-// also use — carries them. The whole title bar is the handle; the ⋮ button
-// and the widgets' own controls are excluded from it (_wire).
+// LAYOUT — each panel is its OWN bordered <article class="home-panel">, so a
+// block reads as a distinct box rather than another row inside a shared card.
+// The title (and the ⋮ menu) travel INSIDE each block: three blocks with
+// three titles cannot share the heading-above-the-section shape "Featured
+// apps" used. Blocks are plain full-width children — .home-column bounds the
+// feed (see app.css; #922 removed the per-box bound).
 //
-// DENSITY — the DESKTOP tile is capped at two app-grid rows
-// (--home-panel-max-h, derived in app.css) and spends that budget on a
-// ~26px title bar, FOUR 40px single-line rows and a ~27px footer. The PHONE
-// block owns ONE cell (#968) and spends it on a ~27px title bar carrying its
-// own leaderboard link plus TWO rows — no footer, which is what buys the
-// second row. Overflow is handled by rendering fewer rows (and, on desktop,
-// the footer's expand toggle) — never an inner scroller (a nested scroll
-// region inside the page scroller is a touch trap) and never a horizontal
-// pager (invisible to the screenshot capture and to dapp.json checks, which
-// can only navigate). That mirrors the removed mobile Challenges tab, which
-// paged by navigation: it was a plain vertical list of bordered cards on a
-// screen of its own.
+// DENSITY — a section sizes to its own CONTENT. That is the shape the full
+// render branch was always written for, and it is now the only one: the
+// capped variants (`inGrid: true`, the phone one-cell branch with its
+// two-row budget and its footer-less title bar) were concessions to a fixed
+// rectangle of the launcher canvas and went with the placement. What
+// survives is the four-row budget itself — a ~26px title bar, up to FOUR
+// 40px single-line rows, a ~27px footer — because it is a good density for
+// a home-screen block, and the leaderboard fill that spends whatever the
+// challenge rows leave (see fillSlots). Overflow is still handled by
+// rendering fewer rows plus the footer's expand toggle — never an inner
+// scroller (a nested scroll region inside the page scroller is a touch trap)
+// and never a horizontal pager (invisible to the screenshot capture and to
+// dapp.json checks, which can only navigate).
 //
-// UNDERFLOW is the other half, and it splits by breakpoint (#947, #968). On
-// a PHONE the widget is full-width and ONE ROW TALL, so a short list ends
-// sooner AND the page moves up with it: the block draws at its content
-// height (the `home-panel--fit` rule inside app.css's phone media block) and
-// its footprint is a single cell, so what it doesn't draw is a row of the
-// grid nobody reserved. On DESKTOP it
-// is a tile among app icons, where shrinking would leave a notch, so it
-// keeps its exact two-row height and spends the leftover on a LEADERBOARD
-// section: the top few rows of the same board the Leaderboard screen's
-// primary tab shows — the Topochain standings — plus the viewer's own row
-// when they have one. The server sends it as `panel.leaderboard`, already
-// carrying its `kind` ('topochain', or 'kudos' for the fallback board a
-// deployment with no public standings falls back to), its `label` and the
-// `you` flags; src/services/topochain/event-standings.js and
+// THE LEADERBOARD FILL is the standings preview under the challenge rows:
+// the top few rows of the same board the Leaderboard screen's primary tab
+// shows — the Topochain standings — plus the viewer's own row when they have
+// one. The server sends it as `panel.leaderboard`, already carrying its
+// `kind` ('topochain', or 'kudos' for the fallback board a deployment with
+// no public standings falls back to), its `label` and the `you` flags;
+// src/services/topochain/event-standings.js and
 // src/services/leaderboard-users.js are the one copy of each board's
-// ordering. See fillSlots/currentCols below for the row budget.
+// ordering. See fillSlots below for the row budget.
 //
 // FETCH DISCIPLINE. Home.load() is called from a dozen WS/event paths, so
-// this module must NOT fetch per Home.load(): ensureLoaded() is
-// TTL-guarded and de-duped on an in-flight promise, while render() is
-// pure paint from the cache. The #home-panels host is static markup the
-// home island renders once (frontend/src/features/home/index.tsx) and lives
-// OUTSIDE #app-list, so Home.render()'s wholesale innerHTML rewrite of the
-// grid never destroys it — and React never reconciles over what this module
-// paints into it, because the island renders that host empty and leaves it
+// this module must NOT fetch per Home.load(): ensureLoaded() is TTL-guarded
+// and de-duped on an in-flight promise, while render() is pure paint from
+// the cache. The three section hosts are static markup the home island
+// renders once (frontend/src/features/home/index.tsx) and they live OUTSIDE
+// #app-list, so Home.render()'s wholesale innerHTML rewrite of the grid
+// never destroys them — and React never reconciles over what this module
+// paints into them, because the island renders each host empty and leaves it
 // alone for good.
 'use strict';
 
@@ -94,72 +94,29 @@ const HomePanels = {
   // quietly eat the fold forever.
   _expanded: Object.create(null),
 
-  // How many row slots fit under the DESKTOP tile's height cap. The server
-  // returns at most this many challenges (CHALLENGE_ROW_LIMIT, kept in step
-  // with it); when more are open, the footer reads "See all N".
+  // ── The row budget ─────────────────────────────────────────────────
+  //
+  // How many challenge rows the block draws before the footer takes over
+  // with "See all N". The server returns at most this many challenges
+  // (CHALLENGE_ROW_LIMIT, kept in step with it).
+  //
+  // It used to be a per-breakpoint pair — four here, and a PHONE_ROW_SLOTS of
+  // two for the single grid cell the block owned below 640px (#968). A fixed
+  // section has no cell to fit into, so there is one budget at every width,
+  // and the phone half went with the placement.
+  //
+  // The number itself comes from app.css's own tokens, sized against two
+  // app-grid rows:
+  //   256 - border 2 - title bar 25.5 - footer 27  = 201.5px
+  //   a row is 40px (--home-panel-row-h); the fill's label costs 16px
   ROW_SLOTS: 4,
 
-  // …and how many fit the PHONE's single cell (#968). The server still sends
-  // four — it has no idea what viewport is asking — so a window dragged
-  // across 640px repaints the desktop shape from the same cache with no
-  // refetch. This is a DRAW budget, not a fetch one.
-  PHONE_ROW_SLOTS: 2,
-
-  // ── The breakpoint split (#947, #968) ──────────────────────────────
-  //
-  // PHONE (4 columns): the widget spans the full grid width and is ONE cell
-  // tall (registry `sizes` 4: [4, 1]), so a shorter block ends sooner and
-  // nothing beneath it is left holding blank space. It draws at its CONTENT
-  // height — that half is pure CSS: the article always carries
-  // `home-panel--fit`, and the `align-self: flex-start` rule lives inside
-  // app.css's `@media (max-width: 639.98px)` block, so a window dragged
-  // across the breakpoint resizes instantly, before any re-render.
-  //
-  // The CONTENT has to fit that one cell, and that half is decided here (see
-  // the compact branch of renderChallengesPanel). Budget, against
-  // --home-cell-h 7.25rem (116px) on a phone:
-  //   border 2 + title bar 27 + 2 rows x --home-panel-row-h (40) = 109px
-  // ~7px of headroom. The 14px meter lane is padding INSIDE the 40px row
-  // (border-box), so a metered list costs no extra height. There is no
-  // footer: a .home-panel-footer is 27px more and that is the second row.
-  // The way out lives in the title bar instead, exactly as Discover's browse
-  // control does for the same reason (#949).
-  //
-  // DESKTOP (5 columns): the widget is a TILE in a grid of app icons —
-  // shrinking it would leave a notch — so it keeps its exact two-row height
-  // and spends whatever the challenge rows don't use on a LEADERBOARD
-  // section (top builders + the viewer's own rank).
-  //
-  // The row budget, from app.css's own tokens:
-  //   tile 256 - border 2 - title bar 25.5 - footer 27  = 201.5px
-  //   a row is 40px (--home-panel-row-h); the label costs 16px
-  // so `fillRows = 4 - max(challengeRows, 1)` — 3 at zero or one challenge,
-  // 2 at two, 1 at three, 0 at four (a 40px row plus its 16px label does not
-  // fit in the ~41px the four-row state leaves).
-  DESKTOP_COLS: 5,
-
+  // Whatever the challenge rows leave goes to the LEADERBOARD fill:
+  // `4 - max(challengeRows, 1)` — 3 at zero or one challenge, 2 at two, 1 at
+  // three, 0 at four (a 40px row plus its 16px label does not fit in the
+  // ~41px the four-row state leaves).
   fillSlots(challengeRows) {
     return Math.max(0, HomePanels.ROW_SLOTS - Math.max(Number(challengeRows) || 0, 1));
-  },
-
-  // The column count the grid is rendering at. Home owns this (it reads the
-  // viewport against HomeLayout.BREAKPOINT_PX, the same 640px as the CSS);
-  // the fallbacks keep this module usable — and testable — with neither on
-  // the window. Unknown width defaults to the COMPACT rendering: it claims
-  // no space it can't fill and needs no fill data, so it is always safe.
-  currentCols() {
-    const w = window.Home;
-    if (w && typeof w.currentCols === 'function') {
-      const cols = Number(w.currentCols());
-      if (Number.isFinite(cols) && cols > 0) return cols;
-    }
-    const layout = window.HomeLayout;
-    const width = Number(window.innerWidth);
-    if (layout && typeof layout.columnsForWidth === 'function' && Number.isFinite(width)) {
-      return layout.columnsForWidth(width);
-    }
-    if (Number.isFinite(width)) return width >= 640 ? 5 : 4;
-    return 4;
   },
 
   // Escapes every character that is dangerous in EITHER a text node OR a
@@ -215,17 +172,16 @@ const HomePanels = {
     });
   },
 
-  // How many rows to draw. Collapsed spends the height cap on at most
-  // `slots` rows (ROW_SLOTS on the desktop tile, PHONE_ROW_SLOTS in the
-  // phone's single cell); the overflow affordance is the footer's expand
-  // toggle on desktop and, on a phone, tapping any row (every one of them
-  // opens the Challenges tab), so it no longer costs a row slot (it used to
-  // take the fourth).
+  // How many rows to draw. Collapsed spends the budget on at most `slots`
+  // rows (ROW_SLOTS unless a caller says otherwise); the overflow affordance
+  // is the footer's expand toggle, so it costs no row slot of its own (it
+  // used to take the fourth).
   // Expanded draws everything the server sent and the CSS cap lifts.
   //
-  // `expanded` is only ever honoured for the caller that HAS an expanded
-  // state — the phone branch passes `collapsed: true`, because growing past
-  // the cell is exactly what its footprint no longer allows (#968).
+  // `collapsed` forced the un-expanded rendering for the phone branch, whose
+  // one-cell footprint could not grow (#968). Nothing forces it now — the
+  // section grows with its content — but it stays honoured so the option is
+  // still the way to render a preview of a block somebody has expanded.
   //
   // `link` stays in the return shape as a compatibility flag for anything
   // still reading it, but it is always false: the footer owns overflow.
@@ -326,46 +282,42 @@ const HomePanels = {
   // ── Rendering ──────────────────────────────────────────────────────
 
   // Painted from the cache only — never fetches. Deliberately NOT gated on
-  // Home._dragActive: this section is outside #app-list, so painting it
+  // Home._dragActive: these sections are outside #app-list, so painting them
   // mid-drag can't yank a card out from under the pointer.
+  //
+  // ── One host per section, in a fixed order ─────────────────────────
+  //
+  // This used to paint into TWO shapes: `[data-panel-slot="<key>"]` hosts
+  // that Home.render() planted inside #app-list at each widget's stored
+  // (column, row) cell, and a standalone #home-panels stack below the grid as
+  // the fallback for views with no grid to ride in (an active search, or a
+  // grid that had not painted yet).
+  //
+  // THE UI OVERHAUL retired the placement, so both shapes collapse into one:
+  // three fixed section hosts, rendered in a fixed order, that no search
+  // keystroke or grid re-render can take away. The fallback existed only
+  // because a widget inside #app-list vanished whenever #app-list did.
+  SECTION_HOSTS: {
+    discover: 'home-discover-section',
+    challenges: 'home-challenges-section',
+    create: 'home-create-section',
+  },
+
   render() {
-    // Hosts, in two shapes. Home.render() plants one multi-cell slot INSIDE
-    // #app-list per placed widget — `[data-panel-slot="<key>"]` — and those
-    // win when they exist; the standalone #home-panels section below the
-    // grid is the fallback for views that have no grid to ride in (an active
-    // search, or a grid that hasn't painted yet). Painting whichever exists
-    // keeps one render path for both.
-    const slots = Array.from(document.querySelectorAll('[data-panel-slot]'));
-    const section = document.getElementById('home-panels');
-    if (!slots.length && !section) return;
-
-    if (slots.length) {
-      // Don't leave a stale copy in the section when the slots own it.
-      if (section) {
-        section.innerHTML = '';
-        section.classList.add('hidden');
-      }
-      for (const slot of slots) {
-        const key = slot.dataset.panelSlot;
-        const panel = HomePanels.panelFor(key);
-        // IN-GRID: this host is a real (column, row) rectangle of #app-list,
-        // so the desktop fill has a fixed height to fill. `cols` decides
-        // whether it does — see fillSlots / currentCols.
-        const html = panel
-          ? HomePanels.renderPanel(panel, { inGrid: true, cols: HomePanels.currentCols() })
-          : '';
-        slot.innerHTML = html;
-        slot.classList.toggle('hidden', !html);
-        HomePanels._stampState(slot);
-        if (html) HomePanels._wire(slot);
-      }
-      return;
+    // Signed out draws NOTHING — every block here is me-scoped (your
+    // challenge progress, the apps you don't have yet, your app quota), and
+    // the guard used to live in renderAll(), the one entry point there was.
+    const signedIn = !!(window.App && App.user);
+    for (const [key, hostId] of Object.entries(HomePanels.SECTION_HOSTS)) {
+      const host = document.getElementById(hostId);
+      if (!host) continue;
+      const panel = signedIn ? HomePanels.panelFor(key) : null;
+      const html = panel ? HomePanels.renderPanel(panel) : '';
+      host.innerHTML = html;
+      host.classList.toggle('hidden', !html);
+      HomePanels._stampState(host);
+      if (html) HomePanels._wire(host);
     }
-
-    const html = HomePanels.renderAll();
-    section.innerHTML = html;
-    section.classList.toggle('hidden', !html);
-    if (html) HomePanels._wire(section);
   },
 
   // Lift a widget's own state attributes onto its HOST.
@@ -394,27 +346,12 @@ const HomePanels = {
     }
   },
 
-  // Every widget the grid should place for this viewer, in registry order:
-  // the registry minus what they've hidden. This — NOT the built `panels`
-  // array — is what HomeLayout places, because `discover` and `create` are
-  // marker entries with no payload and would otherwise never get a cell.
-  hasLayoutRegistry() {
-    return !!(HomePanels._data && Array.isArray(HomePanels._data.registry));
-  },
-
-  gridSlotKeys() {
-    const data = HomePanels._data;
-    if (!data) return [];
-    const hidden = new Set(Array.isArray(data.hidden) ? data.hidden : []);
-    // The registry is the authority — it carries the marker widgets
-    // (discover, create) that build no payload and so never appear in
-    // `panels`. Falling back to the built panels when it is absent keeps a
-    // partial payload rendering something rather than blanking the grid.
-    const source = Array.isArray(data.registry) && data.registry.length
-      ? data.registry
-      : (Array.isArray(data.panels) ? data.panels : []);
-    return source.map((r) => r.key).filter((k) => k && !hidden.has(k));
-  },
+  // `hasLayoutRegistry()` and `gridSlotKeys()` lived here: the list of widgets
+  // HomeLayout should place for this viewer, and the flag that told home.js
+  // the authoritative footprints had arrived so a derived layout was safe to
+  // persist. Both went with the placement — the three sections are in the
+  // markup at fixed positions now, so nothing has to be placed and nothing
+  // has to wait for a registry to know where it goes.
 
   // Is this widget allowed to be hidden? Discover is not (its footer is the
   // shell's only door to the app directory). Everything else is — including
@@ -460,37 +397,17 @@ const HomePanels = {
     return { key, title: HomePanels.titleFor(key) };
   },
 
-  // One article per visible panel, stacked. Used ONLY by the #home-panels
-  // fallback host (the search view) — the in-grid path paints each slot
-  // individually so each widget lands in its own cell.
-  // Empty string = render nothing at all (the section is hidden).
-  //
-  // NOT in the grid, so there is no fixed-height rectangle to fill: this host
-  // never draws the desktop leaderboard fill, at any width. (The article is a
-  // plain block-level flex container here, so it already sizes to its
-  // content.) That is `inGrid: false`, which is all the fill is gated on —
-  // `cols` is the REAL viewport now (#968), because it also decides the
-  // challenges widget's phone SHAPE, and a desktop search view must not be
-  // handed the two-row phone rendering.
-  renderAll() {
-    if (!window.App || !App.user) return '';
-    if (!HomePanels._data) return '';
-    const cols = HomePanels.currentCols();
-    const blocks = HomePanels.gridSlotKeys()
-      .map((k) => HomePanels.panelFor(k))
-      .map((p) => (p ? HomePanels.renderPanel(p, { inGrid: false, cols }) : ''))
-      .filter(Boolean);
-    if (!blocks.length) return '';
-    // space-y-2 between blocks: each widget reads as its own box.
-    return `<div class="space-y-2">${blocks.join('')}</div>`;
-  },
+  // `renderAll()` — one article per visible panel, joined into a stack —
+  // lived here for the #home-panels fallback host. Both went together: the
+  // three sections have hosts of their own and render() paints each one
+  // directly, so nothing needs the blocks as one string any more.
 
   // Dispatch on panel key. An unknown key renders nothing rather than
   // throwing, so a server that ships a new panel before the client knows
   // it degrades to "not shown" instead of a blank home screen.
-  renderPanel(panel, opts) {
+  renderPanel(panel) {
     if (!panel) return '';
-    if (panel.key === 'challenges') return HomePanels.renderChallengesPanel(panel, opts);
+    if (panel.key === 'challenges') return HomePanels.renderChallengesPanel(panel);
     if (panel.key === 'discover') return HomePanels.renderDiscoverPanel(panel);
     if (panel.key === 'create') return HomePanels.renderCreatePanel(panel);
     return '';
@@ -501,45 +418,32 @@ const HomePanels = {
   // cap clip rather than grow (app.css --home-panel-max-h);
   // `.home-panel--expanded` lifts the cap entirely.
   //
-  // THE WHOLE TITLE BAR IS THE DRAG HANDLE. It carries no ⠿ grip any more:
-  // the grip never owned the gesture (the drag surface has always been the
-  // whole grid item), so a dedicated grabber beside a bar that is ITSELF
-  // grabbable read as "only this glyph works" — which is how the widget got
-  // reported as undraggable. `select-none` is what stops a desktop drag from
-  // sweeping a text selection across the title instead; app.css supplies the
-  // grab cursor, scoped to the in-grid host that can actually move.
-  //
-  // The one control on the bar is the ⋮ menu, and it is deliberately NOT
-  // part of the handle — see _wire, which stops its pointerdown before the
-  // grid's reorder recognizer can see it.
+  // THE TITLE BAR WAS THE DRAG HANDLE, and is not one any more. The whole bar
+  // was the grab surface of a grid item — no ⠿ grip, a grab cursor from
+  // app.css, a "Drag to move this widget" tooltip — and the ⋮ menu was
+  // deliberately excluded from it (see _wire, which used to stop the button's
+  // pointerdown before the grid's recognizer could see it). THE UI OVERHAUL
+  // fixed the blocks into sections, so all three went: a bar that says it can
+  // be dragged and cannot is worse than one that says nothing.
   //
   // `stamps` carries extra per-panel state onto the article. Two shapes ride
-  // through here: the challenges widget's `{ cls, attrs }` (an extra CSS
-  // class plus a pre-built `data-rows`/`data-fill` attribute string — a
-  // HEIGHT/COMPOSITION change, and a height is invisible to a CSS selector,
-  // so the dapp.json checks and screenshot assertions need something to hold
-  // on to), and Discover's plain `{ name: value }` bag (its two lane counts,
-  // which _stampState mirrors onto the [data-panel-slot] host so one selector
-  // can ask for the slot AND the state).
-  //
-  // `stamps.collapsed` forces the article to render un-expanded whatever the
-  // per-visit `_expanded` flag says — the phone branch's contract (#968): its
-  // one-cell footprint has nowhere to grow, and `_expanded` survives a
-  // desktop→phone resize, so honouring it there would drop every row of an
-  // expanded season into a 116px cell.
+  // through here: the challenges block's `{ attrs }` (a pre-built
+  // `data-rows`/`data-fill` string — a COMPOSITION change, and one that is
+  // invisible to a CSS selector, so the dapp.json checks and the screenshot
+  // assertions need something to hold on to), and Discover's plain
+  // `{ name: value }` bag (its two lane counts, which _stampState mirrors
+  // onto the section host so one selector can ask for the host AND the
+  // state).
   _panelShell(key, titleHtml, bodyHtml, footerHtml, stamps) {
     const esc = HomePanels.esc;
-    const expanded = !(stamps && stamps.collapsed) && !!HomePanels._expanded[key];
-    const extraCls = (stamps && stamps.cls) ? ` ${stamps.cls}` : '';
+    const expanded = !!HomePanels._expanded[key];
     const extra = (stamps && typeof stamps.attrs === 'string')
       ? ` ${stamps.attrs}`
       : Object.entries(stamps || {})
-        // `cls` and `collapsed` are shell CONTROLS, not data attributes.
-        .filter(([name]) => name !== 'cls' && name !== 'collapsed')
         .map(([name, value]) => ` ${name}="${esc(value)}"`).join('');
     return `
-      <article class="home-panel home-panel-card${expanded ? ' home-panel--expanded' : ''}${extraCls} rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/70 dark:bg-zinc-900/50 overflow-hidden" data-panel="${esc(key)}"${extra}>
-        <div class="home-panel-bar flex-none flex items-center gap-2 px-2.5 py-1 border-b border-zinc-200 dark:border-zinc-800 select-none" title="Drag to move this widget">
+      <article class="home-panel home-panel-card${expanded ? ' home-panel--expanded' : ''} rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/70 dark:bg-zinc-900/50 overflow-hidden" data-panel="${esc(key)}"${extra}>
+        <div class="home-panel-bar flex-none flex items-center gap-2 px-2.5 py-1 border-b border-zinc-200 dark:border-zinc-800">
           ${titleHtml}
           <button type="button" class="home-panel-menu un-touch-target shrink-0 w-4 h-4 flex items-center justify-center rounded-full text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 leading-none"
             data-panel-key="${esc(key)}" aria-haspopup="menu"
@@ -562,21 +466,20 @@ const HomePanels = {
   // empty (see _fillFooter) — the rows and the footer both went to the
   // Challenges TAB instead.
   //
-  // It renders in EVERY branch and at EVERY breakpoint, for Discover's reason:
-  // a discovery path that depends on there being content to discover is not a
-  // path. On a phone it is the bar's ONE control (it replaced the "See all"
-  // this widget used to carry there — see renderChallengesPanel), so the
-  // one-cell footprint from #968 is unchanged: still no footer, still two rows.
+  // It renders in EVERY branch and at EVERY width, for Discover's reason: a
+  // discovery path that depends on there being content to discover is not a
+  // path. Between seasons — the empty branch, which draws no footer — it is
+  // the block's only control.
   //
-  // `compact` only shortens the LABEL. Beside a title that already reads
-  // "CHALLENGES · 1 of 6", "Leaderboard" is what fits without truncating the
-  // counter away; the aria-label stays the full sentence in both shapes.
-  _leaderboardLink(compact) {
+  // The label used to shorten to "Leaderboard" in the compact phone shape,
+  // where it sat beside a title already reading "CHALLENGES · 1 of 6" in one
+  // grid cell. A section's bar has room for the full label at every width.
+  _leaderboardLink() {
     return `
       <button type="button" class="home-panel-lb-browse shrink-0 flex items-center gap-1 text-[12px] font-medium text-violet-600 dark:text-violet-400 hover:underline whitespace-nowrap"
         title="Open the Leaderboard screen" aria-label="Open leaderboard">
         <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M16.5 18.75h-9m9 0a3 3 0 013 3h-15a3 3 0 013-3m9 0v-3.375c0-.621-.503-1.125-1.125-1.125h-.871M7.5 18.75v-3.375c0-.621.504-1.125 1.125-1.125h.872m5.007 0H9.497m5.007 0a7.454 7.454 0 01-.982-3.172M9.497 14.25a7.454 7.454 0 00.981-3.172M5.25 4.236c-.982.143-1.954.317-2.916.52A6.003 6.003 0 007.73 9.728M5.25 4.236V4.5c0 2.108.966 3.99 2.48 5.228M5.25 4.236V2.721C7.456 2.41 9.71 2.25 12 2.25c2.291 0 4.545.16 6.75.47v1.516M7.73 9.728a6.726 6.726 0 002.748 1.35m8.272-7.322c.983.143 1.954.317 2.916.52a6.003 6.003 0 01-5.395 4.972m0 0a6.726 6.726 0 01-2.749 1.35m0 0a6.772 6.772 0 01-3.044 0"/></svg>
-        <span class="whitespace-nowrap">${compact ? 'Leaderboard' : 'Open leaderboard'}</span>
+        <span class="whitespace-nowrap">Open leaderboard</span>
       </button>`;
   },
 
@@ -746,39 +649,44 @@ const HomePanels = {
       </div>`;
   },
 
-  renderChallengesPanel(panel, opts) {
+  // THE PHONE SHAPE (#968) IS GONE. It existed because the widget owned ONE
+  // grid cell below five columns — two rows, the way out in the title bar, no
+  // footer, never expanded — and every one of those was a concession to a
+  // 116px rectangle. THE UI OVERHAUL made this a fixed SECTION that sizes to
+  // its own content, so there is no cell to fit into and the full shape is
+  // right at every width. The `opts`/`inGrid`/`cols` triple that chose between
+  // them went with it; the four-row budget below is now simply THE budget.
+  renderChallengesPanel(panel) {
     const esc = HomePanels.esc;
     const total = Number(panel.total) || 0;
     const title = esc(panel.title || 'Challenges');
-    const inGrid = !!(opts && opts.inGrid);
-    const cols = Number(opts && opts.cols) || 4;
-    // THE PHONE SHAPE (#968). Below five columns the widget owns ONE grid
-    // cell, so its content is reshaped to fit: two rows, the way out in the
-    // title bar, no footer, and never expanded. Keyed on the REAL column
-    // count, which is why renderAll() passes currentCols() rather than a
-    // hardcoded 4 — a desktop search view is not a phone.
-    const compact = cols < HomePanels.DESKTOP_COLS;
-    // …and expansion is a desktop-only state now, so the flag only counts
-    // there. It survives a resize (it is per-visit client state), and
-    // honouring it on a phone would drop every row of an expanded season
-    // into a 116px cell.
-    const expanded = !compact && !!HomePanels._expanded[panel.key];
-    // The desktop tile is the only place with a fixed height to fill.
-    const canFill = inGrid && !compact && !expanded;
-    // `home-panel--fit` is stamped in BOTH branches; app.css only honours it
-    // below 640px, which is what keeps the desktop tile a fixed 2x2.
+    const expanded = !!HomePanels._expanded[panel.key];
+    // THE LEADERBOARD FILL — the standings preview under the challenge rows.
+    // It used to be a desktop-tile affordance: something had to spend the
+    // fixed 2x2 rectangle, and the standings were the best thing to spend it
+    // on. THE UI OVERHAUL made it the point. The hamburger's Leaderboard row
+    // is gone and this section is where the standings live on the home screen
+    // now, so the fill draws at every width. Only an EXPANDED challenge list
+    // suppresses it: that state exists to show every row the season has, and
+    // a standings preview under thirty challenges is not a preview.
+    const canFill = !expanded;
+    // `data-rows` / `data-fill` describe the block's COMPOSITION — how many
+    // challenge rows it drew and how many leaderboard rows the fill spent the
+    // rest on. A height is invisible to a CSS selector, so the dapp.json
+    // checks and the screenshot assertions need something to hold on to.
+    //
+    // The `home-panel--fit` class that rode alongside them is gone: it was the
+    // hook for the phone-only release from the grid slot's stretch-to-fill,
+    // and a section has nothing to be released from.
     const rowsOf = (n, fillRows) => ({
-      cls: 'home-panel--fit',
       attrs: `data-rows="${n}" data-fill="${fillRows}"`,
-      collapsed: compact,
     });
 
     // Nothing open. The block STAYS — for everyone, admins included — and
-    // says why: a widget that silently vanishes between seasons leaves the
+    // says why: a block that silently vanishes between seasons leaves the
     // viewer with no way to tell "nothing is running" from "this broke".
-    // On a phone that is the whole block (one line, no footer, ~68px); on
-    // desktop the same line leads and the LEADERBOARD fill spends the rest
-    // of the tile.
+    // That line leads and the LEADERBOARD fill takes the rest, which between
+    // seasons is the only thing this area has to show.
     if (!total || !Array.isArray(panel.challenges) || !panel.challenges.length) {
       // A payload that came back empty can't be expanded — and leaving the
       // flag set would keep ?expand=challenges on every later fetch, asking
@@ -794,24 +702,20 @@ const HomePanels = {
         // flex-1 so the ⋮ menu sits at the right edge, same as the populated
         // branch — this state is on every home screen now, so its chrome has
         // to match the one beside it. The leaderboard link rides along (#980):
-        // between seasons the standings are the ONLY thing this widget has to
-        // point at, and on a phone this branch draws no footer at all, so the
-        // bar is where the door has to be.
+        // between seasons the standings are the ONLY thing this area has to
+        // point at, and this branch draws no footer at all, so the bar is
+        // where the door has to be.
         `<span class="home-panel-title min-w-0 flex-1 truncate whitespace-nowrap text-[11px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">${title}</span>${
-          HomePanels._leaderboardLink(compact)}`,
+          HomePanels._leaderboardLink()}`,
         `<div class="home-panel-body">${noteHtml}${fillHtml}</div>`,
-        // Nothing to expand, nothing to count: the phone block ends at the
-        // note, and the desktop tile offers the one destination its rows
-        // actually point at.
+        // Nothing to expand, nothing to count — the footer is the fill's
+        // own, offering the one destination those rows point at.
         fillRows ? HomePanels._fillFooter(panel.leaderboard && panel.leaderboard.kind) : '',
         rowsOf(0, fillRows)
       );
     }
 
-    const { rows } = HomePanels.visibleSlots(panel, {
-      slots: compact ? HomePanels.PHONE_ROW_SLOTS : HomePanels.ROW_SLOTS,
-      collapsed: compact,
-    });
+    const { rows } = HomePanels.visibleSlots(panel, { slots: HomePanels.ROW_SLOTS });
     const summary = esc(HomePanels.summaryLine(panel));
     // truncate (which carries white-space: nowrap) + an explicit nowrap on
     // the inner span: the counter must never push the title onto a second
@@ -820,7 +724,7 @@ const HomePanels = {
     // rather than pushing the control off the bar.
     const titleHtml = `
       <span class="home-panel-title min-w-0 flex-1 truncate whitespace-nowrap text-[11px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">${title}<span class="normal-case tracking-normal whitespace-nowrap"> · ${summary}</span></span>${
-      HomePanels._leaderboardLink(compact)}`;
+      HomePanels._leaderboardLink()}`;
 
     const rowsHtml = rows.map((c) => HomePanels.renderChallengeRow(c)).join('');
     // The meter lane is a property of the LIST, not of the row that draws
@@ -836,12 +740,7 @@ const HomePanels = {
 
     return HomePanels._panelShell(panel.key, titleHtml,
       `<div class="home-panel-body"><div class="home-panel-rows${metered ? ' home-panel-rows--metered' : ''}">${rowsHtml}</div>${fillHtml}</div>`,
-      // NO FOOTER on a phone: its 27px is the widget's second row, and both
-      // of its controls are accounted for — the title bar's leaderboard link
-      // is the way off this screen, tapping a row still opens the Challenges
-      // tab, and expanding in place is a state a one-cell footprint cannot
-      // hold.
-      compact ? '' : HomePanels._panelFooter(panel.key, total, expanded),
+      HomePanels._panelFooter(panel.key, total, expanded),
       rowsOf(rows.length, fillRows));
   },
 
@@ -870,30 +769,21 @@ const HomePanels = {
   // 56px launcher card): the block is ~366px wide on a phone and ~397px on
   // desktop, and a full card simply does not fit.
   //
-  // TWO SHAPES, ONE PER BREAKPOINT (#949) — the widget's registry footprint
-  // is asymmetric (4x1 on a phone, 2x2 on desktop), and the content follows:
-  //
-  //   PHONE (4 cols, one row): the title bar and the featured lane, and
-  //     that is the whole widget. It is full width there, so the row this
-  //     gives back is a clean full-width gap.
-  //   DESKTOP (5 cols, two rows): the same, plus a hairline, a "Popular"
-  //     caption and a second lane — the most-used apps this viewer doesn't
-  //     have yet (Home.popularApps). The footprint is unchanged from before
-  //     this issue, so no stored desktop arrangement moves; the row that was
-  //     dead space is earned instead of trimmed.
-  //
-  // The column count is read from Home.currentCols() — the viewport, not the
-  // DOM, so it is answerable before the first paint — and a breakpoint
-  // crossing re-renders through Home._applyColumnCount() → Home.render() →
-  // HomePanels.render(), which only fires when the count actually moved.
+  // ONE SHAPE AT EVERY WIDTH. It used to be two (#949), because the widget's
+  // registry footprint was asymmetric — 4x1 on a phone, 2x2 on desktop — and
+  // the content had to follow: a phone got the title bar and the featured
+  // lane and nothing else, because the second lane would not fit the one row
+  // it owned. THE UI OVERHAUL made Discover a fixed section, so the Popular
+  // lane — the most-used apps this viewer doesn't have yet
+  // (Home.popularApps) — renders everywhere. That is the point of an area
+  // called Discover rather than a strip of curated tiles: the curated lane
+  // alone is whatever an admin got round to featuring.
   //
   // THE BROWSE CONTROL RIDES IN THE TITLE BAR, not in a footer of its own.
-  // A .home-panel-footer costs 27px, which on a phone is exactly the
-  // difference between a tile lane that fits its one cell and one that clips
-  // its captions. Discover has ONE destination, so it belongs beside the
-  // title. (Challenges keeps _panelFooter on desktop for its expand toggle,
-  // and #980 moved its leaderboard door up here for the same reasons this one
-  // lives here.) _wire() needs no change for this: its
+  // Discover has ONE destination, so it belongs beside the title rather than
+  // in 27px of chrome under two lanes. (Challenges keeps _panelFooter for its
+  // expand toggle, and #980 moved its leaderboard door up to the bar for the
+  // same reason this one lives there.) _wire() needs no change for this: its
   // pointerdown guard is on `.home-panel button` generally, so the button is
   // excluded from the drag handle the bar otherwise is.
   //
@@ -905,11 +795,12 @@ const HomePanels = {
     const esc = HomePanels.esc;
     const hasHome = !!(window.Home && typeof Home.featuredApps === 'function');
     const featured = hasHome ? Home.featuredApps(Home._apps || []) : [];
-    // Desktop only. With no Home there is no app list either, so the widget
-    // is down to its note whatever this answers — 5 is the honest default.
-    const cols = (window.Home && typeof Home.currentCols === 'function')
-      ? Home.currentCols() : 5;
-    const popular = (cols === 5 && hasHome && typeof Home.popularApps === 'function')
+    // The "Popular" lane was DESKTOP ONLY: it was the second row the widget
+    // earned at its 2x2 desktop footprint, and there was no room for it in the
+    // one cell it owned on a phone. A fixed section has room at every width, so
+    // it always renders now — which is the point of the area being called
+    // Discover rather than being a strip of curated tiles.
+    const popular = (hasHome && typeof Home.popularApps === 'function')
       ? Home.popularApps(Home._apps || []) : [];
 
     const titleHtml = `
@@ -1015,25 +906,26 @@ const HomePanels = {
     const canCreate = !!(window.Home && typeof Home.canCreate === 'function' && Home.canCreate());
     const hint = (window.Home && Home.CREATE_DISABLED_HINT)
       || 'Ask an admin to enable app creation for your account.';
-    // The whole tile is the button (a 1x1 cell has no room for chrome around
-    // one), and .home-create-btn is what Home.wireCreateButtons() binds.
+    // The whole block is the button, and .home-create-btn is what
+    // Home.wireCreateButtons() binds.
     //
-    // TWO SHAPES, ONE MARKUP. The widget's footprint is 4x1 below 640px and
-    // 1x1 at and above it (PANEL_REGISTRY `sizes`), so the content flips with
-    // the SAME Tailwind `sm:` breakpoint the grid does: a full-width row lays
-    // the icon and label out side by side (stacking them in a 116px row would
-    // leave the label clipped against the tile's own padding), a single cell
-    // stacks them as before. Whole class literals, so the compiled stylesheet
-    // carries both.
+    // ONE SHAPE. It used to be two: the widget's grid footprint was 4x1 below
+    // 640px and 1x1 at and above it, so the content flipped on the same
+    // Tailwind `sm:` breakpoint the grid did — a full-width row laid the icon
+    // and label out side by side, a single cell stacked them. THE UI OVERHAUL
+    // made this a full-width SECTION at every width, so the row shape is the
+    // only one left; the stacked variant existed for a 150px cell that no
+    // longer exists. `h-full` went with the cell too — there is no rectangle
+    // to fill, so the block is as tall as its own padding.
     return `
-      <div class="home-create-widget ${canCreate ? '' : 'home-create-widget--disabled'} h-full" data-panel="${esc(panel.key)}" data-create-enabled="${canCreate}">
-        <button type="button" class="home-create-btn home-create-tile w-full h-full rounded-xl p-3 flex flex-row sm:flex-col items-center justify-center text-center gap-3 sm:gap-2 transition-colors"
+      <div class="home-create-widget ${canCreate ? '' : 'home-create-widget--disabled'}" data-panel="${esc(panel.key)}" data-create-enabled="${canCreate}">
+        <button type="button" class="home-create-btn home-create-tile w-full rounded-xl p-4 flex flex-row items-center justify-center text-center gap-3 transition-colors"
           ${canCreate ? '' : 'aria-disabled="true" '}title="${canCreate ? 'Create a new app' : esc(hint)}"
           aria-label="${canCreate ? 'Create a new app' : esc(hint)}">
           <span class="app-icon-tile app-icon-tile--empty w-14 h-14 rounded-xl flex items-center justify-center shrink-0" aria-hidden="true">
             <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg>
           </span>
-          <span class="home-create-label text-sm sm:text-xs leading-tight max-w-full ${canCreate ? 'text-violet-600 dark:text-violet-400' : 'text-zinc-400 dark:text-zinc-500'}">Create app</span>
+          <span class="home-create-label text-sm leading-tight max-w-full ${canCreate ? 'text-violet-600 dark:text-violet-400' : 'text-zinc-400 dark:text-zinc-500'}">Create app</span>
         </button>
       </div>`;
   },
@@ -1143,17 +1035,12 @@ const HomePanels = {
   },
 
   _wire(section) {
-    // EVERY control in the block is excluded from the drag. The grid's
-    // reorder recognizer listens for pointerdown on #app-list, of which this
-    // block is one item (home.js: itemSelector includes .home-panel-slot),
-    // and it bubbles — so stopping pointerdown AT the button is what keeps a
-    // press on ⋮ from arming a desktop drag, and a finger resting on it from
-    // tripping the kit's long-press lift. Without this, opening the menu on a
-    // phone would grab the widget instead. Everything the guard does NOT
-    // cover — the title bar, the counter, the rows — stays the drag surface.
-    section.querySelectorAll('.home-panel button').forEach((btn) => {
-      btn.addEventListener('pointerdown', (e) => { e.stopPropagation(); });
-    });
+    // A `pointerdown` guard on every `.home-panel button` lived here: the
+    // grid's reorder recognizer listened on #app-list, of which a block was
+    // one item, and the event bubbles — so stopping it AT the button was what
+    // kept a press on ⋮ from arming a desktop drag, or a finger resting on it
+    // from tripping the kit's long-press lift. These sections are outside
+    // #app-list now, so no recognizer can see any of it.
 
     // Rows and the footer's "Open" button both go to the Challenges screen.
     // NOT the leaderboard fill's rows, though — they are a different list

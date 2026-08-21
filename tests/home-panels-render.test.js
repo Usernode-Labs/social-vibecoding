@@ -69,11 +69,18 @@ function makeSection() {
 // contract can be asserted (see _stampState).
 function makeSlot(key) {
   const attrs = { 'data-panel-slot': key };
+  const classes = new Set(['hidden']);
   const slot = {
     dataset: { panelSlot: key },
     innerHTML: '',
     attrs,
-    classList: { toggle: () => {}, add: () => {}, remove: () => {}, contains: () => false },
+    _classes: classes,
+    classList: {
+      toggle: (c, on) => { if (on) classes.add(c); else classes.delete(c); },
+      add: (c) => classes.add(c),
+      remove: (c) => classes.delete(c),
+      contains: (c) => classes.has(c),
+    },
     setAttribute: (n, v) => { attrs[n] = v; },
     getAttribute: (n) => (n in attrs ? attrs[n] : null),
     hasAttribute: (n) => n in attrs,
@@ -94,11 +101,27 @@ function makeSlot(key) {
   return slot;
 }
 
+// The three fixed section hosts render() writes into, keyed the way it looks
+// them up. `slots` is still the parameter name every test passes: THE UI
+// OVERHAUL changed WHERE a block renders, not what it renders, so the hosts
+// are the same stub under a different id.
+const SECTION_HOST_IDS = {
+  discover: 'home-discover-section',
+  challenges: 'home-challenges-section',
+  create: 'home-create-section',
+};
+
 function makeHomePanels({
   user = { id: 1, isAdmin: false }, search = '', home = null, slots = null,
 } = {}) {
   const section = makeSection();
   makeSection._last = section;
+  // Map each supplied host onto the id render() will resolve it by.
+  const hosts = new Map();
+  for (const slot of slots || []) {
+    const key = slot.dataset && slot.dataset.panelSlot;
+    if (key && SECTION_HOST_IDS[key]) hosts.set(SECTION_HOST_IDS[key], slot);
+  }
   const sandbox = {
     console,
     App: { user },
@@ -106,11 +129,9 @@ function makeHomePanels({
     // exercising the module with no Home on the window, exactly as before.
     ...(home ? { Home: home } : {}),
     document: {
-      getElementById: (id) => (id === 'home-panels' ? section : null),
+      getElementById: (id) => hosts.get(id) || (id === 'home-panels' ? section : null),
       querySelector: () => null,
-      querySelectorAll: (sel) => (
-        sel === '[data-panel-slot]' && slots ? slots : []
-      ),
+      querySelectorAll: () => [],
       addEventListener: () => {},
     },
     fetch: async () => ({ ok: false, json: async () => ({}) }),
@@ -155,11 +176,33 @@ const panel = (over = {}) => ({
   ...over,
 });
 
-function renderWith(data, opts) {
-  const { HP, section } = makeHomePanels(opts);
+// Render every section and hand back what they painted, joined.
+//
+// This used to read one node — #home-panels, the stacked fallback host below
+// the grid. THE UI OVERHAUL replaced that host with three fixed section hosts
+// and render() paints each directly, so "what the widgets rendered" is the
+// three concatenated. Every assertion below is a substring or shape check
+// over that text, so joining is faithful: it is the same markup, from the same
+// renderers, in the same order.
+function renderWith(data, opts = {}) {
+  const hosts = ['discover', 'challenges', 'create'].map(makeSlot);
+  const { HP, section, sandbox } = makeHomePanels({ ...opts, slots: hosts });
   HP._data = data;
   HP.render();
-  return { HP, html: section.innerHTML, section };
+  return {
+    HP,
+    html: hosts.map((h) => h.innerHTML).join(''),
+    hosts,
+    host: (key) => hosts.find((h) => h.dataset.panelSlot === key),
+    section,
+    sandbox,
+    // Re-paint into the SAME hosts, so a test can assert on what a second
+    // render left behind (an optimistic hide that failed, say).
+    rerender() {
+      HP.render();
+      return hosts.map((h) => h.innerHTML).join('');
+    },
+  };
 }
 
 // The FIVE-COLUMN width, for the shape that only exists there (#968): the
@@ -516,11 +559,12 @@ test('render: the footer carries the expand toggle and the way out', () => {
 
 test('render: expanded lifts the cap, shows everything, and flips the toggle', () => {
   const nine = Array.from({ length: 9 }, (_, i) => challenge({ id: i + 1 }));
-  const { HP, section } = makeHomePanels(AT_DESKTOP);
+  const hosts = ['challenges'].map(makeSlot);
+  const { HP } = makeHomePanels({ slots: hosts });
   HP._data = { registry: [], hidden: [], panels: [panel({ total: 9, challenges: nine })] };
   HP._expanded.challenges = true;
   HP.render();
-  const html = section.innerHTML;
+  const html = hosts[0].innerHTML;
   assert.match(html, /home-panel--expanded/, 'the class app.css hangs max-height: none on');
   assert.equal((html.match(/data-challenge-id/g) || []).length, 9,
     'every row the server sent, past the four-slot budget');
@@ -551,20 +595,23 @@ test('render: the title bar carries the title, the counter and the ⋮ menu — 
 });
 
 test('render: nothing at all when signed out, unloaded, or hidden', () => {
-  // Signed out.
+  // Signed out. Every host stays empty AND hidden — an empty <section> with
+  // its px-3 pb-3 padding would still be a gap in the stack.
   const out = renderWith({ registry: [], hidden: [], panels: [panel()] },
     { user: null });
   assert.equal(out.html, '');
-  assert.ok(out.section._classes.has('hidden'));
+  for (const host of out.hosts) {
+    assert.ok(host._classes.has('hidden'), `${host.dataset.panelSlot} host hidden`);
+  }
 
   // Data not loaded yet — absent, never a skeleton flash.
-  const { HP, section } = makeHomePanels();
-  HP.render();
-  assert.equal(section.innerHTML, '');
+  const unloaded = renderWith(null);
+  assert.equal(unloaded.html, '');
 
   // Dismissed by this viewer: the server omits it from `panels`.
   const hiddenOut = renderWith({ registry: [{ key: 'challenges', title: 'Challenges' }], hidden: ['challenges'], panels: [] });
   assert.equal(hiddenOut.html, '');
+  assert.ok(hiddenOut.host('challenges')._classes.has('hidden'));
 });
 
 // #947 reversed the admin-only empty box. It is now a COMPACT block that
@@ -580,14 +627,16 @@ test('render: the empty state renders for EVERY viewer, compact and footer-less'
     const who = isAdmin ? 'admin' : 'member';
     assert.match(out.html, /No challenges are running right now/,
       `${who}: the block says why it is quiet`);
-    assert.ok(!out.section._classes.has('hidden'), `${who}: section shown`);
+    assert.ok(!out.host('challenges')._classes.has('hidden'), `${who}: section shown`);
     // Exactly one row, and no footer: nothing to expand, nothing to count.
     assert.equal((out.html.match(/home-panel-row\b/g) || []).length, 1, `${who}: one line`);
     assert.doesNotMatch(out.html, /home-panel-footer/, `${who}: no footer`);
     // The ⋮ menu sits at the right edge, same as the populated branch.
     assert.match(out.html, /home-panel-title[^"]*flex-1/, `${who}: title takes the bar`);
     assert.match(out.html, /data-rows="0"/, `${who}: stamped`);
-    assert.match(out.html, /data-fill="0"/, `${who}: no fill without a grid host`);
+    // No `panel.leaderboard` in this payload, so there is nothing to fill
+    // with — the stamp says so rather than claiming rows nobody drew.
+    assert.match(out.html, /data-fill="0"/, `${who}: nothing to preview`);
   }
 });
 
@@ -595,7 +644,8 @@ test('render: the empty state renders for EVERY viewer, compact and footer-less'
 // keep sending ?expand=challenges, which asks for the season's FINISHED
 // challenges and would repopulate a block that should read as quiet.
 test('render: an empty payload clears the in-place expanded flag', () => {
-  const { HP, section } = makeHomePanels();
+  const hosts = ['challenges'].map(makeSlot);
+  const { HP } = makeHomePanels({ slots: hosts });
   HP._expanded.challenges = true;
   HP._data = {
     registry: [], hidden: [],
@@ -603,61 +653,79 @@ test('render: an empty payload clears the in-place expanded flag', () => {
   };
   HP.render();
   assert.equal(HP._expanded.challenges, false);
-  assert.match(section.innerHTML, /No challenges are running right now/);
+  assert.match(hosts[0].innerHTML, /No challenges are running right now/);
 });
 
 test('setHidden drops the panel optimistically and restores it on failure', async () => {
-  const { HP, section, sandbox } = makeHomePanels();
-  HP._data = { registry: [{ key: 'challenges', title: 'Challenges' }], hidden: [], panels: [panel()] };
-  HP.render();
-  assert.match(section.innerHTML, /Report a reproducible bug/);
+  const out = renderWith(
+    { registry: [{ key: 'challenges', title: 'Challenges' }], hidden: [], panels: [panel()] });
+  assert.match(out.html, /Report a reproducible bug/);
 
-  sandbox.fetch = async () => ({ ok: false, json: async () => ({}) });
-  const ok = await HP.setHidden('challenges', true);
+  out.sandbox.fetch = async () => ({ ok: false, json: async () => ({}) });
+  const ok = await out.HP.setHidden('challenges', true);
   assert.equal(ok, false);
-  assert.deepEqual(HP._data.hidden, [], 'a failed write must not look like it stuck');
-  assert.match(section.innerHTML, /Report a reproducible bug/);
+  assert.deepEqual(out.HP._data.hidden, [], 'a failed write must not look like it stuck');
+  assert.match(out.host('challenges').innerHTML, /Report a reproducible bug/,
+    'the block is back in its own host, not just in the data');
 });
 
-// ── Container shape: one bordered block PER WIDGET ────────────────
+// ── Container shape: one bordered block PER SECTION ───────────────
 //
-// The core of the per-widget-container requirement. Only `challenges`
-// exists today, so the two-panel case is the one that would silently
-// regress into a shared card without a test.
+// The core of the per-block-container requirement: each of the three areas
+// is its own bordered article in its own host, never rows inside one shared
+// card. THE UI OVERHAUL is what made all three renderable at once — before
+// it, only `challenges` built a payload, so the multi-block case had to be
+// staged with a hypothetical second widget.
 
-test('render: each panel is its own bordered article, stacked as siblings', () => {
-  const two = {
-    registry: [{ key: 'challenges', title: 'Challenges' }],
+test('render: each panel is its own bordered article, in its own host', () => {
+  const all = {
+    registry: [
+      { key: 'discover', title: 'Discover', removable: false },
+      { key: 'challenges', title: 'Challenges', removable: true },
+      { key: 'create', title: 'Create app', removable: true },
+    ],
     hidden: [],
     panels: [
       panel(),
-      // A hypothetical second widget. renderPanel dispatches on key, so an
-      // unknown one renders nothing rather than throwing — that's the
-      // degradation path when the server ships a panel the client predates.
+      // A key no renderer knows. renderPanel dispatches on key, so an unknown
+      // one renders nothing rather than throwing — that's the degradation
+      // path when the server ships a panel the client predates. It also has
+      // no host of its own, which is the second half of the same guard.
       { key: 'future-widget', title: 'Rank', total: 1, done: 0, challenges: [] },
     ],
   };
-  const { html } = renderWith(two);
-  // The known panel still renders as exactly one bordered article…
-  assert.equal((html.match(/<article class="home-panel /g) || []).length, 1);
-  assert.doesNotMatch(html, /Rank/, 'an unknown panel key is skipped, not thrown on');
-  // …and the stack wrapper is what separates blocks.
-  assert.match(html, /class="space-y-2"/);
+  const out = renderWith(all, { home: { canCreate: () => true } });
+  assert.doesNotMatch(out.html, /Rank/, 'an unknown panel key is skipped, not thrown on');
 
-  // Two RENDERABLE panels → two sibling articles, never one shared card.
-  const bothKnown = {
-    registry: [], hidden: [],
-    panels: [panel(), panel({ title: 'Challenges' })],
-  };
-  const { html: pair } = renderWith(bothKnown);
-  assert.equal((pair.match(/<article class="home-panel /g) || []).length, 2,
-    'one bordered block per widget');
-  assert.equal((pair.match(/home-panel-bar/g) || []).length, 2,
-    'each block carries its OWN title bar and ⋮ menu');
-  // Siblings: one article must close before the next opens (no nesting).
-  const first = pair.indexOf('</article>');
-  const second = pair.indexOf('<article', first);
+  // Every host draws, and each draws exactly ONE block — never one shared
+  // card, never two stacked in the same section. Discover and Challenges are
+  // bordered articles with their own title bars; Create is the dashed tile
+  // it has always been (its label IS its title, so a bar above it would say
+  // "Create app" twice).
+  for (const key of ['discover', 'challenges']) {
+    const host = out.host(key);
+    assert.equal((host.innerHTML.match(/<article class="home-panel /g) || []).length, 1,
+      `${key}: one bordered block`);
+    assert.equal((host.innerHTML.match(/home-panel-bar/g) || []).length, 1,
+      `${key}: its OWN title bar`);
+    assert.ok(!host._classes.has('hidden'), `${key}: shown`);
+  }
+  const create = out.host('create');
+  assert.equal((create.innerHTML.match(/home-create-widget/g) || []).length, 1);
+  assert.ok(!create._classes.has('hidden'), 'create: shown');
+
+  // Siblings, in the ORDER the sections are declared in — the whole point of
+  // the fixed stack. Discover, then Challenges, then Create.
+  assert.deepEqual(out.hosts.map((h) => h.dataset.panelSlot),
+    ['discover', 'challenges', 'create']);
+  assert.equal((out.html.match(/<article/g) || []).length, 2);
+  const first = out.html.indexOf('</article>');
+  const second = out.html.indexOf('<article', first);
   assert.ok(first > 0 && second > first, 'blocks are siblings, not nested');
+
+  // No stack WRAPPER: each block is a direct child of its own <section>, so
+  // there is nothing left for a space-y-2 to space.
+  assert.doesNotMatch(out.html, /class="space-y-2"/);
 });
 
 // ── Strictly one line per row ──────────────────────────────────────
@@ -713,15 +781,14 @@ test('the title bar and the footer controls are single-line too', () => {
   // Title + counter: the counter must not push the title to a second line.
   assert.match(html, /home-panel-title[^"]*truncate whitespace-nowrap/);
   assert.match(html, /normal-case tracking-normal whitespace-nowrap/);
-  // The phone bar carries the way out BESIDE that title (#968, now the
-  // leaderboard link of #980), so it is the one place a long summary and a
-  // control compete for the same row: the control is shrink-0 and nowrap, and
-  // the title truncates around it. The compact label is the SHORT one, which
-  // is the whole reason _leaderboardLink takes the flag.
-  const phone = renderWith(data).html;
-  assert.match(phone, /home-panel-lb-browse shrink-0[^"]*whitespace-nowrap/);
-  assert.match(phone, /<span class="whitespace-nowrap">Leaderboard<\/span>/);
-  assert.match(phone, /home-panel-title[^"]*truncate whitespace-nowrap/);
+  // The bar carries the way out BESIDE that title (#968, now the leaderboard
+  // link of #980), so it is the one place a long summary and a control
+  // compete for the same row: the control is shrink-0 and nowrap, and the
+  // title truncates around it. The label used to shorten to "Leaderboard" in
+  // the one-cell phone shape; a section's bar fits the full one at every
+  // width, so _leaderboardLink no longer takes a flag.
+  assert.match(html, /home-panel-lb-browse shrink-0[^"]*whitespace-nowrap/);
+  assert.match(html, /<span class="whitespace-nowrap">Open leaderboard<\/span>/);
   // Both footer labels — the expand toggle and the "Open challenges" button.
   // Neither may wrap: the footer is a fixed-height flex row, so a wrap would
   // be clipped exactly like a wrapped row.
@@ -740,18 +807,16 @@ test('the row declares nowrap and clips, so a wrap cannot ship unnoticed', () =>
     'a chip that still overflows is clipped, not spilled onto the next row');
 });
 
-// ── Drag position within the app grid ─────────────────────────────
+// ── The placement is gone ─────────────────────────────────────────
 //
-// The block is a multi-cell item of #app-list — two columns wide, two rows
-// tall from md up — so app icons flow around it iOS-widget style and it can
-// be dropped BESIDE a card as well as between rows. The kit's existing
-// attachReorder carries it; only the persisted index is new.
+// Each block used to be a real item of #app-list: a multi-cell tile the
+// viewer could drop anywhere on the launcher canvas, with a per-breakpoint
+// footprint table and a persisted cell. THE UI OVERHAUL replaced all of it
+// with three fixed sections in a fixed order — so what these pin is that the
+// machinery is really gone, on both sides, rather than left half-wired.
 
-test('gridSlotKeys places every widget the viewer has not hidden', () => {
+test('the placement membership API is gone from the module', () => {
   const { HP } = makeHomePanels();
-  // The REGISTRY is the authority, not the built payload: `discover` and
-  // `create` are marker widgets that build nothing, so a keys list derived
-  // from `panels` would never give them a cell.
   HP._data = {
     registry: [
       { key: 'challenges', title: 'Challenges', removable: true },
@@ -761,35 +826,39 @@ test('gridSlotKeys places every widget the viewer has not hidden', () => {
     hidden: [],
     panels: [panel()],
   };
-  assert.equal(HP.gridSlotKeys().join(','), 'challenges,discover,create');
-
-  HP._data.hidden = ['challenges'];
-  assert.equal(HP.gridSlotKeys().join(','), 'discover,create');
-
-  // Nothing loaded → nothing to place, rather than a hole in the grid.
-  HP._data = null;
-  assert.equal(HP.gridSlotKeys().length, 0);
+  // `gridSlotKeys()` answered "which widgets does HomeLayout have to place
+  // for this viewer", and `hasLayoutRegistry()` told home.js the footprints
+  // had arrived so a derived layout was safe to persist. Nothing is placed
+  // now and nothing waits on a registry, so both are dead weight — as is
+  // `renderAll()`, which joined the blocks into the retired #home-panels
+  // stack, and `setPosition()`, which wrote a widget's cell.
+  for (const dead of ['gridSlotKeys', 'hasLayoutRegistry', 'setPosition', 'renderAll']) {
+    assert.equal(typeof HP[dead], 'undefined', `${dead} should be gone`);
+  }
+  // The registry itself STAYS — it is still what says a block exists at all,
+  // which is how the marker blocks (`discover`, `create`, which build no
+  // payload) render.
+  assert.ok(HP.panelFor('discover'), 'the registry still makes a marker renderable');
 });
 
-// The create widget is on EVERY home screen. Quota decides whether it is
+// The create block is on EVERY home screen. Quota decides whether it is
 // tappable, never whether it exists — this is the regression guard for the
 // old "absent for non-creators" behaviour.
-test('the create widget is placed regardless of app quota', () => {
-  const { HP, sandbox } = makeHomePanels();
-  const registry = [
-    { key: 'discover', title: 'Discover', removable: false },
-    { key: 'create', title: 'Create app', removable: true },
-  ];
-  HP._data = { registry, hidden: [], panels: [] };
+test('the create block renders regardless of app quota', () => {
   for (const canCreateApps of [true, false]) {
-    sandbox.Home = { canCreate: () => canCreateApps, CREATE_DISABLED_HINT: 'hint' };
-    assert.ok(HP.gridSlotKeys().includes('create'), `quota=${canCreateApps}`);
-    assert.ok(HP.panelFor('create'), 'renderable in both states');
+    const out = renderWith(
+      { registry: [{ key: 'create', title: 'Create app', removable: true }],
+        hidden: [], panels: [] },
+      { home: { canCreate: () => canCreateApps, CREATE_DISABLED_HINT: 'hint' } });
+    const host = out.host('create');
+    assert.ok(!host._classes.has('hidden'), `quota=${canCreateApps}: shown`);
+    assert.match(host.innerHTML, new RegExp(`data-create-enabled="${canCreateApps}"`),
+      `quota=${canCreateApps}: the state is the DIFFERENCE, not the presence`);
   }
   // Nothing in the server registry may consult a viewer's quota either.
   const registrySrc = ROUTE.match(/const PANEL_REGISTRY = \[[\s\S]*?\n\];/)[0];
   assert.doesNotMatch(registrySrc, /canCreateApps|app_quota|quota/i,
-    'the registry takes no viewer argument — placement is never permission-gated');
+    'the registry takes no viewer argument — presence is never permission-gated');
 });
 
 // A hidden widget is genuinely absent; an un-buildable one still renders if
@@ -839,17 +908,22 @@ test('home.js places every item at an explicit cell, with no flow fallback', () 
   // page's Tailwind is the CDN JIT and a per-cell arbitrary class would be
   // generated at runtime — a tile visibly jumping into place.
   assert.match(HOME, /grid-column:\$\{item\.col \+ 1\}\/span \$\{w\};grid-row:\$\{item\.row \+ 1\}\/span \$\{h\}/);
-  // Widgets and app tiles are both placed, from ONE layout array.
+  // ONE layout array, and it is app tiles all the way down now.
   assert.match(HOME, /HomeLayout\.canvasItems\(layout\)/);
   assert.match(HOME, /HomeLayout\.overflowItems\(layout\)/);
-  assert.match(HOME, /data-panel-slot="\$\{escapeHtml\(item\.key\)\}"/);
+  // The widget HOST the renderer used to plant in a cell is gone — the three
+  // sections are in the shell's own markup, outside #app-list.
+  assert.doesNotMatch(HOME, /data-panel-slot="\$\{escapeHtml\(item\.key\)\}"/);
+  // Class-shaped, not the bare name: the comment explaining what the branch
+  // used to resolve is the one mention that should survive.
+  assert.doesNotMatch(HOME, /class="home-panel-slot|'\.home-panel-slot'/);
 });
 
 test('the placement recognizer owns the grid, and the flow reorder is gone', () => {
   assert.match(HOME, /unNative\.attachGridPlacement\(listEl, \{/);
-  // Every widget host is draggable — including a create widget rendered in
-  // its disabled state, which must not be pinned in place by lacking quota.
-  assert.match(HOME, /itemSelector: '\.app-card\[data-yours\]:not\(\[data-demo\]\), \.home-panel-slot'/);
+  // App tiles ALONE are draggable now: a fixed section has no cell to move
+  // to, and `.home-panel-slot` went with the hosts that carried it.
+  assert.match(HOME, /itemSelector: '\.app-card\[data-yours\]:not\(\[data-demo\]\)'/);
   assert.doesNotMatch(HOME, /data-create-enabled[^\n]*itemSelector/);
   // The flow model and its persistence are gone in their entirety. Matched
   // as DEFINITIONS / call sites rather than as bare names, so the comments
@@ -863,6 +937,9 @@ test('the placement recognizer owns the grid, and the flow reorder is gone', () 
     /^  _onCardPointerDown\(/m,
     /fetch\('\/api\/favorites\/order'/,
     /HomePanels\?\.setPosition/,
+    // …and the widget half of the placement, retired by THE UI OVERHAUL.
+    /HomePanels\?\.gridSlotKeys/,
+    /HomePanels\?\.hasLayoutRegistry/,
   ]) {
     assert.doesNotMatch(HOME, dead, `${dead} should be gone from home.js`);
   }
@@ -888,12 +965,17 @@ test('a drop writes the whole width through PUT /api/home-layout', () => {
 // the arrangement the viewer made on their laptop.
 test('only a stored layout is repaired in place; a derivation is not persisted', () => {
   const cur = HOME.match(/currentLayout\(cols\) \{[\s\S]*?\n {2}\},/)[0];
-  assert.match(cur, /HomeLayout\.reflow\(otherStored, other, cols\)/, 'other width seeds it');
-  assert.match(cur, /HomeLayout\.deriveDefault\(/, 'flow order is the last resort');
-  assert.match(cur, /const widgetsReady = !!window\.HomePanels\?\.hasLayoutRegistry\?\.\(\)/,
-    'a partial widget catalog cannot authorize a repair write');
-  assert.match(cur, /if \(changed && widgetsReady && Array\.isArray\(stored\) && stored\.length\)/,
-    'only a stored width with authoritative widget membership is repaired in place');
+  // A pre-overhaul DESKTOP arrangement lived under '5'. Seeding from it is
+  // what stops four columns everywhere reading as "my home screen was reset".
+  assert.match(cur, /Home\._layouts\['5'\]/, 'the retired 5-column width seeds it');
+  assert.match(cur, /HomeLayout\.deriveDefault\(/, 'reading order is the last resort');
+  // The `widgetsReady` gate went with the widgets: it existed because a
+  // layout load that beat /api/home-panels saw an empty widget list and would
+  // have persisted a repair erasing the viewer's widget cells. Nothing on the
+  // canvas depends on a second endpoint any more.
+  assert.doesNotMatch(cur, /const widgetsReady|hasLayoutRegistry\?\.\(\)/);
+  assert.match(cur, /if \(changed && Array\.isArray\(stored\) && stored\.length\)/,
+    'only a stored width is repaired in place');
 });
 
 test('the drag overlay draws the whole canvas and doubles as the hit-test', () => {
@@ -905,8 +987,9 @@ test('the drag overlay draws the whole canvas and doubles as the hit-test', () =
   // The layer never eats taps; the cells re-enable them.
   assert.match(CSS, /\.home-grid-overlay \{[^}]*pointer-events: none/);
   assert.match(CSS, /\.home-grid-cell \{[^}]*pointer-events: auto/);
-  // Tiles paint above it.
-  assert.match(CSS, /#app-list > \.app-card,\s*\n#app-list > \.home-panel-slot \{[^}]*z-index: 1/);
+  // Tiles paint above it. App tiles ALONE, since THE UI OVERHAUL: the widget
+  // hosts that shared these two selectors are fixed sections outside the grid.
+  assert.match(CSS, /#app-list > \.app-card \{[^}]*z-index: 1/);
 
   // ...and are TRANSPARENT TO HIT-TESTING for the duration of a lift. This is
   // the regression guard for the bug that made occupied cells undroppable:
@@ -915,7 +998,7 @@ test('the drag overlay draws the whole canvas and doubles as the hit-test', () =
   // cellFromPoint returned null, and both "drop onto another app" and "move a
   // widget over its own footprint" silently sprang back.
   assert.match(CSS,
-    /#app-list\.un-reordering > \.app-card,\s*\n#app-list\.un-reordering > \.home-panel-slot \{[^}]*pointer-events: none/);
+    /#app-list\.un-reordering > \.app-card \{[^}]*pointer-events: none/);
   // The gap between cells belongs to no cell, so each one's hit area bleeds
   // into it — otherwise a pointer resting on a seam resolves to nothing.
   assert.match(CSS, /\.home-grid-cell::before \{[^}]*inset: -4px/);
@@ -942,55 +1025,45 @@ test('the overlay and the locked create tile are both URL-reachable', () => {
   assert.doesNotMatch(canCreate, /fetch|IS_STAGING/);
 });
 
-// ── The whole title bar is the handle ─────────────────────────────
+// ── The title bar is not a handle any more ────────────────────────
 //
-// There is no `handle:` option on the attachReorder call and there must not
-// be one: `handle` is declared per LIST, and #app-list's other items are the
-// app cards, which have to keep drag-from-anywhere on desktop (native.js
-// returns early on a non-handle press) and long-press-to-lift on touch. With
-// no handle the kit already treats the whole grid item as grabbable, so what
-// the bar needed was the AFFORDANCE plus one real gap: nothing stopped a
-// press on a control inside the block from arming that drag.
+// It was one, and the affordance was spread over three files: `select-none`
+// and a "Drag to move this widget" tooltip in the markup, `cursor: grab` /
+// `grabbing` in app.css, and a pointerdown guard in _wire that stopped a
+// press on any control inside the block from arming the grid's recognizer
+// (which listened on #app-list and saw the event by bubbling). THE UI
+// OVERHAUL fixed the blocks into sections outside #app-list, so none of it
+// can work — and a bar that advertises a drag it cannot do is worse than one
+// that says nothing.
 
-test('the bar advertises the drag it has always had, and carries no ⠿ grip', () => {
+test('the bar no longer advertises a drag it cannot do', () => {
   const { html } = renderWith({ registry: [], hidden: [], panels: [panel()] });
-  assert.match(html, /home-panel-bar[^"]*select-none"/,
-    'a desktop drag must not sweep a text selection across the title instead');
-  assert.match(html, /home-panel-bar[^>]*title="Drag to move this widget"/);
-  assert.doesNotMatch(html, /⠿/,
-    'a grabber beside a bar that is itself grabbable read as "only this glyph moves it"');
+  assert.doesNotMatch(html, /title="Drag to move this widget"/);
+  assert.doesNotMatch(html, /home-panel-bar[^>]*select-none/);
+  // The ⠿ grip went two rounds earlier, and must not come back with the
+  // gesture gone: it would advertise the same lie in a different glyph.
+  assert.doesNotMatch(html, /⠿/);
   assert.doesNotMatch(html, /home-panel-grip/);
 });
 
-test('the grab cursor is scoped to the host that can actually move', () => {
+test('the grab cursor is gone from app.css, and stays gone', () => {
   const css = read('public/css/app.css');
-  // Scoped to the IN-GRID hosts (there are several now, one per widget) —
-  // the #home-panels fallback section has no drag wiring at all, so a grab
-  // cursor there would lie.
-  assert.match(css, /\[data-panel-slot\] \.home-panel-bar \{[^}]*cursor:\s*grab/);
-  // The kit puts .un-reordering on the LIST (#app-list) for the duration of a
-  // lift, and the slots are children of it — so the descendant rule holds.
-  assert.match(css, /\.un-reordering \[data-panel-slot\] \.home-panel-bar \{[^}]*cursor:\s*grabbing/);
-  const kit = read('public/usernode-native/v1/native.css');
-  assert.match(kit, /\.un-reordering[^{]*\{[^}]*cursor:\s*grabbing/,
-    'the class the scoping depends on is the kit\'s, not ours');
-  // A control is a control, even sitting on the handle.
+  // Declaration-shaped: the comment recording what was removed, and why, is
+  // the one mention that should survive.
+  assert.doesNotMatch(css, /cursor:\s*grab(bing)?;/,
+    'nothing on this screen is grabbable by its title bar any more');
+  // user-select: none STAYS — the bar is not a text surface, and a
+  // double-click selecting "CHALLENGES · 1 of 6" is noise either way.
+  assert.match(css.match(/\.home-panel-bar \{[^}]*\}/)[0], /user-select:\s*none/);
+  // A control is still a control.
   assert.match(css, /\.home-panel-bar button \{[^}]*cursor:\s*pointer/);
 });
 
-test('a press on a control in the block never arms the grid drag', () => {
-  // The kit binds pointerdown on #app-list and it BUBBLES, so stopping the
-  // event at the button is what keeps the ⋮ from lifting the widget instead
-  // of opening — on desktop (armed → lift past the slop) and on touch (the
-  // 400ms long-press timer) alike.
+test('the block wires no drag recognizer of its own', () => {
   const wire = SRC.match(/_wire\(section\) \{[\s\S]*?\n {2}\},/)[0];
-  assert.match(wire, /querySelectorAll\('\.home-panel button'\)[\s\S]*?'pointerdown'[\s\S]*?stopPropagation\(\)/,
-    'every control, not just the menu — the footer buttons sit inside the item too');
-  const kit = read('public/usernode-native/v1/native.js');
-  assert.match(kit, /listEl\.addEventListener\('pointerdown', onPointerDown\)/,
-    'bubble-phase on the LIST is what makes stopping it at the button enough');
-  // And no second recognizer was bolted on: the placement instance the app
-  // tiles use is still the only thing that moves the block. (HTML5
+  assert.doesNotMatch(wire, /'pointerdown'/,
+    'no recognizer can see these sections, so nothing has to be stopped from it');
+  // …and none was bolted on to replace what was removed. (HTML5
   // `draggable="false"` on an <img> is the opposite of a recognizer — it
   // suppresses the browser's own drag — so it is not what this guards.)
   assert.doesNotMatch(SRC, /attach(Reorder|GridPlacement)\(|draggable="true"|'dragstart'/);
@@ -1112,37 +1185,38 @@ test('the cap is a CSS constant, enforced by flex, and clips rather than grows',
   assert.doesNotMatch(HOME, /alignSections|--home-section-indent/);
 });
 
-test('the width cap is half the home column, left-aligned, on both hosts', () => {
+// The width cap is GONE. It was --home-panel-max-w, half of .home-column
+// (512px of 1024px), and it was right while a block was a WIDGET sharing the
+// launcher canvas with app icons: a challenges row is one short line plus two
+// small chips, and stretching it to 1024px left a lonely reward chip pinned
+// to the far right. These are the screen's AREAS now, stacked under a
+// full-width app grid, and a half-width Discover under it reads as a
+// rendering fault rather than as restraint.
+test('the blocks span the whole column — no half-width cap', () => {
   const css = read('public/css/app.css');
-  // Half of .home-column's 64rem. Pinning both sides means a change to the
-  // column width fails here rather than silently leaving the widget at
-  // some fraction nobody chose.
-  assert.match(css, /--home-panel-max-w:\s*32rem/);
+  assert.doesNotMatch(css, /--home-panel-max-w:|var\(--home-panel-max-w\)/);
+  assert.doesNotMatch(css.match(/\.home-panel \{[^}]*\}/)[0], /max-width/);
+  // The column above them is the one width bound, and it is unchanged.
   assert.match(css.match(/\.home-column \{[^}]*\}/)[0], /max-width:\s*64rem/);
-  // On the article, so BOTH hosts are covered by one rule: the in-grid
-  // slot and the #home-panels section fallback.
-  assert.match(css.match(/\.home-panel \{[^}]*\}/)[0], /max-width:\s*var\(--home-panel-max-w\)/);
-  // And on the drag slot, so the lift ghost and drop indicator match the
-  // widget's real width instead of the full column.
-  assert.match(css.match(/\.home-panel-slot \{[^}]*\}/)[0], /max-width:\s*var\(--home-panel-max-w\)/);
-  // Left-aligned: the block is a grid member and its left edge has to line
-  // up with the first app icon. Auto side margins would centre it.
+  // Still left-aligned, and never centred by auto side margins: the blocks'
+  // left edge lines up with the grid's first column above them.
   assert.doesNotMatch(css.match(/\.home-panel \{[^}]*\}/)[0], /margin(-left|-right)?:\s*auto/);
-  assert.doesNotMatch(css.match(/\.home-panel-slot \{[^}]*\}/)[0], /margin(-left|-right)?:\s*auto/);
 });
 
-// Two consequences of the slot spanning real ROWS rather than breaking one.
-test('the multi-row slot neither inflates its rows nor stretches its neighbours', () => {
+// The drag slot's own rules went with it: a max-width so the lift ghost
+// matched the widget's real width, and a no-margin rule (a margin adds to a
+// grid item's OUTER height, so a row-span-2 slot would have demanded
+// 14rem + margin from two 6.75rem rows and stretched every card sharing
+// them). Nothing spans rows any more.
+test('the grid host and its row-spanning rules are gone', () => {
   const css = read('public/css/app.css');
-  const slotRule = css.match(/\.home-panel-slot \{[^}]*\}/)[0];
-  // A margin adds to the item's OUTER height, so a row-span-2 slot would
-  // demand 14rem + margin from two 6.75rem rows and stretch every card
-  // sharing them. The grid's own gap-2 is the spacing.
-  assert.doesNotMatch(slotRule, /margin/,
-    'the grid gap spaces the slot; a margin would inflate the rows it spans');
-  // And the cards in those rows sit at the top instead of growing a pool of
-  // dead space under their titles when an expanded widget makes the row tall.
-  assert.match(css.match(/#app-list > \.app-card \{[^}]*\}/)[0], /align-self:\s*start/);
+  assert.doesNotMatch(css, /^\.home-panel-slot[\s,{]/m);
+  assert.doesNotMatch(css, /#app-list[^{;]*\.home-panel-slot[^{;]*\{/);
+  // What STAYS is the app tiles' own top-alignment: rows are a fixed height
+  // whenever tiles alone define them, so this is a no-op today — and it is
+  // still the rule that keeps a card from stretching to a track that is NOT a
+  // tile row, which the half-cell blank rows of #975 still are.
+  assert.match(css, /#app-list > \.app-card \{[^}]*align-self:\s*start/);
 });
 
 test('the cell height still matches the app tile it is derived from', () => {
@@ -1177,30 +1251,51 @@ test('the cell height still matches the app tile it is derived from', () => {
   assert.match(grid, /\bp-2\b/);
   assert.match(CSS, /\.app-card\.app-card \{ padding: 0\.5rem; \}/);
   assert.match(CSS, /--home-cell-h: 7\.25rem/);
-  // …and the phone cap is that ONE cell (#968): every widget's phone
-  // footprint is a single row, so the two-cell figure this token used to
-  // carry (14.875rem / 238px) would let an oversized text size paint the
-  // article over the app tiles in the row below instead of clipping.
-  // Written as the token, not a duplicated number, so the cell and its cap
-  // provably cannot drift.
-  assert.match(CSS, /@media \(max-width: 639\.98px\)[\s\S]*?--home-panel-max-h: var\(--home-cell-h\)/);
+  // …and the phone cap override is GONE (#968 introduced it: a block's phone
+  // footprint was a single row, so a two-cell cap would have let an oversized
+  // text size paint the article over the app tiles below it). The blocks are
+  // sections outside the grid now — they overlap nothing — so the collapsed
+  // ceiling is the same 16rem at every width.
+  const phoneBlock = CSS.slice(CSS.indexOf('@media (max-width: 639.98px)'));
+  assert.doesNotMatch(phoneBlock.slice(0, phoneBlock.indexOf('@media (min-width: 640px)')),
+    /--home-panel-max-h:/);
 });
 
 // ── Source pins ───────────────────────────────────────────────────
 
-test('index.html keeps #home-panels as the fallback host below the grid', () => {
+// THE FOUR AREAS, in the shell's own markup and in this order: Your apps,
+// Discover, Challenges, Create app. That order is the whole shape of the
+// screen, so it is pinned against the built document rather than left to the
+// island's source.
+test('index.html stacks the three section hosts below the grid, in order', () => {
   const grid = INDEX.indexOf('id="app-list"');
-  const panels = INDEX.indexOf('id="home-panels"');
-  assert.ok(grid > 0 && panels > 0);
-  assert.ok(panels > grid, 'the fallback host sits below the grid');
-  // Outside the grid, or the grid's wholesale re-render would destroy it.
-  assert.ok(INDEX.indexOf('id="app-list"></div>', 0) < panels);
+  assert.ok(grid > 0, 'the launcher grid is there');
+  const at = (id) => INDEX.indexOf(`id="${id}"`);
+  const order = ['home-discover-section', 'home-challenges-section', 'home-create-section'];
+  let prev = grid;
+  for (const id of order) {
+    const here = at(id);
+    assert.ok(here > 0, `${id} is in the document`);
+    assert.ok(here > prev, `${id} sits below what precedes it`);
+    prev = here;
+  }
+  // Outside the grid, or its wholesale re-render would destroy all three.
+  assert.ok(INDEX.indexOf('id="app-list"', 0) < at('home-discover-section'));
+  assert.doesNotMatch(INDEX.slice(grid, at('home-discover-section')), /<\/section>[\s\S]*<div id="app-list"/);
 
-  // The two trailing sections it used to sit between are GONE — both are
-  // widgets in the grid now, placeable anywhere rather than pinned below
-  // everything.
+  // Each host names the block it is for, which is what the dapp.json checks
+  // and the screenshot assertions select on.
+  for (const key of ['discover', 'challenges', 'create']) {
+    assert.match(INDEX, new RegExp(`data-panel-slot="${key}"`), `${key} host is named`);
+  }
+
+  // #home-panels — the widgets' stacked FALLBACK host — is gone with the
+  // placement it existed for. It caught the moment before the first grid
+  // paint and the active-search view, because a widget that lived IN the grid
+  // vanished whenever the grid did; the three sections never do.
+  assert.equal(INDEX.indexOf('id="home-panels"'), -1);
+  // …as are the two trailing sections THOSE replaced, two rounds ago.
   assert.equal(INDEX.indexOf('id="home-find-more"'), -1);
-  assert.equal(INDEX.indexOf('id="home-create-section"'), -1);
   assert.equal(INDEX.indexOf('id="home-featured-list"'), -1);
   assert.equal(INDEX.indexOf('id="home-create-body"'), -1);
 });
@@ -1250,11 +1345,23 @@ test('home.js loads the panels once per TTL and paints them on every render', ()
   assert.match(HOME, /HomePanels\?\.render\(\)/);
 });
 
-test('Settings offers the Home screen widgets section under Preferences', () => {
-  assert.match(SETTINGS, /\{ key: 'home-panels', label: 'Home screen widgets', group: 'Preferences' \}/);
-  assert.match(SETTINGS, /_renderHomePanelsSection\(\)/);
-  assert.match(INDEX, /data-settings-section="home-panels"/);
-  assert.match(INDEX, /id="settings-home-panels-list"/);
+// The "Home screen widgets" settings section is GONE. It was a list of
+// checkboxes for showing or hiding each widget — an affordance that only made
+// sense while the blocks were optional furniture a viewer arranged. They are
+// three fixed areas of the screen now, in a fixed order, so there is nothing
+// to toggle; the ⋮ menu on a block is still the way to dismiss one.
+test('Settings no longer offers the Home screen widgets section', () => {
+  // Code-shaped, not the bare name: the comment recording what was removed
+  // (and why the endpoint stayed) is the one mention that should survive.
+  assert.doesNotMatch(SETTINGS, /key: 'home-panels'/);
+  assert.doesNotMatch(SETTINGS, /^\s{4}_renderHomePanelsSection\(/m);
+  assert.doesNotMatch(SETTINGS, /^\s{4}async _saveHomePanelVisibility\(/m);
+  assert.doesNotMatch(SETTINGS, /settings-home-panels-list/);
+  assert.equal(INDEX.indexOf('data-settings-section="home-panels"'), -1);
+  assert.equal(INDEX.indexOf('id="settings-home-panels-list"'), -1);
+  // The per-user hidden set stays — the ⋮ menu still writes it, and the
+  // server still filters `panels` by it (see setHidden above).
+  assert.match(ROUTE, /home_panels_hidden/);
 });
 
 test('the per-user hidden set defaults to "everything visible"', () => {
@@ -1327,17 +1434,18 @@ test('the Discover widget renders the curated tiles when Home is reachable', () 
   assert.match(bare, /Browse all apps/);
 });
 
-// ── Discover: one shape per breakpoint (#949) ──────────────────────────
+// ── Discover: ONE shape, at every width ───────────────────────────────
 //
-// A phone gets one grid row (the widget is full width there, so the row it
-// gives back is a clean gap); desktop keeps its original two and spends the
-// second on the Popular lane. The CONTENT follows the footprint, so these
-// stub Home.currentCols to pick a side.
+// It used to be two (#949). The widget's grid footprint was asymmetric — 4x1
+// on a phone, 2x2 on desktop — so the content followed: a phone got the
+// curated lane and nothing else, because the second lane would not fit the
+// one row it owned. THE UI OVERHAUL made Discover a fixed full-width section,
+// so both lanes render everywhere, and the `Home.currentCols()` stub these
+// tests used to pick a side no longer decides anything.
 
 const discoverHome = (over = {}) => ({
   featuredApps: () => [{ slug: 'alpha', name: 'Alpha', featured: true }],
   popularApps: () => [{ slug: 'pop', name: 'Popular One', active_users: 9 }],
-  currentCols: () => 5,
   isYours: () => false,
   _apps: [],
   ...over,
@@ -1346,29 +1454,29 @@ const discoverHome = (over = {}) => ({
 const renderDiscover = (over) => makeHomePanels({ home: discoverHome(over) }).HP
   .renderDiscoverPanel({ key: 'discover', title: 'Discover' });
 
-test('Discover draws the Popular lane on desktop and never on a phone', () => {
-  const desktop = renderDiscover();
-  assert.match(desktop, /home-discover-popular/, '5 columns gets the second lane');
-  assert.match(desktop, /data-slug="pop"/);
-  assert.match(desktop, /home-discover-divider/, 'with a hairline and its caption');
-  assert.match(desktop, />Popular</);
+test('Discover draws the Popular lane at every width', () => {
+  const html = renderDiscover();
+  assert.match(html, /home-discover-popular/, 'the second lane always renders');
+  assert.match(html, /data-slug="pop"/);
+  assert.match(html, /home-discover-divider/, 'with a hairline and its caption');
+  assert.match(html, />Popular</);
+  assert.match(html, /data-slug="alpha"/, 'and the curated lane leads');
+  // The lane order is the point of the area: what an admin chose to feature
+  // first, then what everyone else is actually using.
+  assert.ok(html.indexOf('data-slug="alpha"') < html.indexOf('data-slug="pop"'));
 
-  const phone = renderDiscover({ currentCols: () => 4 });
-  assert.doesNotMatch(phone, /home-discover-popular/,
-    'a phone widget is ONE row — a second lane there would be clipped');
-  assert.doesNotMatch(phone, /home-discover-divider/);
-  assert.match(phone, /data-slug="alpha"/, 'but the curated lane is unchanged');
+  // Nothing in the renderer consults the column count any more — the whole
+  // reason the module's own currentCols() helper is gone.
+  assert.doesNotMatch(SRC, /renderDiscoverPanel[\s\S]{0,900}currentCols/);
 });
 
 test('Discover never draws a footer; the browse control is in the title bar', () => {
-  for (const cols of [4, 5]) {
-    const html = renderDiscover({ currentCols: () => cols });
-    assert.doesNotMatch(html, /home-panel-footer/, `${cols} columns`);
-    // The button is inside the bar, which is what buys the 27px the one-row
-    // phone budget needs.
-    assert.match(html, /home-panel-bar[\s\S]*?id="home-browse-btn"[\s\S]*?home-panel-menu/,
-      `${cols} columns: browse sits between the title and the ⋮`);
-  }
+  const html = renderDiscover();
+  assert.doesNotMatch(html, /home-panel-footer/);
+  // The button is inside the bar. Discover has ONE destination, so it belongs
+  // beside the title rather than in 27px of chrome under two lanes.
+  assert.match(html, /home-panel-bar[\s\S]*?id="home-browse-btn"[\s\S]*?home-panel-menu/,
+    'browse sits between the title and the ⋮');
   // ...and in the empty branch too — it is THE discovery path.
   const empty = renderDiscover({ featuredApps: () => [], popularApps: () => [] });
   assert.match(empty, /home-panel-bar[\s\S]*?id="home-browse-btn"/);
@@ -1449,28 +1557,27 @@ test('the Create widget reads the viewer’s quota through Home', () => {
   assert.doesNotMatch(locked, /\sdisabled[=\s>]/, 'never the disabled ATTRIBUTE');
 });
 
-// The widget is 4x1 below 640px and 1x1 at/above it (PANEL_REGISTRY
-// `sizes`), so its CONTENT has to flip at the same breakpoint: icon beside
-// label in the full-width phone row, icon above label in the single desktop
-// cell. One markup, two shapes, both class literals so the compiled
-// stylesheet actually carries them.
-test('the Create widget lays out as a row on a phone and a stack on desktop', () => {
+// ONE shape. The block used to be 4x1 below 640px and 1x1 at/above it
+// (PANEL_REGISTRY `sizes`), so its CONTENT flipped at the same breakpoint:
+// icon beside label in the full-width phone row, icon above label in the
+// single desktop cell. THE UI OVERHAUL made it a full-width section at every
+// width, so only the row shape is left — the stacked variant existed for a
+// ~150px cell that no longer exists.
+test('the Create block lays out as a row at every width', () => {
   const html = makeHomePanels({ home: { canCreate: () => true } }).HP
     .renderCreatePanel({ key: 'create' });
   const btn = html.match(/class="home-create-btn[^"]*"/)[0];
-  assert.match(btn, /\bflex-row\b/, 'the phone shape is a row');
-  assert.match(btn, /\bsm:flex-col\b/, 'and it stacks again at the 640px breakpoint');
+  assert.match(btn, /\bflex-row\b/, 'icon beside label');
+  assert.doesNotMatch(btn, /\bsm:flex-col\b/, 'and never stacked again at 640px');
   assert.match(btn, /\bitems-center\b/);
-  assert.match(btn, /\bjustify-center\b/, 'centred in whichever rectangle it gets');
-  // The label steps up a size in the wide row, where there is room for it.
-  assert.match(html, /home-create-label[^"]*text-sm sm:text-xs/);
-  // The registry is the other half of the same decision — a 4x1 phone
-  // footprint with a stacked tile inside it would clip the label.
-  const route = read('src/routes/home-panels.js');
-  const create = route.slice(route.indexOf("key: 'create'"));
-  assert.match(create.slice(0, create.indexOf('},') + 1),
-    /sizes: \{ 4: \[4, 1\], 5: \[1, 1\] \}/,
-    'full-width row on a phone, one cell on desktop');
+  assert.match(btn, /\bjustify-center\b/);
+  // The label keeps the wide row's size at every width now, rather than
+  // stepping down for the cell.
+  assert.match(html, /home-create-label[^"]*\btext-sm\b/);
+  assert.doesNotMatch(html, /home-create-label[^"]*sm:text-xs/);
+  // `h-full` went with the rectangle: there is nothing to fill, so the block
+  // is as tall as its own padding.
+  assert.doesNotMatch(btn, /\bh-full\b/);
 });
 
 // The state has to end up on the HOST. The widget stamps it on markup that
@@ -1788,29 +1895,33 @@ test('desktop: a zero-score viewer row is muted, not a violet chip', () => {
   assert.match(youRow, /You are #300 of 42 by kudos on merged proposals/);
 });
 
-test('no fill on a phone, in the search-view host, or while expanded', () => {
+// The fill used to be suppressed at three widths and states: on a phone
+// (where the block owned one 116px cell), in the #home-panels search-view
+// fallback (no fixed-height rectangle to fill), and while expanded. The first
+// two went with the placement — the fill IS the point of the Challenges area
+// now, at every width — so expansion is the only thing left that stands it
+// down, plus the obvious case of a server that sent no board.
+test('the fill draws at every width; only expansion and an absent board stop it', () => {
   const data = withFill({ challenges: [challenge()], total: 1 });
 
-  // Phone: the widget is full-width, so it SHRINKS instead of filling.
-  const phone = makeDesktop(data, { cols: 4 });
-  assert.equal((phone.html.match(/home-panel-lb-row/g) || []).length, 0);
-  assert.match(phone.html, /data-fill="0"/);
+  // No Home on the window at all — the width is unknown and it does not
+  // matter, because nothing about the block is a width decision any more.
+  const anyWidth = renderWith(data);
+  assert.equal((anyWidth.html.match(/home-panel-lb-row/g) || []).length, 3);
+  assert.match(anyWidth.html, /data-fill="3"/);
 
-  // The #home-panels fallback (search view) has no fixed-height rectangle.
-  const fallback = renderWith(data);
-  assert.equal((fallback.html.match(/home-panel-lb-row/g) || []).length, 0);
-  assert.match(fallback.html, /data-fill="0"/);
-
-  // Expanded is all challenges — the fill steps aside.
+  // Expanded is all challenges — a standings preview under thirty rows is
+  // not a preview, so the fill steps aside.
   const slot = makeSlot('challenges');
-  const { HP } = makeHomePanels({ slots: [slot], home: { currentCols: () => 5 } });
+  const { HP } = makeHomePanels({ slots: [slot] });
   HP._expanded.challenges = true;
   HP._data = data;
   HP.render();
   assert.equal((slot.innerHTML.match(/home-panel-lb-row/g) || []).length, 0);
 
-  // And no fill when the server sent no board at all (the panel still renders).
-  const noBoard = makeDesktop({
+  // And no fill when the server sent no board at all (the block still
+  // renders — the challenge rows are its primary content).
+  const noBoard = renderWith({
     registry: [], hidden: [],
     panels: [panel({ challenges: [challenge()], total: 1 })],
   });
@@ -1819,11 +1930,14 @@ test('no fill on a phone, in the search-view host, or while expanded', () => {
   assert.match(noBoard.html, /Report a reproducible bug/);
 });
 
-test('currentCols: unknown width falls back to the COMPACT rendering', () => {
-  // Neither Home nor HomeLayout nor innerWidth on the window: the safe
-  // default is the phone shape, which claims no space it cannot fill.
+// `HomePanels.currentCols()` — the module's own read of the grid's column
+// count, with a phone fallback for an unknown width — is gone. It existed
+// only to choose between the two renderings, and there is one now.
+test('the module no longer reads the column count at all', () => {
   const { HP } = makeHomePanels();
-  assert.equal(HP.currentCols(), 4);
+  assert.equal(typeof HP.currentCols, 'undefined');
+  assert.doesNotMatch(SRC, /^\s*DESKTOP_COLS:/m);
+  assert.doesNotMatch(SRC, /^\s*PHONE_ROW_SLOTS:/m);
 });
 
 test('fill rows are excluded from the challenges click wiring', () => {
@@ -1861,181 +1975,104 @@ test('the fill navigates to the tab that shows the board it previewed', () => {
     /goToLeaderboard\((?:row|btn)\.dataset\.lbKind\)/);
 });
 
-// ── The phone shape (#968) ─────────────────────────────────────────
+// ── The phone shape (#968) is gone ────────────────────────────────
 //
-// Shrinking the drawn box (#947) did not shrink the SPACE: the footprint was
-// still two grid rows, so the height the block gave up became blank grid
-// between the widget and the first row of app icons. The footprint is one
-// row now, which means the CONTENT has to fit one 116px cell — and that is
-// markup, so it is decided in the renderer and asserted here.
+// It was a whole second rendering of the Challenges block, and everything in
+// it was a concession to ONE 116px grid cell: two rows instead of four, no
+// footer (its 27px WAS the second row), the way out moved into the title bar,
+// no leaderboard fill, a shortened "Leaderboard" label, and `_expanded`
+// forcibly ignored because a lifted height cap in a one-cell footprint would
+// have dropped an expanded season on top of the app tiles below.
+//
+// THE UI OVERHAUL made the block a full-width section that sizes to its own
+// content, so there is no cell to fit into and the full shape is right at
+// every width. What used to be the desktop-only rendering is now simply the
+// rendering — which is what these assert, at no particular width.
 
-test('phone: two rows, the way out in the title bar, and no footer', () => {
+test('the block draws all four rows, its footer and its toggle — at any width', () => {
   const four = Array.from({ length: 4 }, (_, i) => challenge({ id: i + 1 }));
-  const { html } = makeDesktop({
-    registry: [], hidden: [], panels: [panel({ total: 8, challenges: four })],
-  }, { cols: 4 });
-
-  // TWO of the four rows the server sent — the phone cell's whole row budget.
-  assert.equal((html.match(/data-challenge-id/g) || []).length, 2);
-  assert.match(html, /data-rows="2"/, 'and data-rows reports what is DRAWN');
-
-  // No footer: its 27px is the second row. Its controls are accounted for —
-  // see below, the rows themselves, and the ⋮ menu's two destination rows.
-  assert.doesNotMatch(html, /home-panel-footer/);
-  assert.doesNotMatch(html, /home-panel-expand/);
-
-  // The way out rides in the title bar instead — the leaderboard link of
-  // #980, which is Discover's browse control in the same place for the same
-  // reason, so the phone shape keeps exactly ONE bar control.
-  assert.match(html, /home-panel-bar[\s\S]*?home-panel-lb-browse[\s\S]*?home-panel-menu/,
-    'inside the bar, before the ⋮ menu');
-  assert.match(html, /home-panel-lb-browse[^>]*title="Open the Leaderboard screen"/);
-  assert.match(html, /home-panel-lb-browse[^>]*aria-label="Open leaderboard"/);
-  assert.doesNotMatch(html, /home-panel-open/,
-    'and NOT a second violet link beside it — the bar has room for one');
-  assert.match(SRC,
-    /querySelectorAll\('\.home-panel-lb-browse'\)/, 'and that class is wired');
-});
-
-test('phone: the empty state is the bar plus its one note row', () => {
-  const { html } = makeDesktop({
-    registry: [], hidden: [],
-    panels: [panel({ total: 0, done: 0, challenges: [], leaderboard: fill() })],
-  }, { cols: 4 });
-  assert.match(html, /No challenges are running right now/, 'it still says why');
-  assert.match(html, /data-rows="0"/);
-  // No leaderboard fill (that spends the DESKTOP tile's leftover) and no
-  // footer, so the block is 2 + 25.5 + 40 = ~69px of its 116px cell.
-  assert.equal((html.match(/home-panel-lb-row/g) || []).length, 0);
-  assert.match(html, /data-fill="0"/);
-  assert.doesNotMatch(html, /home-panel-footer/);
-});
-
-test('phone: an expansion carried across a resize is not honoured', () => {
-  // _expanded is per-visit CLIENT state, so it survives a desktop→phone
-  // resize. Honouring it here would drop every row of an expanded season —
-  // and a lifted height cap — into a cell that is one app-icon row tall.
-  const nine = Array.from({ length: 9 }, (_, i) => challenge({ id: i + 1 }));
-  const slot = makeSlot('challenges');
-  const { HP } = makeHomePanels({ slots: [slot], home: { currentCols: () => 4 } });
-  HP._expanded.challenges = true;
-  HP._data = { registry: [], hidden: [], panels: [panel({ total: 9, challenges: nine })] };
-  HP.render();
-  assert.doesNotMatch(slot.innerHTML, /home-panel--expanded/,
-    'the class app.css hangs max-height: none on must not reach the phone');
-  assert.equal((slot.innerHTML.match(/data-challenge-id/g) || []).length, 2);
-});
-
-test('desktop keeps all four rows, its footer and its toggle', () => {
-  // The other side of the same branch: nothing about the phone shape may
-  // reach five columns, where the widget is a tile among app icons.
-  const four = Array.from({ length: 4 }, (_, i) => challenge({ id: i + 1 }));
-  const { html } = makeDesktop({
+  const { html } = renderWith({
     registry: [], hidden: [], panels: [panel({ total: 8, challenges: four })],
   });
   assert.equal((html.match(/data-challenge-id/g) || []).length, 4);
-  assert.match(html, /data-rows="4"/);
+  assert.match(html, /data-rows="4"/, 'data-rows reports what is DRAWN');
   assert.match(html, /home-panel-footer/);
   assert.match(html, /home-panel-expand[^>]*data-panel-key="challenges"/);
   assert.match(html, /See all 8 challenges/);
   assert.match(html, /home-panel-open[^>]*aria-label="Open challenges"/,
     'the footer keeps the Challenges-tab door; the bar carries the leaderboard');
-  // …and the bar's leaderboard link is on BOTH shapes, with the long label
-  // here where there is room for it (#980).
-  assert.match(html, /home-panel-lb-browse[^>]*aria-label="Open leaderboard"/);
+  // The bar's leaderboard link (#980) with the LONG label — the compact
+  // "Leaderboard" existed only for the one-cell bar.
+  assert.match(html, /home-panel-bar[\s\S]*?home-panel-lb-browse[\s\S]*?home-panel-menu/,
+    'inside the bar, before the ⋮ menu');
+  assert.match(html, /home-panel-lb-browse[^>]*title="Open the Leaderboard screen"/);
   assert.match(html, /<span class="whitespace-nowrap">Open leaderboard<\/span>/);
+  assert.match(SRC, /querySelectorAll\('\.home-panel-lb-browse'\)/, 'and that class is wired');
+  assert.doesNotMatch(SRC, /'Leaderboard' : 'Open leaderboard'/,
+    'the two-label branch went with the shape that needed the short one');
 });
 
-// The fallback host (#home-panels, the search view) has no grid cell — but
-// it is still on somebody's screen at somebody's width, and the phone shape
-// is a WIDTH decision. It used to hardcode cols: 4, which is the right
-// default for "unknown" and the wrong answer for a desktop search.
-test('the search-view host follows the real width, not a hardcoded 4', () => {
-  const four = Array.from({ length: 4 }, (_, i) => challenge({ id: i + 1 }));
-  const data = { registry: [], hidden: [], panels: [panel({ total: 8, challenges: four })] };
-  assert.match(renderWith(data, AT_DESKTOP).html, /home-panel-footer/,
-    'a desktop search view is not a phone');
-  assert.doesNotMatch(renderWith(data).html, /home-panel-footer/,
-    'and an unknown width still gets the compact shape');
-  assert.match(SRC,
-    /renderPanel\(p, \{ inGrid: false, cols \}\)/);
+test('the empty state is the bar, its one note row, and the fill', () => {
+  const { html } = renderWith({
+    registry: [], hidden: [],
+    panels: [panel({ total: 0, done: 0, challenges: [], leaderboard: fill() })],
+  });
+  assert.match(html, /No challenges are running right now/, 'it still says why');
+  assert.match(html, /data-rows="0"/);
+  // Between seasons the standings are the only thing this area has to show,
+  // so the fill spends the whole budget on them (fillSlots(0) === 3).
+  assert.equal((html.match(/home-panel-lb-row/g) || []).length, 3);
+  assert.match(html, /data-fill="3"/);
+  // Still no expand toggle — there is nothing to expand — but the fill's own
+  // footer offers the board it previewed.
+  assert.doesNotMatch(html, /home-panel-expand/);
+  assert.match(html, /home-panel-lb-open/);
 });
 
-// The budget the phone shape is designed against, derived by hand in app.css
-// and pinned here exactly as the Discover one above is — a token moved on one
-// side without the other mis-sizes the widget silently.
-test('the phone shape fits the one cell its footprint buys', () => {
+test('an expansion is honoured at every width now', () => {
+  // `_expanded` is per-visit CLIENT state and survives a resize. The phone
+  // branch had to IGNORE it: a lifted height cap in a 116px cell would have
+  // painted an expanded season over the app tiles below. A section grows.
+  const nine = Array.from({ length: 9 }, (_, i) => challenge({ id: i + 1 }));
+  const slot = makeSlot('challenges');
+  const { HP } = makeHomePanels({ slots: [slot] });
+  HP._expanded.challenges = true;
+  HP._data = { registry: [], hidden: [], panels: [panel({ total: 9, challenges: nine })] };
+  HP.render();
+  assert.match(slot.innerHTML, /home-panel--expanded/,
+    'the class app.css hangs max-height: none on');
+  assert.equal((slot.innerHTML.match(/data-challenge-id/g) || []).length, 9);
+});
+
+// The per-cell BUDGETS the phone shape was designed against went with it:
+// `PHONE_ROW_SLOTS` (two rows against a 116px cell), the registry `sizes`
+// footprint table that made the cell one cell, `FIT_ROW_FLOOR` (the smallest
+// block the widget ever drew, reserved as a grid row's floor) and the
+// `.home-panel--fit` hook that released the block from its slot's stretch.
+// What is left is the collapsed CEILING, which is the same at every width.
+test('the per-cell budgets and their hooks are gone', () => {
   const css = read('public/css/app.css');
-  const rem = (re) => parseFloat(css.match(re)[1]) * 16;
-  const phoneCell = rem(/@media \(max-width: 639\.98px\)[\s\S]*?--home-cell-h: ([\d.]+)rem/);
-  const rowPx = rem(/--home-panel-row-h:\s*([\d.]+)rem/);
-  const bar = 27;   // py-1 8 + 18 line (the 12px control) + 1px rule
-  const slots = Number(SRC
-    .match(/PHONE_ROW_SLOTS:\s*(\d+)/)[1]);
-  assert.equal(slots, 2);
-  assert.ok(2 + bar + slots * rowPx <= phoneCell,
-    `phone budget ${2 + bar + slots * rowPx}px must fit the ${phoneCell}px cell`);
-  // …and a FOOTER would not, which is why the way out is in the bar.
-  const footerPx = rem(/\.home-panel-footer \{[^}]*min-height:\s*([\d.]+)rem/) + 1;
-  assert.ok(2 + bar + slots * rowPx + footerPx > phoneCell,
-    'the footer is exactly the row it would cost');
-  // The footprint that makes the cell one cell in the first place.
-  assert.match(read('src/routes/home-panels.js'),
-    /key: 'challenges'[\s\S]*?sizes: \{ 4: \[4, 1\], 5: \[2, 2\] \}/);
-});
+  // Code-shaped (anchored at the start of a line), so the comments that
+  // record what was removed, and why, survive.
+  assert.doesNotMatch(SRC, /^\s*PHONE_ROW_SLOTS:/m);
+  assert.doesNotMatch(SRC, /'home-panel--fit'/);
+  assert.doesNotMatch(css, /^\s*\.home-panel--fit\s*\{/m);
+  assert.doesNotMatch(HOME, /FIT_ROW_FLOOR/);
+  // The registry keeps the blocks and their titles; the per-breakpoint
+  // footprint each one claimed is what went.
+  assert.doesNotMatch(ROUTE, /sizes:/);
 
-// The row a fit widget owns is sized by the BROWSER (an `auto` track), so
-// nothing here can drift — except the floor, which is a hand-written constant
-// and therefore the one number that can. It must equal the smallest block the
-// widget ever draws: any larger and it reserves space a real state does not
-// use, which is the whole bug this issue is about.
-test('the fit-row floor is the empty block’s own height, not a guess', () => {
-  const css = read('public/css/app.css');
+  // The collapsed ceiling STAYS, at 16rem, with no phone override — and the
+  // four-row block plus its chrome still clears it. 2 + 25.5 + 4x40 + 27 =
+  // 214.5px against 256px.
   const rowPx = parseFloat(css.match(/--home-panel-row-h:\s*([\d.]+)rem/)[1]) * 16;
-  const floorPx = parseFloat(HOME.match(/FIT_ROW_FLOOR: '([\d.]+)rem'/)[1]) * 16;
-  // border 2 + title bar 25.5 (the empty state's bar carries no control) +
-  // one note row, which is a .home-panel-row like any other.
-  const emptyBlock = 2 + 25.5 + rowPx;
-  assert.ok(floorPx >= emptyBlock && floorPx < emptyBlock + 1,
-    `the floor (${floorPx}px) must be the empty block (${emptyBlock}px), rounded up`);
-  // …and comfortably under the cell, or it would be a reservation rather than
-  // a guard against a slot that rendered nothing.
-  const phoneCell = parseFloat(
-    css.match(/@media \(max-width: 639\.98px\)[\s\S]*?--home-cell-h: ([\d.]+)rem/)[1]) * 16;
-  assert.ok(floorPx < phoneCell);
-});
-
-test('the challenges article always carries home-panel--fit', () => {
-  const populated = renderWith({ registry: [], hidden: [], panels: [panel()] }).html;
-  const empty = renderWith({ registry: [], hidden: [],
-    panels: [panel({ total: 0, done: 0, challenges: [] })] }).html;
-  for (const [name, html] of [['populated', populated], ['empty', empty]]) {
-    assert.match(html, /home-panel--fit/, `${name}: the phone sizing hook`);
-  }
-});
-
-// The sizing half of the split is CSS, and it is only correct if it is
-// SCOPED: unscoped, it would shrink the desktop tile and leave a notch in
-// the icon grid.
-test('app.css: the fit rule lives inside the phone media block, and only there', () => {
-  const css = read('public/css/app.css');
-  const at = css.indexOf('@media (max-width: 639.98px)');
-  assert.ok(at > -1, 'the phone block exists');
-  // The block runs to the next top-level @media.
-  const end = css.indexOf('@media (min-width: 640px)', at);
-  const phoneBlock = css.slice(at, end > -1 ? end : css.length);
-  assert.match(phoneBlock, /\.home-panel-slot > \.home-panel--fit \{[^}]*align-self:\s*flex-start/,
-    'content-height sizing is phone-only');
-  // Exactly one RULE for it in the whole file (prose mentions don't count).
-  assert.equal((css.match(/\.home-panel--fit\s*\{/g) || []).length, 1);
-  // Desktop keeps the stretch: the slot must not grow an align-items of its
-  // own (it would take the create widget's h-full 1x1 tile down with it).
-  // Comments stripped first — the rule's own prose explains that constraint,
-  // and asserting against prose would fail on an accurate comment.
-  const decls = (rule) => rule.replace(/\/\*[\s\S]*?\*\//g, '');
-  const slotRule = decls(css.match(/\.home-panel-slot \{[^}]*\}/)[0]);
-  assert.doesNotMatch(slotRule, /align-items/);
-  assert.match(slotRule, /display:\s*flex/);
+  const capPx = parseFloat(css.match(/--home-panel-max-h:\s*([\d.]+)rem/)[1]) * 16;
+  const footerPx = parseFloat(
+    css.match(/\.home-panel-footer \{[^}]*min-height:\s*([\d.]+)rem/)[1]) * 16;
+  assert.equal(capPx, 256);
+  assert.ok(2 + 25.5 + 4 * rowPx + footerPx + 1 <= capPx - 5);
+  assert.equal((css.match(/--home-panel-max-h:/g) || []).length, 1,
+    'declared once, at :root — no per-breakpoint redefinition');
 });
 
 test('app.css: the body wrapper and fill block carry the budget’s geometry', () => {

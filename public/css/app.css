@@ -1063,78 +1063,32 @@ html, body {
   margin-right: auto;
 }
 
-/* ── Home-screen panels (#911) ──────────────────────────────
-   The widget area between the "Your apps" grid and "Featured apps" is a
-   STACK of separate bordered blocks, one per widget, so a second panel
-   lands as its own distinct box rather than another row inside a shared
-   card. Each block is a plain full-width child of #home-panels — the
-   column above is the only width bound (see .home-column).
+/* ── Home-screen sections (#911) ────────────────────────────
+   Discover, Challenges and Create app: three bordered blocks stacked under
+   the launcher grid, in that order, each a plain full-width child of its own
+   <section>. THE UI OVERHAUL fixed them there. They were draggable ITEMS of
+   #app-list before it — a `.home-panel-slot` host at a stored (column, row)
+   cell, spanning real cells so app icons flowed around them the iOS-widget
+   way — and everything below that answered to a rectangle: a two-cell height
+   cap, a half-column width cap, a stretch-to-fill, and a phone branch that
+   reshaped the content to fit ONE 116px cell. All of it is gone with the
+   placement. A section is as tall as it draws and as wide as .home-column.
 
-   HEIGHT — "about two rows of app icons", derived from the app tile's
-   own tokens rather than measured at runtime. #922 deleted exactly that
-   kind of measure-on-render loop (Home.alignSections publishing
-   --home-section-indent), so this stays a constant that a reader can
-   check by hand:
+   HEIGHT — one thing survives the rectangle, and it is the collapsed
+   CEILING: --home-panel-max-h, "about two rows of app icons", derived from
+   the app tile's own tokens rather than measured at runtime. #922 deleted
+   exactly that kind of measure-on-render loop (Home.alignSections publishing
+   --home-section-indent), so this stays a constant a reader can check by
+   hand:
 
      one app row  --home-cell-h              = 7.75rem (124px)
      #app-list    gap-2         0.5rem between rows
                   two app rows  7.75 + 0.5 + 7.75 = 16rem (256px)
 
-   The row height is --home-cell-h now (declared above, with the .app-card
-   token derivation that produces it), so this cap is literally "two cells
-   plus the gap between them" and the two can no longer drift apart. The
-   PHONE variant is smaller — a 116px cell and a 6px gap = 238px — and is
-   applied in the media query below, since every widget is 2 rows tall at
-   both widths.
-
-   If any of .app-card's own tokens changes, update --home-cell-h and this
-   constant together — tests/home-panels-render.test.js pins both sides so
-   a drift in one without the other fails rather than silently mis-sizing
-   the block.
-
-   WHAT THAT NUMBER MEANS DEPENDS ON THE BREAKPOINT (#947, #968). The
-   challenges widget is the same markup at both widths and two different
-   things:
-
-     PHONE (<640px, 4 columns) — the widget spans the FULL grid width and is
-     ONE CELL TALL (registry `sizes` 4: [4, 1]), so this two-cell constant
-     does not apply there at all: the phone media block at the bottom of this
-     file redefines --home-panel-max-h as one --home-cell-h. #947 made the
-     block draw at its CONTENT height (`.home-panel--fit`, same block) but
-     left the footprint at two rows, so the height it gave up became a band of
-     blank grid between the widget and the first row of app icons — a ~68px
-     box inside a 238px reservation between seasons. #968 cut the footprint
-     to one row and reshaped the CONTENT to fit it:
-
-       border 2 + title bar 27 + 2 rows x --home-panel-row-h (40) = 109px
-
-     against the 116px phone cell — ~7px of headroom. No footer: a
-     .home-panel-footer is 27px more and that IS the second row, so the way
-     off this screen rides in the title bar instead — the leaderboard link of
-     #980, which is Discover's browse control in the same place for the same
-     reason (#949) — the rows themselves still open the Challenges tab, and
-     expand-in-place is a desktop-only state. The empty state is 69px of the
-     same cell. See HomePanels.renderChallengesPanel's compact branch.
-
-     DESKTOP (>=640px, 5 columns) — the widget is a TILE in a grid of app
-     icons. Shrinking it would leave a notch beside the tiles it shares rows
-     with, so the constant is the DRAWN height, always, and the widget fills
-     whatever the challenge rows don't use with a LEADERBOARD section (see
-     .home-panel-fill). Row budget inside the 16rem tile:
-
-       256 - border 2 - title bar 25.5 - footer 27           = 201.5px
-       a row is --home-panel-row-h (40); the fill label is 16
-       => fillRows = 4 - max(challengeRows, 1)
-
-     which is 3 rows at zero or one challenge, 2 at two, 1 at three, and 0 at
-     four — a 40px row plus its 16px label does not fit in the ~41px the
-     four-row state leaves, so that one state keeps its slack.
-
-   The cap is enforced by flexbox, not arithmetic: the title bar is
-   flex: none and the body takes the remainder with min-height: 0 +
-   overflow: hidden, so content clips at the cap instead of growing the
-   block. Budget inside 14rem, counting every band the collapsed block
-   actually draws:
+   It is a CEILING, not the drawn height, and it is what `.home-panel--expanded`
+   lifts: the collapsed block draws four challenge rows plus its chrome and the
+   cap stops a season with thirty of them from taking the whole page before the
+   viewer has asked for it. The block deliberately spends LESS than the cap:
 
      border            1px top + 1px bottom          =   2px
      title bar         py-1 8 + 16.5 line + 1 rule   =  25.5px
@@ -1143,35 +1097,37 @@ html, body {
                                                        -------
                                                         214.5px
 
-   The block deliberately spends LESS than the cap — the cap is the
-   ceiling that stops it pushing "Featured apps" off the fold, but a
-   widget that merely fits under a ceiling still reads tall. ~215px
-   against a 224px cap leaves ~9px of headroom, which is also what
-   absorbs a slightly larger system text size before the rows list
-   starts to clip. Growing the row past 40px spends that headroom
-   directly: at 42px the four rows plus chrome are 222.5px and one more
-   pixel of text anywhere clips the last row.
+   ~215px against a 256px cap. The slack is what absorbs a larger system text
+   size before the rows list starts to clip; growing the row past 40px spends
+   it directly. The cap is enforced by flexbox, not arithmetic: the title bar
+   is flex: none and the body takes the remainder with min-height: 0 +
+   overflow: hidden, so content clips at the cap instead of growing the block.
 
-   WIDTH CAP — half the home column, and derived from it the same way:
+   Whatever the challenge rows leave inside that budget goes to the
+   LEADERBOARD fill (see .home-panel-fill) — the standings preview that is
+   how the home screen shows the leaderboard now:
 
-     .home-column  max-width  64rem (1024px)
-                              ------
-                   half        32rem (512px)
+     256 - border 2 - title bar 25.5 - footer 27           = 201.5px
+     a row is --home-panel-row-h (40); the fill label is 16
+     => fillRows = 4 - max(challengeRows, 1)
 
-   A widget is not a section. The trailing sections ("Featured apps",
-   "Create an app") are full-width because their CONTENT is full-width —
-   a horizontal strip of app tiles, a wide call to action. A challenges
-   row is one short line of text plus two small chips, so stretching it
-   to 1024px left most of the block as empty space with a lonely reward
-   chip pinned to the far right, and the eye had to travel the whole
-   column to connect a goal to its points.
+   which is 3 rows at zero or one challenge, 2 at two, 1 at three, and 0 at
+   four — a 40px row plus its 16px label does not fit in the ~41px the
+   four-row state leaves, so that one state keeps its slack.
 
-   Left-aligned, not centred: the block is a member of the app grid (it
-   is a col-span-full item inside #app-list), so its left edge must line
-   up with the first column of app icons or the grid reads as broken.
-   max-width on a block-level article does that for free — no auto
-   margins, which would centre it. Below 512px the cap is a no-op and
-   the block is as wide as the phone, which is what a phone wants. */
+   NO WIDTH CAP any more. It was --home-panel-max-w, half of .home-column
+   (512px of 1024px), and the argument for it was "a widget is not a section":
+   a challenges row is one short line plus two small chips, and stretching it
+   to 1024px left a lonely reward chip pinned to the far right. These ARE
+   sections now — they are the screen's areas, stacked, each one the full
+   width of the column above it — and a half-width Discover under a
+   full-width app grid reads as a rendering fault, not as restraint. The
+   lanes and rows inside them lay out against the width they are given.
+
+   If any of .app-card's own tokens changes, update --home-cell-h and
+   --home-panel-max-h together — tests/home-panels-render.test.js pins both
+   sides so a drift in one without the other fails rather than silently
+   mis-sizing the block. */
 :root {
   /* ONE APP-GRID ROW. Every other height on the home screen is derived from
      it: the grid's own grid-auto-rows, the drag overlay's cells (which must
@@ -1216,7 +1172,6 @@ html, body {
      space-free token — see rowTemplate. */
   --home-blank-row-h: calc(var(--home-cell-h) / 2);
   --home-panel-max-h: 16rem; /* two cells + the gap — see --home-cell-h */
-  --home-panel-max-w: 32rem; /* half of .home-column's 64rem */
   --home-panel-row-h: 2.5rem; /* 40px — see the budget above */
   /* The METER LANE: the strip along the bottom of every row in a panel
      that has at least one progress bar. The bar lives in it and the row's
@@ -1234,42 +1189,19 @@ html, body {
   display: flex;
   flex-direction: column;
   max-height: var(--home-panel-max-h);
-  max-width: var(--home-panel-max-w);
 }
 
-/* THE WHOLE TITLE BAR IS THE DRAG HANDLE (#911). No ⠿ grip: the drag
-   surface has always been the whole grid item, so a dedicated grabber
-   beside a bar that is itself grabbable advertised the opposite — "only
-   this glyph moves it" — which is how the widget got reported as
-   undraggable in the first place.
-
-   There is no `handle:` option on the kit's attachReorder call, and that
-   is deliberate: `handle` is declared per LIST, and #app-list's other
-   items are the app cards, which must keep long-press-to-lift on touch
-   and drag-from-anywhere on desktop. With no handle the kit already gives
-   this bar exactly what was asked for — a desktop drag lifts as soon as
-   it passes the slop, a touch drag lifts on the long press — and a touch
-   that merely rests here still scrolls the feed, which an immediate-lift
-   grabber spanning a full-width 28px bar would have broken.
-
-   The cursor is scoped to the IN-GRID host: in the #home-panels fallback
-   section (search view, or before the grid has painted) there is no
-   reorder wiring at all, so a grab cursor there would be a lie. */
+/* THE TITLE BAR WAS THE DRAG HANDLE (#911) and is not one any more. It
+   carried `cursor: grab` (scoped to the in-grid host, `grabbing` for the span
+   of a lift) and a "Drag to move this widget" tooltip, because the whole bar
+   was the grab surface of a grid item. THE UI OVERHAUL fixed the three blocks
+   into sections, so there is nothing to grab and a grab cursor here would be
+   a lie. `user-select: none` stays: the bar is not a text surface, and a
+   double-click that selects "CHALLENGES · 1 of 6" is noise either way. */
 .home-panel-bar {
   user-select: none;
   -webkit-user-select: none;
 }
-[data-panel-slot] .home-panel-bar {
-  cursor: grab;
-}
-/* The kit puts .un-reordering on the LIST for the duration of a lift, and
-   the slot is one of #app-list's children. */
-.un-reordering [data-panel-slot] .home-panel-bar {
-  cursor: grabbing;
-}
-/* …but a control is a control. The ⋮ menu is excluded from the drag in JS
-   (home-panels.js _wire stops its pointerdown), so it must not wear the
-   handle's cursor either. */
 .home-panel-bar button {
   cursor: pointer;
 }
@@ -1399,64 +1331,11 @@ html, body {
   overflow: visible;
 }
 
-/* The in-grid drag host (#911). It spans real cells — `col-span-2
-   md:row-span-2` in home.js, derived there — so app icons flow around it,
-   the iOS widget idiom, and it can be dropped beside a card as well as
-   between rows. It carries no visuals of its own: the bordered .home-panel
-   article inside it is the widget.
-
-   NO margin here, deliberately: a margin-bottom (which this had while the
-   slot was a col-span-full row break) adds to the item's outer height, so a
-   row-span-2 item would demand 224px + margin from two 108px rows and
-   stretch every card sharing them. The grid's own gap-2 is the spacing.
-
-   The width cap is kept as a backstop, above the widest span (496px at lg
-   vs the 512px cap), so it never binds in the grid but still bounds the
-   #home-panels fallback host and the kit's lift ghost. min-width: 0 keeps
-   a long goal from pushing the item past its cells. */
-.home-panel-slot {
-  max-width: var(--home-panel-max-w);
-  min-width: 0;
-  /* The slot IS its cells: the bordered .home-panel article inside it
-     stretches to fill whatever rectangle the layout gave it, rather than
-     sitting at its natural height in the top-left of a 2x2 block.
-
-     THAT IS A DESKTOP CONTRACT (#947), not a universal one. At five columns
-     the widget is a tile among app icons and a short block would leave a
-     visible notch beside its neighbours — so it stretches, and the challenges
-     widget fills the surplus with its LEADERBOARD section rather than blank
-     space. At four columns the widget spans the whole width, so there is no
-     neighbour to leave a notch beside and shrinking costs nothing: the phone
-     media block at the bottom of this file releases `.home-panel--fit` from
-     this stretch. Do not move that rule out of the media query — desktop
-     depends on the stretch, and `align-items` here would take the create
-     widget's `h-full` 1x1 tile down with it.
-
-     Releasing the stretch is only half of "shrinks", though (#968), and the
-     half that the reader of this rule cannot see: the slot is a grid item, so
-     what it releases is space INSIDE its own rectangle. Two things size that
-     rectangle, and BOTH had to move before the page got anything back —
-     a short block in a slot that still owns 238px of grid gives its height to
-     whitespace, not to the viewer:
-
-       * the footprint. Every widget's phone `sizes` entry is one row, so the
-         rectangle is one cell rather than two.
-       * the TRACK. Home.rowTemplate gives the row a fit widget owns outright
-         a content-sized track, so the cell is as tall as the widget draws —
-         see #app-list above.
-
-     This rule is what makes the second one visible rather than redundant: in
-     a content-sized track it is a no-op (the track already equals the
-     content), but it is still what keeps the article honest on any row that
-     is NOT a fit row — a hole-adjacent full-height row, the desktop tile's
-     sibling breakpoint, or the frame before a re-render lands. */
-  display: flex;
-  min-height: 0;
-}
-.home-panel-slot > .home-panel,
-.home-panel-slot > .home-create-widget {
-  width: 100%;
-}
+/* `.home-panel-slot` — the in-grid drag host — is gone with the placement.
+   It spanned real cells so app icons flowed around a widget the iOS way, and
+   it carried a width cap, a stretch-to-fill and a phone release from that
+   stretch. THE UI OVERHAUL made the three blocks fixed <section>s, so there
+   is no rectangle to fill and nothing to drag. */
 
 /* ── The launcher grid ──────────────────────────────────────
    Free-form placement: every child is positioned at an explicit
@@ -1636,10 +1515,9 @@ html, body {
   .home-item-displaced { transition: none; }
 }
 
-/* Tiles and widgets sit ABOVE the overlay. Without this the overlay's cells
-   would paint over the icons they are supposed to sit behind. */
-#app-list > .app-card,
-#app-list > .home-panel-slot {
+/* Tiles sit ABOVE the overlay. Without this the overlay's cells would paint
+   over the icons they are supposed to sit behind. */
+#app-list > .app-card {
   position: relative;
   z-index: 1;
 }
@@ -1652,15 +1530,14 @@ html, body {
    under the finger returns a TILE for every occupied cell, cellFromPoint
    returns null, and the drop is treated as "not over the grid":
 
-     • dropping onto another app or widget did nothing at all — the target
-       was never even resolvable, so displacement could not be reached;
-     • and a widget could not be moved to any position overlapping its OWN
+     • dropping onto another app did nothing at all — the target was never
+       even resolvable, so displacement could not be reached;
+     • and a tile could not be moved to any position overlapping its OWN
        footprint, because its own drop slot swallowed the hit-test.
 
    The kit puts .un-reordering on the list for exactly the span of a lift, so
    scoping it there means normal taps are untouched. */
-#app-list.un-reordering > .app-card,
-#app-list.un-reordering > .home-panel-slot {
+#app-list.un-reordering > .app-card {
   pointer-events: none;
 }
 
@@ -1785,14 +1662,12 @@ html, body {
 .home-create-widget {
   min-width: 0;
 }
-/* "Create app" wraps to two lines rather than truncating: in the narrowest
-   shape the tile takes (ONE cell, ~150px on desktop) a truncated "Create …"
-   would read as a rendering bug, the way an app tile's truncated name reads
-   as a long name. Two 16px lines fit the cell's budget (16 padding + 56 icon
-   + 8 gap + 32), which is what the caption lane an app tile spends on its
-   status buys back here — a widget has no status line. Below 640px the
-   widget is a 4x1 full-width row and the label sits BESIDE the icon with
-   room to spare, so the clamp is a backstop there, not the layout. */
+/* "Create app" wraps to two lines rather than truncating. It is a backstop
+   now rather than the layout: the block is a full-width section at every
+   width and the label sits BESIDE the icon with room to spare. The clamp
+   earned its keep when the widget could be ONE ~150px grid cell, where a
+   truncated "Create …" read as a rendering bug the way an app tile's
+   truncated name reads as a long name. */
 .home-create-label {
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -1825,9 +1700,9 @@ html, body {
 
 /* ── Phone density ──────────────────────────────────────────
    Below 640px the grid is 4 columns with a tighter tile, so the cell is 8px
-   shorter (p-2 instead of p-3) and the gap is 6px instead of 8. Both the
-   overlay's inset/gap and the two-row widget cap follow from that — kept
-   here, in one block, so the three can't drift.
+   shorter (p-2 instead of p-3) and the gap is 6px instead of 8, and the
+   overlay's inset/gap follows from that — kept here, in one block, so the
+   two can't drift.
 
    640px IS the breakpoint: it is Tailwind's `sm` on #app-list's
    `grid-cols-4 sm:grid-cols-5`, and HomeLayout.BREAKPOINT_PX in
@@ -1837,15 +1712,12 @@ html, body {
   :root {
     /* 116px — p-2 (16) + icon 56 + gap-1.5 (6) + title 26 + caption 12 */
     --home-cell-h: 7.25rem;
-    /* ONE CELL (#968). Every widget's phone footprint is one row now
-       (PANEL_REGISTRY `sizes` 4: [4, 1] for all three), so the cap is the
-       cell they each own rather than the two rows Challenges used to claim.
-       It is a CEILING, not the drawn height — `.home-panel--fit` below is
-       what lets a block end sooner — and its job is to make an oversized
-       system text size CLIP inside the widget rather than paint the article
-       over the app tiles in the row below, which is what a 238px cap in a
-       116px cell would have allowed. */
-    --home-panel-max-h: var(--home-cell-h);
+    /* --home-panel-max-h was redefined here as ONE CELL (#968), because a
+       block was a grid item whose phone footprint was a single row and a
+       238px cap in a 116px cell would have let an oversized system text size
+       paint the article over the app tiles below it. The blocks are fixed
+       sections outside the grid now — they overlap nothing — so the
+       collapsed ceiling is the same 16rem at every width. */
   }
   .home-grid-overlay { gap: 0.375rem; }
   /* The doubled class is deliberate. This rule is what makes the phone
@@ -1860,23 +1732,11 @@ html, body {
      line width, which at 11px is roughly two more characters per line. */
   .app-card.app-card { padding: 0.5rem; }
 
-  /* SIZE TO CONTENT, phone only (#947, #968). The widget is full-width here,
-     so a shorter block just ends sooner — no neighbour to leave a notch
-     beside, nothing to re-pack.
-
-     #947 shrank the drawn box, #968 shrank the FOOTPRINT to one grid row to
-     match, and then shrank the ROW ITSELF: Home.rowTemplate gives the row a
-     fit widget owns a content-sized track (see #app-list), so the height a
-     short block gives up is not reserved anywhere at all. There is no
-     leftover quantization to live with — the between-seasons state costs the
-     page ~68px, not a 116px cell holding a ~68px box.
-
-     Deciding this in CSS rather than JS is deliberate: a window dragged
-     across 640px resizes the block immediately, before the resize listener's
-     re-render lands. --home-panel-max-h stays as the ceiling above. */
-  .home-panel-slot > .home-panel--fit {
-    align-self: flex-start;
-  }
+  /* `.home-panel-slot > .home-panel--fit { align-self: flex-start }` lived
+     here: the phone-only release from the slot's stretch-to-fill, so a short
+     block ended sooner instead of spending its cell on whitespace. Both the
+     slot and the stretch went with the placement — a section is as tall as it
+     draws, everywhere, with no rule needed to say so. */
 }
 @media (min-width: 640px) {
   .home-grid-overlay {
@@ -1887,10 +1747,13 @@ html, body {
 }
 
 /* App tiles sit at the TOP of their row rather than stretching to fill it.
-   Rows are 108px tall whenever cards alone define them, so this changes
-   nothing on its own — it only matters in the rows the panel slot spans,
-   where an expanded widget makes the row taller than a card and a stretched
-   tile would grow a pool of dead space under its title. */
+   Rows are a fixed --home-cell-h whenever tiles alone define them, so this
+   changes nothing on its own. It earned its keep in the rows a multi-cell
+   WIDGET spanned, where an expanded block made the row taller than a card and
+   a stretched tile grew a pool of dead space under its title; nothing spans
+   rows since THE UI OVERHAUL. It stays because the blank rows
+   Home.rowTemplate emits (#975) are half a cell, and a tile stretched to a
+   short track is the same wrong default in the other direction. */
 #app-list > .app-card {
   align-self: start;
 }

@@ -321,8 +321,8 @@ export function ImprovePanel() {
                 onClick={() => Improve.share()}
               />
             ) : null}
-            {/* Version last, and as text rather than a row: it is the one thing
-                here you read instead of act on. `slug` gates it so a
+            {/* Versions last, and as text rather than rows: they are the things
+                here you read instead of act on. `slug` gates the app's own so a
                 target-less panel never renders a dangling label. */}
             {slug ? (
               <div
@@ -338,6 +338,55 @@ export function ImprovePanel() {
                 </span>
               </div>
             ) : null}
+            {/*
+                THE THREE ROWS BELOW CAME FROM #drawer-footer, ids and renderers
+                intact, because every one of them is a fact about the platform
+                or the open app rather than a navigation action — which is what
+                the hamburger is for now.
+
+                They are rendered here as CONSTANT markup with empty slots: the
+                modules that fill them (App.loadVersion,
+                features/header/native-app-version.js, AppView.renderForkBadge)
+                all resolve their slot by getElementById and toggle `hidden` on
+                the row, so only the parent changed. `.drawer-ver-row` keeps its
+                name for the same reason — app.css draws all three off it, and
+                renaming would be a restyle rather than a move.
+
+                DrawerStatus.refreshDeployDot() reads the deploying pill out of
+                whichever of these is painted, which is why the amber dot on the
+                hamburger still lights when a deploy is in flight.
+            */}
+            <div id="drawer-row-platform-version" className="drawer-ver-row flex items-center gap-2 px-4">
+              <span className="drawer-ver-label">
+                Platform version
+              </span>
+              <span
+                id="platform-version-pill-slot"
+                className="drawer-ver-value ml-auto inline-flex min-w-0 justify-end"
+              >
+              </span>
+            </div>
+            {/* Installed Flutter app release (#1101) — version/build, e.g.
+                0.4.0/1223. Deliberately independent of the platform version
+                above and never the open app's commit. Hidden outside the
+                mobile app. */}
+            <div id="drawer-row-native-app-version" className="hidden drawer-ver-row flex items-center gap-2 px-4">
+              <span className="drawer-ver-label">
+                Mobile app version
+              </span>
+              <span
+                id="native-app-version-slot"
+                className="drawer-ver drawer-ver-value ml-auto min-w-0 justify-end"
+              >
+              </span>
+            </div>
+            {/* Fork lineage: the amber "⑂ Forked from <name>" label, written by
+                AppView.renderForkBadge() and revealed by
+                App.DrawerStatus.setForkVisible(). App context, not a version. */}
+            <div id="drawer-row-app-fork" className="hidden drawer-ver-row items-center gap-2 px-4">
+              <span id="app-fork-badge-slot" className="ml-auto inline-flex min-w-0 justify-end">
+              </span>
+            </div>
           </div>
         </div>
       </div>

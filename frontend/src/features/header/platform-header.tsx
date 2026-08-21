@@ -30,7 +30,6 @@ import { useRef } from 'react';
 
 import {
   Bars3Icon,
-  BellIcon,
   ChevronLeftIcon,
   HomeIcon,
 } from '@/components/ui/icons';
@@ -192,18 +191,15 @@ export function PlatformHeader() {
               rendered rather than constant. See ../improve/improve-button.tsx.
           */}
           <ImproveButton />
-          <button
-            id="notifications-btn"
-            className="relative w-7 h-7 flex items-center justify-center un-touch-target text-zinc-400 hover:text-zinc-200 mr-2.5"
-            aria-label="Notifications"
-          >
-            <BellIcon className="w-6 h-6" />
-            <span
-              id="notifications-badge"
-              className="hidden absolute -top-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-red-500 text-white text-[0.65rem] font-bold flex items-center justify-center"
-            >
-            </span>
-          </button>
+          {/*
+              The bell (#notifications-btn) used to sit here, between Improve
+              and the hamburger. THE UI OVERHAUL merged it INTO the hamburger:
+              two top-right drawers that opened the same way, one slot apart,
+              were one affordance too many, and the notifications list is the
+              first thing in that panel now. Its unread badge merged too — see
+              #notifications-badge on the hamburger below, which
+              Notifications._renderBadge paints exactly as it painted this one.
+          */}
           {/*
               Hamburger: LAST in the group at every width — it's the catch-all
               menu now (build status, kudos, standings, admin, theme), so the
@@ -229,14 +225,31 @@ export function PlatformHeader() {
                 the catch-all, and it is about to become the notifications
                 surface too.
 
-                Positioned IDENTICALLY to #notifications-badge on the bell —
-                same corner, same size, same pill geometry — so the two read
-                as one badge convention rather than two. Only the colour
-                differs (emerald = your work in flight, red = unread).
+                Positioned IDENTICALLY to #notifications-badge below — same
+                corner, same size, same pill geometry — so the two read as one
+                badge convention rather than two. Only the colour differs
+                (emerald = your work in flight, red = unread).
             */}
             <span
               id="notifications-badge-ai"
               className="hidden absolute -top-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-emerald-500 text-white text-[0.65rem] font-bold flex items-center justify-center"
+            >
+            </span>
+            {/*
+                The bell's red unread badge, which came here with the bell. Both
+                badges are painted by Notifications._renderBadge and the two
+                counts stay distinct — emerald = your work in flight, red =
+                unread notifications — so the hamburger can say "there are two
+                different reasons to open me" without a third icon.
+
+                Positioned IDENTICALLY to the green badge above: same corner,
+                same size, same pill geometry. Only one is ever non-empty in
+                practice, and tests/header-status-pane.test.js diffs the two
+                class lists with the colour token dropped to keep it that way.
+            */}
+            <span
+              id="notifications-badge"
+              className="hidden absolute -top-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-red-500 text-white text-[0.65rem] font-bold flex items-center justify-center"
             >
             </span>
             <span

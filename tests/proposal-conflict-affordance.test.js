@@ -19,20 +19,14 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
-const { runModules, workDrawerImports } = require('./helpers/bundle-module');
 
 const APP_VIEW_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'app-view.js'),
   'utf8'
 );
-const WORK_DRAWER_SRC = fs.readFileSync(
-  // #1079 chunk B: same module, now inside the React bundle.
-  path.join(__dirname, '..', 'frontend', 'src', 'features', 'work-drawer', 'work-drawer.js'),
-  'utf8'
-);
-// #405: the proposal card / cog-drawer section now derive their merge-state
-// badge from window.MergeStatus, so load it into the sandbox first (mirrors
-// the real page load order in index.html).
+// #405: the proposal card derives its merge-state badge from
+// window.MergeStatus, so load it into the sandbox first (mirrors the real page
+// load order in index.html).
 const MERGE_STATUS_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'merge-status.js'),
   'utf8'
@@ -166,60 +160,13 @@ test("detail: a 'failed' snapshot renders the red 'resolution failed' detail box
   assert.match(html, /Sync with main/, 'keeps the manual-resolve guidance');
 });
 
-// ── Cog-drawer compact badge (WorkDrawer.proposalsSection) ─────────────
-// (The section lived on the home screen as "Your proposals" until it
-// moved into the header cog's drawer — public/js/work-drawer.js.)
-
-function makeWorkDrawer() {
-  const sandbox = {
-    console,
-    App: { user: { id: ME } },
-    document: { getElementById: () => null, addEventListener: () => {} },
-    setTimeout, clearTimeout, setInterval, clearInterval,
-  };
-  sandbox.window = sandbox;
-  sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
-  // work-drawer.js is a bundle module and imports the kit-surface seam and
-  // (since #1191 slice 6 conversion 4) its own store, neither of which a
-  // classic-script `runInContext` can compile — runModules rewrites the
-  // imports into reads of the stub table and leaves the rest of the source
-  // alone. See tests/helpers/bundle-module.js.
-  return runModules(
-    sandbox,
-    [['merge-status.js', MERGE_STATUS_SRC], ['work-drawer.js', WORK_DRAWER_SRC]],
-    { imports: workDrawerImports(), tail: 'return WorkDrawer;' },
-  );
-}
-
-// The row is a descriptor now, but the lifecycle chip is deliberately still
-// MergeStatus.badgeHtml's string — one owner of that badge across the four
-// surfaces that draw it — so these assertions read exactly what they did.
-const chipsOf = (section) =>
-  Array.from(section.rows, (r) => r.lifeChipHtml || '').join(' ');
-
-const drawerProposal = (over) => ({
-  id: 7, app_slug: 'demo', app_name: 'Demo', pr_number: 700,
-  pr_title: 'Tidy the header', yes_count: 1, majority: 2, status: 'promoted',
-  check_state: 'passing', test_results: [],
-  ...over,
-});
-
-test("cog drawer: a 'conflict' proposal shows the red 'Merge failed' chip", () => {
-  const WorkDrawer = makeWorkDrawer();
-  WorkDrawer.proposals = [drawerProposal({ merge_conflict_state: 'conflict', behind_main: 2 })];
-  WorkDrawer.governance = [];
-  const chips = chipsOf(WorkDrawer.proposalsSection());
-  assert.match(chips, /Merge failed — conflict/, 'red merge-failed chip after a real attempt');
-  assert.doesNotMatch(chips, /Behind main/, 'merge-failed outranks the neutral behind chip');
-  assert.doesNotMatch(chips, /Conflict resolution failed/, "the 'failed' affordance stays distinct");
-});
-
-test("cog drawer: a 'failed' proposal shows the red Failed chip", () => {
-  const WorkDrawer = makeWorkDrawer();
-  WorkDrawer.proposals = [drawerProposal({ merge_conflict_state: 'failed', behind_main: 1 })];
-  WorkDrawer.governance = [];
-  // #405: canonical red "Conflict resolution failed" label (was "⚠ Failed").
-  assert.match(chipsOf(WorkDrawer.proposalsSection()), /Conflict resolution failed/,
-    'red failed chip present after a failed attempt');
-});
+// A "Cog-drawer compact badge" block used to sit here, asserting that the SAME
+// MergeStatus.badgeHtml string reached the header cog drawer's proposal rows —
+// the section that had itself moved there from the home screen's "Your
+// proposals" strip.
+//
+// THE UI OVERHAUL retired that drawer: its session list is the Improve panel's,
+// scoped to the app on screen, and its pinned "Needs attention" rows are
+// ordinary notifications in the merged hamburger. The card and detail
+// assertions above are the whole surface now, and MergeStatus is still the one
+// owner of the badge across every one of them.

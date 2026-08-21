@@ -118,6 +118,12 @@
     // and are read here, never duplicated. Sections with no `gate` are
     // always offered.
     SECTIONS: [
+      // THE UI OVERHAUL moved Theme here out of the hamburger drawer, where it
+      // was the drawer's first row. It leads the registry — and is therefore
+      // DEFAULT_SECTION below — because it is the setting most people arrive
+      // looking for and the only one that needs no explanation.
+      { key: 'theme', label: 'Theme', group: 'Preferences' },
+
       { key: 'api-key', label: 'Anthropic API key', group: 'AI & agents' },
       // Own section (not folded into 'cli') so the out-of-credits card can
       // deep-link #settings/connectors as one of its three routes; see
@@ -132,7 +138,10 @@
 
       { key: 'language', label: 'Language', group: 'Preferences' },
       { key: 'alerts', label: 'Notifications & alerts', group: 'Preferences' },
-      { key: 'home-panels', label: 'Home screen widgets', group: 'Preferences' },
+      // "Home screen widgets" sat here. THE UI OVERHAUL made Discover,
+      // Challenges and Create app FIXED SECTIONS of the home screen rather
+      // than draggable, hideable widgets, so there is nothing left for the
+      // section to configure.
 
       { key: 'cli', label: 'CLI & coding-agent access', group: 'Developer' },
       { key: 'dev-console', label: 'Developer console', group: 'Developer' },
@@ -146,7 +155,7 @@
     // The section a bare #settings resolves to on desktop (and the one
     // _writeHash collapses back onto bare #settings). Must be an ungated
     // key, so it is always reachable.
-    DEFAULT_SECTION: 'api-key',
+    DEFAULT_SECTION: 'theme',
 
     init() {
       // The entry point is the drawer's Settings row, a real anchor to
@@ -472,7 +481,6 @@
       this._renderDevConsoleSection();
       this._renderLanguageSection();
       this._loadMobilePushPreferences();
-      this._renderHomePanelsSection();
       this._renderExperimentalSection();
       this._renderAdminSection();
       this._renderUsernodeSection();
@@ -811,6 +819,22 @@
         });
       }
       if (footer) Settings._syncFooter();
+      // The AI-credit figure in the Anthropic API key section renders from a
+      // me-scoped fetch and is throttled inside AiCredit, so refreshing it on
+      // every section change is cheap and keeps it honest. This is where the
+      // hamburger's open-time refresh went when the row moved here.
+      if (window.AiCredit?.refreshAll) window.AiCredit.refreshAll();
+      // Announce which section is showing. The one listener today is the
+      // Theme pane (features/settings/sections/theme.tsx), which re-reads
+      // Theme.get() so a mode changed in another tab — or an explicit value
+      // that happens to match the OS — is reflected when you come back to it.
+      // This replaces the drawer's `usernode:header-menu-open`, which did
+      // exactly the same job when the control lived there.
+      try {
+        window.dispatchEvent(new CustomEvent('usernode:settings-section', {
+          detail: { section: Settings._section },
+        }));
+      } catch (err) { /* ignore */ }
     },
 
     // Log out sits under the sidebar on desktop and under the level-1 menu
@@ -1049,83 +1073,15 @@
       }
     },
 
-    // #911: one checkbox per home-screen panel, built from
-    // GET /api/home-panels's `registry` + `hidden`. Absence from `hidden`
-    // means visible, so a fresh account renders every box ticked without
-    // any per-user rows existing. Rebuilt (not patched) on each render:
-    // the list is two lines of markup and the listeners go with it.
-    async _renderHomePanelsSection() {
-      const list = document.getElementById('settings-home-panels-list');
-      if (!list) return;
-      const status = document.getElementById('settings-home-panels-status');
-      if (status) { status.classList.add('hidden'); status.textContent = ''; }
-      let data = null;
-      try {
-        const r = await fetch('/api/home-panels', { credentials: 'same-origin' });
-        if (r.ok) data = await r.json();
-      } catch {}
-      const registry = (data && Array.isArray(data.registry)) ? data.registry : [];
-      const hidden = (data && Array.isArray(data.hidden)) ? data.hidden : [];
-      if (!registry.length) {
-        list.innerHTML = '<p class="text-xs text-zinc-500 dark:text-zinc-400">No home screen widgets are available.</p>';
-        return;
-      }
-      const esc = (s) => String(s == null ? '' : s)
-        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-      // `removable: false` (Discover) renders as a fixed-on, disabled switch
-      // with the reason beside it, rather than being hidden from the list:
-      // a widget that is silently absent from its own settings row reads as
-      // a bug, where a locked one reads as a decision. The server refuses
-      // the write too, so this is presentation, not the enforcement.
-      //
-      // Every other row is offered to EVERY account — notably "Create app",
-      // which appears whether or not the viewer currently has app quota,
-      // because the widget is on their home screen either way.
-      list.innerHTML = registry.map((p) => {
-        const fixed = p.removable === false;
-        return `
-        <label class="flex items-center gap-2 select-none ${fixed ? 'cursor-default' : 'cursor-pointer'}">
-          <input type="checkbox" class="un-switch settings-home-panel-toggle"
-                 data-panel-key="${esc(p.key)}" ${hidden.includes(p.key) ? '' : 'checked'}
-                 ${fixed ? 'disabled' : ''} />
-          <span class="text-sm text-zinc-800 dark:text-zinc-200">${esc(p.title || p.key)}</span>
-          ${fixed ? '<span class="text-xs text-zinc-500 dark:text-zinc-400">— how you find new apps</span>' : ''}
-        </label>`;
-      }).join('');
-      list.querySelectorAll('.settings-home-panel-toggle').forEach((el) => {
-        if (el.disabled) return;
-        el.addEventListener('change', () => {
-          Settings._saveHomePanelVisibility(el.dataset.panelKey, !el.checked, el);
-        });
-      });
-    },
-
-    async _saveHomePanelVisibility(key, hidden, toggle) {
-      const status = document.getElementById('settings-home-panels-status');
-      try {
-        const r = await fetch(`/api/home-panels/${encodeURIComponent(key)}/visibility`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'same-origin',
-          body: JSON.stringify({ hidden: !!hidden }),
-        });
-        if (!r.ok) throw new Error('save failed');
-        // Repaint the home card straight away so returning to the home
-        // screen doesn't show the stale state for up to a TTL.
-        if (window.HomePanels) {
-          try { await HomePanels.ensureLoaded({ force: true }); } catch {}
-        }
-        if (status) { status.classList.add('hidden'); status.textContent = ''; }
-      } catch (err) {
-        if (toggle) toggle.checked = !hidden;
-        if (status) {
-          status.textContent = 'Failed to save — try again.';
-          status.classList.remove('hidden', 'text-emerald-500');
-          status.classList.add('text-red-500');
-        }
-      }
-    },
+    // `_renderHomePanelsSection()`, `_toggleHomePanel()` and
+    // `_saveHomePanelVisibility()` lived here: #911's one-checkbox-per-widget
+    // list, built from GET /api/home-panels's `registry` + `hidden`, and the
+    // POST that wrote a toggle back. THE UI OVERHAUL made Discover,
+    // Challenges and Create app FIXED sections of the home screen rather than
+    // draggable, hideable widgets, so there is nothing left to show or hide
+    // from a settings page. The visibility endpoint is untouched and the ⋮
+    // menu on a block still writes it (HomePanels.setHidden) — what went is
+    // the second, list-shaped way in.
 
     _renderLanguageSection() {
       const select = document.getElementById('settings-locale');

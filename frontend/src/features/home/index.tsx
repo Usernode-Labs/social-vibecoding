@@ -5,11 +5,18 @@
  * ── What the island owns ───────────────────────────────────────────────
  *
  * The screen's STRUCTURE, and nothing else: the pull-to-reveal search bar, the
- * `.home-column` body, and the three hosts inside it — the iOS widget strip, the
- * launcher grid `#app-list`, and the `#home-panels` fallback stack. Every one of
- * those is an innerHTML host that `home.js` / `home-panels.js` fill, exactly as
+ * `.home-column` body, and the hosts inside it — the iOS widget strip, the
+ * launcher grid `#app-list`, and the three fixed section hosts below it. Every
+ * one is an innerHTML host that `home.js` / `home-panels.js` fill, exactly as
  * before. This component renders once and never again: it holds no state, and
  * the only effect it runs is the visibility subscription below.
+ *
+ * ── FOUR AREAS, in this order ──────────────────────────────────────────
+ *
+ * THE UI OVERHAUL gave this screen a shape: Your apps, Discover, Challenges,
+ * Create app, stacked. The last three used to be draggable WIDGETS on the
+ * launcher canvas — see the block comment beside them below for what that
+ * traded away and why the fixed order is worth more than the freedom was.
  *
  * That is deliberate rather than incidental. Two things depend on it:
  *
@@ -142,62 +149,85 @@ export function HomeScreen() {
         <section id="home-widget-strip-section" className="hidden px-3 pt-2">
         </section>
         {/*
+            ── AREA 1 of 4: YOUR APPS ─────────────────────────────────
+
             THE LAUNCHER GRID. Every child is placed at an explicit
-            (column, row) cell by Home.render() — app tiles and widgets
-            alike — so a viewer's arrangement can have holes in it, exactly
-            like a phone home screen. Nothing here flows.
+            (column, row) cell by Home.render() — so a viewer's arrangement
+            can have holes in it, exactly like a phone home screen. Nothing
+            here flows.
 
-            4 columns on a phone, 5 from `sm` (640px) up, and never more:
-            the canvas is capped at 5 x 8. That 640px boundary is mirrored
-            in HomeLayout.BREAKPOINT_PX (features/home/home-layout.js) — the
-            JS has to lay out against the same column count the CSS renders,
-            and tests/home-layout-model.test.js pins the pair.
+            FOUR COLUMNS AT EVERY WIDTH, and two rows by default. It was
+            `grid-cols-4 sm:grid-cols-5` until THE UI OVERHAUL: a launcher
+            reads as a launcher at phone density, and a second breakpoint
+            bought a fifth column at the price of a whole second stored
+            layout per viewer (see the note this removed in
+            features/home/home-layout.js). The desktop grid is width-capped
+            by .home-column rather than stretched, so four columns there are
+            four bigger tiles, not four tiny ones with a gulf beside them.
+            HomeLayout.COLS mirrors this and tests/home-layout-model.test.js
+            greps both files.
 
-            Tighter gutters and gaps below `sm` than the old 2-column grid
-            had: four 56px icons only read as a home screen at phone
-            density. `grid-auto-rows` and `position: relative` (needed by
-            the drag-time grid overlay) live in app.css.
+            `grid-auto-rows` and `position: relative` (needed by the
+            drag-time grid overlay) live in app.css. The two-row default is
+            HomeLayout.DEFAULT_ROWS: a cap on what is SHOWN, never on what a
+            viewer may have — a ninth app grows the grid rather than being
+            stranded.
         */}
-        <div id="app-list" className="grid grid-cols-4 sm:grid-cols-5 gap-1.5 sm:gap-2 p-2 pt-1.5 sm:p-3 sm:pt-2">
-        </div>
-        {/*
-            Home-screen widgets (#911) — the FALLBACK host.
-
-            Widgets normally live IN the launcher grid above, each at its own
-            (column, row) cell: home.js plants a `[data-panel-slot]` host per
-            widget for HomePanels.render() to paint into. This section is
-            where they go when there is no grid to ride in — an active search
-            (a transient view with no layout to place against), and the moment
-            before the first grid paint. Without it a widget would vanish
-            whenever the grid did.
-
-            Deliberately OUTSIDE #app-list, like the search bar above: the
-            grid's innerHTML is replaced on every WS app event and every
-            search keystroke, which would otherwise destroy these blocks and
-            their listeners.
-
-            HomePanels fills it with a STACK of sibling bordered
-            <article class="home-panel"> blocks — one per widget, each
-            carrying its own title bar and ⋮ menu. The blocks are plain
-            FULL-WIDTH children: .home-column on #home-body bounds and centres
-            the feed, so don't wrap them in a per-box width bound (see
-            app.css .home-column).
-
-            NOTE "panel" ≠ the "Usernode widget" strip above the grid — that
-            is the iOS home-screen widget's pinned app list.
-        */}
-        <section id="home-panels" className="hidden px-3 pb-3">
+        <section id="home-apps-section" className="px-3 pt-1.5 sm:pt-2">
+          <div id="app-list" className="grid grid-cols-4 gap-1.5 sm:gap-2 p-2 pt-1.5 sm:p-3 sm:pt-2">
+          </div>
+          {/*
+              "Show all N apps" — revealed by Home.render() only when the
+              viewer has more than the default two rows hold. Ships hidden
+              and empty, like every other legacy-owned host here.
+          */}
+          <div id="home-apps-more" className="hidden px-2 pb-1 sm:px-3">
+          </div>
         </section>
         {/*
-            NOTE: #home-find-more ("Featured apps" + its "Browse all apps"
-            footer) and #home-create-section ("Create an app") used to sit
-            here as fixed, unmovable trailing sections below the grid. Both
-            are WIDGETS in the grid above now — `discover` and `create` — so
-            they can be placed anywhere the viewer likes, alongside their app
-            tiles, instead of being pinned under everything. See
-            PANEL_REGISTRY in src/routes/home-panels.js and the renderers
-            (renderDiscoverPanel / renderCreatePanel) in
-            features/home/home-panels.js.
+            ── AREAS 2-4: DISCOVER, CHALLENGES, CREATE APP ────────────
+
+            These three were WIDGETS until THE UI OVERHAUL — draggable blocks
+            placed on the launcher canvas alongside the app tiles, each with
+            its own footprint, its own anchor cell and a per-column-count
+            size table. They are fixed sections in a fixed order now, and the
+            drag gesture applies to app tiles alone.
+
+            What that bought: the home screen has a shape you can describe.
+            "Your apps, then what to try next, then what the group is working
+            towards, then make something" is a page; the same four things at
+            wherever-you-dropped-them was a canvas with no reading order, and
+            it made every one of them optional in a way none of them are.
+
+            Each is an innerHTML host filled by HomePanels.render() from the
+            SAME renderers it always used (renderDiscoverPanel,
+            renderChallengesPanel, renderCreatePanel) — only their parent
+            changed. All three ship EMPTY: the panels cache is fetched, so
+            rendering anything here would disagree with the prerendered
+            document and mismatch on hydration.
+
+            `data-panel-slot` rides along from the grid host each one
+            replaces. It names WHICH block a host is for, which is as true of
+            a section as it was of a cell, and it is the hook everything
+            outside this file already selects on: the dapp.json checks
+            (`[data-panel-slot="create"][data-create-enabled="true"]`), the
+            screenshot assertions, and HomePanels._stampState, which mirrors
+            each block's own state attributes up onto its host so one
+            selector can ask for the host AND the state.
+        */}
+        <section id="home-discover-section" data-panel-slot="discover" className="px-3 pb-3">
+        </section>
+        <section id="home-challenges-section" data-panel-slot="challenges" className="px-3 pb-3">
+        </section>
+        <section id="home-create-section" data-panel-slot="create" className="px-3 pb-3">
+        </section>
+        {/*
+            #home-panels — the widgets' FALLBACK host — is gone with the
+            placement it existed for. It caught the moment before the first
+            grid paint and the active-search view, because a widget that
+            lived IN the grid vanished whenever the grid did. The three
+            sections above are outside #app-list and never re-rendered by a
+            search keystroke, so there is nothing left to catch.
         */}
       </div>
     </main>

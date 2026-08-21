@@ -42,6 +42,7 @@ const headerMenuJs = fs.readFileSync(
 const headerMenuTsx = fs.readFileSync(
   path.join(root, 'frontend/src/features/header/header-menu.tsx'), 'utf8');
 const appCss = fs.readFileSync(path.join(root, 'public/css/app.css'), 'utf8');
+const html = fs.readFileSync(path.join(root, 'public/index.html'), 'utf8');
 const platformUiJs = fs.readFileSync(path.join(root, 'public/js/platform-ui.js'), 'utf8');
 const kitSurfaceTs = fs.readFileSync(
   path.join(root, 'frontend/src/lib/kit-surface.ts'), 'utf8');
@@ -185,22 +186,44 @@ test('init() is called from the island, not from App.bindEvents()', () => {
     + 'sit on nodes that outlive the component — binding twice double-closes');
 });
 
-test('the theme segments are React state, with no legacy writer left', () => {
+test('the theme segments left the drawer entirely', () => {
+  // THE UI OVERHAUL made Theme a SETTING — the first one. A live control that
+  // changes how the whole product looks is not navigation, and this drawer is
+  // navigation plus notifications now. tests/theme-mode.test.js owns the
+  // control's own contract; what matters HERE is that no half of it stayed
+  // behind, because two owners of one --theme-caret-index is the exact
+  // conflict the migration rule exists to prevent.
   assert.ok(!/_renderThemeButtons/.test(appJs),
-    'the DOM-writing renderer moved into ThemeControl');
+    'the DOM-writing renderer is long gone');
   assert.ok(!/theme-seg|data-theme-mode|drawer-theme/.test(headerMenuJs),
-    'the controller announces the open instead of writing the segments itself');
-  assert.match(headerMenuJs, /usernode:header-menu-open/,
-    'open() must still make the control re-read Theme.get() — that is what '
-    + 'catches a cross-tab change made while the drawer was closed');
-  assert.match(headerMenuTsx, /useWindowEvent\('usernode:header-menu-open'/);
-  // Hydration equality: the first render must be the shipped markup, which
-  // has no active segment at all.
-  assert.match(headerMenuTsx, /useState<ThemeMode \| null>\(null\)/,
-    'reading Theme.get() during render would mismatch the prerendered markup');
-  assert.match(headerMenuTsx, /setProperty\(\s*\n?\s*'--theme-caret-index'/,
-    'the caret still moves by custom property, written imperatively — a rendered '
-    + 'style attribute would not match the prerender');
+    'the drawer controller writes no segments');
+  assert.ok(!/theme-seg|data-theme-mode|drawer-theme|ThemeControl/.test(headerMenuTsx),
+    'and the drawer markup renders none');
+  // The controller may still NAME the retired event in the comment that
+  // records where it went; what must be gone is the dispatch.
+  assert.ok(!/dispatchEvent\([\s\S]{0,80}usernode:header-menu-open/.test(headerMenuJs),
+    'the open announcement went with the control it existed for — the settings '
+    + 'screen dispatches usernode:settings-section in its place');
+  const settingsJs = fs.readFileSync(
+    path.join(root, 'frontend/src/features/settings/settings.js'), 'utf8');
+  assert.match(settingsJs, /usernode:settings-section/,
+    'and the settings screen makes that announcement in its place');
+});
+
+test('notifications lead the drawer, and the bell is gone', () => {
+  // The merge: two top-right drawers that opened the same way, one slot apart,
+  // became one. The LIST is rendered here from the same store, so the module
+  // is unchanged; what had to move is the init, because the island that used
+  // to own it is retired.
+  assert.match(headerMenuTsx, /<NotificationsBody \/>/,
+    'the drawer renders the notifications body');
+  assert.match(headerMenuTsx, /window\.Notifications\?\.init\(\)/,
+    'and initialises the module from its layout effect, before DOMContentLoaded');
+  assert.match(headerMenuTsx, /id="drawer-notifications"/, 'inside its own region');
+  assert.equal(html.indexOf('id="notifications-panel"'), -1,
+    'the retired bell panel must not still ship');
+  assert.equal(html.indexOf('id="notifications-btn"'), -1,
+    'nor the button that opened it');
 });
 
 test('PlatformUI exposes panel() with the same null-degradation contract', () => {
@@ -228,13 +251,16 @@ test('.platform-panel-adopted fills the drawer instead of capping it', () => {
 
 test('.platform-sheet-adopted survives for the surfaces still using it', () => {
   assert.ok(appCss.includes('.platform-sheet-adopted {'),
-    'notifications, the work drawer and the dev console still ride bottom sheets');
+    'the dev console and the Improve panel still ride bottom sheets');
   // #1079 chunk B moved the dev console into the React bundle; the sheet
   // idiom came with it (see presentSheetIfTouch in the store). #1120 slice 3
-  // then moved the CLASS out of two of these three and into the shared lift,
-  // which spells it `platform-${kind}-adopted` — so the sheet surfaces are
-  // now identified by the kind they ask for, not by the literal.
-  for (const file of ['frontend/src/features/work-drawer/work-drawer.js',
+  // then moved the CLASS into the shared lift, which spells it
+  // `platform-${kind}-adopted` — so the sheet surfaces are identified by the
+  // kind they ask for, not by the literal. THE UI OVERHAUL retired the work
+  // drawer and added the Improve panel, which asks for the same kind: on
+  // touch it is a real kit bottom sheet, which is half of "side panel on
+  // desktop, bottom sheet on mobile".
+  for (const file of ['frontend/src/features/improve/improve-controller.js',
     'frontend/src/features/dev-console/store.ts']) {
     const src = fs.readFileSync(path.join(root, file), 'utf8');
     assert.match(src, /kind: 'sheet'/,
@@ -242,12 +268,16 @@ test('.platform-sheet-adopted survives for the surfaces still using it', () => {
   }
   assert.match(kitSurfaceTs, /`platform-\$\{options\.kind\}-adopted`/,
     "and kind: 'sheet' is what still produces the class app.css styles");
-  // notifications.js is the fifth copy of the adoption dance and was NOT part
-  // of slice 3's four — it still writes the class itself, on purpose.
+  // notifications.js was the fifth copy of the adoption dance and was NOT part
+  // of slice 3's four — it wrote the class itself. THE UI OVERHAUL removed
+  // that copy along with the panel it presented: the list renders inside the
+  // hamburger now, and the hamburger's own adoption is the only one left.
   const notifications = fs.readFileSync(
     path.join(root, 'frontend/src/features/notifications/notifications.js'), 'utf8');
-  assert.match(notifications, /platform-sheet-adopted/,
-    'notifications.js is expected to keep the sheet idiom (deferred work, not a leftover)');
+  assert.ok(!/platform-sheet-adopted/.test(notifications),
+    'the retired fifth copy of the adoption dance must not linger');
+  assert.match(notifications, /window\.HeaderMenu\?\.open\?\.\(\)/,
+    'show() forwards to the drawer that actually presents the list');
 });
 
 test('a dapp check pins the drawer to the panel on a forced-touch route', () => {

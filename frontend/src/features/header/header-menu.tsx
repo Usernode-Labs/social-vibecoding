@@ -4,40 +4,51 @@
  * surface: the overlay is the panel's backdrop on the desktop / kit-missing
  * path, and nothing ever renders one without the other.
  *
+ * ── What THE UI OVERHAUL changed here ─────────────────────────────────
+ *
+ * The bell merged into this drawer. #notifications-panel is gone and the
+ * notifications list is the FIRST thing in the panel — two top-right drawers
+ * that opened the same way, one slot apart, were one affordance too many, and
+ * "what happened while I was away" belongs at the top of the catch-all menu.
+ * The list is rendered by the same components from the same store, so
+ * ../notifications/notifications.js is unchanged.
+ *
+ * Five things left: the theme selector (a SETTING now, and the first one —
+ * features/settings/sections/theme.tsx), the kudos and AI-credit meters
+ * (ambient numbers nobody acts on from a menu), the Leaderboard row (the home
+ * screen's Challenges area links there) and the whole bottom-anchored footer —
+ * version, GitHub, Share — which is app-scoped and therefore Improve-panel
+ * material.
+ *
  * The modules that own live content in this subtree are bundled with it and
  * initialise from the island's layout effect:
  *
  *   ./node-pill.js               #drawer-row-node    (native node status)
  *   ./wallet-sheet.js            #drawer-row-wallet  (native wallet balance)
- *   ./native-app-version.js      #native-app-version-slot (Flutter app release)
- *   ./ai-credit.js               #drawer-row-ai-budget / #ai-budget-slot
  *   ./header-menu-controller.js  the drawer's own open/close (was
  *                                App.HeaderMenu / App.DrawerStatus in app.js)
  *
- * The drawer stays MARKUP-ONLY apart from the theme segments below, and for the
+ * The drawer stays MARKUP-ONLY apart from the notifications body, and for the
  * usual reason: app.js and app-view.js still show and hide individual rows per
  * screen, and on touch the panel is physically adopted into a kit side drawer
  * (PlatformUI.panel({contentEl}) reparents it and adds .platform-panel-adopted),
  * which a re-render of the panel's own `className` or child order would clobber.
  *
- * ThemeControl is the one exception, and it earns it: the segmented control's
- * whole subtree is React's — nothing in public/js/** writes to it now that
- * _renderThemeButtons has moved in here as state. It still renders the shipped
- * markup exactly on the first pass (no active segment, aria-checked="false", no
- * caret index) and only reflects Theme.get() from a layout effect, so hydration
- * matches byte for byte.
+ * <NotificationsBody/> is the one exception, and it earns it the same way the
+ * theme segments used to: its whole subtree is React's, driven by
+ * ../notifications/notifications-store.js, and nothing in public/js/** writes
+ * inside it. It renders the shipped markup exactly on the first pass — an empty
+ * list with the hint and "Mark all read" both inert — so hydration matches byte
+ * for byte.
  *
  * Why init() moves to a layout effect: imported modules evaluate while the
  * bundle loads — before hydration — and both node-pill and wallet-sheet lift
  * `hidden` off a row React is about to hydrate. A layout effect runs inside
  * flushSync(hydrateRoot), so the class lands after hydration has adopted the
- * node and still before DOMContentLoaded, where app.js's own init waits.
- * ai-credit.js is imported for its side effect only — App.init() calls
- * AiCredit.Budget.init() when the viewer is known to be signed in, which is a
- * decision this component cannot make.
+ * node and still before DOMContentLoaded, where app.js's own init waits. The
+ * notifications module needs the same treatment for a different reason — see
+ * the effect below.
  */
-
-import { useCallback, useRef, useState } from 'react';
 
 import {
   ChatBubbleTailIcon,
@@ -53,133 +64,62 @@ import {
   WalletIcon,
   XIcon,
 } from '@/components/ui/icons';
-import { useIsomorphicLayoutEffect, useWindowEvent } from '../../lib/legacy-dom';
+import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
+import { NotificationsBody } from '../notifications/notifications-list';
+// Two side-effect modules whose ROWS moved out of this drawer — the AI-credit
+// figure to Settings → Anthropic API key, the mobile-app version to the
+// Improve panel's footer — but whose imports stay here on purpose. Both
+// install a `window.*` global that app.js's boot looks for, and this island is
+// the earliest thing in the bundle; hanging either off a surface that may
+// never be opened would be a boot-order regression dressed up as tidiness.
+//
+// The AI-credit renderer. Its ROW moved to Settings → Anthropic API key when
+// THE UI OVERHAUL emptied the drawer's status pane, but the import stays here:
+// it is a side-effect module that installs window.AiCredit, App.init() is what
+// calls AiCredit.Budget.init(), and this island is still the earliest thing in
+// the bundle that loads before that. Moving the import to the settings screen
+// would tie a boot-time global to a screen nobody has opened yet.
 import './ai-credit.js';
 import './native-app-version.js';
 import './node-pill.js';
 import './wallet-sheet.js';
 import './header-menu-controller.js';
-
-// Order of the three segments in the DOM — also the caret's stop index, so the
-// two can never disagree.
-const THEME_MODES = ['light', 'dark', 'system'] as const;
-type ThemeMode = (typeof THEME_MODES)[number];
-
-const THEME_SEG_CLASS =
-  'theme-seg flex-1 basis-0 rounded-md px-1.5 py-1 transition-colors';
-
-const THEME_LABELS: Record<ThemeMode, string> = {
-  light: 'Light',
-  dark: 'Dark',
-  system: 'System',
-};
-
-/**
- * The Light / Dark / System segmented control — App.HeaderMenu's
- * _renderThemeButtons(), as state.
- *
- * `mode` starts null, which renders EXACTLY the markup the hand-written shell
- * shipped: no `theme-seg-active`, `aria-checked="false"` on all three, and no
- * `--theme-caret-index` on the track. Theme.get() is only readable on the
- * client (the inline head block owns it), so reading it during render would
- * mismatch the prerender; the layout effect below fills it in on the first
- * client pass instead.
- *
- * The caret index is written through a ref rather than rendered as a `style`
- * prop for the same reason — the shipped track carries no style attribute, and
- * a custom property is not something to reconcile.
- *
- * Three things re-read the mode, matching the three the legacy wiring had:
- * a click on a segment, Theme.onChange (another tab, the OS sunset switch), and
- * every drawer open (`usernode:header-menu-open`, dispatched by the controller
- * where open() used to call _renderThemeButtons directly).
- */
-function ThemeControl() {
-  const [mode, setMode] = useState<ThemeMode | null>(null);
-  const trackRef = useRef<HTMLDivElement | null>(null);
-
-  const sync = useCallback(() => {
-    const current = window.Theme?.get?.();
-    setMode(
-      THEME_MODES.includes(current as ThemeMode) ? (current as ThemeMode) : null,
-    );
-  }, []);
-
-  useIsomorphicLayoutEffect(() => {
-    sync();
-    // Storage/OS-driven changes (other tab, OS sunset switch) re-highlight too.
-    window.Theme?.onChange?.(sync);
-  }, [sync]);
-
-  // Reflect the current mode every time the drawer opens — covers cross-tab
-  // changes and explicit values that happen to match the OS.
-  useWindowEvent('usernode:header-menu-open', sync);
-
-  useIsomorphicLayoutEffect(() => {
-    const track = trackRef.current;
-    if (!track || mode === null) return;
-    // The caret is moved by writing --theme-caret-index (0|1|2) on the track
-    // and letting CSS translate a thirds-width element by index * 100%.
-    // Deliberately NOT a pixel measurement: this runs from the drawer's
-    // open BEFORE PlatformUI.panel resizes the panel from w-60 to the kit
-    // drawer's --un-panel-width, so a pixel read here would be stale the
-    // moment the panel presents. Percentages are correct at both widths with
-    // no re-measure, and the transition in CSS is what makes the caret slide.
-    track.style.setProperty(
-      '--theme-caret-index',
-      String(Math.max(0, THEME_MODES.indexOf(mode))),
-    );
-  }, [mode]);
-
-  // A live control, NOT a navigation row: it sets the mode and re-highlights
-  // WITHOUT closing the drawer, so the user can see the recolor and switch
-  // again. (These are <button>s, so the panel's delegated a[href] close
-  // handler never sees them.)
-  const choose = useCallback(
-    (next: ThemeMode) => {
-      window.Theme?.set?.(next);
-      sync();
-    },
-    [sync],
-  );
-
-  return (
-    <div
-      id="drawer-theme-track"
-      ref={trackRef}
-      role="radiogroup"
-      aria-label="Theme"
-      className="relative flex p-0.5 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-xs font-medium"
-    >
-      {THEME_MODES.map((m) => (
-        <button
-          key={m}
-          type="button"
-          role="radio"
-          aria-checked={mode === m ? 'true' : 'false'}
-          data-theme-mode={m}
-          className={mode === m ? `${THEME_SEG_CLASS} theme-seg-active` : THEME_SEG_CLASS}
-          onClick={() => choose(m)}
-        >
-          {THEME_LABELS[m]}
-        </button>
-      ))}
-      <span id="drawer-theme-caret-track" aria-hidden="true">
-        <span id="drawer-theme-caret">
-        </span>
-      </span>
-    </div>
-  );
-}
+// The bell's module, imported here because its list is rendered here now.
+// ../notifications/mount.ts installs the store's flush and publishes the
+// controller; this pulls both in with the markup they drive.
+import '../notifications/mount';
 
 export function HeaderMenu() {
   useIsomorphicLayoutEffect(() => {
     window.NodePill?.init();
     window.WalletSheet?.init();
+    // The mobile-app version renderer. Its row is the Improve panel's footer
+    // now, but the init stays on this island's layout effect: it runs inside
+    // flushSync(hydrateRoot), so its class/text write lands after hydration has
+    // adopted the node and still before DOMContentLoaded.
     window.NativeAppVersion?.init();
     // The drawer's own open/close wiring — app.js's bindEvents() used to call
     // this; it lives beside the markup it drives now (#1079 chunk B).
     window.HeaderMenu?.init();
+    // Notifications init from HERE now, not from the retired
+    // #notifications-panel island. A LAYOUT effect, not a passive one: it runs
+    // inside main.tsx's flushSync(hydrateRoot), which is before
+    // DOMContentLoaded — where the classic script's init() used to run, only
+    // earlier still. A passive effect could be scheduled after app.js's init,
+    // and `sv:authed` fires at most once, so a late listener would never get
+    // the first fetch.
+    window.Notifications?.init();
+    // The list's pull-to-refresh, a kit attachment on a node this island owns.
+    // The list is never re-created, so attaching it once here — from the same
+    // effect as init() — is the same contract the bell's island had. The kit
+    // no-ops it on desktop, exactly as before.
+    const list = document.getElementById('notifications-list');
+    if (list && window.PlatformUI?.pullToRefresh) {
+      window.PlatformUI.pullToRefresh(
+        list,
+        () => window.Notifications?.refresh() ?? Promise.resolve(),
+      );
+    }
   }, []);
 
   return (
@@ -227,119 +167,60 @@ export function HeaderMenu() {
         <div id="header-menu-rows" className="flex-1 min-h-0 overflow-y-auto flex flex-col">
           <div id="drawer-main-rows" className="shrink-0">
             {/*
-                Theme — Light / Dark / System, the FIRST thing in the menu.
-                Unlike every row below it this is a live control, not a
-                navigation action: a non-clickable container (no hover bg) whose
-                only interactive descendants are the three segment buttons, and
-                tapping a mode does NOT close the drawer.
-                
-                Deliberately compact — text-xs faces on a py-1 track — so the
-                control reads as a setting rather than a banner and costs the
-                rows below it as little height as possible.
-                
-                Active segment + caret position are React state now
-                (ThemeControl above, which is where App.HeaderMenu's
-                _renderThemeButtons ended up). All the persistence still lives
-                in the inline `window.Theme` block at the top of
-                frontend/src/head.html — head-blocking, so the stored mode is
-                applied before first paint — untouched by both the segmented
-                restyle and this conversion.
+                NOTIFICATIONS, first in the drawer.
+
+                THE UI OVERHAUL merged the bell into the hamburger: two
+                top-right drawers that opened the same way, one slot apart,
+                were one affordance too many, and "what happened while I was
+                away" belongs at the top of the catch-all menu rather than
+                behind an icon of its own. #notifications-panel is gone; its
+                whole body lives here, rendered by the same components from
+                the same store, so ./notifications.js is unchanged.
+
+                Bounded height with its own scroller, so a long list cannot
+                push the navigation rows below it off a short viewport — the
+                anchored dropdown it replaced had exactly this cap (max-h-[70vh]
+                on the panel) for the same reason.
             */}
             <div
-              id="drawer-row-theme"
-              className="px-4 pt-2 pb-2.5 border-b border-zinc-100 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300"
+              id="drawer-notifications"
+              className="border-b border-zinc-100 dark:border-zinc-800"
             >
-              <div className="flex items-center gap-3 mb-1.5">
-                <SunIcon className="w-5 h-5 shrink-0" />
-                <span className="text-xs font-medium">
-                  Theme
+              <div className="flex items-center gap-2 px-4 py-2">
+                <span className="text-[0.7rem] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                  Notifications
                 </span>
+                <span className="flex-1">
+                </span>
+                <button
+                  id="notifications-mark-all"
+                  className="text-xs text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200 disabled:opacity-40"
+                  disabled={true}
+                >
+                  Mark all read
+                </button>
               </div>
-              {/*
-                  Segmented track + caret. The caret is positioned purely in CSS
-                  from the --theme-caret-index custom property (0|1|2) that
-                  ThemeControl writes on the track: a thirds-width element
-                  translated by index * 100%. Deliberately NOT measured in JS —
-                  the index is written before PlatformUI.panel resizes the panel
-                  from w-60 to the kit drawer's width, so any pixel read at that
-                  moment would be wrong. Percentages are right at both.
-              */}
-              <ThemeControl />
+              <NotificationsBody />
             </div>
             {/*
-                Status pane: the viewer's remaining weekly kudos and their daily
-                AI credit. Every <span> below is the SAME element (same id) that
-                used to sit in the header, so Kudos.Budget._render /
-                AiCredit.Budget._render keep resolving their slot by
-                getElementById with no change.
-                
-                The build/version rows moved OUT of this pane and into
-                #drawer-footer at the bottom of the panel (they're reference
-                information, not something you act on), where they render as
-                plain text rather than pills. Their slot ids are unchanged.
-                
-                The rows are plain <div>s, never <a>/<button>: the values render
-                their own anchor/button where one is warranted, and nesting
-                those inside a clickable row would be invalid markup.
+                The theme selector used to be the first thing in this drawer,
+                and the kudos + AI-credit meters (#drawer-status-pane) sat
+                directly below it. All three are gone from here:
+
+                  * Theme is a SETTING now, and the first one — see
+                    features/settings/sections/theme.tsx. A live control that
+                    changes how the whole product looks does not belong in a
+                    navigation menu.
+                  * The kudos and AI-credit meters were ambient numbers nobody
+                    acts on from a menu. Kudos is a leaderboard concern (the
+                    home screen's Challenges area links there) and AI credit
+                    surfaces where it actually bites — in the composer's
+                    session options, and in Settings.
+
+                Their renderers (Kudos.Budget._render, AiCredit.Budget._render)
+                resolve their slots by getElementById and no-op when the slot is
+                absent, so both simply stop painting.
             */}
-            <div id="drawer-status-pane" className="border-b border-zinc-100 dark:border-zinc-800">
-              <div
-                id="drawer-row-kudos"
-                className="flex items-center gap-3 px-4 min-h-[44px] text-zinc-600 dark:text-zinc-300"
-              >
-                <ThumbsUpIcon className="w-5 h-5 shrink-0" />
-                <span className="text-sm font-medium">
-                  Kudos
-                </span>
-                <span id="kudos-budget-slot" className="ml-auto inline-flex min-w-0">
-                </span>
-              </div>
-              {/*
-                  AI credit (#555): the viewer's own daily LLM-spend allowance,
-                  used vs. remaining. Shown to EVERY signed-in user — the first
-                  place in the product that tells you where you stand before a
-                  turn is refused with "Daily limit reached".
-                  
-                  Ships hidden and is revealed by AiCredit.Budget once
-                  /api/me/ai-budget answers, so a signed-out visitor (or someone
-                  still in the waiting room) never sees an empty row. Carries no
-                  global spend or global cap: those are admin-only, per
-                  services/status.js redact().
-              */}
-              <div
-                id="drawer-row-ai-budget"
-                className="hidden flex flex-wrap items-center gap-3 px-4 py-1 min-h-[44px] text-zinc-600 dark:text-zinc-300"
-              >
-                <LightBulbIcon className="w-5 h-5 shrink-0" />
-                <span className="text-sm font-medium">
-                  AI credit
-                </span>
-                {/*
-                    `grow text-right` (rather than the plain `ml-auto inline-flex`
-                    the other value slots use) is what keeps this value hard against
-                    the panel's right edge in BOTH of its layouts. `ml-auto` alone
-                    only right-aligns it while it shares the line with the label;
-                    the figure is usually too wide for the 15rem panel, so the
-                    row's `flex-wrap` drops it to its own line — where an
-                    auto-width item sits flush LEFT under the icon. Growing to fill
-                    that line and right-aligning the text inside means the wrapped
-                    value ends where the label's value would have, and the two
-                    halves of a `·`-broken figure stack right-aligned under each
-                    other.
-                */}
-                <span id="ai-budget-slot" className="ml-auto grow min-w-0 text-right">
-                </span>
-              </div>
-              {/*
-                  An "Anthropic credits" row (the ORGANISATION's remaining
-                  Anthropic balance) used to sit here for admins. It was removed:
-                  Anthropic publishes no credit balance, so the figure had to be
-                  recorded by hand and the row read "Not set up" indefinitely.
-                  The balance now lives only in the admin console's Spend limits
-                  section (see AdminConsole.renderLimitsSection) — the
-                  /api/admin/anthropic-credits endpoints are unchanged.
-              */}
-            </div>
             {/*
                 Node status + Wallet: native app chrome absorbed into SV
                 (app-as-SV-chrome migration, NATIVE-BRIDGE.md). Native top frames
@@ -378,9 +259,11 @@ export function HeaderMenu() {
             {/*
                 Members & visibility used to be a drawer row here; #645 moved it
                 into the Dev tab's "+" menu (see AppView._wirePlusMenu).
-                "View on GitHub" and "Share App" used to be here too; they are
-                the LAST two items of #drawer-footer at the bottom of the panel
-                now (same ids, same lifecycle).
+                "View on GitHub" and "Share App" used to be here too; #913 made
+                them the last two items of a bottom-anchored #drawer-footer,
+                and THE UI OVERHAUL moved them out of this drawer entirely —
+                they are rows of the Improve panel now, scoped to one app,
+                which is what both of them always were.
             */}
             {/*
                 MAIN NAV ORDER — Profile, Messages, Leaderboard, Settings,
@@ -435,27 +318,17 @@ export function HeaderMenu() {
               <span id="drawer-messages-badge" className="hidden ml-auto min-w-[18px] h-[18px] px-1 rounded-full bg-violet-600 text-white text-[10px] font-bold leading-[18px] text-center" aria-label="Unread messages"></span>
             </a>
             {/*
-                Leaderboard — the one entry point for shared progress: the
-                Topochain standings (the primary tab, and what the bare
-                #leaderboard hash opens), the Kudos leaderboard and the season's
-                challenges, three tabs on a single screen. This row replaces the header
-                trophy (#leaderboard-btn), the old
-                #drawer-row-topochain-leaderboard, and the separate Challenges /
-                Topochain-seasons rows that used to sit under it. Keeps the
-                trophy icon the header used. Real anchor so hash navigation
-                drives the screen; the handler in HeaderMenu.init just closes
-                the drawer.
+                The Leaderboard row used to sit here — the one entry point for
+                shared progress (Topochain standings, Kudos, the season's
+                challenges), itself the replacement for the header trophy.
+
+                THE UI OVERHAUL moved it to the HOME SCREEN, into the header of
+                the Challenges area, which is the one place on the platform
+                already showing the season's shared progress. A menu row is
+                where you go when you remember the feature exists; a link
+                beside the challenges themselves is where you notice it.
+                #leaderboard is unchanged as a route.
             */}
-            <a
-              id="drawer-row-leaderboard"
-              href="#leaderboard"
-              className="flex items-center gap-3 px-4 min-h-[44px] border-b border-zinc-100 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800"
-            >
-              <TrophyIcon className="w-5 h-5 shrink-0" />
-              <span className="text-sm font-medium">
-                Leaderboard
-              </span>
-            </a>
             {/*
                 Settings — always shown; green dot is the BYOK "key configured"
                 indicator, toggled directly by settings.js _renderIndicator().
@@ -522,76 +395,26 @@ export function HeaderMenu() {
               GitHub + Share are the last two items, on the same
               app-open lifecycle they had as mid-list rows (App.openApp /
               navigate* toggle their `hidden`).
+          {/*
+              The drawer used to end in a bottom-anchored #drawer-footer:
+              the platform version, the installed mobile-app release, the
+              "Forked from" lineage label, View on GitHub and Share App.
+
+              THE UI OVERHAUL moved all of it into the Improve panel, which is
+              where it belongs — every one of those lines is ABOUT AN APP, and
+              the panel is the surface scoped to one. The version and the repo
+              link in particular were describing whichever app happened to be
+              open while sitting in a menu that is otherwise global.
+
+              Two consequences worth naming. The `mt-auto` on that footer was
+              the only reason #header-menu-rows is a column flex, and it stays
+              so — the rows above simply sit at the top now. And the amber
+              #header-menu-deploy-dot on the hamburger used to be derived from
+              the deploying pill rendered INSIDE this footer; DrawerStatus
+              .refreshDeployDot reads the Improve panel's version state instead
+              (features/improve/improve-store.js's `deploying`).
           */}
-          <div id="drawer-footer" className="mt-auto shrink-0 border-t border-zinc-100 dark:border-zinc-800">
-            {/*
-                Display utilities stay in the markup (never in .drawer-ver-row)
-                so the `hidden`-toggling rows below keep behaving exactly as
-                they did: Tailwind's `hidden` must win over the row's own
-                `flex`, which it can only do reliably against another Tailwind
-                utility. .drawer-ver-row carries typography + metrics only.
-            */}
-            <div id="drawer-row-platform-version" className="drawer-ver-row flex items-center gap-2 px-4">
-              <span className="drawer-ver-label">
-                Platform version
-              </span>
-              <span
-                id="platform-version-pill-slot"
-                className="drawer-ver-value ml-auto inline-flex min-w-0 justify-end"
-              >
-              </span>
-            </div>
-            {/*
-                Installed Flutter app release (#1101) — requested from the
-                native bridge and formatted as version/build (for example
-                0.4.0/1223). It is deliberately independent of the deployed
-                platform version (the web build's SHA) above and never uses
-                the currently-open dApp's
-                commit hash. Hidden outside the mobile app.
-            */}
-            <div id="drawer-row-native-app-version" className="hidden drawer-ver-row flex items-center gap-2 px-4">
-              <span className="drawer-ver-label">
-                Mobile app version
-              </span>
-              <span
-                id="native-app-version-slot"
-                className="drawer-ver drawer-ver-value ml-auto min-w-0 justify-end"
-              >
-              </span>
-            </div>
-            {/*
-                Fork lineage: amber "⑂ Forked from <name>" label, written by
-                AppView.renderForkBadge() and revealed by
-                App.DrawerStatus.setForkVisible(). This is app context, not a
-                second version of the platform.
-            */}
-            <div id="drawer-row-app-fork" className="hidden drawer-ver-row items-center gap-2 px-4">
-              <span id="app-fork-badge-slot" className="ml-auto inline-flex min-w-0 justify-end">
-              </span>
-            </div>
-            {/* View on GitHub — only shown when app is open and has a repo */}
-            <a
-              id="drawer-row-github"
-              href="#"
-              target="_blank"
-              className="hidden flex items-center gap-3 px-4 min-h-[44px] border-t border-zinc-100 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800"
-            >
-              <GitHubIcon className="w-5 h-5 shrink-0" />
-              <span className="text-sm font-medium">
-                View on GitHub
-              </span>
-            </a>
-            {/* Share App — only shown when app is open and running */}
-            <button
-              id="drawer-row-share"
-              className="hidden flex items-center gap-3 px-4 min-h-[44px] w-full text-left border-t border-zinc-100 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800"
-            >
-              <ShareIcon className="w-5 h-5 shrink-0" />
-              <span className="text-sm font-medium">
-                Share App
-              </span>
-            </button>
-          </div>
+
         </div>
       </div>
     </>

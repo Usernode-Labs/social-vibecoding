@@ -16,7 +16,7 @@
 //   2. The theme segmented control is genuinely React-owned now (see
 //      ThemeControl in ./header-menu.tsx), so _renderThemeButtons and its click
 //      wiring are gone from here. open() announces itself with a
-//      `usernode:header-menu-open` event instead, which is what that component
+//      `usernode:settings-section` event instead, which is what that component
 //      re-reads Theme.get() on — the same "reflect the mode on every open"
 //      contract, expressed as a subscription rather than a DOM write.
 //   3. init() is called from the island's layout effect rather than from
@@ -92,16 +92,20 @@ const DrawerStatus = {
     row.classList.toggle('flex', !!visible);
   },
 
-  // Mirror "a deploy is in flight" onto the hamburger. Read straight
-  // off the rendered platform version row rather than threading state: its markup is
+  // Mirror "a deploy is in flight" onto the hamburger. Read straight off the
+  // rendered platform version row rather than threading state: its markup is
   // already the single source of truth for the platform deploying state.
-  // Scoped to #drawer-footer so a deploying dApp pill on a home tile can never
-  // light this dot.
+  //
+  // Scoped to #improve-footer — where THE UI OVERHAUL moved that row from the
+  // retired #drawer-footer — so a deploying dApp pill on a home tile can never
+  // light this dot. The dot itself stays on the hamburger: it is the ambient
+  // "something is happening" cue, and the hamburger is the one control present
+  // on every screen.
   refreshDeployDot() {
     const dot = document.getElementById('header-menu-deploy-dot');
     if (!dot) return;
     const deploying = !!document.querySelector(
-      '#drawer-footer .drawer-ver--deploying');
+      '#improve-footer .drawer-ver--deploying');
     dot.classList.toggle('hidden', !deploying);
   },
 };
@@ -178,17 +182,13 @@ const HeaderMenu = {
     }
   },
 
-  // Reflect the current theme mode every time the drawer opens (covers
-  // cross-tab changes and explicit values that happen to match the OS).
-  // The segmented control is a React component now, so this is an
-  // announcement rather than a DOM write — ThemeControl re-reads
-  // Theme.get() on it, which is the same contract _renderThemeButtons()
-  // had when it was called from here.
-  _announceOpen() {
-    try {
-      window.dispatchEvent(new CustomEvent('usernode:header-menu-open'));
-    } catch (err) { /* ignore */ }
-  },
+  // `_announceOpen()` used to dispatch `usernode:header-menu-open` here, so
+  // the theme segments could re-read Theme.get() on every drawer open — the
+  // same contract _renderThemeButtons() had when it was called from this
+  // file. THE UI OVERHAUL moved the control to Settings, and the announcement
+  // went with it: settings.js dispatches `usernode:settings-section` from
+  // _renderContent(), which is the equivalent moment there. Nothing else ever
+  // listened, so the drawer's open is silent again.
 
   open() {
     const panel = document.getElementById('header-menu-panel');
@@ -198,11 +198,12 @@ const HeaderMenu = {
     // A fresh presentation ends any "still sliding out" window the
     // legacy path was counting down (#977).
     HeaderMenu._closingAt = 0;
-    // #555: the AI-credit row only ever renders in this drawer, so
-    // opening it is exactly when its number matters. The refresh is
-    // throttled inside AiCredit, so this is cheap on every open —
-    // and it must run BEFORE the touch branch below, which returns.
-    if (window.AiCredit?.refreshAll) AiCredit.refreshAll();
+    // The #555 AI-credit refresh used to fire here, because the row only
+    // rendered in this drawer and opening it was exactly when the number
+    // mattered. The row is a Settings section now (Anthropic API key), so the
+    // refresh belongs to that screen's open — see Settings._refreshSpend's
+    // neighbours — and firing it from a drawer that no longer shows it would
+    // be a poll with no reader.
     // Touch platforms: present the drawer as a kit side panel — a
     // right-edge slide-in with 1:1 drag-to-dismiss, matching what
     // desktop's CSS slide-over already does positionally (it used to
@@ -255,7 +256,6 @@ const HeaderMenu = {
       // because the touch gate lives inside adoptKitSurface now; the one
       // listener (ThemeControl) just re-reads Theme.get(), so it does not
       // care which side of the present it fires on.
-      HeaderMenu._announceOpen();
       // The touch path used to return before the aria writes below,
       // leaving the button reading "Open menu" / collapsed while the
       // drawer was open.
@@ -270,7 +270,6 @@ const HeaderMenu = {
     panel.setAttribute('data-open', '');
     btn.setAttribute('aria-expanded', 'true');
     btn.setAttribute('aria-label', 'Close menu');
-    HeaderMenu._announceOpen();
     const closeBtn = document.getElementById('header-menu-close');
     if (closeBtn) closeBtn.focus();
   },

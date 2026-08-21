@@ -626,32 +626,29 @@ test('GET ?expand names ONE panel — an unknown name expands nothing', async ()
 
 // ─── Drag position ────────────────────────────────────────────────────
 
-// The registry is what Settings renders its checkboxes from and what the
-// grid places, so it has to describe EVERY widget — including the two
-// marker widgets that build no payload at all.
-test('the registry describes every widget, with its footprint and removability', async () => {
+// The registry is what says a block EXISTS at all — it is how the two marker
+// blocks, which build no payload, render — and which of them may be hidden.
+test('the registry describes every block and its removability', async () => {
   const { app } = makeApp({ season: SEASON, rows: [row()] }, { user: USER });
   const { body } = await get(app, '/api/home-panels');
   const byKey = Object.fromEntries(body.registry.map((r) => [r.key, r]));
   assert.deepEqual(Object.keys(byKey), ['challenges', 'discover', 'create']);
-  // Footprints are per column count and live server-side, so the layout
-  // route's overlap check and the client lay out against the same numbers.
-  // Challenges is asymmetric (#968): one row on a phone, where the widget is
-  // full width and a two-row footprint reserved space its content-height
-  // block never drew; its original two on desktop, where it is a tile among
-  // app icons and the leftover goes to the leaderboard fill.
-  assert.deepEqual(byKey.challenges.sizes, { 4: [4, 1], 5: [2, 2] });
-  // Discover is asymmetric (#949): one row on a phone, where it is full
-  // width and its content is a single lane; its original two on desktop,
-  // where the second row carries the Popular lane.
-  assert.deepEqual(byKey.discover.sizes, { 4: [4, 1], 5: [2, 2] });
-  // Create app takes a whole phone row (4 wide, 1 tall) and one desktop cell.
-  assert.deepEqual(byKey.create.sizes, { 4: [4, 1], 5: [1, 1] });
   // Discover is the shell's only door to the app directory.
   assert.equal(byKey.discover.removable, false);
   assert.equal(byKey.challenges.removable, true);
   assert.equal(byKey.create.removable, true);
-  // Placement is no longer this route's business.
+
+  // FOOTPRINTS ARE GONE. Each entry used to carry a per-column-count `sizes`
+  // table — asymmetric for two of the three, so a phone got a full-width row
+  // where a desktop got a 2x2 tile — and the layout route's overlap check ran
+  // on the same numbers, so a patched client could not persist a
+  // self-overlapping arrangement. THE UI OVERHAUL made all three fixed
+  // sections of the home screen, so nothing is placed and there is no
+  // footprint to agree on.
+  for (const entry of body.registry) {
+    assert.equal(entry.sizes, undefined, `${entry.key} carries no footprint`);
+  }
+  // Placement was already not this route's business.
   assert.equal(body.positions, undefined);
 });
 

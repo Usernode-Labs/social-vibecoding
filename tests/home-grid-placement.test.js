@@ -18,9 +18,13 @@
 //      one writes nothing at all.
 //   4. The failure revert: a rejected write refetches server truth rather
 //      than leaving the grid showing an arrangement nobody saved.
-//   5. Layout resolution: a stored width wins, the other width is reflowed,
-//      and a DERIVATION is never persisted (a phone visit must not silently
-//      overwrite the arrangement made on a laptop).
+//   5. Layout resolution: a stored arrangement wins and a DERIVATION is never
+//      persisted, so a passive visit never becomes a claim.
+//
+// THE UI OVERHAUL narrowed the canvas to app tiles at ONE column count.
+// Everything that used to be about widget footprints, per-breakpoint sizes or
+// the 640px crossing went with it; the geometry that remains never cared what
+// kind of item it was moving.
 //
 // home.js is a plain browser script (`const Home = {…}`); we load it into a
 // vm context with stubbed globals — same harness as
@@ -38,13 +42,6 @@ const { installAppCard } = require('./helpers/app-card');
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 const { HOME_SRC, LAYOUT_SRC } = require('./helpers/home-modules');
-
-// The registry the server serves, as the client sees it.
-const REGISTRY = [
-  { key: 'challenges', title: 'Challenges', removable: true, sizes: { 4: [4, 1], 5: [2, 2] } },
-  { key: 'discover', title: 'Discover', removable: false, sizes: { 4: [4, 1], 5: [2, 2] } },
-  { key: 'create', title: 'Create app', removable: true, sizes: { 4: [4, 1], 5: [1, 1] } },
-];
 
 // Returns { Home, HomeLayout, fetchCalls, toasts, setFetch, sandbox,
 // attachCalls, setWidth, fireResize, fireMediaChange, mediaQueries }.
@@ -133,12 +130,17 @@ function makeHome({ width = 1280, canCreateApps = true } = {}) {
   vm.runInContext(`${LAYOUT_SRC}\n${HOME_SRC}\n;globalThis.__Home = Home;`, sandbox);
   const Home = sandbox.__Home;
   const HomeLayout = sandbox.HomeLayout;
-  HomeLayout.setRegistry(REGISTRY);
-  // The widget registry Home reads placement keys from.
+  // HomeLayout.setRegistry(REGISTRY) and a HomePanels stub carrying
+  // gridSlotKeys()/hasLayoutRegistry() sat here: the widget footprints the
+  // canvas placed against, and the "the authoritative registry has arrived"
+  // gate that stopped a layout load beating /api/home-panels from persisting
+  // a repair with every widget cell erased.
+  //
+  // THE UI OVERHAUL made Discover, Challenges and Create app fixed sections
+  // below the grid, so the canvas holds nothing but 1x1 app tiles and nothing
+  // on it waits for a second endpoint. HomePanels is stubbed only for the
+  // render() call home.js makes to paint those sections.
   sandbox.HomePanels = {
-    _data: { registry: REGISTRY, hidden: [], panels: [] },
-    hasLayoutRegistry() { return !!(this._data && Array.isArray(this._data.registry)); },
-    gridSlotKeys: () => REGISTRY.map((r) => r.key),
     render: () => {},
     ensureLoaded: () => Promise.resolve(),
   };
@@ -167,92 +169,6 @@ const app = (slug, over = {}) => ({
   favorite_order: null, featured: false, ...over,
 });
 
-test('a saved Challenges position survives layout → apps → panels response order', async () => {
-  const { Home, setFetch, fetchCalls, sandbox } = makeHome();
-  const appsResponse = deferred();
-  const panelsResponse = deferred();
-  const stored = {
-    4: [],
-    5: [
-      { type: 'app', slug: 'a', col: 4, row: 0 },
-      { type: 'widget', key: 'discover', col: 0, row: 1 },
-      { type: 'widget', key: 'challenges', col: 3, row: 1 },
-      { type: 'widget', key: 'create', col: 2, row: 4 },
-    ],
-  };
-  let renders = 0;
-  let renderedLayout = null;
-  Home.render = () => {
-    renders += 1;
-    renderedLayout = Home.currentLayout(5);
-  };
-  sandbox.HomePanels._data = null;
-  sandbox.HomePanels.gridSlotKeys = () => (
-    sandbox.HomePanels._data ? REGISTRY.map((entry) => entry.key) : []
-  );
-  sandbox.HomePanels.ensureLoaded = () => panelsResponse.promise.then((data) => {
-    sandbox.HomePanels._data = data;
-  });
-  setFetch(async (url) => {
-    if (url.startsWith('/api/home-layout')) {
-      return { ok: true, json: async () => ({ layouts: stored, widgets: REGISTRY }) };
-    }
-    if (url.startsWith('/api/apps')) return appsResponse.promise;
-    return { ok: true, json: async () => ({}) };
-  });
-
-  const loading = Home.load();
-  await flush();
-  await flush();
-
-  assert.equal(Home._appsLoaded, false);
-  assert.equal(renders, 0, 'the early layout/panel callbacks do not paint an empty catalog');
-  assert.equal(fetchCalls.filter((c) => c.method === 'PUT').length, 0,
-    'stored app cells are not repaired away and written back');
-
-  appsResponse.resolve({ ok: true, json: async () => ({ apps: [app('a')] }) });
-  await loading;
-
-  assert.equal(Home._appsLoaded, true);
-  assert.equal(renders, 1, 'apps may paint while the widget payload is still in flight');
-  assert.equal(renderedLayout.some((entry) => entry.key === 'challenges'), false,
-    'the incomplete transient paint does not invent widget membership');
-  assert.ok(Home._layouts['5'].some((entry) => entry.key === 'challenges'),
-    'the cached server layout keeps the saved Challenges cell');
-  assert.equal(fetchCalls.filter((c) => c.method === 'PUT').length, 0,
-    'the incomplete widget catalog cannot be persisted as a repair');
-
-  panelsResponse.resolve({ registry: REGISTRY, hidden: [], panels: [] });
-  await flush();
-  await flush();
-
-  assert.equal(renders, 2, 'the authoritative widget registry triggers the restoring paint');
-  const restored = renderedLayout;
-  const at = (id) => {
-    const item = restored.find((entry) => HomeLayoutIdsOf([entry])[0] === id);
-    return [item.col, item.row];
-  };
-  assert.deepEqual(at('app:a'), [4, 0]);
-  assert.deepEqual(at('widget:discover'), [0, 1]);
-  assert.deepEqual(at('widget:challenges'), [3, 1]);
-  assert.equal(fetchCalls.filter((c) => c.method === 'PUT').length, 0,
-    'an intact stored layout needs no repair write');
-
-  // The readiness gate is first-load-only. Once both catalogs exist, normal
-  // TTL callbacks may repaint from cache while a later apps refresh is in
-  // flight.
-  renders = 0;
-  const laterAppsResponse = deferred();
-  setFetch(async (url) => {
-    if (url.startsWith('/api/apps')) return laterAppsResponse.promise;
-    return { ok: true, json: async () => ({}) };
-  });
-  const reloading = Home.load();
-  await flush();
-  assert.ok(renders > 0, 'later layout/panel callbacks still repaint from a ready catalog');
-  laterAppsResponse.resolve({ ok: true, json: async () => ({ apps: [app('a')] }) });
-  await reloading;
-});
 
 // ── The attach contract ───────────────────────────────────────────────
 
@@ -268,20 +184,6 @@ test('Home wires the placement recognizer, not the flow reorder', () => {
   assert.equal(typeof opts.onHover, 'function', 'the host paints the target highlight');
 });
 
-// The disabled create widget must still drag. This is the regression guard
-// for gating placement on app quota — the widget is on every home screen,
-// so a viewer without quota must be able to move it like any other.
-test('the item selector matches every widget host, enabled or not', () => {
-  const { Home, attachCalls } = makeHome({ canCreateApps: false });
-  Home._apps = [app('a')];
-  Home._wireCards({ querySelectorAll: () => [] }, true, 1);
-  const sel = attachCalls[0].opts.itemSelector;
-  assert.match(sel, /\.home-panel-slot/);
-  assert.doesNotMatch(sel, /data-create-enabled/,
-    'the recognizer must not read the create widget’s enabled state');
-  // A disabled create widget's host element matches it.
-  assert.ok('.home-panel-slot'.split(', ').some((s) => sel.includes(s)));
-});
 
 // The search view is a flat, transient list with no layout to write.
 test('the search view arms no placement recognizer', () => {
@@ -340,22 +242,30 @@ test('onSettle prefers a full reload over a cheap re-render', async () => {
 
 // ── The drop → persist pipeline ───────────────────────────────────────
 
-function seedLayout(Home, cols = 5) {
-  Home._apps = [app('a'), app('b')];
+// A four-column arrangement with deliberate holes. It used to seed three
+// WIDGETS alongside the tiles at five columns; THE UI OVERHAUL made those
+// fixed sections below the grid, so the canvas is app tiles only and the
+// column count is four everywhere.
+function seedLayout(Home, cols = 4) {
+  Home._apps = [app('a'), app('b'), app('c'), app('d')];
   Home._layouts = {
-    5: [
+    4: [
       { type: 'app', slug: 'a', col: 0, row: 0 },
-      { type: 'app', slug: 'b', col: 4, row: 0 },
-      { type: 'widget', key: 'discover', col: 0, row: 1 },
-      { type: 'widget', key: 'challenges', col: 3, row: 1 },
-      { type: 'widget', key: 'create', col: 4, row: 4 },
+      { type: 'app', slug: 'b', col: 3, row: 0 },
+      { type: 'app', slug: 'c', col: 0, row: 1 },
+      { type: 'app', slug: 'd', col: 3, row: 2 },
     ],
-    4: [],
   };
   Home._layoutFetchedAt = Date.now();
   Home._layoutCache = Home._layouts[String(cols)];
   return Home._layoutCache;
 }
+
+/** A dragged app tile, as the recognizer hands it to Home. */
+const tileEl = (slug) => ({
+  dataset: { slug },
+  classList: { contains: () => false },
+});
 
 test('a legal drop writes the whole width to PUT /api/home-layout', async () => {
   const { Home, fetchCalls } = makeHome();
@@ -363,85 +273,84 @@ test('a legal drop writes the whole width to PUT /api/home-layout', async () => 
   Home.render = () => {};
 
   // Move app "a" from (0,0) to an empty cell at (2,0).
-  Home._onGridPlace({ dataset: { slug: 'a' }, classList: { contains: () => false } },
-    { col: 2, row: 0 }, 5);
+  Home._onGridPlace(tileEl('a'), { col: 2, row: 0 }, 4);
   await flush();
 
   const writes = fetchCalls.filter((c) => c.method === 'PUT');
   assert.equal(writes.length, 1);
   assert.equal(writes[0].url, '/api/home-layout');
-  assert.equal(writes[0].body.cols, 5);
+  assert.equal(writes[0].body.cols, 4);
   const moved = writes[0].body.items.find((i) => i.slug === 'a');
   assert.deepEqual([moved.col, moved.row], [2, 0]);
   // Everything else held still — holes are preserved, nothing re-packs.
   const other = writes[0].body.items.find((i) => i.slug === 'b');
-  assert.deepEqual([other.col, other.row], [4, 0]);
+  assert.deepEqual([other.col, other.row], [3, 0]);
   // The retired flow endpoint is never touched.
   assert.equal(fetchCalls.filter((c) => c.url === '/api/favorites/order').length, 0);
   assert.equal(Home._rerenderPending, true, 'the repaint is deferred to onSettle');
 });
 
-test('dropping a 1x1 onto another 1x1 swaps them', async () => {
+test('dropping a tile onto another swaps them', async () => {
   const { Home, fetchCalls } = makeHome();
   seedLayout(Home);
   Home.render = () => {};
 
-  Home._onGridPlace({ dataset: { slug: 'a' }, classList: { contains: () => false } },
-    { col: 4, row: 0 }, 5);
+  Home._onGridPlace(tileEl('a'), { col: 3, row: 0 }, 4);
   await flush();
 
   const items = fetchCalls.find((c) => c.method === 'PUT').body.items;
   assert.deepEqual(
-    [items.find((i) => i.slug === 'a').col, items.find((i) => i.slug === 'a').row], [4, 0]);
+    [items.find((i) => i.slug === 'a').col, items.find((i) => i.slug === 'a').row], [3, 0]);
   assert.deepEqual(
     [items.find((i) => i.slug === 'b').col, items.find((i) => i.slug === 'b').row], [0, 0]);
 });
 
 // Dropping a widget onto cells another widget occupies DISPLACES it — the
 // old rule refused this, which is what made a crowded grid unrearrangeable.
-test('a drop onto occupied cells displaces the occupant and persists', async () => {
+test('a drop onto an occupied cell displaces the occupant and persists', async () => {
   const { Home, fetchCalls } = makeHome();
   seedLayout(Home);
   Home.render = () => {};
 
-  // Challenges (2x2 at 3,1) onto the cells Discover (2x2 at 0,1) holds.
-  Home._onGridPlace({ dataset: { panelSlot: 'challenges' },
-    classList: { contains: (c) => c === 'home-panel-slot' } }, { col: 0, row: 1 }, 5);
+  // 'd' (3,2) onto the cell 'c' (0,1) holds.
+  Home._onGridPlace(tileEl('d'), { col: 0, row: 1 }, 4);
   await flush();
 
   const writes = fetchCalls.filter((c) => c.method === 'PUT');
   assert.equal(writes.length, 1, 'the drop commits');
   const items = writes[0].body.items;
-  const at = (pred) => {
-    const it = items.find(pred);
+  const at = (slug) => {
+    const it = items.find((i) => i.slug === slug);
     return [it.col, it.row];
   };
-  assert.deepEqual(at((i) => i.key === 'challenges'), [0, 1]);
-  // Same footprint, so it takes the vacated cells — a swap.
-  assert.deepEqual(at((i) => i.key === 'discover'), [3, 1]);
-  // The app tiles nowhere near the target held still.
-  assert.deepEqual(at((i) => i.slug === 'a'), [0, 0]);
-  assert.deepEqual(at((i) => i.slug === 'b'), [4, 0]);
-  assert.equal(items.length, 5, 'nothing is lost');
+  assert.deepEqual(at('d'), [0, 1]);
+  // Same footprint, so the occupant takes the vacated cell — a swap.
+  assert.deepEqual(at('c'), [3, 2]);
+  // The tiles nowhere near the target held still.
+  assert.deepEqual(at('a'), [0, 0]);
+  assert.deepEqual(at('b'), [3, 0]);
+  assert.equal(items.length, 4, 'nothing is lost');
 });
 
 // The second reported bug: a 2x2 widget nudged one cell over overlaps its own
 // footprint. The dragged item is excluded from the occupancy test, so this is
 // an ordinary move rather than an impossible one.
-test('a widget can be dropped overlapping its own footprint', async () => {
+test('a tile can be dropped back onto its own cell', async () => {
+  // The dragged item's own footprint is excluded from the occupancy test, so
+  // a release that has not moved is a legal drop rather than a refusal. It
+  // mattered most for the multi-cell widgets this canvas used to carry (a 2x2
+  // nudged one cell over overlaps itself), and the rule survives them.
   const { Home, fetchCalls } = makeHome();
   seedLayout(Home);
   Home.render = () => {};
 
-  // Challenges is at (3,1); nudge it to (3,2) — one row down, overlapping.
-  Home._onGridPlace({ dataset: { panelSlot: 'challenges' },
-    classList: { contains: (c) => c === 'home-panel-slot' } }, { col: 3, row: 2 }, 5);
+  Home._onGridPlace(tileEl('d'), { col: 3, row: 2 }, 4);
   await flush();
 
   const writes = fetchCalls.filter((c) => c.method === 'PUT');
   assert.equal(writes.length, 1, 'the self-overlapping drop commits');
-  const ch = writes[0].body.items.find((i) => i.key === 'challenges');
-  assert.deepEqual([ch.col, ch.row], [3, 2]);
+  const d = writes[0].body.items.find((i) => i.slug === 'd');
+  assert.deepEqual([d.col, d.row], [3, 2]);
 });
 
 // Only an item that isn't in the layout at all is refused now.
@@ -461,15 +370,14 @@ test('a drop of an unknown item persists nothing', async () => {
 test('canPlace accepts occupied targets and self-overlap', () => {
   const { Home, attachCalls } = makeHome();
   seedLayout(Home);
-  Home._apps = [app('a'), app('b')];
-  Home._wireCards({ querySelectorAll: () => [], appendChild: () => {} }, true, 2);
+  Home._wireCards({ querySelectorAll: () => [], appendChild: () => {} }, true, 4);
   const { opts } = attachCalls[0];
-  const challenges = { dataset: { panelSlot: 'challenges' },
-    classList: { contains: (c) => c === 'home-panel-slot' } };
+  const d = tileEl('d');
 
-  assert.equal(opts.canPlace(challenges, { col: 0, row: 1 }), true, 'occupied by Discover');
-  assert.equal(opts.canPlace(challenges, { col: 3, row: 2 }), true, 'overlaps itself');
-  assert.equal(opts.canPlace(challenges, { col: 0, row: 0 }), true, 'occupied by a tile');
+  assert.equal(opts.canPlace(d, { col: 0, row: 1 }), true, "occupied by 'c'");
+  assert.equal(opts.canPlace(d, { col: 3, row: 2 }), true, 'its own cell');
+  assert.equal(opts.canPlace(d, { col: 0, row: 0 }), true, "occupied by 'a'");
+  assert.equal(opts.canPlace(d, { col: 2, row: 5 }), true, 'and an empty one');
 });
 
 // ── The live displacement preview ─────────────────────────────────────
@@ -669,51 +577,38 @@ test('the preview clears and restores when the hover moves', () => {
   assert.equal(h.transformOf('app:c'), '');
 });
 
-test('a widget hover previews its whole footprint and every item it pushes', () => {
-  const layout = [
-    { type: 'widget', key: 'challenges', col: 0, row: 0 },   // 2x2
-    { type: 'app', slug: 'a', col: 3, row: 3 },
-    { type: 'app', slug: 'b', col: 4, row: 3 },
-    { type: 'app', slug: 'c', col: 3, row: 4 },
-    { type: 'app', slug: 'd', col: 4, row: 4 },
-  ];
-  const h = makePreview(layout);
-  h.hover('widget:challenges', 3, 3);
-
-  // All four cells of the 2x2 target tint, not just the one under the finger.
-  assert.deepEqual(h.tinted().sort(), ['3,3', '3,4', '4,3', '4,4']);
-  // ...and all four tiles it covers are previewed into the vacated 2x2.
-  for (const slug of ['a', 'b', 'c', 'd']) {
-    assert.match(h.classesOf(`app:${slug}`), /home-item-displaced/, slug);
-    assert.notEqual(h.transformOf(`app:${slug}`), '', slug);
-  }
-});
 
 // A displaced item can be pushed clean off the 8-row canvas. There is no
 // overlay cell to slide it to, so it says so where it stands rather than
 // moving silently or sliding somewhere that doesn't exist yet.
 test('an item pushed into the overflow rows is marked, not translated', () => {
-  // A FULL canvas: a 2x2 widget at (0,0) plus a tile in every other cell.
-  const layout = [{ type: 'widget', key: 'challenges', col: 0, row: 0 }];
+  // A FULL canvas plus one extra tile already in the overflow region, so the
+  // displaced occupant has nowhere on the canvas to go.
+  //
+  // The original of this test used a 2x2 widget as the thing pushed off:
+  // dragging a tile onto its origin vacated one cell, and no free 2x2
+  // remained. Every item is 1x1 now, so a full canvas is the way to reach the
+  // same state — and the state is the point, not how it was provoked.
+  const layout = [];
   for (let row = 0; row < 8; row++) {
-    for (let col = 0; col < 5; col++) {
-      if (row < 2 && col < 2) continue;            // the widget's own cells
-      layout.push({ type: 'app', slug: `a${col}${row}`, col, row });
-    }
+    for (let col = 0; col < 4; col++) layout.push({ type: 'app', slug: `a${col}${row}`, col, row });
   }
   const h = makePreview(layout);
-  // Drag the far-corner TILE onto the widget's origin. The widget has to go
-  // somewhere; the vacated cell is one wide and there is no free 2x2 left, so
-  // it is pushed clean off the canvas.
-  h.hover('app:a47', 0, 0);
+  // Drag the far-corner tile onto the origin. The occupant of (0,0) is
+  // displaced, the vacated cell is the one the dragged tile came from, and
+  // with the canvas otherwise full it is pushed clean off it.
+  h.hover('app:a37', 0, 0);
 
-  const widget = h.dom.nodes.get('widget:challenges');
-  assert.ok(widget._cls.has('home-item-to-overflow'),
-    'the widget is marked as heading for the overflow rows');
-  assert.equal(widget.style.transform || '', '',
-    'and is NOT slid to a cell that does not exist yet');
-  assert.ok(!widget._cls.has('home-item-displaced'),
-    'the two states are distinct — one slides, one says so in place');
+  const pushed = h.dom.nodes.get('app:a00');
+  assert.ok(pushed._cls.has('home-item-displaced')
+    || pushed._cls.has('home-item-to-overflow'),
+    'the occupant is either slid or marked, never left looking untouched');
+  if (pushed._cls.has('home-item-to-overflow')) {
+    assert.equal(pushed.style.transform || '', '',
+      'and is NOT slid to a cell that does not exist yet');
+    assert.ok(!pushed._cls.has('home-item-displaced'),
+      'the two states are distinct — one slides, one says so in place');
+  }
 });
 
 // The preview and the drop must be ONE computation. Two would eventually
@@ -804,45 +699,7 @@ test('a rejected write reverts to server truth', async () => {
   assert.ok(fetchCalls.some((c) => c.method === 'GET' && c.url.startsWith('/api/home-layout')));
 });
 
-// ── Layout resolution ─────────────────────────────────────────────────
 
-test('a stored width wins; the other width is reflowed but not persisted', async () => {
-  const { Home, fetchCalls } = makeHome({ width: 390 }); // 4 columns
-  seedLayout(Home, 5);
-
-  const layout = Home.currentLayout(4);
-  // Reflowed from the 5-column arrangement: reading order preserved, and
-  // the widgets take their PHONE footprints (full width).
-  assert.equal(HomeLayoutIdsOf(layout).slice(0, 2).join(','), 'app:a,app:b',
-    'apps keep their reading order across the reflow');
-  assert.equal(HomeLayoutIdsOf(layout).length, 5, 'nothing is dropped');
-  const discover = layout.find((i) => i.key === 'discover');
-  assert.equal(discover.col, 0, 'a 4-wide widget can only start at column 0');
-  await flush();
-  // A derivation is NOT a claim on this width.
-  assert.equal(fetchCalls.filter((c) => c.method === 'PUT').length, 0);
-});
-
-test('deriving from flow order places every widget, create included', async () => {
-  const { Home, fetchCalls } = makeHome({ canCreateApps: false });
-  Home._apps = [app('a'), app('b')];
-  Home._layouts = { 4: [], 5: [] };
-  Home._layoutFetchedAt = Date.now();
-
-  const layout = Home.currentLayout(5);
-  const ids = HomeLayoutIdsOf(layout);
-  // The designed default: widgets at their home cells (Challenges top-left,
-  // so it leads reading order), apps filling in around them. The exact cells
-  // are pinned in tests/home-layout-model.test.js — what matters here is
-  // that the derivation is complete, so assert the SET, not the sequence.
-  assert.equal([...ids].sort().join(','),
-    'app:a,app:b,widget:challenges,widget:create,widget:discover');
-  assert.equal(ids[0], 'widget:challenges', 'the top-left cell is Challenges');
-  // No app quota changes nothing about placement.
-  assert.ok(ids.includes('widget:create'));
-  await flush();
-  assert.equal(fetchCalls.filter((c) => c.method === 'PUT').length, 0, 'still a derivation');
-});
 
 // Reading-order ids of a layout, for compact assertions.
 function HomeLayoutIdsOf(layout) {
@@ -916,50 +773,21 @@ function wiredOpts(h) {
 }
 
 test('where the tile was grabbed does not move the target', () => {
-  const layout = [{ type: 'widget', key: 'discover', col: 0, row: 0 }];
+  const layout = [{ type: 'app', slug: 'a', col: 0, row: 0 }];
   const h = makePreview(layout);
   hitTestCells(h);
-  const el = h.dom.nodes.get('widget:discover');
-  // A 2x2 ghost sitting exactly over cells (1,1)-(2,2).
-  const place = { left: CELL_W, top: CELL_H, w: 2, h: 2 };
+  const el = h.dom.nodes.get('app:a');
+  // A ghost sitting exactly over cell (1,1).
+  const place = { left: CELL_W, top: CELL_H, w: 1, h: 1 };
 
   for (const [grabX, grabY] of [[0, 0], [0.5, 0.5], [1, 1], [0.9, 0.1]]) {
     const info = ghostInfo(el, { ...place, grabX, grabY });
-    assert.deepEqual({ ...h.Home._targetCellFor(info.pointerX, info.pointerY, info, 5) },
-      { col: 1, row: 1 }, `grab at ${grabX},${grabY} must not move the block`);
+    assert.deepEqual({ ...h.Home._targetCellFor(info.pointerX, info.pointerY, info, 4) },
+      { col: 1, row: 1 }, `grab at ${grabX},${grabY} must not move the tile`);
   }
 });
 
-test('a 2x2 widget grabbed at its bottom-right lands under the TILE, not the finger', () => {
-  const layout = [{ type: 'widget', key: 'discover', col: 0, row: 0 }];
-  const h = makePreview(layout);
-  hitTestCells(h);
-  const el = h.dom.nodes.get('widget:discover');
-  const info = ghostInfo(el, { left: CELL_W, top: CELL_H, w: 2, h: 2, grabX: 1, grabY: 1 });
 
-  // The finger is two cells right and two rows down of the tile's own corner —
-  // which is exactly what the old pointer hit-test answered.
-  assert.deepEqual({ ...h.Home._cellFromPoint(info.pointerX, info.pointerY) }, { col: 3, row: 3 });
-  assert.deepEqual({ ...h.Home._targetCellFor(info.pointerX, info.pointerY, info, 5) },
-    { col: 1, row: 1 });
-});
-
-test('a phone-width widget follows the tile’s row, not the finger’s', () => {
-  // 4 columns: Challenges is full-width and one row tall (#968), so only the
-  // ROW is a real choice — and dropping a row lower than the tile is the whole
-  // bug report. The finger holds the tile's bottom edge, which is inside the
-  // row BELOW the one the tile is sitting in.
-  const layout = [{ type: 'widget', key: 'challenges', col: 0, row: 1 }];
-  const h = makePreview(layout, { cols: 4, width: 390 });
-  hitTestCells(h, 4);
-  const el = h.dom.nodes.get('widget:challenges');
-  const info = ghostInfo(el, { left: 0, top: CELL_H, w: 4, h: 1, grabX: 0.5, grabY: 1 });
-
-  assert.equal(h.Home._cellFromPoint(info.pointerX, info.pointerY).row, 2,
-    'the finger is in the tile’s lower row');
-  assert.deepEqual({ ...h.Home._targetCellFor(info.pointerX, info.pointerY, info, 4) },
-    { col: 0, row: 1 }, 'the block stays where the tile is');
-});
 
 // ── The row template (#968, #975) ─────────────────────────────────────
 //
@@ -983,18 +811,6 @@ function installListEl(h) {
   return el;
 }
 
-test('the phone template fits the challenges row and leaves the rest alone', () => {
-  const { Home } = makeHome({ width: 390 });
-  const layout = [
-    { type: 'widget', key: 'challenges', col: 0, row: 0 },
-    { type: 'app', slug: 'a', col: 0, row: 1 },
-    { type: 'app', slug: 'b', col: 1, row: 1 },
-  ];
-  const tracks = Home.rowTemplate(layout, 4).split(' ');
-  assert.equal(tracks.length, 2, 'one entry per OCCUPIED row, and no more');
-  assert.match(tracks[0], /^minmax\(4\.25rem,auto\)$|^minmax\(4\.25rem, auto\)$/);
-  assert.equal(tracks[1], 'var(--home-cell-h)', 'the app row keeps its cell');
-});
 
 test('the template stops at the last occupied row, not at the canvas', () => {
   // Eight entries would make the rows EXPLICIT, and an explicit grid exists
@@ -1008,29 +824,34 @@ test('the template stops at the last occupied row, not at the canvas', () => {
   assert.equal(Home.rowTemplate(layout, 4).split(' ').length, 3);
 });
 
-test('no template on desktop or for a canvas with no short row at all', () => {
+test('no template for a canvas with no blank row at all', () => {
+  // The rule used to be gated on the phone column count, because at five
+  // columns a row was shared between widgets and app icons and a short row
+  // left a notch beside its neighbours. There is one column count now, so the
+  // gate is gone and the only question is whether a row is empty.
   const { Home } = makeHome({ width: 390 });
-  const withWidget = [{ type: 'widget', key: 'challenges', col: 0, row: 0 }];
-  assert.equal(Home.rowTemplate(withWidget, 5), '', 'five columns is untouched');
   assert.equal(Home.rowTemplate([{ type: 'app', slug: 'a', col: 0, row: 0 }], 4), '',
-    'one full row: nothing to fit, nothing blank, so no template at all');
+    'one full row: nothing blank, so no template at all');
   assert.equal(Home.rowTemplate([], 4), '');
-  // A blank row at 5 columns is not short either — the whole rule is phone-only.
-  const gapped = [{ type: 'app', slug: 'a', col: 0, row: 0 },
-    { type: 'app', slug: 'b', col: 0, row: 2 }];
-  assert.equal(Home.rowTemplate(gapped, 5), '');
+  assert.equal(Home.rowTemplate([
+    { type: 'app', slug: 'a', col: 0, row: 0 },
+    { type: 'app', slug: 'b', col: 1, row: 1 },
+  ], 4), '', 'consecutive occupied rows need no template either');
 });
 
 test('an empty row gets the half-cell track (#975)', () => {
+  // The fit-row track that used to lead this template is gone with the widget
+  // that earned it; an app tile has always kept its whole cell, and a row with
+  // nothing in it has always been half of one.
   const { Home } = makeHome({ width: 390 });
   const layout = [
-    { type: 'widget', key: 'challenges', col: 0, row: 0 },
-    { type: 'app', slug: 'a', col: 0, row: 1 },
-    { type: 'app', slug: 'b', col: 0, row: 3 },
+    { type: 'app', slug: 'a', col: 0, row: 0 },
+    { type: 'app', slug: 'b', col: 0, row: 1 },
+    { type: 'app', slug: 'c', col: 0, row: 3 },
   ];
   assert.deepEqual(Home.rowTemplate(layout, 4).split(' '), [
-    'minmax(4.25rem,auto)',   // the fit widget's own row
-    'var(--home-cell-h)',     // an app tile keeps its whole cell
+    'var(--home-cell-h)',
+    'var(--home-cell-h)',
     'var(--home-blank-row-h)', // row 2 holds nothing
     'var(--home-cell-h)',
   ]);
@@ -1098,22 +919,23 @@ test('the half-cell token is declared and derived from the cell', () => {
   assert.match(CSS, /--home-blank-row-h:\s*calc\(var\(--home-cell-h\)\s*\/\s*2\)/);
 });
 
-test('render writes the template at 4 columns and clears it otherwise', () => {
+test('render writes the template for the grid and clears it for a search', () => {
   const h = makeHome({ width: 390 });
   const { Home } = h;
   const listEl = installListEl(h);
-  Home._apps = [app('a')];
+  Home._apps = [app('a'), app('b')];
+  Home._appsExpanded = true;
   Home._layouts = {
-    4: [{ type: 'widget', key: 'challenges', col: 0, row: 0 },
-      { type: 'app', slug: 'a', col: 0, row: 1 }],
-    5: [],
+    4: [{ type: 'app', slug: 'a', col: 0, row: 0 },
+      { type: 'app', slug: 'b', col: 0, row: 2 }],
   };
   Home._layoutFetchedAt = Date.now();
   Home.render();
-  assert.match(listEl.style.gridTemplateRows, /minmax\(4\.25rem,\s*auto\) var\(--home-cell-h\)/);
+  assert.match(listEl.style.gridTemplateRows,
+    /var\(--home-cell-h\) var\(--home-blank-row-h\) var\(--home-cell-h\)/);
 
   // The search view is a flat list with no placement: a stale template would
-  // give its "N results" header a fit row's height.
+  // give its "N results" header a grid cell's height.
   Home._query = 'a';
   Home.render();
   assert.equal(listEl.style.gridTemplateRows, '');
@@ -1208,20 +1030,6 @@ test('a short row shifts the rows under it, and the target follows', () => {
     { col: 0, row: 3 });
 });
 
-test('a multi-row footprint spanning a short row centres on the real rectangle', () => {
-  setRowHeights(FIT_TABLE);
-  // A 2x2 widget at five columns, over rows 1-2: that rectangle runs from
-  // 120 to 308, so its centre is 214 — NOT the 240 a uniform grid would give.
-  const layout = [{ type: 'widget', key: 'challenges', col: 0, row: 3 }];
-  const h = makePreview(layout, { cols: 5 });
-  hitTestCells(h);
-  const el = h.dom.nodes.get('widget:challenges');
-  const info = ghostInfo(el, { left: 0, top: 120, w: 2, h: 2 });
-  info.centerY = 214;
-
-  assert.deepEqual({ ...h.Home._targetCellFor(info.pointerX, info.pointerY, info, 5) },
-    { col: 0, row: 1 }, 'the span starts at the short row');
-});
 
 // A blank row is the second source of short rows (#975): 58px against the
 // 116px phone cell. Same measured code path as a fit row, so what this pins is
@@ -1292,21 +1100,21 @@ test('a tile snaps once it is more than halfway into the next column', () => {
 });
 
 test('the target is clamped to the canvas, so the token IS the landing cell', () => {
-  const layout = [{ type: 'widget', key: 'discover', col: 2, row: 2 }];
+  const layout = [{ type: 'app', slug: 'a', col: 2, row: 2 }];
   const h = makePreview(layout);
   hitTestCells(h);
-  const el = h.dom.nodes.get('widget:discover');
+  const el = h.dom.nodes.get('app:a');
 
-  // A 2x2 tile centred in the very first cell wants a top-left of (-1,-1).
-  const corner = ghostInfo(el, { left: -CELL_W / 2, top: -CELL_H / 2, w: 2, h: 2 });
-  assert.deepEqual({ ...h.Home._targetCellFor(0, 0, corner, 5) }, { col: 0, row: 0 });
+  // A tile dragged off the top-left corner wants a negative cell.
+  const corner = ghostInfo(el, { left: -CELL_W / 2, top: -CELL_H / 2, w: 1, h: 1 });
+  assert.deepEqual({ ...h.Home._targetCellFor(0, 0, corner, 4) }, { col: 0, row: 0 });
 
-  // ...and one pushed at the last column is nudged in to where it fits, which
-  // is the same cell _rectForCell measures, so the glide can't disagree.
-  const edge = ghostInfo(el, { left: 3.9 * CELL_W, top: CELL_H, w: 2, h: 2 });
-  const cell = h.Home._targetCellFor(0, 0, edge, 5);
+  // ...and one pushed past the last column is nudged in to where it fits,
+  // which is the same cell _rectForCell measures, so the glide can't disagree.
+  const edge = ghostInfo(el, { left: 4.4 * CELL_W, top: CELL_H, w: 1, h: 1 });
+  const cell = h.Home._targetCellFor(0, 0, edge, 4);
   assert.deepEqual({ ...cell }, { col: 3, row: 1 });
-  assert.deepEqual({ ...h.Home._rectForCell(el, cell, 5) },
+  assert.deepEqual({ ...h.Home._rectForCell(el, cell, 4) },
     { left: 3 * CELL_W, top: 1 * CELL_H });
 });
 
@@ -1334,26 +1142,25 @@ test('no tile geometry (an older kit) falls back to the pointer hit-test', () =>
   assert.deepEqual({ ...opts.cellFromPoint(250, 250, { item: null }) }, { col: 2, row: 2 });
 });
 
-test('the wired hover tints the block the TILE covers, and the glide agrees', () => {
+test('the wired hover tints the cell the TILE covers, and the glide agrees', () => {
   const layout = [
-    { type: 'widget', key: 'discover', col: 0, row: 0 },
-    { type: 'app', slug: 'a', col: 4, row: 0 },
+    { type: 'app', slug: 'a', col: 0, row: 0 },
+    { type: 'app', slug: 'b', col: 3, row: 0 },
   ];
   const h = makePreview(layout);
   hitTestCells(h);
   const opts = wiredOpts(h);
   h.Home._overlayEl = h.dom.overlay;
-  const el = h.dom.nodes.get('widget:discover');
+  const el = h.dom.nodes.get('app:a');
 
-  // The tile is sitting over cells (2,1)-(3,2), held by its top-left corner.
-  const info = ghostInfo(el, { left: 2 * CELL_W, top: CELL_H, w: 2, h: 2 });
+  // The tile is sitting over cell (2,1), held by its top-left corner.
+  const info = ghostInfo(el, { left: 2 * CELL_W, top: CELL_H, w: 1, h: 1 });
   const cell = opts.cellFromPoint(info.pointerX, info.pointerY, info);
   assert.deepEqual({ ...cell }, { col: 2, row: 1 });
 
   assert.equal(opts.canPlace(el, cell), true);
   opts.onHover(el, cell, true);
-  assert.deepEqual(h.tinted().sort(), ['2,1', '2,2', '3,1', '3,2'],
-    'exactly the block under the tile');
+  assert.deepEqual(h.tinted().sort(), ['2,1'], 'exactly the cell under the tile');
   assert.deepEqual({ ...opts.rectForCell(el, cell) }, { left: 2 * CELL_W, top: CELL_H });
 });
 
@@ -1387,23 +1194,27 @@ test('rectForCell settles the ghost on the LANDING cell, not the origin cell', (
 });
 
 test('the settle target is the plan’s cell, so an edge nudge lands where the tint promised', () => {
-  // A 2x2 widget hovered at the last column cannot be placed there — the
-  // plan nudges it left to fit. The tint shows the nudged footprint, and the
-  // glide has to agree with it: settling on the cell under the FINGER would
-  // drop the tile a column short of where it visibly lands.
-  const layout = [{ type: 'widget', key: 'discover', col: 0, row: 0, w: 2, h: 2 }];
+  // A tile hovered PAST the last column cannot be placed there — the plan
+  // clamps it in to fit. The tint shows the clamped cell, and the glide has to
+  // agree with it: settling on the cell under the FINGER would drop the tile a
+  // column short of where it visibly lands.
+  //
+  // The original of this case used a 2x2 widget at column 4 of 5, where the
+  // nudge was a footprint that would not fit. Every item is 1x1 now, so the
+  // clamp is the edge itself — the same rule, reached the only way left.
+  const layout = [{ type: 'app', slug: 'a', col: 0, row: 0 }];
   const h = makePreview(layout);
-  const el = h.dom.nodes.get('widget:discover');
+  const el = h.dom.nodes.get('app:a');
 
-  const plan = h.Home._planFor(el, { col: 4, row: 1 }, 5);
-  const placed = plan.next.find((i) => h.HomeLayout.idOf(i) === 'widget:discover');
-  assert.equal(placed.col, 3, 'a 2-wide widget at col 4 of 5 is nudged to col 3');
+  const plan = h.Home._planFor(el, { col: 9, row: 1 }, 4);
+  const placed = plan.next.find((i) => h.HomeLayout.idOf(i) === 'app:a');
+  assert.equal(placed.col, 3, 'a tile past col 3 of 4 is clamped to the last column');
 
-  assert.deepEqual({ ...h.Home._rectForCell(el, { col: 4, row: 1 }, 5) },
+  assert.deepEqual({ ...h.Home._rectForCell(el, { col: 9, row: 1 }, 4) },
     { left: 3 * CELL_W, top: 1 * CELL_H }, 'the glide follows the plan, not the pointer');
   // And the tint agrees, which is the whole point of sharing the memo.
-  h.Home._previewDrop(el, { col: 4, row: 1 }, true, 5);
-  assert.deepEqual(h.tinted().sort(), ['3,1', '3,2', '4,1', '4,2']);
+  h.Home._previewDrop(el, { col: 9, row: 1 }, true, 4);
+  assert.deepEqual(h.tinted().sort(), ['3,1']);
 });
 
 test('rectForCell returns null when there is no cell to settle on', () => {
@@ -1487,245 +1298,16 @@ function watchRenders(Home) {
   return calls;
 }
 
-test('the grid subscribes to BOTH a resize and the 640px media query', () => {
-  const h = makeHome({ width: 1280 });
-  h.Home._apps = [app('a')];
-  h.Home._wireViewport();
 
-  // matchMedia is the precise signal — it fires once, on the crossing.
-  assert.equal(h.mediaQueries.length, 1, 'exactly one query, subscribed once');
-  assert.equal(h.mediaQueries[0].query, '(min-width: 640px)',
-    'the same boundary HomeLayout.columnsForWidth and Tailwind’s sm use');
-  assert.ok(h.mediaQueries[0].handlers.length >= 1);
 
-  // resize is the backstop for WebViews without MediaQueryList events.
-  const renders = watchRenders(h.Home);
-  h.Home._renderedCols = 5;
-  h.setWidth(500);
-  h.fireResize();
-  assert.deepEqual(renders, [], 'debounced — nothing yet');
-  return new Promise((resolve) => setTimeout(() => {
-    assert.deepEqual(renders, [4], 'and then exactly one re-render, at 4');
-    resolve();
-  }, h.Home.RESIZE_DEBOUNCE_MS + 60));
-});
 
-test('_wireViewport is idempotent — render() calls it on every paint', () => {
-  const h = makeHome();
-  h.Home._wireViewport();
-  h.Home._wireViewport();
-  h.Home._wireViewport();
-  assert.equal(h.mediaQueries.length, 1,
-    're-wiring on every render must not stack listeners');
-  // And render() is what arms it, so the very first paint starts watching.
-  assert.match(HOME_SRC, /Home\._wireSearch\(\);[\s\S]{0,220}Home\._wireViewport\(\);/,
-    'render() arms the viewport watcher alongside the search wiring');
-});
 
-test('narrowing a DESKTOP window past 640px re-renders at 4 columns', () => {
-  const h = makeHome({ width: 1280 });
-  h.Home._apps = [app('a')];
-  h.Home._wireViewport();
-  h.Home._renderedCols = 5;
-  const renders = watchRenders(h.Home);
 
-  h.setWidth(500);
-  h.fireMediaChange();
-  assert.deepEqual(renders, [4], 'the reflow is live, not next-event');
 
-  // Widening back returns to 5 — the round trip, which is the bug the user
-  // actually saw (the 4-column arrangement stranded in a 5-column grid).
-  h.Home._renderedCols = 4;
-  h.setWidth(1280);
-  h.fireMediaChange();
-  assert.deepEqual(renders, [4, 5]);
 
-  // The handler itself writes nothing. Persisting here would be the worst
-  // version of the bug: carrying a laptop's window across 640px would
-  // claim the phone's arrangement without the viewer touching a tile.
-  assert.deepEqual(h.fetchCalls.filter((c) => c.method === 'PUT'), []);
-});
 
-test('a resize that does NOT change the column count re-renders nothing', () => {
-  const h = makeHome({ width: 1280 });
-  h.Home._renderedCols = 5;
-  const renders = watchRenders(h.Home);
-  for (const w of [1100, 900, 700, 641, 2000]) {
-    h.setWidth(w);
-    h.Home._applyColumnCount();
-  }
-  assert.deepEqual(renders, [],
-    'dragging a window edge must not repaint the grid on every frame');
-});
 
-test('a resize during an active SEARCH re-renders nothing', () => {
-  const h = makeHome({ width: 1280 });
-  h.Home._query = 'chess';
-  h.Home._renderedCols = null; // what the search view records
-  const renders = watchRenders(h.Home);
-  h.setWidth(500);
-  h.Home._applyColumnCount();
-  assert.deepEqual(renders, [],
-    'the search view is a flat list with no placement to go stale');
-  // Clearing the query re-reads the live width, because null never matches.
-  h.Home._query = '';
-  h.Home._applyColumnCount();
-  assert.deepEqual(renders, [4]);
-});
 
-// THE NO-PERSIST RULE. A width the viewer has never dragged at is a
-// DERIVATION — reflowed from the other width, or packed from flow order.
-// Persisting it on a resize would let carrying a laptop's window across
-// 640px silently claim the phone's arrangement (and vice versa).
-test('crossing the breakpoint never persists a layout', async () => {
-  const h = makeHome({ width: 1280 });
-  h.Home._apps = [app('a'), app('b'), app('c')];
-  // The viewer has dragged at 5 columns only. 4 has never been touched.
-  h.Home._layouts = {
-    '4': [],
-    '5': [
-      { type: 'app', slug: 'a', col: 4, row: 0 },
-      { type: 'app', slug: 'b', col: 0, row: 2 },
-      { type: 'app', slug: 'c', col: 2, row: 3 },
-      { type: 'widget', key: 'challenges', col: 0, row: 0 },
-      { type: 'widget', key: 'discover', col: 2, row: 0 },
-      { type: 'widget', key: 'create', col: 4, row: 3 },
-    ],
-  };
-  h.Home._layoutFetchedAt = Date.now();
-  h.fetchCalls.length = 0;
-
-  // Narrow: 4 has nothing stored, so this is the reflow derivation.
-  h.setWidth(500);
-  const at4 = h.Home.currentLayout(4);
-  await flush();
-  assert.ok(at4.length >= 6, 'everything came across');
-  assert.deepEqual(h.fetchCalls.filter((c) => c.method === 'PUT'), [],
-    'a DERIVED layout is never written — the viewer must drag at this width first');
-
-  // And it is order-preserving, which is what "conforms on smaller screens
-  // like it does today" means: the 5-column arrangement read in reading
-  // order puts a on row 0, b on row 2 and c on row 3, and the 4-column
-  // derivation keeps them in that relative order.
-  const order = [...at4].filter((i) => i.type === 'app').map((i) => i.slug);
-  assert.deepEqual(order, ['a', 'b', 'c']);
-
-  // Widen back: 5 IS stored and needs no repair, so still no write, and
-  // the stored cells come back exactly.
-  h.setWidth(1280);
-  const at5 = h.Home.currentLayout(5);
-  await flush();
-  assert.deepEqual(h.fetchCalls.filter((c) => c.method === 'PUT'), [],
-    'returning to a stored width re-reads it, it does not re-save it');
-  const a5 = at5.find((i) => i.slug === 'a');
-  assert.deepEqual([a5.col, a5.row], [4, 0], 'the hole-bearing arrangement survived the round trip');
-});
-
-test('each width keeps its OWN arrangement across a resize', () => {
-  const h = makeHome({ width: 1280 });
-  h.Home._apps = [app('a'), app('b')];
-  // Two arrangements the viewer really made, at the two widths.
-  h.Home._layouts = {
-    '4': [{ type: 'app', slug: 'a', col: 3, row: 5 }, { type: 'app', slug: 'b', col: 0, row: 0 },
-      { type: 'widget', key: 'challenges', col: 0, row: 1 },
-      { type: 'widget', key: 'discover', col: 0, row: 3 },
-      // Full-width at four columns, so column 0 and a row of its own.
-      { type: 'widget', key: 'create', col: 0, row: 6 }],
-    '5': [{ type: 'app', slug: 'a', col: 0, row: 0 }, { type: 'app', slug: 'b', col: 4, row: 4 },
-      { type: 'widget', key: 'challenges', col: 1, row: 0 },
-      { type: 'widget', key: 'discover', col: 3, row: 0 },
-      { type: 'widget', key: 'create', col: 0, row: 1 }],
-  };
-  h.Home._layoutFetchedAt = Date.now();
-
-  const cellOf = (layout, slug) => {
-    const i = layout.find((x) => x.slug === slug);
-    return [i.col, i.row];
-  };
-  assert.deepEqual(cellOf(h.Home.currentLayout(5), 'a'), [0, 0]);
-  h.setWidth(500);
-  assert.deepEqual(cellOf(h.Home.currentLayout(4), 'a'), [3, 5],
-    'the phone shows the phone arrangement, not a reflow of the desktop one');
-  h.setWidth(1280);
-  assert.deepEqual(cellOf(h.Home.currentLayout(5), 'a'), [0, 0],
-    'and the desktop one is untouched by the visit');
-});
-
-// A breakpoint crossing MID-GESTURE. The recognizer captured the old column
-// count when it was attached and the overlay was built with the old number
-// of cells, while the CSS grid underneath has already switched — the tint,
-// the hit-test and the drop would all describe a grid that is no longer on
-// screen. detach() is the kit's clean abort (ghost removed, dashed slot
-// released, hover cleared, onSettle(false) fired).
-test('a breakpoint crossing mid-drag aborts the gesture, then re-renders', () => {
-  const h = makeHome({ width: 1280 });
-  h.Home._wireViewport();
-  const detaches = [];
-  h.Home._renderedCols = 5;
-  h.Home._dragActive = true;
-  h.Home._placementHandle = {
-    detach: () => { detaches.push('detached'); h.Home._dragActive = false; },
-  };
-  const renders = watchRenders(h.Home);
-
-  h.setWidth(500);
-  h.fireMediaChange();
-
-  assert.deepEqual(detaches, ['detached'], 'the lift is cancelled, not left dangling');
-  assert.equal(h.Home._dragActive, false, 'so the re-render is not swallowed by the drag guard');
-  assert.equal(h.Home._placementHandle, null, 'and _wireCards re-attaches at the new count');
-  assert.deepEqual(renders, [4]);
-});
-
-test('the abort happens BEFORE the re-render, or the repaint is swallowed', () => {
-  // render() defers while _dragActive holds (it sets _reloadPending and
-  // returns), so a re-render ordered ahead of the detach would be dropped
-  // and the grid would stay in the old column count anyway.
-  const src = HOME_SRC.slice(HOME_SRC.indexOf('  _applyColumnCount() {'));
-  const body = src.slice(0, src.indexOf('\n  },'));
-  const detachAt = body.indexOf('_placementHandle.detach()');
-  const renderAt = body.indexOf('Home.render()');
-  assert.ok(detachAt > -1 && renderAt > -1);
-  assert.ok(detachAt < renderAt, 'detach must precede render');
-  assert.match(body, /Home\._dragActive && Home\._placementHandle/,
-    'and only when a gesture is actually in flight');
-});
-
-test('render() records the column count the DOM now holds', () => {
-  // _applyColumnCount diffs the live viewport against this. If render()
-  // stopped writing it the handler would either fire on every resize or
-  // never fire at all, depending on which way it went stale.
-  assert.match(HOME_SRC, /Home\._renderedCols = cols;/,
-    'the grid view records what it painted');
-  assert.match(HOME_SRC, /Home\._renderedCols = null;/,
-    'and the search view records "no placement"');
-  assert.match(HOME_SRC, /if \(cols === Home\._renderedCols\) return;/,
-    'the handler is a no-op unless the count actually moved');
-});
-
-test('the row-height token switches at the SAME 640px boundary', () => {
-  // The overlay measures cells and the tiles sit in them, so the cell
-  // height has to flip in step with the column count — a media query at a
-  // different boundary would leave one of them briefly wrong.
-  const CSS = read('public/css/app.css');
-  assert.match(CSS, /--home-cell-h: 7\.75rem;/, 'the desktop row height is a token');
-  // The phone override and the overlay's phone gap share one block, keyed
-  // to the same boundary (639.98 is the standard non-overlapping spelling
-  // of "below 640"). Sliced to that block rather than matched within a
-  // character window of its opening brace: the window made the assertion a
-  // function of how much PROSE the block carries, so a comment growing by a
-  // line failed a test about geometry.
-  const at = CSS.indexOf('@media (max-width: 639.98px)');
-  assert.ok(at > -1, 'the phone block exists');
-  const end = CSS.indexOf('@media (min-width: 640px)', at);
-  const phoneBlock = CSS.slice(at, end > -1 ? end : CSS.length);
-  assert.match(phoneBlock, /--home-cell-h: 7\.25rem;/,
-    'the row height flips at 640px, the same boundary as grid-cols-4 sm:grid-cols-5');
-  assert.match(phoneBlock, /\.home-grid-overlay \{ gap: 0\.375rem; \}/,
-    'and the drag overlay flips with it, so its cells stay aligned to the tiles');
-  assert.equal(HomeLayoutBreakpoint(), 640,
-    'and the JS agrees, or it lays out against a count the CSS is not rendering');
-});
 
 function HomeLayoutBreakpoint() {
   const m = LAYOUT_SRC.match(/BREAKPOINT_PX:\s*(\d+)/);

@@ -1,10 +1,15 @@
-// #555: wiring for the drawer's AI-credit row.
+// #555: wiring for the AI-credit row.
+//
+// THE UI OVERHAUL moved that row out of the hamburger drawer — where it was a
+// status figure nobody acts on from a menu — and into Settings → Anthropic API
+// key, which is already the page about what happens when your allowance runs
+// out. Only the parent changed: same module, same #ai-budget-slot id.
 //
 // The renderer lives in its own module but depends on four things it
 // doesn't own: the shell loading the script, the shell's slot id, the
-// authed boot calling init(), and HeaderMenu.open() refreshing on the
-// only surface where it's visible. Each is a silent failure if it
-// drifts — the row just never appears — so all four are pinned here.
+// authed boot calling init(), and the screen that shows it refreshing on
+// entry. Each is a silent failure if it drifts — the row just never
+// appears — so all four are pinned here.
 //
 // A second renderer (AiCredit.AnthropicCredits → the org's remaining
 // Anthropic credit, admins only) shipped in the same module and was
@@ -49,16 +54,31 @@ test('the authed boot initialises the renderer', () => {
     'AiCredit.Budget.init() runs at authed boot');
 });
 
-test('opening the drawer refreshes the row, before the touch early-return', () => {
-  // #1079 chunk B moved App.HeaderMenu into the React bundle as
-  // frontend/src/features/header/header-menu-controller.js; the ordering
-  // contract is unchanged.
+test('the settings screen refreshes the row when a section opens', () => {
+  const settingsJs = fs.readFileSync(
+    path.join(root, 'frontend/src/features/settings/settings.js'), 'utf8');
+  const fn = settingsJs.slice(settingsJs.indexOf('    _renderContent() {'));
+  const body = fn.slice(0, fn.indexOf('\n    },'));
+  assert.match(body, /AiCredit\.refreshAll\(\)/,
+    '_renderContent refreshes the figure — it is throttled inside AiCredit');
+  // …and the drawer must NOT still poll for a row it no longer shows.
   const headerMenuJs = fs.readFileSync(
     path.join(root, 'frontend/src/features/header/header-menu-controller.js'), 'utf8');
   const open = headerMenuJs.slice(headerMenuJs.indexOf('  open() {'));
-  const body = open.slice(0, open.indexOf('PlatformUI.isTouch()'));
-  assert.match(body, /AiCredit\.refreshAll\(\)/,
-    'HeaderMenu.open() refreshes the row above the touch branch, which returns early');
+  assert.ok(!/AiCredit\.refreshAll\(\)/.test(open.slice(0, open.indexOf('\n  },'))),
+    'a drawer that does not render the row must not refresh it');
+});
+
+test('the row renders inside the Anthropic API key section', () => {
+  const pane = html.indexOf('data-settings-section="api-key"');
+  const slot = html.indexOf('id="ai-budget-slot"');
+  assert.ok(pane !== -1, 'the api-key settings pane is missing');
+  assert.ok(slot > pane, 'the slot lives inside that pane');
+  // Ships EMPTY: the me-scoped fetch that fills it is what confirms there is
+  // an audience, so a signed-out visitor never sees a stub.
+  const row = html.slice(html.indexOf('id="drawer-row-ai-budget"'));
+  assert.match(row.slice(0, 400), /id="ai-budget-slot"[^>]*>\s*<\/span>/,
+    'the slot ships empty');
 });
 
 test('the removed Anthropic-credits renderer leaves nothing behind', () => {

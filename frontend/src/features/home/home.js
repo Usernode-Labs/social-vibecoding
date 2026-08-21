@@ -1,6 +1,12 @@
 // The home screen's launcher grid: loads the viewer's apps, lays them out on
-// the (column, row) canvas HomeLayout models, renders the tiles and the widget
-// slots, and owns the drag-to-rearrange gesture.
+// the (column, row) canvas HomeLayout models, renders the tiles, and owns the
+// drag-to-rearrange gesture.
+//
+// THE UI OVERHAUL narrowed what this canvas holds. Discover, Challenges and
+// Create app used to be draggable WIDGETS placed on it alongside the app
+// tiles; they are fixed sections below the grid now (see
+// features/home/index.tsx), so every item here is a 1x1 app tile, there is one
+// column count instead of two, and the drag applies to app tiles alone.
 //
 // Moved verbatim from public/js/home.js into the bundle by #1083 chunk F step 4
 // (see features/home/index.tsx). Two things changed and nothing else:
@@ -72,10 +78,8 @@ const Home = {
       // apps, and persist the damaged repair before /api/apps arrived.
       // #app-list is also non-empty for the failure state, so the DOM cannot
       // answer this question either.
-      if (!Home._appsLoaded || !window.HomePanels?.hasLayoutRegistry?.()) return;
-      // An active search legitimately has no slots — the section below the
-      // grid is that view's host on purpose. Re-rendering would be a no-op
-      // at best and would rebuild the results grid for nothing.
+      if (!Home._appsLoaded) return;
+      // An active search rebuilds the results grid for nothing.
       if ((Home._query || '').trim()) return;
       Home.render();
     };
@@ -86,7 +90,7 @@ const Home = {
     try {
       // The viewer's own proposals / active sessions used to ride along
       // here as two strips at the top of the grid; both moved into the
-      // header cog's drawer (frontend/src/features/work-drawer/work-drawer.js), which owns those
+      // hamburger's notifications list and the Improve panel, which own those
       // fetches now.
       // ?demo=1 rides on /api/apps: staging injects the icon-demo
       // tiles there (routes/apps.js demoIconApps). No-op in production.
@@ -274,112 +278,37 @@ const Home = {
   // with a repaired copy of the fixture.
   _layoutIsDemo: false,
 
-  // The column count the grid is rendering at right now. Read from the
-  // viewport, NOT from the DOM: it has to be answerable before the first
-  // paint, and it must agree with the `grid-cols-4 sm:grid-cols-5` classes
-  // on #app-list — HomeLayout.BREAKPOINT_PX is the single source for that
-  // 640px boundary.
+  // The column count the grid is rendering at right now — four, at every
+  // width, since THE UI OVERHAUL. It must agree with the `grid-cols-4` class
+  // on #app-list, and HomeLayout.COLS is the single source for that.
+  //
+  // Kept as a call rather than inlined: every reader passes it around as a
+  // parameter and the model still takes it, so the constant-ness stays one
+  // fact in one place instead of a number sprinkled through two files.
   currentCols() {
-    const w = (typeof window !== 'undefined' && window.innerWidth) || 1280;
-    return HomeLayout.columnsForWidth(w);
+    return HomeLayout.columnsForWidth();
   },
 
-  // The column count the DOM currently HOLDS, as opposed to the one the
-  // viewport now implies. null while the search view is up (a flat list has
-  // no placement to go stale). The two diverge the instant a window crosses
-  // 640px, which is what _wireViewport watches for.
-  _renderedCols: null,
-
-  // ===== Live reflow across the 640px boundary =====
+  // `_renderedCols`, `_wireViewport()` and `_applyColumnCount()` lived here:
+  // a resize + matchMedia watcher that re-rendered the grid whenever a window
+  // crossed 640px. Every item's cell is an INLINE grid-column/grid-row this
+  // module writes at render time, so a breakpoint crossing left those inline
+  // placements describing the OLD column count inside a grid the CSS had
+  // already switched — a dead trailing column, widgets spanning 4 of 5.
   //
-  // The CSS switches columns on its own — `grid-cols-4 sm:grid-cols-5` plus
-  // the media-queried --home-cell-h — but every item's cell comes from an
-  // INLINE grid-column/grid-row this module wrote at render time. Without
-  // this handler those inline placements survive the breakpoint: widen a
-  // narrowed window and the tiles keep the 4-column arrangement inside a
-  // 5-column grid — a dead trailing column, widgets spanning 4 of 5, and it
-  // stays that way until some unrelated event (a WS app_status, a poll)
-  // happens to re-render. Desktop windows are resizable, so this is a
-  // desktop bug even though the breakpoint reads as a phone/tablet one.
-  //
-  // Two signals, one idempotent handler:
-  //   - matchMedia('(min-width: 640px)') change — fires exactly once, on the
-  //     crossing itself, and costs nothing in between;
-  //   - a debounced resize — the backstop for WebViews old enough to lack
-  //     MediaQueryList.addEventListener (the same caution Home._schemeQuery
-  //     takes over matchMedia itself), and the thing that catches a viewport
-  //     change that arrives without a media-query flip.
-  // Both funnel into _applyColumnCount, which no-ops unless the count
-  // actually moved, so double delivery is free.
-  _viewportWired: false,
-  _resizeDebounce: null,
-  RESIZE_DEBOUNCE_MS: 150,
-
-  _wireViewport() {
-    if (Home._viewportWired) return;
-    if (typeof window === 'undefined' || !window.addEventListener) return;
-    Home._viewportWired = true;
-
-    window.addEventListener('resize', () => {
-      clearTimeout(Home._resizeDebounce);
-      Home._resizeDebounce = setTimeout(
-        () => Home._applyColumnCount(), Home.RESIZE_DEBOUNCE_MS
-      );
-    });
-
-    try {
-      const mq = typeof window.matchMedia === 'function'
-        ? window.matchMedia(`(min-width: ${HomeLayout.BREAKPOINT_PX}px)`)
-        : null;
-      // addListener is the deprecated spelling; some WebViews have only it.
-      if (mq && mq.addEventListener) {
-        mq.addEventListener('change', () => Home._applyColumnCount());
-      } else if (mq && mq.addListener) {
-        mq.addListener(() => Home._applyColumnCount());
-      }
-    } catch (err) { /* resize alone still covers it */ }
-  },
-
-  // Re-render at the viewport's column count when — and only when — it
-  // changed. The layout itself comes from Home.currentLayout(cols), which
-  // already resolves "this width's stored arrangement, else the other
-  // width's reflowed, else flow order" and — crucially — only writes back a
-  // repair of a genuinely STORED layout. A derivation is never persisted, so
-  // dragging a window across 640px can never claim the other breakpoint on
-  // the viewer's behalf: they have to actually drag something at that width.
-  _applyColumnCount() {
-    // The search view is a flat, transient list with no placement and no
-    // drag, so nothing about it can go stale at a new width. The next grid
-    // render reads the live count (_renderedCols is null here, so the
-    // comparison below can't wrongly skip it).
-    if ((Home._query || '').trim()) return;
-    const cols = Home.currentCols();
-    if (cols === Home._renderedCols) return;
-    // A breakpoint crossing MID-GESTURE. The recognizer captured the old
-    // column count when it was attached, the overlay was built with the old
-    // number of cells, and the CSS grid underneath has already switched — so
-    // the tint, the hit-test and the drop would all be describing a grid
-    // that is no longer on screen. detach() is the kit's clean abort: it
-    // removes the ghost, releases the dashed slot, clears the hover preview
-    // and fires onSettle(false), which drops _dragActive and takes the
-    // overlay down. The item stays where it was; nothing is persisted. The
-    // re-render below then re-attaches against the new column count.
-    if (Home._dragActive && Home._placementHandle) {
-      try { Home._placementHandle.detach(); } catch (err) { /* ignore */ }
-      Home._placementHandle = null;
-      Home._dragActive = false;
-    }
-    Home.render();
-  },
+  // THE UI OVERHAUL settled on four columns at every width, so there is no
+  // boundary to cross and nothing to go stale. The watcher, the mid-gesture
+  // abort it needed (a crossing during a drag left the recognizer describing a
+  // grid that was no longer on screen) and the second stored layout it existed
+  // to keep honest all went with it.
 
   // Every item that should be on the grid right now, as stable ids: the
-  // viewer's apps plus the widgets they haven't hidden. This is the input
-  // HomeLayout.repair reconciles a stored layout against.
+  // viewer's apps, and nothing else. This is the input HomeLayout.repair
+  // reconciles a stored layout against.
   //
-  // The `create` widget is in here for EVERY account — HomePanels.gridSlotKeys
-  // filters on hidden-ness alone and never on app quota. A quota change must
-  // never look like "this item disappeared", or losing quota would delete the
-  // widget from the layout and re-place it somewhere else on the way back.
+  // It used to include the widgets they had not hidden. THE UI OVERHAUL made
+  // those three fixed sections below the grid, so they are not items — and
+  // repair() drops any that a pre-overhaul stored layout still carries.
   presentIds() {
     const { yours } = Home.partitionApps(Home._apps || []);
     const ids = yours.map((a) => `app:${a.slug}`);
@@ -389,25 +318,27 @@ const Home = {
     // grid on purpose, and repair() drops any item that isn't present. The
     // result was a demo route whose whole point is showing the grid rendering
     // a grid with the demo tiles silently removed: for a viewer with no apps
-    // of their own that left nothing but the three widgets. They are placed
+    // of their own that left an empty grid. They are placed
     // like anything else (the spec's rule); only the DRAG excludes them,
     // which the recognizer's `:not([data-demo])` selector already handles.
     for (const app of Home._apps || []) {
       if (app && app.demo && !Home.isYours(app)) ids.push(`app:${app.slug}`);
     }
-    for (const key of (window.HomePanels?.gridSlotKeys?.() || [])) ids.push(`widget:${key}`);
     return ids;
   },
 
-  // The layout to render at this column count, always repaired against what
-  // actually exists. Resolution order:
-  //   1. this width's stored arrangement (the viewer dragged here);
-  //   2. the OTHER width's, reflowed (they dragged on their other device);
-  //   3. flow order from favorite_order — i.e. exactly today's home screen.
-  // Only (1) is authoritative; (2) and (3) are derivations and are NOT
-  // persisted until the viewer actually drags at this width. That is what
-  // makes this feature need no backfill and what keeps a phone visit from
-  // silently rewriting a desktop arrangement.
+  // The layout to render, always repaired against what actually exists.
+  // Resolution order:
+  //   1. the stored arrangement (the viewer has dragged);
+  //   2. flow order from favorite_order — i.e. the default home screen.
+  // Only (1) is authoritative; (2) is a derivation and is NOT persisted until
+  // the viewer actually drags. That is what makes this feature need no
+  // backfill.
+  //
+  // There used to be a step between the two: the OTHER width's arrangement,
+  // reflowed. THE UI OVERHAUL settled on four columns at every width, so there
+  // is one arrangement — and no lossy repack between two of them that could
+  // let a phone visit silently rewrite a desktop layout.
   currentLayout(cols) {
     const present = Home.presentIds();
     const stored = Home._layouts && Home._layouts[String(cols)];
@@ -415,17 +346,16 @@ const Home = {
     if (Array.isArray(stored) && stored.length) {
       base = stored;
     } else {
-      const other = cols === 4 ? 5 : 4;
-      const otherStored = Home._layouts && Home._layouts[String(other)];
-      if (Array.isArray(otherStored) && otherStored.length) {
-        base = HomeLayout.reflow(otherStored, other, cols);
+      // A pre-overhaul DESKTOP arrangement lives under '5'. Reading it here is
+      // what stops the change looking like "my home screen was reset";
+      // repair() pulls anything in the retired fifth column back onto the
+      // canvas rather than dropping those apps off the right-hand edge.
+      const legacy = Home._layouts && Home._layouts['5'];
+      if (Array.isArray(legacy) && legacy.length) {
+        base = legacy;
       } else {
         const { yours } = Home.partitionApps(Home._apps || []);
-        base = HomeLayout.deriveDefault({
-          apps: yours.map((a) => a.slug),
-          widgets: window.HomePanels?.gridSlotKeys?.() || [],
-          cols,
-        });
+        base = HomeLayout.deriveDefault({ apps: yours.map((a) => a.slug), cols });
       }
     }
     const { layout, changed } = HomeLayout.repair(base, cols, present);
@@ -435,17 +365,17 @@ const Home = {
     // find the item and vetoed the whole gesture.
     Home._layoutCache = layout;
     // A repair of a STORED layout is a real correction (an app was added or
-    // deleted, a widget was hidden, a size changed) and is worth persisting
-    // so the next load is clean. A repair of a derivation is not — writing it
-    // would turn a passive visit into a claim on this width.
-    // Widget membership is just as load-bearing as app membership. If the
-    // layout wins the network race against /api/home-panels, gridSlotKeys()
-    // is temporarily empty; persisting that partial repair would erase the
-    // viewer's Challenges/Discover/Create cells. Render the transient repair
-    // if needed, but leave server truth and the cached stored layout untouched
-    // until the authoritative widget registry has arrived.
-    const widgetsReady = !!window.HomePanels?.hasLayoutRegistry?.();
-    if (changed && widgetsReady && Array.isArray(stored) && stored.length) {
+    // deleted, a pre-overhaul widget cell reclaimed, a tile pulled back out of
+    // the retired fifth column) and is worth persisting so the next load is
+    // clean. A repair of a derivation is not — writing it would turn a passive
+    // visit into a claim.
+    //
+    // The `widgetsReady` gate that used to sit here is gone with the widgets.
+    // It existed because a layout load that beat /api/home-panels saw an empty
+    // widget list and would have persisted a repair that erased the viewer's
+    // Challenges/Discover/Create cells. Nothing on the canvas depends on a
+    // second endpoint any more, so a repair is always safe to keep.
+    if (changed && Array.isArray(stored) && stored.length) {
       Home._layouts[String(cols)] = layout;
       Home._persistLayout(cols, layout);
     }
@@ -470,9 +400,10 @@ const Home = {
       .then((res) => (res.ok ? res.json() : null))
       .then((json) => {
         if (!json || !json.layouts) return;
-        // The server's widget registry is the authority on footprints —
+        // The server's widget registry used to be adopted here as the
+        // authority on footprints. Every item is a 1x1 app tile now, so there
+        // is nothing to adopt.
         // adopt it before anything lays out against it.
-        HomeLayout.setRegistry(json.widgets);
         Home._layouts = json.layouts;
         Home._layoutIsDemo = !!json.demo;
         Home._layoutFetchedAt = Date.now();
@@ -529,9 +460,6 @@ const Home = {
     const canCreate = Home.canCreate();
     const apps = Home._apps || [];
     Home._wireSearch();
-    // Idempotent, and armed from the same place as the search wiring so the
-    // grid starts watching the breakpoint on its very first paint.
-    Home._wireViewport();
 
     const query = (Home._query || '').trim();
     // Home is "Your apps" only now — every other app lives on the
@@ -544,24 +472,23 @@ const Home = {
     // cards. null = drag fully disabled (search results are a flat,
     // transient ordering that must not be persisted as a reorder).
     let yoursCount = null;
-    // The phone grid's explicit row tracks (#968, #975). Empty string
-    // everywhere else, which clears any template a previous render left
-    // behind.
+    // The grid's explicit row tracks (#975). Empty string in the search view,
+    // which clears any template a previous render left behind.
     let rowTemplate = '';
+    // Non-zero only when the two-row default is holding tiles back; the count
+    // is every app the viewer has, which is what the button offers to show.
+    let moreCount = 0;
 
     if (query) {
       // Active search over YOUR apps: one flat grid of matches. Section
       // header, widget strip and drag affordance all step aside until
       // the query clears — reorder is only meaningful against the
-      // canonical ordering.
+      // canonical ordering. The three fixed sections below the grid are
+      // untouched by a search: they are outside #app-list.
       //
-      // No placement here, so there is no column count to keep in step —
-      // and null can never equal currentCols(), so clearing the query and
-      // re-rendering always re-reads the live width.
-      Home._renderedCols = null;
       const matches = Home.filterApps(yours, query);
       if (!matches.length) {
-        html = `<div class="col-span-full py-10 text-center text-sm text-zinc-500 dark:text-zinc-400">No apps match &ldquo;${escapeHtml(query)}&rdquo; — clear the search and try the <span class="text-violet-500">Discover</span> widget.</div>`;
+        html = `<div class="col-span-full py-10 text-center text-sm text-zinc-500 dark:text-zinc-400">No apps match &ldquo;${escapeHtml(query)}&rdquo; — clear the search and try <span class="text-violet-500">Discover</span> below.</div>`;
       } else {
         html = `<div class="home-section-header col-span-full">${matches.length} result${matches.length === 1 ? '' : 's'}</div>`;
         html += matches.map((a) => Home.renderAppCard(a)).join('');
@@ -569,26 +496,41 @@ const Home = {
     } else {
       yoursCount = yours.length;
       canDragYours = true;
-      // FREE-FORM PLACEMENT. Every app tile and every visible widget is a
-      // grid item at an explicit (column, row) cell the viewer chose —
-      // holes and all. There is no flow: an item's position comes from the
-      // layout model, never from its order in this array.
+      // FREE-FORM PLACEMENT. Every app tile is a grid item at an explicit
+      // (column, row) cell the viewer chose — holes and all. There is no
+      // flow: a tile's position comes from the layout model, never from its
+      // order in this array.
       const cols = Home.currentCols();
-      // What the DOM is about to hold. _applyColumnCount diffs the live
-      // viewport against this to decide whether a resize is a real
-      // breakpoint crossing or just a window getting a bit wider.
-      Home._renderedCols = cols;
       const layout = Home.currentLayout(cols);
+      // TWO ROWS BY DEFAULT (HomeLayout.DEFAULT_ROWS). The cap is on what is
+      // SHOWN, never on what a viewer may have or where they may put it: the
+      // canvas is still eight rows, a drag can still place a tile on any of
+      // them, and "Show all" below reveals the rest for the rest of the visit.
+      //
+      // It exists because the home screen has three fixed sections under this
+      // grid now. An eight-row canvas would push Discover, Challenges and
+      // Create app off the bottom of a phone for anyone with a lot of apps —
+      // which is the failure the whole four-area design is meant to prevent.
       const canvas = HomeLayout.canvasItems(layout);
-      const overflow = HomeLayout.overflowItems(layout);
-      const parts = canvas.map((it) => Home.renderGridItem(it, cols));
+      const hiddenRows = !Home._appsExpanded
+        && canvas.some((it) => it.row >= HomeLayout.DEFAULT_ROWS);
+      const shown = hiddenRows
+        ? canvas.filter((it) => it.row < HomeLayout.DEFAULT_ROWS)
+        : canvas;
+      const overflow = hiddenRows ? [] : HomeLayout.overflowItems(layout);
+      const parts = shown.map((it) => Home.renderGridItem(it, cols));
       // Items past the 8-row canvas render after it in plain flow, packed
       // densely. The row cap bounds free PLACEMENT, never how many apps a
       // viewer may have — stranding a tile would be far worse than an
       // extra row.
       parts.push(...overflow.map((it) => Home.renderGridItem(it, cols, true)));
       html += parts.join('');
-      rowTemplate = Home.rowTemplate(layout, cols);
+      // The row tracks describe what is RENDERED, so a collapsed grid must not
+      // declare tracks for the rows it is holding back — an explicit track
+      // exists whether or not anything is in it, and naming row 2 while
+      // rendering rows 0-1 would pad the grid out with an empty tile row.
+      rowTemplate = Home.rowTemplate(hiddenRows ? shown : layout, cols);
+      moreCount = hiddenRows ? (canvas.length + HomeLayout.overflowItems(layout).length) : 0;
     }
 
     // The search view is a flat, transient list — it must not inherit the
@@ -603,6 +545,7 @@ const Home = {
     listEl.style.gridTemplateRows = rowTemplate;
     listEl.innerHTML = html;
     Home._wireCards(listEl, canDragYours, yoursCount);
+    Home._renderAppsMore(moreCount);
     // The iOS widget-editing strip renders ABOVE the grid, in its own
     // section: a full-width flow item cannot coexist with explicit cell
     // placement inside #app-list, which is where it used to live.
@@ -613,8 +556,10 @@ const Home = {
       stripSection.classList.toggle('hidden', !stripHtml);
       if (stripHtml) Home._wireWidgetStrip(stripSection);
     }
-    // Pure paint from the widgets cache (#911) — no network. Keeps each
-    // block present through the grid's wholesale innerHTML re-renders.
+    // Discover / Challenges / Create app, painted from the widgets cache
+    // (#911) — no network. Their hosts are fixed sections OUTSIDE #app-list,
+    // so the grid's wholesale innerHTML re-render above cannot disturb them;
+    // this call is here so a first paint fills them at the same moment.
     window.HomePanels?.render();
     Home._maybeOpenShotMenu(listEl);
     Home._searchReveal.sync();
@@ -623,22 +568,52 @@ const Home = {
     Home._maybeShowShotGrid(listEl);
   },
 
-  // ── The phone grid's row tracks (#968, #975) ───────────────────────
+  // Per-visit only, like the widgets' own expand flag: a viewer who opened
+  // the full grid once should not have every later visit start scrolled past
+  // three sections, and a preference this cheap is not worth a write.
+  _appsExpanded: false,
+
+  // "Show all N apps" — the two-row default's way out. Rendered into a host
+  // OUTSIDE #app-list so the grid's wholesale innerHTML rewrite cannot take
+  // the button away mid-click, and wired here rather than delegated because
+  // this host is re-rendered on every paint.
+  _renderAppsMore(count) {
+    const host = document.getElementById('home-apps-more');
+    if (!host) return;
+    if (!count) {
+      host.innerHTML = '';
+      host.classList.add('hidden');
+      return;
+    }
+    host.innerHTML = `<button type="button" id="home-apps-more-btn"
+      class="w-full rounded-lg px-3 py-1.5 text-xs font-medium text-violet-600 dark:text-violet-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">Show all ${count} apps</button>`;
+    host.classList.remove('hidden');
+    const btn = document.getElementById('home-apps-more-btn');
+    if (btn) {
+      btn.addEventListener('click', () => {
+        Home._appsExpanded = true;
+        Home.render();
+      });
+    }
+  },
+
+  // ── The grid's row tracks (#975) ───────────────────────────────────
   //
-  // Every row is one app-grid cell EXCEPT two kinds:
+  // Every row is one app-grid cell EXCEPT one kind: a row with NOTHING in it
+  // is half a cell. It is still exactly where the viewer left it and still a
+  // cell they can drop into — it just stops reserving a whole tile to be
+  // empty, which is what keeps the three fixed sections below the grid from
+  // being pushed down by a viewer's deliberate gaps.
   //
-  //   * a row a FIT widget owns outright sizes to what that widget actually
-  //     draws (HomeLayout.fitRows, #968);
-  //   * a row with NOTHING in it is half a cell (HomeLayout.blankRows, #975).
-  //     It is still exactly where the viewer left it and still a cell they can
-  //     drop into — it just stops reserving a whole tile to be empty.
+  // A second kind used to qualify: a row a FIT widget owned outright sized to
+  // what that widget actually drew (#968). Widgets are not on this canvas any
+  // more, so that rule went with them — and the two sets were disjoint by
+  // construction anyway (a fit row needs content to size to, a blank row has
+  // none), so removing one leaves the other exactly as it was.
   //
-  // The two sets are disjoint by construction: a fit row needs content to size
-  // to, a blank row has none.
-  //
-  // Returns '' for "no template at all", which is the desktop and search-view
-  // answer: app.css's `grid-auto-rows: var(--home-cell-h)` is then the only
-  // row sizing, byte-for-byte as before.
+  // Returns '' for "no template at all", which is the search-view answer:
+  // app.css's `grid-auto-rows: var(--home-cell-h)` is then the only row
+  // sizing, byte-for-byte as before.
   //
   // ONLY AS MANY ENTRIES AS THERE ARE OCCUPIED ROWS. Declaring all eight
   // would make them EXPLICIT tracks, and an explicit grid exists whether or
@@ -655,11 +630,9 @@ const Home = {
   // draws, so it can never ADD space to a real state; its one job is to stop
   // a slot that rendered nothing from taking its row to zero and reading as
   // "the widget was deleted" rather than "the widget is short".
-  FIT_ROW_FLOOR: '4.25rem', // 68px — border 2 + title bar 25.5 + one row 40
   rowTemplate(layout, cols) {
-    const fit = HomeLayout.fitRows(layout, cols);
     const blank = HomeLayout.blankRows(layout, cols);
-    if (!fit.size && !blank.size) return '';
+    if (!blank.size) return '';
     const last = HomeLayout.lastOccupiedRow(layout, cols);
     if (last < 0) return '';
     const tracks = [];
@@ -669,8 +642,7 @@ const Home = {
       // keeping each one a single token means the string can be split and
       // counted (here, in the overlay's mirror, and in the tests) without
       // parsing CSS.
-      if (fit.has(row)) tracks.push(`minmax(${Home.FIT_ROW_FLOOR},auto)`);
-      else if (blank.has(row)) tracks.push('var(--home-blank-row-h)');
+      if (blank.has(row)) tracks.push('var(--home-blank-row-h)');
       else tracks.push('var(--home-cell-h)');
     }
     return tracks.join(' ');
@@ -686,9 +658,10 @@ const Home = {
     const style = overflow
       ? ''
       : ` style="grid-column:${item.col + 1}/span ${w};grid-row:${item.row + 1}/span ${h}"`;
-    if (item.type === 'widget') {
-      return `<div class="home-panel-slot app-card-draggable touch-pan-y" data-panel-slot="${escapeHtml(item.key)}"${style}></div>`;
-    }
+    // The `item.type === 'widget'` branch that planted a
+    // `[data-panel-slot]` host here is gone: THE UI OVERHAUL made Discover,
+    // Challenges and Create app fixed sections below the grid, so every item
+    // on this canvas is an app tile.
     const app = (Home._apps || []).find((a) => a.slug === item.slug);
     if (!app) return '';
     let card = Home.renderAppCard(app);
@@ -1110,7 +1083,7 @@ const Home = {
       if (Home._placementHandle) { try { Home._placementHandle.detach(); } catch {} }
       const cols = Home.currentCols();
       Home._placementHandle = window.unNative.attachGridPlacement(listEl, {
-        itemSelector: '.app-card[data-yours]:not([data-demo]), .home-panel-slot',
+        itemSelector: '.app-card[data-yours]:not([data-demo])',
         cellFromPoint: (x, y, info) => Home._targetCellFor(x, y, info, cols),
         // canPlace runs first on every cell change and onHover right after,
         // and both need the SAME displacement plan — so compute it once here
@@ -1218,7 +1191,7 @@ const Home = {
 
   // The "Your proposals" / "Your active sessions" strips that used to
   // render here (#194) moved into the header cog's drawer — see
-  // frontend/src/features/work-drawer/work-drawer.js, which owns their
+  // the Improve panel (features/improve/), which owns their
   // fetches, rendering and busy-state polling now.
 
   // Pill builder for an app's status/activity flags, and the icon-tile
@@ -3073,15 +3046,14 @@ const Home = {
   },
 
   // A dragged DOM element → its layout item. The element carries only its
-  // identity (data-slug / data-panel-slot); the cell comes from the model,
-  // so the DOM never becomes a second source of truth about position.
+  // identity (data-slug); the cell comes from the model, so the DOM never
+  // becomes a second source of truth about position.
+  //
+  // The `.home-panel-slot` branch that resolved a widget host is gone with the
+  // widgets: every draggable item on this canvas is an app tile now.
   _itemFor(el) {
     if (!el) return null;
     const layout = Home._layoutCache || [];
-    if (el.classList?.contains('home-panel-slot')) {
-      const key = el.dataset.panelSlot;
-      return layout.find((it) => it.type === 'widget' && it.key === key) || null;
-    }
     const slug = el.dataset?.slug;
     return layout.find((it) => it.type === 'app' && it.slug === slug) || null;
   },
@@ -3397,14 +3369,13 @@ const Home = {
   _elFor(item, listEl) {
     const root = listEl || document.getElementById('app-list');
     if (!root || !item) return null;
-    return item.type === 'widget'
-      ? root.querySelector(`[data-panel-slot="${item.key}"]`)
-      : root.querySelector(`.app-card[data-slug="${item.slug}"]`);
+    return root.querySelector(`.app-card[data-slug="${item.slug}"]`);
   },
 
-  // Tint the cells the drop would land in — the whole footprint for a widget,
-  // so the user sees the block they are about to occupy rather than just the
-  // cell under the finger — and move the items it would displace.
+  // Tint the cell the drop would land in, and move the item it would
+  // displace. (This used to tint a whole FOOTPRINT, so a viewer dragging a
+  // multi-cell widget saw the block they were about to occupy rather than
+  // just the cell under the finger; every item is 1x1 now.)
   //
   // Occupied targets tint too: a drop there DISPLACES the occupant rather
   // than being refused (HomeLayout.place), so refusing to highlight it would

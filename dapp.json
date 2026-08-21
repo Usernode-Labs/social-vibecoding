@@ -478,15 +478,15 @@
       "expectText": "Whole-season standings"
     },
     {
-      "name": "Work notifications show a session's title, not its dev name (#971)",
-      "path": "/?shot=work-drawer&demo=1",
-      "expectSelector": "#work-drawer-panel:not(.hidden) #work-drawer-list",
+      "name": "Improve panel shows a session's title, not its dev name (#971)",
+      "path": "/?shot=improve&demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#improve-panel[data-open] #improve-body a[href*=\"/sessions/\"]",
       "expectText": "[Mock] Session titled but not yet proposed"
     },
     {
-      "name": "Work drawer: a busy session row spins from live state (#1038)",
-      "path": "/?shot=work-drawer&demo=1",
-      "expectSelector": "#work-drawer-panel:not(.hidden) #work-drawer-list a[href$=\"/sessions/990102\"] .dc-status-spinner-arc"
+      "name": "Improve panel: a busy session row pulses from live state (#1038)",
+      "path": "/?shot=improve&demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#improve-panel[data-open] a[href$=\"/sessions/990102\"] .animate-pulse"
     },
     {
       "name": "Send Feedback offers a kudos bounty, unchecked by default (#964)",
@@ -530,7 +530,7 @@
     {
       "name": "Challenges widget: with nothing running it says so, and fills the rest (#947)",
       "path": "/?demo=1&challenges=none",
-      "expectSelector": "#app-list [data-panel-slot=\"challenges\"] article.home-panel[data-rows=\"0\"][data-fill=\"3\"] .home-panel-lb-row",
+      "expectSelector": "#home-body [data-panel-slot=\"challenges\"] article.home-panel[data-rows=\"0\"][data-fill=\"3\"] .home-panel-lb-row",
       "expectText": "No challenges are running right now"
     },
     {
@@ -764,7 +764,7 @@
     {
       "name": "Challenges widget: the fill previews the Topochain standings (#962)",
       "path": "/?demo=1&challenges=none",
-      "expectSelector": "#app-list [data-panel-slot=\"challenges\"] article.home-panel .home-panel-fill[data-fill-kind=\"topochain\"] .home-panel-lb-row[data-lb-kind=\"topochain\"]",
+      "expectSelector": "#home-body [data-panel-slot=\"challenges\"] article.home-panel .home-panel-fill[data-fill-kind=\"topochain\"] .home-panel-lb-row[data-lb-kind=\"topochain\"]",
       "expectText": "staging-demo-validator"
     },
     {
@@ -780,7 +780,7 @@
     {
       "name": "Challenges widget: with no standings at all the fill falls back to the Kudos board (#962)",
       "path": "/?demo=1&challenges=none&board=kudos",
-      "expectSelector": "#app-list [data-panel-slot=\"challenges\"] article.home-panel .home-panel-fill[data-fill-kind=\"kudos\"] .home-panel-lb-row[data-lb-kind=\"kudos\"]"
+      "expectSelector": "#home-body [data-panel-slot=\"challenges\"] article.home-panel .home-panel-fill[data-fill-kind=\"kudos\"] .home-panel-lb-row[data-lb-kind=\"kudos\"]"
     },
     {
       "name": "Bare #leaderboard renders all three tabs and opens on the standings (#962)",
@@ -788,27 +788,27 @@
       "expectSelector": "#leaderboard-screen:not(.hidden):has(#standings-tabs [data-standings-tab=\"challenges\"]) #topochain-leaderboard-root:not(.hidden) #tc-lb-body :is(table, [data-tc-lb-empty])"
     },
     {
-      "name": "The Create app widget sits in the grid and opens the create flow",
+      "name": "The Create app section sits below the grid and opens the create flow",
       "path": "/?demo=1",
-      "expectSelector": "#app-list [data-panel-slot=\"create\"][data-create-enabled=\"true\"] .home-create-btn[class*=\"sm:flex-col\"]",
+      "expectSelector": "#home-body [data-panel-slot=\"create\"][data-create-enabled=\"true\"] .home-create-btn[class*=\"flex-row\"]",
       "expectText": "Create app"
     },
     {
       "name": "The Create app widget is present but locked without app quota",
       "path": "/?demo=1&shot=create-disabled",
-      "expectSelector": "#app-list [data-panel-slot=\"create\"][data-create-enabled=\"false\"] .home-create-btn[aria-disabled=\"true\"]",
+      "expectSelector": "#home-body [data-panel-slot=\"create\"][data-create-enabled=\"false\"] .home-create-btn[aria-disabled=\"true\"]",
       "expectText": "Create app"
     },
     {
-      "name": "Discover renders both lanes: curated tiles, then Popular (#949)",
+      "name": "Discover renders both lanes at every width: curated tiles, then Popular",
       "path": "/?demo=1",
-      "expectSelector": "#app-list [data-panel-slot=\"discover\"] .home-panel .home-discover-popular .app-card:not(:has(.users-badge))",
+      "expectSelector": "#home-body [data-panel-slot=\"discover\"] .home-panel .home-discover-popular .app-card:not(:has(.users-badge))",
       "expectText": "Browse all apps"
     },
     {
       "name": "With nothing featured, Discover shows its compact note (?shot=discover-empty)",
       "path": "/?demo=1&shot=discover-empty",
-      "expectSelector": "#app-list [data-panel-slot=\"discover\"][data-featured=\"0\"] .home-panel-browse",
+      "expectSelector": "#home-body [data-panel-slot=\"discover\"][data-featured=\"0\"] .home-panel-browse",
       "expectText": "Nothing featured right now"
     },
     {
@@ -1575,7 +1575,7 @@
     {
       "name": "Saved messages pin to the top of the notifications drawer (#1280)",
       "path": "/?shot=notifications&demo=1",
-      "expectSelector": "#notifications-panel:not(.hidden) #notifications-saved [data-saved-message]",
+      "expectSelector": "#header-menu-panel #notifications-saved [data-saved-message]",
       "expectText": "The deploy runbook lives in docs/deploy.md"
     },
     {
@@ -1590,9 +1590,9 @@
       "expectSelector": "#improve-panel #improve-row-feedback"
     },
     {
-      "name": "Your-work drawer panel ships in the shell with its list + mark-all",
+      "name": "The hamburger carries the notifications list, first in the panel",
       "path": "/?demo=1",
-      "expectSelector": "#work-drawer-panel #work-drawer-list"
+      "expectSelector": "#header-menu-rows > #drawer-main-rows > #drawer-notifications #notifications-list"
     },
     {
       "name": "Work-in-flight badge moved off the cog onto the hamburger",
@@ -1610,24 +1610,25 @@
       "expectSelector": "#drawer-row-admin:not(.hidden)"
     },
     {
-      "name": "Drawer footer renders the platform build as plain text, not a pill",
-      "path": "/?shot=menu",
-      "expectSelector": "#drawer-footer #drawer-row-platform-version #platform-version-pill-slot .drawer-ver"
+      "name": "Improve footer renders the platform build as plain text, not a pill",
+      "path": "/?shot=improve",
+      "expectSelector": "#improve-footer #drawer-row-platform-version #platform-version-pill-slot .drawer-ver"
     },
     {
-      "name": "Drawer status pane renders the kudos budget as inline text",
-      "path": "/",
-      "expectSelector": "#drawer-row-kudos #kudos-budget-slot a[href=\"#leaderboard/prs\"].drawer-meter"
+      "name": "Settings renders the AI-credit allowance as inline text",
+      "path": "/#settings/api-key",
+      "expectSelector": "#drawer-row-ai-budget #ai-budget-slot"
     },
     {
       "name": "Theme selector ships its 3-segment track and caret",
-      "path": "/",
-      "expectSelector": "#drawer-row-theme #drawer-theme-track[role=\"radiogroup\"] [data-theme-mode=\"system\"] ~ #drawer-theme-caret-track #drawer-theme-caret"
+      "path": "/#settings/theme",
+      "expectSelector": "#settings-theme-section #drawer-theme-track[role=\"radiogroup\"] [data-theme-mode=\"system\"] ~ #drawer-theme-caret-track #drawer-theme-caret"
     },
     {
-      "name": "Theme selector is the first thing in the menu, above the status pane",
-      "path": "/",
-      "expectSelector": "#drawer-main-rows > #drawer-row-theme:first-child + #drawer-status-pane"
+      "name": "Theme is the first setting, and a bare #settings opens it",
+      "path": "/#settings",
+      "expectSelector": "[data-settings-section=\"theme\"]:not(.hidden) #drawer-theme-track",
+      "expectText": "Theme"
     },
     {
       "name": "Drawer footer distinguishes the mobile app version from the platform version",
@@ -1635,19 +1636,20 @@
       "expectText": "Platform version"
     },
     {
-      "name": "Drawer footer is bottom-anchored and holds GitHub + Share as its last two items",
-      "path": "/?shot=menu",
-      "expectSelector": "#header-menu-rows > #drawer-footer.mt-auto > #drawer-row-share:last-child"
+      "name": "Improve footer holds GitHub + Share above the version rows",
+      "path": "/?shot=improve&demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#improve-body > #improve-footer > #improve-row-github"
     },
     {
-      "name": "Main nav order is Profile, Messages, Leaderboard, Settings, Admin & moderation",
+      "name": "Main nav order is Profile, Messages, Settings, Admin & moderation",
       "path": "/?shot=menu",
-      "expectSelector": "#drawer-row-profile + #drawer-row-messages + #drawer-row-leaderboard + #drawer-row-settings + #drawer-row-admin"
+      "expectSelector": "#drawer-row-profile + #drawer-row-messages + #drawer-row-settings + #drawer-row-admin"
     },
     {
-      "name": "Leaderboard drawer row replaces the header trophy",
-      "path": "/",
-      "expectSelector": "#drawer-row-leaderboard[href=\"#leaderboard\"]"
+      "name": "The Challenges area is the way to the Leaderboard screen",
+      "path": "/?demo=1",
+      "expectSelector": "#home-challenges-section .home-panel-bar .home-panel-lb-browse[aria-label=\"Open leaderboard\"]",
+      "expectText": "Open leaderboard"
     },
     {
       "name": "Admin & moderation console page renders at #admin (#818)",
@@ -2164,9 +2166,9 @@
       "expectSelector": ".un-panel[data-un-side=\"right\"] #header-menu-panel.platform-panel-adopted #header-menu-rows"
     },
     {
-      "name": "The drawer footer is reachable without scrolling in the panel",
+      "name": "The hamburger opens as a kit panel with notifications at its top",
       "path": "/?shot=menu&un-platform=ios",
-      "expectSelector": ".un-panel #header-menu-rows > #drawer-footer.mt-auto > #drawer-row-share:last-child"
+      "expectSelector": ".un-panel #header-menu-panel.platform-panel-adopted #header-menu-rows > #drawer-main-rows > #drawer-notifications"
     },
     {
       "name": "Hamburger status area shows the viewer's own AI credit (#555)",

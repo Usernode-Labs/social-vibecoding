@@ -27,8 +27,12 @@ test('Messages is a hidden React-owned top-level screen with global navigation',
   assert.match(html, /<main id="messages-screen" class="hidden /);
   assert.match(html, /id="drawer-row-messages" href="#messages"/);
   assert.match(html, /id="drawer-messages-badge" class="hidden /);
+  // The nav order check. THE UI OVERHAUL took Leaderboard out of the
+  // hamburger — a link to shared progress belongs beside the shared progress,
+  // so it is the Challenges area's now — and the four rows left are the
+  // navigation the drawer was always for.
   assert.ok(dapp.tests.some((entry) => entry.expectSelector
-    === '#drawer-row-profile + #drawer-row-messages + #drawer-row-leaderboard + #drawer-row-settings + #drawer-row-admin'));
+    === '#drawer-row-profile + #drawer-row-messages + #drawer-row-settings + #drawer-row-admin'));
   assert.match(screen, /useVisibilityHiddenClass\(screenRef, 'messages-screen', false\)/);
   assert.match(app, /REACT_SCREEN_IDS:[\s\S]*?'messages-screen'/);
   assert.match(app, /parts\[0\] === 'messages'[\s\S]{0,600}navigateToMessages/);

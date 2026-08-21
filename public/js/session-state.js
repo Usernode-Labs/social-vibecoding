@@ -2,7 +2,8 @@
 //
 // One place that knows "is a turn in flight for session N right now", shared
 // by every surface that shows it: the header cog + its drawer
-// (work-drawer.js), the Dev board's In-progress session cards and its issue
+// (the Improve panel's session rows), the Dev board's In-progress session
+// cards and its issue
 // cards' auto-run state (app-view.js), and the per-app session list
 // (dev-chat.js).
 //
@@ -284,7 +285,7 @@ const SessionState = {
 
   // ----- reconcile fetch -----
 
-  // ?demo=1 forwarding, same convention as AppView._demoQS / WorkDrawer._demoQS:
+  // ?demo=1 forwarding, same convention as AppView._demoQS / Improve._demoQS:
   // the staging demo rows must survive a reconcile or the first tick would
   // wipe every mock spinner off the board.
   _params() {

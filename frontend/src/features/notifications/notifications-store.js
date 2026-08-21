@@ -18,14 +18,18 @@
  *
  * ── Why the VIEW is computed in the controller, not here ───────────────
  *
- * The per-kind row copy has two renderers until slice 6's fourth conversion
- * lands: this island's React rows, and the HTML string
- * `WorkDrawer.renderPendingSection` still splices into #work-drawer-list
- * through `Notifications._renderRow`. Both are built from ONE descriptor —
- * `rowView` in ./notifications.js — so the copy has a single source while the
- * two renderers coexist. Pushing the finished descriptor tree through the
- * store keeps ./notifications-list.tsx purely presentational: it imports
- * nothing from the controller and never reaches for `window`.
+ * The per-kind row copy had two renderers for a while: this island's React
+ * rows, and an HTML string the cog drawer spliced into #work-drawer-list. Both
+ * were built from ONE descriptor — `rowView` in ./notifications.js — so the
+ * copy had a single source while the two coexisted. Slice 6's fourth
+ * conversion made the drawer render the React rows, and THE UI OVERHAUL then
+ * retired the drawer outright, so there is one renderer left.
+ *
+ * The descriptor split stays, because it is what keeps
+ * ./notifications-list.tsx purely presentational: it imports nothing from the
+ * controller and never reaches for `window`. That is also what let the list be
+ * lifted wholesale into the hamburger — see features/header/header-menu.tsx —
+ * without the module noticing.
  */
 
 import { createStore } from '../../lib/plain-store.js';

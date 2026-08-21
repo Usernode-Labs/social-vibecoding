@@ -40,13 +40,24 @@ const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const { homeLayoutLimiter } = require('../middleware/rate-limits');
-const { PANEL_KEYS, panelRegistryPublic, widgetSize } = require('./home-panels');
-
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 
 // The canvas. Kept in step with HomeLayout.MAX_COLS / MAX_ROWS in
 // frontend/src/features/home/home-layout.js and with the CHECK constraints on
 // user_home_layout — tests/home-layout-api.test.js pins all three.
+//
+// FIVE IS A LEGACY WIDTH NOW. The grid was `grid-cols-4 sm:grid-cols-5` and
+// each viewer had TWO stored arrangements, one per breakpoint; THE UI
+// OVERHAUL made it four columns at every width, because a launcher reads as a
+// launcher at phone density and the desktop grid is width-capped by
+// .home-column rather than stretched — four columns there are four BIGGER
+// tiles, not four tiny ones with a gulf beside them.
+//
+// The '5' bucket stays readable and writable rather than being migrated or
+// refused: the client seeds a first four-column visit from a stored
+// five-column arrangement (Home.currentLayout), which is what stops the
+// change reading as "my home screen was reset", and a browser tab open
+// across the deploy can still finish a drag it started.
 const MAX_COLS = 5;
 const MAX_ROWS = 8;
 const BREAKPOINTS = [4, 5];
@@ -78,6 +89,14 @@ async function visibleAppIds(pool, user) {
 
 // Read one user's stored layouts, both widths, as the wire shape. Rows whose
 // app was deleted simply aren't there — the FK cascade already removed them.
+//
+// WIDGET ROWS ARE SKIPPED. THE UI OVERHAUL made Discover, Challenges and
+// Create app fixed sections rather than items of the launcher canvas, so a
+// pre-overhaul arrangement carries cells for blocks that no longer live on
+// it. They are dropped on the way OUT rather than migrated away: the rows
+// cost nothing where they are, and the client's HomeLayout.repair() has to
+// reclaim their cells anyway (an app dragged onto one after this ships would
+// otherwise look like it had nowhere to go).
 async function readLayouts(pool, userId) {
   const { rows } = await pool.query(
     `SELECT l.cols, l.item_type, l.widget_key, l.grid_col, l.grid_row, a.slug
@@ -92,13 +111,8 @@ async function readLayouts(pool, userId) {
   for (const r of rows) {
     const bucket = layouts[String(r.cols)];
     if (!bucket) continue;
-    if (r.item_type === 'widget') {
-      if (!PANEL_KEYS.has(r.widget_key)) continue; // key retired in code
-      bucket.push({
-        type: 'widget', key: r.widget_key,
-        col: Number(r.grid_col), row: Number(r.grid_row),
-      });
-    } else if (r.slug) {
+    if (r.item_type === 'widget') continue; // retired — see the note above
+    if (r.slug) {
       bucket.push({
         type: 'app', slug: r.slug,
         col: Number(r.grid_col), row: Number(r.grid_row),
@@ -112,20 +126,24 @@ async function readLayouts(pool, userId) {
 // Returns { items } on success or { error } with a message for a 400.
 //
 // `appIds` maps slug → id for everything this viewer can see; a slug missing
-// from it is dropped (see the header note). Widget keys are NOT dropped —
-// an unknown one means the client and server disagree about the registry,
-// which is a bug worth surfacing.
+// from it is dropped (see the header note).
 //
-// Overlap is checked against the SERVER's own footprints (widgetSize), never
-// against sizes the client claims, so the stored layout can't be made
-// self-overlapping by a patched client.
+// SO IS A WIDGET ITEM, now that nothing places one. It used to be the
+// opposite — an unknown widget key was a 400, because it meant the client and
+// the server disagreed about the registry — but a `type: 'widget'` entry
+// today means a browser tab that was open across the deploy, and failing that
+// viewer's whole layout write is a worse answer than ignoring three cells
+// they can no longer see.
+//
+// Overlap is still checked against the server's own footprint for an app
+// tile (1x1, the only footprint left), never against sizes the client claims,
+// so the stored layout can't be made self-overlapping by a patched client.
 function parseItems(raw, cols, appIds) {
   if (!Array.isArray(raw)) return { error: 'items must be an array' };
   if (raw.length > MAX_ITEMS) return { error: 'too many items' };
 
   const out = [];
   const seenApps = new Set();
-  const seenWidgets = new Set();
   // Occupancy grid for the overlap check — cols x MAX_ROWS booleans.
   const occupied = new Set();
 
@@ -143,12 +161,7 @@ function parseItems(raw, cols, appIds) {
     let size;
     let record;
     if (entry.type === 'widget') {
-      const key = String(entry.key || '');
-      if (!PANEL_KEYS.has(key)) return { error: 'unknown widget' };
-      if (seenWidgets.has(key)) return { error: 'duplicate widget' };
-      seenWidgets.add(key);
-      size = widgetSize(key, cols);
-      record = { item_type: 'widget', app_id: null, widget_key: key, col, row };
+      continue; // a stale client — see the header note
     } else if (entry.type === 'app') {
       const slug = String(entry.slug || '');
       const appId = appIds.get(slug);
@@ -191,37 +204,36 @@ function parseItems(raw, cols, appIds) {
 // layout is read-only and written nowhere, so referencing them is safe.
 // The `create` widget is present unconditionally, matching the rule that it
 // is on every home screen regardless of app quota.
+// The staging preview arrangement. Its ONE job is to be an arrangement no
+// ordering could produce: user_home_layout starts empty on a staging clone,
+// so without this every capture would show the DERIVED default — reading
+// order, no holes — and free-form placement would be invisible in the
+// before/after shots.
+//
+// APPS ONLY, in TWO ROWS. It used to place the three widgets too, and to
+// spend five and six rows doing it; THE UI OVERHAUL moved Discover,
+// Challenges and Create app into fixed sections below the grid and capped
+// the grid itself at two rows by default (HomeLayout.DEFAULT_ROWS), so a demo
+// that filled row 5 would be hidden behind "Show all" — the opposite of a
+// preview. Both widths are the same four-column shape now; '5' is kept
+// because a stored five-column arrangement is still readable (see
+// BREAKPOINTS above), and a capture identity that lands on it should see
+// holes rather than a derived default.
 function demoLayouts() {
+  const arrangement = [
+    // Row 0: two tiles at the ends, a two-cell hole between them.
+    { type: 'app', slug: 'staging-demo-chess-arena', col: 0, row: 0 },
+    { type: 'app', slug: 'staging-demo-pixel-racer', col: 3, row: 0 },
+    // Row 1: three tiles with the hole moved, so the gaps read as placement
+    // rather than as "the list ran out".
+    { type: 'app', slug: 'staging-demo-puzzle-chain', col: 0, row: 1 },
+    { type: 'app', slug: 'staging-demo-emoji-icon', col: 2, row: 1 },
+    { type: 'app', slug: 'staging-demo-image-icon', col: 3, row: 1 },
+    { type: 'app', slug: 'staging-demo-word-garden', col: 1, row: 1 },
+  ];
   return {
-    // Phone: 4 columns, the two full-width widgets stacked with an app row
-    // between them, and the create widget alone in a row of its own.
-    // Discover is ONE row tall at this breakpoint (#949), so the app row and
-    // Challenges are pulled up to sit under it — the holes that remain (the
-    // middles of rows 0 and 2) are the deliberate ones, not a gap left
-    // behind by the resize.
-    '4': [
-      { type: 'app', slug: 'staging-demo-emoji-icon', col: 0, row: 0 },
-      { type: 'app', slug: 'staging-demo-image-icon', col: 3, row: 0 },
-      { type: 'widget', key: 'discover', col: 0, row: 1 },
-      { type: 'app', slug: 'staging-demo-chess-arena', col: 0, row: 2 },
-      { type: 'app', slug: 'staging-demo-pixel-racer', col: 3, row: 2 },
-      { type: 'widget', key: 'challenges', col: 0, row: 3 },
-      // 4 wide at this breakpoint, so column 0 is its only legal start.
-      { type: 'widget', key: 'create', col: 0, row: 5 },
-    ],
-    // Desktop: 5 columns. Chess Arena alone top-left, Pixel Racer alone at
-    // the far end of the same row, both widgets side by side under them.
-    '5': [
-      { type: 'app', slug: 'staging-demo-chess-arena', col: 0, row: 0 },
-      { type: 'app', slug: 'staging-demo-pixel-racer', col: 4, row: 0 },
-      { type: 'widget', key: 'discover', col: 0, row: 1 },
-      { type: 'widget', key: 'challenges', col: 3, row: 1 },
-      { type: 'app', slug: 'staging-demo-puzzle-chain', col: 0, row: 3 },
-      { type: 'app', slug: 'staging-demo-word-garden', col: 3, row: 3 },
-      { type: 'app', slug: 'staging-demo-emoji-icon', col: 0, row: 4 },
-      { type: 'app', slug: 'staging-demo-image-icon', col: 1, row: 4 },
-      { type: 'widget', key: 'create', col: 4, row: 4 },
-    ],
+    '4': arrangement.map((i) => ({ ...i })),
+    '5': arrangement.map((i) => ({ ...i })),
   };
 }
 
@@ -234,11 +246,16 @@ function homeLayoutRoutes() {
     try {
       const demo = IS_STAGING && req.query.demo === '1';
       const layouts = demo ? demoLayouts() : await readLayouts(pool, req.user.id);
+      // `widgets: panelRegistryPublic()` rode along here, so the client laid
+      // out against the SAME footprints this route's overlap check validated
+      // with. Nothing is placed but app tiles now, and their footprint is 1x1
+      // by definition, so there is nothing to agree on — and the registry
+      // itself is already on GET /api/home-panels, where the blocks' own
+      // renderer reads it.
       return res.json({
         maxCols: MAX_COLS,
         maxRows: MAX_ROWS,
         breakpoints: BREAKPOINTS,
-        widgets: panelRegistryPublic(),
         layouts,
         ...(demo ? { demo: true } : {}),
       });
@@ -303,7 +320,6 @@ function homeLayoutRoutes() {
         maxCols: MAX_COLS,
         maxRows: MAX_ROWS,
         breakpoints: BREAKPOINTS,
-        widgets: panelRegistryPublic(),
         layouts,
       });
     } catch (err) {
