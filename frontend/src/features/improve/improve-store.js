@@ -73,9 +73,9 @@ const INITIAL = {
    */
   target: null,
   /**
-   * The target's slug. On the home screen this is the platform's OWN
-   * self-hosted app row, which is what makes "Improve" on home mean "improve
-   * Social Vibecoding itself" rather than nothing at all.
+   * The target's slug — the open app's. (Home used to publish the platform's
+   * OWN self-hosted row here; it publishes nothing now, so the header button
+   * never outlives the app it was about.)
    */
   slug: null,
   /** Display name for the header line. */

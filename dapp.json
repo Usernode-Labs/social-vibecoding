@@ -1333,6 +1333,11 @@
       "expectSelector": "#improve-btn:not(.hidden)"
     },
     {
+      "name": "Home shows no Improve button (it must not linger after leaving an app)",
+      "path": "/",
+      "expectSelector": "#improve-btn.hidden"
+    },
+    {
       "name": "The self-hosted platform row keeps its DEV caption (no header switch)",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#dev-plus-btn"

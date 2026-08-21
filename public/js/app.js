@@ -612,11 +612,12 @@ const App = {
   // needs nothing but a settled shell) fired long before that, so the panel
   // stayed shut and both of its declared checks failed on an empty surface.
   //
-  // Polls instead, on the checks runner's own budget: the home screen
-  // publishes its target during boot, so the first attempt usually wins, and
-  // an app route gets as long as the fetch needs. Bounded, so a route with no
-  // target at all (a screen the panel does not belong on) stops trying rather
-  // than spinning for the life of the page.
+  // Polls instead, on the checks runner's own budget: an app route gets as
+  // long as its fetch needs. Bounded, so a route with no target at all — home
+  // included, which publishes none since the Improve button left that screen —
+  // stops trying rather than spinning for the life of the page. (A bare
+  // `/?shot=improve` therefore never opens the panel; its remaining dapp.json
+  // check asserts panel MARKUP that renders closed, not an open surface.)
   IMPROVE_SHOT_TRIES: 40,
   IMPROVE_SHOT_INTERVAL_MS: 100,
 
@@ -2047,36 +2048,15 @@ const App = {
   // unguarded refreshDeployDot() / setAppOpen() callers below would throw on
   // a bare getter. Forwarding no-ops instead, which is what those calls did
   // when the drawer was not on screen anyway.
-  // Point the Improve panel at the platform's own app row.
-  //
-  // THE UI OVERHAUL put Improve on the home screen, where it means "improve
-  // Social Vibecoding itself" rather than any app the viewer has open. The
-  // slug comes from /api/auth/me's `platformApp` (services/platform-app.js)
-  // because it is not otherwise knowable client-side: GET /api/apps hides
-  // self-hosted rows from non-admins on purpose.
-  //
-  // Silently a no-op when the deployment has no self-hosted row (a fresh
-  // install, a staging clone before its apps table is seeded) — the button
-  // simply does not appear, which is the honest answer.
-  _improveHome() {
-    const platformApp = App.user?.platformApp;
-    if (!platformApp?.slug) return;
-    window.Improve?.setTarget({
-      kind: 'platform',
-      slug: platformApp.slug,
-      name: platformApp.name || 'Social Vibecoding',
-      selfHosted: true,
-      repoUrl: platformApp.repoUrl || null,
-      version: platformApp.version || null,
-      deploying: false,
-      // The home screen cannot know whether this viewer may collaborate on
-      // the platform row, and guessing wrong in the permissive direction only
-      // costs a row that answers 403 on tap. AppView republishes the real
-      // value through setAppOpen the moment the app is actually opened.
-      readOnly: false,
-      canShare: false,
-    });
-  },
+  // The home screen shows NO Improve button. THE UI OVERHAUL originally
+  // pointed it at the platform's own app row there ("improve Social
+  // Vibecoding itself"), but only on the RETURN paths — a cold boot at `/`
+  // never published a target — so the button appeared after backing out of an
+  // app and vanished on refresh, which every reporter read as a stale
+  // leftover from the app they had just closed. The consistent behaviour is
+  // the one a fresh load always had: the target clears with the app
+  // (App.DrawerStatus.setAppOpen(false)) and home stays button-less. The
+  // platform's own row is still improvable by opening it like any other app.
 
   DrawerStatus: {
     setAppOpen(open) { window.DrawerStatus?.setAppOpen(open); },
@@ -2621,10 +2601,10 @@ const App = {
         App._showOnlyScreen('home-screen');
         document.getElementById('back-btn').classList.add('hidden');
         App.setHeaderTitle('dApps');
-        // The home screen's Improve button is about the platform itself. This
-        // is the branch a COLD boot at `/` lands in (navigateHome covers every
-        // later return), so the target has to be published on both paths.
-        App._improveHome();
+        // Home has no Improve target: clear whatever screen published one, or
+        // the header button would outlive the app it was about (the lingering
+        // Improve-button bug, in its unrecognised-hash variant).
+        App.DrawerStatus.setAppOpen(false);
         Home.load();
       }
     } finally {
@@ -3627,13 +3607,12 @@ const App = {
       App._showOnlyScreen('home-screen', ['app-view']);
       document.getElementById('back-btn').classList.add('hidden');
       // …and the GitHub / Share rows retire with the panel's target, rather
-      // than being hidden one by one as drawer rows were.
+      // than being hidden one by one as drawer rows were. This also hides the
+      // header's Improve button: home shows none, on every path — a cold boot
+      // at `/` never had one, and a re-target here is what made the button
+      // linger after backing out of an app (see the DrawerStatus note above
+      // App.DrawerStatus for why the home re-target was retired).
       App.DrawerStatus.setAppOpen(false);
-      // …and immediately re-target Improve at the PLATFORM's own app row.
-      // setAppOpen(false) above clears the target, which is right for every
-      // other screen; home is the one place where leaving an app does not
-      // mean there is nothing to improve. See App._improveHome().
-      App._improveHome();
       App.setHeaderTitle('dApps');
     }, {
       type: App._entryTransition('zoom-out', av),
