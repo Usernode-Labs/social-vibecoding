@@ -5632,6 +5632,29 @@ span.gc-vote-btn-icon { cursor: default; }
   display: none;
 }
 
+/* Visibility opt-in inside the share-to-user popover: rendered only while
+   the session is still private, so the recipient gets a discussion to
+   comment in (pre-promotion shared-session chat delivery). */
+.dc-spec-share-visible {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--text-secondary, #a1a1aa);
+  cursor: pointer;
+}
+
+.dc-spec-share-visible input {
+  margin-top: 1px;
+  accent-color: rgb(139 92 246);
+  flex-shrink: 0;
+}
+
+.dc-spec-share-visible.hidden {
+  display: none;
+}
+
 /* ── Group-chat spec_share card ────────────────────────── */
 
 .gc-spec-card {

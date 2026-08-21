@@ -13,7 +13,9 @@ const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 // check_failed — so the header cog's pinned "Needs attention" section,
 // its green badge, and the bell's EXCLUSION of these kinds are all
 // reviewable in a staging preview without waiting for a real session to
-// finish. Same conventions as the other mock feeds (stagingMockProposals
+// finish, plus one session_comment row (a comment on the viewer's visible
+// session's public discussion — a BELL kind, so it also demonstrates the
+// split). Same conventions as the other mock feeds (stagingMockProposals
 // in votes.js): fixed 99xxxx ids, "[Mock]" titles, never persisted,
 // strictly a no-op outside staging. Mark-read calls on these ids match
 // no DB row and no-op harmlessly.
@@ -82,6 +84,29 @@ function stagingMockNotifications() {
       sessionTitle: null, prTitle: null,
       branchName: 'dev/mockuser-1700000000001',
       prNumber: null, headlessIssueNumber: null,
+    },
+    // Pre-promotion shared-session chat delivery: someone commented in the
+    // viewer's visible (not yet promoted) session's public discussion.
+    // Renders in the BELL list (session_comment is a social kind, not one
+    // of the cog's session-completion kinds) with the comment snippet;
+    // threadType/threadRef make the click route to the discussion topic.
+    // sessionId matches the mock own visible session the demo dev board
+    // renders, so the round trip is reviewable end to end. Its own 99xxxx
+    // appId keeps it out of the shared appId-0 mock group, so its
+    // "commented on your dev session" preview line is visible without
+    // expanding anything — which is what the declared check asserts on.
+    {
+      ...base,
+      id: 990206, kind: 'session_comment',
+      appId: 990206,
+      createdAt: new Date(now - 2 * 60 * 1000).toISOString(),
+      sessionId: 990103,
+      sessionTitle: '[Mock] Your visible session',
+      sourceUsername: 'staging-demo-user',
+      messageContent: '[Mock] Nice direction — does this cover the mobile layout too?',
+      threadType: 'session', threadRef: 990103,
+      chatMessageId: 990901,
+      prTitle: null, prNumber: null, headlessIssueNumber: null,
     },
   ];
 }

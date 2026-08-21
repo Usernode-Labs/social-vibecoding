@@ -36,7 +36,7 @@ test('settings renders clear user-facing category labels and descriptions', () =
     assert.match(block, new RegExp(`data-mobile-push-category="${key}"`));
     assert.match(block, new RegExp(`>${label}<`));
   }
-  assert.match(block, /Mentions and replies to your messages/);
+  assert.match(block, /Mentions, replies, and comments on your dev sessions/);
   assert.match(block, /Conversation invitations, messages, mentions, replies, and reactions/);
   assert.match(block, /Reactions and kudos on your work/);
   assert.doesNotMatch(block, />\s*(mention|reply|stale_pr|check_failed|pr_proposed|spec_shared)\s*</,

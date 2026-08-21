@@ -267,6 +267,36 @@ async function createAutoSolveDoneNotification(pool, { userId, appId, sessionId,
   return rows;
 }
 
+// Pre-promotion shared-session chat delivery: a comment posted into a dev
+// session's public discussion thread notifies the SESSION OWNER
+// (kind='session_comment'). Fired by the WS chat handler for
+// thread_type='session' posts, both before and after promotion — the thread
+// key is the same either way. `excludeUserIds` carries recipients the same
+// message already pinged (a quote-reply or an @mention of the owner), so
+// the owner is notified at most once per message. No-op for the owner's own
+// comments. Both session_id and chat_message_id ride along so the drawer
+// row can render the session title AND the comment snippet, and so the
+// click can deep-link into the discussion thread.
+async function createSessionCommentNotification(pool, {
+  appId, sessionId, chatMessageId, senderId, excludeUserIds = [],
+}) {
+  if (!appId || !sessionId || !chatMessageId) return [];
+  const { rows: sessionRows } = await pool.query(
+    'SELECT user_id FROM chat_sessions WHERE id = $1 AND app_id = $2',
+    [sessionId, appId]
+  );
+  const ownerId = sessionRows[0]?.user_id;
+  if (!ownerId || ownerId === senderId) return [];
+  if (excludeUserIds.includes(ownerId)) return [];
+  const { rows } = await pool.query(
+    `INSERT INTO notifications (user_id, app_id, session_id, chat_message_id, source_user_id, kind)
+     VALUES ($1, $2, $3, $4, $5, 'session_comment')
+     RETURNING id, user_id, app_id, session_id, chat_message_id, source_user_id, kind, created_at`,
+    [ownerId, appId, sessionId, chatMessageId, senderId]
+  );
+  return rows;
+}
+
 // #86: private spec share (kind='spec_shared'). Fired by the
 // share-user endpoint after a NEW chat_session_spec_user_shares row is
 // inserted (the endpoint skips this entirely on a duplicate share, so
@@ -642,7 +672,10 @@ async function countUnread(pool, userId) {
 // SQL-injection surface in markReadForAction's interpolation.
 const ACTION_COMPLETIONS = {
   vote_cast: { kinds: ['pr_proposed', 'stale_pr'], scope: 'session_id' },
-  message_sent: { kinds: ['mention', 'reply', 'reaction'], scope: 'app_id' },
+  // session_comment joins the chat-actionable set: posting a message in the
+  // app (including replying in the session thread itself) is the same "I've
+  // engaged" signal that clears mentions and replies.
+  message_sent: { kinds: ['mention', 'reply', 'reaction', 'session_comment'], scope: 'app_id' },
   // #161: opening a dev session is the canonical "user saw it" signal —
   // it resolves that session's completion notification even when the
   // user navigated there on their own. Triggered in GET /api/sessions/:id.
@@ -857,6 +890,7 @@ module.exports = {
   createSessionDoneNotification,
   createAutoSolveDoneNotification,
   createSpecSharedNotification,
+  createSessionCommentNotification,
   hydrateAndPush,
   createPrProposedNotifications,
   createCollabInviteNotification,

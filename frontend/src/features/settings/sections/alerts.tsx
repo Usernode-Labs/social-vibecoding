@@ -67,7 +67,7 @@ export function AlertsSection() {
             <label className="flex items-start justify-between gap-4 cursor-pointer select-none" data-mobile-push-category="direct_interactions">
               <span>
                 <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">Direct interactions</span>
-                <span className="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">Mentions and replies to your messages.</span>
+                <span className="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">Mentions, replies, and comments on your dev sessions.</span>
               </span>
               <input type="checkbox" className="un-switch mt-0.5 shrink-0" disabled />
             </label>

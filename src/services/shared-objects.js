@@ -86,6 +86,26 @@ function unavailable(ref) {
   };
 }
 
+// Where a session-backed card (a code proposal or a spec version) should
+// take the VIEWER. `dev/sessions/<id>` is the owner's dev chat — it 404s
+// for anyone else — so a non-owner is routed to the surface they can
+// actually open: the proposal page once promoted, the shared session's
+// public discussion (`dev/shared/<id>`, see public/js/app.js hash routes)
+// while it is merely visible, and the app's Dev → Chat as the last resort
+// for a session the owner hasn't made visible (reachable only via a
+// private spec share — the spec itself stays readable through the
+// share-widened gate, there is just no discussion to open yet).
+function sessionHref(appSlug, row, user) {
+  const slug = encodeURIComponent(appSlug);
+  const id = row.id ?? row.session_id;
+  if (row.user_id === user.id) return `#app/${slug}/dev/sessions/${id}`;
+  if (['promoted', 'merging', 'merged'].includes(row.status)) {
+    return `#app/${slug}/dev/proposals/${id}`;
+  }
+  if (row.shared_at) return `#app/${slug}/dev/shared/${id}`;
+  return `#app/${slug}/dev/chat`;
+}
+
 async function validateForShare(pool, user, raw, { conversationId = null } = {}) {
   const ref = normalizeInput(raw);
   if (!ref) return null;
@@ -174,7 +194,8 @@ async function hydrateOne(pool, user, ref) {
     }
     if (ref.object_type === 'code_proposal') {
       const { rows } = await pool.query(
-        `SELECT cs.id, cs.session_title, cs.pr_title, cs.pr_number, cs.status, u.username
+        `SELECT cs.id, cs.user_id, cs.session_title, cs.pr_title, cs.pr_number,
+                cs.status, cs.shared_at, u.username
           FROM chat_sessions cs LEFT JOIN users u ON u.id = cs.user_id
           WHERE cs.id = $1 AND cs.app_id = $2
             AND (cs.user_id = $3 OR cs.shared_at IS NOT NULL
@@ -186,7 +207,7 @@ async function hydrateOne(pool, user, ref) {
       return {
         ...base, sessionId: row.id, title: row.session_title || row.pr_title || `Proposal #${row.id}`,
         state: row.status, author: row.username,
-        href: `#app/${encodeURIComponent(app.slug)}/dev/proposals/${row.id}`,
+        href: sessionHref(app.slug, row, user),
       };
     }
     if (ref.object_type === 'governance_proposal') {
@@ -206,7 +227,8 @@ async function hydrateOne(pool, user, ref) {
     }
     if (ref.object_type === 'spec') {
       const { rows } = await pool.query(
-        `SELECT s.session_id, s.version, cs.session_title, cs.pr_title, u.username
+        `SELECT s.session_id, s.version, cs.user_id, cs.status, cs.shared_at,
+                cs.session_title, cs.pr_title, u.username
            FROM chat_session_specs s
            JOIN chat_sessions cs ON cs.id = s.session_id
            LEFT JOIN users u ON u.id = cs.user_id
@@ -247,7 +269,7 @@ async function hydrateOne(pool, user, ref) {
         ...base, sessionId: row.session_id, version: row.version,
         title: row.session_title || row.pr_title || `Spec v${row.version}`,
         state: `v${row.version}`, author: row.username,
-        href: `#app/${encodeURIComponent(app.slug)}/dev/sessions/${row.session_id}`,
+        href: sessionHref(app.slug, row, user),
       };
     }
     return unavailable(ref);
@@ -282,4 +304,5 @@ module.exports = {
   hydrateOne,
   hydrateForMessages,
   unavailable,
+  sessionHref,
 };

@@ -1687,6 +1687,26 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
             last_activity_at: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
             chat_count: 1, last_message_at: new Date().toISOString(), busy: false,
             transcript_shared: false, message_count: 0,
+          },
+          // Pre-promotion chat delivery: the VIEWER'S own visible mock
+          // session (same id as the /api/me/active-sessions?demo=1 row),
+          // mirrored into this feed so the client's _sharedById cache can
+          // hand the owner's card its 💬 comment count — the board's
+          // "Others" section filters own rows out, so this never renders
+          // as a second card. Same read-only 99xxxx convention as above;
+          // request-time injection only, nothing is written for the
+          // viewer.
+          {
+            id: 990103, session_title: '[Mock] Your visible session',
+            pr_title: null, branch_name: 'mock/my-session-visible', status: 'active',
+            linked_issues: [],
+            staging_url: null, can_preview: true,
+            user_id: req.user.id, username: req.user.username,
+            shared_at: new Date(Date.now() - 15 * 60 * 1000).toISOString(),
+            created_at: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+            last_activity_at: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+            chat_count: 2, last_message_at: new Date().toISOString(), busy: false,
+            transcript_shared: false, message_count: 0,
           }
         );
       }

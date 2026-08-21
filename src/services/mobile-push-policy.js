@@ -125,6 +125,13 @@ function buildCopy(kind, context, now) {
           ? `@${actor} replied in ${quotedTitle}` : `@${actor} replied to you`),
         body: message,
       };
+    case 'session_comment':
+      return actor && {
+        title: withApp(quotedTitle
+          ? `@${actor} commented on ${quotedTitle}`
+          : `@${actor} commented on your dev session`),
+        body: message,
+      };
     case 'reaction':
       return actor && {
         title: withApp(detail

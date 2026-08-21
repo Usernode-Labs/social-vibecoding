@@ -91,7 +91,7 @@ function startServer(mod) {
 
 const SESSION_KINDS = ['session_done', 'auto_solve_done', 'stale_pr', 'check_failed'];
 
-test('staging + ?demo=1: five unread mock session-kind rows prepend and bump unread', async () => {
+test('staging + ?demo=1: six unread mock rows prepend and bump unread', async () => {
   const pool = makeMockPool();
   const mod = loadRoutes('staging', pool);
   const { server, port } = await startServer(mod);
@@ -101,11 +101,11 @@ test('staging + ?demo=1: five unread mock session-kind rows prepend and bump unr
     const body = await res.json();
 
     const mocks = body.notifications.filter((n) => n.id >= 990000);
-    assert.equal(mocks.length, 5, 'exactly five mock rows injected');
+    assert.equal(mocks.length, 6, 'exactly six mock rows injected');
     assert.deepEqual(
       [...new Set(mocks.map((n) => n.kind))].sort(),
-      [...SESSION_KINDS].sort(),
-      'every session-related kind is covered'
+      [...SESSION_KINDS, 'session_comment'].sort(),
+      'every session-related kind is covered, plus the session_comment bell row'
     );
     assert.equal(
       mocks.filter((n) => n.kind === 'session_done').length, 2,
@@ -117,10 +117,19 @@ test('staging + ?demo=1: five unread mock session-kind rows prepend and bump unr
       mocks.find((n) => n.kind === 'auto_solve_done').detail, 'failed',
       'the auto-solve mock exercises the failed variant'
     );
+    // Pre-promotion shared-session chat delivery: the session_comment mock
+    // carries the fields its renderer and click route read — a snippet, a
+    // commenter, and the thread scope pointing at the session's discussion.
+    const comment = mocks.find((n) => n.kind === 'session_comment');
+    assert.ok(comment, 'session_comment mock present');
+    assert.equal(comment.threadType, 'session');
+    assert.equal(comment.threadRef, comment.sessionId, 'thread scope points at the session');
+    assert.match(comment.messageContent, /^\[Mock\]/, 'snippet is obviously fake');
+    assert.equal(comment.sourceUsername, 'staging-demo-user');
     // Real rows survive after the mocks; unread bumped by the mock count
     // so the client's red-badge subtraction stays honest.
     assert.ok(body.notifications.some((n) => n.id === 1), 'real rows still present');
-    assert.equal(body.unread, 2 + 5);
+    assert.equal(body.unread, 2 + 6);
   } finally {
     server.close();
   }
@@ -164,7 +173,7 @@ test('stagingMockNotifications rows carry the fields the shared row renderers re
   const pool = makeMockPool();
   const mod = loadRoutes('staging', pool);
   const rows = mod.stagingMockNotifications();
-  assert.equal(rows.length, 5);
+  assert.equal(rows.length, 6);
   for (const r of rows) {
     assert.ok(r.id >= 990000 && r.id < 1000000, 'ids sit in the 99xxxx mock range');
     assert.equal(r.readAt, null);

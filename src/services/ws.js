@@ -278,7 +278,17 @@ function broadcastGlobal(data) {
 // accept any positive integer — the GitHub issue list is cached and
 // eventual, so a strict existence check would reject messages on
 // fresh issues for up to the cache TTL.
-async function validateThread(pool, appId, thread) {
+//
+// The 'session' branch additionally requires the thread to be REACHABLE by
+// someone other than the poster: the poster owns it, OR the owner made it
+// visible (shared_at), OR it was ever proposed to the group (promoted_at /
+// a promoted-or-later status — merged sessions stay postable, merging
+// settles the vote, not the conversation). Without this, a stale or
+// hand-crafted client could write comments into a private session's thread
+// that no surface will ever render — a black hole that reads as "my
+// message wasn't received". `userId` is the posting user (may be null for
+// system callers, which then rely on the visibility arms).
+async function validateThread(pool, appId, thread, userId = null) {
   if (!thread || typeof thread !== 'object') return null;
   const type = thread.type;
   const ref = Number(thread.ref);
@@ -286,7 +296,11 @@ async function validateThread(pool, appId, thread) {
   if (!Number.isInteger(ref) || ref <= 0) return null;
   if (type === 'session') {
     const { rows } = await pool.query(
-      'SELECT 1 FROM chat_sessions WHERE id = $1 AND app_id = $2', [ref, appId]
+      `SELECT 1 FROM chat_sessions
+        WHERE id = $1 AND app_id = $2
+          AND (user_id = $3 OR shared_at IS NOT NULL OR promoted_at IS NOT NULL
+               OR status IN ('promoted', 'merging', 'merged'))`,
+      [ref, appId, userId]
     );
     if (!rows.length) return null;
   } else if (type === 'governance') {
@@ -357,7 +371,7 @@ async function handleMessage(pool, client, msg) {
       // way, and general chat is the louder surface).
       let thread = null;
       if (msg.thread) {
-        thread = await validateThread(pool, client.appId, msg.thread);
+        thread = await validateThread(pool, client.appId, msg.thread, client.user.id);
         if (!thread) {
           log.warn('ws', 'chat message dropped: invalid thread ref', {
             appId: client.appId, userId: client.user.id,
@@ -530,6 +544,12 @@ async function handleMessage(pool, client, msg) {
         appId: client.appId,
       });
 
+      // Recipients this message has already pinged (reply / mention rows
+      // actually inserted). The session_comment fan-out below excludes them
+      // so a comment that also quotes or @mentions the session owner
+      // notifies them exactly once.
+      const pingedUserIds = new Set();
+
       // #15: reply notification — ping the author of the quoted message
       // or PR (no-op for self-quotes and authorless system rows).
       try {
@@ -539,6 +559,7 @@ async function handleMessage(pool, client, msg) {
           senderId: client.user.id,
           recipientId: replyRecipientId,
         });
+        for (const r of replyRows) pingedUserIds.add(r.user_id);
         if (replyRows.length) {
           const { rows: hydrated } = await pool.query(
             `SELECT n.id, n.kind, n.read_at, n.created_at,
@@ -576,6 +597,7 @@ async function handleMessage(pool, client, msg) {
           senderId: client.user.id,
           content,
         });
+        for (const r of notifRows) pingedUserIds.add(r.user_id);
         if (notifRows.length) {
           // Hydrate with app/sender info so the client can render the
           // dropdown item immediately without another fetch. Mirror the
@@ -607,6 +629,27 @@ async function handleMessage(pool, client, msg) {
         }
       } catch (err) {
         log.warn('ws', 'mention notify failed', { err: err.message });
+      }
+
+      // Pre-promotion shared-session chat delivery: a comment in a dev
+      // session's discussion thread notifies the session OWNER — before
+      // promotion (a shared "Make visible" session) exactly like after it.
+      // Deduped against the reply/mention pings above via pingedUserIds so
+      // the owner never gets two notifications for one message. Best-effort,
+      // like every other notification fan-out on this path.
+      if (thread && thread.type === 'session') {
+        try {
+          const commentRows = await notifications.createSessionCommentNotification(pool, {
+            appId: client.appId,
+            sessionId: thread.ref,
+            chatMessageId: rows[0].id,
+            senderId: client.user.id,
+            excludeUserIds: [...pingedUserIds],
+          });
+          for (const row of commentRows) await notifications.hydrateAndPush(pool, row);
+        } catch (err) {
+          log.warn('ws', 'session comment notify failed', { err: err.message });
+        }
       }
 
       // Posting a message in this app's group chat is the "I've engaged

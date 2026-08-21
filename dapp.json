@@ -1591,6 +1591,17 @@
       "expectText": "Unsave"
     },
     {
+      "name": "A comment on your dev session lands in the notifications drawer (session_comment)",
+      "path": "/?shot=notifications&demo=1",
+      "expectSelector": "#header-menu-panel",
+      "expectText": "commented on your dev session"
+    },
+    {
+      "name": "Owner's visible session card shows its discussion 💬 count on the face",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-body [data-session-chip=\"990103\"] .dev-chat-badge:not(.hidden)"
+    },
+    {
       "name": "Improve panel carries the feedback row",
       "path": "/",
       "expectSelector": "#improve-panel #improve-row-feedback"

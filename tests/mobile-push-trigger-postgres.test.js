@@ -227,7 +227,7 @@ pgTest('the closed kind policy and account preferences gate enqueue at insert ti
 
   const { rows: policy } = await client.query(
     'SELECT kind, default_enabled FROM mobile_push_kind_categories ORDER BY kind');
-  assert.equal(policy.length, 19, 'the seed carries the reviewed closed set');
+  assert.equal(policy.length, 20, 'the seed carries the reviewed closed set');
   for (const { kind, default_enabled: enabled } of policy) {
     const row = await notify(client, { userId: alice, kind });
     assert.equal((await deliveriesFor(client, row.id)).length, enabled ? 1 : 0,

@@ -250,6 +250,36 @@ test('private spec recipients cannot mint transitive conversation grants', () =>
   assert.doesNotMatch(validate, /chat_session_spec_conversation_shares/);
 });
 
+test('session-backed card hrefs route the viewer to a surface they can open', () => {
+  const { sessionHref } = sharedObjects;
+  const owner = { id: 4 };
+  const other = { id: 9 };
+  const base = { id: 55, user_id: 4, status: 'active', shared_at: null };
+
+  // Owner → their own dev chat, exactly the pre-existing destination.
+  assert.equal(sessionHref('my-app', base, owner), '#app/my-app/dev/sessions/55');
+  // Non-owner, promoted (any settled-or-voting status) → the proposal page.
+  for (const status of ['promoted', 'merging', 'merged']) {
+    assert.equal(sessionHref('my-app', { ...base, status }, other),
+      '#app/my-app/dev/proposals/55');
+  }
+  // Non-owner, visible but not promoted → the shared session's public
+  // discussion (dev/shared — see public/js/app.js hash routes). This is the
+  // pre-promotion chat surface; dev/sessions would 404 for them.
+  assert.equal(
+    sessionHref('my-app', { ...base, shared_at: '2026-08-21T09:29:51Z' }, other),
+    '#app/my-app/dev/shared/55'
+  );
+  // Non-owner, private session (reachable only via a private spec share) →
+  // the app's Dev → Chat; there is no discussion to open yet.
+  assert.equal(sessionHref('my-app', base, other), '#app/my-app/dev/chat');
+  // Spec rows carry session_id instead of id; the slug is URI-encoded.
+  assert.equal(
+    sessionHref('my app', { session_id: 56, user_id: 4, status: 'active', shared_at: null }, owner),
+    '#app/my%20app/dev/sessions/56'
+  );
+});
+
 test('orphan conversation attachment GC is independent of session auto-pause', () => {
   const startIndex = serverSource.indexOf('startConversationAttachmentSweeper(config);');
   const autoPauseIndex = serverSource.indexOf('startSessionAutoPauseSweeper(config);');

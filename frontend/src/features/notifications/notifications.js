@@ -619,7 +619,12 @@ const Notifications = {
       // a same-value hash assignment fires no `hashchange`, so clicking a
       // notification for the app/tab already on screen wouldn't re-render.
       // openAppTab always renders (and keeps the URL in sync internally).
-      const chatKinds = new Set(['mention', 'reply', 'reaction']);
+      // session_comment routes exactly like a thread-scoped mention: its
+      // chat_message_id lives in the session's discussion thread, so
+      // threadType/threadRef point straight at the topic to open (the
+      // proposal page once promoted; _loadTopicView reroutes a
+      // not-promoted id to the shared-session topic).
+      const chatKinds = new Set(['mention', 'reply', 'reaction', 'session_comment']);
       if (chatKinds.has(item.kind) && item.threadType && item.threadRef != null) {
         const kindMap = { issue: 'issue', session: 'proposal', governance: 'gov' };
         const topicKind = kindMap[item.threadType];
@@ -1205,6 +1210,7 @@ function previewText(n) {
     case 'pr_proposed': return `\u{1F5F3}️ ${who} proposed a PR to vote on`;
     case 'reply':       return `${who} replied to you`;
     case 'mention':     return `${who} mentioned you`;
+    case 'session_comment': return `\u{1F4AC} ${who} commented on your dev session`;
     case 'spec_shared': return `\u{1F4CB} ${who} shared a spec with you`;
     case 'collab_invite':          return `✉️ ${who} invited you to collaborate`;
     case 'collab_invite_accepted': return `✅ ${who} accepted your invite`;
@@ -1438,6 +1444,28 @@ function rowView(n) {
         { t: 'text', v: verb },
       ],
       body: { text: outcomeText, medium: true, mention: false },
+    };
+  }
+
+  // Someone commented in this user's dev session's public discussion —
+  // before or after promotion. Second line previews the comment; the meta
+  // line names the session (title ladder mirrors the other session-scoped
+  // rows: sessionTitle → prTitle → branchName). Clicking opens the
+  // discussion thread where the comment lives (see _onItemClick).
+  if (n.kind === 'session_comment') {
+    const sessionLabel = n.sessionTitle || n.prTitle || n.branchName || 'your dev session';
+    return {
+      ...base,
+      wrap: true,
+      icon: '\u{1F4AC}',
+      segments: [
+        { t: 'who', v: who },
+        { t: 'text', v: 'commented on' },
+        { t: 'strong', v: sessionLabel },
+        { t: 'text', v: 'in' },
+        { t: 'strong', v: appLine },
+      ],
+      body: { text: (n.messageContent || '').slice(0, 140), medium: false, mention: true },
     };
   }
 

@@ -18,10 +18,10 @@ const notifications = require('../src/services/notifications');
 const CURRENT_KINDS = [
   'conversation_invite', 'conversation_message', 'conversation_mention',
   'conversation_reply', 'conversation_reaction',
-  'mention', 'reply', 'reaction', 'kudos', 'stale_pr', 'check_failed',
-  'pr_proposed', 'spec_shared', 'collab_invite', 'collab_invite_accepted',
-  'approver_invite', 'approver_invite_accepted', 'session_done',
-  'auto_solve_done',
+  'mention', 'reply', 'session_comment', 'reaction', 'kudos', 'stale_pr',
+  'check_failed', 'pr_proposed', 'spec_shared', 'collab_invite',
+  'collab_invite_accepted', 'approver_invite', 'approver_invite_accepted',
+  'session_done', 'auto_solve_done',
 ];
 
 test('every current inbox kind maps exactly once to one closed category', () => {

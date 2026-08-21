@@ -2084,6 +2084,14 @@ const AppView = {
       if (e.target.closest('a, button, input, form')) return;
       const sessionChip = e.target.closest('[data-session-chip]');
       if (sessionChip) {
+        // The 💬 badge on the owner's own visible card opens the PUBLIC
+        // DISCUSSION (where the counted comments live) rather than the
+        // dev chat the rest of the card opens — same destination as the
+        // ⋯ menu's "Open public discussion" row.
+        if (e.target.closest('.dev-chat-badge')) {
+          AppView.openTopic('session', parseInt(sessionChip.dataset.sessionChip, 10));
+          return;
+        }
         // Own session → the owner's dev chat, exactly as the old strip.
         App.switchTab('dev', parseInt(sessionChip.dataset.sessionChip, 10), 'sessions');
         return;
@@ -2215,6 +2223,20 @@ const AppView = {
     // close proposal outside the freshly-reset first page was a dead click.
     if (ok && (ref.kind === 'proposal' || ref.kind === 'gov')
         && !AppView._findTopicItem()) {
+      // A 'proposal' ref that resolves to no promoted/merged proposal may be
+      // a SHARED IN-FLIGHT SESSION — the two share the chat_sessions id
+      // namespace, and thread-scoped notifications (mentions, replies,
+      // session_comment) route session threads here as 'proposal'. Reroute
+      // to the session topic (same discussion thread) BEFORE the
+      // fetch-on-demand below, which would just 404 for such an id.
+      if (ref.kind === 'proposal'
+          && ((AppView._sharedSessions || []).some((s) => s.id === ref.id)
+            || (AppView._mySessions || []).some((s) => s.id === ref.id))) {
+        AppView._devTopic = { kind: 'session', id: ref.id };
+        AppView._mountTopicThread();
+        AppView._renderTopicHead();
+        return;
+      }
       if (ref.kind === 'gov') await AppView._fetchGovProposalById(ref.id);
       else await AppView._fetchProposalById(ref.id);
       // Re-check staleness: the user may have navigated away mid-fetch.
@@ -2229,12 +2251,18 @@ const AppView = {
       //
       // (#1115) Say so for a GOVERNANCE topic: a click on a real, visible
       // card that lands back on the board with no explanation reads as "the
-      // click did nothing". The other kinds stay silent on purpose — a
-      // closed GitHub issue legitimately fails to resolve here (_ghIssues
-      // holds open issues only, see revealInDrawer), so toasting that would
-      // be a behaviour change beyond this fix.
+      // click did nothing". The same courtesy for a SESSION topic (a
+      // deep link from Messages or a notification to a session the owner
+      // has since hidden or archived): explain rather than silently bounce.
+      // The other kinds stay silent on purpose — a closed GitHub issue
+      // legitimately fails to resolve here (_ghIssues holds open issues
+      // only, see revealInDrawer), so toasting that would be a behaviour
+      // change beyond this fix.
       if (ref.kind === 'gov' && window.PlatformUI && PlatformUI.toast) {
         PlatformUI.toast('Couldn’t open that proposal’s discussion.');
+      }
+      if (ref.kind === 'session' && window.PlatformUI && PlatformUI.toast) {
+        PlatformUI.toast('This session’s discussion isn’t available — the owner hasn’t made it visible.');
       }
       App.switchTab('dev');
       return;
@@ -5576,6 +5604,12 @@ const AppView = {
     // may not be in _sharedById yet (background refresh pending) — the
     // badge still renders, with the count at 0.
     const sh = shared ? (AppView._sharedById || {})[s.id] : null;
+    // Public-discussion comment count. Rendered on the card FACE for
+    // visible sessions (chatCount below) — the discussion used to hide
+    // behind the ⋯ menu alone, so comments landing pre-promotion were
+    // invisible to the owner. A private session has no discussion → null
+    // keeps the badge off entirely.
+    const chatN = sh ? (parseInt(sh.chat_count, 10) || 0) : 0;
     // #689: a PR exists once the first commit is pushed, so pr_number set
     // means there is something to preview. The owner is always authorized
     // on ensure-staging, which rebuilds the preview if the idle GC
@@ -5617,7 +5651,6 @@ const AppView = {
           title: "Let everyone read this chat, read-only — they can't reply in it, and can't see your costs or uploaded files",
           act: () => AppView._setTranscriptShared(s.id, true, null),
         });
-      const chatN = sh ? (parseInt(sh.chat_count, 10) || 0) : 0;
       menu.push({
         label: `Open public discussion${chatN ? ` (${chatN})` : ''}`,
         icon: 'chat',
@@ -5661,7 +5694,10 @@ const AppView = {
         titleAttrs: ` title="${label}"`,
         metaHtml: subtitle,
         badges: [AppView._importedSessionBadgeHtml(s), statusTag, AppView._sessionVenueChipHtml(s), AppView.issueChipsHtml(s.linked_issues)],
-        chatCount: null,
+        // Visible sessions show their public-discussion 💬 count on the
+        // card face (clicking the badge opens the discussion — see the
+        // #dev-body delegated click handler); private sessions have none.
+        chatCount: shared && !imported ? chatN : null,
         actions,
       })}
       ${AppView._cardRailHtml(`session:${s.id}`, imported ? [] : menu, { preview })}
@@ -8820,7 +8856,19 @@ const AppView = {
     } else if (type === 'session') {
       const pr = (AppView._proposals || []).find((p) => p.id === ref);
       if (pr) pr.chat_count = (parseInt(pr.chat_count) || 0) + 1;
-      sel = `[data-proposal-row="${ref}"] .dev-chat-badge`;
+      // Pre-promotion shared sessions carry the same thread key, so bump
+      // their cache and cards too: the shared-session card on everyone
+      // else's board AND the owner's own visible-session card (which
+      // renders its count from _sharedById). _sharedById holds the same
+      // object references _sharedSessions filters from, so one bump covers
+      // both. At most one of the three selectors is rendered for a given
+      // id (a promoted session has only a proposal card; a shared one is
+      // either the viewer's own or someone else's).
+      const sh = (AppView._sharedById || {})[ref];
+      if (sh) sh.chat_count = (parseInt(sh.chat_count) || 0) + 1;
+      sel = `[data-proposal-row="${ref}"] .dev-chat-badge, `
+        + `[data-shared-session-row="${ref}"] .dev-chat-badge, `
+        + `[data-session-chip="${ref}"] .dev-chat-badge`;
     } else if (type === 'governance') {
       // Open proposals live in _govProposals; applied close-issue rows
       // live on in the Completed stream (_merged, row_type='close_issue') —

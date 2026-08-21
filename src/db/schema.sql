@@ -1968,9 +1968,12 @@ END $$;
 -- 'session_done' (#161 — a dev-session turn finished after its owner
 -- left; session_id points to the session), 'auto_solve_done' (#161 —
 -- a headless auto-solve run finished; `detail` holds the outcome:
--- spec | code | spec_code | question | failed) and 'spec_shared' (#86 —
+-- spec | code | spec_code | question | failed), 'spec_shared' (#86 —
 -- someone privately shared a spec version with you; session_id points
--- to the dev session, `detail` holds the version number as a string).
+-- to the dev session, `detail` holds the version number as a string),
+-- and 'session_comment' (someone posted in your dev session's public
+-- discussion thread — pre- or post-promotion; session_id points to the
+-- session, chat_message_id to the comment, set in src/services/ws.js).
 CREATE TABLE IF NOT EXISTS notifications (
   id              SERIAL PRIMARY KEY,
   user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -4144,6 +4147,7 @@ END $$;
 INSERT INTO mobile_push_kind_categories (kind, category, default_enabled) VALUES
   ('mention', 'direct_interactions', TRUE),
   ('reply', 'direct_interactions', TRUE),
+  ('session_comment', 'direct_interactions', TRUE),
   ('collab_invite', 'invitations', TRUE),
   ('collab_invite_accepted', 'invitations', TRUE),
   ('approver_invite', 'invitations', TRUE),
@@ -4166,7 +4170,7 @@ ON CONFLICT (kind) DO UPDATE
       default_enabled = EXCLUDED.default_enabled;
 DELETE FROM mobile_push_kind_categories
  WHERE kind NOT IN (
-   'mention', 'reply', 'collab_invite', 'collab_invite_accepted',
+   'mention', 'reply', 'session_comment', 'collab_invite', 'collab_invite_accepted',
    'approver_invite', 'approver_invite_accepted', 'spec_shared',
    'session_done', 'auto_solve_done', 'stale_pr', 'check_failed',
    'pr_proposed', 'reaction', 'kudos',

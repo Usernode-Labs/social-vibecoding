@@ -8,9 +8,9 @@ const CATEGORY_DEFINITIONS = Object.freeze([
   Object.freeze({
     key: 'direct_interactions',
     label: 'Direct interactions',
-    description: 'Mentions and replies to your messages.',
+    description: 'Mentions, replies, and comments on your dev sessions.',
     defaultEnabled: true,
-    kinds: Object.freeze(['mention', 'reply']),
+    kinds: Object.freeze(['mention', 'reply', 'session_comment']),
   }),
   Object.freeze({
     key: 'invitations',

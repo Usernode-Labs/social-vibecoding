@@ -9524,6 +9524,10 @@ const DevChat = {
                  placeholder="Username…" autocomplete="off" spellcheck="false" maxlength="32" />
           <div id="dc-spec-share-suggestions" class="dc-spec-share-suggestions"></div>
           <div id="dc-spec-share-error" class="dc-spec-share-error hidden"></div>
+          ${DevChat.currentSession && !DevChat.currentSession.shared_at ? `<label id="dc-spec-share-visible-row" class="dc-spec-share-visible">
+            <input id="dc-spec-share-visible" type="checkbox" checked />
+            <span>Also make this session visible so they can comment — everyone on this app will see it under In progress</span>
+          </label>` : ''}
           <button id="dc-spec-share-send" class="dc-spec-action-btn dc-spec-share-send">Send</button>
         </div>` : ''}
       </div>
@@ -9710,6 +9714,26 @@ const DevChat = {
       if (!username) { setError('Enter a username'); return; }
       sendBtn.disabled = true;
       sendBtn.textContent = 'Sending…';
+      // Visibility opt-in (rendered only while the session is NOT visible):
+      // sharing a spec with a person signals collaboration, and without
+      // visibility the recipient has nowhere to comment — the session's
+      // public discussion only exists on their board once the session is
+      // visible. Best-effort and BEFORE the share, so the spec_shared
+      // notification's deep link lands on a board that has the card. A
+      // visibility failure never blocks the share itself ("Make visible"
+      // on the session card remains the retry path).
+      const visBox = pane.querySelector('#dc-spec-share-visible');
+      if (visBox && visBox.checked && DevChat.currentSession) {
+        try {
+          const resp = await fetch(`/api/sessions/${DevChat.currentSession.id}/share`, { method: 'POST' });
+          if (resp.ok) {
+            const data = await resp.json().catch(() => ({}));
+            DevChat.currentSession.shared_at = data.shared_at || new Date().toISOString();
+            const visRow = pane.querySelector('#dc-spec-share-visible-row');
+            if (visRow) visRow.classList.add('hidden');
+          }
+        } catch { /* non-fatal — the spec share below still goes out */ }
+      }
       const result = await DevChat._shareSpecToUser(version, username);
       sendBtn.disabled = false;
       sendBtn.textContent = 'Send';

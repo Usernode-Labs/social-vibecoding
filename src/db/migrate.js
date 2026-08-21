@@ -1563,6 +1563,31 @@ async function seedStagingNotifications(pool, config) {
     [sessionId]
   );
 
+  // session_comment fixture target: a comment INSIDE the fixture session's
+  // public discussion thread (thread-scoped, unlike the plain messages
+  // above), so the notification row below carries the threadType/threadRef
+  // its click handler deep-links through. Idempotent on (app_id, content)
+  // like the other fixture messages.
+  let sessionCommentMsgId;
+  {
+    const content = '[staging fixture] Session-comment notification target — a comment in your session’s discussion';
+    const { rows: existing } = await pool.query(
+      'SELECT id FROM chat_messages WHERE app_id = $1 AND content = $2 LIMIT 1',
+      [appId, content]
+    );
+    if (existing.length) {
+      sessionCommentMsgId = existing[0].id;
+    } else {
+      const { rows } = await pool.query(
+        `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, created_at)
+         VALUES ($1, $2, $3, 'message', 'session', $4, NOW() - INTERVAL '13 minutes')
+         RETURNING id`,
+        [appId, source.id, content, sessionId]
+      );
+      sessionCommentMsgId = rows[0].id;
+    }
+  }
+
   const fixtures = [
     { kind: 'mention', chatMessageId: messageIds.mention, sourceUserId: source.id, minutesAgo: 11 },
     { kind: 'reply', chatMessageId: messageIds.reply, sourceUserId: source.id, minutesAgo: 10 },
@@ -1575,6 +1600,15 @@ async function seedStagingNotifications(pool, config) {
     },
     { kind: 'pr_proposed', sessionId, sourceUserId: source.id, minutesAgo: 8 },
     { kind: 'stale_pr', sessionId, sourceUserId: null, minutesAgo: 7 },
+    // Pre-promotion shared-session chat delivery: someone commented in the
+    // target user's dev session's public discussion.
+    {
+      kind: 'session_comment',
+      chatMessageId: sessionCommentMsgId,
+      sessionId,
+      sourceUserId: source.id,
+      minutesAgo: 2,
+    },
     {
       kind: 'kudos',
       sessionId,
