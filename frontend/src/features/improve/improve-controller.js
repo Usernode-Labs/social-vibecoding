@@ -94,12 +94,16 @@ const Improve = {
 
   // ── What the panel is about ──────────────────────────────────────
   //
-  // Called from App.DrawerStatus.setAppOpen() for an open app. Passing null
-  // clears the target, which hides the header button — that is what every
-  // screen that is not an open app does, home included: home briefly
-  // re-published the platform's own self-hosted row here, but only on the
-  // return paths, which left the button lingering after backing out of an app
-  // while a refresh hid it. It was retired for the consistent no-button home.
+  // Called from App.DrawerStatus.setAppOpen() for an open app, and from
+  // Home.publishImproveTarget() for the platform's own self-hosted row while
+  // home is on screen (#1367). Passing null clears the target, which hides the
+  // header button — every OTHER screen does that.
+  //
+  // Home's publisher lives in Home.render() rather than on the navigation
+  // paths, and that is load-bearing: the reverted first attempt published only
+  // when returning from an app, so the button appeared after backing out and
+  // vanished on refresh. Both callers land here identically; only the moment
+  // they fire differs.
   setTarget(target) {
     if (!target || !target.slug) {
       if (improveStore.get().open) Improve.close();
@@ -114,6 +118,9 @@ const Improve = {
         readOnly: false,
         showTerminal: false,
         canShare: false,
+        // Back to App.currentTab's own initial value, so the next target does
+        // not inherit the last one's half.
+        tab: 'app',
       });
       return;
     }
@@ -137,6 +144,35 @@ const Improve = {
       showTerminal: slugChanged ? false : prev.showTerminal,
     });
     if (slugChanged) Improve._rebucket();
+  },
+
+  /**
+   * Publish which half of the app is on screen — the App tab or the Dev area.
+   *
+   * Called from `App.switchTab()`, the single place `App.currentTab` is
+   * assigned. Only meaningful while there IS a target, so a switch with none
+   * published is dropped rather than stored against nothing.
+   */
+  setTab(tab) {
+    if (!improveStore.get().slug) return;
+    improveStore.set({ tab: tab === 'dev' ? 'dev' : 'app' });
+  },
+
+  /**
+   * The App/Feed/Kanban toggle's first segment: back to the app itself.
+   *
+   * The counterpart of openDev below. It does NOT go through _withApp, which
+   * always lands on Dev — this is the one destination that is the other tab.
+   * Self-hosted rows have no reachable iframe target, which is why the segment
+   * is not rendered for them at all (see ImproveViewToggle); switchTab would
+   * coerce the request to Dev anyway, so this can never strand a viewer.
+   */
+  openApp() {
+    Improve.close();
+    const { slug } = improveStore.get();
+    if (!slug || !window.App) return;
+    if (window.App.currentApp === slug) window.App.switchTab('app');
+    else window.App.navigateToApp(slug, 'app');
   },
 
   /** Patch fields on the CURRENT target — app-view.js calls this as data lands. */

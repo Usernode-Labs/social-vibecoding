@@ -54,6 +54,15 @@ const RETIRED_IDS = {
   'work-drawer-icon': 'The cog glyph, retired with its button. The spinning-while-busy cue is the per-row busy dot in the Improve panel now.',
   'dev-console-btn': 'Header terminal icon retired — the Improve panel\'s "Developer terminal" row is shown on the same DevConsole signal. #staging-dev-console-btn survives; the staging overlay has its own chrome.',
   'dev-console-badge': 'Unseen-error count on the retired header terminal icon. #staging-dev-console-badge survives.',
+  // ── #1367: two Improve rows became a segmented toggle ────────────
+  // "Development kanban" and "Latest development activity" were list rows
+  // with a chevron. They are two segments of the App/Feed/Kanban control now
+  // (frontend/src/features/improve/view-toggle.tsx), which renders inside the
+  // panel on a phone and in the header beside #improve-btn on a wide screen.
+  // Improve.openDev(mode) — the handler both rows called — is unchanged, so
+  // the behaviour each id named is reachable by one tap rather than two.
+  'improve-row-kanban': 'Kanban row retired — the "Kanban" segment of the App/Feed/Kanban toggle. Same Improve.openDev(\'kanban\') call.',
+  'improve-row-feed': 'Feed row retired — the "Feed" segment of the App/Feed/Kanban toggle. Same Improve.openDev(\'feed\') call.',
   // ── THE UI OVERHAUL: three top-right drawers became one ──────────
   // The bell and the cog merged INTO the hamburger. Nothing they carried was
   // dropped without a new home; each entry below names it.
@@ -110,8 +119,6 @@ const ADDED_IDS = {
   'improve-body': 'The panel\'s scroller.',
   'improve-row-feedback': 'Opens the feedback dialog — the retired #feedback-btn.',
   'improve-row-new-session': 'Starts a dev session — the Dev "+" menu\'s "Propose a change".',
-  'improve-row-kanban': 'Opens the Dev screen on its Kanban tab.',
-  'improve-row-feed': 'Opens the Dev screen on its Feed tab.',
   'improve-footer': 'Reference block: View on GitHub, Share app, version — all three moved out of the hamburger drawer.',
   'drawer-notifications': 'The notifications region at the top of the hamburger, where the bell dropdown\'s body now renders.',
   'settings-theme-section': 'The Theme settings pane\'s inner node, matching every other section\'s wrapper/inner pair.',

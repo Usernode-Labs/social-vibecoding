@@ -169,6 +169,22 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // first /api/notifications payload lands, so the pinned section is
     // prerendered as nothing by contract (see notifications-store.js).
     'M6.32 2.577a49.255 49.255 0 0 1 11.36 0c1.497.174 2.57 1.46 2.57 2.93V21a.75.75 0 0 1-1.085.67L12 18.089l-7.165 3.583A.75.75 0 0 1 3.75 21V5.507c0-1.47 1.073-2.756 2.57-2.93Z',
+    // ── #1367: the App/Feed/Kanban toggle's glyphs ──────────────────
+    // BoardIcon used to prerender, because the Improve panel drew it
+    // unconditionally on its "Development kanban" row. That row is a segment
+    // of the toggle now, and the whole control returns null without a
+    // published target — which the prerendered document has none of, by the
+    // same contract that keeps GitHubIcon and ShareIcon off it above.
+    //
+    // ListLinesIcon is NOT here: the Dev board frame's own Feed tab renders
+    // it from <Shell/>, so it still lands in the static document.
+    'M4 5h4v14H4zM10 5h4v9h-4zM16 5h4v6h-4z',
+    // AppWindowIcon — both subpaths of the toggle's "App" segment, which is
+    // the most conditional glyph in the shell: it needs a target AND a target
+    // that is not the platform's own self-hosted row (which has no reachable
+    // App tab). New with the toggle, so it has never prerendered.
+    'M4 6a1 1 0 011-1h14a1 1 0 011 1v12a1 1 0 01-1 1H5a1 1 0 01-1-1V6z',
+    'M4 9.5h16',
   ];
   assert.deepEqual(absent.sort(), expected.sort());
 });

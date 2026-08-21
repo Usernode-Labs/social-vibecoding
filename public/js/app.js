@@ -2048,15 +2048,18 @@ const App = {
   // unguarded refreshDeployDot() / setAppOpen() callers below would throw on
   // a bare getter. Forwarding no-ops instead, which is what those calls did
   // when the drawer was not on screen anyway.
-  // The home screen shows NO Improve button. THE UI OVERHAUL originally
-  // pointed it at the platform's own app row there ("improve Social
-  // Vibecoding itself"), but only on the RETURN paths — a cold boot at `/`
-  // never published a target — so the button appeared after backing out of an
-  // app and vanished on refresh, which every reporter read as a stale
-  // leftover from the app they had just closed. The consistent behaviour is
-  // the one a fresh load always had: the target clears with the app
-  // (App.DrawerStatus.setAppOpen(false)) and home stays button-less. The
-  // platform's own row is still improvable by opening it like any other app.
+  // The home screen shows the PLATFORM's Improve button (#1367) — "improve
+  // Social Vibecoding itself", pointed at its own self-hosted app row.
+  //
+  // THE UI OVERHAUL shipped this once and #1363 reverted it, and that revert
+  // is why the publish does NOT live here. That version re-targeted the platform row
+  // on the RETURN paths only, so a cold boot at `/` never published a target:
+  // the button appeared after backing out of an app and vanished on refresh,
+  // which every reporter read as a stale leftover from the app they had just
+  // closed. setAppOpen(false) still clears the app's target on every path;
+  // Home.render() then publishes home's own, which is the one call a cold
+  // boot, a WS repaint and the return from an app all funnel through. See
+  // Home.publishImproveTarget for the two gates it gets right.
 
   DrawerStatus: {
     setAppOpen(open) { window.DrawerStatus?.setAppOpen(open); },
@@ -3607,12 +3610,17 @@ const App = {
       App._showOnlyScreen('home-screen', ['app-view']);
       document.getElementById('back-btn').classList.add('hidden');
       // …and the GitHub / Share rows retire with the panel's target, rather
-      // than being hidden one by one as drawer rows were. This also hides the
-      // header's Improve button: home shows none, on every path — a cold boot
-      // at `/` never had one, and a re-target here is what made the button
-      // linger after backing out of an app (see the DrawerStatus note above
-      // App.DrawerStatus for why the home re-target was retired).
+      // than being hidden one by one as drawer rows were. This clears the
+      // app's target; the line below immediately republishes home's own.
       App.DrawerStatus.setAppOpen(false);
+      // Home's Improve button is the PLATFORM's (#1367). Published here so
+      // backing out of an app swaps the target in the same frame the app's
+      // was cleared, rather than leaving a gap until the next grid paint.
+      // This is a re-publish, NOT the only publish — that was the bug the
+      // first attempt shipped, where home had a button on the return paths
+      // and none on a cold boot at `/`. Home.render() is what makes it
+      // consistent; see Home.publishImproveTarget.
+      if (typeof Home !== 'undefined') Home.publishImproveTarget();
       App.setHeaderTitle('dApps');
     }, {
       type: App._entryTransition('zoom-out', av),
@@ -3796,9 +3804,12 @@ const App = {
     // (see AppView.readOnly).
     App.currentTab = tab;
     App.currentSubTab = tab === 'dev' ? (subTab || 'forum') : null;
-    // The `.app-mode-seg` repaint that used to sit here is gone with the
-    // switch itself — there is no control in the header reflecting which tab
-    // is active any more, because there is no in-place toggle between them.
+    // The `.app-mode-seg` repaint that used to sit here went with the switch
+    // itself. There IS a control reflecting the active tab again — the
+    // App/Feed/Kanban toggle (#1367) — but it is React-rendered from the
+    // Improve store, so this publishes the fact instead of repainting a node:
+    // one owner for the attribute, which is the whole ownership rule.
+    window.Improve?.setTab(tab);
 
     // Tear down the cross-app active-sessions poll when leaving the
     // Sessions sub-tab. renderDevChatTab will spin it back up on

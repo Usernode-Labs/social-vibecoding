@@ -294,3 +294,116 @@ test('a dapp check pins the drawer to the panel on a forced-touch route', () => 
   assert.ok(checks.some((t) => /platform-panel-adopted/.test(t.expectSelector || '')),
     'and that the drawer is the adopted content, not an empty panel');
 });
+
+// ── #1367: what the drawer looks like the moment it opens ────────────
+//
+// Two changes, both about where your eye and your thumb land. Neither has a
+// runtime assertion that would catch a regression — a collapsed section that
+// quietly ships expanded, or an anchor that quietly reverts to a top-stacked
+// list, both still render — so each strand is pinned against the source and
+// against the prerendered document in the style of the contracts above.
+
+test('the drawer opens with notifications COLLAPSED, on every open', () => {
+  // Collapsed by default, from a CONSTANT initial value: the SSG pass renders
+  // this island in Node, so anything read from storage or the store here would
+  // disagree with the client's first pass and console.error — which fails
+  // proposal checks on every route.
+  assert.match(headerMenuTsx, /useState\(false\)/,
+    'the notifications section must start collapsed, from a constant');
+
+  // "By DEFAULT" means on every open, not just the first — the panel is never
+  // unmounted, so without this an expansion would persist for the whole visit
+  // and quietly undo the change for whoever expanded it once.
+  assert.match(headerMenuTsx, /addEventListener\('sv:drawer-open'/,
+    'and re-collapse when the drawer is opened again');
+  assert.match(headerMenuTsx, /removeEventListener\('sv:drawer-open'/,
+    'with the listener torn down, not leaked');
+
+  // The event is dispatched ONCE, above the touch/desktop fork, because both
+  // presentations are the drawer becoming visible.
+  assert.match(headerMenuJs, /dispatchEvent\(new CustomEvent\('sv:drawer-open'\)\)/);
+  const body = openBody();
+  assert.match(body, /HeaderMenu\._announceOpen\(\);/,
+    'open() must announce itself before it presents either way');
+
+  // COLLAPSED WITH A CLASS, NEVER BY UNMOUNTING. Three things inside are
+  // resolved once by id and would not survive a teardown: the kit's
+  // pull-to-refresh on #notifications-list, and notifications.js's click
+  // listener AND `disabled` write on #notifications-mark-all.
+  const block = html.slice(
+    html.indexOf('id="drawer-notifications"'),
+    html.indexOf('id="drawer-main-rows"'),
+  );
+  assert.ok(block.includes('<div class="hidden">'),
+    'the body is hidden by class, so its ids stay mounted');
+  assert.ok(block.includes('id="notifications-list"'),
+    '#notifications-list must still be in the prerendered document');
+  assert.ok(block.includes('id="notifications-mark-all"'),
+    '#notifications-mark-all must still be in the prerendered document');
+  assert.match(block, /aria-expanded="false"/,
+    'and the disclosure control must say it is collapsed');
+});
+
+test('notifications anchor to the top of the drawer, the nav rows to the bottom', () => {
+  // Opposite ends of one column flex. #drawer-notifications is a SIBLING of
+  // #drawer-main-rows now rather than its first child — that nesting is what
+  // made independent anchoring impossible.
+  const rowsAt = html.indexOf('id="header-menu-rows"');
+  const notifAt = html.indexOf('id="drawer-notifications"');
+  const navAt = html.indexOf('id="drawer-main-rows"');
+  assert.ok(rowsAt !== -1 && notifAt !== -1 && navAt !== -1, 'all three ids survive');
+  assert.ok(rowsAt < notifAt && notifAt < navAt,
+    'notifications first, navigation rows after, both inside #header-menu-rows');
+
+  const rowsTag = html.slice(rowsAt, html.indexOf('>', rowsAt));
+  assert.match(rowsTag, /flex flex-col/,
+    '#header-menu-rows stays the column flex the anchoring depends on');
+
+  // `mt-auto` collects the free space ABOVE the nav rows. It degrades on its
+  // own when there is none (a short viewport, an expanded list), which is why
+  // there is no measurement anywhere in this feature.
+  const navTag = html.slice(navAt, html.indexOf('>', navAt));
+  assert.match(navTag, /\bmt-auto\b/, 'the navigation rows must hug the bottom');
+  const notifTag = html.slice(notifAt, html.indexOf('>', notifAt));
+  assert.match(notifTag, /\bshrink-0\b/,
+    'and the notifications block must not be squeezed to make room');
+  assert.ok(!/\bmt-auto\b/.test(notifTag),
+    'nothing may push the notifications block off the top');
+});
+
+test('the ?shot=notifications deep link EXPANDS the section, not just the drawer', () => {
+  // The failure this exists to prevent, in one sentence: a collapsed section
+  // is `hidden`, which keeps its ids in the document — so `expectSelector`
+  // still resolves — but takes its text out of `document.body.innerText`,
+  // which is what a check's `expectText` reads. #1280's two saved-message
+  // assertions went red on exactly that: the rows were present and invisible.
+  //
+  // So the deep link that exists to make a gesture-only state reachable from a
+  // URL now has one more gesture to stand in for.
+  const notificationsJs = fs.readFileSync(
+    path.join(root, 'frontend/src/features/notifications/notifications.js'), 'utf8');
+  const at = notificationsJs.indexOf('  _maybeShotOpen() {');
+  assert.ok(at !== -1, '_maybeShotOpen went missing');
+  const body = notificationsJs.slice(at, notificationsJs.indexOf('\n  },', at));
+
+  // ORDER IS THE CONTRACT. show() opens the drawer, which announces
+  // 'sv:drawer-open', which is what re-collapses the section on every open.
+  // Both are synchronous, so the expand has to come SECOND to stick.
+  const showAt = body.indexOf('Notifications.show();');
+  const expandAt = body.indexOf("'sv:notifications-expand'");
+  assert.ok(showAt !== -1, 'the deep link must still open the drawer');
+  assert.ok(expandAt !== -1, 'and must now expand the notifications section');
+  assert.ok(showAt < expandAt,
+    'expand must be dispatched AFTER show(), or the open re-collapses it');
+
+  // And the island has to be listening — with the listener torn down.
+  assert.match(headerMenuTsx, /addEventListener\('sv:notifications-expand'/);
+  assert.match(headerMenuTsx, /removeEventListener\('sv:notifications-expand'/);
+
+  // The two dapp.json checks that caught this stay text-based on that route,
+  // so the regression cannot come back unnoticed.
+  const shotTests = dapp.tests.filter(
+    (t) => (t.path || '').includes('shot=notifications') && t.expectText);
+  assert.ok(shotTests.length >= 2,
+    'the saved-message assertions must keep reading VISIBLE text on that route');
+});

@@ -5,11 +5,18 @@
  * bubble and the work cog. The switch is the one worth explaining, because this
  * button inherits its lifecycle exactly. That control was shown by
  * `App.DrawerStatus.setAppOpen()` and hidden everywhere else; this one is shown
- * whenever ../improve/improve-store.js carries a TARGET, which the same call
- * publishes — an open app, and nowhere else. Home included: it briefly
- * re-targeted the platform's own self-hosted row there, but only on the return
- * paths, so the button read as a stale leftover of the app just closed (and
- * vanished on refresh). Home publishes no target now, on every path.
+ * whenever ../improve/improve-store.js carries a TARGET.
+ *
+ * TWO publishers put one there. `setAppOpen()` does it for an open app, and
+ * `Home.publishImproveTarget()` does it for the platform's own self-hosted row
+ * while home is on screen (#1367) — "improve Social Vibecoding itself".
+ *
+ * That second one shipped once before and was reverted (#1363), which is worth
+ * knowing before touching it: the first version re-targeted only on the RETURN paths,
+ * so a cold boot at `/` never published anything and the button read as a
+ * stale leftover of the app just closed. It publishes from `Home.render()`
+ * now — the call every path funnels through — so the button is either there on
+ * every home visit or on none.
  *
  * ── Why a labelled pill and not a fifth icon ───────────────────────────
  *
@@ -52,6 +59,10 @@ const IMPROVE_BTN_CLASS =
 
 export function ImproveButton() {
   const { target, open } = useStoreState(improveStore);
+  // "this app" is wrong on home, where the target is the platform itself
+  // (#1367). The visible label stays the single word "Improve" at both — what
+  // is being improved is named in the panel's own header.
+  const label = target === 'platform' ? 'Improve the platform' : 'Improve this app';
 
   // #1054's outbox dot, moved off the retired feedback button. It ships hidden
   // and its writer publishes through the visibility store rather than toggling
@@ -75,7 +86,7 @@ export function ImproveButton() {
       id="improve-btn"
       type="button"
       className={target ? IMPROVE_BTN_CLASS : `hidden ${IMPROVE_BTN_CLASS}`}
-      aria-label="Improve this app"
+      aria-label={label}
       aria-haspopup="dialog"
       aria-expanded={open ? 'true' : 'false'}
       onClick={() => Improve.toggle()}
