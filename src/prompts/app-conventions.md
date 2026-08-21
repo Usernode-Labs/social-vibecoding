@@ -52,6 +52,9 @@ Ordered by how badly an agent working offline gets each one wrong.
    that URL, including any copy of the CDN hostname in the app's `sw.js`
    precache list. The staging preview the platform builds is the
    authority on styling.
+   **The bridge tag is not conditional on calling a bridge API.** It is
+   also how the app ANSWERS the shell, so an app that omits it is invisible
+   to anything that asks the frame a question — offline launch included.
 2. **`USERNODE_ENV` is `staging` or `production`.** Gate DATA and
    irreversible outbound side effects on it — `const IS_STAGING =
    process.env.USERNODE_ENV === 'staging'` — never a feature, a screen,
@@ -1760,6 +1763,53 @@ Rules:
   running their own SV instance either accept that their dapps load
   the bridge from upstream prod, or fork the dapps and edit the URL.
   See [SELF-HOSTING.md](../../SELF-HOSTING.md) for details.
+
+## Offline — apps that open with no connection
+
+The shell opens an app while the device is offline **only when that app's
+own service worker was serving its document on a previous online visit.**
+Everything else gets a placeholder — "This app needs a connection —
+reconnect to open it." — because the app lives on its own subdomain, which
+the platform's service worker cannot cache. That placeholder is the
+correct, expected outcome for an app with no worker of its own; it is not
+a platform bug.
+
+Nothing here is self-declared. The bridge reads
+`navigator.serviceWorker.controller` inside the app frame — the browser's
+own statement that a worker served this document — and announces it to the
+shell, which remembers it per app and reads it back on the next offline
+load. An app cannot claim the capability, and one that loses its worker
+stops being opened offline on its next load.
+
+To earn it:
+
+- **Load the bridge.** Without the tag the app has no channel to announce
+  on, and the shell will never open it offline no matter what else it
+  does. See the section above.
+- **Register a service worker that precaches your shell**, and let it take
+  control (`skipWaiting()` + `clients.claim()`), so the first visit
+  announces rather than waiting for a second one. Registration can fail
+  outright in a third-party iframe — some WebViews refuse storage to a
+  cross-origin frame — and that is a normal degradation, not something to
+  work around: no worker means no announcement means the placeholder.
+- **Never serve `/api/*` from the worker.** Writes and event streams must
+  always reach the network; keep the app's own read cache separate.
+
+Two consequences worth designing for:
+
+- **An offline load carries NO `?token=`.** The shell cannot mint one with
+  no network, so the iframe src has no token at all. Recover identity from
+  the app's own storage, remembered from a load that did have one — and
+  never destroy per-user data when the token is absent. An app that keys
+  its cache on "the current user" and falls back to an anonymous namespace
+  will delete the real user's saved data on the first offline boot.
+- **The frame reloads when the connection returns.** The shell mints a
+  token and re-points the frame, so anything unsent must be persisted, not
+  held in memory. Queue mutations durably and replay them on reconnect.
+
+Be honest in the UI about which of the two worlds the app is in. A device
+that refuses durable storage cannot promise "3 changes will sync", and
+saying so is better than a queue that silently disappears.
 
 ## User language preference
 

@@ -346,35 +346,33 @@ const App = {
   _applyOfflineShot() {
     let shot = null;
     try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
-    if (shot !== 'offline' && shot !== 'offline-signin' && shot !== 'offline-app') return null;
+    if (shot !== 'offline' && shot !== 'offline-signin'
+        && shot !== 'offline-app' && shot !== 'offline-app-blocked') return null;
     if (shot === 'offline-signin' && (!location.hash || location.hash === '#')) {
       try { history.replaceState(null, '', location.search + '#login'); } catch (err) { /* ignore */ }
     }
-    // #487 follow-up. `offline-app` is the one offline state no navigation
-    // could otherwise reach: an app that brought its OWN service worker
-    // opening normally while the shell believes it is disconnected. The flag
-    // that unlocks it is written by that app's bridge announcement on a
-    // previous online visit, so pin it here for the slug in the hash.
-    // Display-only — it decides whether a frame is mounted and nothing else
-    // — and forceOffline() leaves the real network up, so the frame loads.
-    //
-    // Plain `offline` pins the OPPOSITE for the same slug, so the two shots
-    // are symmetric: each states the flag it needs rather than inheriting
-    // whatever the last one left in this browser's storage. Without that,
-    // the placeholder check would pass or fail depending on whether the
-    // offline-app check happened to run first in the same profile.
-    //
-    // Bare `AppView`: classic-script top-level `const`, not on `window`.
-    if (shot === 'offline-app' || shot === 'offline') {
-      try {
-        const slug = (String(location.hash).match(/^#app\/([^/?#]+)/) || [])[1];
-        if (slug && typeof AppView !== 'undefined') {
-          AppView.markOfflineReady(slug, shot === 'offline-app');
-        }
-      } catch (err) { /* ignore */ }
-    }
     try { window.Offline?.forceOffline(); } catch (err) { /* ignore */ }
     return shot;
+  },
+
+  // Screenshot-state deep links `?shot=offline-app` / `?shot=offline-app-blocked`
+  // (#487 follow-up): the offline App tab, with and without an app whose own
+  // service worker can serve it. The offline state itself is pinned much
+  // earlier, by _applyOfflineShot above; painting the App tab needs the
+  // screens to exist, so it runs late, beside _applyLaunchShot.
+  //
+  // Both are self-contained — see AppView.showOfflineAppShot for why they
+  // synthesise the app record instead of naming a real slug.
+  //
+  // Bare `AppView`: classic-script top-level `const`, so `window.AppView`
+  // would silently be undefined (see resyncCurrentView).
+  _applyOfflineAppShot() {
+    let shot = null;
+    try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
+    if (shot !== 'offline-app' && shot !== 'offline-app-blocked') return;
+    try {
+      if (typeof AppView !== 'undefined') AppView.showOfflineAppShot(shot === 'offline-app');
+    } catch (err) { /* ignore */ }
   },
 
   // Swap the drawer's Profile row between the generic person glyph and the
@@ -578,6 +576,7 @@ const App = {
     App._shotHash = location.hash;
     App._applyMenuShot();
     App._applyLaunchShot();
+    App._applyOfflineAppShot();
     App._applyFeedbackShot();
   },
 

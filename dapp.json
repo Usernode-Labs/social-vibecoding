@@ -2328,12 +2328,12 @@
     },
     {
       "name": "Offline, an app that brought its own service worker gets its frame, not the placeholder (#487)",
-      "path": "/?shot=offline-app#app/usernode-2d5619/app",
+      "path": "/?shot=offline-app",
       "expectSelector": "body.is-offline #app-view[data-app-surface=app] #app-iframe"
     },
     {
       "name": "Offline, an app with no worker of its own still gets the reconnect placeholder (#487)",
-      "path": "/?shot=offline#app/usernode-2d5619/app",
+      "path": "/?shot=offline-app-blocked",
       "expectSelector": "body.is-offline #app-view[data-app-surface=platform] #app-content",
       "expectText": "This app needs a connection"
     },

@@ -688,6 +688,30 @@ test('only the mounted production frame can mark an app offline-capable', async 
   assert.equal(sandbox.localStorage.getItem('usernode:offline-ready'), null, 'and the key is gone');
 });
 
+test('the offline-app screenshot states are self-contained — no running app required', async () => {
+  // The two dapp.json checks added with #1356 named a real slug and asserted
+  // on the App tab. The checks environment has no guarantee of a running app
+  // with a live origin behind the preview, so renderAppTab reached NEITHER
+  // branch and both checks failed — including the one for the behaviour the
+  // change did not touch. These states are synthesised now; this pins that.
+  const h = await makeHarness({ offline: true });
+  const { AppView, bridge } = h;
+
+  AppView.showOfflineAppShot(true);
+  assert.ok(bridge.frame(), 'the ready state mounts a frame');
+  assert.equal(h.surface(), 'app', 'on the app surface');
+  assert.equal(bridge.frame().src, 'https://platform.example/health',
+    "pointed at the shell's own /health, not a fabricated cross-origin app");
+  assert.doesNotMatch(h.outside['app-content'].innerHTML, /needs a connection/,
+    'and no placeholder underneath it');
+
+  AppView.showOfflineAppShot(false);
+  assert.equal(bridge.frame(), null, 'the blocked state drops the frame again');
+  assert.match(h.outside['app-content'].innerHTML, /needs a connection/,
+    'and paints the placeholder the unchanged path still produces');
+  assert.equal(h.surface(), 'platform', 'back on the platform surface');
+});
+
 test('an offline-ready record older than its TTL is not trusted', async () => {
   const h = await makeHarness({ offline: true });
   const { AppView, bridge, sandbox } = h;

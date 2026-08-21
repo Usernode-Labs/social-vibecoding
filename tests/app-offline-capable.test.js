@@ -104,3 +104,62 @@ test('both hosted bridge copies carry the block', () => {
     assert.match(src, /__USERNODE_OFFLINE_READY_END__/, `${path.basename(p)} closes the block`);
   }
 });
+
+// ── The checks that shipped broken with #1356 ────────────────────────────
+//
+// Both named a real app slug and asserted on the App tab. The checks
+// environment has no guarantee of a running app with a live origin behind
+// the preview, so renderAppTab reached neither branch and BOTH failed —
+// blocking every later proposal, since checks gate merge. They are served
+// by self-contained ?shot= states now; this keeps them that way.
+test('the offline-app checks do not depend on a real running app', () => {
+  const dapp = JSON.parse(fs.readFileSync(path.join(root, 'dapp.json'), 'utf8'));
+  const offlineAppChecks = (dapp.tests || []).filter(
+    (t) => typeof t.path === 'string' && /shot=offline-app/.test(t.path),
+  );
+  assert.equal(offlineAppChecks.length, 2, 'both offline-app checks are present');
+  for (const t of offlineAppChecks) {
+    assert.doesNotMatch(t.path, /#app\//,
+      `"${t.name}" must not route to a real app's tab — it cannot render in checks`);
+  }
+  // And the states they rely on are actually wired up.
+  const app = fs.readFileSync(path.join(root, 'public', 'js', 'app.js'), 'utf8');
+  const view = fs.readFileSync(path.join(root, 'public', 'js', 'app-view.js'), 'utf8');
+  assert.match(app, /_applyOfflineAppShot\(\)/, 'the shot handler is called from init');
+  assert.match(view, /showOfflineAppShot\(ready\)/, 'and paints through app-view');
+});
+
+// ── The contract generated apps are told about ──────────────────────────
+//
+// The shell half of this is invisible from inside an app: an author has no
+// way to discover that loading the bridge plus registering a worker is what
+// buys an offline launch, or that an offline load arrives with no token.
+// Todo List shipped a complete offline layer AND no bridge tag, which is
+// precisely the gap an undocumented capability produces. Same guard shape as
+// tests/app-conventions-shutdown.test.js.
+const CONVENTIONS = fs.readFileSync(
+  path.join(root, 'src', 'prompts', 'app-conventions.md'), 'utf8',
+);
+
+function conventionsSection(heading) {
+  const start = CONVENTIONS.indexOf(`\n## ${heading}\n`);
+  assert.notStrictEqual(start, -1, `missing "## ${heading}" section`);
+  const next = CONVENTIONS.indexOf('\n## ', start + heading.length + 5);
+  return CONVENTIONS.slice(start, next === -1 ? CONVENTIONS.length : next);
+}
+
+test('the conventions document the offline-launch contract', () => {
+  const s = conventionsSection('Offline — apps that open with no connection');
+  assert.match(s, /navigator\.serviceWorker\.controller/,
+    'names the signal the shell actually reads');
+  assert.match(s, /bridge/i, 'and that the bridge tag is required to announce it');
+  assert.match(s, /token/i, 'an offline load carries no token — apps must expect that');
+});
+
+test('the essentials say the bridge tag is unconditional', () => {
+  // This one is extracted into every work order, so it is the copy an agent
+  // building a new app is most likely to be reading.
+  const essentials = conventionsSection('Essentials — the offline excerpt');
+  assert.match(essentials, /bridge tag is not conditional/i,
+    'an app that calls no bridge API still has to load it');
+});
