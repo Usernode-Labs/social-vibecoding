@@ -512,10 +512,15 @@ const Home = {
       // Create app off the bottom of a phone for anyone with a lot of apps —
       // which is the failure the whole four-area design is meant to prevent.
       const canvas = HomeLayout.canvasItems(layout);
+      // The bound is "two rows that actually hold apps", not "row index < 2"
+      // — see HomeLayout.defaultRowBound. On a packed canvas the two are the
+      // same number; on one with a hole on row 1 the old form collapsed the
+      // two-row default down to a single visible row of tiles.
+      const rowBound = HomeLayout.defaultRowBound(layout, cols);
       const hiddenRows = !Home._appsExpanded
-        && canvas.some((it) => it.row >= HomeLayout.DEFAULT_ROWS);
+        && canvas.some((it) => it.row > rowBound);
       const shown = hiddenRows
-        ? canvas.filter((it) => it.row < HomeLayout.DEFAULT_ROWS)
+        ? canvas.filter((it) => it.row <= rowBound)
         : canvas;
       const overflow = hiddenRows ? [] : HomeLayout.overflowItems(layout);
       const parts = shown.map((it) => Home.renderGridItem(it, cols));
@@ -566,6 +571,80 @@ const Home = {
     // Screenshot-state deep link: paint the drag overlay in its resting
     // visible state so the gesture-only surface is capturable and testable.
     Home._maybeShowShotGrid(listEl);
+    // The header's Improve button, pointed at the PLATFORM (#1363). Published
+    // from render() on purpose — see publishImproveTarget for why that is the
+    // one call that makes it consistent.
+    Home.publishImproveTarget();
+  },
+
+  // ── The home screen's Improve button (#1363) ───────────────────────
+  //
+  // "Improve" on home means the PLATFORM: the same panel every app gets,
+  // scoped to Social Vibecoding's own self-hosted row. Feedback, its dev
+  // sessions, its kanban and feed, its repo — all of it already works on that
+  // row, which is why this is a target publish and not a second surface.
+  //
+  // ── Why this is called from render(), and why that matters ─────────
+  //
+  // THE UI OVERHAUL shipped this once and pulled it back out, and the bug is
+  // worth naming because it is the whole design constraint here: the old
+  // version re-targeted the platform row on the RETURN paths only —
+  // navigateHome() after backing out of an app. A cold boot at `/` never
+  // published anything, so the button appeared only after you had visited an
+  // app and vanished again on refresh, which read as a stale leftover of the
+  // app just closed rather than as a feature.
+  //
+  // render() is the fix because it is the one call every path already funnels
+  // through: the cold boot's first paint, the WS app events, a search
+  // keystroke, and the return from an app. Publishing the same target
+  // repeatedly is free — improveStore.set() is a no-op when nothing changed,
+  // and setTarget only re-buckets sessions when the slug actually moves.
+  //
+  // ── The two gates ──────────────────────────────────────────────────
+  //
+  // HOME HAS TO BE THE SCREEN ON SHOW. render() also runs while an app is
+  // open (a WS event repaints the grid behind the app view), and publishing
+  // then would overwrite the open app's own target with the platform's —
+  // the header button would silently start describing the wrong thing.
+  //
+  // THE ROW HAS TO BE VISIBLE TO THIS VIEWER. GET /api/apps hides
+  // `self_hosted` rows from non-admins unless SELF_APP_PUBLIC_VOTING is on,
+  // and answers 404 rather than 403 for the slug so the row's existence is
+  // not disclosed. Reading the target out of the list the viewer was actually
+  // served keeps that stance exactly: no row in the payload, no button, and
+  // nothing here has to know the flag or the slug. It also means the button
+  // appears for everyone the moment public voting is switched on, with no
+  // second change.
+  publishImproveTarget() {
+    if (!window.Improve) return;
+    // An app is open (or opening): its target is the one that belongs in the
+    // header. Both checks — app.js's own currentApp and the screen itself —
+    // because a repaint can land either side of the transition.
+    if (window.App?.currentApp) return;
+    if (window.App && typeof App._isScreenVisible === 'function'
+        && !App._isScreenVisible('home-screen')) return;
+    const self = (Home._apps || []).find((a) => a && a.self_hosted);
+    // No row in this viewer's payload → leave the target exactly as
+    // navigateHome's setAppOpen(false) left it: cleared, no button. NOT a
+    // setTarget(null) call, which would fight whatever else published.
+    if (!self || !self.slug) return;
+    window.Improve.setTarget({
+      kind: 'platform',
+      slug: self.slug,
+      name: self.name || self.slug,
+      selfHosted: true,
+      repoUrl: self.repo_url || null,
+      // The list payload's own version block, already shortened server-side.
+      version: self.version?.shortSha || null,
+      deploying: self.status === 'deploying',
+      // `can_collaborate` is the read affordance accessFlags() computes for
+      // this viewer on this row — the same bit that decides whether starting
+      // a session is offered anywhere else.
+      readOnly: !self.can_collaborate,
+      // Nothing to share: the platform row has no per-slug app URL, which is
+      // also why opening it lands on Dev rather than the App tab.
+      canShare: false,
+    });
   },
 
   // Per-visit only, like the widgets' own expand flag: a viewer who opened

@@ -101,6 +101,11 @@ const buttonVariants = cva('', {
       tap: 'px-3 min-h-[44px]',
       // #browse-detail-open, whose label is an arrow glyph beside a word.
       iconRow: 'inline-flex items-center gap-2',
+      // #improve-row-feedback — the Improve panel's "Give feedback" (#1363).
+      // The same glyph-beside-a-word row as iconRow, spanning the panel's
+      // width and centred in it, which is what makes it read as the panel's
+      // one primary action rather than as another list row.
+      fullIconRow: 'w-full inline-flex items-center justify-center gap-2',
     },
     /** Radius + surface. Radius leads the box in every shell button. */
     variant: {

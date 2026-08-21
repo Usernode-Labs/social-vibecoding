@@ -97,6 +97,53 @@ test('MAX_COLS narrows to the rendered count, and the schema still admits the ol
   assert.match(SCHEMA, /CONSTRAINT user_home_layout_col CHECK \(grid_col >= 0 AND grid_col < cols\)/);
 });
 
+test('the two-row default counts rows that HOLD apps, not row indices (#1363)', () => {
+  const app = (slug, col, row) => ({ type: 'app', slug, col, row });
+
+  // THE COMMON CASE IS UNCHANGED. Apps packed onto rows 0 and 1 bound at 1,
+  // which is DEFAULT_ROWS - 1 — byte for byte what the old `row < 2` filter
+  // did. This is the property that makes the change safe: it only ever widens
+  // the window, and only for layouts the old form got wrong.
+  assert.equal(
+    HomeLayout.defaultRowBound([app('a', 0, 0), app('b', 1, 0), app('c', 0, 1)], 4),
+    1,
+  );
+  // A sparse canvas is never NARROWER than the naive window, so there are
+  // always two rows' worth of empty cells to drop onto.
+  assert.equal(HomeLayout.defaultRowBound([], 4), 1);
+  assert.equal(HomeLayout.defaultRowBound([app('a', 0, 0)], 4), 1);
+
+  // THE BUG THIS FIXES. Free-form placement lets a viewer leave row 1 empty —
+  // holes are the point — and the old filter then showed row 0 alone: a
+  // one-row grid with "Show all N apps" under it, which is the two-row default
+  // silently becoming a one-row default the moment somebody used the canvas.
+  assert.equal(HomeLayout.defaultRowBound([app('a', 0, 0), app('b', 0, 2)], 4), 2);
+  assert.equal(HomeLayout.defaultRowBound([app('a', 0, 0), app('b', 0, 5)], 4), 5);
+  // It counts OCCUPIED rows, so a layout starting below row 0 still gets two.
+  assert.equal(HomeLayout.defaultRowBound([app('a', 0, 3), app('b', 0, 4)], 4), 4);
+
+  // Nothing past the second occupied row is pulled in: three packed rows still
+  // bound at 1, so "Show all" keeps something to reveal.
+  assert.equal(
+    HomeLayout.defaultRowBound([app('a', 0, 0), app('b', 0, 1), app('c', 0, 2)], 4),
+    1,
+  );
+
+  // Off-canvas overflow items (row >= MAX_ROWS) never count — they render
+  // after the template in plain flow and have no row of their own.
+  assert.equal(
+    HomeLayout.defaultRowBound([app('a', 0, 0), app('b', 0, HomeLayout.MAX_ROWS)], 4),
+    1,
+  );
+
+  // The renderer bounds INCLUSIVELY on this value, and re-places nothing —
+  // widening the window must never move a tile off the cell its owner chose.
+  const HOME = read('frontend/src/features/home/home.js');
+  assert.match(HOME, /defaultRowBound\(layout, cols\)/);
+  assert.match(HOME, /canvas\.filter\(\(it\) => it\.row <= rowBound\)/);
+  assert.match(HOME, /canvas\.some\(\(it\) => it\.row > rowBound\)/);
+});
+
 test('two rows by default — a cap on what is shown, not on what exists', () => {
   assert.equal(HomeLayout.DEFAULT_ROWS, 2);
   // The canvas is still eight rows deep, so a drag can still place a tile on

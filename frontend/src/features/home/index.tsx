@@ -172,8 +172,17 @@ export function HomeScreen() {
             HomeLayout.DEFAULT_ROWS: a cap on what is SHOWN, never on what a
             viewer may have — a ninth app grows the grid rather than being
             stranded.
+
+            NO TOP PADDING ON THIS SECTION. It used to carry `pt-1.5 sm:pt-2`
+            on top of the `pt-1.5 sm:pt-2` #app-list already has, so the first
+            row of tiles sat a doubled gutter below the header for no reason
+            anybody could point at. The grid keeps its own — and it has to,
+            because `.home-grid-overlay`'s inset mirrors #app-list's padding
+            EXACTLY (app.css says so, twice, once per breakpoint) and
+            Home._rectForCell measures those overlay cells to land a committed
+            drop. Trim the padding here, never there.
         */}
-        <section id="home-apps-section" className="px-3 pt-1.5 sm:pt-2">
+        <section id="home-apps-section" className="px-3">
           <div id="app-list" className="grid grid-cols-4 gap-1.5 sm:gap-2 p-2 pt-1.5 sm:p-3 sm:pt-2">
           </div>
           {/*

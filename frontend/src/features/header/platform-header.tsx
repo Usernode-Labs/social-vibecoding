@@ -38,6 +38,7 @@ import { useHiddenClass } from '../../lib/legacy-dom';
 import { useVisibility } from '../../lib/visibility-store';
 import { ChromelessPill } from './chromeless-pill';
 import { ImproveButton } from '../improve/improve-button';
+import { ImproveViewToggle } from '../improve/view-toggle';
 import { useHeaderLayout } from './use-header-layout';
 
 export function PlatformHeader() {
@@ -190,6 +191,21 @@ export function PlatformHeader() {
               no public/js/** module writes to it — so its className is
               rendered rather than constant. See ../improve/improve-button.tsx.
           */}
+          {/*
+              The App / Feed / Kanban toggle, immediately LEFT of the Improve
+              button (#1363), on wide screens only — the component carries its
+              own `hidden sm:inline-flex`, and below that breakpoint the copy
+              inside the Improve panel is the one on screen. Switching views is
+              the thing people do most often in an app, and behind a sheet it
+              cost two taps and a dismissal.
+
+              Inside the right-group div for the same reason #improve-btn is:
+              rightGroupRef is what use-header-layout.ts measures as the
+              title's right side group. A control parked outside it would not
+              count towards the clearance the centering decision needs, and the
+              title would overlap it at exactly the widths where this renders.
+          */}
+          <ImproveViewToggle compact={true} />
           <ImproveButton />
           {/*
               The bell (#notifications-btn) used to sit here, between Improve

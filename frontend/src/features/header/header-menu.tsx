@@ -13,6 +13,23 @@
  * The list is rendered by the same components from the same store, so
  * ../notifications/notifications.js is unchanged.
  *
+ * ── What #1363 changed ────────────────────────────────────────────────
+ *
+ * Two things, both about where your eye and your thumb land when the drawer
+ * opens. The notifications section is COLLAPSED by default and re-collapses on
+ * every open (see `notificationsOpen` below), so the menu opens on the thing
+ * you opened it for; and the two blocks are anchored to opposite ends of the
+ * panel — notifications to the top, the navigation rows to the bottom — rather
+ * than stacked from the top with the slack underneath.
+ *
+ * That made the drawer STATEFUL, which it was not before. It is allowed under
+ * AGENTS.md's rule for the same reason <NotificationsBody/> already was: the
+ * state lives entirely in React-owned nodes. Everything `public/js/**` still
+ * shows and hides per screen — the node, wallet, profile, messages, settings
+ * and admin rows — is untouched by it, and the two nodes the notifications
+ * module DOES write to (#notifications-list, #notifications-mark-all) are
+ * never unmounted; the collapse toggles a class on a wrapper above them.
+ *
  * Five things left: the theme selector (a SETTING now, and the first one —
  * features/settings/sections/theme.tsx), the kudos and AI-credit meters
  * (ambient numbers nobody acts on from a menu), the Leaderboard row (the home
@@ -50,8 +67,11 @@
  * the effect below.
  */
 
+import { useState } from 'react';
+
 import {
   ChatBubbleTailIcon,
+  ChevronRightIcon,
   CogIcon,
   GitHubIcon,
   LightBulbIcon,
@@ -65,7 +85,9 @@ import {
   XIcon,
 } from '@/components/ui/icons';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
+import { useStoreState } from '../../lib/use-store-state';
 import { NotificationsBody } from '../notifications/notifications-list';
+import { notificationsStore } from '../notifications/notifications-store.js';
 // Two side-effect modules whose ROWS moved out of this drawer — the AI-credit
 // figure to Settings → Anthropic API key, the mobile-app version to the
 // Improve panel's footer — but whose imports stay here on purpose. Both
@@ -90,6 +112,41 @@ import './header-menu-controller.js';
 import '../notifications/mount';
 
 export function HeaderMenu() {
+  // ── Notifications: COLLAPSED by default (#1363) ──────────────────────
+  //
+  // The drawer opens on the navigation rows, not on a wall of notifications.
+  // The list is still the first thing in the panel and still one tap away —
+  // what changed is that "what happened while I was away" no longer sits
+  // between you and the row you opened the menu to reach.
+  //
+  // `false` is a CONSTANT initial value, which is what keeps hydration byte
+  // exact: the SSG pass in frontend/scripts/build-shell.mjs renders this in
+  // Node with no way to know a viewer's preference, so anything read from
+  // localStorage or the store here would mismatch on the client's first pass
+  // and console.error — which fails proposal checks.
+  //
+  // Deliberately NOT persisted, and deliberately re-collapsed on every open:
+  // the request is "collapsed by default when opening the hamburger tray",
+  // and a sticky expansion would quietly undo that for whoever expanded it
+  // once. HeaderMenu.close() is not observed here — the panel is never
+  // unmounted — so the reset rides ./header-menu-controller.js's own open
+  // path via the `sv:drawer-open` event below.
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+
+  // The store the list already renders from, read here for one bit: is there
+  // anything unread behind the collapsed header. Without it a collapsed
+  // section is a section you have no reason to open. (The hamburger's red
+  // #notifications-badge says the same thing from outside the drawer; this is
+  // the in-drawer half of that cue.)
+  const notificationsState = useStoreState(notificationsStore) as {
+    list: ({ type: 'row'; row: { unread: boolean } }
+      | { type: 'group'; group: { hasUnread: boolean } })[] | null;
+    invites: unknown[] | null;
+  };
+  const hasUnread = (notificationsState.list || []).some((entry) => (
+    entry.type === 'row' ? entry.row.unread : entry.group.hasUnread
+  )) || !!(notificationsState.invites || []).length;
+
   useIsomorphicLayoutEffect(() => {
     window.NodePill?.init();
     window.WalletSheet?.init();
@@ -120,6 +177,13 @@ export function HeaderMenu() {
         () => window.Notifications?.refresh() ?? Promise.resolve(),
       );
     }
+    // "Collapsed by DEFAULT" means on every open, not just the first one.
+    // ./header-menu-controller.js emits this as it opens the panel (both the
+    // desktop transform path and the kit side-drawer adoption), which is the
+    // only moment either side agrees the drawer became visible.
+    const collapse = () => setNotificationsOpen(false);
+    document.addEventListener('sv:drawer-open', collapse);
+    return () => document.removeEventListener('sv:drawer-open', collapse);
   }, []);
 
   return (
@@ -148,60 +212,123 @@ export function HeaderMenu() {
           </button>
         </div>
         {/*
-            Panel body — ONE scroller, laid out as a COLUMN FLEX so the
-            footer block at its end can be bottom-anchored with `mt-auto`:
-            when the rows above are short the free space collects above the
-            footer and it hugs the bottom of the panel; when they overflow
-            (a short viewport) there is no free space and the footer simply
-            sits at the end of the scroll. One rule, both behaviours, no
-            measurement. On touch the panel fills a full-height kit side
-            drawer (.platform-panel-adopted), so the footer sits at the
-            bottom of the screen there too.
-            
-            The theme selector and the status pane are first in DOM order
-            rather than pinned outside the scroller: pinning blocks above
-            the list would leave a short viewport almost no room for the
-            navigation rows. Being first means they're on screen the moment
-            the drawer opens at any realistic viewport.
+            Panel body — ONE scroller, laid out as a COLUMN FLEX with its two
+            blocks anchored to OPPOSITE ENDS (#1363): notifications at the top,
+            the navigation rows at the bottom via `mt-auto`. The free space
+            between them belongs to neither, so a viewer with three
+            notifications gets their nav rows under their thumb instead of
+            stranded halfway up a tall panel.
+
+            The column flex is the same one the retired #drawer-footer needed,
+            and it degrades the same way: when the two blocks together overflow
+            (a short viewport, an expanded list) there is no free space to
+            collect and `mt-auto` contributes nothing, so the rows simply sit
+            at the end of the scroll. One rule, both behaviours, no
+            measurement. On touch the panel fills a full-height kit side drawer
+            (.platform-panel-adopted), so the bottom really is the bottom of
+            the screen there.
         */}
         <div id="header-menu-rows" className="flex-1 min-h-0 overflow-y-auto flex flex-col">
-          <div id="drawer-main-rows" className="shrink-0">
-            {/*
-                NOTIFICATIONS, first in the drawer.
+          {/*
+              NOTIFICATIONS, anchored to the TOP of the drawer (#1363).
 
-                THE UI OVERHAUL merged the bell into the hamburger: two
-                top-right drawers that opened the same way, one slot apart,
-                were one affordance too many, and "what happened while I was
-                away" belongs at the top of the catch-all menu rather than
-                behind an icon of its own. #notifications-panel is gone; its
-                whole body lives here, rendered by the same components from
-                the same store, so ./notifications.js is unchanged.
+              THE UI OVERHAUL merged the bell into the hamburger: two
+              top-right drawers that opened the same way, one slot apart,
+              were one affordance too many, and "what happened while I was
+              away" belongs at the top of the catch-all menu rather than
+              behind an icon of its own. #notifications-panel is gone; its
+              whole body lives here, rendered by the same components from
+              the same store, so ./notifications.js is unchanged.
 
-                Bounded height with its own scroller, so a long list cannot
-                push the navigation rows below it off a short viewport — the
-                anchored dropdown it replaced had exactly this cap (max-h-[70vh]
-                on the panel) for the same reason.
-            */}
-            <div
-              id="drawer-notifications"
-              className="border-b border-zinc-100 dark:border-zinc-800"
-            >
-              <div className="flex items-center gap-2 px-4 py-2">
+              It is a SIBLING of #drawer-main-rows now rather than its first
+              child, which is what lets the two ends of the panel be anchored
+              independently: this block sits at the top, the navigation rows
+              carry `mt-auto` and hug the bottom, and the free space between
+              them belongs to neither. Both keep their ids — nothing moved
+              out of the drawer, the nesting changed.
+
+              Bounded height with its own scroller, so a long list cannot
+              push the navigation rows below it off a short viewport — the
+              anchored dropdown it replaced had exactly this cap (max-h-[70vh]
+              on the panel) for the same reason.
+          */}
+          <div
+            id="drawer-notifications"
+            className="shrink-0 border-b border-zinc-100 dark:border-zinc-800"
+          >
+            <div className="flex items-center gap-2 px-4 py-2">
+              {/*
+                  The section header is the DISCLOSURE control. A <button>
+                  beside "Mark all read" rather than wrapping it, because a
+                  button inside a button is invalid markup and the browser
+                  would drop one of them.
+              */}
+              <button
+                type="button"
+                className="flex items-center gap-1.5 flex-1 min-w-0 text-left un-touch-target"
+                aria-expanded={notificationsOpen ? 'true' : 'false'}
+                aria-controls="notifications-list"
+                onClick={() => setNotificationsOpen((wasOpen) => !wasOpen)}
+              >
+                <ChevronRightIcon
+                  className={
+                    notificationsOpen
+                      ? 'w-3 h-3 shrink-0 text-zinc-400 transition-transform rotate-90'
+                      : 'w-3 h-3 shrink-0 text-zinc-400 transition-transform'
+                  }
+                  aria-hidden="true"
+                />
                 <span className="text-[0.7rem] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
                   Notifications
                 </span>
-                <span className="flex-1">
-                </span>
-                <button
-                  id="notifications-mark-all"
-                  className="text-xs text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200 disabled:opacity-40"
-                  disabled={true}
-                >
-                  Mark all read
-                </button>
-              </div>
+                {/* The reason to open a collapsed section. Hidden while it is
+                    open, where the rows themselves carry their own dots. */}
+                {hasUnread && !notificationsOpen ? (
+                  <span
+                    className="w-1.5 h-1.5 rounded-full bg-violet-500 shrink-0"
+                    aria-label="Unread notifications"
+                  />
+                ) : null}
+              </button>
+              <button
+                id="notifications-mark-all"
+                className="text-xs text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200 disabled:opacity-40"
+                disabled={true}
+              >
+                Mark all read
+              </button>
+            </div>
+            {/*
+                COLLAPSED WITH A CLASS, never by unmounting. Three things
+                inside this subtree are resolved once, by id, and would not
+                survive being torn down and rebuilt: the layout effect above
+                attaches the kit's pull-to-refresh to #notifications-list,
+                ./notifications.js binds its click listener to
+                #notifications-mark-all, and the same module writes that
+                button's `disabled` property directly. Toggling `hidden` keeps
+                every one of those attachments alive and costs one class.
+            */}
+            <div className={notificationsOpen ? undefined : 'hidden'}>
               <NotificationsBody />
             </div>
+          </div>
+          {/*
+              THE NAVIGATION ROWS, anchored to the BOTTOM (#1363).
+
+              `mt-auto` inside #header-menu-rows' column flex collects the
+              free space ABOVE this block, so the rows hug the foot of the
+              panel whenever the notifications above them leave room, and
+              degrade to "just after the list" when they do not (a short
+              viewport, an expanded list). One rule, both behaviours, no
+              measurement — the same trick the retired #drawer-footer used,
+              which is the reason #header-menu-rows was made a column flex in
+              the first place.
+
+              On touch the panel fills a full-height kit side drawer
+              (.platform-panel-adopted), so this sits at the bottom of the
+              screen there too — which is where a thumb actually is.
+          */}
+          <div id="drawer-main-rows" className="shrink-0 mt-auto">
             {/*
                 The theme selector used to be the first thing in this drawer,
                 and the kudos + AI-credit meters (#drawer-status-pane) sat

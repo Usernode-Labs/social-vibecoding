@@ -1333,9 +1333,24 @@
       "expectSelector": "#improve-btn:not(.hidden)"
     },
     {
-      "name": "Home shows no Improve button (it must not linger after leaving an app)",
+      "name": "The App/Feed/Kanban toggle rides the header on a wide screen",
+      "path": "/app/staging-demo-admins/dev",
+      "expectSelector": "#improve-view-toggle [data-view-segment=\"app\"]"
+    },
+    {
+      "name": "The header toggle marks the Dev view actually on screen",
+      "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
+      "expectSelector": "#improve-view-toggle [data-view-segment=\"kanban\"][aria-selected=\"true\"]"
+    },
+    {
+      "name": "The self-hosted row gets no App segment (its iframe target does not resolve)",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#improve-view-toggle:not(:has([data-view-segment=\"app\"]))"
+    },
+    {
+      "name": "Home shows the platform Improve button (improve Social Vibecoding itself)",
       "path": "/",
-      "expectSelector": "#improve-btn.hidden"
+      "expectSelector": "#improve-btn:not(.hidden)"
     },
     {
       "name": "The self-hosted platform row keeps its DEV caption (no header switch)",
@@ -1630,7 +1645,7 @@
     {
       "name": "The hamburger carries the notifications list, first in the panel",
       "path": "/?demo=1",
-      "expectSelector": "#header-menu-rows > #drawer-main-rows > #drawer-notifications #notifications-list"
+      "expectSelector": "#header-menu-rows > #drawer-notifications #notifications-list"
     },
     {
       "name": "Work-in-flight badge moved off the cog onto the hamburger",
@@ -2206,7 +2221,7 @@
     {
       "name": "The hamburger opens as a kit panel with notifications at its top",
       "path": "/?shot=menu&un-platform=ios",
-      "expectSelector": ".un-panel #header-menu-panel.platform-panel-adopted #header-menu-rows > #drawer-main-rows > #drawer-notifications"
+      "expectSelector": ".un-panel #header-menu-panel.platform-panel-adopted #header-menu-rows > #drawer-notifications"
     },
     {
       "name": "Hamburger status area shows the viewer's own AI credit (#555)",

@@ -41,12 +41,10 @@
 
 import { useCallback, type ReactNode } from 'react';
 
+import { Button } from '@/components/ui/button';
 import {
-  BoardIcon,
   ChatIcon,
-  ChevronRightIcon,
   GitHubIcon,
-  ListLinesIcon,
   PlusIcon,
   ShareIcon,
   TerminalIcon,
@@ -56,6 +54,7 @@ import {
 import { useStoreState } from '../../lib/use-store-state';
 import { improveStore } from './improve-store.js';
 import { Improve } from './improve-controller.js';
+import { ImproveViewToggle } from './view-toggle';
 
 const ROW_CLASS =
   'w-full flex items-center gap-3 px-4 min-h-[44px] text-left text-zinc-600 '
@@ -170,7 +169,7 @@ function SessionRow({
 
 export function ImprovePanel() {
   const state = useStoreState(improveStore);
-  const { open, slug, name, sessions, otherSessions } = state;
+  const { open, target, slug, name, sessions, otherSessions } = state;
 
   const close = useCallback(() => Improve.close(), []);
 
@@ -187,10 +186,13 @@ export function ImprovePanel() {
         onClick={close}
       >
       </div>
+      {/* "this app" is wrong on home, where the target is the platform itself
+          (#1363), so the label follows the target rather than assuming one.
+          #improve-target-name inside the header spells out which app. */}
       <div
         id="improve-panel"
         role="dialog"
-        aria-label="Improve this app"
+        aria-label={target === 'platform' ? 'Improve the platform' : 'Improve this app'}
         aria-hidden={open ? undefined : 'true'}
         {...(open ? { 'data-open': '' } : {})}
         className="fixed z-50 flex flex-col bg-white dark:bg-zinc-900 border-zinc-200 dark:border-zinc-700 shadow-2xl improve-panel-transition"
@@ -221,20 +223,74 @@ export function ImprovePanel() {
           </button>
         </div>
 
+        {/*
+            A COLUMN FLEX, so #improve-footer can be bottom-anchored with
+            `mt-auto` (#1363): the version, GitHub and Share block hugs the
+            foot of the panel whenever the rows above it leave free space, and
+            degrades to "just at the end of the scroll" when they do not — a
+            long session list, a short viewport, the kit sheet. One rule, both
+            behaviours, no measurement, and the same trick the hamburger's own
+            footer used before those rows moved here.
+        */}
         <div
           id="improve-body"
-          className="flex-1 min-h-0 overflow-y-auto overscroll-contain platform-safe-scroll"
+          className="flex-1 min-h-0 overflow-y-auto overscroll-contain platform-safe-scroll flex flex-col"
         >
-          {/* Feedback first, and deliberately: it is the one action that needs
-              nothing of the viewer — no collaborator bit, no session, no repo.
-              Everything below it asks for progressively more. */}
-          <ImproveRow
-            id="improve-row-feedback"
-            icon={<ChatIcon className="w-5 h-5 shrink-0" />}
-            label="Give feedback"
-            onClick={() => Improve.giveFeedback()}
-          />
+          {/*
+              ── The two controls at the top (#1363) ────────────────────
 
+              Feedback first, and deliberately: it is the one action that needs
+              nothing of the viewer — no collaborator bit, no session, no repo.
+              Everything below it asks for progressively more.
+
+              It is a BUTTON now rather than a list row. The panel is a stack of
+              rows that all look alike, and the one thing here that every
+              viewer can always do looked exactly like the six they mostly
+              cannot. Same handler, same id — `#improve-row-feedback` is what
+              the dot's writer and the checks select on — only the chrome
+              changed.
+          */}
+          <div className="px-4 pt-3 pb-2 flex flex-col gap-2 shrink-0">
+            <Button
+              id="improve-row-feedback"
+              type="button"
+              layout="fullIconRow"
+              size="sm"
+              className="un-touch-target"
+              onClick={() => Improve.giveFeedback()}
+            >
+              <ChatIcon className="w-4 h-4 shrink-0" />
+              Give feedback
+            </Button>
+            {/*
+                The App / Feed / Kanban toggle, directly under it. `sm:hidden`
+                lives on the component: on a wide screen this copy steps aside
+                and the header's takes over, immediately left of #improve-btn.
+                See ./view-toggle.tsx for why both are always rendered.
+            */}
+            <ImproveViewToggle compact={false} />
+          </div>
+
+          {/*
+              THE MIDDLE BLOCK, in one `shrink-0` wrapper.
+
+              #improve-body is a column flex now (so the footer can hug the
+              bottom), and a flex item is shrinkable by default: once the rows
+              here overflow the panel they would compress to fit instead of
+              handing the overflow to the scroller. Most of what is inside is
+              text, whose `min-height: auto` already refuses to shrink — but
+              the session rows carry an explicit `min-h-[44px]`, which REPLACES
+              that floor and is exactly the kind of thing that squeezes a
+              44px tap target down on a short viewport. One wrapper settles it
+              for everything between the header controls and the footer.
+
+              A wrapper and not `shrink-0` on each row, because the footer has
+              to stay a DIRECT child of #improve-body: dapp.json checks
+              `#improve-body > #improve-footer > #improve-row-github`, and
+              `mt-auto` only anchors against the flex container it is a child
+              of.
+          */}
+          <div className="shrink-0">
           <div className={SECTION_LABEL_CLASS}>Sessions</div>
           {state.loadingSessions && !state.sessionsLoaded ? (
             <div className="px-4 py-2 text-xs text-zinc-500 dark:text-zinc-400">
@@ -261,21 +317,23 @@ export function ImprovePanel() {
             />
           )}
 
-          <div className={SECTION_LABEL_CLASS}>Development</div>
-          <ImproveRow
-            id="improve-row-kanban"
-            icon={<BoardIcon className="w-5 h-5 shrink-0" aria-hidden="true" />}
-            label="Development kanban"
-            detail={<ChevronRightIcon className="w-4 h-4 text-zinc-400 shrink-0" />}
-            onClick={() => Improve.openDev('kanban')}
-          />
-          <ImproveRow
-            id="improve-row-feed"
-            icon={<ListLinesIcon className="w-5 h-5 shrink-0" aria-hidden="true" />}
-            label="Latest development activity"
-            detail={<ChevronRightIcon className="w-4 h-4 text-zinc-400 shrink-0" />}
-            onClick={() => Improve.openDev('feed')}
-          />
+          {/*
+              THE "DEVELOPMENT" SECTION'S TWO NAVIGATION ROWS ARE GONE (#1363).
+
+              `#improve-row-kanban` and `#improve-row-feed` were list rows with
+              a chevron — "Development kanban" and "Latest development
+              activity" — and they are the App/Feed/Kanban toggle at the top of
+              this panel now. Three mutually exclusive views of one app, one of
+              them always current, is a segmented control rather than two
+              one-way links; and as links they could say where to GO but never
+              where you WERE, which is why following one left no way back to
+              the app. Improve.openDev(mode) is unchanged and is still what the
+              two segments call.
+
+              The heading went with them: the terminal below is the only row
+              left under it, and a section label over a single conditional row
+              is a heading that vanishes.
+          */}
           {/* The developer terminal — the header's #dev-console-btn, as a row.
               Shown on exactly the signal that used to show that button: an app
               iframe is on screen and the console has something to attach to. */}
@@ -300,9 +358,21 @@ export function ImprovePanel() {
             </>
           ) : null}
 
+          </div>
+
+          {/*
+              `mt-auto` (#1363) — the version, GitHub and Share block is pinned
+              to the FOOT of the panel whenever the rows above it leave free
+              space, which on a tall desktop sidebar with one session is most
+              of it. #improve-body is the column flex that makes it work; when
+              the rows DO fill the panel there is no free space to collect and
+              this degrades to "at the end of the scroll", exactly as before.
+              `mt-2` stays as the floor so the border never crowds the row
+              above it in that case.
+          */}
           <div
             id="improve-footer"
-            className="mt-2 border-t border-zinc-100 dark:border-zinc-800"
+            className="mt-auto shrink-0 pt-2 border-t border-zinc-100 dark:border-zinc-800"
           >
             {state.repoUrl ? (
               <ImproveRow

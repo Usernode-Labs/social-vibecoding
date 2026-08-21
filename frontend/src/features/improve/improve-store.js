@@ -55,6 +55,7 @@ import { createStore } from '../../lib/plain-store.js';
  * @property {boolean} readOnly
  * @property {boolean} showTerminal
  * @property {boolean} canShare
+ * @property {'app'|'dev'} tab
  * @property {ImproveSession[]} sessions
  * @property {ImproveSession[]} otherSessions
  * @property {boolean} loadingSessions
@@ -73,11 +74,25 @@ const INITIAL = {
    */
   target: null,
   /**
-   * The target's slug — the open app's. (Home used to publish the platform's
-   * OWN self-hosted row here; it publishes nothing now, so the header button
-   * never outlives the app it was about.)
+   * The target's slug — the open app's, or the platform's own self-hosted row
+   * while home is on screen (#1363, published by Home.publishImproveTarget).
    */
   slug: null,
+  /**
+   * Which half of the open app is on screen: its App tab or its Dev area.
+   *
+   * Republished from `App.switchTab()` — the one place `App.currentTab` is
+   * assigned — because the App/Feed/Kanban toggle (#1363) has to render which
+   * one is active, and a control that reflects state needs that state to be
+   * reactive. THE UI OVERHAUL deleted the `.app-mode-seg` repaint that used to
+   * sit in switchTab for exactly this reason, noting "there is no control in
+   * the header reflecting which tab is active any more"; there is again, so
+   * the fact is published as store state rather than repainted by hand.
+   *
+   * 'app' in the initial value because that is `App.currentTab`'s own initial
+   * value, so the prerender and the first client render agree.
+   */
+  tab: 'app',
   /** Display name for the header line. */
   name: '',
   /** True when the target is the platform's own self-hosted row. */

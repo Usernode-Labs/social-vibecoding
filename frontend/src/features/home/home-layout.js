@@ -146,6 +146,57 @@ const HomeLayout = {
     return last;
   },
 
+  // ── The collapsed grid's row bound (#1363) ─────────────────────────
+  //
+  // Home.render() shows a COLLAPSED grid by default and offers "Show all N
+  // apps" to reveal the rest. This answers the one question that view has to
+  // ask: what is the LAST row index it may draw?
+  //
+  // The naive answer — `DEFAULT_ROWS - 1`, i.e. rows 0 and 1 — is what it used
+  // to use, and it is wrong for exactly the layouts free-form placement makes
+  // possible. A viewer whose apps sit on rows 0 and 2 (a hole on row 1, which
+  // HOLES ARE THE POINT explicitly allows) got a collapsed grid holding ONE
+  // row of tiles and a "Show all" button: the two-row default silently became
+  // a one-row default the moment somebody used the feature the canvas exists
+  // for.
+  //
+  // So the bound is "far enough down to include DEFAULT_ROWS rows that
+  // actually HOLD something", never less than the naive answer. Two
+  // properties matter:
+  //
+  //   * NOTHING IS RE-PLACED. Every tile keeps the exact cell the viewer put
+  //     it in — this widens the window, it does not compact anything into it.
+  //     That is what keeps a drag inside a collapsed grid landing on the cell
+  //     the pointer is actually over.
+  //   * The holes it pulls in cost half a row each, not a whole one:
+  //     blankRows() already sizes an empty row at var(--home-blank-row-h).
+  //
+  // In the common case — apps packed onto rows 0 and 1 — this returns 1, byte
+  // for byte the old behaviour.
+  defaultRowBound(layout, cols) {
+    const occupied = new Set();
+    for (const item of layout || []) {
+      if (!item || item.row >= HomeLayout.MAX_ROWS) continue;
+      const [, h] = HomeLayout.sizeOf(item, cols);
+      for (let dy = 0; dy < h; dy++) {
+        const row = item.row + dy;
+        if (row < HomeLayout.MAX_ROWS) occupied.add(row);
+      }
+    }
+    // Never narrower than the naive window, so a sparse canvas still offers
+    // the two rows' worth of empty cells a viewer can drop onto.
+    let bound = HomeLayout.DEFAULT_ROWS - 1;
+    let seen = 0;
+    for (const row of [...occupied].sort((a, b) => a - b)) {
+      seen += 1;
+      if (seen >= HomeLayout.DEFAULT_ROWS) {
+        if (row > bound) bound = row;
+        break;
+      }
+    }
+    return bound;
+  },
+
   // ── Occupancy ──────────────────────────────────────────────────────
   //
   // A Set of "col,row" strings. Built fresh per query rather than cached:
