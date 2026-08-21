@@ -316,12 +316,24 @@ test("a server-resolved event id is fed back silently", () => {
 });
 
 test('pull-to-refresh dispatches on the active section', () => {
-  const fn = appJs.slice(appJs.indexOf('  _wirePullToRefresh() {'), appJs.indexOf('  bindEvents() {'));
-  assert.match(fn, /Leaderboard\.section === 'topochain'/, 'the handler branches on the section');
-  assert.match(fn, /TopochainLeaderboard\.loadLeaderboard\(\)/,
+  // The three-pane dispatch moved out of _wirePullToRefresh into
+  // App._refreshLeaderboard, so the service worker's late-arrival
+  // correction (App.refreshActiveScreen) refreshes this screen through the
+  // exact same loaders a manual pull uses. Assert the extracted helper
+  // still branches, AND that the pull still routes through it — a copy of
+  // this logic left behind in the pull handler is the drift this split was
+  // made to prevent.
+  const wire = appJs.slice(appJs.indexOf('  _wirePullToRefresh() {'), appJs.indexOf('  bindEvents() {'));
+  assert.match(wire, /pullToRefresh\(lb, \(\) => App\._refreshLeaderboard\(\)\)/,
+    'the pull must delegate to the shared helper');
+
+  const fn = appJs.slice(appJs.indexOf('  _refreshLeaderboard() {'));
+  const body = fn.slice(0, fn.indexOf('\n  },') + 1);
+  assert.match(body, /Leaderboard\.section === 'topochain'/, 'the handler branches on the section');
+  assert.match(body, /TopochainLeaderboard\.loadLeaderboard\(\)/,
     'a pull on the Topochain tab reloads Topochain standings, not kudos panes');
-  assert.match(fn, /Leaderboard\.section === 'challenges'/, 'and on the challenges section');
-  assert.match(fn, /TopochainChallenges\.loadChallenges\(\)/,
+  assert.match(body, /Leaderboard\.section === 'challenges'/, 'and on the challenges section');
+  assert.match(body, /TopochainChallenges\.loadChallenges\(\)/,
     'a pull on the Challenges tab reloads the challenge grid');
 });
 
