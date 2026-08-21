@@ -12,23 +12,23 @@
  * attribute and `hidden` semantic is the one the template emitted.
  *
  * React-owned, and now stateful:
- *   * the header bar — caption, the four-button view toggle, the "+" button and
- *     its dropdown, including every `data-plus` row and the two
+ *   * the header bar — the "Dev" caption, the Feed/Kanban tab strip, the "+"
+ *     button and its dropdown, including every `data-plus` row and the two
  *     `data-plus-group` headings;
  *   * `#dev-forum-scroll` and the General-chat card.
  *
  * Legacy-owned hosts, rendered by React but never reconciled into:
  *   * `#dev-body` — `AppView._repaintDevBody()` replaces its `innerHTML` on
- *     every mode switch and feed reload, so its initial content is a CONSTANT
+ *     every tab switch and feed reload, so its initial content is a CONSTANT
  *     `dangerouslySetInnerHTML` OBJECT (`DEV_BODY_INITIAL`). React writes it
  *     once at mount and, because the object's identity never changes, never
  *     looks inside again. The identity is what matters: React 19 diffs host
  *     props by reference and re-assigns `innerHTML` whenever the `{__html}`
  *     wrapper is a new object, even for an identical string — an inline
- *     literal here made every toggle click wipe the module's paint back to
- *     "Loading…". Rendering `#dev-feed` and `#gc-merged` as JSX children
- *     instead would make every view-mode re-render reconcile against nodes
- *     the module has since replaced.
+ *     literal here made every tab click wipe the module's paint back to
+ *     "Loading…". Rendering `#dev-feed` as a JSX child instead would make
+ *     every view-mode re-render reconcile against nodes the module has since
+ *     replaced.
  *   * `#dev-locked-notice`, `#dev-chat-card-preview`, `#dc-secrets-state` —
  *     leaves the module writes text or `innerHTML` into, and in the notice's
  *     case toggles `hidden` on. They are safe because React renders their
@@ -53,7 +53,12 @@
  * exists on the Dev route. Chunk H (#1085) folds it into the main tree.
  */
 
-import { ChevronRightIcon, DiscussionIcon, Glyph } from '@/components/ui/icons';
+import {
+  BoardIcon,
+  ChevronRightIcon,
+  DiscussionIcon,
+  ListLinesIcon,
+} from '@/components/ui/icons';
 
 import { useDevViewMode, type DevViewMode } from './view-mode-store';
 
@@ -71,55 +76,63 @@ export interface DevBoardFrameProps {
   cardCls: string;
   /** `AppView.DEV_CARD_HOVER_CLS`. */
   cardHoverCls: string;
-  /** Called when a toggle button is pressed — `AppView._setViewMode` + repaint. */
+  /** Called when a tab is pressed — `AppView._setViewMode` + repaint. */
   onSelectViewMode: (mode: DevViewMode) => void;
 }
 
 /**
- * `AppView._viewToggleBtnCls(active)`, character for character.
+ * The Dev screen's two tabs.
  *
- * Kept here rather than imported from the module because this is the only
- * remaining caller: `_updateViewToggleUI()` is gone and `_renderViewToggle()`
- * with it.
+ * THE UI OVERHAUL replaced a four-icon segmented control — List, Kanban, PM,
+ * Reporting — with this. Two things drove that. The icons were unlabelled, so
+ * the two overviews almost nobody switched to were also the two nobody could
+ * identify; and a "display preference" toggle had quietly accumulated four
+ * genuinely different products behind it, one of which (Reporting) generated a
+ * document. What is left is the two answers a board is actually asked for:
+ * what just happened, and what is in flight.
+ *
+ * Labelled text tabs rather than icons, and an underline rather than a filled
+ * pill, because these are now the primary navigation WITHIN the Dev area
+ * rather than a corner control — the Improve panel links straight to either
+ * one, so a viewer can arrive on a tab without having chosen it and needs to
+ * read where they are.
  */
-function viewToggleBtnCls(active: boolean): string {
+function viewTabCls(active: boolean): string {
   return (
-    // #1288: 36px boxes + the kit's 44px tap halo. The outer-corner rounding
-    // lives on the first/last segments (7px = the container's 8px rounded-lg
-    // minus its 1px border) because the container must NOT clip overflow —
-    // overflow-hidden would cut the un-touch-target halos back to the box.
-    'dev-view-btn un-touch-target w-9 h-9 flex items-center justify-center transition-colors ' +
-    'first:rounded-l-[7px] last:rounded-r-[7px] ' +
-    (active
-      ? 'bg-violet-600 text-white'
-      : 'text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800')
+    // The 44px kit tap halo on a 36px box, exactly as the retired icon
+    // buttons carried it.
+    'dev-view-btn un-touch-target h-9 px-3 inline-flex items-center gap-1.5 '
+    + 'text-sm font-medium border-b-2 -mb-px transition-colors '
+    + (active
+      ? 'border-violet-600 text-violet-600 dark:text-violet-400'
+      : 'border-transparent text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200')
   );
 }
 
-/** The four inline SVGs the template built, as JSX. Same paths, same order. */
-const VIEW_ICON_PATHS: Record<DevViewMode, string> = {
-  // List-lines (three rows).
-  list: 'M4 6h16M4 12h16M4 18h16',
-  // Board / columns.
-  kanban: 'M4 5h4v14H4zM10 5h4v9h-4zM16 5h4v6h-4z',
-  // People (two-person silhouette) for the PM assignment overview.
-  pm: 'M17 20h5v-1a4 4 0 00-3-3.87M9 20H4v-1a4 4 0 013-3.87m6 4.87v-1a4 4 0 00-3-3.87M12 7a3 3 0 11-6 0 3 3 0 016 0zm7 3a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0z',
-  // #1100: document-with-lines for the read-only progress report.
-  report: 'M8 4h8l4 4v12H8zM8 4H6a2 2 0 00-2 2v12M11 12h6M11 16h6M11 8h2',
-};
-
-const VIEW_BUTTONS: {
+const VIEW_TABS: {
   mode: DevViewMode;
   id: string;
+  label: string;
   title: string;
+  Icon: typeof BoardIcon;
 }[] = [
-  { mode: 'list', id: 'dev-view-list', title: 'List view' },
-  { mode: 'kanban', id: 'dev-view-kanban', title: 'Kanban view' },
-  { mode: 'pm', id: 'dev-view-pm', title: 'PM view — tasks by assignee' },
-  { mode: 'report', id: 'dev-view-report', title: 'Reporting — progress report' },
+  {
+    mode: 'feed',
+    id: 'dev-view-feed',
+    label: 'Feed',
+    title: 'Feed — recent activity, newest first',
+    Icon: ListLinesIcon,
+  },
+  {
+    mode: 'kanban',
+    id: 'dev-view-kanban',
+    label: 'Kanban',
+    title: 'Kanban — work in flight, by column',
+    Icon: BoardIcon,
+  },
 ];
 
-function ViewToggle({
+function ViewTabs({
   active,
   onSelect,
 }: {
@@ -128,22 +141,24 @@ function ViewToggle({
 }) {
   return (
     <div
-      className="inline-flex items-center rounded-lg border border-zinc-200 dark:border-zinc-700"
-      role="group"
-      aria-label="Dev view mode"
+      id="dev-view-tabs"
+      className="inline-flex items-stretch gap-4 border-b border-zinc-200 dark:border-zinc-700"
+      role="tablist"
+      aria-label="Dev view"
     >
-      {VIEW_BUTTONS.map(({ mode, id, title }) => (
+      {VIEW_TABS.map(({ mode, id, label, title, Icon }) => (
         <button
           key={mode}
           id={id}
+          role="tab"
           data-view={mode}
-          className={viewToggleBtnCls(active === mode)}
-          aria-pressed={active === mode}
+          className={viewTabCls(active === mode)}
+          aria-selected={active === mode}
           title={title}
-          aria-label={title}
           onClick={() => onSelect(mode)}
         >
-          <Glyph className="w-5 h-5" aria-hidden="true" d={VIEW_ICON_PATHS[mode]} />
+          <Icon className="w-4 h-4" aria-hidden="true" />
+          {label}
         </button>
       ))}
     </div>
@@ -209,12 +224,13 @@ function ChatCardIcon() {
 /**
  * `#dev-body`'s initial content, as a constant string — see the header.
  *
- * Byte-for-byte what the template put there, so the first paint (before
- * `_repaintDevBody()` runs) is the "Loading…" placeholder it always was.
+ * The "Loading…" placeholder the template always put there. The second node
+ * it used to carry — `#gc-merged`, the Completed block — is gone: completed
+ * work is ordinary activity in the Feed's own stream now (see
+ * `AppView._feedItems`), and the kanban Done column renders its own.
  */
 const DEV_BODY_INITIAL_HTML =
-  '<div id="dev-feed"><div class="text-xs text-zinc-500 dark:text-zinc-400">Loading…</div></div>' +
-  '<div id="gc-merged" class="mt-4"></div>';
+  '<div id="dev-feed"><div class="text-xs text-zinc-500 dark:text-zinc-400">Loading…</div></div>';
 
 /**
  * Module-level so the prop's IDENTITY is stable across renders. React 19's
@@ -240,21 +256,25 @@ export function DevBoardFrame({
 
   return (
     <div className="flex flex-col h-full min-h-0">
-      {/* Header bar: caption + view-mode toggle + the "+" menu (top right).
-          The "DEV" caption renders ONLY when the header's #app-mode-switch is
-          hidden — i.e. on the self-hosted platform row. Everywhere else the
-          header now says "Dev" a few pixels above this row, and printing it
-          twice reads as a bug. The flex-1 spacer keeps the toggle and "+"
-          right-aligned either way. */}
-      <div className="flex items-center gap-3 px-3 py-2 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
-        {selfHosted ? (
-          <span className="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider flex-1">
-            Dev
-          </span>
-        ) : (
-          <span className="flex-1"></span>
-        )}
-        <ViewToggle active={mode} onSelect={onSelectViewMode} />
+      {/* Header bar: the "Dev" caption, the Feed/Kanban tabs, and the "+"
+          menu (top right).
+
+          The caption used to render ONLY for the self-hosted platform row,
+          because everywhere else the header's #app-mode-switch already said
+          "Dev" a few pixels above this row and printing it twice read as a
+          bug. THE UI OVERHAUL retired that switch, so nothing above says it
+          any more and the caption is unconditional — it is the only thing
+          naming the area the two tabs sit under, which is exactly what the
+          product spec asks for ("reformatted to be under the Dev area").
+
+          The tab strip carries the bottom border now, so this row does not:
+          two stacked hairlines a few pixels apart read as a rendering fault. */}
+      <div className="flex items-end gap-3 px-3 pt-2 shrink-0 border-b border-zinc-200 dark:border-zinc-800">
+        <span className="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider pb-2.5">
+          Dev
+        </span>
+        <span className="flex-1"></span>
+        <ViewTabs active={mode} onSelect={onSelectViewMode} />
         <div className={`relative ${readOnly && selfHosted ? 'hidden' : ''}`}>
           <button
             id="dev-plus-btn"
@@ -392,10 +412,10 @@ export function DevBoardFrame({
             <ChevronRightIcon className="w-4 h-4 text-zinc-400 dark:text-zinc-500 shrink-0" />
           </button>
         </div>
-        {/* Body region: list mode mounts #dev-feed + #gc-merged here; kanban
-            mode mounts #dev-kanban. _repaintDevBody() owns the swap. The
-            wrapper node is stable across mode switches so the delegated
-            card-open handler (bound by the module) survives both. */}
+        {/* Body region: the Feed mounts #dev-feed here; Kanban mounts
+            #dev-kanban-filterbar + #dev-kanban-board. _repaintDevBody() owns
+            the swap. The wrapper node is stable across tab switches so the
+            delegated card-open handler (bound by the module) survives both. */}
         <div
           id="dev-body"
           className="px-3 py-2"

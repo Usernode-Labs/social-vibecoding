@@ -192,9 +192,9 @@ test('the bridge is published before hydration, and guarded for the SSG pass', (
 // ── the conversion: React owns the frame, modules keep their hosts ───────
 
 test('#dev-body stays a legacy host — a constant dangerouslySetInnerHTML', () => {
-  // AppView._repaintDevBody() replaces its innerHTML on every mode switch, so
-  // rendering #dev-feed / #gc-merged as JSX children would make each
-  // view-mode re-render reconcile against nodes the module has replaced.
+  // AppView._repaintDevBody() replaces its innerHTML on every tab switch, so
+  // rendering #dev-feed as a JSX child would make each view-mode re-render
+  // reconcile against nodes the module has replaced.
   //
   // The WRAPPER OBJECT must be a module-level constant too, not an inline
   // `{{ __html: … }}` literal. React 19 diffs host props by REFERENCE and its
@@ -202,9 +202,9 @@ test('#dev-body stays a legacy host — a constant dangerouslySetInnerHTML', () 
   // __html string comparison React 18 did in diffProperties is gone), so an
   // inline literal — a fresh object every render — makes EVERY re-render of
   // the frame rewrite #dev-body back to the placeholder. The view-mode store
-  // re-renders the frame on every toggle click, which turned each PM /
-  // Reporting switch into "Loading…" forever: _repaintDevBody() painted, then
-  // React's commit clobbered the paint.
+  // re-renders the frame on every tab click, which turned each switch into
+  // "Loading…" forever: _repaintDevBody() painted, then React's commit
+  // clobbered the paint.
   assert.match(
     FRAME,
     /id="dev-body"[\s\S]{0,200}dangerouslySetInnerHTML=\{DEV_BODY_INITIAL\}/,
@@ -223,7 +223,12 @@ test('#dev-body stays a legacy host — a constant dangerouslySetInnerHTML', () 
   // Byte-for-byte what the template put there.
   assert.ok(decl[1].includes('<div id="dev-feed">'), 'still ships #dev-feed');
   assert.ok(decl[1].includes('Loading…'), 'still ships the loading placeholder');
-  assert.ok(decl[1].includes('<div id="gc-merged" class="mt-4"></div>'), 'still ships #gc-merged');
+  // #gc-merged is NOT here any more: THE UI OVERHAUL folded completed work
+  // into the Feed's own stream (AppView._feedItems), so the second node the
+  // template used to ship — the "Completed" block parked below the feed — is
+  // gone. The kanban Done column renders its own.
+  assert.ok(!decl[1].includes('gc-merged'),
+    'the retired Completed block must not come back as a second host');
   // The module still owns it.
   assert.match(APP_VIEW, /_repaintDevBody\(\)/, '_repaintDevBody is still the swap owner');
 });
@@ -271,11 +276,19 @@ test('the view toggle is real React state, and the className writer is gone', ()
   assert.match(APP_VIEW, /_selectViewMode\(v\) \{/, 'the click handler lives in the module');
   assert.match(APP_VIEW, /AppView\._setViewMode\(mode\);\s*\n\s*\/\/[^\n]*\n\s*AppView\._repaintDevBody\(\);/,
     'a mode change still persists and repaints, in that order');
-  // All four buttons, with their ids and aria-pressed, survive.
-  for (const id of ['dev-view-list', 'dev-view-kanban', 'dev-view-pm', 'dev-view-report']) {
+  // THE UI OVERHAUL cut four icon buttons down to two labelled tabs. The ids
+  // are the contract dapp.json selects on, so they are pinned; the retired
+  // two must be really gone rather than merely unrendered.
+  for (const id of ['dev-view-feed', 'dev-view-kanban']) {
     assert.ok(FRAME.includes(`id: '${id}'`), `${id} still rendered`);
   }
-  assert.match(FRAME, /aria-pressed=\{active === mode\}/, 'aria-pressed still reflects the mode');
+  for (const id of ['dev-view-list', 'dev-view-pm', 'dev-view-report']) {
+    assert.ok(!FRAME.includes(`id: '${id}'`), `${id} was retired`);
+  }
+  // A tab strip, not a toggle: role/aria-selected rather than aria-pressed.
+  assert.match(FRAME, /role="tablist"/, 'the strip is a tablist');
+  assert.match(FRAME, /aria-selected=\{active === mode\}/,
+    'aria-selected reflects the mode, so the active tab reaches the a11y tree');
   // Seeded from the module before the first paint, so ?view=kanban does not
   // flash list first.
   assert.match(MOUNT, /publishViewMode\(options\.viewMode\);/, 'the store is seeded at mount');

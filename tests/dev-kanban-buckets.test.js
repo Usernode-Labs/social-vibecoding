@@ -463,10 +463,15 @@ test('loadMoreMerged repaints the board (not #gc-merged) in kanban mode', async 
   assert.equal(writes.length, 0, '#gc-merged is never touched in kanban mode');
 });
 
-test('loadMoreMerged updates #gc-merged (not the board) in list mode', async () => {
+test('loadMoreMerged repaints the body in Feed mode too, and never #gc-merged', async () => {
+  // This used to assert the OPPOSITE: the retired List view kept its completed
+  // rows in a separate #gc-merged block that this patched in place, without
+  // repainting the board. THE UI OVERHAUL folded completed work into the
+  // Feed's own stream, so there is no such block in either mode and both go
+  // through _repaintDevBody.
   const writes = [];
   const ctx = makeCtx({
-    localStorage: { getItem: () => 'list', setItem: () => {} },
+    localStorage: { getItem: () => 'feed', setItem: () => {} },
     document: docWithGcMerged(captureEl(writes)),
     fetch: async () => ({ ok: true, json: async () => ({ merged: [], hasMore: false, total: 1 }) }),
   });
@@ -475,8 +480,8 @@ test('loadMoreMerged updates #gc-merged (not the board) in list mode', async () 
   AppView._repaintDevBody = () => { repaints += 1; };
   primePager(AppView);
   await AppView.loadMoreMerged();
-  assert.equal(repaints, 0, 'list mode does not repaint the whole board');
-  assert.ok(writes.length >= 1, '#gc-merged is updated in list mode');
+  assert.ok(repaints >= 1, 'Feed mode repaints the body');
+  assert.equal(writes.length, 0, '#gc-merged is never touched — it does not exist');
 });
 
 // ── _getViewMode default: explicit preference, else width-based (#462) ─────
@@ -497,20 +502,35 @@ test('no stored value + wide viewport → kanban by default', () => {
   assert.equal(ctx.__AppView._getViewMode(), 'kanban');
 });
 
-test('no stored value + narrow viewport → list by default', () => {
+test('no stored value + narrow viewport → feed by default', () => {
   const ctx = makeCtx({
     localStorage: { getItem: () => null, setItem: () => {} },
     matchMedia: mediaStub(false),
   });
-  assert.equal(ctx.__AppView._getViewMode(), 'list');
+  assert.equal(ctx.__AppView._getViewMode(), 'feed');
 });
 
-test('stored list beats the wide-viewport kanban default', () => {
+test("a stored 'list' migrates to feed, and still beats the kanban default", () => {
+  // 'list' is the retired name for exactly this surface, so a viewer who last
+  // left the board there must land on the Feed — not on the width default,
+  // which at this viewport would silently override their choice with kanban.
   const ctx = makeCtx({
     localStorage: { getItem: () => 'list', setItem: () => {} },
     matchMedia: mediaStub(true),
   });
-  assert.equal(ctx.__AppView._getViewMode(), 'list');
+  assert.equal(ctx.__AppView._getViewMode(), 'feed');
+});
+
+test('a stored pm / report preference migrates to the board', () => {
+  // The two retired overviews were board-shaped, so the board is the nearest
+  // surviving surface. Anything else would read as "my setting was forgotten".
+  for (const stored of ['pm', 'report']) {
+    const ctx = makeCtx({
+      localStorage: { getItem: () => stored, setItem: () => {} },
+      matchMedia: mediaStub(false),
+    });
+    assert.equal(ctx.__AppView._getViewMode(), 'kanban', `${stored} → kanban`);
+  }
 });
 
 test('stored kanban beats the narrow-viewport list default', () => {
@@ -521,11 +541,11 @@ test('stored kanban beats the narrow-viewport list default', () => {
   assert.equal(ctx.__AppView._getViewMode(), 'kanban');
 });
 
-test('no matchMedia in the environment → list (guarded fallback)', () => {
+test('no matchMedia in the environment → feed (guarded fallback)', () => {
   const ctx = makeCtx({
     localStorage: { getItem: () => null, setItem: () => {} },
   });
-  assert.equal(ctx.__AppView._getViewMode(), 'list');
+  assert.equal(ctx.__AppView._getViewMode(), 'feed');
 });
 
 test('unrecognized stored garbage falls through to the width-based default', () => {

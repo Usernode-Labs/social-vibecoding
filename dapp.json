@@ -1330,38 +1330,36 @@
       "expectSelector": "#dev-kanban-tabs [data-kanban-tab=\"done\"]"
     },
     {
-      "name": "PM view toggle button renders in the dev view switcher",
+      "name": "Dev screen offers exactly two tabs, Feed and Kanban",
       "path": "/?demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-view-pm"
+      "expectSelector": "#dev-view-tabs #dev-view-feed[data-view=\"feed\"] + #dev-view-kanban[data-view=\"kanban\"]",
+      "expectText": "Kanban"
     },
     {
-      "name": "Reporting button renders in the dev view switcher (#1100)",
+      "name": "The Dev tabs sit under a Dev caption",
       "path": "/?demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-view-report[data-view=\"report\"]"
+      "expectSelector": "#dev-view-tabs[role=\"tablist\"]",
+      "expectText": "Dev"
     },
     {
-      "name": "Reporting view renders the progress report sections (#1100)",
-      "path": "/?demo=1&view=report#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-report .ur-rpt-section[data-section=\"done\"]",
-      "expectText": "Progress report"
+      "name": "Feed is the selected tab on a ?view=feed deep link",
+      "path": "/?demo=1&view=feed#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-view-feed[aria-selected=\"true\"]"
     },
     {
-      "name": "Reporting toolbar offers the period selector and the Discord button (reporting-period)",
-      "path": "/?demo=1&view=report#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-report select#dev-report-period",
-      "expectText": "Generate Discord message"
+      "name": "A retired ?view=list link still resolves onto the Feed",
+      "path": "/?demo=1&view=list#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-view-feed[aria-selected=\"true\"] ~ #dev-view-kanban[aria-selected=\"false\"]"
     },
     {
-      "name": "Progress report renders the six-tile summary and Needs attention (#1264)",
-      "path": "/?demo=1&view=report#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-report .ur-rpt-section[data-section=\"attention\"]",
-      "expectText": "High priority backlog"
+      "name": "Kanban is the selected tab on a ?view=kanban deep link",
+      "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-view-kanban[aria-selected=\"true\"]"
     },
     {
-      "name": "Progress report renders the monthly strip and Work by owner (#1264)",
-      "path": "/?demo=1&view=report#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-report .ur-rpt-section[data-section=\"monthly\"] .ur-rpt-trend-fill",
-      "expectText": "Work by owner"
+      "name": "The Feed renders activity rows into #dev-feed",
+      "path": "/?demo=1&view=feed#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-body #dev-feed"
     },
     {
       "name": "Kanban cards show the assignee initial-avatar",

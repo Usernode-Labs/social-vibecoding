@@ -370,15 +370,40 @@ test('an in-flight recheck renders a disabled "Re-running…" button on re-rende
   assert.doesNotMatch(html, /castRecheck/);
 });
 
-test('_proposalPinRank pins failing/error proposals above ordinary ones', () => {
+test('the board pins failing/error proposals above ordinary ones', () => {
+  // #47 used to be asserted against AppView._proposalPinRank, which ordered
+  // the retired List view's proposal group. THE UI OVERHAUL replaced that view
+  // with the pure-recency Feed and removed the helper; the board is where
+  // priority lives now, so the rule is asserted through _bucketDevItems's
+  // In-review column instead — the surface a viewer actually reads it off.
   const AppView = makeAppView(ME);
-  assert.equal(AppView._proposalPinRank(baseProposal({ status: 'merging' })), 0);
-  assert.equal(AppView._proposalPinRank(baseProposal({ merge_conflict_state: 'failed' })), 2);
-  assert.equal(AppView._proposalPinRank(baseProposal({ check_state: 'failing' })), 3);
-  assert.equal(AppView._proposalPinRank(baseProposal({ check_state: 'error' })), 3);
+  const at = (h) => `2026-06-01T${String(h).padStart(2, '0')}:00:00Z`;
+  // Authored newest-first so ONLY the pin can reorder them.
+  const proposals = [
+    baseProposal({ id: 1, check_state: 'passing', promoted_at: at(9), last_message_at: at(9) }),
+    baseProposal({ id: 2, check_state: 'failing', promoted_at: at(2), last_message_at: at(2) }),
+    baseProposal({ id: 3, merge_conflict_state: 'failed', promoted_at: at(3), last_message_at: at(3) }),
+    baseProposal({ id: 4, status: 'merging', promoted_at: at(1), last_message_at: at(1) }),
+  ];
+  const buckets = AppView._bucketDevItems({
+    issues: [], proposals, gov: [], merged: [], mySessions: [], sharedSessions: [],
+  });
+  assert.deepEqual(
+    Array.from(buckets.inReview, (e) => e.item.id),
+    [4, 3, 2, 1],
+    'merging → conflict-failed → checks-failing → ordinary'
+  );
+
   // A passing / pending / skipped proposal is not pinned by checks —
-  // 'skipped' (#461) is not a problem state.
-  assert.equal(AppView._proposalPinRank(baseProposal({ check_state: 'passing' })), 4);
-  assert.equal(AppView._proposalPinRank(baseProposal({ check_state: 'pending' })), 4);
-  assert.equal(AppView._proposalPinRank(baseProposal({ check_state: 'skipped' })), 4);
+  // 'skipped' (#461) is not a problem state, so all three keep pure recency.
+  const calm = AppView._bucketDevItems({
+    issues: [],
+    proposals: [
+      baseProposal({ id: 10, check_state: 'skipped', promoted_at: at(1), last_message_at: at(1) }),
+      baseProposal({ id: 11, check_state: 'pending', promoted_at: at(5), last_message_at: at(5) }),
+      baseProposal({ id: 12, check_state: 'passing', promoted_at: at(3), last_message_at: at(3) }),
+    ],
+    gov: [], merged: [], mySessions: [], sharedSessions: [],
+  });
+  assert.deepEqual(Array.from(calm.inReview, (e) => e.item.id), [11, 12, 10]);
 });
