@@ -1,0 +1,8 @@
+node_modules/
+package.json
+package-lock.json
+bun.lock
+opencode.jsonc
+opencode.jsonc.lock
+opencode.jsonc.lock.*
+.opencode.jsonc.tmp-*

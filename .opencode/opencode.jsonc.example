@@ -1,0 +1,34 @@
+// Copying this file verbatim is not supported: opencode setup writes canonical
+// absolute paths for this machine into the ignored .opencode/opencode.jsonc.
+//
+// From a trusted, reviewed checkout, run:
+//   node ./tools/social-vibecoding opencode setup
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "social_vibecoding": {
+      "type": "local",
+      "command": [
+        "/absolute/path/to/node",
+        "/absolute/path/to/checkout/tools/social-vibecoding",
+        "mcp",
+        "--profile",
+        "production"
+      ],
+      "enabled": true
+    }
+  },
+  "permission": {
+    "social_vibecoding_*": "deny",
+    "social_vibecoding_social_vibecoding_login_status": "allow",
+    "social_vibecoding_social_vibecoding_whoami": "allow",
+    "social_vibecoding_social_vibecoding_api_read": "allow",
+    "social_vibecoding_social_vibecoding_api_write": "allow",
+    "social_vibecoding_social_vibecoding_proposal_start": "allow",
+    "social_vibecoding_social_vibecoding_proposal_append_context": "allow",
+    "social_vibecoding_social_vibecoding_proposal_push_commit": "allow",
+    "social_vibecoding_social_vibecoding_proposal_submit_build": "allow",
+    "social_vibecoding_social_vibecoding_proposal_status": "allow",
+    "social_vibecoding_social_vibecoding_proposal_promote": "ask"
+  }
+}

@@ -5,7 +5,9 @@
 This repository keeps conditional procedures as portable Agent Skills instead
 of loading them for every task. The canonical copies live in
 `.agents/skills/`; `.claude/skills/` links to that directory for Claude
-Code discovery.
+Code discovery. OpenCode discovers `.agents/skills/` directly, so it does not
+need a duplicate skill tree; its project plugin entry point under
+`.opencode/plugins/` links back to the canonical adapter in `.agents/hooks/`.
 Use the matching skill whenever its description fits:
 
 - `usernode-api` — inspect or change Usernode app/platform state.
@@ -15,8 +17,8 @@ Use the matching skill whenever its description fits:
 - `mobile-push-testing` — verify push delivery through a real phone.
 
 `CLAUDE.md` imports this file for the always-on repository rules below.
-Claude Code and Codex load the full workflow bodies only when a task selects a
-skill.
+Claude Code, Codex, and OpenCode load the full workflow bodies only when a task
+selects a skill.
 
 ## Know your base commit before you write code — the checkout will not tell you
 

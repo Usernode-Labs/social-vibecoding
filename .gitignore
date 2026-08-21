@@ -30,3 +30,9 @@ hackathon-data/
 
 # Local Claude Code worktree checkouts (never repo content).
 .claude/worktrees/
+
+# Machine-local OpenCode MCP wiring (absolute checkout/runtime paths).
+.opencode/opencode.jsonc
+.opencode/opencode.jsonc.lock
+.opencode/opencode.jsonc.lock.*
+.opencode/.opencode.jsonc.tmp-*

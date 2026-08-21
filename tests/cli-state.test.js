@@ -370,6 +370,38 @@ test('Codex setup table contains only canonical launcher data and reviewed tools
   }), /SHA-256/);
 });
 
+test('OpenCode setup config contains canonical launcher data and reviewed permissions', () => {
+  const document = main.setupOpenCodeJsonc({
+    nodePath: '/usr/bin/node',
+    scriptPath: '/checkout/tools/social-vibecoding',
+    profile: 'production',
+  });
+  assert.ok(document.startsWith(`${main.OPENCODE_GENERATED_HEADER}\n`));
+  const config = JSON.parse(document.slice(main.OPENCODE_GENERATED_HEADER.length));
+  assert.deepEqual(config.mcp.social_vibecoding, {
+    type: 'local',
+    command: [
+      '/usr/bin/node',
+      '/checkout/tools/social-vibecoding',
+      'mcp',
+      '--profile',
+      'production',
+    ],
+    enabled: true,
+  });
+  assert.equal(config.permission['social_vibecoding_*'], 'deny');
+  assert.equal(
+    config.permission.social_vibecoding_social_vibecoding_proposal_promote,
+    'ask'
+  );
+  assert.equal(
+    config.permission.social_vibecoding_social_vibecoding_api_write,
+    'allow'
+  );
+  assert.doesNotMatch(document, /bearer_token|SOCIAL_VIBECODING_TOKEN/);
+  assert.doesNotMatch(document, new RegExp(PRODUCTION_ORIGIN));
+});
+
 test('Claude setup registers only the canonical credential-free stdio command', () => {
   const server = main.claudeMcpServer({
     nodePath: '/usr/bin/node',
@@ -464,7 +496,7 @@ test('Claude setup distinguishes an absent local MCP server from command failure
   }), '/checkout'), /not found on PATH/);
 });
 
-test('CLI usage advertises both agent setup commands', async () => {
+test('CLI usage advertises all agent setup commands', async () => {
   let stderr = '';
   assert.equal(await main.main([], {
     stdout: { write: () => {} },
@@ -472,6 +504,7 @@ test('CLI usage advertises both agent setup commands', async () => {
   }), 2);
   assert.match(stderr, /social-vibecoding codex setup/);
   assert.match(stderr, /social-vibecoding claude setup/);
+  assert.match(stderr, /social-vibecoding opencode setup/);
 });
 
 test('CLI option parsing rejects duplicates instead of applying last-one-wins', () => {

@@ -1,0 +1,1 @@
+../../.agents/hooks/opencode-promotion-approval.js
