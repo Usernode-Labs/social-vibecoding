@@ -191,6 +191,17 @@ const ADDED_IDS = {
   'drawer-row-messages': 'Platform Messages destination in the global navigation drawer (#488).',
   'drawer-messages-badge': 'Aggregate unread conversation count in the global navigation drawer (#488).',
   'notifications-saved': 'Pinned "Saved" section at the top of the bell drawer, holding the messages this user bookmarked (#1280).',
+  // #1344 — verified users may claim one company-funded OpenRouter key.
+  // These are static settings controls; settings.js owns their state and the
+  // one-time plaintext reveal lifecycle.
+  'settings-openrouter-managed-card': 'Included managed OpenRouter key status and claim card (#1344).',
+  'settings-openrouter-managed-message': 'Eligibility/ownership/status copy for the included key (#1344).',
+  'settings-openrouter-claim': 'One-time managed child-key provisioning action (#1344).',
+  'settings-openrouter-reveal': 'One-time plaintext child-key reveal container (#1344).',
+  'settings-openrouter-revealed-key': 'Read-only one-time child-key value shown only after creation (#1344).',
+  'settings-openrouter-copy': 'Copy action for the one-time child-key reveal (#1344).',
+  'settings-openrouter-dismiss-reveal': 'Clears the one-time plaintext key from the settings DOM (#1344).',
+  'settings-openrouter-personal-controls': 'Personal-BYOK controls hidden while a managed key owns the credential slot (#1344).',
 };
 
 test('the shell still carries every id in the frozen baseline', () => {
