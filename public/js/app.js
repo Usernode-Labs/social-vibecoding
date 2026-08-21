@@ -594,17 +594,38 @@ const App = {
   // moment it ships. Pair it with ?demo=1 in staging so the session sections
   // have mock rows to render.
   //
-  // One tick after restoreFromHash, like ?shot=menu, so the panel opens over a
-  // settled shell — and so App.DrawerStatus.setAppOpen() has published a
-  // target on an #app/<slug> route. Without a target the panel refuses to open,
-  // which is the correct behaviour, not a failure to work around.
+  // It WAITS FOR A TARGET rather than firing on a fixed delay. Without one the
+  // panel refuses to open — correct behaviour, not something to work around —
+  // and on an #app/<slug> route the target is published by
+  // App.DrawerStatus.setAppOpen(), which runs after openApp()'s fetch has
+  // landed. A single 50ms tick (what ?shot=menu can afford, because the drawer
+  // needs nothing but a settled shell) fired long before that, so the panel
+  // stayed shut and both of its declared checks failed on an empty surface.
+  //
+  // Polls instead, on the checks runner's own budget: the home screen
+  // publishes its target during boot, so the first attempt usually wins, and
+  // an app route gets as long as the fetch needs. Bounded, so a route with no
+  // target at all (a screen the panel does not belong on) stops trying rather
+  // than spinning for the life of the page.
+  IMPROVE_SHOT_TRIES: 40,
+  IMPROVE_SHOT_INTERVAL_MS: 100,
+
   _applyImproveShot() {
     let shot = null;
     try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
     if (shot !== 'improve') return;
-    setTimeout(() => {
-      try { window.Improve?.open(); } catch (err) { /* ignore */ }
-    }, 50);
+    let tries = App.IMPROVE_SHOT_TRIES;
+    const attempt = () => {
+      try {
+        window.Improve?.open();
+        // open() is a no-op without a target, so the panel's own state is
+        // what says whether it took.
+        const panel = document.getElementById('improve-panel');
+        if (panel && panel.hasAttribute('data-open')) return;
+      } catch (err) { /* ignore */ }
+      if (--tries > 0) setTimeout(attempt, App.IMPROVE_SHOT_INTERVAL_MS);
+    };
+    setTimeout(attempt, 50);
   },
 
   _applyMenuShot() {

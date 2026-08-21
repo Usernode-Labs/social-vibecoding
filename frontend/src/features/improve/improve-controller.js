@@ -73,7 +73,14 @@ function toRow(session, appNameFallback) {
     id: session.id,
     appSlug: session.app_slug || null,
     appName: session.app_name || appNameFallback || session.app_slug || '',
-    title: session.title || 'Untitled session',
+    // THE SAME PRECEDENCE THE RETIRED WORK DRAWER USED (#971): the human
+    // title a session was given, then the PR it opened, then the branch it
+    // works on — a dev name is the last thing worth showing, and `id` is the
+    // floor. `session.title` alone was wrong: GET /api/me/active-sessions
+    // sends `session_title` / `pr_title` / `branch_name` and no `title` at
+    // all, so every row in the panel read "Untitled session".
+    title: session.session_title || session.pr_title || session.branch_name
+      || `Session #${session.id}`,
     status: statusLabel(session),
     busy: isBusy(session),
   };

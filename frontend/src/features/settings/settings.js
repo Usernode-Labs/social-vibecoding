@@ -75,8 +75,18 @@
 
     // ── Screen state ─────────────────────────────────────────────────────
     _open: false,
-    // Which section is showing (or would show on a viewport crossing).
-    _section: 'api-key',
+    // Which section is showing (or would show on a viewport crossing). It
+    // doubles as "last visited in this tab": open() keeps it when it is still
+    // a visible key, so returning to Settings lands where you left off.
+    //
+    // THAT IS WHY THE INITIAL VALUE MATTERS. It was 'api-key', hard-coded
+    // here before DEFAULT_SECTION existed, and a bare #settings on a fresh
+    // tab therefore resolved to it whatever the registry said — so THE UI
+    // OVERHAUL putting Theme first had no effect at all until this moved too.
+    // Kept as a literal because DEFAULT_SECTION is declared further down this
+    // same object literal; the two are pinned together by
+    // tests/theme-mode.test.js.
+    _section: 'theme',
     // Which level the phone layout is showing: 1 = the section menu,
     // 2 = one section. Kept in sync on desktop too (it is ignored there)
     // so a viewport crossing resolves without guessing.
@@ -515,7 +525,7 @@
       const valid = !!section && visible.some((s) => s.key === section);
       const fallback = visible.some((s) => s.key === Settings._section)
         ? Settings._section
-        : (visible[0] ? visible[0].key : 'api-key');
+        : (visible[0] ? visible[0].key : Settings.DEFAULT_SECTION);
 
       // On mobile, a bare #settings means the MENU — never a last-visited
       // section resurrected from earlier in this tab. On desktop it keeps
@@ -564,7 +574,7 @@
       const targetLevel = (!mobile || valid) ? 2 : 1;
       const targetSection = valid
         ? section
-        : (mobile ? Settings._section : (visible[0] ? visible[0].key : 'api-key'));
+        : (mobile ? Settings._section : (visible[0] ? visible[0].key : Settings.DEFAULT_SECTION));
       if (targetLevel === Settings._level && targetSection === Settings._section) {
         Settings._markRoute('skipped');
         return;
@@ -778,7 +788,7 @@
     setSection(key, opts) {
       const visible = Settings._visibleSections();
       if (!visible.some((s) => s.key === key)) {
-        key = visible[0] ? visible[0].key : 'api-key';
+        key = visible[0] ? visible[0].key : Settings.DEFAULT_SECTION;
       }
       Settings._section = key;
       if (!opts || opts.writeHash !== false) Settings._writeHash(key);

@@ -674,8 +674,17 @@ test('?shot=home-grid renders a real preview, not just the outlines', () => {
     HOME_SRC.indexOf('_maybeShowShotGrid(listEl) {'),
     HOME_SRC.indexOf('\n  // Kit-era long-press actions menu'));
   assert.match(shot, /_previewDrop\(el, \{ col: 0, row: 0 \}, true, cols\)/);
-  assert.match(shot, /canvas\[canvas\.length - 1\]/, 'a deterministic notional dragged item');
-  assert.match(shot, /canvas\.length > 1/, 'a single-item grid has nothing to displace');
+  // THE LAST RENDERED ITEM, not `canvas[canvas.length - 1]`. The canvas is
+  // eight rows deep and the grid shows two of them by default
+  // (HomeLayout.DEFAULT_ROWS, THE UI OVERHAUL), so on any real account the
+  // last canvas item is behind "Show all N apps" and has no element — which
+  // sent the shot to its no-subject branch and left the check asserting
+  // outlines with nothing being pushed.
+  assert.match(shot, /for \(let i = canvas\.length - 1; i > 0 && !el; i--\)/,
+    'walks back from the end to the last item that is actually on screen');
+  assert.match(shot, /Home\._elFor\(candidate, listEl\)/,
+    'and "on screen" means it resolves to an element');
+  assert.match(shot, /i > 0/, 'a single-item grid has nothing to displace');
 });
 
 test('a rejected write reverts to server truth', async () => {

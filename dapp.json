@@ -480,8 +480,8 @@
     {
       "name": "Improve panel shows a session's title, not its dev name (#971)",
       "path": "/?shot=improve&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#improve-panel[data-open] #improve-body a[href*=\"/sessions/\"]",
-      "expectText": "[Mock] Session titled but not yet proposed"
+      "expectSelector": "#improve-panel[data-open] #improve-body a[href$=\"/sessions/990101\"]",
+      "expectText": "[Mock] Your in-progress session"
     },
     {
       "name": "Improve panel: a busy session row pulses from live state (#1038)",
@@ -775,7 +775,7 @@
     {
       "name": "The desktop slide-over suppresses the screen fade too (#977)",
       "path": "/?shot=menu-nav",
-      "expectSelector": "#leaderboard-screen:not(.hidden)[data-entered=\"none\"]"
+      "expectSelector": "#profile-screen:not(.hidden)[data-entered=\"none\"]"
     },
     {
       "name": "Challenges widget: with no standings at all the fill falls back to the Kudos board (#962)",
@@ -812,8 +812,14 @@
       "expectText": "Nothing featured right now"
     },
     {
-      "name": "App tiles are placed at explicit grid cells, with iOS-sized two-line labels (#951)",
+      "name": "The launcher grid shows two rows by default, with a way to the rest",
       "path": "/?demo=1",
+      "expectSelector": "#home-body #home-apps-section #home-apps-more:not(.hidden) button",
+      "expectText": "Show all"
+    },
+    {
+      "name": "App tiles are placed at explicit grid cells, with iOS-sized two-line labels (#951)",
+      "path": "/?demo=1&shot=home-apps",
       "expectSelector": "#app-list .app-card[data-yours=\"true\"][style*=\"grid-row\"] .app-card-title",
       "expectText": "Staging demo photo album and journal"
     },
@@ -1821,7 +1827,7 @@
     {
       "name": "A settings history traversal routes once, so nothing pre-empts the transition snapshot (#1102)",
       "path": "/?shot=settings-back#settings",
-      "expectSelector": "#settings-screen:not(.hidden)[data-settings-route=\"skipped\"] #settings-section-content [data-settings-section=\"api-key\"]:not(.hidden)"
+      "expectSelector": "#settings-screen:not(.hidden)[data-settings-route=\"skipped\"] #settings-section-content [data-settings-section=\"theme\"]:not(.hidden)"
     },
     {
       "name": "Settings deep-links the Password section",
@@ -2177,7 +2183,7 @@
     },
     {
       "name": "AI credit reads like the dev chat: limit $spent/$limit, no pill",
-      "path": "/?shot=menu&demo=1",
+      "path": "/?demo=1#settings/api-key",
       "expectText": "limit $"
     },
     {
@@ -2297,8 +2303,8 @@
       "expectText": "Add API key"
     },
     {
-      "name": "The drawer's AI-credit row shows the remaining allowance (#555, #593)",
-      "path": "/?shot=menu&demo=1",
+      "name": "The AI-credit row shows the remaining allowance (#555, #593)",
+      "path": "/?demo=1#settings/api-key",
       "expectSelector": "#drawer-row-ai-budget .ai-budget-meter [data-credits-remaining]",
       "expectText": "$6.40 left"
     },

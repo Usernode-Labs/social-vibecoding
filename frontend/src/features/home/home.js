@@ -571,7 +571,20 @@ const Home = {
   // Per-visit only, like the widgets' own expand flag: a viewer who opened
   // the full grid once should not have every later visit start scrolled past
   // three sections, and a preference this cheap is not worth a write.
-  _appsExpanded: false,
+  // Whether "Show all N apps" has been pressed this visit. Per-visit state,
+  // deliberately not persisted: the two-row default is the contract, and an
+  // expansion the viewer forgot about would quietly eat the fold forever —
+  // the same reasoning as HomePanels._expanded.
+  //
+  // `?shot=home-apps` pins it ON before the first paint. Every row past the
+  // second is unreachable to a still frame and to a declared check otherwise,
+  // because the only way in is a tap; ungated and read-only, like every other
+  // shot link here, so the production "before" side works the moment it ships.
+  _appsExpanded: (() => {
+    try {
+      return new URLSearchParams(location.search).get('shot') === 'home-apps';
+    } catch (err) { return false; }
+  })(),
 
   // "Show all N apps" — the two-row default's way out. Rendered into a host
   // OUTSIDE #app-list so the grid's wholesale innerHTML rewrite cannot take
@@ -3478,10 +3491,21 @@ const Home = {
     // of the link — the preview is the part a reviewer needs to see and the
     // part nothing can navigate to, and it makes the state assertable by a
     // declared check instead of only by a live gesture.
+    // THE LAST RENDERED ITEM, not the last item on the canvas. The canvas is
+    // eight rows deep and the grid shows two of them by default
+    // (HomeLayout.DEFAULT_ROWS, THE UI OVERHAUL), so on any real account the
+    // last canvas item is behind "Show all N apps" and has no element at all —
+    // which sent this straight to the no-subject branch below and left the
+    // shot with outlines and nothing being pushed.
     const layout = Home.currentLayoutCached(cols);
     const canvas = HomeLayout.canvasItems(layout);
-    const dragged = canvas.length > 1 ? canvas[canvas.length - 1] : null;
-    const el = dragged ? Home._elFor(dragged, listEl) : null;
+    let dragged = null;
+    let el = null;
+    for (let i = canvas.length - 1; i > 0 && !el; i--) {
+      const candidate = canvas[i];
+      const found = Home._elFor(candidate, listEl);
+      if (found) { dragged = candidate; el = found; }
+    }
     if (el) {
       // The same dashed, contents-hidden drop slot a real lift gives the
       // dragged item (native.css .un-reorder-slot). Without it the tile stays
