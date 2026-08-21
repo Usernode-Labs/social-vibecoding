@@ -4888,8 +4888,15 @@
     //     already fetched, and the ?shot=terms-consent /
     //     ?shot=terms-consent-blocking screenshot states pass a fixed one
     //     so the shots do no fetch and no writes.
+    _termsSheetOpen: false,
     async showTermsSheet(onAccepted, opts) {
       opts = opts || {};
+      // Reentrancy guard (#1361): never lift a second terms overlay over
+      // an open one. Return-early, not dismiss-and-replace, so a blocking
+      // native modal can never be displaced by a later plain open. The
+      // flag clears in the wrapped onClosed below — the kit fires
+      // onDismiss on every teardown, programmatic dismiss included.
+      if (this._termsSheetOpen) return;
       const firstRun = opts.firstRun === true;
       let payload = opts.payload || null;
       if (!payload) {
@@ -5036,8 +5043,13 @@
         panel.appendChild(closeBtn);
       }
 
-      const onClosed = typeof opts.onClosed === 'function'
-        ? opts.onClosed : null;
+      // Re-check after the awaits above: a concurrent call could have
+      // presented while this one was still fetching /terms/current.
+      if (this._termsSheetOpen) return;
+      const onClosed = () => {
+        Settings._termsSheetOpen = false;
+        if (typeof opts.onClosed === 'function') opts.onClosed();
+      };
       if (blocking && window.PlatformUI &&
           typeof PlatformUI.modal === 'function') {
         // Non-dismissible modal (#1328): no backdrop tap, no Escape, no
@@ -5057,50 +5069,9 @@
           ? PlatformUI.sheet({ contentEl: panel, onDismiss: onClosed })
           : null;
       }
-    },
-
-    // ── First-entry terms prompt (#1297) ──────────────────────────────
-    // The consent gate only guards the mobile/challenges API surfaces, so
-    // a web-only account could use the whole platform without ever seeing
-    // the published terms. Present the sheet above once, on the boot that
-    // enters the full shell, while the account has never responded to the
-    // current version (consent.status null — an accept OR a decline is a
-    // response, so neither is re-prompted). One prompt per (user, version)
-    // per browser; a new published version prompts again, and Settings ›
-    // About & legal keeps the always-available path.
-    _termsPromptSeenKey(user, versionId) {
-      const who = user && user.id != null ? String(user.id) : (user && user.username) || 'anon';
-      return 'sv-terms-prompted:' + who + ':' + versionId;
-    },
-    async maybePromptTerms(user) {
-      // Screenshot fixtures and the native demo states must never get a
-      // sheet lifted over them — the declared checks select on the screen
-      // underneath.
-      try {
-        if (new URLSearchParams(location.search).get('shot')) return;
-      } catch (_) { /* ignore */ }
-      if (this._unDemoMode()) return;
-      let payload = null;
-      try {
-        const res = await fetch('/challenges-api/terms/current', {
-          credentials: 'same-origin',
-        });
-        // 404 = nothing published (gate open); any other failure is not
-        // worth interrupting the boot over — the Settings path remains.
-        if (!res.ok) return;
-        const body = await res.json().catch(() => null);
-        if (!body || !body.success || !body.data) return;
-        payload = body.data;
-      } catch (_) {
-        return;
-      }
-      const consent = payload.consent || {};
-      if (consent.status != null) return;
-      let seen = null;
-      try { seen = localStorage.getItem(this._termsPromptSeenKey(user, payload.id)); } catch (_) { /* private mode */ }
-      if (seen) return;
-      try { localStorage.setItem(this._termsPromptSeenKey(user, payload.id), '1'); } catch (_) { /* private mode */ }
-      this.showTermsSheet();
+      // Only an actually-presented overlay latches — a kit-less boot
+      // (sheet null) must keep later opens working.
+      this._termsSheetOpen = !!sheet;
     },
 
     // `readError` / `loading` only matter when there is NO snapshot: the
@@ -5574,26 +5545,10 @@
   // module graph in Node (#1081 chunk D).
   if (typeof window !== 'undefined') window.Settings = Settings;
 
-  // First-entry terms prompt (#1297). `sv:authed` fires at most once per
-  // page load, and only for sessions that enter the full shell — the
-  // waiting room returns from enterAuthed before the dispatch. The delay
-  // lets the boot paint and kit adoption settle before a sheet lifts;
-  // the already-authed branch mirrors notifications.js's boot idiom for
-  // the (theoretical) case where this module evaluates after the event.
-  if (typeof document !== 'undefined' && typeof window !== 'undefined') {
-    const promptTerms = (user) => {
-      setTimeout(() => {
-        try {
-          Settings.maybePromptTerms(user || (window.App && App.user) || {});
-        } catch (_) { /* never break boot */ }
-      }, 1500);
-    };
-    if (window.App && App.user) promptTerms(App.user);
-    else {
-      document.addEventListener('sv:authed',
-        (e) => promptTerms(e && e.detail && e.detail.user), { once: true });
-    }
-  }
+  // The first-entry terms prompt lives in ./terms-first-run.js — the ONE
+  // boot trigger that auto-presents showTermsSheet (issue #1361 was two
+  // parallel implementations of #1297 both riding sv:authed, stacking two
+  // sheets at login; the settings.js copy was removed in its fix).
 
   // init() is called from SettingsScreen's layout effect (../index.tsx), not
   // from DOMContentLoaded. Same moment in practice — the React entry is a

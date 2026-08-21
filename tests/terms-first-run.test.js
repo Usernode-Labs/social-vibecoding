@@ -188,6 +188,40 @@ test('a pre-fetched payload skips the fetch (what makes the shots write-free)', 
   assert.match(settingsJs, /if \(!payload\) \{/);
 });
 
+// ─── Single presenter (#1361) ─────────────────────────────────────────────
+
+test('exactly one boot trigger auto-presents the terms sheet (#1361)', () => {
+  // #1297 was implemented twice in parallel (#1315 and #1318 both merged),
+  // each riding sv:authed — at login the two presented two stacked sheets.
+  // The fix removed the settings.js copy (maybePromptTerms, its localStorage
+  // stamp and its module-scope sv:authed listener); the ONLY auto-trigger is
+  // terms-first-run.js. Manual entry points (About & legal, the profile
+  // notice) stay user-initiated.
+  assert.ok(!settingsJs.includes('maybePromptTerms'),
+    'the duplicate #1315 auto-prompt must not return to settings.js');
+  assert.ok(!settingsJs.includes('sv-terms-prompted'),
+    'the once-per-browser localStorage stamp went with it');
+  assert.ok(!settingsJs.includes("addEventListener('sv:authed'"),
+    'settings.js must not hook the authed boot — only terms-first-run.js does');
+});
+
+test('showTermsSheet never stacks a second terms overlay (#1361)', () => {
+  const sheetBody = settingsJs.slice(
+    settingsJs.indexOf('async showTermsSheet('),
+    settingsJs.indexOf('_renderUsernodeBody(readError, loading)'));
+  // Return-early, not dismiss-and-replace — a blocking native modal must
+  // never be displaced by a later plain open. Checked at entry AND again
+  // after the fetch awaits, so a concurrent call can't slip through.
+  const guards = sheetBody.match(/if \(this\._termsSheetOpen\) return;/g) || [];
+  assert.equal(guards.length, 2, 'guard at entry and again before presenting');
+  // Only an actually-presented overlay latches, and every teardown —
+  // programmatic dismiss included — clears the flag via the wrapped
+  // onDismiss, which still chains the caller's own onClosed.
+  assert.match(sheetBody, /this\._termsSheetOpen = !!sheet;/);
+  assert.match(sheetBody,
+    /Settings\._termsSheetOpen = false;\s*\n\s*if \(typeof opts\.onClosed === 'function'\) opts\.onClosed\(\);/);
+});
+
 // ─── The screenshot states (?shot=terms-consent[-blocking]) ──────────────
 
 test('the shots present both variants from a fixed payload, no fetch', () => {
