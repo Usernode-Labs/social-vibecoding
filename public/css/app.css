@@ -17,6 +17,9 @@
   --accent: #0a7cff;
   --accent-light: #1f86ff;
   --accent-tint: rgba(10, 124, 255, 0.08);
+  /* Text ON the accent — the outgoing message bubble is the only place the
+     shell puts type on a saturated fill, and it must not follow the page. */
+  --accent-ink: #ffffff;
 
   /* ── App identity tints (the widget language) ──────────────────────
      An app's tile colour. DELIBERATELY OUTSIDE the zinc/violet ramps:
@@ -663,6 +666,7 @@ html.un-kb .platform-safe-bar {
   --accent: #5aa9ff;
   --accent-light: #8cc4ff;
   --accent-tint: rgba(90, 169, 255, 0.14);
+  --accent-ink: #0b0b0c;
 
   /* Dark counterparts of the semantic state tokens. Every --state-*
      declared on :root has one here — tests/dev-color-tokens.test.js
@@ -2016,17 +2020,28 @@ html, body {
 
 .dc-msg { padding: 8px 12px; max-width: 92%; }
 
+/* The agent chat is the language's BUBBLE transcript (the deck's "Your new
+   idea" screen): your turns are a solid accent fill, the agent's are a neutral
+   surface, and both are uniformly rounded. They were two faint washes before
+   — an accent tint and an emerald one — which read as two highlight states
+   rather than as two speakers, and which the reskin turned into two blues.
+
+   The tail notch (`… 4px 12px`) goes with them: the deck's bubbles are
+   uniformly rounded and rely on side and colour to say who is speaking. */
 .dc-msg-user {
   margin-left: auto;
-  background: var(--bg-card);
-  border-radius: 12px 12px 4px 12px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-radius: 1.25rem;
   margin-bottom: 4px;
 }
 
 .dc-msg-assistant {
   margin-right: auto;
-  background: var(--bg-card-alt);
-  border-radius: 12px 12px 12px 4px;
+  /* --bg-primary, not the page ground: on the grey ground a bubble has to be
+     a distinct surface or it disappears into the transcript. */
+  background: var(--bg-primary);
+  border-radius: 1.25rem;
   margin-bottom: 4px;
 }
 
@@ -4353,8 +4368,13 @@ span.gc-vote-btn-icon { cursor: default; }
   min-width: 0;
 }
 
-.gc-msg:hover { background: var(--bg-card-alt); }
-.gc-msg-self { background: var(--bg-card); }
+/* Neutral, not the tint tokens. --bg-card and --bg-card-alt are ACCENT and
+   emerald washes: with them, hovering any message and every message you sent
+   read as a highlighted state rather than as ordinary transcript. The deck's
+   group transcript tints neither — a message is identified by its author's
+   name and avatar, which is the whole point of a named-row transcript. */
+.gc-msg:hover { background: var(--bg-secondary); }
+.gc-msg-self { background: transparent; }
 
 .gc-msg-header {
   display: flex;
@@ -4364,11 +4384,16 @@ span.gc-vote-btn-icon { cursor: default; }
 }
 
 .gc-msg-username {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-secondary);
+  /* The author's name is the transcript's primary identifier, so the language
+     gives it reading size and full weight in primary ink — not a 13px
+     semibold caption a line above the words. */
+  font-size: 1.0625rem;
+  font-weight: 700;
+  color: var(--text-primary);
 }
 
+/* Your own name keeps the accent — the one place it still marks "mine" now
+   that the row itself is untinted. */
 .gc-msg-username-self { color: var(--accent); }
 
 /* Per-message unread dot: a message this user has an unread mention/
