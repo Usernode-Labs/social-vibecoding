@@ -1818,8 +1818,11 @@ const Home = {
     if (!slug) return;
     const app = (Home._apps || []).find((a) => a.slug === slug);
     if (app) app.locked = !!isLocked;
-    const card = document.querySelector(`.app-card[data-slug="${slug}"]`);
-    if (card) card.dataset.locked = String(!!isLocked);
+    // Same as updateAppCardIcon below: `data-locked` is rendered by
+    // features/home/app-grid.tsx now, so the cache write above is the change
+    // and this publishes it. Writing the attribute here would be overwritten
+    // by the next render.
+    Home.render();
   },
 
   // ── Native homescreen-shortcut support ─────────────────────────────
@@ -2462,13 +2465,19 @@ const Home = {
       app.icon_emoji = iconEmoji || null;
       app.icon_url = iconUrl || null;
     }
-    const card = document.querySelector(`.app-card[data-slug="${slug}"]`);
-    const tile = card?.querySelector('[data-icon]');
-    if (!tile) return;
-    const name = app?.name || card.querySelector('.font-medium')?.textContent || '?';
-    const icon = Home.iconTileFor({ icon_emoji: iconEmoji || null, icon_url: iconUrl || null, name });
-    tile.dataset.icon = icon.kind;
-    tile.innerHTML = icon.html;
+    // #1191: the tile is React-owned now, so this re-renders instead of
+    // writing into it. The cache update above IS the change; Home.render()
+    // publishes it and React repaints the one tile whose icon moved.
+    //
+    // Writing `tile.innerHTML` here would have made this a SECOND writer
+    // inside a subtree React reconciles — the exact hazard the stateful-island
+    // rule in AGENTS.md exists to prevent. It would also have been silently
+    // temporary: the next store push would paint the old icon straight back.
+    //
+    // The comment above still holds and is now free rather than hand-managed —
+    // a reconcile touches the changed tile and nothing else, so hover and
+    // scroll state on every other card survive without a special path.
+    Home.render();
   },
 
   // ===== "…" card actions menu =====
