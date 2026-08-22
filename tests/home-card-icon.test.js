@@ -19,10 +19,11 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const { installAppCard } = require('./helpers/app-card');
+const { installGridStore } = require('./helpers/home-grid-store');
 // The "Create app" tile moved out of home.js: it is a home-screen WIDGET now
 // (HomePanels.renderCreatePanel), so home-panels.js is loaded here too, to
 // keep it under the same shared-icon-treatment assertions the app tiles are.
-const { HOME_SRC: SRC, PANELS_SRC } = require('./helpers/home-modules');
+const { HOME_SRC: SRC, PANELS_SRC, LAYOUT_SRC } = require('./helpers/home-modules');
 
 // Minimal functional stand-in for the DOM bits home.js's escapeHtml
 // leans on (createElement + textContent/innerHTML round-trip).
@@ -65,9 +66,14 @@ function makeHome() {
   // builders (frontend/src/features/apps/app-card.js) since #1083 chunk F.
   // It imports them; this declares what the stripped import would have bound.
   installAppCard(sandbox);
-  vm.runInContext(`${SRC}\n${PANELS_SRC}\n;globalThis.__Home = Home;`, sandbox);
+  // #1191: updateAppCardIcon publishes a render rather than writing into
+  // the tile, so the sandbox needs the store binding the stripped import
+  // would have made — and the geometry module render() lays out against.
+  const gridStore = installGridStore(sandbox);
+  vm.runInContext(`${LAYOUT_SRC}\n${SRC}\n${PANELS_SRC}\n;globalThis.__Home = Home;`, sandbox);
   const Home = sandbox.__Home;
   Home.__sandbox = sandbox;
+  Home.__gridStore = gridStore;
   Home.__HP = sandbox.HomePanels;
   return Home;
 }
@@ -162,13 +168,18 @@ test('app.css steps the letter glyph down to the faint token', () => {
     path.join(__dirname, '..', 'public', 'css', 'app.css'),
     'utf8'
   );
+  // Scoped to :not([data-tint]) since the widget language landed: an untinted
+  // tile still steps its letter down, but on an app's identity tint the
+  // near-black ink is what reads and the faint token would be near-invisible.
   assert.match(
     css,
-    /\.app-icon-tile\[data-icon="letter"\]\s*\{\s*color:\s*var\(--text-faint\);/,
-    'letter tiles use --text-faint, one step fainter than the base glyph'
+    /\.app-icon-tile\[data-icon="letter"\]:not\(\[data-tint\]\)\s*\{\s*color:\s*var\(--text-faint\);/,
+    'untinted letter tiles use --text-faint, one step fainter than the base glyph'
   );
   // The base tile colour stays where it is — only the letter steps down.
   assert.match(css, /\.app-icon-tile \{[^}]*color: var\(--text-secondary\);/);
+  // And a tinted face drops the hairline and pins the glyph, in both themes.
+  assert.match(css, /\.app-icon-tile\[data-tint\]\s*\{[^}]*color: var\(--tile-ink\);/);
 });
 
 // --border-light is inverted between the palettes (fainter than
@@ -464,36 +475,53 @@ test('icon_url is HTML-escaped', () => {
   assert.doesNotMatch(html, /<script>/);
 });
 
-test('updateAppCardIcon patches a mounted tile across states', () => {
+test('updateAppCardIcon republishes the tile across icon states', () => {
+  // #1191: the tile is React-owned, so this no longer patches the DOM. It
+  // updates the Home._apps cache and publishes a render; features/home/
+  // app-grid.tsx repaints the one tile whose icon moved. Asserting the
+  // PUBLISHED MODEL is asserting the same thing the old DOM check did, one
+  // layer earlier — and it is the layer home.js still owns.
   const Home = makeHome();
-  const tile = { dataset: { icon: 'letter' }, innerHTML: 'D' };
-  const card = {
-    querySelector: (sel) => (sel === '[data-icon]' ? tile : { textContent: 'Demo App' }),
+  // `is_favorited` matters: Home.presentIds() derives the placeable set from
+  // partitionApps(), and currentLayout() drops any item that is not present —
+  // so an app nobody has pinned is filtered out of the canvas before it can
+  // reach the model.
+  Home._apps = [baseApp({ is_favorited: true })];
+  const placed = [{ type: 'app', slug: 'demo', col: 0, row: 0 }];
+  Home._layouts = { 4: placed, 5: placed };
+  Home._layoutFetchedAt = Date.now();
+  const iconOf = () => {
+    const item = Home.__gridStore.get().items.find((i) => i.kind === 'card');
+    return item && item.app.icon;
   };
-  Home.__sandbox.document.querySelector = (sel) =>
-    sel === '.app-card[data-slug="demo"]' ? card : null;
-  Home._apps = [baseApp()];
 
   Home.updateAppCardIcon('demo', '🚀', null);
-  assert.equal(tile.dataset.icon, 'emoji');
-  assert.ok(tile.innerHTML.includes('🚀'));
+  // Field-wise, not deepEqual: these objects are built inside the vm context,
+  // so they carry that realm's prototypes and deepStrictEqual rejects them
+  // however identical their contents.
+  assert.equal(iconOf().kind, 'emoji');
+  assert.equal(iconOf().emoji, '🚀');
   assert.equal(Home._apps[0].icon_emoji, '🚀');
 
   Home.updateAppCardIcon('demo', null, '/app-icons/' + 'b'.repeat(32));
-  assert.equal(tile.dataset.icon, 'image');
-  assert.match(tile.innerHTML, /<img/);
+  assert.equal(iconOf().kind, 'image');
+  assert.match(iconOf().src, /^\/app-icons\//);
 
   // Cleared back to the letter fallback (derived from the cached name).
   Home.updateAppCardIcon('demo', null, null);
-  assert.equal(tile.dataset.icon, 'letter');
-  assert.equal(tile.innerHTML, 'D');
+  assert.equal(iconOf().kind, 'letter');
+  assert.equal(iconOf().letter, 'D');
   assert.equal(Home._apps[0].icon_url, null);
 });
 
-test('updateAppCardIcon is a safe no-op when the card is not mounted', () => {
+test('updateAppCardIcon is a safe no-op for an app it has never seen', () => {
+  // "Not mounted" is no longer the interesting case — publishing a model for
+  // an unmounted island is harmless, and React paints it when it mounts. What
+  // still has to be safe is a slug that is in no cache at all.
   const Home = makeHome();
   Home._apps = [];
   assert.doesNotThrow(() => Home.updateAppCardIcon('ghost', '🎮', null));
+  assert.equal(Home.__gridStore.get().items.length, 0, 'and it publishes no card for it');
 });
 
 // _desiredIconSrcFor calls _widgetScheme on every heal pass, so a throw

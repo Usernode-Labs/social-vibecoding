@@ -18,6 +18,32 @@
   --accent-light: #1f86ff;
   --accent-tint: rgba(10, 124, 255, 0.08);
 
+  /* ── App identity tints (the widget language) ──────────────────────
+     An app's tile colour. DELIBERATELY OUTSIDE the zinc/violet ramps:
+     those two are the shell's neutral and its accent, and an app's
+     identity is neither — folding six shades into the accent ramp would
+     make every one of them read as a state.
+
+     Declared here rather than in tailwind.config.js because BOTH systems
+     need them: `.app-icon-tile[data-tint]` below styles the launcher
+     tiles that app.css already owns, and the cva table in
+     frontend/@/components/ui/icon-tile.tsx reads the same variables
+     through `bg-[var(--tile-…)]`. One source, two readers, no drift.
+
+     Eyedropped from the design screenshots and expected to be corrected
+     against the real source tokens — a value edit here, nothing else.
+
+     NOT redefined under .dark on purpose: a tinted tile is an app's
+     ICON, and an icon does not invert with the page. That is also why
+     the glyph on it is pinned near-black in both themes. */
+  --tile-lime: #c5e86c;
+  --tile-sky: #bfe9f5;
+  --tile-amber: #fcefc0;
+  --tile-rose: #f8c9cd;
+  --tile-lilac: #d9d2f9;
+  --tile-sand: #ecdcc4;
+  --tile-ink: #0a0a0a;
+
   /* ── Safe-area tokens ────────────────────────────────────
      THE single source of truth for the shell's own safe-area
      arithmetic. Every rule in this file that needs an inset reads one
@@ -967,6 +993,36 @@ html, body {
   border: 1px solid var(--border-light);
   color: var(--text-secondary);
 }
+/* A tile carrying an app's identity tint: the widget language's launcher
+   face. The border goes — the language separates by figure/ground, and a
+   hairline around a filled tile reads as a frame around an icon rather
+   than as the icon itself. The glyph is pinned near-black in BOTH themes
+   for the same reason the tints are not redefined under .dark above.
+   An image icon covers the whole face, so its tint never shows; the
+   attribute is still set, so a slow-loading icon shows the app's colour
+   rather than an empty box. */
+.app-icon-tile[data-tint] {
+  border-color: transparent;
+  color: var(--tile-ink);
+}
+.app-icon-tile[data-tint="lime"]  { background-color: var(--tile-lime); }
+.app-icon-tile[data-tint="sky"]   { background-color: var(--tile-sky); }
+.app-icon-tile[data-tint="amber"] { background-color: var(--tile-amber); }
+.app-icon-tile[data-tint="rose"]  { background-color: var(--tile-rose); }
+.app-icon-tile[data-tint="lilac"] { background-color: var(--tile-lilac); }
+.app-icon-tile[data-tint="sand"]  { background-color: var(--tile-sand); }
+/* The first-letter fallback specifically — one step fainter than the base
+   glyph colour so a name initial reads as a quiet placeholder rather than as
+   content. Tiles tag their kind with data-icon, so this never touches emoji
+   tiles (whose colour glyphs ignore `color` anyway) or image tiles. Both modes
+   step to the same faint token.
+
+   Scoped to :not([data-tint]) since the widget language landed: on a tinted
+   face the near-black ink above is what reads, and the faint token on a pastel
+   would be close to invisible. */
+.app-icon-tile[data-icon="letter"]:not([data-tint]) {
+  color: var(--text-faint);
+}
 .dark .app-icon-tile {
   /* --bg-primary is near-black in dark mode; one step up so the tile
      reads as a surface sitting on the page rather than a hole in it. */
@@ -975,14 +1031,6 @@ html, body {
      brighter of the two hairline tokens in dark mode (see above), so
      the faint-hairline intent needs --border here. */
   border-color: var(--border);
-}
-/* The first-letter fallback specifically — one step fainter than the
-   base glyph colour so a name initial reads as a quiet placeholder
-   rather than as content. Tiles tag their kind with data-icon, so this
-   never touches emoji tiles (whose colour glyphs ignore `color`
-   anyway) or image tiles. Both modes step to the same faint token. */
-.app-icon-tile[data-icon="letter"] {
-  color: var(--text-faint);
 }
 /* The create-tile placeholder: same face, dashed ring + muted glyph so
    it still reads "empty slot" within the same visual family. */

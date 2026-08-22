@@ -49,6 +49,7 @@
 import { useCallback, useEffect, useRef } from 'react';
 
 import { Bars3Icon } from '@/components/ui/icons';
+import { tintFor } from '@/components/ui/icon-tile';
 
 import { useStoreState } from '../../lib/use-store-state';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
@@ -135,9 +136,23 @@ function AppCardTile({ app, style, yours }: { app: HomeAppView; style?: React.CS
         </button>
       ) : null}
       <div className="relative w-14 h-14 shrink-0">
+        {/*
+            `data-tint` is the widget language's launcher face: app.css turns
+            it into the app's identity colour, drops the hairline and pins the
+            glyph near-black (see `.app-icon-tile[data-tint]` there). The tile
+            KEEPS its 3.5rem box — the grid's cell height, the drag overlay's
+            mirror and HomeLayout's geometry are all measured against it, so
+            growing it to the deck's 4rem is a layout change, not a reskin, and
+            belongs in its own commit.
+
+            The tint is derived from the slug rather than stored, so it is
+            stable per app and identical on every surface that renders it,
+            with no migration and no per-app column to backfill.
+        */}
         <div
-          className="app-icon-tile w-14 h-14 rounded-xl overflow-hidden flex items-center justify-center font-bold text-xl"
+          className="app-icon-tile w-14 h-14 rounded-2xl overflow-hidden flex items-center justify-center font-bold text-xl"
           data-icon={app.icon.kind}
+          data-tint={tintFor(app.slug)}
         >
           <AppIcon icon={app.icon} />
         </div>

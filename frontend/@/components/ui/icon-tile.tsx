@@ -12,24 +12,27 @@ import { cn } from '@/lib/utils';
  * the Activity feed's app card, and on the record cards attached to chat
  * messages.
  *
- * ── The tints are PLACEHOLDERS ────────────────────────────────────────
+ * ── The tints live in app.css, and BOTH systems read them ─────────────
  *
- * The three in the design deck (a lime, a sky, an amber) are eyedropped from
- * the screenshots, and it is not yet settled whether they are a fixed palette
- * or picked per app. They are written as arbitrary-value literals in one cva
- * table so that correcting them is a single edit here rather than a sweep —
- * and as COMPLETE literals, never `bg-[${hex}]`, because Tailwind's extractor
- * is a regex over source text (see tailwind.config.js).
+ * The values are `--tile-*` custom properties declared on `:root` in
+ * public/css/app.css. They have to be there rather than in
+ * tailwind.config.js because the launcher tiles app.css already owns
+ * (`.app-icon-tile[data-tint]`) need the same six colours this table does —
+ * one source, two readers, no drift. Correcting them against the real design
+ * tokens is a value edit in that one block.
+ *
+ * The class strings stay COMPLETE literals (`bg-[var(--tile-lime)]`, never
+ * `bg-[${name}]`): Tailwind's extractor is a regex over source text, so a
+ * computed class name is a class name that never compiles.
  *
  * They are deliberately NOT routed through the zinc/violet ramps: those two
  * scales are the shell's neutral and its accent, and an app's identity colour
  * is neither. Adding six more shades to the accent ramp to hold them would
  * make every one of them look like a state.
  *
- * The glyph inside is always monochrome and near-black IN BOTH THEMES — the
- * tint is the surface, so the ink on it does not flip with the page. That is
- * why this component pins `text-zinc-900` with no `dark:` counterpart, which
- * is otherwise a smell in this codebase.
+ * They are also NOT redefined for dark mode, and the ink on them is pinned
+ * near-black in both themes: a tinted tile is an app's ICON, and an icon does
+ * not invert with the page.
  */
 
 const tile = cva('flex shrink-0 items-center justify-center', {
@@ -40,12 +43,12 @@ const tile = cva('flex shrink-0 items-center justify-center', {
     },
     tint: {
       neutral: 'bg-zinc-100 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100',
-      lime: 'bg-[#c5e86c] text-zinc-900',
-      sky: 'bg-[#bfe9f5] text-zinc-900',
-      amber: 'bg-[#fcefc0] text-zinc-900',
-      rose: 'bg-[#f8c9cd] text-zinc-900',
-      lilac: 'bg-[#d9d2f9] text-zinc-900',
-      sand: 'bg-[#ecdcc4] text-zinc-900',
+      lime: 'bg-[var(--tile-lime)] text-[var(--tile-ink)]',
+      sky: 'bg-[var(--tile-sky)] text-[var(--tile-ink)]',
+      amber: 'bg-[var(--tile-amber)] text-[var(--tile-ink)]',
+      rose: 'bg-[var(--tile-rose)] text-[var(--tile-ink)]',
+      lilac: 'bg-[var(--tile-lilac)] text-[var(--tile-ink)]',
+      sand: 'bg-[var(--tile-sand)] text-[var(--tile-ink)]',
     },
   },
   defaultVariants: { size: 'sm', tint: 'neutral' },
