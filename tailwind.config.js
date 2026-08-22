@@ -63,8 +63,53 @@ module.exports = {
 
   darkMode: 'class',
   future: { hoverOnlyWhenSupported: true },
-  theme: { extend: { colors: {
-    zinc: { 50:'#f6f6fb',100:'#eeeef6',200:'#d4d4e4',300:'#b0b0c8',400:'#9898b0',500:'#6e6e8a',600:'#4e4e6a',700:'#484870',800:'#2e2e50',900:'#1a1a30',950:'#08080f' },
-    violet: { 400:'#a78bfa',500:'#8b5cf6',600:'#7c3aed',700:'#6d28d9' },
-  } } },
+  // ── The widget-language palette (step 1 of the reskin) ──────────────
+  //
+  // THE SCALE NAMES ARE DELIBERATELY UNCHANGED; ONLY THE VALUES MOVED.
+  // `zinc-*` is no longer a violet-tinted grey and `violet-*` is no longer
+  // violet — they are the new language's neutral ramp and its blue accent.
+  // That reads wrong at first glance and is still the right call:
+  //
+  //   * ~80k lines across frontend/src/**, frontend/@/** and public/js/**
+  //     spell these scales as complete class literals (`bg-zinc-900`,
+  //     `text-violet-400`). Re-keying them to `neutral-*`/`blue-*` would be a
+  //     rename touching every one of those literals — an enormous diff whose
+  //     rendered output is identical to this four-line one.
+  //   * tests/admin-ui-registry.test.js keeps the two design systems apart BY
+  //     PALETTE NAME: the shell must read `zinc-`/`violet-` and the admin
+  //     console `gray-`/`indigo-`. Re-keying the shell's scales would erase
+  //     the boundary that test exists to defend.
+  //
+  // So the scale name is now an IDENTITY ("the shell's neutral", "the shell's
+  // accent"), not a hue. Read the hex, not the key. The admin console is
+  // untouched and stays gray/indigo — see the "Two design systems" rule in
+  // AGENTS.md.
+  //
+  // Values are eyedropped from the design screenshots and are EXPECTED TO BE
+  // CORRECTED against the real source tokens; they are anchored deliberately
+  // at three points and interpolated between:
+  //   zinc-100  the page background the cards float on
+  //   zinc-400  secondary label text ("Private, 3m ago agent finished")
+  //   violet-600  the outgoing message bubble
+  theme: { extend: {
+    colors: {
+      zinc: { 50:'#f5f5f7',100:'#eaeaea',200:'#e3e3e6',300:'#c7c7cc',400:'#8e8e93',500:'#6c6c70',600:'#48484a',700:'#3a3a3c',800:'#2c2c2e',900:'#1c1c1e',950:'#0b0b0c' },
+      // The FULL ramp, deliberately. The pre-reskin config pinned only
+      // 400/500/600/700, so 280 call sites using violet-50 (191 of them),
+      // -100, -200, -300, -800, -900 and -950 were quietly rendering STOCK
+      // Tailwind violet all along. That was invisible while the pinned shades
+      // were violet too; against a blue accent every one of them would have
+      // read as a stray purple tint. Closing the ramp is what makes the
+      // remap total rather than partial.
+      violet: {
+        50:'#eaf4ff',100:'#d6e9ff',200:'#b3d6ff',300:'#85bcff',400:'#5aa9ff',
+        500:'#1f86ff',600:'#0a7cff',700:'#0062cc',800:'#004fa3',900:'#003b7a',950:'#00264d',
+      },
+    },
+    // The language is markedly rounder than the shell was. Remapping the
+    // scale rather than editing call sites rounds every existing
+    // `rounded-lg`/`rounded-xl` up one step at once, with no class churn.
+    // `rounded-full` is untouched (pills stay pills).
+    borderRadius: { lg: '0.75rem', xl: '1rem', '2xl': '1.25rem', '3xl': '1.5rem' },
+  } },
 };

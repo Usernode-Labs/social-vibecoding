@@ -112,14 +112,20 @@ test('the compiled stylesheet is substantial, not a stub', () => {
   assert.ok(/\.dark\b/.test(css), 'expected darkMode:"class" output (.dark selectors)');
 });
 
-test('the platform palette from the old inline config reached the output', () => {
+test('the platform palette reached the output', () => {
   // Tailwind emits palette colours as space-separated rgb triplets so the
-  // opacity modifier can slot in: `rgb(8 8 15/var(--tw-bg-opacity,1))`.
+  // opacity modifier can slot in: `rgb(11 11 12/var(--tw-bg-opacity,1))`.
+  //
+  // These four moved in the widget-language reskin, which is what this guard
+  // is FOR: the scale keys `zinc`/`violet` are unchanged (see the long note in
+  // tailwind.config.js on why they keep their names while their hues moved),
+  // so nothing about a call site would reveal an accidental revert to the old
+  // violet-tinted ramp. Pinning the hex is the only thing that would.
   const triplets = {
-    'zinc-950 (#08080f)': '8 8 15',
-    'zinc-900 (#1a1a30)': '26 26 48',
-    'violet-600 (#7c3aed)': '124 58 237',
-    'violet-400 (#a78bfa)': '167 139 250',
+    'zinc-950 (#0b0b0c) — the dark page ground': '11 11 12',
+    'zinc-100 (#eaeaea) — the light page ground cards float on': '234 234 234',
+    'violet-600 (#0a7cff) — the accent': '10 124 255',
+    'violet-400 (#5aa9ff) — the dark-mode accent': '90 169 255',
   };
   for (const [name, rgb] of Object.entries(triplets)) {
     assert.ok(css.includes(rgb), `expected platform palette colour ${name} → rgb(${rgb}) in ${OUTPUT_FILE}`);
@@ -127,6 +133,13 @@ test('the platform palette from the old inline config reached the output', () =>
   // And the stock ramp it replaces is absent — proof `theme.extend.colors`
   // actually applied rather than the defaults silently winning.
   assert.ok(!css.includes('rgb(9 9 11'), 'stock Tailwind zinc-950 (#09090b) leaked in — is the palette override wired up?');
+  // And the pre-reskin ramp is gone, not merely shadowed.
+  assert.ok(!css.includes('124 58 237'), 'the pre-reskin violet accent (#7c3aed) is still compiled in');
+  // The accent ramp is closed across ALL shades, not just the four the
+  // pre-reskin config pinned. 280 call sites use violet-50/-100/-200/-300/
+  // -800/-900/-950; while they were unpinned they rendered STOCK Tailwind
+  // violet, which against a blue accent reads as stray purple.
+  assert.ok(!css.includes('245 243 255'), 'stock Tailwind violet-50 (#f5f3ff) leaked in — is the accent ramp closed across every shade?');
 });
 
 test('future.hoverOnlyWhenSupported is compiled in', () => {

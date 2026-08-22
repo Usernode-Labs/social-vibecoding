@@ -143,7 +143,14 @@ const head = fs.readFileSync(path.join(FRONTEND, 'src', 'head.html'), 'utf8');
 // hydrates body's CHILDREN, so the element itself is the template's. This is
 // the flex column every screen's height depends on
 // (`flex flex-col` + `height:100dvh` with `flex-1` <main> children).
-const BODY_ATTRS = 'class="bg-white dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 flex flex-col" style="height:100dvh"';
+// The page GROUND. `bg-white` until the widget-language reskin: the shell was
+// white-on-white and drew its structure with borders. The language in the design
+// screenshots separates by FIGURE/GROUND instead — white cards floating on a
+// light grey page — so the ground moves to the neutral ramp's `zinc-100` and the
+// ~97 existing `bg-white` surfaces become the cards, with no class edits at those
+// call sites. Dark mode already had a distinct ground and is unchanged in ROLE
+// (only its hex moved, in tailwind.config.js).
+const BODY_ATTRS = 'class="bg-zinc-100 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 flex flex-col" style="height:100dvh"';
 
 const { stamp, files } = expectedStamp();
 

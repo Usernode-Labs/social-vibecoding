@@ -1,22 +1,22 @@
 :root {
   --bg-primary: #ffffff;
-  --bg-secondary: #f4f4f5;
-  --bg-tertiary: #e4e4e7;
-  --bg-code: #f4f4f5;
-  --bg-code-header: #e4e4e7;
-  --bg-card: rgba(139, 92, 246, 0.06);
+  --bg-secondary: #f5f5f7;
+  --bg-tertiary: #e3e3e6;
+  --bg-code: #f5f5f7;
+  --bg-code-header: #e3e3e6;
+  --bg-card: rgba(10, 124, 255, 0.06);
   --bg-card-alt: rgba(16, 185, 129, 0.04);
-  --bg-input: #f4f4f5;
-  --border: #d4d4d8;
-  --border-light: #e4e4e7;
-  --text-primary: #18181b;
-  --text-secondary: #3f3f46;
-  --text-muted: #71717a;
-  --text-faint: #a1a1aa;
-  --text-code: #3f3f46;
-  --accent: #7c3aed;
-  --accent-light: #8b5cf6;
-  --accent-tint: rgba(124, 58, 237, 0.08);
+  --bg-input: #f5f5f7;
+  --border: #d1d1d6;
+  --border-light: #e3e3e6;
+  --text-primary: #0a0a0a;
+  --text-secondary: #3a3a3c;
+  --text-muted: #6c6c70;
+  --text-faint: #8e8e93;
+  --text-code: #3a3a3c;
+  --accent: #0a7cff;
+  --accent-light: #1f86ff;
+  --accent-tint: rgba(10, 124, 255, 0.08);
 
   /* ── Safe-area tokens ────────────────────────────────────
      THE single source of truth for the shell's own safe-area
@@ -321,7 +321,7 @@ html.un-kb .platform-safe-bar {
   gap: 12px;
   flex: 0 0 auto;
   padding: 10px 12px;
-  border-bottom: 1px solid rgba(124, 58, 237, .25);
+  border-bottom: 1px solid rgba(10, 124, 255, .25);
   background: var(--accent-tint);
   font-size: 12px;
 }
@@ -617,24 +617,24 @@ html.un-kb .platform-safe-bar {
 }
 
 .dark {
-  --bg-primary: #08080f;
-  --bg-secondary: #1a1a30;
-  --bg-tertiary: #2e2e50;
-  --bg-code: #0f0f1a;
-  --bg-code-header: #1a1a30;
-  --bg-card: rgba(139, 92, 246, 0.08);
+  --bg-primary: #0b0b0c;
+  --bg-secondary: #1c1c1e;
+  --bg-tertiary: #2c2c2e;
+  --bg-code: #141416;
+  --bg-code-header: #1c1c1e;
+  --bg-card: rgba(90, 169, 255, 0.10);
   --bg-card-alt: rgba(16, 185, 129, 0.05);
-  --bg-input: #1a1a30;
-  --border: #2e2e50;
-  --border-light: #484870;
-  --text-primary: #f4f4f5;
-  --text-secondary: #e4e4e7;
-  --text-muted: #6e6e8a;
-  --text-faint: #9898b0;
-  --text-code: #e4e4e7;
-  --accent: #a78bfa;
-  --accent-light: #c4b5fd;
-  --accent-tint: rgba(167, 139, 250, 0.12);
+  --bg-input: #1c1c1e;
+  --border: #2c2c2e;
+  --border-light: #3a3a3c;
+  --text-primary: #f5f5f7;
+  --text-secondary: #e3e3e6;
+  --text-muted: #6c6c70;
+  --text-faint: #8e8e93;
+  --text-code: #e3e3e6;
+  --accent: #5aa9ff;
+  --accent-light: #8cc4ff;
+  --accent-tint: rgba(90, 169, 255, 0.14);
 
   /* Dark counterparts of the semantic state tokens. Every --state-*
      declared on :root has one here — tests/dev-color-tokens.test.js
@@ -688,12 +688,12 @@ html.un-kb .platform-safe-bar {
   --un-surface: var(--bg-secondary);
   --un-hairline: var(--border);
   --un-muted: var(--text-faint);
-  --un-group-bg: #12121f;
-  --un-sheet-bg: #12121f;
-  /* One step lighter than --bg-primary (#08080f) so the floating menu
+  --un-group-bg: #1c1c1e;
+  --un-sheet-bg: #1c1c1e;
+  /* One step lighter than --bg-primary (#0b0b0c) so the floating menu
      reads as elevated above the page rather than merging into it. */
-  --un-popover-bg: #12121f;
-  --un-navbar-bg: rgba(8, 8, 15, 0.78);
+  --un-popover-bg: #1c1c1e;
+  --un-navbar-bg: rgba(11, 11, 12, 0.78);
   --un-zoom-bg: var(--bg-primary);
 }
 
@@ -851,7 +851,7 @@ html.un-ios.in-native-webview .dc-active-dot-busy.dc-active-dot-active {
 }
 html.un-ios.in-native-webview .dc-active-dot-busy.dc-active-dot-promoted {
   animation: none;
-  box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.38);
+  box-shadow: 0 0 0 2px rgba(31, 134, 255, 0.38);
 }
 
 /* Pressed-state opt-outs: the kit gives every button an instant
@@ -1451,8 +1451,8 @@ html, body {
    left plain rather than tinted red — the absence of the affordance is the
    clearer signal, and it matches the ghost springing back. */
 .home-grid-cell--on {
-  background-color: rgba(139, 92, 246, 0.14);
-  border-color: rgba(139, 92, 246, 0.75);
+  background-color: rgba(31, 134, 255, 0.14);
+  border-color: rgba(31, 134, 255, 0.75);
   border-style: solid;
 }
 @media (prefers-reduced-motion: reduce) {
@@ -1498,7 +1498,7 @@ html, body {
   font-size: 0.75rem;
   line-height: 1;
   color: #fff;
-  background-color: rgba(139, 92, 246, 0.9);
+  background-color: rgba(31, 134, 255, 0.9);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1674,10 +1674,10 @@ html, body {
   overflow: hidden;
 }
 .home-create-widget .home-create-tile {
-  background-color: rgba(139, 92, 246, 0.02);
+  background-color: rgba(31, 134, 255, 0.02);
 }
 .dark .home-create-widget .home-create-tile {
-  background-color: rgba(139, 92, 246, 0.04);
+  background-color: rgba(31, 134, 255, 0.04);
 }
 .home-create-widget--disabled .home-create-tile {
   background-color: transparent;
@@ -2168,7 +2168,7 @@ html, body {
   transition: background 300ms;
 }
 
-.dc-pr-card-highlight { background: rgba(139, 92, 246, 0.2); }
+.dc-pr-card-highlight { background: rgba(31, 134, 255, 0.2); }
 .dc-pr-card-header { margin-bottom: 8px; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
 
 .dc-pr-link { font-size: 14px; font-weight: 600; color: var(--accent); text-decoration: none; }
@@ -2284,11 +2284,11 @@ html, body {
 /* The per-option CTA. Shares .dc-pr-btn's geometry; the first option is
    the primary route so every button reads equally actionable. */
 .dc-credits-go {
-  background: #7c3aed;
+  background: var(--accent);
   color: white;
   flex: 0 0 auto;
 }
-.dc-credits-go:hover { background: #6d28d9; }
+.dc-credits-go:hover { background: var(--accent-light); }
 
 /* The "Are you a developer?" half of the out-of-credits card (#1281).
    The routes that need a terminal — the CLI lease and importing your own
@@ -2620,11 +2620,11 @@ html, body {
 }
 
 .dc-flow-go {
-  background: #7c3aed;
+  background: var(--accent);
   color: white;
   flex: 0 0 auto;
 }
-.dc-flow-go:hover { background: #6d28d9; }
+.dc-flow-go:hover { background: var(--accent-light); }
 
 .dc-flow-remember {
   display: flex;
@@ -2697,8 +2697,8 @@ html, body {
 .dc-flow-step-done .dc-flow-step-title { color: var(--text-muted); }
 
 .dc-flow-step-current .dc-flow-step-mark {
-  background: #7c3aed;
-  border-color: #7c3aed;
+  background: var(--accent);
+  border-color: var(--accent);
   color: white;
 }
 
@@ -2730,11 +2730,11 @@ a.dc-flow-action {
 .dc-flow-action:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .dc-flow-action-primary {
-  background: #7c3aed;
-  border-color: #7c3aed;
+  background: var(--accent);
+  border-color: var(--accent);
   color: white;
 }
-.dc-flow-action-primary:hover { background: #6d28d9; }
+.dc-flow-action-primary:hover { background: var(--accent-light); }
 
 .dc-flow-error {
   font-size: 12px;
@@ -2798,8 +2798,8 @@ a.dc-flow-action {
 }
 .dc-pr-btn-preview:disabled:hover { background: var(--bg-secondary); }
 
-.dc-pr-btn-promote { background: #7c3aed; color: white; }
-.dc-pr-btn-promote:hover { background: #6d28d9; }
+.dc-pr-btn-promote { background: var(--accent); color: white; }
+.dc-pr-btn-promote:hover { background: var(--accent-light); }
 .dc-pr-btn-promote:disabled { background: #3f3f46; cursor: not-allowed; }
 /* #558: the shared arc spinner borders in var(--accent) (violet), which is
    near-invisible on this filled violet/dark button while a proposal is in
@@ -2833,8 +2833,8 @@ a.dc-flow-action {
 }
 .dc-qa-chip:hover { background: var(--bg-tertiary); }
 .dc-qa-chip-default { border-color: var(--accent); }
-.dc-qa-chip-selected { background: #7c3aed; border-color: #7c3aed; color: #fff; }
-.dc-qa-chip-selected:hover { background: #6d28d9; }
+.dc-qa-chip-selected { background: var(--accent); border-color: var(--accent); color: #fff; }
+.dc-qa-chip-selected:hover { background: var(--accent-light); }
 
 .dc-qa-chip-hint {
   font-size: 9px;
@@ -2853,11 +2853,11 @@ a.dc-flow-action {
   font-weight: 500;
   cursor: pointer;
   border: none;
-  background: #7c3aed;
+  background: var(--accent);
   color: #fff;
   transition: background 150ms;
 }
-.dc-qa-send:hover { background: #6d28d9; }
+.dc-qa-send:hover { background: var(--accent-light); }
 
 .dc-qa-defaults {
   padding: 6px 12px;
@@ -3454,10 +3454,10 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
 .gc-vote-btn-no:hover { background: rgba(239, 68, 68, 0.18); border-color: rgba(239, 68, 68, 0.5); color: #ef4444; }
 .gc-vote-btn-preview {
   color: var(--accent);
-  background: rgba(167, 139, 250, 0.10);
-  border-color: rgba(167, 139, 250, 0.35);
+  background: rgba(90, 169, 255, 0.10);
+  border-color: rgba(90, 169, 255, 0.35);
 }
-.gc-vote-btn-preview:hover { background: rgba(167, 139, 250, 0.18); border-color: rgba(167, 139, 250, 0.5); color: var(--accent); }
+.gc-vote-btn-preview:hover { background: rgba(90, 169, 255, 0.18); border-color: rgba(90, 169, 255, 0.5); color: var(--accent); }
 /* Admin force-merge / force-undo buttons. Amber instead of red so
  * they don't visually dominate the Yes/No pair, but distinct enough
  * from the regular vote buttons that an admin clicking through the
@@ -4434,7 +4434,7 @@ span.gc-vote-btn-icon { cursor: default; }
   font-weight: 500;
 }
 .gc-mention-self {
-  background: rgba(139, 92, 246, 0.18);
+  background: rgba(31, 134, 255, 0.18);
   padding: 0 4px;
   border-radius: 4px;
   color: var(--accent-light, var(--accent));
@@ -4461,8 +4461,8 @@ span.gc-vote-btn-icon { cursor: default; }
 }
 /* Violet — matches the drawer's existing PR#N anchors. */
 .gc-ref-pr {
-  color: rgb(167, 139, 250);
-  background: rgba(139, 92, 246, 0.12);
+  color: rgb(90, 169, 255);
+  background: rgba(31, 134, 255, 0.12);
 }
 /* Emerald — clearly distinct from the PR violet (amber already signals
    bounties/warnings in the panel). */
@@ -5056,9 +5056,9 @@ span.gc-vote-btn-icon { cursor: default; }
   100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
 }
 @keyframes dc-active-pulse-violet {
-  0%   { box-shadow: 0 0 0 0 rgba(139, 92, 246, 0.45); }
-  70%  { box-shadow: 0 0 0 6px rgba(139, 92, 246, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(139, 92, 246, 0); }
+  0%   { box-shadow: 0 0 0 0 rgba(31, 134, 255, 0.45); }
+  70%  { box-shadow: 0 0 0 6px rgba(31, 134, 255, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(31, 134, 255, 0); }
 }
 
 /* Primary action button (Pause/Resume). Tinted by intent —
@@ -5171,7 +5171,7 @@ span.gc-vote-btn-icon { cursor: default; }
 .dc-spec-preview-card:hover,
 .dc-spec-preview-card:focus-visible {
   border-color: rgb(139 92 246);
-  background: rgba(139, 92, 246, 0.06);
+  background: rgba(31, 134, 255, 0.06);
   outline: none;
 }
 
@@ -6075,20 +6075,20 @@ span.gc-vote-btn-icon { cursor: default; }
 /* "Platform has rolled past the SHA this tab loaded against — reload to
    pick up the new client code." Click to reload; styled as a button. */
 .app-version-pill--stale {
-  background: rgba(139, 92, 246, 0.12);
-  border-color: rgba(139, 92, 246, 0.45);
-  color: #a78bfa;
+  background: rgba(31, 134, 255, 0.12);
+  border-color: rgba(31, 134, 255, 0.45);
+  color: var(--accent);
   cursor: pointer;
   font: inherit;
 }
 .app-version-pill--stale:hover {
-  background: rgba(139, 92, 246, 0.2);
-  border-color: rgba(139, 92, 246, 0.65);
-  color: #c4b5fd;
+  background: rgba(31, 134, 255, 0.2);
+  border-color: rgba(31, 134, 255, 0.65);
+  color: var(--accent-light);
 }
 .app-version-pill--stale .app-version-pill-dot {
-  background: #a78bfa;
-  box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.22);
+  background: var(--accent);
+  box-shadow: 0 0 0 2px rgba(31, 134, 255, 0.22);
   animation: app-version-pill-pulse 1.6s ease-in-out infinite;
 }
 @keyframes app-version-pill-pulse {
@@ -6337,12 +6337,12 @@ a.drawer-ver:hover {
    reload button, borderless like its siblings but underlined on hover
    so it still reads as actionable. */
 button.drawer-ver--stale {
-  color: #6d28d9;
+  color: var(--accent-light);
   cursor: pointer;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 .dark button.drawer-ver--stale {
-  color: #a78bfa;
+  color: var(--accent);
 }
 button.drawer-ver--stale:hover {
   text-decoration: underline;
@@ -6618,7 +6618,7 @@ a.drawer-ver--fork:hover {
   height: 12px;
   margin-right: 6px;
   border-radius: 50%;
-  border: 2px solid rgba(124, 58, 237, 0.25);
+  border: 2px solid rgba(10, 124, 255, 0.25);
   border-top-color: var(--accent);
   animation: import-spin 0.8s linear infinite;
   vertical-align: -2px;
@@ -7132,13 +7132,13 @@ html:not(.dark) #admin-status-root .pill-creating { background: #eef2ff; color: 
   cursor: help;
   user-select: none;
   vertical-align: middle;
-  background: rgba(139, 92, 246, 0.18);
-  color: #a78bfa;
+  background: rgba(31, 134, 255, 0.18);
+  color: var(--accent);
 }
 #admin-analytics-root .dc-info:hover,
 #admin-analytics-root .dc-info:focus,
 #admin-estimator-root .dc-info:hover,
-#admin-estimator-root .dc-info:focus { background: rgba(139, 92, 246, 0.32); outline: none; }
+#admin-estimator-root .dc-info:focus { background: rgba(31, 134, 255, 0.32); outline: none; }
 
 /* ── Merge debug (was public/debug.html) ─────────────────────────────── */
 
@@ -7366,13 +7366,13 @@ body.is-offline [data-offline-disabled] {
 }
 
 .dc-venue-select:hover {
-  border-color: #8b5cf6;
+  border-color: var(--accent-light);
   color: var(--text-primary);
 }
 
 .dc-venue-select:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.35);
+  box-shadow: 0 0 0 2px rgba(31, 134, 255, 0.35);
 }
 
 /* Mid-turn the venue cannot change — the running turn is already in one.
@@ -7473,7 +7473,7 @@ body.is-offline [data-offline-disabled] {
   padding: 0;
   border: 0;
   background: none;
-  color: #8b5cf6;
+  color: var(--accent-light);
   font: inherit;
   font-size: 11px;
   cursor: pointer;
@@ -7482,13 +7482,13 @@ body.is-offline [data-offline-disabled] {
 }
 
 .dc-openrouter-model-change:hover {
-  color: #a78bfa;
+  color: var(--accent);
 }
 
 .dc-openrouter-model-change:focus-visible {
   outline: none;
   border-radius: 3px;
-  box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.35);
+  box-shadow: 0 0 0 2px rgba(31, 134, 255, 0.35);
 }
 
 .dc-openrouter-model-change:disabled {
