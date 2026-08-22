@@ -111,8 +111,14 @@ function kit(): any {
   return (typeof window !== 'undefined' ? (window as any).PlatformUI : null) || null;
 }
 
-const ROW_CLASS = 'w-full text-left px-3 py-2.5 border-b border-zinc-200 '
-  + 'dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 transition-colors';
+// The widget language's list row (#1191): the hairline between rows is what
+// the language keeps — a grouped list IS rows separated by rules — but it sits
+// on a white card now rather than under a bordered strip, and the row breathes
+// at the language's rhythm. Same shape as ListRow in
+// @/components/ui/grouped-list.tsx; spelled here because these rows carry the
+// descriptor tree's own structure rather than a title/subtitle pair.
+const ROW_CLASS = 'w-full text-left px-4 py-3 border-b border-zinc-200 '
+  + 'dark:border-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors';
 
 // Unread indicator dot. When unread it's a solid violet dot carrying an
 // accessible "Unread" label; when read it's an equal-width invisible spacer so
@@ -123,13 +129,13 @@ function UnreadDot({ unread }: { unread: boolean }): ReactNode {
     <span
       role="img"
       aria-label="Unread"
-      className="inline-block w-1.5 h-1.5 rounded-full bg-violet-500 align-middle mr-1.5 shrink-0"
+      className="inline-block w-2 h-2 rounded-full bg-zinc-900 dark:bg-zinc-100 align-middle mr-1.5 shrink-0"
     >
     </span>
   ) : (
     <span
       aria-hidden="true"
-      className="inline-block w-1.5 h-1.5 align-middle mr-1.5 shrink-0"
+      className="inline-block w-2 h-2 align-middle mr-1.5 shrink-0"
     >
     </span>
   );
