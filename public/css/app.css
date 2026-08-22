@@ -1869,7 +1869,9 @@ html, body {
   transition: background-color 150ms, border-color 150ms;
 }
 .dark .browse-row { --browse-border: var(--border); }
-.browse-row:hover { background-color: var(--bg-card); }
+/* Neutral, not --bg-card: that token is an accent TINT, so a plain hover read
+   as a selected/highlighted row once the accent turned blue. */
+.browse-row:hover { background-color: var(--bg-secondary); }
 
 /* Phone: a single hairline BETWEEN consecutive rows, no box. */
 .browse-row + .browse-row { border-top: 1px solid var(--browse-border); }
@@ -1880,8 +1882,14 @@ html, body {
 @media (min-width: 768px) {
   .browse-row,
   .browse-row + .browse-row {
-    border: 1px solid var(--browse-border);
-    border-radius: 0.75rem; /* rounded-xl, matching the icon tiles */
+    /* The widget language separates by figure/ground, so the box is a white
+       surface on the grey page rather than a hairline outline. The border
+       stays declared and transparent because the phone rule above uses
+       `border-top` for the between-rows hairline, and dropping the shorthand
+       here would let that hairline through at md+ as well as the box. */
+    border: 1px solid transparent;
+    background-color: var(--bg-primary);
+    border-radius: 1rem;
   }
   .browse-row:hover,
   .browse-row + .browse-row:hover { border-color: var(--accent-light); }

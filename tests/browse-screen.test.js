@@ -338,7 +338,13 @@ test('browse rows: the layout switch is pure CSS on the container', () => {
   const mdBlock = browseCss.slice(browseCss.indexOf('@media (min-width: 768px)'));
   const box = mdBlock.slice(0, mdBlock.indexOf('}\n}') + 3);
   assert.match(box, /\.browse-row,\s*\n\s*\.browse-row \+ \.browse-row \{/);
-  assert.match(box, /border: 1px solid var\(--browse-border\)/);
+  // The BORDER SHORTHAND is the load-bearing half and still is: it cancels the
+  // phone rule's `border-top` hairline at md+. What changed with the widget
+  // language is what the box is made of — a white surface on the grey page
+  // ground instead of a hairline outline — so the shorthand is transparent and
+  // the separation comes from the fill.
+  assert.match(box, /border: 1px solid transparent/);
+  assert.match(box, /background-color: var\(--bg-primary\)/);
   assert.match(box, /border-radius/);
   // One theme token instead of `.dark` variants, which would out-specify
   // the sibling and hover rules.

@@ -72,8 +72,13 @@ const navClick = (key: string) => {
 
 /** Carried over verbatim from the retired _navItemsHtml / _mobileMenuHtml. */
 const GROUP_SPACED = 'mt-4 pt-3 border-t border-zinc-200 dark:border-zinc-800';
-const NAV_HEADING = 'px-3 pb-1 text-[11px] uppercase tracking-wide text-zinc-400 dark:text-zinc-500';
-const MENU_HEADING = 'px-4 pb-1.5 text-[11px] uppercase tracking-wide text-zinc-400 dark:text-zinc-500';
+// The widget language labels a group in SENTENCE CASE at reading size, not as
+// a small-caps micro-caption — same treatment as SectionHeader in
+// @/components/ui/grouped-list.tsx, which is what the deck's grouped lists use.
+// The settings screen was already grouped-list shaped, so this is the last
+// thing that made it read as the old vocabulary.
+const NAV_HEADING = 'px-3 pb-1 text-[0.9375rem] text-zinc-400 dark:text-zinc-500';
+const MENU_HEADING = 'px-4 pb-1.5 text-[0.9375rem] text-zinc-400 dark:text-zinc-500';
 const MENU_CARD = 'rounded-lg overflow-hidden border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 [&>button:last-child]:border-b-0';
 const MENU_ROW = 'settings-menu-row flex items-center gap-3 w-full text-left min-h-[44px] px-4 py-2 border-b border-zinc-100 dark:border-zinc-800 text-zinc-700 dark:text-zinc-200 hover:bg-zinc-50 dark:hover:bg-zinc-800/60 transition-colors';
 const MENU_LABEL = 'flex-1 min-w-0 text-sm font-medium truncate';
