@@ -4295,8 +4295,12 @@ const AppView = {
       // typed text survive WS-driven refreshes); only the board region
       // re-renders. Switching list → kanban rebuilds the bar from the
       // surviving _kanbanFilters, so filter state outlives the toggle.
-      if (!document.getElementById('dev-kanban-filterbar')
-          || !document.getElementById('dev-kanban-board')) {
+      // Keyed on the BOARD alone. #dev-kanban-filterbar used to be built into
+      // #dev-body beside it, so its absence was a fair "not mounted yet"
+      // signal; it is a permanent host in the React frame's action row now
+      // (#1367 follow-up) and is always present, so testing for it here would
+      // never rebuild the bar. The board is still the node this branch owns.
+      if (!document.getElementById('dev-kanban-board')) {
         // Restore this app's persisted filters before building the bar, so
         // the controls (and the board) come back exactly as the user left
         // them across navigation / reload. Keyed per slug, so switching apps
@@ -4305,7 +4309,7 @@ const AppView = {
         // #814: restore this app's active mobile tab alongside its filters,
         // so switching apps shows that app's own column (or Issues).
         AppView._kanbanTab = AppView._loadKanbanTab(App.currentApp);
-        body.innerHTML = '<div id="dev-kanban-filterbar" class="mb-2"></div><div id="dev-kanban-board"></div>';
+        body.innerHTML = '<div id="dev-kanban-board"></div>';
         AppView._renderKanbanFilterBar();
       }
       AppView._repaintKanbanBoard();
@@ -4320,6 +4324,11 @@ const AppView = {
     if (!document.getElementById('dev-feed')) {
       body.innerHTML = '<div id="dev-feed"></div>';
     }
+    // The feed has no filters, so the shared action row shows the "+" alone.
+    // Emptying the host rather than hiding it lets `empty:hidden` collapse it,
+    // and means a switch back to kanban rebuilds the chips from the surviving
+    // _kanbanFilters exactly as a fresh mount does.
+    AppView._clearKanbanFilterBar();
     AppView._rerenderFeed();
     AppView._reanchorCardMenu();
   },
@@ -4905,11 +4914,34 @@ const AppView = {
     return html;
   },
 
+  // ── The filter bar's chips (Material filter-chip shape) ──────────
+  //
+  // Every control in this bar is now the SAME pill: 32px tall, fully rounded,
+  // hairline outline, compact label. Material's filter chip in the two states
+  // it actually has here — unselected is an outlined transparent pill, selected
+  // is a filled tonal one that keeps the outline so the row's rhythm does not
+  // shift by a pixel when you toggle it.
+  //
+  // One shared base string and no computed class names: Tailwind's extractor is
+  // a regex over source text (AGENTS.md), and these are read from a template
+  // literal rather than JSX, which does not make the rule any softer.
+  KANBAN_CHIP_BASE: 'h-8 rounded-full border text-xs transition-colors shrink-0 '
+    + 'inline-flex items-center gap-1',
+  KANBAN_CHIP_IDLE: 'border-zinc-300 dark:border-zinc-700 bg-transparent '
+    + 'text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800',
+  KANBAN_CHIP_ON: 'border-violet-600 bg-violet-600 text-white hover:bg-violet-500',
+
   _kanbanNeedsVoteChipCls(active) {
-    return 'text-xs px-2.5 py-1.5 rounded-lg border transition-colors shrink-0 '
-      + (active
-        ? 'bg-violet-600 border-violet-600 text-white'
-        : 'border-zinc-300 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800');
+    return `${AppView.KANBAN_CHIP_BASE} px-3 `
+      + (active ? AppView.KANBAN_CHIP_ON : AppView.KANBAN_CHIP_IDLE);
+  },
+
+  // A <select> wearing the same pill. `appearance-none` and the explicit right
+  // padding are what stop the native arrow from breaking the shape; the caret
+  // is drawn as a background image in app.css off `.dev-chip-select`.
+  _kanbanChipSelectCls(active) {
+    return `${AppView.KANBAN_CHIP_BASE} dev-chip-select pl-3 pr-7 `
+      + (active ? AppView.KANBAN_CHIP_ON : AppView.KANBAN_CHIP_IDLE);
   },
 
   _kanbanAssigneeOptionsHtml() {
@@ -4935,26 +4967,39 @@ const AppView = {
   // Called once per kanban mount (and by Clear, to reset control
   // values); ordinary board repaints leave this node untouched so the
   // search input keeps its focus and text.
+  // Empty the shared action row's filter host. Called on the way into the
+  // feed, which has no filters; `empty:hidden` on the host then collapses it
+  // so the "+" sits alone at the right of the row.
+  _clearKanbanFilterBar() {
+    const el = document.getElementById('dev-kanban-filterbar');
+    if (el) el.innerHTML = '';
+  },
+
   _renderKanbanFilterBar() {
     const el = document.getElementById('dev-kanban-filterbar');
     if (!el) return;
     const f = AppView._kanbanFilters || {};
-    const ctlCls = 'rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-2 py-1.5 text-xs text-zinc-900 dark:text-zinc-100';
     const priOpt = (v, label) =>
       `<option value="${v}"${f.priority === v ? ' selected' : ''}>${label}</option>`;
+    // The search field is the one control that is NOT a chip: it takes typing,
+    // so it keeps a real field's affordance. It wears the chip's height and
+    // radius so the row still reads as one strip.
+    const searchCls = 'h-8 rounded-full border border-zinc-300 dark:border-zinc-700 '
+      + 'bg-white dark:bg-zinc-800 px-3 text-xs text-zinc-900 dark:text-zinc-100 '
+      + 'flex-1 min-w-[10rem]';
     el.innerHTML = `
-      <div class="flex flex-wrap items-center gap-2">
+      <div id="dev-filter-row" class="flex flex-wrap items-center gap-2">
         <input id="dev-kanban-search" type="search" placeholder="Filter by title, author or #number"
           value="${escapeAttr(f.q || '')}" aria-label="Filter cards"
-          class="${ctlCls} flex-1 min-w-[10rem]" />
-        <select id="dev-kanban-priority" class="${ctlCls}" aria-label="Filter by priority">
+          class="${searchCls}" />
+        <select id="dev-kanban-priority" class="${AppView._kanbanChipSelectCls(!!f.priority)}" aria-label="Filter by priority">
           <option value="">Any priority</option>
           ${priOpt('high', 'High')}${priOpt('medium', 'Medium')}${priOpt('low', 'Low')}
         </select>
-        <select id="dev-kanban-category" class="${ctlCls}" aria-label="Filter by category">
+        <select id="dev-kanban-category" class="${AppView._kanbanChipSelectCls(!!f.category)}" aria-label="Filter by category">
           ${AppView._kanbanCategoryOptionsHtml()}
         </select>
-        <select id="dev-kanban-assignee" class="${ctlCls}" aria-label="Filter by assignee">
+        <select id="dev-kanban-assignee" class="${AppView._kanbanChipSelectCls(!!f.assignee)}" aria-label="Filter by assignee">
           ${AppView._kanbanAssigneeOptionsHtml()}
         </select>
         <button id="dev-kanban-needsvote" type="button" aria-pressed="${f.needsVote ? 'true' : 'false'}"
@@ -4963,6 +5008,11 @@ const AppView = {
         <button id="dev-kanban-clear" type="button"
           class="text-xs text-violet-500 hover:underline shrink-0${AppView._kanbanFiltersActive() ? '' : ' hidden'}">Clear</button>
       </div>`;
+    // No re-parenting here, deliberately. #dev-kanban-filterbar is a host the
+    // React frame renders INSIDE #dev-actions, one flex sibling to the left of
+    // the "+" — so filling it is all it takes to put the chips beside the
+    // button. See the comment on that row in features/dev-board/board-frame.tsx
+    // for why the button can never move into #dev-body instead.
 
     const input = el.querySelector('#dev-kanban-search');
     let debounce = null;

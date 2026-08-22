@@ -50,6 +50,17 @@ export const notificationsStore = createStore({
   list: null,
   /** The "you'll get pinged here" hint. Hidden in the shipped markup. */
   empty: false,
+  /**
+   * Caught up: nothing unread, but there ARE read ones behind "See older"
+   * (#1367 follow-up). Distinct from `empty`, which still means "you have
+   * never had a notification" — telling a viewer that when they have a month
+   * of history reads as the drawer having lost it.
+   */
+  caughtUp: false,
+  /** How many read notifications the older view would reveal. */
+  olderCount: 0,
+  /** Whether the older ones are currently revealed. Per drawer open. */
+  showOlder: false,
   /** PlatformUI.isTouch() at render time — gates the swipe-action wiring. */
   touch: false,
 });

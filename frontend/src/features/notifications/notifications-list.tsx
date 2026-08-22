@@ -487,6 +487,9 @@ export function NotificationsBody(): ReactNode {
     invites: InviteView[] | null;
     list: Entry[] | null;
     empty: boolean;
+    caughtUp: boolean;
+    olderCount: number;
+    showOlder: boolean;
     touch: boolean;
   };
   const saved = state.saved || [];
@@ -536,6 +539,44 @@ export function NotificationsBody(): ReactNode {
           </div>
         ))}
       </div>
+      {/*
+          CAUGHT UP (#1367 follow-up) — nothing unread, but there is history.
+
+          Deliberately a different node and a different sentence from
+          #notifications-empty below. That one means "you have never had a
+          notification"; this one means "you have dealt with all of them", and
+          showing the first to somebody with a month of history reads as the
+          drawer having lost it. Only one is ever visible: the store sets
+          `empty` only when `olderCount` is 0.
+      */}
+      <div
+        id="notifications-caught-up"
+        className={state.caughtUp
+          ? 'px-4 py-6 text-sm text-zinc-500 text-center'
+          : 'hidden px-4 py-6 text-sm text-zinc-500 text-center'}
+      >
+        You&rsquo;re all caught up — no new notifications.
+      </div>
+      {/*
+          The footer toggle. Rendered only when there is something behind it,
+          so a first-time viewer never sees an "older" button that reveals
+          nothing. The count is on the reveal and not on the hide, because
+          "See 12 older" answers "is it worth tapping?" while "Hide older"
+          only has to undo it.
+      */}
+      {state.olderCount > 0 ? (
+        <button
+          id="notifications-older-toggle"
+          type="button"
+          className="shrink-0 w-full px-4 py-2.5 text-xs font-medium text-violet-600 dark:text-violet-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 border-t border-zinc-200 dark:border-zinc-800 transition-colors"
+          aria-expanded={state.showOlder ? 'true' : 'false'}
+          onClick={() => controller()?.toggleOlder()}
+        >
+          {state.showOlder
+            ? 'Hide older notifications'
+            : `See ${state.olderCount} older notification${state.olderCount === 1 ? '' : 's'}`}
+        </button>
+      ) : null}
       <div
         id="notifications-empty"
         className={state.empty

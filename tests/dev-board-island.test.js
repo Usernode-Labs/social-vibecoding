@@ -46,6 +46,7 @@ const FRAME = read('frontend/src/features/dev-board/board-frame.tsx');
 const CHAT_FRAME = read('frontend/src/features/dev-board/chat-frame.tsx');
 const SESSION_FRAME = read('frontend/src/features/dev-board/session-frame.tsx');
 const STORE = read('frontend/src/features/dev-board/view-mode-store.ts');
+const TOGGLE = read('frontend/src/features/improve/view-toggle.tsx');
 const MAIN = read('frontend/src/main.tsx');
 const APP_VIEW = read('public/js/app-view.js');
 const APP = read('public/js/app.js');
@@ -271,24 +272,35 @@ test('the view toggle is real React state, and the className writer is gone', ()
     '_setViewMode publishes the new mode');
   assert.match(STORE, /useSyncExternalStore\(subscribe, getSnapshot/,
     'the frame subscribes through useSyncExternalStore');
-  assert.match(FRAME, /const mode = useDevViewMode\(\);/, 'the frame reads the store');
+  // The frame no longer reads the store at all: it stopped drawing a control
+  // for the mode when the header's App/Feed/Kanban toggle replaced its tabs
+  // (#1367 follow-up). The TOGGLE is the reader now.
+  assert.match(TOGGLE, /useDevViewMode\(\)/, 'the header toggle reads the store');
+  assert.ok(!FRAME.includes('useDevViewMode'),
+    'the dev frame draws no view control of its own any more');
   // The click still runs the module's behaviour, unchanged.
   assert.match(APP_VIEW, /_selectViewMode\(v\) \{/, 'the click handler lives in the module');
   assert.match(APP_VIEW, /AppView\._setViewMode\(mode\);\s*\n\s*\/\/[^\n]*\n\s*AppView\._repaintDevBody\(\);/,
     'a mode change still persists and repaints, in that order');
-  // THE UI OVERHAUL cut four icon buttons down to two labelled tabs. The ids
-  // are the contract dapp.json selects on, so they are pinned; the retired
-  // two must be really gone rather than merely unrendered.
-  for (const id of ['dev-view-feed', 'dev-view-kanban']) {
-    assert.ok(FRAME.includes(`id: '${id}'`), `${id} still rendered`);
+  // THE UI OVERHAUL cut four icon buttons down to two labelled tabs; the
+  // follow-up to #1367 removed the strip entirely, because the header's
+  // App/Feed/Kanban toggle offers the same two destinations plus the app
+  // itself. Every id it drew must be really gone rather than merely unstyled.
+  for (const id of ['dev-view-feed', 'dev-view-kanban', 'dev-view-tabs',
+    'dev-view-list', 'dev-view-pm', 'dev-view-report']) {
+    assert.ok(!FRAME.includes(`id: '${id}'`) && !FRAME.includes(`id="${id}"`),
+      `${id} was retired with the dev-screen tab strip`);
   }
-  for (const id of ['dev-view-list', 'dev-view-pm', 'dev-view-report']) {
-    assert.ok(!FRAME.includes(`id: '${id}'`), `${id} was retired`);
-  }
-  // A tab strip, not a toggle: role/aria-selected rather than aria-pressed.
-  assert.match(FRAME, /role="tablist"/, 'the strip is a tablist');
-  assert.match(FRAME, /aria-selected=\{active === mode\}/,
-    'aria-selected reflects the mode, so the active tab reaches the a11y tree');
+  // The control that replaced it is still a tablist reflecting the live mode,
+  // so the active view reaches the a11y tree exactly as the strip did.
+  assert.match(TOGGLE, /role="tablist"/, 'the header toggle is a tablist');
+  assert.match(TOGGLE, /aria-selected=\{active === '(app|feed|kanban)' \? 'true' : 'false'\}/,
+    'aria-selected reflects the active segment');
+  // BOTH form factors keep a switch — that is what makes removing the strip
+  // safe. The header copy is wide-screen only and the Improve panel carries
+  // the phone copy.
+  assert.match(TOGGLE, /hidden sm:inline-flex/, 'header copy is wide-screen only');
+  assert.match(TOGGLE, /flex sm:hidden/, 'panel copy covers the phone');
   // Seeded from the module before the first paint, so ?view=kanban does not
   // flash list first.
   assert.match(MOUNT, /publishViewMode\(options\.viewMode\);/, 'the store is seeded at mount');

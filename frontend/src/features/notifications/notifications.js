@@ -110,6 +110,15 @@ const Notifications = {
     const markAll = document.getElementById('notifications-mark-all');
     if (markAll) markAll.addEventListener('click', Notifications.markAllRead);
 
+    // Every drawer open starts folded, and on the "new" list rather than
+    // wherever the last visit left it. Both are the same idea — the drawer
+    // opens on what is NEW — and both key off the one announcement the
+    // controller makes for both presentations.
+    document.addEventListener('sv:drawer-open', () => {
+      Notifications._foldAllGroups();
+      Notifications._setShowOlder(false);
+    });
+
     // Anonymous SPA boot (fold-auth-pages-into-SPA): the initial fetch
     // waits for the authed boot stage instead of firing a guaranteed 401
     // on a sessionless document. `sv:authed` fires at most once.
@@ -118,7 +127,29 @@ const Notifications = {
       () => Notifications.refresh(), { once: true });
   },
 
-  // --- expansion persistence -------------------------------------------
+  // --- expansion --------------------------------------------------------
+  //
+  // Each app GROUP is folded by default, and re-folds on every drawer open —
+  // that is the collapse #1367's follow-up actually asked for, at the grain
+  // where it helps. A viewer with four apps sees four one-line headers and
+  // opens the one they care about, instead of scrolling past thirty rows.
+  //
+  // The persisted set is still loaded at boot and still written on toggle, so
+  // an expansion survives a re-render, a WS refresh and the leaf pager within
+  // one visit. It just does not survive CLOSING the drawer: `_foldAllGroups`
+  // below runs on `sv:drawer-open` (announced by
+  // ../header/header-menu-controller.js for both the desktop and the kit
+  // presentation), so "collapsed by default" means every time rather than only
+  // the first time.
+  _foldAllGroups() {
+    if (!Notifications.expanded.size) return;
+    Notifications.expanded.clear();
+    Notifications._saveExpanded();
+    // Only repaint if the drawer already has rows — the open itself triggers a
+    // refresh, and re-rendering an empty store here would be a wasted pass.
+    if (Notifications.items.length) Notifications._renderList();
+  },
+
 
   _loadExpanded() {
     try {
@@ -392,19 +423,6 @@ const Notifications = {
   // mock rows to render. Once per page load — reopening after a manual
   // dismiss would fight the user, and refresh() runs again on live events.
   //
-  // OPENING THE DRAWER IS NO LONGER ENOUGH (#1367). The notifications section
-  // is collapsed by default now, and a collapsed section is `hidden` — which
-  // keeps its ids in the document (so an `expectSelector` still resolves) but
-  // takes its text out of `document.body.innerText`, which is what a check's
-  // `expectText` reads. #1280's two saved-message assertions went red on
-  // exactly that: the rows were there, and invisible.
-  //
-  // So this deep link expands the section as well as opening the drawer. That
-  // is the same job it already had — "make a state that only exists behind a
-  // gesture reachable from a URL" — with one more gesture to stand in for.
-  // Dispatched AFTER show(), and the ordering matters: show() opens the drawer,
-  // which announces `sv:drawer-open`, which is what re-collapses the section on
-  // every open. Both are synchronous, so expanding second is what sticks.
   _shotOpened: false,
   _maybeShotOpen() {
     if (Notifications._shotOpened || Notifications.open) return;
@@ -413,9 +431,6 @@ const Notifications = {
     if (shot !== 'notifications') return;
     Notifications._shotOpened = true;
     Notifications.show();
-    try {
-      document.dispatchEvent(new CustomEvent('sv:notifications-expand'));
-    } catch (err) { /* ignore — a browser too old for CustomEvent */ }
   },
 
   // #1329: a presented drawer is MODAL on touch — it covers the screen the
@@ -937,8 +952,45 @@ const Notifications = {
   // hamburger carries two counts (green = your work in flight, red =
   // everything else + invites) and they must not double-count. What changed is
   // only which of them decides what is RENDERED.
-  _bellItems() {
+  // ── New vs older (#1367 follow-up) ───────────────────────────────
+  //
+  // The drawer shows what is NEW. A notification you have already read has
+  // done its job — it told you a thing — and leaving it in the list means the
+  // one that arrived this morning is buried under three weeks of things you
+  // have already dealt with. So the default list is the UNREAD ones, and the
+  // read ones are one tap away behind "See older notifications".
+  //
+  // `readAt` is the existing server-side field and the existing meaning of
+  // "viewed": it is set when you click a notification, when you use a group's
+  // "Mark read", and by "Mark all read". Nothing new is stored, and nothing is
+  // deleted — "go away" here means "leave the new list", which is why the
+  // older view can always bring them back.
+  //
+  // Per drawer OPEN, not persisted: `sv:drawer-open` resets it to false (see
+  // init), so a visit always starts on what is new.
+  showOlder: false,
+
+  _setShowOlder(next) {
+    const value = !!next;
+    if (Notifications.showOlder === value) return;
+    Notifications.showOlder = value;
+    if (Notifications.items.length) Notifications._renderList();
+  },
+
+  /** The controller entry point behind the footer button. */
+  toggleOlder() {
+    Notifications._setShowOlder(!Notifications.showOlder);
+  },
+
+  /** Every notification the bell owns, read or not. */
+  _allBellItems() {
     return Notifications.items;
+  },
+
+  /** What the list actually renders: unread only, unless older is revealed. */
+  _bellItems() {
+    if (Notifications.showOlder) return Notifications.items;
+    return Notifications.items.filter((n) => !n.readAt);
   },
 
   _groupByApp() {
@@ -990,6 +1042,13 @@ const Notifications = {
     if (!store) return;
     const touch = isTouchNow();
 
+    // How many read notifications the older view would add. Drives the footer
+    // button's presence AND its count, and separates the two empty states
+    // below: "nothing has ever arrived" is not the same as "you are caught
+    // up", and telling a viewer the first when the second is true reads as
+    // the drawer having lost their history.
+    const olderCount = Notifications._allBellItems().filter((n) => n.readAt).length;
+
     if (Notifications._bellItems().length === 0) {
       // The pinned sections may still have content — only show the empty
       // hint when there's truly nothing in the drawer. #1280 added the
@@ -998,7 +1057,17 @@ const Notifications = {
       // a bug.
       store.set({
         list: [],
-        empty: Notifications.invites.length === 0 && Notifications.saved.length === 0,
+        // `empty` is still the ORIGINAL "you have never had a notification"
+        // hint, so it now also requires that there be no older ones to
+        // reveal — otherwise a fully-read drawer would claim nothing had
+        // ever arrived while offering to show you what had.
+        empty: Notifications.invites.length === 0
+          && Notifications.saved.length === 0
+          && olderCount === 0,
+        // …and this is the new one: caught up, with history behind it.
+        caughtUp: olderCount > 0 && !Notifications.showOlder,
+        olderCount,
+        showOlder: Notifications.showOlder,
         touch,
       });
       return;
@@ -1021,7 +1090,14 @@ const Notifications = {
       }
       entries.push({ type: 'group', group: groupView(g, Notifications.expanded.has(g.key)) });
     }
-    store.set({ list: entries, empty: false, touch });
+    store.set({
+      list: entries,
+      empty: false,
+      caughtUp: false,
+      olderCount,
+      showOlder: Notifications.showOlder,
+      touch,
+    });
   },
 
   // Reveal one more page (GROUP_LEAF_CAP) of leaves for a group. If every
