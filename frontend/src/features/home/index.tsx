@@ -67,6 +67,8 @@ import { useRef } from 'react';
 
 import { SearchIcon } from '@/components/ui/icons';
 
+import { AppGrid } from './app-grid';
+
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 
 // The three modules that fill this screen, imported in the order their
@@ -183,8 +185,7 @@ export function HomeScreen() {
             drop. Trim the padding here, never there.
         */}
         <section id="home-apps-section" className="px-3">
-          <div id="app-list" className="grid grid-cols-4 gap-1.5 sm:gap-2 p-2 pt-1.5 sm:p-3 sm:pt-2">
-          </div>
+          <AppGrid />
           {/*
               "Show all N apps" — revealed by Home.render() only when the
               viewer has more than the default two rows hold. Ships hidden

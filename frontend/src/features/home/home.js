@@ -21,6 +21,7 @@
 // both are published by sibling modules the island imports BEFORE this one, and
 // every read happens at call time, long after the bundle has evaluated.
 import { AppCard } from '../apps/app-card.js';
+import { gridStore } from './grid-store';
 
 const Home = {
   // Can this viewer create apps right now? Derived per request by
@@ -455,8 +456,6 @@ const Home = {
       Home._reloadPending = true;
       return;
     }
-    const listEl = document.getElementById('app-list');
-    if (!listEl) return;
     const canCreate = Home.canCreate();
     const apps = Home._apps || [];
     Home._wireSearch();
@@ -466,12 +465,10 @@ const Home = {
     // #apps browse screen (public/js/browse.js), so the old All Apps
     // section and its drag-to-add gesture are gone.
     const { yours } = Home.partitionApps(apps);
-    let html = '';
-    let canDragYours = false;
-    // Non-null only in the un-queried view: the count of "Your apps"
-    // cards. null = drag fully disabled (search results are a flat,
-    // transient ordering that must not be persisted as a reorder).
-    let yoursCount = null;
+    let items = [];
+    let view = 'grid';
+    let resultsHeading = null;
+    let emptyQuery = null;
     // The grid's explicit row tracks (#975). Empty string in the search view,
     // which clears any template a previous render left behind.
     let rowTemplate = '';
@@ -486,16 +483,15 @@ const Home = {
       // canonical ordering. The three fixed sections below the grid are
       // untouched by a search: they are outside #app-list.
       //
+      view = 'search';
       const matches = Home.filterApps(yours, query);
       if (!matches.length) {
-        html = `<div class="col-span-full py-10 text-center text-sm text-zinc-500 dark:text-zinc-400">No apps match &ldquo;${escapeHtml(query)}&rdquo; — clear the search and try <span class="text-violet-500">Discover</span> below.</div>`;
+        emptyQuery = query;
       } else {
-        html = `<div class="home-section-header col-span-full">${matches.length} result${matches.length === 1 ? '' : 's'}</div>`;
-        html += matches.map((a) => Home.renderAppCard(a)).join('');
+        resultsHeading = `${matches.length} result${matches.length === 1 ? '' : 's'}`;
+        items = matches.map((a) => ({ kind: 'card', placement: null, app: Home.appView(a) }));
       }
     } else {
-      yoursCount = yours.length;
-      canDragYours = true;
       // FREE-FORM PLACEMENT. Every app tile is a grid item at an explicit
       // (column, row) cell the viewer chose — holes and all. There is no
       // flow: a tile's position comes from the layout model, never from its
@@ -523,13 +519,13 @@ const Home = {
         ? canvas.filter((it) => it.row <= rowBound)
         : canvas;
       const overflow = hiddenRows ? [] : HomeLayout.overflowItems(layout);
-      const parts = shown.map((it) => Home.renderGridItem(it, cols));
+      const parts = shown.map((it) => Home.gridItemView(it, cols, false));
       // Items past the 8-row canvas render after it in plain flow, packed
       // densely. The row cap bounds free PLACEMENT, never how many apps a
       // viewer may have — stranding a tile would be far worse than an
       // extra row.
-      parts.push(...overflow.map((it) => Home.renderGridItem(it, cols, true)));
-      html += parts.join('');
+      parts.push(...overflow.map((it) => Home.gridItemView(it, cols, true)));
+      items = parts.filter(Boolean);
       // The row tracks describe what is RENDERED, so a collapsed grid must not
       // declare tracks for the rows it is holding back — an explicit track
       // exists whether or not anything is in it, and naming row 2 while
@@ -542,14 +538,12 @@ const Home = {
     // canvas's fixed row height (its "N results" header and empty-state
     // line would each claim a whole 100px tile row). app.css keys the
     // auto-rows off this attribute.
-    listEl.dataset.view = query ? 'search' : 'grid';
+
     // SHORT ROWS (#968 fit rows, #975 blank rows). '' clears it, which is what
     // desktop and the search view get — app.css's grid-auto-rows is then the
     // only row sizing, exactly as before. Written BEFORE the innerHTML so the
     // first layout of the new children already has its tracks.
-    listEl.style.gridTemplateRows = rowTemplate;
-    listEl.innerHTML = html;
-    Home._wireCards(listEl, canDragYours, yoursCount);
+    gridStore.set({ ready: true, view, rowTemplate, items, resultsHeading, emptyQuery });
     Home._renderAppsMore(moreCount);
     // The iOS widget-editing strip renders ABOVE the grid, in its own
     // section: a full-width flow item cannot coexist with explicit cell
@@ -566,15 +560,128 @@ const Home = {
     // so the grid's wholesale innerHTML re-render above cannot disturb them;
     // this call is here so a first paint fills them at the same moment.
     window.HomePanels?.render();
-    Home._maybeOpenShotMenu(listEl);
-    Home._searchReveal.sync();
-    // Screenshot-state deep link: paint the drag overlay in its resting
-    // visible state so the gesture-only surface is capturable and testable.
-    Home._maybeShowShotGrid(listEl);
     // The header's Improve button, pointed at the PLATFORM (#1367). Published
     // from render() on purpose — see publishImproveTarget for why that is the
     // one call that makes it consistent.
     Home.publishImproveTarget();
+  },
+
+
+  // One app -> the flat facts its tile renders. Every conditional the old
+  // template string evaluated inline is resolved HERE, where the `App.user`
+  // gates and the status vocabulary already live.
+  appView(app) {
+    const isAwaiting = app.status === 'awaiting_secrets';
+    const isError = app.status === 'error';
+    const isRunning = app.status === 'running';
+    // The status DOT and the active-users badge are gone from the tile face —
+    // a launcher icon should read as an app, not a dashboard row. Every
+    // non-running status still says so in words.
+    const statusLabel = isRunning ? ''
+      : app.status === 'creating' ? 'Spinning up...'
+      : isAwaiting ? 'Awaiting secrets'
+      : 'Error';
+    // Retry is the errored card's primary recovery action, gated to
+    // creator-or-full-admin (view-only admins excluded, issue #311).
+    const showRetry = isError
+      && !!(App.user?.canAdminWrite || App.user?.id === app.created_by);
+    // #416: `last_failure_reason` only rides the list payload for the app's
+    // creator / collaborators / admins, so it is simply absent for outsiders.
+    const forkName = app.forked_from && typeof app.forked_from === 'object'
+      ? (app.forked_from.name || '<deleted>') : null;
+    return {
+      slug: app.slug,
+      name: String(app.name || ''),
+      status: app.status,
+      icon: AppCard.iconViewFor(app),
+      locked: !!app.locked,
+      demo: !!app.demo,
+      statusLabel,
+      isAwaiting,
+      isError,
+      // Awaiting-secrets cards stay clickable so the viewer can open the app
+      // view + Secrets modal to fill values; other non-running statuses show
+      // no app surface.
+      clickable: isRunning || isAwaiting,
+      failureReason: isError && app.last_failure_reason ? String(app.last_failure_reason) : null,
+      showRetry,
+      forkName,
+    };
+  },
+
+  // One placed item -> its view-model entry. The string version spliced
+  // `data-yours` and the placement style INTO renderAppCard's output with two
+  // fragile `String.replace` calls (one of which silently unplaced the whole
+  // grid once by moving the anchor the other matched on). Placement is data
+  // now, so there is nothing to splice.
+  gridItemView(item, cols, overflow) {
+    const [w, h] = HomeLayout.sizeOf(item, cols);
+    const placement = overflow ? null : { col: item.col, row: item.row, w, h };
+    if (item.type === 'widget') {
+      return { kind: 'slot', placement, key: item.key };
+    }
+    const app = (Home._apps || []).find((a) => a.slug === item.slug);
+    if (!app) return null;
+    return { kind: 'card', placement, app: Home.appView(app) };
+  },
+
+  // Attach / detach the kit's placement recognizer. Split out of _wireCards so
+  // app-grid.tsx can own WHEN it happens (a post-commit effect) while every
+  // callback below stays here, where the geometry lives.
+  //
+  // `enabled` is false in the search view: a flat, transient ordering must not
+  // be persisted as a reorder.
+  _attachGridPlacement(listEl, enabled) {
+    Home._detachGridPlacement();
+    if (!enabled || !window.unNative?.attachGridPlacement) return;
+    const cols = Home.currentCols();
+    Home._placementHandle = window.unNative.attachGridPlacement(listEl, {
+      // Matches EVERY widget host, including a create widget in its disabled
+      // state — being unable to create apps must not make the widget immovable.
+      itemSelector: '.app-card[data-yours]:not([data-demo]), .home-panel-slot',
+      cellFromPoint: (x, y, info) => Home._targetCellFor(x, y, info, cols),
+      // canPlace runs first on every cell change and onHover right after, and
+      // both need the SAME displacement plan — so compute it once and memo it
+      // for the paint. Recomputing would risk the highlight describing a
+      // different outcome than the one that commits.
+      canPlace: (item, cell) => !!Home._planFor(item, cell, cols),
+      onLift: (item) => {
+        Home._dragActive = true;
+        Home._showGridOverlay(listEl, cols, item);
+      },
+      onHover: (item, cell, ok) => { Home._previewDrop(item, cell, ok, cols); },
+      // The release spring's destination. Same memoised plan again: the tile
+      // settles on the cell the tint promised, not the one it left.
+      rectForCell: (item, cell) => Home._rectForCell(item, cell, cols),
+      onPlace: (item, cell) => { Home._onGridPlace(item, cell, cols); },
+      onSettle: () => {
+        Home._dragActive = false;
+        Home._hideGridOverlay();
+        if (Home._reloadPending) {
+          Home._reloadPending = false;
+          Home._rerenderPending = false;
+          Home.load();
+        } else if (Home._rerenderPending) {
+          Home._rerenderPending = false;
+          Home.render();
+        }
+      },
+    });
+  },
+
+  _detachGridPlacement() {
+    if (Home._placementHandle) {
+      try { Home._placementHandle.detach(); } catch {}
+      Home._placementHandle = null;
+    }
+  },
+
+  // The errored card's Retry, lifted out of the _wireCards sweep so the button
+  // can carry its own handler as a prop.
+  async _onRetry(slug, btn) {
+    if (btn) btn.textContent = '...';
+    await fetch(`/api/apps/${slug}/retry`, { method: 'POST' });
+    Home.load();
   },
 
   // ── The home screen's Improve button (#1367) ───────────────────────
@@ -1114,119 +1221,15 @@ const Home = {
     card.addEventListener('mouseenter', warm);
   },
 
-  // `yoursCount` is the "Your apps" section size in the sectioned view
-  // (0 included — adds must work with an empty section), or null when
-  // drag is off entirely (search view). Only the kit path consumes it;
-  // the legacy path still keys off canDragYours.
-  _wireCards(listEl, canDragYours, yoursCount = null) {
-    // Cards already in the widget aren't drag-into-widget candidates —
-    // computed once per render, not per card.
-    const widgetSlugs = Home._widgetUiActive() ? Home._widgetSlugs() : null;
-    listEl.querySelectorAll('.app-card').forEach((card) => {
-      card.addEventListener('click', (e) => {
-        // A completed drag (or a long-press that opened the menu) ends
-        // with the pointer still on the card, so the browser fires a
-        // click right after pointerup — eat it so the gesture doesn't
-        // also open the app.
-        if (Home._suppressClick) {
-          Home._suppressClick = false;
-          return;
-        }
-        if (
-          e.target.closest('.retry-btn') ||
-          e.target.closest('.card-menu-btn')
-        ) return;
-        // Disabled while spinning up / errored — there's no iframe or
-        // chat history to render and the WS `app_status` handler will
-        // re-bind the card as soon as the container goes live.
-        if (card.dataset.status !== 'running' && card.dataset.status !== 'awaiting_secrets') return;
-        App.navigateToApp(card.dataset.slug);
-      });
-      Home._wirePrewarm(card);
-      // The placement recognizer (below) owns long-press-lift-drag on every
-      // card it matches. The long-press actions menu survives only where it
-      // does NOT: the search view (a transient view with no layout to write)
-      // and inert staging demo tiles. All other cards reach the menu through
-      // their "…" button.
-      if (yoursCount == null || card.dataset.demo === 'true') {
-        Home._wireCardLongPressMenu(card);
-      }
-    });
+  // NOTE: _wireCards is gone (#1191). It existed because an innerHTML
+  // assignment destroys every listener under it, so all four sweeps — card
+  // click, prewarm, long-press menu, retry and the card-menu button — had to
+  // run again after each render. React keeps the card nodes across renders,
+  // so those handlers are ordinary props on the elements that own them
+  // (features/home/app-grid.tsx) and the two gesture attachments run once per
+  // card from its ref. What was the tail of this function — the kit's
+  // placement recognizer — is _attachGridPlacement above.
 
-    // FREE-FORM PLACEMENT on the whole grid: long-press (or a desktop drag
-    // past the slop) lifts a floating ghost that tracks the finger on both
-    // axes, the real item holds its cell as a dashed slot, the grid draws
-    // itself underneath, and the drop lands in whatever cell the pointer is
-    // over — including an empty one with nothing around it. Nothing
-    // re-packs; the holes the viewer leaves are the point.
-    //
-    // The kit owns the gesture, this owns the geometry: cellFromPoint hits
-    // the overlay's own cell elements, so the highlight the user sees and
-    // the cell the drop commits to come from one code path with no
-    // arithmetic over grid-template-columns. It answers from the dragged
-    // TILE's centroid rather than the finger (see _targetCellFor), so the
-    // block that tints is the block the tile is visibly covering however it
-    // was picked up.
-    //
-    // The item selector deliberately matches EVERY widget host, including a
-    // create widget rendered in its disabled state — being unable to create
-    // apps must not make the widget unmovable.
-    if (yoursCount != null && window.unNative?.attachGridPlacement) {
-      if (Home._placementHandle) { try { Home._placementHandle.detach(); } catch {} }
-      const cols = Home.currentCols();
-      Home._placementHandle = window.unNative.attachGridPlacement(listEl, {
-        itemSelector: '.app-card[data-yours]:not([data-demo])',
-        cellFromPoint: (x, y, info) => Home._targetCellFor(x, y, info, cols),
-        // canPlace runs first on every cell change and onHover right after,
-        // and both need the SAME displacement plan — so compute it once here
-        // and memo it for the paint. Recomputing would risk the highlight
-        // describing a different outcome than the one that commits.
-        canPlace: (item, cell) => !!Home._planFor(item, cell, cols),
-        onLift: (item) => {
-          Home._dragActive = true;
-          Home._showGridOverlay(listEl, cols, item);
-        },
-        onHover: (item, cell, ok) => { Home._previewDrop(item, cell, ok, cols); },
-        // The release spring's destination. Same memoised plan again: the
-        // tile settles on the cell the tint promised, not on the cell it was
-        // picked up from.
-        rectForCell: (item, cell) => Home._rectForCell(item, cell, cols),
-        onPlace: (item, cell) => { Home._onGridPlace(item, cell, cols); },
-        onSettle: () => {
-          Home._dragActive = false;
-          Home._hideGridOverlay();
-          if (Home._reloadPending) {
-            Home._reloadPending = false;
-            Home._rerenderPending = false;
-            Home.load();
-          } else if (Home._rerenderPending) {
-            Home._rerenderPending = false;
-            Home.render();
-          }
-        },
-      });
-    }
-
-    // Retry stays visible on errored cards (it's the card's primary
-    // recovery action); it is also offered in the hamburger menu.
-    listEl.querySelectorAll('.retry-btn').forEach((btn) => {
-      btn.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        btn.textContent = '...';
-        await fetch(`/api/apps/${btn.dataset.slug}/retry`, { method: 'POST' });
-        Home.load();
-      });
-    });
-
-    listEl.querySelectorAll('.card-menu-btn').forEach((btn) => {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        // Pass the element itself so the kit popover can toggle closed
-        // on a re-click and manage aria-expanded.
-        Home.openCardMenu(btn.dataset.slug, btn);
-      });
-    });
-  },
 
   // Map structured drift-check result → a short, user-readable
   // message. Mirrors the status enum in main-drift-poller.js.

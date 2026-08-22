@@ -39,6 +39,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const { installAppCard } = require('./helpers/app-card');
+const { installGridStore } = require('./helpers/home-grid-store');
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 const { HOME_SRC, LAYOUT_SRC } = require('./helpers/home-modules');
@@ -127,6 +128,9 @@ function makeHome({ width = 1280, canCreateApps = true } = {}) {
   // home.js delegates iconTileFor / renderAppPillsHtml to window.AppCard
   // (frontend/src/features/apps/app-card.js) since #1083 chunk F.
   installAppCard(sandbox);
+  // #1191: Home.render() publishes a view model instead of assigning
+  // innerHTML. See ./helpers/home-grid-store.
+  const gridStore = installGridStore(sandbox);
   vm.runInContext(`${LAYOUT_SRC}\n${HOME_SRC}\n;globalThis.__Home = Home;`, sandbox);
   const Home = sandbox.__Home;
   const HomeLayout = sandbox.HomeLayout;
@@ -145,7 +149,7 @@ function makeHome({ width = 1280, canCreateApps = true } = {}) {
     ensureLoaded: () => Promise.resolve(),
   };
   return {
-    Home, HomeLayout, fetchCalls, toasts, attachCalls, sandbox, mediaQueries,
+    gridStore, Home, HomeLayout, fetchCalls, toasts, attachCalls, sandbox, mediaQueries,
     setFetch: (fn) => { fetchImpl = fn; },
     setWidth: (w) => { sandbox.innerWidth = w; },
     fireResize: () => { (winListeners.resize || []).forEach((fn) => fn()); },
@@ -175,7 +179,7 @@ const app = (slug, over = {}) => ({
 test('Home wires the placement recognizer, not the flow reorder', () => {
   const { Home, attachCalls } = makeHome();
   Home._apps = [app('a')];
-  Home._wireCards({ querySelectorAll: () => [] }, true, 1);
+  Home._attachGridPlacement({ querySelectorAll: () => [] }, true);
   assert.equal(attachCalls.length, 1);
   const { opts } = attachCalls[0];
   assert.equal(typeof opts.cellFromPoint, 'function', 'the host owns the geometry');
@@ -189,7 +193,7 @@ test('Home wires the placement recognizer, not the flow reorder', () => {
 test('the search view arms no placement recognizer', () => {
   const { Home, attachCalls } = makeHome();
   Home._apps = [app('a')];
-  Home._wireCards({ querySelectorAll: () => [] }, false, null);
+  Home._attachGridPlacement({ querySelectorAll: () => [] }, false);
   assert.equal(attachCalls.length, 0);
 });
 
@@ -198,7 +202,7 @@ test('the search view arms no placement recognizer', () => {
 test('onLift holds _dragActive; onSettle clears it and flushes a reload', async () => {
   const { Home, attachCalls } = makeHome();
   Home._apps = [app('a')];
-  Home._wireCards({ querySelectorAll: () => [], appendChild: () => {} }, true, 1);
+  Home._attachGridPlacement({ querySelectorAll: () => [], appendChild: () => {} }, true);
   const { opts } = attachCalls[0];
 
   let loaded = 0;
@@ -219,7 +223,7 @@ test('onLift holds _dragActive; onSettle clears it and flushes a reload', async 
 test('onSettle prefers a full reload over a cheap re-render', async () => {
   const { Home, attachCalls } = makeHome();
   Home._apps = [app('a')];
-  Home._wireCards({ querySelectorAll: () => [] }, true, 1);
+  Home._attachGridPlacement({ querySelectorAll: () => [] }, true);
   const { opts } = attachCalls[0];
   let loaded = 0;
   let rendered = 0;
@@ -370,7 +374,7 @@ test('a drop of an unknown item persists nothing', async () => {
 test('canPlace accepts occupied targets and self-overlap', () => {
   const { Home, attachCalls } = makeHome();
   seedLayout(Home);
-  Home._wireCards({ querySelectorAll: () => [], appendChild: () => {} }, true, 4);
+  Home._attachGridPlacement({ querySelectorAll: () => [], appendChild: () => {} }, true);
   const { opts } = attachCalls[0];
   const d = tileEl('d');
 
@@ -777,7 +781,7 @@ function ghostInfo(el, { left, top, w, h: rows, grabX = 0, grabY = 0 }) {
 // than the internals.
 function wiredOpts(h) {
   h.Home._apps = [app('a')];
-  h.Home._wireCards({ querySelectorAll: () => [] }, true, 1);
+  h.Home._attachGridPlacement({ querySelectorAll: () => [] }, true);
   return h.attachCalls[h.attachCalls.length - 1].opts;
 }
 
@@ -928,10 +932,14 @@ test('the half-cell token is declared and derived from the cell', () => {
   assert.match(CSS, /--home-blank-row-h:\s*calc\(var\(--home-cell-h\)\s*\/\s*2\)/);
 });
 
-test('render writes the template for the grid and clears it for a search', () => {
+test('render publishes the template for the grid and clears it for a search', () => {
+  // #1191: the tracks are PUBLISHED now, not written. Home.render() puts
+  // `rowTemplate` in the view model and features/home/app-grid.tsx writes it
+  // onto the element in a layout effect — so this asserts the model, which is
+  // the half home.js still owns.
   const h = makeHome({ width: 390 });
-  const { Home } = h;
-  const listEl = installListEl(h);
+  const { Home, gridStore } = h;
+  installListEl(h);
   Home._apps = [app('a'), app('b')];
   Home._appsExpanded = true;
   Home._layouts = {
@@ -940,14 +948,15 @@ test('render writes the template for the grid and clears it for a search', () =>
   };
   Home._layoutFetchedAt = Date.now();
   Home.render();
-  assert.match(listEl.style.gridTemplateRows,
+  assert.match(gridStore.get().rowTemplate,
     /var\(--home-cell-h\) var\(--home-blank-row-h\) var\(--home-cell-h\)/);
 
   // The search view is a flat list with no placement: a stale template would
   // give its "N results" header a grid cell's height.
   Home._query = 'a';
   Home.render();
-  assert.equal(listEl.style.gridTemplateRows, '');
+  assert.equal(gridStore.get().rowTemplate, '');
+  assert.equal(gridStore.get().view, 'search', 'and the view switches with it');
 });
 
 // ── The overlay mirrors the tracks (#968, #975) ───────────────────────
@@ -1144,7 +1153,7 @@ test('no tile geometry (an older kit) falls back to the pointer hit-test', () =>
   const h = makePreview(layout);
   hitTestCells(h);
   const opts = wiredOpts(h);
-  h.Home._overlayEl = h.dom.overlay; // _wireCards doesn't touch it; be explicit
+  h.Home._overlayEl = h.dom.overlay; // _attachGridPlacement doesn't touch it; be explicit
 
   assert.deepEqual({ ...opts.cellFromPoint(250, 250) }, { col: 2, row: 2 },
     'degrades to today’s behaviour rather than breaking the drag');
@@ -1258,7 +1267,7 @@ test('rectForCell returns null when there is no cell to settle on', () => {
 test('the host hands rectForCell to the kit, wired to the same memo as the tint', () => {
   const { Home, attachCalls } = makeHome();
   Home._apps = [app('a')];
-  Home._wireCards({ querySelectorAll: () => [] }, true, 1);
+  Home._attachGridPlacement({ querySelectorAll: () => [] }, true);
   const { opts } = attachCalls[0];
   assert.equal(typeof opts.rectForCell, 'function',
     'without this the kit settles on the item’s own rect — the origin cell');

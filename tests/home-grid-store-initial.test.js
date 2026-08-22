@@ -1,0 +1,61 @@
+// The vm harness's copy of the grid store's initial state must not drift.
+//
+// tests/helpers/home-grid-store.js transcribes INITIAL_GRID because the real
+// one lives in TypeScript (frontend/src/features/home/grid-store.ts) and the
+// vm sandboxes run classic script text — there is nothing to import it from.
+// A transcription is a second source of truth, and the failure it invites is
+// silent: a field added to the real store but not to the copy simply reads
+// `undefined` inside every home test, so `Home.render()` publishes it, nobody
+// asserts on it, and the harness keeps passing while the thing it models has
+// moved on.
+//
+// So pin the pair. This parses the literal out of the TypeScript source rather
+// than evaluating it: the file is a module with type-only exports around it,
+// and the object itself is plain JSON-shaped data.
+//
+// Run with: node --test tests/home-grid-store-initial.test.js
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+
+const { INITIAL_GRID } = require('./helpers/home-grid-store');
+
+const STORE_PATH = path.join(
+  __dirname, '..', 'frontend', 'src', 'features', 'home', 'grid-store.ts'
+);
+
+test('the harness mirrors INITIAL_GRID exactly', () => {
+  const src = fs.readFileSync(STORE_PATH, 'utf8');
+  const m = src.match(/export const INITIAL_GRID: HomeGridState = \{([\s\S]*?)\n\};/);
+  assert.ok(m, 'INITIAL_GRID is no longer declared the way this test reads it —'
+    + ' update the pattern here rather than deleting the guard');
+
+  // `key: value,` per line, values being the JSON-ish literals the store holds.
+  const real = {};
+  for (const line of m[1].split('\n')) {
+    const kv = line.trim().match(/^([A-Za-z_$][\w$]*):\s*(.+?),?$/);
+    if (!kv) continue;
+    real[kv[1]] = JSON.parse(
+      kv[2].replace(/'/g, '"').replace(/,$/, ''),
+    );
+  }
+
+  assert.deepEqual(real, INITIAL_GRID,
+    'tests/helpers/home-grid-store.js has drifted from grid-store.ts —'
+    + ' every home test that calls Home.render() is running against a stale shape');
+});
+
+test('the initial state renders NOTHING, which is the prerendered markup', () => {
+  // The hydration contract (AGENTS.md): an island's first render must emit
+  // exactly the markup the hand-written shell shipped, and #app-list shipped
+  // empty. `ready: false` with no items is what makes that true — a mismatch
+  // here is a console error on the home route, and a console error on any
+  // route fails proposal checks.
+  assert.equal(INITIAL_GRID.ready, false);
+  assert.deepEqual(INITIAL_GRID.items, []);
+  assert.equal(INITIAL_GRID.rowTemplate, '');
+  assert.equal(INITIAL_GRID.resultsHeading, null);
+  assert.equal(INITIAL_GRID.emptyQuery, null);
+});

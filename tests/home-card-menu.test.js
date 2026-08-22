@@ -28,7 +28,8 @@ const assert = require('node:assert/strict');
 const vm = require('node:vm');
 const { installAppCard } = require('./helpers/app-card');
 
-const { HOME_SRC } = require('./helpers/home-modules');
+const { HOME_SRC, LAYOUT_SRC } = require('./helpers/home-modules');
+const { installGridStore } = require('./helpers/home-grid-store');
 
 function makeHome(user) {
   return makeHomeEnv(user).Home;
@@ -110,7 +111,12 @@ function makeHomeEnv(user) {
   // builders (frontend/src/features/apps/app-card.js) since #1083 chunk F.
   // It imports them; this declares what the stripped import would have bound.
   installAppCard(sandbox);
-  vm.runInContext(`${HOME_SRC}\n;globalThis.__Home = Home;`, sandbox);
+  // #1191: Home.render() no longer bails when #app-list is absent — it
+  // publishes a view model instead of assigning innerHTML, so it now runs
+  // for real here and needs both the geometry module it lays out against
+  // and the store binding ./helpers/home-modules strips the import for.
+  installGridStore(sandbox);
+  vm.runInContext(`${LAYOUT_SRC}\n${HOME_SRC}\n;globalThis.__Home = Home;`, sandbox);
   return { Home: sandbox.__Home, sandbox };
 }
 
