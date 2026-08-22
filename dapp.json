@@ -2595,6 +2595,16 @@
       "path": "/?shot=notifications&demo=1",
       "expectSelector": "#notifications-older-toggle",
       "expectText": "older notification"
+    },
+    {
+      "name": "The Dev feed renders as a de-carded stream",
+      "path": "/?demo=1&view=feed#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-feed .dev-feed-entry > .gc-vote-item"
+    },
+    {
+      "name": "Feed issue rows carry an inline-comment slot",
+      "path": "/?demo=1&view=feed#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-feed .dev-feed-entry .dev-feed-comments[data-comments-for]"
     }
   ],
   "governance": {

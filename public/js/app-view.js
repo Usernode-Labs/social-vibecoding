@@ -4442,17 +4442,33 @@ const AppView = {
     }
 
     const shown = Math.min(AppView._feedShown || 20, items.length);
-    html += '<div class="space-y-2">';
+    // `dev-feed-stream` and not `space-y-2`: the feed's rows are flush now,
+    // separated by a hairline rather than by a gap, so the column reads as one
+    // continuous stream instead of a stack of tiles. See app.css.
+    html += '<div class="dev-feed-stream">';
     for (let i = 0; i < shown; i++) {
       const it = items[i];
-      if (it.kind === 'issue') html += AppView._renderIssueRow(it.item);
-      else if (it.kind === 'proposal') html += AppView._renderProposalCard(it.item);
-      else if (it.kind === 'shared-session') html += AppView._renderSharedSessionCard(it.item);
+      // Each entry is WRAPPED here rather than inside the row renderers,
+      // because those renderers are shared with the kanban columns and the
+      // kanban board must keep its cards. The wrapper is what carries the
+      // inline-comment slot and what the de-carding CSS is scoped through.
+      if (it.kind === 'issue') {
+        html += AppView._feedEntryHtml(
+          AppView._renderIssueRow(it.item),
+          { commentsFor: it.item && it.item.number }
+        );
+      } else if (it.kind === 'proposal') {
+        html += AppView._feedEntryHtml(AppView._renderProposalCard(it.item));
+      } else if (it.kind === 'shared-session') {
+        html += AppView._feedEntryHtml(AppView._renderSharedSessionCard(it.item));
       // Completed work, folded into the stream by _feedItems rather than
       // parked in a block below it. _renderMergedRow is the same renderer
       // the Completed block used, called one row at a time.
-      else if (it.kind === 'merged') html += AppView._renderMergedRow(it.item);
-      else html += AppView._renderGovCard(it.item);
+      } else if (it.kind === 'merged') {
+        html += AppView._feedEntryHtml(AppView._renderMergedRow(it.item));
+      } else {
+        html += AppView._feedEntryHtml(AppView._renderGovCard(it.item));
+      }
     }
     html += '</div>';
 
@@ -4476,6 +4492,135 @@ const AppView = {
     return html;
   },
 
+  // ── The feed's entry wrapper ──────────────────────────────────────
+  //
+  // One row of the stream: the card renderer's markup, plus — for an issue —
+  // an empty slot the inline comment preview lands in.
+  //
+  // The wrapping happens HERE and not inside the row renderers because every
+  // one of them is shared with the kanban columns, and the kanban board keeps
+  // its cards. `.dev-feed-entry` is the hook the de-carding CSS is scoped
+  // through, so the same renderer draws a bordered tile on the board and a
+  // full-bleed row in the feed with no branch in the JS.
+  _feedEntryHtml(rowHtml, opts) {
+    if (!rowHtml) return '';
+    const number = opts && opts.commentsFor;
+    // Ships EMPTY and stays empty until the row is actually scrolled to —
+    // see _wireFeedComments. An issue with no comments never fills it, so
+    // nothing reserves space for a thread that does not exist.
+    const slot = number != null
+      ? `<div class="dev-feed-comments" data-comments-for="${escapeAttr(String(number))}"></div>`
+      : '';
+    return `<div class="dev-feed-entry">${rowHtml}${slot}</div>`;
+  },
+
+  // A comment thread as the FEED shows it: the last few, flat, no card chrome.
+  //
+  // Deliberately not _issueCommentsHtml. That one is the opened-topic view —
+  // every comment, each in its own bordered box, under a "Discussion" heading.
+  // Inline in a stream the point is the opposite: enough to see what people
+  // said without leaving, and no chrome competing with the row above it. So
+  // this shows the LAST few (a thread's tail is the live part), as plain
+  // indented lines, with a count when there is more behind them.
+  FEED_COMMENT_PREVIEW: 2,
+
+  _feedCommentsHtml(comments) {
+    const list = Array.isArray(comments) ? comments : [];
+    if (!list.length) return '';
+    const renderMd = (typeof DevChat !== 'undefined' && DevChat.renderMarkdown)
+      ? (s) => DevChat.renderMarkdown(s)
+      : (s) => `<pre class="whitespace-pre-wrap font-sans">${escapeHtml(s)}</pre>`;
+    const tail = list.slice(-AppView.FEED_COMMENT_PREVIEW);
+    const hidden = list.length - tail.length;
+    const more = hidden > 0
+      ? `<div class="dev-feed-comment-more">${hidden} earlier ${hidden === 1 ? 'reply' : 'replies'}</div>`
+      : '';
+    const rows = tail.map((c) => {
+      const isBot = AppView._isBotCommentAuthor(c.author);
+      const author = c.author ? escapeHtml(c.author) : 'unknown';
+      const botTag = isBot
+        ? ' <span class="text-[10px] uppercase tracking-wide text-sky-600 dark:text-sky-400">bot</span>'
+        : '';
+      return `<div class="dev-feed-comment">
+          <span class="dev-feed-comment-author">${author}</span>${botTag}
+          <span class="dev-feed-comment-body">${renderMd(c.body || '')}</span>
+        </div>`;
+    }).join('');
+    return `${more}${rows}`;
+  },
+
+  // ── Inline comments, loaded lazily ────────────────────────────────
+  //
+  // A feed of thirty issues must not fire thirty requests on paint, and most
+  // of them are below the fold anyway. So each slot is filled when its row is
+  // actually scrolled to, through one IntersectionObserver over the feed.
+  //
+  // The existing per-issue cache (`_ghComments`) and the existing endpoint do
+  // the work — this is the same data the opened-topic view already fetches, so
+  // opening a row you have scrolled past costs nothing, and a row whose thread
+  // you have already read paints from cache with no request at all.
+  //
+  // The observer is rebuilt on every feed render because _rerenderFeed replaces
+  // the container's innerHTML, which detaches every node it was watching.
+  _feedCommentObserver: null,
+
+  _wireFeedComments(root) {
+    if (AppView._feedCommentObserver) {
+      AppView._feedCommentObserver.disconnect();
+      AppView._feedCommentObserver = null;
+    }
+    if (!root || typeof IntersectionObserver !== 'function') return;
+    const slots = root.querySelectorAll('.dev-feed-comments[data-comments-for]');
+    if (!slots.length) return;
+    const observer = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue;
+        // Once per slot: unobserve BEFORE the await, or a fast scroll can
+        // queue the same fetch several times over.
+        observer.unobserve(entry.target);
+        AppView._fillFeedComments(entry.target);
+      }
+    }, { rootMargin: '200px 0px' });
+    for (const slot of slots) observer.observe(slot);
+    AppView._feedCommentObserver = observer;
+  },
+
+  async _fillFeedComments(slot) {
+    if (!slot) return;
+    const number = parseInt(slot.getAttribute('data-comments-for'), 10);
+    if (!Number.isFinite(number)) return;
+
+    // Re-resolve by number rather than holding the node: a WS repaint between
+    // the request and its answer detaches this one, and writing into an
+    // orphan would silently drop the comments.
+    const paint = (entry) => {
+      const feed = document.getElementById('dev-feed');
+      if (!feed) return;
+      const live = feed.querySelector(`.dev-feed-comments[data-comments-for="${number}"]`);
+      if (!live) return;
+      live.innerHTML = AppView._feedCommentsHtml(entry.comments);
+    };
+
+    const cached = AppView._ghComments[number];
+    if (cached) { paint(cached); return; }
+
+    try {
+      const slug = AppView.appData && AppView.appData.slug;
+      if (!slug) return;
+      const res = await fetch(
+        `/api/apps/${slug}/github-issues/${number}/comments${AppView._demoQS()}`
+      );
+      if (!res.ok) return;
+      const data = await res.json();
+      const entry = {
+        comments: Array.isArray(data.comments) ? data.comments : [],
+        truncated: !!data.truncated,
+      };
+      AppView._ghComments[number] = entry;
+      paint(entry);
+    } catch (_) { /* best-effort: the row simply shows no replies */ }
+  },
+
   // Re-render the feed in place from the cached data, then re-mount the
   // expanded card's thread + roster (innerHTML replacement wipes any
   // previous mount).
@@ -4483,6 +4628,9 @@ const AppView = {
     const el = document.getElementById('dev-feed');
     if (!el) return;
     el.innerHTML = AppView._renderFeedInner();
+    // Rebuilt every time: the assignment above detached every node the previous
+    // observer was watching.
+    AppView._wireFeedComments(el);
     if (window.Kudos) Kudos.attach(el);
     AppView._applyExploreChatAvailability(el);
     AppView._startMergeCountdownTimer();
@@ -9649,7 +9797,7 @@ const AppView = {
     const actions = AppView._cardActionsHtml({ primary: [kudosBtn] });
 
     return `
-        <div class="gc-vote-item ${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}" data-ref-pr="${pr.pr_number || pr.id}" data-proposal-row="${pr.id}" title="Open this proposal's discussion">
+        <div class="gc-vote-item ${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}" data-completed="1" data-ref-pr="${pr.pr_number || pr.id}" data-proposal-row="${pr.id}" title="Open this proposal's discussion">
           ${AppView._cardContentHtml({
             icon: AppView._devCardIcon('done'),
             titleHtml: mergedLabel,
@@ -9711,7 +9859,7 @@ const AppView = {
     // sits in the same Done column as merged PR cards, and an inch-shorter
     // card there is exactly the raggedness the four bands exist to remove.
     return `
-        <div class="gc-vote-item ${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}" data-gov-row="${row.id}"${issueN ? ` data-ref-issue="${issueN}"` : ''} title="Open this proposal's discussion">
+        <div class="gc-vote-item ${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}" data-completed="1" data-gov-row="${row.id}"${issueN ? ` data-ref-issue="${issueN}"` : ''} title="Open this proposal's discussion">
           ${AppView._cardContentHtml({
             icon: AppView._devCardIcon('done'),
             titleHtml: `${escapeHtml(titleText)}${who}`,
