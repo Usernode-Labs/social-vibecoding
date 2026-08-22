@@ -103,8 +103,11 @@ test('every path the shell prerenders is one the module exports', () => {
   // surfaces that drew them were retired — see the expected-absent list in the
   // next test, which names each one — and two were added with the Improve
   // panel's rows.
-  assert.ok(shipped.size >= 21,
-    `only ${shipped.size} glyph paths in the prerendered document — the shell ships 21, `
+  // 21 before the #1367 follow-up removed the notifications disclosure, which
+  // was ChevronRightIcon's last prerendered call site (see the expected-absent
+  // list in the next test, which records its full history).
+  assert.ok(shipped.size >= 20,
+    `only ${shipped.size} glyph paths in the prerendered document — the shell ships 20, `
     + 'so something stopped rendering');
 });
 
@@ -122,10 +125,15 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // lib/interim-root.ts on the Dev route rather than by <Shell/>, so it is
     // not part of the prerender at all.
     //
-    // ChevronRightIcon used to sit here for the same reason. It prerenders now:
-    // THE UI OVERHAUL's Improve panel is part of <Shell/> and uses it as the
-    // affordance on its two navigating rows.
+    // ChevronRightIcon has moved on and off this list twice, which is worth
+    // recording rather than re-deciding. It prerendered while the Improve
+    // panel drew it on its two navigating rows; #1367 turned those rows into
+    // the App/Feed/Kanban toggle and briefly kept it as the notifications
+    // disclosure caret; the follow-up removed that disclosure. Every call site
+    // left is behind route state — the Dev board frame's General-chat card and
+    // its group rows, none of which are in <Shell/>.
     'M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z',
+    'M9 5l7 7-7 7',
     // CheckIcon and ArrowRightShortIcon — the browse screen's Add button and
     // its detail page's Open pill (#1191 slice 6). Both render from row/detail
     // descriptors that are null until the first fetch lands, so the prerendered

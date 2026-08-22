@@ -15,20 +15,19 @@
  *
  * ── What #1367 changed ────────────────────────────────────────────────
  *
- * Two things, both about where your eye and your thumb land when the drawer
- * opens. The notifications section is COLLAPSED by default and re-collapses on
- * every open (see `notificationsOpen` below), so the menu opens on the thing
- * you opened it for; and the two blocks are anchored to opposite ends of the
- * panel — notifications to the top, the navigation rows to the bottom — rather
- * than stacked from the top with the slack underneath.
+ * The two blocks are anchored to OPPOSITE ENDS of the panel — notifications to
+ * the top, the navigation rows to the bottom via `mt-auto` — rather than
+ * stacked from the top with all the slack underneath. That is why
+ * #drawer-notifications is a sibling of #drawer-main-rows rather than its
+ * first child.
  *
- * That made the drawer STATEFUL, which it was not before. It is allowed under
- * AGENTS.md's rule for the same reason <NotificationsBody/> already was: the
- * state lives entirely in React-owned nodes. Everything `public/js/**` still
- * shows and hides per screen — the node, wallet, profile, messages, settings
- * and admin rows — is untouched by it, and the two nodes the notifications
- * module DOES write to (#notifications-list, #notifications-mark-all) are
- * never unmounted; the collapse toggles a class on a wrapper above them.
+ * #1367 also collapsed the notifications SECTION behind a disclosure, and its
+ * follow-up took that back out: the useful grain is each GROUP inside the
+ * section, not the section itself. See the note in the component body.
+ *
+ * So this island is markup-only again, exactly as the header above describes —
+ * no state, no disclosure, and <NotificationsBody/> still the one subtree that
+ * renders from a store.
  *
  * Five things left: the theme selector (a SETTING now, and the first one —
  * features/settings/sections/theme.tsx), the kudos and AI-credit meters
@@ -67,11 +66,8 @@
  * the effect below.
  */
 
-import { useState } from 'react';
-
 import {
   ChatBubbleTailIcon,
-  ChevronRightIcon,
   CogIcon,
   GitHubIcon,
   LightBulbIcon,
@@ -85,9 +81,7 @@ import {
   XIcon,
 } from '@/components/ui/icons';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
-import { useStoreState } from '../../lib/use-store-state';
 import { NotificationsBody } from '../notifications/notifications-list';
-import { notificationsStore } from '../notifications/notifications-store.js';
 // Two side-effect modules whose ROWS moved out of this drawer — the AI-credit
 // figure to Settings → Anthropic API key, the mobile-app version to the
 // Improve panel's footer — but whose imports stay here on purpose. Both
@@ -112,41 +106,18 @@ import './header-menu-controller.js';
 import '../notifications/mount';
 
 export function HeaderMenu() {
-  // ── Notifications: COLLAPSED by default (#1367) ──────────────────────
+  // ── The notifications AREA is not collapsible ────────────────────────
   //
-  // The drawer opens on the navigation rows, not on a wall of notifications.
-  // The list is still the first thing in the panel and still one tap away —
-  // what changed is that "what happened while I was away" no longer sits
-  // between you and the row you opened the menu to reach.
+  // #1367 briefly collapsed this whole section behind a disclosure. That was
+  // the wrong grain: what is worth collapsing is each GROUP inside it — an app
+  // with nine notifications should fold to one line, but the section itself is
+  // the reason the drawer has a top half at all, and hiding it behind a tap
+  // just moved the work. The per-group fold is where it belongs, and it lives
+  // in ../notifications/notifications.js (`Notifications.expanded`, cleared on
+  // every drawer open so each one starts folded).
   //
-  // `false` is a CONSTANT initial value, which is what keeps hydration byte
-  // exact: the SSG pass in frontend/scripts/build-shell.mjs renders this in
-  // Node with no way to know a viewer's preference, so anything read from
-  // localStorage or the store here would mismatch on the client's first pass
-  // and console.error — which fails proposal checks.
-  //
-  // Deliberately NOT persisted, and deliberately re-collapsed on every open:
-  // the request is "collapsed by default when opening the hamburger tray",
-  // and a sticky expansion would quietly undo that for whoever expanded it
-  // once. HeaderMenu.close() is not observed here — the panel is never
-  // unmounted — so the reset rides ./header-menu-controller.js's own open
-  // path via the `sv:drawer-open` event below.
-  const [notificationsOpen, setNotificationsOpen] = useState(false);
-
-  // The store the list already renders from, read here for one bit: is there
-  // anything unread behind the collapsed header. Without it a collapsed
-  // section is a section you have no reason to open. (The hamburger's red
-  // #notifications-badge says the same thing from outside the drawer; this is
-  // the in-drawer half of that cue.)
-  const notificationsState = useStoreState(notificationsStore) as {
-    list: ({ type: 'row'; row: { unread: boolean } }
-      | { type: 'group'; group: { hasUnread: boolean } })[] | null;
-    invites: unknown[] | null;
-  };
-  const hasUnread = (notificationsState.list || []).some((entry) => (
-    entry.type === 'row' ? entry.row.unread : entry.group.hasUnread
-  )) || !!(notificationsState.invites || []).length;
-
+  // So this island holds no notifications state again, and the section renders
+  // exactly the markup it shipped: header, "Mark all read", body.
   useIsomorphicLayoutEffect(() => {
     window.NodePill?.init();
     window.WalletSheet?.init();
@@ -177,26 +148,6 @@ export function HeaderMenu() {
         () => window.Notifications?.refresh() ?? Promise.resolve(),
       );
     }
-    // "Collapsed by DEFAULT" means on every open, not just the first one.
-    // ./header-menu-controller.js emits this as it opens the panel (both the
-    // desktop transform path and the kit side-drawer adoption), which is the
-    // only moment either side agrees the drawer became visible.
-    const collapse = () => setNotificationsOpen(false);
-    document.addEventListener('sv:drawer-open', collapse);
-    // …and the one thing that has to override that default: the
-    // `?shot=notifications` deep link, whose whole job is making a
-    // gesture-only state reachable from a URL for the capture pipeline and
-    // the declared checks. A collapsed section is `hidden`, so its text is
-    // absent from `document.body.innerText` — which is what a check's
-    // `expectText` reads — and #1280's saved-message assertions read exactly
-    // that text. ../notifications/notifications.js dispatches this straight
-    // after opening the drawer, so it lands after the collapse above.
-    const expand = () => setNotificationsOpen(true);
-    document.addEventListener('sv:notifications-expand', expand);
-    return () => {
-      document.removeEventListener('sv:drawer-open', collapse);
-      document.removeEventListener('sv:notifications-expand', expand);
-    };
   }, []);
 
   return (
@@ -270,39 +221,11 @@ export function HeaderMenu() {
             className="shrink-0 border-b border-zinc-100 dark:border-zinc-800"
           >
             <div className="flex items-center gap-2 px-4 py-2">
-              {/*
-                  The section header is the DISCLOSURE control. A <button>
-                  beside "Mark all read" rather than wrapping it, because a
-                  button inside a button is invalid markup and the browser
-                  would drop one of them.
-              */}
-              <button
-                type="button"
-                className="flex items-center gap-1.5 flex-1 min-w-0 text-left un-touch-target"
-                aria-expanded={notificationsOpen ? 'true' : 'false'}
-                aria-controls="notifications-list"
-                onClick={() => setNotificationsOpen((wasOpen) => !wasOpen)}
-              >
-                <ChevronRightIcon
-                  className={
-                    notificationsOpen
-                      ? 'w-3 h-3 shrink-0 text-zinc-400 transition-transform rotate-90'
-                      : 'w-3 h-3 shrink-0 text-zinc-400 transition-transform'
-                  }
-                  aria-hidden="true"
-                />
-                <span className="text-[0.7rem] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-                  Notifications
-                </span>
-                {/* The reason to open a collapsed section. Hidden while it is
-                    open, where the rows themselves carry their own dots. */}
-                {hasUnread && !notificationsOpen ? (
-                  <span
-                    className="w-1.5 h-1.5 rounded-full bg-violet-500 shrink-0"
-                    aria-label="Unread notifications"
-                  />
-                ) : null}
-              </button>
+              <span className="text-[0.7rem] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                Notifications
+              </span>
+              <span className="flex-1">
+              </span>
               <button
                 id="notifications-mark-all"
                 className="text-xs text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200 disabled:opacity-40"
@@ -311,19 +234,7 @@ export function HeaderMenu() {
                 Mark all read
               </button>
             </div>
-            {/*
-                COLLAPSED WITH A CLASS, never by unmounting. Three things
-                inside this subtree are resolved once, by id, and would not
-                survive being torn down and rebuilt: the layout effect above
-                attaches the kit's pull-to-refresh to #notifications-list,
-                ./notifications.js binds its click listener to
-                #notifications-mark-all, and the same module writes that
-                button's `disabled` property directly. Toggling `hidden` keeps
-                every one of those attachments alive and costs one class.
-            */}
-            <div className={notificationsOpen ? undefined : 'hidden'}>
-              <NotificationsBody />
-            </div>
+            <NotificationsBody />
           </div>
           {/*
               THE NAVIGATION ROWS, anchored to the BOTTOM (#1367).

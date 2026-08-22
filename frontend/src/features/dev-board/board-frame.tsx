@@ -54,13 +54,9 @@
  */
 
 import {
-  BoardIcon,
   ChevronRightIcon,
   DiscussionIcon,
-  ListLinesIcon,
 } from '@/components/ui/icons';
-
-import { useDevViewMode, type DevViewMode } from './view-mode-store';
 
 /** `AppView.DEV_CARD_CLS`, unchanged. Passed in so there is one source of truth. */
 export interface DevBoardFrameProps {
@@ -76,94 +72,26 @@ export interface DevBoardFrameProps {
   cardCls: string;
   /** `AppView.DEV_CARD_HOVER_CLS`. */
   cardHoverCls: string;
-  /** Called when a tab is pressed — `AppView._setViewMode` + repaint. */
-  onSelectViewMode: (mode: DevViewMode) => void;
 }
 
-/**
- * The Dev screen's two tabs.
+/*
+ * THE DEV SCREEN'S TWO TABS ARE GONE (#1367 follow-up).
  *
- * THE UI OVERHAUL replaced a four-icon segmented control — List, Kanban, PM,
- * Reporting — with this. Two things drove that. The icons were unlabelled, so
- * the two overviews almost nobody switched to were also the two nobody could
- * identify; and a "display preference" toggle had quietly accumulated four
- * genuinely different products behind it, one of which (Reporting) generated a
- * document. What is left is the two answers a board is actually asked for:
- * what just happened, and what is in flight.
+ * `#dev-view-tabs` and its `#dev-view-feed` / `#dev-view-kanban` buttons were a
+ * Feed/Kanban strip sitting at the top of this frame. The App/Feed/Kanban
+ * toggle in the platform header replaced them: the same two destinations plus
+ * the app itself, one control instead of two that disagreed about how many
+ * options there were.
  *
- * Labelled text tabs rather than icons, and an underline rather than a filled
- * pill, because these are now the primary navigation WITHIN the Dev area
- * rather than a corner control — the Improve panel links straight to either
- * one, so a viewer can arrive on a tab without having chosen it and needs to
- * read where they are.
+ * BOTH FORM FACTORS STILL HAVE A SWITCH, which is what makes the removal safe.
+ * The header copy is `hidden sm:inline-flex`, so on a wide screen it is right
+ * there; below that breakpoint it steps aside for the copy inside the Improve
+ * panel. See frontend/src/features/improve/view-toggle.tsx.
+ *
+ * `AppView._setViewMode()` and the view-mode store are untouched — only this
+ * frame stopped drawing a control for them, and `onSelectViewMode` went with
+ * it (the header toggle calls Improve.openDev, which routes to the same place).
  */
-function viewTabCls(active: boolean): string {
-  return (
-    // The 44px kit tap halo on a 36px box, exactly as the retired icon
-    // buttons carried it.
-    'dev-view-btn un-touch-target h-9 px-3 inline-flex items-center gap-1.5 '
-    + 'text-sm font-medium border-b-2 -mb-px transition-colors '
-    + (active
-      ? 'border-violet-600 text-violet-600 dark:text-violet-400'
-      : 'border-transparent text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200')
-  );
-}
-
-const VIEW_TABS: {
-  mode: DevViewMode;
-  id: string;
-  label: string;
-  title: string;
-  Icon: typeof BoardIcon;
-}[] = [
-  {
-    mode: 'feed',
-    id: 'dev-view-feed',
-    label: 'Feed',
-    title: 'Feed — recent activity, newest first',
-    Icon: ListLinesIcon,
-  },
-  {
-    mode: 'kanban',
-    id: 'dev-view-kanban',
-    label: 'Kanban',
-    title: 'Kanban — work in flight, by column',
-    Icon: BoardIcon,
-  },
-];
-
-function ViewTabs({
-  active,
-  onSelect,
-}: {
-  active: DevViewMode;
-  onSelect: (mode: DevViewMode) => void;
-}) {
-  return (
-    <div
-      id="dev-view-tabs"
-      className="inline-flex items-stretch gap-4 border-b border-zinc-200 dark:border-zinc-700"
-      role="tablist"
-      aria-label="Dev view"
-    >
-      {VIEW_TABS.map(({ mode, id, label, title, Icon }) => (
-        <button
-          key={mode}
-          id={id}
-          role="tab"
-          data-view={mode}
-          className={viewTabCls(active === mode)}
-          aria-selected={active === mode}
-          title={title}
-          onClick={() => onSelect(mode)}
-        >
-          <Icon className="w-4 h-4" aria-hidden="true" />
-          {label}
-        </button>
-      ))}
-    </div>
-  );
-}
 
 /**
  * `AppView._plusMenuHeading(label, key, divider)`, as JSX.
@@ -250,31 +178,42 @@ export function DevBoardFrame({
   showsMembers,
   cardCls,
   cardHoverCls,
-  onSelectViewMode,
 }: DevBoardFrameProps) {
-  const mode = useDevViewMode();
-
   return (
     <div className="flex flex-col h-full min-h-0">
-      {/* Header bar: the "Dev" caption, the Feed/Kanban tabs, and the "+"
-          menu (top right).
+      {/*
+          THE "DEV" SUB-HEADER ROW IS GONE (#1367 follow-up).
 
-          The caption used to render ONLY for the self-hosted platform row,
-          because everywhere else the header's #app-mode-switch already said
-          "Dev" a few pixels above this row and printing it twice read as a
-          bug. THE UI OVERHAUL retired that switch, so nothing above says it
-          any more and the caption is unconditional — it is the only thing
-          naming the area the two tabs sit under, which is exactly what the
-          product spec asks for ("reformatted to be under the Dev area").
+          It carried three things: a "Dev" caption, the Feed/Kanban tabs, and
+          the "+" menu. The caption named an area the header already names, the
+          tabs are the header's App/Feed/Kanban toggle now (see the note above),
+          and with both gone the row was a full-height strip of chrome holding
+          one button — so the button moved down to sit with the filter controls
+          and the row went.
 
-          The tab strip carries the bottom border now, so this row does not:
-          two stacked hairlines a few pixels apart read as a rendering fault. */}
-      <div className="flex items-end gap-3 px-3 pt-2 shrink-0 border-b border-zinc-200 dark:border-zinc-800">
-        <span className="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider pb-2.5">
-          Dev
-        </span>
-        <span className="flex-1"></span>
-        <ViewTabs active={mode} onSelect={onSelectViewMode} />
+          `#dev-actions` is that new row, and the "+" sits at its right end with
+          the filter controls to its left. The controls are legacy-rendered, so
+          the row carries an innerHTML HOST for them rather than the markup —
+          the same seam `#dev-body` below already is.
+
+          THE HOST IS OUTSIDE `#dev-body` ON PURPOSE, and it is the whole reason
+          this row is shaped this way. `_repaintDevBody()` assigns
+          `body.innerHTML` on every view switch; anything living in there is
+          destroyed and rebuilt. The "+" is React's — button, menu, listeners —
+          so it can never be a child of that node, and moving it in and out
+          around each repaint would be a race waiting to happen. Keeping BOTH
+          the filter host and the button up here means the row is stable, React
+          never reconciles inside the host, and the module never writes outside
+          it. `_renderKanbanFilterBar()` fills it on kanban and
+          `_clearKanbanFilterBar()` empties it on the feed, which has no filters.
+      */}
+      <div id="dev-actions" className="flex items-center gap-2 px-3 pt-2 shrink-0">
+        {/*
+            Legacy innerHTML host for the filter chips. Ships EMPTY and is
+            filled by AppView._renderKanbanFilterBar(); `empty:hidden` keeps it
+            from claiming the row's width on the feed, where it stays empty.
+        */}
+        <div id="dev-kanban-filterbar" className="flex-1 min-w-0 empty:hidden" />
         <div className={`relative ${readOnly && selfHosted ? 'hidden' : ''}`}>
           <button
             id="dev-plus-btn"

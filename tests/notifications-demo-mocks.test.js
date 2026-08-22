@@ -91,7 +91,7 @@ function startServer(mod) {
 
 const SESSION_KINDS = ['session_done', 'auto_solve_done', 'stale_pr', 'check_failed'];
 
-test('staging + ?demo=1: five unread mock session-kind rows prepend and bump unread', async () => {
+test('staging + ?demo=1: six mock session-kind rows prepend, and only the unread ones bump unread', async () => {
   const pool = makeMockPool();
   const mod = loadRoutes('staging', pool);
   const { server, port } = await startServer(mod);
@@ -101,24 +101,36 @@ test('staging + ?demo=1: five unread mock session-kind rows prepend and bump unr
     const body = await res.json();
 
     const mocks = body.notifications.filter((n) => n.id >= 990000);
-    assert.equal(mocks.length, 5, 'exactly five mock rows injected');
+    assert.equal(mocks.length, 6, 'exactly six mock rows injected');
     assert.deepEqual(
       [...new Set(mocks.map((n) => n.kind))].sort(),
       [...SESSION_KINDS].sort(),
       'every session-related kind is covered'
     );
     assert.equal(
-      mocks.filter((n) => n.kind === 'session_done').length, 2,
-      '#971: two session_done rows — one titled, one untitled'
+      mocks.filter((n) => n.kind === 'session_done').length, 3,
+      '#971: two session_done rows — one titled, one untitled — plus the read one below'
     );
-    assert.ok(mocks.every((n) => !n.readAt), 'mock rows are unread (they feed the cog badge)');
+    // FIVE unread rows feed the cog badge, and ONE ships already read. That
+    // last one is the only thing a staging preview has behind the drawer's
+    // "See N older notifications" button: without it the button does not
+    // render at all and the caught-up state is unreachable, so the two things
+    // a reviewer is asked to look at are both invisible.
+    assert.equal(mocks.filter((n) => !n.readAt).length, 5,
+      'five unread rows still feed the cog badge');
+    const readMocks = mocks.filter((n) => n.readAt);
+    assert.equal(readMocks.length, 1, 'exactly one already-read row');
+    assert.match(readMocks[0].sessionTitle, /\[Mock\]/,
+      'and it is obviously fake, like the rest');
     assert.ok(mocks.every((n) => n.appSlug === 'staging-demo'), 'obviously-fake app attribution');
     assert.equal(
       mocks.find((n) => n.kind === 'auto_solve_done').detail, 'failed',
       'the auto-solve mock exercises the failed variant'
     );
-    // Real rows survive after the mocks; unread bumped by the mock count
-    // so the client's red-badge subtraction stays honest.
+    // Real rows survive after the mocks; unread bumped by the UNREAD mock
+    // count so the client's red-badge subtraction stays honest. Counting all
+    // six would claim the read row as unread — inflating the badge by one and
+    // leaving "Mark all read" enabled with nothing left to mark.
     assert.ok(body.notifications.some((n) => n.id === 1), 'real rows still present');
     assert.equal(body.unread, 2 + 5);
   } finally {
@@ -164,10 +176,14 @@ test('stagingMockNotifications rows carry the fields the shared row renderers re
   const pool = makeMockPool();
   const mod = loadRoutes('staging', pool);
   const rows = mod.stagingMockNotifications();
-  assert.equal(rows.length, 5);
+  assert.equal(rows.length, 6);
   for (const r of rows) {
     assert.ok(r.id >= 990000 && r.id < 1000000, 'ids sit in the 99xxxx mock range');
-    assert.equal(r.readAt, null);
+    // `readAt` is null on every row EXCEPT the one that exists to be read —
+    // the drawer parks read notifications behind "See N older notifications",
+    // and a staging clone has nothing to put there otherwise.
+    assert.ok(r.readAt === null || typeof r.readAt === 'string',
+      'readAt is either absent or a timestamp');
     assert.ok(r.createdAt, 'timestamp present for relativeTime');
     assert.equal(r.appName, 'Staging demo app');
     assert.ok('sessionTitle' in r, '#971: every mock row carries the sessionTitle field');
@@ -180,6 +196,15 @@ test('stagingMockNotifications rows carry the fields the shared row renderers re
   assert.match(titled.sessionTitle, /^\[Mock\]/, 'mock titles are obviously fake');
   assert.equal(titled.prTitle, null, 'no PR title — the pre-promotion case');
   assert.match(titled.branchName, /^dev\//, 'a dev name is present to be beaten');
+
+  // The already-read row: read STRICTLY after it was created, so the drawer's
+  // older view sorts it sensibly and nothing renders a negative age.
+  const readRow = rows.find((r) => r.readAt);
+  assert.ok(readRow, 'one row ships already read');
+  assert.ok(Date.parse(readRow.readAt) > Date.parse(readRow.createdAt),
+    'read after it arrived');
+  assert.ok(Date.parse(readRow.createdAt) < Date.now(), 'and it is genuinely older');
+  assert.equal(rows.filter((r) => r.readAt).length, 1, 'exactly one');
 
   // ...and the untitled one proves the branch-name fallback survives.
   const untitled = rows.find((r) => r.kind === 'session_done' && !r.sessionTitle);

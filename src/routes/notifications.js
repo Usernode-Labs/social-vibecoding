@@ -83,6 +83,27 @@ function stagingMockNotifications() {
       branchName: 'dev/mockuser-1700000000001',
       prNumber: null, headlessIssueNumber: null,
     },
+    // An ALREADY-READ row. The drawer lists unread notifications and parks the
+    // read ones behind "See N older notifications", so without one of these a
+    // staging preview has nothing behind that button — it does not render at
+    // all, the "you're all caught up" state can never be reached, and the two
+    // things a reviewer is being asked to look at are both invisible.
+    //
+    // `readAt` in the past is the whole point of the row, and it is the only
+    // thing that distinguishes it from the four above. Same conventions as
+    // they use: a fixed 99xxxx id, a "[Mock]" title, request-time only, never
+    // persisted, and a no-op outside staging — marking it read again matches
+    // no DB row and harmlessly does nothing.
+    {
+      ...base,
+      id: 990206, kind: 'session_done',
+      createdAt: new Date(now - 3 * 24 * 60 * 60 * 1000).toISOString(),
+      readAt: new Date(now - 2 * 24 * 60 * 60 * 1000).toISOString(),
+      sessionId: 990106,
+      sessionTitle: '[Mock] Something you already read',
+      prTitle: null, branchName: 'dev/mockuser-1700000000002',
+      prNumber: null, headlessIssueNumber: null,
+    },
   ];
 }
 
@@ -235,10 +256,17 @@ function notificationsRoutes(config) {
         // First page only (they'd duplicate on cursor follow-ups), unread
         // count bumped to match so the client's red-badge subtraction
         // (account unread minus loaded session-kind unread) stays honest.
+        //
+        // Only the UNREAD mocks are counted. This used to add `mocks.length`
+        // outright, which was right while every mock was unread; one of them
+        // now ships with a `readAt` (so the drawer's "older notifications"
+        // view has something behind it), and counting that one would claim an
+        // already-read row as unread — inflating the red badge by one and
+        // leaving "Mark all read" enabled with nothing left to mark.
         if (IS_STAGING && req.query.demo === '1') {
           const mocks = stagingMockNotifications();
           payload.notifications = [...mocks, ...payload.notifications];
-          payload.unread += mocks.length;
+          payload.unread += mocks.filter((m) => !m.readAt).length;
           // Pinned-invite demo row: drives the drawer's Invites section
           // and its swipe Accept/Decline path in a staging preview.
           // Obviously fake (staging-demo-*); acting on it hits a

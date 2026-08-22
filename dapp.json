@@ -1383,31 +1383,30 @@
       "expectSelector": "#dev-kanban-tabs [data-kanban-tab=\"done\"]"
     },
     {
-      "name": "Dev screen offers exactly two tabs, Feed and Kanban",
+      "name": "The Dev screen draws no view tabs of its own — the header toggle owns them",
       "path": "/?demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-view-tabs #dev-view-feed[data-view=\"feed\"] + #dev-view-kanban[data-view=\"kanban\"]",
+      "expectSelector": "#dev-actions #dev-plus-btn"
+    },
+    {
+      "name": "The header toggle offers App, Feed and Kanban",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#improve-view-toggle [data-view-segment=\"feed\"] + [data-view-segment=\"kanban\"]",
       "expectText": "Kanban"
     },
     {
-      "name": "The Dev tabs sit under a Dev caption",
-      "path": "/?demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-view-tabs[role=\"tablist\"]",
-      "expectText": "Dev"
-    },
-    {
-      "name": "Feed is the selected tab on a ?view=feed deep link",
+      "name": "Feed is the selected segment on a ?view=feed deep link",
       "path": "/?demo=1&view=feed#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-view-feed[aria-selected=\"true\"]"
+      "expectSelector": "#improve-view-toggle [data-view-segment=\"feed\"][aria-selected=\"true\"]"
     },
     {
       "name": "A retired ?view=list link still resolves onto the Feed",
       "path": "/?demo=1&view=list#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-view-feed[aria-selected=\"true\"] ~ #dev-view-kanban[aria-selected=\"false\"]"
+      "expectSelector": "#improve-view-toggle [data-view-segment=\"feed\"][aria-selected=\"true\"] ~ [data-view-segment=\"kanban\"][aria-selected=\"false\"]"
     },
     {
-      "name": "Kanban is the selected tab on a ?view=kanban deep link",
+      "name": "Kanban is the selected segment on a ?view=kanban deep link",
       "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-view-kanban[aria-selected=\"true\"]"
+      "expectSelector": "#improve-view-toggle [data-view-segment=\"kanban\"][aria-selected=\"true\"]"
     },
     {
       "name": "The Feed renders activity rows into #dev-feed",
@@ -2570,6 +2569,42 @@
       "path": "/reports/00abcdef00abcdef00abcdef00abcdef",
       "expectSelector": ".staging-fixture-report",
       "expectText": "staging fixture"
+    },
+    {
+      "name": "The Dev filter controls are chips sharing a row with the + button",
+      "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-actions > #dev-kanban-filterbar #dev-kanban-needsvote.rounded-full"
+    },
+    {
+      "name": "The filter chips and the + button are siblings in one row",
+      "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-actions > #dev-kanban-filterbar + div > #dev-plus-btn"
+    },
+    {
+      "name": "A filter select wears the chip pill",
+      "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-kanban-priority.dev-chip-select.rounded-full"
+    },
+    {
+      "name": "The feed shows the + button with no filter chips beside it",
+      "path": "/?demo=1&view=feed#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-actions > #dev-kanban-filterbar:empty + div > #dev-plus-btn"
+    },
+    {
+      "name": "The notifications drawer offers its older notifications",
+      "path": "/?shot=notifications&demo=1",
+      "expectSelector": "#notifications-older-toggle",
+      "expectText": "older notification"
+    },
+    {
+      "name": "The Dev feed renders as a de-carded stream",
+      "path": "/?demo=1&view=feed#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-feed .dev-feed-entry > .gc-vote-item"
+    },
+    {
+      "name": "Feed issue rows carry an inline-comment slot",
+      "path": "/?demo=1&view=feed#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-feed .dev-feed-entry .dev-feed-comments[data-comments-for]"
     }
   ],
   "governance": {

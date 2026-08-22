@@ -118,6 +118,7 @@ const ADDED_IDS = {
   'improve-close': 'Close button in the Improve panel header.',
   'improve-body': 'The panel\'s scroller.',
   'improve-row-feedback': 'Opens the feedback dialog — the retired #feedback-btn.',
+  'notifications-caught-up': 'The drawer\'s "you\'re all caught up" state — nothing unread, but there IS history behind "See older notifications". Deliberately a different node and sentence from #notifications-empty, which still means "you have never had a notification".',
   'improve-row-new-session': 'Starts a dev session — the Dev "+" menu\'s "Propose a change".',
   'improve-footer': 'Reference block: View on GitHub, Share app, version — all three moved out of the hamburger drawer.',
   'drawer-notifications': 'The notifications region at the top of the hamburger, where the bell dropdown\'s body now renders.',

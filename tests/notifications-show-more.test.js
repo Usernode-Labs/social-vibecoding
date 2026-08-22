@@ -68,7 +68,12 @@ test('the prior misleading "Scroll for older" copy is still gone', () => {
 });
 
 test('no global reveal/scroll handlers remain', () => {
-  assert.doesNotMatch(SRC, /showOlder/, 'showOlder() removed');
+  // The retired machinery was a SCROLL-driven reveal of rows already loaded
+  // but held back — `showOlder()` was its entry point. #1367's follow-up
+  // introduced an unrelated `showOlder` FLAG (the new-vs-older filter behind
+  // the drawer's footer button), so this pins the retired function rather than
+  // the word: a bare /showOlder/ would now fail on the thing that replaced it.
+  assert.doesNotMatch(SRC, /\bshowOlder\s*\([^)]*\)\s*\{/, 'showOlder() removed');
   assert.doesNotMatch(SRC, /_hasHiddenOlder/, '_hasHiddenOlder() removed');
   assert.doesNotMatch(SRC, /_revealLoadedHidden/, '_revealLoadedHidden() removed');
   assert.doesNotMatch(SRC, /_wireScroll/, '_wireScroll() removed');
@@ -82,10 +87,22 @@ test('_renderList no longer appends a footer to the list markup', () => {
   // string, so the "no footer" claim is now two assertions — the controller
   // publishes exactly the grouped entries, and the component that renders
   // them puts nothing after the last one.
-  const m = SRC.match(/store\.set\(\{ list: (entries[^,]*),/);
+  // Written across several lines since the follow-up added the older-count
+  // fields beside it, so the match is anchored on the key rather than the
+  // whole call's formatting.
+  const m = SRC.match(/store\.set\(\{\s*list:\s*([A-Za-z_$][\w$]*),/);
   assert.ok(m, 'the grouped-entries store push found');
   assert.equal(m[1], 'entries', 'publishes just the grouped entries');
   assert.doesNotMatch(LIST_SRC, /loadmore|load more/i, 'no footer control in the renderer');
+  // The drawer DOES have a footer button now — "See N older notifications" —
+  // but it is a SIBLING of #notifications-list, not a child of it. That is the
+  // distinction this test has always been about: the scroller holds entries
+  // and nothing else, so a paging control can never ride the scroll position.
+  assert.match(LIST_SRC, /id="notifications-older-toggle"/,
+    'the older toggle exists…');
+  const listBlock0 = LIST_SRC.match(/id="notifications-list"[\s\S]*?\n {6}<\/div>/);
+  assert.ok(listBlock0 && !/notifications-older-toggle/.test(listBlock0[0]),
+    '…and sits outside the entries scroller');
   const listBlock = LIST_SRC.match(/id="notifications-list"[\s\S]*?\n {6}<\/div>/);
   assert.ok(listBlock, 'the #notifications-list container found');
   assert.match(listBlock[0], /entries\.map\(/, 'renders one child per entry');

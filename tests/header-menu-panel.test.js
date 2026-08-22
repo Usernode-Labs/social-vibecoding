@@ -303,47 +303,6 @@ test('a dapp check pins the drawer to the panel on a forced-touch route', () => 
 // list, both still render — so each strand is pinned against the source and
 // against the prerendered document in the style of the contracts above.
 
-test('the drawer opens with notifications COLLAPSED, on every open', () => {
-  // Collapsed by default, from a CONSTANT initial value: the SSG pass renders
-  // this island in Node, so anything read from storage or the store here would
-  // disagree with the client's first pass and console.error — which fails
-  // proposal checks on every route.
-  assert.match(headerMenuTsx, /useState\(false\)/,
-    'the notifications section must start collapsed, from a constant');
-
-  // "By DEFAULT" means on every open, not just the first — the panel is never
-  // unmounted, so without this an expansion would persist for the whole visit
-  // and quietly undo the change for whoever expanded it once.
-  assert.match(headerMenuTsx, /addEventListener\('sv:drawer-open'/,
-    'and re-collapse when the drawer is opened again');
-  assert.match(headerMenuTsx, /removeEventListener\('sv:drawer-open'/,
-    'with the listener torn down, not leaked');
-
-  // The event is dispatched ONCE, above the touch/desktop fork, because both
-  // presentations are the drawer becoming visible.
-  assert.match(headerMenuJs, /dispatchEvent\(new CustomEvent\('sv:drawer-open'\)\)/);
-  const body = openBody();
-  assert.match(body, /HeaderMenu\._announceOpen\(\);/,
-    'open() must announce itself before it presents either way');
-
-  // COLLAPSED WITH A CLASS, NEVER BY UNMOUNTING. Three things inside are
-  // resolved once by id and would not survive a teardown: the kit's
-  // pull-to-refresh on #notifications-list, and notifications.js's click
-  // listener AND `disabled` write on #notifications-mark-all.
-  const block = html.slice(
-    html.indexOf('id="drawer-notifications"'),
-    html.indexOf('id="drawer-main-rows"'),
-  );
-  assert.ok(block.includes('<div class="hidden">'),
-    'the body is hidden by class, so its ids stay mounted');
-  assert.ok(block.includes('id="notifications-list"'),
-    '#notifications-list must still be in the prerendered document');
-  assert.ok(block.includes('id="notifications-mark-all"'),
-    '#notifications-mark-all must still be in the prerendered document');
-  assert.match(block, /aria-expanded="false"/,
-    'and the disclosure control must say it is collapsed');
-});
-
 test('notifications anchor to the top of the drawer, the nav rows to the bottom', () => {
   // Opposite ends of one column flex. #drawer-notifications is a SIBLING of
   // #drawer-main-rows now rather than its first child — that nesting is what
@@ -371,39 +330,84 @@ test('notifications anchor to the top of the drawer, the nav rows to the bottom'
     'nothing may push the notifications block off the top');
 });
 
-test('the ?shot=notifications deep link EXPANDS the section, not just the drawer', () => {
-  // The failure this exists to prevent, in one sentence: a collapsed section
-  // is `hidden`, which keeps its ids in the document — so `expectSelector`
-  // still resolves — but takes its text out of `document.body.innerText`,
-  // which is what a check's `expectText` reads. #1280's two saved-message
-  // assertions went red on exactly that: the rows were present and invisible.
-  //
-  // So the deep link that exists to make a gesture-only state reachable from a
-  // URL now has one more gesture to stand in for.
+// ── The follow-up: the SECTION is not collapsible; its GROUPS are ────
+//
+// #1367 collapsed the whole notifications section behind a disclosure and the
+// follow-up took that back out: the useful grain is each app group inside the
+// section, not the section itself. Both halves are pinned here — the section
+// has no disclosure, and the groups re-fold on every drawer open — because
+// each fails silently if it drifts (a section that quietly ships collapsed
+// again, or groups that stay expanded from the last visit).
+
+test('the notifications SECTION has no disclosure of its own', () => {
+  const block = html.slice(
+    html.indexOf('id="drawer-notifications"'),
+    html.indexOf('id="drawer-main-rows"'),
+  );
+  // The body is rendered plainly — not behind a `hidden` wrapper, which is
+  // what the retired disclosure used and what took the saved-message rows out
+  // of `document.body.innerText` and broke #1280's two checks.
+  assert.ok(!/<div class="hidden">/.test(block),
+    'the section body must not ship inside a hidden wrapper');
+  assert.ok(!/aria-expanded/.test(block),
+    'and its header must not be a disclosure control');
+  // The island holds no state for it either.
+  assert.ok(!/notificationsOpen/.test(headerMenuTsx),
+    'no section-collapse state survives in the island');
+  assert.ok(!/sv:notifications-expand/.test(headerMenuTsx),
+    'and no expand channel for it');
+  // The rows it must still contain.
+  assert.ok(block.includes('id="notifications-list"'));
+  assert.ok(block.includes('id="notifications-mark-all"'));
+});
+
+test('every app GROUP re-folds on each drawer open', () => {
   const notificationsJs = fs.readFileSync(
     path.join(root, 'frontend/src/features/notifications/notifications.js'), 'utf8');
-  const at = notificationsJs.indexOf('  _maybeShotOpen() {');
-  assert.ok(at !== -1, '_maybeShotOpen went missing');
+  // Folding is the module's, because `Notifications.expanded` is the module's.
+  assert.match(notificationsJs, /_foldAllGroups\(\)\s*\{/,
+    'the module owns a fold-all');
+  assert.match(notificationsJs, /addEventListener\('sv:drawer-open'/,
+    'and runs it on the drawer-open announcement');
+  const at = notificationsJs.indexOf('_foldAllGroups() {');
   const body = notificationsJs.slice(at, notificationsJs.indexOf('\n  },', at));
+  assert.match(body, /Notifications\.expanded\.clear\(\)/,
+    'folding clears the expanded set…');
+  assert.match(body, /_saveExpanded\(\)/, '…and persists that, so it survives a repaint');
+  // The announcement is still dispatched once, above the touch/desktop fork.
+  assert.match(headerMenuJs, /dispatchEvent\(new CustomEvent\('sv:drawer-open'\)\)/);
+});
 
-  // ORDER IS THE CONTRACT. show() opens the drawer, which announces
-  // 'sv:drawer-open', which is what re-collapses the section on every open.
-  // Both are synchronous, so the expand has to come SECOND to stick.
-  const showAt = body.indexOf('Notifications.show();');
-  const expandAt = body.indexOf("'sv:notifications-expand'");
-  assert.ok(showAt !== -1, 'the deep link must still open the drawer');
-  assert.ok(expandAt !== -1, 'and must now expand the notifications section');
-  assert.ok(showAt < expandAt,
-    'expand must be dispatched AFTER show(), or the open re-collapses it');
+test('read notifications leave the list, with a way back to them', () => {
+  const notificationsJs = fs.readFileSync(
+    path.join(root, 'frontend/src/features/notifications/notifications.js'), 'utf8');
+  const listTsx = fs.readFileSync(
+    path.join(root, 'frontend/src/features/notifications/notifications-list.tsx'), 'utf8');
 
-  // And the island has to be listening — with the listener torn down.
-  assert.match(headerMenuTsx, /addEventListener\('sv:notifications-expand'/);
-  assert.match(headerMenuTsx, /removeEventListener\('sv:notifications-expand'/);
+  // "Viewed" is the EXISTING readAt field — nothing new is stored and nothing
+  // is deleted, which is what lets the older view bring them all back.
+  const at = notificationsJs.indexOf('  _bellItems() {');
+  const body = notificationsJs.slice(at, notificationsJs.indexOf('\n  },', at));
+  assert.match(body, /filter\(\(n\) => !n\.readAt\)/,
+    'the default list is the unread ones');
+  assert.match(body, /if \(Notifications\.showOlder\) return Notifications\.items;/,
+    'and the older view is every one of them');
 
-  // The two dapp.json checks that caught this stay text-based on that route,
-  // so the regression cannot come back unnoticed.
-  const shotTests = dapp.tests.filter(
-    (t) => (t.path || '').includes('shot=notifications') && t.expectText);
-  assert.ok(shotTests.length >= 2,
-    'the saved-message assertions must keep reading VISIBLE text on that route');
+  // Per drawer OPEN, so a visit always starts on what is new.
+  assert.match(notificationsJs, /_setShowOlder\(false\)/,
+    'the older view resets when the drawer opens');
+
+  // Two DIFFERENT empty states. "You have never had a notification" and "you
+  // have dealt with all of them" are not the same sentence, and showing the
+  // first to somebody with a month of history reads as lost data.
+  assert.match(listTsx, /id="notifications-caught-up"/, 'the caught-up state exists');
+  assert.match(listTsx, /id="notifications-empty"/, 'and the never-had-one state survives');
+  assert.match(notificationsJs, /caughtUp: olderCount > 0 && !Notifications\.showOlder/,
+    'caught-up means nothing unread but something behind the toggle');
+  assert.match(notificationsJs, /olderCount === 0/,
+    'and the original empty hint now requires there be no history either');
+
+  // The toggle only renders when it would reveal something.
+  assert.match(listTsx, /state\.olderCount > 0 \?/,
+    'no older button when there is nothing older');
 });
