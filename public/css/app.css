@@ -3841,7 +3841,14 @@ span.gc-vote-btn-icon { cursor: default; }
    that replaces the "Only you can see your active sessions." caption as
    the signal that nobody else can see this card. */
 .dev-card-muted {
-  border-style: dashed;
+  /* A PRIVATE dev session — nobody else can see it, and that has to read off
+     the card itself. It used to say so by switching the shell's hairline to
+     dashed; the widget language's card has no hairline to switch, so the
+     dashed ring becomes an OUTLINE. Outlines draw outside the box and take no
+     layout space, so the muted card still lines up with its neighbours to the
+     pixel — which a border re-added here would not. */
+  outline: 1px dashed var(--border);
+  outline-offset: -1px;
   opacity: 0.82;
 }
 

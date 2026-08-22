@@ -110,11 +110,19 @@ const AppView = {
   // The two-line label cards with nothing under the title (General chat, an
   // archived session) do still pass the icon as a sibling: there the icon and
   // the whole content column are the same height, so centred IS title-aligned.
-  DEV_CARD_CLS: 'w-full flex items-center gap-3 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/60 px-3.5 py-3 text-left transition-colors',
+  // The widget language (#1191): a card is a white surface on the grey page
+  // ground, with no hairline and a rounder corner — the same figure/ground
+  // separation @/components/ui/grouped-list.tsx draws. One constant restyles
+  // every card the Dev board renders (issues, proposals, sessions, gov rows,
+  // recently-merged), which is exactly why they were pulled onto a shared
+  // class in the first place.
+  DEV_CARD_CLS: 'w-full flex items-center gap-3 rounded-2xl bg-white dark:bg-zinc-900 px-3.5 py-3 text-left transition-colors',
   // Trailing chevron marking a card as tappable (same affordance as the
   // General chat card).
   DEV_CARD_CHEVRON: '<svg class="w-4 h-4 text-zinc-400 dark:text-zinc-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>',
-  DEV_CARD_HOVER_CLS: 'hover:border-violet-300 dark:hover:border-violet-700 cursor-pointer',
+  // Tappable cards have no border left to tint, so the affordance moves to the
+  // surface itself — the same `active:` fill ListRow uses.
+  DEV_CARD_HOVER_CLS: 'hover:bg-zinc-50 dark:hover:bg-zinc-800 cursor-pointer',
   // A PRIVATE dev session — nobody else can see it. Muted/draft treatment
   // (dashed border, slightly dimmed) so that fact reads off the card itself
   // instead of needing the grey caption that used to sit above the group.

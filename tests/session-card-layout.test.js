@@ -95,7 +95,10 @@ function assertOrder(html, markers) {
 const CHEVRON = 'M9 5l7 7-7 7';
 const SPINNER = 'dc-status-spinner-arc';
 // The single-row shell every card on the board shares.
-const SHELL = 'w-full flex items-center gap-3 rounded-xl';
+// `rounded-2xl` since the widget language landed (#1191): the card is a white
+// surface on the grey page ground with no hairline, so the corner carries the
+// shape the border used to.
+const SHELL = 'w-full flex items-center gap-3 rounded-2xl';
 
 // The ⋯ registry key a card emitted, or null.
 function menuKeyOf(html) {

@@ -126,7 +126,9 @@ test('_renderMergedInner row is openable: data-proposal-row + hover + chevron', 
   const html = AppView._renderMergedInner();
   assert.match(html, /data-proposal-row="55"/, 'row carries the proposal-row hook');
   assert.match(html, /data-ref-pr="700"/, 'existing data-ref-pr preserved');
-  assert.match(html, /hover:border-violet-300/, 'hover affordance present');
+  // A tappable card has no border left to tint, so the affordance moved to the
+  // surface — the same `hover:` fill the language's list rows use.
+  assert.match(html, /hover:bg-zinc-50/, 'hover affordance present');
   assert.match(html, /title="Open this proposal's discussion"/, 'open hint title present');
   assert.match(html, /M9 5l7 7-7 7/, 'chevron svg path present');
 });
