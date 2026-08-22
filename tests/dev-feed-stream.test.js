@@ -138,3 +138,39 @@ test('the declared checks cover the stream and the comment slots', () => {
   // assertion there would be red for a reason that has nothing to do with
   // this code.
 });
+
+// ── The staging demo has to contain what the testing steps ask for ──
+//
+// Not feed work, but the same failure mode and caught the same way: a review
+// surface that renders nothing in a preview because the data behind it does
+// not exist there. The drawer's "older notifications" view is invisible
+// without an already-read row, and a staging clone has none.
+
+test('the notifications demo seeds an already-read row', () => {
+  const ROUTE = read('src/routes/notifications.js');
+
+  const at = ROUTE.indexOf('function stagingMockNotifications()');
+  assert.ok(at !== -1, 'the mock feed survives');
+  const fn = ROUTE.slice(at, ROUTE.indexOf('\n}', at));
+
+  // Exactly one read row: enough for "See 1 older notification" and the
+  // caught-up state to be reachable, without burying the unread ones the
+  // other checks read.
+  const readRows = fn.match(/readAt: new Date\(/g) || [];
+  assert.equal(readRows.length, 1, 'one already-read demo row');
+  assert.match(fn, /\[Mock\] Something you already read/,
+    'and it is obviously fake, like every other row here');
+
+  // The unread COUNT must not include it. This was `mocks.length` while every
+  // mock was unread; leaving it that way would claim a read row as unread —
+  // inflating the red badge and leaving "Mark all read" enabled with nothing
+  // to mark.
+  assert.match(ROUTE, /payload\.unread \+= mocks\.filter\(\(m\) => !m\.readAt\)\.length;/,
+    'only the unread mocks are counted');
+  assert.ok(!/payload\.unread \+= mocks\.length;/.test(ROUTE),
+    'the unconditional count is gone');
+
+  // Still strictly staging + ?demo=1, never persisted.
+  assert.match(ROUTE, /IS_STAGING && req\.query\.demo === '1'/,
+    'the injection stays gated on staging and the demo flag');
+});
