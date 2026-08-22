@@ -617,9 +617,10 @@ const Home = {
   gridItemView(item, cols, overflow) {
     const [w, h] = HomeLayout.sizeOf(item, cols);
     const placement = overflow ? null : { col: item.col, row: item.row, w, h };
-    if (item.type === 'widget') {
-      return { kind: 'slot', placement, key: item.key };
-    }
+    // The `item.type === 'widget'` branch that planted a `[data-panel-slot]`
+    // host is gone with the UI overhaul: Discover, Challenges and Create app
+    // are fixed sections below the grid now, so every item on this canvas is
+    // an app tile.
     const app = (Home._apps || []).find((a) => a.slug === item.slug);
     if (!app) return null;
     return { kind: 'card', placement, app: Home.appView(app) };
@@ -636,9 +637,7 @@ const Home = {
     if (!enabled || !window.unNative?.attachGridPlacement) return;
     const cols = Home.currentCols();
     Home._placementHandle = window.unNative.attachGridPlacement(listEl, {
-      // Matches EVERY widget host, including a create widget in its disabled
-      // state — being unable to create apps must not make the widget immovable.
-      itemSelector: '.app-card[data-yours]:not([data-demo]), .home-panel-slot',
+      itemSelector: '.app-card[data-yours]:not([data-demo])',
       cellFromPoint: (x, y, info) => Home._targetCellFor(x, y, info, cols),
       // canPlace runs first on every cell change and onHover right after, and
       // both need the SAME displacement plan — so compute it once and memo it

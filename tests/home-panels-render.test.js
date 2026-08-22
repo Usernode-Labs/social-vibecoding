@@ -784,7 +784,12 @@ test('the title bar and the footer controls are single-line too', () => {
   const { html } = renderWith(data, AT_DESKTOP);
   // Title + counter: the counter must not push the title to a second line.
   assert.match(html, /home-panel-title[^"]*truncate whitespace-nowrap/);
-  assert.match(html, /normal-case tracking-normal whitespace-nowrap/);
+  // The summary run appended after the separator. It used to carry
+  // `normal-case tracking-normal` to undo the title's small caps; the widget
+  // language labels a group in sentence case at reading size, so there is no
+  // small caps left to undo. `whitespace-nowrap` is the load-bearing half and
+  // is what this line has always been about.
+  assert.match(html, /<span class="whitespace-nowrap"> · /);
   // The bar carries the way out BESIDE that title (#968, now the leaderboard
   // link of #980), so it is the one place a long summary and a control
   // compete for the same row: the control is shrink-0 and nowrap, and the

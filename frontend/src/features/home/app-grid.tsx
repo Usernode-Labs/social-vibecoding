@@ -27,7 +27,7 @@
  * Four separate consumers depend on it and none of them would fail loudly:
  *
  *   * the kit's placement recognizer selects
- *     `.app-card[data-yours]:not([data-demo]), .home-panel-slot`;
+ *     `.app-card[data-yours]:not([data-demo])`;
  *   * `App._tileFor(slug)` (public/js/app.js) finds the zoom-out rect with
  *     `#app-list .app-card[data-slug="…"]`;
  *   * app.css styles `.app-card`, `.app-icon-tile[data-icon]`,
@@ -256,23 +256,14 @@ export function AppGrid() {
       {state.resultsHeading ? (
         <div className="home-section-header col-span-full">{state.resultsHeading}</div>
       ) : null}
-      {state.items.map((item) =>
-        item.kind === 'slot' ? (
-          <div
-            key={`slot:${item.key}`}
-            className="home-panel-slot app-card-draggable touch-pan-y"
-            data-panel-slot={item.key}
-            style={cellStyle(item)}
-          />
-        ) : (
-          <AppCardTile
-            key={`card:${item.app.slug}`}
-            app={item.app}
-            style={cellStyle(item)}
-            yours={state.view === 'grid'}
-          />
-        ),
-      )}
+      {state.items.map((item) => (
+        <AppCardTile
+          key={`card:${item.app.slug}`}
+          app={item.app}
+          style={cellStyle(item)}
+          yours={state.view === 'grid'}
+        />
+      ))}
     </div>
   );
 }

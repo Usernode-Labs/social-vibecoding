@@ -455,8 +455,8 @@ const HomePanels = {
       : Object.entries(stamps || {})
         .map(([name, value]) => ` ${name}="${esc(value)}"`).join('');
     return `
-      <article class="home-panel home-panel-card${expanded ? ' home-panel--expanded' : ''} rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/70 dark:bg-zinc-900/50 overflow-hidden" data-panel="${esc(key)}"${extra}>
-        <div class="home-panel-bar flex-none flex items-center gap-2 px-2.5 py-1 border-b border-zinc-200 dark:border-zinc-800">
+      <article class="home-panel home-panel-card${expanded ? ' home-panel--expanded' : ''} rounded-2xl bg-white dark:bg-zinc-900 overflow-hidden" data-panel="${esc(key)}"${extra}>
+        <div class="home-panel-bar flex-none flex items-center gap-2 px-3.5 pt-2.5 pb-1">
           ${titleHtml}
           <button type="button" class="home-panel-menu un-touch-target shrink-0 w-4 h-4 flex items-center justify-center rounded-full text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 leading-none"
             data-panel-key="${esc(key)}" aria-haspopup="menu"
@@ -718,7 +718,7 @@ const HomePanels = {
         // between seasons the standings are the ONLY thing this area has to
         // point at, and this branch draws no footer at all, so the bar is
         // where the door has to be.
-        `<span class="home-panel-title min-w-0 flex-1 truncate whitespace-nowrap text-[11px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">${title}</span>${
+        `<span class="home-panel-title min-w-0 flex-1 truncate whitespace-nowrap text-[0.9375rem] text-zinc-400 dark:text-zinc-500">${title}</span>${
           HomePanels._leaderboardLink()}`,
         `<div class="home-panel-body">${noteHtml}${fillHtml}</div>`,
         // Nothing to expand, nothing to count — the footer is the fill's
@@ -736,7 +736,7 @@ const HomePanels = {
     // sits beside it as a shrink-0 sibling, so a long summary truncates
     // rather than pushing the control off the bar.
     const titleHtml = `
-      <span class="home-panel-title min-w-0 flex-1 truncate whitespace-nowrap text-[11px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">${title}<span class="normal-case tracking-normal whitespace-nowrap"> · ${summary}</span></span>${
+      <span class="home-panel-title min-w-0 flex-1 truncate whitespace-nowrap text-[0.9375rem] text-zinc-400 dark:text-zinc-500">${title}<span class="whitespace-nowrap"> · ${summary}</span></span>${
       HomePanels._leaderboardLink()}`;
 
     const rowsHtml = rows.map((c) => HomePanels.renderChallengeRow(c)).join('');
@@ -817,7 +817,7 @@ const HomePanels = {
       ? Home.popularApps(Home._apps || []) : [];
 
     const titleHtml = `
-      <span class="home-panel-title min-w-0 flex-1 truncate whitespace-nowrap text-[11px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">${esc(panel.title || 'Discover')}</span>
+      <span class="home-panel-title min-w-0 flex-1 truncate whitespace-nowrap text-[0.9375rem] text-zinc-400 dark:text-zinc-500">${esc(panel.title || 'Discover')}</span>
       <button type="button" id="home-browse-btn" class="home-panel-browse shrink-0 flex items-center gap-1 text-[12px] font-medium text-violet-600 dark:text-violet-400 hover:underline whitespace-nowrap"
         title="Browse every app in the directory" aria-label="Browse all apps">
         <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>

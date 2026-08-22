@@ -70,7 +70,7 @@ test('the card markup keeps the contract four other consumers select on', () => 
   for (const token of [
     'app-card', 'data-slug', 'data-status', 'data-locked', 'data-yours',
     'data-demo', 'app-icon-tile', 'app-card-title', 'app-card-status',
-    'card-menu-btn', 'home-panel-slot',
+    'card-menu-btn',
   ]) {
     assert.ok(GRID_TSX.includes(token),
       `app-grid.tsx no longer renders \`${token}\` — one of the kit, app.js,`

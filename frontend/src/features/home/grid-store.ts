@@ -81,9 +81,12 @@ export interface HomeAppView {
   forkName: string | null;
 }
 
-export type GridItem =
-  | { kind: 'card'; placement: GridPlacement | null; app: HomeAppView }
-  | { kind: 'slot'; placement: GridPlacement | null; key: string };
+/**
+ * One placed tile. A single shape rather than a union: since the UI overhaul
+ * moved the three widgets out to fixed sections, every item on the launcher
+ * canvas is an app.
+ */
+export type GridItem = { kind: 'card'; placement: GridPlacement | null; app: HomeAppView };
 
 export interface HomeGridState {
   /** False until the first `Home.render()` push — see the header. */
