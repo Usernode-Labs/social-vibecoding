@@ -448,10 +448,12 @@ html.un-kb .platform-safe-bar {
   gap: 3px;
   min-height: 24px;
   padding: 1px 7px;
-  border: 1px solid var(--border-light);
+  /* Same move as .gc-vote-btn: the language's reaction pill is a filled
+     neutral chip, not an outlined white one. */
+  border: 1px solid transparent;
   border-radius: 9999px;
-  color: var(--text-muted);
-  background: var(--bg-primary);
+  color: var(--text-primary);
+  background: var(--bg-secondary);
   font-size: 11px;
 }
 .messages-reactions .messages-reaction-mine { border-color: var(--accent-light); color: var(--accent); background: var(--accent-tint); }
@@ -2210,9 +2212,13 @@ html, body {
 .dc-pr-card {
   margin: 8px 12px;
   padding: 12px;
-  background: var(--bg-card);
-  border: 1px solid var(--border-light);
-  border-radius: 10px;
+  /* A card in the language: an opaque surface with no hairline and the
+     language's corner. --bg-card is an accent TINT, which read as a
+     highlighted state once the accent turned blue; the neutral surface is
+     what the deck's embedded cards use. */
+  background: var(--bg-secondary);
+  border: 1px solid transparent;
+  border-radius: 1rem;
   transition: background 300ms;
 }
 
@@ -3470,9 +3476,14 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   line-height: 1;
   white-space: nowrap;
   cursor: pointer;
-  border: 1px solid var(--border);
-  background: transparent;
-  color: var(--text-muted);
+  /* The widget language's action pill (#1191): a FILLED neutral surface, not
+     an outlined transparent one. The deck's "open the Change ›" / "read it ›"
+     controls read as soft solid objects sitting on the card, and an outline
+     on a card that itself no longer has one reads as the louder element of
+     the two. Ink steps up to primary to keep contrast on the fill. */
+  border: 1px solid transparent;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
   transition: all 150ms;
 }
 .gc-vote-btn:hover {
