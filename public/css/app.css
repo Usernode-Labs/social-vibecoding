@@ -1029,7 +1029,14 @@ html, body {
 .app-icon-tile[data-icon="letter"]:not([data-tint]) {
   color: var(--text-faint);
 }
-.dark .app-icon-tile {
+/* :not([data-tint]) is load-bearing. This rule and
+   `.app-icon-tile[data-tint="…"]` are both (0,2,0), so at equal specificity
+   source order decides — and this one is later, which meant every tinted
+   launcher tile lost its colour in dark mode AND kept the near-black glyph
+   the tint exists to carry, leaving the letter almost invisible on a dark
+   face. A tinted tile is an app's icon and does not follow the page in either
+   direction. */
+.dark .app-icon-tile:not([data-tint]) {
   /* --bg-primary is near-black in dark mode; one step up so the tile
      reads as a surface sitting on the page rather than a hole in it. */
   background-color: var(--bg-secondary);
@@ -1057,17 +1064,17 @@ html, body {
    don't inherit `currentColor` so we can't collapse to a single
    variable-driven version cleanly. */
 .home-create-tile {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='12' ry='12' stroke='%23a78bfa' stroke-opacity='0.55' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='12' ry='12' stroke='%230a7cff' stroke-opacity='0.55' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
 }
 .home-create-tile:hover {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='12' ry='12' stroke='%23a78bfa' stroke-opacity='0.85' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='12' ry='12' stroke='%230a7cff' stroke-opacity='0.85' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E");
 }
 .dark .home-create-tile {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='12' ry='12' stroke='%238b5cf6' stroke-opacity='0.5' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='12' ry='12' stroke='%235aa9ff' stroke-opacity='0.5' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E");
 }
 .dark .home-create-tile:hover {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='12' ry='12' stroke='%238b5cf6' stroke-opacity='0.75' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='12' ry='12' stroke='%235aa9ff' stroke-opacity='0.75' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E");
 }
 
 /* Drag-reorderable starred cards (issue #191): a long-press must

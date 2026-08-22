@@ -206,10 +206,15 @@ test('the tile hairline steps down to --border in dark mode', () => {
     /\.widget-tile \.app-icon-tile\s*\{/,
     'strip tiles take the shared face, not a scoped one'
   );
+  // Scoped :not([data-tint]) since the widget language landed. This rule and
+  // `.app-icon-tile[data-tint="…"]` are both (0,2,0), and this one is later —
+  // unscoped it won, so every tinted launcher tile lost its colour in dark
+  // mode while keeping the near-black glyph the tint exists to carry. A
+  // tinted tile is an app's icon and follows neither theme.
   assert.match(
     css,
-    /\.dark \.app-icon-tile \{[^}]*border-color: var\(--border\);/,
-    'dark mode steps the hairline down to --border'
+    /\.dark \.app-icon-tile:not\(\[data-tint\]\) \{[^}]*border-color: var\(--border\);/,
+    'dark mode steps the UNTINTED hairline down to --border'
   );
 });
 
