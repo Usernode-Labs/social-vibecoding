@@ -61,8 +61,10 @@ function makeHarness() {
   };
   const state = {
     nextId: 101,
+    nextMessageId: 1,
     sessions: [],
     messages: [],
+    attachments: [],
     specs: [],
     github: [],
     staging: [],
@@ -88,10 +90,12 @@ function makeHarness() {
       if (text === 'BEGIN') {
         transactionState = {
           nextId: state.nextId,
+          nextMessageId: state.nextMessageId,
           sessions: state.sessions.map((row) => ({ ...row })),
           messages: state.messages.map((message) => ({
             ...message, metadata: { ...message.metadata },
           })),
+          attachments: state.attachments.map((attachment) => ({ ...attachment })),
           specs: state.specs.map((row) => ({ ...row })),
         };
         return { rows: [], rowCount: 0 };
@@ -103,8 +107,10 @@ function makeHarness() {
       if (text === 'ROLLBACK') {
         if (transactionState) {
           state.nextId = transactionState.nextId;
+          state.nextMessageId = transactionState.nextMessageId;
           state.sessions.splice(0, state.sessions.length, ...transactionState.sessions);
           state.messages.splice(0, state.messages.length, ...transactionState.messages);
+          state.attachments.splice(0, state.attachments.length, ...transactionState.attachments);
           state.specs.splice(0, state.specs.length, ...transactionState.specs);
         }
         transactionState = null;
@@ -156,15 +162,39 @@ function makeHarness() {
         const metadata = JSON.parse(params[3]);
         const duplicate = state.messages.some((m) => m.session_id === Number(params[0])
           && m.metadata.handoffEventId === metadata.handoffEventId);
-        if (!duplicate) state.messages.push({
-          session_id: Number(params[0]), role: params[1], content: params[2], metadata,
-        });
-        return { rows: [], rowCount: duplicate ? 0 : 1 };
+        let inserted = null;
+        if (!duplicate) {
+          inserted = {
+            id: state.nextMessageId++,
+            session_id: Number(params[0]), role: params[1], content: params[2], metadata,
+          };
+          state.messages.push(inserted);
+        }
+        return { rows: inserted ? [{ id: inserted.id }] : [], rowCount: duplicate ? 0 : 1 };
       }
-      if (/SELECT role, content, metadata FROM chat_session_messages/.test(text)) {
+      if (/SELECT id, role, content, metadata FROM chat_session_messages/.test(text)) {
         const row = state.messages.find((m) => m.session_id === Number(params[0])
           && m.metadata.handoffEventId === params[1]);
         return { rows: row ? [{ ...row }] : [] };
+      }
+      if (/SELECT id, message_id, kind, filename, content_type, size_bytes, meta\s+FROM chat_session_attachments/.test(text)) {
+        const wanted = new Set(params[0]);
+        return {
+          rows: state.attachments.filter((attachment) => wanted.has(attachment.id)
+            && attachment.session_id === Number(params[1])).map((attachment) => ({ ...attachment })),
+        };
+      }
+      if (/UPDATE chat_session_attachments\s+SET message_id = \$1/.test(text)) {
+        const wanted = new Set(params[1]);
+        let rowCount = 0;
+        for (const attachment of state.attachments) {
+          if (wanted.has(attachment.id) && attachment.session_id === Number(params[2])
+              && attachment.message_id == null) {
+            attachment.message_id = Number(params[0]);
+            rowCount += 1;
+          }
+        }
+        return { rows: [], rowCount };
       }
       if (/SELECT cs\.\*, a\.slug AS app_slug, a\.name AS app_name/.test(text)) {
         const row = state.sessions.find((s) => s.id === Number(params[0])
@@ -412,6 +442,8 @@ test('handoff validators require a spec-first, bounded, user-visible history con
     const parsed = subject.parseStartBody(START_BODY);
     assert.equal(parsed.baseSha, BASE);
     assert.equal(parsed.history.length, 2);
+    assert.ok(!('attachmentIds' in parsed.history[0]),
+      'text-only start fingerprints stay compatible with pre-image clients');
     assert.throws(() => subject.parseStartBody({ ...START_BODY, history: [] }), /history/);
     assert.throws(() => subject.parseStartBody({
       ...START_BODY, history: [{ id: 's1', kind: 'summary', content: 'Only a summary' }],
@@ -423,6 +455,20 @@ test('handoff validators require a spec-first, bounded, user-visible history con
       schemaVersion: 1,
       history: [{ id: 'later-summary', kind: 'summary', content: 'Finished another local phase.' }],
     }), 'later context may be a summary without repeating a user prompt');
+    const imageOnly = subject.parseContextBody({
+      schemaVersion: 1,
+      history: [{ id: 'image-only', kind: 'summary', attachmentIds: ['a'.repeat(32)] }],
+    });
+    assert.equal(imageOnly.history[0].content, '(attached files)');
+    assert.deepEqual(imageOnly.history[0].attachmentIds, ['a'.repeat(32)]);
+    assert.throws(() => subject.parseContextBody({
+      schemaVersion: 1,
+      history: [{ id: 'empty', kind: 'summary' }],
+    }), /content is required/);
+    assert.throws(() => subject.parseContextBody({
+      schemaVersion: 1,
+      history: [{ id: 'bad-image', kind: 'summary', attachmentIds: ['not-an-id'] }],
+    }), /attachmentIds/);
     const upload = subject.parseCommitUploadBody({
       schemaVersion: 1,
       localCommitSha: HEAD,
@@ -456,6 +502,99 @@ test('handoff validators require a spec-first, bounded, user-visible history con
       check_state: 'error',
       staging_url: null,
     }).state, 'failed', 'a staging boot failure must not remain stuck as deploying');
+  } finally { restore(); }
+});
+
+test('proposal history links only session images and retries idempotently', async () => {
+  const { router, state, restore } = makeHarness();
+  const imageId = 'a'.repeat(32);
+  const otherImageId = 'b'.repeat(32);
+  const textId = 'c'.repeat(32);
+  try {
+    const start = routeHandler(router, '/api/apps/:slug/proposal-handoffs', 'post');
+    await start({
+      params: { slug: 'demo' }, body: START_BODY, cliAuthenticated: true,
+      user: { id: 7, username: 'maker' },
+    }, mockRes());
+    state.attachments.push(
+      {
+        id: imageId, session_id: 101, message_id: null, kind: 'image',
+        filename: 'details.png', content_type: 'image/png', size_bytes: 4096, meta: null,
+      },
+      {
+        id: otherImageId, session_id: 101, message_id: null, kind: 'image',
+        filename: 'alternate.png', content_type: 'image/png', size_bytes: 2048, meta: null,
+      },
+      {
+        id: textId, session_id: 101, message_id: null, kind: 'text',
+        filename: 'notes.txt', content_type: 'text/plain', size_bytes: 20, meta: null,
+      }
+    );
+    const context = routeHandler(router, '/api/sessions/:id/proposal-handoff/context', 'post');
+    const body = {
+      schemaVersion: 1,
+      history: [{
+        id: 'screenshot-1', kind: 'summary', content: 'Expandable details shown below.',
+        phase: 'review', attachmentIds: [imageId],
+      }],
+    };
+    const first = mockRes();
+    await context({
+      params: { id: '101' }, body, cliAuthenticated: true,
+      user: { id: 7, username: 'maker' },
+    }, first);
+    assert.equal(first.statusCode, 200);
+    assert.equal(first.body.inserted, 1);
+    const message = state.messages.find((candidate) => candidate.metadata.handoffEventId === 'screenshot-1');
+    assert.equal(state.attachments[0].message_id, message.id);
+    assert.deepEqual(message.metadata.attachments, [{
+      id: imageId,
+      kind: 'image',
+      filename: 'details.png',
+      contentType: 'image/png',
+      sizeBytes: 4096,
+      transcriptVisible: true,
+    }]);
+
+    const retry = mockRes();
+    await context({
+      params: { id: '101' }, body, cliAuthenticated: true,
+      user: { id: 7, username: 'maker' },
+    }, retry);
+    assert.equal(retry.statusCode, 200);
+    assert.equal(retry.body.inserted, 0);
+    assert.equal(state.messages.filter((candidate) => candidate.metadata.handoffEventId === 'screenshot-1').length, 1);
+
+    const changed = mockRes();
+    await context({
+      params: { id: '101' }, cliAuthenticated: true, user: { id: 7, username: 'maker' },
+      body: { ...body, history: [{ ...body.history[0], attachmentIds: [otherImageId] }] },
+    }, changed);
+    assert.equal(changed.statusCode, 409);
+    assert.equal(changed.body.error, 'history_event_conflict');
+    assert.equal(state.attachments[1].message_id, null, 'a conflicting retry leaves the new image unused');
+
+    const nonImage = mockRes();
+    await context({
+      params: { id: '101' }, cliAuthenticated: true, user: { id: 7, username: 'maker' },
+      body: {
+        schemaVersion: 1,
+        history: [{ id: 'text-file', kind: 'summary', attachmentIds: [textId] }],
+      },
+    }, nonImage);
+    assert.equal(nonImage.statusCode, 400);
+    assert.match(nonImage.body.message, /must be images/);
+
+    const unknown = mockRes();
+    await context({
+      params: { id: '101' }, cliAuthenticated: true, user: { id: 7, username: 'maker' },
+      body: {
+        schemaVersion: 1,
+        history: [{ id: 'unknown-file', kind: 'summary', attachmentIds: ['d'.repeat(32)] }],
+      },
+    }, unknown);
+    assert.equal(unknown.statusCode, 400);
+    assert.match(unknown.body.message, /Unknown or cross-session/);
   } finally { restore(); }
 });
 

@@ -26,6 +26,8 @@ The returned `webPath` is an optional continuation surface, not a required step.
 
 Give history entries stable event IDs. Include exact user-visible requests and concise agent summaries. Never upload hidden reasoning, credentials, raw tool logs, or unrelated conversation.
 
+Every build-submission summary must include a `How to test / observe` section with concrete reviewer steps. To include a screenshot, call `proposal_upload_image` after `proposal_start`, execute its exact host `argv`, then reference the returned ID in that summary event's `attachmentIds`. Only images linked this way are visible in a shared read-only transcript; ordinary dev-chat attachments remain private.
+
 ## Apply the promotion guard on the correct host
 
 - **Codex CLI only:** expect a separate hook-injected developer context on each user prompt reporting that the Usernode promotion-guard health check passed. If it is absent, tell the user once that the project promotion guard is not active, ask them to open `/hooks`, review and enable or trust the Usernode project hook, then send another message. Safe non-promotion work may continue, but do not promote until a later prompt carries the passing context.

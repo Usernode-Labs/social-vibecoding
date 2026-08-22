@@ -61,9 +61,10 @@ async function readLimitedJson(response, maxResponseBytes = MAX_RESPONSE_BYTES) 
   }
 }
 
-async function requestJson(origin, pathname, {
+async function requestBody(origin, pathname, {
   method = 'GET',
   body,
+  contentType,
   token,
   deadlineMs = 30000,
   maxResponseBytes = MAX_RESPONSE_BYTES,
@@ -86,10 +87,10 @@ async function requestJson(origin, pathname, {
       signal: controller.signal,
       headers: {
         Accept: 'application/json',
-        ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+        ...(body === undefined || !contentType ? {} : { 'Content-Type': contentType }),
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      ...(body === undefined ? {} : { body }),
     });
     connected = true;
     clearTimeout(connectTimer);
@@ -138,10 +139,32 @@ async function requestJson(origin, pathname, {
   }
 }
 
+async function requestJson(origin, pathname, options = {}) {
+  return requestBody(origin, pathname, {
+    ...options,
+    ...(options.body === undefined
+      ? {}
+      : { body: JSON.stringify(options.body), contentType: 'application/json' }),
+  });
+}
+
+async function requestBytes(origin, pathname, options = {}) {
+  if (!Buffer.isBuffer(options.body)) {
+    throw new CliHttpError('Binary request body must be a Buffer', {
+      code: 'configuration_error',
+    });
+  }
+  return requestBody(origin, pathname, {
+    ...options,
+    contentType: 'application/octet-stream',
+  });
+}
+
 module.exports = {
   MAX_RESPONSE_BYTES,
   CliHttpError,
   retryAfterSeconds,
   readLimitedJson,
   requestJson,
+  requestBytes,
 };

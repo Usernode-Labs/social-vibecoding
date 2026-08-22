@@ -8,6 +8,7 @@ const OPENCODE_REVIEWED_TOOL_SUFFIXES = Object.freeze([
   'api_write',
   'proposal_start',
   'proposal_append_context',
+  'proposal_upload_image',
   'proposal_push_commit',
   'proposal_submit_build',
   'proposal_status',

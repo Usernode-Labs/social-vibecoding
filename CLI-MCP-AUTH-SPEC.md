@@ -1175,6 +1175,7 @@ enabled_tools = [
   "social_vibecoding.api_write",
   "social_vibecoding.proposal_start",
   "social_vibecoding.proposal_append_context",
+  "social_vibecoding.proposal_upload_image",
   "social_vibecoding.proposal_push_commit",
   "social_vibecoding.proposal_submit_build",
   "social_vibecoding.proposal_status",
@@ -1447,6 +1448,13 @@ necessarily the app checkout. Its returned host command uses a two-minute HTTP
 deadline for the bounded upload/GitHub reconstruction operation; ordinary API
 calls retain the generic 30-second deadline.
 
+`proposal_upload_image` likewise requires an explicit absolute image path and
+returns an exact host command. The CLI validates PNG/JPEG/GIF/WebP bytes,
+uploads them through the existing session attachment endpoint, and returns an
+opaque attachment ID. A later proposal history event includes that ID in
+`attachmentIds`; arbitrary Markdown image URLs are not promoted into shared
+transcript content.
+
 The protected tools are:
 
 ```text
@@ -1455,6 +1463,7 @@ social_vibecoding.api_read
 social_vibecoding.api_write
 social_vibecoding.proposal_start
 social_vibecoding.proposal_append_context
+social_vibecoding.proposal_upload_image
 social_vibecoding.proposal_push_commit
 social_vibecoding.proposal_submit_build
 social_vibecoding.proposal_status
@@ -1469,7 +1478,7 @@ platform endpoint's HTTP status and JSON body, never accept an origin/header/
 cookie/token input, and never call GitHub directly. This path-based bridge
 means a new user-facing platform endpoint needs no CLI/MCP registry change.
 
-The six proposal tools are reviewed convenience wrappers around those same
+The seven proposal tools are reviewed convenience wrappers around those same
 user-facing APIs, not a hardcoded API registry. They preserve the browser Dev
 workflow for work authored in a local Codex or Claude session:
 
@@ -2108,6 +2117,6 @@ This keeps global platform identity separate from child-app identity.
    `reauthorization_required` retry contracts.
 8. Add native CLI proposal handoff storage/routes, GitHub-App-backed exact-tree
    commit upload, pinned-commit branch adoption, shared transcript/spec
-   context, staging/check orchestration, and the six proposal workflow tools
+   context, staging/check orchestration, and the seven proposal workflow tools
    for Codex and Claude.
 9. Add operational metrics and audit-retention monitoring.

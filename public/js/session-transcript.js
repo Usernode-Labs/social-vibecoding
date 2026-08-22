@@ -17,10 +17,10 @@
 //      fetches — so tests/session-transcript-render.test.js can vm-load it
 //      and assert on the HTML directly.
 //   2. NOTHING INTERACTIVE THAT WRITES. No composer, no form, no send
-//      button, no owner action buttons, no attachment links. Reading
-//      someone's chat can never post into it, and the server enforces the
-//      same thing (POST /chat is owner-scoped) — the missing UI is the
-//      second layer, not the only one.
+//      button or owner action buttons. Deliberately shared proposal-history
+//      images may open read-only; ordinary attachments remain inert name
+//      chips. Reading someone's chat can never post into it, and the server
+//      enforces the same thing (POST /chat is owner-scoped).
 //   3. AGENT ACTIVITY COLLAPSED BY DEFAULT. The owner's own view opens
 //      these (they're watching a live run); a reader is skimming a
 //      finished conversation, so progress logs and raw agent summaries
@@ -68,16 +68,23 @@
     return '';
   }
 
-  // Attachment chips: NAME ONLY, and deliberately a <span>, not an <a>.
-  // The sanitiser strips attachment ids precisely so no URL can be built
-  // here; rendering a link shape would promise a download that 404s (and
-  // would be the first thing to accidentally re-point at the owner-scoped
-  // bytes route later).
-  function attachmentsHtml(msg) {
+  // Ordinary attachment entries stay NAME-ONLY chips. The sanitizer keeps
+  // an id only for an image deliberately attached to proposal history; those
+  // render inline and open full-size through the read-authorized bytes route.
+  function attachmentsHtml(msg, sessionId) {
     const atts = msg && msg.metadata && msg.metadata.attachments;
     if (!Array.isArray(atts) || !atts.length) return '';
+    const sid = Number(sessionId);
+    const sessionOk = Number.isSafeInteger(sid) && sid > 0 && sid <= 2147483647;
     const items = atts.map((a) => {
       const name = esc((a && a.filename) || 'file');
+      const idOk = a && typeof a.id === 'string' && /^[a-f0-9]{32}$/.test(a.id);
+      if (sessionOk && idOk && a.kind === 'image' && a.transcriptVisible === true) {
+        const url = '/api/sessions/' + sid + '/attachments/' + a.id;
+        return '<a href="' + url + '" target="_blank" rel="noopener" title="' + name
+          + ' — open full size"><img class="dc-msg-att-img" src="' + url + '" alt="'
+          + name + '" loading="lazy"></a>';
+      }
       const size = humanSize(a && a.sizeBytes);
       const icon = a && a.kind === 'image' ? '🖼' : '📎';
       return '<span class="dc-msg-att-chip st-att-chip" title="' + name
@@ -149,7 +156,7 @@
     return line + activity + spec;
   }
 
-  function convoRowHtml(msg, ownerName) {
+  function convoRowHtml(msg, ownerName, sessionId) {
     const isUser = msg.role === 'user';
     const who = isUser ? (ownerName || 'them') : 'AI';
     const cls = isUser ? 'dc-msg-user' : 'dc-msg-assistant';
@@ -160,7 +167,7 @@
       + (when ? '<span class="st-msg-when">' + esc(when) + '</span>' : '')
       + '</div>'
       + '<div class="dc-msg-content">' + md(msg.content || '') + '</div>'
-      + attachmentsHtml(msg)
+      + attachmentsHtml(msg, sessionId)
       + '</div>';
   }
 
@@ -184,7 +191,9 @@
     html += '<div class="st-timeline">';
     for (const msg of messages) {
       if (!msg || !msg.role) continue;
-      html += msg.role === 'system' ? systemRowHtml(msg) : convoRowHtml(msg, ownerName);
+      html += msg.role === 'system'
+        ? systemRowHtml(msg)
+        : convoRowHtml(msg, ownerName, session.id);
     }
     html += '</div>';
     return html;

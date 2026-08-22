@@ -16,6 +16,7 @@ const assert = require('node:assert/strict');
 const {
   sanitizeTranscriptMessage,
   sanitizeTranscript,
+  canReadSessionAttachment,
   MAX_TRANSCRIPT_MESSAGES,
   buildForkFollowUpMessage,
   FORK_FOLLOWUP_REPLIES,
@@ -128,6 +129,72 @@ test('attachments keep name/kind/size and LOSE the id (no reachable bytes URL)',
   const serialized = JSON.stringify(out);
   assert.ok(!serialized.includes('a'.repeat(32)), 'attachment id is not reachable');
   assert.ok(!serialized.includes('BYTES'), 'attachment bytes are not reachable');
+});
+
+test('shared transcript opt-in keeps only explicitly linked proposal-history image ids', () => {
+  const visibleId = 'a'.repeat(32);
+  const ordinaryId = 'b'.repeat(32);
+  const textId = 'c'.repeat(32);
+  const input = row({
+    role: 'assistant',
+    metadata: {
+      attachments: [
+        {
+          id: visibleId, filename: 'details.png', kind: 'image', sizeBytes: 4096,
+          transcriptVisible: true, contentType: 'image/png', data: 'BYTES',
+        },
+        {
+          id: ordinaryId, filename: 'private.png', kind: 'image', sizeBytes: 2048,
+        },
+        {
+          id: textId, filename: 'notes.txt', kind: 'text', sizeBytes: 100,
+          transcriptVisible: true,
+        },
+      ],
+    },
+  });
+  const shared = sanitizeTranscriptMessage(input, { includeTranscriptImages: true });
+  assert.deepStrictEqual(shared.metadata.attachments[0], {
+    filename: 'details.png', kind: 'image', sizeBytes: 4096,
+    id: visibleId, transcriptVisible: true,
+  });
+  assert.ok(!('id' in shared.metadata.attachments[1]), 'ordinary image stays names-only');
+  assert.ok(!('id' in shared.metadata.attachments[2]), 'non-image never becomes reachable');
+  assert.ok(!JSON.stringify(shared).includes('BYTES'));
+
+  const forkSafe = sanitizeTranscriptMessage(input);
+  assert.ok(forkSafe.metadata.attachments.every((attachment) => !('id' in attachment)),
+    'default/fork sanitizer strips every live id');
+});
+
+test('attachment bytes stay owner-only except for an explicitly shared history image', () => {
+  const id = 'a'.repeat(32);
+  const base = {
+    id,
+    kind: 'image',
+    owner_id: 7,
+    shared_at: '2026-08-22T00:00:00Z',
+    transcript_shared_at: '2026-08-22T00:00:01Z',
+    message_metadata: {
+      attachments: [{ id, kind: 'image', transcriptVisible: true }],
+    },
+  };
+  assert.equal(canReadSessionAttachment(base, 7), true, 'owner always keeps access');
+  assert.equal(canReadSessionAttachment(base, 8), true, 'shared reader gets deliberate image');
+  assert.equal(canReadSessionAttachment({ ...base, shared_at: null }, 8), false);
+  assert.equal(canReadSessionAttachment({ ...base, transcript_shared_at: null }, 8), false);
+  assert.equal(canReadSessionAttachment({
+    ...base,
+    message_metadata: { attachments: [{ id, kind: 'image' }] },
+  }, 8), false, 'ordinary chat image stays private');
+  assert.equal(canReadSessionAttachment({
+    ...base,
+    message_metadata: { attachments: [{ id, kind: 'text', transcriptVisible: true }] },
+  }, 8), false, 'non-images stay private');
+  assert.equal(canReadSessionAttachment({
+    ...base,
+    message_metadata: { attachments: [{ id: 'b'.repeat(32), kind: 'image', transcriptVisible: true }] },
+  }, 8), false, 'metadata must link this exact attachment');
 });
 
 test('a non-object attachment entry is dropped rather than passed through', () => {

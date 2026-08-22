@@ -20,6 +20,7 @@ const { effectiveSessionCaps } = require('../services/session-caps');
 const { drainGuard } = require('../services/lifecycle');
 const events = require('../services/events');
 const log = require('../services/logger');
+const attachmentsSvc = require('../services/attachments');
 const {
   MAX_UPLOAD_FILES,
   MAX_UPLOAD_FILE_BYTES,
@@ -120,16 +121,27 @@ function parseHistory(value, { required = false, requireUser = false } = {}) {
   }
   let total = 0;
   const out = value.map((item, index) => {
-    exactKeys(item, ['id', 'kind', 'content', 'phase'], `history[${index}]`);
+    exactKeys(item, ['id', 'kind', 'content', 'phase', 'attachmentIds'], `history[${index}]`);
     if (typeof item.id !== 'string' || !EVENT_ID_RE.test(item.id)) {
       throw new ValidationError(`history[${index}].id is invalid`);
     }
     if (!['user', 'summary'].includes(item.kind)) {
       throw new ValidationError(`history[${index}].kind must be user or summary`);
     }
-    const content = boundedText(item.content, {
-      label: `history[${index}].content`, min: 1, max: MAX_EVENT_BYTES,
-    });
+    const attachmentIds = attachmentsSvc.sanitizeAttachmentIds(item.attachmentIds);
+    if (attachmentIds === null) {
+      throw new ValidationError(
+        `history[${index}].attachmentIds must contain at most ${attachmentsSvc.MAX_PER_MESSAGE} image IDs`
+      );
+    }
+    if (item.content === undefined && !attachmentIds.length) {
+      throw new ValidationError(`history[${index}].content is required without attachments`);
+    }
+    const content = item.content === undefined
+      ? attachmentsSvc.ATTACHMENTS_ONLY_TEXT
+      : boundedText(item.content, {
+          label: `history[${index}].content`, min: 1, max: MAX_EVENT_BYTES,
+        });
     total += Buffer.byteLength(content, 'utf8');
     let phase = null;
     if (item.phase !== undefined) {
@@ -138,7 +150,13 @@ function parseHistory(value, { required = false, requireUser = false } = {}) {
       }
       phase = item.phase;
     }
-    return { id: item.id, kind: item.kind, content, phase };
+    return {
+      id: item.id,
+      kind: item.kind,
+      content,
+      phase,
+      ...(attachmentIds.length ? { attachmentIds } : {}),
+    };
   });
   if (total > MAX_HISTORY_BYTES) {
     throw new ValidationError(`history content exceeds ${MAX_HISTORY_BYTES} UTF-8 bytes`);
@@ -473,36 +491,88 @@ async function insertHistoryRows(client, sessionId, history) {
   if (!history.length) return 0;
   let inserted = 0;
   for (const item of history) {
+    const attachmentIds = Array.isArray(item.attachmentIds) ? item.attachmentIds : [];
+    let attachmentRows = [];
+    if (attachmentIds.length) {
+      const { rows } = await client.query(
+        `SELECT id, message_id, kind, filename, content_type, size_bytes, meta
+           FROM chat_session_attachments
+          WHERE id = ANY($1) AND session_id = $2
+          FOR UPDATE`,
+        [attachmentIds, sessionId]
+      );
+      if (rows.length !== attachmentIds.length) {
+        throw new ValidationError('Unknown or cross-session proposal history attachment');
+      }
+      const byId = new Map(rows.map((row) => [row.id, row]));
+      attachmentRows = attachmentIds.map((id) => byId.get(id));
+      if (attachmentRows.some((row) => row.kind !== 'image')) {
+        throw new ValidationError('Proposal history attachments must be images');
+      }
+    }
     const metadata = {
       source: SOURCE,
       handoffEventId: item.id,
       phase: item.phase,
     };
     if (item.kind === 'summary') metadata.handoffSummary = true;
+    if (attachmentRows.length) {
+      metadata.attachments = attachmentRows.map((attachment) => ({
+        id: attachment.id,
+        kind: attachment.kind,
+        filename: attachment.filename,
+        contentType: attachment.content_type,
+        sizeBytes: attachment.size_bytes,
+        ...(attachment.meta ? { meta: attachment.meta } : {}),
+        transcriptVisible: true,
+      }));
+    }
     const role = item.kind === 'user' ? 'user' : 'assistant';
-    const { rowCount } = await client.query(
+    const { rows: insertedRows, rowCount } = await client.query(
       `INSERT INTO chat_session_messages (session_id, role, content, metadata)
        VALUES ($1, $2, $3, $4::jsonb)
-       ON CONFLICT DO NOTHING`,
+       ON CONFLICT DO NOTHING
+       RETURNING id`,
       [sessionId, role, item.content, JSON.stringify(metadata)]
     );
     if (rowCount) {
+      if (attachmentRows.some((attachment) => attachment.message_id != null)) {
+        throw new HandoffConflictError('Proposal history attachment was already linked');
+      }
+      if (attachmentRows.length) {
+        const linked = await client.query(
+          `UPDATE chat_session_attachments
+              SET message_id = $1
+            WHERE id = ANY($2) AND session_id = $3 AND message_id IS NULL`,
+          [insertedRows[0].id, attachmentIds, sessionId]
+        );
+        if (linked.rowCount !== attachmentIds.length) {
+          throw new HandoffConflictError('Proposal history attachment was already linked');
+        }
+      }
       inserted += rowCount;
       continue;
     }
     const { rows } = await client.query(
-      `SELECT role, content, metadata FROM chat_session_messages
+      `SELECT id, role, content, metadata FROM chat_session_messages
         WHERE session_id = $1 AND metadata->>'handoffEventId' = $2
         LIMIT 1`,
       [sessionId, item.id]
     );
     const prior = rows[0];
+    const priorAttachmentIds = Array.isArray(prior?.metadata?.attachments)
+      ? prior.metadata.attachments.map((attachment) => attachment?.id).filter(Boolean)
+      : [];
     if (!prior
         || prior.role !== role
         || prior.content !== item.content
         || (prior.metadata?.phase || null) !== item.phase
-        || !!prior.metadata?.handoffSummary !== (item.kind === 'summary')) {
-      throw new HandoffConflictError(`History event ${item.id} was already used with different content`);
+        || !!prior.metadata?.handoffSummary !== (item.kind === 'summary')
+        || JSON.stringify(priorAttachmentIds) !== JSON.stringify(attachmentIds)
+        || attachmentRows.some((attachment) => attachment.message_id !== prior.id)) {
+      throw new HandoffConflictError(
+        `History event ${item.id} was already used with different content or attachments`
+      );
     }
   }
   return inserted;
@@ -791,6 +861,9 @@ function proposalHandoffRoutes(config) {
       res.status(insertedSession ? 201 : 200)
         .json(publicSessionStatus({ ...created, app_slug: app.slug }));
     } catch (err) {
+      if (err instanceof ValidationError) {
+        return res.status(400).json({ error: 'invalid_request', message: err.message });
+      }
       if (err instanceof HandoffConflictError) {
         return res.status(409).json({ error: 'history_event_conflict', message: err.message });
       }
@@ -821,6 +894,9 @@ function proposalHandoffRoutes(config) {
       await pool.query(`UPDATE chat_sessions SET last_activity_at = NOW() WHERE id = $1`, [session.id]);
       res.json({ ok: true, inserted });
     } catch (err) {
+      if (err instanceof ValidationError) {
+        return res.status(400).json({ error: 'invalid_request', message: err.message });
+      }
       if (err instanceof HandoffConflictError) {
         return res.status(409).json({ error: 'history_event_conflict', message: err.message });
       }
@@ -1153,6 +1229,9 @@ function proposalHandoffRoutes(config) {
         }
       });
     } catch (err) {
+      if (err instanceof ValidationError) {
+        return res.status(400).json({ error: 'invalid_request', message: err.message });
+      }
       if (err instanceof HandoffConflictError) {
         return res.status(409).json({ error: 'history_event_conflict', message: err.message });
       }

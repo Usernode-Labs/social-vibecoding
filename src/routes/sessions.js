@@ -3278,7 +3278,10 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       const newestFirst = truncated
         ? raw.slice(0, transcriptShare.MAX_TRANSCRIPT_MESSAGES)
         : raw;
-      const messages = transcriptShare.sanitizeTranscript(newestFirst.slice().reverse());
+      const messages = transcriptShare.sanitizeTranscript(
+        newestFirst.slice().reverse(),
+        { includeTranscriptImages: true }
+      );
 
       res.json({
         session: {
@@ -3820,23 +3823,31 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     }
   );
 
-  // Serve attachment bytes. Authed + owner-gated (deliberately NOT the
-  // pre-auth /visuals/:id pattern — attachments are private chat content
-  // with no GitHub-camo requirement). Rows are immutable and ids are
-  // unguessable, so a long private immutable cache is safe.
+  // Serve attachment bytes. Owners may read every attachment in their own
+  // session. A non-owner may read only an image deliberately linked from a
+  // proposal-history event, and only after both the session and transcript
+  // were shared. Ordinary chat attachments remain private even when their
+  // filename chip appears in a shared transcript.
   router.get('/api/sessions/:id/attachments/:attId', async (req, res) => {
     const attId = String(req.params.attId || '');
     if (!/^[a-f0-9]{32}$/.test(attId)) return res.status(404).end();
     try {
       const { rows } = await pool.query(
-        `SELECT att.kind, att.filename, att.content_type, att.data
+        `SELECT att.kind, att.filename, att.content_type, att.data,
+                cs.user_id AS owner_id, cs.shared_at, cs.transcript_shared_at,
+                message.metadata AS message_metadata
            FROM chat_session_attachments att
            JOIN chat_sessions cs ON cs.id = att.session_id
-          WHERE att.id = $1 AND att.session_id = $2 AND cs.user_id = $3`,
-        [attId, req.params.id, req.user.id]
+           LEFT JOIN chat_session_messages message
+             ON message.id = att.message_id AND message.session_id = att.session_id
+          WHERE att.id = $1 AND att.session_id = $2`,
+        [attId, req.params.id]
       );
       if (!rows.length) return res.status(404).end();
       const att = rows[0];
+      if (!transcriptShare.canReadSessionAttachment({ ...att, id: attId }, req.user.id)) {
+        return res.status(404).end();
+      }
       // Text always serves as text/plain (set at upload) and downloads as
       // an attachment; images render inline. nosniff so a browser can
       // never promote either into something executable.

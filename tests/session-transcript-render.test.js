@@ -140,6 +140,42 @@ test('attachment chips are inert: names only, no href, no <img>', () => {
   assert.match(html, /4 KB/);
 });
 
+test('explicit proposal-history images render inline and open full size', () => {
+  const ST = load();
+  const id = 'a'.repeat(32);
+  const html = ST.renderHtml(payload([{
+    id: 1, role: 'assistant', content: 'Expandable details shown below.', created_at: 'x',
+    metadata: {
+      attachments: [{
+        id, filename: 'details.png', kind: 'image', sizeBytes: 4096,
+        transcriptVisible: true,
+      }],
+    },
+  }], { id: 41 }));
+  assert.match(html, new RegExp(`<img class="dc-msg-att-img" src="/api/sessions/41/attachments/${id}"`));
+  assert.match(html, /target="_blank" rel="noopener"/);
+  assert.match(html, /title="details\.png — open full size"/);
+});
+
+test('hostile or incomplete transcript image capabilities stay inert', () => {
+  const ST = load();
+  const id = 'a'.repeat(32);
+  const html = ST.renderHtml(payload([{
+    id: 1, role: 'assistant', content: 'Images', created_at: 'x',
+    metadata: {
+      attachments: [
+        { id: '../secret', filename: 'bad.png', kind: 'image', transcriptVisible: true },
+        { id, filename: 'ordinary.png', kind: 'image' },
+        { id, filename: 'notes.txt', kind: 'text', transcriptVisible: true },
+      ],
+    },
+  }], { id: '5"><script>' }));
+  assert.doesNotMatch(html, /<img/);
+  assert.doesNotMatch(html, /href=/);
+  assert.doesNotMatch(html, /<script/);
+  assert.equal((html.match(/st-att-chip/g) || []).length, 3);
+});
+
 test('spec previews render as static text with no "View full spec" link', () => {
   const ST = load();
   const html = ST.renderHtml(payload([{

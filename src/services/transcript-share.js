@@ -63,10 +63,13 @@ const METADATA_KEYS = [
 ];
 
 // Attachment entries are reduced to a NAME CHIP: filename/kind/size only.
-// The 32-hex `id` is dropped so a reader cannot construct
-// /api/sessions/:id/attachments/:attId — that route stays owner-scoped, and
-// without the id there is nothing to guess at.
+// One explicit exception exists for proposal-history images: the handoff
+// route stamps those entries transcriptVisible=true, and the shared read
+// route may opt in to keeping their ids so the read-only renderer can fetch
+// them. The default remains names-only because the fork path also calls this
+// sanitizer and must never copy a live attachment capability.
 const ATTACHMENT_FIELDS = ['filename', 'kind', 'sizeBytes'];
+const ATTACHMENT_ID_RE = /^[a-f0-9]{32}$/;
 
 // Hard ceiling on how many rows one transcript read returns. The largest
 // shared session in production carries ~110 messages, so this is headroom
@@ -86,19 +89,49 @@ function pick(src, keys) {
 // Returns a fresh object — never a mutated reference to the input row, so a
 // caller that also holds the raw row (the fork path does) can't accidentally
 // serve the unsanitized one.
-function sanitizeTranscriptMessage(row) {
+function isTranscriptImageAttachment(attachment) {
+  return !!(attachment && typeof attachment === 'object'
+    && attachment.kind === 'image'
+    && attachment.transcriptVisible === true
+    && typeof attachment.id === 'string'
+    && ATTACHMENT_ID_RE.test(attachment.id));
+}
+
+function canReadSessionAttachment(attachmentRow, viewerId) {
+  const row = attachmentRow && typeof attachmentRow === 'object' ? attachmentRow : {};
+  const ownerId = Number(row.owner_id);
+  const readerId = Number(viewerId);
+  if (Number.isSafeInteger(ownerId) && ownerId > 0 && ownerId === readerId) return true;
+  const linkedEntry = Array.isArray(row.message_metadata?.attachments)
+    ? row.message_metadata.attachments.find((candidate) => candidate?.id === row.id)
+    : null;
+  return !!(row.shared_at != null
+    && row.transcript_shared_at != null
+    && row.kind === 'image'
+    && isTranscriptImageAttachment(linkedEntry));
+}
+
+function sanitizeTranscriptMessage(row, { includeTranscriptImages = false } = {}) {
   if (!row || typeof row !== 'object') return null;
   const out = pick(row, ROW_FIELDS);
 
   const meta = row.metadata && typeof row.metadata === 'object' ? row.metadata : null;
   const safeMeta = pick(meta, METADATA_KEYS);
 
-  // Attachments: names only, ids stripped. An entry that isn't an object at
-  // all is dropped rather than passed through.
+  // Attachments are names-only unless this exact shared-transcript response
+  // opts into deliberate proposal-history images. An entry that isn't an
+  // object at all is dropped rather than passed through.
   if (meta && Array.isArray(meta.attachments)) {
     const atts = meta.attachments
       .filter((a) => a && typeof a === 'object')
-      .map((a) => pick(a, ATTACHMENT_FIELDS));
+      .map((a) => {
+        const safe = pick(a, ATTACHMENT_FIELDS);
+        if (includeTranscriptImages && isTranscriptImageAttachment(a)) {
+          safe.id = a.id;
+          safe.transcriptVisible = true;
+        }
+        return safe;
+      });
     if (atts.length) safeMeta.attachments = atts;
   }
 
@@ -107,9 +140,9 @@ function sanitizeTranscriptMessage(row) {
 }
 
 // Sanitize a whole list, dropping rows that sanitize to nothing.
-function sanitizeTranscript(rows) {
+function sanitizeTranscript(rows, options) {
   return (Array.isArray(rows) ? rows : [])
-    .map(sanitizeTranscriptMessage)
+    .map((row) => sanitizeTranscriptMessage(row, options))
     .filter(Boolean);
 }
 
@@ -159,6 +192,8 @@ const FORK_FOLLOWUP_REPLIES = Object.freeze([
 module.exports = {
   sanitizeTranscriptMessage,
   sanitizeTranscript,
+  isTranscriptImageAttachment,
+  canReadSessionAttachment,
   MAX_TRANSCRIPT_MESSAGES,
   buildForkFollowUpMessage,
   FORK_FOLLOWUP_REPLIES,

@@ -105,12 +105,14 @@ test('MCP initializes without credentials and returns the external login contrac
       'social_vibecoding.proposal_start',
       'social_vibecoding.proposal_status',
       'social_vibecoding.proposal_submit_build',
+      'social_vibecoding.proposal_upload_image',
       'social_vibecoding.whoami',
     ]);
     for (const [name, tool] of byName) {
       const mutating = name === 'social_vibecoding.api_write'
         || name === 'social_vibecoding.proposal_start'
         || name === 'social_vibecoding.proposal_append_context'
+        || name === 'social_vibecoding.proposal_upload_image'
         || name === 'social_vibecoding.proposal_push_commit'
         || name === 'social_vibecoding.proposal_submit_build'
         || name === 'social_vibecoding.proposal_promote';
@@ -125,6 +127,8 @@ test('MCP initializes without credentials and returns the external login contrac
       /branch to push/i);
     assert.ok(byName.get('social_vibecoding.proposal_push_commit')
       .inputSchema.required.includes('repo_path'));
+    assert.ok(byName.get('social_vibecoding.proposal_upload_image')
+      .inputSchema.required.includes('file_path'));
     assert.match(byName.get('social_vibecoding.api_write').description,
       /POST \/api\/apps\/:slug\/messages/);
 
@@ -363,6 +367,8 @@ test('proposal MCP tools call the native handoff lifecycle and gate promotion on
   await fs.mkdir(directory, { recursive: true, mode: 0o700 });
   const checkout = path.resolve(__dirname, '..');
   const token = makeAccessToken();
+  const imagePath = path.join(home, 'details.png');
+  await fs.writeFile(imagePath, 'image-bytes-for-mcp-host-vector');
   const requests = [];
   let promoted = false;
   const server = http.createServer(async (req, res) => {
@@ -471,6 +477,21 @@ test('proposal MCP tools call the native handoff lifecycle and gate promotion on
       },
     });
     assert.equal(append.structuredContent.body.inserted, 1);
+
+    const uploadImage = await client.callTool({
+      name: 'social_vibecoding.proposal_upload_image',
+      arguments: { session_id: 41, file_path: imagePath },
+    });
+    assert.equal(uploadImage.isError, true);
+    assert.equal(uploadImage.structuredContent.code, 'host_execution_required');
+    assert.equal(uploadImage.structuredContent.requires_host_execution, true);
+    assert.deepEqual(uploadImage.structuredContent.argv, [
+      await fs.realpath(process.execPath),
+      await fs.realpath(path.join(checkout, 'tools', 'social-vibecoding')),
+      'proposal', 'upload-image', '--session', '41', '--file', await fs.realpath(imagePath),
+      '--profile', 'lab',
+    ]);
+    assert.match(uploadImage.structuredContent.message, /attachmentIds/);
 
     const push = await client.callTool({
       name: 'social_vibecoding.proposal_push_commit',

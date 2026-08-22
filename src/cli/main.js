@@ -19,8 +19,9 @@ const {
 } = require('../services/cli-auth');
 const { canonicalApiTarget } = require('../services/cli-api-policy');
 const state = require('./state');
-const { requestJson, CliHttpError } = require('./http');
+const { requestJson, requestBytes, CliHttpError } = require('./http');
 const { collectCommitUpload } = require('./git-upload');
+const attachmentsSvc = require('../services/attachments');
 const {
   OPENCODE_MCP_SERVER,
   OPENCODE_REVIEWED_TOOL_SUFFIXES,
@@ -296,6 +297,19 @@ async function callUserApi(profile, method, rawTarget, body, token, { deadlineMs
   }
   return requestJson(profile.origin, target, {
     method,
+    body,
+    token,
+    ...(deadlineMs === undefined ? {} : { deadlineMs }),
+  });
+}
+
+async function callUserBytes(profile, rawTarget, body, token, { deadlineMs } = {}) {
+  const target = canonicalApiTarget(rawTarget);
+  if (!target) {
+    throw new Error('API target must be an allowed same-origin /api/ path');
+  }
+  return requestBytes(profile.origin, target, {
+    method: 'POST',
     body,
     token,
     ...(deadlineMs === undefined ? {} : { deadlineMs }),
@@ -724,6 +738,86 @@ async function proposalPushCommand(args, io) {
   return response.ok ? 0 : 1;
 }
 
+async function proposalUploadImageCommand(args, io) {
+  const { options, positional } = parseOptions(
+    args,
+    new Set(['--session', '--file', '--profile'])
+  );
+  if (positional.length || !options.session || !options.file) {
+    throw new Error(
+      'Usage: proposal upload-image --session <id> --file <absolute-path> [--profile <name>]'
+    );
+  }
+  if (!/^[1-9]\d{0,9}$/.test(options.session)
+      || Number(options.session) > 2147483647) {
+    throw new Error('proposal upload-image requires a canonical positive session ID');
+  }
+  if (!path.isAbsolute(options.file) || /\u0000/.test(options.file)) {
+    throw new Error('proposal upload-image requires an absolute --file path');
+  }
+  let canonicalFile;
+  let stat;
+  try {
+    canonicalFile = await fsp.realpath(options.file);
+    stat = await fsp.stat(canonicalFile);
+  } catch {
+    throw new Error('proposal upload-image file is not accessible');
+  }
+  if (!stat.isFile()) throw new Error('proposal upload-image --file must be a regular file');
+  if (stat.size < 1 || stat.size > attachmentsSvc.MAX_IMAGE_BYTES) {
+    throw new Error(
+      `proposal upload-image file must be 1-${attachmentsSvc.MAX_IMAGE_BYTES} bytes`
+    );
+  }
+  const filename = path.basename(canonicalFile);
+  const data = await fsp.readFile(canonicalFile);
+  const verdict = attachmentsSvc.validateUpload({ filename, data });
+  if (!verdict.ok || verdict.kind !== 'image') {
+    throw new Error(verdict.ok
+      ? 'proposal upload-image accepts PNG, JPEG, GIF, or WebP images only'
+      : verdict.error);
+  }
+
+  const profile = await state.selectedProfile(options.profile);
+  if (!(await localProfileReady(profile))) {
+    throw new Error('The local Usernode stack is not running. Start it with make up, then retry.');
+  }
+  let credential = await resolvedCredential(profile);
+  if (!credential) {
+    const loginCode = await login(['--profile', profile.name], io);
+    if (loginCode !== 0) return loginCode;
+    credential = await resolvedCredential(profile);
+  }
+  if (!credential) throw new Error('Login completed without a usable credential');
+
+  const target = `/api/sessions/${options.session}/attachments?filename=${encodeURIComponent(filename)}`;
+  let response = await callUserBytes(profile, target, data, credential.record.access_token);
+  const needsLogin = response.status === 401 && hasExactError(
+    response,
+    new Set(['invalid_token', 'expired_token', 'revoked_token'])
+  );
+  const needsNewScope = response.status === 403
+    && hasExactError(response, new Set(['insufficient_scope']));
+  if (needsLogin || needsNewScope) {
+    if (credential.source === 'environment') {
+      throw new Error(
+        'The environment credential is invalid or lacks API access; replace it and retry'
+      );
+    }
+    const loginCode = await login(['--profile', profile.name], io);
+    if (loginCode !== 0) return loginCode;
+    credential = await resolvedCredential(profile);
+    if (!credential) throw new Error('Login completed without a usable credential');
+    response = await callUserBytes(profile, target, data, credential.record.access_token);
+  }
+  if (response.ok && (!response.data || response.data.kind !== 'image'
+      || typeof response.data.id !== 'string' || !/^[a-f0-9]{32}$/.test(response.data.id))) {
+    throw new Error('Server returned an unexpected proposal image response');
+  }
+  io.out(`${JSON.stringify({ status: response.status, body: response.data }, null, 2)}\n`);
+  return response.ok ? 0 : 1;
+}
+
 async function authStatus(args, io) {
   const { options, positional } = parseOptions(args, new Set(['--profile']));
   if (positional.length) throw new Error('auth status accepts no positional arguments');
@@ -987,6 +1081,7 @@ function setupToml({
     '  "social_vibecoding.api_write",',
     '  "social_vibecoding.proposal_start",',
     '  "social_vibecoding.proposal_append_context",',
+    '  "social_vibecoding.proposal_upload_image",',
     '  "social_vibecoding.proposal_push_commit",',
     '  "social_vibecoding.proposal_submit_build",',
     '  "social_vibecoding.proposal_status",',
@@ -2070,8 +2165,11 @@ async function runMcp(args, launcherPath) {
   const proposalHistorySchema = z.array(z.object({
     id: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,79}$/),
     kind: z.enum(['user', 'summary']),
-    content: z.string().min(1).max(8192),
+    content: z.string().min(1).max(8192).optional(),
     phase: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9 _./:-]{0,63}$/).optional(),
+    attachmentIds: z.array(z.string().regex(/^[a-f0-9]{32}$/)).max(4).optional(),
+  }).refine((event) => event.content !== undefined || (event.attachmentIds?.length || 0) > 0, {
+    message: 'content is required unless attachmentIds contains an image',
   })).max(80);
   const proposalTestsSchema = z.array(z.object({
     command: z.string().min(1).max(1024),
@@ -2109,7 +2207,7 @@ async function runMcp(args, launcherPath) {
   }));
 
   server.registerTool('social_vibecoding.proposal_append_context', {
-    description: 'Append idempotent user-visible prompts or durable summaries to a native CLI proposal so a later local turn or optional web Dev continuation retains the useful context. Do not upload hidden reasoning, credentials, or raw tool logs.',
+    description: 'Append idempotent user-visible prompts or durable summaries to a native CLI proposal so a later local turn or optional web Dev continuation retains the useful context. To include screenshots, first call proposal_upload_image, then put its returned id in attachmentIds. Do not upload hidden reasoning, credentials, or raw tool logs.',
     inputSchema: {
       session_id: sessionIdSchema,
       history: proposalHistorySchema.min(1),
@@ -2123,6 +2221,66 @@ async function runMcp(args, launcherPath) {
     body: { schemaVersion: 1, history },
     profileName: profile,
   }));
+
+  server.registerTool('social_vibecoding.proposal_upload_image', {
+    description: 'Prepare one local PNG, JPEG, GIF, or WebP image for a native proposal transcript. This returns an exact host CLI argv: execute it once, then include the returned image id in a proposal history event attachmentIds array. Only explicitly linked proposal-history images become visible in a shared read-only transcript.',
+    inputSchema: {
+      session_id: sessionIdSchema,
+      file_path: z.string().min(1).max(4096),
+      profile: apiProfileSchema,
+    },
+    outputSchema: apiOutputSchema,
+    annotations: proposalAnnotations,
+  }, async ({ session_id: sessionId, file_path: filePath, profile: explicitProfile }) => {
+    let profile;
+    try {
+      profile = await toolProfile(explicitProfile);
+    } catch (err) {
+      return mcpError('configuration_error', safeError(err), {
+        profile: explicitProfile || pinned.name, retryable: false,
+      });
+    }
+    if (!path.isAbsolute(filePath) || /\u0000/.test(filePath)) {
+      return mcpError('invalid_request', 'file_path must be an absolute local path.', {
+        profile: profile.name, retryable: false,
+      });
+    }
+    let canonicalFile;
+    let stat;
+    try {
+      canonicalFile = await fsp.realpath(filePath);
+      stat = await fsp.stat(canonicalFile);
+    } catch {
+      return mcpError('invalid_request', 'file_path is not accessible.', {
+        profile: profile.name, retryable: false,
+      });
+    }
+    if (!stat.isFile() || stat.size < 1 || stat.size > attachmentsSvc.MAX_IMAGE_BYTES) {
+      return mcpError(
+        'invalid_request',
+        `file_path must be a regular image file of 1-${attachmentsSvc.MAX_IMAGE_BYTES} bytes.`,
+        { profile: profile.name, retryable: false }
+      );
+    }
+    const argv = [
+      realNode, realLauncher, 'proposal', 'upload-image',
+      '--session', String(sessionId),
+      '--file', canonicalFile,
+      '--profile', profile.name,
+    ];
+    return mcpError(
+      'host_execution_required',
+      'Execute the returned argv once with host/out-of-sandbox permission. Then add the returned image id to attachmentIds on proposal_append_context or proposal_submit_build.',
+      {
+        command: `node ./tools/social-vibecoding proposal upload-image --session ${sessionId} --file <absolute-image-path> --profile ${profile.name}`,
+        argv,
+        cwd: path.dirname(canonicalFile),
+        profile: profile.name,
+        retryable: false,
+        requires_host_execution: true,
+      }
+    );
+  });
 
   server.registerTool('social_vibecoding.proposal_push_commit', {
     description: 'Upload one tested local Git commit through Usernode’s GitHub App instead of personal GitHub credentials. This tool returns an exact host CLI argv: execute it once outside the sandbox. Usernode reconstructs and verifies the local tree, creates a commit on the managed proposal branch, and returns the platform head SHA for proposal_submit_build. Never dispatch a remote coding agent just to obtain push credentials.',
@@ -2277,6 +2435,7 @@ function usage() {
     '  social-vibecoding auth status [--profile <name>]',
     '  social-vibecoding auth server add|use|list|remove ...',
     '  social-vibecoding api <GET|POST|PUT|PATCH|DELETE> <path> [--profile <name>] [--data <json>]',
+    '  social-vibecoding proposal upload-image --session <id> --file <absolute-path> [--profile <name>]',
     '  social-vibecoding proposal push --session <id> --commit <sha> [--repo <path>] [--profile <name>]',
     '  social-vibecoding agent run --session <id> [--repo <path>] [--label <name>] [--model <name>] [--once]',
     '      takes both spec (read-only) and coding turns; each one asks in this terminal first',
@@ -2327,6 +2486,9 @@ async function main(argv, {
     if (command === 'api') return await apiCommand(rest, io);
     if (command === 'proposal' && rest[0] === 'push') {
       return await proposalPushCommand(rest.slice(1), io);
+    }
+    if (command === 'proposal' && rest[0] === 'upload-image') {
+      return await proposalUploadImageCommand(rest.slice(1), io);
     }
     if (command === 'agent') {
       // Lazily required: agent-command.js pulls in the runtime adapters, and
@@ -2385,6 +2547,7 @@ module.exports = {
   mcpError,
   mcpCredentialLoadError,
   nativeCredentialStoreInaccessible,
+  proposalUploadImageCommand,
   proposalPushCommand,
   main,
 };

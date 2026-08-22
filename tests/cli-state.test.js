@@ -322,6 +322,7 @@ test('Codex setup table contains only canonical launcher data and reviewed tools
   assert.match(document, /"social_vibecoding\.api_write"/);
   assert.match(document, /"social_vibecoding\.proposal_start"/);
   assert.match(document, /"social_vibecoding\.proposal_append_context"/);
+  assert.match(document, /"social_vibecoding\.proposal_upload_image"/);
   assert.match(document, /"social_vibecoding\.proposal_push_commit"/);
   assert.match(document, /"social_vibecoding\.proposal_submit_build"/);
   assert.match(document, /"social_vibecoding\.proposal_status"/);
