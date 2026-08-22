@@ -24,6 +24,16 @@ import { cn } from '@/lib/utils';
  * Note `shrink-0` on the chip and `overflow-x-auto` on the rail: without the
  * first, a rail wider than the viewport compresses its chips into ellipses
  * instead of scrolling.
+ *
+ * ── What this is NOT for ──────────────────────────────────────────────
+ *
+ * A TABLIST. `features/improve/view-toggle.tsx` looks like a row of chips and
+ * is not one: its segments are `role="tab"` with `aria-selected`, three
+ * mutually exclusive views of the same thing. This component is a toggle and
+ * says so with `aria-pressed`, and a node carrying both is wrong for assistive
+ * tech — a tab is selected, not pressed. That toggle therefore states the
+ * language's selection idiom itself rather than importing this. Sharing the
+ * LOOK is not a reason to share the SEMANTICS.
  */
 
 const chip = cva(
@@ -36,11 +46,20 @@ const chip = cva(
       },
       shape: {
         // Icon-only chips are circles; text chips are pills with room to breathe.
-        text: 'h-14 px-6',
-        icon: 'h-14 w-14 [&>svg]:h-6 [&>svg]:w-6',
+        text: 'px-6',
+        icon: 'aspect-square',
+      },
+      size: {
+        // `rail` is the deck's own filter rail — a row of big, finger-sized
+        // chips that IS the screen's primary control.
+        rail: 'h-14 text-[1.0625rem] [&>svg]:h-6 [&>svg]:w-6',
+        // `bar` is the same idiom shrunk to sit inside a header row beside a
+        // title and an action button. Same shape, same selection inversion,
+        // sized to the 36px controls the shell's bars are built from.
+        bar: 'h-9 text-[0.9375rem] [&>svg]:h-5 [&>svg]:w-5',
       },
     },
-    defaultVariants: { selected: false, shape: 'text' },
+    defaultVariants: { selected: false, shape: 'text', size: 'rail' },
   },
 );
 
@@ -48,12 +67,12 @@ export interface ChipProps
   extends Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, 'type'>,
     VariantProps<typeof chip> {}
 
-export function Chip({ className, selected, shape, ...props }: ChipProps) {
+export function Chip({ className, selected, shape, size, ...props }: ChipProps) {
   return (
     <button
       type="button"
       aria-pressed={selected ?? false}
-      className={cn(chip({ selected, shape }), className)}
+      className={cn(chip({ selected, shape, size }), className)}
       {...props}
     />
   );
