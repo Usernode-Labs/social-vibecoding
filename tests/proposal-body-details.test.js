@@ -106,13 +106,16 @@ test('legacy and blank PR bodies render no disclosure', () => {
 
 test('a full PR body is collapsed and rendered through the Markdown pipeline', () => {
   const seen = [];
-  const AppView = makeAppView((md) => {
-    seen.push(md);
+  const AppView = makeAppView((md, opts) => {
+    seen.push({ md, opts });
     return `<safe-markdown>${md}</safe-markdown>`;
   });
   const html = AppView._proposalBodyHtml({ id: 7, pr_body: '# Why\n\nMore context.' });
 
-  assert.deepEqual(seen, ['# Why\n\nMore context.']);
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].md, '# Why\n\nMore context.');
+  assert.equal(seen[0].opts.images, true,
+    'reviewer screenshots use the Markdown renderer\'s sanitized image mode');
   assert.match(html, /^<details /);
   assert.doesNotMatch(html, /^<details[^>]* open(?: |>|=)/, 'closed by default');
   assert.match(html, />Full proposal details<\/summary>/);

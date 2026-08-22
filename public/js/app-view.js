@@ -6368,7 +6368,11 @@ const AppView = {
     const hasStableId = Number.isInteger(id) && id > 0;
     const open = hasStableId && AppView._proposalBodyOpen.has(id);
     const renderMd = (typeof DevChat !== 'undefined' && DevChat.renderMarkdown)
-      ? (s) => DevChat.renderMarkdown(s)
+      // Proposal descriptions can carry the same reviewer evidence as issue
+      // bodies (for example an annotated screenshot). Keep image rendering
+      // opt-in at this trusted surface; renderMarkdown still permits only
+      // HTTPS or same-origin absolute URLs and sanitizes the resulting HTML.
+      ? (s) => DevChat.renderMarkdown(s, { images: true })
       : (s) => `<pre class="whitespace-pre-wrap font-sans">${escapeHtml(s)}</pre>`;
     const toggle = hasStableId
       ? ` ontoggle="AppView._setProposalBodyOpen(${id}, this.open)"`
