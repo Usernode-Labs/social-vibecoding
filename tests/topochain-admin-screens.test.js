@@ -213,8 +213,7 @@ test('every built screen has a render function reachable from _renderSub', () =>
   const fn = topoJs.slice(topoJs.indexOf('  _renderSub() {'), topoJs.indexOf('  // ══'.repeat(1), topoJs.indexOf('  _renderSub() {')));
   const renderFns = [
     'renderSeasonEvents', 'renderWaitlist', 'renderOnchainAccounts', 'renderUserActivities',
-    'renderChallengeTemplates', 'renderSettings', 'renderAppVersion',
-    'renderSeasons', 'renderDelegations',
+    'renderChallengeTemplates', 'renderSeasons', 'renderDelegations',
   ];
   for (const name of renderFns) {
     assert.ok(fn.includes(name), `_renderSub dispatches to ${name}`);
@@ -232,12 +231,16 @@ test('every built screen has a render function reachable from _renderSub', () =>
   for (const [key, component] of [
     ['api-tester', 'ApiTesterScreen'],
     ['sql-console', 'SqlConsoleScreen'],
+    ['settings', 'SettingsScreen'],
+    ['app-version', 'AppVersionScreen'],
   ]) {
-    assert.ok(!fn.includes(`case '${key}'`), `${key} left the switch`);
+    assert.ok(!new RegExp(`case '${key}':`).test(fn), `${key} left the switch`);
     const renderer = `render${component.replace('Screen', '')}`;
     assert.ok(!new RegExp(renderer).test(code), `and ${renderer} is gone from this module`);
+    // A key with a hyphen has to be quoted; one without normally is not.
+    const prop = /^[a-z][a-z0-9]*$/.test(key) ? key : `'${key}'`;
     assert.ok(
-      screens.includes(`'${key}': { mount(host) { mountLegacyPortal(host, <${component} />); } },`),
+      screens.includes(`${prop}: { mount(host) { mountLegacyPortal(host, <${component} />); } },`),
       `the registry mounts ${key} through the portal seam`,
     );
   }
@@ -388,11 +391,26 @@ test('the shared _inputHtml/_textareaHtml/_selectHtml builders escape their valu
 // shared input builders) actually pass through esc(...).
 test('table-rendered API fields pass through esc()', () => {
   for (const field of [
-    'ev.name', 'u.email', 'a.public_key', 't.category', 's.key', 'c.os',
+    'ev.name', 'u.email', 'a.public_key', 't.category',
     't.reward', 'a.tier',
   ]) {
     const re = new RegExp(`esc\\(${field.replace('.', '\\.')}`);
     assert.ok(re.test(topoJs), `${field} passes through esc() somewhere in admin-topochain.js`);
+  }
+  // `s.key` and `c.os` were the other two, on the Settings and App version
+  // screens. Both are React since #1120 slices 26/27, where a cell is a text
+  // child and React does the escaping. The stronger statement for a converted
+  // screen is that it never opts back out — and it covers every value the
+  // screen renders, not the one field a spot-check happened to name.
+  for (const [file, cell] of [
+    ['settings.tsx', /cell: \(s\) => s\.key/],
+    ['app-version.tsx', /cell: \(c\) => c\.os/],
+  ]) {
+    const src = fs.readFileSync(
+      path.join(root, 'frontend/src/features/admin/topochain', file), 'utf8');
+    assert.match(src, cell, `${file} still renders that cell`);
+    assert.ok(!/dangerouslySetInnerHTML|innerHTML/.test(stripComments(src)),
+      `${file} renders no raw HTML`);
   }
 });
 
@@ -662,8 +680,7 @@ test('every open-a-form entry point renders through _panel with a wired close co
     '_openSeasonEventForm', '_openChallengeForm', '_openUserForm',
     '_openUserImportForm', '_openUserExport', '_openAccountImportForm',
     '_openActivityForm', '_openActivityImportForm', '_openActivityTotals',
-    '_openTemplateForm', '_openSettingForm', '_openAppVersionForm',
-    '_moveChallenge',
+    '_openTemplateForm', '_moveChallenge',
   ];
   for (const fn of FORMS) {
     const start = topoJs.indexOf(`  async ${fn}(`);
@@ -676,6 +693,21 @@ test('every open-a-form entry point renders through _panel with a wired close co
       assert.ok(body.includes(`document.getElementById('${id}').addEventListener('click'`),
         `${fn} wires its '${id}' close control (a ✕ that does nothing is worse than none)`);
     }
+  }
+  // _openSettingForm and _openAppVersionForm were two of the thirteen until
+  // #1120 slices 26/27 made those screens React. The same property holds and
+  // is no longer splittable: the ✕ IS its handler, so a panel with a close
+  // control that does nothing is not expressible.
+  for (const [file, label] of [
+    ['settings.tsx', 'Close the setting form'],
+    ['app-version.tsx', 'Close the app version form'],
+  ]) {
+    const src = fs.readFileSync(
+      path.join(root, 'frontend/src/features/admin/topochain', file), 'utf8');
+    assert.match(src, /<Panel\n/, `${file} renders its form inside a Panel`);
+    assert.ok(src.includes(`onClose={onClose}`), `${file} wires the panel's close control`);
+    assert.ok(src.includes(`closeLabel="${label}"`),
+      `${file}'s ✕ is labelled for a screen reader`);
   }
 });
 
@@ -694,7 +726,6 @@ test('every screen opens with the shared _screenHeader, toolbar and all', () => 
   const SCREENS = [
     'renderSeasons', 'renderSeasonEvents', 'renderUsers', 'renderWaitlist',
     'renderOnchainAccounts', 'renderUserActivities', 'renderChallengeTemplates',
-    'renderSettings', 'renderAppVersion',
   ];
   for (const fn of SCREENS) {
     const start = topoJs.search(new RegExp(`\\n  (?:async )?${fn}\\(host\\) \\{`));

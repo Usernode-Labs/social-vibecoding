@@ -1,5 +1,6 @@
 'use strict';
 
+import { Fragment } from 'react';
 import type {
   InputHTMLAttributes, ReactNode, SelectHTMLAttributes, TextareaHTMLAttributes,
 } from 'react';
@@ -22,7 +23,7 @@ import type {
 // `@/components/ui/**`. The console has its own vocabulary and its own tap
 // targets, and tests/admin-ui-registry.test.js holds the line.
 
-import { BTN, FIELD_CLS, PANEL_CLS, TEXTAREA_CLS } from './tokens.ts';
+import { BTN, BTN_BASE, BTN_SM, FIELD_CLS, PANEL_CLS, TEXTAREA_CLS } from './tokens.ts';
 
 // The heading strip at the top of a screen: title on the left, toolbar on the
 // right. Stacks below sm: so a long title and three buttons don't fight over
@@ -149,5 +150,288 @@ export function EmptyState(
       {body ? <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">{body}</p> : null}
       {action ? <div className="mt-4 flex justify-center">{action}</div> : null}
     </div>
+  );
+}
+
+// "The request failed" — visually distinct from empty (red, not dashed-grey)
+// and always retryable. Mirrors AdminTopochain._error; a status of 0 means the
+// request never got an answer at all (offline / server down), which is worth
+// saying. `onRetry` stands in for its `retryId` + _wireRetry pair.
+export function ErrorState({
+  title, status, message, onRetry,
+}: {
+  title?: string;
+  status?: number;
+  message?: string | null;
+  onRetry?: () => void;
+}) {
+  const detail = status === 0
+    ? "Couldn't reach the server."
+    : (message || `Request failed${status ? ` (HTTP ${status})` : ''}.`);
+  return (
+    <div className="rounded-xl border border-red-200 dark:border-red-900 bg-red-50 dark:bg-red-950/30 px-4 py-8 text-center">
+      <p className="text-sm font-medium text-red-700 dark:text-red-300">
+        {title || "Couldn't load this"}
+      </p>
+      <p className="mt-1 text-xs text-red-600 dark:text-red-400">{detail}</p>
+      {onRetry ? (
+        <div className="mt-4 flex justify-center">
+          <button
+            type="button"
+            onClick={onRetry}
+            className={`${BTN_BASE} ${BTN_SM} border border-red-300 dark:border-red-800 text-red-700 dark:text-red-300 hover:bg-red-100 dark:hover:bg-red-950/60`}
+          >
+            Try again
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+// ── The shared responsive list ─────────────────────────────────────────
+//
+// ONE column definition renders BOTH layouts: a real <table> at md+ (where
+// there is room for it) and a stack of cards below, where a table could only
+// ever be scrolled sideways one column at a time. Mirrors AdminTopochain._list.
+//
+// The one thing that changes in React: the string version had to put every
+// data-* hook in the DOM TWICE and wire handlers with querySelectorAll,
+// because both layouts are always present with one hidden by a breakpoint.
+// A cell is a React node here, so a button in it carries its own handler and
+// exists twice with no wiring to keep in step.
+
+export type Column<T> = {
+  label: string;
+  cell: (item: T) => ReactNode;
+  /** Titles the card. Falls back to the first column. */
+  primary?: boolean;
+  hideOnCard?: boolean;
+  thClass?: string;
+  tdClass?: string;
+};
+
+export function List<T>({
+  items, columns, rowKey, actions, extra, rowClass,
+}: {
+  items: T[];
+  columns: Column<T>[];
+  /** Stable identity for the row — React's key in both layouts. */
+  rowKey: (item: T, index: number) => string | number;
+  actions?: (item: T) => ReactNode;
+  extra?: (item: T) => ReactNode;
+  rowClass?: (item: T) => string;
+}) {
+  const act = actions || (() => null);
+  const ex = extra || (() => null);
+  const cls = rowClass || (() => '');
+  const anyActions = items.some((it) => !!act(it));
+  const span = columns.length + (anyActions ? 1 : 0);
+  const primary = columns.find((c) => c.primary) || columns[0];
+
+  return (
+    <>
+      <div className="hidden md:block overflow-x-auto rounded-xl border border-zinc-200 dark:border-zinc-800">
+        <table className="w-full text-sm">
+          <thead className="bg-zinc-50 dark:bg-zinc-900 text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+            <tr>
+              {columns.map((c) => (
+                <th key={c.label} className={`px-3 py-2 text-left font-medium ${c.thClass || ''}`}>
+                  {c.label}
+                </th>
+              ))}
+              {anyActions ? <th className="px-3 py-2 text-right font-medium">Actions</th> : null}
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((it, i) => {
+              const key = rowKey(it, i);
+              const below = ex(it);
+              return (
+                <Fragment key={key}>
+                  <tr className={`border-t border-zinc-100 dark:border-zinc-800 ${cls(it)}`}>
+                    {columns.map((c) => (
+                      <td key={c.label} className={`px-3 py-2 ${c.tdClass || ''}`}>{c.cell(it)}</td>
+                    ))}
+                    {anyActions ? (
+                      <td className="px-3 py-2">
+                        <div className="flex flex-wrap items-center justify-end gap-1">{act(it)}</div>
+                      </td>
+                    ) : null}
+                  </tr>
+                  {below ? (
+                    <tr className="border-t border-zinc-100 dark:border-zinc-800">
+                      <td colSpan={span} className="px-3 py-3">{below}</td>
+                    </tr>
+                  ) : null}
+                </Fragment>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <div className="md:hidden space-y-2">
+        {items.map((it, i) => {
+          const rowActions = act(it);
+          const below = ex(it);
+          return (
+            <div key={rowKey(it, i)} className={`${PANEL_CLS} px-4 py-3 ${cls(it)}`}>
+              <p className="text-sm font-medium break-words">{primary ? primary.cell(it) : null}</p>
+              <dl className="mt-1 divide-y divide-zinc-100 dark:divide-zinc-800">
+                {columns.filter((c) => c !== primary && !c.hideOnCard).map((c) => (
+                  <div key={c.label} className="flex items-start justify-between gap-3 py-1">
+                    <dt className="shrink-0 text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                      {c.label}
+                    </dt>
+                    <dd className="min-w-0 text-right text-sm break-words">{c.cell(it)}</dd>
+                  </div>
+                ))}
+              </dl>
+              {rowActions ? (
+                <div className="mt-2 flex flex-wrap gap-1 border-t border-zinc-100 dark:border-zinc-800 pt-2">
+                  {rowActions}
+                </div>
+              ) : null}
+              {below ? <div className="mt-2">{below}</div> : null}
+            </div>
+          );
+        })}
+      </div>
+    </>
+  );
+}
+
+// Page N of M · T total, with Prev/Next. Mirrors AdminTopochain._pagerHtml +
+// _wirePager, whose split existed only because the markup had to be built
+// before its buttons could be found again.
+export type PageMeta = { page: number; total_pages: number; total: number };
+
+export function Pager({ meta, onPage }: { meta: PageMeta | null; onPage: (page: number) => void }) {
+  if (!meta) return null;
+  return (
+    <div className="mt-4 flex flex-col gap-2 text-xs text-zinc-500 dark:text-zinc-400 sm:flex-row sm:items-center sm:justify-between">
+      <span>{`Page ${meta.page} of ${Math.max(meta.total_pages, 1)} · ${meta.total} total`}</span>
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          className={BTN.row}
+          disabled={meta.page <= 1}
+          onClick={() => { if (meta.page > 1) onPage(meta.page - 1); }}
+        >
+          Prev
+        </button>
+        <button
+          type="button"
+          className={BTN.row}
+          disabled={meta.page >= meta.total_pages}
+          onClick={() => { if (meta.page < meta.total_pages) onPage(meta.page + 1); }}
+        >
+          Next
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── Form chrome ────────────────────────────────────────────────────────
+
+// One labelled field. Mirrors AdminTopochain._field. `htmlFor` replaces the
+// wrapping <label> the string helper used: it could not know the control's
+// id, so it wrapped; a component is handed one.
+export function Field({
+  label, htmlFor, help, className, children,
+}: {
+  label: ReactNode;
+  htmlFor?: string;
+  help?: ReactNode;
+  className?: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className={`block text-xs${className ? ` ${className}` : ''}`}>
+      <label className="font-medium text-zinc-600 dark:text-zinc-400" htmlFor={htmlFor}>
+        {label}
+      </label>
+      <div className="mt-1">{children}</div>
+      {help ? (
+        <span className="block mt-1 text-[11px] leading-snug text-zinc-400">{help}</span>
+      ) : null}
+    </div>
+  );
+}
+
+// The field grid every form uses: one full-width column on a phone, two from
+// md: up. `cols={3}` opts into a third at lg: for the short numeric forms.
+// Fields that need the full width carry `md:col-span-2` themselves.
+export function FormGrid({ cols, children }: { cols?: 2 | 3; children: ReactNode }) {
+  const wide = cols === 3
+    ? 'grid-cols-1 md:grid-cols-2 lg:grid-cols-3'
+    : 'grid-cols-1 md:grid-cols-2';
+  return <div className={`grid gap-4 ${wide}`}>{children}</div>;
+}
+
+// Inline validation / submit-failure slot for a form panel. Renders nothing
+// until there is something to say — the string version rendered an empty
+// paragraph and toggled `hidden`, which is the same thing seen from the other
+// side.
+export function FormError({ message }: { message?: string | null }) {
+  if (!message) return null;
+  return (
+    <p
+      className="mt-3 rounded-lg bg-red-50 dark:bg-red-950/40 px-3 py-2 text-xs text-red-600 dark:text-red-400"
+      role="alert"
+    >
+      {message}
+    </p>
+  );
+}
+
+// Save / Cancel pair for a Panel footer, in that visual order with the primary
+// first so it is under the thumb on a phone. Mirrors _formActions.
+export function FormActions(
+  { onSave, onCancel, saveLabel }: { onSave: () => void; onCancel: () => void; saveLabel?: string },
+) {
+  return (
+    <>
+      <button type="button" className={BTN.primary} onClick={onSave}>{saveLabel || 'Save'}</button>
+      <button type="button" className={BTN.secondary} onClick={onCancel}>Cancel</button>
+    </>
+  );
+}
+
+// Formats an ISO timestamp for a table cell. Mirrors AdminTopochain._fmt.
+export function fmt(iso?: string | null): string {
+  if (!iso) return '—';
+  try { return new Date(iso).toLocaleString(); } catch { return iso; }
+}
+
+// A checkbox reads as a control plus its label, not as a label with a control
+// under it, so it gets its own row shape with a tap target that covers the
+// text as well as the box. Mirrors AdminTopochain._checkField.
+export function CheckField({
+  id, label, help, checked, onChange,
+}: {
+  id: string;
+  label: ReactNode;
+  help?: ReactNode;
+  checked: boolean;
+  onChange: (next: boolean) => void;
+}) {
+  return (
+    <label className="flex items-start gap-2.5 min-h-[44px] sm:min-h-[36px] py-2 cursor-pointer">
+      <input
+        id={id}
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        className="mt-0.5 h-5 w-5 shrink-0 rounded border-zinc-300 dark:border-zinc-600 text-violet-600 focus:ring-2 focus:ring-violet-500"
+      />
+      <span className="text-xs">
+        <span className="font-medium text-zinc-600 dark:text-zinc-400">{label}</span>
+        {help ? (
+          <span className="block mt-0.5 text-[11px] leading-snug text-zinc-400">{help}</span>
+        ) : null}
+      </span>
+    </label>
   );
 }

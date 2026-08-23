@@ -190,8 +190,11 @@ test('the older v4 mail routes are still there and unchanged in shape', () => {
     path.join(ROOT, 'src/routes/topochain/admin/settings.js'), 'utf8');
   assert.match(settings, /\/mail-status/, 'the Topochain settings card keeps its own status route');
   assert.match(settings, /\/mail-activity/, 'and its own activity route');
-  const topochainJs = fs.readFileSync(path.join(ROOT, 'frontend/src/features/admin/admin-topochain.js'), 'utf8');
-  assert.match(topochainJs, /\/api\/v4\/admin\/settings\/mail-status/,
+  // The Topochain Settings screen is React since #1120 slice 26; its mail
+  // readiness card moved with it, still on the v4 settings route.
+  const settingsTsx = fs.readFileSync(
+    path.join(ROOT, 'frontend/src/features/admin/topochain/settings.tsx'), 'utf8');
+  assert.match(settingsTsx, /\/api\/v4\/admin\/settings\/mail-status/,
     'the Topochain card was not quietly repointed at the new routes');
 });
 
