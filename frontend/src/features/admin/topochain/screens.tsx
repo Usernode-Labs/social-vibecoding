@@ -3,6 +3,7 @@
 import { mountLegacyPortal } from '../../../lib/legacy-portals';
 import { ApiTesterScreen } from './api-tester.tsx';
 import { AppVersionScreen } from './app-version.tsx';
+import { DelegationsScreen } from './delegations.tsx';
 import { OnchainAccountsScreen } from './onchain-accounts.tsx';
 import { SettingsScreen } from './settings.tsx';
 import { SqlConsoleScreen } from './sql-console.tsx';
@@ -34,6 +35,7 @@ import { WaitlistScreen } from './waitlist.tsx';
 export const TOPO_REACT_SCREENS: Record<string, { mount(host: Element): void }> = {
   'api-tester': { mount(host) { mountLegacyPortal(host, <ApiTesterScreen />); } },
   'app-version': { mount(host) { mountLegacyPortal(host, <AppVersionScreen />); } },
+  delegations: { mount(host) { mountLegacyPortal(host, <DelegationsScreen />); } },
   'onchain-accounts': { mount(host) { mountLegacyPortal(host, <OnchainAccountsScreen />); } },
   settings: { mount(host) { mountLegacyPortal(host, <SettingsScreen />); } },
   'sql-console': { mount(host) { mountLegacyPortal(host, <SqlConsoleScreen />); } },

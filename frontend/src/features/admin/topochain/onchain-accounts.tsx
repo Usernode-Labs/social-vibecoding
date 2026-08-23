@@ -45,6 +45,27 @@ const canWrite = () => !!topo()?.canWrite();
 
 const MASK = '••••••••••••';
 
+// ── Cross-screen entry point ───────────────────────────────────────────
+//
+// The Delegations screen's "View account" jumps here and asks for one
+// account's dialog: that screen owns no detail host of its own, because
+// rendering a second copy would duplicate a static id. It calls
+// AdminConsole.setSection('onchain-accounts') and then this.
+//
+// Two arrival orders have to work. If this screen is already on-screen,
+// `live` takes the id immediately. If the section switch has only just
+// mounted it, the id is PARKED and the mount effect picks it up — which also
+// covers the case where React has not yet run the effect that publishes
+// `live`. Losing this seam is silent (a button that throws), so
+// tests/topochain-admin-screens.test.js pins both ends of it.
+let live: ((id: number) => void) | null = null;
+let pending: number | null = null;
+
+export function openAccountDetail(id: number) {
+  if (live) live(id);
+  else pending = id;
+}
+
 type Account = {
   id: number;
   public_key: string;
@@ -347,6 +368,14 @@ function OnchainAccountsScreen() {
   const [detailId, setDetailId] = useState<number | null>(null);
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
+
+  // Publish this screen's dialog opener for the cross-screen jump above, and
+  // take whatever was parked while it was not mounted.
+  useEffect(() => {
+    live = setDetailId;
+    if (pending != null) { setDetailId(pending); pending = null; }
+    return () => { live = null; };
+  }, []);
 
   useEffect(() => {
     (async () => {

@@ -221,7 +221,7 @@ test('every built screen key is present in SUBS, no gap key is, and each is a re
 test('every built screen has a render function reachable from _renderSub', () => {
   const fn = topoJs.slice(topoJs.indexOf('  _renderSub() {'), topoJs.indexOf('  // ══'.repeat(1), topoJs.indexOf('  _renderSub() {')));
   const renderFns = [
-    'renderSeasonEvents', 'renderChallengeTemplates', 'renderSeasons', 'renderDelegations',
+    'renderSeasonEvents', 'renderChallengeTemplates', 'renderSeasons',
   ];
   for (const name of renderFns) {
     assert.ok(fn.includes(name), `_renderSub dispatches to ${name}`);
@@ -244,6 +244,7 @@ test('every built screen has a render function reachable from _renderSub', () =>
     ['waitlist', 'WaitlistScreen'],
     ['onchain-accounts', 'OnchainAccountsScreen'],
     ['user-activities', 'UserActivitiesScreen'],
+    ['delegations', 'DelegationsScreen'],
   ]) {
     assert.ok(!new RegExp(`case '${key}':`).test(fn), `${key} left the switch`);
     const renderer = `render${component.replace('Screen', '')}`;
@@ -505,24 +506,71 @@ test("no user-facing 'Phase' or 'Participant' label — Event/User/Challenge tem
   assert.match(code, /const participants = /, 'the import payload still builds its `participants` field');
 });
 
+// The screen is React since #1120 slice 31.
+const dlgTsx = fs.readFileSync(
+  path.join(root, 'frontend/src/features/admin/topochain/delegations.tsx'), 'utf8');
+
 test('Delegations screen: stat strip, season/event scoping, and a per-account history timeline', () => {
   // The summary strip renders account-level tallies from /delegations/stats
   // into its own host, above the table.
-  assert.match(topoJs, /id="admin-topo-dlg-stats"/, 'the stat-strip host exists');
-  assert.match(topoJs, /_loadDelegationStats\(\)/, 'and is loaded separately from the list');
-  assert.match(topoJs, /\/api\/v4\/admin\/delegations\/stats/, 'from the stats endpoint');
+  assert.match(dlgTsx, /id="admin-topo-dlg-stats"/, 'the stat-strip host exists');
+  assert.match(dlgTsx, /\/api\/v4\/admin\/delegations\/stats/, 'from the stats endpoint');
+  // Loaded separately from the list, and — the property that matters — NOT
+  // re-fetched when a list filter changes: it answers "how is delegation
+  // doing overall", not "show me these accounts".
+  const statsEffect = dlgTsx.slice(dlgTsx.indexOf("fetchJson('/api/v4/admin/delegations/stats')"));
+  assert.match(statsEffect.slice(0, 400), /\}, \[\]\);/,
+    'the stats effect has empty deps, so a filter change cannot re-run it');
 
   // Season/event filters, same picker idiom as the accounts screen.
-  assert.match(topoJs, /admin-topo-dlg-season-filter/, 'season filter select');
-  assert.match(topoJs, /admin-topo-dlg-event-filter/, 'event filter select');
+  assert.match(dlgTsx, /admin-topo-dlg-season-filter/, 'season filter select');
+  assert.match(dlgTsx, /admin-topo-dlg-event-filter/, 'event filter select');
 
   // History: a Periods column plus an expandable per-account timeline
   // fetched from /:account/history — the schema keeps every period now.
-  assert.match(topoJs, /label: 'Periods'/, 'the period-count column');
-  assert.match(topoJs, /data-dlg-history=/, 'the history toggle action');
-  assert.match(topoJs, /\/history`/, 'fetching the account history endpoint');
-  assert.ok(!topoJs.includes('re-delegating overwrites the previous one'),
+  assert.match(dlgTsx, /label: 'Periods'/, 'the period-count column');
+  assert.match(dlgTsx, /data-dlg-history=\{d\.account\}/, 'the history toggle action');
+  assert.match(dlgTsx, /\/history`/, 'fetching the account history endpoint');
+  assert.ok(!dlgTsx.includes('re-delegating overwrites the previous one'),
     'the old single-row caveat is gone from the copy — it is no longer true');
+  // One expanded account at a time: `expanded` is a single value, and the
+  // toggle replaces it rather than adding to a set.
+  assert.match(dlgTsx, /setExpanded\(\(c\) => \(c === d\.account \? null : d\.account\)\)/,
+    'expanding one account collapses whichever was open');
+});
+
+// This screen is READ-ONLY by design: the mobile app is the delegation actor
+// and reconciles its local state against the backend flag, so an admin write
+// here would desync phones. The rule is easy to erode one convenience button
+// at a time, so it is asserted as an absence.
+test('Delegations screen carries no mutation control at all', () => {
+  const code = stripAllComments(dlgTsx);
+  assert.ok(!/\bsend\(/.test(code), 'no POST/PUT/PATCH/DELETE helper is even imported');
+  assert.ok(!/canWrite/.test(code),
+    'and no write gate, because there is nothing to gate');
+});
+
+// The cross-screen jump. "View account" opens the dialog the ONCHAIN ACCOUNTS
+// screen owns — a second copy here would duplicate a static id — so it
+// depends on a seam between two modules that convert on different days. It
+// broke exactly that way once: the jump called AdminTopochain._openAccountDetail,
+// which left the module when Onchain accounts became React in slice 29, and
+// the button threw. Both ends are pinned here.
+test('Delegations "View account" reaches the Onchain accounts dialog', () => {
+  const oa = fs.readFileSync(
+    path.join(root, 'frontend/src/features/admin/topochain/onchain-accounts.tsx'), 'utf8');
+  assert.match(oa, /export function openAccountDetail\(id: number\) \{/,
+    'Onchain accounts exports the opener');
+  assert.match(dlgTsx, /^import \{ openAccountDetail \} from '\.\/onchain-accounts\.tsx';$/m,
+    'and Delegations imports it — a bare global read is what broke last time');
+  assert.match(dlgTsx, /console_\.setSection\('onchain-accounts'\);\n\s*openAccountDetail\(id\);/,
+    'the section switch comes first, then the request for the dialog');
+  // Both arrival orders: already-mounted takes it live, just-switched parks
+  // it for the mount effect. Losing either is a silently dead button.
+  assert.match(oa, /if \(live\) live\(id\);\n\s*else pending = id;/,
+    'the opener handles a screen that is not mounted yet');
+  assert.match(oa, /live = setDetailId;\n\s*if \(pending != null\) \{ setDetailId\(pending\); pending = null; \}/,
+    'and the mount effect picks up whatever was parked');
 });
 
 test('Onchain accounts: delegation is visible and filterable, list and detail', () => {
@@ -666,16 +714,34 @@ test('the shared list, skeleton, empty and error helpers exist and are used ever
   assert.match(skeleton, /sr-only" role="status">Loading&hellip;/,
     '...and it lives inside _skeleton, announced as a status');
   assert.match(skeleton, /animate-pulse/, 'sighted users get the pulsing placeholder bars');
-  assert.ok((topoJs.match(/_skeleton\(\d\)/g) || []).length >= 10,
+  // The three counts below span BOTH renderers, and have to: this file's
+  // screens are converting one at a time (#1120), so counting only the
+  // innerHTML module would report a falling number as the property it
+  // measures stayed exactly as true. A converted screen uses the components
+  // in topochain/ui.tsx, which render the same markup from the same tokens.
+  const reactScreens = fs.readdirSync(path.join(root, 'frontend/src/features/admin/topochain'))
+    .filter((f) => f.endsWith('.tsx') && !['ui.tsx', 'screens.tsx'].includes(f))
+    .map((f) => fs.readFileSync(path.join(root, 'frontend/src/features/admin/topochain', f), 'utf8'));
+  assert.ok(reactScreens.length >= 5, 'the converted screens are being read');
+  const across = (re) => (topoJs.match(re[0]) || []).length
+    + reactScreens.reduce((n, src) => n + (src.match(re[1]) || []).length, 0);
+
+  assert.ok(across([/_skeleton\(\d\)/g, /<Skeleton\b/g]) >= 10,
     'every async screen renders a skeleton while it fetches');
 
   // A failed fetch must be distinguishable from an empty result, and
   // recoverable without a full page reload.
-  assert.ok((topoJs.match(/_error\(\{/g) || []).length >= 7,
+  assert.ok(across([/_error\(\{/g, /<ErrorState\b/g]) >= 7,
     'every loader has an error branch');
-  assert.ok((topoJs.match(/_wireRetry\(/g) || []).length >= 7,
-    'every error block wires its own retry');
-  assert.match(topoJs, /Couldn't reach the server\./,
+  // The retry wiring is a PROP on the React side — the string helper needed
+  // a separate _wireRetry pass only because its button did not exist until
+  // the markup had been written.
+  assert.ok(across([/_wireRetry\(/g, /onRetry=\{/g]) >= 7,
+    'every error block offers its own retry');
+  const errorText = "Couldn't reach the server.";
+  assert.ok(topoJs.includes(errorText) || reactScreens.some((src) => src.includes(errorText))
+    || fs.readFileSync(path.join(root, 'frontend/src/features/admin/topochain/ui.tsx'), 'utf8')
+      .includes(errorText),
     'status 0 is reported as a connectivity problem, not as a server error');
 });
 
