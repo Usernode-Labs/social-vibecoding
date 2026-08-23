@@ -41,9 +41,9 @@ now reconciles — and is the thing to update when one moves across.
 - `#home-panels` and the home grid's panel slots.
 - `#settings-nav-desktop`, `#settings-mobile-menu-host`, and the settings
   interior.
-- `#admin-section-content` — **partly converted**. Ten section modules render
-  from React (see below); the console's own eight self-rendered sections and
-  `admin-topochain.js`'s eleven sub-sections still assign `innerHTML` into it.
+- `#admin-section-content` — **partly converted**. Every section but one
+  renders from React (see below); `admin-topochain.js`'s eleven sub-sections
+  are the only ones that still assign `innerHTML` into it.
 - the two remaining leaderboard panes, the notification list, and the
   work-drawer list.
 - the group chat's composer, thread shell, vote controls, spec-share panel and
@@ -53,7 +53,7 @@ Convert them one screen at a time, not as a sweep.
 
 ## The admin console's per-section seam
 
-Sixteen of the console's section modules render from React (every `.tsx` in
+Eighteen of the console's section modules render from React (every `.tsx` in
 `frontend/src/features/admin/`). The pattern is documented in AGENTS.md under
 "Converting a console section to React"; the short version is that
 `AdminConsole._renderSection` hands each module its host, so a converted
@@ -67,31 +67,41 @@ The console had TWO populations of section, and the difference matters:
   `SECTION_MODULES`. All ten are `.tsx`: status, node, analytics, estimator,
   merges, gallery, campaigns, mail, push, e2e.
 - **Self-rendered sections** — eight that the chassis drew itself, dispatched
-  by a `switch` in `_renderSection`. Six have MOVED OUT into their own
-  modules (overview, codes, featured-apps, db-export, features, limits) and
-  are `.tsx`; each move deleted a `switch` arm and registered a
-  `SECTION_MODULES` entry. Moving them out first, rather than converting them
-  in place, is what keeps the chassis file imperative: converting in place
-  would have meant turning a 3,400-line router into a React file.
+  by a `switch` in `_renderSection`. All eight have MOVED OUT into their own
+  `.tsx` modules (overview, codes, featured-apps, db-export, features, limits,
+  users, and the rollover/staging-reap pair); each move deleted a `switch` arm
+  and registered a `SECTION_MODULES` entry. Moving them out first, rather than
+  converting them in place, is what kept the chassis file imperative:
+  converting in place would have meant turning a 3,400-line router into a
+  React file. The `switch` is gone entirely now — `_renderSection` is the
+  `SECTION_MODULES` lookup plus the Overview default, and `admin-console.js`
+  is down to 1,244 lines and 9 `innerHTML` sites from 3,420 and 47.
 
-Two remain in the switch, and one file remains untouched:
+One file remains untouched:
 
-- `users` and the two container-lifecycle sections (`rollover`,
-  `staging-reap`) are still inline in `admin-console.js` — about 2,290 lines
-  and 25 `innerHTML` sites, down from 3,420 and 47. Users is the biggest of
-  the eight at ~600 lines. Rollover and staging-reap are the most delicate:
-  `public/js/app.js` routes `admin_rollover_status` and
-  `admin_staging_reap_status` WebSocket frames to
-  `AdminConsole.handleRolloverStatus` / `handleStagingReapStatus`, and calls
-  `loadRollover` / `loadStagingReap` on socket reconnect, so moving them means
-  either keeping forwarders on the console or changing app.js's routing.
 - `admin-topochain.js` — about 4,550 lines, 138 `innerHTML` sites across
   eleven sub-sections with their own sub-nav. Convert it sub-section by
   sub-section, not as one chunk.
 
-`overview` is the console's DEFAULT section, so `_renderSection`'s `default:`
-arm dispatches through `_renderModule` too — that helper exists so both arms
-share one place that records the active module for `_teardownActiveSection`.
+`overview` is the console's DEFAULT section, so `_renderSection`'s default
+path dispatches through `_renderModule` too — that helper exists so both the
+named and the default arm share one place that records the active module for
+`_teardownActiveSection`.
+
+### The one seam that is not the host
+
+Rollover and Stale previews are the only sections with a caller outside the
+console: `public/js/app.js` routes `admin_rollover_status` /
+`admin_staging_reap_status` frames from the shell's `/ws/events` socket to
+`AdminConsole.handleRolloverStatus` / `handleStagingReapStatus`, and calls
+`loadRollover` / `loadStagingReap` on reconnect. That surface is the SHELL's,
+so the conversion left it exactly where app.js looks for it: `admin-console.js`
+keeps four thin forwarders and the two modules publish `handleStatus` /
+`reload`. Each module holds a module-level `live` handle, set and cleared by an
+effect, so a frame that arrives while the admin is elsewhere is dropped and the
+next mount reads the job from the GET. Copy that shape for any future section
+with an out-of-console caller — changing app.js instead would put shell routing
+on the console's schedule.
 
 ## Step 3 sequence
 
@@ -101,8 +111,8 @@ Treat each row below as a separate chunk. Sizes are current.
 
 `#app-list` (home app grid), `#browse-list`, `#standings-tabs`, the settings
 App-AI grants and agent-files lists, the group-chat transcript
-(`#gc-messages` / `#gc-thread-messages`), and the sixteen admin sections
-above.
+(`#gc-messages` / `#gc-thread-messages`), and the eighteen admin sections
+above — every console section except topochain's eleven.
 
 ### Small, self-contained
 
@@ -134,15 +144,17 @@ above.
 1. Dev screen — `public/js/app-view.js`, about 14,140 lines and 71 sites.
 2. Dev chat — `features/dev-chat/dev-chat.js`, about 9,820 lines and 58 sites.
    Streaming assistant output is the complication.
-3. Admin interior — `admin-console.js` + `admin-topochain.js`, about 6,840
-   lines and 163 sites, per the seam above. The two chassis sections left
-   (Users, and the rollover/staging-reap pair) are small next to topochain;
-   move them out the same way before touching the chassis itself.
+3. Admin interior — `admin-topochain.js`, about 4,550 lines and 138 sites,
+   per the seam above. It is all that is left of the console: the chassis
+   (`admin-console.js`) is 1,244 lines and 9 sites, none of them a section.
+   Convert its eleven sub-sections one at a time; they share a sub-nav, so
+   the sub-nav host is its own ownership boundary and should go last.
 
 ## Staging fixtures
 
 Several sections are empty in a prod-cloned staging database because their
 tables are `staging:private`. Reach them with `/?demo=1#admin/<key>` — the
 flag is read from `location.search`, so it goes BEFORE the hash. It covers the
-screenshot gallery, merge debug, analytics and estimator accuracy. Running the
-local server with `USERNODE_ENV=staging` is what enables the substitution.
+screenshot gallery, merge debug, analytics, estimator accuracy, container
+rollover and stale previews. Running the local server with
+`USERNODE_ENV=staging` is what enables the substitution.
