@@ -91,7 +91,7 @@ export function ConversationMembersDialog() {
           {error ? <p role="alert" className="mt-3 text-xs text-red-600 dark:text-red-400">{error}</p> : null}
           <div className="mt-4 pt-4 border-t border-zinc-200 dark:border-zinc-800 flex items-center justify-between">
             <button type="button" disabled={busy} onClick={() => void leaveCurrent()} className="text-xs text-red-600 dark:text-red-400 disabled:opacity-50">Leave group</button>
-            <Button type="button" variant="outline" onClick={dialog.close}>Done</Button>
+            <Button type="button" variant="neutral" ink="neutral" onClick={dialog.close}>Done</Button>
           </div>
         </div>
       </div>

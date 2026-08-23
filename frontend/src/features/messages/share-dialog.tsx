@@ -58,7 +58,7 @@ export function ShareItemDialog() {
           {type === 'spec' ? <label className="block mb-3"><span className="block text-xs font-medium text-zinc-500 mb-1">Spec version</span><Input inputMode="numeric" pattern="[0-9]*" value={version} onChange={(event) => setVersion(event.target.value.replace(/\D/g, '').slice(0, 10))} placeholder="1" /></label> : null}
           <p className="text-xs text-zinc-500 dark:text-zinc-400">The server resolves the live title and state. If access is later removed, the card becomes metadata-free and unavailable.</p>
           {error ? <p role="alert" className="mt-3 text-xs text-red-600 dark:text-red-400">{error}</p> : null}
-          <div className="mt-5 flex justify-end gap-2"><Button type="button" variant="outline" onClick={dialog.close}>Cancel</Button><Button type="button" disabled={!canAttach} onClick={attach}>Attach item</Button></div>
+          <div className="mt-5 flex justify-end gap-2"><Button type="button" variant="neutral" ink="neutral" onClick={dialog.close}>Cancel</Button><Button type="button" disabled={!canAttach} onClick={attach}>Attach item</Button></div>
         </div>
       </div>
     </div>

@@ -685,7 +685,14 @@ html.un-kb .platform-safe-bar {
   --border-light: #3a3a3c;
   --text-primary: #f5f5f7;
   --text-secondary: #e3e3e6;
-  --text-muted: #6c6c70;
+  /* #8e8e93, not the #6c6c70 this carried. --text-muted was the ONE token in
+     this block with no dark counterpart — it kept its light value, so on a
+     near-black page it was as dark as it is on a near-white one. Every muted
+     label the token paints measured 3.2:1 or worse against the dark ground,
+     and the create modal's unselected segment pills 2.7:1 against their track.
+     One step up the neutral ramp reads at 6.0 on the ground and 5.3 on a card,
+     and is still plainly quieter than --text-secondary above. */
+  --text-muted: #8e8e93;
   --text-faint: #8e8e93;
   --text-code: #e3e3e6;
   --accent: #5aa9ff;

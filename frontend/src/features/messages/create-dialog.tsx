@@ -129,7 +129,7 @@ export function CreateConversationDialog() {
           <div className="mt-4 pt-4 border-t border-zinc-200 dark:border-zinc-800 flex items-center gap-2">
             <button type="button" onClick={() => void loadBlocked()} className="text-xs text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200">Blocked people</button>
             <div className="ml-auto flex gap-2">
-              <Button type="button" variant="outline" onClick={dialog.close}>Cancel</Button>
+              <Button type="button" variant="neutral" ink="neutral" onClick={dialog.close}>Cancel</Button>
               {mode === 'group' ? <Button type="button" disabled={submitting || !title.trim() || !selected.length} onClick={() => void submitGroup()}>{submitting ? 'Creating…' : 'Create group'}</Button> : null}
             </div>
           </div>

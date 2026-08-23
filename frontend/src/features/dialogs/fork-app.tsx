@@ -137,7 +137,7 @@ export function ForkAppDialog() {
           </div>
           <div className="text-xs text-zinc-500 dark:text-zinc-400 space-y-1.5 rounded-lg bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700 p-3">
             <p>
-              <span className="text-emerald-500">
+              <span className="text-emerald-700 dark:text-emerald-400">
                 ✅ Carries over:
               </span>
               the app's code, its icon, and its current
@@ -147,13 +147,13 @@ export function ForkAppDialog() {
               data (e.g. leaderboards, public posts).
             </p>
             <p>
-              <span className="text-violet-400">
+              <span className="text-violet-700 dark:text-violet-400">
                 🔁 Resets to you:
               </span>
               you become the sole owner — collaborators, group chat, issues, proposals and votes all start empty.
             </p>
             <p>
-              <span className="text-amber-500">
+              <span className="text-amber-700 dark:text-amber-400">
                 ❌ Not copied:
               </span>
               <strong>

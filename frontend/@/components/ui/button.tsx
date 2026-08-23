@@ -127,6 +127,13 @@ const buttonVariants = cva('', {
       // in `ink` instead — see `fillLate` / `unavailableLate` below.
       roundedFull: 'rounded-full',
       // #agent-files-cancel — the neutral bordered sibling of `compact`.
+      //
+      // THIS VARIANT CARRIES NO INK, and the default ink is `solid` (white).
+      // `variant="outline"` on its own therefore renders white text on a
+      // white card — an invisible label, which is exactly how the three
+      // messages dialogs shipped their Cancel/Done buttons until a contrast
+      // sweep measured them at 1.00:1. Every call site must pass an ink;
+      // `muted` is what the two that got it right pass.
       outline: 'rounded border border-zinc-300 dark:border-zinc-700',
       // The widget language's SECONDARY action: a filled neutral pill, not an
       // outline. The language separates by figure/ground rather than by rule,

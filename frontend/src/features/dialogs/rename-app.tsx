@@ -112,7 +112,7 @@ export function RenameAppDialog() {
         </h2>
         <p className="text-xs text-zinc-500 mb-4">
           Current app name:
-          <span id="rename-current" className="font-mono text-zinc-300">
+          <span id="rename-current" className="font-mono text-zinc-500 dark:text-zinc-400">
             {currentName}
           </span>
         </p>
