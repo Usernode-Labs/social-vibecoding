@@ -1794,6 +1794,21 @@
       "expectSelector": "#settings-section-content [data-settings-section=\"api-key\"]:not(.hidden) #settings-api-key"
     },
     {
+      "name": "The Username section renders at its deep link",
+      "path": "/#settings/username",
+      "expectSelector": "#settings-section-content [data-settings-section=\"username\"]:not(.hidden) #change-username-section #cu-new"
+    },
+    {
+      "name": "Changing a username asks for the current password",
+      "path": "/#settings/username",
+      "expectSelector": "#change-username-section #cu-password[type=\"password\"]"
+    },
+    {
+      "name": "The Username section says the old handle stays reserved",
+      "path": "/#settings/username",
+      "expectText": "kept reserved for you"
+    },
+    {
       "name": "Settings offers Log out outside the section list",
       "path": "/#settings",
       "expectSelector": "#settings-footer #settings-logout"

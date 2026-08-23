@@ -2,13 +2,14 @@
  * Every [data-settings-section] pane of the #settings screen, in the order the
  * shell has always emitted them (#1081 chunk D).
  *
- * There are FIFTEEN of them, one per entry in Settings.SECTIONS. THE UI
+ * There are SIXTEEN of them, one per entry in Settings.SECTIONS. THE UI
  * OVERHAUL added Theme (lifted out of the hamburger drawer) and retired
  * "Home screen widgets" (there is nothing left to configure now that the
- * three widgets are fixed sections), which is a net zero. (#1081 said sixteen when there were fifteen — the registry, the
- * shell and tests/settings-screen.test.js, which parses SECTIONS out of
- * settings.js and asserts a wrapper per key, were the authority then and
- * still are.)
+ * three widgets are fixed sections), which was a net zero at fifteen; 
+ * added Username, which is the sixteenth. (#1081 said sixteen when there were
+ * fifteen — the registry, the shell and tests/settings-screen.test.js, which
+ * parses SECTIONS out of settings.js and asserts a wrapper per key, were the
+ * authority then and still are.)
  *
  * This file is the MARKUP half of the settings screen. Behaviour stays in
  * ./settings.js — the module binds every control below by id, ONCE, and the
@@ -44,6 +45,7 @@ import { LanguageSection } from './language';
 import { OpenRouterSection } from './openrouter';
 import { PasswordSection } from './password';
 import { ThemeSection } from './theme';
+import { UsernameSection } from './username';
 import { UsernodeSection } from './usernode';
 import { WalletSection } from './wallet';
 
@@ -59,6 +61,7 @@ export function SettingsSections() {
       <OpenRouterSection />
       <AppAiSection />
       <AgentFilesSection />
+      <UsernameSection />
       <PasswordSection />
       <WalletSection />
       <LanguageSection />
