@@ -1,4 +1,5 @@
 const { execFile, spawn } = require('child_process');
+const crypto = require('crypto');
 const { promisify } = require('util');
 const log = require('./logger');
 
@@ -111,6 +112,33 @@ async function buildImage(contextPath, tag, buildArgs = {}) {
   return { durationMs };
 }
 
+// Linux caps a hostname at HOST_NAME_MAX (64 bytes) and runc's
+// sethostname() rejects anything longer with EINVAL, so the container dies
+// during init with nothing but "error during container init: sethostname:
+// invalid argument" to show for it. Staging previews are named
+// `usernode-staging-<slug>--<sessionId>`, which is 66 characters for a
+// 43-character slug and a 4-digit session id — a real app hit that wall and
+// its preview could never boot, no matter how many times the heal sweep
+// retried, because the name is deterministic.
+//
+// Clamp only what we pass to --hostname. The container's --name must stay
+// byte-identical to what callers asked for: Caddy's map block derives the
+// upstream container name from the request host, staging-reap parses session
+// ids back out of it, and Docker's embedded DNS resolves container names and
+// network aliases — never hostnames. Nothing on the platform resolves a
+// container by its hostname, so shortening it is invisible.
+const MAX_HOSTNAME = 63; // RFC-1123 label limit; same convention as kubernetes.dnsName()
+
+function containerHostname(name) {
+  const value = String(name || '');
+  if (value.length <= MAX_HOSTNAME) return value;
+  // Hash the FULL name, not the truncated prefix: two sessions on the same
+  // long slug (…--3530 and …--3539) differ only in the tail that gets cut.
+  const digest = crypto.createHash('sha256').update(value).digest('hex').slice(0, 8);
+  const prefix = value.slice(0, MAX_HOSTNAME - digest.length - 1).replace(/-+$/, '');
+  return `${prefix}-${digest}`;
+}
+
 async function runContainer(name, {
   image, env = {}, port, memory = APP_MEMORY, cpus = APP_CPUS, labels = {},
 }) {
@@ -128,7 +156,7 @@ async function runContainer(name, {
   const args = [
     'run', '-d',
     '--name', name,
-    '--hostname', name,
+    '--hostname', containerHostname(name),
     // #767: run Docker's bundled init (tini) as PID 1 instead of the app.
     //
     // Linux does NOT apply default signal dispositions to PID 1 — a signal
@@ -626,6 +654,7 @@ async function removeVolume(name) {
 
 module.exports = {
   execFileAsync,
+  containerHostname,
   execShellStdin,
   buildImage,
   runContainer,

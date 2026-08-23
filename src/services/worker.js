@@ -1698,7 +1698,10 @@ async function _bootstrapWarmContainer(sessionId, {
   const args = [
     'run', '-d',
     '--name', containerName,
-    '--hostname', containerName,
+    // Clamped for HOST_NAME_MAX; see docker.containerHostname. Worker names
+    // (`usernode-worker-<sessionId>`) are nowhere near the limit today — this
+    // is defence in depth so the whole platform shares one hostname rule.
+    '--hostname', docker.containerHostname(containerName),
     '--network', network,
     '--memory', WORKER_MEMORY,
     '--cpus', WORKER_CPUS,
