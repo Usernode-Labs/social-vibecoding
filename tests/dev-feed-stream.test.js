@@ -62,9 +62,13 @@ test('the de-carding is scoped to the feed, so the kanban keeps its cards', () =
       `chrome-stripping rule is not scoped to the feed: ${rule.slice(0, 80)}`);
   }
   // And the shared class itself still carries the tile treatment, because the
-  // board reads it.
-  assert.match(APP_VIEW, /DEV_CARD_CLS: '[^']*rounded-xl[^']*border[^']*'/,
-    'DEV_CARD_CLS still draws a bordered tile for the kanban');
+  // board reads it. Since the widget language landed (#1191) the tile is drawn
+  // by SURFACE rather than by hairline — a white card on the grey page ground,
+  // with the corner carrying the shape the border used to. The feed's strip
+  // rule above is unaffected: it zeroes `border-radius` and clears `background`
+  // as well as the border, so it still flattens the card into a stream row.
+  assert.match(APP_VIEW, /DEV_CARD_CLS: '[^']*rounded-2xl[^']*bg-white[^']*'/,
+    'DEV_CARD_CLS still draws a distinct tile for the kanban');
 });
 
 test('the merge bar runs the full width of the column', () => {

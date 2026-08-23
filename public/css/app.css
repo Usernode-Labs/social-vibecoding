@@ -2585,7 +2585,7 @@ html, body {
   cursor: pointer;
 }
 .dc-launchpad-copy-btn:hover,
-.dc-launchpad-btn:hover { border-color: #7c3aed; color: #7c3aed; }
+.dc-launchpad-btn:hover { border-color: var(--accent); color: var(--accent); }
 
 .dc-launchpad-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 
@@ -2610,8 +2610,8 @@ html, body {
 .dc-flow-brief::placeholder { color: var(--text-muted); }
 .dc-flow-brief:focus {
   outline: none;
-  border-color: #7c3aed;
-  box-shadow: 0 0 0 2px rgba(124, 58, 237, 0.25);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(10, 124, 255, 0.25);
 }
 .dc-flow-brief:disabled { opacity: 0.6; }
 
@@ -2642,7 +2642,7 @@ html, body {
 
 .dc-flow-vendor-on,
 .dc-flow-vendor-on:disabled {
-  background: #7c3aed;
+  background: var(--accent);
   color: #fff;
   cursor: default;
   opacity: 1;

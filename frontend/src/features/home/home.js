@@ -1719,8 +1719,8 @@ const Home = {
       Object.assign(tile.style, {
         borderWidth: '1px',
         borderStyle: 'dashed',
-        borderColor: 'rgba(139, 92, 246, 0.55)',
-        backgroundColor: 'rgba(139, 92, 246, 0.07)',
+        borderColor: 'rgba(31, 134, 255, 0.55)',
+        backgroundColor: 'rgba(31, 134, 255, 0.07)',
         borderRadius: '0.75rem',
       });
       document.body.style.userSelect = 'none';

@@ -837,7 +837,7 @@ const HomePanels = {
     // has the whole box, which is exactly the pre-#949 rendering.
     const popularHtml = popular.length
       ? `<div class="home-discover-divider flex-none flex items-center px-2.5 border-t border-zinc-200 dark:border-zinc-800">
-          <span class="text-[11px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Popular</span>
+          <span class="text-[0.9375rem] text-zinc-400 dark:text-zinc-500">Popular</span>
         </div>${lane(popular, 'home-discover-popular')}`
       : '';
 
