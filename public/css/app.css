@@ -2066,6 +2066,30 @@ html, body {
   word-break: break-word;
 }
 
+/* ── Ink on the outgoing bubble ────────────────────────────
+   Everything inside .dc-msg-user sits on the accent fill, so it takes the
+   fill's ink rather than the page's. Without this the role label and the
+   message id keep --text-muted and the body keeps --text-secondary — all
+   three tuned for a near-white page, and close to illegible on blue. Scoped
+   to the user bubble only: the agent's is still a neutral surface. */
+.dc-msg-user .dc-msg-content,
+.dc-msg-user .dc-msg-content strong,
+.dc-msg-user .dc-msg-header {
+  color: var(--accent-ink);
+}
+/* The id and timestamp stay quieter than the words, but by OPACITY — a second
+   colour token would need its own light and dark values for a surface that
+   deliberately does not follow the theme. */
+.dc-msg-user .dc-msg-header > * {
+  color: var(--accent-ink);
+  opacity: 0.72;
+}
+.dc-msg-user .dc-msg-content a,
+.dc-msg-user .dc-msg-content a:hover {
+  color: var(--accent-ink);
+  text-decoration: underline;
+}
+
 .dc-msg-content p, .dc-p { margin-top: 0.5em; }
 
 /* ── Markdown ──────────────────────────────────────────── */
