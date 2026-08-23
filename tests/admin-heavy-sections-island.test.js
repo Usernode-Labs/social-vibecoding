@@ -178,10 +178,12 @@ test('the anchors the chunk brief names by hand are all still rendered', () => {
   for (const [id, file] of Object.entries(NAMED)) {
     assert.ok(SRC.get(file).includes(`id="${id}"`), `${file}.js must still render #${id}`);
   }
-  // #admin-credit-balance belongs to a console-rendered section (limits), so
-  // it lives in the chassis module rather than one of the nine.
-  assert.ok(consoleJs.includes('id="admin-credit-balance"'),
-    'admin-console.js must still render #admin-credit-balance');
+  // #admin-credit-balance belonged to a console-rendered section (limits)
+  // until #1120 slice 21 moved that section out of the chassis into its own
+  // module, like the nine. The id is still the anchor; only the file moved.
+  const limits = fs.readFileSync(path.join(ADMIN_DIR, 'admin-limits.tsx'), 'utf8');
+  assert.ok(limits.includes('id="admin-credit-balance"'),
+    'admin-limits.tsx must still render #admin-credit-balance');
 });
 
 // ── 3. Lifecycle: nothing outlives its section ──────────────────────────

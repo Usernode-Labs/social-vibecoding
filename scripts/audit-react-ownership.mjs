@@ -120,6 +120,7 @@ const OWNED = [
   { sel: '#admin-section-content', when: '#admin/featured-apps' }, // features/admin/admin-featured-apps.tsx
   { sel: '#admin-section-content', when: '#admin/db-export' }, // features/admin/admin-db-export.tsx
   { sel: '#admin-section-content', when: '#admin/features' }, // features/admin/admin-features.tsx
+  { sel: '#admin-section-content', when: '#admin/limits' },  // features/admin/admin-limits.tsx
 ];
 
 const ROUTES = [
@@ -127,7 +128,7 @@ const ROUTES = [
   '#settings/agent-files', '#profile', '#leaderboard', '#messages',
   '#app/recipebot', '#app/recipebot/dev', '#app/recipebot/dev/chat',
   '#app/recipebot/dev/sessions/1',
-  '#admin/e2e', '#admin/gallery', '#admin/node', '#admin/merges', '#admin/push', '#admin/campaigns', '#admin/mail', '#admin/estimator', '#admin/analytics', '#admin/overview', '#admin/codes', '#admin/featured-apps', '#admin/db-export', '#admin/features', '#admin/status',
+  '#admin/e2e', '#admin/gallery', '#admin/node', '#admin/merges', '#admin/push', '#admin/campaigns', '#admin/mail', '#admin/estimator', '#admin/analytics', '#admin/overview', '#admin/codes', '#admin/featured-apps', '#admin/db-export', '#admin/features', '#admin/limits', '#admin/status',
 ];
 
 function instrument(owned) {

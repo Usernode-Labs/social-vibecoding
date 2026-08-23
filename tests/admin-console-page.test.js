@@ -119,7 +119,7 @@ test('the console island imports every admin module, console first', () => {
   assert.deepEqual(order.slice(1).sort(), [
     'admin-analytics', 'admin-campaigns', 'admin-codes', 'admin-db-export',
     'admin-e2e', 'admin-estimator', 'admin-featured-apps', 'admin-features',
-    'admin-gallery', 'admin-mail', 'admin-merges', 'admin-node',
+    'admin-gallery', 'admin-limits', 'admin-mail', 'admin-merges', 'admin-node',
     'admin-overview', 'admin-push', 'admin-status', 'admin-topochain',
   ], 'every section module is imported by the island');
 });

@@ -129,6 +129,7 @@ import './admin-codes.tsx';
 import './admin-featured-apps.tsx';
 import './admin-db-export.tsx';
 import './admin-features.tsx';
+import './admin-limits.tsx';
 import './admin-status.tsx';
 import './admin-node.tsx';
 import './admin-analytics.tsx';
