@@ -462,6 +462,66 @@ async function markHeadlessTerminal(db, {
   throw err;
 }
 
+// #1378: durable record that the user asked THIS turn to stop.
+//
+// The in-memory stop handle (services/stop-registry) is the fast path, but
+// it dies with the process. A stop clicked seconds before a blue-green
+// cutover, or on a turn whose handle is cleared while the tail is still
+// unwinding, has to survive into the next process — otherwise recovery
+// re-adopts the turn, narrates "[interrupted]" and can even retry it, which
+// is the opposite of what was asked. Stamping the intent onto the
+// active_turn JSONB gives POST /stop, GET /status and the recovery path one
+// answer they all agree on.
+//
+// Compare-and-set on turn identity, exactly like markQuarantined: a stamp
+// must never land on a REPLACEMENT turn that happens to share the session.
+// Unlike the transition helpers this does NOT move the phase — stopping is
+// an intent recorded against whatever phase the turn is in, and the phase
+// machine keeps running until the turn actually unwinds. It also never
+// throws on a miss: a stop for a turn that already finished is a no-op, not
+// an error the route should surface.
+async function markStopRequested(db, { sessionId, turnId = null, journal = null, by = null }) {
+  const ident = identitySql(turnId, journal, 2);
+  const patch = {
+    stopRequestedAt: new Date().toISOString(),
+    stopRequestedBy: by ? String(by).slice(0, 100) : null,
+  };
+  const { rows, rowCount } = await db.query(
+    `UPDATE chat_sessions
+        SET active_turn = active_turn || $3::jsonb
+      WHERE id = $1
+        AND active_turn IS NOT NULL
+        AND ${ident.sql}
+        AND active_turn->>'stopRequestedAt' IS NULL
+      RETURNING active_turn`,
+    [sessionId, ident.value, JSON.stringify(patch)],
+  );
+  if ((rowCount ?? rows?.length ?? 0) === 1) {
+    return { updated: true, activeTurn: parseActiveTurn(rows[0]?.active_turn) };
+  }
+  // Either the turn is gone, a different turn owns the session now, or an
+  // earlier stop already stamped it. The first request wins — repeat stops
+  // must not rewrite the timestamp the client's escalation ladder is
+  // measuring against.
+  const current = await loadActiveTurn(db, sessionId);
+  return { updated: false, activeTurn: current || null };
+}
+
+// Read the durable stop intent back off a parsed active_turn record.
+// Returns null when the turn carries no stamp, so callers can treat
+// "no durable stop" and "no turn at all" the same way.
+function stopRequestOf(activeTurn) {
+  if (!activeTurn || typeof activeTurn !== 'object') return null;
+  const at = activeTurn.stopRequestedAt;
+  if (!at) return null;
+  const ms = Date.parse(at);
+  return {
+    at,
+    atMs: Number.isFinite(ms) ? ms : null,
+    by: activeTurn.stopRequestedBy || null,
+  };
+}
+
 module.exports = {
   PHASE_DISPATCH_PENDING,
   PHASE_EXECUTING,
@@ -487,4 +547,7 @@ module.exports = {
   incrementByokCents,
   clearCleanupPending,
   markHeadlessTerminal,
+  markStopRequested,
+  stopRequestOf,
+  RECOVERABLE_PHASES,
 };

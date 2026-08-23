@@ -1048,6 +1048,13 @@
     {
       "source": "src/services/turn-lifecycle.js",
       "kind": "structural-template",
+      "fingerprint": "544d173eb6008737473d",
+      "count": 1,
+      "preview": "`UPDATE chat_sessions SET active_turn = active_turn || $3::jsonb WHERE id = $1 AND active_turn IS NOT NULL AND ${ident.sql} AND active_turn->>'stopRequestedAt' "
+    },
+    {
+      "source": "src/services/turn-lifecycle.js",
+      "kind": "structural-template",
       "fingerprint": "6402a17eb2e4e03bb8d3",
       "count": 1,
       "preview": "`UPDATE chat_sessions SET active_turn = NULL WHERE id = $1 AND active_turn IS NOT NULL AND ${ident.sql} AND active_turn->>'phase' = '${PHASE_CLEANUP_PENDING}' R"
