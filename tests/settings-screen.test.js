@@ -1350,3 +1350,114 @@ test('the best-effort app logout cannot block leaving the app', () => {
   assert.match(best, /settle\(false\)/, 'a rejection resolves false, never throws');
   assert.doesNotMatch(best, /throw /);
 });
+
+
+// ── The CLI credential rows (#1191) ───────────────────────────────────
+//
+// `#cli-tokens-list` was built by `document.createElement` in
+// `Settings._renderCliTokens`; it is features/settings/cli-tokens-list.tsx's
+// now, driven by what the module publishes. The rules that were only visible
+// in that builder get executed coverage here rather than a source grep,
+// because every one of them is a branch that renders differently.
+
+const { renderComponent } = require('./lib/render-tsx');
+
+const CLI_LIST = 'frontend/src/features/settings/cli-tokens-list.tsx';
+const cliRows = (state) => renderComponent(CLI_LIST, 'CliTokensListView', state);
+
+test('the credential list renders its three host states', () => {
+  // `idle` is the PRERENDER state and has to draw nothing at all: the shipped
+  // `<div id="cli-tokens-list">` is empty, and a first render that drew the
+  // empty line would mismatch on hydration — a console error on #settings, and
+  // a console error on any route fails proposal checks.
+  assert.equal(cliRows({ phase: 'idle', tokens: [] }), '');
+  assert.equal(read('public/index.html').includes('<div id="cli-tokens-list" class="space-y-2"></div>'),
+    true, 'and the prerendered document agrees');
+  // The two the module used to write with `textContent`.
+  assert.match(cliRows({ phase: 'loading', tokens: [] }), /Loading credentials…/);
+  assert.match(cliRows({ phase: 'ready', tokens: [] }), /No CLI credentials\./);
+});
+
+test('only a live, non-demo credential offers Revoke', () => {
+  const rows = [
+    { id: 'tok_1', hint: 'sv_live_…abcd', detail: 'valid · created Jan 1', revocable: true },
+    // Staging ?demo=1 rows are fabricated server-side and have nothing to
+    // revoke — the server flags them and the view model turns that into
+    // `revocable: false`, so a button is never drawn for one.
+    { id: null, hint: 'staging-demo-cli-1', detail: 'valid · created Jan 1', revocable: false },
+    // An expired or already-revoked credential is the same: nothing to undo.
+    { id: 'tok_3', hint: 'sv_live_…efgh', detail: 'revoked · created Jan 1', revocable: false },
+  ];
+  const html2 = cliRows({ phase: 'ready', tokens: rows });
+  assert.equal((html2.match(/>Revoke</g) || []).length, 1, 'exactly one button');
+  assert.match(html2, /sv_live_…abcd/);
+  assert.match(html2, /staging-demo-cli-1/);
+  // The hint is a monospace line and the metadata a muted one, as the two
+  // `document.createElement` nodes were.
+  assert.match(html2, /class="text-sm font-mono[^"]*">sv_live_…abcd</);
+  assert.match(html2, /class="text-xs text-zinc-500[^"]*">valid · created Jan 1</);
+});
+
+test('settings.js publishes the rows rather than building them', () => {
+  const render = settingsJs.slice(
+    settingsJs.indexOf('    _renderCliTokens() {'),
+    settingsJs.indexOf('    async _revokeCliToken(id, button) {'),
+  );
+  assert.ok(render.length > 200, 'located the renderer');
+  // Comments first — this one names the builder it replaced.
+  assert.doesNotMatch(code(render), /createElement|appendChild/,
+    'no DOM building is left in the module');
+  assert.match(render, /revocable: token\.status === 'valid'\s*\n?\s*&& typeof token\.id === 'string' && !token\.demo/,
+    'and the demo/expired rule is decided where the payload is');
+  // The two SIBLINGS of the host stay the module's: the Load-more button
+  // follows the keyset cursor and the status line has three writers.
+  assert.match(render, /more\.classList\.toggle\('hidden', !this\._cliTokenCursor\)/);
+  assert.match(render, /status\.textContent = 'Demo data/);
+});
+
+
+// ── The connector cards (#1191) ───────────────────────────────────────
+
+const CONNECTORS_LIST = 'frontend/src/features/settings/connectors-list.tsx';
+const connectorRows = (state) => renderComponent(CONNECTORS_LIST, 'ConnectorsListView', state);
+
+test('the connections list renders its three host states', () => {
+  assert.equal(connectorRows({ phase: 'idle', connectors: [] }), '');
+  assert.equal(
+    read('public/index.html').includes('<div id="connectors-list" class="space-y-2"></div>'),
+    true, 'and the prerendered document agrees');
+  assert.match(connectorRows({ phase: 'loading', connectors: [] }), /Loading connections…/);
+  assert.match(connectorRows({ phase: 'ready', connectors: [] }),
+    /No chat products connected yet\./);
+});
+
+test('every connection is disconnectable, and names itself', () => {
+  const html2 = connectorRows({
+    phase: 'ready',
+    connectors: [
+      { id: '1', title: 'Claude', detail: 'connected 1 Jan · last used 2 Jan' },
+      { id: '2', title: 'Connected client', detail: 'connected 1 Jan · never used' },
+    ],
+  });
+  assert.equal((html2.match(/>Disconnect</g) || []).length, 2,
+    'unlike a credential, a connection is always revocable');
+  assert.match(html2, />Claude</);
+  // The fallback title, for a client that registered without a name.
+  assert.match(html2, />Connected client</);
+  assert.match(html2, /never used/);
+});
+
+test('settings.js publishes the connector cards rather than building them', () => {
+  const render = settingsJs.slice(
+    settingsJs.indexOf('    _renderConnectors() {'),
+    settingsJs.indexOf('    async _disconnectConnector(id, button) {'),
+  );
+  assert.ok(render.length > 200, 'located the renderer');
+  assert.doesNotMatch(code(render), /createElement|appendChild/,
+    'no DOM building is left in the module');
+  // The two siblings it still owns, and must keep calling: the "stop the
+  // prompts" prose blocks and the read-only tip status both key off which
+  // client FAMILIES are connected, which is not a property of any one card.
+  assert.match(render, /this\._renderConnectorCases\(connectors\)/);
+  assert.match(render, /this\._renderConnectorHint\(connectors\)/);
+});

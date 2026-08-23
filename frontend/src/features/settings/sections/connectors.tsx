@@ -5,6 +5,8 @@ import { SectionHeading, StatusLine } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 
+import { ConnectorsList } from '../connectors-list';
+
 /**
  * Hosted MCP connector: connect Claude.ai / ChatGPT so their built-in coding
  * agent (Claude Code on the web, Codex) can do the work on the user's own
@@ -368,6 +370,7 @@ export function ConnectorsSection() {
           Connected
         </h4>
         <div id="connectors-list" className="space-y-2">
+          <ConnectorsList />
         </div>
         <StatusLine id="connectors-status" size="xs" />
       </div>

@@ -1343,9 +1343,8 @@
 
     async _loadConnectors() {
       const section = document.getElementById('connectors-section');
-      const list = document.getElementById('connectors-list');
       const status = document.getElementById('connectors-status');
-      if (!section || !list || !status) return;
+      if (!section || !status) return;
 
       // The connector URL is derived from the origin the SPA is served
       // from, so a self-hosted fork shows its own.
@@ -1354,7 +1353,7 @@
 
       this._connectorLoadId = (this._connectorLoadId || 0) + 1;
       const loadId = this._connectorLoadId;
-      list.textContent = 'Loading connections…';
+      this._publishConnectors({ phase: 'loading', connectors: [] });
       status.classList.add('hidden');
 
       try {
@@ -1382,7 +1381,7 @@
         this._renderConnectors();
       } catch (err) {
         if (loadId !== this._connectorLoadId) return;
-        list.textContent = '';
+        this._publishConnectors({ phase: 'idle', connectors: [] });
         status.textContent = err.message || 'Could not load your connections.';
         status.classList.remove('hidden', 'text-emerald-500');
         status.classList.add('text-red-500');
@@ -1478,51 +1477,39 @@
       line.classList.remove('hidden');
     },
 
+    // Publish the connector cards. Was a `document.createElement` tree per
+    // connection — card, top row, title, metadata, Disconnect and its listener
+    // — and is ./connectors-list.tsx's markup now. The two date formats and
+    // the "never used" fallback are resolved here, where the payload is.
+    _publishConnectors(next) {
+      const bridge = (typeof window !== 'undefined' && window.UsernodeReact)
+        ? window.UsernodeReact.settingsConnectors : null;
+      if (bridge) bridge.publish(next);
+    },
+
     _renderConnectors() {
-      const list = document.getElementById('connectors-list');
-      if (!list) return;
-      list.textContent = '';
       const connectors = this._connectors || [];
+      // Two SIBLINGS of the list host, both still this module's: the static
+      // "stop the prompts" prose blocks, whose visibility follows which client
+      // families are connected, and the read-only tip status.
       this._renderConnectorCases(connectors);
       this._renderConnectorHint(connectors);
-      if (!connectors.length) {
-        const empty = document.createElement('p');
-        empty.className = 'text-xs text-zinc-500 dark:text-zinc-400';
-        empty.textContent = 'No chat products connected yet.';
-        list.appendChild(empty);
-        return;
-      }
-      for (const connector of connectors) {
-        const card = document.createElement('div');
-        card.className = 'rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2';
-
-        const top = document.createElement('div');
-        top.className = 'flex items-start justify-between gap-3';
-        const text = document.createElement('div');
-        text.className = 'min-w-0';
-        const title = document.createElement('div');
-        title.className = 'text-sm font-medium text-zinc-800 dark:text-zinc-200';
-        title.textContent = connector.client_name || 'Connected client';
-        const detail = document.createElement('div');
-        detail.className = 'text-xs text-zinc-500 dark:text-zinc-400 mt-1';
-        const connected = Number.isFinite(Date.parse(connector.connected_at))
-          ? new Date(connector.connected_at).toLocaleString() : 'unknown date';
-        const used = connector.last_used_at && Number.isFinite(Date.parse(connector.last_used_at))
-          ? ` · last used ${new Date(connector.last_used_at).toLocaleString()}`
-          : ' · never used';
-        detail.textContent = `connected ${connected}${used}`;
-        text.append(title, detail);
-
-        const disconnect = document.createElement('button');
-        disconnect.type = 'button';
-        disconnect.className = 'shrink-0 rounded-md border border-red-400 dark:border-red-700 px-2 py-1 text-xs font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 transition-colors';
-        disconnect.textContent = 'Disconnect';
-        disconnect.addEventListener('click', () => this._disconnectConnector(connector.id, disconnect));
-
-        top.append(text, disconnect);
-        card.appendChild(top);
-        list.appendChild(card);
-      }
+      this._publishConnectors({
+        phase: 'ready',
+        connectors: connectors.map((connector) => {
+          const connected = Number.isFinite(Date.parse(connector.connected_at))
+            ? new Date(connector.connected_at).toLocaleString() : 'unknown date';
+          const used = connector.last_used_at
+            && Number.isFinite(Date.parse(connector.last_used_at))
+            ? ` · last used ${new Date(connector.last_used_at).toLocaleString()}`
+            : ' · never used';
+          return {
+            id: String(connector.id),
+            title: connector.client_name || 'Connected client',
+            detail: `connected ${connected}${used}`,
+          };
+        }),
+      });
     },
 
     async _disconnectConnector(id, button) {
@@ -1921,12 +1908,19 @@
       }
     },
 
+    // The list host's three states are ./cli-tokens-store.js's phases now, so
+    // this reaches the bridge rather than the element.
+    _publishCliTokens(next) {
+      const bridge = (typeof window !== 'undefined' && window.UsernodeReact)
+        ? window.UsernodeReact.settingsCliTokens : null;
+      if (bridge) bridge.publish(next);
+    },
+
     async _loadCliTokens(reset) {
       const section = document.getElementById('cli-tokens-section');
-      const list = document.getElementById('cli-tokens-list');
       const more = document.getElementById('cli-tokens-more');
       const status = document.getElementById('cli-tokens-status');
-      if (!section || !list || !more || !status) return;
+      if (!section || !more || !status) return;
 
       // Don't ask for a surface this deployment doesn't serve — the 404
       // would be a console error even though the code below handles it.
@@ -1952,7 +1946,7 @@
         this._cliTokenLoadId += 1;
         this._cliTokens = [];
         this._cliTokenCursor = null;
-        list.textContent = 'Loading credentials…';
+        this._publishCliTokens({ phase: 'loading', tokens: [] });
         more.classList.add('hidden');
         status.classList.add('hidden');
       }
@@ -1989,7 +1983,7 @@
         this._renderCliTokens();
       } catch (err) {
         if (loadId !== this._cliTokenLoadId) return;
-        if (!this._cliTokens.length) list.textContent = '';
+        if (!this._cliTokens.length) this._publishCliTokens({ phase: 'idle', tokens: [] });
         status.textContent = err.message || 'Could not load CLI credentials.';
         status.classList.remove('hidden', 'text-emerald-500');
         status.classList.add('text-red-500');
@@ -2002,54 +1996,34 @@
     },
 
     _renderCliTokens() {
-      const list = document.getElementById('cli-tokens-list');
       const more = document.getElementById('cli-tokens-more');
       const status = document.getElementById('cli-tokens-status');
-      if (!list || !more || !status) return;
-      list.textContent = '';
+      if (!more || !status) return;
       status.classList.add('hidden');
-      if (!this._cliTokens.length) {
-        const empty = document.createElement('p');
-        empty.className = 'text-xs text-zinc-500 dark:text-zinc-400';
-        empty.textContent = 'No CLI credentials.';
-        list.appendChild(empty);
-      }
-      for (const token of this._cliTokens) {
-        const card = document.createElement('div');
-        card.className = 'rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2';
-
-        const top = document.createElement('div');
-        top.className = 'flex items-start justify-between gap-3';
-        const text = document.createElement('div');
-        text.className = 'min-w-0';
-        const title = document.createElement('div');
-        title.className = 'text-sm font-mono text-zinc-800 dark:text-zinc-200';
-        title.textContent = typeof token.token_hint === 'string'
-          ? token.token_hint : 'CLI credential';
-        const detail = document.createElement('div');
-        detail.className = 'text-xs text-zinc-500 dark:text-zinc-400 mt-1';
-        const created = Number.isFinite(Date.parse(token.created_at))
-          ? new Date(token.created_at).toLocaleString() : 'unknown date';
-        const used = token.last_used_at && Number.isFinite(Date.parse(token.last_used_at))
-          ? ` · last used ${new Date(token.last_used_at).toLocaleString()}` : '';
-        detail.textContent = `${token.status || 'unknown'} · created ${created}${used}`;
-        text.append(title, detail);
-        top.appendChild(text);
-
-        // Demo rows (staging ?demo=1) are fabricated server-side and have
-        // nothing to revoke — offer no button, same stance as the demo
-        // agent-files rows.
-        if (token.status === 'valid' && typeof token.id === 'string' && !token.demo) {
-          const revoke = document.createElement('button');
-          revoke.type = 'button';
-          revoke.className = 'shrink-0 rounded border border-red-400 dark:border-red-700 px-2 py-1 text-xs font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 transition-colors';
-          revoke.textContent = 'Revoke';
-          revoke.addEventListener('click', () => this._revokeCliToken(token.id, revoke));
-          top.appendChild(revoke);
-        }
-        card.appendChild(top);
-        list.appendChild(card);
-      }
+      // The ROWS are ./cli-tokens-list.tsx's — a card each, built here with
+      // `document.createElement` until #1191. Every branch it evaluated is
+      // resolved here, where the payload and the demo flag live: the two date
+      // formats, the status line, and whether a row may be revoked at all (a
+      // staging demo row is fabricated server-side and has nothing to revoke).
+      this._publishCliTokens({
+        phase: 'ready',
+        tokens: this._cliTokens.map((token) => {
+          const created = Number.isFinite(Date.parse(token.created_at))
+            ? new Date(token.created_at).toLocaleString() : 'unknown date';
+          const used = token.last_used_at && Number.isFinite(Date.parse(token.last_used_at))
+            ? ` · last used ${new Date(token.last_used_at).toLocaleString()}` : '';
+          return {
+            id: typeof token.id === 'string' ? token.id : null,
+            hint: typeof token.token_hint === 'string' ? token.token_hint : 'CLI credential',
+            detail: `${token.status || 'unknown'} · created ${created}${used}`,
+            revocable: token.status === 'valid'
+              && typeof token.id === 'string' && !token.demo,
+          };
+        }),
+      });
+      // Both SIBLINGS of that host, and both still this module's: the
+      // Load-more button follows the keyset cursor, and the status line has
+      // three writers (revoke succeeded, revoke failed, demo data).
       more.classList.toggle('hidden', !this._cliTokenCursor);
       if (this._cliTokensDemo() && this._cliTokens.some((t) => t.demo)) {
         status.textContent = 'Demo data — changes are not saved.';
