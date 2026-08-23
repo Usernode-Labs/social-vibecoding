@@ -26,6 +26,8 @@
 // legacy module has its own copy: it is three lines, and a shared import would
 // be a load-order dependency between classic scripts that don't have one.
 
+import { tintFor as uiTintFor } from '@/components/ui/icon-tile';
+
 function escapeHtml(str) {
   const div = document.createElement('div');
   div.textContent = str;
@@ -166,7 +168,16 @@ export function renderAppPillsHtml(app) {
   return `${chipsHtml}${visChipHtml}`;
 }
 
-export const AppCard = { iconTileFor, renderAppPillsHtml, iconViewFor, appPillsFor };
+// `tintFor` is re-exported, not reimplemented: the canonical hash lives in
+// @/components/ui/icon-tile.tsx alongside the tint table it indexes, and a
+// second copy here would be a second answer to "what colour is this app". The
+// classic scripts reach it through `window.AppCard` below, which is exactly
+// what that global was left in place for.
+export { tintFor } from '@/components/ui/icon-tile';
+
+export const AppCard = {
+  iconTileFor, renderAppPillsHtml, iconViewFor, appPillsFor, tintFor: uiTintFor,
+};
 
 // Published for the legacy half of the split. Both in-bundle consumers
 // (features/apps/browse.js and features/home/home.js, whose two card methods

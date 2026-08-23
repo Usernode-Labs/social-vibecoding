@@ -1182,9 +1182,18 @@ const AppView = {
     const tile = home && typeof home.iconTileFor === 'function'
       ? home.iconTileFor(record || {})
       : { kind: 'letter', html: escapeHtml(((record && record.name) || '?').charAt(0).toUpperCase()) };
+    // The app's identity tint, from the same slug hash the launcher grid and
+    // the directory use (frontend/@/components/ui/icon-tile.tsx, reached here
+    // through window.AppCard — this is a classic script and cannot import).
+    // The cover is the app's icon at its most prominent moment; a blank white
+    // square there would be the one place its colour goes missing.
+    const slug = (record && record.slug) || '';
+    const tintOf = (typeof window !== 'undefined' && window.AppCard
+      && typeof window.AppCard.tintFor === 'function') ? window.AppCard.tintFor : null;
     return {
       iconKind: tile.kind,
       iconHtml: tile.html,
+      iconTint: (slug && tintOf) ? tintOf(slug) : '',
       name: (record && record.name) || '',
       note: 'Opening…',
       spinner: false,
@@ -1200,7 +1209,7 @@ const AppView = {
   _coverHtml(cover, { id = 'app-launch-cover', pinned = false } = {}) {
     return `
       <div id="${id}" class="app-launch-cover"${pinned ? ' data-pinned="true"' : ''} aria-hidden="true">
-        <div class="app-icon-tile app-launch-cover-icon" data-icon="${cover.iconKind}">${cover.iconHtml}</div>
+        <div class="app-icon-tile app-launch-cover-icon" data-icon="${cover.iconKind}"${cover.iconTint ? ` data-tint="${cover.iconTint}"` : ''}>${cover.iconHtml}</div>
         <p class="app-launch-cover-name">${escapeHtml(cover.name)}</p>
         <p class="app-launch-cover-note" id="${id}-note">${escapeHtml(cover.note)}</p>
         <div class="dc-status-spinner-arc app-launch-cover-spinner hidden" id="${id}-spinner"></div>
