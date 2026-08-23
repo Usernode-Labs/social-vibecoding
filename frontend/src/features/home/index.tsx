@@ -13,8 +13,9 @@
  *   * `<AppGrid/>`, `<WidgetStrip/>` and `<AppsMore/>` are stateful islands
  *     rendering plain view models `home.js` pushes (./grid-store.ts and
  *     ./chrome-store.ts);
- *   * the three panel hosts below the grid are still `innerHTML`, filled by
- *     `home-panels.js` exactly as before.
+ *   * `<DiscoverSection/>`, `<ChallengesSection/>` and `<CreateSection/>` are
+ *     the same arrangement for the three blocks below the grid, from
+ *     ./panels-store.ts.
  *
  * ── FOUR AREAS, in this order ──────────────────────────────────────────
  *
@@ -50,9 +51,12 @@
  *     the kit attachment all stayed in home.js.
  *   * `#home-widget-strip-section` and `#home-apps-more`: the same split for
  *     the two hosts outside the canvas, on the same push.
+ *   * the three panel sections: `HomePanels.render()` computes three view
+ *     models where it used to build ~800 lines of HTML string and then
+ *     re-attach eight families of listener over the result.
  *
- * The three panel hosts below have not moved, so `home-panels.js` still owns
- * their subtrees whole — which is why they are plain `<div>`s here.
+ * Nothing on this screen is an `innerHTML` host any more. The data, the
+ * fetches and the gestures all stayed where they were.
  *
  * `data-revealed` on the search bar is written by `home.js` at runtime through
  * `dataset`, which is safe for exactly the reason
@@ -82,6 +86,7 @@ import { SearchIcon } from '@/components/ui/icons';
 
 import { AppGrid } from './app-grid';
 import { AppsMore } from './apps-more';
+import { ChallengesSection, CreateSection, DiscoverSection } from './panels/sections';
 import { WidgetStrip } from './widget-strip';
 
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
@@ -225,28 +230,26 @@ export function HomeScreen() {
             wherever-you-dropped-them was a canvas with no reading order, and
             it made every one of them optional in a way none of them are.
 
-            Each is an innerHTML host filled by HomePanels.render() from the
-            SAME renderers it always used (renderDiscoverPanel,
-            renderChallengesPanel, renderCreatePanel) — only their parent
-            changed. All three ship EMPTY: the panels cache is fetched, so
-            rendering anything here would disagree with the prerendered
-            document and mismatch on hydration.
+            Each renders its own host now (./panels/sections.tsx) from a view
+            model HomePanels.render() pushes — the three `innerHTML` hosts and
+            the `_stampState` pass that mirrored each block's state up onto
+            them went together. All three still ship EMPTY and un-hidden: the
+            panels cache is fetched, so drawing anything at hydration would
+            disagree with the prerendered document.
 
             `data-panel-slot` rides along from the grid host each one
             replaces. It names WHICH block a host is for, which is as true of
             a section as it was of a cell, and it is the hook everything
             outside this file already selects on: the dapp.json checks
-            (`[data-panel-slot="create"][data-create-enabled="true"]`), the
-            screenshot assertions, and HomePanels._stampState, which mirrors
-            each block's own state attributes up onto its host so one
-            selector can ask for the host AND the state.
+            (`[data-panel-slot="create"][data-create-enabled="true"]`) and the
+            screenshot assertions. That selector is why the block's own state
+            attributes appear on the host as well as on the block — one model
+            now feeds both, rather than a second pass copying one to the
+            other.
         */}
-        <section id="home-discover-section" data-panel-slot="discover" className="px-3 pb-3">
-        </section>
-        <section id="home-challenges-section" data-panel-slot="challenges" className="px-3 pb-3">
-        </section>
-        <section id="home-create-section" data-panel-slot="create" className="px-3 pb-3">
-        </section>
+        <DiscoverSection />
+        <ChallengesSection />
+        <CreateSection />
         {/*
             #home-panels — the widgets' FALLBACK host — is gone with the
             placement it existed for. It caught the moment before the first

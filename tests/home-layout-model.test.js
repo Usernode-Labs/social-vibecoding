@@ -150,10 +150,16 @@ test('two rows by default — a cap on what is shown, not on what exists', () =>
   // any of them and nothing is stranded.
   assert.ok(HomeLayout.MAX_ROWS > HomeLayout.DEFAULT_ROWS);
   // The island documents why: three fixed sections sit under this grid, and
-  // an eight-row canvas would push them off the bottom of a phone.
-  assert.match(ISLAND, /home-discover-section/);
-  assert.match(ISLAND, /home-challenges-section/);
-  assert.match(ISLAND, /home-create-section/);
+  // an eight-row canvas would push them off the bottom of a phone. Each host
+  // is rendered by its own component since #1191, so the ids live one file
+  // down — the island mounts the three, and the sections carry the hosts.
+  const SECTIONS = read('frontend/src/features/home/panels/sections.tsx');
+  for (const key of ['Discover', 'Challenges', 'Create']) {
+    assert.match(ISLAND, new RegExp(`<${key}Section />`), `the island mounts ${key}`);
+  }
+  assert.match(SECTIONS, /home-discover-section/);
+  assert.match(SECTIONS, /home-challenges-section/);
+  assert.match(SECTIONS, /home-create-section/);
 });
 
 test('the module is evaluated before its consumers, and precached', () => {

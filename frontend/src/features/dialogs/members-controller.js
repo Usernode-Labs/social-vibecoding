@@ -234,8 +234,10 @@ const MembersDialog = {
     AppView._hideInviteSuggestions();
   },
 
-  // Idempotent wiring (cloneNode swap clears stale listeners, mirroring
-  // Home.wireCreateButtons) for the pills + invite input.
+  // Idempotent wiring: the cloneNode swap clears stale listeners, because this
+  // modal's roster is re-rendered by innerHTML on every open. (It mirrored
+  // Home.wireCreateButtons, which is gone — the block it wired is React's now
+  // and keeps its element, so it needed neither the swap nor the helper.)
   _wireMembersModal() {
     document.querySelectorAll('#members-visibility-section [data-m-collab-vis], #members-visibility-section [data-m-view-vis]')
       .forEach((pill) => {

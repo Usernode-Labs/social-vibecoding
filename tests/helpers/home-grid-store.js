@@ -77,6 +77,31 @@ function installGridStore(sandbox) {
   return sandbox.gridStore;
 }
 
+/** Mirrors INITIAL_PANELS in frontend/src/features/home/panels-store.ts. */
+const INITIAL_PANELS = {
+  painted: false,
+  discover: null,
+  challenges: null,
+  create: null,
+};
+
+/**
+ * The same for home-panels.js, which imports its own store.
+ *
+ * A THIRD store rather than a field on either of the others, because it is a
+ * different module's paint: `HomePanels.render()` is called from
+ * `Home.render()` but also on its own (an expand toggle, an optimistic hide),
+ * and the three blocks have nothing to do with the launcher canvas.
+ */
+function installPanelsStore(sandbox) {
+  vm.runInContext(
+    `${PLAIN_STORE_SRC}\n;var panelsStore = createStore(${JSON.stringify(INITIAL_PANELS)});`,
+    sandbox,
+  );
+  return sandbox.panelsStore;
+}
+
 module.exports = {
-  installGridStore, INITIAL_GRID, INITIAL_CHROME, PLAIN_STORE_SRC,
+  installGridStore, installPanelsStore,
+  INITIAL_GRID, INITIAL_CHROME, INITIAL_PANELS, PLAIN_STORE_SRC,
 };

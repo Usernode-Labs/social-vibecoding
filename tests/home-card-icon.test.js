@@ -19,7 +19,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const { installAppCard } = require('./helpers/app-card');
-const { installGridStore } = require('./helpers/home-grid-store');
+const { installGridStore, installPanelsStore } = require('./helpers/home-grid-store');
 // The "Create app" tile moved out of home.js: it is a home-screen WIDGET now
 // (HomePanels.renderCreatePanel), so home-panels.js is loaded here too, to
 // keep it under the same shared-icon-treatment assertions the app tiles are.
@@ -36,6 +36,19 @@ const WIDGET_STRIP = 'frontend/src/features/home/widget-strip.tsx';
 /** `Home.renderWidgetTile(item)`, in its two halves. */
 function widgetTileHtml(Home, item) {
   return renderComponent(WIDGET_STRIP, 'WidgetTile', { tile: Home.widgetTileView(item) });
+}
+
+// The Create app block, the same way: HomePanels.createView() decides and
+// features/home/panels/create.tsx draws. It is here for the shared TILE
+// TREATMENT — the block's plus sits in an `.app-icon-tile`, and the rule that
+// no tile carries its own violet colouring has to span every call site or it
+// is not a rule.
+const CREATE_PANEL = 'frontend/src/features/home/panels/create.tsx';
+
+function createPanelHtml(Home) {
+  return renderComponent(CREATE_PANEL, 'CreatePanel', {
+    view: Home.__HP.createView({ key: 'create' }),
+  });
 }
 
 // Minimal functional stand-in for the DOM bits home.js's escapeHtml
@@ -83,6 +96,7 @@ function makeHome() {
   // the tile, so the sandbox needs the store binding the stripped import
   // would have made — and the geometry module render() lays out against.
   const gridStore = installGridStore(sandbox);
+  installPanelsStore(sandbox);
   vm.runInContext(`${LAYOUT_SRC}\n${SRC}\n${PANELS_SRC}\n;globalThis.__Home = Home;`, sandbox);
   const Home = sandbox.__Home;
   Home.__sandbox = sandbox;
@@ -137,7 +151,7 @@ test('every icon tile carries .app-icon-tile and no violet colouring', () => {
     Home.renderAppCard(baseApp()),
     Home.renderAppCard(baseApp({ icon_emoji: '🎮' })),
     Home.renderAppCard(baseApp({ icon_url: '/app-icons/' + 'a'.repeat(32) })),
-    Home.__HP.renderCreatePanel({ key: 'create' }),
+    createPanelHtml(Home),
     widgetTileHtml(Home, { id: 'w1', name: 'Demo App', slug: 'demo' }),
   ];
   for (const html of variants) {
@@ -150,7 +164,7 @@ test('every icon tile carries .app-icon-tile and no violet colouring', () => {
     assert.doesNotMatch(tile[0], /text-violet/, 'no violet glyph colour');
   }
   // The create-tile placeholder keeps its "empty slot" variant.
-  assert.match(Home.__HP.renderCreatePanel({ key: 'create' }), /app-icon-tile app-icon-tile--empty/);
+  assert.match(createPanelHtml(Home), /app-icon-tile app-icon-tile--empty/);
 });
 
 // The fainter letter is CSS-side: the tile tags its kind with

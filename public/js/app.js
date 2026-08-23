@@ -2114,8 +2114,8 @@ const App = {
 
   bindEvents() {
     // Note: the "Create new app" entry point lives in the home feed
-    // now (see Home.wireCreateButtons) — no static header button to
-    // bind here anymore.
+    // now (the Create app section — frontend/src/features/home/panels/) —
+    // no static header button to bind here anymore.
     // The drawer's own wiring is HeaderMenu.init(), called from the React
     // island's layout effect now (#1079 chunk B) — it has to run after
     // hydration has adopted #header-menu-panel, which is earlier than this.

@@ -110,6 +110,9 @@ const OWNED = [
   // that either way — the guard for it is Home.render()'s `_dragActive`
   // bail-out, which keeps React from reconciling mid-gesture.
   { sel: '#home-widget-strip-section' },     // features/home/widget-strip.tsx
+  { sel: '#home-discover-section' },         // features/home/panels/sections.tsx
+  { sel: '#home-challenges-section' },       // ditto
+  { sel: '#home-create-section' },           // ditto
   { sel: '#gc-messages' },                   // features/group-chat/transcript.tsx
   { sel: '#gc-thread-messages' },            // ditto, mounted with the 'thread' key
   { sel: '#llm-grants-list' },               // features/settings/grants-list.tsx

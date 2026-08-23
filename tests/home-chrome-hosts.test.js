@@ -1,6 +1,6 @@
-// The home screen's two hosts OUTSIDE the launcher canvas, after #1191 made
-// them React's: `#home-apps-more` ("Show all N apps") and
-// `#home-widget-strip-section` (the iOS widget-editing strip).
+// The home screen's non-canvas hosts, after #1191 made them React's:
+// `#home-apps-more` ("Show all N apps"), `#home-widget-strip-section` (the iOS
+// widget-editing strip), and the three fixed panel sections below the grid.
 //
 // ── What the conversion moved, and what these pin ──────────────────────
 //
@@ -32,8 +32,10 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-const { HOME_SRC, HOME_RAW } = require('./helpers/home-modules');
-const { installGridStore, INITIAL_CHROME } = require('./helpers/home-grid-store');
+const { HOME_SRC, HOME_RAW, PANELS_SRC } = require('./helpers/home-modules');
+const {
+  installGridStore, installPanelsStore, INITIAL_CHROME,
+} = require('./helpers/home-grid-store');
 const { installAppCard } = require('./helpers/app-card');
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
 
@@ -75,10 +77,14 @@ function makeHome() {
   vm.createContext(sandbox);
   installAppCard(sandbox);
   installGridStore(sandbox);
+  installPanelsStore(sandbox);
   vm.runInContext(
     `${read('frontend/src/features/home/home-layout.js')}\n;globalThis.HomeLayout = HomeLayout;`,
     sandbox,
   );
+  // In the same order the island imports them: HomeLayout is read by both of
+  // the others, and home.js's render() calls HomePanels.render().
+  vm.runInContext(`${PANELS_SRC}\n;globalThis.HomePanels = HomePanels;`, sandbox);
   vm.runInContext(`${HOME_SRC}\n;globalThis.__Home = Home;`, sandbox);
   return { Home: sandbox.__Home, chromeStore: sandbox.chromeStore, sandbox };
 }
@@ -292,4 +298,79 @@ test('"Show all N apps" expands the grid and repaints', () => {
     assert.equal(home._appsExpanded, true, 'the click lifts the two-row cap');
     assert.equal(home.renders, 1, 'and repaints from it');
   });
+});
+
+
+// ── The three panel sections ──────────────────────────────────────────
+//
+// tests/home-panels-render.test.js covers what they DRAW, end to end. What
+// belongs here is the one thing that is about the screen rather than about a
+// block: after #1191 no host on #home is written by hand, so nothing on it can
+// have two authors.
+
+test('nothing on the home screen is an innerHTML host any more', () => {
+  const strip = (src) => src
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^[ \t]*\/\/.*$/gm, '');
+  // Two markup writes survive in home.js, and NEITHER fills a host on the
+  // screen — both build a detached element and hand it somewhere:
+  //
+  //   * the card menu's rich header, which `PlatformUI.menu` adopts into the
+  //     kit's own popover;
+  //   * the drag overlay's cells, on a node created and appended by
+  //     `_showGridOverlay` (whose header explains why it may live inside
+  //     #app-list, and tests/home-grid-placement.test.js pins the invariant).
+  //
+  // Anything else — in particular a write reached through `getElementById` —
+  // would be a second author under a host React renders.
+  const EXPECTED = {
+    'frontend/src/features/home/home.js': [
+      'headerEl.innerHTML = Home.renderMenuHeaderHtml(app);',
+      'overlay.innerHTML = cells;',
+    ],
+    'frontend/src/features/home/home-panels.js': [],
+    'frontend/src/features/home/home-layout.js': [],
+  };
+  for (const [rel, expected] of Object.entries(EXPECTED)) {
+    const code = strip(read(rel));
+    const writes = (code.match(/^\s*\S.*\.innerHTML\s*=.*$/gm) || []).map((l) => l.trim());
+    assert.deepEqual(writes, expected, `${rel}: unexpected markup write`);
+    assert.doesNotMatch(code, /insertAdjacentHTML/, `${rel} injects markup`);
+    assert.doesNotMatch(code, /getElementById\([^)]*\)\.innerHTML/,
+      `${rel} fills a host it found by id`);
+  }
+  // …and the island mounts a component for every one of them, so there is no
+  // empty <section> left for a module to find by id and fill.
+  const island = read('frontend/src/features/home/index.tsx');
+  for (const tag of ['<AppGrid />', '<AppsMore />', '<WidgetStrip />',
+    '<DiscoverSection />', '<ChallengesSection />', '<CreateSection />']) {
+    assert.ok(island.includes(tag), `the island mounts ${tag}`);
+  }
+});
+
+test('the panel sections publish through a store, on one paint', () => {
+  const { Home, sandbox } = makeHome();
+  // HomePanels rides in the same sandbox as home.js — the island imports it
+  // first, and Home.render() calls it.
+  const panels = sandbox.HomePanels;
+  assert.ok(panels, 'HomePanels is published for the legacy callers');
+  const store = sandbox.panelsStore;
+  assert.equal(store.get().painted, false, 'nothing published before a render');
+
+  Home._apps = [APP];
+  panels._data = {
+    registry: [
+      { key: 'discover', title: 'Discover', removable: false },
+      { key: 'create', title: 'Create app', removable: true },
+    ],
+    hidden: [],
+    panels: [],
+  };
+  Home.render();
+
+  const state = JSON.parse(JSON.stringify(store.get()));
+  assert.equal(state.painted, true, 'Home.render() paints the panels too');
+  assert.equal(state.discover.title, 'Discover');
+  assert.equal(state.create.canCreate, false, 'no App.user quota in this harness');
+  assert.equal(state.challenges, null, 'a block the registry does not carry is absent');
 });

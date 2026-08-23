@@ -134,7 +134,11 @@ test('one entry point reaches all three surfaces', () => {
     'the Challenges area is in the shell, above the fold of the home screen');
   const panels = fs.readFileSync(
     path.join(root, 'frontend/src/features/home/home-panels.js'), 'utf8');
-  assert.match(panels, /class="home-panel-lb-browse[^"]*"[\s\S]*?aria-label="Open leaderboard"/,
+  // The bar's link is drawn by the React block (#1191); home-panels.js keeps
+  // the destination, which is the half that owns the hash.
+  const ui = fs.readFileSync(
+    path.join(root, 'frontend/src/features/home/panels/ui.tsx'), 'utf8');
+  assert.match(ui, /className="home-panel-lb-browse[^"]*"[\s\S]*?aria-label="Open leaderboard"/,
     'the area\u2019s title bar carries the link');
   assert.match(panels, /goToLeaderboard\(kind\) \{[\s\S]*?location\.hash = kind === 'kudos' \? '#leaderboard\/users' : '#leaderboard'/,
     'and it is a real hash navigation, so the device back gesture returns home');

@@ -30,6 +30,9 @@ import * as React from 'react';
  *                   the DOM.
  *   `filled`      — `fill="currentColor"`, no stroke. One: the GitHub mark.
  *
+ * One glyph is written out instead of built: `EllipsisVerticalIcon` is three
+ * <circle>s on the 20 grid, and there is no `d` to hand a factory.
+ *
  * Everything else — `fill="none"`, `stroke="currentColor"`,
  * `viewBox="0 0 24 24"`, `strokeLinecap`/`strokeLinejoin` on every path — was
  * already identical at all 36 sites, so it lives in the factory.
@@ -140,6 +143,22 @@ export const Bars3Icon = stroked('Bars3Icon', 'M4 6h16M4 12h16M4 18h16');
 
 export const PlusIcon = stroked('PlusIcon', 'M12 5v14M5 12h14');
 
+/**
+ * The plus that spans the whole 24 grid rather than PlusIcon's inset one, and
+ * is always drawn at a heavier stroke. Three sites want the bolder mark
+ * because it is the CONTENT of a small round badge or an empty tile rather
+ * than a label's leading glyph: the home card menu's Add control, Discover's
+ * add badge, and the Create app tile.
+ *
+ * Two of those still live in HTML strings (features/home/home.js's card menu)
+ * — this export is the source of truth for that duplicate, the same
+ * arrangement BookmarkIcon has with the group-chat save toggle.
+ */
+export const PlusWideIcon = stroked('PlusWideIcon', 'M12 4v16m8-8H4');
+
+/** The disclosure caret the home panels' expand toggle rotates. */
+export const ChevronDownIcon = stroked('ChevronDownIcon', 'M19 9l-7 7-7-7');
+
 export const HomeIcon = strokedPath(
   'HomeIcon',
   'M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-4 0a1 1 0 01-1-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 01-1 1h-2z',
@@ -177,6 +196,18 @@ export const TrophyIcon = stroked(
  * is why this is a `stroked` glyph rather than a `strokedPath` one.
  */
 export const CheckIcon = stroked('CheckIcon', 'M5 13l4 4L19 7');
+
+/**
+ * A trophy on a plinth — the door to the Leaderboard screen, drawn on the
+ * 24 grid at a finer weight than TrophyIcon's blockier mark. TrophyIcon was
+ * the hamburger drawer's row glyph; this is the one the home screen's
+ * Challenges bar and its standings footer carry, and the two are genuinely
+ * different drawings rather than two spellings of one.
+ */
+export const TrophyOutlineIcon = stroked(
+  'TrophyOutlineIcon',
+  'M16.5 18.75h-9m9 0a3 3 0 013 3h-15a3 3 0 013-3m9 0v-3.375c0-.621-.503-1.125-1.125-1.125h-.871M7.5 18.75v-3.375c0-.621.504-1.125 1.125-1.125h.872m5.007 0H9.497m5.007 0a7.454 7.454 0 01-.982-3.172M9.497 14.25a7.454 7.454 0 00.981-3.172M5.25 4.236c-.982.143-1.954.317-2.916.52A6.003 6.003 0 007.73 9.728M5.25 4.236V4.5c0 2.108.966 3.99 2.48 5.228M5.25 4.236V2.721C7.456 2.41 9.71 2.25 12 2.25c2.291 0 4.545.16 6.75.47v1.516M7.73 9.728a6.726 6.726 0 002.748 1.35m8.272-7.322c.983.143 1.954.317 2.916.52a6.003 6.003 0 01-5.395 4.972m0 0a6.726 6.726 0 01-2.749 1.35m0 0a6.772 6.772 0 01-3.044 0',
+);
 
 export const ShieldCheckIcon = stroked(
   'ShieldCheckIcon',
@@ -338,6 +369,24 @@ export const BookmarkSolidIcon = filled(
   'BookmarkSolidIcon',
   'M6.32 2.577a49.255 49.255 0 0 1 11.36 0c1.497.174 2.57 1.46 2.57 2.93V21a.75.75 0 0 1-1.085.67L12 18.089l-7.165 3.583A.75.75 0 0 1 3.75 21V5.507c0-1.47 1.073-2.756 2.57-2.93Z',
 );
+
+/**
+ * The ⋮ overflow control — three filled dots on the 20 grid, not the 24 one.
+ *
+ * It is written out rather than built by `filled()` because it is the only
+ * glyph in the set drawn from <circle>s: three round dots on a 24 grid have to
+ * be described as three arcs each, and the path data for that is unreadable
+ * next to `cx`/`cy`/`r`. The 20 viewBox is the reason the radii are whole
+ * numbers.
+ */
+export const EllipsisVerticalIcon = ({ id, className, ...rest }: IconProps) => (
+  <svg id={id} className={className} viewBox="0 0 20 20" fill="currentColor" {...rest}>
+    <circle cx="10" cy="4.2" r="1.6" />
+    <circle cx="10" cy="10" r="1.6" />
+    <circle cx="10" cy="15.8" r="1.6" />
+  </svg>
+);
+EllipsisVerticalIcon.displayName = 'EllipsisVerticalIcon';
 
 export const GitHubIcon = filled(
   'GitHubIcon',

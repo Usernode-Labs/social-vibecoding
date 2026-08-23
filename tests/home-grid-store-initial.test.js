@@ -20,11 +20,14 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { INITIAL_GRID, INITIAL_CHROME } = require('./helpers/home-grid-store');
+const {
+  INITIAL_GRID, INITIAL_CHROME, INITIAL_PANELS,
+} = require('./helpers/home-grid-store');
 
 const FEATURE_DIR = path.join(__dirname, '..', 'frontend', 'src', 'features', 'home');
 const STORE_PATH = path.join(FEATURE_DIR, 'grid-store.ts');
 const CHROME_PATH = path.join(FEATURE_DIR, 'chrome-store.ts');
+const PANELS_PATH = path.join(FEATURE_DIR, 'panels-store.ts');
 
 test('the harness mirrors INITIAL_GRID exactly', () => {
   const src = fs.readFileSync(STORE_PATH, 'utf8');
@@ -103,4 +106,34 @@ test('the initial chrome renders the two EMPTY hosts the shell shipped', () => {
     'the strip is iOS-in-app only; every other platform never activates it');
   assert.equal(INITIAL_CHROME.strip.helpVisible, false);
   assert.deepEqual(INITIAL_CHROME.strip.tiles, []);
+});
+
+// ── The THIRD home store ──────────────────────────────────────────────
+//
+// home-panels.js's, and a separate one for a separate module's paint:
+// `HomePanels.render()` is called from `Home.render()` but also on its own —
+// an expand toggle, an optimistic hide — and the three blocks below the grid
+// have nothing to do with the launcher canvas above them.
+
+test('the harness mirrors INITIAL_PANELS exactly', () => {
+  const src = fs.readFileSync(PANELS_PATH, 'utf8');
+  const m = src.match(/export const INITIAL_PANELS: HomePanelsState = (\{[\s\S]*?\n\});/);
+  assert.ok(m, 'INITIAL_PANELS is no longer declared the way this test reads it —'
+    + ' update the pattern here rather than deleting the guard');
+  assert.deepEqual(parseLiteral(m[1]), INITIAL_PANELS,
+    'tests/helpers/home-grid-store.js has drifted from panels-store.ts');
+});
+
+test('the initial panels render the three EMPTY, UN-hidden hosts', () => {
+  // The other two stores ship their hosts hidden; these three do not, and the
+  // difference is real rather than an oversight. The hand-written shell shipped
+  // `<section class="px-3 pb-3">` with no `hidden`, so that is what the
+  // prerendered document contains and what the first client render has to
+  // agree with. `painted: false` is what defers the class: it separates "no
+  // render has happened yet" from "this render decided there is nothing to
+  // show", and without it the very first paint would add `hidden` and mismatch.
+  assert.equal(INITIAL_PANELS.painted, false);
+  assert.equal(INITIAL_PANELS.discover, null);
+  assert.equal(INITIAL_PANELS.challenges, null);
+  assert.equal(INITIAL_PANELS.create, null);
 });

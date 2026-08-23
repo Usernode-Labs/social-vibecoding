@@ -1472,12 +1472,13 @@ const Home = {
     `;
   },
 
-  // NOTE: renderCreateTile() is gone. "Create an app" is a WIDGET in the
-  // grid now (HomePanels.renderCreatePanel), present on every home screen
-  // for every account — dimmed and self-explaining where the viewer has no
-  // app quota, rather than swapped for a hint paragraph in a trailing
-  // section. Home.wireCreateButtons() below still binds its button, and
-  // CREATE_DISABLED_HINT is still the one wording of the locked case.
+  // NOTE: renderCreateTile() is gone. "Create an app" is a fixed SECTION now
+  // (features/home/panels/create.tsx), present on every home screen for every
+  // account — dimmed and self-explaining where the viewer has no app quota,
+  // rather than swapped for a hint paragraph in a trailing section. Its button
+  // carries its own handler; CREATE_DISABLED_HINT below is still the one
+  // wording of the locked case, shared by the tooltip, the tap toast and the
+  // ⋮ menu's inert note.
 
   // ── Usernode widget section (iOS in-app only) ──────────────────────
   //
@@ -3631,29 +3632,17 @@ const Home = {
   // three can never drift.
   CREATE_DISABLED_HINT: 'Ask an admin to enable app creation for your account.',
 
-  // Idempotent click-wiring for every `.home-create-btn` currently
-  // mounted (the empty-state CTA, the per-tile placeholder pill,
-  // etc.). Listeners are re-bound on every Home.load(); cloneNode
-  // swap clears any stale ones from a prior render so the modal
-  // doesn't open twice. The non-<button> branch is a defensive
-  // fallback — both current call sites use real <button> elements
-  // and get Enter/Space activation for free — but kept so future
-  // div-based variants don't silently lose keyboard support.
-  wireCreateButtons() {
-    document.querySelectorAll('.home-create-btn').forEach((btn) => {
-      const fresh = btn.cloneNode(true);
-      btn.parentNode.replaceChild(fresh, btn);
-      fresh.addEventListener('click', () => App.showCreateModal());
-      if (fresh.tagName !== 'BUTTON') {
-        fresh.addEventListener('keydown', (e) => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            App.showCreateModal();
-          }
-        });
-      }
-    });
-  },
+  // `wireCreateButtons()` lived here: `document.querySelectorAll('.home-create-btn')`,
+  // each button cloneNode'd and swapped for a fresh copy so a re-paint could
+  // not leave two listeners on it, then a click handler bound to the clone.
+  //
+  // Its one caller was `HomePanels._wire`, and its one matching element is now
+  // rendered by features/home/panels/create.tsx. Both halves of what it did
+  // stop applying there: React keeps the element across paints, so there are
+  // no stale listeners to clear, and the clone-and-replace is a structural DOM
+  // write inside a subtree React owns — the exact failure the ownership rule
+  // exists to prevent. Keeping it as an unused helper would leave that loaded
+  // gun pointed at the block, so it went with its caller.
 
   // Targeted deploy-state update for a single app. Called from the
   // `app_redeploy_status` WS handler (deploy END triggers a full
