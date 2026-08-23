@@ -20,6 +20,8 @@
   /* Text ON the accent — the outgoing message bubble is the only place the
      shell puts type on a saturated fill, and it must not follow the page. */
   --accent-ink: #ffffff;
+  /* The agent bubble's surface — see the .dark counterpart. */
+  --bubble-bg: #ffffff;
 
   /* ── App identity tints (the widget language) ──────────────────────
      An app's tile colour. DELIBERATELY OUTSIDE the zinc/violet ramps:
@@ -667,6 +669,9 @@ html.un-kb .platform-safe-bar {
   --accent-light: #8cc4ff;
   --accent-tint: rgba(90, 169, 255, 0.14);
   --accent-ink: #0b0b0c;
+  /* One step UP from the page here, not white: the page is near-black, so a
+     bubble has to be lighter than it or it stops being a bubble. */
+  --bubble-bg: #1c1c1e;
 
   /* Dark counterparts of the semantic state tokens. Every --state-*
      declared on :root has one here — tests/dev-color-tokens.test.js
@@ -2043,9 +2048,10 @@ html, body {
 
 .dc-msg-assistant {
   margin-right: auto;
-  /* --bg-primary, not the page ground: on the grey ground a bubble has to be
-     a distinct surface or it disappears into the transcript. */
-  background: var(--bg-primary);
+  /* A bubble has to be a distinct surface or it disappears into the
+     transcript — which is what --bg-primary did here in DARK mode, where it
+     IS the page ground. --bubble-bg states the surface per theme. */
+  background: var(--bubble-bg);
   border-radius: 1.25rem;
   margin-bottom: 4px;
 }
