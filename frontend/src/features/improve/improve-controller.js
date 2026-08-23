@@ -163,14 +163,32 @@ const Improve = {
    *
    * The counterpart of openDev below. It does NOT go through _withApp, which
    * always lands on Dev — this is the one destination that is the other tab.
-   * Self-hosted rows have no reachable iframe target, which is why the segment
-   * is not rendered for them at all (see ImproveViewToggle); switchTab would
-   * coerce the request to Dev anyway, so this can never strand a viewer.
+   *
+   * ── The self-hosted row goes HOME (#1386) ──────────────────────────
+   *
+   * The platform's own row has no per-slug iframe URL, so `switchTab('app')`
+   * coerces the request to the Dev forum — which is why the segment used not to
+   * be rendered for it at all. That reasoning held for the TAB and not for the
+   * destination: "the app itself" is not missing for the platform, it merely is
+   * not an iframe. The platform's product surface IS the home screen, and home
+   * is the very screen `Home.publishImproveTarget()` publishes this target
+   * from. So the segment renders there too and lands home, which closes the
+   * one-way trip the toggle exists to fix.
+   *
+   * Already home — no app open — is the state that segment renders as ACTIVE,
+   * so there is nowhere to go and the click is a no-op rather than a pointless
+   * re-entry transition. Those are the only two states this can be reached in:
+   * every screen other than home and an open app clears the target outright
+   * (setAppOpen(false)), which unrenders the whole control.
    */
   openApp() {
     Improve.close();
-    const { slug } = improveStore.get();
+    const { slug, selfHosted } = improveStore.get();
     if (!slug || !window.App) return;
+    if (selfHosted) {
+      if (window.App.currentApp) window.App.navigateHome();
+      return;
+    }
     if (window.App.currentApp === slug) window.App.switchTab('app');
     else window.App.navigateToApp(slug, 'app');
   },

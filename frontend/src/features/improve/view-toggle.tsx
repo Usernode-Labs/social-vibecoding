@@ -39,14 +39,30 @@
  * Kanban are only ever active while the Dev half is the one on screen, which is
  * exactly the `tab === 'dev' && mode === …` conjunction below.
  *
- * ── The App segment is conditional ─────────────────────────────────────
+ * ── All three segments render everywhere, home included (#1386) ────────
  *
- * A self-hosted row (the platform's own app, which is what home targets) has no
- * per-slug iframe URL, so its App tab does not resolve — `App.switchTab()`
- * coerces any request for it to the Dev forum. Rendering a segment that
- * silently redirects would be a dead option in a control whose whole job is
- * saying where you are, so it is not rendered there at all. That is the same
- * exclusion the retired App/Dev switch made, for the same reason.
+ * They did not always. A self-hosted row — the platform's own app, which is
+ * what home targets — has no per-slug iframe URL, so its App TAB does not
+ * resolve: `App.switchTab('app')` coerces any request for it to the Dev forum.
+ * A segment that silently redirects is a dead option in a control whose whole
+ * job is saying where you are, so it was left out for that row, the same
+ * exclusion the retired App/Dev switch made.
+ *
+ * That reasoning held for the tab and not for the DESTINATION. "The app
+ * itself" is not missing for the platform — it simply is not an iframe. The
+ * platform's product surface IS the home screen, which is the very screen
+ * `Home.publishImproveTarget()` publishes this target from. So the segment
+ * renders for the self-hosted row too and `Improve.openApp()` sends it home,
+ * which closes the same one-way trip the toggle was built to fix: before this,
+ * following Kanban out of home left a control reading Feed | Kanban with
+ * NEITHER segment selected and nothing in it to get back.
+ *
+ * `active` needed no change to say so. On home no app is open, so the store's
+ * `tab` is still `App.currentTab`'s own initial 'app' and the App segment reads
+ * as selected; opening the Dev half republishes 'dev' and Feed or Kanban takes
+ * over. The label stays "App" in both homes — a segmented control whose labels
+ * move around is a control you have to re-read — and only the tooltip names the
+ * platform case.
  */
 
 import { AppWindowIcon, BoardIcon, ListLinesIcon } from '@/components/ui/icons';
@@ -117,20 +133,18 @@ export function ImproveViewToggle({ compact }: { compact: boolean }) {
       role="tablist"
       aria-label="App view"
     >
-      {selfHosted ? null : (
-        <button
-          type="button"
-          role="tab"
-          data-view-segment="app"
-          aria-selected={active === 'app' ? 'true' : 'false'}
-          className={segmentCls(active === 'app', compact)}
-          onClick={() => select('app')}
-          title="The app itself"
-        >
-          <AppWindowIcon className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-          App
-        </button>
-      )}
+      <button
+        type="button"
+        role="tab"
+        data-view-segment="app"
+        aria-selected={active === 'app' ? 'true' : 'false'}
+        className={segmentCls(active === 'app', compact)}
+        onClick={() => select('app')}
+        title={selfHosted ? 'The platform itself — back to home' : 'The app itself'}
+      >
+        <AppWindowIcon className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+        App
+      </button>
       <button
         type="button"
         role="tab"

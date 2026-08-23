@@ -486,10 +486,18 @@ test('the view toggle renders in BOTH homes, and CSS picks which one shows', () 
   // way back to once you had followed Kanban out of it.
   assert.match(toggle, /Improve\.openApp\(\)/);
   assert.match(toggle, /Improve\.openDev\(segment\)/);
-  // The App segment is not rendered for a self-hosted row: its iframe target
-  // does not resolve, and switchTab() coerces the request to Dev anyway, so
-  // the segment would be a dead option in a control that says where you are.
-  assert.match(toggle, /selfHosted \? null :/);
+  // #1386: the App segment renders for EVERY row, the platform's self-hosted
+  // one included. Its iframe target still does not resolve, so openApp() sends
+  // that row home instead — the platform's product surface is the home screen,
+  // and leaving the segment out was what left the control reading Feed | Kanban
+  // with neither selected once you had followed Kanban out of home.
+  assert.ok(!/selfHosted \? null :/.test(toggle),
+    'the App segment must not be withheld from the self-hosted row');
+  assert.match(toggle, /title=\{selfHosted \?/,
+    'only the tooltip distinguishes the platform case; the label stays "App"');
+  const controller = read('frontend/src/features/improve/improve-controller.js');
+  assert.match(controller, /if \(selfHosted\) \{\s*\n\s*if \(window\.App\.currentApp\) window\.App\.navigateHome\(\);/,
+    'openApp() sends the self-hosted row home, and no-ops when it is already there');
 
   // Active state comes from two stores because it genuinely lives in two
   // places — which HALF of the app is on screen, and which dev view.
