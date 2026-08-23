@@ -550,16 +550,76 @@ const GroupChat = {
     GroupChat.typingTimeout = setTimeout(() => { GroupChat.typingTimeout = null; }, 2000);
   },
 
+  // ── The transcript's view model (#1191) ────────────────────────────
+  //
+  // One message -> the flat facts its row renders. Every branch the template
+  // string evaluated inline is resolved HERE, where App.user, AppView.voteState
+  // and the message-kind vocabulary already live; features/group-chat/
+  // transcript.tsx renders it and is the only writer below #gc-messages.
+  //
+  // `bodyHtml` stays markup: renderMessageBody runs the content through
+  // DevChat.renderMarkdown and a sanitizer, and a second copy of that pipeline
+  // in React is exactly how the two drift apart.
+  _messageView(msg) {
+    const kindRaw = msg.msgType || msg.msg_type || 'message';
+    const meta = msg.metadata || msg.meta || {};
+    const isVote = kindRaw === 'vote';
+    const isSystem = kindRaw === 'system';
+    const isSpecShare = kindRaw === 'spec_share' && !!meta.specShare;
+    const kind = isSpecShare ? 'spec_share' : (isVote ? 'vote' : (isSystem ? 'system' : 'message'));
+    const username = msg.username || 'System';
+    const me = App.user && App.user.username;
+    const editedAt = msg.editedAt || msg.edited_at;
+    const q = meta.quote;
+    const atts = meta.attachments;
+    return {
+      id: msg.id == null ? null : Number(msg.id),
+      kind,
+      username,
+      time: new Date(msg.createdAt || msg.created_at)
+        .toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      bodyHtml: kind === 'message' ? renderMessageBody(msg.content) : '',
+      systemText: kind === 'message' ? '' : String(msg.content == null ? '' : msg.content),
+      mine: msg.userId === App.user?.id || msg.user_id === App.user?.id,
+      editedTitle: editedAt ? GroupChat._editedTitle(editedAt) : null,
+      unread: !!msg.has_unread_notification,
+      bookmarked: !!(msg.saved || msg.bookmarked),
+      canEdit: msg.userId === App.user?.id || msg.user_id === App.user?.id,
+      quote: q ? {
+        username: q.author || (q.source === 'pr' ? `PR #${q.prNumber || ''}`.trim() : 'system'),
+        excerpt: GroupChat._collapseSnippet(q.snippet).slice(0, 160),
+        targetId: q.refMsgId == null ? null : Number(q.refMsgId),
+      } : null,
+      reactions: ((msg.reactions) || []).map((r) => {
+        const users = Array.isArray(r.users) ? r.users : [];
+        return { emoji: r.emoji, count: r.count, users, mine: !!(me && users.includes(me)) };
+      }),
+      hasAttachments: Array.isArray(atts) && atts.length > 0 && !!GroupChat._attachSlug(),
+      voteRowClass: isVote
+        ? GroupChat._rowVoteClass(GroupChat._resolvePr(...GroupChat._voteRef(msg))) : '',
+    };
+  },
+
+  // The React bridge, or null before the bundle has evaluated. Reached by name
+  // because this file is a classic script that loads before it.
+  _react() {
+    return (typeof window !== 'undefined' && window.UsernodeReact)
+      ? window.UsernodeReact.groupChat : null;
+  },
+
   render() {
     const container = document.getElementById('gc-messages');
     if (!container) return;
-    container.innerHTML = GroupChat.messages.map(GroupChat.renderMessageHtml).join('');
+    // (Re)establish the portal: #gc-messages is created fresh by
+    // AppView.renderDevChatTab on every tab switch, so the previous mount is
+    // pointing at a detached node by now.
+    GroupChat._react()?.mountTranscript(container);
+    GroupChat._react()?.publishTranscript(GroupChat.messages.map(GroupChat._messageView));
   },
 
   appendMessage(msg) {
-    const container = document.getElementById('gc-messages');
-    if (!container) return;
-    container.insertAdjacentHTML('beforeend', GroupChat.renderMessageHtml(msg));
+    if (!document.getElementById('gc-messages')) return;
+    GroupChat._react()?.appendTranscriptMessage(GroupChat._messageView(msg));
   },
 
   // ── #194: thread chat (mounted inside Issues / Proposals accordions) ─
@@ -1263,8 +1323,14 @@ const GroupChat = {
       }
     }
     if (msg) msg.reactions = reactions || [];
-    const el = document.getElementById(`gc-react-${messageId}`);
-    if (el) el.innerHTML = GroupChat._renderReactionPills(msg || { reactions: reactions || [] });
+    // A field update, not a targeted innerHTML write into a row React owns.
+    const me = App.user && App.user.username;
+    GroupChat._react()?.patchTranscriptMessage(Number(messageId), {
+      reactions: ((msg && msg.reactions) || reactions || []).map((r) => {
+        const users = Array.isArray(r.users) ? r.users : [];
+        return { emoji: r.emoji, count: r.count, users, mine: !!(me && users.includes(me)) };
+      }),
+    });
   },
 
   // Toggle an emoji on a message for the current user (server decides
