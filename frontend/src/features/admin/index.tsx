@@ -128,7 +128,7 @@ import './admin-status.js';
 import './admin-node.tsx';
 import './admin-analytics.js';
 import './admin-estimator.js';
-import './admin-merges.js';
+import './admin-merges.tsx';
 import './admin-gallery.tsx';
 import './admin-campaigns.js';
 import './admin-push.js';
