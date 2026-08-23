@@ -117,9 +117,9 @@ test('the console island imports every admin module, console first', () => {
     .map((m) => m[1]);
   assert.equal(order[0], 'admin-console', 'admin-console.js is imported first');
   assert.deepEqual(order.slice(1).sort(), [
-    'admin-analytics', 'admin-campaigns', 'admin-codes', 'admin-e2e',
-    'admin-estimator', 'admin-featured-apps', 'admin-gallery', 'admin-mail',
-    'admin-merges', 'admin-node', 'admin-overview', 'admin-push',
+    'admin-analytics', 'admin-campaigns', 'admin-codes', 'admin-db-export',
+    'admin-e2e', 'admin-estimator', 'admin-featured-apps', 'admin-gallery',
+    'admin-mail', 'admin-merges', 'admin-node', 'admin-overview', 'admin-push',
     'admin-status', 'admin-topochain',
   ], 'every section module is imported by the island');
 });
@@ -368,16 +368,22 @@ test('dapp.json locks the rendered page in with checks', () => {
 // the download is a NAVIGATION rather than a Blob, and every string that
 // reaches the DOM from the history API is escaped.
 
+// ── Database export ─────────────────────────────────────────────────────
+//
+// The section moved out of the chassis into its own module in #1120 slice 19,
+// so these read admin-db-export.tsx rather than slicing admin-console.js. What
+// each one pins is unchanged; only the two that were ABOUT the old renderer
+// are restated, and both got stronger for it.
+
+const dbExportTsx = fs.readFileSync(
+  path.join(root, 'frontend/src/features/admin/admin-db-export.tsx'), 'utf8');
+
 test('the export section warns before it offers, and never uses a native prompt', () => {
-  const fn = consoleJs.slice(
-    consoleJs.indexOf('  renderDbExportSection(host) {'),
-    consoleJs.indexOf('  _resetDbExportConfirm()')
-  );
-  assert.ok(fn.length > 0, 'renderDbExportSection located');
-  assert.match(fn, /password hash/, 'spells out what the file contains');
-  assert.match(fn, /admin-db-export-phrase/, 'the typed EXPORT confirmation is an in-page field');
-  assert.match(fn, /admin-db-export-password/, 'password re-entry is an in-page field');
-  assert.ok(!/\bprompt\(/.test(consoleJs), 'no native prompt() — the platform renders its own dialogs');
+  assert.match(dbExportTsx, /password hash/, 'spells out what the file contains');
+  assert.match(dbExportTsx, /admin-db-export-phrase/, 'the typed EXPORT confirmation is an in-page field');
+  assert.match(dbExportTsx, /admin-db-export-password/, 'password re-entry is an in-page field');
+  assert.ok(!/\bprompt\(/.test(dbExportTsx), 'no native prompt() — the platform renders its own dialogs');
+  assert.ok(!/\bprompt\(/.test(consoleJs), 'and none left behind in the chassis either');
 });
 
 test('the restore instructions match the file the server actually sends', () => {
@@ -385,56 +391,56 @@ test('the restore instructions match the file the server actually sends', () => 
   // document gunzip + psql. A stale `pg_restore … .dump` line here is worse
   // than no line at all: an admin follows it during an incident and the
   // restore fails on a file pg_restore cannot read.
-  const fn = consoleJs.slice(
-    consoleJs.indexOf('  renderDbExportSection(host) {'),
-    consoleJs.indexOf('  _resetDbExportConfirm()')
-  );
-  assert.match(fn, /\.sql\.gz/, 'names the extension the browser will save');
-  assert.match(fn, /gunzip -c/, 'the restore starts by decompressing');
-  assert.match(fn, /\|\s*psql/, 'and replays the SQL with psql, not pg_restore');
-  assert.ok(!/pg_restore/.test(consoleJs), 'no leftover custom-format restore command');
-  assert.ok(!/&lt;file&gt;\.dump/.test(consoleJs), 'no leftover .dump filename');
+  assert.match(dbExportTsx, /\.sql\.gz/, 'names the extension the browser will save');
+  assert.match(dbExportTsx, /gunzip -c/, 'the restore starts by decompressing');
+  assert.match(dbExportTsx, /\|\s*psql/, 'and replays the SQL with psql, not pg_restore');
+  assert.ok(!/pg_restore/.test(dbExportTsx), 'no leftover custom-format restore command');
+  assert.ok(!/<file>\.dump/.test(dbExportTsx), 'no leftover .dump filename');
 });
 
 test('the export button is enabled by the server, not by the client', () => {
-  const fn = consoleJs.slice(
-    consoleJs.indexOf('  async loadDbExportStatus()'),
-    consoleJs.indexOf('  async startDbExport()')
-  );
-  assert.match(fn, /btn\.disabled = !data\.available/,
+  // The disabled expression is the whole assertion now: it may consult the
+  // server's `available` flag and whether the confirm panel is open, and
+  // nothing else. An environment check of the client's own would show up here
+  // as a third term.
+  assert.match(dbExportTsx, /disabled=\{!status\?\.available \|\| confirming\}/,
     'the probe decides; the client only renders the decision');
-  assert.match(fn, /DB_EXPORT_REASONS\[data\.reason\]/,
+  assert.match(dbExportTsx, /DB_EXPORT_REASONS\[status\.reason\]/,
     'the refusal copy is keyed off the server reason code');
   for (const reason of ['staging', 'unavailable', 'in_progress', 'rate_limited']) {
-    assert.ok(new RegExp(`${reason}:`).test(consoleJs), `reason '${reason}' has copy`);
+    assert.ok(new RegExp(`${reason}:`).test(dbExportTsx), `reason '${reason}' has copy`);
   }
+  // And the client must not be deciding availability from the environment.
+  assert.ok(!/IS_STAGING|USERNODE_ENV|location\.hostname/.test(dbExportTsx),
+    'availability is the server’s call, so the client reads no environment signal');
 });
 
 test('the download is navigated, not fetched into memory', () => {
-  const fn = consoleJs.slice(
-    consoleJs.indexOf('  async startDbExport()'),
-    consoleJs.indexOf('  _dbExportRow(r)')
-  );
+  const at = dbExportTsx.indexOf('  const start = async () => {');
+  const fn = dbExportTsx.slice(at, dbExportTsx.indexOf('  return (', at));
+  assert.ok(fn.length > 400, 'located the ticket flow');
   assert.match(fn, /\/api\/admin\/db-export\/ticket/, 'step 1 posts the confirmation');
   assert.match(fn, /window\.location\.href = data\.url/, 'step 2 navigates to the ticket URL');
-  assert.ok(!/createObjectURL/.test(fn),
+  assert.ok(!/createObjectURL/.test(dbExportTsx),
     'a multi-hundred-MB dump must never be held in page memory as a Blob');
-  assert.match(fn, /pw\.value = ''/, 'the password field is cleared as soon as it is spent');
+  assert.match(fn, /setPassword\(''\)/, 'the password field is cleared as soon as it is spent');
 });
 
-test('history rows are escaped — they carry admin-controlled strings', () => {
-  const fn = consoleJs.slice(
-    consoleJs.indexOf('  _dbExportRow(r)'),
-    consoleJs.indexOf('  async loadDbExportHistory()')
-  );
+test('history rows cannot render admin-controlled strings as markup', () => {
+  // These fields carry admin-supplied text — a username, a database name, a
+  // pg_dump error. They used to be interpolated into an innerHTML template,
+  // so each needed its own esc(); the row is JSX now, which escapes text
+  // children by construction. The assertion is that the class is unreachable
+  // AND that the four fields still reach the output.
+  assert.ok(!/dangerouslySetInnerHTML|\.innerHTML/.test(dbExportTsx),
+    'the history row renders no raw HTML at all');
   for (const field of ['r.username', 'r.db_name', 'r.ip', 'r.error']) {
-    assert.ok(new RegExp(`esc\\(${field.replace('.', '\\.')}`).test(fn)
-      || new RegExp(`esc\\([^)]*${field.replace('.', '\\.')}`).test(fn),
-      `${field} passes through esc()`);
+    assert.ok(dbExportTsx.includes(`{${field}}`) || dbExportTsx.includes(field),
+      `${field} still reaches the rendered row`);
   }
 });
 
 test('the section spells out post-export rotation guidance', () => {
-  assert.match(consoleJs, /rotate/i, 'the console tells the admin what to rotate if the file leaks');
-  assert.match(consoleJs, /JWT secret/i, 'naming the one rotation that invalidates every session');
+  assert.match(dbExportTsx, /rotate/i, 'the section tells the admin what to rotate if the file leaks');
+  assert.match(dbExportTsx, /JWT secret/i, 'naming the one rotation that invalidates every session');
 });

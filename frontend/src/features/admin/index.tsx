@@ -127,6 +127,7 @@ import { AdminUI } from './admin-console.js';
 import './admin-overview.tsx';
 import './admin-codes.tsx';
 import './admin-featured-apps.tsx';
+import './admin-db-export.tsx';
 import './admin-status.tsx';
 import './admin-node.tsx';
 import './admin-analytics.tsx';
