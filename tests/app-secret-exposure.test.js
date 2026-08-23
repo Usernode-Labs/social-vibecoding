@@ -44,7 +44,15 @@ stub(ids.docker, { getHostPort: async () => null });
 stub(ids.github, { parseGithubUrl: () => null, isEnabled: () => false });
 stub(ids.driftPoller, { checkAndRedeployOne: async () => ({}) });
 stub(ids.appSecrets, {});
-stub(ids.appManifest, { MAX_APP_NAME_LENGTH: 64 });
+// The create/fork routes derive the app slug through the manifest module, so
+// the stub carries the real slug builder rather than a second copy of its
+// length budget (see appManifest.MAX_APP_SLUG_LENGTH).
+const realAppManifest = require('../src/services/app-manifest');
+stub(ids.appManifest, {
+  MAX_APP_NAME_LENGTH: 64,
+  MAX_APP_SLUG_LENGTH: realAppManifest.MAX_APP_SLUG_LENGTH,
+  buildAppSlug: realAppManifest.buildAppSlug,
+});
 stub(ids.renamePr, {});
 stub(ids.staging, { rebuildProduction: async () => ({}), MissingSecretsError: class extends Error {} });
 

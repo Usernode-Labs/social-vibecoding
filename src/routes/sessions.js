@@ -15,6 +15,7 @@ const staging = require('../services/staging');
 const { appIdentityEnv } = require('../services/app-identity-env');
 const visuals = require('../services/visuals');
 const docker = require('../services/docker');
+const applicationRuntime = require('../services/application-runtime');
 const caddy = require('../services/caddy');
 const worker = require('../services/worker');
 const branchNames = require('../services/branch-names');
@@ -6654,8 +6655,21 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         // probeHealthOnce swallows its own failures; the .catch is belt and
         // braces so a docker-layer surprise can never turn "open the
         // preview" into a 500.
+        // #1381: this is the last platform code that runs before the browser
+        // is pointed at the preview URL, so it is the right place to make
+        // sure Caddy can actually resolve its upstream. The proxy's map row
+        // targets the short session alias, and a container built before
+        // aliases existed carries only its (possibly >63-byte, therefore
+        // unresolvable) name — which would 502 the preview with no way back
+        // short of a new commit. Attaching it here is idempotent, one
+        // `docker inspect` on the already-aliased path, and never throws.
+        const stagingName = `usernode-staging-${session.app_slug}--${sessionId}`;
+        await docker.ensureNetworkAlias(
+          stagingName,
+          applicationRuntime.dnsAlias({ environment: 'staging', sessionId })
+        ).catch(() => false);
         const verified = await docker.probeHealthOnce(
-          `usernode-staging-${session.app_slug}--${sessionId}`, 3000, '/health',
+          stagingName, 3000, '/health',
           { timeoutMs: 3000 }
         ).catch(() => false);
         if (!verified) {

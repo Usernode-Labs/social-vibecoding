@@ -355,6 +355,39 @@ function readPlatformEnv(parsed) {
 const MAX_APP_NAME_LENGTH = 64;
 const MIN_APP_NAME_LENGTH = 1;
 
+// Bound for a generated app SLUG, which — unlike the display name — ends up
+// inside DNS labels the platform must be able to resolve (#1381):
+//
+//   usernode-app-<slug>            the production container name, resolved by
+//                                  Caddy and by the screenshot capture
+//   <slug>--s<sessionId>.<domain>  the staging preview host label
+//
+// A DNS label caps at 63 bytes and nothing will even send a query for a
+// longer one. `usernode-app-` is 13, so 50 is the largest slug that keeps the
+// production name legal, and it also leaves the preview host label at 60 for
+// a seven-digit session id. Nothing here bounds the staging CONTAINER name,
+// which is longer still — that one is unreachable by design now and carries a
+// short network alias instead.
+//
+// Existing longer slugs are grandfathered: renaming an app does not re-slug
+// it, and a slug is a permanent URL.
+const MAX_APP_SLUG_LENGTH = 50;
+
+// Build the slug for a newly created (or forked) app from its display name
+// and a random suffix. The suffix is what makes the slug unique, so it is
+// never what gets cut — the human-readable base is truncated around it, and a
+// truncation that lands mid-word must not leave a trailing hyphen.
+// Returns null when the name has no alphanumerics at all.
+function buildAppSlug(name, code) {
+  const base = String(name == null ? '' : name)
+    .trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  if (!base) return null;
+  const suffix = `-${String(code || '')}`;
+  const room = MAX_APP_SLUG_LENGTH - suffix.length;
+  const kept = base.length <= room ? base : base.slice(0, room).replace(/-+$/, '');
+  return `${kept}${suffix}`;
+}
+
 // Normalize a raw top-level `name` into a trimmed string or null. Anything
 // that isn't a string, is empty after trimming, or busts the length bound
 // resolves to null — i.e. "no manifest name", so the platform name (the
@@ -1543,5 +1576,7 @@ module.exports = {
   KEY_RE,
   MANIFEST_FILENAME,
   MAX_APP_NAME_LENGTH,
+  MAX_APP_SLUG_LENGTH,
+  buildAppSlug,
   MIN_APP_NAME_LENGTH,
 };
