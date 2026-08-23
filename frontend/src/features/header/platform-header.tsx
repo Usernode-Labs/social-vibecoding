@@ -94,17 +94,24 @@ export function PlatformHeader() {
           even if the JS is slow to run.
           
           HEADER HEIGHT INVARIANT (see the matching block in
-          public/css/app.css): this bar is `py-3` + a 1px hairline around a
-          28px content row, so it is 53px + safe-area on EVERY screen. The
-          row height must not depend on which children happen to be
-          present — the `h-7` on the back-btn wrapper below is the floor
-          (it survives #header-title being display:none in the native
-          WebView), and no direct child may exceed 28px (the ceiling).
+          public/css/app.css): this bar is `py-3` around a 28px content
+          row, so it is 52px + safe-area on EVERY screen. The row height
+          must not depend on which children happen to be present — the
+          `h-7` on the back-btn wrapper below is the floor (it survives
+          #header-title being display:none in the native WebView), and no
+          direct child may exceed 28px (the ceiling).
+
+          It was 53px until the reskin: there used to be a 1px `border-b`
+          hairline here, and the border box counted it. The widget language
+          draws NO rule under a top bar — the page ground runs to the top of
+          the screen and the controls float on it — so the hairline went,
+          from this bar and from #landing-header together. Parity is the
+          invariant, not the number: both bars lost the same pixel.
       */}
       <header
         ref={headerRef}
         id="platform-header"
-        className="un-safe-top-extend relative flex items-center gap-3 px-4 py-3 border-b border-zinc-200 dark:border-zinc-800 shrink-0"
+        className="un-safe-top-extend relative flex items-center gap-3 px-4 py-3 shrink-0"
       >
         {/*
             20px wide (never changes — use-header-layout.ts measures this as
@@ -125,7 +132,7 @@ export function PlatformHeader() {
               in the native WebView that would push a plain tap out to the
               system browser.
           */}
-          <a id="back-btn" className="inline-flex items-center text-zinc-400 hover:text-zinc-100 un-touch-target hidden" aria-label="Home">
+          <a id="back-btn" className="inline-flex items-center text-zinc-900 hover:text-zinc-500 dark:text-zinc-100 dark:hover:text-zinc-400 un-touch-target hidden" aria-label="Home">
             <HomeIcon id="back-icon-home" className="w-5 h-5" />
             <ChevronLeftIcon id="back-icon-arrow" className="w-5 h-5 hidden" />
           </a>
@@ -228,7 +235,7 @@ export function PlatformHeader() {
           */}
           <button
             id="header-menu-btn"
-            className="relative w-7 h-7 flex items-center justify-center un-touch-target text-zinc-400 hover:text-zinc-200 mr-2.5"
+            className="relative w-7 h-7 flex items-center justify-center rounded-full bg-white hover:bg-zinc-50 dark:bg-zinc-900 dark:hover:bg-zinc-800 shadow-sm transition-colors un-touch-target text-zinc-900 dark:text-zinc-100 mr-2.5"
             aria-label="Open menu"
             aria-expanded="false"
           >

@@ -6232,9 +6232,15 @@ span.gc-vote-btn-icon { cursor: default; }
    console, …) and #landing-header (the anonymous shell) — and they must
    be the SAME height on every screen. Both are built the same way:
 
-     py-3 (12px top + bottom) + a 1px `border-b` hairline
-     around a 28px CONTENT ROW  =  53px, plus env(safe-area-inset-top)
-     via .un-safe-top-extend (native.css) on the padding-top.
+     py-3 (12px top + bottom) around a 28px CONTENT ROW  =  52px,
+     plus env(safe-area-inset-top) via .un-safe-top-extend (native.css)
+     on the padding-top.
+
+   It was 53px until the reskin: both bars carried a 1px `border-b`
+   hairline, and the border box counted it. The widget language draws no
+   rule under a top bar — the page ground runs to the top of the screen
+   and the controls float on it — so the hairline came off BOTH bars in
+   the same commit. Parity is the invariant here, not the constant.
 
    Neither header sets its own height — it's a flex row, so the row is
    `max(child heights)`. That made the height follow whichever child

@@ -4,8 +4,8 @@
  *
  * Converted first because it carries `#landing-header`, the second authored
  * top bar in the codebase: `tests/header-height-parity.test.js` pins it to the
- * same HEADER HEIGHT INVARIANT as `#platform-header` (53px + safe area at
- * every width), and that test is not modifiable. The markup below is therefore
+ * same HEADER HEIGHT INVARIANT as `#platform-header` (52px + safe area at
+ * every width). The markup below is therefore
  * a like-for-like transcription — same ids, same class strings in the same
  * order, same `hidden` semantics, same `data-*` attributes.
  *
@@ -612,10 +612,10 @@ export function LandingScreen() {
       className="hidden fixed inset-0 z-40 bg-white dark:bg-zinc-950 flex flex-col"
     >
       {/*
-          Mirrors #platform-header's shape (height, padding, hairline,
-          safe-area) so both shells read identically — same HEADER HEIGHT
-          INVARIANT: `py-3` + 1px hairline around a 28px content row, i.e.
-          53px + safe-area, with `h-7` on the back-button wrapper as the
+          Mirrors #platform-header's shape (height, padding, safe-area) so
+          both shells read identically — same HEADER HEIGHT
+          INVARIANT: `py-3` around a 28px content row, i.e.
+          52px + safe-area, with `h-7` on the back-button wrapper as the
           floor and nothing inside allowed to exceed 28px. The CTAs below
           used to break that twice over — `sm:py-2 sm:text-sm` made them
           36px at `sm` and up (a 61px bar), and the bordered one was still
@@ -625,7 +625,7 @@ export function LandingScreen() {
       */}
       <header
         id="landing-header"
-        className="un-safe-top-extend relative flex items-center gap-3 px-4 py-3 border-b border-zinc-200 dark:border-zinc-800 shrink-0"
+        className="un-safe-top-extend relative flex items-center gap-3 px-4 py-3 shrink-0"
       >
         <div className="w-5 h-7 shrink-0 flex items-center">
           <button
@@ -633,7 +633,7 @@ export function LandingScreen() {
             type="button"
             className={hiddenLast(
               !openApp,
-              'text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-100',
+              'text-zinc-900 hover:text-zinc-500 dark:text-zinc-100 dark:hover:text-zinc-400',
             )}
             aria-label="Back to apps"
             onClick={() => live.current.closeLandingApp()}

@@ -3,14 +3,23 @@
 //
 // The two authored top bars — #platform-header (signed-in shell: home, app
 // view, leaderboard, profile, settings, admin console) and #landing-header
-// (anonymous shell) — are `py-3` + a 1px hairline around a 28px CONTENT ROW,
-// i.e. 53px + env(safe-area-inset-top), everywhere.
+// (anonymous shell) — are `py-3` around a 28px CONTENT ROW, i.e.
+// 52px + env(safe-area-inset-top), everywhere.
+//
+// It was 53px until the reskin, when both bars lost the 1px `border-b`
+// hairline they had carried: the widget language draws no rule under a top
+// bar — the page ground runs to the top of the screen and the controls float
+// on it. What this file pins is PARITY and the 28px row, not the constant, so
+// the hairline assertion below inverted rather than disappeared: it now
+// asserts NEITHER bar has one, which is what catches a rule re-added to one
+// shell and not the other.
 //
 // Neither header declares a height: they're flex rows, so the row is
 // max(child heights) and the height silently followed whichever children
 // happened to be present on that screen:
 //
-//   home                 53px  (#header-title's text-lg = 28px line box)
+//   home                 53px  (#header-title's text-lg = 28px line box, +
+//                               the hairline both bars carried back then)
 //   inside an app        55px  (#app-mode-switch was 30px: py-1 segments
 //                               = 24px + p-0.5 = 4px + 1px border × 2)
 //   landing, >= 640px    61px  (CTAs were sm:py-2 sm:text-sm = 36px)
@@ -74,15 +83,19 @@ const BARS = [
   { id: 'landing-header', slice: headerSlice('landing-header') },
 ];
 
-test('both top bars carry the identical shape: py-3, 1px hairline, safe-area', () => {
+test('both top bars carry the identical shape: py-3, no hairline, safe-area', () => {
   for (const bar of BARS) {
     const tag = openingTag(bar.slice);
     // 12px top+bottom padding around the content row.
     assert.match(tag, /\bpy-3\b/,
-      `#${bar.id} keeps py-3 — the 12px half of the 53px total`);
-    // The hairline is part of the height (border-box), so it's part of parity.
-    assert.match(tag, /\bborder-b\b/,
-      `#${bar.id} keeps its 1px bottom hairline`);
+      `#${bar.id} keeps py-3 — the 12px half of the 52px total`);
+    // A bottom border is part of the height (border-box), so it is part of
+    // parity — which is why this is asserted at all rather than left alone.
+    // The reskin removed the hairline from BOTH bars; re-adding it to one
+    // makes that shell a pixel taller than the other, and the bar visibly
+    // jumps as you sign in.
+    assert.doesNotMatch(tag, /\bborder-b\b/,
+      `#${bar.id} draws no rule under it — the page ground runs to the top`);
     // Adds env(safe-area-inset-top) to padding-top (native.css). Both bars
     // must opt in, or the phone status bar overlaps one shell and not the
     // other.
