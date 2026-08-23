@@ -112,6 +112,7 @@ const OWNED = [
   { sel: '#admin-section-content', when: '#admin/push' },    // features/admin/admin-push.tsx
   { sel: '#admin-section-content', when: '#admin/campaigns' }, // features/admin/admin-campaigns.tsx
   { sel: '#admin-section-content', when: '#admin/mail' },    // features/admin/admin-mail.tsx
+  { sel: '#admin-section-content', when: '#admin/status' },  // features/admin/admin-status.tsx
 ];
 
 const ROUTES = [

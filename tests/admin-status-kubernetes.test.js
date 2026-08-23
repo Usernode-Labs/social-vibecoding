@@ -17,16 +17,20 @@ test('status uses a runtime-specific inventory provider', () => {
 });
 
 test('Kubernetes capacity renders quota reservations, not invented live usage', () => {
-  const source = read('frontend/src/features/admin/admin-status.js');
+  // `.tsx` since #1120 slice 13 — the section renders in React now. What this
+  // pins is the SEMANTICS of the Kubernetes branch (reserved quota, not
+  // invented live usage), which is renderer-independent; only the two spellings
+  // that named the old string-building helpers moved.
+  const source = read('frontend/src/features/admin/admin-status.tsx');
   assert.match(source, /data\.runtimeKind === 'kubernetes'/);
   assert.match(source, /CPU requests/);
   assert.match(source, /Memory requests/);
   assert.match(source, /% headroom/);
   assert.doesNotMatch(source, /Kubernetes live (CPU|memory)/i);
-  assert.match(source, /data\.runtimeKind === 'kubernetes' \? 'Capacity' : 'Capacity & host'/);
+  assert.match(source, /d\.runtimeKind === 'kubernetes' \? 'Capacity' : 'Capacity & host'/);
   assert.match(source, /s\.workersReady/);
   assert.match(source, /s\.stagingTotal/);
-  assert.match(source, /statePill\(s\.worker\.state/);
+  assert.match(source, /<StatePill state=\{s\.worker\.state/);
 });
 
 test('Kubernetes stale-preview administration is exposed as an explicit gap', () => {
