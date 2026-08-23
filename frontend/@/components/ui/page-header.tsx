@@ -15,11 +15,22 @@ import { cn } from '@/lib/utils';
  * continuous surface — there is no rule under the title to cut the page in
  * two.
  *
- * The consequence is that these components DO NOT REPLACE `#platform-header`
- * and are not wired into it. That header carries four live affordances on
- * Home (feedback, work cog, bell, hamburger) against the one this treatment
- * has room for, and reconciling that is a product decision that has been
- * deliberately deferred. These are for screens that opt in.
+ * The consequence is that these components DO NOT REPLACE `#platform-header`,
+ * and they still have no consumers. That bar carries three live affordances
+ * (the Improve pill, the view toggle, the hamburger) plus a back glyph and a
+ * title, against the one a floating-disc treatment has room for, and
+ * reconciling that is a product decision, not a restyle.
+ *
+ * The bar HAS taken the language in every way that did not require that
+ * decision — features/header/platform-header.tsx: the rule under it is gone
+ * (the page ground runs to the top of the screen), its controls are inked
+ * near-black instead of muted, and the hamburger is one of these discs in all
+ * but name. What is still deferred is the SHAPE below the bar: `LargeTitle`
+ * under a bare row of floating buttons, which is a layout change and needs
+ * the four-affordance question answered first.
+ *
+ * So these stay the vocabulary for a screen that opts in, and the fact that
+ * nothing has yet is the deferral, not an oversight.
  *
  * ── Three titles, not one with a `variant` ────────────────────────────
  *

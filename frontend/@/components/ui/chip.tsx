@@ -25,6 +25,16 @@ import { cn } from '@/lib/utils';
  * first, a rail wider than the viewport compresses its chips into ellipses
  * instead of scrolling.
  *
+ * ── No consumers yet, and that is the deferral ────────────────────────
+ *
+ * Nothing in the shell imports this. The deck leads its Changes screen with a
+ * filter rail, and the platform's nearest equivalent — the Dev screen's
+ * proposal and issue list — has no filter at all today. ADDING one is a
+ * navigation change, which this reskin deliberately does not make; the two
+ * places that needed the language's SELECTION idiom without a new control
+ * (features/improve/view-toggle.tsx and the Leaderboard's section strip)
+ * state it themselves, for the reason immediately below.
+ *
  * ── What this is NOT for ──────────────────────────────────────────────
  *
  * A TABLIST. `features/improve/view-toggle.tsx` looks like a row of chips and
