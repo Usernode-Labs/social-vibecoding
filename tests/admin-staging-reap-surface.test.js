@@ -38,6 +38,10 @@ const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
 
 const adminRoutes = read('src/routes/admin.js');
 const consoleJs = read('frontend/src/features/admin/admin-console.js');
+// The section is a React module since #1120 slice 23; the console keeps the
+// nav entry, the SECTION_MODULES mapping and the two WS forwarders app.js
+// calls, so both files carry part of what this file pins.
+const reapTsx = read('frontend/src/features/admin/admin-staging-reap.tsx');
 const appJs = read('public/js/app.js');
 const eventsJs = read('src/services/events.js');
 const reapJs = read('src/services/staging-reap.js');
@@ -124,29 +128,60 @@ test('the shell routes the aggregate event into the console', () => {
 test('the console section exists, is admin-visible, and its button is write-gated', () => {
   assert.match(consoleJs, /\{ key: 'staging-reap', label: 'Stale previews', group: '[^']+' \}/,
     'a real section in the admin console nav');
-  assert.match(
-    consoleJs,
-    /case 'staging-reap': return AdminConsole\.renderStalePreviewsSection\(host\)/,
-    'wired into the hash router'
-  );
+  // Dispatched as a delegated module rather than by a render*Section method
+  // on the chassis (#1120 slice 23) — the `switch` those two arms lived in is
+  // gone. What has to hold is that the key still resolves to a module the
+  // island imports; losing either shows "module failed to load".
+  assert.match(consoleJs, /'staging-reap': 'AdminStagingReap',/,
+    'wired into the section dispatch');
+  assert.ok(!/case 'staging-reap'/.test(consoleJs),
+    'and not ALSO on the retired switch, which would be two dispatch paths');
+  assert.match(read('frontend/src/features/admin/index.tsx'),
+    /import '\.\/admin-staging-reap\.tsx';/, 'the console island imports the module');
+  assert.match(reapTsx,
+    /if \(typeof window !== 'undefined'\) \(window as any\)\.AdminStagingReap = AdminStagingReap;/,
+    'and the module publishes the global the dispatcher looks up');
 
-  const section = consoleJs.slice(
-    consoleJs.indexOf('renderStalePreviewsSection(host)'),
-    consoleJs.indexOf('async loadStagingReap()')
-  );
-  assert.ok(section.length > 200, 'the renderer has a body');
-  assert.match(section, /const canWrite = AdminConsole\.canWrite\(\)/,
+  assert.match(reapTsx, /const canWrite = !!console_\(\)\?\.canWrite\(\)/,
     'canWrite is derived from canAdminWrite — the view-only-admin split');
-  assert.match(section, /\$\{canWrite \?/,
+  assert.match(reapTsx, /\{canWrite \? \(/,
     'the start button is conditional on write access, the section itself is not');
-  assert.match(section, /admin-reap-list/, 'a host for the live per-preview table');
+  assert.match(reapTsx, /View-only admin — you can watch a sweep, but not start one\./,
+    'and a view-only admin is told why the button is missing');
+  assert.match(reapTsx, /id="admin-reap-list"/, 'a host for the live per-preview table');
+});
+
+// The section renders through React now, so the console no longer owns the
+// markup — but public/js/app.js still calls two AdminConsole methods for this
+// section, and that surface is the SHELL's. Losing a forwarder is silent: the
+// socket frame arrives, nothing repaints, and the screen sits on a stale job.
+test('the console keeps the WS surface app.js calls, forwarding to the module', () => {
+  for (const [fwd, target] of [
+    ['handleStagingReapStatus(data)', 'window.AdminStagingReap?.handleStatus?.(data);'],
+    ['loadStagingReap()', 'window.AdminStagingReap?.reload?.();'],
+  ]) {
+    assert.ok(consoleJs.includes(fwd), `AdminConsole.${fwd} is where app.js looks for it`);
+    assert.ok(consoleJs.includes(target), `${fwd} forwards to the module`);
+  }
+  assert.match(reapTsx, /handleStatus\(data: \{ job\?: ReapJob \| null \} \| null\) \{/);
+  assert.match(reapTsx, /\n  reload\(\) \{ live\?\.reload\(\); \},/);
+  // A frame that lands while the admin is on another section must be
+  // dropped, not applied to an unmounted component — `live` is null exactly
+  // then, which is what the old `_section === 'staging-reap'` guard meant.
+  assert.match(reapTsx, /if \(!data \|\| !live\) return;/,
+    'an unmounted section drops the frame; the next mount reads the GET');
+  assert.match(reapTsx, /live = \{ paint:[\s\S]*?return \(\) => \{ live = null; \};/,
+    'and the handle is set and cleared by an effect, so it tracks mounting');
 });
 
 test('the console passes ?demo=1 through and disables the button on fixtures', () => {
-  assert.match(consoleJs, /\/api\/admin\/staging-reap\$\{demoQS\}/,
+  assert.match(reapTsx,
+    /const DEMO = typeof window !== 'undefined'\s*\n?\s*&& new URLSearchParams\(location\.search\)\.get\('demo'\) === '1'/,
+    'the flag is read once, guarded — the SSG prerender evaluates this in Node');
+  assert.match(reapTsx, /\/api\/admin\/staging-reap\$\{DEMO \? '\?demo=1' : ''\}/,
     'the page-level ?demo=1 must ride along on the status read');
-  assert.match(consoleJs, /_reapDemo/);
-  assert.match(consoleJs, /'Unavailable in previews'/,
+  assert.match(reapTsx, /setDemo\(!!data\.demo\)/);
+  assert.match(reapTsx, /'Unavailable in previews'/,
     'pressing the button in a preview would only earn a 400 — say so instead');
 });
 
@@ -159,19 +194,21 @@ test('the preview refusal is gated on staging, not just on ?demo=1', () => {
   assert.match(get, /staging = stagingReap\.isStagingEnv\(\)/,
     'the GET reports staging-ness independently of the demo branch');
   assert.match(get, /staging,/, 'and returns it on the non-demo path too');
-  assert.match(consoleJs, /_reapStaging = !!data\.staging/);
-  assert.match(consoleJs, /_reapStaging \|\| !!AdminConsole\._reapDemo/,
+  assert.match(reapTsx, /setStaging\(!!data\.staging\)/);
+  assert.match(reapTsx, /const preview = staging \|\| demo;/,
     'either flag disables the button');
+  assert.match(reapTsx, /disabled=\{running \|\| preview \|\| runtimeUnavailable \|\| starting\}/,
+    'and that is the whole disabled expression — no fifth, softer path to the POST');
 });
 
 // The confirmation text is load-bearing: teardown discards each preview's
 // throwaway data and the rebuild re-runs that proposal's checks, so an admin
 // must be told both before pressing.
 test('the confirmation dialog states the two real consequences', () => {
-  // Anchor on the DEFINITION, not the addEventListener call that precedes it.
-  const start = consoleJs.indexOf('async _startStagingReap()');
-  assert.ok(start > 0, '_startStagingReap is defined');
-  const body = consoleJs.slice(start, start + 1800);
+  const start = reapTsx.indexOf('const start = useCallback');
+  assert.ok(start > 0, 'the start handler is defined');
+  const body = reapTsx.slice(start, reapTsx.indexOf('const running =', start));
+  assert.ok(body.length > 500, 'the handler has a body');
   assert.match(body, /_confirm\(/, 'destructive sweeps are confirmed, not one-click');
   assert.match(body, /rebuilt automatically/, 'nothing is permanently lost — say so');
   assert.match(body, /test data is discarded/i);
@@ -325,22 +362,28 @@ test('the pass also runs once at boot, after the heal recovery', () => {
 });
 
 test('the console renders the out-of-date tile and the automatic-sweep line', () => {
-  assert.match(consoleJs, /id="admin-reap-outdated"/);
-  assert.match(consoleJs, /Out of date/);
-  assert.match(consoleJs, /id="admin-reap-automatic"/);
-  assert.match(consoleJs, /Automatic sweep last ran/);
+  assert.match(reapTsx, /id="admin-reap-outdated"/);
+  assert.match(reapTsx, /Out of date/);
+  assert.match(reapTsx, /id="admin-reap-automatic"/);
+  assert.match(reapTsx, /Automatic sweep last ran/);
   // The switched-off case must say so rather than render an empty line.
-  assert.match(consoleJs, /automatic background sweep is switched off/);
+  assert.match(reapTsx, /automatic background sweep is switched off/);
+  // …but before the first response there is nothing to say, and the
+  // innerHTML version shipped that paragraph empty.
+  assert.match(reapTsx, /if \(!loaded\) return '';/,
+    'the line stays empty until the GET answers, as the static markup did');
 });
 
 test('the console counts the button\'s real blast radius, not the stale subset', () => {
   // The confirmation says "this shuts down N previews" — N must be every open
   // preview, since that is what the button does.
-  const start = consoleJs.indexOf('async _startStagingReap()');
-  assert.ok(start > 0, 'the method definition, not the click-handler reference');
-  const body = consoleJs.slice(start, start + 900);
-  assert.match(body, /_reapOpen/,
+  const start = reapTsx.indexOf('const start = useCallback');
+  assert.ok(start > 0, 'the handler definition, not the onClick reference');
+  const body = reapTsx.slice(start, reapTsx.indexOf('const ok = await', start));
+  assert.match(body, /typeof open === 'number'/,
     'confirming with the stale count would understate a fleet-wide action');
+  assert.ok(!/outdated/.test(body),
+    'and the out-of-date subset must not be what the dialog counts');
 });
 
 test('the leak event type is declared alongside the reap one', () => {

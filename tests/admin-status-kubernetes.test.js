@@ -35,11 +35,20 @@ test('Kubernetes capacity renders quota reservations, not invented live usage', 
 
 test('Kubernetes stale-preview administration is exposed as an explicit gap', () => {
   const route = read('src/routes/admin.js');
-  const consoleSource = read('frontend/src/features/admin/admin-console.js');
+  // The Stale previews section left the console chassis for its own React
+  // module in #1120 slice 23; the two strings the route's gap feeds moved
+  // with it.
+  const reapSource = read('frontend/src/features/admin/admin-staging-reap.tsx');
   assert.match(route, /available: !staging && runtimeKind === 'docker'/);
   assert.match(route, /unavailableReason: staging \? 'staging' : \(runtimeKind === 'kubernetes' \? 'kubernetes' : null\)/);
-  assert.match(consoleSource, /Not yet supported in Kubernetes/);
-  assert.match(consoleSource, /normal per-session idle cleanup still applies/);
+  assert.match(reapSource, /Not yet supported in Kubernetes/);
+  assert.match(reapSource, /normal per-session idle cleanup still applies/);
+  // Both strings are reached through the reason the route sends, not through
+  // an environment read of the section's own — the demo/staging gate above it
+  // must not be what decides the Kubernetes wording.
+  assert.match(reapSource, /unavailableReason === 'kubernetes'/);
+  assert.ok(!/USERNODE_ENV|runtimeKind/.test(reapSource),
+    'the section renders the gap the route reports; it does not detect the runtime');
 });
 
 test('database export remains runtime-neutral through networked pg_dump', () => {

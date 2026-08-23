@@ -1054,6 +1054,8 @@ const AdminConsole = {
     features: 'AdminFeatures',
     limits: 'AdminLimits',
     users: 'AdminUsers',
+    rollover: 'AdminRollover',
+    'staging-reap': 'AdminStagingReap',
     status: 'AdminStatus',
     node: 'AdminNode',
     analytics: 'AdminAnalytics',
@@ -1131,14 +1133,12 @@ const AdminConsole = {
     const key = AdminConsole._section;
     const modName = AdminConsole.SECTION_MODULES[key];
     if (modName) return AdminConsole._renderModule(host, modName, key);
-    switch (key) {
-      case 'rollover': return AdminConsole.renderRolloverSection(host);
-      case 'staging-reap': return AdminConsole.renderStalePreviewsSection(host);
-      // Anything the address bar names that this build does not know about
-      // lands on the default section, which is Overview — a delegated module
-      // since #1120, so it goes through the same dispatch.
-      default: return AdminConsole._renderModule(host, 'AdminOverview', 'overview');
-    }
+    // Anything the address bar names that this build does not know about
+    // lands on the default section, which is Overview — a delegated module
+    // since #1120, so it goes through the same dispatch. Every section is a
+    // delegated module now, so this is the only arm left: the `switch` the
+    // console dispatched its own renderers through is gone (#1120 slice 23).
+    return AdminConsole._renderModule(host, 'AdminOverview', 'overview');
   },
 
   // Hand a section host to a delegated module, and remember it so the next
@@ -1167,521 +1167,36 @@ const AdminConsole = {
   // back with replaceState, the same pattern leaderboard.js uses for its
   // own tab state, so this file never needs general multi-level routing.
 
-  // ── Container rollover ────────────────────────────────────────────────
+  // ── Sweep forwarders (Container rollover / Stale previews) ───────────
   //
-  // One press recreates every running child-app container with freshly
-  // assembled env. Progress arrives on the shell's existing /ws/events
-  // socket as `admin_rollover_status` (admin-only broadcast) and is routed
-  // here by App's onmessage; GET /api/admin/rollover covers first paint and
-  // WS reconnect. See src/services/app-rollover.js for why an env change
-  // needs a container recreate at all.
-
-  // Per-app outcome → chip. Mirrors the outcome vocabulary in
-  // src/services/app-rollover.js; an unknown state falls back to the raw
-  // string so a new outcome shows up rather than disappearing.
-  ROLLOVER_STATES: {
-    pending: { label: 'Queued', cls: 'bg-zinc-200 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300' },
-    running: { label: 'Rolling over…', cls: 'bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300' },
-    rolled: { label: 'Done', cls: 'bg-green-100 dark:bg-green-950/60 text-green-700 dark:text-green-400' },
-    rebuilt: { label: 'Rebuilt', cls: 'bg-green-100 dark:bg-green-950/60 text-green-700 dark:text-green-400' },
-    skipped_deploying: { label: 'Skipped — deploying', cls: 'bg-zinc-200 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300' },
-    skipped_missing_secrets: { label: 'Skipped — missing secrets', cls: 'bg-zinc-200 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300' },
-    skipped_no_db_password: { label: 'Skipped — no DB role', cls: 'bg-zinc-200 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300' },
-    skipped_deleted: { label: 'Skipped — app gone', cls: 'bg-zinc-200 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300' },
-    failed: { label: 'Failed', cls: 'bg-red-100 dark:bg-red-950/60 text-red-700 dark:text-red-400' },
-  },
-
-  renderRolloverSection(host) {
-    const canWrite = AdminConsole.canWrite();
-    host.innerHTML = `
-      <div class="${AdminUI.card} p-4">
-        <div class="flex items-center justify-between mb-3">
-          <h2 class="${AdminUI.cardTitle}">Container rollover</h2>
-          <button id="admin-refresh-rollover" class="${AdminUI.btn.link} text-xs">Refresh</button>
-        </div>
-        <p class="text-sm text-zinc-600 dark:text-zinc-400 mb-2">
-          Recreates every running app container so it picks up the environment
-          this platform build hands out. Needed after a platform change to what
-          gets injected into containers — a restart is not enough, because a
-          restarted container keeps the environment it was created with.
-        </p>
-        <p class="text-xs text-zinc-500 dark:text-zinc-400 mb-4">
-          This re-runs each app's existing build: it changes the environment and
-          nothing else — no new code is shipped, unlike a per-app redeploy. Each
-          app blinks offline for a few seconds as its turn comes up. The platform
-          app itself is never touched.
-        </p>
-        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
-          <div class="rounded-lg bg-zinc-100 dark:bg-zinc-800 p-3">
-            <div class="text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Eligible apps</div>
-            <div id="admin-rollover-eligible" class="text-2xl font-bold mt-1">—</div>
-          </div>
-          <div class="rounded-lg bg-zinc-100 dark:bg-zinc-800 p-3">
-            <div class="text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400">At a time</div>
-            <div id="admin-rollover-concurrency" class="text-2xl font-bold mt-1">—</div>
-          </div>
-          <div class="rounded-lg bg-zinc-100 dark:bg-zinc-800 p-3">
-            <div class="text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Failed</div>
-            <div id="admin-rollover-failed" class="text-2xl font-bold mt-1">—</div>
-          </div>
-        </div>
-        ${canWrite ? `
-        <button id="admin-rollover-btn"
-          class="${AdminUI.btn.primary} disabled:opacity-50 disabled:hover:bg-violet-600">
-          Roll over all app containers
-        </button>` : `
-        <p class="text-xs text-zinc-500 dark:text-zinc-400">View-only admin — you can watch a rollover, but not start one.</p>`}
-        <p id="admin-rollover-summary" class="text-sm text-zinc-500 dark:text-zinc-400 mt-3">Loading…</p>
-        <div id="admin-rollover-list" class="space-y-2 mt-3"></div>
-      </div>`;
-
-    document.getElementById('admin-refresh-rollover')
-      ?.addEventListener('click', () => AdminConsole.loadRollover());
-    document.getElementById('admin-rollover-btn')
-      ?.addEventListener('click', () => AdminConsole._startRollover());
-
-    AdminConsole.loadRollover();
-  },
-
-  async loadRollover() {
-    // The page's ?demo=1 rides along on the status read so a staging
-    // preview renders the demo job (routes/admin.js serves it only behind
-    // IS_STAGING && ?demo=1) — same pass-through home.js and settings.js
-    // use for their own demo-injected endpoints.
-    const demoQS = new URLSearchParams(location.search).get('demo') === '1' ? '?demo=1' : '';
-    const { data } = await AdminConsole.fetchJson(`/api/admin/rollover${demoQS}`);
-    if (!data || typeof data !== 'object') return;
-    if (AdminConsole._section !== 'rollover') return; // navigated away mid-fetch
-    AdminConsole._rolloverEligible = typeof data.eligible === 'number' ? data.eligible : null;
-    AdminConsole._rolloverConcurrency = data.concurrency || null;
-    AdminConsole._rolloverDemo = !!data.demo;
-    AdminConsole._paintRollover(data.job || null);
-  },
-
-  // Routed here from App's /ws/events onmessage. The section may not be
-  // mounted (an admin can be anywhere in the shell while a sweep runs) —
-  // in that case there is nothing to repaint and the next mount picks the
-  // state up from the GET.
+  // Both sections are React modules now (#1120 slice 23:
+  // features/admin/admin-rollover.tsx and admin-staging-reap.tsx), but they
+  // are the only two with a caller OUTSIDE the console: public/js/app.js
+  // routes `admin_rollover_status` / `admin_staging_reap_status` frames from
+  // the shell's /ws/events socket to the two handlers below, and calls the
+  // two loaders on socket reconnect so a dropped socket cannot leave a job
+  // half-painted.
+  //
+  // That surface belongs to the shell, not to the console, so it stays
+  // exactly where app.js already looks for it and forwards to the module.
+  // Each forwarder is a no-op while its section is not mounted — the module
+  // holds a `live` handle that is non-null exactly while it is on screen,
+  // which is what the old handlers approximated with a `_section === …`
+  // check plus a getElementById probe. Nothing is lost by dropping a frame:
+  // the next mount reads the job from the GET.
   handleRolloverStatus(data) {
-    if (!data || !AdminConsole._open) return;
-    if (AdminConsole._section !== 'rollover') return;
-    if (!document.getElementById('admin-rollover-list')) return;
-    AdminConsole._paintRollover(data.job || null);
+    if (!AdminConsole._open) return;
+    window.AdminRollover?.handleStatus?.(data);
   },
 
-  async _startRollover() {
-    const btn = document.getElementById('admin-rollover-btn');
-    const count = AdminConsole._rolloverEligible;
-    const many = typeof count === 'number' ? `${count} app container${count === 1 ? '' : 's'}` : 'every running app container';
-    const ok = await AdminConsole._confirm({
-      title: 'Roll over all app containers?',
-      message: `This recreates ${many} with the environment this platform build injects. `
-        + 'Each app is briefly unavailable (a few seconds) as its turn comes up, '
-        + 'and only the environment changes — no new code is shipped. '
-        + 'The platform app itself is not touched.',
-      confirmLabel: 'Roll over',
-    });
-    if (!ok) return;
-    if (btn) { btn.disabled = true; btn.textContent = 'Starting…'; }
-    try {
-      const res = await fetch('/api/admin/rollover', { method: 'POST' });
-      const data = await res.json().catch(() => ({}));
-      if (res.status === 409) {
-        // Singleton job: a second press is a no-op, not an error.
-        window.PlatformUI?.toast?.('A rollover is already in progress.');
-        if (data && data.job) AdminConsole._paintRollover(data.job);
-        return;
-      }
-      if (!res.ok) {
-        AdminConsole._alert((data && data.error) || `Rollover failed to start (HTTP ${res.status})`);
-        return;
-      }
-      window.PlatformUI?.toast?.('Rollover started.');
-      if (data && data.job) AdminConsole._paintRollover(data.job);
-    } catch (err) {
-      AdminConsole._alert(`Rollover failed to start: ${err.message}`);
-    } finally {
-      AdminConsole.loadRollover();
-    }
-  },
+  loadRollover() { window.AdminRollover?.reload?.(); },
 
-  _paintRollover(job) {
-    const esc = AdminConsole.esc;
-    const eligibleEl = document.getElementById('admin-rollover-eligible');
-    const concEl = document.getElementById('admin-rollover-concurrency');
-    const failedEl = document.getElementById('admin-rollover-failed');
-    const summary = document.getElementById('admin-rollover-summary');
-    const list = document.getElementById('admin-rollover-list');
-    if (!summary || !list) return;
-
-    const running = !!(job && !job.finishedAt && !job.stale);
-
-    if (eligibleEl) {
-      eligibleEl.textContent = AdminConsole._rolloverEligible == null
-        ? '—' : String(AdminConsole._rolloverEligible);
-    }
-    if (concEl) {
-      concEl.textContent = job ? String(job.concurrency)
-        : (AdminConsole._rolloverConcurrency ? String(AdminConsole._rolloverConcurrency) : '—');
-    }
-    if (failedEl) failedEl.textContent = job ? String(job.failed) : '—';
-
-    const btn = document.getElementById('admin-rollover-btn');
-    if (btn) {
-      // A staging preview has no production containers to recreate, and the
-      // route refuses the POST there — say so on the button rather than
-      // letting a reviewer press it into a 400.
-      const demo = !!AdminConsole._rolloverDemo;
-      btn.disabled = running || demo;
-      btn.textContent = demo
-        ? 'Unavailable in previews'
-        : (running ? 'Rollover in progress…' : 'Roll over all app containers');
-    }
-    const summaryPrefix = AdminConsole._rolloverDemo
-      ? '<span class="text-violet-500">Staging demo data</span> — ' : '';
-
-    if (!job) {
-      summary.textContent = 'No rollover has run since this platform process started.';
-      list.innerHTML = '';
-      return;
-    }
-    if (!job.total) {
-      summary.textContent = job.finishedAt
-        ? 'Finished — no eligible app containers were found.'
-        : 'Starting…';
-      list.innerHTML = '';
-      return;
-    }
-
-    const parts = [`${job.done} of ${job.total} done`];
-    if (job.failed) parts.push(`${job.failed} failed`);
-    const when = job.finishedAt ? 'Finished' : (job.stale ? 'Stalled' : 'Running');
-    const by = job.startedBy ? ` · started by ${esc(job.startedBy)}` : '';
-    summary.innerHTML = `${summaryPrefix}<span class="font-medium">${when}</span> — ${esc(parts.join(', '))}${by}`;
-
-    list.innerHTML = '';
-    for (const app of job.apps || []) {
-      const chip = AdminConsole.ROLLOVER_STATES[app.state]
-        || { label: app.state, cls: 'bg-zinc-200 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300' };
-      const el = document.createElement('div');
-      el.className = 'flex flex-wrap items-center justify-between gap-x-3 gap-y-1 p-2.5 rounded-lg bg-zinc-100 dark:bg-zinc-800';
-      el.setAttribute('data-rollover-slug', app.slug);
-      el.setAttribute('data-rollover-state', app.state);
-      const secs = app.ms == null ? '' : `${(app.ms / 1000).toFixed(1)}s`;
-      el.innerHTML = `
-        <span class="flex-1 min-w-0">
-          <code class="font-mono text-sm">${esc(app.slug)}</code>
-          ${app.error ? `<span class="block text-xs text-red-500 mt-0.5">${esc(app.error)}</span>` : ''}
-        </span>
-        <span class="flex items-center gap-2 shrink-0">
-          ${secs ? `<span class="text-xs text-zinc-500 dark:text-zinc-400">${esc(secs)}</span>` : ''}
-          <span class="text-xs px-2 py-0.5 rounded-full ${chip.cls}">${esc(chip.label)}</span>
-        </span>`;
-      list.appendChild(el);
-    }
-  },
-
-  // ── Stale previews ────────────────────────────────────────────────────
-  //
-  // The preview half of the rollover above. A staging preview's environment
-  // is fixed when it is BUILT, and previews live for weeks — so a platform
-  // env change leaves them running happily with stale env, which the
-  // existing staging-heal sweep cannot see (it only rebuilds previews whose
-  // container has STOPPED). This shuts them down; the next Preview click
-  // rebuilds any that someone actually wants. Progress arrives on the
-  // shell's /ws/events socket as `admin_staging_reap_status` (admin-only
-  // broadcast) and is routed here by App's onmessage; GET
-  // /api/admin/staging-reap covers first paint and WS reconnect. See
-  // src/services/staging-reap.js.
-
-  // Per-preview outcome → chip. Mirrors the outcome vocabulary in
-  // src/services/staging-reap.js; an unknown state falls back to the raw
-  // string so a new outcome shows up rather than disappearing.
-  REAP_STATES: {
-    pending: { label: 'Queued', cls: 'bg-zinc-200 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300' },
-    running: { label: 'Shutting down…', cls: 'bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300' },
-    torn_down: { label: 'Shut down', cls: 'bg-green-100 dark:bg-green-950/60 text-green-700 dark:text-green-400' },
-    torn_down_no_db: { label: 'Shut down — database kept', cls: 'bg-green-100 dark:bg-green-950/60 text-green-700 dark:text-green-400' },
-    skipped_gone: { label: 'Skipped — already gone', cls: 'bg-zinc-200 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300' },
-    failed: { label: 'Failed', cls: 'bg-red-100 dark:bg-red-950/60 text-red-700 dark:text-red-400' },
-  },
-
-  // Why each preview was picked up. Presentational only — the sweep tears
-  // down everything it enumerates; this just explains what the admin is
-  // looking at, and distinguishes "expected leftover of a merged proposal"
-  // from "the session row is gone entirely".
-  REAP_CLASSIFICATIONS: {
-    merged: 'proposal merged',
-    archived: 'proposal abandoned',
-    promoted: 'up for a vote',
-    merging: 'merging now',
-    active: 'session open',
-    paused: 'session paused',
-    merged_unlinked: 'merged — leaked past teardown',
-    archived_unlinked: 'abandoned — leaked past teardown',
-    promoted_unlinked: 'up for a vote — link lost',
-    no_session_row: 'session no longer exists',
-  },
-
-  renderStalePreviewsSection(host) {
-    const canWrite = AdminConsole.canWrite();
-    host.innerHTML = `
-      <div class="${AdminUI.card} p-4">
-        <div class="flex items-center justify-between mb-3">
-          <h2 class="${AdminUI.cardTitle}">Stale previews</h2>
-          <button id="admin-refresh-reap" class="${AdminUI.btn.link} text-xs">Refresh</button>
-        </div>
-        <p class="text-sm text-zinc-600 dark:text-zinc-400 mb-2">
-          Shuts down every proposal preview that is still running. A preview's
-          settings are fixed when it is built, so after a platform change to
-          what gets injected into containers, old previews keep running with
-          the old settings — typically showing a login screen instead of the
-          app. Out-of-date previews are now found and cleaned up
-          automatically in the background; this button is the immediate
-          version, and takes every preview rather than only the stale ones.
-        </p>
-        <p class="text-xs text-zinc-500 dark:text-zinc-400 mb-4">
-          Nothing is lost that matters: clicking Preview on a proposal rebuilds
-          it automatically with current settings, the same way a preview that
-          went to sleep does. A preview's throwaway test data is discarded, and
-          rebuilding re-runs that proposal's automated checks.
-        </p>
-        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
-          <div class="rounded-lg bg-zinc-100 dark:bg-zinc-800 p-3">
-            <div class="text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Open previews</div>
-            <div id="admin-reap-stale" class="text-2xl font-bold mt-1">—</div>
-          </div>
-          <div class="rounded-lg bg-zinc-100 dark:bg-zinc-800 p-3">
-            <div class="text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Out of date</div>
-            <div id="admin-reap-outdated" class="text-2xl font-bold mt-1">—</div>
-          </div>
-          <div class="rounded-lg bg-zinc-100 dark:bg-zinc-800 p-3">
-            <div class="text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400">At a time</div>
-            <div id="admin-reap-concurrency" class="text-2xl font-bold mt-1">—</div>
-          </div>
-          <div class="rounded-lg bg-zinc-100 dark:bg-zinc-800 p-3">
-            <div class="text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Failed</div>
-            <div id="admin-reap-failed" class="text-2xl font-bold mt-1">—</div>
-          </div>
-        </div>
-        <p id="admin-reap-automatic" class="text-xs text-zinc-500 dark:text-zinc-400 mb-4"></p>
-        ${canWrite ? `
-        <button id="admin-reap-btn"
-          class="${AdminUI.btn.primary} disabled:opacity-50 disabled:hover:bg-violet-600">
-          Shut down stale previews
-        </button>` : `
-        <p class="text-xs text-zinc-500 dark:text-zinc-400">View-only admin — you can watch a sweep, but not start one.</p>`}
-        <p id="admin-reap-summary" class="text-sm text-zinc-500 dark:text-zinc-400 mt-3">Loading…</p>
-        <div id="admin-reap-list" class="space-y-2 mt-3"></div>
-      </div>`;
-
-    document.getElementById('admin-refresh-reap')
-      ?.addEventListener('click', () => AdminConsole.loadStagingReap());
-    document.getElementById('admin-reap-btn')
-      ?.addEventListener('click', () => AdminConsole._startStagingReap());
-
-    AdminConsole.loadStagingReap();
-  },
-
-  async loadStagingReap() {
-    // The page's ?demo=1 rides along on the status read so a staging preview
-    // renders the demo job (routes/admin.js serves it only behind
-    // IS_STAGING && ?demo=1) — a preview has no docker socket, so there is
-    // nothing real for this section to show there. Same pass-through
-    // loadRollover uses.
-    const demoQS = new URLSearchParams(location.search).get('demo') === '1' ? '?demo=1' : '';
-    const { data } = await AdminConsole.fetchJson(`/api/admin/staging-reap${demoQS}`);
-    if (!data || typeof data !== 'object') return;
-    if (AdminConsole._section !== 'staging-reap') return; // navigated away mid-fetch
-    // `open` is every preview (what the button shuts down); `stale` is the
-    // out-of-date subset the automatic pass acts on. Older payloads carried
-    // only `stale` meaning "all previews", so fall back to it for `open`.
-    AdminConsole._reapOpen = typeof data.open === 'number' ? data.open
-      : (typeof data.stale === 'number' ? data.stale : null);
-    AdminConsole._reapOutdated = typeof data.stale === 'number' ? data.stale : null;
-    AdminConsole._reapAutomatic = data.automatic || null;
-    AdminConsole._reapConcurrency = data.concurrency || null;
-    AdminConsole._reapDemo = !!data.demo;
-    // Tracked separately from _reapDemo: the POST is refused in a preview
-    // whether or not the reviewer arrived with ?demo=1.
-    AdminConsole._reapStaging = !!data.staging;
-    AdminConsole._reapAvailable = data.available !== false;
-    AdminConsole._reapUnavailableReason = data.unavailableReason || null;
-    AdminConsole._paintStagingReap(data.job || null);
-  },
-
-  // Routed here from App's /ws/events onmessage. The section may not be
-  // mounted (an admin can be anywhere in the shell while a sweep runs) — in
-  // that case there is nothing to repaint and the next mount picks the state
-  // up from the GET.
   handleStagingReapStatus(data) {
-    if (!data || !AdminConsole._open) return;
-    if (AdminConsole._section !== 'staging-reap') return;
-    if (!document.getElementById('admin-reap-list')) return;
-    AdminConsole._paintStagingReap(data.job || null);
+    if (!AdminConsole._open) return;
+    window.AdminStagingReap?.handleStatus?.(data);
   },
 
-  async _startStagingReap() {
-    const btn = document.getElementById('admin-reap-btn');
-    // The button takes EVERY open preview, not just the out-of-date ones, so
-    // the confirmation counts `open` — saying "4 previews" when it will shut
-    // down 6 would be a lie about a fleet-wide action.
-    const count = AdminConsole._reapOpen;
-    const many = typeof count === 'number'
-      ? `${count} preview${count === 1 ? '' : 's'}`
-      : 'every open preview';
-    const ok = await AdminConsole._confirm({
-      title: 'Shut down stale previews?',
-      message: `This shuts down ${many}. Anyone who wants one back gets it `
-        + 'rebuilt automatically on their next Preview click, with current '
-        + "settings. Each preview's throwaway test data is discarded, and "
-        + "rebuilding re-runs that proposal's automated checks.",
-      confirmLabel: 'Shut down',
-    });
-    if (!ok) return;
-    if (btn) { btn.disabled = true; btn.textContent = 'Starting…'; }
-    try {
-      const res = await fetch('/api/admin/staging-reap', { method: 'POST' });
-      const data = await res.json().catch(() => ({}));
-      if (res.status === 409) {
-        // Singleton job: a second press is a no-op, not an error.
-        window.PlatformUI?.toast?.('A sweep is already in progress.');
-        if (data && data.job) AdminConsole._paintStagingReap(data.job);
-        return;
-      }
-      if (!res.ok) {
-        AdminConsole._alert((data && data.error) || `Sweep failed to start (HTTP ${res.status})`);
-        return;
-      }
-      window.PlatformUI?.toast?.('Sweep started.');
-      if (data && data.job) AdminConsole._paintStagingReap(data.job);
-    } catch (err) {
-      AdminConsole._alert(`Sweep failed to start: ${err.message}`);
-    } finally {
-      AdminConsole.loadStagingReap();
-    }
-  },
-
-  // "3 minutes ago" for the automatic pass's last run. Kept local and tiny:
-  // the only consumer is the one line below.
-  _reapAgo(iso) {
-    const then = Date.parse(iso);
-    if (!Number.isFinite(then)) return null;
-    const mins = Math.max(0, Math.round((Date.now() - then) / 60000));
-    if (mins < 1) return 'just now';
-    if (mins < 60) return `${mins} minute${mins === 1 ? '' : 's'} ago`;
-    const hours = Math.round(mins / 60);
-    if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
-    const days = Math.round(hours / 24);
-    return `${days} day${days === 1 ? '' : 's'} ago`;
-  },
-
-  _paintStagingReap(job) {
-    const esc = AdminConsole.esc;
-    const staleEl = document.getElementById('admin-reap-stale');
-    const outdatedEl = document.getElementById('admin-reap-outdated');
-    const autoEl = document.getElementById('admin-reap-automatic');
-    const concEl = document.getElementById('admin-reap-concurrency');
-    const failedEl = document.getElementById('admin-reap-failed');
-    const summary = document.getElementById('admin-reap-summary');
-    const list = document.getElementById('admin-reap-list');
-    if (!summary || !list) return;
-
-    const running = !!(job && !job.finishedAt && !job.stale);
-
-    if (staleEl) {
-      staleEl.textContent = AdminConsole._reapOpen == null
-        ? '—' : String(AdminConsole._reapOpen);
-    }
-    if (outdatedEl) {
-      outdatedEl.textContent = AdminConsole._reapOutdated == null
-        ? '—' : String(AdminConsole._reapOutdated);
-    }
-    if (autoEl) {
-      const auto = AdminConsole._reapAutomatic;
-      if (AdminConsole._reapUnavailableReason === 'kubernetes') {
-        autoEl.textContent = 'Kubernetes stale-preview administration is not implemented yet; normal per-session idle cleanup still applies.';
-      } else if (!auto || !auto.intervalMs) {
-        autoEl.textContent = 'The automatic background sweep is switched off.';
-      } else if (!auto.lastRunAt) {
-        const every = Math.round(auto.intervalMs / 60000);
-        autoEl.textContent = `Automatic sweep runs every ${every} minutes — it hasn't run yet since this platform process started.`;
-      } else {
-        const ago = AdminConsole._reapAgo(auto.lastRunAt) || 'recently';
-        const bits = [`Automatic sweep last ran ${ago}`];
-        bits.push(`${auto.tornDown || 0} shut down`);
-        if (auto.failed) bits.push(`${auto.failed} failed`);
-        autoEl.textContent = `${bits.join(' · ')}.`;
-      }
-    }
-    if (concEl) {
-      concEl.textContent = job ? String(job.concurrency)
-        : (AdminConsole._reapConcurrency ? String(AdminConsole._reapConcurrency) : '—');
-    }
-    if (failedEl) failedEl.textContent = job ? String(job.failed) : '—';
-
-    const btn = document.getElementById('admin-reap-btn');
-    if (btn) {
-      // A preview has no docker socket, so it cannot manage other previews,
-      // and the route refuses the POST there — say so on the button rather
-      // than letting a reviewer press it into a 400. Gate on `staging`, not
-      // on `demo`: the refusal applies with or without ?demo=1.
-      const preview = !!AdminConsole._reapStaging || !!AdminConsole._reapDemo;
-      const runtimeUnavailable = AdminConsole._reapAvailable === false;
-      btn.disabled = running || preview || runtimeUnavailable;
-      btn.textContent = preview
-        ? 'Unavailable in previews'
-        : (AdminConsole._reapUnavailableReason === 'kubernetes'
-          ? 'Not yet supported in Kubernetes'
-          : (running ? 'Sweep in progress…' : 'Shut down stale previews'));
-    }
-    const summaryPrefix = AdminConsole._reapDemo
-      ? '<span class="text-violet-500">Staging demo data</span> — ' : '';
-
-    if (!job) {
-      summary.textContent = 'No sweep has run since this platform process started.';
-      list.innerHTML = '';
-      return;
-    }
-    if (!job.total) {
-      summary.textContent = job.finishedAt
-        ? 'Finished — no open previews were found.'
-        : 'Starting…';
-      list.innerHTML = '';
-      return;
-    }
-
-    const parts = [`${job.done} of ${job.total} done`];
-    if (job.failed) parts.push(`${job.failed} failed`);
-    const when = job.finishedAt ? 'Finished' : (job.stale ? 'Stalled' : 'Running');
-    const by = job.startedBy ? ` · started by ${esc(job.startedBy)}` : '';
-    summary.innerHTML = `${summaryPrefix}<span class="font-medium">${when}</span> — ${esc(parts.join(', '))}${by}`;
-
-    list.innerHTML = '';
-    for (const preview of job.previews || []) {
-      const chip = AdminConsole.REAP_STATES[preview.state]
-        || { label: preview.state, cls: 'bg-zinc-200 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300' };
-      const why = AdminConsole.REAP_CLASSIFICATIONS[preview.classification]
-        || preview.classification;
-      const el = document.createElement('div');
-      el.className = 'flex flex-wrap items-center justify-between gap-x-3 gap-y-1 p-2.5 rounded-lg bg-zinc-100 dark:bg-zinc-800';
-      el.setAttribute('data-reap-name', preview.name);
-      el.setAttribute('data-reap-state', preview.state);
-      const secs = preview.ms == null ? '' : `${(preview.ms / 1000).toFixed(1)}s`;
-      el.innerHTML = `
-        <span class="flex-1 min-w-0">
-          <code class="font-mono text-sm">${esc(preview.slug)}</code>
-          <span class="text-xs text-zinc-500 dark:text-zinc-400 ml-1">#${esc(String(preview.sessionId))}</span>
-          <span class="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">${esc(why)}</span>
-          ${preview.error ? `<span class="block text-xs text-red-500 mt-0.5">${esc(preview.error)}</span>` : ''}
-        </span>
-        <span class="flex items-center gap-2 shrink-0">
-          ${secs ? `<span class="text-xs text-zinc-500 dark:text-zinc-400">${esc(secs)}</span>` : ''}
-          <span class="text-xs px-2 py-0.5 rounded-full ${chip.cls}">${esc(chip.label)}</span>
-        </span>`;
-      list.appendChild(el);
-    }
-  },
+  loadStagingReap() { window.AdminStagingReap?.reload?.(); },
 
   // ── Temporary-password dialog (filled for the Users section) ───────────
   //

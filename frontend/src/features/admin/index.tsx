@@ -131,6 +131,8 @@ import './admin-db-export.tsx';
 import './admin-features.tsx';
 import './admin-limits.tsx';
 import './admin-users.tsx';
+import './admin-rollover.tsx';
+import './admin-staging-reap.tsx';
 import './admin-status.tsx';
 import './admin-node.tsx';
 import './admin-analytics.tsx';

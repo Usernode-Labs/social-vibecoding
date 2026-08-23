@@ -300,10 +300,10 @@ test('sections render into the host they are given, not by id lookup', () => {
 
 test('every client-side demo=1 passthrough survived the move, and is prerender-safe', () => {
   // The whole inventory, grepped rather than trusted: exactly six read sites
-  // across the console. Four of the nine heavy sections read the page-level
-  // flag for themselves; the other two sites are the chassis module's rollover
-  // and staging-reap reads. Health & status, Node & chain, Campaigns, Push and Mail
-  // have no demo path at all and must not grow one here.
+  // across the console, one per section that has staging fixtures. Four of
+  // the nine heavy sections read the page-level flag for themselves, and so
+  // do rollover and stale previews. Health & status, Node & chain, Campaigns,
+  // Push and Mail have no demo path at all and must not grow one here.
   const OWN_FLAG = ['admin-analytics', 'admin-estimator', 'admin-gallery', 'admin-merges'];
   for (const file of OWN_FLAG) {
     const src = SRC.get(file);
@@ -320,9 +320,19 @@ test('every client-side demo=1 passthrough survived the move, and is prerender-s
     assert.ok(!/\bdemo\b/.test(SRC.get(file)),
       `${file}.js had no demo passthrough before the move and must not have grown one`);
   }
-  const demoQS = (consoleJs.match(/const demoQS = new URLSearchParams\(location\.search\)/g) || []);
-  assert.equal(demoQS.length, 2,
-    'admin-console.js must still carry the flag onto the rollover and staging-reap reads');
+  // The other two sites were the chassis module's own rollover and
+  // staging-reap reads until #1120 slice 23 moved both sections into React;
+  // they read the same guarded module-level flag the four above do now, and
+  // the chassis carries none.
+  for (const file of ['admin-rollover', 'admin-staging-reap']) {
+    assert.match(readMod(file),
+      /const DEMO = typeof window !== 'undefined'\s*\n?\s*&& new URLSearchParams\(location\.search\)\.get\('demo'\) === '1'/,
+      `${file} must carry the flag its chassis renderer used to`);
+    assert.match(readMod(file), /DEMO \? '\?demo=1' : ''/,
+      `${file} must use DEMO to build its request`);
+  }
+  assert.ok(!/URLSearchParams\(location\.search\)\.get\('demo'\)/.test(consoleJs),
+    'and the chassis keeps no demo passthrough of its own — every section owns its read');
 });
 
 test('no section grew a server-side demo gate of its own', () => {

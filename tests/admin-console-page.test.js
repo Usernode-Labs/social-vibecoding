@@ -120,8 +120,8 @@ test('the console island imports every admin module, console first', () => {
     'admin-analytics', 'admin-campaigns', 'admin-codes', 'admin-db-export',
     'admin-e2e', 'admin-estimator', 'admin-featured-apps', 'admin-features',
     'admin-gallery', 'admin-limits', 'admin-mail', 'admin-merges', 'admin-node',
-    'admin-overview', 'admin-push', 'admin-status', 'admin-topochain',
-    'admin-users',
+    'admin-overview', 'admin-push', 'admin-rollover', 'admin-staging-reap',
+    'admin-status', 'admin-topochain', 'admin-users',
   ], 'every section module is imported by the island');
 });
 

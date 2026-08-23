@@ -1,6 +1,6 @@
 // Wiring tests for the bulk container rollover surface — the admin route
-// pair (src/routes/admin.js), the admin-console section
-// (frontend/src/features/admin/admin-console.js), the shell's WS routing (public/js/app.js)
+// pair (src/routes/admin.js), the console section
+// (frontend/src/features/admin/admin-rollover.tsx), the shell's WS routing (public/js/app.js)
 // and the three small supporting additions it leans on (ws.js's
 // admin-filtered broadcast, docker.js's imageExists, staging.js's exported
 // per-slug lock).
@@ -37,6 +37,10 @@ const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
 
 const adminRoutes = read('src/routes/admin.js');
 const consoleJs = read('frontend/src/features/admin/admin-console.js');
+// The section is a React module since #1120 slice 23; the console keeps the
+// nav entry, the SECTION_MODULES mapping and the two WS forwarders app.js
+// calls, so both files carry part of what this file pins.
+const rolloverTsx = read('frontend/src/features/admin/admin-rollover.tsx');
 const appJs = read('public/js/app.js');
 const wsJs = read('src/services/ws.js');
 const dockerJs = read('src/services/docker.js');
@@ -102,8 +106,11 @@ test('the demo job is gated on IS_STAGING && ?demo=1 and never persisted', () =>
   assert.match(get, /isStagingEnv\(\)\s*&&\s*req\.query\.demo === '1'/,
     'request-time demo injection per the Staging mock data convention');
   assert.match(get, /demoJob\(\)/);
-  assert.match(consoleJs, /new URLSearchParams\(location\.search\)\.get\('demo'\) === '1' \? '\?demo=1' : ''/,
+  assert.match(rolloverTsx,
+    /const DEMO = typeof window !== 'undefined'\s*\n?\s*&& new URLSearchParams\(location\.search\)\.get\('demo'\) === '1'/,
     "the page's ?demo=1 rides along on the status read, or the preview renders empty");
+  assert.match(rolloverTsx, /\/api\/admin\/rollover\$\{DEMO \? '\?demo=1' : ''\}/,
+    'and the flag has to actually reach the URL, or it is decoration');
   // The demo job is a pure literal in the service — no INSERT anywhere.
   assert.ok(!/INSERT/i.test(rolloverJs),
     'the rollover service never writes rows; the demo job is read-only');
@@ -144,56 +151,93 @@ test('per-app progress rides the existing version-pill machinery', () => {
 test('the console section exists, is admin-visible, and its button is write-gated', () => {
   assert.match(consoleJs, /\{ key: 'rollover', label: 'Container rollover', group: '[^']+' \}/,
     'a real section in the admin console nav');
-  assert.match(consoleJs, /case 'rollover': return AdminConsole\.renderRolloverSection\(host\)/,
-    'wired into the hash router');
+  // Dispatched as a delegated module rather than by a render*Section method
+  // on the chassis (#1120 slice 23) — the `switch` those two arms lived in is
+  // gone. What has to hold is that the key still resolves to a module the
+  // island imports; losing either shows "module failed to load".
+  assert.match(consoleJs, /rollover: 'AdminRollover',/, 'wired into the section dispatch');
+  assert.ok(!/case 'rollover'/.test(consoleJs),
+    'and not ALSO on the retired switch, which would be two dispatch paths');
+  assert.match(read('frontend/src/features/admin/index.tsx'),
+    /import '\.\/admin-rollover\.tsx';/, 'the console island imports the module');
+  assert.match(rolloverTsx,
+    /if \(typeof window !== 'undefined'\) \(window as any\)\.AdminRollover = AdminRollover;/,
+    'and the module publishes the global the dispatcher looks up');
 
-  const section = consoleJs.slice(
-    consoleJs.indexOf('renderRolloverSection(host)'),
-    consoleJs.indexOf('async loadRollover()')
-  );
-  assert.ok(section.length > 200, 'the renderer has a body');
-  assert.match(section, /const canWrite = AdminConsole\.canWrite\(\)/,
+  assert.match(rolloverTsx, /const canWrite = !!console_\(\)\?\.canWrite\(\)/,
     'canWrite is derived from canAdminWrite — the view-only-admin split');
-  assert.match(section, /\$\{canWrite \?/,
+  assert.match(rolloverTsx, /\{canWrite \? \(/,
     'the start button is conditional on write access, the section itself is not');
-  assert.match(section, /admin-rollover-list/, 'a host for the live per-app table');
+  assert.match(rolloverTsx, /View-only admin — you can watch a rollover, but not start one\./,
+    'and a view-only admin is told why the button is missing');
+  assert.match(rolloverTsx, /id="admin-rollover-list"/, 'a host for the live per-app table');
+});
+
+// The section renders through React now, so the console no longer owns the
+// markup — but public/js/app.js still calls four AdminConsole methods, and
+// that surface is the SHELL's. Losing a forwarder is silent: the socket
+// frame arrives, nothing repaints, and the screen sits on a stale job.
+test('the console keeps the WS surface app.js calls, forwarding to the module', () => {
+  for (const [fwd, target] of [
+    ['handleRolloverStatus(data)', 'window.AdminRollover?.handleStatus?.(data);'],
+    ['loadRollover()', 'window.AdminRollover?.reload?.();'],
+  ]) {
+    assert.ok(consoleJs.includes(fwd), `AdminConsole.${fwd} is where app.js looks for it`);
+    assert.ok(consoleJs.includes(target), `${fwd} forwards to the module`);
+  }
+  assert.match(rolloverTsx, /handleStatus\(data: \{ job\?: RolloverJob \| null \} \| null\) \{/);
+  assert.match(rolloverTsx, /\n  reload\(\) \{ live\?\.reload\(\); \},/);
+  // A frame that lands while the admin is on another section must be
+  // dropped, not applied to an unmounted component — `live` is null exactly
+  // then, which is what the old `_section === 'rollover'` guard meant.
+  assert.match(rolloverTsx, /if \(!data \|\| !live\) return;/,
+    'an unmounted section drops the frame; the next mount reads the GET');
+  assert.match(rolloverTsx, /live = \{ paint:[\s\S]*?return \(\) => \{ live = null; \};/,
+    'and the handle is set and cleared by an effect, so it tracks mounting');
 });
 
 test('the start button confirms before recreating anything', () => {
-  const start = consoleJs.slice(
-    consoleJs.indexOf('async _startRollover()'),
-    consoleJs.indexOf('_paintRollover(job)')
+  const start = rolloverTsx.slice(
+    rolloverTsx.indexOf('const start = useCallback'),
+    rolloverTsx.indexOf('const running =')
   );
-  assert.match(start, /AdminConsole\._confirm\(/, 'a fleet-wide recreate is not a one-tap action');
-  assert.match(start, /_rolloverEligible/, 'the dialog names the actual app count');
+  assert.ok(start.length > 500, 'the handler has a body');
+  assert.match(start, /console_\(\)\._confirm\(/, 'a fleet-wide recreate is not a one-tap action');
+  assert.match(start, /\$\{eligible === 1 \? '' : 's'\}/, 'the dialog names the actual app count');
   assert.match(start, /res\.status === 409/, 'a competing sweep is a toast, not an error dialog');
   assert.match(start, /method: 'POST'/);
 });
 
 test('the table renders one row per app with its outcome chip', () => {
-  assert.match(consoleJs, /ROLLOVER_STATES: \{/);
+  assert.match(rolloverTsx, /const ROLLOVER_STATES: Record<string, \{ label: string; cls: string \}> = \{/);
   for (const state of [
     'pending', 'running', 'rolled', 'rebuilt',
     'skipped_deploying', 'skipped_missing_secrets', 'skipped_no_db_password',
     'skipped_deleted', 'failed',
   ]) {
-    assert.match(consoleJs, new RegExp(`${state}:`),
+    assert.match(rolloverTsx, new RegExp(`${state}:`),
       `the UI has a chip for the ${state} outcome the service can emit`);
     assert.match(rolloverJs, new RegExp(`'${state}'`),
       `the service actually emits ${state}`);
   }
-  // The whole renderer, from its method head to the section marker that
-  // follows it — a fixed-length slice would silently stop covering the
-  // tail as the renderer grows.
-  const paintStart = consoleJs.indexOf('_paintRollover(job) {');
-  const paint = consoleJs.slice(paintStart, consoleJs.indexOf('// ── Overview', paintStart));
-  assert.ok(paint.length > 500, 'the paint renderer has a body');
-  assert.match(paint, /data-rollover-slug/,
+  const row = rolloverTsx.slice(
+    rolloverTsx.indexOf('function AppRow('),
+    rolloverTsx.indexOf('function RolloverSection(')
+  );
+  assert.ok(row.length > 400, 'the row renderer has a body');
+  assert.match(row, /data-rollover-slug=\{app\.slug\}/,
     'rows are addressable for a future browser check');
-  assert.match(paint, /esc\(app\.slug\)/,
-    'every interpolation goes through the escaper');
-  assert.match(paint, /_rolloverDemo/,
+  assert.match(row, /data-rollover-state=\{app\.state\}/);
+  // Stronger than the `esc(app.slug)` this replaced: React escapes text
+  // children, so the property to hold is that NOTHING in the module opts
+  // back out of that. Comment-stripped, because the header prose names the
+  // innerHTML renderer this conversion replaced.
+  const code = rolloverTsx.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  assert.ok(!/dangerouslySetInnerHTML|innerHTML/.test(code),
+    'the section renders no raw HTML — every value is a text child');
+  assert.match(rolloverTsx, /disabled=\{running \|\| demo \|\| starting\}/,
     'a preview says so and disables the button — the POST is refused there');
+  assert.match(rolloverTsx, /'Unavailable in previews'/);
 });
 
 test('the supporting helpers are exported', () => {
