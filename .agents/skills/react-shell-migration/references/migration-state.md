@@ -41,7 +41,7 @@ now reconciles — and is the thing to update when one moves across.
 - `#dev-body` — the Dev chat.
 - `#settings-nav-desktop`, `#settings-mobile-menu-host`, and the settings
   interior.
-- the two remaining leaderboard panes.
+- nothing on the Leaderboard screen. See the note under "Converted".
 - the group chat's composer, thread shell, vote controls, spec-share panel and
   the two autocomplete menus.
 - the header's own strays: `header/ai-credit.js`, `header/wallet-sheet.js`,
@@ -118,6 +118,14 @@ Treat each row below as a separate chunk. Sizes are current.
   `#profile-root`, the notifications list, Browse (`#browse-list` /
   `#browse-detail`) and the work-drawer list. Each kept its module — the data,
   the fetches and the gestures stayed — and gained a store plus components.
+- **The WHOLE Leaderboard screen.** The three panes went first; the shared
+  event bar (`#leaderboard-event-bar`, the picker and hero both Topochain-domain
+  panes select through) followed. `kudos.js` still contains `innerHTML` and is
+  NOT a remaining target: one site fills the retired `#kudos-budget-slot`
+  (kept as a re-homing seam — see tests/shell-id-inventory.test.js), and the
+  rest are the hover popover inside `Kudos.renderButton`'s HTML string, which
+  `app-view.js` inlines into the Dev screen's PR panels. That popover's
+  ownership boundary is the Dev screen, not this one.
 - **The WHOLE home screen.** `#app-list` (the launcher canvas),
   `#home-widget-strip-section` and `#home-apps-more` (the two hosts outside
   it), and the three fixed sections below it — Discover, Challenges and Create
@@ -142,10 +150,8 @@ Two things from the home conversion are worth reading before the next screen:
 
 ### Medium
 
-1. Leaderboard — convert the remaining panes independently because they have
-   separate lazy-mount lifecycles.
-2. Settings interior — about 5,500 lines and nine sites.
-3. Group chat, everything but the transcript — `public/js/group-chat.js`,
+1. Settings interior — about 5,500 lines and nine sites.
+2. Group chat, everything but the transcript — `public/js/group-chat.js`,
    about 3,580 lines and 21 sites. The transcript conversion left the
    composer, the thread shell, `[data-gc-vote-controls]`, the spec-share card
    and the mention/ref autocomplete menus as legacy hosts on purpose; each is
