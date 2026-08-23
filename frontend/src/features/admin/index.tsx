@@ -126,7 +126,7 @@ import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { AdminUI } from './admin-console.js';
 import './admin-status.tsx';
 import './admin-node.tsx';
-import './admin-analytics.js';
+import './admin-analytics.tsx';
 import './admin-estimator.tsx';
 import './admin-merges.tsx';
 import './admin-gallery.tsx';

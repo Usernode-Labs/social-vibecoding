@@ -252,11 +252,11 @@ test('#898: the Estimator accuracy section renders the card', () => {
 });
 
 test('#898: the move is complete — no estimator code left in Analytics', () => {
-  const js = read('frontend/src/features/admin/admin-analytics.js');
+  const js = read('frontend/src/features/admin/admin-analytics.tsx');
   for (const gone of ['renderEstimator', 'ESTIMATOR_BAR', 'estimatorVerdict',
     'data-info="estimator"', '<div id="estimator">', 'analytics/estimator']) {
     assert.ok(!js.includes(gone),
-      `admin-analytics.js must no longer contain ${gone} — the card MOVED, it was not copied`);
+      `admin-analytics.tsx must no longer contain ${gone} — the card MOVED, it was not copied`);
   }
   // The estimator-only formatters left with it.
   assert.doesNotMatch(js, /const fmtSecs =/, 'fmtSecs was estimator-only and must be gone');
@@ -357,7 +357,7 @@ test('#892: the card renders the version split, baselines and priors freshness',
 });
 
 test('#891: withAdmins carries the page ?demo=1 through to the Analytics endpoints', () => {
-  const js = read('frontend/src/features/admin/admin-analytics.js');
+  const js = read('frontend/src/features/admin/admin-analytics.tsx');
   // Without this the whole section's demo substitution never fires, so every
   // chart is blank in a staging preview.
   // The `typeof window` guard is #1082 chunk E: the module lives in the React
@@ -365,9 +365,11 @@ test('#891: withAdmins carries the page ?demo=1 through to the Analytics endpoin
   // read itself — and therefore the staging demo substitution — is unchanged.
   assert.match(js, /const DEMO = typeof window !== 'undefined'\s*\n?\s*&& new URLSearchParams\(location\.search\)\.get\('demo'\) === '1'/,
     'the page-level demo flag must be read from location.search');
-  const fnStart = js.indexOf('function withAdmins(url) {');
+  // `withAdmins` is a closure over the includeAdmins state now — same two
+  // query parameters, built the same way.
+  const fnStart = js.indexOf('const withAdmins = (url: string) => {');
   assert.ok(fnStart !== -1, 'withAdmins must exist');
-  const fnBody = js.slice(fnStart, js.indexOf('\n  }', fnStart));
+  const fnBody = js.slice(fnStart, js.indexOf('\n  };', fnStart));
   assert.match(fnBody, /includeAdmins=\$\{includeAdmins\}/, 'the admin flag must still ride along');
   assert.match(fnBody, /\$\{DEMO \? '&demo=1' : ''\}/, 'demo=1 must ride along when present');
 });
