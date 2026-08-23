@@ -228,14 +228,32 @@ html.un-kb .platform-safe-bar {
 }
 
 .messages-conversation-row {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 10px;
   min-height: 66px;
   padding: 9px 12px;
-  border-bottom: 1px solid var(--border-light);
   color: inherit;
   text-decoration: none;
+}
+/* The row separator, INSET past the avatar to where the name starts: 12px of
+   padding + the 44px `lg` UserAvatar + the 10px gap. A pseudo-element rather
+   than `border-bottom` because a border cannot be inset, and because the row
+   is a fixed-height box whose 66px the border would eat into.
+
+   Same treatment, same reason, as the drawer's nav rows, the home panels and
+   @/components/ui/grouped-list.tsx: the widget language starts a row
+   separator at the content. */
+.messages-conversation-row::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 66px;
+  right: 0;
+  height: 1px;
+  background: var(--border-light);
+  pointer-events: none;
 }
 .messages-conversation-row:hover { background: var(--bg-secondary); }
 .messages-conversation-active { background: var(--accent-tint); }

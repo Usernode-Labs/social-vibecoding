@@ -283,7 +283,7 @@ export function HeaderMenu() {
             */}
             <button
               id="drawer-row-node"
-              className="hidden flex items-center gap-3 px-4 min-h-[44px] w-full text-left border-b border-zinc-100 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800"
+              className="hidden flex items-center gap-3 px-4 min-h-[44px] w-full text-left relative after:absolute after:bottom-0 after:left-12 after:right-0 after:h-px after:bg-zinc-100 dark:after:bg-zinc-800 after:content-[''] text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800"
             >
               <span id="drawer-node-dot" className="w-2.5 h-2.5 rounded-full bg-zinc-400 shrink-0" aria-hidden="true">
               </span>
@@ -295,7 +295,7 @@ export function HeaderMenu() {
             </button>
             <button
               id="drawer-row-wallet"
-              className="hidden flex items-center gap-3 px-4 min-h-[44px] w-full text-left border-b border-zinc-100 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800"
+              className="hidden flex items-center gap-3 px-4 min-h-[44px] w-full text-left relative after:absolute after:bottom-0 after:left-12 after:right-0 after:h-px after:bg-zinc-100 dark:after:bg-zinc-800 after:content-[''] text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800"
             >
               <WalletIcon className="w-5 h-5 shrink-0" />
               <span className="text-sm font-medium">
@@ -341,10 +341,23 @@ export function HeaderMenu() {
                 both keep the glyph, and nothing requests /avatars/ until there is
                 something to request.
             */}
+            {/*
+                THE ROW HAIRLINE IS INSET past the glyph — `left-12` is this
+                row's `px-4` (1rem) plus the 20px icon plus `gap-3` (0.75rem),
+                i.e. exactly where the label starts. It is a pseudo-element
+                rather than `border-b` because a border cannot be inset.
+
+                Same treatment, same reason, as the home panels' rules and
+                @/components/ui/grouped-list.tsx: the widget language starts a
+                row separator at the content, not at the sheet's edge. The
+                drawer's own chrome boundaries (the close-button strip at the
+                top, the notifications pane's foot) keep their full-bleed
+                borders — those divide PANES, not rows.
+            */}
             <a
               id="drawer-row-profile"
               href="#profile"
-              className="flex items-center gap-3 px-4 min-h-[44px] border-b border-zinc-100 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800"
+              className="flex items-center gap-3 px-4 min-h-[44px] relative after:absolute after:bottom-0 after:left-12 after:right-0 after:h-px after:bg-zinc-100 dark:after:bg-zinc-800 after:content-[''] text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800"
             >
               <UserIcon id="drawer-profile-glyph" className="w-5 h-5 shrink-0" />
               <img
@@ -362,7 +375,7 @@ export function HeaderMenu() {
             <a
               id="drawer-row-messages"
               href="#messages"
-              className="flex items-center gap-3 px-4 min-h-[44px] border-b border-zinc-100 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800"
+              className="flex items-center gap-3 px-4 min-h-[44px] relative after:absolute after:bottom-0 after:left-12 after:right-0 after:h-px after:bg-zinc-100 dark:after:bg-zinc-800 after:content-[''] text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800"
             >
               <ChatBubbleTailIcon className="w-5 h-5 shrink-0" />
               <span className="text-sm font-medium">Messages</span>
@@ -390,7 +403,7 @@ export function HeaderMenu() {
             <a
               id="drawer-row-settings"
               href="#settings"
-              className="flex items-center gap-3 px-4 min-h-[44px] w-full text-left border-b border-zinc-100 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800"
+              className="flex items-center gap-3 px-4 min-h-[44px] w-full text-left relative after:absolute after:bottom-0 after:left-12 after:right-0 after:h-px after:bg-zinc-100 dark:after:bg-zinc-800 after:content-[''] text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800"
             >
               <CogIcon className="w-5 h-5 shrink-0" />
               <span className="text-sm font-medium">
@@ -421,7 +434,7 @@ export function HeaderMenu() {
             <a
               id="drawer-row-admin"
               href="#admin"
-              className="hidden flex items-center gap-3 px-4 min-h-[44px] border-b border-zinc-100 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800"
+              className="hidden flex items-center gap-3 px-4 min-h-[44px] relative after:absolute after:bottom-0 after:left-12 after:right-0 after:h-px after:bg-zinc-100 dark:after:bg-zinc-800 after:content-[''] text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800"
             >
               <ShieldCheckIcon className="w-5 h-5 shrink-0" />
               <span className="text-sm font-medium">
