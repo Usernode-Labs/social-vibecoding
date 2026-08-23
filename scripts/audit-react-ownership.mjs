@@ -131,6 +131,7 @@ const OWNED = [
   { sel: '#admin-topo-content', when: '#admin/sql-console' }, // topochain/sql-console.tsx
   { sel: '#admin-topo-content', when: '#admin/settings' }, // topochain/settings.tsx
   { sel: '#admin-topo-content', when: '#admin/app-version' }, // topochain/app-version.tsx
+  { sel: '#admin-topo-content', when: '#admin/waitlist' }, // topochain/waitlist.tsx
   {
     sel: '#admin-section-content',
     when: '#admin/users',                     // features/admin/admin-users.tsx
@@ -148,7 +149,7 @@ const ROUTES = [
   '#app/recipebot', '#app/recipebot/dev', '#app/recipebot/dev/chat',
   '#app/recipebot/dev/sessions/1',
   '#admin/e2e', '#admin/gallery', '#admin/node', '#admin/merges', '#admin/push', '#admin/campaigns', '#admin/mail', '#admin/estimator', '#admin/analytics', '#admin/overview', '#admin/codes', '#admin/featured-apps', '#admin/db-export', '#admin/features', '#admin/limits', '#admin/users', '#admin/status', '#admin/rollover', '#admin/staging-reap',
-  '#admin/api-tester', '#admin/sql-console', '#admin/settings', '#admin/app-version',
+  '#admin/api-tester', '#admin/sql-console', '#admin/settings', '#admin/app-version', '#admin/waitlist',
 ];
 
 function instrument(owned) {

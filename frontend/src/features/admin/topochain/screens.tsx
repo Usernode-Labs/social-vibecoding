@@ -5,6 +5,7 @@ import { ApiTesterScreen } from './api-tester.tsx';
 import { AppVersionScreen } from './app-version.tsx';
 import { SettingsScreen } from './settings.tsx';
 import { SqlConsoleScreen } from './sql-console.tsx';
+import { WaitlistScreen } from './waitlist.tsx';
 
 // The programme console's React screens, and the portal seam that mounts them
 // (#1120 slice 24).
@@ -33,4 +34,5 @@ export const TOPO_REACT_SCREENS: Record<string, { mount(host: Element): void }> 
   'app-version': { mount(host) { mountLegacyPortal(host, <AppVersionScreen />); } },
   settings: { mount(host) { mountLegacyPortal(host, <SettingsScreen />); } },
   'sql-console': { mount(host) { mountLegacyPortal(host, <SqlConsoleScreen />); } },
+  waitlist: { mount(host) { mountLegacyPortal(host, <WaitlistScreen />); } },
 };

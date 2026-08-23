@@ -212,7 +212,7 @@ test('every built screen key is present in SUBS, no gap key is, and each is a re
 test('every built screen has a render function reachable from _renderSub', () => {
   const fn = topoJs.slice(topoJs.indexOf('  _renderSub() {'), topoJs.indexOf('  // ══'.repeat(1), topoJs.indexOf('  _renderSub() {')));
   const renderFns = [
-    'renderSeasonEvents', 'renderWaitlist', 'renderOnchainAccounts', 'renderUserActivities',
+    'renderSeasonEvents', 'renderOnchainAccounts', 'renderUserActivities',
     'renderChallengeTemplates', 'renderSeasons', 'renderDelegations',
   ];
   for (const name of renderFns) {
@@ -233,6 +233,7 @@ test('every built screen has a render function reachable from _renderSub', () =>
     ['sql-console', 'SqlConsoleScreen'],
     ['settings', 'SettingsScreen'],
     ['app-version', 'AppVersionScreen'],
+    ['waitlist', 'WaitlistScreen'],
   ]) {
     assert.ok(!new RegExp(`case '${key}':`).test(fn), `${key} left the switch`);
     const renderer = `render${component.replace('Screen', '')}`;
@@ -724,7 +725,7 @@ test('no two static admin-topo-* element ids collide', () => {
 
 test('every screen opens with the shared _screenHeader, toolbar and all', () => {
   const SCREENS = [
-    'renderSeasons', 'renderSeasonEvents', 'renderUsers', 'renderWaitlist',
+    'renderSeasons', 'renderSeasonEvents', 'renderUsers',
     'renderOnchainAccounts', 'renderUserActivities', 'renderChallengeTemplates',
   ];
   for (const fn of SCREENS) {
@@ -733,6 +734,22 @@ test('every screen opens with the shared _screenHeader, toolbar and all', () => 
     const body = topoJs.slice(start, start + topoJs.slice(start).indexOf('\n  },'));
     assert.match(body, /_screenHeader\(\{/, `${fn} uses the shared screen header`);
   }
+  // A converted screen uses the <ScreenHeader> component, which renders the
+  // same strip from the same classes. Waitlist is the interesting case: it
+  // opens TWO, one per queue.
+  const waitlist = fs.readFileSync(
+    path.join(root, 'frontend/src/features/admin/topochain/waitlist.tsx'), 'utf8');
+  assert.ok((waitlist.match(/<ScreenHeader\n/g) || []).length >= 1,
+    'the waitlist screen opens with the shared header');
+  const topoUi = fs.readFileSync(
+    path.join(root, 'frontend/src/features/admin/topochain/ui.tsx'), 'utf8');
+  const reactHeader = topoUi.slice(topoUi.indexOf('export function ScreenHeader('),
+    topoUi.indexOf('export function Panel('));
+  assert.match(reactHeader, /flex flex-col gap-3 sm:flex-row/,
+    'the component stacks title and toolbar the same way the string helper does');
+  assert.match(reactHeader, /flex flex-wrap items-center gap-2/,
+    'and wraps its toolbar the same way');
+
   const header = topoJs.slice(topoJs.indexOf('  _screenHeader(opts) {'),
     topoJs.indexOf('  _screenHeader(opts) {') + 900);
   assert.match(header, /flex flex-col gap-3 sm:flex-row/,
