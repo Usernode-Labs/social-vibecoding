@@ -169,8 +169,13 @@ function instrument(owned) {
    * appends its whole subtree, and every one of those appends looked like a
    * violation.
    */
+  // ELEMENTS AND TEXT NODES BOTH. React precaches the fiber on a text
+  // instance as well as an element one, and this deliberately does not check
+  // nodeType: an earlier version restricted it to elements and then reported
+  // React's own text children — a `{' · '}` appended into a <p> whose first
+  // render had said "Loading…" — as a legacy write.
   const own = (node, prefix) => {
-    if (!node || node.nodeType !== 1) return null;
+    if (!node || typeof node !== 'object') return null;
     for (const k of Object.keys(node)) if (k.startsWith(prefix)) return node[k];
     return null;
   };
