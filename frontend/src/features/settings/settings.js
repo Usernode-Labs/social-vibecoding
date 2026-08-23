@@ -3455,12 +3455,11 @@
     },
 
     async _loadAgentFiles() {
-      const instrList = document.getElementById('agent-files-instructions-list');
-      const skillList = document.getElementById('agent-files-skills-list');
-      if (!instrList || !skillList) return;
-      instrList.innerHTML = '<p class="text-xs text-zinc-500">Loading…</p>';
-      skillList.innerHTML = '';
+      const bridge = (typeof window !== 'undefined' && window.UsernodeReact)
+        ? window.UsernodeReact.settingsAgentFiles : null;
+      if (!bridge) return;
       const demo = this._agentFilesDemo();
+      bridge.publish({ phase: 'loading', files: [], demo });
       let files = [];
       try {
         const r = await fetch('/api/me/agent-files' + (demo ? '?demo=1' : ''), { credentials: 'same-origin' });
@@ -3468,98 +3467,53 @@
         const j = await r.json();
         files = j.files || [];
       } catch {
-        instrList.innerHTML = '<p class="text-xs text-red-500">Failed to load your agent files.</p>';
+        bridge.publish({ phase: 'error', files: [], demo });
         return;
       }
-      const byKind = (kind) => files.filter((f) => f.kind === kind);
-      const renderList = (el, list, emptyText) => {
-        el.innerHTML = '';
-        if (!list.length) {
-          el.innerHTML = `<p class="text-xs text-zinc-500 dark:text-zinc-500">${emptyText}</p>`;
-          return;
-        }
-        for (const f of list) el.appendChild(this._agentFileRow(f, demo));
-      };
-      renderList(instrList, byKind('instruction'),
-        'No instruction files yet — upload a markdown file to guide the coding agent on every build you start.');
-      renderList(skillList, byKind('skill'),
-        'No skills yet — upload a skill file the agent can use while building for you.');
+      bridge.publish({ phase: 'ready', demo, files: files.map((f) => this._agentFileView(f)) });
     },
 
-    _agentFileRow(f, demo) {
-      const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({
-        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
-      }[c]));
-      const row = document.createElement('div');
-      row.className = 'rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-xs';
-      // Stable hook for the #settings/agent-files rendered check — a row
-      // that stops rendering should fail checks, not shrink silently.
-      row.dataset.agentFile = f.kind || '';
-      const kb = Math.max(1, Math.round((f.size_bytes || 0) / 1024));
-      row.innerHTML = `
-        <div class="flex items-center justify-between gap-2">
-          <span class="font-mono font-medium text-zinc-700 dark:text-zinc-300 truncate">${esc(f.name)}</span>
-          <span class="shrink-0 flex items-center gap-2">
-            <span class="text-zinc-500 dark:text-zinc-500">${kb} KB</span>
-            <button data-role="view" class="text-violet-500 hover:text-violet-400 font-medium">View</button>
-            <button data-role="delete" class="text-red-600 dark:text-red-400 hover:text-red-500 font-medium">Delete</button>
-          </span>
-        </div>
-        ${f.description ? `<div class="text-zinc-500 dark:text-zinc-500 mt-1 truncate">${esc(f.description)}</div>` : ''}
-        <pre data-role="content" class="hidden mt-2 max-h-48 overflow-y-auto whitespace-pre-wrap break-words rounded bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-2 py-1.5 font-mono text-[11px] text-zinc-700 dark:text-zinc-300"></pre>`;
+    // One file, as DATA. The KB rounding is this module's rule — the same
+    // reason the grant rows arrive with their dollars already formatted.
+    _agentFileView(f) {
+      return {
+        kind: String(f.kind ?? ''),
+        name: String(f.name ?? ''),
+        description: String(f.description ?? ''),
+        kb: Math.max(1, Math.round((f.size_bytes || 0) / 1024)),
+      };
+    },
 
-      const viewBtn = row.querySelector('[data-role="view"]');
-      const pre = row.querySelector('[data-role="content"]');
-      viewBtn.addEventListener('click', async () => {
-        if (!pre.classList.contains('hidden')) {
-          pre.classList.add('hidden');
-          viewBtn.textContent = 'View';
-          return;
-        }
-        if (!pre.textContent) {
-          pre.textContent = 'Loading…';
-          pre.classList.remove('hidden');
-          try {
-            const qs = `kind=${encodeURIComponent(f.kind)}&name=${encodeURIComponent(f.name)}` + (demo ? '&demo=1' : '');
-            const r = await fetch(`/api/me/agent-files/content?${qs}`, { credentials: 'same-origin' });
-            const j = await r.json().catch(() => ({}));
-            if (!r.ok) throw new Error(j.error || 'fetch failed');
-            pre.textContent = j.file?.content || '(empty)';
-          } catch (err) {
-            pre.textContent = 'Failed to load: ' + err.message;
-          }
-        } else {
-          pre.classList.remove('hidden');
-        }
-        viewBtn.textContent = 'Hide';
+    // Delete was a closure inside the row builder, wired with
+    // addEventListener to a node it had just created. It is a method now,
+    // called by name from ./agent-files-list.tsx — the component owns the
+    // markup, this module owns the confirm dialog, the write and the reload.
+    async _onAgentFileDelete(kind, name) {
+      const ok = await ConfirmModal.show({
+        title: `Delete "${name}"?`,
+        message: 'The coding agent stops using it from your next run. This cannot be undone.',
+        confirmLabel: 'Delete',
+        danger: true,
       });
-
-      row.querySelector('[data-role="delete"]').addEventListener('click', async () => {
-        const ok = await ConfirmModal.show({
-          title: `Delete "${f.name}"?`,
-          message: 'The coding agent stops using it from your next run. This cannot be undone.',
-          confirmLabel: 'Delete',
-          danger: true,
+      if (!ok) return;
+      if (this._agentFilesDemo()) {
+        this._setAgentFilesStatus('Demo data — changes are not saved.', 'info');
+        return;
+      }
+      try {
+        const r = await fetch('/api/me/agent-files', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ kind, name }),
         });
-        if (!ok) return;
-        if (demo) { this._setAgentFilesStatus('Demo data — changes are not saved.', 'info'); return; }
-        try {
-          const r = await fetch('/api/me/agent-files', {
-            method: 'DELETE',
-            headers: { 'Content-Type': 'application/json' },
-            credentials: 'same-origin',
-            body: JSON.stringify({ kind: f.kind, name: f.name }),
-          });
-          const j = await r.json().catch(() => ({}));
-          if (!r.ok) { this._setAgentFilesStatus(j.error || 'Failed to delete.', 'error'); return; }
-          this._setAgentFilesStatus(`Deleted "${f.name}".`, 'ok');
-          this._loadAgentFiles();
-        } catch (err) {
-          this._setAgentFilesStatus('Network error: ' + err.message, 'error');
-        }
-      });
-
-      return row;
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) { this._setAgentFilesStatus(j.error || 'Failed to delete.', 'error'); return; }
+        this._setAgentFilesStatus(`Deleted "${name}".`, 'ok');
+        this._loadAgentFiles();
+      } catch (err) {
+        this._setAgentFilesStatus('Network error: ' + err.message, 'error');
+      }
     },
 
     _setAgentFilesStatus(text, kind) {
