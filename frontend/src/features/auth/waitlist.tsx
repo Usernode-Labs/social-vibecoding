@@ -219,7 +219,7 @@ export function WaitlistScreen() {
           <div>
             <label htmlFor="waitlist-email" className="block text-sm font-medium text-zinc-700 dark:text-zinc-200">
               Your email address
-              <span className="text-red-500">
+              <span className="text-red-600 dark:text-red-400">
                 *
               </span>
             </label>
@@ -243,7 +243,7 @@ export function WaitlistScreen() {
               className="block text-sm font-medium text-zinc-700 dark:text-zinc-200"
             >
               Link something you&rsquo;ve made
-              <span className="text-red-500">
+              <span className="text-red-600 dark:text-red-400">
                 *
               </span>
             </label>
@@ -309,7 +309,7 @@ export function WaitlistScreen() {
           <div>
             <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-200">
               How did you find us?
-              <span className="text-red-500">
+              <span className="text-red-600 dark:text-red-400">
                 *
               </span>
             </label>

@@ -34,6 +34,8 @@
 
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 
+import { tintFor } from '@/components/ui/icon-tile';
+
 import { ChevronLeftIcon, LockIcon } from '@/components/ui/icons';
 
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
@@ -146,7 +148,11 @@ function LandingTile({ app, onOpen }: { app: PublicApp; onOpen: (app: PublicApp)
     <div
       className={
         'app-card relative rounded-xl transition-colors p-3 flex flex-col items-center text-center gap-1.5 cursor-pointer' +
-        (gated ? ' opacity-50 grayscale' : '')
+        // `grayscale` alone, where this was `opacity-50 grayscale`. Opacity
+        // composites toward whatever is behind, so it fades on the light page
+        // and muddies on the dark one; draining the colour reads the same on
+        // both. Same correction as the authed launcher's unlaunchable tiles.
+        (gated ? ' grayscale-[0.75]' : '')
       }
       data-slug={app.slug || ''}
       data-gated={gated ? 'true' : 'false'}
@@ -155,7 +161,8 @@ function LandingTile({ app, onOpen }: { app: PublicApp; onOpen: (app: PublicApp)
       <div className="relative w-14 h-14 shrink-0">
         {app.icon_url ? (
           <div
-            className="app-icon-tile w-14 h-14 rounded-xl overflow-hidden flex items-center justify-center font-bold text-xl"
+            className="app-icon-tile w-14 h-14 rounded-2xl overflow-hidden flex items-center justify-center font-bold text-xl"
+            data-tint={tintFor(app.slug || app.name || "")}
             data-icon="image"
           >
             <img
@@ -168,7 +175,8 @@ function LandingTile({ app, onOpen }: { app: PublicApp; onOpen: (app: PublicApp)
           </div>
         ) : app.icon_emoji ? (
           <div
-            className="app-icon-tile w-14 h-14 rounded-xl overflow-hidden flex items-center justify-center font-bold text-xl"
+            className="app-icon-tile w-14 h-14 rounded-2xl overflow-hidden flex items-center justify-center font-bold text-xl"
+            data-tint={tintFor(app.slug || app.name || "")}
             data-icon="emoji"
           >
             <span className="text-3xl leading-none" aria-hidden="true">
@@ -177,7 +185,8 @@ function LandingTile({ app, onOpen }: { app: PublicApp; onOpen: (app: PublicApp)
           </div>
         ) : (
           <div
-            className="app-icon-tile w-14 h-14 rounded-xl overflow-hidden flex items-center justify-center font-bold text-xl"
+            className="app-icon-tile w-14 h-14 rounded-2xl overflow-hidden flex items-center justify-center font-bold text-xl"
+            data-tint={tintFor(app.slug || app.name || "")}
             data-icon="letter"
           >
             {(app.name || '?').charAt(0).toUpperCase()}
@@ -677,7 +686,7 @@ export function LandingScreen() {
               href="#waitlist"
               id="landing-waitlist-cta"
               data-offline-disabled=""
-              className="h-7 inline-flex items-center rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 text-xs sm:px-5 font-medium text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-900 transition-colors"
+              className="h-7 inline-flex items-center rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-3 text-xs sm:px-5 font-medium text-zinc-900 dark:text-zinc-100 transition-colors"
               onClick={onLeaveCta}
             >
               Join waitlist
@@ -745,7 +754,11 @@ export function LandingScreen() {
           */}
           <section
             id="landing-waitlist"
-            className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/60 p-5 mb-10"
+            // No border: this page's ground is WHITE, so the card is a step DOWN
+            // (zinc-50) rather than the step up a card takes on the authed
+            // shell's grey ground. Either way the language separates by
+            // figure/ground, and the outline was doing the separating here.
+            className="rounded-2xl bg-zinc-50 dark:bg-zinc-900/60 p-5 mb-10"
           >
             <h2 className="text-lg font-semibold mb-1">
               Build apps together, own them together
