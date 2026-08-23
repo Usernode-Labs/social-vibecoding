@@ -121,6 +121,15 @@ const OWNED = [
   { sel: '#admin-section-content', when: '#admin/db-export' }, // features/admin/admin-db-export.tsx
   { sel: '#admin-section-content', when: '#admin/features' }, // features/admin/admin-features.tsx
   { sel: '#admin-section-content', when: '#admin/limits' },  // features/admin/admin-limits.tsx
+  {
+    sel: '#admin-section-content',
+    when: '#admin/users',                     // features/admin/admin-users.tsx
+    // `#admin-users-programme` is the programme users card, filled by
+    // admin-topochain.js. The Users section renders it ONCE, with a constant
+    // className, and never looks inside — the legacy-host seam in AGENTS.md.
+    // Without this the audit would report that documented arrangement.
+    except: ['#admin-users-programme'],
+  },
 ];
 
 const ROUTES = [
@@ -128,16 +137,23 @@ const ROUTES = [
   '#settings/agent-files', '#profile', '#leaderboard', '#messages',
   '#app/recipebot', '#app/recipebot/dev', '#app/recipebot/dev/chat',
   '#app/recipebot/dev/sessions/1',
-  '#admin/e2e', '#admin/gallery', '#admin/node', '#admin/merges', '#admin/push', '#admin/campaigns', '#admin/mail', '#admin/estimator', '#admin/analytics', '#admin/overview', '#admin/codes', '#admin/featured-apps', '#admin/db-export', '#admin/features', '#admin/limits', '#admin/status',
+  '#admin/e2e', '#admin/gallery', '#admin/node', '#admin/merges', '#admin/push', '#admin/campaigns', '#admin/mail', '#admin/estimator', '#admin/analytics', '#admin/overview', '#admin/codes', '#admin/featured-apps', '#admin/db-export', '#admin/features', '#admin/limits', '#admin/users', '#admin/status',
 ];
 
 function instrument(owned) {
   window.__ownHits = [];
   const inside = (node) => {
     if (!node || node.nodeType !== 1) return null;
-    for (const { sel, when } of owned) {
+    for (const { sel, when, except } of owned) {
       // A scoped host is only React's while that address is on screen.
       if (when && !String(location.hash || '').startsWith(when)) continue;
+      // A documented legacy-filled host INSIDE an owned one: rendered once
+      // with constant props and never looked inside. Writes below it are the
+      // sanctioned pattern, not a second author.
+      if (except && except.some((s2) => {
+        const h = document.querySelector(s2);
+        return h && (h === node || h.contains(node));
+      })) continue;
       const host = document.querySelector(sel);
       // The host ITSELF counts, not just its descendants: appending a row
       // straight into `#gc-messages` is one of the two bugs this exists for.

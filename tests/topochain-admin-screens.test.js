@@ -73,14 +73,21 @@ test('AdminConsole.SECTIONS promotes every programme screen under the #1179 grou
 });
 
 test('the console Users section embeds the programme users screen (merged, #1179)', () => {
-  const fn = consoleJs.slice(consoleJs.indexOf('  renderUsersSection(host) {'),
-    consoleJs.indexOf('  async _bulkQuota() {'));
+  // The section moved out of the chassis into its own module in #1120 slice
+  // 22. The arrangement is unchanged: a host rendered by the section, the
+  // stale-response guard armed before the render, and both surfaces coexisting.
+  const fn = fs.readFileSync(
+    path.join(__dirname, '..', 'frontend/src/features/admin/admin-users.tsx'), 'utf8');
   assert.match(fn, /id="admin-users-programme"/,
     'the section renders a host for the programme users card');
-  assert.match(fn, /window\.AdminTopochain\._sub = 'users'/,
+  assert.match(fn, /topochain\._sub = 'users';/,
     "the module's stale-response guard is armed before the render");
-  assert.match(fn, /window\.AdminTopochain\.renderUsers\(/,
+  assert.match(fn, /topochain\.renderUsers\(programme\.current\)/,
     'and the programme users screen renders into it');
+  // Armed BEFORE, not after — the loaders read `_sub` to decide whether their
+  // response is still wanted, so the order is the whole point.
+  assert.ok(fn.indexOf("topochain._sub = 'users';") < fn.indexOf('topochain.renderUsers('),
+    'the guard is set before renderUsers is called');
   // The platform-accounts card is untouched — both surfaces coexist.
   assert.match(fn, /id="admin-user-list"/, 'the platform accounts list is still there');
 });
