@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { AdminUI } from './admin-console.js';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
+import { ProgrammeUsers } from './topochain/programme-users.tsx';
 
 // Users (#admin/users) — one row per account, with every per-user dial the
 // platform has: role, app quota, daily spend cap, linked Usernode wallet, and
@@ -11,11 +12,12 @@ import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals
 //
 // #1179: the programme's own users screen (event enrolment, podium and log
 // settings, CSV import/export) is merged into this section — one Users menu
-// entry, both feature sets. admin-topochain.js owns that card's markup and
-// handlers, and `#admin-users-programme` below is its host: rendered once with
-// a constant className and never looked inside, which is the documented
-// legacy-host seam in AGENTS.md. Its `_sub` must name the screen because its
-// loaders use it as their stale-response guard.
+// entry, both feature sets. That card was admin-topochain.js's markup, filled
+// into an `#admin-users-programme` host this file rendered once and never
+// looked inside — the documented legacy-host seam in AGENTS.md. #1120 slice 35
+// made it a React component, so the host, the seam and the audit's
+// `except: ['#admin-users-programme']` exemption are all gone: the whole
+// section is one tree.
 //
 // PERMISSIONS: visible to any admin. Every control is gated on
 // AdminConsole.canWrite(); a view-only admin sees the role as text rather than
@@ -506,7 +508,6 @@ function UsersSection() {
   // installed only while one is open. The old shape bound its pair once for
   // the module's lifetime behind a `_menusWired` flag and never removed them.
   const [openMenu, setOpenMenu] = useState<number | null>(null);
-  const programme = useRef<HTMLDivElement | null>(null);
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
 
@@ -534,16 +535,6 @@ function UsersSection() {
       document.removeEventListener('keydown', onKey);
     };
   }, [openMenu]);
-
-  // The programme's users card. admin-topochain.js fills this host with its
-  // own markup and binds its own handlers — rendered once with a constant
-  // className, never looked inside. `_sub` is its stale-response guard.
-  useEffect(() => {
-    const topochain = (window as any).AdminTopochain;
-    if (!topochain || !programme.current) return;
-    topochain._sub = 'users';
-    topochain.renderUsers(programme.current);
-  }, []);
 
   const bulkQuota = async () => {
     const raw = bulk.trim();
@@ -607,7 +598,9 @@ function UsersSection() {
           ))}
         </div>
       </div>
-      <div id="admin-users-programme" className="mt-6" ref={programme} />
+      <div id="admin-users-programme" className="mt-6">
+        <ProgrammeUsers />
+      </div>
     </>
   );
 }

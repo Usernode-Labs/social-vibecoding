@@ -138,15 +138,10 @@ const OWNED = [
   { sel: '#admin-topo-content', when: '#admin/challenge-templates' }, // topochain/challenge-templates.tsx
   { sel: '#admin-topo-content', when: '#admin/seasons' }, // topochain/seasons.tsx
   { sel: '#admin-topo-content', when: '#admin/season-events' }, // topochain/season-events.tsx
-  {
-    sel: '#admin-section-content',
-    when: '#admin/users',                     // features/admin/admin-users.tsx
-    // `#admin-users-programme` is the programme users card, filled by
-    // admin-topochain.js. The Users section renders it ONCE, with a constant
-    // className, and never looks inside — the legacy-host seam in AGENTS.md.
-    // Without this the audit would report that documented arrangement.
-    except: ['#admin-users-programme'],
-  },
+  // No `except` any more: `#admin-users-programme` was the programme users
+  // card's host, filled by admin-topochain.js, and #1120 slice 35 made that
+  // card a child component. The whole section is React's, exemption included.
+  { sel: '#admin-section-content', when: '#admin/users' }, // features/admin/admin-users.tsx
 ];
 
 const ROUTES = [

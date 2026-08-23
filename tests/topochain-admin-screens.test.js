@@ -92,23 +92,23 @@ test('AdminConsole.SECTIONS promotes every programme screen under the #1179 grou
 });
 
 test('the console Users section embeds the programme users screen (merged, #1179)', () => {
-  // The section moved out of the chassis into its own module in #1120 slice
-  // 22. The arrangement is unchanged: a host rendered by the section, the
-  // stale-response guard armed before the render, and both surfaces coexisting.
+  // The section moved out of the chassis in #1120 slice 22, and slice 35 made
+  // the programme card a React component too — so the arrangement is no
+  // longer a host plus a stale-response guard, it is a child component. Both
+  // surfaces still coexist under one Users menu entry.
   const fn = fs.readFileSync(
     path.join(__dirname, '..', 'frontend/src/features/admin/admin-users.tsx'), 'utf8');
   assert.match(fn, /id="admin-users-programme"/,
-    'the section renders a host for the programme users card');
-  assert.match(fn, /topochain\._sub = 'users';/,
-    "the module's stale-response guard is armed before the render");
-  assert.match(fn, /topochain\.renderUsers\(programme\.current\)/,
-    'and the programme users screen renders into it');
-  // Armed BEFORE, not after — the loaders read `_sub` to decide whether their
-  // response is still wanted, so the order is the whole point.
-  assert.ok(fn.indexOf("topochain._sub = 'users';") < fn.indexOf('topochain.renderUsers('),
-    'the guard is set before renderUsers is called');
+    'the section still renders the programme card, under its own id');
+  assert.match(fn, /<ProgrammeUsers \/>/, 'as a child component');
+  assert.match(fn, /^import \{ ProgrammeUsers \} from '\.\/topochain\/programme-users\.tsx';$/m,
+    'imported rather than read off the AdminTopochain global');
+  // The `_sub = 'users'` guard and the renderUsers() call are gone with the
+  // innerHTML card: a component that unmounts needs no stale-response flag.
+  assert.ok(!/topochain\._sub/.test(fn), 'no stale-response flag is armed any more');
+  assert.ok(!/renderUsers/.test(fn), 'and nothing calls into the module to draw it');
   // The platform-accounts card is untouched — both surfaces coexist.
-  assert.match(fn, /id="admin-user-list"/, 'the platform accounts list is still there');
+  assert.match(fn, /id="admin-user-list"/, 'the platform users list is still there');
 });
 
 test("the retired 'topochain' key still resolves, at ONE choke point", () => {
@@ -193,12 +193,19 @@ test('AdminTopochain is defined and mirrored onto window', () => {
 });
 
 test('AdminTopochain defines the core surface the brief calls for', () => {
+  // esc(s) and safeHref(url) left with the markup in #1120 slice 35 — this
+  // module builds none. What remains is a router plus the three helpers the
+  // screens defer to.
   for (const member of [
-    'render(host)', 'setSub(sub)', 'esc(s)', 'safeHref(url)', 'canWrite()',
+    'render(host)', 'setSub(sub)', 'canWrite()',
     'async fetchJson(url, opts)', 'async send(method, url, body)',
     '_subFromHash()', '_syncHash()', '_renderShell()', '_renderSub()',
   ]) {
     assert.ok(topoJs.includes(member), `AdminTopochain defines ${member}`);
+  }
+  for (const gone of ['esc(s) {', 'safeHref(url) {', '_list(opts) {', '_panel(opts) {']) {
+    assert.ok(!topoJs.includes(gone),
+      `${gone} left with the screens — a second copy here would be the one that drifts`);
   }
 });
 
@@ -266,9 +273,11 @@ test('every built screen has a render function reachable from _renderSub', () =>
       `the registry mounts ${key} through the portal seam`,
     );
   }
-  // renderUsers is rendered by the console's Users section, not _renderSub.
-  assert.ok(!fn.includes('renderUsers('), '_renderSub no longer dispatches renderUsers');
-  assert.match(topoJs, /\brenderUsers\(host\) \{/, 'renderUsers(host) is still defined for the merged section');
+  // The programme users card is a child component of the console's Users
+  // section since #1120 slice 35, not a host this module fills — so
+  // renderUsers is gone from here entirely, not merely off the dispatch.
+  assert.ok(!/renderUsers\(/.test(stripComments(topoJs)),
+    'renderUsers left with the card it drew');
 });
 
 test('the three documented API gaps are explained in the file header, not silently dropped', () => {
@@ -399,67 +408,75 @@ test('render() takes the screen from the active console section, with a legacy-h
 
 // ─── Security: esc()/safeHref() discipline ─────────────────────────────────
 
-test('esc() mirrors the hardened topochain-challenges.js/topochain-leaderboard.js version, not the older admin-console.js one', () => {
-  const fn = topoJs.slice(topoJs.indexOf('esc(s) {'), topoJs.indexOf('esc(s) {') + 300);
-  assert.ok(fn.includes(".replace(/&/g, '&amp;')"), 'esc() escapes &');
-  assert.ok(fn.includes(".replace(/</g, '&lt;')"), 'esc() escapes <');
-  assert.ok(fn.includes(".replace(/>/g, '&gt;')"), 'esc() escapes >');
-  assert.ok(fn.includes('.replace(/"/g, \'&quot;\')'), 'esc() escapes double quotes (attribute-value breakout)');
-  assert.ok(fn.includes(".replace(/'/g, '&#39;')"), 'esc() escapes single quotes too');
+test('every value a screen renders is a text child, never spliced into markup', () => {
+  // What esc() used to guarantee, stated as the property React gives for
+  // free — and stated over EVERY screen rather than over the three builders
+  // that happened to funnel values. The XSS this rule exists for was a value
+  // interpolated into an attribute; there is no interpolation left to get
+  // wrong.
+  for (const [i, src] of REACT_SCREENS.entries()) {
+    assert.ok(!/dangerouslySetInnerHTML/.test(stripAllComments(src)),
+      `${REACT_SCREEN_FILES[i]} must not opt out of React's escaping`);
+    assert.ok(!/\.innerHTML\s*=/.test(stripAllComments(src)),
+      `${REACT_SCREEN_FILES[i]} must not write markup directly either`);
+  }
+  const ui = fs.readFileSync(path.join(REACT_DIR, 'ui.tsx'), 'utf8');
+  assert.ok(!/dangerouslySetInnerHTML/.test(stripAllComments(ui)),
+    'nor may the shared chrome they all render through');
 });
 
-test('safeHref validates an http(s)-only scheme', () => {
-  const fn = topoJs.slice(topoJs.indexOf('safeHref(url) {'), topoJs.indexOf('canWrite() {'));
-  assert.ok(fn.length > 0, 'safeHref is defined');
-  assert.ok(fn.includes('/^https?:\\/\\//i.test(url)'), 'safeHref checks the URL scheme with an http(s)-only regex');
+test('no admin- or API-supplied URL is ever rendered as a clickable anchor', () => {
+  // safeHref()'s rule, which esc() could not express: escaping stops
+  // attribute breakout but not a `javascript:` scheme, which executes on
+  // click with no markup injection at all. The screens' answer is stronger —
+  // they render no anchor from server data whatsoever.
+  //
+  // The fields this is about: app-version-configs' update_url,
+  // challenge-templates' cta_link / mobile_cta_link, and a waitlist signup's
+  // made_url, which is the least trusted of the four (a public join form) and
+  // has its own executed test against a hostile payload.
+  for (const [i, src] of REACT_SCREENS.entries()) {
+    for (const [, expr] of stripAllComments(src).matchAll(/href=\{([^}]*)\}/g)) {
+      assert.fail(`${REACT_SCREEN_FILES[i]} renders a computed href (${expr.trim()}) — `
+        + 'admin data must be shown as text, not as a link');
+    }
+  }
+  const waitlist = fs.readFileSync(path.join(REACT_DIR, 'waitlist.tsx'), 'utf8');
+  assert.match(waitlist, /<span className="select-all break-all">\{a\.made_url\}<\/span>/,
+    'the submitted URL is selectable text so an admin can still copy it out');
+  assert.ok(fs.existsSync(path.join(root, 'tests/topochain-waitlist-survey.test.js')),
+    'and the executed test for it exists');
+  // The one outbound navigation left is the CSV export, which builds a
+  // same-origin path from a numeric id the client fetched itself.
+  const programme = fs.readFileSync(path.join(REACT_DIR, 'programme-users.tsx'), 'utf8');
+  assert.match(programme, /if \(!Number\.isInteger\(id\) \|\| id <= 0\) return;/,
+    'the export id is validated before it reaches the URL');
+  assert.match(programme, /window\.location\.href = `\/api\/v4\/admin\/users\/export-csv\/\$\{encodeURIComponent\(id\)\}`;/,
+    'and the path is same-origin and server-generated');
 });
 
-test('no admin/API-supplied URL is ever interpolated into a raw href attribute', () => {
-  // This module deliberately never renders update_url/cta_link/mobile_cta_link
-  // etc. as clickable anchors (they're shown as escaped text in form
-  // fields instead) — so there should be no interpolated href="${...}" at
-  // all. If a future change adds one, it must go through safeHref() like
-  // topochain-challenges.js's _ctaHtml does.
-  const hrefSites = (topoJs.match(/href="\$\{/g) || []).length;
-  assert.equal(hrefSites, 0, 'no interpolated href exists in admin-topochain.js');
-});
-
-// The helper functions that build every <input>/<textarea>/<option> in
-// this file all funnel through esc() internally — spot-check the three
-// helpers rather than every call site (there are dozens).
-test('the shared _inputHtml/_textareaHtml/_selectHtml builders escape their values', () => {
-  const inputFn = topoJs.slice(topoJs.indexOf('  _inputHtml(id, opts = {}) {'), topoJs.indexOf('  _textareaHtml('));
-  assert.match(inputFn, /esc\(val\)/, '_inputHtml escapes the value attribute');
-  const textareaFn = topoJs.slice(topoJs.indexOf('  _textareaHtml(id, value, rows) {'), topoJs.indexOf('  _selectHtml('));
-  assert.match(textareaFn, /esc\(value\)/, '_textareaHtml escapes its content');
-  const selectFn = topoJs.slice(topoJs.indexOf('  _selectHtml(id, options, selected, opts = {}) {'), topoJs.indexOf('  _isoToLocalInput('));
-  assert.match(selectFn, /esc\(val\)/, '_selectHtml escapes option values');
-  assert.match(selectFn, /esc\(label\)/, '_selectHtml escapes option labels');
-});
 
 // Spot-check a sampling of fields rendered directly (not through the
 // shared input builders) actually pass through esc(...).
-test('table-rendered API fields pass through esc()', () => {
-  for (const field of ['ev.name', 'u.email']) {
-    const re = new RegExp(`esc\\(${field.replace('.', '\\.')}`);
-    assert.ok(re.test(topoJs), `${field} passes through esc() somewhere in admin-topochain.js`);
-  }
-  // `s.key` and `c.os` were the other two, on the Settings and App version
-  // screens. Both are React since #1120 slices 26/27, where a cell is a text
-  // child and React does the escaping. The stronger statement for a converted
-  // screen is that it never opts back out — and it covers every value the
-  // screen renders, not the one field a spot-check happened to name.
+test('every screen renders its API fields as text children', () => {
+  // Was a spot-check that eight named fields went through esc(). Every screen
+  // is React now, so the property is stated once and covers every value each
+  // one renders rather than the eight a sampling happened to name. The
+  // renderers are checked for the two ways out of it above; this pins that
+  // the fields the sampling named are still RENDERED, so the check cannot
+  // pass by the column quietly disappearing.
   for (const [file, cell] of [
+    ['season-events.tsx', /cell: \(ev\) => ev\.name/],
+    ['programme-users.tsx', /cell: \(u\) => u\.email \|\| '—'/],
+    ['onchain-accounts.tsx', /\{a\.public_key\}/],
+    ['onchain-accounts.tsx', /cell: \(a\) => a\.tier/],
+    ['challenge-templates.tsx', /cell: \(t\) => t\.category/],
+    ['challenge-templates.tsx', /cell: \(t\) => t\.reward/],
     ['settings.tsx', /cell: \(s\) => s\.key/],
     ['app-version.tsx', /cell: \(c\) => c\.os/],
-    ['onchain-accounts.tsx', /\{a\.public_key\}/],
-    ['challenge-templates.tsx', /cell: \(t\) => t\.category/],
   ]) {
-    const src = fs.readFileSync(
-      path.join(root, 'frontend/src/features/admin/topochain', file), 'utf8');
+    const src = fs.readFileSync(path.join(REACT_DIR, file), 'utf8');
     assert.match(src, cell, `${file} still renders that cell`);
-    assert.ok(!/dangerouslySetInnerHTML|innerHTML/.test(stripAllComments(src)),
-      `${file} renders no raw HTML`);
   }
 });
 
@@ -569,8 +586,11 @@ test("no user-facing 'Phase' or 'Participant' label — Event/User/Challenge tem
   // underscore is a word character, so `_phase_` never hits `\bphase\b`
   // — there is no legitimate "phase" reference of any kind left in this
   // file, unlike "participants").
-  const code = topoJs.replace(/^\s*\/\/.*$/gm, '');
-  assert.ok(!/\bphase\b/i.test(code), 'no whole-word "phase" outside comments');
+  // Both the module and every screen: the rule is about what an admin READS,
+  // and the copy moved with the screens.
+  const code = stripComments(`${topoJs}\n${allScreens}`);
+  assert.ok(!/\bphase\b/i.test(code.replace(/\w_phase_?\w*|_phase_count/g, '')),
+    'no whole-word "phase" outside comments');
 
   // "participant" is trickier: the users import-csv API's own required
   // JSON body field is literally named `participants` (users.js's
@@ -586,8 +606,10 @@ test("no user-facing 'Phase' or 'Participant' label — Event/User/Challenge tem
     assert.ok(!code.includes(banned), `admin-topochain.js must not display "${banned}"`);
   }
   // Confirm the identifier itself is still there (sanity check that this
-  // test isn't just vacuously passing because the feature was deleted).
-  assert.match(code, /const participants = /, 'the import payload still builds its `participants` field');
+  // test isn't just vacuously passing because the feature was deleted). It
+  // moved to the programme users card with the import panel that builds it.
+  assert.match(allScreens, /const participants = /,
+    'the import payload still builds its `participants` field');
 });
 
 // The screen is React since #1120 slice 31.
@@ -693,27 +715,31 @@ test('the vocabulary is actually used: Event / User / Challenge template / Kind'
   // SUBS labels stay in the module; the screen copy moved with the screens.
   assert.match(topoJs, /label: 'Season events'/);
   assert.match(topoJs, /label: 'Challenge templates'/);
-  assert.match(topoJs, /title: 'Programme users'/);
+  assert.match(allScreens, /title="Programme users"/);
   assert.match(allScreens, /'Kind'/);
 });
 
 // ─── Users delete: strong confirm (can delete ANY platform user) ──────────
 
 test('deleting a user requires typing the exact identifier before the button enables', () => {
-  // Renamed from _userDeleteConfirmRow: the shared list renderer draws the
-  // same item as a table row AND as a card, so the confirm markup has to be
-  // layout-neutral (a <div>, not a <tr>) to work in both.
-  const fn = topoJs.slice(topoJs.indexOf('  _userDeleteConfirmBlock(u, identifier) {'), topoJs.indexOf('  async _togglePodium('));
-  assert.ok(fn.length > 0, 'the confirm block is defined');
+  // The confirm markup has to be layout-neutral (a <div>, not a <tr>): the
+  // shared list draws the same item as a table row AND as a card, and this
+  // rides along as the row's `extra` block in both.
+  const src = fs.readFileSync(path.join(REACT_DIR, 'programme-users.tsx'), 'utf8');
+  const fn = src.slice(src.indexOf('function DeleteConfirm('), src.indexOf('function UserForm('));
+  assert.ok(fn.length > 400, 'the confirm block is defined');
   assert.ok(!/<tr\b/.test(fn), 'layout-neutral: no <tr>, so the same markup renders inside a card');
-  assert.match(fn, /data-expect="\$\{esc\(identifier\)\}"/, 'the expected string is the row identifier, exactly');
-  assert.match(fn, /disabled/, 'the confirm button starts disabled');
+  assert.match(fn, /data-expect=\{expected\}/, 'the expected string is the row identifier, exactly');
+  assert.match(fn, /disabled=\{typed !== expected\}/,
+    'the confirm button is enabled by an exact match and by nothing else');
   assert.match(fn, /ANY platform user/i, 'the copy warns this is not scoped to this programme’s rows');
-  const wireFn = topoJs.slice(topoJs.indexOf("data-typed-check"), topoJs.indexOf("data-typed-check") + 700);
-  assert.match(wireFn, /inp\.value === inp\.dataset\.expect/, 'the button only enables on an exact match');
-  // Both layouts render the hook, so a querySelector would only ever reach
-  // one of the two copies and the visible button could stay disabled.
-  assert.match(wireFn, /querySelectorAll/, 'every copy of the confirm control is wired, not just the first');
+  // The old shape needed a querySelectorAll pass because both layouts render
+  // the hook and a querySelector would only ever reach one — leaving the
+  // VISIBLE button disabled. Each copy owns its own state now, so there is
+  // nothing to keep in step.
+  assert.match(src, /const \[typed, setTyped\] = useState\(''\)/,
+    'the typed value is the block\'s own state, so both copies work');
+  assert.ok(!/querySelectorAll/.test(src), 'and no cross-copy wiring pass is needed');
 });
 
 // ─── Challenges live inside the season-event detail view ──────────────────
@@ -790,63 +816,55 @@ test('neither the challenge move nor the CSV export uses window.prompt()', () =>
     'the move PATCH is sent with the picked id');
   assert.match(chTsx, /if \(!Number\.isInteger\(targetId\)\) return;/,
     'and a non-numeric pick never reaches the request');
-  assert.match(topoJs, /id="admin-topo-u-exp-event"/, 'the export flow offers an event <select>');
-  assert.match(topoJs, /if \(!Number\.isInteger\(id\) \|\| id <= 0\) return;/,
+  const programme = fs.readFileSync(path.join(REACT_DIR, 'programme-users.tsx'), 'utf8');
+  assert.match(programme, /id="admin-topo-u-exp-event"/, 'the export flow offers an event <select>');
+  assert.match(programme, /if \(!Number\.isInteger\(id\) \|\| id <= 0\) return;/,
     'the picked export id is validated before it reaches the URL');
-  assert.match(topoJs, /export-csv\/\$\{encodeURIComponent\(id\)\}/,
+  assert.match(programme, /export-csv\/\$\{encodeURIComponent\(id\)\}/,
     '...and encoded on the way in');
 });
 
 // ─── Shared loading / empty / error treatment across every screen ─────────
 
 test('the shared list, skeleton, empty and error helpers exist and are used everywhere', () => {
-  for (const helper of ['_list(opts) {', '_skeleton(rows) {', '_empty({', '_error({', '_wireRetry(']) {
-    assert.ok(topoJs.includes(helper), `the shared ${helper.split('(')[0]} helper is defined`);
+  // The whole family is components in topochain/ui.tsx since #1120 slice 35 —
+  // admin-topochain.js builds no markup at all. Same guarantees, same class
+  // strings, one definition each.
+  const uiTsx = fs.readFileSync(path.join(REACT_DIR, 'ui.tsx'), 'utf8');
+  for (const helper of [
+    'export function List<T>(', 'export function Skeleton(', 'export function EmptyState(',
+    'export function ErrorState(', 'export function Pager(',
+  ]) {
+    assert.ok(uiTsx.includes(helper), `the shared ${helper.split('(')[0].split(' ').pop()} is defined`);
   }
   // One column definition renders both layouts, so a screen can't drift
   // between its table and its cards.
-  assert.match(topoJs, /hidden md:block/, '_list renders a table at md+');
-  assert.match(topoJs, /md:hidden space-y-2/, '...and a card stack below it');
+  assert.match(uiTsx, /hidden md:block/, 'the list renders a table at md+');
+  assert.match(uiTsx, /md:hidden space-y-2/, '...and a card stack below it');
 
-  // Every screen that loads asynchronously shows the skeleton rather than
-  // the bare word "Loading…", which read as a stuck screen. The ONE
-  // surviving occurrence is the skeleton's own sr-only status line — the
-  // pulsing bars say nothing to a screen reader on their own.
-  assert.equal((topoJs.match(/>Loading&hellip;</g) || []).length, 1,
-    'the only Loading… left is the skeleton\'s sr-only status');
-  const skeleton = topoJs.slice(topoJs.indexOf('  _skeleton(rows) {'),
-    topoJs.indexOf('  _skeleton(rows) {') + 700);
-  assert.match(skeleton, /sr-only" role="status">Loading&hellip;/,
-    '...and it lives inside _skeleton, announced as a status');
+  // Every screen that loads asynchronously shows the skeleton rather than the
+  // bare word "Loading…", which read as a stuck screen. The ONE surviving
+  // occurrence is the skeleton's own sr-only status line — the pulsing bars
+  // say nothing to a screen reader on their own.
+  assert.equal((`${uiTsx}\n${allScreens}`.match(/>Loading…</g) || []).length, 1,
+    "the only Loading… left is the skeleton's sr-only status");
+  const skeleton = uiTsx.slice(uiTsx.indexOf('export function Skeleton('),
+    uiTsx.indexOf('export function EmptyState('));
+  assert.match(skeleton, /className="sr-only" role="status">Loading…/,
+    '...and it lives inside Skeleton, announced as a status');
   assert.match(skeleton, /animate-pulse/, 'sighted users get the pulsing placeholder bars');
-  // The three counts below span BOTH renderers, and have to: this file's
-  // screens are converting one at a time (#1120), so counting only the
-  // innerHTML module would report a falling number as the property it
-  // measures stayed exactly as true. A converted screen uses the components
-  // in topochain/ui.tsx, which render the same markup from the same tokens.
-  const reactScreens = fs.readdirSync(path.join(root, 'frontend/src/features/admin/topochain'))
-    .filter((f) => f.endsWith('.tsx') && !['ui.tsx', 'screens.tsx'].includes(f))
-    .map((f) => fs.readFileSync(path.join(root, 'frontend/src/features/admin/topochain', f), 'utf8'));
-  assert.ok(reactScreens.length >= 5, 'the converted screens are being read');
-  const across = (re) => (topoJs.match(re[0]) || []).length
-    + reactScreens.reduce((n, src) => n + (src.match(re[1]) || []).length, 0);
-
-  assert.ok(across([/_skeleton\(\d\)/g, /<Skeleton\b/g]) >= 10,
+  assert.ok((allScreens.match(/<Skeleton\b/g) || []).length >= 10,
     'every async screen renders a skeleton while it fetches');
 
   // A failed fetch must be distinguishable from an empty result, and
   // recoverable without a full page reload.
-  assert.ok(across([/_error\(\{/g, /<ErrorState\b/g]) >= 7,
+  assert.ok((allScreens.match(/<ErrorState\b/g) || []).length >= 7,
     'every loader has an error branch');
-  // The retry wiring is a PROP on the React side — the string helper needed
-  // a separate _wireRetry pass only because its button did not exist until
-  // the markup had been written.
-  assert.ok(across([/_wireRetry\(/g, /onRetry=\{/g]) >= 7,
+  // The retry is a PROP now — the string helper needed a separate _wireRetry
+  // pass only because its button did not exist until the markup was written.
+  assert.ok((allScreens.match(/onRetry=\{/g) || []).length >= 7,
     'every error block offers its own retry');
-  const errorText = "Couldn't reach the server.";
-  assert.ok(topoJs.includes(errorText) || reactScreens.some((src) => src.includes(errorText))
-    || fs.readFileSync(path.join(root, 'frontend/src/features/admin/topochain/ui.tsx'), 'utf8')
-      .includes(errorText),
+  assert.match(uiTsx, /Couldn't reach the server\./,
     'status 0 is reported as a connectivity problem, not as a server error');
 });
 
@@ -860,49 +878,53 @@ test('the shared list, skeleton, empty and error helpers exist and are used ever
 // added on the old idiom without failing here.
 
 test('the shared panel/header/form helpers exist', () => {
+  const uiTsx = fs.readFileSync(path.join(REACT_DIR, 'ui.tsx'), 'utf8');
   for (const helper of [
-    '_panel(opts) {', '_screenHeader(opts) {', '_formGrid(innerHtml, cols) {',
-    '_formActions(saveId, cancelId, saveLabel) {', '_formErrorSlot(id) {',
-    '_checkField(id, label, checked, help) {',
+    'export function Panel(', 'export function ScreenHeader(', 'export function FormGrid(',
+    'export function FormActions(', 'export function FormError(', 'export function CheckField(',
   ]) {
-    assert.ok(topoJs.includes(helper), `the shared ${helper.split('(')[0]} helper is defined`);
+    assert.ok(uiTsx.includes(helper), `the shared ${helper.split('(')[0].split(' ').pop()} is defined`);
+  }
+  // And nothing re-implements one: a screen that hand-rolled a panel would
+  // drift from the other ten the first time the chrome changed.
+  for (const [i, src] of REACT_SCREENS.entries()) {
+    assert.ok(!/sticky top-0 z-10 flex items-start/.test(src),
+      `${REACT_SCREEN_FILES[i]} renders its panels through <Panel>, not a copy of its header`);
   }
 });
 
 test('a panel header sticks to the top and carries a visible dismiss control', () => {
-  const panel = topoJs.slice(topoJs.indexOf('  _panel(opts) {'),
-    topoJs.indexOf('  _panel(opts) {') + 2000);
+  const uiTsx = fs.readFileSync(path.join(REACT_DIR, 'ui.tsx'), 'utf8');
+  const panel = uiTsx.slice(uiTsx.indexOf('export function Panel('),
+    uiTsx.indexOf('export function Input('));
   assert.match(panel, /sticky top-0/,
     'a long form scrolls under its own title rather than losing it');
-  assert.match(panel, /aria-label="\$\{esc\(closeLabel\)\}"/,
+  assert.match(panel, /<CloseButton label=\{label\} onClick=\{onClose\} \/>/,
+    'the dismiss control is the shared one');
+  const close = uiTsx.slice(uiTsx.indexOf('export function CloseButton('),
+    uiTsx.indexOf('export function Panel('));
+  assert.match(close, /aria-label=\{label\}/,
     'the ✕ is labelled for a screen reader, not a bare glyph');
-  assert.match(panel, /<svg[^>]*aria-hidden="true"/,
+  assert.match(close, /<svg[^>]*aria-hidden="true"/,
     '...and its icon is hidden from the accessibility tree');
   assert.match(panel, /flex flex-wrap items-center gap-2 border-t/,
     'the footer action bar wraps instead of overflowing on a phone');
+  // Every panel that can be dismissed labels its ✕ for what it closes — a
+  // bare "Close" on eight different panels is no help in a screen reader.
+  const labels = [...allScreens.matchAll(/closeLabel="([^"]+)"/g)].map((m) => m[1]);
+  assert.ok(labels.length >= 8, `expected many labelled dismiss controls, saw ${labels.length}`);
+  for (const label of labels) {
+    assert.match(label, /^Close the .+/, `"${label}" names what it closes`);
+  }
 });
 
-test('every open-a-form entry point renders through _panel with a wired close control', () => {
-  const FORMS = [
-    '_openUserForm', '_openUserImportForm', '_openUserExport',
-  ];
-  for (const fn of FORMS) {
-    const start = topoJs.indexOf(`  async ${fn}(`);
-    assert.ok(start > 0, `${fn} is defined`);
-    const body = topoJs.slice(start, start + topoJs.slice(start).indexOf('\n  },'));
-    assert.match(body, /_panel\(\{/, `${fn} renders inside a _panel`);
-    const closeIds = [...body.matchAll(/closeId: '([^']+)'/g)].map((m) => m[1]);
-    assert.ok(closeIds.length >= 1, `${fn} gives its panel a close control`);
-    for (const id of new Set(closeIds)) {
-      assert.ok(body.includes(`document.getElementById('${id}').addEventListener('click'`),
-        `${fn} wires its '${id}' close control (a ✕ that does nothing is worse than none)`);
-    }
-  }
-  // _openSettingForm and _openAppVersionForm were two of the thirteen until
-  // #1120 slices 26/27 made those screens React. The same property holds and
-  // is no longer splittable: the ✕ IS its handler, so a panel with a close
+test('every open-a-form entry point renders through a Panel with a wired close control', () => {
+  // Was an inventory of thirteen `_open*Form` methods in admin-topochain.js.
+  // None are left — every form is a React component — and the property is no
+  // longer splittable: the ✕ IS its handler, so a panel with a dismiss
   // control that does nothing is not expressible.
-  for (const [file, label] of [
+  assert.ok(!/_open\w*Form/.test(topoJs), 'no form opener is left in the module');
+  const FORMS = [
     ['settings.tsx', 'Close the setting form'],
     ['app-version.tsx', 'Close the app version form'],
     ['onchain-accounts.tsx', 'Close the import panel'],
@@ -913,13 +935,16 @@ test('every open-a-form entry point renders through _panel with a wired close co
     ['season-events.tsx', 'Close the event form'],
     ['challenges.tsx', 'Close the challenge form'],
     ['challenges.tsx', 'Close the move panel'],
-  ]) {
-    const src = fs.readFileSync(
-      path.join(root, 'frontend/src/features/admin/topochain', file), 'utf8');
+    ['programme-users.tsx', 'Close the user form'],
+    ['programme-users.tsx', 'Close the import panel'],
+    ['programme-users.tsx', 'Close the export panel'],
+  ];
+  assert.ok(FORMS.length >= 13, 'the inventory did not shrink in the move');
+  for (const [file, label] of FORMS) {
+    const src = fs.readFileSync(path.join(REACT_DIR, file), 'utf8');
     assert.match(src, /<Panel\n/, `${file} renders its form inside a Panel`);
-    assert.ok(src.includes(`onClose={onClose}`), `${file} wires the panel's close control`);
-    assert.ok(src.includes(`closeLabel="${label}"`),
-      `${file}'s ✕ is labelled for a screen reader`);
+    assert.ok(src.includes('onClose={onClose}'), `${file} wires the panel's close control`);
+    assert.ok(src.includes(`closeLabel="${label}"`), `${file} carries the "${label}" dismiss`);
   }
 });
 
@@ -934,32 +959,17 @@ test('no two static admin-topo-* element ids collide', () => {
   assert.deepEqual(dupes, [], 'duplicate static ids');
 });
 
-test('every screen opens with the shared _screenHeader, toolbar and all', () => {
-  const SCREENS = ['renderUsers'];
-  for (const fn of SCREENS) {
-    const start = topoJs.search(new RegExp(`\\n  (?:async )?${fn}\\(host\\) \\{`));
-    assert.ok(start > 0, `${fn} is defined`);
-    const body = topoJs.slice(start, start + topoJs.slice(start).indexOf('\n  },'));
-    assert.match(body, /_screenHeader\(\{/, `${fn} uses the shared screen header`);
-  }
-  // A converted screen uses the <ScreenHeader> component, which renders the
-  // same strip from the same classes. Waitlist is the interesting case: it
-  // opens TWO, one per queue.
-  const waitlist = fs.readFileSync(
-    path.join(root, 'frontend/src/features/admin/topochain/waitlist.tsx'), 'utf8');
-  assert.ok((waitlist.match(/<ScreenHeader\n/g) || []).length >= 1,
-    'the waitlist screen opens with the shared header');
-  const topoUi = fs.readFileSync(
-    path.join(root, 'frontend/src/features/admin/topochain/ui.tsx'), 'utf8');
-  const reactHeader = topoUi.slice(topoUi.indexOf('export function ScreenHeader('),
-    topoUi.indexOf('export function Panel('));
-  assert.match(reactHeader, /flex flex-col gap-3 sm:flex-row/,
-    'the component stacks title and toolbar the same way the string helper does');
-  assert.match(reactHeader, /flex flex-wrap items-center gap-2/,
-    'and wraps its toolbar the same way');
-
-  const header = topoJs.slice(topoJs.indexOf('  _screenHeader(opts) {'),
-    topoJs.indexOf('  _screenHeader(opts) {') + 900);
+test('every screen opens with the shared screen header, toolbar and all', () => {
+  // All eleven screens plus the programme users card, none of them in the
+  // module any more. Each opens with <ScreenHeader>; the waitlist opens two,
+  // one per queue.
+  const withHeader = REACT_SCREEN_FILES.filter(
+    (f, i) => /<ScreenHeader\n/.test(REACT_SCREENS[i]));
+  assert.ok(withHeader.length >= 10,
+    `expected every screen to open with the shared header, saw ${withHeader.length}`);
+  const uiTsx = fs.readFileSync(path.join(REACT_DIR, 'ui.tsx'), 'utf8');
+  const header = uiTsx.slice(uiTsx.indexOf('export function ScreenHeader('),
+    uiTsx.indexOf('export function CloseButton('));
   assert.match(header, /flex flex-col gap-3 sm:flex-row/,
     'title and toolbar stack on a phone and sit side by side from sm: up');
   assert.match(header, /flex flex-wrap items-center gap-2/,
@@ -1007,45 +1017,37 @@ test('buttons and fields are one consistent, tap-friendly set of tokens', () => 
   // not a helper that returns a whole <button>: Tailwind's extractor only
   // sees whole literals, and the canWrite() ternary test above counts the
   // literal `canWrite ? `<button` shape.
-  assert.doesNotMatch(topoJs, /_btn\(/, 'no button-building function');
+  assert.doesNotMatch(`${topoJs}\n${allScreens}`, /_btn\(/, 'no button-building function');
   const legacy = [
     'text-xs text-zinc-500 hover:text-violet-400',
     'text-xs text-red-500 hover:text-red-400',
     'rounded-lg bg-violet-600 hover:bg-violet-500 px-',
   ];
   for (const cls of legacy) {
-    assert.ok(!topoJs.includes(cls), `the hand-rolled "${cls}" button styling is gone`);
+    assert.ok(!`${topoJs}\n${allScreens}`.includes(cls),
+      `the hand-rolled "${cls}" button styling is gone`);
   }
-  // Row actions are chips inside a wrapping group in BOTH _list layouts.
-  assert.match(topoJs, /flex flex-wrap items-center justify-end gap-1/, 'table action cell wraps');
-  assert.match(topoJs, /mt-2 flex flex-wrap gap-1 border-t/, 'card action footer wraps');
+  // Row actions are chips inside a wrapping group in BOTH list layouts.
+  const listUi = fs.readFileSync(path.join(REACT_DIR, 'ui.tsx'), 'utf8');
+  assert.match(listUi, /flex flex-wrap items-center justify-end gap-1/, 'table action cell wraps');
+  assert.match(listUi, /mt-2 flex flex-wrap gap-1 border-t/, 'card action footer wraps');
 });
 
 test('every form reports failures through the shared inline error slot', () => {
-  const slot = topoJs.slice(topoJs.indexOf('  _formErrorSlot(id) {'),
-    topoJs.indexOf('  _formErrorSlot(id) {') + 500);
-  assert.match(slot, /class="hidden /, 'rendered hidden, revealed by the save handler');
-  assert.match(slot, /role="alert"/, 'a validation failure is announced, not just coloured red');
-  // Spans both renderers: a converted screen renders <FormError message=…/>,
-  // which is the same slot seen from the other side — it renders nothing when
-  // there is nothing to say, instead of an empty paragraph toggled by class.
-  const reactDir = path.join(root, 'frontend/src/features/admin/topochain');
-  const reactSlots = fs.readdirSync(reactDir).filter((f) => f.endsWith('.tsx'))
-    .reduce((n, f) => n + ((fs.readFileSync(path.join(reactDir, f), 'utf8')
-      .match(/<FormError message=/g) || []).length), 0);
-  assert.ok((topoJs.match(/_formErrorSlot\(/g) || []).length + reactSlots >= 8,
-    'every form panel carries one');
-  const uiTsx = fs.readFileSync(path.join(reactDir, 'ui.tsx'), 'utf8');
-  const reactSlot = uiTsx.slice(uiTsx.indexOf('export function FormError('),
+  const uiTsx = fs.readFileSync(path.join(REACT_DIR, 'ui.tsx'), 'utf8');
+  const slot = uiTsx.slice(uiTsx.indexOf('export function FormError('),
     uiTsx.indexOf('export function FormActions('));
-  assert.match(reactSlot, /if \(!message\) return null;/,
-    'the React slot is absent rather than hidden');
-  assert.match(reactSlot, /role="alert"/,
-    'and a validation failure is still announced, not just coloured red');
-  // The save handlers toggle `hidden` on that element by id — the slot
-  // must keep that contract rather than inventing a second mechanism.
-  assert.ok((topoJs.match(/errEl\.classList\.remove\('hidden'\)/g) || []).length >= 5,
-    'the existing show-the-error path still drives it');
+  assert.match(slot, /if \(!message\) return null;/,
+    'the slot is ABSENT rather than an empty paragraph toggled by a class');
+  assert.match(slot, /role="alert"/, 'a validation failure is announced, not just coloured red');
+  assert.ok((allScreens.match(/<FormError message=/g) || []).length >= 8,
+    'every form panel carries one');
+  // And no screen invents a second mechanism for the same job.
+  for (const [i, src] of REACT_SCREENS.entries()) {
+    if (!/<FormError/.test(src)) continue;
+    assert.ok(!/classList\.(add|remove)\('hidden'\)/.test(src),
+      `${REACT_SCREEN_FILES[i]} drives its error through the slot, not by toggling a class`);
+  }
 });
 
 test('the tool screens got the same treatment as the CRUD screens', () => {

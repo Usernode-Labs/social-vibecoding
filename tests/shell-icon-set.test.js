@@ -84,34 +84,35 @@ test('the glyphs live in the module, not inline beside it', () => {
     // table at render time, and <Glyph> is the escape hatch it uses.
     if (/\sd="M/.test(src)) offenders.push(file);
   }
-  // The admin console's own ✕ is the one exception, and it is a PORT, not a
-  // new glyph: topochain/ui.tsx's <CloseButton> renders the same path
-  // admin-topochain.js's _panel() has always written into its header, and it
-  // has to stay byte-identical while a converted screen and an unconverted
-  // one sit in the same sub-nav. Importing from @/components/ui/icons.tsx is
-  // not the fix — AGENTS.md's density boundary forbids an admin source from
-  // reaching into the shell's primitives, and tests/admin-ui-registry.test.js
-  // enforces it. Retire this exemption when _panel() itself is gone.
+  // The admin console's own two glyphs — the panel ✕ and a nested screen's
+  // back chevron — are the one exception. They are PORTS, not new glyphs, and
+  // importing from @/components/ui/icons.tsx is not the alternative:
+  // AGENTS.md's density boundary forbids an admin source from reaching into
+  // the shell's primitives, and tests/admin-ui-registry.test.js enforces it.
   //
-  // ONE file, deliberately: every other converted screen imports
-  // <CloseButton> rather than re-inlining the path, so a second offender here
-  // is a copy that will drift, not a second legitimate port.
+  // These were checkable byte for byte against admin-topochain.js's own
+  // _panel() / detail renderer while those existed. #1120 slice 35 retired
+  // the last of them — that module renders no markup at all now — so the
+  // anchor is structural instead, and it is the one that protects what is
+  // left: exactly two paths, each exported as a component, and no other admin
+  // source inlining one. A second offender in this list is a copy that will
+  // drift, not a third legitimate port.
   const PORTED = 'frontend/src/features/admin/topochain/ui.tsx';
   if (offenders.includes(PORTED)) {
     const src = read(PORTED);
     const ported = src.match(/\sd="(M[^"]*)"/g) || [];
     assert.equal(ported.length, 2,
       `${PORTED} may carry exactly the two ported glyphs — the ✕ and the back chevron`);
-    // The ✕ is still checkable byte for byte against the string helper that
-    // draws it. The back chevron's original left the module with the screen
-    // it belonged to (#1120 slice 34), so its anchor is this assertion: it
-    // exists once, exported, and no screen re-inlines it.
-    const topo = read('frontend/src/features/admin/admin-topochain.js');
-    assert.ok(ported.some((d) => topo.includes(d.trim())),
-      `${PORTED}'s ✕ must be the same path _panel() writes, character for character`);
     for (const fn of ['CloseButton', 'BackButton']) {
       assert.match(src, new RegExp(`export function ${fn}\\(`),
-        `and ${fn} is exported, so the screens have something to import instead of copying`);
+        `${fn} is exported, so the screens have something to import instead of copying`);
+    }
+    // And they are actually used through those components, not re-declared.
+    const screens = fs.readdirSync(path.join(ROOT, 'frontend/src/features/admin/topochain'))
+      .filter((f) => f.endsWith('.tsx') && f !== 'ui.tsx');
+    for (const f of screens) {
+      const s2 = read(`frontend/src/features/admin/topochain/${f}`);
+      assert.ok(!/\sd="M/.test(s2), `${f} imports the glyph rather than inlining it`);
     }
     offenders.splice(offenders.indexOf(PORTED), 1);
   }
