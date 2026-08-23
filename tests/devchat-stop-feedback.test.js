@@ -343,6 +343,67 @@ test('"no active turn" tears down streaming and reconciles from the DB', async (
   assert.equal(document.getElementById('dc-send-btn').textContent, 'Send');
 });
 
+// #1378: the SAME 'no active turn' answer, but the session is still busy.
+// That is what the server says for a turn adopted after a platform restart:
+// it is very much alive, it just has no in-process stop handle. The teardown
+// above must NOT happen here — it was the reported bug, because dropping the
+// ladder is what made Force stop (the one path that ends such a turn)
+// unreachable, leaving a Send button in front of a running agent.
+test('"no active turn" keeps the ladder armed while the session is still busy', async () => {
+  const { DevChat, sandbox, document, timers } = makeHarness();
+  arriveMidTurn(DevChat);
+  let reconciled = false;
+  DevChat._reconcileAfterFallbackDone = () => { reconciled = true; };
+  sandbox.fetch = async (url) => ({
+    ok: true,
+    status: 200,
+    json: async () => (String(url).endsWith('/status')
+      ? { busy: true, stoppable: false }
+      : { ok: true, stopped: false, reason: 'no active turn', hasDurableTurn: true }),
+  });
+
+  await DevChat._stopCurrentTurn();
+
+  assert.equal(reconciled, false, 'no reload — the turn has not ended');
+  assert.equal(DevChat.isStreaming, true, 'the agent is still running');
+  assert.equal(DevChat._stopping, true);
+  assert.equal(stoppingRows(DevChat).length, 1, 'the stopping row stays up');
+  assert.equal(document.getElementById('dc-send-btn').textContent === 'Send', false);
+  // The rungs are what matter: rung 2 is where Force stop is offered.
+  assert.deepEqual(armedDelays(timers), [DevChat.STOPPING_SLOW_MS, DevChat.STOPPING_STUCK_MS]);
+  assert.equal(fireRung(timers, DevChat.STOPPING_STUCK_MS), true);
+  const row = DevChat._stoppingRow();
+  assert.equal(row._forceOffered, true, 'Force stop is reachable');
+});
+
+// #1378: /status reports whether POST /stop can do anything at all. When it
+// cannot, the composer must not paint a red Stop the click would not honour.
+test('a not-stoppable turn paints a spinner instead of the red Stop', () => {
+  const { DevChat, document } = makeHarness();
+  DevChat.currentSession = { id: SESSION_ID, status: 'active' };
+  DevChat.isStreaming = true;
+  DevChat._setStreamingUI(true, null, { stoppable: false });
+
+  const btn = document.getElementById('dc-send-btn');
+  assert.equal(btn.classList.contains('dc-btn-stop'), false, 'no red Stop');
+  assert.equal(btn.classList.contains('dc-btn-streaming'), true);
+  assert.equal(btn.disabled, true);
+  assert.equal(btn.getAttribute('aria-label'), 'Working');
+  assert.equal(DevChat._streamingStoppable, false);
+
+  // A repaint that only knows the phase must not silently re-offer Stop —
+  // every one of those call sites now carries the remembered stoppability.
+  DevChat._stopRequestFailed();
+  assert.equal(btn.classList.contains('dc-btn-stop'), false);
+  assert.equal(btn.classList.contains('dc-btn-streaming'), true);
+
+  // …and it is not sticky: the next turn starts stoppable again.
+  DevChat._setStreamingUI(false);
+  assert.equal(DevChat._streamingStoppable, true);
+  DevChat._setStreamingUI(true, 'cc');
+  assert.equal(btn.classList.contains('dc-btn-stop'), true);
+});
+
 test('duplicate `stopping` events collapse into a single row', async () => {
   const { DevChat, sandbox } = makeHarness();
   arriveMidTurn(DevChat);

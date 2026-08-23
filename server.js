@@ -86,6 +86,8 @@ const activeWorkersSvc = require('./src/services/active-workers');
 const turnWatchdog = require('./src/services/turn-watchdog');
 const recoveryRetry = require('./src/services/recovery-retry');
 const turnLifecycle = require('./src/services/turn-lifecycle');
+const stopRegistry = require('./src/services/stop-registry');
+const sessionBus = require('./src/services/session-bus');
 const turnEffects = require('./src/services/turn-effects');
 const recoveryPills = require('./src/services/recovery-pills');
 const sessionLifecycle = require('./src/services/session-lifecycle');
@@ -1168,6 +1170,16 @@ if (require.main === module) {
 // listener and pool without booting a server. Not used by any runtime caller.
 module.exports = {
   adoptOrphanWorker,
+  // #1378: the detached-turn resume itself, so tests can prove a stop that
+  // lands on an ADOPTED turn terminalizes it as a stop instead of narrating
+  // an interruption (or retrying it). Driving it through adoptOrphanWorker
+  // would need the journal transport stood up; this is the same seam
+  // finalizeRecoveredTurn already exposes one level down.
+  resumeDetachedTurnInner,
+  // ...and the handle factory it is driven with, so a test exercises the
+  // real dual-channel `send` (WS broadcast + session bus, `_seq` and all)
+  // rather than a hand-rolled stand-in that could drift from it.
+  buildRecoveryStopHandle,
   finalizeRecoveredTurn,
   restoreMissingQuickReplies,
   recoverStuckMerges,
@@ -3176,8 +3188,63 @@ async function finalizeRecoveredTurn({
 // 0 (rebuilding progress + result state), follows it live if the turn
 // is still going, then runs the standard post-turn tail. The warm
 // container stays registered for the session's next dispatch.
+// #1378: build the stop handle for an ADOPTED turn.
+//
+// A turn started by POST /chat registers a handle in the shared stop
+// registry, and that handle is the ONLY thing POST /stop looks at. A turn
+// adopted after a restart or a blue-green cutover is resumed from here
+// instead, so until now it had no handle at all: POST /stop classified it
+// 'no_active_turn' and answered { ok: true, stopped: false } while
+// GET /status still said busy, which painted a live red Stop button that
+// did nothing (production session 3539 — 36 minutes unstoppable).
+//
+// Phase is 'cc' for the journal tail, which is what makes
+// stopPolicy.killsWorkerInPhase true so the request drives the
+// in-container kill; it moves to 'mayor2' when the wrap-up starts, where
+// stopping is refused by design.
+function buildRecoveryStopHandle({ sessionId, containerName, activeTurn, broadcastGlobal }) {
+  // Recovery narration now fans out on BOTH channels. The global WS
+  // broadcast reaches tabs listening for session_event; the per-session bus
+  // is what a client reconnecting over GET /events replays from. The live
+  // turn's send() has always done both — recovery only did the first, so a
+  // reconnected client watching an adopted turn saw nothing, which would
+  // include the 'stopped' this change makes it able to receive.
+  const seqPrefix = `rec-${sessionId}-${process.pid}`;
+  let seq = 0;
+  const send = (event, data) => {
+    const payload = { type: event, _seq: `${seqPrefix}-${++seq}`, ...(data || {}) };
+    // Spread first, pin the envelope last — otherwise the inner `type`
+    // clobbers `type: 'session_event'` and the client never routes it.
+    try {
+      broadcastGlobal({ ...payload, sessionId, event, type: 'session_event' });
+    } catch {}
+    try { sessionBus.publish(sessionId, payload); } catch {}
+  };
+  const handle = stopRegistry.createHandle({
+    sessionId,
+    phase: 'cc',
+    workerName: containerName || null,
+    send,
+  });
+  // A stop clicked in the seconds before the restart is durable on the turn
+  // record. Seed the handle from it so recovery honours the intent it never
+  // got to act on, instead of re-adopting the turn and narrating an
+  // interruption the user already asked for.
+  const durable = turnLifecycle.stopRequestOf(activeTurn);
+  if (durable) {
+    handle.stopped = true;
+    handle.stoppedBy = durable.by;
+    handle.stopRequestedAt = durable.atMs;
+  }
+  return handle;
+}
+
 async function resumeDetachedTurn(args) {
-  const { pool, sessionId } = args;
+  const { pool, sessionId, containerName, activeTurn, broadcastGlobal } = args;
+  const stopHandle = buildRecoveryStopHandle({
+    sessionId, containerName, activeTurn, broadcastGlobal,
+  });
+  stopRegistry.set(sessionId, stopHandle);
   // Register the whole recovery (journal tail + finalize's PR/staging
   // work) in the shared activeWorkers set so the auto-pause/staging-GC
   // sweepers see the session as busy — the sessions 2391/2386 incident
@@ -3185,7 +3252,7 @@ async function resumeDetachedTurn(args) {
   // the window between the journal tail ending and finalize completing.
   activeWorkersSvc.activeWorkers.add(sessionId);
   try {
-    return await resumeDetachedTurnInner(args);
+    return await resumeDetachedTurnInner({ ...args, stopHandle });
   } catch (err) {
     let retainedTurn;
     try {
@@ -3207,6 +3274,9 @@ async function resumeDetachedTurn(args) {
     }
     throw err;
   } finally {
+    // Identity-guarded: a newer turn may already own the session by the time
+    // this recovery unwinds, and clearing unconditionally would strand it.
+    stopRegistry.deleteIf(sessionId, stopHandle);
     activeWorkersSvc.activeWorkers.delete(sessionId);
     // Turn completion counts as activity: give the freshly recovered
     // session a full idle window instead of leaving last_activity_at at
@@ -3221,12 +3291,16 @@ async function resumeDetachedTurn(args) {
 
 async function resumeDetachedTurnInner({
   config, pool, staging, broadcastGlobal, session, sessionId,
-  containerName, activeTurn,
+  containerName, activeTurn, stopHandle = null,
 }) {
   const [, repoOwner, repoName] = (session.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
-  const emit = (event, data) => {
-    broadcastGlobal({ type: 'session_event', sessionId, event, ...data });
-  };
+  // #1378: the adopted turn's stop handle owns the fan-out (see
+  // buildRecoveryStopHandle). Callers that drive this directly get an
+  // unregistered handle so the narration still works.
+  const handle = stopHandle || buildRecoveryStopHandle({
+    sessionId, containerName, activeTurn, broadcastGlobal,
+  });
+  const emit = handle.send;
 
   // The milestone map of an interrupted TAIL (empty for a mid-exec
   // recovery). Read once here and threaded into finalizeRecoveredTurn so
@@ -3279,6 +3353,93 @@ async function resumeDetachedTurnInner({
       setTimeout(flushProgress, 1000);
     }
   };
+  // #1378: terminalize an adopted turn that the user stopped.
+  //
+  // Before this, a stop that landed on a recovered turn was invisible to
+  // the recovery path: the tail finished, the code below narrated
+  // "[interrupted]" with unrecoverable retry pills, and an api-error tail
+  // could even be RETRIED — dispatching more work for a turn the user had
+  // explicitly ended. A stop is a deliberate end, so it gets the same
+  // closing row and pills the live stop path writes, and the Codex ledger
+  // attempt is terminalized 'cancelled' rather than 'failed'.
+  const finishAsStopped = async (turnRecord, execResult = null) => {
+    const record = turnRecord || recoveryActiveTurn || activeTurn;
+    const by = handle.stoppedBy
+      || turnLifecycle.stopRequestOf(record)?.by
+      || null;
+    // #1378: stopping a RECOVERED turn discards more than stopping a live
+    // one — the agent may well have committed and pushed before the restart
+    // that detached it. Saying only "Stopped." would leave the user's branch
+    // silently moved, and re-sending the same request would buy a duplicate
+    // run. The durable tail milestones know what landed (markTurnTail writes
+    // sha/pushOk at the exec→tail boundary), so reuse the live path's exact
+    // wording. They carry no commit COUNT, hence `ahead: null`.
+    //
+    // Two sources, in order of authority. A stop caught AFTER the journal
+    // tail resolved has the exec result itself, which carries the commit
+    // COUNT as well as the sha. A stop that surfaced as a throw does not,
+    // and falls back to the durable milestones — enough to say a commit
+    // landed, not enough to count them, hence `ahead: null`.
+    const { describeStoppedLanding } = require('./src/routes/sessions');
+    const stoppedTail = (record && typeof record.tail === 'object' && record.tail) || {};
+    const landed = execResult
+      ? describeStoppedLanding({
+        sha: execResult.sha || null,
+        ahead: execResult.ahead ?? 0,
+        pushOk: execResult.pushOk === true,
+      })
+      : describeStoppedLanding({
+        sha: stoppedTail.sha || null,
+        ahead: null,
+        pushOk: stoppedTail.pushOk === true,
+      });
+    const text = `Stopped${by ? ` by @${by}` : ''}${landed}.`;
+    const pills = recoveryPills.turnFallbackQuickReplies({ outcome: 'stopped' });
+    log.info('server', 'Recovered turn was stopped by the user', {
+      sessionId, by, turnId: turnLifecycle.turnIdentity(record),
+    });
+    if (record?.backend === 'codex_openrouter' && record?.turnUuid) {
+      const agentTurn = require('./src/services/agent-turn');
+      try {
+        await agentTurn.completeCodexAttempt({
+          pool,
+          turnUuid: record.turnUuid,
+          status: 'cancelled',
+          errorCode: 'user_cancelled',
+        });
+      } catch (err) {
+        log.warn('server', 'Recovered stop: Codex attempt terminalization failed', {
+          sessionId, err: err.message,
+        });
+      }
+    }
+    // The progress card must not stay frozen on the last journal line.
+    if (progressLines.length) {
+      if (turnWatchdog.appendTerminalLine(progressLines, '[interrupted]')) {
+        emit('cc_progress', { text: '[interrupted]' });
+      }
+      flushProgress();
+    } else {
+      await appendTerminalProgressLine(pool, sessionId, '[interrupted]');
+      emit('cc_progress', { text: '[interrupted]' });
+    }
+    await pool.query(
+      `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+       VALUES ($1, 'system', $2, $3)`,
+      [sessionId, text, JSON.stringify({
+        quickReplies: pills, recovered: true, stopped: true,
+      })]
+    ).catch(() => {});
+    emit('status', { text, quickReplies: pills });
+    emit('stopped', { by });
+    const stoppedCleanupArgs = turnCleanupArgs(record);
+    recoveryRetry.requireDurableTurnCleanup(
+      await worker.finishTurn(sessionId, stoppedCleanupArgs),
+      stoppedCleanupArgs,
+    );
+    emit('done', {});
+  };
+
   let result;
   try {
     result = await worker.resumeTurnFromJournal(sessionId, {
@@ -3307,6 +3468,14 @@ async function resumeDetachedTurnInner({
       onProgress: onRecoveredProgress,
     });
   } catch (err) {
+    // #1378: the stop machinery kills the agent process and appends an exit
+    // marker, so a stopped turn usually resolves rather than throwing — but
+    // when it does throw, the user still asked for this to end. Close it as
+    // a stop instead of reporting a failure they caused on purpose.
+    if (handle.stopped) {
+      await finishAsStopped(activeTurn);
+      return;
+    }
     log.warn('server', 'Detached-turn resume failed', { sessionId, err: err.message });
     // Fail the Codex ledger row on a resume failure too (review P1c): the
     // success path terminalizes, but a thrown resume also must not leave
@@ -3390,6 +3559,15 @@ async function resumeDetachedTurnInner({
     return;
   }
   flushProgress();
+
+  // #1378: the tail is done and the user had asked for this turn to stop.
+  // Everything below — the Codex fresh-retry, the api-error retry inside
+  // finalize, the Mayor wrap-up — is work for a turn that is meant to keep
+  // going, so none of it may run. Close the turn as a stop and return.
+  if (handle.stopped) {
+    await finishAsStopped(recoveryActiveTurn, result);
+    return;
+  }
 
   // Mirror execInWorker's finally: the exec is over, hand the durable
   // record to the tail. A journal that detached MID-EXEC leaves active_turn
@@ -3607,6 +3785,13 @@ async function resumeDetachedTurnInner({
     }
     if (wrapUpOutcome) {
       const { runRecoveredWrapUp } = require('./src/routes/sessions');
+      // #1378: phase-2 is stop-proof by design — the commit, PR and staging
+      // already exist, and killing the summary would leave the user without
+      // any context for changes that are real. Moving the handle to
+      // 'mayor2' is what makes POST /stop answer 'wrap_up_not_stoppable'
+      // for an adopted turn, exactly as it does for a live one.
+      handle.phase = 'mayor2';
+      emit('phase', { phase: 'mayor2' });
       await runRecoveredWrapUp({
         pool, config, session, sessionId,
         outcome: wrapUpOutcome,
@@ -3615,6 +3800,7 @@ async function resumeDetachedTurnInner({
         turnModel: recoveryActiveTurn.model || null,
         turnId: recoveryActiveTurn.turnId || null,
         emit,
+        signal: handle.abort?.signal || null,
       });
       await worker.noteTailMilestone(
         sessionId,

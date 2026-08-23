@@ -287,27 +287,12 @@ const CLI_CREDENTIAL_MANAGEMENT_ERROR = 'credential_management_not_available_via
 // for a turn that died with the old process.
 const PROCESS_BOOT_ID = String(Date.now());
 
-// Per-session stop handles, populated while a chat turn is in flight.
-// Shape: { abort: AbortController, workerName: string|null, phase: 'mayor1'|'cc'|'mayor2', stopped: boolean, stoppedBy: string|null, stopRequestedAt: number|null, confirming: boolean }
-// The POST /stop endpoint looks up this record to:
-//   1. Abort the in-flight Mayor Anthropic stream (phase 'mayor1').
-//   2. Kill the running Claude Code turn in its container, then CONFIRM
-//      it died and re-issue the kill while it hasn't (#937).
-//   3. Serve the stop's age to the client's escalation ladder, and gate
-//      the Force stop escape hatch on a stop already being pending.
-// Phase 'mayor2' is intentionally stop-proof — by then CC has already
-// pushed a commit + opened a PR and we just want the summary to finish.
-const stopRegistry = new Map();
-
-// #1038: the live session-state notifier reports `phase` / `stopping`
-// alongside `busy`, but stopRegistry is module-local here and importing
-// routes from a service would be a require cycle. Register a reader
-// instead — the same two values GET /api/sessions/:id/status serves.
-sessionState.setPhaseResolver((sessionId) => {
-  const handle = stopRegistry.get(Number(sessionId));
-  if (!handle) return { phase: null, stopping: false };
-  return { phase: handle.phase || null, stopping: !!handle.stopped };
-});
+// #1378: per-session stop handles now live in a shared leaf service so the
+// detached-turn recovery path in server.js can register one too. See
+// services/stop-registry.js for the handle shape and for the production
+// failure that moved it out of this module. It also owns the
+// sessionState.setPhaseResolver wiring that used to sit here.
+const stopRegistry = require('../services/stop-registry');
 
 // Per-session in-flight guard for on-demand staging rebuilds (the
 // ensure-staging route below). Repeated Preview clicks while a rebuild is
@@ -4228,7 +4213,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           );
           send('done', {});
           res.end();
-          if (stopRegistry.get(session.id) === stopHandle) stopRegistry.delete(session.id);
+          stopRegistry.deleteIf(session.id, stopHandle);
           setTimeout(() => sessionBus.clearSession(session.id), 30000);
           return;
         }
@@ -4768,7 +4753,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
             send('stopped', { phase: 'mayor1', by: stopHandle.stoppedBy });
             send('done', {});
             res.end();
-            if (stopRegistry.get(session.id) === stopHandle) stopRegistry.delete(session.id);
+            stopRegistry.deleteIf(session.id, stopHandle);
             setTimeout(() => sessionBus.clearSession(session.id), 30000);
             return;
           }
@@ -4939,7 +4924,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
               send('stopped', { phase: 'mayor1', by: stopHandle.stoppedBy });
               send('done', {});
               res.end();
-              if (stopRegistry.get(session.id) === stopHandle) stopRegistry.delete(session.id);
+              stopRegistry.deleteIf(session.id, stopHandle);
               setTimeout(() => sessionBus.clearSession(session.id), 30000);
               return;
             }
@@ -5259,7 +5244,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
             send('stopped', { phase: 'cc', by: stopHandle.stoppedBy });
             send('done', {});
             res.end();
-            if (stopRegistry.get(session.id) === stopHandle) stopRegistry.delete(session.id);
+            stopRegistry.deleteIf(session.id, stopHandle);
             setTimeout(() => sessionBus.clearSession(session.id), 30000);
             return;
           }
@@ -5303,7 +5288,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
             send('stopped', { phase: 'cc', by: stopHandle.stoppedBy });
             send('done', {});
             res.end();
-            if (stopRegistry.get(session.id) === stopHandle) stopRegistry.delete(session.id);
+            stopRegistry.deleteIf(session.id, stopHandle);
             setTimeout(() => sessionBus.clearSession(session.id), 30000);
             return;
           }
@@ -5670,9 +5655,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         // Clear the stop handle for this session only if it's still the
         // one we registered (another turn may have replaced it if the
         // client somehow fired a second POST before this one finished).
-        if (stopRegistry.get(session.id) === stopHandle) {
-          stopRegistry.delete(session.id);
-        }
+        stopRegistry.deleteIf(session.id, stopHandle);
       }
 
       // #249: covers every turn that reached the main exit without a PR
@@ -6044,17 +6027,29 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   // shape and the whole client are identical, only the seeded rows' state
   // differs, and it is a strict no-op outside staging. The id set is resolved
   // once and cached, so the 3s status poll costs nothing.
+  //
+  // #1378: the set became a Map because `stoppable` is now part of the
+  // payload and the fixtures have to be able to show BOTH answers. A seeded
+  // fixture has no in-memory stop handle and no durable active_turn, so it
+  // would compute stoppable:false for all of them — regressing the two
+  // estimator fixtures to the "Finishing up…" spinner and breaking the
+  // checks that assert their cohort note. The '-unstoppable' fixture is the
+  // one that deliberately keeps the false answer.
   let stagingCohortFixtureIds = null;
   async function stagingCohortFixtureSessions() {
     if (process.env.USERNODE_ENV !== 'staging') return null;
     if (stagingCohortFixtureIds) return stagingCohortFixtureIds;
     try {
       const { rows } = await pool.query(
-        `SELECT id FROM chat_sessions WHERE branch_name LIKE 'staging-fixture/cc-cohort-%'`
+        `SELECT id, branch_name FROM chat_sessions
+          WHERE branch_name LIKE 'staging-fixture/cc-cohort-%'`
       );
-      stagingCohortFixtureIds = new Set(rows.map((r) => r.id));
+      stagingCohortFixtureIds = new Map(rows.map((r) => [
+        r.id,
+        { stoppable: !String(r.branch_name || '').endsWith('-unstoppable') },
+      ]));
     } catch {
-      stagingCohortFixtureIds = new Set();
+      stagingCohortFixtureIds = new Map();
     }
     return stagingCohortFixtureIds;
   }
@@ -6082,9 +6077,14 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     // adding to activeWorkers and registering with the warm registry.
     let busy = isSessionBusy(sessionId);
     // #906 staging fixtures — see stagingCohortFixtureSessions above.
+    let fixtureStoppable = null;
     if (!busy) {
       const fixtures = await stagingCohortFixtureSessions();
-      if (fixtures && fixtures.has(sessionId)) busy = true;
+      const fixture = fixtures && fixtures.get(sessionId);
+      if (fixture) {
+        busy = true;
+        fixtureStoppable = fixture.stoppable;
+      }
     }
 
     let progress = [];
@@ -6117,19 +6117,50 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     // Current turn phase (mayor1 / cc / mayor2). Lets the client pick
     // between the stop button and the finishing-up spinner on refresh
     // without guessing from container status alone.
-    const phase = stopRegistry.get(sessionId)?.phase || null;
+    const stopHandleNow = stopRegistry.get(sessionId);
+    const phase = stopHandleNow?.phase || null;
+
+    // #1378: whether POST /stop can actually do anything for this session.
+    //
+    // `busy` and "stoppable" are NOT the same fact, and conflating them is
+    // what produced the reported bug. `busy` is true for anything holding
+    // the session — an adopted turn, a handoff pipeline, a proposal
+    // handoff — while only a turn with a stop handle (or a durable
+    // active_turn still in a recoverable phase, which the recovery path
+    // will register a handle for) can be stopped. The client used to
+    // assume every busy session was stoppable and painted a live red Stop
+    // that answered { stopped: false }; it now paints the "Finishing up…"
+    // spinner instead when this is false, so the affordance matches what
+    // the server will do.
+    let durableTurn = null;
+    try {
+      durableTurn = await turnLifecycle.loadActiveTurn(pool, sessionId);
+    } catch {}
+    const durableRecoverable = !!durableTurn
+      && turnLifecycle.RECOVERABLE_PHASES.has(turnLifecycle.phaseOf(durableTurn));
+    const stoppable = fixtureStoppable === null
+      ? (!!stopHandleNow || durableRecoverable)
+      : fixtureStoppable;
 
     // #889: a stop has been requested for this turn but it hasn't unwound
     // yet. Lets a reloading client (and the 3s poll fallback) repaint the
     // "Stopping…" button instead of a live red Stop for a turn that is
     // already being killed.
-    const stopping = !!stopRegistry.get(sessionId)?.stopped;
+    //
+    // #1378: falls back to the durable stamp. A stop clicked just before a
+    // restart lives on the turn record, not in this process's memory, so
+    // without the fallback the client repaints a calm red Stop for a turn
+    // that is already ending.
+    const durableStop = turnLifecycle.stopRequestOf(durableTurn);
+    const stopping = stopHandleNow ? !!stopHandleNow.stopped : !!durableStop;
 
     // #937: WHEN the stop was requested, so a reloading client (or a second
     // tab joining mid-stop) rebuilds its escalation ladder at the right
     // rung instead of restarting a calm "Stopping…" that never escalates.
     // Null whenever no stop is pending.
-    const stopRequestedAt = stopRegistry.get(sessionId)?.stopRequestedAt || null;
+    const stopRequestedAt = stopHandleNow
+      ? (stopHandleNow.stopRequestedAt || null)
+      : (durableStop?.atMs || null);
 
     // Experimental AI progress estimate: latest in-memory Haiku guess for
     // the run, so the 3s polling fallback carries it when SSE/WS drop.
@@ -6198,13 +6229,14 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     // null) — the dev-chat sync banner's reload recovery and poll
     // fallback read this the same way the resolving banner reads
     // `resolving`.
-    // Keys: busy, progress, phase, stopping, stopRequestedAt, estimate
+    // Keys: busy, progress, phase, stopping, stopRequestedAt, stoppable,
+    // estimate
     // (+ resolving, sync, status). `estimate` is { text, remainingSeconds,
     // estimatedAt } | null — see workerProgress.setEstimate /
     // clearEstimate. `stopRequestedAt` is epoch ms | null (#937) and drives
     // the client's stop-escalation ladder across reloads.
     res.json({
-      busy, progress, phase, stopping, stopRequestedAt, estimate,
+      busy, progress, phase, stopping, stopRequestedAt, stoppable, estimate,
       agentBackend: progressAgentBackend,
       agentModel: progressAgentModel,
       resolving: isResolving(sessionId),
@@ -6223,12 +6255,31 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     const sessionId = parseInt(req.params.id, 10);
     if (Number.isNaN(sessionId)) return res.status(400).json({ error: 'Bad session id' });
 
+    // #1378: owner OR an admin who is allowed to WRITE. GET
+    // /api/sessions/:id is admin-readable and GET .../status has no
+    // ownership guard at all, so an admin could already watch someone
+    // else's runaway turn — but this route was owner-only, so their stop
+    // came back 404 and the client rendered "Couldn't stop the agent". An
+    // admin who can see a turn burning platform capacity must be able to
+    // end it.
+    //
+    // Deliberately `canAdminWrite` and not `isAdmin`: the latter includes
+    // view-only admins, and killing someone's in-flight turn is a
+    // privileged mutation (same gate middleware/admin.js uses). POST /chat
+    // stays owner-only — reading and stopping are not writing on someone
+    // else's behalf.
+    const stopAsAdmin = req.user?.canAdminWrite === true;
     try {
       const { rows } = await pool.query(
-        `SELECT id FROM chat_sessions WHERE id = $1 AND user_id = $2`,
-        [sessionId, req.user.id]
+        `SELECT id, user_id FROM chat_sessions WHERE id = $1 AND (user_id = $2 OR $3::boolean)`,
+        [sessionId, req.user.id, stopAsAdmin]
       );
       if (!rows.length) return res.status(404).json({ error: 'Session not found' });
+      if (rows[0].user_id !== req.user.id) {
+        log.info('sessions', 'Admin stopping another user\'s turn', {
+          sessionId, by: req.user.username, ownerId: rows[0].user_id,
+        });
+      }
     } catch (err) {
       log.error('sessions', 'Stop session lookup failed', { message: err.message });
       return res.status(500).json({ error: 'Internal server error' });
@@ -6247,7 +6298,26 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     const action = stopPolicy.classifyStopRequest({ handle, force: forceRequested });
 
     if (action === 'no_active_turn') {
-      return res.json({ ok: true, stopped: false, reason: 'no active turn' });
+      // #1378: this used to return silently, which is why the production
+      // report had nothing to go on — the click landed, the server said
+      // "nothing to stop", and the only trace was the user watching a turn
+      // keep running. Log the disagreement between what the client can see
+      // (`busy`) and what this process holds (`handle`), because that gap
+      // IS the bug class: a turn adopted by another process, or one whose
+      // handle was cleared while the tail is still unwinding.
+      let hasDurableTurn = false;
+      try {
+        hasDurableTurn = !!(await turnLifecycle.loadActiveTurn(pool, sessionId));
+      } catch {}
+      log.warn('sessions', 'Stop request had no active turn', {
+        sessionId,
+        busy: isSessionBusy(sessionId),
+        hasDurableTurn,
+        by: req.user.username,
+      });
+      return res.json({
+        ok: true, stopped: false, reason: 'no active turn', hasDurableTurn,
+      });
     }
     if (action === 'force_orphan') {
       // The turn already ended, but its bookkeeping may not have — this is
@@ -6303,6 +6373,41 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         stopRequestedAt: handle.stopRequestedAt,
       });
     } catch {}
+
+    // #1378: the same intent, recorded durably on the turn record.
+    //
+    // The in-memory stamp above is the fast path and is what ends the turn
+    // in every ordinary case. It cannot survive this process, though, and a
+    // blue-green cutover landing in the same second as the click would take
+    // it: the version that adopts the turn would resume it, narrate an
+    // interruption the user had already asked for, and — on an api-error
+    // tail — retry it. buildRecoveryStopHandle in server.js reads this stamp
+    // at adopt time and seeds the recovered turn's handle from it, which is
+    // what closes that window.
+    //
+    // It also leaves the only durable trace a pending stop has ever had:
+    // this incident was diagnosed with no record in the log OR the database
+    // that a stop had been asked for at all.
+    //
+    // Best-effort. The stamp is a compare-and-set against the turn identity
+    // and is a quiet no-op for a legacy row with neither a turnId nor a
+    // journal; none of that is a reason to refuse a stop the handle can
+    // already honour, so a failure here only warns.
+    try {
+      const durableTurn = await turnLifecycle.loadActiveTurn(pool, sessionId);
+      if (durableTurn && (durableTurn.turnId || durableTurn.journal)) {
+        await turnLifecycle.markStopRequested(pool, {
+          sessionId,
+          turnId: durableTurn.turnId || null,
+          journal: durableTurn.journal || null,
+          by: req.user.username,
+        });
+      }
+    } catch (err) {
+      log.warn('sessions', 'Durable stop stamp failed', {
+        sessionId, err: err.message,
+      });
+    }
 
     // #161: clicking stop proves presence — disarm notify_on_done BEFORE
     // aborting so the turn's resulting send('done') doesn't create a
@@ -8120,6 +8225,32 @@ function snapshotMayorResponse(response) {
   };
 }
 
+// #1378: the "…and here is what it had already committed" clause of a stop.
+//
+// Stopping a turn discards work in progress, but not necessarily ALL of it:
+// the agent may have committed and pushed before the stop landed. Saying
+// only "Stopped." there is actively misleading, because the user's branch
+// has moved and re-sending the same request buys them a duplicate run.
+//
+// Extracted so the RECOVERED path can say the same thing as the live one.
+// A recovered turn reaches this from the durable tail milestones
+// (active_turn.tail.sha / .pushOk, written by markTurnTail) rather than
+// from an in-memory exec result, and those carry no commit COUNT — hence
+// `ahead: null` meaning "a commit landed, quantity unknown". A NUMERIC
+// ahead is authoritative and 0 means nothing landed, which preserves the
+// live path's behaviour exactly (an absent `ahead` there has always read
+// as "nothing landed", so that caller passes `?? 0`, not null).
+function describeStoppedLanding({ sha = null, ahead = null, pushOk = false } = {}) {
+  if (!sha) return '';
+  if (ahead != null && !(ahead > 0)) return '';
+  const what = ahead != null
+    ? `${ahead} change${ahead === 1 ? '' : 's'}`
+    : 'changes';
+  return ` — it had already committed ${what} to the branch`
+    + ` (${String(sha).slice(0, 8)}${pushOk ? ', pushed' : ', not pushed'});`
+    + ' no pull request was opened';
+}
+
 function staticWrapUpText(outcome, { toolKind = null } = {}) {
   if (outcome === 'push_failed' || outcome === 'failed') {
     return toolKind === 'scout'
@@ -8141,7 +8272,7 @@ function staticWrapUpText(outcome, { toolKind = null } = {}) {
 // re-issued. Legacy rows without a turnId retain the old best-effort behavior.
 async function runRecoveredWrapUp({
   pool, config, session, sessionId, outcome, dispatchSummary,
-  fallbackPillKind, turnModel, turnId = null, emit = () => {},
+  fallbackPillKind, turnModel, turnId = null, emit = () => {}, signal = null,
 }) {
   const recoveryPills = require('../services/recovery-pills');
   const fallbackPills = recoveryPills.buildRecoveryQuickReplies(fallbackPillKind);
@@ -8318,6 +8449,13 @@ async function runRecoveredWrapUp({
       tools: [SUGGEST_REPLIES_TOOL],
       toolChoice: { type: 'auto' },
       apiKey: userApiKey,
+      // #1378: the recovered wrap-up runs under the adopted turn's stop
+      // handle like any other phase-2, so a stop that lands while it is
+      // streaming aborts the provider call instead of being ignored. The
+      // handle's phase is 'mayor2' by the time we get here, so POST /stop
+      // answers 'wrap_up_not_stoppable' and this only ever fires for a
+      // stop that landed EARLIER and is still unwinding.
+      signal: signal || undefined,
       telemetryContext: invocationTelemetry(pool, session, 'mayor_phase_2'),
     }))
       : fallbackMayor;
@@ -11528,6 +11666,25 @@ async function confirmStopLanded(sessionId, handle) {
 async function forceStopSession(pool, sessionId, username, handle) {
   const containerName = handle?.workerName || worker.workerContainerName(sessionId);
 
+  // #1378: the force-orphan path arrives here with `handle === null` (a turn
+  // adopted after a restart never had one, and a handle that already cleared
+  // is the same story), and every announcement below used to be
+  // `handle?.send?.(...)` — a silent no-op precisely when the user most needs
+  // to be told the turn is over. Fall back to the two channels a live turn's
+  // own `send` fans out over, with the `_seq` sessionBus.publish requires.
+  const announce = handle?.send || (() => {
+    const { broadcastGlobal } = require('../services/ws');
+    const seqPrefix = `force-${sessionId}-${Date.now().toString(36)}`;
+    let seq = 0;
+    return (type, data) => {
+      const event = { type, _seq: `${seqPrefix}-${++seq}`, ...(data || {}) };
+      // Spread first, pin the envelope last — same reason as the live send:
+      // an inner `type` must not clobber `type: 'session_event'`.
+      try { broadcastGlobal({ ...event, sessionId, event: type, type: 'session_event' }); } catch {}
+      try { sessionBus.publish(sessionId, event); } catch {}
+    };
+  })();
+
   // The ordinary stop may be a beat from landing; don't destroy a
   // container that is already going quietly.
   let executing = await worker.isWorkerExecuting(containerName);
@@ -11618,7 +11775,7 @@ async function forceStopSession(pool, sessionId, username, handle) {
   });
 
   try {
-    handle?.send?.('status', { text, quickReplies: turnFallbackQuickReplies({ outcome: 'stopped' }) });
+    announce('status', { text, quickReplies: turnFallbackQuickReplies({ outcome: 'stopped' }) });
   } catch {}
   await pool.query(
     `INSERT INTO chat_session_messages (session_id, role, content, metadata)
@@ -11627,11 +11784,11 @@ async function forceStopSession(pool, sessionId, username, handle) {
   ).catch(() => {});
 
   try {
-    handle?.send?.('stopped', { phase: handle?.phase || null, by: username, forced: true });
-    handle?.send?.('done', {});
+    announce('stopped', { phase: handle?.phase || null, by: username, forced: true });
+    announce('done', {});
   } catch {}
 
-  if (handle && stopRegistry.get(sessionId) === handle) stopRegistry.delete(sessionId);
+  stopRegistry.deleteIf(sessionId, handle);
 }
 
 // Pre-retry safety: kill any zombie turn process and wait (bounded) for
@@ -12008,11 +12165,14 @@ async function runClaudeCodeTool({
     const byStr = stopHandle?.stoppedBy ? ` by @${stopHandle.stoppedBy}` : '';
     const commits = result && result.sha && result.ahead > 0 ? result.ahead : 0;
     const shortSha = commits ? String(result.sha).slice(0, 8) : null;
-    const landed = commits
-      ? ` — it had already committed ${commits} change${commits === 1 ? '' : 's'}`
-        + ` to the branch (${shortSha}${result.pushOk ? ', pushed' : ', not pushed'});`
-        + ' no pull request was opened'
-      : '';
+    // #1378: shared with the recovered-turn stop path — see
+    // describeStoppedLanding. `?? 0` keeps an absent `ahead` reading as
+    // "nothing landed", which is what this call site has always done.
+    const landed = describeStoppedLanding({
+      sha: result?.sha || null,
+      ahead: result?.ahead ?? 0,
+      pushOk: result?.pushOk === true,
+    });
     // #894: no phase-2 wrap-up follows a stop, so this status row is the
     // turn's only pill carrier.
     await sendStatus(`${executionAgentName} stopped${byStr}${landed}.`, {
@@ -14063,4 +14223,4 @@ CMD ["node", "server.js"]
   return { containerId, stagingUrl, hostname };
 }
 
-module.exports = { BUILD_VENUES, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, advanceSharedReviewAfterSync, advanceReviewAfterPlatformSync, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildCodingAgentBuildGuidance, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };
+module.exports = { BUILD_VENUES, describeStoppedLanding, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, advanceSharedReviewAfterSync, advanceReviewAfterPlatformSync, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildCodingAgentBuildGuidance, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };

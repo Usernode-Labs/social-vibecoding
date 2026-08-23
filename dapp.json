@@ -1040,6 +1040,11 @@
       "expectText": "this is a long one — some runs go 30 min+"
     },
     {
+      "name": "A turn the server cannot stop offers a spinner, not a red Stop (#1378)",
+      "path": "/#app/usernode-2d5619/dev/sessions/900812",
+      "expectSelector": "#dc-send-btn.dc-btn-streaming[aria-label=\"Working\"]"
+    },
+    {
       "name": "Visible own session offers the \"Share chat\" opt-in in its ⋯ menu",
       "path": "/?demo=1&shot=card-menu&card=session:990103#app/usernode-2d5619/dev",
       "expectSelector": ".dev-card-menu [data-menu-idx][title^=\"Let everyone read this chat\"]",

@@ -3476,6 +3476,24 @@ async function seedStagingCcCohortRuns(pool, config) {
         '  ⎿ Edit: ok',
       ]),
     },
+    {
+      // #1378: the not-stoppable screen. A turn adopted after a platform
+      // restart is genuinely running but has no in-process stop handle, so
+      // /status reports `stoppable: false` and the composer paints a muted
+      // spinner instead of a red Stop the server could not honour. There is
+      // no way for a tester to produce that state on demand — it needs a
+      // restart landing mid-turn — so it is seeded.
+      //
+      // The branch SUFFIX is the contract: stagingCohortFixtureSessions() in
+      // src/routes/sessions.js keys this fixture's stoppability off
+      // `-unstoppable`, so renaming the branch silently turns the screen
+      // back into an ordinary stoppable one and its dapp.json check with it.
+      id: 900812,
+      branch: 'staging-fixture/cc-cohort-unstoppable',
+      title: '[staging fixture] Busy with platform work — Stop not offered',
+      minutesAgo: 8,
+      progressLog: baseLog,
+    },
   ];
 
   for (const run of runs) {
