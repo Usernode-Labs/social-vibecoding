@@ -132,7 +132,7 @@ import './admin-merges.tsx';
 import './admin-gallery.tsx';
 import './admin-campaigns.tsx';
 import './admin-push.tsx';
-import './admin-mail.js';
+import './admin-mail.tsx';
 import './admin-e2e.tsx';
 import './admin-topochain.js';
 
