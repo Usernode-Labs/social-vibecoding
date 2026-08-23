@@ -1007,10 +1007,17 @@
       } catch {}
 
       this._localAgents = agents;
+      // The SECTION's own `hidden` is a sibling concern and stays here: an
+      // empty "Local coding agent — none" panel would be noise on every
+      // account that has never used the CLI, which is nearly all of them.
       section.classList.toggle('hidden', agents.length === 0);
-      list.textContent = '';
-      for (const agent of agents) {
-        list.appendChild(this._localAgentCard(agent));
+      const bridge = (typeof window !== 'undefined' && window.UsernodeReact)
+        ? window.UsernodeReact.settingsLocalAgents : null;
+      if (bridge) {
+        bridge.publish({
+          phase: 'ready',
+          agents: agents.map((agent) => this._localAgentView(agent)),
+        });
       }
       if (status && agents.some((a) => a.demo)) {
         status.textContent = 'Demo data — changes are not saved.';
@@ -1018,48 +1025,28 @@
       }
     },
 
-    // Built with DOM calls rather than innerHTML: the label is free text the
-    // user typed on their own machine and arrives here verbatim.
-    _localAgentCard(agent) {
-      const card = document.createElement('div');
-      card.className = 'rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2';
-
-      const top = document.createElement('div');
-      top.className = 'flex items-start justify-between gap-3';
-      const text = document.createElement('div');
-      text.className = 'min-w-0';
-
-      const title = document.createElement('div');
-      title.className = 'text-sm font-medium text-zinc-800 dark:text-zinc-200 truncate';
-      title.textContent = agent.label || 'Unnamed machine';
-
-      const where = document.createElement('div');
-      where.className = 'text-xs text-zinc-500 dark:text-zinc-400 mt-1 truncate';
+    // One attached machine, as ./local-agents-list.tsx draws it.
+    //
+    // This was `_localAgentCard`, built with DOM calls rather than innerHTML
+    // for one reason: the label is free text the user typed on their own
+    // machine and arrives verbatim. React escapes it for the same reason, so
+    // the safety property survives the renderer swap — `leaseId` and `demo`
+    // collapse into the one fact the row needs, which is whether there is a
+    // lease to release at all.
+    _localAgentView(agent) {
       const app = agent.appName || agent.appSlug || 'an app';
-      where.textContent = agent.sessionTitle
-        ? `${app} · ${agent.sessionTitle}` : String(app);
-
-      const detail = document.createElement('div');
-      detail.className = 'text-xs text-zinc-500 dark:text-zinc-400 mt-0.5';
       const seen = Number.isFinite(Date.parse(agent.lastSeenAt))
         ? new Date(agent.lastSeenAt).toLocaleTimeString() : 'unknown';
-      detail.textContent = `${agent.runtime || 'claude-code'} · last seen ${seen}`;
-
-      text.append(title, where, detail);
-      top.appendChild(text);
-
-      // Demo rows (staging ?demo=1) are fabricated per request and own no
-      // lease, so there is nothing for a button to release.
-      if (!agent.demo && agent.leaseId) {
-        const detach = document.createElement('button');
-        detach.type = 'button';
-        detach.className = 'shrink-0 rounded border border-zinc-400 dark:border-zinc-600 px-2 py-1 text-xs font-medium text-zinc-700 dark:text-zinc-200 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors';
-        detach.textContent = 'Detach';
-        detach.addEventListener('click', () => this._detachLocalAgent(agent, detach));
-        top.appendChild(detach);
-      }
-      card.appendChild(top);
-      return card;
+      return {
+        leaseId: agent.leaseId || null,
+        label: agent.label || null,
+        title: agent.label || 'Unnamed machine',
+        where: agent.sessionTitle ? `${app} · ${agent.sessionTitle}` : String(app),
+        detail: `${agent.runtime || 'claude-code'} · last seen ${seen}`,
+        // Demo rows (staging ?demo=1) are fabricated per request and own no
+        // lease, so there is nothing for a button to release.
+        detachable: !agent.demo && !!agent.leaseId,
+      };
     },
 
     // Releasing from here must not need the machine to cooperate: the common

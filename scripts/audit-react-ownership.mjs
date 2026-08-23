@@ -119,6 +119,7 @@ const OWNED = [
   { sel: '#cli-tokens-list' },               // features/settings/cli-tokens-list.tsx
   { sel: '#connectors-list' },               // features/settings/connectors-list.tsx
   { sel: '#github-link-body' },              // features/settings/social-identity.tsx
+  { sel: '#settings-local-agents-list' },    // features/settings/local-agents-list.tsx
   { sel: '#agent-files-instructions-list' }, // features/settings/agent-files-list.tsx
   { sel: '#agent-files-skills-list' },
   { sel: '#browse-list' },                   // features/apps/browse-list.tsx
@@ -165,7 +166,7 @@ const OWNED = [
 
 const ROUTES = [
   '#home', '#apps', '#apps/recipebot', '#settings', '#settings/app-ai',
-  '#settings/agent-files', '#settings/cli', '#settings/connectors', '#profile', '#leaderboard', '#messages',
+  '#settings/agent-files', '#settings/cli', '#settings/connectors', '#settings/experimental', '#profile', '#leaderboard', '#messages',
   '#app/recipebot', '#app/recipebot/dev', '#app/recipebot/dev/chat',
   '#app/recipebot/dev/sessions/1',
   '#admin/e2e', '#admin/gallery', '#admin/node', '#admin/merges', '#admin/push', '#admin/campaigns', '#admin/mail', '#admin/estimator', '#admin/analytics', '#admin/overview', '#admin/codes', '#admin/featured-apps', '#admin/db-export', '#admin/features', '#admin/limits', '#admin/users', '#admin/status', '#admin/rollover', '#admin/staging-reap',

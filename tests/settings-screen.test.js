@@ -33,6 +33,7 @@ const path = require('node:path');
 
 const root = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
+const { renderComponent } = require('./lib/render-tsx');
 
 const html = read('public/index.html');
 const appJs = read('public/js/app.js');
@@ -948,18 +949,39 @@ test('the local-agent block lives in Experimental and ships hidden', () => {
   assert.match(experimental, /Usernode still opens the pull request/);
 });
 
-test('the machine list is built as DOM nodes, never innerHTML', () => {
+// The label is free text typed on someone's own laptop and arrives here
+// verbatim, so it must never reach an HTML string. It was hand-built with
+// `document.createElement` + `textContent` for that reason; #1191 made the
+// list React's, which gives the same guarantee by construction — a text child
+// is escaped, and there is no template to interpolate into.
+test('a machine label can never escape into markup', () => {
+  const hostile = '<img src=x onerror=alert(1)> "quoted" & \'apostrophe\'';
+  const html2 = renderComponent(
+    'frontend/src/features/settings/local-agents-list.tsx', 'LocalAgentsListView',
+    {
+      phase: 'ready',
+      agents: [{
+        leaseId: 'lease_1',
+        title: hostile,
+        where: hostile,
+        detail: 'claude-code · last seen 10:00',
+        detachable: true,
+      }],
+    },
+  );
+  assert.ok(!html2.includes('<img'), 'the tag never lands as markup');
+  assert.match(html2, /&lt;img src=x onerror=alert\(1\)&gt;/);
+  assert.match(html2, /&quot;quoted&quot;/);
+  assert.match(html2, /&#x27;apostrophe&#x27;/);
+  // …and the module has nothing left that builds DOM for this host.
   const render = settingsJs.slice(
     settingsJs.indexOf('_renderLocalAgentsSection()'),
     settingsJs.indexOf('_detachLocalAgent(')
   );
-  // The label is free text typed on someone's own laptop and arrives here
-  // verbatim. This section follows the screen's MOVE-DON'T-REWRITE rule too:
-  // it only ever writes into its own list host.
-  assert.ok(!/innerHTML\s*=\s*`/.test(render), 'no template-literal innerHTML');
-  assert.match(render, /createElement\(/);
-  assert.match(render, /\.textContent = /);
-  assert.match(render, /list\.textContent = '';/, 'the list host is emptied, not rewritten');
+  // Comments first — the note beside the publish names the builder it replaced.
+  assert.ok(!/innerHTML/.test(code(render)), 'no innerHTML');
+  assert.ok(!/createElement\(/.test(code(render)), 'and no createElement either');
+  assert.match(render, /settingsLocalAgents/, 'it publishes instead');
 });
 
 test('the machine list hides itself when there is nothing to list', () => {
@@ -998,11 +1020,26 @@ test('detaching is confirmed, and an already-gone lease is not an error', () => 
   assert.match(detach, /204|404/);
   assert.match(detach, /confirm/i);
   // Demo rows have no Detach button at all — there is nothing to detach.
-  const card = settingsJs.slice(
-    settingsJs.indexOf('_localAgentCard('),
+  // The rule is one field on the view model now, and the component draws the
+  // button only for a row that carries it.
+  const view = settingsJs.slice(
+    settingsJs.indexOf('_localAgentView(agent) {'),
     settingsJs.indexOf('_detachLocalAgent(')
   );
-  assert.match(card, /!agent\.demo/);
+  assert.match(view, /detachable: !agent\.demo && !!agent\.leaseId/);
+  const list = read('frontend/src/features/settings/local-agents-list.tsx');
+  assert.match(list, /agent\.detachable \? \(/);
+  const withoutLease = renderComponent(
+    'frontend/src/features/settings/local-agents-list.tsx', 'LocalAgentsListView',
+    {
+      phase: 'ready',
+      agents: [{
+        leaseId: null, title: 'staging demo', where: 'an app',
+        detail: 'claude-code · last seen 10:00', detachable: false,
+      }],
+    },
+  );
+  assert.ok(!withoutLease.includes('Detach'), 'and a demo row draws none');
 });
 
 test('the Experimental toggle still gates the whole section', () => {
@@ -1360,7 +1397,6 @@ test('the best-effort app logout cannot block leaving the app', () => {
 // in that builder get executed coverage here rather than a source grep,
 // because every one of them is a branch that renders differently.
 
-const { renderComponent } = require('./lib/render-tsx');
 
 const CLI_LIST = 'frontend/src/features/settings/cli-tokens-list.tsx';
 const cliRows = (state) => renderComponent(CLI_LIST, 'CliTokensListView', state);
