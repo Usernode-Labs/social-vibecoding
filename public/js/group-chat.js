@@ -3126,21 +3126,32 @@ const MentionAutocomplete = {
       MentionAutocomplete.accept(opt.dataset.username);
     });
     document.body.appendChild(menu);
+    // The HOST stays ours — it is position:fixed, appended to the body,
+    // measured against the composer on every render — and its CHILDREN are
+    // features/group-chat/autocomplete.tsx's, mounted once here.
+    window.UsernodeReact?.groupChat?.mountMentionMenu?.(menu);
     MentionAutocomplete._menu = menu;
     return menu;
   },
 
+  _publish() {
+    const me = (App.user?.username || '').toLowerCase();
+    window.UsernodeReact?.groupChat?.publishMentionMenu?.(
+      MentionAutocomplete._items.map((name) => ({
+        username: name,
+        // Decided here, where the viewer is known.
+        you: name.toLowerCase() === me,
+      })),
+      MentionAutocomplete._active
+    );
+  },
+
   _render() {
     const menu = MentionAutocomplete._ensureMenu();
-    const me = (App.user?.username || '').toLowerCase();
-    menu.innerHTML = MentionAutocomplete._items.map((name, i) => {
-      const isMe = name.toLowerCase() === me;
-      const active = i === MentionAutocomplete._active ? ' gc-mention-option-active' : '';
-      return `<div class="gc-mention-option${active}" role="option" data-username="${escapeHtml(name)}" data-index="${i}">` +
-        `<span class="gc-mention-option-at">@</span>${escapeHtml(name)}` +
-        (isMe ? `<span class="gc-mention-option-you">you</span>` : '') +
-        `</div>`;
-    }).join('');
+    // Publishing goes through flushSync (features/group-chat/mount.ts), so the
+    // rows exist before _position() measures the menu's height on the line
+    // after next — the synchronous contract the innerHTML assignment gave.
+    MentionAutocomplete._publish();
 
     if (!MentionAutocomplete._open) {
       menu.classList.remove('hidden');
@@ -3186,7 +3197,7 @@ const MentionAutocomplete = {
     MentionAutocomplete._tokenStart = -1;
     if (MentionAutocomplete._menu) {
       MentionAutocomplete._menu.classList.add('hidden');
-      MentionAutocomplete._menu.innerHTML = '';
+      MentionAutocomplete._publish();
     }
     if (MentionAutocomplete._dismissBound) {
       document.removeEventListener('mousedown', MentionAutocomplete._dismissBound, true);
@@ -3196,16 +3207,15 @@ const MentionAutocomplete = {
     }
   },
 
+  // An arrow key moves the highlight and nothing else. It used to walk every
+  // option element toggling a class and scrolling the winner into view; the
+  // class follows from the render now, and the scroll is an effect in
+  // features/group-chat/autocomplete.tsx keyed on this index.
   _move(delta) {
     const n = MentionAutocomplete._items.length;
     if (!n) return;
     MentionAutocomplete._active = (MentionAutocomplete._active + delta + n) % n;
-    const menu = MentionAutocomplete._menu;
-    if (!menu) return;
-    menu.querySelectorAll('.gc-mention-option').forEach((el, i) => {
-      el.classList.toggle('gc-mention-option-active', i === MentionAutocomplete._active);
-      if (i === MentionAutocomplete._active) el.scrollIntoView({ block: 'nearest' });
-    });
+    MentionAutocomplete._publish();
   },
 
   // Capture-phase keydown. Consumes the event (preventing the composer's
@@ -3432,24 +3442,29 @@ const RefAutocomplete = {
       RefAutocomplete.accept(opt.dataset.kind, opt.dataset.number);
     });
     document.body.appendChild(menu);
+    // Same split as the mention menu: ours to place, React's to fill.
+    window.UsernodeReact?.groupChat?.mountRefMenu?.(menu);
     RefAutocomplete._menu = menu;
     return menu;
   },
 
+  _publish() {
+    window.UsernodeReact?.groupChat?.publishRefMenu?.(
+      RefAutocomplete._items.map((item) => ({
+        kind: item.kind,
+        number: item.number,
+        title: item.title || '',
+      })),
+      RefAutocomplete._active
+    );
+  },
+
   _render() {
     const menu = RefAutocomplete._ensureMenu();
-    menu.innerHTML = RefAutocomplete._items.map((item, i) => {
-      const active = i === RefAutocomplete._active ? ' gc-mention-option-active' : '';
-      // The badge reuses the message-chip classes so the dropdown teaches
-      // the rendering: violet PR#N, emerald #N.
-      const badge = item.kind === 'pr'
-        ? `<span class="gc-ref gc-ref-pr">PR#${item.number}</span>`
-        : `<span class="gc-ref gc-ref-issue">#${item.number}</span>`;
-      return `<div class="gc-mention-option gc-ref-option${active}" role="option" data-kind="${item.kind}" data-number="${item.number}" data-index="${i}">`
-        + badge
-        + `<span class="gc-ref-option-title">${escapeHtml(item.title || '')}</span>`
-        + `</div>`;
-    }).join('');
+    // Publishing goes through flushSync (features/group-chat/mount.ts), so the
+    // rows exist before _position() measures the menu's height on the line
+    // after next — the synchronous contract the innerHTML assignment gave.
+    RefAutocomplete._publish();
 
     if (!RefAutocomplete._open) {
       menu.classList.remove('hidden');
@@ -3495,7 +3510,7 @@ const RefAutocomplete = {
     RefAutocomplete._tokenStart = -1;
     if (RefAutocomplete._menu) {
       RefAutocomplete._menu.classList.add('hidden');
-      RefAutocomplete._menu.innerHTML = '';
+      RefAutocomplete._publish();
     }
     if (RefAutocomplete._dismissBound) {
       document.removeEventListener('mousedown', RefAutocomplete._dismissBound, true);
@@ -3505,16 +3520,13 @@ const RefAutocomplete = {
     }
   },
 
+  // Same as the mention menu's: the index is the state, the class and the
+  // scroll follow from it.
   _move(delta) {
     const n = RefAutocomplete._items.length;
     if (!n) return;
     RefAutocomplete._active = (RefAutocomplete._active + delta + n) % n;
-    const menu = RefAutocomplete._menu;
-    if (!menu) return;
-    menu.querySelectorAll('.gc-mention-option').forEach((el, i) => {
-      el.classList.toggle('gc-mention-option-active', i === RefAutocomplete._active);
-      if (i === RefAutocomplete._active) el.scrollIntoView({ block: 'nearest' });
-    });
+    RefAutocomplete._publish();
   },
 
   // Capture-phase keydown. Consumes the event only when the menu is open

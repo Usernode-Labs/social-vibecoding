@@ -28,8 +28,15 @@
  */
 
 import { createElement } from 'react';
+import { flushSync } from 'react-dom';
 
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
+import { MentionMenu, RefMenu } from './autocomplete';
+import {
+  autocompleteStore,
+  type MentionOption,
+  type RefOption,
+} from './autocomplete-store';
 import { Transcript } from './transcript';
 import {
   EMPTY_VIEW,
@@ -111,6 +118,57 @@ export function patchTranscriptMessage(id: number, patch: Partial<TranscriptMess
   });
 }
 
+/**
+ * `setFlush(flushSync)` on the autocomplete store, and it is load-bearing.
+ *
+ * `_render()` publishes the rows and then, two lines later, calls
+ * `_position()`, which reads `menu.offsetHeight` to decide whether the menu
+ * fits above the composer or has to flip below it. Batched — React 18's
+ * default for an update that starts outside React — that measurement would run
+ * against the previous frame and a freshly-opened menu would be placed as if
+ * it were empty. The innerHTML assignment this replaces was synchronous, so
+ * the flush is what keeps the contract rather than what changes it.
+ */
+autocompleteStore.setFlush(flushSync);
+
+// ── The composer's two autocomplete menus ─────────────────────────────
+//
+// Same seam, one level smaller: `_ensureMenu` still creates the floating host
+// and appends it to `document.body` — it is `position: fixed`, measured
+// against the composer, and belongs to no React tree — and then mounts a
+// portal into it ONCE. Everything after that is a publish.
+//
+// `mountLegacyPortal` is the right tool even though these hosts are never
+// destroyed: it is what gives the subtree a root, and the unmount path exists
+// for symmetry rather than because anything calls it today.
+
+/** Establish the `@name` menu's contents. Idempotent — the host is cached. */
+export function mountMentionMenu(host: Element | null): void {
+  if (!host) return;
+  mountLegacyPortal(host, createElement(MentionMenu));
+}
+
+/** Establish the `#123` / `PR#123` menu's contents. */
+export function mountRefMenu(host: Element | null): void {
+  if (!host) return;
+  mountLegacyPortal(host, createElement(RefMenu));
+}
+
+/**
+ * The rows and the highlighted index, together.
+ *
+ * One call rather than a publish plus a separate "move the highlight",
+ * because an arrow key changes only `active` and a new token changes both —
+ * and the module already holds them as one pair (`_items` / `_active`).
+ */
+export function publishMentionMenu(items: MentionOption[], active: number): void {
+  autocompleteStore.set({ mention: { items, active } });
+}
+
+export function publishRefMenu(items: RefOption[], active: number): void {
+  autocompleteStore.set({ ref: { items, active } });
+}
+
 if (typeof window !== 'undefined') {
   const w = window as unknown as { UsernodeReact?: Record<string, unknown> };
   w.UsernodeReact = w.UsernodeReact || {};
@@ -120,5 +178,9 @@ if (typeof window !== 'undefined') {
     publishTranscript,
     appendTranscriptMessage,
     patchTranscriptMessage,
+    mountMentionMenu,
+    mountRefMenu,
+    publishMentionMenu,
+    publishRefMenu,
   };
 }

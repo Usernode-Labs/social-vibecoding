@@ -115,6 +115,8 @@ const OWNED = [
   { sel: '#home-create-section' },           // ditto
   { sel: '#gc-messages' },                   // features/group-chat/transcript.tsx
   { sel: '#gc-thread-messages' },            // ditto, mounted with the 'thread' key
+  { sel: '#gc-mention-menu' },               // features/group-chat/autocomplete.tsx
+  { sel: '#gc-ref-menu' },                   // ditto
   { sel: '#llm-grants-list' },               // features/settings/grants-list.tsx
   { sel: '#cli-tokens-list' },               // features/settings/cli-tokens-list.tsx
   { sel: '#connectors-list' },               // features/settings/connectors-list.tsx
