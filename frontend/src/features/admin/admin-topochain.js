@@ -112,6 +112,7 @@ import {
 // The React screens, and the portal seam that mounts them. `unmountLegacyPortal`
 // is imported here rather than re-exported through screens.tsx because this file
 // is plain JS: it may hold a component MAP, but it renders no JSX itself.
+import { fetchJson, send } from './topochain/api.ts';
 import { TOPO_REACT_SCREENS } from './topochain/screens.tsx';
 import { unmountLegacyPortal } from '../../lib/legacy-portals';
 
@@ -163,31 +164,13 @@ const AdminTopochain = {
   _alert(message) { if (window.AdminConsole) AdminConsole._alert(message); else window.alert(message); },
   async _confirm(opts) { return window.AdminConsole ? AdminConsole._confirm(opts) : window.confirm(opts.message); },
 
-  // Safe fetch+parse, never throws — same contract as
-  // AdminConsole.fetchJson/TopochainChallenges.fetchJson, extended with an
-  // options bag so this module can also POST/PUT/PATCH/DELETE (the other
-  // two only ever GET).
-  async fetchJson(url, opts) {
-    try {
-      const res = await fetch(url, { credentials: 'same-origin', ...(opts || {}) });
-      const ct = res.headers.get('content-type') || '';
-      if (!ct.includes('application/json')) return { status: res.status, ok: res.ok, data: null };
-      try { return { status: res.status, ok: res.ok, data: await res.json() }; }
-      catch { return { status: res.status, ok: res.ok, data: null }; }
-    } catch {
-      return { status: 0, ok: false, data: null };
-    }
-  },
+  // Safe fetch+parse, never throws, and its JSON-body wrapper. Both moved to
+  // ./topochain/api.ts in #1120 slice 25 so the React screens share this
+  // module's copy rather than growing one; these stay as members because ~50
+  // call sites below name them, and because the tests pin the surface.
+  async fetchJson(url, opts) { return fetchJson(url, opts); },
 
-  // JSON-body convenience wrapper for the mutating verbs.
-  async send(method, url, body) {
-    const opts = { method };
-    if (body !== undefined) {
-      opts.headers = { 'Content-Type': 'application/json' };
-      opts.body = JSON.stringify(body);
-    }
-    return AdminTopochain.fetchJson(url, opts);
-  },
+  async send(method, url, body) { return send(method, url, body); },
 
   // ── Small HTML-building helpers (used across every subsection) ─────
 
@@ -774,7 +757,6 @@ const AdminTopochain = {
       case 'challenge-templates': return AdminTopochain.renderChallengeTemplates(c);
       case 'settings': return AdminTopochain.renderSettings(c);
       case 'app-version': return AdminTopochain.renderAppVersion(c);
-      case 'sql-console': return AdminTopochain.renderSqlConsole(c);
       default: return AdminTopochain.renderSeasons(c);
     }
   },
@@ -4099,194 +4081,8 @@ const AdminTopochain = {
   },
 
   // ══════════════════════════════════════════════════════════════════
-  // SQL console — POST sql-query/execute, schema sidebar, templates.
-  // Handles the 503 "console unavailable" state explicitly.
+  // SQL console — moved to ./topochain/sql-console.tsx (#1120 slice 25).
   // ══════════════════════════════════════════════════════════════════
-
-  _sql: { schema: null, templates: null },
-
-  renderSqlConsole(host) {
-    // Editor first in the DOM so a phone gets the thing it came for
-    // without scrolling past two reference lists; `lg:order-*` puts the
-    // sidebar back on the left once there is room for both.
-    host.innerHTML = `
-      ${AdminTopochain._screenHeader({
-    title: 'SQL console',
-    subtitle: 'Read-only queries against the app database. Pick a template or a table to start.',
-  })}
-      <div class="grid grid-cols-1 gap-4 lg:grid-cols-[260px_1fr]">
-        <div class="lg:order-2">
-          ${AdminTopochain._panel({
-    title: 'Query',
-    subtitle: 'SELECT only — bare wildcards are rejected.',
-    body: `
-              <textarea id="admin-topo-sql-query" rows="8" placeholder="SELECT ..."
-                aria-label="SQL query" class="${TEXTAREA_CLS}"></textarea>`,
-    footer: `
-              <button id="admin-topo-sql-run" type="button" class="${BTN.primary}">Run query</button>
-              <label class="flex items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400">
-                <span>Limit</span>
-                <input id="admin-topo-sql-limit" type="number" min="1" max="1000" value="100"
-                  class="w-24 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 px-2 py-1 text-xs font-mono min-h-[44px] sm:min-h-[36px] focus:outline-none focus:ring-2 focus:ring-violet-500">
-              </label>`,
-  })}
-          <div id="admin-topo-sql-result"></div>
-        </div>
-        <div class="lg:order-1 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-1">
-          ${AdminTopochain._panel({
-    title: 'Templates',
-    body: `<div id="admin-topo-sql-templates" class="space-y-1">${AdminTopochain._skeleton(3)}</div>`,
-  })}
-          ${AdminTopochain._panel({
-    title: 'Schema',
-    subtitle: 'Every table in the app database, including the auth and push tables. Credential columns are hidden. Click one to draft a SELECT.',
-    // The list covers the whole schema now (~108 tables — every base
-    // table in `public`, not the original 20 topochain ones and no longer
-    // minus the 20 credential-bearing ones #1130 was filed about), so a
-    // filter box is the difference between a browsable panel and a
-    // scroll. Filtering is client-side over the already-fetched schema —
-    // no request per keystroke.
-    body: `
-              <input id="admin-topo-sql-schema-filter" type="search" placeholder="Filter tables&hellip;"
-                aria-label="Filter tables" autocomplete="off" class="${FIELD_CLS} mb-2">
-              <p id="admin-topo-sql-schema-count" class="mb-1 text-xs text-zinc-500 dark:text-zinc-400" role="status"></p>
-              <div id="admin-topo-sql-schema" class="space-y-1 max-h-96 overflow-y-auto">${AdminTopochain._skeleton(3)}</div>`,
-  })}
-        </div>
-      </div>`;
-    document.getElementById('admin-topo-sql-run').addEventListener('click', () => AdminTopochain._runSqlQuery());
-    AdminTopochain._loadSqlSchema();
-    AdminTopochain._loadSqlTemplates();
-  },
-
-  async _loadSqlTemplates() {
-    const { ok, data } = await AdminTopochain.fetchJson('/api/v4/admin/sql-query/templates');
-    const host = document.getElementById('admin-topo-sql-templates');
-    if (!host) return;
-    const esc = AdminTopochain.esc;
-    if (!ok || !data?.success) { host.innerHTML = '<p class="text-xs text-zinc-500 dark:text-zinc-400">Unavailable.</p>'; return; }
-    AdminTopochain._sql.templates = data.data;
-    host.innerHTML = data.data.map((t, i) => `
-      <button data-tpl="${i}" type="button" title="${esc(t.description)}"
-        class="${BTN.sidebar}">${esc(t.name)}</button>`).join('');
-    host.querySelectorAll('[data-tpl]').forEach((b) => b.addEventListener('click', () => {
-      document.getElementById('admin-topo-sql-query').value = AdminTopochain._sql.templates[parseInt(b.dataset.tpl, 10)].query;
-    }));
-  },
-
-  async _loadSqlSchema() {
-    const { ok, data } = await AdminTopochain.fetchJson('/api/v4/admin/sql-query/schema');
-    const host = document.getElementById('admin-topo-sql-schema');
-    if (!host) return;
-    if (!ok || !data?.success) { host.innerHTML = '<p class="text-xs text-zinc-500 dark:text-zinc-400">Unavailable.</p>'; return; }
-    // Server order is already alphabetical across the whole schema
-    // (db-console-scope.js sorts it); don't re-sort, just render.
-    AdminTopochain._sql.schema = data.data;
-    AdminTopochain._renderSqlSchemaList('');
-    const filter = document.getElementById('admin-topo-sql-schema-filter');
-    if (filter) {
-      filter.addEventListener('input', () => AdminTopochain._renderSqlSchemaList(filter.value));
-    }
-  },
-
-  // Renders (or re-renders) the schema list, optionally narrowed to
-  // tables whose name contains `term`. Indexes into `_sql.schema` are
-  // kept as the button's `data-table` so the click handler never has to
-  // re-resolve a name against the filtered view.
-  _renderSqlSchemaList(term) {
-    const host = document.getElementById('admin-topo-sql-schema');
-    if (!host) return;
-    const esc = AdminTopochain.esc;
-    const all = AdminTopochain._sql.schema || [];
-    const needle = String(term || '').trim().toLowerCase();
-    const shown = all
-      .map((t, i) => ({ t, i }))
-      .filter(({ t }) => !needle || t.name.toLowerCase().includes(needle));
-
-    const count = document.getElementById('admin-topo-sql-schema-count');
-    if (count) {
-      count.textContent = needle
-        ? `${shown.length} of ${all.length} tables`
-        : `${all.length} tables`;
-    }
-
-    if (!shown.length) {
-      host.innerHTML = '<p class="text-xs text-zinc-500 dark:text-zinc-400">No table matches that filter.</p>';
-      return;
-    }
-    host.innerHTML = shown.map(({ t, i }) => `
-      <button data-table="${i}" type="button" title="${esc(t.comment || '')}"
-        class="${BTN.sidebar} font-mono justify-between gap-2">
-        <span class="truncate">${esc(t.name)}</span>
-        <span class="shrink-0 text-zinc-400 dark:text-zinc-500">${t.columns.length}</span>
-      </button>`).join('');
-    host.querySelectorAll('[data-table]').forEach((b) => b.addEventListener('click', () => {
-      const t = AdminTopochain._sql.schema[parseInt(b.dataset.table, 10)];
-      // Never `SELECT *` — the console rejects bare wildcards; list the
-      // table's own columns explicitly instead so the inserted query is
-      // guaranteed to pass validation as-is. `t.columns` is already
-      // redaction-filtered server-side, so a credential column is never
-      // in the drafted query either.
-      const cols = t.columns.map((c) => c.name).join(', ');
-      document.getElementById('admin-topo-sql-query').value = `SELECT ${cols} FROM ${t.name} LIMIT 100`;
-    }));
-  },
-
-  async _runSqlQuery() {
-    // Read-only by construction server-side (BEGIN TRANSACTION READ ONLY
-    // under a restricted role) — no canWrite() gate needed here, this is
-    // the one mutating-looking control in this file that isn't actually
-    // a write.
-    const query = document.getElementById('admin-topo-sql-query').value.trim();
-    const limit = document.getElementById('admin-topo-sql-limit').value.trim() || '100';
-    const result = document.getElementById('admin-topo-sql-result');
-    const esc = AdminTopochain.esc;
-    const note = (cls, text) => `<p class="mt-3 rounded-lg px-3 py-2 text-sm ${cls}" role="status">${text}</p>`;
-    if (!query) { result.innerHTML = note('bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400', 'Enter a query.'); return; }
-    result.innerHTML = note('bg-zinc-100 dark:bg-zinc-800 text-zinc-500', 'Running&hellip;');
-    const { status, ok, data } = await AdminTopochain.fetchJson('/api/v4/admin/sql-query/execute', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query, limit: Number(limit) }),
-    });
-    if (status === 503) {
-      result.innerHTML = note('bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400',
-        esc((data && data.error) || 'The SQL console is not available right now.'));
-      return;
-    }
-    if (!ok || !data?.success) {
-      result.innerHTML = note('bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400',
-        esc((data && data.error) || 'Query failed.'));
-      return;
-    }
-    if (!data.data.length) {
-      result.innerHTML = `<div class="mt-3">${AdminTopochain._empty({
-        title: 'No rows',
-        body: `The query ran in ${data.execution_time_ms} ms and matched nothing.`,
-      })}</div>`;
-      return;
-    }
-    const cols = data.columns;
-    const rows = data.data.map((row) => `
-      <tr class="border-t border-zinc-200 dark:border-zinc-800">
-        ${cols.map((c) => `<td class="px-2 py-1 text-xs font-mono whitespace-nowrap">${esc(row[c] == null ? '' : String(row[c]))}</td>`).join('')}
-      </tr>`).join('');
-    // Deliberately NOT the shared _list() card/table pair: the columns
-    // here are whatever the query returned, so there is no primary
-    // column to title a card with and no stable label set. A scrolling
-    // result grid is the right shape for arbitrary SQL output, on a
-    // phone as much as anywhere.
-    result.innerHTML = `
-      <p class="text-xs text-zinc-500 dark:text-zinc-400 mb-2 mt-3">${esc(data.row_count)} row(s)${data.limited ? ' (truncated to the limit)' : ''} in ${esc(data.execution_time_ms)} ms</p>
-      <div class="overflow-x-auto rounded-xl border border-zinc-200 dark:border-zinc-800">
-        <table class="w-full">
-          <thead class="bg-zinc-50 dark:bg-zinc-900 text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-            <tr>${cols.map((c) => `<th class="px-2 py-1 text-left">${esc(c)}</th>`).join('')}</tr>
-          </thead>
-          <tbody>${rows}</tbody>
-        </table>
-      </div>`;
-  },
 
   // ══════════════════════════════════════════════════════════════════
   // API tester — moved to ./topochain/api-tester.tsx (#1120 slice 24).

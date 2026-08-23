@@ -128,6 +128,7 @@ const OWNED = [
   // still owns the shell around it and recreates that node on every screen
   // switch, so the boundary React owns is the content node alone.
   { sel: '#admin-topo-content', when: '#admin/api-tester' }, // topochain/api-tester.tsx
+  { sel: '#admin-topo-content', when: '#admin/sql-console' }, // topochain/sql-console.tsx
   {
     sel: '#admin-section-content',
     when: '#admin/users',                     // features/admin/admin-users.tsx
@@ -145,7 +146,7 @@ const ROUTES = [
   '#app/recipebot', '#app/recipebot/dev', '#app/recipebot/dev/chat',
   '#app/recipebot/dev/sessions/1',
   '#admin/e2e', '#admin/gallery', '#admin/node', '#admin/merges', '#admin/push', '#admin/campaigns', '#admin/mail', '#admin/estimator', '#admin/analytics', '#admin/overview', '#admin/codes', '#admin/featured-apps', '#admin/db-export', '#admin/features', '#admin/limits', '#admin/users', '#admin/status', '#admin/rollover', '#admin/staging-reap',
-  '#admin/api-tester',
+  '#admin/api-tester', '#admin/sql-console',
 ];
 
 function instrument(owned) {

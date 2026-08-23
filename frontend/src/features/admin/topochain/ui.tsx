@@ -116,3 +116,38 @@ type TextareaProps = TextareaHTMLAttributes<HTMLTextAreaElement> & { className?:
 export function Textarea({ className, ...rest }: TextareaProps) {
   return <textarea className={className ? `${TEXTAREA_CLS} ${className}` : TEXTAREA_CLS} {...rest} />;
 }
+
+// Loading placeholder shaped like the rows it is standing in for, so the
+// layout doesn't jump when the data lands. Mirrors AdminTopochain._skeleton.
+export function Skeleton({ rows }: { rows?: number }) {
+  const n = Math.max(1, Math.min(rows == null ? 4 : rows, 10));
+  const widths = ['w-3/4', 'w-full', 'w-5/6', 'w-2/3'];
+  return (
+    <>
+      <div className="animate-pulse space-y-2 py-2" aria-hidden="true">
+        {Array.from({ length: n }, (_, i) => (
+          <div key={i} className={`h-4 ${widths[i % 4]} rounded bg-zinc-200 dark:bg-zinc-800`} />
+        ))}
+      </div>
+      <p className="sr-only" role="status">Loading…</p>
+    </>
+  );
+}
+
+// "Nothing here yet" — a title, an optional explanation, and an optional call
+// to action. Mirrors AdminTopochain._empty. The action is the caller's to omit
+// for a view-only admin, exactly as the string helper made it: an empty state
+// whose only affordance 403s is worse than no affordance.
+export function EmptyState(
+  { title, body, action }: { title?: string; body?: ReactNode; action?: ReactNode },
+) {
+  return (
+    <div className="rounded-xl border border-dashed border-zinc-300 dark:border-zinc-700 px-4 py-10 text-center">
+      <p className="text-sm font-medium text-zinc-600 dark:text-zinc-300">
+        {title || 'Nothing here yet'}
+      </p>
+      {body ? <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">{body}</p> : null}
+      {action ? <div className="mt-4 flex justify-center">{action}</div> : null}
+    </div>
+  );
+}

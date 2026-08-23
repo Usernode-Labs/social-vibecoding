@@ -213,7 +213,7 @@ test('every built screen has a render function reachable from _renderSub', () =>
   const fn = topoJs.slice(topoJs.indexOf('  _renderSub() {'), topoJs.indexOf('  // ══'.repeat(1), topoJs.indexOf('  _renderSub() {')));
   const renderFns = [
     'renderSeasonEvents', 'renderWaitlist', 'renderOnchainAccounts', 'renderUserActivities',
-    'renderChallengeTemplates', 'renderSettings', 'renderAppVersion', 'renderSqlConsole',
+    'renderChallengeTemplates', 'renderSettings', 'renderAppVersion',
     'renderSeasons', 'renderDelegations',
   ];
   for (const name of renderFns) {
@@ -226,13 +226,21 @@ test('every built screen has a render function reachable from _renderSub', () =>
   // matter: a leftover `case` would keep dispatching the deleted renderer.
   assert.match(fn, /const react = TOPO_REACT_SCREENS\[AdminTopochain\._sub\];/,
     '_renderSub tries the React registry before its own switch');
-  assert.ok(!fn.includes("case 'api-tester'"), 'api-tester left the switch');
-  assert.ok(!/renderApiTester/.test(topoJs.replace(/^\s*\/\/.*$/gm, '')),
-    'and its renderer is gone from this module');
   const screens = fs.readFileSync(
     path.join(root, 'frontend/src/features/admin/topochain/screens.tsx'), 'utf8');
-  assert.match(screens, /'api-tester': \{ mount\(host\) \{ mountLegacyPortal\(host, <ApiTesterScreen \/>\); \} \},/,
-    'the registry mounts the converted screen through the portal seam');
+  const code = topoJs.replace(/^\s*\/\/.*$/gm, '');
+  for (const [key, component] of [
+    ['api-tester', 'ApiTesterScreen'],
+    ['sql-console', 'SqlConsoleScreen'],
+  ]) {
+    assert.ok(!fn.includes(`case '${key}'`), `${key} left the switch`);
+    const renderer = `render${component.replace('Screen', '')}`;
+    assert.ok(!new RegExp(renderer).test(code), `and ${renderer} is gone from this module`);
+    assert.ok(
+      screens.includes(`'${key}': { mount(host) { mountLegacyPortal(host, <${component} />); } },`),
+      `the registry mounts ${key} through the portal seam`,
+    );
+  }
   // renderUsers is rendered by the console's Users section, not _renderSub.
   assert.ok(!fn.includes('renderUsers('), '_renderSub no longer dispatches renderUsers');
   assert.match(topoJs, /\brenderUsers\(host\) \{/, 'renderUsers(host) is still defined for the merged section');
@@ -415,9 +423,21 @@ test('every AdminTopochain.send(...) mutating call sits inside a canWrite()-guar
 });
 
 test('the one non-mutating POST (sql-query/execute) is explicitly NOT canWrite-gated, with a comment saying why', () => {
-  const fn = topoJs.slice(topoJs.indexOf('  async _runSqlQuery() {'), topoJs.indexOf('  // ══', topoJs.indexOf('async _runSqlQuery')));
+  // The screen is React since #1120 slice 25; the explanation moved with it.
+  const sqlTsx = fs.readFileSync(
+    path.join(root, 'frontend/src/features/admin/topochain/sql-console.tsx'), 'utf8');
+  const fn = sqlTsx.slice(sqlTsx.indexOf('  const run = useCallback'),
+    sqlTsx.indexOf('  const draft = useCallback'));
+  assert.ok(fn.length > 400, 'the run handler has a body');
   assert.match(fn, /read-only by construction server-side/i,
-    'the file explains that sql-query/execute is a read-only endpoint despite using POST');
+    'the handler explains that sql-query/execute is a read-only endpoint despite using POST');
+  assert.ok(!/canWrite/.test(stripComments(fn)),
+    'and does not gate on write access — the comment saying so is not the gate');
+  // The header carries the full reasoning, since the handler comment is one
+  // line: this is the ONE mutating-looking control in the console that is not
+  // a write, and a future reader must not "fix" it by adding a gate.
+  assert.match(sqlTsx, /BEGIN TRANSACTION READ ONLY/,
+    'the header names the server-side mechanism that makes it read-only');
 });
 
 test('rendered mutating buttons (Edit/Delete/Reset/New/Import/Move/Toggle) are wrapped in a canWrite() ternary', () => {
@@ -674,7 +694,7 @@ test('every screen opens with the shared _screenHeader, toolbar and all', () => 
   const SCREENS = [
     'renderSeasons', 'renderSeasonEvents', 'renderUsers', 'renderWaitlist',
     'renderOnchainAccounts', 'renderUserActivities', 'renderChallengeTemplates',
-    'renderSettings', 'renderAppVersion', 'renderSqlConsole',
+    'renderSettings', 'renderAppVersion',
   ];
   for (const fn of SCREENS) {
     const start = topoJs.search(new RegExp(`\\n  (?:async )?${fn}\\(host\\) \\{`));
@@ -756,15 +776,18 @@ test('every form reports failures through the shared inline error slot', () => {
 });
 
 test('the tool screens got the same treatment as the CRUD screens', () => {
-  const sql = topoJs.slice(topoJs.indexOf('  renderSqlConsole(host) {'),
-    topoJs.indexOf('  async _loadSqlTemplates()'));
+  // The SQL console is React since #1120 slice 25; the four layout properties
+  // are unchanged, expressed in the renderer it uses now.
+  const sql = fs.readFileSync(
+    path.join(root, 'frontend/src/features/admin/topochain/sql-console.tsx'), 'utf8');
   assert.match(sql, /grid-cols-1 gap-4 lg:grid-cols-\[260px_1fr\]/,
     'the SQL console is one column on a phone, sidebar + editor at lg:');
   assert.match(sql, /lg:order-2/,
     'the query editor comes first on a phone, and moves right at lg:');
-  assert.ok((sql.match(/_panel\(\{/g) || []).length >= 3,
+  assert.ok((sql.match(/<Panel\b/g) || []).length >= 3,
     'query, templates and schema each sit in a panel');
-  assert.match(sql, /_skeleton\(3\)/, 'the reference lists show a skeleton while they load');
+  assert.ok((sql.match(/<Skeleton rows=\{3\} \/>/g) || []).length >= 2,
+    'both reference lists show a skeleton while they load');
 
   // The API tester is React since #1120 slice 24. The same four properties
   // hold, expressed in the renderer it uses now — and the field styling one
@@ -786,10 +809,16 @@ test('the tool screens got the same treatment as the CRUD screens', () => {
 });
 
 test('the SQL result and API response areas use the shared empty/panel treatment', () => {
-  const run = topoJs.slice(topoJs.indexOf('  async _runSqlQuery()'),
-    topoJs.indexOf('  // ══════════════════════════════════════════════════════════════════\n  // API tester'));
-  assert.match(run, /_empty\(\{/, 'a query that matched nothing gets the empty-state card');
-  assert.match(run, /role="status"/, 'running/failed states are announced');
+  const sqlTsx = fs.readFileSync(
+    path.join(root, 'frontend/src/features/admin/topochain/sql-console.tsx'), 'utf8');
+  assert.match(sqlTsx, /<EmptyState title="No rows"/,
+    'a query that matched nothing gets the empty-state card');
+  assert.match(sqlTsx, /role="status"/, 'running/failed states are announced');
+  // The 503 branch is the one an operator hits when the console is switched
+  // off server-side, and it must say the server's own reason rather than
+  // "Query failed".
+  assert.match(sqlTsx, /if \(status === 503\)/, 'the unavailable state is handled on its own');
+  assert.match(sqlTsx, /'The SQL console is not available right now\.'/);
   assert.match(apiTesterTsx, /\$\{PANEL_CLS\} overflow-hidden/,
     'the response is framed like every other panel');
   assert.match(apiTesterTsx, /`HTTP \$\{result\.status\} \$\{result\.statusText\}`/,

@@ -208,30 +208,39 @@ test('the deep-linked Season-events screens the brief names still resolve', () =
 
 // ── 5. The SQL-schema explorer, client half ─────────────────────────────
 
+// The SQL console is React since #1120 slice 25. The same five properties
+// hold; each is expressed in the renderer it uses now, and three of them got
+// stronger in the move because React removed the thing they were guarding.
+const sqlTsx = read(`${topoDir}/sql-console.tsx`);
+
 test('the schema explorer renders its three declared anchors', () => {
   // Named by the brief, and selected by three declared checks on
-  // /#admin/seasons/sql-console.
-  assert.match(topo, /<input id="admin-topo-sql-schema-filter" type="search"/,
+  // /#admin/sql-console.
+  assert.match(sqlTsx, /id="admin-topo-sql-schema-filter"\n\s*type="search"/,
     'a search input filters the table list');
-  assert.match(topo, /<p id="admin-topo-sql-schema-count"[^>]*role="status"/,
+  assert.match(sqlTsx, /id="admin-topo-sql-schema-count"[\s\S]{0,200}?role="status"/,
     'the count is a live region, so a filter change is announced');
-  assert.match(topo, /<div id="admin-topo-sql-schema" class="[^"]*overflow-y-auto"/,
+  assert.match(sqlTsx, /id="admin-topo-sql-schema" className="[^"]*overflow-y-auto"/,
     'the list itself scrolls within the panel rather than the page');
 });
 
-test('filtering the ~90-table schema is client-side over the fetched list', () => {
+test('filtering the ~110-table schema is client-side over the fetched list', () => {
   // One request, then keystroke-local filtering. A request per keystroke would
-  // be ~90 tables of schema re-fetched per character against the admin API.
-  const load = topo.slice(topo.indexOf('async _loadSqlSchema()'), topo.indexOf('_renderSqlSchemaList(term)'));
-  assert.match(load, /fetchJson\('\/api\/v4\/admin\/sql-query\/schema'\)/,
+  // be ~110 tables of schema re-fetched per character against the admin API.
+  assert.match(sqlTsx, /fetchJson\('\/api\/v4\/admin\/sql-query\/schema'\)/,
     'the schema is fetched once');
-  assert.match(load, /AdminTopochain\._sql\.schema = data\.data;/, 'and cached');
-  assert.match(load, /filter\.addEventListener\('input', \(\) => AdminTopochain\._renderSqlSchemaList\(filter\.value\)\)/,
-    'input re-renders from the cache — it must not re-fetch');
-  const render = topo.slice(topo.indexOf('_renderSqlSchemaList(term)'), topo.indexOf('async _runSqlQuery()'));
-  assert.ok(!render.includes('fetchJson'), 'the filtered re-render must not hit the network');
-  assert.match(render, /includes\(needle\)/, 'filtering is a substring match on the table name');
-  assert.match(render, /\$\{shown\.length\} of \$\{all\.length\} tables/,
+  // The whole fetch lives in a mount-only effect — `[]` deps, so nothing the
+  // operator types can re-run it. That is a stronger statement than the
+  // "the re-render must not call fetchJson" the innerHTML version could make:
+  // there is no re-render function left to check.
+  const load = sqlTsx.slice(sqlTsx.indexOf('  useEffect(() => {\n    (async () => {'),
+    sqlTsx.indexOf('  const tables ='));
+  assert.ok(load.length > 300, 'the loading effect has a body');
+  assert.match(load, /\}, \[\]\);\s*$/, 'and runs once on mount, not on any state change');
+  assert.match(sqlTsx, /const shown = useMemo\(/, 'the filtered view is derived, not refetched');
+  assert.match(sqlTsx, /t\.name\.toLowerCase\(\)\.includes\(needle\)/,
+    'filtering is a substring match on the table name');
+  assert.match(sqlTsx, /`\$\{shown\.length\} of \$\{tables\.length\} tables`/,
     'a narrowed list says how much of the schema it is showing');
 });
 
@@ -240,25 +249,35 @@ test('a table button drafts an explicit-column SELECT, never a bare wildcard', (
   // (topochain-db-tools.test.js), so a drafted `SELECT *` would be a query the
   // console hands you and then refuses to run. Listing t.columns also keeps the
   // draft inside the redaction the server already applied to that list.
-  const render = topo.slice(topo.indexOf('_renderSqlSchemaList(term)'), topo.indexOf('async _runSqlQuery()'));
-  assert.match(render, /data-table="\$\{i\}"/,
-    'each button carries its index into the cached schema, not a name to re-resolve');
-  assert.match(render, /const cols = t\.columns\.map\(\(c\) => c\.name\)\.join\(', '\);/,
-    'the draft lists the columns the server disclosed');
-  assert.match(render, /`SELECT \$\{cols\} FROM \$\{t\.name\} LIMIT 100`/,
-    'and bounds the draft with a LIMIT');
-  // Comments stripped: the code above is commented with "Never `SELECT *`",
-  // which is the intent, not a violation of it.
-  const code = render.split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
+  assert.match(sqlTsx,
+    /setQuery\(`SELECT \$\{t\.columns\.map\(\(c\) => c\.name\)\.join\(', '\)\} FROM \$\{t\.name\} LIMIT 100`\);/,
+    'the draft lists the columns the server disclosed, bounded by a LIMIT');
+  // The index-into-the-cache indirection is gone from the CLICK path: a button
+  // closes over its own table, so there is no filtered-view position to
+  // resolve against. `data-table` survives as an ATTRIBUTE because two
+  // declared checks select on it — it is part of the screen's contract, not
+  // part of its wiring any more.
+  assert.match(sqlTsx, /onClick=\{\(\) => draft\(t\)\}/,
+    'each button carries its own table rather than a position to re-resolve');
+  assert.match(sqlTsx, /data-table=\{i\}/,
+    "and still carries the index dapp.json's declared checks select on");
+  // Comments stripped: the code is commented with "Never `SELECT *`", which is
+  // the intent, not a violation of it.
+  const code = sqlTsx.split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
   assert.ok(!/SELECT \*/.test(code), 'no bare wildcard may be drafted');
 });
 
-test('the schema list escapes every server-supplied string it renders', () => {
+test('the schema list renders every server-supplied string as data, never markup', () => {
   // Table names and comments come from the database over the admin API — data,
-  // never markup. Both go through the module's hardened esc().
-  const render = topo.slice(topo.indexOf('_renderSqlSchemaList(term)'), topo.indexOf('async _runSqlQuery()'));
-  assert.match(render, /title="\$\{esc\(t\.comment \|\| ''\)\}"/, 'the tooltip is escaped');
-  assert.match(render, /<span class="truncate">\$\{esc\(t\.name\)\}<\/span>/, 'the table name is escaped');
+  // never markup. The innerHTML version put both through the module's hardened
+  // esc(); React escapes text children, so what has to hold now is that the
+  // screen never opts back out. That covers the query RESULT grid too, which
+  // renders arbitrary column values from an operator-written query.
+  assert.match(sqlTsx, /title=\{t\.comment \|\| ''\}/, 'the tooltip is a prop, not interpolated markup');
+  assert.match(sqlTsx, /<span className="truncate">\{t\.name\}<\/span>/, 'so is the table name');
+  const code = sqlTsx.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  assert.ok(!/dangerouslySetInnerHTML|innerHTML/.test(code),
+    'the screen renders no raw HTML at all');
 });
 
 test('the console island is what loads all of this', () => {

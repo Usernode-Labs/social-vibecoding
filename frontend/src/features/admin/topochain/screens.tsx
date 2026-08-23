@@ -2,6 +2,7 @@
 
 import { mountLegacyPortal } from '../../../lib/legacy-portals';
 import { ApiTesterScreen } from './api-tester.tsx';
+import { SqlConsoleScreen } from './sql-console.tsx';
 
 // The programme console's React screens, and the portal seam that mounts them
 // (#1120 slice 24).
@@ -27,4 +28,5 @@ import { ApiTesterScreen } from './api-tester.tsx';
 
 export const TOPO_REACT_SCREENS: Record<string, { mount(host: Element): void }> = {
   'api-tester': { mount(host) { mountLegacyPortal(host, <ApiTesterScreen />); } },
+  'sql-console': { mount(host) { mountLegacyPortal(host, <SqlConsoleScreen />); } },
 };

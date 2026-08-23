@@ -44,6 +44,25 @@ const TOKENS_SRC = (() => {
   return body.replace(/^export const/gm, 'var');
 })();
 
+// The fetch helpers (frontend/src/features/admin/topochain/api.ts). Read from
+// the real file for the same reason as the tokens: AdminTopochain.fetchJson
+// delegates to this copy, so a restated one would keep passing after the real
+// contract changed. `export`/type annotations are stripped for the vm — the
+// bodies are plain JS.
+const API_SRC = (() => {
+  const src = fs.readFileSync(
+    path.join(root, 'frontend/src/features/admin/topochain/api.ts'), 'utf8');
+  const body = src.slice(src.indexOf('export async function fetchJson'));
+  assert.ok(body.includes('export async function send'), 'api.ts exports both helpers');
+  return body
+    .replace(/^export /gm, '')
+    .replace(/^\s*url: string,$/m, '  url,')
+    .replace(/^\s*opts\?: RequestInit,$/m, '  opts,')
+    .replace(/\): Promise<\{ status: number; ok: boolean; data: any \}> \{/, ') {')
+    .replace(/function send\(method: string, url: string, body\?: unknown\)/, 'function send(method, url, body)')
+    .replace(/const opts: RequestInit = \{ method \};/, 'const opts = { method };');
+})();
+
 // The React seam. TOPO_REACT_SCREENS maps a screen key to a portal mount, and
 // a vm cannot render React — so it is stubbed EMPTY, which makes _renderSub
 // fall through to the innerHTML switch for every screen. That is the right
@@ -308,6 +327,7 @@ function loadModule() {
   // body resolves the bare AdminUI identifier without further wiring.
   vm.runInContext(ADMIN_UI_SRC, sandbox, { filename: 'admin-console.js#AdminUI' });
   vm.runInContext(TOKENS_SRC, sandbox, { filename: 'topochain/tokens.ts' });
+  vm.runInContext(API_SRC, sandbox, { filename: 'topochain/api.ts' });
   vm.runInContext(PORTAL_STUB_SRC, sandbox, { filename: 'topochain/screens.tsx#stub' });
   vm.runInContext(TOPO_SRC, sandbox, { filename: 'admin-topochain.js' });
   const Topo = sandbox.window.AdminTopochain;
