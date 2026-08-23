@@ -363,21 +363,23 @@ test('the console carries a Featured apps section under Platform', () => {
     /\{ key: 'featured-apps', label: 'Featured apps', group: 'Platform' \}/);
   // `features` is "Submitted features" — a different section entirely.
   assert.match(sections, /\{ key: 'features', label: 'Submitted features'/);
-  assert.match(src, /case 'featured-apps': return AdminConsole\.renderFeaturedAppsSection\(host\)/);
+  // The section moved out of the chassis into its own module in #1120 slice
+  // 18, so the dispatch is a SECTION_MODULES entry rather than a switch arm.
+  assert.match(src, /'featured-apps': 'AdminFeaturedApps'/);
 });
 
 test('the section gates its mutating controls on canWrite', () => {
   const src = fs.readFileSync(
-    path.join(__dirname, '..', 'frontend/src/features/admin/admin-console.js'), 'utf8'
+    path.join(__dirname, '..', 'frontend/src/features/admin/admin-featured-apps.tsx'), 'utf8'
   );
-  const section = src.slice(
-    src.indexOf('renderFeaturedAppsSection(host) {'),
-    src.indexOf('async _loadFeaturedApps()')
-  );
-  assert.ok(section.length > 400, 'located the renderer');
-  assert.match(section, /const canWrite = AdminConsole\.canWrite\(\)/);
-  assert.match(section, /admin-featured-save/);
-  assert.match(section, /View-only admin/, 'read-only affordance for view-only admins');
+  assert.match(src, /const canWrite = !!\(window as any\)\.AdminConsole\?\.canWrite\(\)/);
+  assert.match(src, /admin-featured-save/);
+  assert.match(src, /View-only admin/, 'read-only affordance for view-only admins');
+  // Every mutating control sits behind the flag: the reorder/remove buttons on
+  // each row, and the picker + Add + Save footer.
+  assert.match(src, /\{canWrite \? \(\s*<>/, 'the row controls are gated');
+  assert.match(src, /\{canWrite \? \(\s*<>\s*<div className="flex flex-wrap items-center gap-2 pt-3/,
+    'the picker/Add/Save footer is gated');
   // Save PUTs the ordered slug array — the array IS the display order.
-  assert.match(src, /body: JSON\.stringify\(\{ slugs: AdminConsole\._featured \|\| \[\] \}\)/);
+  assert.match(src, /body: JSON\.stringify\(\{ slugs: featured \|\| \[\] \}\)/);
 });

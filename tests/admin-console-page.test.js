@@ -109,13 +109,18 @@ test('the console island imports every admin module, console first', () => {
   // `.tsx` as well as `.js`: sections are converting to React one at a time
   // (#1120), and the import order this pins is about module EVALUATION order,
   // which the file extension has nothing to do with.
-  const order = [...island.matchAll(/from '\.\/(admin-[a-z]+)\.(?:js|tsx)'|import '\.\/(admin-[a-z]+)\.(?:js|tsx)'/g)]
-    .map((m) => m[1] || m[2]);
+  // `[a-z0-9-]` rather than `[a-z]`: the character class used to miss
+  // `admin-e2e` (a digit) silently, and would now also miss
+  // `admin-featured-apps` (a second hyphen). A section this test cannot see is
+  // a section whose import order it does not actually pin.
+  const order = [...island.matchAll(/(?:from|import) '\.\/(admin-[a-z0-9-]+)\.(?:js|tsx)'/g)]
+    .map((m) => m[1]);
   assert.equal(order[0], 'admin-console', 'admin-console.js is imported first');
   assert.deepEqual(order.slice(1).sort(), [
-    'admin-analytics', 'admin-campaigns', 'admin-codes', 'admin-estimator',
-    'admin-gallery', 'admin-mail', 'admin-merges', 'admin-node',
-    'admin-overview', 'admin-push', 'admin-status', 'admin-topochain',
+    'admin-analytics', 'admin-campaigns', 'admin-codes', 'admin-e2e',
+    'admin-estimator', 'admin-featured-apps', 'admin-gallery', 'admin-mail',
+    'admin-merges', 'admin-node', 'admin-overview', 'admin-push',
+    'admin-status', 'admin-topochain',
   ], 'every section module is imported by the island');
 });
 
