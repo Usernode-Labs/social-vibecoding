@@ -106,7 +106,7 @@ function AppCardTile({ app, style, yours }: { app: HomeAppView; style?: React.CS
     <div
       ref={wireRef}
       className={`app-card app-card-draggable touch-pan-y relative rounded-xl transition-colors p-3 flex flex-col items-center text-center gap-1.5 ${
-        app.clickable ? (yours ? 'cursor-grab' : 'cursor-pointer') : 'cursor-not-allowed opacity-70'
+        app.clickable ? (yours ? 'cursor-grab' : 'cursor-pointer') : 'cursor-not-allowed grayscale-[0.75]'
       }`}
       data-slug={app.slug}
       data-status={app.status}

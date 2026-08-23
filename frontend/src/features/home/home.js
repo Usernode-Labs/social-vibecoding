@@ -1350,7 +1350,7 @@ const Home = {
     // Awaiting-secrets cards stay clickable so the user can open the
     // app view + Secrets modal to fill values; other non-running
     // statuses show no app surface.
-    const cursorClass = (isRunning || isAwaiting) ? 'cursor-pointer' : 'cursor-not-allowed opacity-70';
+    const cursorClass = (isRunning || isAwaiting) ? 'cursor-pointer' : 'cursor-not-allowed grayscale-[0.75]';
 
     // Per-tile sections, computed up front so the template stays
     // readable. Anything that may be empty is collapsed to '' so the
