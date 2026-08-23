@@ -593,7 +593,9 @@ const GroupChat = {
       // The three header controls, gated exactly as the string template gated
       // them: edit is your own message and not read-only (#621), react is not
       // read-only, save needs a signed-in viewer.
-      showEdit: (msg.userId === App.user?.id || msg.user_id === App.user?.id) && !GroupChat._readOnly(),
+      showEdit: kind === 'message'
+        && (msg.userId === App.user?.id || msg.user_id === App.user?.id)
+        && !GroupChat._readOnly(),
       showReact: !GroupChat._readOnly(),
       showBookmark: !!(window.App && App.user),
       quote: q ? {

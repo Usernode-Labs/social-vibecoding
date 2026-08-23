@@ -108,20 +108,6 @@ function Reactions({ msg }: { msg: TranscriptMessage }) {
   );
 }
 
-/** A system or vote row — one line of text, plus whatever the module fills in. */
-function SystemRow({ msg }: { msg: TranscriptMessage }) {
-  return (
-    <div
-      className={`gc-msg-system ${msg.kind === 'vote' ? 'gc-msg-vote' : ''}${msg.voteRowClass ? ` ${msg.voteRowClass}` : ''}`}
-      data-msg-id={msg.id ?? ''}
-    >
-      <span className="gc-msg-system-text">{msg.systemText}</span>
-      {msg.kind === 'vote' ? <span data-gc-vote-controls={msg.id ?? ''} /> : null}
-      <Reactions msg={msg} />
-    </div>
-  );
-}
-
 /**
  * The row's three header controls: edit, save, react.
  *
@@ -172,6 +158,28 @@ function RowActions({ msg }: { msg: TranscriptMessage }) {
         </button>
       ) : null}
     </>
+  );
+}
+
+/** A system or vote row — one line of text, plus whatever the module fills in. */
+function SystemRow({ msg }: { msg: TranscriptMessage }) {
+  return (
+    <div
+      className={`gc-msg-system ${msg.kind === 'vote' ? 'gc-msg-vote' : ''}${msg.voteRowClass ? ` ${msg.voteRowClass}` : ''}`}
+      data-msg-id={msg.id ?? ''}
+    >
+      <span className="gc-msg-system-text">{msg.systemText}</span>
+      {msg.kind === 'vote' ? <span data-gc-vote-controls={msg.id ?? ''} /> : null}
+      {/*
+          A system or vote row is savable and reactable, exactly as the string
+          template had it — the same two buttons, in the same place, before the
+          reaction pills. Not editable: `showEdit` is false for every row whose
+          kind is not `message`, which is how the legacy branch expressed it
+          (it simply never called the edit builder here).
+      */}
+      <RowActions msg={msg} />
+      <Reactions msg={msg} />
+    </div>
   );
 }
 
