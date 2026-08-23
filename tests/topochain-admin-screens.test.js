@@ -221,8 +221,7 @@ test('every built screen key is present in SUBS, no gap key is, and each is a re
 test('every built screen has a render function reachable from _renderSub', () => {
   const fn = topoJs.slice(topoJs.indexOf('  _renderSub() {'), topoJs.indexOf('  // ══'.repeat(1), topoJs.indexOf('  _renderSub() {')));
   const renderFns = [
-    'renderSeasonEvents', 'renderUserActivities',
-    'renderChallengeTemplates', 'renderSeasons', 'renderDelegations',
+    'renderSeasonEvents', 'renderChallengeTemplates', 'renderSeasons', 'renderDelegations',
   ];
   for (const name of renderFns) {
     assert.ok(fn.includes(name), `_renderSub dispatches to ${name}`);
@@ -244,6 +243,7 @@ test('every built screen has a render function reachable from _renderSub', () =>
     ['app-version', 'AppVersionScreen'],
     ['waitlist', 'WaitlistScreen'],
     ['onchain-accounts', 'OnchainAccountsScreen'],
+    ['user-activities', 'UserActivitiesScreen'],
   ]) {
     assert.ok(!new RegExp(`case '${key}':`).test(fn), `${key} left the switch`);
     const renderer = `render${component.replace('Screen', '')}`;
@@ -714,9 +714,7 @@ test('a panel header sticks to the top and carries a visible dismiss control', (
 test('every open-a-form entry point renders through _panel with a wired close control', () => {
   const FORMS = [
     '_openSeasonEventForm', '_openChallengeForm', '_openUserForm',
-    '_openUserImportForm', '_openUserExport',
-    '_openActivityForm', '_openActivityImportForm', '_openActivityTotals',
-    '_openTemplateForm', '_moveChallenge',
+    '_openUserImportForm', '_openUserExport', '_openTemplateForm', '_moveChallenge',
   ];
   for (const fn of FORMS) {
     const start = topoJs.indexOf(`  async ${fn}(`);
@@ -738,6 +736,9 @@ test('every open-a-form entry point renders through _panel with a wired close co
     ['settings.tsx', 'Close the setting form'],
     ['app-version.tsx', 'Close the app version form'],
     ['onchain-accounts.tsx', 'Close the import panel'],
+    ['user-activities.tsx', 'Close the activity form'],
+    ['user-activities.tsx', 'Close the import panel'],
+    ['user-activities.tsx', 'Close the totals panel'],
   ]) {
     const src = fs.readFileSync(
       path.join(root, 'frontend/src/features/admin/topochain', file), 'utf8');
@@ -761,8 +762,7 @@ test('no two static admin-topo-* element ids collide', () => {
 
 test('every screen opens with the shared _screenHeader, toolbar and all', () => {
   const SCREENS = [
-    'renderSeasons', 'renderSeasonEvents', 'renderUsers',
-    'renderUserActivities', 'renderChallengeTemplates',
+    'renderSeasons', 'renderSeasonEvents', 'renderUsers', 'renderChallengeTemplates',
   ];
   for (const fn of SCREENS) {
     const start = topoJs.search(new RegExp(`\\n  (?:async )?${fn}\\(host\\) \\{`));

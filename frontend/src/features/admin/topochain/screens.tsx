@@ -6,6 +6,7 @@ import { AppVersionScreen } from './app-version.tsx';
 import { OnchainAccountsScreen } from './onchain-accounts.tsx';
 import { SettingsScreen } from './settings.tsx';
 import { SqlConsoleScreen } from './sql-console.tsx';
+import { UserActivitiesScreen } from './user-activities.tsx';
 import { WaitlistScreen } from './waitlist.tsx';
 
 // The programme console's React screens, and the portal seam that mounts them
@@ -36,5 +37,6 @@ export const TOPO_REACT_SCREENS: Record<string, { mount(host: Element): void }> 
   'onchain-accounts': { mount(host) { mountLegacyPortal(host, <OnchainAccountsScreen />); } },
   settings: { mount(host) { mountLegacyPortal(host, <SettingsScreen />); } },
   'sql-console': { mount(host) { mountLegacyPortal(host, <SqlConsoleScreen />); } },
+  'user-activities': { mount(host) { mountLegacyPortal(host, <UserActivitiesScreen />); } },
   waitlist: { mount(host) { mountLegacyPortal(host, <WaitlistScreen />); } },
 };
