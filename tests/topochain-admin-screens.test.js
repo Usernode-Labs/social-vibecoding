@@ -220,7 +220,7 @@ test('every built screen key is present in SUBS, no gap key is, and each is a re
 
 test('every built screen has a render function reachable from _renderSub', () => {
   const fn = topoJs.slice(topoJs.indexOf('  _renderSub() {'), topoJs.indexOf('  // ══'.repeat(1), topoJs.indexOf('  _renderSub() {')));
-  const renderFns = ['renderSeasonEvents', 'renderSeasons'];
+  const renderFns = ['renderSeasonEvents'];
   for (const name of renderFns) {
     assert.ok(fn.includes(name), `_renderSub dispatches to ${name}`);
     assert.match(topoJs, new RegExp(`\\b${name}\\(host\\) \\{|async ${name}\\(host\\) \\{`),
@@ -244,6 +244,7 @@ test('every built screen has a render function reachable from _renderSub', () =>
     ['user-activities', 'UserActivitiesScreen'],
     ['delegations', 'DelegationsScreen'],
     ['challenge-templates', 'ChallengeTemplatesScreen'],
+    ['seasons', 'SeasonsScreen'],
   ]) {
     assert.ok(!new RegExp(`case '${key}':`).test(fn), `${key} left the switch`);
     const renderer = `render${component.replace('Screen', '')}`;
@@ -276,27 +277,39 @@ test('the three documented API gaps are explained in the file header, not silent
     'the seasons gap is retired, not left in the header');
 });
 
+// The Seasons screen is React since #1120 slice 33.
+const seasonsTsx = fs.readFileSync(
+  path.join(root, 'frontend/src/features/admin/topochain/seasons.tsx'), 'utf8');
+
 test('the seasons subsection is full CRUD against the real /admin/seasons resource', () => {
-  const fn = topoJs.slice(topoJs.indexOf('  renderSeasons(host) {'), topoJs.indexOf('  _se: {'));
-  assert.ok(!/no dedicated Seasons API/i.test(fn),
+  assert.ok(!/no dedicated Seasons API/i.test(seasonsTsx),
     'the "there is no API" banner is gone — there is one');
-  assert.match(fn, /\/api\/v4\/admin\/seasons/, 'the screen talks to the seasons resource directly');
+  assert.match(seasonsTsx, /\/api\/v4\/admin\/seasons/,
+    'the screen talks to the seasons resource directly');
   for (const method of ['POST', 'PUT', 'DELETE']) {
-    assert.ok(fn.includes(`'${method}'`), `the screen can ${method}`);
+    assert.ok(seasonsTsx.includes(`'${method}'`), `the screen can ${method}`);
   }
-  // Same rule as every other CRUD screen in this file: the control is
-  // not rendered for a view-only admin AND the handler refuses anyway.
-  for (const handler of ['_openSeasonForm(id)', '_saveSeason()', '_deleteSeason(id)']) {
-    const body = fn.slice(fn.indexOf(`async ${handler} {`));
-    assert.match(body.slice(0, 200), /if \(!AdminTopochain\.canWrite\(\)\) return;/,
+  // Same rule as every other CRUD screen: the control is not rendered for a
+  // view-only admin AND the handler refuses anyway. The render half is
+  // stronger here than the string version could state — a `write ? … : null`
+  // means the button does not exist, not that its markup was skipped.
+  for (const handler of ['const save = useCallback', 'const remove = useCallback']) {
+    const body = seasonsTsx.slice(seasonsTsx.indexOf(handler));
+    assert.match(body.slice(0, 300), /if \(!canWrite\(\)\) return;/,
       `${handler} refuses a view-only admin even if the control were reachable`);
   }
+  assert.match(seasonsTsx, /\{write \? \(\n\s*<button\n\s*id="admin-topo-sn-new"/,
+    'and New season is not rendered for one');
 });
 
 test('the seasons list delete surfaces the 409 season_in_use message rather than a generic failure', () => {
-  const fn = topoJs.slice(topoJs.indexOf('  async _deleteSeason(id) {'), topoJs.indexOf('  // ══════', topoJs.indexOf('  async _deleteSeason(id) {')));
+  const fn = seasonsTsx.slice(seasonsTsx.indexOf('const remove = useCallback'),
+    seasonsTsx.indexOf('const columns:'));
+  assert.ok(fn.length > 300, 'the delete handler has a body');
   assert.match(fn, /res\.data && res\.data\.error/,
     "the API's own message (which names what still references the season) is what the admin sees");
+  assert.ok(!/Delete failed\.'\);\n\s*\}\);$/.test(fn.trim()),
+    'the generic string is only the fallback, never the whole branch');
 });
 
 test('the season events screen links to seasons by name and can filter by one', () => {
@@ -691,8 +704,18 @@ test('the horizontal sub-nav is gone — the shell hosts only the screen content
   assert.match(topoJs, /_gotoSub\(sub\) \{/, 'the cross-screen jump helper exists');
   assert.match(topoJs, /AdminConsole\.setSection\(sub\)/,
     'and it routes through AdminConsole.setSection');
-  assert.ok((topoJs.match(/_gotoSub\('season-events'\)/g) || []).length >= 2,
-    'the seasons screen\'s event links use it');
+  // The two call sites are the Seasons screen's "View events" and its
+  // unassigned-events panel; both are React since slice 33 and reach the
+  // helper through the published global, which is the same jump.
+  assert.match(seasonsTsx, /t\._gotoSub\('season-events'\);/,
+    "the seasons screen's event links use it");
+  assert.ok((seasonsTsx.match(/gotoSeasonEvents\(/g) || []).length >= 3,
+    'both links plus its definition');
+  // And they hand over an EXACT filter rather than a free-text search:
+  // season_id is a filter the API applies itself.
+  assert.match(seasonsTsx, /t\._se\.seasonFilter = seasonFilter;/);
+  assert.match(seasonsTsx, /gotoSeasonEvents\('none'\)/,
+    'the unassigned panel uses the API\'s own "no season" bucket');
 });
 
 // ─── No window.prompt(): both flows are inline panels now ─────────────────
@@ -855,7 +878,7 @@ test('no two static admin-topo-* element ids collide', () => {
 
 test('every screen opens with the shared _screenHeader, toolbar and all', () => {
   const SCREENS = [
-    'renderSeasons', 'renderSeasonEvents', 'renderUsers',
+    'renderSeasonEvents', 'renderUsers',
   ];
   for (const fn of SCREENS) {
     const start = topoJs.search(new RegExp(`\\n  (?:async )?${fn}\\(host\\) \\{`));
