@@ -27,6 +27,7 @@ import type { ReactNode } from 'react';
 
 import { CheckIcon } from '@/components/ui/icons';
 import { ListRow } from '@/components/ui/grouped-list';
+import { tintFor } from '@/components/ui/icon-tile';
 import { AppIconContent, AppPills, appIconKind, hasAppPills } from './app-card-view';
 
 type RowView = {
@@ -49,8 +50,12 @@ function controller(): any {
 const ADD_BASE = 'browse-add-btn shrink-0 inline-flex items-center gap-1 rounded-full '
   + 'border px-3 py-1.5 text-xs font-medium transition-colors ';
 const ADD_ON = 'bg-emerald-500 border-emerald-500 text-white';
-const ADD_OFF = 'border-violet-500 dark:border-violet-400 text-violet-600 '
-  + 'dark:text-violet-400 bg-white dark:bg-zinc-900 hover:bg-violet-50 dark:hover:bg-violet-950';
+// Filled neutral, not an accent outline: the row sits on a white card now, and
+// an outlined control on a floating surface is the shape the language never
+// draws (see the `neutral` variant in @/components/ui/button.tsx). ADD_ON stays
+// a filled emerald because "Added" is a STATE, not an action.
+const ADD_OFF = 'border-transparent bg-zinc-100 dark:bg-zinc-800 text-zinc-900 '
+  + 'dark:text-zinc-100 hover:bg-zinc-200 dark:hover:bg-zinc-700';
 
 function Row({ view }: { view: RowView }): ReactNode {
   const rowRef = useRef<HTMLDivElement | null>(null);
@@ -93,6 +98,11 @@ function Row({ view }: { view: RowView }): ReactNode {
         <div
           className="app-icon-tile w-11 h-11 shrink-0 rounded-xl overflow-hidden flex items-center justify-center font-bold text-lg"
           data-icon={appIconKind(view.app)}
+          // The same slug-derived identity tint the launcher grid draws. An
+          // app that is a lilac tile on Home was a blank white square here,
+          // which is the one thing a launcher icon must never be: different
+          // per screen. app.css turns the attribute into the colour.
+          data-tint={tintFor(view.slug)}
         >
           <AppIconContent app={view.app} />
         </div>

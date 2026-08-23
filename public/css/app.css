@@ -1941,20 +1941,40 @@ html, body {
    as a selected/highlighted row once the accent turned blue. */
 .browse-row:hover { background-color: var(--bg-secondary); }
 
-/* Phone: a single hairline BETWEEN consecutive rows, no box. */
-.browse-row + .browse-row { border-top: 1px solid var(--browse-border); }
+/* Phone: a single hairline BETWEEN consecutive rows, INSET to the text column.
+   The rows sit in one white card now (#browse-list carries the card classes
+   below md), so a rule running the card's full width would reach its corner
+   radius — the same reason the home panels' hairlines are inset, and the same
+   4.75rem depth @/components/ui/grouped-list.tsx uses for a row with a leading
+   tile (px-4 1rem + tile 2.75rem + gap-4 1rem).
+
+   A pseudo-element rather than `border-top` so the md+ box below can own the
+   `border` shorthand outright: .browse-row is a ListRow, which is already
+   `relative`. */
+.browse-row + .browse-row::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 4.75rem;
+  right: 0;
+  height: 1px;
+  background: var(--browse-border);
+  pointer-events: none;
+}
 
 /* md+: every row is its own complete box. The sibling selector is listed
    alongside so this wins over the phone rule at equal specificity rather
    than relying on source order alone. */
 @media (min-width: 768px) {
+  /* Each row is its own box here, so the between-rows hairline has nothing to
+     separate — it would draw across the top of every box but the first. */
+  .browse-row + .browse-row::before { content: none; }
   .browse-row,
   .browse-row + .browse-row {
     /* The widget language separates by figure/ground, so the box is a white
        surface on the grey page rather than a hairline outline. The border
-       stays declared and transparent because the phone rule above uses
-       `border-top` for the between-rows hairline, and dropping the shorthand
-       here would let that hairline through at md+ as well as the box. */
+       stays declared and transparent so the hover rule below has a width to
+       colour in without the box changing size under the cursor. */
     border: 1px solid transparent;
     background-color: var(--bg-primary);
     border-radius: 1rem;

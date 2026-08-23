@@ -325,9 +325,18 @@ test('browse rows: the layout switch is pure CSS on the container', () => {
   assert.doesNotMatch(listTag, /divide-/,
     'the phone hairline is .browse-row + .browse-row in app.css');
 
+  // Phone: the rows sit in ONE white card (the max-md classes on the container
+  // above) and the hairline between them is INSET to the text column, so it
+  // stops short of the card's corner radius. It is a pseudo-element rather
+  // than `border-top` — a border cannot be inset — which is also what frees
+  // the md+ block below to own the `border` shorthand outright.
+  assert.match(listTag, /max-md:rounded-2xl/, 'phone: the rows sit in one card');
+  assert.match(listTag, /max-md:bg-white/, 'phone: that card is a white surface');
   const css = read('public/css/app.css');
-  assert.match(css, /\.browse-row \+ \.browse-row \{ border-top: 1px solid/,
+  assert.match(css, /\.browse-row \+ \.browse-row::before \{/,
     'phone: a hairline between consecutive rows');
+  assert.match(css, /\.browse-row \+ \.browse-row::before \{[\s\S]*?left: 4\.75rem/,
+    'and it is inset to the text column, not the card edge');
   // The md block re-states the sibling selector so the full box wins at
   // equal specificity instead of relying on source order alone.
   const browseStart = css.indexOf('/* ── Browse screen rows / boxes');
@@ -338,11 +347,18 @@ test('browse rows: the layout switch is pure CSS on the container', () => {
   const mdBlock = browseCss.slice(browseCss.indexOf('@media (min-width: 768px)'));
   const box = mdBlock.slice(0, mdBlock.indexOf('}\n}') + 3);
   assert.match(box, /\.browse-row,\s*\n\s*\.browse-row \+ \.browse-row \{/);
-  // The BORDER SHORTHAND is the load-bearing half and still is: it cancels the
-  // phone rule's `border-top` hairline at md+. What changed with the widget
-  // language is what the box is made of — a white surface on the grey page
-  // ground instead of a hairline outline — so the shorthand is transparent and
-  // the separation comes from the fill.
+  // At md+ every row is its OWN box, so the between-rows hairline has nothing
+  // left to separate — it would draw across the top of every box but the
+  // first. The md block cancels it explicitly rather than relying on the
+  // border shorthand to paint over it, which is what the shorthand used to do
+  // back when the hairline was a `border-top`.
+  assert.match(mdBlock, /\.browse-row \+ \.browse-row::before \{ content: none/,
+    'md+: the between-rows hairline is cancelled, not painted over');
+  // What changed with the widget language is what the box is made of — a white
+  // surface on the grey page ground instead of a hairline outline — so the
+  // shorthand is transparent and the separation comes from the fill. It stays
+  // declared so the hover rule has a width to colour in without the box
+  // changing size under the cursor.
   assert.match(box, /border: 1px solid transparent/);
   assert.match(box, /background-color: var\(--bg-primary\)/);
   assert.match(box, /border-radius/);
