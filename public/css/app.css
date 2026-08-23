@@ -453,12 +453,13 @@ html.un-kb .platform-safe-bar {
   gap: 3px;
   min-height: 24px;
   padding: 1px 7px;
-  /* Same move as .gc-vote-btn: the language's reaction pill is a filled
-     neutral chip, not an outlined white one. */
+  /* Same move as .gc-vote-btn, including its fill token: the language's
+     reaction pill is a filled neutral chip, not an outlined white one, and
+     --bg-tertiary is the one that stays a step off the card in both themes. */
   border: 1px solid transparent;
   border-radius: 9999px;
   color: var(--text-primary);
-  background: var(--bg-secondary);
+  background: var(--bg-tertiary);
   font-size: 11px;
 }
 .messages-reactions .messages-reaction-mine { border-color: var(--accent-light); color: var(--accent); background: var(--accent-tint); }
@@ -3630,7 +3631,11 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
      on a card that itself no longer has one reads as the louder element of
      the two. Ink steps up to primary to keep contrast on the fill. */
   border: 1px solid transparent;
-  background: var(--bg-secondary);
+  /* --bg-tertiary, not --bg-secondary: these pills sit ON a card, and in dark
+     --bg-secondary IS the card (#1c1c1e both), so a "filled" pill rendered
+     invisible there. --bg-tertiary is one step off the card in BOTH themes —
+     #e3e3e6 on white, #2c2c2e on #1c1c1e. */
+  background: var(--bg-tertiary);
   color: var(--text-primary);
   transition: all 150ms;
 }

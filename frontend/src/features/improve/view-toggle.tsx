@@ -91,11 +91,25 @@ function segmentCls(active: boolean, compact: boolean): string {
  * means the two variants each state theirs exactly once and neither depends on
  * that ordering.
  */
-// White, not zinc-100: on the header this track sits on the PAGE GROUND, and
-// zinc-100 is that ground (#eaeaea) — the track was invisible and the three
-// segments read as loose labels. Same reason the Leaderboard's section strip
-// is white (@/components/ui/tabs.tsx).
-const TRACK_CLS = 'items-center gap-0.5 rounded-full bg-white dark:bg-zinc-900 p-0.5';
+/*
+ * The track's fill depends on WHAT IT SITS ON, which is the one thing the two
+ * copies of this control do not share.
+ *
+ * zinc-100 IS the page ground in this palette (#eaeaea). The header copy sits
+ * on that ground, so a zinc-100 track is invisible there and the three
+ * segments read as loose labels — it has to be a raised white surface, like
+ * the hamburger disc beside it. The panel copy sits inside the Improve sheet,
+ * which is already white, so there the reverse is true and white is the
+ * invisible one.
+ *
+ * Two literals rather than one: Tailwind's extractor is a regex over source
+ * text, so neither can be assembled.
+ */
+const TRACK_BASE = 'items-center gap-0.5 rounded-full p-0.5';
+/** On the page ground — the header copy. */
+const TRACK_ON_GROUND = `${TRACK_BASE} bg-white dark:bg-zinc-900`;
+/** On the Improve sheet's white surface — the panel copy. */
+const TRACK_ON_CARD = `${TRACK_BASE} bg-zinc-100 dark:bg-zinc-800`;
 
 export function ImproveViewToggle({ compact }: { compact: boolean }) {
   const { target, slug, selfHosted, tab } = useStoreState(improveStore);
@@ -122,8 +136,8 @@ export function ImproveViewToggle({ compact }: { compact: boolean }) {
       id={compact ? 'improve-view-toggle' : 'improve-view-toggle-panel'}
       className={
         compact
-          ? `hidden sm:inline-flex ${TRACK_CLS} h-7 mr-2`
-          : `flex sm:hidden ${TRACK_CLS} w-full`
+          ? `hidden sm:inline-flex ${TRACK_ON_GROUND} h-7 mr-2`
+          : `flex sm:hidden ${TRACK_ON_CARD} w-full`
       }
       role="tablist"
       aria-label="App view"
