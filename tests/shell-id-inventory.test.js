@@ -100,6 +100,17 @@ const ADDED_IDS = {
   'session-bridge-enabled': 'Opt-in switch for the session-CLI bridge venue (#1281).',
   'session-bridge-status': 'Save/error line for the session-bridge switch (#1281).',
   'settings-mobile-push-preferences': 'Account-level Social mobile-push category controls in Settings → Alerts.',
+  // ── #1191: the build-flow preference stops being injected ────────
+  // These three were BUILT AT RUNTIME by Settings._renderDevFlowSection,
+  // which created the block and inserted it into the Connections pane on
+  // every render. The reason was this very baseline: the shell's body used to
+  // be a hand-written document, so a new settings control had nowhere to go.
+  // The pane is a component now, so the block is markup and its ids are a
+  // deliberate line here — which is also what stops a legacy module writing
+  // into a subtree React owns.
+  'dev-flow-pref-section': 'The "Preferred build flow" block in Settings → Connections (#1049) — the escape hatch for the dev-chat picker\'s "remember my option" checkbox.',
+  'settings-dev-flow': 'The build-flow dropdown itself. Settings binds its change and gates the two hand-off options on whether the deployment has external flows.',
+  'settings-dev-flow-status': 'Save/error line for the build-flow dropdown.',
   'drawer-row-native-app-version': 'Installed Flutter app version in the drawer footer (#1101).',
   'native-app-version-slot': 'Mobile app version/build rendered through the native bridge (#1101).',
   'feedback-queue-dot': 'Header dot for feedback saved offline and still waiting to send (#1054).',

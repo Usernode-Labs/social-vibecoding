@@ -1117,61 +1117,30 @@
       if (status) { status.classList.add('hidden'); status.textContent = ''; }
     },
 
-    // "Preferred build flow" (#1049) — the escape hatch for the dev-chat
-    // picker's "remember my option" checkbox. Once a user ticks that box the
-    // picker stops rendering, so there has to be somewhere to change their
-    // mind; Connections is where the GitHub link and the connectors already
-    // live, which is exactly the machinery the external flows depend on.
+    // "Preferred build flow" (#1049). The BLOCK is markup now
+    // (sections/connectors.tsx) — it was injected here at runtime until
+    // #1191, because the shell's body was a hand-written document pinned
+    // id-for-id and a new settings control had nowhere else to go. What is
+    // left is what this module does for every other control on the screen:
+    // bind the change, reflect the stored value, and gate the two hand-off
+    // options on whether this deployment has the external flows at all.
     //
-    // The markup is BUILT HERE rather than in frontend/src/Shell.tsx: the
-    // shell's body is id-pinned against tests/baselines/shell-markup.json
-    // by tests/shell-id-inventory.test.js (no undeclared elements, no attribute
-    // changes), so a new settings control has to be injected at runtime.
-    // Idempotent — _renderAllSections and refresh() both call it.
+    // Idempotent — _renderAllSections and refresh() both call it, and the
+    // listener is attached once, to an element React keeps.
     _renderDevFlowSection() {
-      const host = document.querySelector('[data-settings-section="connectors"]');
-      if (!host) return;
-      let block = document.getElementById('dev-flow-pref-section');
-      if (!block) {
-        block = document.createElement('div');
-        block.id = 'dev-flow-pref-section';
-        block.className = 'mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800';
-        block.innerHTML = `
-          <h3 class="text-sm font-bold text-zinc-900 dark:text-zinc-100 mb-1">Preferred build flow</h3>
-          <p class="text-xs text-zinc-500 dark:text-zinc-500 mb-3 leading-relaxed">
-            When you start a proposal, Usernode can ask how you want to build it — here on the
-            platform with the Usernode agent, or by handing the work order to your own Claude Code
-            or Codex web session. Pick one here to skip the question; choose
-            <strong class="font-semibold text-zinc-600 dark:text-zinc-400">Ask me every time</strong>
-            to get the picker back.
-          </p>
-          <select id="settings-dev-flow"
-            class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500">
-            <option value="">Ask me every time</option>
-            <option value="platform">Build on Usernode</option>
-            <option value="claude-code">Claude Code (claude.ai/code)</option>
-            <option value="codex">Codex (chatgpt.com/codex)</option>
-          </select>
-          <div id="settings-dev-flow-status" class="text-xs mt-2 hidden"></div>
-        `;
-        // Above the GitHub link block when it exists, so the preference reads
-        // as the question and the link below it as one of the answers.
-        const anchor = document.getElementById('github-link-section');
-        if (anchor) host.insertBefore(block, anchor);
-        else host.appendChild(block);
-      }
-      const select = block.querySelector('#settings-dev-flow');
-      if (select && !select.__devFlowWired) {
+      const select = document.getElementById('settings-dev-flow');
+      if (!select) return;
+      if (!select.__devFlowWired) {
         select.__devFlowWired = true;
         select.addEventListener('change', (e) => this._saveDevFlow(e.target.value));
       }
       // A deployment without the external flows can still express "always
       // build on Usernode" vs "ask me" — just not the two hand-offs.
-      block.querySelectorAll('option[value="claude-code"], option[value="codex"]').forEach((opt) => {
+      select.querySelectorAll('option[value="claude-code"], option[value="codex"]').forEach((opt) => {
         opt.disabled = !this.state.externalFlowsAvailable;
       });
-      if (select) select.value = this.state.devFlowPreference || '';
-      const status = block.querySelector('#settings-dev-flow-status');
+      select.value = this.state.devFlowPreference || '';
+      const status = document.getElementById('settings-dev-flow-status');
       if (status) { status.classList.add('hidden'); status.textContent = ''; }
     },
 
