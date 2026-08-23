@@ -91,7 +91,11 @@ function segmentCls(active: boolean, compact: boolean): string {
  * means the two variants each state theirs exactly once and neither depends on
  * that ordering.
  */
-const TRACK_CLS = 'items-center gap-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800 p-0.5';
+// White, not zinc-100: on the header this track sits on the PAGE GROUND, and
+// zinc-100 is that ground (#eaeaea) — the track was invisible and the three
+// segments read as loose labels. Same reason the Leaderboard's section strip
+// is white (@/components/ui/tabs.tsx).
+const TRACK_CLS = 'items-center gap-0.5 rounded-full bg-white dark:bg-zinc-900 p-0.5';
 
 export function ImproveViewToggle({ compact }: { compact: boolean }) {
   const { target, slug, selfHosted, tab } = useStoreState(improveStore);
