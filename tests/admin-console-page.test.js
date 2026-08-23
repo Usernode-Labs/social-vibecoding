@@ -101,7 +101,10 @@ test('the console island imports all eleven admin modules, console first', () =>
   // console import ever stops coming first, the prerender pass throws.
   const island = fs.readFileSync(
     path.join(root, 'frontend/src/features/admin/index.tsx'), 'utf8');
-  const order = [...island.matchAll(/from '\.\/(admin-[a-z]+)\.js'|import '\.\/(admin-[a-z]+)\.js'/g)]
+  // `.tsx` as well as `.js`: sections are converting to React one at a time
+  // (#1120), and the import order this pins is about module EVALUATION order,
+  // which the file extension has nothing to do with.
+  const order = [...island.matchAll(/from '\.\/(admin-[a-z]+)\.(?:js|tsx)'|import '\.\/(admin-[a-z]+)\.(?:js|tsx)'/g)]
     .map((m) => m[1] || m[2]);
   assert.equal(order[0], 'admin-console', 'admin-console.js is imported first');
   assert.deepEqual(order.slice(1).sort(), [
@@ -232,10 +235,14 @@ test('every folded-in section has a module, an island import and no stale wiring
   for (const [key, file] of Object.entries(MODULES)) {
     assert.match(consoleJs, new RegExp(`${key}: '`),
       `SECTION_MODULES maps '${key}' to a module global`);
-    assert.ok(fs.existsSync(path.join(root, 'frontend/src/features/admin', `${file}.js`)),
-      `frontend/src/features/admin/${file}.js exists`);
-    assert.ok(island.includes(`'./${file}.js'`),
-      `${file}.js is imported by the console island`);
+    // Either renderer — a converted section is a `.tsx` (#1120). What has to
+    // hold is that the module exists at its new path and the island imports
+    // it; losing either shows "module failed to load" instead of the section.
+    const ext = ['js', 'tsx'].find((e) => fs.existsSync(
+      path.join(root, 'frontend/src/features/admin', `${file}.${e}`)));
+    assert.ok(ext, `frontend/src/features/admin/${file}.{js,tsx} exists`);
+    assert.ok(island.includes(`'./${file}.${ext}'`),
+      `${file}.${ext} is imported by the console island`);
     assert.ok(!html.includes(`/js/${file}.js`),
       `${file}.js is bundled, so the shell must not still load it as a script`);
     assert.ok(!sw.includes(`'/js/${file}.js'`),
@@ -258,10 +265,15 @@ test('every section module exposes destroy(), and switches call it first', () =>
   for (const file of ['admin-status', 'admin-node', 'admin-analytics',
     'admin-estimator', 'admin-merges', 'admin-gallery', 'admin-campaigns',
     'admin-topochain', 'admin-mail']) {
+    // `.js` or `.tsx` — the render/destroy contract is what the console
+    // dispatches through, and converting a section to React (#1120) keeps it.
+    const ext = ['js', 'tsx'].find((e) => fs.existsSync(
+      path.join(root, 'frontend/src/features/admin', `${file}.${e}`)));
     const src = fs.readFileSync(
-      path.join(root, 'frontend/src/features/admin', `${file}.js`), 'utf8');
-    assert.match(src, /destroy\(\)\s*\{/, `${file}.js implements destroy()`);
-    assert.match(src, /render\(\s*\w+\s*\)\s*\{/, `${file}.js implements render(host)`);
+      path.join(root, 'frontend/src/features/admin', `${file}.${ext}`), 'utf8');
+    assert.match(src, /destroy\(\)\s*\{/, `${file}.${ext} implements destroy()`);
+    assert.match(src, /render\(\s*\w+\s*(?:: [\w.<>[\] |]+)?\)\s*\{/,
+      `${file}.${ext} implements render(host)`);
   }
   assert.match(consoleJs, /_teardownActiveSection\(\)\s*\{/,
     'the console has a single teardown choke point');

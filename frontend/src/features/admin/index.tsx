@@ -129,7 +129,7 @@ import './admin-node.js';
 import './admin-analytics.js';
 import './admin-estimator.js';
 import './admin-merges.js';
-import './admin-gallery.js';
+import './admin-gallery.tsx';
 import './admin-campaigns.js';
 import './admin-push.js';
 import './admin-mail.js';

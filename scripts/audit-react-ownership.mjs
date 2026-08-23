@@ -105,7 +105,8 @@ const OWNED = [
   { sel: '#agent-files-skills-list' },
   { sel: '#browse-list' },                   // features/apps/browse-list.tsx
   { sel: '#standings-tabs' },                // @/components/ui/tabs, via the leaderboard
-  { sel: '#admin-section-content', when: '#admin/e2e' }, // features/admin/admin-e2e.tsx
+  { sel: '#admin-section-content', when: '#admin/e2e' },     // features/admin/admin-e2e.tsx
+  { sel: '#admin-section-content', when: '#admin/gallery' }, // features/admin/admin-gallery.tsx
 ];
 
 const ROUTES = [
@@ -113,7 +114,7 @@ const ROUTES = [
   '#settings/agent-files', '#profile', '#leaderboard', '#messages',
   '#app/recipebot', '#app/recipebot/dev', '#app/recipebot/dev/chat',
   '#app/recipebot/dev/sessions/1',
-  '#admin/e2e', '#admin/status',
+  '#admin/e2e', '#admin/gallery', '#admin/status',
 ];
 
 function instrument(owned) {
@@ -124,8 +125,14 @@ function instrument(owned) {
       // A scoped host is only React's while that address is on screen.
       if (when && !String(location.hash || '').startsWith(when)) continue;
       const host = document.querySelector(sel);
-      // INSIDE the host, never the host itself — mounting writes the host.
-      if (host && host !== node && host.contains(node)) return sel;
+      // The host ITSELF counts, not just its descendants: appending a row
+      // straight into `#gc-messages` is one of the two bugs this exists for.
+      // That used to be excluded because mounting writes the host — but the
+      // React filter above is what handles mounting now, precisely, so the
+      // exclusion would only be hiding findings. (`mountLegacyPortal` clears
+      // its host with `replaceChildren`, which is not one of the three
+      // patched APIs.)
+      if (host && host.contains(node)) return sel;
     }
     return null;
   };
@@ -138,9 +145,43 @@ function instrument(owned) {
     }
     return bits.join(' > ');
   };
-  const note = (kind, el) => {
+  /*
+   * React writes to the DOM with the same three APIs, so the patch has to
+   * tell React's own commits apart from a legacy module's. Both parts below
+   * are statements about what React CANNOT have done, not heuristics over
+   * stack text — the bundle is minified, so its frame names say nothing.
+   *
+   * A portal mount made this necessary: a hydrated island's initial tree
+   * arrives in the prerendered document, so React does no appending for it
+   * and the audit never saw React at all. A section mounted at runtime
+   * appends its whole subtree, and every one of those appends looked like a
+   * violation.
+   */
+  const own = (node, prefix) => {
+    if (!node || node.nodeType !== 1) return null;
+    for (const k of Object.keys(node)) if (k.startsWith(prefix)) return node[k];
+    return null;
+  };
+  // React attaches the fiber to a host instance in createInstance, BEFORE it
+  // is ever appended anywhere — so a child with no fiber was created by
+  // something that is not React, which is the whole finding.
+  const reactMade = (node) => own(node, '__reactFiber$') != null;
+  // Props are written by updateFiberProps ahead of the DOM update in both the
+  // mount and the update path, so during React's own write the node's props
+  // already hold the exact string being assigned. A legacy write into the
+  // same node is a DIFFERENT string — which is precisely the shape of the bug
+  // that prompted this script: `.gc-msg-content` is a dangerouslySetInnerHTML
+  // sink AND was being assigned by group-chat.js. Comparing the value rather
+  // than merely asking "is this a sink" is what keeps that catchable.
+  const reactWroteHtml = (el, value) => {
+    const props = own(el, '__reactProps$');
+    const html = props && props.dangerouslySetInnerHTML && props.dangerouslySetInnerHTML.__html;
+    return html != null && String(html) === String(value);
+  };
+  const note = (kind, el, value) => {
     const host = inside(el);
     if (!host) return;
+    if (kind === 'appendChild' ? reactMade(value) : reactWroteHtml(el, value)) return;
     const stack = (String(new Error().stack || '')).split('\n').slice(2, 7)
       .map((l) => l.trim()).filter((l) => !/\bnote\b|<anonymous>:/.test(l));
     window.__ownHits.push({ kind, host, target: where(el), stack });
@@ -148,15 +189,16 @@ function instrument(owned) {
   const proto = Element.prototype;
   const ih = Object.getOwnPropertyDescriptor(proto, 'innerHTML');
   Object.defineProperty(proto, 'innerHTML', {
-    ...ih, set(v) { note('innerHTML', this); return ih.set.call(this, v); },
+    ...ih, set(v) { note('innerHTML', this, v); return ih.set.call(this, v); },
   });
+  // React never reaches for insertAdjacentHTML, so every call is a finding.
   const iah = proto.insertAdjacentHTML;
   proto.insertAdjacentHTML = function patched(...a) {
-    note('insertAdjacentHTML', this); return iah.apply(this, a);
+    note('insertAdjacentHTML', this, null); return iah.apply(this, a);
   };
   const ap = Node.prototype.appendChild;
   Node.prototype.appendChild = function patched(...a) {
-    note('appendChild', this); return ap.apply(this, a);
+    note('appendChild', this, a[0]); return ap.apply(this, a);
   };
 }
 

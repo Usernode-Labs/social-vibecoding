@@ -50,7 +50,11 @@ const path = require('node:path');
 const root = path.join(__dirname, '..');
 const ADMIN_DIR = path.join(root, 'frontend/src/features/admin');
 const read = (rel) => fs.readFileSync(path.join(root, rel), 'utf8');
-const readMod = (name) => fs.readFileSync(path.join(ADMIN_DIR, `${name}.js`), 'utf8');
+// A section is a `.js` (innerHTML) or a `.tsx` (React) module — #1120 is
+// converting them one at a time, and every rule in this file is about the
+// section's CONTRACT with the console, which the renderer does not change.
+const modExt = (name) => (fs.existsSync(path.join(ADMIN_DIR, `${name}.tsx`)) ? 'tsx' : 'js');
+const readMod = (name) => fs.readFileSync(path.join(ADMIN_DIR, `${name}.${modExt(name)}`), 'utf8');
 
 const islandTsx = read('frontend/src/features/admin/index.tsx');
 const consoleJs = readMod('admin-console');
@@ -78,14 +82,16 @@ test('each heavy section is imported by the island and reachable through window'
   for (const { key, file, global } of HEAVY) {
     // The island imports it for its side effect: evaluating the module is
     // what publishes the global.
-    assert.ok(islandTsx.includes(`import './${file}.js';`),
-      `the console island must import ${file}.js`);
+    assert.ok(islandTsx.includes(`import './${file}.${modExt(file)}';`),
+      `the console island must import ${file}.${modExt(file)}`);
     // AdminConsole._renderSection dispatches through window[modName], so the
     // publication is the actual contract — and it must be guarded, because
     // the SSG prerender pass evaluates this module in Node.
+    // `(window as any).X = X` in a converted section — same publication, the
+    // cast is only TypeScript's price for writing to the global object.
     assert.match(SRC.get(file),
-      new RegExp(`if \\(typeof window !== 'undefined'\\) window\\.${global} = ${global};`),
-      `${file}.js must publish window.${global}, guarded for the prerender pass`);
+      new RegExp(`if \\(typeof window !== 'undefined'\\) \\(?window(?: as any\\))?\\.${global} = ${global};`),
+      `${file} must publish window.${global}, guarded for the prerender pass`);
     assert.match(consoleJs, new RegExp(`${key}: '${global}'`),
       `SECTION_MODULES must still map ${key} -> ${global}`);
   }
@@ -109,7 +115,9 @@ test('every heavy section still honours the render(host) / destroy() contract', 
     // The parameter name varies across the nine (host / hostEl / sectionHost);
     // what the console's dispatcher relies on is that there is exactly one, and
     // that the section takes its root from it rather than from the document.
-    assert.match(src, /\n\s*render\(\w+\) \{/, `${file}.js must expose render(<host>)`);
+    // `render(el: Element)` in a converted section — one parameter either way.
+    assert.match(src, /\n\s*render\(\w+(?:: [\w.<>[\] |]+)?\) \{/,
+      `${file} must expose render(<host>)`);
     assert.match(src, /\n\s*destroy\(\) \{/, `${file}.js must expose destroy()`);
   }
 });
