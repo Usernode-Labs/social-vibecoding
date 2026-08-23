@@ -101,6 +101,32 @@ function renderComponent(entry, exportName, props) {
   return renderToHtml(createElement(Component, props));
 }
 
+/**
+ * Transpile one `.ts` file to plain CommonJS-free JavaScript — no bundling,
+ * no module wrapper — for evaluation in a `vm` context.
+ *
+ * tests/challenge-template-prefill.test.js runs admin-topochain.js inside a
+ * vm with a DOM shim, and that module imports its shared helpers from
+ * `./topochain/*.ts`. The helpers have to be BOUND in the sandbox before the
+ * module body runs, and hand-stripping their type annotations with regexes
+ * broke the first time one gained a return type. esbuild already ships in
+ * frontend/node_modules for the bundler above; this uses it for the one job
+ * that needs a transformer rather than a bundler.
+ *
+ * `format: 'esm'` keeps the output free of `exports.x = …` wrappers, and the
+ * caller strips the remaining `export ` keywords so every declaration lands
+ * as a sandbox global — which is what `var` at a vm context's top level is.
+ */
+function transpileTs(entry) {
+  const esbuild = fromFrontend('esbuild');
+  const result = esbuild.transformSync(fs.readFileSync(path.join(ROOT, entry), 'utf8'), {
+    loader: 'ts',
+    format: 'esm',
+    target: 'node22',
+  });
+  return result.code;
+}
+
 module.exports = {
-  loadTsx, renderToHtml, createElement, renderComponent, ROOT, FRONTEND, fs,
+  loadTsx, renderToHtml, createElement, renderComponent, transpileTs, ROOT, FRONTEND, fs,
 };

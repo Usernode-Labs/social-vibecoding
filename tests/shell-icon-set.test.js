@@ -85,19 +85,25 @@ test('the glyphs live in the module, not inline beside it', () => {
     if (/\sd="M/.test(src)) offenders.push(file);
   }
   // The admin console's own ✕ is the one exception, and it is a PORT, not a
-  // new glyph: topochain/ui.tsx's <Panel> renders the same path
+  // new glyph: topochain/ui.tsx's <CloseButton> renders the same path
   // admin-topochain.js's _panel() has always written into its header, and it
   // has to stay byte-identical while a converted screen and an unconverted
   // one sit in the same sub-nav. Importing from @/components/ui/icons.tsx is
   // not the fix — AGENTS.md's density boundary forbids an admin source from
   // reaching into the shell's primitives, and tests/admin-ui-registry.test.js
   // enforces it. Retire this exemption when _panel() itself is gone.
+  //
+  // ONE file, deliberately: every other converted screen imports
+  // <CloseButton> rather than re-inlining the path, so a second offender here
+  // is a copy that will drift, not a second legitimate port.
   const PORTED = 'frontend/src/features/admin/topochain/ui.tsx';
   if (offenders.includes(PORTED)) {
     const ported = read(PORTED).match(/\sd="(M[^"]*)"/g) || [];
     assert.equal(ported.length, 1, `${PORTED} may carry exactly the one ported glyph`);
     assert.ok(read('frontend/src/features/admin/admin-topochain.js').includes(ported[0].trim()),
       `${PORTED}'s glyph must be the same path _panel() writes, character for character`);
+    assert.match(read(PORTED), /export function CloseButton\(/,
+      'and it is exported, so the screens have something to import instead of copying');
     offenders.splice(offenders.indexOf(PORTED), 1);
   }
   assert.deepEqual(offenders, [],

@@ -95,10 +95,11 @@
 // full CRUD like every other resource screen.)
 'use strict';
 
-// The shared admin class-string registry. This was a bare global read that
-// depended on <script> order (admin-console.js loaded first); inside the
-// React bundle the dependency is explicit (#1082 chunk E).
-import { AdminUI } from './admin-console.js';
+// The shared admin class-string registry used to be imported here too — its
+// last use in this file was the onchain-accounts detail dialog, which left in
+// #1120 slice 29. ./topochain/tokens.ts still imports it for PANEL_CLS, so the
+// evaluation-time dependency this module has on admin-console.js is unchanged;
+// it is one file further away.
 
 // ── Control styling tokens ───────────────────────────────────────────
 //
@@ -112,7 +113,9 @@ import {
 // The React screens, and the portal seam that mounts them. `unmountLegacyPortal`
 // is imported here rather than re-exported through screens.tsx because this file
 // is plain JS: it may hold a component MAP, but it renders no JSX itself.
-import { fetchJson, send } from './topochain/api.ts';
+import {
+  eventOptions, fetchAllEvents, fetchAllSeasons, fetchJson, seasonOptions, send,
+} from './topochain/api.ts';
 import { TOPO_REACT_SCREENS } from './topochain/screens.tsx';
 import { unmountLegacyPortal } from '../../lib/legacy-portals';
 
@@ -527,47 +530,17 @@ const AdminTopochain = {
   // pages at most) for use in <select> pickers across several
   // subsections. Not cached: each picker refetches so a just-created
   // event shows up immediately.
-  async _fetchAllEvents() {
-    const out = [];
-    let page = 1;
-    for (let guard = 0; guard < 20; guard++) {
-      const { ok, data } = await AdminTopochain.fetchJson(
-        `/api/v4/admin/season-events?page=${page}&per_page=100`);
-      if (!ok || !data?.success || !Array.isArray(data.data)) break;
-      out.push(...data.data);
-      const meta = data.meta;
-      if (!meta || page >= meta.total_pages) break;
-      page += 1;
-    }
-    return out;
-  },
+  async _fetchAllEvents() { return fetchAllEvents(); },
 
-  _eventOptions(events) {
-    return events.map((ev) => ({ value: ev.id, label: `${ev.name} (#${ev.id})` }));
-  },
+  _eventOptions(events) { return eventOptions(events); },
 
   // Same idea as _fetchAllEvents for the (even smaller) seasons list —
   // used by the season <select> on the Season events form and by the
   // season filter on the Season events list. Not cached, so a season
   // created seconds ago is already pickable.
-  async _fetchAllSeasons() {
-    const out = [];
-    let page = 1;
-    for (let guard = 0; guard < 20; guard++) {
-      const { ok, data } = await AdminTopochain.fetchJson(
-        `/api/v4/admin/seasons?page=${page}&per_page=100`);
-      if (!ok || !data?.success || !Array.isArray(data.data)) break;
-      out.push(...data.data);
-      const meta = data.meta;
-      if (!meta || page >= meta.total_pages) break;
-      page += 1;
-    }
-    return out;
-  },
+  async _fetchAllSeasons() { return fetchAllSeasons(); },
 
-  _seasonOptions(seasons) {
-    return seasons.map((s) => ({ value: s.id, label: `${s.name} (#${s.id})` }));
-  },
+  _seasonOptions(seasons) { return seasonOptions(seasons); },
 
   // Where a season sits relative to now, as a small coloured chip.
   // Derived client-side from starts_at/ends_at/is_active rather than
@@ -750,7 +723,6 @@ const AdminTopochain = {
     }
     switch (AdminTopochain._sub) {
       case 'season-events': return AdminTopochain.renderSeasonEvents(c);
-      case 'onchain-accounts': return AdminTopochain.renderOnchainAccounts(c);
       case 'user-activities': return AdminTopochain.renderUserActivities(c);
       case 'delegations': return AdminTopochain.renderDelegations(c);
       case 'challenge-templates': return AdminTopochain.renderChallengeTemplates(c);
@@ -2155,381 +2127,9 @@ const AdminTopochain = {
   // ══════════════════════════════════════════════════════════════════
 
   // ══════════════════════════════════════════════════════════════════
-  // Onchain accounts — index/show/import/:id/reset (no create/edit/
-  // delete singular routes exist per the API surface — nothing invented
-  // here beyond what's documented).
+  // Onchain accounts — moved to ./topochain/onchain-accounts.tsx
+  // (#1120 slice 29).
   // ══════════════════════════════════════════════════════════════════
-
-  _accts: {
-    page: 1, perPage: 50, search: '', seasonFilter: '', eventFilter: '', delegatedFilter: '',
-    seasons: [], events: [], items: [], meta: null,
-  },
-
-  renderOnchainAccounts(host) {
-    const canWrite = AdminTopochain.canWrite();
-    const esc = AdminTopochain.esc;
-    host.innerHTML = `
-      ${AdminTopochain._screenHeader({
-    title: 'Onchain accounts',
-    subtitle: 'Accounts linked to users, with their identity and balances. Click a public key for the full detail.',
-    actions: `${AdminTopochain._acctFiltersHtml()}
-          <input id="admin-topo-oa-search" type="text" placeholder="Search public key/identity/code&hellip;"
-            value="${esc(AdminTopochain._accts.search)}" aria-label="Search onchain accounts"
-            class="${FIELD_CLS} sm:w-64">
-          ${canWrite ? `<button id="admin-topo-oa-import" type="button" class="${BTN.primarySm}">Import&hellip;</button>` : ''}`,
-  })}
-      <div id="admin-topo-oa-form"></div>
-      <div id="admin-topo-oa-table">${AdminTopochain._skeleton(4)}</div>
-      <div id="admin-topo-oa-detail"></div>`;
-    document.getElementById('admin-topo-oa-search').addEventListener('change', (e) => {
-      AdminTopochain._accts.search = e.target.value.trim();
-      AdminTopochain._accts.page = 1;
-      AdminTopochain._loadAccounts();
-    });
-    AdminTopochain._wireAcctFilters();
-    document.getElementById('admin-topo-oa-import')?.addEventListener('click', () => AdminTopochain._openAccountImportForm());
-    AdminTopochain._loadAccounts();
-    AdminTopochain._refreshAcctPickers();
-  },
-
-  // The season/event filter pair, rendered from whatever is already
-  // cached in `_accts.seasons`/`_accts.events` so first paint isn't
-  // blocked on two more requests; _refreshAcctPickers() fetches both and
-  // re-renders the options in place (same idiom as the Season events
-  // screen's season filter). A chosen season narrows the event options
-  // to that season's events.
-  _acctFiltersHtml() {
-    const s = AdminTopochain._accts;
-    const events = s.seasonFilter
-      ? s.events.filter((ev) => String(ev.season_id) === String(s.seasonFilter))
-      : s.events;
-    return `<label class="sr-only" for="admin-topo-oa-season-filter">Filter by season</label>
-      ${AdminTopochain._selectHtml('admin-topo-oa-season-filter', AdminTopochain._seasonOptions(s.seasons), s.seasonFilter, { blank: 'All seasons' })}
-      <label class="sr-only" for="admin-topo-oa-event-filter">Filter by event</label>
-      ${AdminTopochain._selectHtml('admin-topo-oa-event-filter', AdminTopochain._eventOptions(events), s.eventFilter, { blank: 'All events' })}
-      <label class="sr-only" for="admin-topo-oa-delegated-filter">Filter by delegation</label>
-      ${AdminTopochain._selectHtml('admin-topo-oa-delegated-filter', [
-    { value: 'true', label: 'Delegated' },
-    { value: 'false', label: 'Not delegated' },
-  ], s.delegatedFilter, { blank: 'Delegation: any' })}`;
-  },
-
-  _wireAcctFilters() {
-    document.getElementById('admin-topo-oa-season-filter')?.addEventListener('change', (e) => {
-      const s = AdminTopochain._accts;
-      s.seasonFilter = e.target.value;
-      // An event choice that belongs to another season no longer makes
-      // sense under the new season — drop it rather than sending a
-      // contradictory filter pair.
-      if (s.eventFilter) {
-        const ev = s.events.find((x) => String(x.id) === String(s.eventFilter));
-        if (s.seasonFilter && (!ev || String(ev.season_id) !== String(s.seasonFilter))) s.eventFilter = '';
-      }
-      AdminTopochain._syncAcctFilterOptions();
-      s.page = 1;
-      AdminTopochain._loadAccounts();
-    });
-    document.getElementById('admin-topo-oa-event-filter')?.addEventListener('change', (e) => {
-      AdminTopochain._accts.eventFilter = e.target.value;
-      AdminTopochain._accts.page = 1;
-      AdminTopochain._loadAccounts();
-    });
-    document.getElementById('admin-topo-oa-delegated-filter')?.addEventListener('change', (e) => {
-      AdminTopochain._accts.delegatedFilter = e.target.value;
-      AdminTopochain._accts.page = 1;
-      AdminTopochain._loadAccounts();
-    });
-  },
-
-  // Rebuilds both filter <select>s' options from current state, keeping
-  // the current selections. Used after the pickers load and after a
-  // season change narrows the event list.
-  _syncAcctFilterOptions() {
-    const s = AdminTopochain._accts;
-    const wrap = document.createElement('div');
-    wrap.innerHTML = AdminTopochain._acctFiltersHtml();
-    for (const id of ['admin-topo-oa-season-filter', 'admin-topo-oa-event-filter', 'admin-topo-oa-delegated-filter']) {
-      const sel = document.getElementById(id);
-      const fresh = wrap.querySelector(`#${id}`);
-      if (!sel || !fresh) continue;
-      sel.innerHTML = fresh.innerHTML;
-      sel.value = id === 'admin-topo-oa-season-filter' ? s.seasonFilter
-        : id === 'admin-topo-oa-event-filter' ? s.eventFilter : s.delegatedFilter;
-    }
-  },
-
-  async _refreshAcctPickers() {
-    const [seasons, events] = await Promise.all([
-      AdminTopochain._fetchAllSeasons(),
-      AdminTopochain._fetchAllEvents(),
-    ]);
-    if (AdminTopochain._sub !== 'onchain-accounts') return;
-    AdminTopochain._accts.seasons = seasons;
-    AdminTopochain._accts.events = events;
-    AdminTopochain._syncAcctFilterOptions();
-  },
-
-  async _loadAccounts() {
-    const s = AdminTopochain._accts;
-    const params = new URLSearchParams({ page: String(s.page), per_page: String(s.perPage) });
-    if (s.search) params.set('search', s.search);
-    if (s.seasonFilter) params.set('season_id', s.seasonFilter);
-    if (s.eventFilter) params.set('season_event_id', s.eventFilter);
-    if (s.delegatedFilter) params.set('delegated', s.delegatedFilter);
-    const { ok, data, status } = await AdminTopochain.fetchJson(`/api/v4/admin/onchain-accounts?${params}`);
-    if (AdminTopochain._sub !== 'onchain-accounts') return;
-    if (ok && data?.success) { s.items = data.data; s.meta = data.meta; s.error = null; }
-    else { s.items = []; s.meta = null; s.error = { status, message: (data && data.error) || null }; }
-    AdminTopochain._renderAccountsTable();
-  },
-
-  _renderAccountsTable() {
-    const table = document.getElementById('admin-topo-oa-table');
-    if (!table) return;
-    const esc = AdminTopochain.esc;
-    const canWrite = AdminTopochain.canWrite();
-    const s = AdminTopochain._accts;
-    if (s.error) {
-      table.innerHTML = AdminTopochain._error({
-        title: "Couldn't load onchain accounts", status: s.error.status,
-        message: s.error.message, retryId: 'admin-topo-oa-retry',
-      });
-      AdminTopochain._wireRetry('admin-topo-oa-retry', () => AdminTopochain._loadAccounts());
-      return;
-    }
-    if (!s.items.length) {
-      const filtered = !!(s.search || s.seasonFilter || s.eventFilter || s.delegatedFilter);
-      table.innerHTML = AdminTopochain._empty({
-        title: filtered ? 'No accounts match these filters' : 'No onchain accounts yet',
-        body: filtered ? 'Clear the search box and the season/event/delegation filters to see every account.'
-          : 'Import a batch of accounts to hand out registration codes for an event.',
-        actionId: filtered ? null : 'admin-topo-oa-empty-import',
-        actionLabel: 'Import accounts',
-      });
-      document.getElementById('admin-topo-oa-empty-import')
-        ?.addEventListener('click', () => AdminTopochain._openAccountImportForm());
-      return;
-    }
-    table.innerHTML = AdminTopochain._list({
-      items: s.items,
-      columns: [
-        {
-          label: 'Public key',
-          primary: true,
-          // The whole cell is the way into the detail dialog — a real
-          // button (not a row click handler) so it exists identically in
-          // the table and card layouts and is keyboard-reachable.
-          cell: (a) => `<button data-acct-show="${a.id}" type="button"
-            class="text-left break-all underline decoration-dotted underline-offset-2 hover:text-violet-600 dark:hover:text-violet-400 rounded touch-manipulation focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500"
-            aria-haspopup="dialog">${esc(a.public_key)}</button>`,
-          tdClass: 'text-xs font-mono',
-        },
-        { label: 'Tier', cell: (a) => esc(a.tier), tdClass: 'text-zinc-500' },
-        { label: 'Amount', cell: (a) => esc(a.amount), tdClass: 'font-mono text-right', thClass: 'text-right' },
-        { label: 'Event', cell: (a) => (a.event ? esc(a.event.name) : '—'), tdClass: 'text-xs text-zinc-500' },
-        { label: 'Status', cell: (a) => (a.is_used ? '<span class="text-amber-600 dark:text-amber-400">used</span>' : '<span class="text-green-600 dark:text-green-400">free</span>') },
-        {
-          label: 'Delegation',
-          cell: (a) => (a.delegated ? AdminTopochain._badgeHtml('Delegated', 'green') : '<span class="text-zinc-400">—</span>'),
-        },
-        { label: 'User', cell: (a) => (a.user ? esc(a.user.username) : '—'), tdClass: 'text-xs text-zinc-500' },
-      ],
-      actions: (a) => (canWrite && a.is_used
-        ? `<button data-reset="${a.id}" type="button" class="${BTN.rowWarn}">Reset</button>` : ''),
-    }) + AdminTopochain._pagerHtml(s.meta, 'admin-topo-oa-pg');
-    table.querySelectorAll('[data-reset]').forEach((b) => b.addEventListener('click', () => AdminTopochain._resetAccount(b.dataset.reset)));
-    table.querySelectorAll('[data-acct-show]').forEach((b) => b.addEventListener('click', () =>
-      AdminTopochain._openAccountDetail(parseInt(b.dataset.acctShow, 10))));
-    if (s.meta) AdminTopochain._wirePager(s.meta, 'admin-topo-oa-pg', (page) => { s.page = page; AdminTopochain._loadAccounts(); });
-  },
-
-  async _resetAccount(id) {
-    if (!AdminTopochain.canWrite()) return;
-    const ok = await AdminTopochain._confirm({
-      title: 'Reset this account?',
-      message: 'Clears the current user’s claim (user_id, is_used, used_at) so the account becomes assignable again. The registration code itself is kept.',
-      confirmLabel: 'Reset',
-    });
-    if (!ok) return;
-    const res = await AdminTopochain.send('POST', `/api/v4/admin/onchain-accounts/${encodeURIComponent(id)}/reset`);
-    if (res.ok && res.data?.success) AdminTopochain._loadAccounts();
-    else AdminTopochain._alert((res.data && res.data.error) || 'Reset failed.');
-  },
-
-  // ── Account detail dialog ──────────────────────────────────────────
-  //
-  // Opens on a public-key click. Fetches the single account fresh rather
-  // than reusing the index row: the show route is the ONE place the API
-  // serves `secret_key`, and only to full admins. The secret stays in
-  // this module's closure until the admin explicitly reveals it — it is
-  // never parked in a data-* attribute, and reveal writes it via
-  // textContent, not markup.
-  _acctDetailKeyHandler: null,
-
-  _openAccountDetail(id) {
-    const host = document.getElementById('admin-topo-oa-detail');
-    if (!host) return;
-    const esc = AdminTopochain.esc;
-    host.innerHTML = `<div id="admin-topo-oa-detail-overlay" class="${AdminUI.dialogOverlay}">
-      <div class="${AdminUI.dialogPanel} max-h-[85vh] overflow-y-auto" role="dialog" aria-modal="true"
-        aria-labelledby="admin-topo-oa-detail-title">
-        <div class="flex items-start justify-between gap-3">
-          <h3 id="admin-topo-oa-detail-title" class="text-sm font-semibold">Onchain account #${esc(id)}</h3>
-          <button id="admin-topo-oa-detail-close" type="button" class="${BTN.close}"
-            aria-label="Close the account detail" title="Close the account detail">
-            <svg class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z"/></svg>
-          </button>
-        </div>
-        <div id="admin-topo-oa-detail-body" class="mt-2">${AdminTopochain._skeleton(3)}</div>
-      </div>
-    </div>`;
-    const close = () => AdminTopochain._closeAccountDetail();
-    document.getElementById('admin-topo-oa-detail-close').addEventListener('click', close);
-    document.getElementById('admin-topo-oa-detail-overlay').addEventListener('click', (e) => {
-      if (e.target === e.currentTarget) close();
-    });
-    AdminTopochain._acctDetailKeyHandler = (e) => { if (e.key === 'Escape') close(); };
-    document.addEventListener('keydown', AdminTopochain._acctDetailKeyHandler);
-    AdminTopochain._loadAccountDetail(id);
-  },
-
-  _closeAccountDetail() {
-    if (AdminTopochain._acctDetailKeyHandler) {
-      document.removeEventListener('keydown', AdminTopochain._acctDetailKeyHandler);
-      AdminTopochain._acctDetailKeyHandler = null;
-    }
-    const host = document.getElementById('admin-topo-oa-detail');
-    if (host) host.innerHTML = '';
-  },
-
-  async _loadAccountDetail(id) {
-    const { ok, data, status } = await AdminTopochain.fetchJson(`/api/v4/admin/onchain-accounts/${encodeURIComponent(id)}`);
-    const body = document.getElementById('admin-topo-oa-detail-body');
-    // Dismissed (or the screen was left) before the response landed.
-    if (!body) return;
-    if (!ok || !data?.success) {
-      body.innerHTML = AdminTopochain._error({
-        title: "Couldn't load the account", status,
-        message: (data && data.error) || null, retryId: 'admin-topo-oa-detail-retry',
-      });
-      AdminTopochain._wireRetry('admin-topo-oa-detail-retry', () => AdminTopochain._loadAccountDetail(id));
-      return;
-    }
-    AdminTopochain._renderAccountDetail(data.data);
-  },
-
-  _renderAccountDetail(a) {
-    const body = document.getElementById('admin-topo-oa-detail-body');
-    if (!body) return;
-    const esc = AdminTopochain.esc;
-    const row = (label, valueHtml) => `<div class="py-2">
-      <dt class="text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400">${esc(label)}</dt>
-      <dd class="mt-0.5 text-sm break-all">${valueHtml}</dd>
-    </div>`;
-    const mono = (v) => (v == null || v === '' ? '—' : `<span class="font-mono">${esc(v)}</span>`);
-    const season = AdminTopochain._accts.seasons.find((x) => String(x.id) === String(a.season_id));
-    const secret = typeof a.secret_key === 'string' ? a.secret_key : null;
-    const secretHtml = secret != null
-      ? `<span id="admin-topo-oa-detail-secret" class="font-mono">••••••••••••</span>
-         <button id="admin-topo-oa-detail-secret-toggle" type="button" class="${BTN.row} ml-2">Reveal</button>`
-      : '<span class="text-zinc-500 dark:text-zinc-400">Hidden for view-only admins.</span>';
-    const userHtml = a.user
-      ? `<dl class="divide-y divide-zinc-100 dark:divide-zinc-800">
-          ${row('Username', esc(a.user.username ?? '—'))}
-          ${row('Display name', esc(a.user.display_name ?? '—'))}
-          ${row('Email', mono(a.user.email))}
-          ${row('Discord', mono(a.user.discord))}
-          ${row('User id', mono(a.user.id))}
-        </dl>`
-      : '<p class="text-sm text-zinc-500 dark:text-zinc-400">Unassigned — no user has claimed this account.</p>';
-    body.innerHTML = `
-      <dl class="divide-y divide-zinc-100 dark:divide-zinc-800">
-        ${row('Public key', mono(a.public_key))}
-        ${row('Secret key', secretHtml)}
-        ${row('Address', mono(a.address))}
-        ${row('Identity UID', mono(a.identity_uid))}
-        ${row('Registration code', mono(a.registration_code))}
-        ${row('Tier', esc(a.tier ?? '—'))}
-        ${row('Amount', mono(a.amount))}
-        ${row('Description', a.description ? esc(a.description) : '—')}
-        ${row('Season', season ? `${esc(season.name)} (#${esc(a.season_id)})` : `#${esc(a.season_id)}`)}
-        ${row('Event', a.event ? `${esc(a.event.name)} (#${esc(a.event.id)})` : '— (season-wide)')}
-        ${row('Status', a.is_used
-    ? `<span class="text-amber-600 dark:text-amber-400">used</span> · ${esc(AdminTopochain._fmt(a.used_at))}`
-    : '<span class="text-green-600 dark:text-green-400">free</span>')}
-        ${row('Delegation', a.delegated
-    ? `${AdminTopochain._badgeHtml('Delegated', 'green')} <span class="text-xs text-zinc-500 dark:text-zinc-400">since ${esc(AdminTopochain._fmt(a.delegated_since))}</span>`
-    : '<span class="text-zinc-500 dark:text-zinc-400">Not delegated</span>')}
-        ${row('Created', esc(AdminTopochain._fmt(a.created_at)))}
-        ${row('Updated', esc(AdminTopochain._fmt(a.updated_at)))}
-      </dl>
-      ${AdminTopochain._formSection('User')}
-      ${userHtml}`;
-    const toggle = document.getElementById('admin-topo-oa-detail-secret-toggle');
-    if (toggle && secret != null) {
-      let shown = false;
-      toggle.addEventListener('click', () => {
-        shown = !shown;
-        document.getElementById('admin-topo-oa-detail-secret').textContent = shown ? secret : '••••••••••••';
-        toggle.textContent = shown ? 'Hide' : 'Reveal';
-      });
-    }
-  },
-
-  async _openAccountImportForm() {
-    if (!AdminTopochain.canWrite()) return;
-    const seasons = await AdminTopochain._fetchAllSeasons();
-    const sel = AdminTopochain._selectHtml, field = AdminTopochain._field;
-    const host = document.getElementById('admin-topo-oa-form');
-    host.innerHTML = AdminTopochain._panel({
-      title: 'Import onchain accounts',
-      subtitle: 'One account per line, into a season’s pool (accounts are per-season; each user can hold one).',
-      closeId: 'admin-topo-oa-imp-close',
-      closeLabel: 'Close the import panel',
-      body: `
-        <div class="grid grid-cols-1 gap-4">
-          ${field('Season *', sel('admin-topo-oa-imp-season', AdminTopochain._seasonOptions(seasons), '', { blank: 'Choose a season…' }))}
-          ${field('Accounts — one "amount,identity_uid,address,public_key,secret_key,tier,description" per line *',
-    AdminTopochain._textareaHtml('admin-topo-oa-imp-rows', '', 8),
-    'registration_code is generated server-side; do not include it.')}
-        </div>
-        ${AdminTopochain._formErrorSlot('admin-topo-oa-imp-err')}
-        <div id="admin-topo-oa-imp-result" class="mt-3 text-xs text-zinc-500 dark:text-zinc-400"></div>`,
-      footer: `<button id="admin-topo-oa-imp-go" type="button" class="${BTN.primary}">Import</button>
-        <button id="admin-topo-oa-imp-cancel" type="button" class="${BTN.secondary}">Cancel</button>`,
-    });
-    const closeForm = () => { host.innerHTML = ''; };
-    document.getElementById('admin-topo-oa-imp-go').addEventListener('click', () => AdminTopochain._runAccountImport());
-    document.getElementById('admin-topo-oa-imp-cancel').addEventListener('click', closeForm);
-    document.getElementById('admin-topo-oa-imp-close').addEventListener('click', closeForm);
-  },
-
-  async _runAccountImport() {
-    if (!AdminTopochain.canWrite()) return;
-    const errEl = document.getElementById('admin-topo-oa-imp-err');
-    errEl.classList.add('hidden');
-    const seasonId = document.getElementById('admin-topo-oa-imp-season').value;
-    if (!seasonId) { errEl.textContent = 'Choose a season.'; errEl.classList.remove('hidden'); return; }
-    const lines = document.getElementById('admin-topo-oa-imp-rows').value.split('\n').map((l) => l.trim()).filter(Boolean);
-    const accounts = lines.map((line) => {
-      const [amount, identity_uid, address, public_key, secret_key, tier, description] = line.split(',').map((s) => (s || '').trim());
-      return { amount: Number(amount), identity_uid, address, public_key, secret_key, tier, description: description || null };
-    });
-    if (!accounts.length) { errEl.textContent = 'Add at least one account row.'; errEl.classList.remove('hidden'); return; }
-    const { ok, data } = await AdminTopochain.send('POST', '/api/v4/admin/onchain-accounts/import',
-      { season_id: parseInt(seasonId, 10), accounts });
-    if (!ok || !data?.success) {
-      errEl.textContent = (data && data.error) || 'Import failed.';
-      errEl.classList.remove('hidden');
-      return;
-    }
-    const r = data.data;
-    const esc = AdminTopochain.esc;
-    document.getElementById('admin-topo-oa-imp-result').innerHTML =
-      `Imported ${esc(r.imported_count)}, skipped ${esc(r.skipped_count)}.
-       ${r.errors.length ? `<br>${r.errors.map((e) => esc(e)).join('<br>')}` : ''}`;
-    AdminTopochain._loadAccounts();
-  },
 
   // ══════════════════════════════════════════════════════════════════
   // User activities — full CRUD + import + totals + refresh-totals.

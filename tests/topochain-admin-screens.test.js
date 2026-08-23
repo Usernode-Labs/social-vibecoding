@@ -46,6 +46,15 @@ const GAP_SUBS = ['challenge-kinds', 'terms-versions', 'token-allocation', 'mobi
 // to explain. Same line-comment strip the vocabulary test uses.
 const stripComments = (src) => src.replace(/^\s*\/\/.*$/gm, '');
 
+// The converted screens' prose lives in BOTH comment forms — a `.tsx` header
+// is `//` lines, but an explanation inside JSX has to be a `{/* … */}` block.
+// The "no raw HTML" checks below are about what the file DOES, so they strip
+// both; several of those comments name `innerHTML` to say what the conversion
+// replaced.
+const stripAllComments = (src) => src
+  .replace(/\/\*[\s\S]*?\*\//g, '')
+  .replace(/^\s*\/\/.*$/gm, '');
+
 // ─── admin-console.js: the promoted sections + delegation ─────────────────
 
 test('AdminConsole.SECTIONS promotes every programme screen under the #1179 groups', () => {
@@ -212,7 +221,7 @@ test('every built screen key is present in SUBS, no gap key is, and each is a re
 test('every built screen has a render function reachable from _renderSub', () => {
   const fn = topoJs.slice(topoJs.indexOf('  _renderSub() {'), topoJs.indexOf('  // ══'.repeat(1), topoJs.indexOf('  _renderSub() {')));
   const renderFns = [
-    'renderSeasonEvents', 'renderOnchainAccounts', 'renderUserActivities',
+    'renderSeasonEvents', 'renderUserActivities',
     'renderChallengeTemplates', 'renderSeasons', 'renderDelegations',
   ];
   for (const name of renderFns) {
@@ -234,6 +243,7 @@ test('every built screen has a render function reachable from _renderSub', () =>
     ['settings', 'SettingsScreen'],
     ['app-version', 'AppVersionScreen'],
     ['waitlist', 'WaitlistScreen'],
+    ['onchain-accounts', 'OnchainAccountsScreen'],
   ]) {
     assert.ok(!new RegExp(`case '${key}':`).test(fn), `${key} left the switch`);
     const renderer = `render${component.replace('Screen', '')}`;
@@ -392,8 +402,7 @@ test('the shared _inputHtml/_textareaHtml/_selectHtml builders escape their valu
 // shared input builders) actually pass through esc(...).
 test('table-rendered API fields pass through esc()', () => {
   for (const field of [
-    'ev.name', 'u.email', 'a.public_key', 't.category',
-    't.reward', 'a.tier',
+    'ev.name', 'u.email', 't.category', 't.reward',
   ]) {
     const re = new RegExp(`esc\\(${field.replace('.', '\\.')}`);
     assert.ok(re.test(topoJs), `${field} passes through esc() somewhere in admin-topochain.js`);
@@ -406,11 +415,12 @@ test('table-rendered API fields pass through esc()', () => {
   for (const [file, cell] of [
     ['settings.tsx', /cell: \(s\) => s\.key/],
     ['app-version.tsx', /cell: \(c\) => c\.os/],
+    ['onchain-accounts.tsx', /\{a\.public_key\}/],
   ]) {
     const src = fs.readFileSync(
       path.join(root, 'frontend/src/features/admin/topochain', file), 'utf8');
     assert.match(src, cell, `${file} still renders that cell`);
-    assert.ok(!/dangerouslySetInnerHTML|innerHTML/.test(stripComments(src)),
+    assert.ok(!/dangerouslySetInnerHTML|innerHTML/.test(stripAllComments(src)),
       `${file} renders no raw HTML`);
   }
 });
@@ -516,10 +526,35 @@ test('Delegations screen: stat strip, season/event scoping, and a per-account hi
 });
 
 test('Onchain accounts: delegation is visible and filterable, list and detail', () => {
-  assert.match(topoJs, /admin-topo-oa-delegated-filter/, 'the delegated filter select');
-  assert.match(topoJs, /params\.set\('delegated'/, 'wired into the index query');
-  assert.match(topoJs, /label: 'Delegation'/, 'the list column');
-  assert.match(topoJs, /row\('Delegation'/, 'and the detail dialog row');
+  // The screen is React since #1120 slice 29.
+  const oa = fs.readFileSync(
+    path.join(root, 'frontend/src/features/admin/topochain/onchain-accounts.tsx'), 'utf8');
+  assert.match(oa, /admin-topo-oa-delegated-filter/, 'the delegated filter select');
+  assert.match(oa, /params\.set\('delegated'/, 'wired into the index query');
+  assert.match(oa, /label: 'Delegation'/, 'the list column');
+  assert.match(oa, /<DetailRow label="Delegation">/, 'and the detail dialog row');
+});
+
+// The show route is the ONE place the API serves `secret_key`, and only to a
+// full admin. How the client HOLDS it is therefore load-bearing, and the rule
+// predates the conversion: never in an attribute, never written as markup.
+test('Onchain accounts: the secret key is state, never an attribute or markup', () => {
+  const oa = fs.readFileSync(
+    path.join(root, 'frontend/src/features/admin/topochain/onchain-accounts.tsx'), 'utf8');
+  const fn = oa.slice(oa.indexOf('function SecretKey('), oa.indexOf('function AccountDetail('));
+  assert.ok(fn.length > 200, 'the reveal control has a body');
+  assert.match(fn, /const \[shown, setShown\] = useState\(false\)/,
+    'it starts masked and the toggle is component state');
+  assert.match(fn, /\{shown \? secret : MASK\}/,
+    'the secret is a text child, rendered only while revealed');
+  // The two ways it could leak: an attribute (data-*, title, value) or a raw
+  // HTML write. Neither may appear anywhere in the screen.
+  assert.ok(!/(data-[\w-]+|title|value)=\{[^}]*secret/.test(fn),
+    'the secret never lands in an attribute');
+  assert.ok(!/dangerouslySetInnerHTML|innerHTML/.test(stripAllComments(oa)),
+    'and the screen renders no raw HTML at all');
+  assert.match(fn, /Hidden for view-only admins\./,
+    'a view-only admin is told why there is nothing to reveal');
 });
 
 test('the vocabulary is actually used: Event / User / Challenge template / Kind', () => {
@@ -679,7 +714,7 @@ test('a panel header sticks to the top and carries a visible dismiss control', (
 test('every open-a-form entry point renders through _panel with a wired close control', () => {
   const FORMS = [
     '_openSeasonEventForm', '_openChallengeForm', '_openUserForm',
-    '_openUserImportForm', '_openUserExport', '_openAccountImportForm',
+    '_openUserImportForm', '_openUserExport',
     '_openActivityForm', '_openActivityImportForm', '_openActivityTotals',
     '_openTemplateForm', '_moveChallenge',
   ];
@@ -702,6 +737,7 @@ test('every open-a-form entry point renders through _panel with a wired close co
   for (const [file, label] of [
     ['settings.tsx', 'Close the setting form'],
     ['app-version.tsx', 'Close the app version form'],
+    ['onchain-accounts.tsx', 'Close the import panel'],
   ]) {
     const src = fs.readFileSync(
       path.join(root, 'frontend/src/features/admin/topochain', file), 'utf8');
@@ -726,7 +762,7 @@ test('no two static admin-topo-* element ids collide', () => {
 test('every screen opens with the shared _screenHeader, toolbar and all', () => {
   const SCREENS = [
     'renderSeasons', 'renderSeasonEvents', 'renderUsers',
-    'renderOnchainAccounts', 'renderUserActivities', 'renderChallengeTemplates',
+    'renderUserActivities', 'renderChallengeTemplates',
   ];
   for (const fn of SCREENS) {
     const start = topoJs.search(new RegExp(`\\n  (?:async )?${fn}\\(host\\) \\{`));

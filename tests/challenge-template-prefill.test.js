@@ -32,36 +32,25 @@ const TOPO_SRC = fs.readFileSync(path.join(root, 'frontend/src/features/admin/ad
   // React seam from PORTAL_STUB_SRC.
   .replace(/^import [\s\S]*?from '[^']*';$/gm, '');
 
-// The control-styling tokens (frontend/src/features/admin/topochain/tokens.ts).
-// The module interpolates them into every screen's markup, so they have to be
-// bound before its body runs. Read from the real file rather than restated
-// here: a restated copy would keep passing after the real one changed.
-const TOKENS_SRC = (() => {
-  const src = fs.readFileSync(
-    path.join(root, 'frontend/src/features/admin/topochain/tokens.ts'), 'utf8');
-  const body = src.slice(src.indexOf('export const BTN_BASE'));
-  assert.ok(body.length > 500, 'tokens.ts exports its token block');
-  return body.replace(/^export const/gm, 'var');
-})();
+// The shared helper modules admin-topochain.js imports: the control-styling
+// tokens it interpolates into every screen's markup, and the fetch/picker
+// helpers its loaders call. Both have to be BOUND in the sandbox before the
+// module body runs. They are read from the real files and transpiled with
+// esbuild rather than restated here — a restated copy would keep passing
+// after the real one changed, and hand-stripping type annotations with
+// regexes broke the first time one grew a return type.
+//
+// `export ` is dropped so each declaration lands as a sandbox global, which
+// is what `var` at a vm context's top level is, and the `import` lines go the
+// same way TOPO_SRC's do — every binding they name is supplied by an earlier
+// runInContext (tokens.ts's AdminUI comes from ADMIN_UI_SRC below).
+const { transpileTs } = require('./lib/render-tsx');
+const sandboxModule = (rel) => transpileTs(`frontend/src/features/admin/topochain/${rel}`)
+  .replace(/^import [\s\S]*?from "[^"]*";$/gm, '')
+  .replace(/^export /gm, '');
 
-// The fetch helpers (frontend/src/features/admin/topochain/api.ts). Read from
-// the real file for the same reason as the tokens: AdminTopochain.fetchJson
-// delegates to this copy, so a restated one would keep passing after the real
-// contract changed. `export`/type annotations are stripped for the vm — the
-// bodies are plain JS.
-const API_SRC = (() => {
-  const src = fs.readFileSync(
-    path.join(root, 'frontend/src/features/admin/topochain/api.ts'), 'utf8');
-  const body = src.slice(src.indexOf('export async function fetchJson'));
-  assert.ok(body.includes('export async function send'), 'api.ts exports both helpers');
-  return body
-    .replace(/^export /gm, '')
-    .replace(/^\s*url: string,$/m, '  url,')
-    .replace(/^\s*opts\?: RequestInit,$/m, '  opts,')
-    .replace(/\): Promise<\{ status: number; ok: boolean; data: any \}> \{/, ') {')
-    .replace(/function send\(method: string, url: string, body\?: unknown\)/, 'function send(method, url, body)')
-    .replace(/const opts: RequestInit = \{ method \};/, 'const opts = { method };');
-})();
+const TOKENS_SRC = sandboxModule('tokens.ts');
+const API_SRC = sandboxModule('api.ts');
 
 // The React seam. TOPO_REACT_SCREENS maps a screen key to a portal mount, and
 // a vm cannot render React — so it is stubbed EMPTY, which makes _renderSub

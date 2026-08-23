@@ -46,6 +46,32 @@ export function ScreenHeader(
   );
 }
 
+// The console's dismiss control. The one place in the programme console that
+// inlines SVG path data, and it is a PORT: the same path AdminTopochain._panel()
+// has always written into its header, kept byte-identical so a converted screen
+// and an unconverted one show the same ✕ while the conversion runs. Importing
+// from @/components/ui/icons.tsx is not the alternative — AGENTS.md's density
+// boundary forbids an admin source from reaching into the shell's primitives.
+// tests/shell-icon-set.test.js exempts this file alone, and says so.
+export function CloseButton(
+  { id, label, onClick }: { id?: string; label: string; onClick: () => void },
+) {
+  return (
+    <button
+      id={id}
+      type="button"
+      className={BTN.close}
+      aria-label={label}
+      title={label}
+      onClick={onClick}
+    >
+      <svg className="w-4 h-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+        <path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z" />
+      </svg>
+    </button>
+  );
+}
+
 // Every create, edit, import, detail and console surface renders through this,
 // so they all get the same border, padding, header treatment and dismiss
 // control. The header is `sticky top-0` inside the panel: on a long form the
@@ -78,13 +104,7 @@ export function Panel({
             <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">{subtitle}</p>
           ) : null}
         </div>
-        {onClose ? (
-          <button type="button" className={BTN.close} aria-label={label} title={label} onClick={onClose}>
-            <svg className="w-4 h-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-              <path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z" />
-            </svg>
-          </button>
-        ) : null}
+        {onClose ? <CloseButton label={label} onClick={onClose} /> : null}
       </header>
       <div className="px-4 py-4 sm:px-5">{children}</div>
       {footer ? (
@@ -433,5 +453,47 @@ export function CheckField({
         ) : null}
       </span>
     </label>
+  );
+}
+
+// A small status pill. Mirrors AdminTopochain._badgeHtml; the tone table is
+// the same four, and an unknown tone falls back to zinc rather than
+// disappearing.
+const BADGE_TONES: Record<string, string> = {
+  green: 'bg-green-50 text-green-700 dark:bg-green-950/40 dark:text-green-400',
+  amber: 'bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400',
+  violet: 'bg-violet-50 text-violet-700 dark:bg-violet-950/40 dark:text-violet-400',
+  zinc: 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300',
+};
+
+export function Badge({ label, tone }: { label: ReactNode; tone?: string }) {
+  return (
+    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ${BADGE_TONES[tone || 'zinc'] || BADGE_TONES.zinc}`}>
+      {label}
+    </span>
+  );
+}
+
+// A labelled rule between groups of fields inside one panel. The long forms
+// are otherwise a wall of inputs in which "which of these is the CTA?" has to
+// be answered by reading every label. Mirrors AdminTopochain._formSection.
+export function FormSection({ label }: { label: ReactNode }) {
+  return (
+    <p className="mt-5 mb-3 border-t border-zinc-200 dark:border-zinc-800 pt-4 text-xs font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
+      {label}
+    </p>
+  );
+}
+
+// A <select>'s options from a {value,label} list, with an optional leading
+// blank. Mirrors the `blank` option of AdminTopochain._selectHtml.
+export function Options(
+  { options, blank }: { options: { value: string | number; label: string }[]; blank?: string },
+) {
+  return (
+    <>
+      {blank ? <option value="">{blank}</option> : null}
+      {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+    </>
   );
 }
