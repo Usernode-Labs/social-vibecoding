@@ -215,17 +215,41 @@ test('every interval a heavy section starts is cleared in its destroy()', () => 
   }
 });
 
-test('the two body-level tooltips are removed by their own destroy()', () => {
+test('the two body-level tooltips are removed when their section goes', () => {
   // Analytics and Estimator append <div id="dc-tip"> to <body> so the tooltip
   // can escape the section's overflow. That node is OUTSIDE both the section
-  // host and every React-owned subtree, so only destroy() can reclaim it.
+  // host and every React-owned subtree, so nothing reclaims it implicitly:
+  // left behind, it lingers on the next section still showing this one's copy.
   for (const file of ['admin-analytics', 'admin-estimator']) {
     const src = SRC.get(file);
     assert.ok(src.includes('document.body.appendChild'),
-      `${file}.js is expected to escape the section host with a body-level tip`);
-    const destroy = src.slice(src.indexOf('destroy() {'), src.indexOf('destroy() {') + 700);
-    assert.match(destroy, /getElementById\('dc-tip'\)/, `${file}.js's destroy() must find the tip`);
-    assert.match(destroy, /\.remove\(\)/, `${file}.js's destroy() must remove it`);
+      `${file} is expected to escape the section host with a body-level tip`);
+    if (modExt(file) === 'tsx') {
+      // A converted section (#1120) removes it from the effect CLEANUP that
+      // installed the hover delegation — which destroy() triggers by dropping
+      // the portal. Same guarantee, one level of indirection: the teardown is
+      // attached to the thing that created the node rather than to a separate
+      // method that has to remember.
+      // Anchored on the removal itself, then walked BACK to the nearest
+      // `return () => {` — the file has several arrow-returns and the first
+      // one is not this.
+      // lastIndexOf, not indexOf: the FIRST occurrence is ensureTip() looking
+      // for a tip it may need to create.
+      const at = src.lastIndexOf("getElementById('dc-tip')");
+      assert.ok(at > 0, `${file} must still reclaim the body-level tip`);
+      const before = src.lastIndexOf('return () => {', at);
+      assert.ok(before > 0 && at - before < 400,
+        `${file} must remove the tip from an effect CLEANUP, not from arbitrary code`);
+      assert.match(src.slice(at, at + 200), /\.remove\(\)/,
+        `${file}'s effect cleanup must remove it`);
+      const destroy = src.slice(src.indexOf('destroy() {'), src.indexOf('destroy() {') + 400);
+      assert.match(destroy, /unmountLegacyPortal\(/,
+        `${file}'s destroy() must drop the portal, which runs that cleanup`);
+    } else {
+      const destroy = src.slice(src.indexOf('destroy() {'), src.indexOf('destroy() {') + 700);
+      assert.match(destroy, /getElementById\('dc-tip'\)/, `${file}.js's destroy() must find the tip`);
+      assert.match(destroy, /\.remove\(\)/, `${file}.js's destroy() must remove it`);
+    }
   }
 });
 

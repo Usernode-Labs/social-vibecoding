@@ -232,12 +232,14 @@ test('#891: progress_estimates stays staging:private (so the demo is needed)', (
 // platform analytics. Every assertion below now reads the new module.
 
 test('#898: the Estimator accuracy section renders the card', () => {
-  const js = read('frontend/src/features/admin/admin-estimator.js');
-  assert.match(js, /<div id="admin-estimator-card"><\/div>/, 'the card must have a mount point');
+  const js = read('frontend/src/features/admin/admin-estimator.tsx');
+  // `.tsx` since #1120 slice 14 — the card is a component rather than a
+  // string builder, so the mount point holds it instead of being filled.
+  assert.match(js, /<div id="admin-estimator-card">/, 'the card must have a mount point');
   assert.match(js, /Progress estimator accuracy/, 'the card must be titled');
   assert.match(js, /data-info="estimator"/, 'the card must carry a (?) info icon');
-  assert.match(js, /function renderEstimator\(e\)/, 'a render function must exist');
-  assert.match(js, /renderEstimator\(payload\)/, 'init must render the card');
+  assert.match(js, /function EstimatorCard\(\{ e \}/, 'a card component must exist');
+  assert.match(js, /<EstimatorCard e=\{payload\} \/>/, 'the section must render the card');
   assert.match(js, /getJSON\(withDemo\('\/api\/admin\/analytics\/estimator'\)\)/,
     'the section must fetch the endpoint');
   // The endpoint deliberately keeps its /api/admin/analytics/ prefix (it is
@@ -270,7 +272,7 @@ test('#898: the console registers the section, and the shell loads it', () => {
   // #1082 chunk E moved the module into the React bundle, so "the shell loads
   // it" is now an island import rather than a <script> tag plus a service-worker
   // precache entry — /shell/assets/shell.js carries both jobs.
-  assert.match(read('frontend/src/features/admin/index.tsx'), /import '\.\/admin-estimator\.js';/,
+  assert.match(read('frontend/src/features/admin/index.tsx'), /import '\.\/admin-estimator\.tsx';/,
     'the console island must import the module');
   assert.ok(!read('public/index.html').includes('/js/admin-estimator.js'),
     'the retired script tag must be gone from the shell');
@@ -299,7 +301,7 @@ test('#898: dapp.json checks the new section renders', () => {
 });
 
 test('#891: the card states the leave-experimental bar', () => {
-  const js = read('frontend/src/features/admin/admin-estimator.js');
+  const js = read('frontend/src/features/admin/admin-estimator.tsx');
   // The thresholds live in one constant driving both the tiles and the verdict.
   assert.match(js, /const ESTIMATOR_BAR = \{/,
     'the decision thresholds must be a single named constant');
@@ -314,7 +316,7 @@ test('#891: the card states the leave-experimental bar', () => {
   assert.match(js, /increasedRate: 0\.05/, 'the backwards-countdown gate must be part of the bar');
   assert.match(js, /CANDIDATE_PROMPT_VERSION = 2/,
     'the verdict must be judged on the candidate prompt generation');
-  assert.match(js, /function estimatorVerdict\(w, ctx\)/, 'the card must compute a verdict');
+  assert.match(js, /function estimatorVerdict\(w: any, ctx: any\)/, 'the card must compute a verdict');
   assert.match(js, /Ready to leave experimental/, 'the verdict must have a ready state');
   assert.match(js, /Stays experimental/, 'the verdict must have a not-ready state');
   // "Not enough data yet" must be distinguishable from "failed the bar".
@@ -331,19 +333,27 @@ test('#891: the card states the leave-experimental bar', () => {
 });
 
 test('#892: the card renders the version split, baselines and priors freshness', () => {
-  const js = read('frontend/src/features/admin/admin-estimator.js');
-  assert.match(js, /const versionHtml = /, 'the v1-vs-v2 comparison must render');
-  assert.match(js, /const baselineHtml = /, 'the baselines-to-beat row must render');
-  assert.match(js, /const priorsHtml = /, 'the priors freshness strip must render');
+  const js = read('frontend/src/features/admin/admin-estimator.tsx');
+  // The three blocks are JSX in the card now rather than three named HTML
+  // strings spliced into a template. tests/estimator-card-render.test.js is
+  // the half that proves each one actually reaches the output — it RENDERS
+  // the card against the demo payload — so this file names them.
+  assert.match(js, /Prompt generation/, 'the v1-vs-v2 comparison must render');
+  assert.match(js, /Baselines to beat/, 'the baselines-to-beat row must render');
+  assert.match(js, /Run-length figures given to the model/, 'the priors freshness strip must render');
   assert.match(js, /Priors stale/, 'the stale state must be nameable on sight');
   assert.match(js, /Priors current/, 'the fresh state must be distinguishable');
-  // All three must actually be spliced into the card body, not just built —
-  // a block that is assembled and never rendered is the easy mistake here.
-  const bodyAt = js.indexOf('${versionHtml}');
-  assert.ok(bodyAt > 0, 'versionHtml must lead the estimator card body');
-  const body = js.slice(bodyAt, bodyAt + 400);
-  assert.ok(body.includes('${baselineHtml}'), 'baselineHtml must be rendered');
-  assert.ok(body.includes('${priorsHtml}'), 'priorsHtml must be rendered');
+  // All three must actually REACH the output, not merely be written down —
+  // a block that is assembled and never rendered was the easy mistake in the
+  // template version, and a component defined and never used is its
+  // equivalent. Proving it takes a render, which is
+  // tests/estimator-card-render.test.js's job; what is checkable here is the
+  // ORDER, because the v1-vs-v2 comparison is deliberately the card's lead.
+  const lead = js.indexOf('Prompt generation');
+  assert.ok(lead > 0, 'the version comparison must be in the card');
+  assert.ok(lead < js.indexOf('Baselines to beat'), 'the version comparison leads the card');
+  assert.ok(lead < js.indexOf('Run-length figures given to the model'),
+    'the version comparison leads the priors strip too');
 });
 
 test('#891: withAdmins carries the page ?demo=1 through to the Analytics endpoints', () => {
@@ -363,7 +373,7 @@ test('#891: withAdmins carries the page ?demo=1 through to the Analytics endpoin
 });
 
 test('#898: the estimator section carries ?demo=1 through to the endpoint', () => {
-  const js = read('frontend/src/features/admin/admin-estimator.js');
+  const js = read('frontend/src/features/admin/admin-estimator.tsx');
   // progress_estimates is staging:private, so without the flag the section
   // is a wall of dashes in every PR preview.
   // The `typeof window` guard is #1082 chunk E: the module lives in the React
@@ -371,41 +381,48 @@ test('#898: the estimator section carries ?demo=1 through to the endpoint', () =
   // read itself — and therefore the staging demo substitution — is unchanged.
   assert.match(js, /const DEMO = typeof window !== 'undefined'\s*\n?\s*&& new URLSearchParams\(location\.search\)\.get\('demo'\) === '1'/,
     'the page-level demo flag must be read from location.search');
-  assert.match(js, /const withDemo = \(url\) =>/, 'withDemo must exist');
-  assert.match(js, /DEMO \? \(url\.includes\('\?'\) \? '&' : '\?'\) \+ 'demo=1' : ''/,
+  assert.match(js, /const withDemo = \(url: string\) =>/, 'withDemo must exist');
+  assert.match(js, /DEMO \? `\$\{url\.includes\('\?'\) \? '&' : '\?'\}demo=1` : ''/,
     'demo=1 must ride along when present');
 });
 
 test('#891: an empty or failed payload does not blow the section up', () => {
-  const js = read('frontend/src/features/admin/admin-estimator.js');
-  const fnStart = js.indexOf('function renderEstimator(e) {');
+  const js = read('frontend/src/features/admin/admin-estimator.tsx');
+  const fnStart = js.indexOf('function EstimatorCard({ e }');
   const fnBody = js.slice(fnStart, fnStart + 600);
   assert.match(fnBody, /if \(!e \|\| !all \|\| !all\.ticks\) \{/,
-    'renderEstimator must handle a null/empty payload');
-  assert.match(fnBody, /EMPTY_MSG/, 'an empty payload must render the shared empty state');
+    'EstimatorCard must handle a null/empty payload');
+  assert.match(fnBody, /Not enough data yet/, 'an empty payload must render the empty state');
   // The estimator is now the section's only fetch, so a failure gates the
   // section rather than silently leaving one card blank.
-  assert.match(js, /showGate\('Failed to load estimator accuracy\.'\)/,
+  assert.match(js, /'Failed to load estimator accuracy\.'/,
     'a failed load must show the section gate');
-  assert.match(js, /if \(err\.forbidden\) \{ showGate\('Admin access required\.'\); return; \}/,
+  assert.match(js, /setGate\(err\.forbidden \? 'Admin access required\.'/,
     'a 401/403 must read as an access problem, not a load failure');
 });
 
 test('#898: the section tears its body-level tooltip down on destroy', () => {
-  const js = read('frontend/src/features/admin/admin-estimator.js');
+  const js = read('frontend/src/features/admin/admin-estimator.tsx');
   // #dc-tip is appended to <body> so it can escape the section's overflow;
   // leaving it behind means stale copy floating over the next section.
-  assert.match(js, /render\(\s*\w+\s*\)\s*\{/, 'the module must implement render(host)');
-  const destroy = js.slice(js.indexOf('    destroy() {'));
-  assert.match(destroy.slice(0, 400), /getElementById\('dc-tip'\)/,
-    'destroy() must remove the floating tooltip');
-  assert.match(destroy.slice(0, 400), /delete tipStore\[k\]/,
-    'destroy() must clear the tip store');
+  assert.match(js, /render\(\w+(?:: [\w.<>[\] |]+)?\) \{/,
+    'the module must implement render(host)');
+  // destroy() drops the portal; the removal itself lives in the cleanup of
+  // the effect that installed the hover delegation, so it is attached to the
+  // thing that created the node rather than to a method that must remember.
+  const destroy = js.slice(js.indexOf('  destroy() {'));
+  assert.match(destroy.slice(0, 300), /unmountLegacyPortal\(/,
+    'destroy() must drop the portal, which runs that cleanup');
+  const cleanupAt = js.lastIndexOf("getElementById('dc-tip')");
+  const cleanup = js.slice(js.lastIndexOf('return () => {', cleanupAt), cleanupAt + 300);
+  assert.match(cleanup, /getElementById\('dc-tip'\)/,
+    'the cleanup must remove the floating tooltip');
+  assert.match(cleanup, /delete tipStore\[k\]/, 'the cleanup must clear the tip store');
 });
 
 test('#891: the card formats durations without a 60-second carry bug', () => {
-  const js = read('frontend/src/features/admin/admin-estimator.js');
-  const fnStart = js.indexOf('const fmtSecs = (v) => {');
+  const js = read('frontend/src/features/admin/admin-estimator.tsx');
+  const fnStart = js.indexOf('const fmtSecs = (v: any): string => {');
   assert.ok(fnStart !== -1, 'fmtSecs must exist');
   const fnBody = js.slice(fnStart, js.indexOf('\n  };', fnStart));
   // Rounding the m/s parts independently renders 119.5s as "1m 60s".

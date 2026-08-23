@@ -87,7 +87,15 @@ test('the glyphs live in the module, not inline beside it', () => {
   assert.deepEqual(offenders, [],
     'these files inline SVG path data — move the glyph into '
     + 'frontend/@/components/ui/icons.tsx and import it:\n  ' + offenders.join('\n  '));
-  assert.deepEqual(featureFiles().filter((f) => svgTags(read(f)).length > 0), [],
+  // The blanket "no raw <svg>" half is the SHELL's rule. The admin console
+  // draws its own data charts and always has — admin-analytics.js,
+  // admin-estimator and admin-topochain each emit an <svg> of <rect>s and
+  // <line>s — and a bar chart is not a glyph that escaped the module. Those
+  // files only became visible here when #1120 started converting console
+  // sections to .tsx; the inline-path-data rule above still covers them, which
+  // is the half that actually catches a glyph.
+  const shellFiles = featureFiles().filter((f) => !f.startsWith('frontend/src/features/admin/'));
+  assert.deepEqual(shellFiles.filter((f) => svgTags(read(f)).length > 0), [],
     'a raw <svg> in a feature file is a glyph that escaped the module');
 });
 

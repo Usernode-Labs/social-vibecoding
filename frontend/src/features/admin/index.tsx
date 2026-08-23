@@ -127,7 +127,7 @@ import { AdminUI } from './admin-console.js';
 import './admin-status.tsx';
 import './admin-node.tsx';
 import './admin-analytics.js';
-import './admin-estimator.js';
+import './admin-estimator.tsx';
 import './admin-merges.tsx';
 import './admin-gallery.tsx';
 import './admin-campaigns.tsx';

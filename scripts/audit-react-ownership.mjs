@@ -113,6 +113,7 @@ const OWNED = [
   { sel: '#admin-section-content', when: '#admin/campaigns' }, // features/admin/admin-campaigns.tsx
   { sel: '#admin-section-content', when: '#admin/mail' },    // features/admin/admin-mail.tsx
   { sel: '#admin-section-content', when: '#admin/status' },  // features/admin/admin-status.tsx
+  { sel: '#admin-section-content', when: '#admin/estimator' }, // features/admin/admin-estimator.tsx
 ];
 
 const ROUTES = [
@@ -120,7 +121,7 @@ const ROUTES = [
   '#settings/agent-files', '#profile', '#leaderboard', '#messages',
   '#app/recipebot', '#app/recipebot/dev', '#app/recipebot/dev/chat',
   '#app/recipebot/dev/sessions/1',
-  '#admin/e2e', '#admin/gallery', '#admin/node', '#admin/merges', '#admin/push', '#admin/campaigns', '#admin/mail', '#admin/status',
+  '#admin/e2e', '#admin/gallery', '#admin/node', '#admin/merges', '#admin/push', '#admin/campaigns', '#admin/mail', '#admin/estimator', '#admin/status',
 ];
 
 function instrument(owned) {
