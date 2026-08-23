@@ -130,7 +130,7 @@ import './admin-analytics.js';
 import './admin-estimator.js';
 import './admin-merges.tsx';
 import './admin-gallery.tsx';
-import './admin-campaigns.js';
+import './admin-campaigns.tsx';
 import './admin-push.tsx';
 import './admin-mail.js';
 import './admin-e2e.tsx';
