@@ -2144,6 +2144,22 @@ html, body {
   color: var(--accent-ink);
   opacity: 0.72;
 }
+
+/* The two header slots that declared their colour INLINE until now — the
+   "#12 1787450684510" id/time stamp and the model name. An inline style beats
+   every class rule in the cascade, so the inversion above could not reach
+   them: on the accent fill the stamp stayed --text-muted at 50% opacity, about
+   1.5:1 against #0a7cff and unreadable. As classes they take the inversion
+   like everything else in the bubble, and the `> *` rule above (two classes,
+   so it outranks these) supplies the white and the 0.72 there. */
+.dc-msg-meta {
+  color: var(--text-muted);
+  font-size: 9px;
+  opacity: 0.5;
+}
+.dc-msg-model {
+  color: var(--text-muted);
+}
 .dc-msg-user .dc-msg-content a,
 .dc-msg-user .dc-msg-content a:hover {
   color: var(--accent-ink);

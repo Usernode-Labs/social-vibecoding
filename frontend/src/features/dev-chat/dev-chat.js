@@ -6302,7 +6302,7 @@ const DevChat = {
           <div class="dc-msg dc-msg-assistant">
             <div class="dc-msg-header">
               <span class="text-emerald-400">Claude Code</span>
-              <span style="color:var(--text-muted);font-size:9px;opacity:0.5">${idLabel} ${ts}</span>
+              <span class="dc-msg-meta">${idLabel} ${ts}</span>
             </div>
             <div class="dc-msg-content">${DevChat.renderMarkdown(firstPara)}</div>
             ${hasMore ? `<details class="dc-cc-log" style="margin-top:6px" data-persist-id="${DevChat._detailsId(msg, 'ccfull')}"><summary class="dc-cc-log-toggle">Full output</summary><div class="dc-msg-content" style="padding:8px 10px">${DevChat.renderMarkdown(lines)}</div></details>` : ''}
@@ -6325,8 +6325,8 @@ const DevChat = {
         <div class="dc-msg ${isUser ? 'dc-msg-user' : 'dc-msg-assistant'}">
           <div class="dc-msg-header">
             <span class="${isUser ? 'text-violet-400' : 'text-emerald-400'}">${isUser ? 'You' : 'AI'}</span>
-            ${msg.model ? `<span style="color:var(--text-muted)">${msg.model.split('-').slice(0, 2).join('-')}${costLabel}</span>` : ''}
-            <span style="color:var(--text-muted);font-size:9px;opacity:0.5">${idLabel} ${ts}</span>
+            ${msg.model ? `<span class="dc-msg-model">${msg.model.split('-').slice(0, 2).join('-')}${costLabel}</span>` : ''}
+            <span class="dc-msg-meta">${idLabel} ${ts}</span>
           </div>
           <div class="dc-msg-content">${isUser ? DevChat.renderMarkdown(content) : displayContent}</div>
           ${isUser ? DevChat._attachmentsRowHtml(msg) : ''}
