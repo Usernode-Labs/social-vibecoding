@@ -118,6 +118,7 @@ const OWNED = [
   { sel: '#llm-grants-list' },               // features/settings/grants-list.tsx
   { sel: '#cli-tokens-list' },               // features/settings/cli-tokens-list.tsx
   { sel: '#connectors-list' },               // features/settings/connectors-list.tsx
+  { sel: '#github-link-body' },              // features/settings/social-identity.tsx
   { sel: '#agent-files-instructions-list' }, // features/settings/agent-files-list.tsx
   { sel: '#agent-files-skills-list' },
   { sel: '#browse-list' },                   // features/apps/browse-list.tsx

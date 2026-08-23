@@ -77,6 +77,17 @@ const ALLOWED_BUTTON_FILES = new Set([
   // attribute of every other button in the shell. See the header of
   // frontend/src/features/leaderboard/kudos-pane.tsx.
   'leaderboard/kudos-pane.tsx',
+  // The social-account Connect control, which exists in TWO spellings that
+  // must render identically: a live `<a href>` (the OAuth flow is a top-level
+  // navigation, not a fetch) and a disabled `<button>` for the ?demo= fixture,
+  // which must not navigate out of itself.
+  //
+  // This install of Button is hand-rolled and has no `asChild`, so it cannot
+  // be an anchor. Routing only the button through it would leave the pair
+  // written two different ways and free to drift — so both are written from
+  // one `CONNECT_SURFACE` constant in the file, which is the same guarantee
+  // the primitive would have given.
+  'settings/social-identity.tsx',
 ]);
 
 // Empty, and worth keeping empty: every field box in the tree now comes from

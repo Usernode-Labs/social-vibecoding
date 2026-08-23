@@ -1461,3 +1461,95 @@ test('settings.js publishes the connector cards rather than building them', () =
   assert.match(render, /this\._renderConnectorCases\(connectors\)/);
   assert.match(render, /this\._renderConnectorHint\(connectors\)/);
 });
+
+
+// ── The social-account block (#1191) ──────────────────────────────────
+//
+// `#github-link-body` was ~330 lines of `document.createElement` in
+// settings.js — a tier card, a row per provider with five mutually-exclusive
+// states and two actions, an audit note, a stranded-attempt note and an
+// admin diagnostics panel. The module decides all of it; the markup is
+// features/settings/social-identity.tsx's.
+//
+// These render the component against each shape, because every one of them is
+// a different sentence to a user about how much they may spend and why.
+
+const SOCIAL = 'frontend/src/features/settings/social-identity.tsx';
+const socialHtml = (state) => renderComponent(SOCIAL, 'SocialIdentityView', state);
+const socialBase = { phase: 'ready', message: null, tier: null, providers: [] };
+
+test('the social block renders its four host states', () => {
+  assert.equal(socialHtml({ ...socialBase, phase: 'idle' }), '');
+  assert.equal(
+    read('public/index.html').includes('<div id="github-link-body" class="space-y-2"></div>'),
+    true, 'and the prerendered document agrees');
+  assert.match(socialHtml({ ...socialBase, phase: 'loading', message: 'Loading…' }), /Loading…/);
+  assert.match(
+    socialHtml({ ...socialBase, phase: 'error', message: 'Could not load social accounts. Try again shortly.' }),
+    /Could not load social accounts/);
+});
+
+test('the tier card carries its tone as well as its wording', () => {
+  const locked = socialHtml({ ...socialBase, tier: { tone: 'warn', title: 'Layer 1 locked · $0/day', detail: 'Connect either.' } });
+  assert.match(locked, /border-amber-300/, 'a locked tier is amber');
+  assert.match(locked, /Layer 1 locked · \$0\/day/);
+  const open = socialHtml({ ...socialBase, tier: { tone: 'ok', title: 'Layer 1 unlocked · $10.00/day', detail: 'Verified.' } });
+  assert.match(open, /border-emerald-300/, 'an unlocked one is emerald');
+  // The three neutral states (unavailable, legacy policy, admin override)
+  // share the plain card — they are statements of fact, not outcomes.
+  const plain = socialHtml({ ...socialBase, tier: { tone: 'plain', title: 'Administrator-set allowance: $25.00/day', detail: 'Override.' } });
+  assert.doesNotMatch(plain, /border-amber-300|border-emerald-300/);
+});
+
+test('a demo Connect control is inert but present, and matches the live one', () => {
+  const row = {
+    provider: 'github',
+    name: 'GitHub',
+    heading: 'GitHub',
+    state: { tone: 'muted', text: 'Not connected.' },
+    linkedAt: null,
+    noToken: null,
+    connect: { label: 'Connect GitHub', href: '/api/me/social-identities/github/connect' },
+    unlink: null,
+    strandedNote: null,
+    diagnostics: null,
+  };
+  const live = socialHtml({ ...socialBase, providers: [row] });
+  assert.match(live, /<a href="\/api\/me\/social-identities\/github\/connect"/,
+    'the real control is an ANCHOR — the OAuth flow is a top-level navigation');
+  // The ?demo= twin must not navigate out of the fixture, so it is a disabled
+  // button — and it has to LOOK the same, which one shared constant is what
+  // guarantees (see the file's header and the primitive allow-list entry).
+  const demo = socialHtml({
+    ...socialBase,
+    providers: [{ ...row, connect: { label: 'Connect GitHub', href: null } }],
+  });
+  assert.match(demo, /<button type="button" disabled/);
+  const surface = 'rounded-md bg-violet-600 px-2 py-1 text-xs font-medium text-white';
+  assert.ok(live.includes(surface) && demo.includes(surface), 'one surface, both spellings');
+});
+
+test('the reviewable claims travel with the row that makes them', () => {
+  const html2 = socialHtml({
+    ...socialBase,
+    providers: [{
+      provider: 'github',
+      name: 'GitHub',
+      heading: 'GitHub · @octo',
+      state: { tone: 'emerald', text: 'Ownership verified · counts toward the single $10/day social tier.' },
+      linkedAt: 'linked 1 Jan',
+      noToken: 'Usernode holds no GitHub access token for your account.',
+      connect: null,
+      unlink: { disabled: false },
+      strandedNote: 'Your last GitHub connection attempt didn’t complete.',
+      diagnostics: null,
+    }],
+  });
+  assert.match(html2, /id="github-link-no-token"/, 'the no-token claim keeps its id');
+  assert.match(html2, /id="github-link-audit-note"[\s\S]*?github\.com\/settings\/applications/,
+    'and the audit link beside it makes the claim checkable');
+  assert.match(html2, /target="_blank" rel="noopener noreferrer"/,
+    'top-level, because the shell is framed and github.com is not frameable');
+  assert.match(html2, /id="github-link-pending-note"/, 'the stranded-attempt note keeps its id');
+  assert.match(html2, />Disconnect</);
+});

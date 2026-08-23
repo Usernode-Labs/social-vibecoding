@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 
 import { ConnectorsList } from '../connectors-list';
+import { SocialIdentity } from '../social-identity';
 
 /**
  * Hosted MCP connector: connect Claude.ai / ChatGPT so their built-in coding
@@ -383,6 +384,7 @@ export function ConnectorsSection() {
           &mdash; identity-only profile information &mdash; and stores no provider token. GitHub can also attribute proposals built by your own coding agent to the account you verified.
         </SectionHeading>
         <div id="github-link-body" className="space-y-2">
+          <SocialIdentity />
         </div>
         <StatusLine id="github-link-status" size="xs" />
       </div>

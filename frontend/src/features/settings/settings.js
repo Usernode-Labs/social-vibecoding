@@ -1556,9 +1556,10 @@
 
     async _loadGithubLink() {
       const section = document.getElementById('github-link-section');
-      const body = document.getElementById('github-link-body');
-      if (!section || !body) return;
-      body.textContent = 'Loading…';
+      if (!section) return;
+      this._publishSocialIdentity({
+        phase: 'loading', message: 'Loading…', tier: null, providers: [],
+      });
       try {
         const response = await fetch(`/api/me/social-identities${this._socialIdentityDemoQuery()}`, {
           credentials: 'same-origin',
@@ -1580,287 +1581,184 @@
         this._githubLink = data;
         this._renderGithubLink();
       } catch {
-        body.textContent = 'Could not load social accounts. Try again shortly.';
+        this._publishSocialIdentity({
+          phase: 'error',
+          message: 'Could not load social accounts. Try again shortly.',
+          tier: null,
+          providers: [],
+        });
         section.classList.remove('hidden');
       }
     },
 
+    _publishSocialIdentity(next) {
+      const bridge = (typeof window !== 'undefined' && window.UsernodeReact)
+        ? window.UsernodeReact.settingsSocialIdentity : null;
+      if (bridge) bridge.publish(next);
+    },
+
     _renderGithubLink() {
-      const body = document.getElementById('github-link-body');
       const status = document.getElementById('github-link-status');
-      if (!body) return;
-      body.textContent = '';
       if (status) status.classList.add('hidden');
       const payload = this._githubLink || { providers: {}, entitlement: {} };
-      body.appendChild(this._socialIdentityTierCard(payload.entitlement));
-      ['github', 'x'].forEach((provider) => {
-        body.appendChild(this._socialIdentityProviderRow(
+      const entitlement = payload.entitlement || {};
+      this._publishSocialIdentity({
+        phase: 'ready',
+        message: null,
+        tier: this._socialIdentityTierView(entitlement),
+        providers: ['github', 'x'].map((provider) => this._socialIdentityRowView(
           provider,
           payload.providers[provider] || { provider, linked: false, available: false },
-          payload.entitlement,
+          entitlement,
           !!payload.demo
-        ));
+        )),
       });
+      // A SIBLING of the block, and still this module's: it reports the OAuth
+      // result carried in the hash query, which is about the navigation that
+      // just happened rather than about the block's contents.
       this._socialIdentityCallbackStatus(status);
     },
 
-    _socialIdentityTierCard(entitlement) {
+    // The tier card's five states, as text plus a tone. Every one of them is
+    // a different answer to "how much can this account spend today, and why",
+    // so the wording is decided here, next to the entitlement it reads.
+    _socialIdentityTierView(entitlement) {
       const e = entitlement || {};
-      const card = document.createElement('div');
-      card.className = 'rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 px-3 py-2 mb-3';
-      const title = document.createElement('div');
-      title.className = 'text-sm font-semibold text-zinc-800 dark:text-zinc-200';
-      const detail = document.createElement('div');
-      detail.className = 'text-xs text-zinc-500 dark:text-zinc-400 mt-1';
       const dollars = `$${(Math.max(0, Number(e.limitCents) || 0) / 100).toFixed(2)}/day`;
       if (e.entitlementAvailable === false) {
-        title.textContent = 'Daily credit tier temporarily unavailable';
-        detail.textContent = 'Usernode could not verify credit eligibility. Platform-funded calls fail closed; your own API key still works.';
-      } else if (e.policy === 'legacy') {
-        title.textContent = `Current daily allowance: ${dollars}`;
-        detail.textContent = 'Social account linking is available, but identity-based credit tiers are not active on this deployment yet.';
-      } else if (e.tier === 'override') {
-        title.textContent = `Administrator-set allowance: ${dollars}`;
-        detail.textContent = 'This account has an explicit administrator override, which takes precedence over identity tiers.';
-      } else if (e.verificationRequired) {
-        title.textContent = 'Layer 1 locked · $0/day';
-        detail.textContent = 'Connect either GitHub or X below to unlock $10.00/day. A second provider does not add another $10.';
-        card.className += ' border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/20';
-      } else {
-        title.textContent = `Layer 1 unlocked · ${dollars}`;
-        detail.textContent = 'At least one social account ownership proof is current. Provider tokens are not stored.';
-        card.className += ' border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/20';
+        return {
+          tone: 'plain',
+          title: 'Daily credit tier temporarily unavailable',
+          detail: 'Usernode could not verify credit eligibility. Platform-funded calls fail closed; your own API key still works.',
+        };
       }
-      card.append(title, detail);
-      return card;
+      if (e.policy === 'legacy') {
+        return {
+          tone: 'plain',
+          title: `Current daily allowance: ${dollars}`,
+          detail: 'Social account linking is available, but identity-based credit tiers are not active on this deployment yet.',
+        };
+      }
+      if (e.tier === 'override') {
+        return {
+          tone: 'plain',
+          title: `Administrator-set allowance: ${dollars}`,
+          detail: 'This account has an explicit administrator override, which takes precedence over identity tiers.',
+        };
+      }
+      if (e.verificationRequired) {
+        return {
+          tone: 'warn',
+          title: 'Layer 1 locked · $0/day',
+          detail: 'Connect either GitHub or X below to unlock $10.00/day. A second provider does not add another $10.',
+        };
+      }
+      return {
+        tone: 'ok',
+        title: `Layer 1 unlocked · ${dollars}`,
+        detail: 'At least one social account ownership proof is current. Provider tokens are not stored.',
+      };
     },
 
-    _socialIdentityProviderRow(provider, link, entitlement, demo) {
+    // One provider row. Five mutually-exclusive states, and the two actions:
+    // a Connect anchor (or its inert ?demo= twin) and Disconnect.
+    _socialIdentityRowView(provider, link, entitlement, demo) {
       const name = provider === 'github' ? 'GitHub' : 'X';
-      const wrap = document.createElement('div');
-      wrap.className = 'rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2';
-      const row = document.createElement('div');
-      row.className = 'flex items-start justify-between gap-3';
-      const text = document.createElement('div');
-      text.className = 'min-w-0';
-      const heading = document.createElement('div');
-      heading.className = 'text-sm font-semibold text-zinc-800 dark:text-zinc-200';
-      heading.textContent = link.linked && link.handle ? `${name} · @${link.handle}` : name;
-      const state = document.createElement('div');
-      state.className = 'text-xs mt-1';
+      let state;
       if (link.reconnectRequired) {
-        state.className += ' text-amber-600 dark:text-amber-400';
-        state.textContent = 'Linked for GitHub attribution · reconnect once to make this identity credit-eligible.';
+        state = {
+          tone: 'amber',
+          text: 'Linked for GitHub attribution · reconnect once to make this identity credit-eligible.',
+        };
       } else if (link.linked && entitlement.policy === 'tiered') {
-        state.className += ' text-emerald-600 dark:text-emerald-400';
-        state.textContent = 'Ownership verified · counts toward the single $10/day social tier.';
+        state = {
+          tone: 'emerald',
+          text: 'Ownership verified · counts toward the single $10/day social tier.',
+        };
       } else if (link.linked) {
-        state.className += ' text-zinc-500 dark:text-zinc-400';
-        state.textContent = 'Ownership verified · identity credit tiers are not active yet.';
+        state = {
+          tone: 'muted',
+          text: 'Ownership verified · identity credit tiers are not active yet.',
+        };
       } else if (link.available === false) {
-        state.className += ' text-zinc-500 dark:text-zinc-400';
-        state.textContent = `${name} linking is not configured on this deployment.`;
+        state = { tone: 'muted', text: `${name} linking is not configured on this deployment.` };
       } else {
-        state.className += ' text-zinc-500 dark:text-zinc-400';
-        state.textContent = entitlement.verificationRequired
-          ? `Not connected · connect ${name} to unlock Layer 1.`
-          : 'Not connected.';
+        state = {
+          tone: 'muted',
+          text: entitlement.verificationRequired
+            ? `Not connected · connect ${name} to unlock Layer 1.`
+            : 'Not connected.',
+        };
       }
-      text.append(heading, state);
-      if (link.linkedAt && Number.isFinite(Date.parse(link.linkedAt))) {
-        const when = document.createElement('div');
-        when.className = 'text-xs text-zinc-500 dark:text-zinc-500 mt-1';
-        when.textContent = `linked ${new Date(link.linkedAt).toLocaleString()}`;
-        text.appendChild(when);
-      }
-      if (link.linked && link.access === 'identity') {
-        const noToken = document.createElement('div');
-        if (provider === 'github') noToken.id = 'github-link-no-token';
-        noToken.className = 'text-xs text-zinc-500 dark:text-zinc-400 mt-1';
-        noToken.textContent = provider === 'github'
-          ? 'Usernode holds no GitHub access token for your account.'
-          : 'Usernode stores no X access token for your account.';
-        text.appendChild(noToken);
-      }
-
-      const actions = document.createElement('div');
-      actions.className = 'shrink-0 flex flex-wrap justify-end gap-2';
-      if ((!link.linked || link.reconnectRequired) && link.available !== false) {
-        const label = link.reconnectRequired ? 'Reconnect' : `Connect ${name}`;
-        if (demo) {
-          const disabled = document.createElement('button');
-          disabled.type = 'button';
-          disabled.disabled = true;
-          disabled.className = 'rounded-md bg-violet-600 px-2 py-1 text-xs font-medium text-white opacity-50';
-          disabled.textContent = label;
-          actions.appendChild(disabled);
-        } else {
-          const connect = document.createElement('a');
-          connect.href = `/api/me/social-identities/${provider}/connect`;
-          connect.className = 'rounded-md bg-violet-600 hover:bg-violet-500 px-2 py-1 text-xs font-medium text-white transition-colors';
-          connect.textContent = label;
-          actions.appendChild(connect);
-        }
-      }
-      if (link.linked) {
-        const unlink = document.createElement('button');
-        unlink.type = 'button';
-        unlink.disabled = demo;
-        unlink.className = 'rounded-md border border-red-400 dark:border-red-700 px-2 py-1 text-xs font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 disabled:opacity-50 transition-colors';
-        unlink.textContent = 'Disconnect';
-        if (!demo) unlink.addEventListener('click', () => this._unlinkGithub(unlink, provider));
-        actions.appendChild(unlink);
-      }
-      row.append(text, actions);
-      wrap.append(row, this._socialIdentityAuditNote(provider));
-      // A provider that rejects our callback address errors on its own page
-      // and never redirects back, so the only trace of that failure is the
-      // stranded attempt the server spotted (#1291).
-      if (link.pendingAttemptAt) {
-        const stranded = document.createElement('p');
-        stranded.id = `${provider}-link-pending-note`;
-        stranded.className = 'text-xs text-amber-600 dark:text-amber-400 mt-2';
-        stranded.textContent = `Your last ${name} connection attempt didn't complete. `
-          + `If ${name} showed "Something went wrong — You weren't able to give access to the App", `
-          + `the platform's callback address isn't registered on the ${name} developer app — `
-          + 'an administrator needs to update that app’s settings.';
-        wrap.appendChild(stranded);
-      }
-      if (link.diagnostics) {
-        wrap.appendChild(this._socialIdentityDiagnostics(provider, link.diagnostics, demo));
-      }
-      return wrap;
+      const offersConnect = (!link.linked || link.reconnectRequired) && link.available !== false;
+      return {
+        provider,
+        name,
+        heading: link.linked && link.handle ? `${name} · @${link.handle}` : name,
+        state,
+        linkedAt: link.linkedAt && Number.isFinite(Date.parse(link.linkedAt))
+          ? `linked ${new Date(link.linkedAt).toLocaleString()}`
+          : null,
+        noToken: link.linked && link.access === 'identity'
+          ? (provider === 'github'
+            ? 'Usernode holds no GitHub access token for your account.'
+            : 'Usernode stores no X access token for your account.')
+          : null,
+        connect: offersConnect
+          ? {
+            label: link.reconnectRequired ? 'Reconnect' : `Connect ${name}`,
+            // A demo fixture gets the control inert rather than absent: the
+            // real flow would navigate straight out of the fixture.
+            href: demo ? null : `/api/me/social-identities/${provider}/connect`,
+          }
+          : null,
+        unlink: link.linked ? { disabled: !!demo } : null,
+        strandedNote: link.pendingAttemptAt
+          ? `Your last ${name} connection attempt didn't complete. `
+            + `If ${name} showed "Something went wrong — You weren't able to give access to the App", `
+            + `the platform's callback address isn't registered on the ${name} developer app — `
+            + 'an administrator needs to update that app’s settings.'
+          : null,
+        diagnostics: link.diagnostics
+          ? this._socialIdentityDiagnosticsView(provider, link.diagnostics, demo)
+          : null,
+      };
     },
 
-    // Admin-only configuration panel for a provider whose OAuth setup can
-    // fail invisibly on the provider's own page (#1291): names the
-    // credential pair in use, the exact callback URL the developer app must
-    // register, and a live check of the pair against X's token endpoint.
-    _socialIdentityDiagnostics(provider, diagnostics, demo) {
+    // The admin-only configuration panel (#1291): the credential pair in use,
+    // the callback URL the developer app must register, and a live check of
+    // the pair. The transient halves — the Copy control's "Copied" flash and
+    // the check's in-flight/verdict line — are ./social-identity.tsx's own
+    // state: they were local variables closed over by a listener, and they
+    // never leave that subtree.
+    _socialIdentityDiagnosticsView(provider, diagnostics, demo) {
       const name = provider === 'github' ? 'GitHub' : 'X';
-      const panel = document.createElement('div');
-      panel.id = `${provider}-link-diagnostics`;
-      panel.className = 'mt-2 rounded-md border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 px-2.5 py-2 text-xs';
-
-      const source = document.createElement('div');
-      source.className = 'font-medium text-zinc-700 dark:text-zinc-300';
+      let source;
       if (diagnostics.credentialSource === 'waitlist') {
-        source.textContent = `Reusing the waitlist ${name} app’s credentials.`;
+        source = `Reusing the waitlist ${name} app’s credentials.`;
       } else if (diagnostics.credentialSource === 'dedicated') {
-        source.textContent = diagnostics.sameAppAsWaitlist
+        source = diagnostics.sameAppAsWaitlist
           ? `Dedicated ${name} credentials — same app as the waitlist pair.`
           : `Dedicated ${name} app credentials.`;
       } else {
-        source.textContent = `No complete ${name} credential pair is configured.`;
+        source = `No complete ${name} credential pair is configured.`;
       }
-      panel.appendChild(source);
-
-      const cbRow = document.createElement('div');
-      cbRow.className = 'mt-1 flex items-center gap-2 min-w-0';
-      const cbLabel = document.createElement('span');
-      cbLabel.className = 'text-zinc-500 dark:text-zinc-400 shrink-0';
-      cbLabel.textContent = 'Callback URI:';
-      const cbCode = document.createElement('code');
-      cbCode.className = 'truncate text-zinc-700 dark:text-zinc-300 bg-zinc-100 dark:bg-zinc-800 rounded px-1 py-0.5';
-      cbCode.textContent = diagnostics.callbackUrl || '';
-      const cbCopy = document.createElement('button');
-      cbCopy.type = 'button';
-      cbCopy.className = 'shrink-0 rounded border border-zinc-300 dark:border-zinc-600 px-1.5 py-0.5 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors';
-      cbCopy.textContent = 'Copy';
-      cbCopy.addEventListener('click', async () => {
-        try {
-          await navigator.clipboard.writeText(diagnostics.callbackUrl || '');
-          cbCopy.textContent = 'Copied';
-          setTimeout(() => { cbCopy.textContent = 'Copy'; }, 1500);
-        } catch { /* clipboard unavailable — the address is still visible */ }
-      });
-      cbRow.append(cbLabel, cbCode, cbCopy);
-      panel.appendChild(cbRow);
-
-      const warning = document.createElement('p');
-      warning.className = 'mt-1 text-zinc-500 dark:text-zinc-400';
-      warning.textContent = `If this address isn’t registered as a callback URI on the ${name} developer app, `
-        + `${name} shows "Something went wrong" before sign-in and never redirects back here.`;
-      panel.appendChild(warning);
-
-      const checkRow = document.createElement('div');
-      checkRow.className = 'mt-2 flex items-start gap-2';
-      const checkButton = document.createElement('button');
-      checkButton.type = 'button';
-      checkButton.id = `${provider}-link-check`;
-      checkButton.className = 'shrink-0 rounded-md border border-violet-400 dark:border-violet-700 px-2 py-1 font-medium text-violet-700 dark:text-violet-300 hover:bg-violet-50 dark:hover:bg-violet-950 disabled:opacity-50 transition-colors';
-      checkButton.textContent = 'Run configuration check';
-      const checkResult = document.createElement('span');
-      checkResult.className = 'text-zinc-500 dark:text-zinc-400 pt-1';
-      checkButton.addEventListener('click', async () => {
-        checkButton.disabled = true;
-        checkResult.className = 'text-zinc-500 dark:text-zinc-400 pt-1';
-        checkResult.textContent = 'Checking…';
-        try {
-          let verdict;
-          if (demo) {
-            verdict = { clientAuth: 'ok' };
-          } else {
-            const response = await fetch('/api/me/social-identities/x/check', {
-              method: 'POST',
-              credentials: 'same-origin',
-              cache: 'no-store',
-            });
-            if (!response.ok) throw new Error(`Check failed (${response.status})`);
-            verdict = await response.json();
-          }
-          if (verdict.clientAuth === 'ok') {
-            checkResult.className = 'text-emerald-600 dark:text-emerald-400 pt-1';
-            checkResult.textContent = `${name} accepted the platform’s client credentials. `
-              + `If connecting still fails on ${name}’s own page, the callback address above `
-              + `is not registered on the ${name} app.`;
-          } else if (verdict.clientAuth === 'rejected') {
-            checkResult.className = 'text-red-600 dark:text-red-400 pt-1';
-            checkResult.textContent = `${name} rejected the platform’s client ID or secret — `
-              + 'the configured credential pair is wrong.';
-          } else {
-            checkResult.className = 'text-amber-600 dark:text-amber-400 pt-1';
-            checkResult.textContent = `Couldn’t reach ${name} to verify the credentials. Try again shortly.`;
-          }
-        } catch {
-          checkResult.className = 'text-red-600 dark:text-red-400 pt-1';
-          checkResult.textContent = 'The configuration check failed to run. Try again shortly.';
-        } finally {
-          checkButton.disabled = false;
-        }
-      });
-      checkRow.append(checkButton, checkResult);
-      panel.appendChild(checkRow);
-      return panel;
+      return {
+        provider,
+        name,
+        source,
+        callbackUrl: diagnostics.callbackUrl || '',
+        warning: `If this address isn’t registered as a callback URI on the ${name} developer app, `
+          + `${name} shows "Something went wrong" before sign-in and never redirects back here.`,
+        demo: !!demo,
+      };
     },
 
-    // "Don't take our word for it": GitHub's own page lists what every
-    // authorized OAuth app can reach, so the claim above is checkable in one
-    // click. Deliberately a top-level link (target=_blank + noopener) — the
-    // shell is framed, and github.com refuses to be framed.
-    _githubAuditNote() {
-      return this._socialIdentityAuditNote('github');
-    },
-
-    _socialIdentityAuditNote(provider) {
-      const note = document.createElement('p');
-      if (provider === 'github') note.id = 'github-link-audit-note';
-      note.className = 'text-xs text-zinc-500 dark:text-zinc-500 mt-2';
-      note.appendChild(document.createTextNode('Review or revoke this authorization at '));
-      const anchor = document.createElement('a');
-      anchor.href = provider === 'github'
-        ? 'https://github.com/settings/applications'
-        : 'https://x.com/settings/connected_apps';
-      anchor.target = '_blank';
-      anchor.rel = 'noopener noreferrer';
-      anchor.className = 'text-violet-600 dark:text-violet-400 hover:underline';
-      anchor.textContent = provider === 'github'
-        ? 'github.com/settings/applications'
-        : 'x.com/settings/connected_apps';
-      note.appendChild(anchor);
-      note.appendChild(document.createTextNode('.'));
-      return note;
-    },
+    // `_socialIdentityAuditNote` / `_githubAuditNote` lived here — the
+    // "don't take our word for it" line linking to the provider's own list of
+    // authorized apps. It is ./social-identity.tsx's `<AuditNote>` now, with
+    // the same top-level-link discipline (target=_blank + noopener), because
+    // the shell is framed and neither provider allows being framed.
 
     _socialIdentityCallbackStatus(status) {
       if (!status) return;
