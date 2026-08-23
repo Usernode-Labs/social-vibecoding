@@ -1051,6 +1051,7 @@ const AdminConsole = {
     codes: 'AdminCodes',
     'featured-apps': 'AdminFeaturedApps',
     'db-export': 'AdminDbExport',
+    features: 'AdminFeatures',
     status: 'AdminStatus',
     node: 'AdminNode',
     analytics: 'AdminAnalytics',
@@ -1129,7 +1130,6 @@ const AdminConsole = {
     switch (key) {
       case 'users': return AdminConsole.renderUsersSection(host);
       case 'limits': return AdminConsole.renderLimitsSection(host);
-      case 'features': return AdminConsole.renderFeaturesSection(host);
       case 'rollover': return AdminConsole.renderRolloverSection(host);
       case 'staging-reap': return AdminConsole.renderStalePreviewsSection(host);
       // Anything the address bar names that this build does not know about
@@ -2500,182 +2500,6 @@ const AdminConsole = {
       valueEl.textContent = '';
     };
     modal.classList.remove('hidden');
-  },
-
-  // ── Submitted features (cross-app, ported from admin-features.js) ──────
-
-  // The endpoint caps limit at 200; also the CSV paging page size.
-  FEATURES_PAGE: 200,
-  FEATURES_CSV_FIELDS: [
-    'id', 'app_id', 'app_slug', 'app_name', 'title', 'description',
-    'kind', 'status', 'github_issue_number', 'created_at',
-    'created_by', 'created_by_username', 'up_count', 'down_count',
-  ],
-  FEATURES_STATUS_BADGE: {
-    open:      { label: 'Open',    cls: 'bg-green-500/20 text-green-600 dark:text-green-300' },
-    closed:    { label: 'Closed',  cls: 'bg-zinc-500/20 text-zinc-600 dark:text-zinc-300' },
-    completed: { label: 'Shipped', cls: 'bg-violet-500/20 text-violet-600 dark:text-violet-300' },
-  },
-
-  renderFeaturesSection(host) {
-    host.innerHTML = `
-      <div class="${AdminUI.card} p-4">
-        <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
-          <h2 class="${AdminUI.cardTitle}">Submitted features</h2>
-          <div class="flex items-center gap-2">
-            <select id="admin-features-status" class="rounded bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 px-2 py-1 text-xs">
-              <option value="all" selected>All</option>
-              <option value="open">Open</option>
-              <option value="closed">Closed</option>
-              <option value="completed">Shipped</option>
-            </select>
-            <button id="admin-features-refresh" class="${AdminUI.btn.link} text-xs px-1 py-1">Refresh</button>
-            <button id="admin-features-csv" class="${AdminUI.btn.primarySm}">Download CSV</button>
-          </div>
-        </div>
-        <p id="admin-features-summary" class="text-xs text-zinc-500 dark:text-zinc-400 mb-3"></p>
-        <div id="admin-features-list" class="space-y-3"></div>
-        <p id="admin-features-empty" class="text-sm text-zinc-500 dark:text-zinc-400 hidden"></p>
-      </div>`;
-    document.getElementById('admin-features-status')
-      .addEventListener('change', () => AdminConsole.loadFeatures());
-    document.getElementById('admin-features-refresh')
-      .addEventListener('click', () => AdminConsole.loadFeatures());
-    document.getElementById('admin-features-csv')
-      .addEventListener('click', () => AdminConsole.downloadFeaturesCsv());
-    AdminConsole.loadFeatures();
-  },
-
-  _featuresStatus() {
-    // Default 'all' so an admin lands on the full cross-app list — shipped
-    // features carry status='completed', invisible under open/closed (#565).
-    return document.getElementById('admin-features-status')?.value || 'all';
-  },
-
-  _fmtTime(iso) {
-    if (!iso) return '';
-    try { return new Date(iso).toLocaleString(); } catch { return iso; }
-  },
-
-  _featureCard(f, rank) {
-    const esc = AdminConsole.esc;
-    const b = AdminConsole.FEATURES_STATUS_BADGE[f.status]
-      || { label: f.status || '—', cls: 'bg-zinc-500/20 text-zinc-600 dark:text-zinc-300' };
-    const el = document.createElement('div');
-    el.className = 'border border-zinc-200 dark:border-zinc-800 rounded-lg bg-zinc-100 dark:bg-zinc-800/60 p-4';
-    const gh = f.github_issue_number
-      ? `<span class="text-xs text-zinc-500 dark:text-zinc-400">GitHub #${esc(f.github_issue_number)}</span>` : '';
-    const submitter = f.created_by_username ? esc(f.created_by_username) : '—';
-    el.innerHTML = `
-      <div class="flex items-start gap-3">
-        <div class="text-zinc-400 font-mono text-sm pt-0.5 w-8 shrink-0">#${rank}</div>
-        <div class="flex-1 min-w-0">
-          <div class="flex items-center gap-2 flex-wrap">
-            <span class="font-semibold">${esc(f.title)}</span>
-            <span class="text-[11px] font-semibold px-2 py-0.5 rounded ${b.cls}">${esc(b.label)}</span>
-          </div>
-          ${f.description ? `<div class="text-sm text-zinc-500 dark:text-zinc-400 mt-1 whitespace-pre-wrap break-words">${esc(f.description)}</div>` : ''}
-          <div class="text-xs text-zinc-500 dark:text-zinc-400 mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
-            <span class="text-violet-500 dark:text-violet-400">${esc(f.app_name)}</span>
-            <span class="text-zinc-500 dark:text-zinc-400">${esc(f.app_slug)}</span>
-            <span>by ${submitter}</span>
-            <span>${esc(AdminConsole._fmtTime(f.created_at))}</span>
-            ${gh}
-          </div>
-        </div>
-        <div class="text-right text-sm shrink-0">
-          <div class="text-green-500 dark:text-green-400 font-semibold">▲ ${esc(f.up_count)}</div>
-          <div class="text-zinc-400">▼ ${esc(f.down_count)}</div>
-        </div>
-      </div>`;
-    return el;
-  },
-
-  async loadFeatures() {
-    const status = AdminConsole._featuresStatus();
-    const container = document.getElementById('admin-features-list');
-    const empty = document.getElementById('admin-features-empty');
-    const summary = document.getElementById('admin-features-summary');
-    if (!container) return;
-    container.innerHTML = '';
-    empty.classList.add('hidden');
-    summary.textContent = 'Loading…';
-
-    const { status: httpStatus, data } = await AdminConsole.fetchJson(
-      `/api/admin/submitted-features?status=${encodeURIComponent(status)}&limit=${AdminConsole.FEATURES_PAGE}&offset=0`);
-    if (AdminConsole._section !== 'features') return;
-    if (httpStatus === 403) {
-      summary.textContent = 'Admin access required.';
-      return;
-    }
-    if (!data || typeof data !== 'object') {
-      summary.textContent = 'Couldn’t load submitted features — try Refresh.';
-      return;
-    }
-
-    const features = data.features || [];
-    const total = typeof data.total === 'number' ? data.total : features.length;
-    if (!features.length) {
-      summary.textContent = '';
-      empty.textContent = status === 'all'
-        ? 'No submitted features yet.'
-        : 'No submitted features match this filter — try the “All” status.';
-      empty.classList.remove('hidden');
-      return;
-    }
-    features.forEach((f, i) => container.appendChild(AdminConsole._featureCard(f, i + 1)));
-    summary.textContent = total > features.length
-      ? `Showing the top ${features.length} of ${total} — use Download CSV for the full list.`
-      : `${total} feature${total === 1 ? '' : 's'}.`;
-  },
-
-  _csvCell(v) {
-    return '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
-  },
-
-  async downloadFeaturesCsv() {
-    const btn = document.getElementById('admin-features-csv');
-    const status = AdminConsole._featuresStatus();
-    const original = btn.textContent;
-    btn.disabled = true;
-    btn.textContent = 'Preparing…';
-    try {
-      // Pull the ENTIRE filtered set (looping the offset param), not just
-      // the visible page. Hard iteration cap guards a non-advancing page.
-      const all = [];
-      let offset = 0;
-      let total = Infinity;
-      for (let guard = 0; guard < 10000 && all.length < total; guard++) {
-        const { ok, data } = await AdminConsole.fetchJson(
-          `/api/admin/submitted-features?status=${encodeURIComponent(status)}&limit=${AdminConsole.FEATURES_PAGE}&offset=${offset}`);
-        if (!ok || !data) throw new Error('export failed');
-        const batch = data.features || [];
-        if (typeof data.total === 'number') total = data.total;
-        if (!batch.length) break;
-        all.push(...batch);
-        offset += AdminConsole.FEATURES_PAGE;
-        if (batch.length < AdminConsole.FEATURES_PAGE) break;
-      }
-      const lines = [AdminConsole.FEATURES_CSV_FIELDS.map(AdminConsole._csvCell).join(',')];
-      for (const r of all) {
-        lines.push(AdminConsole.FEATURES_CSV_FIELDS.map((k) => AdminConsole._csvCell(r[k])).join(','));
-      }
-      const blob = new Blob([lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `submitted-features-${status}.csv`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 0);
-    } catch {
-      const summary = document.getElementById('admin-features-summary');
-      if (summary) summary.textContent = 'CSV export failed — try again.';
-    } finally {
-      btn.disabled = false;
-      btn.textContent = original;
-    }
   }
 };
 
