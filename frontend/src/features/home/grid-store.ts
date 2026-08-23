@@ -100,6 +100,13 @@ export interface HomeGridState {
   resultsHeading: string | null;
   /** Search view only: the query that matched nothing, or null. */
   emptyQuery: string | null;
+  /**
+   * A whole-grid message from the LOAD path — offline with an empty cache, or
+   * a failed fetch. It is in the model rather than written into `#app-list`
+   * because React owns that subtree: an imperative write here would be a
+   * second writer, and would be painted straight back over by the next push.
+   */
+  notice: { text: string; tone: 'muted' | 'error' } | null;
 }
 
 export const INITIAL_GRID: HomeGridState = {
@@ -109,6 +116,7 @@ export const INITIAL_GRID: HomeGridState = {
   items: [],
   resultsHeading: null,
   emptyQuery: null,
+  notice: null,
 };
 
 export const gridStore = createStore<HomeGridState>(INITIAL_GRID);

@@ -58,4 +58,5 @@ test('the initial state renders NOTHING, which is the prerendered markup', () =>
   assert.equal(INITIAL_GRID.rowTemplate, '');
   assert.equal(INITIAL_GRID.resultsHeading, null);
   assert.equal(INITIAL_GRID.emptyQuery, null);
+  assert.equal(INITIAL_GRID.notice, null);
 });

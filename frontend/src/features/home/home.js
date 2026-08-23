@@ -86,7 +86,6 @@ const Home = {
     };
     window.HomePanels?.ensureLoaded()?.then(repaint);
     Home._ensureLayoutLoaded()?.then(repaint);
-    const listEl = document.getElementById('app-list');
 
     try {
       // The viewer's own proposals / active sessions used to ride along
@@ -125,14 +124,24 @@ const Home = {
         if (Home._apps.length) {
           Home.render();
         } else {
-          listEl.innerHTML = `<div class="col-span-full p-4 text-sm text-zinc-500 dark:text-zinc-400">`
-            + `You're offline — apps you've opened before will appear here once this device `
-            + `has loaded them.</div>`;
+          gridStore.set({
+            ready: true, view: 'grid', rowTemplate: '', items: [],
+            resultsHeading: null, emptyQuery: null,
+            notice: {
+              text: "You're offline — apps you've opened before will appear here once this "
+                + 'device has loaded them.',
+              tone: 'muted',
+            },
+          });
         }
         try { Offline.nudge(); } catch (_) { /* ignore */ }
         return;
       }
-      listEl.innerHTML = `<div class="col-span-full p-4 text-red-400 text-sm">Failed to load apps</div>`;
+      gridStore.set({
+        ready: true, view: 'grid', rowTemplate: '', items: [],
+        resultsHeading: null, emptyQuery: null,
+        notice: { text: 'Failed to load apps', tone: 'error' },
+      });
     }
   },
 
@@ -543,7 +552,7 @@ const Home = {
     // desktop and the search view get — app.css's grid-auto-rows is then the
     // only row sizing, exactly as before. Written BEFORE the innerHTML so the
     // first layout of the new children already has its tracks.
-    gridStore.set({ ready: true, view, rowTemplate, items, resultsHeading, emptyQuery });
+    gridStore.set({ ready: true, view, rowTemplate, items, resultsHeading, emptyQuery, notice: null });
     Home._renderAppsMore(moreCount);
     // The iOS widget-editing strip renders ABOVE the grid, in its own
     // section: a full-width flow item cannot coexist with explicit cell

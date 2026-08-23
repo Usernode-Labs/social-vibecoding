@@ -246,6 +246,15 @@ export function AppGrid() {
       className="grid grid-cols-4 gap-1.5 sm:gap-2 p-2 pt-1.5 sm:p-3 sm:pt-2"
       data-view={state.ready ? state.view : undefined}
     >
+      {state.notice ? (
+        <div
+          className={`col-span-full p-4 text-sm ${
+            state.notice.tone === 'error' ? 'text-red-400' : 'text-zinc-500 dark:text-zinc-400'
+          }`}
+        >
+          {state.notice.text}
+        </div>
+      ) : null}
       {state.emptyQuery !== null ? (
         <div className="col-span-full py-10 text-center text-sm text-zinc-500 dark:text-zinc-400">
           {`No apps match “${state.emptyQuery}” — clear the search and try `}
