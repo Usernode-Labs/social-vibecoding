@@ -97,6 +97,11 @@ const CHROME = process.env.CHROME_PATH
  * un-converted section's own `innerHTML` would report as a violation.
  */
 const OWNED = [
+  // `#home-grid-overlay` is appended into this host by home.js during a drag,
+  // which this sweep never performs and so never sees. It is a deliberate
+  // exception resting on a timing invariant rather than a boundary — the
+  // reasoning is at Home._showGridOverlay and the invariant is pinned by
+  // tests/home-grid-placement.test.js.
   { sel: '#app-list' },                      // features/home/app-grid.tsx
   { sel: '#home-apps-more' },                // features/home/apps-more.tsx
   // The strip's tiles are React's; the kit's reorder recognizer moves those

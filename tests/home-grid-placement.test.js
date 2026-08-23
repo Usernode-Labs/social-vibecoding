@@ -1399,3 +1399,70 @@ test('the demo layout survives repair for a viewer with no apps of their own', (
   assert.ok(ids.includes('app:staging-demo-image-icon'));
   assert.equal(layout.filter((i) => i.type === 'app').length, 2);
 });
+
+
+// ── The drag-time overlay lives INSIDE a React-owned host ─────────────
+//
+// `_showGridOverlay` appends `#home-grid-overlay` into `#app-list`, and
+// `#app-list` is `features/home/app-grid.tsx`'s subtree. That is a second
+// writer under an owned host — the thing AGENTS.md's ownership rule exists to
+// forbid — and it is deliberate, because the alternatives are worse: the
+// overlay's inset mirrors #app-list's padding EXACTLY at both breakpoints
+// (app.css says so, twice) and `_rectForCell` measures those cell elements to
+// land a committed drop, so moving it out would re-derive geometry that is
+// currently free.
+//
+// What makes it safe is a timing invariant rather than a boundary: the overlay
+// exists ONLY between onLift and onSettle, and React cannot reconcile
+// `#app-list` in that window because every path that publishes the grid model
+// returns early while `_dragActive` holds. The audit
+// (scripts/audit-react-ownership.mjs) cannot check this — it never drags — so
+// it is checked here, on both halves:
+//
+//   1. Executed: with the guard held, neither entry point publishes.
+//   2. Complete: there is no THIRD publisher for the guard to miss.
+//
+// Break either half and the failure is the one the rule describes — React
+// reconciling over a subtree the drag is mutating, mid-gesture.
+
+test('no grid model is published while a drag holds the guard', async () => {
+  const { Home, gridStore } = makeHome();
+  Home._apps = [app('alpha'), app('beta')];
+  Home._layoutFetchedAt = Date.now();
+  Home.render();
+  const painted = gridStore.get();
+  assert.equal(painted.ready, true, 'a normal render publishes');
+
+  Home._dragActive = true;
+  Home._query = 'alpha';           // a search keystroke mid-drag
+  Home.render();
+  assert.equal(gridStore.get(), painted, 'render() defers instead of republishing');
+  assert.equal(Home._reloadPending, true, 'and records what it owes');
+
+  Home._reloadPending = false;
+  await Home.load();               // a WS app_status mid-drag
+  assert.equal(gridStore.get(), painted, 'load() defers too');
+  assert.equal(Home._reloadPending, true);
+});
+
+test('render() and load() are the only publishers of the grid model', () => {
+  // Comments first — the note above names the store it is about.
+  const code = HOME_SRC
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^[ \t]*\/\/.*$/gm, '');
+  const sites = [...code.matchAll(/gridStore\.\w+\(/g)].map((m) => m.index);
+  assert.equal(sites.length, 3,
+    'a new gridStore write needs its own drag guard — see the note above');
+  // Each one is inside load() (its two failure paths) or render() (the paint).
+  const load = code.indexOf('async load() {');
+  const render = code.indexOf('  render() {');
+  const afterRender = code.indexOf('  _renderAppsMore(count) {');
+  assert.ok(load > 0 && render > load && afterRender > render);
+  const inLoad = sites.filter((at) => at > load && at < render).length;
+  const inRender = sites.filter((at) => at > render && at < afterRender).length;
+  assert.equal(inLoad, 2, 'load()\'s offline and failure notices');
+  assert.equal(inRender, 1, 'the paint');
+  // And both entry points open with the guard.
+  assert.match(code.slice(load, load + 400), /if \(Home\._dragActive\) \{\s*Home\._reloadPending = true;\s*return;/);
+  assert.match(code.slice(render, render + 300), /if \(Home\._dragActive\) \{\s*Home\._reloadPending = true;\s*return;/);
+});

@@ -3300,6 +3300,21 @@ const Home = {
     return tracks.join(' ');
   },
 
+  // ── This appends INTO a React-owned host, and that is deliberate ───
+  //
+  // `#app-list` is features/home/app-grid.tsx's subtree, so `#home-grid-overlay`
+  // is a second writer under an owned host. Moving it out would mean
+  // re-deriving geometry that is currently free: the overlay's inset mirrors
+  // #app-list's padding exactly at both breakpoints (app.css says so, twice)
+  // and _rectForCell measures these cell elements to land a committed drop.
+  //
+  // What makes it safe is a timing invariant, not a boundary. The overlay
+  // exists only between onLift and onSettle, and React cannot reconcile
+  // #app-list in that window: render() and load() are the only publishers of
+  // the grid model and both return early while _dragActive holds.
+  // tests/home-grid-placement.test.js pins both halves — the deferral and the
+  // absence of a third publisher — because the ownership audit never drags and
+  // therefore cannot see any of this.
   _showGridOverlay(listEl, cols, liftedEl) {
     Home._hideGridOverlay();
     if (!listEl) return;
