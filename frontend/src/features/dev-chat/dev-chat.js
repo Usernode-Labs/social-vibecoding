@@ -7925,7 +7925,7 @@ const DevChat = {
                 title="${escapeHtml(DevChat.SAVE_DRAFT_TITLE)}" aria-label="Save as draft">
                 ${DevChat._SAVE_ICON_SVG}
               </button>
-              <button type="submit" id="dc-send-btn" class="dc-send-btn rounded-lg bg-emerald-600 hover:bg-emerald-500 px-4 py-2 text-sm font-medium text-white transition-colors shrink-0">
+              <button type="submit" id="dc-send-btn" class="dc-send-btn rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors shrink-0">
                 Send
               </button>
             </form>
