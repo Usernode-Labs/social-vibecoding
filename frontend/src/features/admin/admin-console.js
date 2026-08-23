@@ -1045,6 +1045,9 @@ const AdminConsole = {
   // polling when you navigate away. Resolved lazily by name so a module
   // that failed to load degrades to a message instead of a crash.
   SECTION_MODULES: {
+    // `overview` is also the console's DEFAULT section — see the `default:`
+    // arm of _renderSection, which dispatches through the same helper.
+    overview: 'AdminOverview',
     status: 'AdminStatus',
     node: 'AdminNode',
     analytics: 'AdminAnalytics',
@@ -1119,16 +1122,7 @@ const AdminConsole = {
 
     const key = AdminConsole._section;
     const modName = AdminConsole.SECTION_MODULES[key];
-    if (modName) {
-      const mod = window[modName];
-      if (!mod || typeof mod.render !== 'function') {
-        host.innerHTML = `<p class="${AdminUI.muted} p-4">The ${AdminConsole.esc(key)} console module failed to load.</p>`;
-        return;
-      }
-      AdminConsole._activeModule = mod;
-      mod.render(host);
-      return;
-    }
+    if (modName) return AdminConsole._renderModule(host, modName, key);
     switch (key) {
       case 'users': return AdminConsole.renderUsersSection(host);
       case 'codes': return AdminConsole.renderCodesSection(host);
@@ -1138,8 +1132,24 @@ const AdminConsole = {
       case 'rollover': return AdminConsole.renderRolloverSection(host);
       case 'staging-reap': return AdminConsole.renderStalePreviewsSection(host);
       case 'db-export': return AdminConsole.renderDbExportSection(host);
-      default: return AdminConsole.renderOverviewSection(host);
+      // Anything the address bar names that this build does not know about
+      // lands on the default section, which is Overview — a delegated module
+      // since #1120, so it goes through the same dispatch.
+      default: return AdminConsole._renderModule(host, 'AdminOverview', 'overview');
     }
+  },
+
+  // Hand a section host to a delegated module, and remember it so the next
+  // switch can tear it down. Extracted from _renderSection when `overview`
+  // became a module: it is now reachable both by name and as the default.
+  _renderModule(host, modName, key) {
+    const mod = window[modName];
+    if (!mod || typeof mod.render !== 'function') {
+      host.innerHTML = `<p class="${AdminUI.muted} p-4">The ${AdminConsole.esc(key)} console module failed to load.</p>`;
+      return;
+    }
+    AdminConsole._activeModule = mod;
+    mod.render(host);
   },
 
   // ── Delegated sections ──────────────────────────────────────────────
@@ -1876,113 +1886,6 @@ const AdminConsole = {
   },
 
   // ── Overview (operations snapshot) ─────────────────────────────────────
-
-  renderOverviewSection(host) {
-    host.innerHTML = `
-      <div class="${AdminUI.card} p-4">
-        <div class="flex items-center justify-between mb-3">
-          <h2 class="${AdminUI.cardTitle}">Operations</h2>
-          <button id="admin-refresh-overview" class="${AdminUI.btn.link} text-xs">Refresh</button>
-        </div>
-        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
-          <div class="rounded-lg bg-zinc-100 dark:bg-zinc-800 p-3">
-            <div class="text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Stuck apps</div>
-            <div id="admin-overview-stuck" class="text-2xl font-bold mt-1">—</div>
-          </div>
-          <div class="rounded-lg bg-zinc-100 dark:bg-zinc-800 p-3">
-            <div class="text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400">LLM spend today</div>
-            <div id="admin-overview-llm" class="text-2xl font-bold mt-1">—</div>
-          </div>
-          <div class="rounded-lg bg-zinc-100 dark:bg-zinc-800 p-3">
-            <div class="text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Orphan workers</div>
-            <div id="admin-overview-orphan" class="text-2xl font-bold mt-1">—</div>
-          </div>
-        </div>
-        <div id="admin-overview-details" class="space-y-3 text-sm">
-          <p class="text-xs text-zinc-500 dark:text-zinc-400">Loading…</p>
-        </div>
-      </div>`;
-    document.getElementById('admin-refresh-overview')
-      .addEventListener('click', () => AdminConsole.loadOverview());
-    AdminConsole.loadOverview();
-  },
-
-  async loadOverview() {
-    // status.gather can take a moment; the tiles show em-dashes until it
-    // lands, and only this section blocks — never the whole page.
-    const { data } = await AdminConsole.fetchJson('/api/admin/overview');
-    if (!data || typeof data !== 'object') return;
-    if (AdminConsole._section !== 'overview') return; // navigated away mid-fetch
-    AdminConsole._paintOverview(data);
-  },
-
-  _paintOverview(data) {
-    const esc = AdminConsole.esc;
-    const stuck = data.stuckApps || [];
-    const orphans = data.orphanWorkers || [];
-    const llm = data.llmToday || { totalSpendCents: 0, users: [] };
-
-    const stuckEl = document.getElementById('admin-overview-stuck');
-    const orphanEl = document.getElementById('admin-overview-orphan');
-    const llmEl = document.getElementById('admin-overview-llm');
-    const detail = document.getElementById('admin-overview-details');
-    if (!stuckEl || !detail) return;
-    stuckEl.textContent = String(stuck.length);
-    orphanEl.textContent = String(orphans.length);
-    llmEl.textContent = `$${(llm.totalSpendCents / 100).toFixed(2)}`;
-
-    detail.innerHTML = '';
-    if (stuck.length) {
-      const sec = document.createElement('div');
-      sec.innerHTML = `
-        <div class="text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400 mb-1">Stuck apps</div>
-        <ul class="space-y-1">
-          ${stuck.map((a) => `
-            <li class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 p-2 rounded bg-zinc-100 dark:bg-zinc-800">
-              <span>
-                <span class="font-mono">${esc(a.slug)}</span>
-                <span class="text-xs text-zinc-500 dark:text-zinc-400">(${esc(a.dbStatus)}, by ${esc(a.createdBy || '—')})</span>
-              </span>
-              <span class="text-xs text-zinc-500 dark:text-zinc-400">${new Date(a.createdAt).toLocaleString()}</span>
-            </li>`).join('')}
-        </ul>`;
-      detail.appendChild(sec);
-    }
-    if (orphans.length) {
-      const sec = document.createElement('div');
-      sec.innerHTML = `
-        <div class="text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400 mb-1">Orphan workers</div>
-        <ul class="space-y-1">
-          ${orphans.map((w) => `
-            <li class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 p-2 rounded bg-zinc-100 dark:bg-zinc-800">
-              <span>
-                <span class="font-mono">${esc(w.name)}</span>
-                <span class="text-xs text-zinc-500 dark:text-zinc-400">
-                  ${w.appSlug ? `app ${esc(w.appSlug)}` : 'no app'}
-                  · up ${Math.round((w.uptimeSeconds || 0) / 60)}m
-                  ${w.sessionArchived ? '· session archived' : ''}
-                </span>
-              </span>
-            </li>`).join('')}
-        </ul>`;
-      detail.appendChild(sec);
-    }
-    if (llm.users?.length) {
-      const sec = document.createElement('div');
-      const rows = llm.users.slice(0, 5).map((u) =>
-        `<li class="flex items-center justify-between gap-3 p-2 rounded bg-zinc-100 dark:bg-zinc-800">
-          <span>${esc(u.username)}</span>
-          <span class="text-xs font-mono text-zinc-400">$${(u.costCents / 100).toFixed(2)}</span>
-        </li>`).join('');
-      sec.innerHTML = `
-        <div class="text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400 mb-1">Top LLM spenders today</div>
-        <ul class="space-y-1">${rows}</ul>`;
-      detail.appendChild(sec);
-    }
-    if (!detail.children.length) {
-      detail.innerHTML = '<p class="text-xs text-zinc-500 dark:text-zinc-400">All clear — no stuck apps, no orphan workers, no LLM spend recorded today.</p>';
-    }
-  },
 
   // ── Spend limits ────────────────────────────────────────────────────────
 

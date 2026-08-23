@@ -94,11 +94,14 @@ test('the admin screen ships hidden in the shell like its siblings', () => {
     'the section host ships EMPTY: sections render into it from the module');
 });
 
-test('the console island imports all eleven admin modules, console first', () => {
-  // The load-order cluster the retired <script> tags used to express. The ten
+test('the console island imports all twelve admin modules, console first', () => {
+  // The load-order cluster the retired <script> tags used to express. The
   // section modules read the AdminUI registry admin-console.js exports, and
   // admin-topochain.js reads it while its module body evaluates — so if the
   // console import ever stops coming first, the prerender pass throws.
+  //
+  // `admin-overview` joined the list in #1120 slice 16, when the console's own
+  // default section moved out of the chassis into a module of its own.
   const island = fs.readFileSync(
     path.join(root, 'frontend/src/features/admin/index.tsx'), 'utf8');
   // `.tsx` as well as `.js`: sections are converting to React one at a time
@@ -109,9 +112,9 @@ test('the console island imports all eleven admin modules, console first', () =>
   assert.equal(order[0], 'admin-console', 'admin-console.js is imported first');
   assert.deepEqual(order.slice(1).sort(), [
     'admin-analytics', 'admin-campaigns', 'admin-estimator', 'admin-gallery',
-    'admin-mail', 'admin-merges', 'admin-node', 'admin-push', 'admin-status',
-    'admin-topochain',
-  ], 'all ten section modules are imported by the island');
+    'admin-mail', 'admin-merges', 'admin-node', 'admin-overview', 'admin-push',
+    'admin-status', 'admin-topochain',
+  ], 'all eleven section modules are imported by the island');
 });
 
 test('every full-screen exit path also exits the admin screen', () => {
@@ -280,7 +283,9 @@ test('every section module exposes destroy(), and switches call it first', () =>
   const renderSection = consoleJs.slice(consoleJs.indexOf('  _renderSection() {'));
   const head = renderSection.slice(0, 1200);
   const teardownAt = head.indexOf('_teardownActiveSection()');
-  const renderAt = head.indexOf('mod.render(host)');
+  // The dispatch body is `_renderModule` since #1120 slice 16 — `overview`
+  // became a module, so the switch's `default:` arm needed the same path.
+  const renderAt = head.indexOf('_renderModule(host, modName, key)');
   assert.ok(teardownAt > -1, '_renderSection tears the previous section down');
   assert.ok(renderAt > -1, '_renderSection delegates to the section module');
   assert.ok(teardownAt < renderAt, 'teardown happens BEFORE the next section renders');

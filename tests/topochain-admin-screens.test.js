@@ -116,9 +116,15 @@ test('_renderSection dispatches every promoted screen to AdminTopochain via SECT
     assert.match(modules, new RegExp(`'?${key}'?: 'AdminTopochain'`),
       `SECTION_MODULES maps '${key}' to the AdminTopochain global`);
   }
+  // The dispatch body moved into `_renderModule` in #1120 slice 16, when
+  // `overview` became a module and the switch's `default:` arm had to reach
+  // the same code path. Same single choke point, one function further down.
   const fn = consoleJs.slice(consoleJs.indexOf('  _renderSection() {'));
-  assert.match(fn.slice(0, 1200), /mod\.render\(host\)/,
-    'the dispatcher calls render(host) on the mapped module');
+  assert.match(fn.slice(0, 1200), /_renderModule\(host, modName, key\)/,
+    'the dispatcher hands the host to the mapped module');
+  const dispatch = consoleJs.slice(consoleJs.indexOf('  _renderModule(host, modName, key) {'));
+  assert.match(dispatch.slice(0, 600), /mod\.render\(host\)/,
+    'and _renderModule calls render(host) on it');
   assert.match(consoleJs, /_teardownActiveSection\(\)/,
     'and tears the outgoing section down first');
 });

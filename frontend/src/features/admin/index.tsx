@@ -124,6 +124,7 @@ import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 // admin-console.js FIRST: it exports the AdminUI registry the others import,
 // and admin-topochain.js reads AdminUI.card at module-evaluation time.
 import { AdminUI } from './admin-console.js';
+import './admin-overview.tsx';
 import './admin-status.tsx';
 import './admin-node.tsx';
 import './admin-analytics.tsx';
