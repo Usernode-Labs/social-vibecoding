@@ -206,11 +206,14 @@ test('the four formerly-anonymous section roots got stable ids', () => {
 
 test('no section container is ever innerHTML-written', () => {
   // Section BODIES may still repaint their own dynamic list hosts
-  // (#llm-grants-list, #cli-tokens-list, #agent-files-*-list) exactly as
-  // they did in the modal — those are built by settings.js and carry no
-  // init()-bound listeners. What must never happen is a write that
-  // replaces a WRAPPER or the container holding them, which would detach
-  // every id-bound control at once.
+  // (#cli-tokens-list, #agent-files-*-list) exactly as they did in the modal —
+  // those are built by settings.js and carry no init()-bound listeners.
+  // #llm-grants-list is NOT one of them any more: it is React-owned end to end
+  // (frontend/src/features/settings/grants-list.tsx) and settings.js publishes
+  // a view model to it, which the next test pins.
+  //
+  // What must never happen is a write that replaces a WRAPPER or the container
+  // holding them, which would detach every id-bound control at once.
   for (const forbidden of ['settings-section-content', 'settings-screen', 'settings-root']) {
     assert.doesNotMatch(
       settingsJs,
@@ -220,6 +223,16 @@ test('no section container is ever innerHTML-written', () => {
   }
   assert.doesNotMatch(settingsJs, /data-settings-section[^\n]*innerHTML/,
     'no wrapper is ever rebuilt');
+
+  // #llm-grants-list is React's. settings.js must not reach into it at all:
+  // not innerHTML, not appendChild, not even getElementById. It fetches and
+  // publishes; grants-list.tsx renders. Two writers over one subtree is the
+  // failure the migration's ownership rule exists to prevent, and the row
+  // handlers here are exactly the kind of code that would reach for the node.
+  assert.doesNotMatch(settingsJs, /llm-grants-list/,
+    '#llm-grants-list is React-owned — settings.js publishes to grants-store instead');
+  assert.match(settingsJs, /UsernodeReact\.settingsGrants/,
+    'settings.js reaches the grants store through the published bridge');
 
   // #1191 slice 6, conversion 8: the two nav hosts are React now
   // (frontend/src/features/settings/settings-nav.tsx), so _renderNav pushes

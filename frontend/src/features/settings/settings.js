@@ -3191,9 +3191,11 @@
     // staging:private) grant tables still produce a reviewable list.
 
     async _renderLlmGrants() {
-      const list = document.getElementById('llm-grants-list');
-      if (!list) return;
-      list.innerHTML = '<p class="text-xs text-zinc-500">Loading…</p>';
+      const bridge = (typeof window !== 'undefined' && window.UsernodeReact)
+        ? window.UsernodeReact.settingsGrants : null;
+      if (!bridge) return;
+      const publish = bridge.publish;
+      publish({ phase: 'loading', grants: [] });
       const demo = new URLSearchParams(window.location.search).get('demo') === '1';
       let grants = [];
       try {
@@ -3202,132 +3204,114 @@
         const j = await r.json();
         grants = j.grants || [];
       } catch {
-        list.innerHTML = '<p class="text-xs text-red-500">Failed to load app permissions.</p>';
+        publish({ phase: 'error', grants: [] });
         return;
       }
-      if (!grants.length) {
-        list.innerHTML = '<p class="text-xs text-zinc-500 dark:text-zinc-500">No apps have asked to use AI yet.</p>';
-        return;
-      }
-      list.innerHTML = '';
-      for (const g of grants) list.appendChild(this._llmGrantRow(g));
+      publish({ phase: 'ready', grants: grants.map((g) => this._grantView(g)) });
     },
 
-    _llmGrantRow(g) {
-      const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({
-        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
-      }[c]));
-      const row = document.createElement('div');
-      row.className = 'rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-xs';
-      const revoked = g.status !== 'active';
+    // One grant, as DATA. Every branch the row template used to evaluate
+    // inline is decided here, where `this.state.hasApiKey` and the demo flag
+    // already live — see the note in ./grants-store.js. The money is
+    // pre-formatted for the same reason: cents-to-dollars is this module's
+    // rule, not the component's.
+    _grantView(g) {
       const spent = ((g.spentTodayCents || 0) + (g.byokSpentTodayCents || 0)) / 100;
       const cap = (g.dailyCapCents || 0) / 100;
+      return {
+        appId: g.appId,
+        appName: String(g.appName ?? ''),
+        revoked: g.status !== 'active',
+        spent: spent.toFixed(2),
+        cap: cap.toFixed(2),
+        capValue: cap.toFixed(2),
+        showByok: !!(this.state.hasApiKey || g.allowByok),
+        allowByok: !!g.allowByok,
+      };
+    },
 
-      if (revoked) {
-        row.innerHTML = `
-          <div class="flex items-center justify-between gap-2">
-            <span class="font-medium text-zinc-500 dark:text-zinc-500 truncate">${esc(g.appName)}</span>
-            <span class="shrink-0 rounded px-1.5 py-0.5 bg-zinc-200 dark:bg-zinc-700 text-zinc-500 dark:text-zinc-400">Revoked</span>
-          </div>`;
-        return row;
+    // A fabricated staging row. The demo grant tables are staging:private and
+    // always empty, so ?demo=1 stands in for them — and those rows must never
+    // reach the API.
+    _isDemoGrant(appId) { return appId < 0; },
+
+    // ── The three row handlers ───────────────────────────────────
+    //
+    // These were closures inside the row builder, wired with addEventListener
+    // to nodes it had just created. They are methods now, called by name from
+    // ./grants-list.tsx, because the component owns the markup and this module
+    // owns the writes. Each still reports through _setLlmGrantsStatus and
+    // re-renders on success, exactly as before.
+
+    async _onGrantCapChange(appId, value) {
+      const status = (t, k) => this._setLlmGrantsStatus(t, k);
+      if (this._isDemoGrant(appId)) { status('Demo data — changes are not saved.', 'info'); return; }
+      const cents = Math.round(parseFloat(value) * 100);
+      if (!Number.isFinite(cents) || cents <= 0) {
+        status('Enter a valid cap (at least $0.01).', 'error');
+        return;
       }
-
-      row.innerHTML = `
-        <div class="flex items-center justify-between gap-2">
-          <span class="font-medium text-zinc-700 dark:text-zinc-300 truncate">${esc(g.appName)}</span>
-          <span class="font-mono text-zinc-600 dark:text-zinc-400 shrink-0">$${spent.toFixed(2)} / $${cap.toFixed(2)} today</span>
-        </div>
-        <div class="flex items-center justify-between gap-2 mt-2 flex-wrap">
-          <label class="flex items-center gap-1 text-zinc-600 dark:text-zinc-400">
-            Cap $<input data-role="cap" type="number" min="0.01" step="0.01" value="${cap.toFixed(2)}"
-              class="w-20 rounded bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-1.5 py-0.5 font-mono text-zinc-900 dark:text-zinc-100" />
-          </label>
-          ${this.state.hasApiKey || g.allowByok ? `
-          <label class="flex items-center gap-1 cursor-pointer select-none text-zinc-600 dark:text-zinc-400">
-            <input data-role="byok" type="checkbox" class="accent-violet-500 w-3.5 h-3.5" ${g.allowByok ? 'checked' : ''} />
-            Use my own key past the daily budget
-          </label>` : ''}
-          <button data-role="revoke"
-            class="rounded border border-red-400 dark:border-red-700 px-2 py-0.5 font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 transition-colors">Revoke</button>
-        </div>`;
-
-      const status = (text, kind) => this._setLlmGrantsStatus(text, kind);
-      const isDemo = g.appId < 0;
-
-      const capInput = row.querySelector('[data-role="cap"]');
-      capInput.addEventListener('change', async () => {
-        if (isDemo) { status('Demo data — changes are not saved.', 'info'); return; }
-        const cents = Math.round(parseFloat(capInput.value) * 100);
-        if (!Number.isFinite(cents) || cents <= 0) {
-          status('Enter a valid cap (at least $0.01).', 'error');
-          return;
-        }
-        try {
-          const r = await fetch(`/api/me/llm-grants/${g.appId}`, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            credentials: 'same-origin',
-            body: JSON.stringify({ dailyCapCents: cents }),
-          });
-          const j = await r.json().catch(() => ({}));
-          if (!r.ok) { status(j.error || 'Failed to update cap.', 'error'); return; }
-          status('Cap updated.', 'ok');
-          this._renderLlmGrants();
-        } catch (err) {
-          status('Network error: ' + err.message, 'error');
-        }
-      });
-
-      const byokInput = row.querySelector('[data-role="byok"]');
-      if (byokInput) {
-        byokInput.addEventListener('change', async () => {
-          if (isDemo) { status('Demo data — changes are not saved.', 'info'); return; }
-          try {
-            const r = await fetch(`/api/me/llm-grants/${g.appId}`, {
-              method: 'PATCH',
-              headers: { 'Content-Type': 'application/json' },
-              credentials: 'same-origin',
-              body: JSON.stringify({ allowByok: byokInput.checked }),
-            });
-            const j = await r.json().catch(() => ({}));
-            if (!r.ok) {
-              byokInput.checked = !byokInput.checked;
-              status(j.error || 'Failed to update.', 'error');
-              return;
-            }
-            status(byokInput.checked
-              ? 'This app may spill over onto your own key (still capped).'
-              : 'Spillover disabled.', 'ok');
-          } catch (err) {
-            byokInput.checked = !byokInput.checked;
-            status('Network error: ' + err.message, 'error');
-          }
+      try {
+        const r = await fetch(`/api/me/llm-grants/${appId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ dailyCapCents: cents }),
         });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) { status(j.error || 'Failed to update cap.', 'error'); return; }
+        status('Cap updated.', 'ok');
+        this._renderLlmGrants();
+      } catch (err) {
+        status('Network error: ' + err.message, 'error');
       }
+    },
 
-      row.querySelector('[data-role="revoke"]').addEventListener('click', async () => {
-        const ok = await ConfirmModal.show({
-          title: `Revoke AI access for "${g.appName}"?`,
-          message: 'Its next AI call will fail immediately. The app can ask for access again later.',
-          confirmLabel: 'Revoke',
-          danger: true,
+    async _onGrantByokChange(appId, checked) {
+      const status = (t, k) => this._setLlmGrantsStatus(t, k);
+      if (this._isDemoGrant(appId)) { status('Demo data — changes are not saved.', 'info'); return; }
+      try {
+        const r = await fetch(`/api/me/llm-grants/${appId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ allowByok: checked }),
         });
-        if (!ok) return;
-        if (isDemo) { status('Demo data — changes are not saved.', 'info'); return; }
-        try {
-          const r = await fetch(`/api/me/llm-grants/${g.appId}`, {
-            method: 'DELETE', credentials: 'same-origin',
-          });
-          const j = await r.json().catch(() => ({}));
-          if (!r.ok) { status(j.error || 'Failed to revoke.', 'error'); return; }
-          status('Revoked.', 'ok');
-          this._renderLlmGrants();
-        } catch (err) {
-          status('Network error: ' + err.message, 'error');
-        }
-      });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) { status(j.error || 'Failed to update.', 'error'); return; }
+        status(checked ? 'Spillover enabled.' : 'Spillover disabled.', 'ok');
+        // The checkbox is CONTROLLED by the store now, so the failure paths
+        // above leave it showing the old value on their own — where the DOM
+        // version had to flip `byokInput.checked` back by hand. On success the
+        // re-render is what makes the new value stick.
+        this._renderLlmGrants();
+      } catch (err) {
+        status('Network error: ' + err.message, 'error');
+        this._renderLlmGrants();
+      }
+    },
 
-      return row;
+    async _onGrantRevoke(appId, appName) {
+      const status = (t, k) => this._setLlmGrantsStatus(t, k);
+      const ok = await ConfirmModal.show({
+        title: `Revoke AI access for "${appName}"?`,
+        message: 'Its next AI call will fail immediately. The app can ask for access again later.',
+        confirmLabel: 'Revoke',
+        danger: true,
+      });
+      if (!ok) return;
+      if (this._isDemoGrant(appId)) { status('Demo data — changes are not saved.', 'info'); return; }
+      try {
+        const r = await fetch(`/api/me/llm-grants/${appId}`, {
+          method: 'DELETE', credentials: 'same-origin',
+        });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) { status(j.error || 'Failed to revoke.', 'error'); return; }
+        status('Revoked.', 'ok');
+        this._renderLlmGrants();
+      } catch (err) {
+        status('Network error: ' + err.message, 'error');
+      }
     },
 
     _setLlmGrantsStatus(text, kind) {
