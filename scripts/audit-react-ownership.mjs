@@ -120,6 +120,7 @@ const OWNED = [
   { sel: '#agent-files-skills-list' },
   { sel: '#browse-list' },                   // features/apps/browse-list.tsx
   { sel: '#standings-tabs' },                // @/components/ui/tabs, via the leaderboard
+  { sel: '#leaderboard-event-bar' },         // features/leaderboard/event-bar.tsx
   { sel: '#admin-section-content', when: '#admin/e2e' },     // features/admin/admin-e2e.tsx
   { sel: '#admin-section-content', when: '#admin/gallery' }, // features/admin/admin-gallery.tsx
   { sel: '#admin-section-content', when: '#admin/node' },    // features/admin/admin-node.tsx

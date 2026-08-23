@@ -46,6 +46,12 @@ const chJs = fs.readFileSync(path.join(root, 'frontend/src/features/leaderboard/
 // 5 split the standings pane: chJs decides, this renders.
 const chTsx = fs.readFileSync(path.join(root, 'frontend/src/features/leaderboard/challenges-pane.tsx'), 'utf8');
 const ctxJs = fs.readFileSync(path.join(root, 'frontend/src/features/leaderboard/topochain-event-context.js'), 'utf8');
+// The bar's MARKUP moved to a component in #1191; topochain-event-context.js
+// keeps the data, the picks and the subscription, and pushes a view model.
+// Assertions about what is drawn read the component, assertions about what
+// decides it read the module.
+const barTsx = fs.readFileSync(path.join(root, 'frontend/src/features/leaderboard/event-bar.tsx'), 'utf8');
+const barStore = fs.readFileSync(path.join(root, 'frontend/src/features/leaderboard/event-bar-store.js'), 'utf8');
 const manifest = JSON.parse(fs.readFileSync(path.join(root, 'dapp.json'), 'utf8'));
 
 // ─── Shell ───────────────────────────────────────────────────────────────
@@ -287,9 +293,18 @@ test('one module owns the event list, the picker and the hero', () => {
     'it owns the events fetch');
   assert.match(ctxJs, /TopochainEvents\.pickDefault\(data\.data\)/,
     'and the shared default pick');
-  assert.match(ctxJs, /id="tc-ev-select"/, 'it renders the picker');
-  assert.match(ctxJs, /id="tc-ev-hero"/, 'it renders the hero');
-  assert.match(ctxJs, /onChange\(fn\)/, 'and exposes a subscription for the panes');
+  assert.match(ctxJs, /_renderOptions\(\)/, 'it owns what the picker offers');
+  assert.match(ctxJs, /_renderHero\(\)/, 'and what the hero says');
+  assert.match(barTsx, /id="tc-ev-select"/, 'the component renders the picker');
+  assert.match(barTsx, /id="tc-ev-hero"/, 'and the hero');
+  assert.match(barTsx, /TopochainEventContext/,
+    'and hands a pick straight back to the one module that owns the selection');
+  assert.match(ctxJs, /onChange\(fn\)/, 'which exposes a subscription for the panes');
+  // ONE store between them, and it is the module's own — a second writer under
+  // this host is exactly what the single-owner rule forbids.
+  assert.match(barStore, /export const eventBarStore/);
+  assert.match(ctxJs, /import \{ eventBarStore \} from '\.\/event-bar-store\.js'/);
+  assert.match(barTsx, /import \{ eventBarStore \} from '\.\/event-bar-store\.js'/);
 });
 
 test('neither pane fetches or renders an event picker of its own any more', () => {
@@ -542,18 +557,20 @@ test('the season caption replaces the "nothing is running" caption', () => {
   // board the screen exists to show. The two flags are mutually exclusive.
   assert.match(ctxJs, /_endedFallback\s*=\s*\n?\s*!TopochainEvents\.isSeasonAggregate\(pick\)/,
     'a season pick suppresses the ended-event caption rather than stacking with it');
-  assert.match(ctxJs, /Whole-season standings/, 'the season caption exists');
+  assert.match(barTsx, /Whole-season standings/, 'the season caption exists');
   // The caption must key off the SELECTION, not off "pickDefault landed
   // here": the standings pane's first fetch resolves the default server-side
   // and writes the id back silently, usually before this module's list lands,
   // so pickDefault never runs on most real loads. Keying off a flag set in
   // that branch left the caption missing exactly when it was needed.
-  assert.match(ctxJs, /\$\{isSeason \? `\s*\n\s*<p id="tc-ev-season-note"/,
+  assert.match(ctxJs, /const isSeason = TopochainEventContext\.isSeasonSelected\(\);[\s\S]*?seasonNote: isSeason,/,
     'the caption renders from isSeasonSelected(), not from a default-pick flag');
+  assert.match(barTsx, /hero\.seasonNote \? \([\s\S]{0,200}?id="tc-ev-season-note"/,
+    'and the component draws it from that one field');
   assert.ok(!/_seasonDefault/.test(ctxJs),
     'the default-pick flag is gone — the selection is the single source of truth');
   // The picker and the hero must not label the season event "(past)".
-  assert.match(ctxJs, /isSeason \? ' \(season\)'/, 'the option reads (season)');
+  assert.match(ctxJs, /if \(isSeason\) return ' \(season\)';/, 'the option reads (season)');
   assert.match(ctxJs, /const statusLabel = isSeason \? 'season'/, 'so does the hero badge');
 });
 

@@ -39,13 +39,17 @@ now reconciles — and is the thing to update when one moves across.
 - `#app-content` and `#dc-view` — the Dev screen. `#dc-view` is created at
   runtime by `public/js/app-view.js`, so it cannot be converted independently.
 - `#dev-body` — the Dev chat.
-- `#home-panels` and the home grid's panel slots.
 - `#settings-nav-desktop`, `#settings-mobile-menu-host`, and the settings
   interior.
-- the two remaining leaderboard panes, the notification list, and the
-  work-drawer list.
+- the two remaining leaderboard panes.
 - the group chat's composer, thread shell, vote controls, spec-share panel and
   the two autocomplete menus.
+- the header's own strays: `header/ai-credit.js`, `header/wallet-sheet.js`,
+  `header/node-pill.js`, `native-chrome.js` and `screenshot-select.js`.
+
+`members-controller.js` and `app-secrets-controller.js` are NOT on this list
+and should not be added: AGENTS.md documents both as legitimate legacy hosts
+inside a converted dialog.
 
 Convert them one screen at a time, not as a sweep.
 
@@ -106,32 +110,42 @@ Treat each row below as a separate chunk. Sizes are current.
 
 ### Converted
 
-`#app-list` (home app grid), `#browse-list`, `#standings-tabs`, the settings
-App-AI grants and agent-files lists, the group-chat transcript
-(`#gc-messages` / `#gc-thread-messages`), and the WHOLE admin console —
-eighteen console sections, eleven programme screens and the programme users
-card.
+- The WHOLE admin console — eighteen console sections, eleven programme
+  screens and the programme users card. See its own section above.
+- `#standings-tabs`, the settings App-AI grants and agent-files lists, and the
+  group-chat transcript (`#gc-messages` / `#gc-thread-messages`).
+- The four "small, self-contained" screens this list used to sequence:
+  `#profile-root`, the notifications list, Browse (`#browse-list` /
+  `#browse-detail`) and the work-drawer list. Each kept its module — the data,
+  the fetches and the gestures stayed — and gained a store plus components.
+- **The WHOLE home screen.** `#app-list` (the launcher canvas),
+  `#home-widget-strip-section` and `#home-apps-more` (the two hosts outside
+  it), and the three fixed sections below it — Discover, Challenges and Create
+  app. `home.js` and `home-panels.js` between them assign markup in exactly two
+  places now, both on DETACHED elements: the card menu's rich header, which the
+  kit adopts, and the drag overlay's cells.
 
-### Small, self-contained
+Two things from the home conversion are worth reading before the next screen:
 
-1. `#profile-root` — `features/profile/profile.js`, about 555 lines and no
-   `innerHTML` at all; it builds its subtree with `createElement` and
-   `textContent`. Still the easiest start.
-2. Notifications list — `features/notifications/notifications.js`, about
-   1,670 lines and three sites.
-3. Browse — `features/apps/browse.js` plus `app-card.js`, about 1,030 lines
-   and two sites.
-4. Work-drawer list — about 563 lines and two sites.
+- **`Home._showGridOverlay` appends into `#app-list`, which React owns.** It
+  is a deliberate exception resting on a TIMING invariant rather than a
+  boundary — the overlay exists only between onLift and onSettle, and
+  `render()` / `load()` are the only publishers of the grid model, both
+  returning early while `_dragActive` holds. The ownership audit never drags,
+  so it cannot see any of this; `tests/home-grid-placement.test.js` pins both
+  halves instead.
+- **A helper whose whole job was re-wiring after a repaint is DEAD, not
+  spare.** `Home.wireCreateButtons()` did a `cloneNode` + `replaceChild` to
+  clear stale listeners; once its block was React's it had no caller and no
+  other matching element, and leaving it would have left a structural DOM write
+  pointed at a host React reconciles. Delete those with their caller.
 
 ### Medium
 
-1. Home grid — convert `home.js`, `home-panels.js` and `home-layout.js`
-   together, about 5,640 lines and 18 sites; `home.js` plants the
-   `[data-panel-slot]` hosts filled by `HomePanels.render()`.
-2. Leaderboard — convert the remaining panes independently because they have
+1. Leaderboard — convert the remaining panes independently because they have
    separate lazy-mount lifecycles.
-3. Settings interior — about 5,500 lines and nine sites.
-4. Group chat, everything but the transcript — `public/js/group-chat.js`,
+2. Settings interior — about 5,500 lines and nine sites.
+3. Group chat, everything but the transcript — `public/js/group-chat.js`,
    about 3,580 lines and 21 sites. The transcript conversion left the
    composer, the thread shell, `[data-gc-vote-controls]`, the spec-share card
    and the mention/ref autocomplete menus as legacy hosts on purpose; each is
