@@ -26,10 +26,31 @@ const vm = require('node:vm');
 
 const root = path.join(__dirname, '..');
 const TOPO_SRC = fs.readFileSync(path.join(root, 'frontend/src/features/admin/admin-topochain.js'), 'utf8')
-  // The one line a bare vm cannot evaluate: the AdminUI import the module
-  // grew when #1082 chunk E moved it into the React bundle. ADMIN_UI_SRC
-  // below supplies that binding instead, as the bundler does in the browser.
-  .replace(/^import \{ AdminUI \} from '\.\/admin-console\.js';$/m, '');
+  // The four lines a bare vm cannot evaluate — the module's imports. Each
+  // binding is supplied below instead, as the bundler does in the browser:
+  // AdminUI from ADMIN_UI_SRC, the control tokens from TOKENS_SRC, and the
+  // React seam from PORTAL_STUB_SRC.
+  .replace(/^import [\s\S]*?from '[^']*';$/gm, '');
+
+// The control-styling tokens (frontend/src/features/admin/topochain/tokens.ts).
+// The module interpolates them into every screen's markup, so they have to be
+// bound before its body runs. Read from the real file rather than restated
+// here: a restated copy would keep passing after the real one changed.
+const TOKENS_SRC = (() => {
+  const src = fs.readFileSync(
+    path.join(root, 'frontend/src/features/admin/topochain/tokens.ts'), 'utf8');
+  const body = src.slice(src.indexOf('export const BTN_BASE'));
+  assert.ok(body.length > 500, 'tokens.ts exports its token block');
+  return body.replace(/^export const/gm, 'var');
+})();
+
+// The React seam. TOPO_REACT_SCREENS maps a screen key to a portal mount, and
+// a vm cannot render React — so it is stubbed EMPTY, which makes _renderSub
+// fall through to the innerHTML switch for every screen. That is the right
+// stub for this file: the challenge form lives on season-events, which is one
+// of the screens still rendered that way.
+const PORTAL_STUB_SRC = 'var TOPO_REACT_SCREENS = {};\n'
+  + 'function unmountLegacyPortal() {}\n';
 
 // The module's PANEL_CLS reads AdminUI at load time, so the registry has to
 // be bound before the module body runs. Same extraction as the estimator test.
@@ -286,6 +307,8 @@ function loadModule() {
   // `var` at a vm context's top level IS the sandbox global, so the module
   // body resolves the bare AdminUI identifier without further wiring.
   vm.runInContext(ADMIN_UI_SRC, sandbox, { filename: 'admin-console.js#AdminUI' });
+  vm.runInContext(TOKENS_SRC, sandbox, { filename: 'topochain/tokens.ts' });
+  vm.runInContext(PORTAL_STUB_SRC, sandbox, { filename: 'topochain/screens.tsx#stub' });
   vm.runInContext(TOPO_SRC, sandbox, { filename: 'admin-topochain.js' });
   const Topo = sandbox.window.AdminTopochain;
   assert.ok(Topo, 'AdminTopochain is mirrored onto window');

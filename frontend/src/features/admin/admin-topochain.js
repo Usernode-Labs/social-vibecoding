@@ -102,69 +102,18 @@ import { AdminUI } from './admin-console.js';
 
 // ── Control styling tokens ───────────────────────────────────────────
 //
-// Every button, field and panel in this file is built from the strings
-// below rather than a hand-written class list, so size, radius, focus
-// ring and colour are identical on all eleven screens — the first pass
-// modernised the LISTS and left each form and editor with whatever
-// classes it happened to be written with.
-//
-// They are plain string constants rather than a helper that RETURNS a
-// <button> for two reasons: the class names stay WHOLE LITERALS, which
-// is the only form Tailwind's extractor scans for, and the markup keeps
-// the literal ``canWrite ? `<button …`` shape that
-// tests/topochain-admin-screens.test.js counts to prove every mutating
-// control is gated.
-//
-// Tap targets are >= 44px tall below sm: (a finger) and tighten to a
-// pointer-sized control at sm: and up, where a mouse is likely and
-// vertical space is worth more. `touch-manipulation` drops the 300ms
-// double-tap delay that otherwise makes the small row chips feel dead.
-const BTN_BASE = 'inline-flex items-center justify-center gap-1.5 rounded-lg font-medium '
-  + 'transition-colors touch-manipulation focus:outline-none focus-visible:ring-2 '
-  + 'focus-visible:ring-violet-500 disabled:opacity-40 disabled:pointer-events-none';
-const BTN_MD = 'min-h-[44px] sm:min-h-[36px] px-4 py-2 text-sm';
-const BTN_SM = 'min-h-[44px] sm:min-h-[34px] px-3 py-1.5 text-sm';
-const BTN_ROW = 'min-h-[36px] sm:min-h-[30px] px-2.5 py-1 text-xs';
-const BTN = {
-  // Page/panel-level primary + secondary (Save, Cancel, Run, Send).
-  primary: `${BTN_BASE} ${BTN_MD} bg-violet-600 hover:bg-violet-700 text-white shadow-sm`,
-  secondary: `${BTN_BASE} ${BTN_MD} border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800`,
-  // Toolbar variants — same colours, one size down.
-  primarySm: `${BTN_BASE} ${BTN_SM} bg-violet-600 hover:bg-violet-700 text-white shadow-sm`,
-  secondarySm: `${BTN_BASE} ${BTN_SM} border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800`,
-  dangerSm: `${BTN_BASE} ${BTN_SM} bg-red-600 hover:bg-red-500 text-white`,
-  warnSm: `${BTN_BASE} ${BTN_SM} border border-amber-400 dark:border-amber-700 text-amber-700 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-950/40`,
-  // Row actions. Chips, not bare text links: a bordered box is a target
-  // you can see and hit, and it wraps predictably inside both the table
-  // cell and the card footer _list() renders them into.
-  row: `${BTN_BASE} ${BTN_ROW} border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 hover:border-violet-400 hover:text-violet-600 dark:hover:text-violet-800 dark:hover:text-violet-300`,
-  rowPrimary: `${BTN_BASE} ${BTN_ROW} border border-violet-300 dark:border-violet-800 text-violet-600 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-950/40`,
-  rowDanger: `${BTN_BASE} ${BTN_ROW} border border-red-200 dark:border-red-900 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40`,
-  rowWarn: `${BTN_BASE} ${BTN_ROW} border border-amber-300 dark:border-amber-800 text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/40`,
-  // Full-width list entry in a reference sidebar (SQL templates, schema
-  // tables). Left-aligned rather than centred, and tall enough to hit.
-  sidebar: 'flex w-full items-center min-h-[36px] rounded-lg px-2.5 py-1.5 text-left text-xs '
-    + 'text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 '
-    + 'touch-manipulation focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500',
-  // Back control on a nested screen, and the ✕ in a panel header.
-  back: `${BTN_BASE} min-h-[44px] sm:min-h-[36px] -ml-2 px-2 py-1 text-sm text-violet-600 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-950/40`,
-  close: 'inline-flex shrink-0 items-center justify-center h-9 w-9 rounded-lg text-zinc-500 '
-    + 'hover:bg-zinc-100 dark:hover:bg-zinc-800 hover:text-zinc-900 dark:hover:text-zinc-100 '
-    + 'touch-manipulation focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500',
-};
+// Moved to ./topochain/tokens.ts in #1120 slice 24, verbatim, so the screens
+// being converted to React build from the SAME strings the innerHTML screens
+// below do. That file carries the reasoning that used to live here.
+import {
+  BTN_BASE, BTN_SM, BTN, FIELD_CLS, TEXTAREA_CLS, PANEL_CLS,
+} from './topochain/tokens.ts';
 
-// Text inputs / selects / textareas. Same 44px-then-36px rule as the
-// buttons so a field and the button beside it line up at every width.
-const FIELD_CLS = 'w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 '
-  + 'px-3 py-2 text-sm min-h-[44px] sm:min-h-[36px] focus:outline-none focus:ring-2 '
-  + 'focus:ring-violet-500 focus:border-transparent disabled:opacity-60';
-// Textareas set their height from `rows`, so they take everything but
-// the min-height.
-const TEXTAREA_CLS = 'w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 '
-  + 'px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent';
-
-// Panel and card surfaces, shared by every form, picker and detail view.
-const PANEL_CLS = AdminUI.card; // identical recipe — one source of truth
+// The React screens, and the portal seam that mounts them. `unmountLegacyPortal`
+// is imported here rather than re-exported through screens.tsx because this file
+// is plain JS: it may hold a component MAP, but it renders no JSX itself.
+import { TOPO_REACT_SCREENS } from './topochain/screens.tsx';
+import { unmountLegacyPortal } from '../../lib/legacy-portals';
 
 const AdminTopochain = {
   _host: null,
@@ -691,6 +640,7 @@ const AdminTopochain = {
   // which AdminConsole replaces wholesale on the next section. Dropping
   // the host reference keeps a detached tree from being retained.
   destroy() {
+    AdminTopochain._unmountScreen();
     AdminTopochain._host = null;
   },
 
@@ -785,13 +735,36 @@ const AdminTopochain = {
   _renderShell() {
     const host = AdminTopochain._host;
     if (!host) return;
+    // A converted screen owns #admin-topo-content through a portal. Dropping
+    // the node from under it would leave the portal mounted on a detached
+    // host, so it comes down BEFORE the innerHTML that discards the node —
+    // rule 1 in lib/legacy-portals.tsx.
+    AdminTopochain._unmountScreen();
     host.innerHTML = '<div id="admin-topo-content"></div>';
     AdminTopochain._renderSub();
+  },
+
+  // The host of the currently-mounted React screen, or null. Only the portal
+  // seam reads it; an innerHTML screen leaves it null and needs no teardown,
+  // because AdminConsole replaces the whole section host on the next switch.
+  _reactHost: null,
+
+  _unmountScreen() {
+    const h = AdminTopochain._reactHost;
+    AdminTopochain._reactHost = null;
+    if (h) unmountLegacyPortal(h);
   },
 
   _renderSub() {
     const c = document.getElementById('admin-topo-content');
     if (!c) return;
+    // React screens first (#1120 slice 24); the switch below is what is left
+    // of the innerHTML renderers, and shrinks by one `case` per conversion.
+    const react = TOPO_REACT_SCREENS[AdminTopochain._sub];
+    if (react) {
+      AdminTopochain._reactHost = c;
+      return react.mount(c);
+    }
     switch (AdminTopochain._sub) {
       case 'season-events': return AdminTopochain.renderSeasonEvents(c);
       case 'waitlist': return AdminTopochain.renderWaitlist(c);
@@ -802,7 +775,6 @@ const AdminTopochain = {
       case 'settings': return AdminTopochain.renderSettings(c);
       case 'app-version': return AdminTopochain.renderAppVersion(c);
       case 'sql-console': return AdminTopochain.renderSqlConsole(c);
-      case 'api-tester': return AdminTopochain.renderApiTester(c);
       default: return AdminTopochain.renderSeasons(c);
     }
   },
@@ -4317,231 +4289,10 @@ const AdminTopochain = {
   },
 
   // ══════════════════════════════════════════════════════════════════
-  // API tester — pick an endpoint (or "Custom…"), method + JSON body,
-  // same-origin fetch.
-  //
-  // The endpoint list is NOT hardcoded here: it comes from
-  // GET /api/v4/admin/api-catalog, which introspects Express's own router
-  // stack server-side, so the select always offers exactly the routes this
-  // build mounted. (It used to be a single placeholder path,
-  // `/season-events`, which isn't even a mounted route — the real one is
-  // `/admin/season-events` — so the tool only worked for an operator who
-  // already knew the surface.)
-  //
-  // Deliberately not gated on canWrite(): this is a generic HTTP console
-  // that fires requests using the admin's OWN session cookies (same-
-  // origin credentials, nothing more), exactly like every route it hits.
-  // A view-only admin who picks PUT/POST/DELETE here still gets the
-  // platform's own 403 "Full admin access required." from adminWriteGate
-  // server-side — the tool grants no capability beyond what the session
-  // already has, so hiding it would be UX-only, not a security boundary
-  // (mirrors why the SQL console's run button isn't canWrite()-gated
-  // either — see the comment on _runSqlQuery below).
+  // API tester — moved to ./topochain/api-tester.tsx (#1120 slice 24).
+  // It is the first of this module's eleven screens through the portal seam;
+  // _renderSub dispatches it through TOPO_REACT_SCREENS rather than a `case`.
   // ══════════════════════════════════════════════════════════════════
-
-  // Sentinel <option> value for "I'll type the path myself". Not a legal
-  // catalog entry (every real one is `METHOD /path`), so it can never
-  // collide with a route.
-  API_CUSTOM: '__custom__',
-
-  // Filled by _loadApiCatalog(); `null` until the first fetch settles.
-  _apiCatalog: null,
-
-  renderApiTester(host) {
-    host.innerHTML = `
-      ${AdminTopochain._screenHeader({
-    title: 'API tester',
-    subtitle: 'Same-origin requests sent with your own session — the platform still applies its own gates.',
-  })}
-      ${AdminTopochain._panel({
-    title: 'Request',
-    subtitle: 'Pick a mounted /api/v4 endpoint (or Custom…), then a method and an optional JSON body.',
-    body: `
-          <div class="min-w-0">
-            <label for="admin-topo-api-endpoint" class="block text-xs font-medium text-zinc-600 dark:text-zinc-400 mb-1">Endpoint</label>
-            ${AdminTopochain._selectHtml('admin-topo-api-endpoint',
-    [{ value: AdminTopochain.API_CUSTOM, label: 'Custom…' }], AdminTopochain.API_CUSTOM)}
-            <p id="admin-topo-api-catalog-note" class="mt-1 text-xs text-zinc-500 dark:text-zinc-400" role="status">Loading the endpoint list&hellip;</p>
-          </div>
-          <div class="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-[auto_1fr]">
-            <div class="sm:w-32">
-              <label for="admin-topo-api-method" class="block text-xs font-medium text-zinc-600 dark:text-zinc-400 mb-1">Method</label>
-              ${AdminTopochain._selectHtml('admin-topo-api-method', ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'], 'GET')}
-            </div>
-            <div class="min-w-0 hidden" id="admin-topo-api-path-row">
-              <label for="admin-topo-api-path" class="block text-xs font-medium text-zinc-600 dark:text-zinc-400 mb-1">
-                Path <span class="font-mono font-normal text-zinc-400">(prefixed with /api/v4)</span>
-              </label>
-              <input id="admin-topo-api-path" type="text" placeholder="/admin/seasons" value="/admin/seasons"
-                class="${FIELD_CLS} font-mono">
-            </div>
-          </div>
-          <p class="mt-3 text-xs text-zinc-500 dark:text-zinc-400">
-            Target <span id="admin-topo-api-target" class="font-mono text-zinc-700 dark:text-zinc-300">GET /api/v4/admin/seasons</span>
-          </p>
-          <div class="mt-4">
-            <label for="admin-topo-api-body" class="block text-xs font-medium text-zinc-600 dark:text-zinc-400 mb-1">
-              JSON body <span class="font-normal text-zinc-400">(ignored for GET)</span>
-            </label>
-            ${AdminTopochain._textareaHtml('admin-topo-api-body', '', 6)}
-          </div>`,
-    footer: `<button id="admin-topo-api-send" type="button" class="${BTN.primary}">Send request</button>`,
-  })}
-      <div id="admin-topo-api-result"></div>`;
-    document.getElementById('admin-topo-api-send').addEventListener('click', () => AdminTopochain._runApiTest());
-    document.getElementById('admin-topo-api-endpoint')
-      .addEventListener('change', () => AdminTopochain._onApiEndpointChange());
-    document.getElementById('admin-topo-api-method')
-      .addEventListener('change', () => AdminTopochain._syncApiTarget());
-    document.getElementById('admin-topo-api-path')
-      .addEventListener('input', () => AdminTopochain._syncApiTarget());
-    // The path row starts hidden and the select starts at Custom…, so open
-    // the field for that state until the catalog arrives and picks a route.
-    AdminTopochain._onApiEndpointChange();
-    AdminTopochain._loadApiCatalog();
-  },
-
-  async _runApiTest() {
-    const esc = AdminTopochain.esc;
-    const method = document.getElementById('admin-topo-api-method').value;
-    const path = AdminTopochain._apiTargetPath();
-    const fullUrl = `/api/v4${path}`;
-    const result = document.getElementById('admin-topo-api-result');
-    const opts = { method, credentials: 'same-origin' };
-    const note = (cls, text) => `<p class="mt-3 rounded-lg px-3 py-2 text-sm ${cls}" role="status">${text}</p>`;
-    if (method !== 'GET' && method !== 'DELETE') {
-      const raw = document.getElementById('admin-topo-api-body').value.trim();
-      if (raw) {
-        try { JSON.parse(raw); } catch {
-          result.innerHTML = note('bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400', 'Body must be valid JSON.');
-          return;
-        }
-        opts.headers = { 'Content-Type': 'application/json' };
-        opts.body = raw;
-      }
-    }
-    result.innerHTML = note('bg-zinc-100 dark:bg-zinc-800 text-zinc-500', 'Sending&hellip;');
-    try {
-      const res = await fetch(fullUrl, opts);
-      const text = await res.text();
-      let pretty = text;
-      try { pretty = JSON.stringify(JSON.parse(text), null, 2); } catch { /* not JSON, show raw */ }
-      const okTone = res.ok
-        ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400'
-        : 'bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400';
-      result.innerHTML = `
-        <div class="mt-4 ${PANEL_CLS} overflow-hidden">
-          <header class="flex flex-wrap items-center gap-2 border-b border-zinc-200 dark:border-zinc-800 px-4 py-3 sm:px-5">
-            <h3 class="text-sm font-semibold">Response</h3>
-            <span class="rounded-full px-2 py-0.5 text-xs font-medium ${okTone}">HTTP ${esc(res.status)} ${esc(res.statusText)}</span>
-          </header>
-          <pre class="text-xs font-mono bg-zinc-50 dark:bg-zinc-950 p-4 overflow-x-auto whitespace-pre-wrap max-h-[32rem]">${esc(pretty)}</pre>
-        </div>`;
-    } catch (err) {
-      result.innerHTML = note('bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400',
-        `Network error: ${esc(err.message)}`);
-    }
-  },
-
-  // ─── Endpoint select ──────────────────────────────────────────────
-  //
-  // The path INPUT stays the single source of truth for what gets sent —
-  // the select writes into it and is then hidden for a concrete route, so
-  // _runApiTest() never has to know which of the two the operator used.
-
-  _apiTargetPath() {
-    const el = document.getElementById('admin-topo-api-path');
-    let p = ((el && el.value) || '').trim();
-    if (!p) p = '/';
-    if (!p.startsWith('/')) p = `/${p}`;
-    return p;
-  },
-
-  _syncApiTarget() {
-    const target = document.getElementById('admin-topo-api-target');
-    const methodSel = document.getElementById('admin-topo-api-method');
-    if (!target || !methodSel) return;
-    target.textContent = `${methodSel.value} /api/v4${AdminTopochain._apiTargetPath()}`;
-  },
-
-  _onApiEndpointChange() {
-    const sel = document.getElementById('admin-topo-api-endpoint');
-    const pathRow = document.getElementById('admin-topo-api-path-row');
-    const pathInput = document.getElementById('admin-topo-api-path');
-    const methodSel = document.getElementById('admin-topo-api-method');
-    if (!sel || !pathRow || !pathInput || !methodSel) return;
-    const val = sel.value;
-    if (val === AdminTopochain.API_CUSTOM) {
-      pathRow.classList.remove('hidden');
-      AdminTopochain._syncApiTarget();
-      return;
-    }
-    const sp = val.indexOf(' ');
-    const method = sp > 0 ? val.slice(0, sp) : 'GET';
-    const path = sp > 0 ? val.slice(sp + 1) : val;
-    if ([...methodSel.options].some((o) => o.value === method)) methodSel.value = method;
-    pathInput.value = path;
-    // A `:id`-style route can't be fired as written, so the field stays
-    // OPEN (prefilled) for exactly those — the operator substitutes the
-    // value in place. A concrete route hides it: the select is the target.
-    const route = (AdminTopochain._apiCatalog || []).find((r) => `${r.method} ${r.path}` === val);
-    pathRow.classList.toggle('hidden', !(route && route.has_params));
-    AdminTopochain._syncApiTarget();
-  },
-
-  // GET /api/v4/admin/api-catalog — every route this build actually
-  // mounted, introspected from Express's router stack server-side (see
-  // src/routes/topochain/admin/api-catalog.js). Nothing here is a
-  // hardcoded list, so a route added or renamed anywhere under
-  // src/routes/topochain/ appears in this select with no client change.
-  async _loadApiCatalog() {
-    const esc = AdminTopochain.esc;
-    const sel = document.getElementById('admin-topo-api-endpoint');
-    const note = document.getElementById('admin-topo-api-catalog-note');
-    if (!sel) return;
-    let routes = null;
-    try {
-      const res = await fetch('/api/v4/admin/api-catalog', { credentials: 'same-origin' });
-      const data = await res.json().catch(() => null);
-      if (!res.ok || !data || !data.success) {
-        throw new Error((data && data.error) || `HTTP ${res.status}`);
-      }
-      routes = Array.isArray(data.data) ? data.data : [];
-    } catch (err) {
-      // A tester that can't list the surface still has to be usable: leave
-      // the free-text path exactly as it was and say why the list is gone.
-      AdminTopochain._apiCatalog = [];
-      if (note) note.textContent = `Could not load the endpoint list (${err.message}) — enter a path by hand.`;
-      AdminTopochain._onApiEndpointChange();
-      return;
-    }
-    // The operator may have navigated away while the fetch was in flight.
-    if (!document.body.contains(sel)) return;
-    AdminTopochain._apiCatalog = routes;
-    if (!routes.length) {
-      if (note) note.textContent = 'No /api/v4 endpoints were reported — enter a path by hand.';
-      AdminTopochain._onApiEndpointChange();
-      return;
-    }
-    const groups = [];
-    routes.forEach((r) => { if (!groups.includes(r.group)) groups.push(r.group); });
-    const label = (r) => `${r.method} ${r.path}`;
-    sel.innerHTML = `${groups.map((g) => `
-      <optgroup label="${esc(g)}">${routes.filter((r) => r.group === g).map((r) => `
-        <option value="${esc(label(r))}">${esc(label(r))}</option>`).join('')}</optgroup>`).join('')}
-      <option value="${esc(AdminTopochain.API_CUSTOM)}">Custom&hellip;</option>`;
-    // Default to the Seasons index — this screen lives under Seasons, and
-    // it is a parameter-free GET, so it is safe to have preselected.
-    const preferred = routes.find((r) => r.method === 'GET' && r.path === '/admin/seasons')
-      || routes.find((r) => r.method === 'GET' && !r.has_params)
-      || routes[0];
-    sel.value = label(preferred);
-    if (note) {
-      note.textContent = `${routes.length} endpoint${routes.length === 1 ? '' : 's'} mounted in this build`
-        + ' — pick “Custom…” to send any other path.';
-    }
-    AdminTopochain._onApiEndpointChange();
-  },
 };
 
 // Published on the global because AdminConsole._renderSection dispatches

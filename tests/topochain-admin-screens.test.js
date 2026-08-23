@@ -15,6 +15,16 @@ const root = path.join(__dirname, '..');
 const html = fs.readFileSync(path.join(root, 'public/index.html'), 'utf8');
 const consoleJs = fs.readFileSync(path.join(root, 'frontend/src/features/admin/admin-console.js'), 'utf8');
 const topoJs = fs.readFileSync(path.join(root, 'frontend/src/features/admin/admin-topochain.js'), 'utf8');
+// The eleven screens are converting to React one at a time (#1120 slice 24).
+// A converted screen leaves admin-topochain.js for ./topochain/, so the rules
+// about ITS markup follow it there; everything about the module's shell,
+// routing and remaining screens still reads topoJs.
+const apiTesterTsx = fs.readFileSync(
+  path.join(root, 'frontend/src/features/admin/topochain/api-tester.tsx'), 'utf8');
+const topoUiTsx = fs.readFileSync(
+  path.join(root, 'frontend/src/features/admin/topochain/ui.tsx'), 'utf8');
+const topoTokens = fs.readFileSync(
+  path.join(root, 'frontend/src/features/admin/topochain/tokens.ts'), 'utf8');
 
 // Built screens only — the four documented gaps (challenge-kinds,
 // terms-versions, token-allocation, mobile-logs) must NOT appear as a
@@ -204,13 +214,25 @@ test('every built screen has a render function reachable from _renderSub', () =>
   const renderFns = [
     'renderSeasonEvents', 'renderWaitlist', 'renderOnchainAccounts', 'renderUserActivities',
     'renderChallengeTemplates', 'renderSettings', 'renderAppVersion', 'renderSqlConsole',
-    'renderApiTester', 'renderSeasons', 'renderDelegations',
+    'renderSeasons', 'renderDelegations',
   ];
   for (const name of renderFns) {
     assert.ok(fn.includes(name), `_renderSub dispatches to ${name}`);
     assert.match(topoJs, new RegExp(`\\b${name}\\(host\\) \\{|async ${name}\\(host\\) \\{`),
       `${name}(host) is defined`);
   }
+  // A converted screen is reached through the React registry instead of a
+  // `case`, and its renderer is gone from this file entirely. Both halves
+  // matter: a leftover `case` would keep dispatching the deleted renderer.
+  assert.match(fn, /const react = TOPO_REACT_SCREENS\[AdminTopochain\._sub\];/,
+    '_renderSub tries the React registry before its own switch');
+  assert.ok(!fn.includes("case 'api-tester'"), 'api-tester left the switch');
+  assert.ok(!/renderApiTester/.test(topoJs.replace(/^\s*\/\/.*$/gm, '')),
+    'and its renderer is gone from this module');
+  const screens = fs.readFileSync(
+    path.join(root, 'frontend/src/features/admin/topochain/screens.tsx'), 'utf8');
+  assert.match(screens, /'api-tester': \{ mount\(host\) \{ mountLegacyPortal\(host, <ApiTesterScreen \/>\); \} \},/,
+    'the registry mounts the converted screen through the portal seam');
   // renderUsers is rendered by the console's Users section, not _renderSub.
   assert.ok(!fn.includes('renderUsers('), '_renderSub no longer dispatches renderUsers');
   assert.match(topoJs, /\brenderUsers\(host\) \{/, 'renderUsers(host) is still defined for the merged section');
@@ -652,7 +674,7 @@ test('every screen opens with the shared _screenHeader, toolbar and all', () => 
   const SCREENS = [
     'renderSeasons', 'renderSeasonEvents', 'renderUsers', 'renderWaitlist',
     'renderOnchainAccounts', 'renderUserActivities', 'renderChallengeTemplates',
-    'renderSettings', 'renderAppVersion', 'renderSqlConsole', 'renderApiTester',
+    'renderSettings', 'renderAppVersion', 'renderSqlConsole',
   ];
   for (const fn of SCREENS) {
     const start = topoJs.search(new RegExp(`\\n  (?:async )?${fn}\\(host\\) \\{`));
@@ -681,15 +703,25 @@ test('form fields stack on a phone and go multi-column from md: up', () => {
 });
 
 test('buttons and fields are one consistent, tap-friendly set of tokens', () => {
-  assert.match(topoJs, /const BTN_BASE = /, 'one base class string for every button');
-  assert.match(topoJs, /const FIELD_CLS = /, 'one class string for every text input and select');
-  assert.match(topoJs, /const TEXTAREA_CLS = /, '...and one for every textarea');
-  assert.match(topoJs, /const PANEL_CLS = /, '...and one panel/card surface');
-  assert.match(topoJs, /touch-manipulation/, 'taps are not delayed by double-tap-zoom detection');
-  assert.match(topoJs, /focus-visible:ring-2/, 'keyboard focus stays visible');
+  // The declarations moved to topochain/tokens.ts in #1120 slice 24 so the
+  // React screens build from the same strings. There must be exactly ONE copy:
+  // a second would show up as two different buttons in one sub-nav while the
+  // conversion runs, which is the whole reason the move happened.
+  assert.match(topoTokens, /export const BTN_BASE = /, 'one base class string for every button');
+  assert.match(topoTokens, /export const FIELD_CLS = /, 'one class string for every text input and select');
+  assert.match(topoTokens, /export const TEXTAREA_CLS = /, '...and one for every textarea');
+  assert.match(topoTokens, /export const PANEL_CLS = /, '...and one panel/card surface');
+  assert.match(topoJs, /from '\.\/topochain\/tokens\.ts'/, 'the innerHTML screens import them');
+  assert.match(topoUiTsx, /from '\.\/tokens\.ts'/, '...and so does the React chrome');
+  for (const name of ['BTN_BASE', 'FIELD_CLS', 'TEXTAREA_CLS', 'PANEL_CLS']) {
+    assert.ok(!new RegExp(`^const ${name} = `, 'm').test(topoJs),
+      `admin-topochain.js must not keep its own ${name}`);
+  }
+  assert.match(topoTokens, /touch-manipulation/, 'taps are not delayed by double-tap-zoom detection');
+  assert.match(topoTokens, /focus-visible:ring-2/, 'keyboard focus stays visible');
   // 44px is the tap target on a phone; the denser 36px only applies once
   // there is a pointer-sized viewport.
-  assert.ok((topoJs.match(/min-h-\[44px\] sm:min-h-\[36px\]/g) || []).length >= 3,
+  assert.ok((topoTokens.match(/min-h-\[44px\] sm:min-h-\[36px\]/g) || []).length >= 3,
     'controls are 44px tall on a phone');
 
   // The tokens must stay class-string CONSTANTS interpolated into markup,
@@ -734,12 +766,23 @@ test('the tool screens got the same treatment as the CRUD screens', () => {
     'query, templates and schema each sit in a panel');
   assert.match(sql, /_skeleton\(3\)/, 'the reference lists show a skeleton while they load');
 
-  const api = topoJs.slice(topoJs.indexOf('  renderApiTester(host) {'),
-    topoJs.indexOf('  async _runApiTest()'));
-  assert.match(api, /_panel\(\{/, 'the request builder is a panel');
-  assert.match(api, /<label for="admin-topo-api-method"/, 'the method select is labelled');
-  assert.match(api, /<label for="admin-topo-api-path"/, '...and so is the path input');
-  assert.match(api, /\$\{FIELD_CLS\}/, 'its inputs use the shared field styling');
+  // The API tester is React since #1120 slice 24. The same four properties
+  // hold, expressed in the renderer it uses now — and the field styling one
+  // is stronger: the screen may not hand-write FIELD_CLS at all, it goes
+  // through the <Input>/<Select>/<Textarea> wrappers that own it, so the two
+  // renderers cannot drift.
+  assert.match(apiTesterTsx, /<Panel\n/, 'the request builder is a panel');
+  assert.match(apiTesterTsx, /htmlFor="admin-topo-api-method"/, 'the method select is labelled');
+  assert.match(apiTesterTsx, /htmlFor="admin-topo-api-path"/, '...and so is the path input');
+  assert.ok(!/FIELD_CLS/.test(apiTesterTsx),
+    'the screen never writes the field class itself');
+  assert.match(topoUiTsx, /className=\{className \? `\$\{FIELD_CLS\} \$\{className\}` : FIELD_CLS\}/,
+    'the shared controls do, from the same tokens the innerHTML screens import');
+  // Both renderers must build from ONE copy of the tokens — two would show up
+  // as two different buttons in one sub-nav while the conversion runs.
+  assert.match(topoJs, /from '\.\/topochain\/tokens\.ts'/,
+    'admin-topochain.js imports the shared tokens rather than declaring them');
+  assert.ok(!/^const BTN = \{/m.test(topoJs), 'and does not keep a second copy');
 });
 
 test('the SQL result and API response areas use the shared empty/panel treatment', () => {
@@ -747,7 +790,14 @@ test('the SQL result and API response areas use the shared empty/panel treatment
     topoJs.indexOf('  // ══════════════════════════════════════════════════════════════════\n  // API tester'));
   assert.match(run, /_empty\(\{/, 'a query that matched nothing gets the empty-state card');
   assert.match(run, /role="status"/, 'running/failed states are announced');
-  const apiRun = topoJs.slice(topoJs.indexOf('  async _runApiTest()'));
-  assert.match(apiRun, /\$\{PANEL_CLS\}/, 'the response is framed like every other panel');
-  assert.match(apiRun, /HTTP \$\{esc\(res\.status\)\}/, 'the status line survives, escaped');
+  assert.match(apiTesterTsx, /\$\{PANEL_CLS\} overflow-hidden/,
+    'the response is framed like every other panel');
+  assert.match(apiTesterTsx, /`HTTP \$\{result\.status\} \$\{result\.statusText\}`/,
+    'the status line survives');
+  // Stronger than the `esc(...)` it replaced: React escapes text children, so
+  // the property to hold is that the screen never opts back out. A response
+  // body is arbitrary server output rendered verbatim — this is the one screen
+  // where that matters most.
+  assert.ok(!/dangerouslySetInnerHTML|innerHTML/.test(stripComments(apiTesterTsx)),
+    'the screen renders no raw HTML — the response body is a text child');
 });

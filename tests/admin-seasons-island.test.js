@@ -29,6 +29,16 @@ const root = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(root, rel), 'utf8');
 
 const topo = read('frontend/src/features/admin/admin-topochain.js');
+// The eleven screens are converting to React one at a time (#1120 slice 24).
+// A converted screen's markup lives under frontend/src/features/admin/topochain/,
+// so the id inventory below reads BOTH — a declared check must resolve against
+// whichever renderer currently produces its anchor.
+const topoDir = 'frontend/src/features/admin/topochain';
+const topoReact = fs.readdirSync(path.join(root, topoDir))
+  .filter((f) => /\.tsx?$/.test(f))
+  .map((f) => read(`${topoDir}/${f}`))
+  .join('\n');
+const tokens = read(`${topoDir}/tokens.ts`);
 const islandTsx = read('frontend/src/features/admin/index.tsx');
 const consoleJs = read('frontend/src/features/admin/admin-console.js');
 const manifest = JSON.parse(read('dapp.json'));
@@ -44,10 +54,17 @@ test('the class registry is read at module-evaluation time, from an import', () 
   // instead of one at a time. If it ever stops being an evaluation-time read,
   // say so in the commit that changes it rather than discovering later that the
   // clustering was unnecessary.
-  assert.match(moduleScope, /^const PANEL_CLS = AdminUI\.card;/m,
-    'admin-topochain.js reads AdminUI.card while its module body evaluates');
-  assert.match(moduleScope, /^import \{ AdminUI \} from '\.\/admin-console\.js';$/m,
+  // The read moved to topochain/tokens.ts with the rest of the control tokens
+  // (#1120 slice 24) and is still an evaluation-time one — the module scope
+  // below imports that file, so importing admin-topochain.js still evaluates
+  // AdminUI.card. Nothing about the clustering argument changed; only which
+  // file holds the line.
+  assert.match(tokens, /^export const PANEL_CLS = AdminUI\.card;/m,
+    'topochain/tokens.ts reads AdminUI.card while its module body evaluates');
+  assert.match(tokens, /^import \{ AdminUI \} from '\.\.\/admin-console\.js';$/m,
     'and it must get it from an import, not from <script> order');
+  assert.match(moduleScope, /^\} from '\.\/topochain\/tokens\.ts';$/m,
+    'and admin-topochain.js pulls the tokens in at evaluation time too');
   assert.match(consoleJs, /^export const AdminUI = Object\.freeze\(\{$/m,
     'admin-console.js must export the registry rather than only publishing it');
 });
@@ -136,11 +153,15 @@ test('the section never reaches into the React-owned chassis', () => {
 // argument to the shared _inputHtml/_textareaHtml/_selectHtml builders, and as
 // a getElementById lookup. Any quoted occurrence counts as "the module knows
 // this id" — the builders are covered by their own escaping tests.
+// A converted screen writes `id="admin-topo-…"` in JSX rather than in a
+// template string, which the same two patterns already match; `data-*` in JSX
+// is `data-x={…}` as often as `data-x="…"`, so that pattern accepts both.
+const topoAll = `${topo}\n${topoReact}`;
 const producedIds = new Set([
-  ...[...topo.matchAll(/id=["'`]([\w-]+)["'`]/g)].map((m) => m[1]),
-  ...[...topo.matchAll(/["'`](admin-topo-[\w-]+)["'`]/g)].map((m) => m[1]),
+  ...[...topoAll.matchAll(/id=["'`]([\w-]+)["'`]/g)].map((m) => m[1]),
+  ...[...topoAll.matchAll(/["'`](admin-topo-[\w-]+)["'`]/g)].map((m) => m[1]),
 ]);
-const producedAttrs = new Set([...topo.matchAll(/\b(data-[\w-]+)=/g)].map((m) => m[1]));
+const producedAttrs = new Set([...topoAll.matchAll(/\b(data-[\w-]+)[={]/g)].map((m) => m[1]));
 
 test('every id and data-* a declared programme-screen check selects on is produced', () => {
   // The screens are first-class sections since #1179, so the declared
