@@ -53,27 +53,45 @@ Convert them one screen at a time, not as a sweep.
 
 ## The admin console's per-section seam
 
-Ten of the console's twelve top-level modules are React
-(`admin-e2e`, `admin-gallery`, `admin-node`, `admin-merges`, `admin-push`,
-`admin-campaigns`, `admin-mail`, `admin-status`, `admin-estimator`,
-`admin-analytics` — all `.tsx`). The pattern is documented in AGENTS.md under
+Sixteen of the console's section modules render from React (every `.tsx` in
+`frontend/src/features/admin/`). The pattern is documented in AGENTS.md under
 "Converting a console section to React"; the short version is that
 `AdminConsole._renderSection` hands each module its host, so a converted
 section swaps the `innerHTML` assignment for `mountLegacyPortal` and its
 `destroy()` for `unmountLegacyPortal`. Everything else about the chassis is
 untouched, which is why the two idioms coexist with no bridge.
 
-Two files remain, and they are the reason the console is not finished:
+The console had TWO populations of section, and the difference matters:
 
-- `admin-console.js` — about 3,420 lines, 47 `innerHTML` sites. This is the
-  chassis (sidebar, mobile two-level router, view-only banner, temp-password
-  dialog) PLUS eight sections it renders itself (users, codes, limits,
-  features, featured-apps, rollover, staging-reap, db-export). The chassis and
-  the sections are separable: the sections can move to their own `.tsx`
-  modules behind `SECTION_MODULES` before the chassis is touched at all.
+- **Delegated modules** — the ten that were already their own files behind
+  `SECTION_MODULES`. All ten are `.tsx`: status, node, analytics, estimator,
+  merges, gallery, campaigns, mail, push, e2e.
+- **Self-rendered sections** — eight that the chassis drew itself, dispatched
+  by a `switch` in `_renderSection`. Six have MOVED OUT into their own
+  modules (overview, codes, featured-apps, db-export, features, limits) and
+  are `.tsx`; each move deleted a `switch` arm and registered a
+  `SECTION_MODULES` entry. Moving them out first, rather than converting them
+  in place, is what keeps the chassis file imperative: converting in place
+  would have meant turning a 3,400-line router into a React file.
+
+Two remain in the switch, and one file remains untouched:
+
+- `users` and the two container-lifecycle sections (`rollover`,
+  `staging-reap`) are still inline in `admin-console.js` — about 2,290 lines
+  and 25 `innerHTML` sites, down from 3,420 and 47. Users is the biggest of
+  the eight at ~600 lines. Rollover and staging-reap are the most delicate:
+  `public/js/app.js` routes `admin_rollover_status` and
+  `admin_staging_reap_status` WebSocket frames to
+  `AdminConsole.handleRolloverStatus` / `handleStagingReapStatus`, and calls
+  `loadRollover` / `loadStagingReap` on socket reconnect, so moving them means
+  either keeping forwarders on the console or changing app.js's routing.
 - `admin-topochain.js` — about 4,550 lines, 138 `innerHTML` sites across
   eleven sub-sections with their own sub-nav. Convert it sub-section by
   sub-section, not as one chunk.
+
+`overview` is the console's DEFAULT section, so `_renderSection`'s `default:`
+arm dispatches through `_renderModule` too — that helper exists so both arms
+share one place that records the active module for `_teardownActiveSection`.
 
 ## Step 3 sequence
 
@@ -83,7 +101,8 @@ Treat each row below as a separate chunk. Sizes are current.
 
 `#app-list` (home app grid), `#browse-list`, `#standings-tabs`, the settings
 App-AI grants and agent-files lists, the group-chat transcript
-(`#gc-messages` / `#gc-thread-messages`), and the ten admin sections above.
+(`#gc-messages` / `#gc-thread-messages`), and the sixteen admin sections
+above.
 
 ### Small, self-contained
 
@@ -115,8 +134,10 @@ App-AI grants and agent-files lists, the group-chat transcript
 1. Dev screen — `public/js/app-view.js`, about 14,140 lines and 71 sites.
 2. Dev chat — `features/dev-chat/dev-chat.js`, about 9,820 lines and 58 sites.
    Streaming assistant output is the complication.
-3. Admin interior — `admin-console.js` + `admin-topochain.js`, about 7,970
-   lines and 185 sites, per the seam above.
+3. Admin interior — `admin-console.js` + `admin-topochain.js`, about 6,840
+   lines and 163 sites, per the seam above. The two chassis sections left
+   (Users, and the rollover/staging-reap pair) are small next to topochain;
+   move them out the same way before touching the chassis itself.
 
 ## Staging fixtures
 
