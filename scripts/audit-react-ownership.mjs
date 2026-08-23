@@ -1,0 +1,180 @@
+#!/usr/bin/env node
+
+/**
+ * Does any legacy module still write into a subtree a React island owns?
+ *
+ * WHY THIS EXISTS
+ *
+ * The step-3 shell migration's central rule (AGENTS.md, and the
+ * `react-shell-migration` skill) is ONE OWNER PER SUBTREE: a region may become
+ * a React island only when no `public/js/**` module writes into it. Breaking
+ * that does not throw, does not fail a unit test, and usually does not even
+ * look wrong on the day it lands — the legacy write paints, and it keeps
+ * painting until the next store update repaints the row from a model that
+ * never heard about it.
+ *
+ * Two shipped bugs of exactly that shape are what prompted this:
+ *
+ *   * the group chat's save button had its icon, three attributes and a class
+ *     written straight onto a node transcript.tsx renders. It worked, and
+ *     would have silently reverted on the next reaction.
+ *   * the same transcript's edit paths assigned `.gc-msg-content.innerHTML`.
+ *     `Body` memoises its `{__html}` wrapper on the string, so React kept
+ *     believing the old content and repainted the row from it the next time
+ *     anything else about the message changed — an edit followed by a
+ *     reaction reverted the text on screen.
+ *
+ * Neither is visible to a static check: the write is in a classic script and
+ * the node is React's. So this instruments the DOM in a real browser instead.
+ *
+ * WHAT IT DOES
+ *
+ * Patches the `innerHTML` setter, `insertAdjacentHTML` and `appendChild`
+ * before any app code runs, walks a list of routes, and reports every write
+ * whose target sits INSIDE one of the hosts below.
+ *
+ * WHY A LIST OF HOSTS RATHER THAN "ANY REACT ROOT"
+ *
+ * `main.tsx` hydrates the whole `<body>`, so "is this node inside a React
+ * root" is true of every node in the document and flags nothing useful. Almost
+ * everything under it is a DOCUMENTED legacy host — rendered once by React
+ * with constant props and never looked inside again, which is the sanctioned
+ * pattern (see the header of features/dev-board/board-frame.tsx). The hosts
+ * below are the other kind: React renders and RECONCILES every descendant, so
+ * a legacy write there is a second author.
+ *
+ * ADD A HOST HERE whenever a conversion makes one — that is the point.
+ *
+ * USAGE
+ *
+ *   node scripts/audit-react-ownership.mjs            # needs a dev server on :3000
+ *   AUDIT_BASE=http://localhost:3000 AUTH=/path/auth.json node scripts/audit-react-ownership.mjs
+ *
+ * Exits non-zero when it finds anything, so it can gate a branch.
+ */
+
+import fs from 'node:fs';
+import { createRequire } from 'node:module';
+
+/*
+ * Playwright is NOT a repository dependency and this script does not make it
+ * one. The test suite is node:test over vm sandboxes with no browser in it,
+ * and adding ~300MB of browser tooling to install a dev-only audit would be a
+ * poor trade. Resolve it from wherever it happens to live — a global install,
+ * an `npm i -g playwright`, or PLAYWRIGHT_PATH — and say so clearly when it
+ * is absent, rather than failing with a bare module-not-found.
+ */
+const require_ = createRequire(import.meta.url);
+let chromium;
+try {
+  ({ chromium } = require_(process.env.PLAYWRIGHT_PATH || 'playwright'));
+} catch {
+  try {
+    ({ chromium } = require_('/opt/node22/lib/node_modules/playwright'));
+  } catch {
+    console.error(
+      'This audit drives a real browser and needs Playwright, which is not a\n'
+      + 'dependency of this repo. Install it globally (`npm i -g playwright`)\n'
+      + 'or point PLAYWRIGHT_PATH at an existing copy.',
+    );
+    process.exit(2);
+  }
+}
+
+const BASE = process.env.AUDIT_BASE || 'http://localhost:3000';
+const AUTH = process.env.AUTH || '';
+const CHROME = process.env.CHROME_PATH
+  || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
+
+/** Hosts whose ENTIRE subtree a React island renders and reconciles. */
+const OWNED = [
+  '#app-list',                      // features/home/app-grid.tsx
+  '#gc-messages',                   // features/group-chat/transcript.tsx
+  '#gc-thread-messages',            // ditto, mounted with the 'thread' key
+  '#llm-grants-list',               // features/settings/grants-list.tsx
+  '#agent-files-instructions-list', // features/settings/agent-files-list.tsx
+  '#agent-files-skills-list',
+  '#browse-list',                   // features/apps/browse-list.tsx
+  '#standings-tabs',                // @/components/ui/tabs, via the leaderboard
+];
+
+const ROUTES = [
+  '#home', '#apps', '#apps/recipebot', '#settings', '#settings/app-ai',
+  '#settings/agent-files', '#profile', '#leaderboard', '#messages',
+  '#app/recipebot', '#app/recipebot/dev', '#app/recipebot/dev/chat',
+  '#app/recipebot/dev/sessions/1',
+];
+
+function instrument(owned) {
+  window.__ownHits = [];
+  const inside = (node) => {
+    if (!node || node.nodeType !== 1) return null;
+    for (const sel of owned) {
+      const host = document.querySelector(sel);
+      // INSIDE the host, never the host itself — mounting writes the host.
+      if (host && host !== node && host.contains(node)) return sel;
+    }
+    return null;
+  };
+  const where = (el) => {
+    const bits = [];
+    let n = el;
+    for (let i = 0; n && n.nodeType === 1 && i < 3; i += 1, n = n.parentElement) {
+      bits.unshift(n.id ? `#${n.id}` : n.tagName.toLowerCase()
+        + (n.className ? `.${String(n.className).split(/\s+/).filter(Boolean).slice(0, 2).join('.')}` : ''));
+    }
+    return bits.join(' > ');
+  };
+  const note = (kind, el) => {
+    const host = inside(el);
+    if (!host) return;
+    const stack = (String(new Error().stack || '')).split('\n').slice(2, 7)
+      .map((l) => l.trim()).filter((l) => !/\bnote\b|<anonymous>:/.test(l));
+    window.__ownHits.push({ kind, host, target: where(el), stack });
+  };
+  const proto = Element.prototype;
+  const ih = Object.getOwnPropertyDescriptor(proto, 'innerHTML');
+  Object.defineProperty(proto, 'innerHTML', {
+    ...ih, set(v) { note('innerHTML', this); return ih.set.call(this, v); },
+  });
+  const iah = proto.insertAdjacentHTML;
+  proto.insertAdjacentHTML = function patched(...a) {
+    note('insertAdjacentHTML', this); return iah.apply(this, a);
+  };
+  const ap = Node.prototype.appendChild;
+  Node.prototype.appendChild = function patched(...a) {
+    note('appendChild', this); return ap.apply(this, a);
+  };
+}
+
+const browser = await chromium.launch({ executablePath: CHROME });
+const context = await browser.newContext({
+  viewport: { width: 440, height: 950 },
+  serviceWorkers: 'block',
+  ...(AUTH && fs.existsSync(AUTH) ? { storageState: AUTH } : {}),
+});
+const page = await context.newPage();
+await page.addInitScript(instrument, OWNED);
+
+const found = new Map();
+for (const route of ROUTES) {
+  await page.goto(BASE + '/' + route, { waitUntil: 'networkidle' });
+  await page.waitForTimeout(2600);
+  const hits = await page.evaluate(() => {
+    const out = window.__ownHits || [];
+    window.__ownHits = [];
+    return out;
+  });
+  for (const hit of hits) {
+    const key = `${hit.kind} into ${hit.host} @ ${hit.target}`;
+    if (!found.has(key)) found.set(key, { route, stack: hit.stack });
+  }
+}
+await browser.close();
+
+for (const [key, v] of found) {
+  console.log(`${v.route}\n  ${key}`);
+  (v.stack || []).slice(0, 2).forEach((s) => console.log(`      ${s.slice(0, 120)}`));
+}
+console.log(`\n${found.size} legacy write(s) into React-owned subtrees`);
+process.exit(found.size ? 1 : 0);
