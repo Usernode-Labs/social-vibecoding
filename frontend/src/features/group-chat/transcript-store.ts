@@ -83,11 +83,39 @@ export interface TranscriptMessage {
   voteRowClass: string;
 }
 
+/**
+ * The rows above the messages: "Load earlier", and the empty/loading line.
+ * Only the thread transcript has them — the general chat paginates from its own
+ * header — but modelling them here keeps ONE component for both hosts.
+ */
+export interface TranscriptLead {
+  /** Show the "Load earlier" control. */
+  earlier: boolean;
+  /** The placeholder line, or null when there are messages to show. */
+  placeholder: string | null;
+}
+
+export interface TranscriptView {
+  messages: TranscriptMessage[];
+  lead: TranscriptLead;
+}
+
 export interface TranscriptState {
   /** False until group-chat.js has pushed once — see the initial-render note. */
   ready: boolean;
-  messages: TranscriptMessage[];
+  /**
+   * Transcripts by host key — `main` for the general chat, `thread` for the
+   * topic sub-view. Keyed rather than two stores because the two are the same
+   * shape rendered by the same component into different hosts; a second store
+   * would be a second copy of every update path.
+   */
+  byKey: Record<string, TranscriptView>;
 }
+
+export const EMPTY_VIEW: TranscriptView = {
+  messages: [],
+  lead: { earlier: false, placeholder: null },
+};
 
 /**
  * Renders nothing, which is exactly the empty `<div id="gc-messages">` that
@@ -96,7 +124,7 @@ export interface TranscriptState {
  * matters: the module mounts this portal and THEN loads, and a transcript that
  * flashed placeholder rows would be visible on every tab switch.
  */
-export const INITIAL_TRANSCRIPT: TranscriptState = { ready: false, messages: [] };
+export const INITIAL_TRANSCRIPT: TranscriptState = { ready: false, byKey: {} };
 
 export const transcriptStore = createStore<TranscriptState>(INITIAL_TRANSCRIPT);
 

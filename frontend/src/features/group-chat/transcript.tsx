@@ -144,12 +144,34 @@ function MessageRow({ msg }: { msg: TranscriptMessage }) {
   );
 }
 
-export function Transcript() {
+/**
+ * `source` names which transcript this host shows — `main` for the general
+ * chat, `thread` for the topic sub-view. One component for both: they are the
+ * same rows in different containers, and the differences (a "Load earlier"
+ * control, an empty/loading line) are data.
+ */
+export function Transcript({ source = 'main' }: { source?: string }) {
   const state = useStoreState(transcriptStore);
-  if (!state.ready) return null;
+  const view = state.byKey[source];
+  if (!state.ready || !view) return null;
   return (
     <>
-      {state.messages.map((msg, i) => {
+      {view.lead.earlier ? (
+        <div className="text-center py-1">
+          <button
+            type="button"
+            id="gc-thread-earlier"
+            className="gc-vote-btn"
+            onClick={() => controller()?.loadThreadHistoryForOpen?.()}
+          >
+            Load earlier
+          </button>
+        </div>
+      ) : null}
+      {view.lead.placeholder ? (
+        <div className="text-xs text-zinc-500 px-2 py-2">{view.lead.placeholder}</div>
+      ) : null}
+      {view.messages.map((msg, i) => {
         const key = msg.id != null ? `m${msg.id}` : `i${i}`;
         if (msg.kind === 'spec_share') return <div key={key} data-gc-spec-share={msg.id ?? ''} />;
         if (msg.kind === 'message') return <MessageRow key={key} msg={msg} />;

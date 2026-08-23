@@ -32,15 +32,17 @@ import { createElement } from 'react';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
 import { Transcript } from './transcript';
 import {
+  EMPTY_VIEW,
   transcriptStore,
+  type TranscriptLead,
   type TranscriptMessage,
   type TranscriptState,
 } from './transcript-store';
 
 /** Mount (or re-establish) the transcript inside the host app-view just built. */
-export function mountTranscript(host: Element | null): void {
+export function mountTranscript(host: Element | null, key = 'main'): void {
   if (!host) return;
-  mountLegacyPortal(host, createElement(Transcript));
+  mountLegacyPortal(host, createElement(Transcript, { source: key }));
 }
 
 export function unmountTranscript(host: Element | null): void {
@@ -49,8 +51,15 @@ export function unmountTranscript(host: Element | null): void {
 }
 
 /** The whole transcript, replacing whatever was there. */
-export function publishTranscript(messages: TranscriptMessage[]): void {
-  transcriptStore.set({ ready: true, messages });
+export function publishTranscript(
+  messages: TranscriptMessage[],
+  key = 'main',
+  lead: TranscriptLead = { earlier: false, placeholder: null },
+): void {
+  transcriptStore.set((s: TranscriptState) => ({
+    ready: true,
+    byKey: { ...s.byKey, [key]: { messages, lead } },
+  }));
 }
 
 /**
@@ -62,8 +71,14 @@ export function publishTranscript(messages: TranscriptMessage[]): void {
  * under the reader's scroll position. Appending to the array preserves that
  * property through the reconciler instead of around it.
  */
-export function appendTranscriptMessage(message: TranscriptMessage): void {
-  transcriptStore.set((s: TranscriptState) => ({ ...s, ready: true, messages: [...s.messages, message] }));
+export function appendTranscriptMessage(message: TranscriptMessage, key = 'main'): void {
+  transcriptStore.set((s: TranscriptState) => {
+    const view = s.byKey[key] || EMPTY_VIEW;
+    return {
+      ready: true,
+      byKey: { ...s.byKey, [key]: { ...view, messages: [...view.messages, message] } },
+    };
+  });
 }
 
 /**
@@ -78,12 +93,21 @@ export function appendTranscriptMessage(message: TranscriptMessage): void {
 export function patchTranscriptMessage(id: number, patch: Partial<TranscriptMessage>): void {
   transcriptStore.set((s: TranscriptState) => {
     let hit = false;
-    const messages = s.messages.map((m: TranscriptMessage) => {
-      if (m.id !== id) return m;
-      hit = true;
-      return { ...m, ...patch };
-    });
-    return hit ? { ...s, messages } : s;
+    const byKey: Record<string, typeof EMPTY_VIEW> = {};
+    // Patched across EVERY transcript: the same message can be on screen in
+    // both the general chat and an open thread, and a reaction on one is a
+    // reaction on the other.
+    for (const [k, view] of Object.entries(s.byKey)) {
+      byKey[k] = {
+        ...view,
+        messages: view.messages.map((m: TranscriptMessage) => {
+          if (m.id !== id) return m;
+          hit = true;
+          return { ...m, ...patch };
+        }),
+      };
+    }
+    return hit ? { ...s, byKey } : s;
   });
 }
 

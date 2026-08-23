@@ -827,6 +827,13 @@ const GroupChat = {
   // #363: the element that actually scrolls a mounted thread. In the unified
   // topic layout it's the wrapper holding the header + messages; in the legacy
   // boxed layout the messages list is itself the scroller.
+  // Called by the transcript's "Load earlier" control, which knows it is in a
+  // thread but not WHICH — that is this module's state.
+  loadThreadHistoryForOpen() {
+    const a = GroupChat.activeThread;
+    if (a) GroupChat.loadThreadHistory(a.type, a.ref);
+  },
+
   _threadScrollEl() {
     return document.getElementById('gc-thread-scroll')
       || document.getElementById('gc-thread-messages');
@@ -847,17 +854,18 @@ const GroupChat = {
     const prevTop = scroll ? scroll.scrollTop : 0;
     const wasLoaded = el.dataset.loaded === '1';
 
-    const earlier = (st.loaded && st.hasMore && st.messages.length)
-      ? '<div class="text-center py-1"><button id="gc-thread-earlier" class="gc-vote-btn">Load earlier</button></div>'
-      : '';
-    const empty = (st.loaded && !st.messages.length)
-      ? '<div class="text-xs text-zinc-500 px-2 py-2">No messages yet — start the thread.</div>'
-      : (!st.loaded ? '<div class="text-xs text-zinc-500 px-2 py-2">Loading…</div>' : '');
-    el.innerHTML = earlier + empty + st.messages.map(GroupChat.renderMessageHtml).join('');
+    GroupChat._react()?.mountTranscript(el, 'thread');
+    GroupChat._react()?.publishTranscript(
+      st.messages.map(GroupChat._messageView),
+      'thread',
+      {
+        earlier: !!(st.loaded && st.hasMore && st.messages.length),
+        placeholder: st.loaded
+          ? (st.messages.length ? null : 'No messages yet — start the thread.')
+          : 'Loading…',
+      },
+    );
     el.dataset.loaded = st.loaded ? '1' : '';
-
-    const btn = document.getElementById('gc-thread-earlier');
-    if (btn) btn.addEventListener('click', () => GroupChat.loadThreadHistory(a.type, a.ref));
 
     if (!scroll) return;
     if (wasLoaded) {
