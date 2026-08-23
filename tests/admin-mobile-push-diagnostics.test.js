@@ -14,8 +14,15 @@ const routeSource = fs.readFileSync(path.join(ROOT, 'src/routes/admin.js'), 'utf
 const consoleSource = fs.readFileSync(
   path.join(ROOT, 'frontend/src/features/admin/admin-console.js'), 'utf8'
 );
+// `.tsx` since #1120 slice 10 — the section renders in React now. Every
+// assertion below is about the module's CONTENT (what it must show an
+// operator, and what it must never receive), which the renderer does not
+// change; only the path, the import line and the two shape regexes moved.
+const MODULE_EXT = ['tsx', 'js'].find((ext) => fs.existsSync(
+  path.join(ROOT, `frontend/src/features/admin/admin-push.${ext}`)
+));
 const moduleSource = fs.readFileSync(
-  path.join(ROOT, 'frontend/src/features/admin/admin-push.js'), 'utf8'
+  path.join(ROOT, `frontend/src/features/admin/admin-push.${MODULE_EXT}`), 'utf8'
 );
 const islandSource = fs.readFileSync(
   path.join(ROOT, 'frontend/src/features/admin/index.tsx'), 'utf8'
@@ -236,11 +243,11 @@ test('admin route is read-only, admin-gated by the existing mount, and value-saf
 test('Push delivery is a lifecycle-managed admin section', () => {
   assert.match(consoleSource, /key: 'push', label: 'Push delivery', group: 'Operations'/);
   assert.match(consoleSource, /push: 'AdminPush'/);
-  assert.ok(islandSource.includes("import './admin-push.js';"));
-  assert.match(moduleSource, /render\(hostEl\) \{/);
+  assert.ok(islandSource.includes(`import './admin-push.${MODULE_EXT}';`));
+  assert.match(moduleSource, /render\(\w+(?:: [\w.<>[\] |]+)?\) \{/);
   assert.match(moduleSource, /destroy\(\) \{/);
   assert.match(moduleSource,
-    /if \(typeof window !== 'undefined'\) window\.AdminPush = AdminPush;/);
+    /if \(typeof window !== 'undefined'\) \(?window(?: as any\))?\.AdminPush = AdminPush;/);
   assert.match(moduleSource, /username, email address or numeric user ID/);
   assert.match(serviceSource, /device presentation is not confirmed/);
   assert.match(moduleSource, /Recent registration lifecycle/);
