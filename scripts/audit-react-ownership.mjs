@@ -137,6 +137,7 @@ const OWNED = [
   { sel: '#admin-topo-content', when: '#admin/delegations' }, // topochain/delegations.tsx
   { sel: '#admin-topo-content', when: '#admin/challenge-templates' }, // topochain/challenge-templates.tsx
   { sel: '#admin-topo-content', when: '#admin/seasons' }, // topochain/seasons.tsx
+  { sel: '#admin-topo-content', when: '#admin/season-events' }, // topochain/season-events.tsx
   {
     sel: '#admin-section-content',
     when: '#admin/users',                     // features/admin/admin-users.tsx
@@ -155,7 +156,7 @@ const ROUTES = [
   '#app/recipebot/dev/sessions/1',
   '#admin/e2e', '#admin/gallery', '#admin/node', '#admin/merges', '#admin/push', '#admin/campaigns', '#admin/mail', '#admin/estimator', '#admin/analytics', '#admin/overview', '#admin/codes', '#admin/featured-apps', '#admin/db-export', '#admin/features', '#admin/limits', '#admin/users', '#admin/status', '#admin/rollover', '#admin/staging-reap',
   '#admin/api-tester', '#admin/sql-console', '#admin/settings', '#admin/app-version', '#admin/waitlist', '#admin/onchain-accounts', '#admin/user-activities', '#admin/delegations',
-  '#admin/challenge-templates', '#admin/seasons',
+  '#admin/challenge-templates', '#admin/seasons', '#admin/season-events',
 ];
 
 function instrument(owned) {

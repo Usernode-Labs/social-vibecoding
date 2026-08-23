@@ -200,10 +200,15 @@ test('the deep-linked Season-events screens the brief names still resolve', () =
   // asserted above from dapp.json; this pins the sibling relationship one of
   // those selectors depends on (`#…-se-detail-hero ~ #…-ch-table`), which an
   // innocent-looking wrapper <div> around either one would break.
-  const heroAt = topo.indexOf('id="admin-topo-se-detail-hero"');
-  const tableAt = topo.indexOf('id="admin-topo-ch-table"');
+  const detail = read(`${topoDir}/challenges.tsx`);
+  const heroAt = detail.indexOf('id="admin-topo-se-detail-hero"');
+  const tableAt = detail.indexOf('id="admin-topo-ch-table"');
   assert.ok(heroAt > 0 && tableAt > 0, 'both the detail hero and the challenge table must render');
   assert.ok(heroAt < tableAt, 'the hero must precede the challenge table, as the ~ selector requires');
+  // They are siblings in one component, so the relationship is now
+  // structural rather than a property of two separate innerHTML writes.
+  assert.ok(!/<\w+[^>]*>\s*<div id="admin-topo-ch-table"/.test(detail),
+    'nothing wraps the challenge table, which would break the ~ selector');
 });
 
 // ── 5. The SQL-schema explorer, client half ─────────────────────────────

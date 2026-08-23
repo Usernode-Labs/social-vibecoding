@@ -220,11 +220,20 @@ test('every built screen key is present in SUBS, no gap key is, and each is a re
 
 test('every built screen has a render function reachable from _renderSub', () => {
   const fn = topoJs.slice(topoJs.indexOf('  _renderSub() {'), topoJs.indexOf('  // ══'.repeat(1), topoJs.indexOf('  _renderSub() {')));
-  const renderFns = ['renderSeasonEvents'];
-  for (const name of renderFns) {
-    assert.ok(fn.includes(name), `_renderSub dispatches to ${name}`);
-    assert.match(topoJs, new RegExp(`\\b${name}\\(host\\) \\{|async ${name}\\(host\\) \\{`),
-      `${name}(host) is defined`);
+  // Every screen is a React one since #1120 slice 34, so _renderSub has no
+  // `switch` left at all: the registry, then Seasons as the fallback.
+  assert.ok(!/switch \(/.test(fn), 'the innerHTML dispatch switch is gone');
+  assert.match(fn, /return AdminTopochain\._mountReactScreen\(c, TOPO_REACT_SCREENS\.seasons\);/,
+    'an address this build does not know about lands on Seasons');
+  // SUBS and the registry must agree, or a menu entry would silently open
+  // Seasons instead of its own screen.
+  const registry = fs.readFileSync(path.join(REACT_DIR, 'screens.tsx'), 'utf8');
+  const subsBlock = topoJs.slice(topoJs.indexOf('  SUBS: ['), topoJs.indexOf('  // ── Shared helpers'));
+  const subKeys = [...subsBlock.matchAll(/key: '([^']+)'/g)].map((m) => m[1]);
+  assert.equal(subKeys.length, 11, 'all eleven screens are still listed');
+  for (const key of subKeys) {
+    assert.ok(new RegExp(`(^|\\s)'?${key}'?: \\{ mount`, 'm').test(registry),
+      `SUBS key '${key}' has a screen in the React registry`);
   }
   // A converted screen is reached through the React registry instead of a
   // `case`, and its renderer is gone from this file entirely. Both halves
@@ -245,6 +254,7 @@ test('every built screen has a render function reachable from _renderSub', () =>
     ['delegations', 'DelegationsScreen'],
     ['challenge-templates', 'ChallengeTemplatesScreen'],
     ['seasons', 'SeasonsScreen'],
+    ['season-events', 'SeasonEventsScreen'],
   ]) {
     assert.ok(!new RegExp(`case '${key}':`).test(fn), `${key} left the switch`);
     const renderer = `render${component.replace('Screen', '')}`;
@@ -281,6 +291,21 @@ test('the three documented API gaps are explained in the file header, not silent
 const seasonsTsx = fs.readFileSync(
   path.join(root, 'frontend/src/features/admin/topochain/seasons.tsx'), 'utf8');
 
+// Season events and its nested Challenges detail are React since #1120
+// slice 34 — the eleventh and last of this module's screens.
+const seTsx = fs.readFileSync(
+  path.join(root, 'frontend/src/features/admin/topochain/season-events.tsx'), 'utf8');
+const chTsx = fs.readFileSync(
+  path.join(root, 'frontend/src/features/admin/topochain/challenges.tsx'), 'utf8');
+// Every converted screen, for the rules that are about the WHOLE console
+// rather than one screen. Read once; the list grows by itself.
+const REACT_DIR = path.join(root, 'frontend/src/features/admin/topochain');
+const REACT_SCREEN_FILES = fs.readdirSync(REACT_DIR)
+  .filter((f) => f.endsWith('.tsx') && !['ui.tsx', 'screens.tsx'].includes(f));
+const REACT_SCREENS = REACT_SCREEN_FILES
+  .map((f) => fs.readFileSync(path.join(REACT_DIR, f), 'utf8'));
+const allScreens = REACT_SCREENS.join('\n');
+
 test('the seasons subsection is full CRUD against the real /admin/seasons resource', () => {
   assert.ok(!/no dedicated Seasons API/i.test(seasonsTsx),
     'the "there is no API" banner is gone — there is one');
@@ -313,16 +338,17 @@ test('the seasons list delete surfaces the 409 season_in_use message rather than
 });
 
 test('the season events screen links to seasons by name and can filter by one', () => {
-  const screen = topoJs.slice(topoJs.indexOf('  renderSeasonEvents(host) {'), topoJs.indexOf('  async _openSeasonEventForm(id) {'));
-  assert.match(screen, /admin-topo-se-season-filter/, 'a season filter control exists');
-  assert.match(screen, /params\.set\('season_id', s\.seasonFilter\)/,
+  assert.match(seTsx, /admin-topo-se-season-filter/, 'a season filter control exists');
+  assert.match(seTsx, /params\.set\('season_id', seasonFilter\)/,
     'the filter is sent to the API, not applied client-side over one page of results');
-  assert.match(screen, /ev\.season\?\.name/, 'the Season column shows the name, not the raw id');
-  assert.match(screen, /— No season —/, 'the unassigned bucket is selectable');
-
-  const form = topoJs.slice(topoJs.indexOf('  async _openSeasonEventForm(id) {'), topoJs.indexOf('  async _saveSeasonEvent() {'));
-  assert.match(form, /sel\('admin-topo-se-f-season_id'/,
+  assert.match(seTsx, /ev\.season\?\.name/, 'the Season column shows the name, not the raw id');
+  assert.match(seTsx, /— No season —/, 'the unassigned bucket is selectable');
+  assert.match(seTsx, /<Select\n\s*id=\{fid\('season_id'\)\}/,
     'the event form picks a season from a dropdown instead of asking for a numeric id');
+  // The Seasons screen writes the filter before jumping here; losing the
+  // seed would open the unfiltered list and silently ignore the jump.
+  assert.match(seTsx, /useState<string>\(\(\) => topo\(\)\?\._se\?\.seasonFilter \|\| ''\)/,
+    'and the screen seeds it from the router state the Seasons screen wrote');
 });
 
 // ─── Hash handling: canonical single-level + permanent legacy aliases ─────
@@ -444,8 +470,9 @@ test('every AdminTopochain.send(...) mutating call sits inside a canWrite()-guar
   const fnHeaderRe = /^\s{2}(async )?_?\w+\([^)]*\)\s*\{\s*$/;
   const sendCallLineIdxs = [];
   lines.forEach((line, i) => { if (line.includes('AdminTopochain.send(')) sendCallLineIdxs.push(i); });
-  assert.ok(sendCallLineIdxs.length >= 8,
-    `expected many send() call sites, found ${sendCallLineIdxs.length}`);
+  // admin-topochain.js has no screens left (#1120 slice 34), so its own
+  // count is now zero and the whole weight of this rule sits on the React
+  // half below. The loop stays because the module could grow one again.
 
   for (const callIdx of sendCallLineIdxs) {
     // Walk upward to the nearest enclosing top-level (2-space indented)
@@ -483,12 +510,15 @@ test('every AdminTopochain.send(...) mutating call sits inside a canWrite()-guar
       }
       assert.ok(start >= 0, `${file}:${i + 1} send() has an enclosing handler`);
       const scope = srcLines.slice(start, i + 1).join('\n');
-      assert.match(scope, /if \(!canWrite\(\)\) return;/,
+      // `if (!canWrite()) return;` or a compound guard that OPENS with it —
+      // what must not happen is the write check coming after some other
+      // condition that could return first for a different reason.
+      assert.match(scope, /if \(!canWrite\(\)(\s*\|\|[^)]*)?\) return;/,
         `${file}:${i + 1} send() is guarded by an early canWrite() return:\n${scope.slice(0, 200)}`);
     });
   }
-  assert.ok(reactSends >= 8,
-    `expected the converted screens to carry their share of the writes, found ${reactSends}`);
+  assert.ok(reactSends >= 20,
+    `expected the converted screens to carry every write, found ${reactSends}`);
 });
 
 test('the one non-mutating POST (sql-query/execute) is explicitly NOT canWrite-gated, with a comment saying why', () => {
@@ -510,9 +540,24 @@ test('the one non-mutating POST (sql-query/execute) is explicitly NOT canWrite-g
 });
 
 test('rendered mutating buttons (Edit/Delete/Reset/New/Import/Move/Toggle) are wrapped in a canWrite() ternary', () => {
-  const guardedButtonCount = (topoJs.match(/canWrite\s*(&&[^?]*)?\?\s*`<button/g) || []).length;
-  assert.ok(guardedButtonCount >= 15,
-    `expected at least 15 canWrite()-gated buttons in rendered markup, found ${guardedButtonCount}`);
+  // Both renderers. The React form is `{write ? <button…> : null}`, which is
+  // a stronger statement than the string version's: the element does not
+  // exist for a view-only admin rather than its markup being skipped.
+  const stringGated = (topoJs.match(/canWrite\s*(&&[^?]*)?\?\s*`<button/g) || []).length;
+  const reactGated = (allScreens.match(/\{write \? \(?\s*<(button|>)/g) || []).length
+    + (allScreens.match(/actions=\{write \?/g) || []).length;
+  assert.ok(stringGated + reactGated >= 15,
+    `expected at least 15 canWrite()-gated buttons in rendered markup, found ${stringGated + reactGated}`);
+  // And the gate is always the console's own, never a local re-derivation.
+  // Every screen that HAS a write gate derives it from the console's own,
+  // never from a local re-derivation of the user object. (Delegations and
+  // the two tool screens have none: they perform no writes at all.)
+  for (const [i, src] of REACT_SCREENS.entries()) {
+    if (!/\bcanWrite\(\)/.test(stripAllComments(src))) continue;
+    assert.match(src, /const canWrite = \(\) => !!topo\(\)\?\.canWrite\(\);/,
+      `${REACT_SCREEN_FILES[i]} derives write access from AdminTopochain.canWrite(), `
+      + 'which defers to AdminConsole');
+  }
 });
 
 // ─── Vocabulary (SPEC §5.4's rename table) ─────────────────────────────────
@@ -645,10 +690,11 @@ test('Onchain accounts: the secret key is state, never an attribute or markup', 
 });
 
 test('the vocabulary is actually used: Event / User / Challenge template / Kind', () => {
+  // SUBS labels stay in the module; the screen copy moved with the screens.
   assert.match(topoJs, /label: 'Season events'/);
-  assert.match(topoJs, /title: 'Programme users'/);
   assert.match(topoJs, /label: 'Challenge templates'/);
-  assert.match(topoJs, /'Kind'/);
+  assert.match(topoJs, /title: 'Programme users'/);
+  assert.match(allScreens, /'Kind'/);
 });
 
 // ─── Users delete: strong confirm (can delete ANY platform user) ──────────
@@ -674,11 +720,14 @@ test('deleting a user requires typing the exact identifier before the button ena
 
 test('challenges are managed nested under a season-event detail view, not a top-level tab', () => {
   assert.ok(!/key: 'challenges'/.test(topoJs), 'no standalone top-level "challenges" SUBS entry');
-  assert.match(topoJs, /_renderSeasonEventDetail\(host\)/, 'season-events has a nested detail renderer');
-  assert.match(topoJs, /season-events\/\$\{encodeURIComponent\(eventId\)\}\/challenges/,
+  // The detail view is a branch of the Season events screen, not a screen of
+  // its own — the same either/or renderSeasonEvents opened with.
+  assert.match(seTsx, /if \(detailId != null\) \{\n\s*return \(\n\s*<EventDetail/,
+    'season-events renders its nested detail instead of the list');
+  assert.match(chTsx, /season-events\/\$\{encodeURIComponent\(eventId\)\}\/challenges/,
     'the nested challenges list is fetched under the event');
   for (const action of ['toggle-enabled', 'toggle-completed', 'move', 'update-display-orders']) {
-    assert.ok(topoJs.includes(action), `the nested challenge view wires ${action}`);
+    assert.ok(chTsx.includes(action), `the nested challenge view wires ${action}`);
   }
 });
 
@@ -726,14 +775,21 @@ test('neither the challenge move nor the CSV export uses window.prompt()', () =>
   // CHOICE from a known list, which a free-text box cannot express.
   // Comments stripped: both call sites document what they replaced, and
   // that prose is the record of the decision, not a leftover call.
-  assert.ok(!/window\.prompt\(/.test(stripComments(topoJs)), 'no window.prompt( anywhere in the module');
-  assert.ok(!/[^.\w]prompt\(/.test(stripComments(topoJs)), 'not via a bare prompt( either');
+  // The ban covers the module AND every converted screen: a prompt() that
+  // reappeared on one of them would be the same bug in a new file.
+  for (const [name, src] of [['admin-topochain.js', topoJs], ...REACT_SCREEN_FILES.map(
+    (f, i) => [f, REACT_SCREENS[i]])]) {
+    assert.ok(!/window\.prompt\(/.test(stripAllComments(src)), `no window.prompt( in ${name}`);
+    assert.ok(!/[^.\w]prompt\(/.test(stripAllComments(src)), `not via a bare prompt( in ${name} either`);
+  }
 
   // Both replacements are event pickers rendered inline, so the admin sees
   // the events that actually exist instead of guessing an id.
-  assert.match(topoJs, /id="admin-topo-ch-move-target"/, 'the move flow offers a target <select>');
-  assert.match(topoJs, /_submitChallengeMove\(eventId, challengeId, targetId\)/,
-    'the move PATCH is a named handler taking the picked id');
+  assert.match(chTsx, /id="admin-topo-ch-move-target"/, 'the move flow offers a target <select>');
+  assert.match(chTsx, /target_season_event_id: targetId/,
+    'the move PATCH is sent with the picked id');
+  assert.match(chTsx, /if \(!Number\.isInteger\(targetId\)\) return;/,
+    'and a non-numeric pick never reaches the request');
   assert.match(topoJs, /id="admin-topo-u-exp-event"/, 'the export flow offers an event <select>');
   assert.match(topoJs, /if \(!Number\.isInteger\(id\) \|\| id <= 0\) return;/,
     'the picked export id is validated before it reaches the URL');
@@ -828,8 +884,7 @@ test('a panel header sticks to the top and carries a visible dismiss control', (
 
 test('every open-a-form entry point renders through _panel with a wired close control', () => {
   const FORMS = [
-    '_openSeasonEventForm', '_openChallengeForm', '_openUserForm',
-    '_openUserImportForm', '_openUserExport', '_moveChallenge',
+    '_openUserForm', '_openUserImportForm', '_openUserExport',
   ];
   for (const fn of FORMS) {
     const start = topoJs.indexOf(`  async ${fn}(`);
@@ -855,6 +910,9 @@ test('every open-a-form entry point renders through _panel with a wired close co
     ['user-activities.tsx', 'Close the import panel'],
     ['user-activities.tsx', 'Close the totals panel'],
     ['challenge-templates.tsx', 'Close the template form'],
+    ['season-events.tsx', 'Close the event form'],
+    ['challenges.tsx', 'Close the challenge form'],
+    ['challenges.tsx', 'Close the move panel'],
   ]) {
     const src = fs.readFileSync(
       path.join(root, 'frontend/src/features/admin/topochain', file), 'utf8');
@@ -877,9 +935,7 @@ test('no two static admin-topo-* element ids collide', () => {
 });
 
 test('every screen opens with the shared _screenHeader, toolbar and all', () => {
-  const SCREENS = [
-    'renderSeasonEvents', 'renderUsers',
-  ];
+  const SCREENS = ['renderUsers'];
   for (const fn of SCREENS) {
     const start = topoJs.search(new RegExp(`\\n  (?:async )?${fn}\\(host\\) \\{`));
     assert.ok(start > 0, `${fn} is defined`);
@@ -911,14 +967,17 @@ test('every screen opens with the shared _screenHeader, toolbar and all', () => 
 });
 
 test('form fields stack on a phone and go multi-column from md: up', () => {
-  const grid = topoJs.slice(topoJs.indexOf('  _formGrid(innerHtml, cols) {'),
-    topoJs.indexOf('  _formGrid(innerHtml, cols) {') + 500);
-  assert.match(grid, /grid-cols-1 md:grid-cols-2 lg:grid-cols-3/, 'cols: 3 opts into a third column');
+  // The grid is a component since #1120; the two class strings are the same.
+  const uiSrc = fs.readFileSync(path.join(REACT_DIR, 'ui.tsx'), 'utf8');
+  const grid = uiSrc.slice(uiSrc.indexOf('export function FormGrid('),
+    uiSrc.indexOf('export function FormError('));
+  assert.match(grid, /grid-cols-1 md:grid-cols-2 lg:grid-cols-3/, 'cols={3} opts into a third column');
   assert.match(grid, /grid-cols-1 md:grid-cols-2/, 'the default is one column then two');
-  assert.ok((topoJs.match(/_formGrid\(/g) || []).length >= 8,
+  assert.ok((allScreens.match(/<FormGrid\b/g) || []).length >= 8,
     'every multi-field form is laid out through it');
   // No screen may go back to the old sm:-breakpoint two-column form grid.
-  assert.doesNotMatch(stripComments(topoJs), /grid grid-cols-1 sm:grid-cols-2 gap-3/,
+  assert.doesNotMatch(stripAllComments(`${topoJs}\n${allScreens}`),
+    /grid grid-cols-1 sm:grid-cols-2 gap-3/,
     'the pre-second-pass form grid is gone');
 });
 

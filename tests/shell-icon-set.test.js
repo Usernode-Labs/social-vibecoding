@@ -98,12 +98,21 @@ test('the glyphs live in the module, not inline beside it', () => {
   // is a copy that will drift, not a second legitimate port.
   const PORTED = 'frontend/src/features/admin/topochain/ui.tsx';
   if (offenders.includes(PORTED)) {
-    const ported = read(PORTED).match(/\sd="(M[^"]*)"/g) || [];
-    assert.equal(ported.length, 1, `${PORTED} may carry exactly the one ported glyph`);
-    assert.ok(read('frontend/src/features/admin/admin-topochain.js').includes(ported[0].trim()),
-      `${PORTED}'s glyph must be the same path _panel() writes, character for character`);
-    assert.match(read(PORTED), /export function CloseButton\(/,
-      'and it is exported, so the screens have something to import instead of copying');
+    const src = read(PORTED);
+    const ported = src.match(/\sd="(M[^"]*)"/g) || [];
+    assert.equal(ported.length, 2,
+      `${PORTED} may carry exactly the two ported glyphs — the ✕ and the back chevron`);
+    // The ✕ is still checkable byte for byte against the string helper that
+    // draws it. The back chevron's original left the module with the screen
+    // it belonged to (#1120 slice 34), so its anchor is this assertion: it
+    // exists once, exported, and no screen re-inlines it.
+    const topo = read('frontend/src/features/admin/admin-topochain.js');
+    assert.ok(ported.some((d) => topo.includes(d.trim())),
+      `${PORTED}'s ✕ must be the same path _panel() writes, character for character`);
+    for (const fn of ['CloseButton', 'BackButton']) {
+      assert.match(src, new RegExp(`export function ${fn}\\(`),
+        `and ${fn} is exported, so the screens have something to import instead of copying`);
+    }
     offenders.splice(offenders.indexOf(PORTED), 1);
   }
   assert.deepEqual(offenders, [],

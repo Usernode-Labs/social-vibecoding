@@ -6,6 +6,7 @@ import { AppVersionScreen } from './app-version.tsx';
 import { ChallengeTemplatesScreen } from './challenge-templates.tsx';
 import { DelegationsScreen } from './delegations.tsx';
 import { OnchainAccountsScreen } from './onchain-accounts.tsx';
+import { SeasonEventsScreen } from './season-events.tsx';
 import { SeasonsScreen } from './seasons.tsx';
 import { SettingsScreen } from './settings.tsx';
 import { SqlConsoleScreen } from './sql-console.tsx';
@@ -40,6 +41,7 @@ export const TOPO_REACT_SCREENS: Record<string, { mount(host: Element): void }> 
   'challenge-templates': { mount(host) { mountLegacyPortal(host, <ChallengeTemplatesScreen />); } },
   delegations: { mount(host) { mountLegacyPortal(host, <DelegationsScreen />); } },
   'onchain-accounts': { mount(host) { mountLegacyPortal(host, <OnchainAccountsScreen />); } },
+  'season-events': { mount(host) { mountLegacyPortal(host, <SeasonEventsScreen />); } },
   seasons: { mount(host) { mountLegacyPortal(host, <SeasonsScreen />); } },
   settings: { mount(host) { mountLegacyPortal(host, <SettingsScreen />); } },
   'sql-console': { mount(host) { mountLegacyPortal(host, <SqlConsoleScreen />); } },
