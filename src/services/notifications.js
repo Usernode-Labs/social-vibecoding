@@ -16,6 +16,7 @@
 // ownership/review events use openrouter_key_created/openrouter_key_review.
 
 const log = require('./logger');
+const usernames = require('./usernames');
 const { listActiveUserIds } = require('./active-users');
 
 // Usernames in this app are [A-Za-z0-9_]+, length-restricted on signup.
@@ -86,13 +87,16 @@ function parseMentions(text) {
   return [...out];
 }
 
-async function resolveUsers(pool, usernames) {
-  if (!usernames.length) return [];
-  const { rows } = await pool.query(
-    `SELECT id, username FROM users WHERE LOWER(username) = ANY($1::text[])`,
-    [usernames]
-  );
-  return rows;
+// Resolve `@name` captures to users. Reads the retired-handle ledger as
+// well as `users`: once someone renames, their old handle is
+// reserved forever, so `@alice` in a message written after alice became
+// `ada` would otherwise resolve to nobody and the mention would silently
+// do nothing. Nobody else can ever hold `alice`, so pointing it at ada is
+// unambiguous. Named `names` here because `usernames` is now the module.
+async function resolveUsers(pool, names) {
+  if (!names.length) return [];
+  return (await usernames.resolveHandles(pool, names))
+    .map((r) => ({ id: r.id, username: r.username }));
 }
 
 // Visibility scoping: for a collab-private app, restrict a candidate

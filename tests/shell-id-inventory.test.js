@@ -99,6 +99,18 @@ const ADDED_IDS = {
   // live: Settings → Experimental, beside the other per-user preview flag.
   'session-bridge-enabled': 'Opt-in switch for the session-CLI bridge venue (#1281).',
   'session-bridge-status': 'Save/error line for the session-bridge switch (#1281).',
+  // Username changes — Settings -> Username, the change-your-@handle form. It sits in
+  // Settings rather than the profile edit sheet because the endpoint requires
+  // the current password, which is the same reason Change password is here.
+  'change-username-section': 'Settings -> Username section wrapper.',
+  'cu-current': 'The handle the viewer holds right now, painted by Settings._renderChangeUsernameSection.',
+  // The `cu-` prefix mirrors the `cp-` one the change-password controls
+  // beside them have always used — and stays clear of the native kit's
+  // `.un-*` class vocabulary.
+  'cu-new': 'Requested new handle.',
+  'cu-password': 'Current password, required by POST /api/me/username.',
+  'cu-save': 'Submit for the username change.',
+  'cu-status': 'Status line for the username change.',
   'settings-mobile-push-preferences': 'Account-level Social mobile-push category controls in Settings → Alerts.',
   'drawer-row-native-app-version': 'Installed Flutter app version in the drawer footer (#1101).',
   'native-app-version-slot': 'Mobile app version/build rendered through the native bridge (#1101).',
