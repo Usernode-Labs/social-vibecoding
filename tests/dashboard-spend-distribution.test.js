@@ -187,11 +187,14 @@ test('html: the chart header carries a Hide/Show $0 toggle', () => {
   assert.match(html, /data-zero-toggle="spend-distribution"/, 'toggle group must exist');
   assert.match(html, /data-zero="hide"[^>]*>Hide \$0/, 'a "Hide $0" button must exist');
   assert.match(html, /data-zero="show"[^>]*>Show \$0/, 'a "Show $0" button must exist');
-  // Hide is the default-active button (indigo), Show is inactive (gray).
+  // Hide is the default-active button (the accent), Show is inactive (neutral).
+  // The scale keys moved with the reskin — the admin console speaks the
+  // shell's zinc/violet now — but the CONTRACT is unchanged: the default is
+  // the filled accent one.
   assert.match(
     html,
-    /data-zero="hide" class="zero-btn[^"]*bg-indigo-600/,
-    'Hide $0 must be the default-active (indigo) button',
+    /data-zero="hide" class="zero-btn[^"]*bg-violet-600/,
+    'Hide $0 must be the default-active (accent) button',
   );
 });
 

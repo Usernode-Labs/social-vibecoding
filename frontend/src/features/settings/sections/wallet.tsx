@@ -29,11 +29,11 @@ export function WalletSection() {
         <div id="wallet-linking" className="hidden text-center">
           <div id="wallet-qr-canvas" className="inline-block rounded-lg bg-white p-2">
           </div>
-          <p id="wallet-link-timer" className="text-xs text-zinc-500 mt-2">
+          <p id="wallet-link-timer" className="text-xs text-zinc-500 dark:text-zinc-400 mt-2">
           </p>
           <button
             id="wallet-link-cancel"
-            className="mt-2 text-xs text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-300 underline"
+            className="mt-2 text-xs text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-300 underline"
           >
             Cancel
           </button>

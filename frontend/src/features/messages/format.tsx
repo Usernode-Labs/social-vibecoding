@@ -70,7 +70,7 @@ export function ObjectCard({ object, compact = false }: { object: SharedObjectCa
     return (
       <div className="messages-object-card messages-object-unavailable" aria-disabled="true">
         <span className="messages-object-icon">?</span>
-        <div className="min-w-0"><div className="text-xs font-semibold">Unavailable</div><div className="text-[11px] text-zinc-500">You can’t access this item.</div></div>
+        <div className="min-w-0"><div className="text-xs font-semibold">Unavailable</div><div className="text-[11px] text-zinc-500 dark:text-zinc-400">You can’t access this item.</div></div>
       </div>
     );
   }

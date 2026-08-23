@@ -3880,7 +3880,7 @@ const AppView = {
             <div id="gc-messages" class="flex-1 overflow-y-auto py-2 space-y-0.5"></div>
 
             <!-- Typing indicator -->
-            <div id="gc-typing" class="px-3 text-xs text-zinc-500 h-5 shrink-0"></div>
+            <div id="gc-typing" class="px-3 text-xs text-zinc-500 dark:text-zinc-400 h-5 shrink-0"></div>
 
             <!-- Input (#621: read-only viewers get a notice instead).
                  platform-safe-bar (app.css) adds the home-indicator
@@ -5764,7 +5764,7 @@ const AppView = {
       return MergeStatus.badgeHtml(life);
     }
     return s && s.status === 'paused'
-      ? '<span class="dev-badge bg-zinc-500/10 text-zinc-500">paused</span>'
+      ? '<span class="dev-badge bg-zinc-500/10 text-zinc-500 dark:text-zinc-400">paused</span>'
       : '';
   },
 
@@ -8107,7 +8107,7 @@ const AppView = {
       el.innerHTML =
         `<span class="text-emerald-500 font-medium">Yes ${rosterCount(data.yes)}:</span> ${fmt((data.yes || []).map((u) => escapeHtml(u)))}`
         + ` &nbsp;<span class="text-red-400 font-medium">No ${rosterCount(data.no)}:</span> ${fmt((data.no || []).map((u) => escapeHtml(u)))}`
-        + `<span class="text-zinc-500">${escapeHtml(needs)}</span>`;
+        + `<span class="text-zinc-500 dark:text-zinc-400">${escapeHtml(needs)}</span>`;
     } catch {
       el.textContent = '';
     }
@@ -8289,7 +8289,7 @@ const AppView = {
   _devChatBadge(count) {
     const n = parseInt(count) || 0;
     // .dev-badge owns the geometry; the utility classes only supply the tint.
-    return `<span class="dev-chat-badge dev-badge ${n ? 'bg-violet-500/10 text-violet-400' : 'hidden bg-zinc-500/10 text-zinc-500'}" data-count="${n}" title="Messages in this thread">&#128172; ${n}</span>`;
+    return `<span class="dev-chat-badge dev-badge ${n ? 'bg-violet-500/10 text-violet-400' : 'hidden bg-zinc-500/10 text-zinc-500 dark:text-zinc-400'}" data-count="${n}" title="Messages in this thread">&#128172; ${n}</span>`;
   },
 
   // ── Community-voted priority + assigned-person chips ─────────────────
@@ -8479,7 +8479,7 @@ const AppView = {
       // #780: escapeHtml the label — for a custom category it is user input.
       const meta = AppView._categoryMeta(s.top);
       if (meta) { label = `<span class="attr-dot ${meta.cls}"></span>${escapeHtml(meta.label)}`; cls = meta.cls; hover = meta.hover; }
-      else { label = '<span class="attr-dot bg-zinc-500/10 text-zinc-500"></span>Set category'; cls = 'bg-zinc-500/10 text-zinc-500'; hover = 'hover:bg-zinc-500/20'; }
+      else { label = '<span class="attr-dot bg-zinc-500/10 text-zinc-500 dark:text-zinc-400"></span>Set category'; cls = 'bg-zinc-500/10 text-zinc-500'; hover = 'hover:bg-zinc-500/20'; }
     } else {
       // #489: the assignee now leads with a coloured initial-avatar (an at-a-
       // glance "who owns this") instead of the generic person emoji, and the
@@ -9847,7 +9847,7 @@ const AppView = {
       ? `Close issue #${issueN}: "${p.issueTitle || row.title}"`
       : (row.title || 'Close issue');
     const who = row.created_by_username
-      ? ` <span class="text-zinc-500">· ${escapeHtml(row.created_by_username)}</span>`
+      ? ` <span class="text-zinc-500 dark:text-zinc-400">· ${escapeHtml(row.created_by_username)}</span>`
       : '';
     const how = String(p.appliedBy || '').startsWith('admin:')
       ? 'closed by admin' : 'closed by vote';
@@ -10331,7 +10331,7 @@ const AppView = {
                above land in depends on it. Empty when build-venues.js
                hasn't loaded, which leaves the popup as it was. -->
           <p class="text-xs text-zinc-500 dark:text-zinc-400 mb-4">${venueHtml}</p>
-          <label class="block text-xs font-medium text-zinc-500 mb-1" for="auto-session-model">${openRouter ? 'OpenRouter model' : 'Chat model'}</label>
+          <label class="block text-xs font-medium text-zinc-500 dark:text-zinc-400 mb-1" for="auto-session-model">${openRouter ? 'OpenRouter model' : 'Chat model'}</label>
           <select id="auto-session-model"
             class="w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100">
             ${options}
@@ -11255,7 +11255,7 @@ const AppView = {
       const has = v && (v.png || v.webm || v.gif);
       const heading = `<div class="text-[0.7rem] font-semibold text-zinc-400">${label}</div>`;
       if (!has) {
-        return `<div style="${colStyle}">${heading}<div class="text-xs text-zinc-500" style="padding:24px 0;text-align:center;border:1px dashed rgba(127,127,127,0.3);border-radius:8px">No ${label.toLowerCase()} version to compare.</div></div>`;
+        return `<div style="${colStyle}">${heading}<div class="text-xs text-zinc-500 dark:text-zinc-400" style="padding:24px 0;text-align:center;border:1px dashed rgba(127,127,127,0.3);border-radius:8px">No ${label.toLowerCase()} version to compare.</div></div>`;
       }
       const media = v.webm
         ? `<video src="/visuals/${v.webm}"${v.png ? ` poster="/visuals/${v.png}"` : ''} muted loop autoplay playsinline controls style="${mediaStyle}"></video>`
@@ -12929,7 +12929,7 @@ const AppView = {
         ? DevChat.renderMarkdown(t.md)
         : `<pre class="whitespace-pre-wrap font-sans">${escapeHtml(t.md)}</pre>`);
     } else {
-      staging.setTestHtml('<span class="text-zinc-500">Use the button above to jump to the changed feature.</span>');
+      staging.setTestHtml('<span class="text-zinc-500 dark:text-zinc-400">Use the button above to jump to the changed feature.</span>');
     }
 
     staging.setTestBtn({

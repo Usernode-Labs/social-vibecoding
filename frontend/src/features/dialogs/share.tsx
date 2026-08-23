@@ -113,7 +113,7 @@ export function ShareDialog() {
         <h2 className="text-lg font-bold mb-1 text-zinc-900 dark:text-zinc-100">
           Share this app
         </h2>
-        <p className="text-xs text-zinc-500 mb-4">
+        <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-4">
           Anyone with this link can open the app outside the Usernode platform. Whether they need to log in is up to the app — most public apps work for anonymous viewers.
         </p>
         <div className="flex gap-2">

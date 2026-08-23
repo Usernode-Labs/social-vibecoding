@@ -58,7 +58,10 @@ test('AGENTS keeps always-on rules and routes conditional work to skills', () =>
   assert.match(guidance, /\.claude\/skills/);
   assert.match(guidance, /OpenCode discovers `\.agents\/skills\/` directly/);
   assert.match(guidance, /public\/index\.html.*GENERATED/);
-  assert.match(guidance, /Two design systems, one bundle/);
+  // Renamed when the widget-language reskin folded the admin console into the
+  // shell's palette: the boundary between them is a RENDERING one now
+  // (components vs class recipes), not two design systems.
+  assert.match(guidance, /One language, two renderers/);
   assert.doesNotMatch(guidance, /open `\/hooks`/);
   assert.doesNotMatch(guidance, /social-vibecoding codex setup/);
 });

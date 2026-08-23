@@ -506,7 +506,7 @@ const MembersDialog = {
   async loadCollaborators() {
     const list = document.getElementById('members-list');
     if (!list || !AppView.appData) return;
-    list.innerHTML = '<div class="px-3 py-2 text-sm text-zinc-500">Loading…</div>';
+    list.innerHTML = '<div class="px-3 py-2 text-sm text-zinc-500 dark:text-zinc-400">Loading…</div>';
     try {
       const res = await fetch(`/api/apps/${AppView.appData.slug}/collaborators`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -523,7 +523,7 @@ const MembersDialog = {
     const me = (typeof App !== 'undefined' && App.user) ? App.user : {};
     const canManage = !!AppView.appData?.can_manage;
     if (!rows.length) {
-      list.innerHTML = '<div class="px-3 py-2 text-sm text-zinc-500">No collaborators yet.</div>';
+      list.innerHTML = '<div class="px-3 py-2 text-sm text-zinc-500 dark:text-zinc-400">No collaborators yet.</div>';
       return;
     }
     list.innerHTML = rows.map((r) => {
@@ -1173,7 +1173,7 @@ const MembersDialog = {
   async loadApprovers() {
     const list = document.getElementById('members-approvers-list');
     if (!list || !AppView.appData) return;
-    list.innerHTML = '<div class="px-3 py-2 text-sm text-zinc-500">Loading…</div>';
+    list.innerHTML = '<div class="px-3 py-2 text-sm text-zinc-500 dark:text-zinc-400">Loading…</div>';
     try {
       const res = await fetch(`/api/apps/${AppView.appData.slug}/approvers`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -1207,7 +1207,7 @@ const MembersDialog = {
       // Only visible when the policy is 'invited' — honest about the
       // merge gate's empty-roster fallback (services/governance.js:
       // full admins act as the approver set).
-      list.innerHTML = '<div class="px-3 py-2 text-sm text-zinc-500">No approvers yet — platform admins can approve proposals until an approver is added.</div>';
+      list.innerHTML = '<div class="px-3 py-2 text-sm text-zinc-500 dark:text-zinc-400">No approvers yet — platform admins can approve proposals until an approver is added.</div>';
       return;
     }
     const canManage = !!AppView.appData?.can_manage;

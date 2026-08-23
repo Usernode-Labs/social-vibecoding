@@ -275,7 +275,7 @@ export function ImportPrDialog() {
         <h2 className="text-lg font-bold mb-1">
           Import a pull request
         </h2>
-        <p className="text-xs text-zinc-500 mb-2">
+        <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-2">
           Pick an open pull request to add to In progress. It stays there until you put it up for vote.
         </p>
         {/*
@@ -286,7 +286,7 @@ export function ImportPrDialog() {
             fork — rows marked "from a fork" run an outside contributor's
             code in the preview, so read the diff on GitHub first.
         */}
-        <p className="text-xs text-zinc-500 mb-4">
+        <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-4">
           {"A staging preview is built from the pull request's head commit, so it takes a few minutes to appear — and automated checks stay pending until it does. Rows marked "}
           <span className="text-amber-600 dark:text-amber-400">
             from a fork

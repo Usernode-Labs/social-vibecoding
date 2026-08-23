@@ -135,7 +135,7 @@ const Secrets = {
     Secrets.declareOpen = !!opts.declare;
     const list = document.getElementById('app-secrets-list');
     if (!list) return;
-    list.innerHTML = '<p class="text-sm text-zinc-500">Loading…</p>';
+    list.innerHTML = '<p class="text-sm text-zinc-500 dark:text-zinc-400">Loading…</p>';
     Secrets.setStatus('', '');
     try {
       const res = await fetch(`/api/apps/${slug}/secrets`);
@@ -226,7 +226,7 @@ const Secrets = {
     // it, because a declaration already up for vote is exactly the thing
     // someone opening this panel needs to see (and not open twice).
     const manifestNotice = data.manifestKnown ? '' : `
-        <p class="text-sm text-zinc-500 mb-3">
+        <p class="text-sm text-zinc-500 dark:text-zinc-400 mb-3">
           No manifest snapshot yet. Once this app's first deploy completes the
           declared secrets show up here.
         </p>`;
@@ -237,11 +237,11 @@ const Secrets = {
     }
     if (!data.secrets || !data.secrets.length) {
       list.innerHTML = isPlatform
-        ? `<p class="text-sm text-zinc-500">
+        ? `<p class="text-sm text-zinc-500 dark:text-zinc-400">
              No platform variables are declared yet — use “New variable” below to
              declare the first one.
            </p>`
-        : `<p class="text-sm text-zinc-500">
+        : `<p class="text-sm text-zinc-500 dark:text-zinc-400">
              This app's <code class="text-xs">dapp.json</code> doesn't declare any
              secrets yet — use “New secret” below to declare the first one.
            </p>`;
@@ -270,7 +270,7 @@ const Secrets = {
       }
       list.innerHTML = manifestNotice + groups.map((g) => `
         <div class="mb-3">
-          <h3 class="text-[0.9375rem] text-zinc-500 mb-1">${escapeHtml(g)}</h3>
+          <h3 class="text-[0.9375rem] text-zinc-500 dark:text-zinc-400 mb-1">${escapeHtml(g)}</h3>
           ${Secrets.groupNoteHtml(g, data)}
           ${byGroup.get(g).map((s) => Secrets.renderRow(s, canWrite)).join('')}
         </div>`).join('');
@@ -314,9 +314,9 @@ const Secrets = {
         escapeHtml(gh.reason || 'Couldn\'t read the platform repo\'s Actions secrets.')}</p>`;
     }
     if (gh.state === 'ok' && !gh.count) {
-      return `<p class="text-xs text-zinc-500 mb-2">No Actions secrets on this repo. ${where}</p>`;
+      return `<p class="text-xs text-zinc-500 dark:text-zinc-400 mb-2">No Actions secrets on this repo. ${where}</p>`;
     }
-    return `<p class="text-xs text-zinc-500 mb-2">${where}${
+    return `<p class="text-xs text-zinc-500 dark:text-zinc-400 mb-2">${where}${
       gh.staged ? ' <span class="italic">(Staging preview: this list is demo data.)</span>' : ''}</p>`;
   },
 
@@ -330,7 +330,7 @@ const Secrets = {
       ? `<span class="text-[0.65rem] uppercase font-bold text-amber-500" title="value never shown after save">sensitive</span>`
       : '';
     const orphanBadge = s.orphan
-      ? `<span class="text-[0.65rem] uppercase font-bold text-zinc-500">orphan</span>`
+      ? `<span class="text-[0.65rem] uppercase font-bold text-zinc-500 dark:text-zinc-400">orphan</span>`
       : '';
     // Present only on the platform-variables view; ordinary app secrets
     // send no `state` and keep exactly the badges they always had — except
@@ -351,14 +351,14 @@ const Secrets = {
       valueDisplay = s.hasValue
         ? `<span class="text-xs text-violet-600 dark:text-violet-300">value included${
           s.valueLast4 ? ` (…${escapeHtml(s.valueLast4)})` : ''} — applied when the proposal merges</span>`
-        : '<span class="text-xs text-zinc-500">declaration only — no value proposed</span>';
+        : '<span class="text-xs text-zinc-500 dark:text-zinc-400">declaration only — no value proposed</span>';
     } else if (s.hasValue && s.value != null) {
       // A non-private platform variable whose plaintext the server was
       // willing to return (admins only). Showing it in full is the point of
       // marking a variable non-private.
       valueDisplay = `<code class="text-xs font-mono text-zinc-700 dark:text-zinc-300 break-all">${escapeHtml(s.value)}</code>`;
     } else if (s.hasValue && s.private && s.state) {
-      valueDisplay = '<span class="text-xs text-zinc-500 font-mono">•••••••• (private — never displayed)</span>';
+      valueDisplay = '<span class="text-xs text-zinc-500 dark:text-zinc-400 font-mono">•••••••• (private — never displayed)</span>';
     } else if (s.hasValue && s.state === 'set' && !s.private && s.valueLast4 == null) {
       // Stored, but the plaintext couldn't be decrypted (rotated
       // JWT_SECRET, corrupt row). listView() degrades to this rather than
@@ -370,9 +370,9 @@ const Secrets = {
     } else if (s.required && !s.unwritable) {
       valueDisplay = `<span class="text-xs font-medium text-red-500">missing — deploys are blocked</span>`;
     } else if (s.default != null) {
-      valueDisplay = `<span class="font-mono text-xs text-zinc-500">default: ${escapeHtml(s.default)}</span>`;
+      valueDisplay = `<span class="font-mono text-xs text-zinc-500 dark:text-zinc-400">default: ${escapeHtml(s.default)}</span>`;
     } else {
-      valueDisplay = `<span class="text-xs text-zinc-500">not set</span>`;
+      valueDisplay = `<span class="text-xs text-zinc-500 dark:text-zinc-400">not set</span>`;
     }
 
     const setVerb = s.hasValue ? 'replace' : 'set';
@@ -428,14 +428,14 @@ const Secrets = {
           ${sensitiveBadge}
           ${orphanBadge}
         </div>
-        ${s.description ? `<p class="text-xs text-zinc-500 mb-2">${escapeHtml(s.description)}</p>` : ''}
-        ${isGithubRow ? `<p class="text-xs text-zinc-500 mb-2">
+        ${s.description ? `<p class="text-xs text-zinc-500 dark:text-zinc-400 mb-2">${escapeHtml(s.description)}</p>` : ''}
+        ${isGithubRow ? `<p class="text-xs text-zinc-500 dark:text-zinc-400 mb-2">
           Stored as an Actions secret on the platform repo. Its value can't be shown — GitHub's
           API never returns one — so change it in the repo's Settings → Secrets and variables →
           Actions.</p>` : ''}
-        ${!isGithubRow && s.unwritable ? `<p class="text-xs text-zinc-500 mb-2">
+        ${!isGithubRow && s.unwritable ? `<p class="text-xs text-zinc-500 dark:text-zinc-400 mb-2">
           Set by the deploy from a GitHub secret. It can't be edited here.</p>` : ''}
-        ${!isGithubRow && s.githubSecret ? `<p class="text-xs text-zinc-500 mb-2">
+        ${!isGithubRow && s.githubSecret ? `<p class="text-xs text-zinc-500 dark:text-zinc-400 mb-2">
           ${alsoGithub(s.githubSecret)}</p>` : ''}
         ${isProposed ? `<p class="text-xs text-violet-600 dark:text-violet-300 mb-2">
           Not declared yet — a proposal adding it to <code class="text-[0.65rem]">dapp.json</code>
@@ -498,7 +498,7 @@ const Secrets = {
           <button id="app-secrets-declare-open"
             class="text-xs px-2.5 py-1.5 rounded bg-violet-600 hover:bg-violet-500 text-white font-medium">
             + New ${noun}</button>
-          <span class="ml-2 text-xs text-zinc-500">${blocked
+          <span class="ml-2 text-xs text-zinc-500 dark:text-zinc-400">${blocked
     ? escapeHtml(data.declareDisabledReason || 'Unavailable right now.')
     : (canWrite
       ? 'Declares it in dapp.json (a proposal) and stores your value now.'

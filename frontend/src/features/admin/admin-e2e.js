@@ -93,9 +93,9 @@ const AdminE2E = (() => {
         const n = counts[s] || 0;
         const active = statusFilter === s;
         return `<button type="button" data-e2e-status="${s}"
-          class="${AdminUI.card} px-4 py-3 text-left transition-colors ${active ? 'ring-2 ring-indigo-500' : ''}">
-          <span class="block text-2xl font-semibold tabular-nums ${s === 'fail' && n ? 'text-red-600 dark:text-red-400' : 'text-gray-900 dark:text-gray-100'}">${n}</span>
-          <span class="text-xs uppercase tracking-wider text-gray-500 dark:text-gray-400">${esc(s)}</span>
+          class="${AdminUI.card} px-4 py-3 text-left transition-colors ${active ? 'ring-2 ring-violet-500' : ''}">
+          <span class="block text-2xl font-semibold tabular-nums ${s === 'fail' && n ? 'text-red-600 dark:text-red-400' : 'text-zinc-900 dark:text-zinc-100'}">${n}</span>
+          <span class="text-xs uppercase tracking-wider text-zinc-500 dark:text-zinc-400">${esc(s)}</span>
         </button>`;
       }).join('');
     return `<div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2 mb-4">${tiles}</div>`;
@@ -104,17 +104,17 @@ const AdminE2E = (() => {
   function caseRowHtml(c) {
     const badge = STATUS_BADGE[c.status] || AdminUI.badge.default;
     const notes = c.notes
-      ? `<p class="text-xs text-gray-500 dark:text-gray-400 mt-1">${esc(c.notes)}</p>`
+      ? `<p class="text-xs text-zinc-500 dark:text-zinc-400 mt-1">${esc(c.notes)}</p>`
       : '';
     return `<tr class="${AdminUI.trHover}">
-      <td class="${AdminUI.td} font-mono text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap align-top">${esc(c.id)}</td>
+      <td class="${AdminUI.td} font-mono text-xs text-zinc-500 dark:text-zinc-400 whitespace-nowrap align-top">${esc(c.id)}</td>
       <td class="${AdminUI.td} align-top">
-        <span class="font-medium text-gray-900 dark:text-gray-100">${esc(c.name)}</span>
-        <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">${esc(c.flow)}</p>
+        <span class="font-medium text-zinc-900 dark:text-zinc-100">${esc(c.name)}</span>
+        <p class="text-xs text-zinc-500 dark:text-zinc-400 mt-1">${esc(c.flow)}</p>
         ${notes}
       </td>
-      <td class="${AdminUI.td} align-top whitespace-nowrap text-xs text-gray-500 dark:text-gray-400">${esc(GATE_LABEL[c.gate] || c.gate)}</td>
-      <td class="${AdminUI.td} align-top whitespace-nowrap text-xs text-gray-500 dark:text-gray-400">${esc(METHOD_LABEL[c.method] || c.method)}</td>
+      <td class="${AdminUI.td} align-top whitespace-nowrap text-xs text-zinc-500 dark:text-zinc-400">${esc(GATE_LABEL[c.gate] || c.gate)}</td>
+      <td class="${AdminUI.td} align-top whitespace-nowrap text-xs text-zinc-500 dark:text-zinc-400">${esc(METHOD_LABEL[c.method] || c.method)}</td>
       <td class="${AdminUI.td} align-top whitespace-nowrap"><span class="${badge}">${esc(c.status)}</span></td>
     </tr>`;
   }
@@ -124,7 +124,7 @@ const AdminE2E = (() => {
     if (!cases.length) return '';
     return `<section class="mb-6">
       <h3 class="${AdminUI.sectionTitle} mb-1">
-        <span class="font-mono text-indigo-600 dark:text-indigo-400 mr-2">${esc(area.key)}</span>${esc(area.title)}
+        <span class="font-mono text-violet-600 dark:text-violet-400 mr-2">${esc(area.key)}</span>${esc(area.title)}
       </h3>
       <p class="${AdminUI.cardDescription} mb-3">${esc(area.blurb)}</p>
       <div class="${AdminUI.tableWrap}">

@@ -666,7 +666,7 @@ const GroupChat = {
     // legacy boxed layout the bar isn't screen-bottom-anchored, so the
     // inset is inert there — harmless, and it keeps one class per role.
     const composerHtml = opts.readOnly
-      ? `<div class="px-3 py-2 text-xs text-zinc-500 border-t border-zinc-200 dark:border-zinc-800 shrink-0 platform-safe-bar">${escapeHtml(opts.notice || 'This thread is read-only.')}</div>`
+      ? `<div class="px-3 py-2 text-xs text-zinc-500 dark:text-zinc-400 border-t border-zinc-200 dark:border-zinc-800 shrink-0 platform-safe-bar">${escapeHtml(opts.notice || 'This thread is read-only.')}</div>`
       : `<div class="shrink-0 border-t border-zinc-200 dark:border-zinc-800 p-2 platform-safe-bar">
           <div id="gc-thread-reply-preview" class="hidden"></div>
           <div id="gc-thread-attach-error" class="dc-attach-error hidden"></div>
@@ -694,12 +694,12 @@ const GroupChat = {
             ${headSlot}
             <div id="gc-thread-messages" class="py-2 space-y-0.5"></div>
           </div>
-          <div id="gc-thread-typing" class="px-3 text-xs text-zinc-500 h-5 shrink-0"></div>
+          <div id="gc-thread-typing" class="px-3 text-xs text-zinc-500 dark:text-zinc-400 h-5 shrink-0"></div>
           ${composerHtml}
         </div>`
       : `<div class="dev-thread border border-zinc-200 dark:border-zinc-800 rounded-xl flex flex-col bg-zinc-50/50 dark:bg-zinc-900/40">
           <div id="gc-thread-messages" class="overflow-y-auto px-2 py-1 space-y-0.5" style="max-height:40vh;min-height:60px"></div>
-          <div id="gc-thread-typing" class="px-3 text-xs text-zinc-500 h-4 shrink-0"></div>
+          <div id="gc-thread-typing" class="px-3 text-xs text-zinc-500 dark:text-zinc-400 h-4 shrink-0"></div>
           ${composerHtml}
         </div>`;
 

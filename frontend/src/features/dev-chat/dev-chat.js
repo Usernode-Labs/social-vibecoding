@@ -1112,7 +1112,7 @@ const DevChat = {
       return;
     }
     host.innerHTML = `
-      <label class="text-xs text-zinc-500" for="dc-runner-select">Run on:</label>
+      <label class="text-xs text-zinc-500 dark:text-zinc-400" for="dc-runner-select">Run on:</label>
       <select id="dc-runner-select" class="rounded bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-2 py-1 text-xs text-zinc-700 dark:text-zinc-300 focus:outline-none focus:ring-2 focus:ring-violet-500">
         <option value="local" selected>${escapeHtml(label)}</option>
         <option value="platform">Usernode</option>
@@ -7182,7 +7182,7 @@ const DevChat = {
           ${isFreeable ? `<button class="dc-pause-btn text-xs text-zinc-400 hover:text-emerald-400" data-id="${s.id}" data-action="pause" data-freeing="1" title="Frees the AI worker. The PR stays up for voting." onclick="event.stopPropagation()">Free worker</button>` : ''}
           ${isPaused ? `<button class="dc-pause-btn text-xs text-emerald-400 hover:text-emerald-300" data-id="${s.id}" data-action="resume" onclick="event.stopPropagation()">Resume</button>` : ''}
           ${isArchived ? `<button class="dc-unarchive-btn text-xs text-emerald-400 hover:text-emerald-300" data-id="${s.id}" onclick="event.stopPropagation()" title="Restore this session (reopens the PR)">Unarchive</button>` : ''}
-          ${isArchivable ? `<button class="dc-archive-btn text-xs text-zinc-500 hover:text-red-400" data-id="${s.id}" data-name="${escapeHtml(s.session_title || s.pr_title || s.branch_name || 'Session')}" title="Archive (frees the slot; restorable for a while)" onclick="event.stopPropagation()">Archive</button>` : ''}
+          ${isArchivable ? `<button class="dc-archive-btn text-xs text-zinc-500 dark:text-zinc-400 hover:text-red-400" data-id="${s.id}" data-name="${escapeHtml(s.session_title || s.pr_title || s.branch_name || 'Session')}" title="Archive (frees the slot; restorable for a while)" onclick="event.stopPropagation()">Archive</button>` : ''}
           <span class="text-xs text-zinc-500 dark:text-zinc-400">${date}</span>
         </div>`;
     }).join('');
@@ -7782,7 +7782,7 @@ const DevChat = {
         <span class="text-xs text-zinc-400 truncate flex-1" title="${escapeHtml(DevChat.currentSession.branch_name || '')}">${escapeHtml(DevChat.currentSession.session_title || DevChat.currentSession.pr_title || DevChat.currentSession.branch_name || 'Session')}</span>
         ${DevChat.currentSession.pr_number
           ? `<button id="dc-pr-header-link" class="text-xs text-violet-600 hover:text-violet-700 dark:text-violet-400 dark:hover:text-violet-300" title="This session's pull request — every change in this chat goes to PR #${DevChat.currentSession.pr_number}. Use “Start a new change” for separate work.">PR #${DevChat.currentSession.pr_number}</button>`
-          : '<span class="text-xs text-zinc-500" title="This chat is one change → one pull request. A PR opens after the first build.">New change</span>'}
+          : '<span class="text-xs text-zinc-500 dark:text-zinc-400" title="This chat is one change → one pull request. A PR opens after the first build.">New change</span>'}
         ${DevChat._renderHeaderStatusPill(DevChat.currentSession)}
         <!-- #1348: where this session is built, top right of the session
              area. It states the venue and opens the sheet that changes it,
@@ -7869,7 +7869,7 @@ const DevChat = {
                    keeps its own row below. -->
               ${claudeVenue ? `
               <div id="dc-venue-detail" class="dc-venue-detail dc-venue-detail-inline">
-                <label class="text-xs text-zinc-500" for="dc-model-select">Chat model:</label>
+                <label class="text-xs text-zinc-500 dark:text-zinc-400" for="dc-model-select">Chat model:</label>
                 <select id="dc-model-select" class="rounded bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-2 py-1 text-xs text-zinc-700 dark:text-zinc-300 focus:outline-none focus:ring-2 focus:ring-violet-500">
                   ${modelOptions}
                 </select>
@@ -7884,7 +7884,7 @@ const DevChat = {
             </div>
             ${openRouterVenue ? `
             <div id="dc-venue-detail" class="dc-venue-detail">
-              <span class="text-xs text-zinc-500">OpenRouter model:</span>
+              <span class="text-xs text-zinc-500 dark:text-zinc-400">OpenRouter model:</span>
               <span id="dc-openrouter-model" class="dc-openrouter-model" title="${escapeHtml(openRouterModel || 'No model is pinned')}">${escapeHtml(openRouterModel || 'No model is pinned')}</span>
               <button type="button" id="dc-openrouter-model-change" class="dc-openrouter-model-change" ${DevChat.isStreaming ? 'disabled' : ''}>Change model</button>
               <div id="dc-agent-note" class="basis-full text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">${escapeHtml(agentBillingNote)}</div>
@@ -7902,7 +7902,7 @@ const DevChat = {
             <div class="dc-composer-actions">
               <input type="file" id="dc-file-input" class="hidden" multiple>
               <button type="button" id="dc-attach-btn" title="Attach files — images (≤4 MB), text/code files (≤200 KB), zip archives (≤20 MB), or any other file (≤10 MB); up to 4 per message" aria-label="Attach files"
-                class="dc-attach-btn rounded border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-900 text-zinc-500 hover:text-violet-400 hover:border-violet-500 px-1.5 py-1 shrink-0 transition-colors">
+                class="dc-attach-btn rounded border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-900 text-zinc-500 dark:text-zinc-400 hover:text-violet-400 hover:border-violet-500 px-1.5 py-1 shrink-0 transition-colors">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
               </button>
               <div id="dc-quick-replies" class="dc-quick-replies"></div>
@@ -9495,10 +9495,10 @@ const DevChat = {
       ? 'No spec yet. Ask the AI to draft one.'
       : 'No spec has been shared for this session yet.';
     const bodyHtml = DevChat.specViewer.isLoading && !displayContent
-      ? `<div class="p-4 text-sm text-zinc-500">Loading spec…</div>`
+      ? `<div class="p-4 text-sm text-zinc-500 dark:text-zinc-400">Loading spec…</div>`
       : displayContent
         ? specBodyHtml
-        : `<div class="p-4 text-sm text-zinc-500">${emptyCopy}</div>`;
+        : `<div class="p-4 text-sm text-zinc-500 dark:text-zinc-400">${emptyCopy}</div>`;
 
     // Spec planning and building are two separate steps: drafting a spec
     // does NOT build anything. Make the handoff explicit so a finished

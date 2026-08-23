@@ -31,18 +31,18 @@ import { AdminUI } from './admin-console.js';
 // topochain-style vocabulary.
 const NodeUI = Object.freeze({
   kv: 'grid grid-cols-[max-content_1fr] items-baseline gap-x-6 gap-y-1.5 text-sm',
-  label: 'text-gray-500 dark:text-gray-400',
-  val: 'break-all text-gray-900 dark:text-gray-100',
-  small: 'text-[11px] text-gray-500 dark:text-gray-400',
-  empty: 'py-1.5 text-xs italic text-gray-500 dark:text-gray-400',
+  label: 'text-zinc-500 dark:text-zinc-400',
+  val: 'break-all text-zinc-900 dark:text-zinc-100',
+  small: 'text-[11px] text-zinc-500 dark:text-zinc-400',
+  empty: 'py-1.5 text-xs italic text-zinc-500 dark:text-zinc-400',
   errText: 'text-xs text-red-600 dark:text-red-400',
   warnText: 'text-xs text-amber-600 dark:text-amber-400',
-  code: 'rounded bg-gray-100 dark:bg-gray-800 px-1 py-0.5 font-mono text-xs',
-  link: 'text-indigo-600 hover:text-indigo-800 dark:text-indigo-400 dark:hover:text-indigo-300 hover:underline',
-  details: 'rounded-lg bg-gray-50 dark:bg-gray-800/50 px-3 py-1.5 my-2',
-  summary: 'cursor-pointer select-none py-1 text-[13px] font-medium text-gray-700 dark:text-gray-300',
-  syncBar: 'mt-1 h-1.5 w-full max-w-[240px] overflow-hidden rounded-full bg-gray-200 dark:bg-gray-800',
-  syncFill: 'h-full rounded-full bg-indigo-600 transition-all duration-300',
+  code: 'rounded bg-zinc-100 dark:bg-zinc-800 px-1 py-0.5 font-mono text-xs',
+  link: 'text-violet-600 hover:text-violet-800 dark:text-violet-400 dark:hover:text-violet-300 hover:underline',
+  details: 'rounded-lg bg-zinc-50 dark:bg-zinc-800/50 px-3 py-1.5 my-2',
+  summary: 'cursor-pointer select-none py-1 text-[13px] font-medium text-zinc-700 dark:text-zinc-300',
+  syncBar: 'mt-1 h-1.5 w-full max-w-[240px] overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800',
+  syncFill: 'h-full rounded-full bg-violet-600 transition-all duration-300',
   syncFillFull: 'h-full rounded-full bg-emerald-500 transition-all duration-300',
 });
 
@@ -326,7 +326,7 @@ const AdminNode = {
       led.className = 'inline-block h-2 w-2 rounded-full bg-red-500';
       t.textContent = 'disconnected';
     } else {
-      led.className = 'inline-block h-2 w-2 rounded-full bg-gray-300 dark:bg-gray-600';
+      led.className = 'inline-block h-2 w-2 rounded-full bg-zinc-300 dark:bg-zinc-600';
       t.textContent = 'connecting…';
     }
   },
@@ -359,10 +359,10 @@ const AdminNode = {
       <div id="admin-node-root">
         <div class="mb-1 flex flex-wrap items-baseline justify-between gap-2">
           <div>
-            <h2 id="admin-node-server-name" class="text-2xl font-bold text-gray-900 dark:text-gray-100">Loading…</h2>
-            <div class="mb-6 text-[13px] text-gray-500 dark:text-gray-400" id="admin-node-server-meta"></div>
+            <h2 id="admin-node-server-name" class="text-2xl font-bold text-zinc-900 dark:text-zinc-100">Loading…</h2>
+            <div class="mb-6 text-[13px] text-zinc-500 dark:text-zinc-400" id="admin-node-server-meta"></div>
           </div>
-          <div class="flex items-center gap-1.5 text-[11px] text-gray-500 dark:text-gray-400" id="admin-node-conn"><span id="admin-node-led" class="inline-block h-2 w-2 rounded-full bg-gray-300 dark:bg-gray-600"></span><span id="admin-node-conn-text">connecting…</span></div>
+          <div class="flex items-center gap-1.5 text-[11px] text-zinc-500 dark:text-zinc-400" id="admin-node-conn"><span id="admin-node-led" class="inline-block h-2 w-2 rounded-full bg-zinc-300 dark:bg-zinc-600"></span><span id="admin-node-conn-text">connecting…</span></div>
         </div>
 
         <div class="${AdminUI.card} p-6 mb-4">

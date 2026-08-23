@@ -106,7 +106,7 @@ export function ForkAppDialog() {
         <h2 className="text-lg font-bold mb-1">
           Fork this app
         </h2>
-        <p className="text-xs text-zinc-500 mb-4">
+        <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-4">
           Forking
           <span id="fork-source-name" className="font-mono text-zinc-300">
             {sourceName}

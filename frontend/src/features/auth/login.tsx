@@ -1168,7 +1168,7 @@ export function LoginScreen() {
             <button
               id="btn-recovery-back"
               type="button"
-              className="w-full text-sm text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-300"
+              className="w-full text-sm text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-300"
               onClick={showLoginBaseView}
             >
               Back to login

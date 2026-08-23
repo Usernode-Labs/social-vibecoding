@@ -177,7 +177,7 @@ function PublicControls({ controls, status, publishing, previewOpen }: {
           Copy public link
         </Button>
       </div>
-      <div className="mt-3 text-xs text-zinc-500" role="status" aria-live="polite">{status}</div>
+      <div className="mt-3 text-xs text-zinc-500 dark:text-zinc-400" role="status" aria-live="polite">{status}</div>
       <div id="public-profile-preview" className={previewOpen ? 'mt-4' : 'hidden mt-4'}>
         {previewOpen ? (
           <PublicProfileCard profile={controls.profile} allowReport={false} />

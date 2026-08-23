@@ -813,13 +813,13 @@ export function LandingScreen() {
             {/* Same launcher-grid shape as the authed homescreen (#app-list). */}
             <div id="landing-apps" className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2">
               {apps.kind === 'loading' ? (
-                <p className="text-sm text-zinc-500">
+                <p className="text-sm text-zinc-500 dark:text-zinc-400">
                   Loading&hellip;
                 </p>
               ) : apps.kind === 'error' ? (
-                <p className="text-sm text-zinc-500 col-span-full">Could not load apps right now.</p>
+                <p className="text-sm text-zinc-500 dark:text-zinc-400 col-span-full">Could not load apps right now.</p>
               ) : apps.apps.length === 0 ? (
-                <p className="text-sm text-zinc-500 col-span-full">No public apps yet.</p>
+                <p className="text-sm text-zinc-500 dark:text-zinc-400 col-span-full">No public apps yet.</p>
               ) : (
                 apps.apps.map((app, i) => (
                   <LandingTile key={app.slug || i} app={app} onOpen={onTileClick} />

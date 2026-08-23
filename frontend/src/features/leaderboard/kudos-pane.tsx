@@ -324,7 +324,7 @@ function PrRows({ rows }: { rows: PrRow[] }): ReactNode {
           className={ROW}
           onClick={() => controller()?._routeToPr(row.slug, row.sessionId)}
         >
-          <div className="w-7 text-center text-sm font-mono text-zinc-500">{row.rank}</div>
+          <div className="w-7 text-center text-sm font-mono text-zinc-500 dark:text-zinc-400">{row.rank}</div>
           <div className="flex-1 min-w-0">
             <div className={ROW_TITLE}>{row.title}</div>
             <div className={ROW_META}>
@@ -354,7 +354,7 @@ function UserRows({ rows }: { rows: UserRow[] }): ReactNode {
           className={ROW}
           onClick={() => controller()?._openUser(row.who)}
         >
-          <div className="w-7 text-center text-sm font-mono text-zinc-500">{row.rank}</div>
+          <div className="w-7 text-center text-sm font-mono text-zinc-500 dark:text-zinc-400">{row.rank}</div>
           <div className="w-9 h-9 rounded-full bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 flex items-center justify-center font-semibold text-sm">
             {row.initial}
           </div>

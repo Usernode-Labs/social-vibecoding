@@ -91,9 +91,15 @@ function code(src) {
 }
 
 test('the admin console does not reach for the shell’s primitives', () => {
-  // The console predates the shadcn work and is styled end to end by the
-  // registry. A <Button> here would be violet, and the surrounding markup is
-  // built by innerHTML anyway, so there is nothing for it to compose with.
+  // THIS is the boundary now. It used to be a palette one — gray/indigo here,
+  // zinc/violet there — and the widget-language reskin folded the console into
+  // the shell's language, so that half is gone (see the test below, which now
+  // enforces ONE palette rather than two).
+  //
+  // What is left is a RENDERING boundary, and it is the durable one: the
+  // console draws with template literals and `innerHTML`, the shell draws with
+  // React components. You cannot interpolate a <Button> into a template
+  // string. Same vocabulary, two forms — components there, class recipes here.
   for (const file of ADMIN_FILES.concat(['index.tsx'])) {
     const src = code(fs.readFileSync(path.join(JS_DIR, file), 'utf8'));
     const hit = src.match(/from '@\/components\/ui\/[^']*'/);
@@ -104,9 +110,12 @@ test('the admin console does not reach for the shell’s primitives', () => {
 });
 
 test('nothing outside the admin console reads the registry', () => {
-  // The other direction. AdminUI is exported (index.tsx imports it for the
-  // dialog it renders) rather than private, so this is the only thing keeping
-  // a gray/indigo recipe from turning up on a zinc/violet screen.
+  // The other direction, and it outlived its original reason. It used to keep
+  // a gray/indigo recipe off a zinc/violet screen; both are zinc/violet now,
+  // so what it keeps out is a CLASS STRING where a component belongs. A shell
+  // file reaching for AdminUI.card is a React tree being handed markup meant
+  // for an innerHTML host — it would work, and it would be the first crack in
+  // the rendering boundary above.
   for (const file of sourcesUnder(SRC_DIR)) {
     if (file.startsWith(JS_DIR + path.sep)) continue;
     const src = code(fs.readFileSync(file, 'utf8'));
@@ -116,24 +125,36 @@ test('nothing outside the admin console reads the registry', () => {
   }
 });
 
-test('the shell primitives carry no admin palette, and vice versa', () => {
-  // The palettes are the boundary made visible: `gray-`/`indigo-` is
-  // topochain, `zinc-`/`violet-` is the shell. Each side using the other's
-  // scale is the exact failure this section exists to catch, and it is one a
-  // reviewer will not see in a diff of class strings.
-  for (const file of sourcesUnder(UI_DIR)) {
+test('one palette across the product — no gray or indigo anywhere', () => {
+  // This assertion INVERTED with the reskin, and got stronger doing it.
+  //
+  // It used to police a split: `gray-`/`indigo-` was the admin console's,
+  // `zinc-`/`violet-` was the shell's, and each side using the other's scale
+  // was the failure. The console speaks the shell's language now, so the split
+  // is gone — and the rule that replaces it covers strictly more ground: the
+  // stock gray and indigo scales appear NOWHERE, in either system.
+  //
+  // That is what catches a revert. The scale keys `zinc`/`violet` are
+  // overridden in tailwind.config.js (see the long note there on why they keep
+  // their names while their hues moved), so a stray `bg-gray-100` renders
+  // stock Tailwind grey next to the platform's — a difference no reviewer
+  // spots in a diff of class strings.
+  const scoped = [...sourcesUnder(UI_DIR), ...ADMIN_FILES.map((f) => path.join(JS_DIR, f))];
+  for (const file of scoped) {
     const src = code(fs.readFileSync(file, 'utf8'));
     for (const token of ['gray-', 'indigo-']) {
       assert.ok(!src.includes(token),
-        `${path.basename(file)} uses the ${token.slice(0, -1)} scale — the shell primitives are `
-        + 'zinc/violet; that palette belongs to the admin console');
+        `${path.basename(file)} uses the ${token.slice(0, -1)} scale — the platform is `
+        + 'zinc/violet everywhere since the widget-language reskin');
     }
   }
+  // And the registry is IN that language rather than merely free of the old
+  // one: an empty file would pass the loop above.
   const registry = fs.readFileSync(path.join(JS_DIR, 'admin-console.js'), 'utf8');
   const table = registry.slice(registry.indexOf('export const AdminUI'), registry.indexOf('\n});'));
   for (const token of ['zinc-', 'violet-']) {
-    assert.ok(!table.includes(token),
-      `the AdminUI registry uses the ${token.slice(0, -1)} scale — that palette belongs to the shell`);
+    assert.ok(table.includes(token),
+      `the AdminUI registry has no ${token.slice(0, -1)} classes — it should speak the shell's palette`);
   }
 });
 

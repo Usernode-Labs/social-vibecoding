@@ -120,7 +120,7 @@ export function AgentFilesList({ kind, empty }: { kind: string; empty: string })
   // as they did before: one fetch feeds both lists, and saying "Loading…"
   // twice for one request reads as two requests.
   if (state.phase === 'loading') {
-    return kind === 'instruction' ? <p className="text-xs text-zinc-500">Loading…</p> : null;
+    return kind === 'instruction' ? <p className="text-xs text-zinc-500 dark:text-zinc-400">Loading…</p> : null;
   }
   if (state.phase === 'error') {
     return kind === 'instruction'

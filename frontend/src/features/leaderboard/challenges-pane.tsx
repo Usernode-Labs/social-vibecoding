@@ -161,7 +161,7 @@ function Card({ view }: { view: CardView }): ReactNode {
         {view.done ? <span className={DONE_CHIP}>Completed</span> : null}
       </div>
       <div className="text-sm font-medium text-zinc-900 dark:text-zinc-100 mb-1">{view.goal}</div>
-      <p className="text-xs text-zinc-500 line-clamp-2">{view.task}</p>
+      <p className="text-xs text-zinc-500 dark:text-zinc-400 line-clamp-2">{view.task}</p>
       {view.reward ? (
         <p className="text-xs text-violet-500 mt-2 font-medium">{view.reward}</p>
       ) : null}
@@ -175,11 +175,11 @@ function Grid({ view }: { view: GridView | null }): ReactNode {
   // starts and the loading line arrives on the very next render.
   if (!view) return null;
   if (view.kind === 'loading') {
-    return <p className="text-sm text-zinc-500">Loading challenges…</p>;
+    return <p className="text-sm text-zinc-500 dark:text-zinc-400">Loading challenges…</p>;
   }
   if (view.kind === 'error') return <div className={GRID_ERROR}>{view.message}</div>;
   if (view.kind === 'empty') {
-    return <p className="text-sm text-zinc-500 py-8 text-center">No challenges for this event yet.</p>;
+    return <p className="text-sm text-zinc-500 dark:text-zinc-400 py-8 text-center">No challenges for this event yet.</p>;
   }
   return (
     <>
@@ -221,7 +221,7 @@ function Grid({ view }: { view: GridView | null }): ReactNode {
 function Cta({ view }: { view: CtaView }): ReactNode {
   if (view.kind === 'text') {
     return (
-      <p className="mb-3 text-xs text-zinc-500">
+      <p className="mb-3 text-xs text-zinc-500 dark:text-zinc-400">
         {view.label} <span className="italic">(link unavailable)</span>
       </p>
     );
@@ -243,10 +243,10 @@ function Cta({ view }: { view: CtaView }): ReactNode {
 
 function Entries({ view }: { view: EntriesView }): ReactNode {
   if (view.kind === 'loading') {
-    return <p className="text-xs text-zinc-500">Loading participants…</p>;
+    return <p className="text-xs text-zinc-500 dark:text-zinc-400">Loading participants…</p>;
   }
-  if (view.kind === 'error') return <p className="text-xs text-zinc-500">{view.message}</p>;
-  if (view.kind === 'empty') return <p className="text-xs text-zinc-500">No participants yet.</p>;
+  if (view.kind === 'error') return <p className="text-xs text-zinc-500 dark:text-zinc-400">{view.message}</p>;
+  if (view.kind === 'empty') return <p className="text-xs text-zinc-500 dark:text-zinc-400">No participants yet.</p>;
   return (
     <>
       <ul className="space-y-1">
@@ -308,19 +308,19 @@ function DetailPanel({ view }: { view: DetailView }): ReactNode {
         </p>
       ) : null}
       {view.requirements ? (
-        <p className="text-xs text-zinc-500 mb-2">
+        <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-2">
           <span className="font-medium">Requirements:</span> {view.requirements}
         </p>
       ) : null}
       {view.rewardLogic ? (
-        <p className="text-xs text-zinc-500 mb-3">
+        <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-3">
           <span className="font-medium">Reward logic:</span> {view.rewardLogic}
         </p>
       ) : null}
       {view.cta ? <Cta view={view.cta} /> : null}
       <div className="border-t border-zinc-200 dark:border-zinc-800 pt-3">
-        <div className="text-[0.9375rem] text-zinc-500 mb-1">Participants</div>
-        {view.totals ? <p className="text-xs text-zinc-500 mb-2">{view.totals}</p> : null}
+        <div className="text-[0.9375rem] text-zinc-500 dark:text-zinc-400 mb-1">Participants</div>
+        {view.totals ? <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-2">{view.totals}</p> : null}
         <Entries view={view.entries} />
       </div>
     </>
@@ -330,20 +330,20 @@ function DetailPanel({ view }: { view: DetailView }): ReactNode {
 // ── Profile overlay ─────────────────────────────────────────────────────
 
 function ProfileBody({ view }: { view: ProfileView }): ReactNode {
-  if (view.kind === 'loading') return <p className="text-sm text-zinc-500">Loading…</p>;
-  if (view.kind === 'error') return <p className="text-sm text-zinc-500">{view.message}</p>;
+  if (view.kind === 'loading') return <p className="text-sm text-zinc-500 dark:text-zinc-400">Loading…</p>;
+  if (view.kind === 'error') return <p className="text-sm text-zinc-500 dark:text-zinc-400">{view.message}</p>;
   return (
     <>
       <h2 className="text-lg font-bold text-zinc-900 dark:text-zinc-100 mb-3">{view.name}</h2>
       <div className="grid grid-cols-2 gap-2 text-xs mb-4">
         {view.stats.map((s) => (
           <div key={s.label}>
-            <span className="text-zinc-500">{s.label}</span>
+            <span className="text-zinc-500 dark:text-zinc-400">{s.label}</span>
             <div className="font-mono">{s.value}</div>
           </div>
         ))}
       </div>
-      <div className="text-[0.9375rem] text-zinc-500 mb-1">Activities</div>
+      <div className="text-[0.9375rem] text-zinc-500 dark:text-zinc-400 mb-1">Activities</div>
       {view.activities ? (
         <ul className="space-y-1">
           {view.activities.map((a) => (
@@ -354,7 +354,7 @@ function ProfileBody({ view }: { view: ProfileView }): ReactNode {
           ))}
         </ul>
       ) : (
-        <p className="text-xs text-zinc-500">No activities recorded.</p>
+        <p className="text-xs text-zinc-500 dark:text-zinc-400">No activities recorded.</p>
       )}
     </>
   );

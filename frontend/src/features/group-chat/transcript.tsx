@@ -169,7 +169,7 @@ export function Transcript({ source = 'main' }: { source?: string }) {
         </div>
       ) : null}
       {view.lead.placeholder ? (
-        <div className="text-xs text-zinc-500 px-2 py-2">{view.lead.placeholder}</div>
+        <div className="text-xs text-zinc-500 dark:text-zinc-400 px-2 py-2">{view.lead.placeholder}</div>
       ) : null}
       {view.messages.map((msg, i) => {
         const key = msg.id != null ? `m${msg.id}` : `i${i}`;

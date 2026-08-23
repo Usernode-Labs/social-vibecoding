@@ -288,7 +288,7 @@ const TopochainEventContext = {
     const esc = TopochainEventContext.esc;
 
     if (TopochainEventContext._detailLoading && !TopochainEventContext._detail) {
-      host.innerHTML = '<p class="text-sm text-zinc-500">Loading…</p>';
+      host.innerHTML = '<p class="text-sm text-zinc-500 dark:text-zinc-400">Loading…</p>';
       return;
     }
     if (TopochainEventContext._detailError && !TopochainEventContext._detail) {
@@ -300,7 +300,7 @@ const TopochainEventContext = {
     }
     const ev = TopochainEventContext._detail;
     if (!ev) {
-      host.innerHTML = '<p class="text-sm text-zinc-500">No event selected.</p>';
+      host.innerHTML = '<p class="text-sm text-zinc-500 dark:text-zinc-400">No event selected.</p>';
       return;
     }
     // Same reasoning as the picker's `(season)` suffix: a season-type event
@@ -323,17 +323,17 @@ const TopochainEventContext = {
           <span class="text-xs px-2 py-0.5 rounded-full font-medium ${statusBadge}">${esc(statusLabel)}</span>
         </div>
         ${ev.description ? `<p class="text-sm text-zinc-600 dark:text-zinc-300 mt-2">${esc(ev.description)}</p>` : ''}
-        <p class="text-xs text-zinc-500 mt-2">
+        <p class="text-xs text-zinc-500 dark:text-zinc-400 mt-2">
           ${esc(fmt(ev.starts_at))} &ndash; ${esc(fmt(ev.ends_at))}
           ${ev.users_count != null ? ` · ${esc(ev.users_count)} taking part` : ''}
         </p>
         ${isSeason ? `
-        <p id="tc-ev-season-note" class="text-xs text-zinc-500 mt-2">
+        <p id="tc-ev-season-note" class="text-xs text-zinc-500 dark:text-zinc-400 mt-2">
           Whole-season standings &mdash; every public event in this season, combined.
           Pick a single event above to see just its results.
         </p>` : ''}
         ${TopochainEventContext._endedFallback ? `
-        <p id="tc-ev-fallback-note" class="text-xs text-zinc-500 mt-2">
+        <p id="tc-ev-fallback-note" class="text-xs text-zinc-500 dark:text-zinc-400 mt-2">
           Nothing is running right now — showing the most recent event.
         </p>` : ''}
       </div>`;

@@ -64,7 +64,7 @@ const AdminPush = (() => {
     const runtimeReady = runtime && runtime.enabled
       && runtime.environment && runtime.firebaseProjectId;
     const rows = (deployment || []).map((row) => `
-      <div class="rounded-lg border border-gray-200 dark:border-gray-800 p-3 text-sm">
+      <div class="rounded-lg border border-zinc-200 dark:border-zinc-800 p-3 text-sm">
         <div class="flex items-center justify-between gap-2 flex-wrap">
           <code class="font-mono text-xs">${esc(row.environment)}</code>
           <span class="${row.send_enabled ? AdminUI.badge.success : AdminUI.badge.destructive}">
@@ -72,9 +72,9 @@ const AdminPush = (() => {
           </span>
         </div>
         <dl class="mt-2 space-y-1 text-xs">
-          <div class="flex gap-2"><dt class="text-gray-500 w-28 shrink-0">Firebase project</dt><dd class="font-mono break-all">${esc(row.firebase_project_id)}</dd></div>
-          <div class="flex gap-2"><dt class="text-gray-500 w-28 shrink-0">Active since</dt><dd>${esc(fmtTime(row.send_not_before))}</dd></div>
-          <div class="flex gap-2"><dt class="text-gray-500 w-28 shrink-0">State updated</dt><dd>${esc(fmtTime(row.updated_at))}</dd></div>
+          <div class="flex gap-2"><dt class="text-zinc-500 dark:text-zinc-400 w-28 shrink-0">Firebase project</dt><dd class="font-mono break-all">${esc(row.firebase_project_id)}</dd></div>
+          <div class="flex gap-2"><dt class="text-zinc-500 dark:text-zinc-400 w-28 shrink-0">Active since</dt><dd>${esc(fmtTime(row.send_not_before))}</dd></div>
+          <div class="flex gap-2"><dt class="text-zinc-500 dark:text-zinc-400 w-28 shrink-0">State updated</dt><dd>${esc(fmtTime(row.updated_at))}</dd></div>
         </dl>
       </div>`).join('');
 
@@ -90,12 +90,12 @@ const AdminPush = (() => {
           </span>
         </div>
         <div class="grid gap-3 md:grid-cols-2">
-          <div class="rounded-lg border border-gray-200 dark:border-gray-800 p-3 text-sm">
+          <div class="rounded-lg border border-zinc-200 dark:border-zinc-800 p-3 text-sm">
             <div class="font-medium">Running process</div>
             <dl class="mt-2 space-y-1 text-xs">
-              <div class="flex gap-2"><dt class="text-gray-500 w-28 shrink-0">Sender</dt><dd>${runtime?.enabled ? 'enabled' : 'disabled'}</dd></div>
-              <div class="flex gap-2"><dt class="text-gray-500 w-28 shrink-0">Environment</dt><dd class="font-mono">${esc(runtime?.environment || '—')}</dd></div>
-              <div class="flex gap-2"><dt class="text-gray-500 w-28 shrink-0">Firebase project</dt><dd class="font-mono break-all">${esc(runtime?.firebaseProjectId || '—')}</dd></div>
+              <div class="flex gap-2"><dt class="text-zinc-500 dark:text-zinc-400 w-28 shrink-0">Sender</dt><dd>${runtime?.enabled ? 'enabled' : 'disabled'}</dd></div>
+              <div class="flex gap-2"><dt class="text-zinc-500 dark:text-zinc-400 w-28 shrink-0">Environment</dt><dd class="font-mono">${esc(runtime?.environment || '—')}</dd></div>
+              <div class="flex gap-2"><dt class="text-zinc-500 dark:text-zinc-400 w-28 shrink-0">Firebase project</dt><dd class="font-mono break-all">${esc(runtime?.firebaseProjectId || '—')}</dd></div>
             </dl>
           </div>
           ${rows || `<p class="${AdminUI.muted} p-3">No deployment state has been recorded.</p>`}
@@ -115,19 +115,19 @@ const AdminPush = (() => {
             <span class="${Number(row.eligible) > 0 ? AdminUI.badge.success : AdminUI.badge.warn}">${esc(row.eligible)} permission/session eligible</span>
           </div>
           <div class="text-2xl font-semibold mt-2">${esc(row.total)}</div>
-          <div class="text-xs text-gray-500 mt-1">registrations · last seen ${esc(fmtTime(row.last_seen_at))}</div>
+          <div class="text-xs text-zinc-500 dark:text-zinc-400 mt-1">registrations · last seen ${esc(fmtTime(row.last_seen_at))}</div>
         </div>`;
     }).join('');
 
     const activity = (overview.deliveriesLast24h || []).slice(0, 12).map((row) => `
-      <li class="flex items-start justify-between gap-3 border-b border-gray-100 dark:border-gray-800 py-2 last:border-0">
+      <li class="flex items-start justify-between gap-3 border-b border-zinc-100 dark:border-zinc-800 py-2 last:border-0">
         <div class="min-w-0">
           <div class="flex items-center gap-2 flex-wrap">
             <span class="font-medium">${esc(row.platform)}</span>
             <span class="${badge(row.status)}">${esc(deliveryStatusLabel(row.status))}</span>
             ${row.last_error_code ? `<code class="font-mono text-xs break-all">${esc(row.last_error_code)}</code>` : ''}
           </div>
-          <div class="text-xs text-gray-500 mt-1">last updated ${esc(fmtTime(row.last_updated_at))}</div>
+          <div class="text-xs text-zinc-500 dark:text-zinc-400 mt-1">last updated ${esc(fmtTime(row.last_updated_at))}</div>
         </div>
         <span class="text-sm font-semibold">${esc(row.total)}</span>
       </li>`).join('');
@@ -159,7 +159,7 @@ const AdminPush = (() => {
       return `<p class="${AdminUI.muted}">No current device registrations.</p>`;
     }
     return registrations.map((row) => `
-      <article class="rounded-lg border border-gray-200 dark:border-gray-800 p-4 text-sm">
+      <article class="rounded-lg border border-zinc-200 dark:border-zinc-800 p-4 text-sm">
         <div class="flex items-center justify-between gap-2 flex-wrap">
           <div class="flex items-center gap-2">
             <span class="font-semibold">${esc(row.platform)}</span>
@@ -171,11 +171,11 @@ const AdminPush = (() => {
           <code class="font-mono text-xs">#${esc(row.id)}</code>
         </div>
         <dl class="mt-3 grid gap-1 text-xs">
-          <div><dt class="inline text-gray-500">Environment: </dt><dd class="inline font-mono">${esc(row.environment)}</dd></div>
-          <div><dt class="inline text-gray-500">Installation: </dt><dd class="inline font-mono break-all">${esc(row.installation_id)}</dd></div>
-          <div><dt class="inline text-gray-500">Session expires: </dt><dd class="inline">${esc(fmtTime(row.session_expires_at))}</dd></div>
-          <div><dt class="inline text-gray-500">Last seen: </dt><dd class="inline">${esc(fmtTime(row.last_seen_at))}</dd></div>
-          <div><dt class="inline text-gray-500">Updated: </dt><dd class="inline">${esc(fmtTime(row.updated_at))}</dd></div>
+          <div><dt class="inline text-zinc-500 dark:text-zinc-400">Environment: </dt><dd class="inline font-mono">${esc(row.environment)}</dd></div>
+          <div><dt class="inline text-zinc-500 dark:text-zinc-400">Installation: </dt><dd class="inline font-mono break-all">${esc(row.installation_id)}</dd></div>
+          <div><dt class="inline text-zinc-500 dark:text-zinc-400">Session expires: </dt><dd class="inline">${esc(fmtTime(row.session_expires_at))}</dd></div>
+          <div><dt class="inline text-zinc-500 dark:text-zinc-400">Last seen: </dt><dd class="inline">${esc(fmtTime(row.last_seen_at))}</dd></div>
+          <div><dt class="inline text-zinc-500 dark:text-zinc-400">Updated: </dt><dd class="inline">${esc(fmtTime(row.updated_at))}</dd></div>
         </dl>
       </article>`).join('');
   }
@@ -187,23 +187,23 @@ const AdminPush = (() => {
     return events.map((event) => {
       const registration = event.registrationId == null
         ? ''
-        : `<div><dt class="inline text-gray-500">Registration: </dt><dd class="inline font-mono">#${esc(event.registrationId)}</dd></div>`;
+        : `<div><dt class="inline text-zinc-500 dark:text-zinc-400">Registration: </dt><dd class="inline font-mono">#${esc(event.registrationId)}</dd></div>`;
       const permission = event.permissionStatus
-        ? `<div><dt class="inline text-gray-500">Permission: </dt><dd class="inline">${esc(event.permissionStatus)}</dd></div>`
+        ? `<div><dt class="inline text-zinc-500 dark:text-zinc-400">Permission: </dt><dd class="inline">${esc(event.permissionStatus)}</dd></div>`
         : '';
       return `
-        <article class="rounded-lg border border-gray-200 dark:border-gray-800 p-4 text-sm">
+        <article class="rounded-lg border border-zinc-200 dark:border-zinc-800 p-4 text-sm">
           <div class="flex items-start justify-between gap-3 flex-wrap">
             <div class="flex items-center gap-2 flex-wrap">
               <span class="font-semibold">${esc(event.platform || 'unknown')}</span>
               <span class="${AdminUI.badge.secondary}">${esc(String(event.eventKind || 'unknown').replace(/_/g, ' '))}</span>
               ${event.reasonCode ? `<code class="font-mono text-xs break-all">${esc(event.reasonCode)}</code>` : ''}
             </div>
-            <span class="text-xs text-gray-500">${esc(fmtTime(event.createdAt))}</span>
+            <span class="text-xs text-zinc-500 dark:text-zinc-400">${esc(fmtTime(event.createdAt))}</span>
           </div>
           <dl class="mt-2 grid gap-1 text-xs">
-            <div><dt class="inline text-gray-500">Environment: </dt><dd class="inline font-mono">${esc(event.environment || 'unknown')}</dd></div>
-            <div><dt class="inline text-gray-500">Installation: </dt><dd class="inline font-mono break-all">${esc(event.installationId || 'unknown')}</dd></div>
+            <div><dt class="inline text-zinc-500 dark:text-zinc-400">Environment: </dt><dd class="inline font-mono">${esc(event.environment || 'unknown')}</dd></div>
+            <div><dt class="inline text-zinc-500 dark:text-zinc-400">Installation: </dt><dd class="inline font-mono break-all">${esc(event.installationId || 'unknown')}</dd></div>
             ${registration}
             ${permission}
           </dl>
@@ -213,14 +213,14 @@ const AdminPush = (() => {
 
   function renderDelivery(delivery) {
     return `
-      <div class="rounded-lg bg-gray-50 dark:bg-gray-800/60 border border-gray-200 dark:border-gray-800 p-3 text-xs">
+      <div class="rounded-lg bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-800 p-3 text-xs">
         <div class="flex items-center gap-2 flex-wrap">
           <span class="font-semibold">${esc(delivery.platform)}</span>
           <span class="${badge(delivery.status)}">${esc(deliveryStatusLabel(delivery.status))}</span>
           <span>${esc(delivery.attempts)} attempt${Number(delivery.attempts) === 1 ? '' : 's'}</span>
           ${delivery.errorCode ? `<code class="font-mono break-all">${esc(delivery.errorCode)}</code>` : ''}
         </div>
-        <div class="mt-2 grid gap-1 text-gray-500">
+        <div class="mt-2 grid gap-1 text-zinc-500 dark:text-zinc-400">
           <span>Environment <code class="font-mono">${esc(delivery.environment)}</code></span>
           <span>Installation <code class="font-mono break-all">${esc(delivery.installationId)}</code></span>
           <span>Created ${esc(fmtTime(delivery.createdAt))}</span>
@@ -245,9 +245,9 @@ const AdminPush = (() => {
               </span>
               <span class="${AdminUI.badge.secondary}">${esc(notification.category)}</span>
             </div>
-            <div class="text-xs text-gray-500 mt-1">Notification #${esc(notification.id)} · ${esc(fmtTime(notification.createdAt))}</div>
+            <div class="text-xs text-zinc-500 dark:text-zinc-400 mt-1">Notification #${esc(notification.id)} · ${esc(fmtTime(notification.createdAt))}</div>
           </div>
-          <span class="text-xs text-gray-500">${notification.readAt ? `read ${esc(fmtTime(notification.readAt))}` : 'unread'}</span>
+          <span class="text-xs text-zinc-500 dark:text-zinc-400">${notification.readAt ? `read ${esc(fmtTime(notification.readAt))}` : 'unread'}</span>
         </div>
         <div class="grid gap-2 mt-3">
           ${notification.deliveries.length
@@ -278,8 +278,8 @@ const AdminPush = (() => {
       <section class="space-y-4">
         <div class="flex items-start justify-between gap-3 flex-wrap">
           <div>
-            <h3 class="text-xl font-semibold text-gray-900 dark:text-gray-100">${esc(data.user.username)}</h3>
-            <p class="text-sm text-gray-500">User #${esc(data.user.id)}</p>
+            <h3 class="text-xl font-semibold text-zinc-900 dark:text-zinc-100">${esc(data.user.username)}</h3>
+            <p class="text-sm text-zinc-500 dark:text-zinc-400">User #${esc(data.user.id)}</p>
           </div>
           <div class="flex gap-2 flex-wrap">${preferences}</div>
         </div>
@@ -313,8 +313,8 @@ const AdminPush = (() => {
     const request = ++requestGeneration;
     const global = document.getElementById('admin-push-overview');
     const target = document.getElementById('admin-push-user-result');
-    if (global) global.innerHTML = '<p class="text-sm text-gray-500">Loading push deployment health…</p>';
-    if (target && user) target.innerHTML = '<p class="text-sm text-gray-500">Loading account diagnostics…</p>';
+    if (global) global.innerHTML = '<p class="text-sm text-zinc-500 dark:text-zinc-400">Loading push deployment health…</p>';
+    if (target && user) target.innerHTML = '<p class="text-sm text-zinc-500 dark:text-zinc-400">Loading account diagnostics…</p>';
     const suffix = user ? `?user=${encodeURIComponent(user)}` : '';
     const { ok, data } = await AdminConsole.fetchJson(`/api/admin/mobile-push/diagnostics${suffix}`);
     if (mine !== generation || request !== requestGeneration) return;
@@ -341,7 +341,7 @@ const AdminPush = (() => {
       host.innerHTML = `
         <div class="space-y-6">
           <div>
-            <h2 class="text-2xl font-semibold text-gray-900 dark:text-gray-100">Push delivery</h2>
+            <h2 class="text-2xl font-semibold text-zinc-900 dark:text-zinc-100">Push delivery</h2>
             <p class="${AdminUI.muted} mt-1">Inspect current registrations, recent delivery records and short-lived lifecycle events. FCM acceptance does not confirm device receipt or notification presentation. Provider tokens and credentials are never shown.</p>
           </div>
           <div id="admin-push-overview" class="grid gap-4"></div>

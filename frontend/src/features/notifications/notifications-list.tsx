@@ -228,7 +228,7 @@ function Meta({ view }: { view: NotificationRowView }): ReactNode {
     }
   });
   nodes.push(
-    <span key="time" className="text-zinc-500">{flex ? `· ${view.time}` : ` · ${view.time}`}</span>,
+    <span key="time" className="text-zinc-500 dark:text-zinc-400">{flex ? `· ${view.time}` : ` · ${view.time}`}</span>,
   );
   return <div className={metaClass(view)}>{nodes}</div>;
 }
@@ -401,7 +401,7 @@ function Saved({ view, touch }: { view: SavedView; touch: boolean }): ReactNode 
           <span className="font-medium text-zinc-800 dark:text-zinc-200">{` ${view.who}`}</span>
           {' in '}
           <span className="font-medium text-zinc-700 dark:text-zinc-300">{view.appName}</span>
-          <span className="text-zinc-500">{` · ${view.time}`}</span>
+          <span className="text-zinc-500 dark:text-zinc-400">{` · ${view.time}`}</span>
         </div>
         <div className="text-sm text-zinc-700 dark:text-zinc-300 line-clamp-2">{view.text}</div>
       </button>
@@ -460,7 +460,7 @@ function Invite({ view, touch }: { view: InviteView; touch: boolean }): ReactNod
         <span className="font-medium text-zinc-800 dark:text-zinc-200">{` ${view.who}`}</span>
         {` ${view.verb} `}
         <span className="font-medium text-zinc-700 dark:text-zinc-300">{view.appName}</span>
-        <span className="text-zinc-500">{` · ${view.time}`}</span>
+        <span className="text-zinc-500 dark:text-zinc-400">{` · ${view.time}`}</span>
       </div>
       <div className="flex gap-2">
         <Button
