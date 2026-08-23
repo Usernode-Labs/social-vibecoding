@@ -26,6 +26,7 @@ import { useEffect, useRef } from 'react';
 import type { ReactNode } from 'react';
 
 import { CheckIcon } from '@/components/ui/icons';
+import { ListRow } from '@/components/ui/grouped-list';
 import { AppIconContent, AppPills, appIconKind, hasAppPills } from './app-card-view';
 
 type RowView = {
@@ -79,32 +80,41 @@ function Row({ view }: { view: RowView }): ReactNode {
   const warm = () => controller()?.warmRow(view);
 
   return (
-    <div
+    <ListRow
       ref={rowRef}
-      className={`browse-row flex items-center gap-3 px-3 py-2.5 ${view.openable ? 'cursor-pointer' : 'cursor-default'}`}
+      className={`browse-row ${view.openable ? 'cursor-pointer' : 'cursor-default'}`}
       data-slug={view.slug}
       data-demo={view.demo ? 'true' : undefined}
       onPointerDown={warm}
       onMouseEnter={warm}
-    >
-      <div
-        className="app-icon-tile w-11 h-11 shrink-0 rounded-xl overflow-hidden flex items-center justify-center font-bold text-lg"
-        data-icon={appIconKind(view.app)}
-      >
-        <AppIconContent app={view.app} />
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-1.5 min-w-0">
-          <span className="font-medium text-sm truncate">{view.name}</span>
-          <span className={`status-dot ${view.statusDot} shrink-0`} title={view.status}></span>
+      inset="none"
+      chevron={false}
+      leading={(
+        <div
+          className="app-icon-tile w-11 h-11 shrink-0 rounded-xl overflow-hidden flex items-center justify-center font-bold text-lg"
+          data-icon={appIconKind(view.app)}
+        >
+          <AppIconContent app={view.app} />
         </div>
-        <div className="text-xs text-zinc-500 dark:text-zinc-400 truncate">{view.meta}</div>
-        {hasAppPills(view.app) ? (
-          <div className="flex flex-wrap items-center gap-1 mt-1">
-            <AppPills app={view.app} />
-          </div>
-        ) : null}
-      </div>
+      )}
+      title={(
+        <span className="flex items-center gap-1.5 min-w-0">
+          <span className="truncate">{view.name}</span>
+          <span className={`status-dot ${view.statusDot} shrink-0`} title={view.status}></span>
+        </span>
+      )}
+      subtitle={(
+        <>
+          <span className="block truncate">{view.meta}</span>
+          {hasAppPills(view.app) ? (
+            <span className="mt-1 flex flex-wrap items-center gap-1">
+              <AppPills app={view.app} />
+            </span>
+          ) : null}
+        </>
+      )}
+      trailing={(
+        <>
       {/* No `type` — the hand-written row shipped a bare <button>, and it sits
           in no form, so the default submit type is inert either way. */}
       <button
@@ -121,7 +131,9 @@ function Row({ view }: { view: RowView }): ReactNode {
         {view.added ? <CheckIcon className="w-3.5 h-3.5" strokeWidth="3" aria-hidden="true" /> : null}
         {view.added ? 'Added' : 'Add'}
       </button>
-    </div>
+        </>
+      )}
+    />
   );
 }
 

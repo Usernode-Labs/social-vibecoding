@@ -114,9 +114,16 @@ function kit(): any {
 // The widget language's list row (#1191): the hairline between rows is what
 // the language keeps — a grouped list IS rows separated by rules — but it sits
 // on a white card now rather than under a bordered strip, and the row breathes
-// at the language's rhythm. Same shape as ListRow in
-// @/components/ui/grouped-list.tsx; spelled here because these rows carry the
-// descriptor tree's own structure rather than a title/subtitle pair.
+// at the language's rhythm.
+//
+// It does NOT use ListRow from @/components/ui/grouped-list.tsx, and that is
+// deliberate rather than pending. A notification row INVERTS the primitive's
+// hierarchy: its first line is the small grey meta ("@who · 2h", the group
+// name, the unread dot) and the heavier content sits UNDER it, where ListRow
+// puts a bold title over a grey subtitle. Passing Meta as `title` would render
+// the timestamp at 17px bold and the message underneath it in grey — the
+// opposite of what either surface means. Same look, different information
+// shape; sharing the classes is not a reason to share the component.
 const ROW_CLASS = 'w-full text-left px-4 py-3 border-b border-zinc-200 '
   + 'dark:border-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors';
 

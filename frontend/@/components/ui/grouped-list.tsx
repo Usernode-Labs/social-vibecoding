@@ -74,8 +74,16 @@ export interface ListRowProps
   // `title` is omitted from the DOM attributes because ours is a ReactNode and
   // HTMLAttributes' is the tooltip string. Same reason in QuoteCard and
   // StackedTitle below — an intersection would silently narrow ours to string.
-  extends Omit<React.HTMLAttributes<HTMLDivElement>, 'title'>,
+  extends Omit<React.HTMLAttributes<HTMLElement>, 'title'>,
     VariantProps<typeof rowSeparator> {
+  /**
+   * The element to render. `button` for a row that DOES something — which is
+   * most of them, and is why this exists: a row with an `onClick` on a `<div>`
+   * is invisible to keyboard and assistive tech, and wrapping every call site
+   * in its own button would put the focus ring around the row instead of on
+   * it. `div` stays the default for a row that is only ever read.
+   */
+  as?: 'div' | 'button';
   /** The leading rounded-square glyph tile. */
   leading?: React.ReactNode;
   title: React.ReactNode;
@@ -89,17 +97,31 @@ export interface ListRowProps
   trailing?: React.ReactNode;
 }
 
-export function ListRow({
-  className, leading, title, subtitle, dot, chevron = true, trailing, inset, ...props
-}: ListRowProps) {
+/**
+ * forwardRef because callers mount BEHAVIOUR on the row element: the browse
+ * directory hands its node to NavLink so a modified click opens a new tab, and
+ * a kit gesture would attach the same way. A primitive that swallows the ref
+ * pushes those callers back into a wrapper div — which is the layout the row
+ * exists to provide in the first place.
+ */
+export const ListRow = React.forwardRef<HTMLElement, ListRowProps>(function ListRow({
+  className, leading, title, subtitle, dot, chevron = true, trailing, inset, as = 'div', ...props
+}, ref) {
+  const Tag = as;
   // A row with no tile has nothing to inset the hairline PAST, so it falls back
   // to the text inset rather than leaving a gap the eye reads as a broken rule.
   const depth = inset ?? (leading ? 'tile' : 'text');
   return (
-    <div
+    <Tag
+      ref={ref as React.Ref<HTMLDivElement & HTMLButtonElement>}
+      // `text-left w-full` only matter on a button — a button centres its
+      // content and shrinks to it, which would break the row's layout the
+      // moment `as` changed. Harmless on a div, so they are unconditional
+      // rather than a second branch to keep in step.
+      {...(as === 'button' ? { type: 'button' as const } : null)}
       className={cn(
-        'relative flex items-center gap-4 px-4 py-3.5',
-        props.onClick && 'cursor-pointer active:bg-zinc-50 dark:active:bg-zinc-800',
+        'relative flex w-full items-center gap-4 px-4 py-3.5 text-left',
+        (props.onClick || as === 'button') && 'cursor-pointer active:bg-zinc-50 dark:active:bg-zinc-800',
         rowSeparator({ inset: depth }),
         className,
       )}
@@ -119,6 +141,6 @@ export function ListRow({
       {chevron ? (
         <ChevronRightIcon className="h-5 w-5 shrink-0 text-zinc-300 dark:text-zinc-600" aria-hidden="true" />
       ) : null}
-    </div>
+    </Tag>
   );
-}
+});
