@@ -5081,11 +5081,11 @@ const AppView = {
   // One shared base string and no computed class names: Tailwind's extractor is
   // a regex over source text (AGENTS.md), and these are read from a template
   // literal rather than JSX, which does not make the rule any softer.
-  KANBAN_CHIP_BASE: 'h-8 rounded-full border text-xs transition-colors shrink-0 '
+  KANBAN_CHIP_BASE: 'h-8 rounded-full border border-transparent text-xs transition-colors shrink-0 '
     + 'inline-flex items-center gap-1',
-  KANBAN_CHIP_IDLE: 'border-zinc-300 dark:border-zinc-700 bg-transparent '
-    + 'text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800',
-  KANBAN_CHIP_ON: 'border-violet-600 bg-violet-600 text-white hover:bg-violet-500',
+  KANBAN_CHIP_IDLE: 'bg-white dark:bg-zinc-900 '
+    + 'text-zinc-900 dark:text-zinc-100 hover:bg-zinc-50 dark:hover:bg-zinc-800',
+  KANBAN_CHIP_ON: 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900',
 
   _kanbanNeedsVoteChipCls(active) {
     return `${AppView.KANBAN_CHIP_BASE} px-3 `
@@ -5541,7 +5541,7 @@ const AppView = {
       html += `
         <div id="dev-kanban-col-${escapeAttr(col.key)}" data-kanban-col="${escapeAttr(col.key)}"
           class="dev-kanban-col${activeCls}">
-          <div class="dev-kanban-col-head text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider mb-2 px-0.5"${col.hint ? ` title="${escapeAttr(col.hint)}"` : ''}>
+          <div class="dev-kanban-col-head text-[0.9375rem] font-semibold text-zinc-500 dark:text-zinc-400 mb-2 px-0.5"${col.hint ? ` title="${escapeAttr(col.hint)}"` : ''}>
             ${escapeHtml(col.title)} <span class="text-zinc-400 dark:text-zinc-500 font-mono">· ${count}</span>
           </div>
           ${cards}
@@ -9633,7 +9633,7 @@ const AppView = {
       ? merged.length
       : Math.min(AppView._mergedShownDefault, merged.length);
 
-    let html = `<div class="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider mb-1">Completed</div><div class="space-y-2">`;
+    let html = `<div class="text-[0.9375rem] font-semibold text-zinc-500 dark:text-zinc-400 mb-1">Completed</div><div class="space-y-2">`;
     for (let i = 0; i < shown; i++) {
       html += merged[i].row_type === 'close_issue'
         ? AppView._renderCompletedCloseIssueCard(merged[i])

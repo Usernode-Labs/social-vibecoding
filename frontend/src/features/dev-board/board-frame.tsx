@@ -115,7 +115,7 @@ function PlusMenuHeading({
     <div
       data-plus-group={groupKey}
       className={
-        'px-3 pt-2.5 pb-1 text-[10px] uppercase font-semibold tracking-wider text-zinc-400 dark:text-zinc-500 select-none' +
+        'px-3 pt-2.5 pb-1 text-[0.9375rem] font-semibold text-zinc-400 dark:text-zinc-500 select-none' +
         (divider ? ' border-t border-zinc-200 dark:border-zinc-800 mt-1' : '')
       }
     >
