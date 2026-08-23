@@ -90,7 +90,7 @@ import { Profile } from './profile.js';
  * The no-kit card chrome, on the node the kit flags rather than the node it
  * lifts. Constant: `platform-modal-adopted` is written here through classList.
  */
-const ROOT_CLASS = 'rounded-xl border border-zinc-200 dark:border-zinc-800 mb-5';
+const ROOT_CLASS = 'rounded-2xl bg-white dark:bg-zinc-900 mb-5';
 
 /**
  * The lifted card. Constant for the same reason (`platform-modal-card` lands

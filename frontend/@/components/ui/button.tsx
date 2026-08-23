@@ -128,6 +128,14 @@ const buttonVariants = cva('', {
       roundedFull: 'rounded-full',
       // #agent-files-cancel — the neutral bordered sibling of `compact`.
       outline: 'rounded border border-zinc-300 dark:border-zinc-700',
+      // The widget language's SECONDARY action: a filled neutral pill, not an
+      // outline. The language separates by figure/ground rather than by rule,
+      // and an outlined control on a floating white card is the one shape it
+      // never draws — the same reason the cards themselves lost their borders.
+      // Call sites: the profile screen's Edit profile, Preview, Open public
+      // page, Copy public link, Reveal and Browse challenges, all of which
+      // were `border border-zinc-300` or `border border-violet-500` boxes.
+      neutral: 'rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700',
       // #settings-remove — the bordered destructive button.
       destructive: 'rounded-lg border border-red-400 dark:border-red-700',
       // Buttons that carry no box of their own (header icon buttons, text
@@ -201,6 +209,10 @@ const buttonVariants = cva('', {
       // #agent-files-cancel.
       muted:
         'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors',
+      // The ink that goes with `variant: 'neutral'` — near-black, which is
+      // what the language puts on a control you are meant to be able to hit.
+      // The fill is already in `variant`, so this group only carries colour.
+      neutral: 'text-zinc-900 dark:text-zinc-100 transition-colors',
       // #settings-remove.
       danger:
         'text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 transition-colors',

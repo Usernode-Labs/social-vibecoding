@@ -15,7 +15,7 @@
 
 import { type ReactNode } from 'react';
 
-import { Button } from '@/components/ui/button';
+import { Button, buttonVariants } from '@/components/ui/button';
 import { useStoreState } from '../../lib/use-store-state';
 import {
   buildProfileView,
@@ -58,7 +58,7 @@ function IdentityCard({ identity }: { identity: any }): ReactNode {
   return (
     <div
       id="profile-identity-card"
-      className="rounded-xl border border-zinc-200 dark:border-zinc-800 p-4 mb-5"
+      className="rounded-2xl bg-white dark:bg-zinc-900 p-4 mb-5"
     >
       <div className="flex items-center gap-4">
         <IdentityAvatar url={identity.avatarUrl} initial={identity.initial} />
@@ -70,17 +70,16 @@ function IdentityCard({ identity }: { identity: any }): ReactNode {
             </div>
           ) : null}
         </div>
-        <button
+        <Button
           id="profile-edit-btn"
-          className={
-            'shrink-0 px-3 py-1.5 rounded-lg text-sm font-medium border '
-            + 'border-violet-500 text-violet-600 dark:text-violet-400 '
-            + 'hover:bg-violet-50 dark:hover:bg-violet-950'
-          }
+          layout="shrink"
+          variant="neutral"
+          size="sm"
+          ink="neutral"
           onClick={() => Profile.showEditSheet()}
         >
           Edit profile
-        </button>
+        </Button>
       </div>
       {/*
           The bio is deliberately plain text, not markdown: React renders it as
@@ -120,7 +119,7 @@ function PublicControls({ controls, status, publishing, previewOpen }: {
   return (
     <section
       id="public-profile-controls"
-      className="rounded-xl border border-zinc-200 dark:border-zinc-800 p-4 mb-5"
+      className="rounded-2xl bg-white dark:bg-zinc-900 p-4 mb-5"
     >
       <h2 className="font-semibold text-base">Public profile</h2>
       <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
@@ -149,35 +148,34 @@ function PublicControls({ controls, status, publishing, previewOpen }: {
         >
           {controls.publishLabel}
         </Button>
-        <button
+        <Button
           type="button"
-          className={
-            'px-3 min-h-[44px] rounded-lg border border-zinc-300 dark:border-zinc-700 '
-            + 'text-sm font-medium'
-          }
+          layout="tap"
+          variant="neutral"
+          size="none"
+          ink="neutral"
+          className="text-sm font-medium"
           onClick={() => Profile.togglePreview()}
         >
           {previewOpen ? 'Hide preview' : 'Preview'}
-        </button>
+        </Button>
         <a
-          className={
-            'px-3 min-h-[44px] inline-flex items-center rounded-lg border '
-            + 'border-zinc-300 dark:border-zinc-700 text-sm font-medium'
-          }
+          className={`${buttonVariants({ layout: 'tap', variant: 'neutral', size: 'none', ink: 'neutral' })} inline-flex items-center text-sm font-medium`}
           href={controls.openHref}
         >
           Open public page
         </a>
-        <button
+        <Button
           type="button"
-          className={
-            'px-3 min-h-[44px] rounded-lg border border-zinc-300 dark:border-zinc-700 '
-            + 'text-sm font-medium'
-          }
+          layout="tap"
+          variant="neutral"
+          size="none"
+          ink="neutral"
+          className="text-sm font-medium"
           onClick={() => { void Profile.copyPublicLink(controls.openHref); }}
         >
           Copy public link
-        </button>
+        </Button>
       </div>
       <div className="mt-3 text-xs text-zinc-500" role="status" aria-live="polite">{status}</div>
       <div id="public-profile-preview" className={previewOpen ? 'mt-4' : 'hidden mt-4'}>
@@ -204,17 +202,13 @@ function Completed({ completed }: { completed: any }): ReactNode {
       {completed.rows.length === 0 ? (
         <div
           id="profile-completed-empty"
-          className="rounded-xl border border-zinc-200 dark:border-zinc-800 p-4 text-center"
+          className="rounded-2xl bg-white dark:bg-zinc-900 p-4 text-center"
         >
           <div className="text-sm text-zinc-500 dark:text-zinc-400 mb-3">
             No completed challenges yet.
           </div>
           <a
-            className={
-              'inline-flex items-center justify-center px-3 min-h-[36px] rounded-lg '
-              + 'text-sm font-medium border border-violet-500 text-violet-600 '
-              + 'dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-950'
-            }
+            className={`${buttonVariants({ variant: 'neutral', size: 'none', ink: 'neutral' })} inline-flex items-center justify-center px-3 min-h-[36px] text-sm font-medium`}
             href="#leaderboard/challenges"
           >
             Browse challenges
@@ -226,8 +220,11 @@ function Completed({ completed }: { completed: any }): ReactNode {
             <a
               key={row.id}
               className={
-                'rounded-xl border border-zinc-200 dark:border-zinc-800 p-3 mb-2 '
-                + 'flex items-center gap-3 hover:bg-zinc-50 dark:hover:bg-zinc-900 '
+                'rounded-2xl bg-white dark:bg-zinc-900 p-3 mb-2 '
+                // dark:hover was zinc-900 back when the card was transparent;
+                // it is the card's own fill now, so the row had no hover at
+                // all in dark. One step up the ramp, as everywhere else.
+                + 'flex items-center gap-3 hover:bg-zinc-50 dark:hover:bg-zinc-800 '
                 + 'transition-colors'
               }
               href={row.href}
@@ -268,26 +265,24 @@ function Completed({ completed }: { completed: any }): ReactNode {
 function TokenCard({ token }: { token: any }): ReactNode {
   if (token.gated) {
     return (
-      <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 p-4">
+      <div className="rounded-2xl bg-white dark:bg-zinc-900 p-4">
         <div className="font-semibold mb-1">Token allocation withheld</div>
         <div className="text-sm text-zinc-500 dark:text-zinc-400 mb-3">
           Review and accept the terms to see your token allocation.
         </div>
-        <button
-          className={
-            'px-3 py-1.5 rounded-lg text-sm font-medium border '
-            + 'border-violet-500 text-violet-600 dark:text-violet-400 '
-            + 'hover:bg-violet-50 dark:hover:bg-violet-950'
-          }
+        <Button
+          variant="neutral"
+          size="sm"
+          ink="neutral"
           onClick={() => Profile.reviewTerms()}
         >
           Review terms
-        </button>
+        </Button>
       </div>
     );
   }
   return (
-    <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 p-4">
+    <div className="rounded-2xl bg-white dark:bg-zinc-900 p-4">
       <div className="text-[0.9375rem] text-zinc-500 dark:text-zinc-400 mb-1">
         Token allocation
       </div>
@@ -301,16 +296,15 @@ function TokenCard({ token }: { token: any }): ReactNode {
         Allocations are provisional and subject to the program terms.
       </div>
       {token.revealed ? null : (
-        <button
-          className={
-            'mt-3 px-3 py-1.5 rounded-lg text-sm font-medium border '
-            + 'border-violet-500 text-violet-600 dark:text-violet-400 '
-            + 'hover:bg-violet-50 dark:hover:bg-violet-950'
-          }
+        <Button
+          variant="neutral"
+          size="sm"
+          ink="neutral"
+          className="mt-3"
           onClick={() => Profile.revealTokens()}
         >
           Reveal
-        </button>
+        </Button>
       )}
     </div>
   );
@@ -397,13 +391,18 @@ export function ProfileRoot(): ReactNode {
             Points breakdown
           </div>
           <div
-            className={
-              'rounded-xl border border-zinc-200 dark:border-zinc-800 '
-              + 'divide-y divide-zinc-100 dark:divide-zinc-800'
-            }
+            className="rounded-2xl bg-white dark:bg-zinc-900"
           >
             {view.breakdown.map((row: any, index: number) => (
-              <div key={`${row.label}:${index}`} className="flex items-center gap-3 px-3 py-2 text-sm">
+              // The separator is INSET to the text column and drawn by the row
+              // rather than by `divide-y` on the parent: a rule that runs the
+              // full width of a rounded card reaches its corner radius. Same
+              // idiom, same reason, as @/components/ui/grouped-list.tsx and as
+              // the home panels' hairlines in app.css.
+              <div
+                key={`${row.label}:${index}`}
+                className="relative flex items-center gap-3 px-3 py-2 text-sm [&:not(:first-child)]:before:absolute [&:not(:first-child)]:before:top-0 [&:not(:first-child)]:before:left-3 [&:not(:first-child)]:before:right-0 [&:not(:first-child)]:before:h-px [&:not(:first-child)]:before:bg-zinc-200 dark:[&:not(:first-child)]:before:bg-zinc-800 [&:not(:first-child)]:before:content-['']"
+              >
                 <span className="flex-1 min-w-0 truncate">{row.label}</span>
                 <span className="shrink-0 font-semibold text-violet-600 dark:text-violet-400">
                   {`${Number(row.points || 0).toLocaleString()} pts`}
