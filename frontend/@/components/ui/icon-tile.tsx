@@ -54,18 +54,15 @@ const tile = cva('flex shrink-0 items-center justify-center', {
   defaultVariants: { size: 'sm', tint: 'neutral' },
 });
 
-export const TILE_TINTS = ['lime', 'sky', 'amber', 'rose', 'lilac', 'sand'] as const;
-export type TileTint = (typeof TILE_TINTS)[number];
-
 /**
- * Pick a stable tint for an app that has not chosen one. Same input → same
- * tint, so a launcher grid doesn't reshuffle its colours on every render.
+ * The tint table and the slug hash come from ../../src/lib/app-tint.js, not
+ * from here. They have a second reader in a different world — the classic
+ * scripts, through `window.AppCard.tintFor` — and that reader cannot import a
+ * .tsx module. Re-exported so this file stays the one import a React surface
+ * needs for a tinted tile.
  */
-export function tintFor(key: string): TileTint {
-  let h = 0;
-  for (let i = 0; i < key.length; i += 1) h = (h * 31 + key.charCodeAt(i)) >>> 0;
-  return TILE_TINTS[h % TILE_TINTS.length];
-}
+export { TILE_TINTS, tintFor } from '../../../src/lib/app-tint.js';
+export type TileTint = 'lime' | 'sky' | 'amber' | 'rose' | 'lilac' | 'sand';
 
 export interface IconTileProps
   extends React.HTMLAttributes<HTMLDivElement>,

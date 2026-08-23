@@ -297,7 +297,11 @@ html.un-kb .platform-safe-bar {
   border-radius: 8px;
   padding: 7px 12px;
   background: var(--accent);
-  color: white;
+  /* --accent-ink, not `white`. The dark accent is a LIGHTER blue (#5aa9ff) —
+     it has to be, against a near-black page — so white on it is 2.5:1. The
+     token is exactly this pair: white on the light accent, near-black on the
+     dark one. Same rule the outgoing chat bubble runs under. */
+  color: var(--accent-ink);
   font-weight: 600;
 }
 .messages-state-error { color: #dc2626; }
@@ -2158,11 +2162,20 @@ html, body {
 .dc-msg-user .dc-msg-header {
   color: var(--accent-ink);
 }
-/* The id and timestamp stay quieter than the words, but by OPACITY — a second
-   colour token would need its own light and dark values for a surface that
-   deliberately does not follow the theme. */
+/* Everything in the header takes the fill's ink. */
 .dc-msg-user .dc-msg-header > * {
   color: var(--accent-ink);
+}
+/* The id and timestamp stay quieter than the words, but by OPACITY — a second
+   colour token would need its own light and dark values for a surface that
+   deliberately does not follow the theme.
+
+   Scoped to the STAMP. It used to be `.dc-msg-header > *`, which also dimmed
+   the "You" role label beside it to 0.72 — white at 0.72 on #0a7cff is 2.7:1,
+   so the one word naming who is speaking was the least readable thing in the
+   bubble. The label is a label; only the stamp is an aside. */
+.dc-msg-user .dc-msg-meta,
+.dc-msg-user .dc-msg-model {
   opacity: 0.72;
 }
 
@@ -2176,7 +2189,9 @@ html, body {
 .dc-msg-meta {
   color: var(--text-muted);
   font-size: 9px;
-  opacity: 0.5;
+  /* No opacity dimming on the neutral bubble. --text-muted is already the
+     quiet token, and halving it took the stamp to 2:1 against the bubble —
+     9px is what makes this an aside, not a second helping of transparency. */
 }
 .dc-msg-model {
   color: var(--text-muted);
@@ -6154,7 +6169,11 @@ span.gc-vote-btn-icon { cursor: default; }
 /* ── Keyboard shortcut hints ───────────────────────────── */
 
 .dc-kbd {
-  background: var(--bg-secondary);
+  /* --bg-tertiary and the primary ink: --bg-secondary IS the card in dark
+     (#1c1c1e both) and the chip's inherited muted ink measured 1.9:1 on it. A
+     keycap has to read as a key. */
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
   border: 1px solid var(--border);
   border-radius: 3px;
   padding: 0 4px;

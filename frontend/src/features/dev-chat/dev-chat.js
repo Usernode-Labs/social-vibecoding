@@ -1382,16 +1382,16 @@ const DevChat = {
     if (state && state.level === 'locked') {
       if (hasApiKey) {
         const last4 = window.Settings.state.keyLast4 || '••••';
-        el.innerHTML = `<span title="Platform credits are locked until you connect GitHub or X. Your own Anthropic key remains available."><a href="#settings/connectors" class="text-amber-400 hover:underline">platform credits locked</a><span class="text-zinc-600"> · </span><span class="text-emerald-400">your key · ${escapeHtml(last4)}</span></span>`;
+        el.innerHTML = `<span title="Platform credits are locked until you connect GitHub or X. Your own Anthropic key remains available."><a href="#settings/connectors" class="text-amber-700 dark:text-amber-400 hover:underline">platform credits locked</a><span class="text-zinc-500 dark:text-zinc-400"> · </span><span class="text-emerald-700 dark:text-emerald-400">your key · ${escapeHtml(last4)}</span></span>`;
       } else {
-        el.innerHTML = '<a href="#settings/connectors" class="text-amber-400 font-medium hover:underline" title="Connect GitHub or X to unlock $10/day">verify account · unlock $10/day</a>';
+        el.innerHTML = '<a href="#settings/connectors" class="text-amber-700 dark:text-amber-400 font-medium hover:underline" title="Connect GitHub or X to unlock $10/day">verify account · unlock $10/day</a>';
       }
       return;
     }
     if (state && state.level === 'unavailable') {
       el.innerHTML = hasApiKey
-        ? '<span class="text-emerald-400" title="Platform credit eligibility is temporarily unavailable; your own key remains available.">your key available</span>'
-        : '<span class="text-amber-400" title="Platform credit eligibility could not be verified. Try again shortly.">credits temporarily unavailable</span>';
+        ? '<span class="text-emerald-700 dark:text-emerald-400" title="Platform credit eligibility is temporarily unavailable; your own key remains available.">your key available</span>'
+        : '<span class="text-amber-700 dark:text-amber-400" title="Platform credit eligibility could not be verified. Try again shortly.">credits temporarily unavailable</span>';
       return;
     }
     // #1353: no "· $X left" alongside the pair. The remainder is $limit
@@ -1412,7 +1412,7 @@ const DevChat = {
       const last4 = window.Settings.state.keyLast4 || '••••';
       if (!DevChat.budget) {
         // Budget fetch hasn't landed yet — static badge until it does.
-        el.innerHTML = `<span class="text-emerald-400" title="Using your Anthropic API key">your key · ${last4}</span>`;
+        el.innerHTML = `<span class="text-emerald-700 dark:text-emerald-400" title="Using your Anthropic API key">your key · ${last4}</span>`;
         return;
       }
       const byokCents = DevChat.budget.byokSpentCents || 0;
@@ -1420,14 +1420,14 @@ const DevChat = {
       const spent = (DevChat.budget.spentCents / 100).toFixed(2);
       const limit = (DevChat.budget.limitCents / 100).toFixed(2);
       const pct = Math.min(100, (DevChat.budget.spentCents / DevChat.budget.limitCents) * 100);
-      const color = pct > 80 ? 'text-red-400' : pct > 50 ? 'text-yellow-400' : 'text-emerald-400';
+      const color = pct > 80 ? 'text-red-700 dark:text-red-400' : pct > 50 ? 'text-yellow-700 dark:text-yellow-400' : 'text-emerald-700 dark:text-emerald-400';
       const tip = `Today: $${spent} of your $${limit} platform daily limit`
         + (byokCents > 0 ? ` + $${byok} billed to your Anthropic key (…${last4})` : '')
         + `. The daily limit is used first; your key (…${last4}) takes over once it runs out. `
         + (resetTip || 'Resets at midnight UTC.');
-      let html = `<span class="text-zinc-600">limit </span><span class="${color}">$${spent}</span><span class="text-zinc-600">/$${limit}</span>`;
+      let html = `<span class="text-zinc-500 dark:text-zinc-400">limit </span><span class="${color}">$${spent}</span><span class="text-zinc-500 dark:text-zinc-400">/$${limit}</span>`;
       if (byokCents > 0) {
-        html += `<span class="text-zinc-600"> · </span><span class="text-emerald-400">your key $${byok}</span>`;
+        html += `<span class="text-zinc-500 dark:text-zinc-400"> · </span><span class="text-emerald-700 dark:text-emerald-400">your key $${byok}</span>`;
       }
       el.innerHTML = `<span title="${escapeHtml(tip)}">${html}</span>`;
       return;
@@ -1441,14 +1441,14 @@ const DevChat = {
     if (DevChat._creditsExhausted()) {
       const tip = `Your free daily AI credits are used up. ${
         resetTip || 'Resets at midnight UTC.'} Or add your own Anthropic API key in Settings to keep working now.`;
-      el.innerHTML = `<span title="${escapeHtml(tip)}"><span class="text-red-500 font-semibold">$${spent}</span><span class="text-red-400">/$${limit}</span></span>`;
+      el.innerHTML = `<span title="${escapeHtml(tip)}"><span class="text-red-500 font-semibold">$${spent}</span><span class="text-red-700 dark:text-red-400">/$${limit}</span></span>`;
       return;
     }
     const pct = Math.min(100, (DevChat.budget.spentCents / DevChat.budget.limitCents) * 100);
-    const color = pct > 80 ? 'text-red-400' : pct > 50 ? 'text-yellow-400' : 'text-emerald-400';
+    const color = pct > 80 ? 'text-red-700 dark:text-red-400' : pct > 50 ? 'text-yellow-700 dark:text-yellow-400' : 'text-emerald-700 dark:text-emerald-400';
     const tip = `Today: $${spent} of your $${limit} free daily AI credits. ${
       resetTip || 'Resets at midnight UTC.'}`;
-    el.innerHTML = `<span title="${escapeHtml(tip)}"><span class="${color}">$${spent}</span><span class="text-zinc-600">/$${limit}</span></span>`;
+    el.innerHTML = `<span title="${escapeHtml(tip)}"><span class="${color}">$${spent}</span><span class="text-zinc-500 dark:text-zinc-400">/$${limit}</span></span>`;
   },
 
   // #463: true when the signed-in user is out of free credits AND has no
@@ -6324,7 +6324,7 @@ const DevChat = {
       return `
         <div class="dc-msg ${isUser ? 'dc-msg-user' : 'dc-msg-assistant'}">
           <div class="dc-msg-header">
-            <span class="${isUser ? 'text-violet-400' : 'text-emerald-400'}">${isUser ? 'You' : 'AI'}</span>
+            <span class="${isUser ? 'text-violet-400' : 'text-emerald-700 dark:text-emerald-400'}">${isUser ? 'You' : 'AI'}</span>
             ${msg.model ? `<span class="dc-msg-model">${msg.model.split('-').slice(0, 2).join('-')}${costLabel}</span>` : ''}
             <span class="dc-msg-meta">${idLabel} ${ts}</span>
           </div>
@@ -7183,7 +7183,7 @@ const DevChat = {
           ${isPaused ? `<button class="dc-pause-btn text-xs text-emerald-400 hover:text-emerald-300" data-id="${s.id}" data-action="resume" onclick="event.stopPropagation()">Resume</button>` : ''}
           ${isArchived ? `<button class="dc-unarchive-btn text-xs text-emerald-400 hover:text-emerald-300" data-id="${s.id}" onclick="event.stopPropagation()" title="Restore this session (reopens the PR)">Unarchive</button>` : ''}
           ${isArchivable ? `<button class="dc-archive-btn text-xs text-zinc-500 hover:text-red-400" data-id="${s.id}" data-name="${escapeHtml(s.session_title || s.pr_title || s.branch_name || 'Session')}" title="Archive (frees the slot; restorable for a while)" onclick="event.stopPropagation()">Archive</button>` : ''}
-          <span class="text-xs text-zinc-600">${date}</span>
+          <span class="text-xs text-zinc-500 dark:text-zinc-400">${date}</span>
         </div>`;
     }).join('');
 
@@ -7934,7 +7934,7 @@ const DevChat = {
                  _syncShortcutHint, which every _syncSaveDraftBtn call
                  site reaches. Sourced from the constant so the two can
                  never drift apart. -->
-            <div class="text-xs text-zinc-600 mt-1 text-right" id="dc-shortcut-hint">${DevChat.SHORTCUT_HINT_SEND}</div>
+            <div class="text-xs text-zinc-500 dark:text-zinc-400 mt-1 text-right" id="dc-shortcut-hint">${DevChat.SHORTCUT_HINT_SEND}</div>
             </div>
           </div>
         </div>

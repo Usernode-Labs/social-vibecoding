@@ -49,7 +49,10 @@ function controller(): any {
 
 const ADD_BASE = 'browse-add-btn shrink-0 inline-flex items-center gap-1 rounded-full '
   + 'border px-3 py-1.5 text-xs font-medium transition-colors ';
-const ADD_ON = 'bg-emerald-500 border-emerald-500 text-white';
+// emerald-700, not -500: white on #10b981 is 2.5:1 — a green you can see and a
+// label you cannot read. -700 takes the same pill to 5.5:1 with the state
+// unchanged.
+const ADD_ON = 'bg-emerald-700 border-emerald-700 text-white';
 // Filled neutral, not an accent outline: the row sits on a white card now, and
 // an outlined control on a floating surface is the shape the language never
 // draws (see the `neutral` variant in @/components/ui/button.tsx). ADD_ON stays

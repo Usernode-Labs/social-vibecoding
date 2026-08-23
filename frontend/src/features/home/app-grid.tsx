@@ -187,7 +187,7 @@ function AppCardTile({ app, style, yours }: { app: HomeAppView; style?: React.CS
         <div className="app-card-title" title={app.name}>{app.name}</div>
         {app.statusLabel ? (
           <p
-            className={`app-card-status ${app.isAwaiting ? 'text-amber-500' : 'text-yellow-500'}`}
+            className={`app-card-status ${app.isAwaiting ? 'text-[color:var(--state-attention)]' : 'text-[color:var(--state-blocked)]'}`}
             {...(app.failureReason ? { title: app.failureReason } : null)}
           >
             {app.statusLabel}

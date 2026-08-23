@@ -333,7 +333,10 @@ test('missing secrets: key names never render; the chip lives in the menu header
   assert.doesNotMatch(card, /Missing secrets/, 'no chip on the card face');
   assert.doesNotMatch(card, /STRIPE_SECRET_KEY|SENDGRID_API_KEY/, 'key names stay off the card');
   const header = Home.renderMenuHeaderHtml(app);
-  assert.match(header, /bg-red-500\/10 text-red-500[^>]*>Missing secrets</, 'red chip in the header');
+  // The chip's INK moved a step darker for the light theme (a -500 on a 10%
+  // tint of itself measured 2.3:1 there); the tint behind it is unchanged, and
+  // the assertion is still that this chip is the RED one.
+  assert.match(header, /bg-red-500\/10 text-red-700[^>]*>Missing secrets</, 'red chip in the header');
   assert.doesNotMatch(header, /STRIPE_SECRET_KEY|SENDGRID_API_KEY/, 'key names stay out of the header too');
 });
 

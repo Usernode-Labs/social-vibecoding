@@ -4454,7 +4454,7 @@ const AppView = {
       const note = meta.note
         ? 'Couldn&#39;t load open issues right now. '
         : '';
-      html += `<div class="text-xs text-zinc-500 dark:text-zinc-400 mb-2">${note}No activity yet. Press <span class="font-medium text-violet-500">+</span> to propose a change or file an issue.</div>`;
+      html += `<div class="text-xs text-zinc-500 dark:text-zinc-400 mb-2">${note}No activity yet. Press <span class="font-medium text-violet-700 dark:text-violet-400">+</span> to propose a change or file an issue.</div>`;
       return html;
     }
 
