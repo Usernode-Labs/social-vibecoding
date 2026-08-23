@@ -22,6 +22,7 @@
 // every read happens at call time, long after the bundle has evaluated.
 import { AppCard } from '../apps/app-card.js';
 import { gridStore } from './grid-store';
+import { chromeStore } from './chrome-store';
 
 const Home = {
   // Can this viewer create apps right now? Derived per request by
@@ -553,17 +554,13 @@ const Home = {
     // only row sizing, exactly as before. Written BEFORE the innerHTML so the
     // first layout of the new children already has its tracks.
     gridStore.set({ ready: true, view, rowTemplate, items, resultsHeading, emptyQuery, notice: null });
+    // ...and, in the same push, the two hosts outside it: "Show all N apps"
+    // and the iOS widget-editing strip. The strip renders ABOVE the grid, in
+    // its own section, because a full-width flow item cannot coexist with the
+    // explicit cell placement #app-list uses. Its reorder recognizer is
+    // attached by ./widget-strip.tsx's effect, which calls _wireWidgetStrip —
+    // that function attaches listeners, it writes no markup.
     Home._renderAppsMore(moreCount);
-    // The iOS widget-editing strip renders ABOVE the grid, in its own
-    // section: a full-width flow item cannot coexist with explicit cell
-    // placement inside #app-list, which is where it used to live.
-    const stripSection = document.getElementById('home-widget-strip-section');
-    if (stripSection) {
-      const stripHtml = Home.renderWidgetSection();
-      stripSection.innerHTML = stripHtml;
-      stripSection.classList.toggle('hidden', !stripHtml);
-      if (stripHtml) Home._wireWidgetStrip(stripSection);
-    }
     // Discover / Challenges / Create app, painted from the widgets cache
     // (#911) — no network. Their hosts are fixed sections OUTSIDE #app-list,
     // so the grid's wholesale innerHTML re-render above cannot disturb them;
@@ -780,28 +777,20 @@ const Home = {
     } catch (err) { return false; }
   })(),
 
-  // "Show all N apps" — the two-row default's way out. Rendered into a host
-  // OUTSIDE #app-list so the grid's wholesale innerHTML rewrite cannot take
-  // the button away mid-click, and wired here rather than delegated because
-  // this host is re-rendered on every paint.
+  // "Show all N apps" and the widget strip, pushed together — they are the
+  // two hosts OUTSIDE #app-list that this same paint fills, and one store
+  // keeps them from being repainted at two different moments. The button
+  // stays outside the grid for the reason it always did: the grid's
+  // re-render must not take it away mid-click.
+  //
+  // Kept its name and its caller. It no longer touches the DOM, and the
+  // listener it used to re-attach on every paint is now attached once by
+  // ./apps-more.tsx to an element React keeps.
   _renderAppsMore(count) {
-    const host = document.getElementById('home-apps-more');
-    if (!host) return;
-    if (!count) {
-      host.innerHTML = '';
-      host.classList.add('hidden');
-      return;
-    }
-    host.innerHTML = `<button type="button" id="home-apps-more-btn"
-      class="w-full rounded-lg px-3 py-1.5 text-xs font-medium text-violet-600 dark:text-violet-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">Show all ${count} apps</button>`;
-    host.classList.remove('hidden');
-    const btn = document.getElementById('home-apps-more-btn');
-    if (btn) {
-      btn.addEventListener('click', () => {
-        Home._appsExpanded = true;
-        Home.render();
-      });
-    }
+    chromeStore.set({
+      moreCount: count || 0,
+      strip: Home.widgetSectionView(),
+    });
   },
 
   // ── The grid's row tracks (#975) ───────────────────────────────────
@@ -1500,100 +1489,46 @@ const Home = {
   // within the session like _widgetSectionVisible.
   _widgetHelpVisible: false,
 
-  renderWidgetSection() {
-    if (!Home._widgetUiActive()) return '';
-    const items = Home._widgetItems;
-    const tiles = items.map((it) => Home.renderWidgetTile(it)).join('');
-    const hint = items.length
-      ? 'Drag tiles to reorder. Drag cards from Your apps here to add them.'
-      : 'Drag a card from Your apps here (or use its menu) to add it to the Usernode widget on your home screen.';
-    const helpPanel = Home._widgetHelpVisible
-      ? `
-      <div id="widget-help-panel" class="w-full text-[0.7rem] leading-relaxed text-zinc-600 dark:text-zinc-300 rounded-lg bg-violet-500/5 dark:bg-violet-500/10 border border-violet-500/20 px-3 py-2">
-        <span class="font-medium">Add the widget to your home screen:</span>
-        touch and hold an empty area of your iPhone home screen, tap
-        <span class="font-medium">Edit</span> → <span class="font-medium">Add Widget</span>
-        (or the <span class="font-medium">+</span>), search for
-        <span class="font-medium">Usernode</span>, pick a size and tap
-        <span class="font-medium">Add Widget</span>. The apps below appear on it automatically.
-      </div>`
-      : '';
-    return `
-      <div class="home-section-header flex items-center justify-between">
-        <span class="flex items-center gap-1.5">Usernode widget
-          <button id="widget-section-help" class="w-4 h-4 flex items-center justify-center rounded-full text-zinc-400 dark:text-zinc-500 hover:text-violet-500 dark:hover:text-violet-400 transition-colors" title="How to add the widget to your home screen" aria-label="How to add the widget to your home screen" aria-expanded="${Home._widgetHelpVisible}">
-            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-          </button>
-        </span>
-        <button id="widget-section-close" class="flex items-center gap-1 text-xs font-normal normal-case tracking-normal text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors" title="Close the widget section" aria-label="Close the widget section">Done
-          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
-        </button>
-      </div>
-      <div id="widget-strip" class="flex flex-wrap items-start gap-3 rounded-xl border border-dashed border-zinc-300 dark:border-zinc-600 p-3 transition-colors">
-        ${helpPanel}
-        ${tiles}
-        <div class="widget-strip-hint w-full text-[0.7rem] text-zinc-500 dark:text-zinc-400 ${items.length ? '' : 'py-3 text-center'}">${hint}</div>
-      </div>`;
+  // The strip's view model. Was `renderWidgetSection()`, an HTML string, and
+  // is the same decision as data (#1191 slice 7): ./widget-strip.tsx renders
+  // it. `active: false` is what `return ''` meant — the section is hidden and
+  // draws nothing, which is every platform but the iOS app.
+  widgetSectionView() {
+    if (!Home._widgetUiActive()) {
+      return { active: false, helpVisible: false, tiles: [] };
+    }
+    return {
+      active: true,
+      helpVisible: !!Home._widgetHelpVisible,
+      tiles: (Home._widgetItems || []).map((it) => Home.widgetTileView(it)),
+    };
   },
 
-  renderWidgetTile(item) {
+  // One pinned shortcut, as the strip draws it. Same three icon kinds as the
+  // home card, tagged with the same `kind` so the tile treatment (app.css)
+  // can single out the letter fallback for its fainter glyph colour — and
+  // resolved through AppCard.iconViewFor so the priority order has one home.
+  widgetTileView(item) {
     const slug = Home._widgetSlugFor(item);
     const app = slug ? (Home._apps || []).find((a) => a.slug === slug) : null;
     const name = (app && app.name) || item.name || '?';
-    // Same three kinds as the home card's iconTileFor, tagged with the
-    // same data-icon so the tile treatment (app.css) can single out the
-    // letter fallback for its fainter glyph colour.
-    let iconHtml;
-    let iconKind;
-    if (app && app.icon_url) {
-      iconKind = 'image';
-      iconHtml = `<img src="${escapeHtml(app.icon_url)}" alt="" loading="lazy" draggable="false" class="w-full h-full rounded-lg object-cover">`;
-    } else if (app && app.icon_emoji) {
-      iconKind = 'emoji';
-      iconHtml = `<span class="text-xl leading-none" aria-hidden="true">${escapeHtml(app.icon_emoji)}</span>`;
-    } else {
-      iconKind = 'letter';
-      iconHtml = escapeHtml(String(name).charAt(0).toUpperCase());
-    }
-    // touch-pan-y + select-none for the same reason as app cards: keep
-    // vertical scroll native until the tile drag actually claims the
-    // gesture (see _onWidgetTilePointerDown).
-    return `
-      <div class="widget-tile app-card-draggable touch-pan-y relative flex flex-col items-center gap-1 w-16 cursor-grab" data-wid="${escapeHtml(item.id)}"${slug ? ` data-wslug="${escapeHtml(slug)}"` : ''}>
-        <div class="app-icon-tile w-10 h-10 rounded-lg overflow-hidden flex items-center justify-center font-bold text-base" data-icon="${iconKind}">${iconHtml}</div>
-        <span class="text-[0.65rem] leading-tight truncate w-full text-center">${escapeHtml(name)}</span>
-        <button class="widget-remove-btn absolute -top-1.5 right-0 w-5 h-5 flex items-center justify-center rounded-full bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-600 shadow-sm text-[0.6rem] text-zinc-500 dark:text-zinc-300 hover:text-red-500" data-wid="${escapeHtml(item.id)}" title="Remove from widget" aria-label="Remove ${escapeHtml(name)} from widget">✕</button>
-      </div>`;
+    // An entry another dapp pinned has no SV app behind it: fall back to the
+    // registry's own name for the letter, rather than iconViewFor's '?'.
+    const icon = app
+      ? AppCard.iconViewFor(app)
+      : { kind: 'letter', letter: String(name).charAt(0).toUpperCase() };
+    return { id: item.id, slug: slug || null, name, icon };
   },
 
+  // The strip's GESTURE, and only that. Done, the ⓘ help toggle and each
+  // tile's ✕ used to be wired here too, re-attached on every paint because
+  // the paint replaced the nodes they were on; they are props in
+  // ./widget-strip.tsx now, on elements React keeps. What is left attaches
+  // listeners to nodes and writes no markup, which is why the component may
+  // call it (same split app-grid.tsx makes for the canvas recognizer).
   _wireWidgetStrip(listEl) {
     const strip = listEl.querySelector('#widget-strip');
     if (!strip) return;
-    // "Done": hide the section again. State on the device is untouched —
-    // "Add/Edit in Usernode widget" brings it back.
-    const closeBtn = listEl.querySelector('#widget-section-close');
-    if (closeBtn) {
-      closeBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        Home._widgetSectionVisible = false;
-        Home._widgetHelpVisible = false;
-        Home.render();
-      });
-    }
-    const helpBtn = listEl.querySelector('#widget-section-help');
-    if (helpBtn) {
-      helpBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        Home._widgetHelpVisible = !Home._widgetHelpVisible;
-        Home.render();
-      });
-    }
-    strip.querySelectorAll('.widget-remove-btn').forEach((btn) => {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        Home._removeWidgetItem(btn.dataset.wid);
-      });
-    });
     if (window.unNative && typeof window.unNative.attachReorder === 'function') {
       // The strip keeps attachREORDER, not the grid's attachGridPlacement,
       // and that is the right call: the iOS widget's pinned shortcuts are a

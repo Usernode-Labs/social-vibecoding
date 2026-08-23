@@ -98,6 +98,13 @@ const CHROME = process.env.CHROME_PATH
  */
 const OWNED = [
   { sel: '#app-list' },                      // features/home/app-grid.tsx
+  { sel: '#home-apps-more' },                // features/home/apps-more.tsx
+  // The strip's tiles are React's; the kit's reorder recognizer moves those
+  // nodes DURING a drag (attachReorder is a displacement model, so the slot
+  // travels through the DOM). This sweep never drags, so it would not see
+  // that either way — the guard for it is Home.render()'s `_dragActive`
+  // bail-out, which keeps React from reconciling mid-gesture.
+  { sel: '#home-widget-strip-section' },     // features/home/widget-strip.tsx
   { sel: '#gc-messages' },                   // features/group-chat/transcript.tsx
   { sel: '#gc-thread-messages' },            // ditto, mounted with the 'thread' key
   { sel: '#llm-grants-list' },               // features/settings/grants-list.tsx

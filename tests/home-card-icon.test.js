@@ -24,6 +24,19 @@ const { installGridStore } = require('./helpers/home-grid-store');
 // (HomePanels.renderCreatePanel), so home-panels.js is loaded here too, to
 // keep it under the same shared-icon-treatment assertions the app tiles are.
 const { HOME_SRC: SRC, PANELS_SRC, LAYOUT_SRC } = require('./helpers/home-modules');
+// The widget strip is React as of #1191: `Home.renderWidgetTile` is
+// `Home.widgetTileView` (a view model) plus features/home/widget-strip.tsx's
+// `WidgetTile`. The shared-icon-treatment rules below span BOTH call sites, so
+// the tile is rendered here rather than dropped from the sweep — the same
+// choice tests/estimator-card-render.test.js made when its module converted.
+const { renderComponent } = require('./lib/render-tsx');
+
+const WIDGET_STRIP = 'frontend/src/features/home/widget-strip.tsx';
+
+/** `Home.renderWidgetTile(item)`, in its two halves. */
+function widgetTileHtml(Home, item) {
+  return renderComponent(WIDGET_STRIP, 'WidgetTile', { tile: Home.widgetTileView(item) });
+}
 
 // Minimal functional stand-in for the DOM bits home.js's escapeHtml
 // leans on (createElement + textContent/innerHTML round-trip).
@@ -125,7 +138,7 @@ test('every icon tile carries .app-icon-tile and no violet colouring', () => {
     Home.renderAppCard(baseApp({ icon_emoji: '🎮' })),
     Home.renderAppCard(baseApp({ icon_url: '/app-icons/' + 'a'.repeat(32) })),
     Home.__HP.renderCreatePanel({ key: 'create' }),
-    Home.renderWidgetTile({ id: 'w1', name: 'Demo App', slug: 'demo' }),
+    widgetTileHtml(Home, { id: 'w1', name: 'Demo App', slug: 'demo' }),
   ];
   for (const html of variants) {
     const tile = html.match(/class="app-icon-tile[^"]*"/);
@@ -151,16 +164,16 @@ test('letter tiles are tagged data-icon="letter" on every call site', () => {
   assert.match(Home.renderAppCard(baseApp()), /class="app-icon-tile[^"]*"[^>]*data-icon="letter"/);
   Home._apps = [baseApp()];
   assert.match(
-    Home.renderWidgetTile(widgetItem),
+    widgetTileHtml(Home, widgetItem),
     /class="app-icon-tile[^"]*"[^>]*data-icon="letter"/
   );
   // …and the other two kinds keep their own tags, so the letter rule
   // can never catch an emoji or image tile.
   assert.match(Home.renderAppCard(baseApp({ icon_emoji: '🎮' })), /data-icon="emoji"/);
   Home._apps = [baseApp({ icon_emoji: '🎮' })];
-  assert.match(Home.renderWidgetTile(widgetItem), /data-icon="emoji"/);
+  assert.match(widgetTileHtml(Home, widgetItem), /data-icon="emoji"/);
   Home._apps = [baseApp({ icon_url: '/app-icons/' + 'a'.repeat(32) })];
-  assert.match(Home.renderWidgetTile(widgetItem), /data-icon="image"/);
+  assert.match(widgetTileHtml(Home, widgetItem), /data-icon="image"/);
 });
 
 test('app.css steps the letter glyph down to the faint token', () => {

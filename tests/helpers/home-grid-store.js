@@ -20,6 +20,13 @@
 // here rather than parsed out of it. tests/home-grid-store-initial.test.js
 // pins the two against each other, so a field added there without one here
 // fails loudly instead of silently reading undefined.
+//
+// The home screen has TWO of these stores and `Home.render()` pushes both on
+// the same pass, so both are installed here. `chromeStore` holds the two hosts
+// OUTSIDE the launcher canvas — "Show all N apps" and the iOS widget strip —
+// which is why it is a separate store and not another field on the grid: the
+// grid model is deliberately not pushed mid-drag (see grid-store.ts), and
+// those two have nothing to do with that guard.
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -45,19 +52,31 @@ const INITIAL_GRID = {
   notice: null,
 };
 
+/** Mirrors INITIAL_CHROME in frontend/src/features/home/chrome-store.ts. */
+const INITIAL_CHROME = {
+  moreCount: 0,
+  strip: { active: false, helpVisible: false, tiles: [] },
+};
+
 /**
- * Declares `gridStore` in the sandbox's global lexical scope — the same scope
- * home.js resolves it against once its import line is stripped.
+ * Declares `gridStore` and `chromeStore` in the sandbox's global lexical scope
+ * — the same scope home.js resolves them against once its import lines are
+ * stripped.
  *
- * Returns the store so a test can read `gridStore.get()` without reaching back
- * through the sandbox.
+ * Returns the grid store, which is what every caller written before the second
+ * store existed expects. The chrome store is read off the sandbox itself
+ * (`sandbox.chromeStore`) by the handful of tests that assert on it.
  */
 function installGridStore(sandbox) {
   vm.runInContext(
-    `${PLAIN_STORE_SRC}\n;var gridStore = createStore(${JSON.stringify(INITIAL_GRID)});`,
+    `${PLAIN_STORE_SRC}`
+    + `\n;var gridStore = createStore(${JSON.stringify(INITIAL_GRID)});`
+    + `\n;var chromeStore = createStore(${JSON.stringify(INITIAL_CHROME)});`,
     sandbox,
   );
   return sandbox.gridStore;
 }
 
-module.exports = { installGridStore, INITIAL_GRID, PLAIN_STORE_SRC };
+module.exports = {
+  installGridStore, INITIAL_GRID, INITIAL_CHROME, PLAIN_STORE_SRC,
+};

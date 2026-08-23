@@ -363,9 +363,16 @@ test('the apps grid is four columns at every width, two rows by default', () => 
   assert.match(tag, /\bgrid-cols-4\b/, 'four columns');
   assert.doesNotMatch(tag, /sm:grid-cols-\d/,
     'and no second breakpoint — one column count is the point');
-  // The two-row default is a cap on what is SHOWN, with a way out.
+  // The two-row default is a cap on what is SHOWN, with a way out. The
+  // wording moved with the button: #1191 made `#home-apps-more` React's, so
+  // home.js pushes the COUNT (Home._renderAppsMore) and apps-more.tsx spells
+  // the label. Both halves are pinned so neither can drift alone.
   assert.match(LAYOUT_SRC, /DEFAULT_ROWS: 2,/);
-  assert.match(HOME_SRC, /Show all \$\{count\} apps/);
+  assert.match(HOME_SRC, /chromeStore\.set\(\{\s*moreCount: count \|\| 0,/);
+  assert.match(
+    read('frontend/src/features/home/apps-more.tsx'),
+    /`Show all \$\{moreCount\} apps`/
+  );
   assert.equal(INDEX.indexOf('id="home-apps-more"') > 0, true,
     'the expander has a host outside #app-list');
 });

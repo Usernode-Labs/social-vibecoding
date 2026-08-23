@@ -5,11 +5,16 @@
  * ── What the island owns ───────────────────────────────────────────────
  *
  * The screen's STRUCTURE, and nothing else: the pull-to-reveal search bar, the
- * `.home-column` body, and the hosts inside it — the iOS widget strip, the
- * launcher grid `#app-list`, and the three fixed section hosts below it. Every
- * one is an innerHTML host that `home.js` / `home-panels.js` fill, exactly as
- * before. This component renders once and never again: it holds no state, and
- * the only effect it runs is the visibility subscription below.
+ * `.home-column` body, and the hosts inside it. THIS component renders once and
+ * never again — it holds no state, and the only effect it runs is the
+ * visibility subscription below. What lives inside it has moved on, one host at
+ * a time:
+ *
+ *   * `<AppGrid/>`, `<WidgetStrip/>` and `<AppsMore/>` are stateful islands
+ *     rendering plain view models `home.js` pushes (./grid-store.ts and
+ *     ./chrome-store.ts);
+ *   * the three panel hosts below the grid are still `innerHTML`, filled by
+ *     `home-panels.js` exactly as before.
  *
  * ── FOUR AREAS, in this order ──────────────────────────────────────────
  *
@@ -32,20 +37,28 @@
  *     stay in `home.js`, driving `#app-list`'s own children. React never
  *     reconciles inside that subtree, so a drag cannot race a render.
  *
- * ── Why nothing here is stateful ───────────────────────────────────────
+ * ── What is stateful, and what that cost ───────────────────────────────
  *
  * The stateful-island rule (AGENTS.md): a region may hold state only when its
- * whole subtree is React-owned. Every dynamic part of this screen is written by
- * a `public/js`-era module, so the whole screen is static markup plus legacy
- * hosts. Making the grid stateful would mean moving the layout engine, the drag
- * gesture, the widget renderers and the WS fan-out inside React at once — a
- * rewrite, not this chunk's conversion.
+ * whole subtree is React-owned. This screen shipped with none — every dynamic
+ * part of it was written by a `public/js`-era module — and it has gained three,
+ * each paid for by moving that module's RENDERER (not its data, not its
+ * gestures) across the line:
  *
- * `data-revealed` on the search bar and `hidden` on the two `<section>`s are
- * written by `home.js` at runtime through `classList` / `dataset`, which is safe
- * for exactly the reason `frontend/src/lib/legacy-dom.ts` documents: React
- * renders their `className` once, as a constant prop, and never writes the
- * attribute again.
+ *   * `#app-list` (#1191): `Home.render()` computes a view model instead of an
+ *     HTML string. The layout engine, the WS fan-out, the drag geometry and
+ *     the kit attachment all stayed in home.js.
+ *   * `#home-widget-strip-section` and `#home-apps-more`: the same split for
+ *     the two hosts outside the canvas, on the same push.
+ *
+ * The three panel hosts below have not moved, so `home-panels.js` still owns
+ * their subtrees whole — which is why they are plain `<div>`s here.
+ *
+ * `data-revealed` on the search bar is written by `home.js` at runtime through
+ * `dataset`, which is safe for exactly the reason
+ * `frontend/src/lib/legacy-dom.ts` documents: React renders its `className`
+ * once, as a constant prop, and never writes the attribute again. The two
+ * `hidden` toggles that used to sit beside it are React's own state now.
  *
  * ── Visibility ─────────────────────────────────────────────────────────
  *
@@ -68,6 +81,8 @@ import { useRef } from 'react';
 import { SearchIcon } from '@/components/ui/icons';
 
 import { AppGrid } from './app-grid';
+import { AppsMore } from './apps-more';
+import { WidgetStrip } from './widget-strip';
 
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 
@@ -145,11 +160,12 @@ export function HomeScreen() {
             the pinned grid the homescreen widget renders. It lives ABOVE the
             launcher grid rather than inside it — a full-width flow item
             cannot coexist with the explicit cell placement #app-list now
-            uses. Filled + wired by Home.renderWidgetSection /
-            _wireWidgetStrip; empty everywhere but the iOS app.
+            uses. Stateful (chromeStore), and it ships EMPTY and hidden
+            everywhere but the iOS app — see widget-strip.tsx for what the
+            component took over from Home._wireWidgetStrip and what it left
+            there.
         */}
-        <section id="home-widget-strip-section" className="hidden px-3 pt-2">
-        </section>
+        <WidgetStrip />
         {/*
             ── AREA 1 of 4: YOUR APPS ─────────────────────────────────
 
@@ -189,10 +205,10 @@ export function HomeScreen() {
           {/*
               "Show all N apps" — revealed by Home.render() only when the
               viewer has more than the default two rows hold. Ships hidden
-              and empty, like every other legacy-owned host here.
+              and empty; it is React's now (chromeStore), which is what lets
+              its listener be attached once instead of on every paint.
           */}
-          <div id="home-apps-more" className="hidden px-2 pb-1 sm:px-3">
-          </div>
+          <AppsMore />
         </section>
         {/*
             ── AREAS 2-4: DISCOVER, CHALLENGES, CREATE APP ────────────

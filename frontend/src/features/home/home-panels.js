@@ -31,7 +31,7 @@
 // and the whole `inGrid` / `cols` split described below.
 //
 // NAMING — "panel", not "widget". home.js already owns a DIFFERENT concept
-// called "widget" (Home.renderWidgetSection / #widget-strip / .widget-tile:
+// called "widget" (Home.widgetSectionView / #widget-strip / .widget-tile:
 // the iOS home-screen widget's pinned app grid, whose UI says "Usernode
 // widget"). Both render on this same screen, so everything here says
 // `panel`. Nothing user-facing says either: the blocks are titled by their

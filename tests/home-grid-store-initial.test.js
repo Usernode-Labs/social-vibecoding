@@ -20,11 +20,11 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { INITIAL_GRID } = require('./helpers/home-grid-store');
+const { INITIAL_GRID, INITIAL_CHROME } = require('./helpers/home-grid-store');
 
-const STORE_PATH = path.join(
-  __dirname, '..', 'frontend', 'src', 'features', 'home', 'grid-store.ts'
-);
+const FEATURE_DIR = path.join(__dirname, '..', 'frontend', 'src', 'features', 'home');
+const STORE_PATH = path.join(FEATURE_DIR, 'grid-store.ts');
+const CHROME_PATH = path.join(FEATURE_DIR, 'chrome-store.ts');
 
 test('the harness mirrors INITIAL_GRID exactly', () => {
   const src = fs.readFileSync(STORE_PATH, 'utf8');
@@ -59,4 +59,48 @@ test('the initial state renders NOTHING, which is the prerendered markup', () =>
   assert.equal(INITIAL_GRID.resultsHeading, null);
   assert.equal(INITIAL_GRID.emptyQuery, null);
   assert.equal(INITIAL_GRID.notice, null);
+});
+
+// ── The SECOND home store ─────────────────────────────────────────────
+//
+// `Home.render()` pushes two view models on one pass: the launcher canvas
+// (above) and the two hosts outside it — "Show all N apps" and the iOS widget
+// strip. They are separate stores because the canvas model is deliberately not
+// pushed mid-drag and those two have nothing to do with that guard, so they get
+// the same transcription and the same pin.
+//
+// INITIAL_CHROME is NESTED, so this parses the literal rather than reading it
+// line by line: bare keys quoted, single quotes doubled, trailing commas
+// dropped, then JSON.parse. Anything the store's initial value could hold is
+// JSON-shaped by construction — a plain store may only carry serialisable data.
+function parseLiteral(text) {
+  return JSON.parse(
+    text
+      .replace(/([{,]\s*)([A-Za-z_$][\w$]*)\s*:/g, '$1"$2":')
+      .replace(/'/g, '"')
+      .replace(/,(\s*[}\]])/g, '$1'),
+  );
+}
+
+test('the harness mirrors INITIAL_CHROME exactly', () => {
+  const src = fs.readFileSync(CHROME_PATH, 'utf8');
+  const m = src.match(/export const INITIAL_CHROME: HomeChromeState = (\{[\s\S]*?\n\});/);
+  assert.ok(m, 'INITIAL_CHROME is no longer declared the way this test reads it —'
+    + ' update the pattern here rather than deleting the guard');
+  assert.deepEqual(parseLiteral(m[1]), INITIAL_CHROME,
+    'tests/helpers/home-grid-store.js has drifted from chrome-store.ts —'
+    + ' every home test that calls Home.render() is running against a stale shape');
+});
+
+test('the initial chrome renders the two EMPTY hosts the shell shipped', () => {
+  // Same hydration contract as the grid: `#home-apps-more` and
+  // `#home-widget-strip-section` both ship hidden and empty in the prerendered
+  // document, so the first client render has to agree — a mismatch here is a
+  // console error on #home, and a console error on any route fails proposal
+  // checks.
+  assert.equal(INITIAL_CHROME.moreCount, 0, '0 is what keeps the expander hidden');
+  assert.equal(INITIAL_CHROME.strip.active, false,
+    'the strip is iOS-in-app only; every other platform never activates it');
+  assert.equal(INITIAL_CHROME.strip.helpVisible, false);
+  assert.deepEqual(INITIAL_CHROME.strip.tiles, []);
 });

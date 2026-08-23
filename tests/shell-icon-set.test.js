@@ -178,8 +178,16 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // its detail page's Open pill (#1191 slice 6). Both render from row/detail
     // descriptors that are null until the first fetch lands, so the prerendered
     // #browse-list and #browse-detail are empty by contract, not by accident.
+    // CheckIcon gained a second call site with the widget strip's Done button,
+    // which is behind the same iOS-only gate as InfoCircleIcon below.
     'M5 13l4 4L19 7',
     'M13 7l5 5m0 0l-5 5m5-5H6',
+    // InfoCircleIcon — the widget strip's ⓘ help toggle. The strip is iOS
+    // in-app only: `Home.widgetSectionView()` reports `active: false` unless
+    // the bridge answered `mechanism: 'widget'` AND the viewer opened the
+    // section, so the prerendered `#home-widget-strip-section` is the empty,
+    // hidden host and this glyph has no other call site.
+    'M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z',
     // The thread header and composer render only after a conversation is
     // selected. The static Messages screen therefore ships only its new-
     // conversation plus glyph; these five remain behind route state.
