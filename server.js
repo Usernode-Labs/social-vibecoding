@@ -2733,23 +2733,36 @@ async function finalizeRecoveredTurn({
         sha: (pushed?.sha || result.sha || '').substring(0, 8),
       });
     } catch (err) {
+      // #1376: same treatment as the live tail — carry the real reason into
+      // chat instead of a fixed "send your request again", which for a
+      // permanently unpushable branch is advice that can only fail again.
+      const failure = worker.describePushFailure(err);
       log.warn('server', 'Recovered turn: re-push failed — skipping PR creation', {
-        sessionId, branch: session.branch_name, err: err.message,
+        sessionId,
+        branch: session.branch_name,
+        code: failure.code,
+        permanent: failure.permanent,
+        err: err.message,
       });
-      const pushFailedText =
-        "Your changes were committed but couldn't be pushed to GitHub — "
-        + 'send your request again to re-push and open the PR.';
+      const pushFailedText = failure.text;
       emit('status', { text: pushFailedText });
       await pool.query(
         `INSERT INTO chat_session_messages (session_id, role, content, metadata)
          VALUES ($1, 'system', $2, $3)`,
-        [sessionId, pushFailedText, JSON.stringify({ recovered: true })]
+        [sessionId, pushFailedText, JSON.stringify({
+          recovered: true,
+          pushFailureCode: failure.code,
+          pushFailurePermanent: failure.permanent,
+        })]
       ).catch(() => {});
       await persistCompletionRow(recoveredCcSummary, 'error');
       summaryParts.push(
         `The agent committed ${result.sha.substring(0, 8)} locally, but the push to `
         + `${session.branch_name} failed, so no PR was opened and no preview was built. `
-        + 'Tell the user to send their request again to re-push and open the PR.'
+        + (failure.permanent
+          ? 'This failure is permanent for this session — do NOT tell the user to retry. '
+            + `Reason: ${failure.text}`
+          : 'Tell the user to send their request again to re-push and open the PR.')
       );
       if (!keepWorker) await worker.destroyWorker(containerName);
       return { outcome: 'push_failed', summary: summaryParts.join('\n\n') };

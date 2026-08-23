@@ -38,7 +38,18 @@ require.cache[workerPath].exports = {
   destroyWorker: async (name) => { workerCalls.push(['destroyWorker', name]); },
   execPushFromWorker: async (sessionId, branch) => {
     workerCalls.push(['execPushFromWorker', sessionId, branch]);
-    if (pushBehavior.mode === 'throw') throw new Error('push proxy failed: container gone');
+    if (pushBehavior.mode === 'throw') {
+      if (pushBehavior.permanent) {
+        // #1376: mirrors execPushFromWorker's bad_branch rejection.
+        const err = new Error(`Invalid branch name: ${branch}`);
+        err.code = 'bad_branch';
+        err.permanent = true;
+        err.userMessage = `This session's branch name (${branch}) isn't a valid git branch, `
+          + 'so the push can never succeed. Start a new session on this app.';
+        throw err;
+      }
+      throw new Error('push proxy failed: container gone');
+    }
     return { sha: pushBehavior.sha };
   },
   noteTailMilestone: async (sessionId, milestone) => {
@@ -183,7 +194,7 @@ const SESSION = {
 
 const sysMsgInserted = (pool) =>
   pool.calls.some((c) => /INSERT INTO chat_session_messages/i.test(c.sql) &&
-    /couldn't be pushed/i.test(String(c.params[1] || '')));
+    /not on GitHub/i.test(String(c.params[1] || '')));
 
 // Rows the tail persisted, as { content, metadata } pairs.
 const insertedRows = (pool) => pool.calls
@@ -346,15 +357,49 @@ test('skips PR creation and warns the user when the re-push fails', async () => 
   assert.equal(staging.calls.length, 0);
   // The user is told the truth, and the worker is reaped (keepWorker:false).
   assert.ok(sysMsgInserted(pool));
-  assert.ok(emits.some((e) => e.event === 'status' && /couldn't be pushed/i.test(e.data.text)));
+  assert.ok(emits.some((e) => e.event === 'status' && /not on GitHub/i.test(e.data.text)));
   assert.ok(workerCalls.some((c) => c[0] === 'destroyWorker'));
 
   // #896: the message states the situation and the action, without
   // naming the restart — that lives in metadata.recovered instead.
-  const pushRow = insertedRows(pool).find((r) => /couldn't be pushed/.test(r.content));
+  const pushRow = insertedRows(pool).find((r) => /not on GitHub/.test(r.content));
   assert.doesNotMatch(pushRow.content, /restart|recover/i);
   assert.equal(pushRow.metadata.recovered, true);
-  assert.match(pushRow.content, /send your request again/);
+  assert.match(pushRow.content, /Retry your request/);
+  // #1376: a transient failure keeps its retry advice AND now names the
+  // actual git/platform error, which used to exist only in a WARN line.
+  assert.match(pushRow.content, /container gone/);
+  assert.equal(pushRow.metadata.pushFailurePermanent, false);
+  assert.equal(pushRow.metadata.pushFailureCode, 'push_failed');
+});
+
+test('a permanently unpushable branch says so instead of advising a retry', async () => {
+  // #1376: the production shape — a branch minted from an email-address
+  // username, rejected by the push proxy's charset. Retrying re-pushes the
+  // same rejected name forever, so the copy must not suggest it.
+  pushBehavior = { mode: 'throw', permanent: true };
+  const pool = makePool();
+  const staging = makeStaging();
+  const emits = [];
+
+  await finalizeRecoveredTurn({
+    config: {}, pool, staging,
+    session: { ...SESSION },
+    sessionId: 510,
+    result: { ahead: 1, sha: 'localonlysha12345', pushOk: false, lastResultText: 'done', sessionId: 'cc-3' },
+    repoOwner: 'Usernode-Labs', repoName: 'social-vibecoding',
+    emit: (event, data) => emits.push({ event, data }),
+    containerName: 'usernode-worker-510',
+    keepWorker: false,
+  });
+
+  assert.equal(prMetadataCalls.length, 0);
+  const pushRow = insertedRows(pool).find((r) => /not on GitHub/.test(r.content));
+  assert.ok(pushRow, 'the failure must reach the chat transcript');
+  assert.match(pushRow.content, /never succeed/i);
+  assert.equal(/retry|send your request again/i.test(pushRow.content), false);
+  assert.equal(pushRow.metadata.pushFailurePermanent, true);
+  assert.equal(pushRow.metadata.pushFailureCode, 'bad_branch');
 });
 
 test('does not re-push when the turn already pushed (pushOk:true)', async () => {

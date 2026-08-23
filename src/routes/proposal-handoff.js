@@ -9,6 +9,7 @@ const staging = require('../services/staging');
 const visuals = require('../services/visuals');
 const sessionLifecycle = require('../services/session-lifecycle');
 const proposalUpdate = require('../services/proposal-update');
+const branchNames = require('../services/branch-names');
 // The connector-error → HTTP status map. It lives in routes/dev-flow.js
 // because tests/dev-flow-routes.test.js scrapes the services' emitted codes
 // against it in both directions; importing it here rather than restating it is
@@ -719,6 +720,16 @@ function proposalHandoffRoutes(config) {
       }
 
       const branchName = `dev/cli-u${req.user.id}-${input.requestId}`;
+      // #1376: `requestId` is already validated to [a-z0-9-] and the user id
+      // is numeric, so this is safe by construction — assert it anyway, so a
+      // future change to either surfaces here rather than as an unpushable
+      // branch discovered after the agent has already done the work.
+      if (!branchNames.isValidBranchName(branchName)) {
+        log.error('proposal-handoff', 'Refusing to create an unpushable branch', {
+          app: app.slug, branchName,
+        });
+        return res.status(400).json({ error: 'bad_branch_name' });
+      }
       try {
         await github.ensureBranchAtSha(repo.owner, repo.repo, branchName, input.baseSha);
       } catch (err) {

@@ -17,6 +17,7 @@ const visuals = require('../services/visuals');
 const docker = require('../services/docker');
 const caddy = require('../services/caddy');
 const worker = require('../services/worker');
+const branchNames = require('../services/branch-names');
 const agentTurn = require('../services/agent-turn');
 const registry = require('../agents/registry');
 const agentPreferences = require('../services/agent-preferences');
@@ -1806,7 +1807,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       const rawIssue = req.body && req.body.issueNumber;
       const issueNumber = Number.isInteger(rawIssue) && rawIssue > 0 ? rawIssue : null;
 
-      const branchName = `dev/${req.user.username}-${Date.now()}`;
+      const branchName = branchNames.devBranchName(req.user.username);
 
       // Create branch on GitHub (PR created later after first commit)
       if (github.isEnabled() && app.repo_url) {
@@ -1977,7 +1978,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       let botUsername = null;
       try { botUsername = await github.getBotUsername(); } catch {}
 
-      const branchName = `dev/auto-issue-${issueNumber}-${Date.now()}`;
+      const branchName = branchNames.devBranchName(`auto-issue-${issueNumber}`);
       try {
         await github.createBranch(repoOwner, repoName, branchName);
       } catch (err) {
@@ -2108,7 +2109,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // Fork the new branch off the auto session's branch so any commit it
       // pushed carries over. Fall back to main if that branch is missing
       // (e.g. the headless run never pushed and the branch was pruned).
-      const branchName = `dev/${req.user.username}-${Date.now()}`;
+      const branchName = branchNames.devBranchName(req.user.username);
       const [, repoOwner, repoName] = (src.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
       if (github.isEnabled() && repoOwner && repoName) {
         try {
@@ -3376,7 +3377,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
 
       // Fork the branch off the source's branch so any commit it pushed
       // carries over; fall back to main if that branch is gone.
-      const branchName = `dev/${req.user.username}-${Date.now()}`;
+      const branchName = branchNames.devBranchName(req.user.username);
       const [, repoOwner, repoName] = (src.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
       if (github.isEnabled() && repoOwner && repoName) {
         try {
@@ -13052,18 +13053,31 @@ ${buildGuidance.testingGuidance}`;
     // re-push it from the platform side — the identical heal the restart
     // recovery path (finalizeRecoveredTurn in server.js) already uses —
     // before deciding the turn failed.
+    // #1376: the heal's rejection is the only place the REAL reason for a
+    // push failure exists (an invalid branch name, a missing bot token, a
+    // git error from GitHub). It used to be swallowed into a WARN line and
+    // replaced downstream with a fixed "retry your request" sentence, so a
+    // permanently unpushable session read as a transient hiccup and the
+    // user retried into the same wall. Keep it and describe it.
+    let pushFailure = null;
     const healPush = async () => {
       try {
         await worker.execPushFromWorker(session.id, session.branch_name);
         result.pushOk = true;
+        pushFailure = null;
         log.info('sessions', 'Push heal: re-pushed un-pushed branch', {
           sessionId: session.id, branch: session.branch_name,
         });
         await appendTurnProgressLine('[done]');
         return true;
       } catch (err) {
+        pushFailure = worker.describePushFailure(err);
         log.warn('sessions', 'Push heal failed', {
-          sessionId: session.id, branch: session.branch_name, err: err.message,
+          sessionId: session.id,
+          branch: session.branch_name,
+          code: pushFailure.code,
+          permanent: pushFailure.permanent,
+          err: err.message,
         });
         return false;
       }
@@ -13106,9 +13120,23 @@ ${buildGuidance.testingGuidance}`;
       // keeps the only copy of the commit; the next turn (or a retry)
       // re-pushes it (#295), so nothing is lost.
       isError = true;
-      const msg = 'Push to GitHub failed — your changes are committed in the session\'s worker but not on GitHub. Retry your request to re-push and open the PR.';
-      await sendStatus(msg, { ...executionAgentMeta, error: msg });
+      const failure = pushFailure || worker.describePushFailure(null);
+      const msg = failure.text;
+      await sendStatus(msg, {
+        ...executionAgentMeta,
+        error: msg,
+        pushFailureCode: failure.code,
+        pushFailurePermanent: failure.permanent,
+      });
       summaryParts.push(msg);
+      if (failure.permanent) {
+        // The Mayor writes the wrap-up from summaryParts; without this it
+        // cheerfully offers "try again", which cannot work.
+        summaryParts.push(
+          'This push failure is permanent for this session — do NOT tell the user to retry. '
+          + 'Their committed work is still in the worker and can be recovered by an admin.'
+        );
+      }
     } else if (headless) {
       // Success path, headless variant (#155/#183): the commit was already
       // pushed by run-cc.sh inside the worker. Persist testing guidance so
