@@ -197,7 +197,7 @@ export function RegisterScreen() {
           </form>
           <p className="text-center text-sm text-zinc-500 dark:text-zinc-400 mt-6">
             Already have an account?
-            <a href="#login" className="text-violet-400 hover:text-violet-300">
+            <a href="#login" className="text-violet-600 hover:text-violet-700 dark:text-violet-400 dark:hover:text-violet-300">
               Log in
             </a>
           </p>

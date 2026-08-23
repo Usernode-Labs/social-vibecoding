@@ -33,7 +33,7 @@ export function WalletSection() {
           </p>
           <button
             id="wallet-link-cancel"
-            className="mt-2 text-xs text-zinc-500 hover:text-zinc-300 underline"
+            className="mt-2 text-xs text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-300 underline"
           >
             Cancel
           </button>

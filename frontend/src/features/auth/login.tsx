@@ -81,7 +81,7 @@ type RecoveryPath = 'wallet' | 'email';
 // already covers every one of them.
 const P = 'text-sm text-zinc-500 dark:text-zinc-400';
 const LABEL = 'block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1';
-const QUIET_BUTTON = 'w-full text-sm text-zinc-500 hover:text-zinc-300';
+const QUIET_BUTTON = 'w-full text-sm text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-300';
 
 /**
  * What the retired `BUTTON` class constant is now: the same string, spelled as
@@ -886,7 +886,7 @@ export function LoginScreen() {
             className={hiddenLast(!base, 'text-center text-sm text-zinc-500 dark:text-zinc-400 mt-6')}
           >
             {'Have an activation code? '}
-            <a href="#register" className="text-violet-400 hover:text-violet-300">
+            <a href="#register" className="text-violet-600 hover:text-violet-700 dark:text-violet-400 dark:hover:text-violet-300">
               Register
             </a>
           </p>
@@ -1168,7 +1168,7 @@ export function LoginScreen() {
             <button
               id="btn-recovery-back"
               type="button"
-              className="w-full text-sm text-zinc-500 hover:text-zinc-300"
+              className="w-full text-sm text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-300"
               onClick={showLoginBaseView}
             >
               Back to login

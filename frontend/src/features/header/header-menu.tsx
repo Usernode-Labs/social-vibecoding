@@ -171,7 +171,7 @@ export function HeaderMenu() {
       >
         {/* Panel header with close button */}
         <div className="flex items-center justify-end px-4 py-3 border-b border-zinc-100 dark:border-zinc-800">
-          <button id="header-menu-close" className="text-zinc-400 hover:text-zinc-200" aria-label="Close menu">
+          <button id="header-menu-close" className="text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200" aria-label="Close menu">
             <XIcon className="w-5 h-5" />
           </button>
         </div>
