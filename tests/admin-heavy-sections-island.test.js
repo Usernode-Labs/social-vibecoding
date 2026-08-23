@@ -193,14 +193,25 @@ test('every interval a heavy section starts is cleared in its destroy()', () => 
     if (!starts) continue;
     const clears = (src.match(/clearInterval\(/g) || []).length;
     assert.ok(clears >= 1,
-      `${file}.js starts ${starts} interval(s) and never clears one — a section left `
+      `${file} starts ${starts} interval(s) and never clears one — a section left `
       + 'mounted would poll for the life of the tab (#860)');
-    // Either destroy() clears directly (status, node, campaigns) or it calls the
-    // one function that owns the timer (merges' setLive(false), which clears
-    // before deciding whether to restart). Both are the same guarantee.
     const destroy = src.slice(src.indexOf('destroy() {'));
-    assert.match(destroy.slice(0, 900), /clearInterval\(|setLive\(false\)/,
-      `${file}.js's destroy() must stop its poll`);
+    if (modExt(file) === 'tsx') {
+      // A converted section (#1120) owns its poll in an effect, so the chain
+      // is: destroy() drops the portal -> React unmounts -> the effect's
+      // cleanup clears the timer. Both links are asserted, because either one
+      // missing leaves the same 2s poll running for the life of the tab.
+      assert.match(destroy.slice(0, 900), /unmountLegacyPortal\(/,
+        `${file}'s destroy() must drop its portal — that is what unmounts the effect`);
+      assert.match(src, /return \(\) => \{[^}]*clearInterval\(/,
+        `${file} must clear its interval from an effect CLEANUP, not merely somewhere`);
+    } else {
+      // Either destroy() clears directly (status, campaigns) or it calls the
+      // one function that owns the timer (merges' setLive(false), which clears
+      // before deciding whether to restart). Both are the same guarantee.
+      assert.match(destroy.slice(0, 900), /clearInterval\(|setLive\(false\)/,
+        `${file}.js's destroy() must stop its poll`);
+    }
   }
 });
 

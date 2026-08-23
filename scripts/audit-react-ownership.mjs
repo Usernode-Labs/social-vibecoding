@@ -107,6 +107,7 @@ const OWNED = [
   { sel: '#standings-tabs' },                // @/components/ui/tabs, via the leaderboard
   { sel: '#admin-section-content', when: '#admin/e2e' },     // features/admin/admin-e2e.tsx
   { sel: '#admin-section-content', when: '#admin/gallery' }, // features/admin/admin-gallery.tsx
+  { sel: '#admin-section-content', when: '#admin/node' },    // features/admin/admin-node.tsx
 ];
 
 const ROUTES = [
@@ -114,7 +115,7 @@ const ROUTES = [
   '#settings/agent-files', '#profile', '#leaderboard', '#messages',
   '#app/recipebot', '#app/recipebot/dev', '#app/recipebot/dev/chat',
   '#app/recipebot/dev/sessions/1',
-  '#admin/e2e', '#admin/gallery', '#admin/status',
+  '#admin/e2e', '#admin/gallery', '#admin/node', '#admin/status',
 ];
 
 function instrument(owned) {
