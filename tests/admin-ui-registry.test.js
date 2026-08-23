@@ -12,7 +12,10 @@ const vm = require('node:vm');
 // #1082 chunk E moved the ten admin modules into the React bundle. Same
 // files, same registry, same discipline — only the directory changed.
 const JS_DIR = path.join(__dirname, '..', 'frontend', 'src', 'features', 'admin');
-const ADMIN_FILES = fs.readdirSync(JS_DIR).filter((f) => /^admin(-|\.)/.test(f) && f.endsWith('.js'));
+// `.tsx` as well as `.js` since #1120 slice 6: a converted section renders in
+// React but is still styled by the registry below, so every rule in this file
+// applies to it unchanged. Both renderers, one vocabulary.
+const ADMIN_FILES = fs.readdirSync(JS_DIR).filter((f) => /^admin(-|\.)/.test(f) && /\.(js|tsx)$/.test(f));
 
 function loadRegistry() {
   const src = fs.readFileSync(path.join(JS_DIR, 'admin-console.js'), 'utf8');
@@ -96,10 +99,17 @@ test('the admin console does not reach for the shell’s primitives', () => {
   // the shell's language, so that half is gone (see the test below, which now
   // enforces ONE palette rather than two).
   //
-  // What is left is a RENDERING boundary, and it is the durable one: the
-  // console draws with template literals and `innerHTML`, the shell draws with
-  // React components. You cannot interpolate a <Button> into a template
-  // string. Same vocabulary, two forms — components there, class recipes here.
+  // What is left is a SURFACE boundary, and unlike the palette one it does not
+  // dissolve as sections convert to React. An operator console and a phone
+  // screen want different densities of the same vocabulary: a 44px tap target
+  // and a card with 1.5rem of padding are right on `#home` and wrong in a
+  // table of 130 test cases. So the console keeps its own recipes — the same
+  // zinc/violet utilities, tuned for a desk — and reaching for `<Button>` here
+  // would drop a phone-sized control into a spreadsheet.
+  //
+  // A converted section is still bound by this. `admin-e2e.tsx` renders JSX and
+  // spells every class `className={AdminUI.td}`; what changed there is the
+  // renderer, not the vocabulary.
   for (const file of ADMIN_FILES.concat(['index.tsx'])) {
     const src = code(fs.readFileSync(path.join(JS_DIR, file), 'utf8'));
     const hit = src.match(/from '@\/components\/ui\/[^']*'/);

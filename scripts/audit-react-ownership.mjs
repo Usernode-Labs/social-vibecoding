@@ -86,16 +86,26 @@ const AUTH = process.env.AUTH || '';
 const CHROME = process.env.CHROME_PATH
   || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
 
-/** Hosts whose ENTIRE subtree a React island renders and reconciles. */
+/**
+ * Hosts whose ENTIRE subtree a React island renders and reconciles.
+ *
+ * `when` scopes an entry to one address, for a host that is React's on some
+ * routes and a legacy module's on others. `#admin-section-content` is the
+ * only one so far and it is a whole class of them: the admin console has one
+ * content host and thirty sections take turns in it, so it is owned exactly
+ * while the section occupying it is a converted one. Without the scope every
+ * un-converted section's own `innerHTML` would report as a violation.
+ */
 const OWNED = [
-  '#app-list',                      // features/home/app-grid.tsx
-  '#gc-messages',                   // features/group-chat/transcript.tsx
-  '#gc-thread-messages',            // ditto, mounted with the 'thread' key
-  '#llm-grants-list',               // features/settings/grants-list.tsx
-  '#agent-files-instructions-list', // features/settings/agent-files-list.tsx
-  '#agent-files-skills-list',
-  '#browse-list',                   // features/apps/browse-list.tsx
-  '#standings-tabs',                // @/components/ui/tabs, via the leaderboard
+  { sel: '#app-list' },                      // features/home/app-grid.tsx
+  { sel: '#gc-messages' },                   // features/group-chat/transcript.tsx
+  { sel: '#gc-thread-messages' },            // ditto, mounted with the 'thread' key
+  { sel: '#llm-grants-list' },               // features/settings/grants-list.tsx
+  { sel: '#agent-files-instructions-list' }, // features/settings/agent-files-list.tsx
+  { sel: '#agent-files-skills-list' },
+  { sel: '#browse-list' },                   // features/apps/browse-list.tsx
+  { sel: '#standings-tabs' },                // @/components/ui/tabs, via the leaderboard
+  { sel: '#admin-section-content', when: '#admin/e2e' }, // features/admin/admin-e2e.tsx
 ];
 
 const ROUTES = [
@@ -103,13 +113,16 @@ const ROUTES = [
   '#settings/agent-files', '#profile', '#leaderboard', '#messages',
   '#app/recipebot', '#app/recipebot/dev', '#app/recipebot/dev/chat',
   '#app/recipebot/dev/sessions/1',
+  '#admin/e2e', '#admin/status',
 ];
 
 function instrument(owned) {
   window.__ownHits = [];
   const inside = (node) => {
     if (!node || node.nodeType !== 1) return null;
-    for (const sel of owned) {
+    for (const { sel, when } of owned) {
+      // A scoped host is only React's while that address is on screen.
+      if (when && !String(location.hash || '').startsWith(when)) continue;
       const host = document.querySelector(sel);
       // INSIDE the host, never the host itself — mounting writes the host.
       if (host && host !== node && host.contains(node)) return sel;

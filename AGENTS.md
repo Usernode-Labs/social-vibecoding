@@ -124,10 +124,10 @@ selects a skill.
 - Adding or removing a `public/js/**` script means updating `SHELL_ASSETS` in
   `public/sw.js` and the count in `tests/shell-script-order.test.js` too.
 
-## One language, two renderers — keep the boundary
+## One language, two surfaces — keep the boundary
 
-This repo ships **one** visual vocabulary in **two forms**, and the split
-between them is about RENDERING, not about styling.
+This repo ships **one** visual vocabulary in **two tunings**, and the split
+between them is about the SURFACE each is drawn for, not about styling.
 
 - **The platform shell** — `frontend/@/components/ui/**`. shadcn primitives,
   hand-rolled, `cssVariables: false`, in the platform's `zinc`/`violet`
@@ -138,11 +138,10 @@ between them is about RENDERING, not about styling.
   a class name that never gets compiled.
 - **The admin console** — the `AdminUI` registry in
   `frontend/src/features/admin/admin-console.js`. A frozen object of class
-  *recipes* (`AdminUI.card`, `AdminUI.btn.primary`, `AdminUI.cardTitle`, …)
-  interpolated into template-literal `innerHTML`. It is published on
-  `window.AdminUI` as well as exported, because the section modules
-  (`admin-analytics.js`, `admin-mail.js`, `admin-topochain.js`, …) read it as a
-  bare identifier at call time.
+  *recipes* (`AdminUI.card`, `AdminUI.btn.primary`, `AdminUI.cardTitle`, …). It
+  is published on `window.AdminUI` as well as exported, because the section
+  modules (`admin-analytics.js`, `admin-mail.js`, `admin-topochain.js`, …) read
+  it as a bare identifier at call time.
 
 The console used to be a genuinely separate design system — the topochain
 admin's `gray`/`indigo`, deliberately not the shell's `zinc`/`violet`. The
@@ -151,20 +150,50 @@ filled controls, same radii. `gray-*` and `indigo-*` now appear NOWHERE in
 either system, and `tests/admin-ui-registry.test.js` enforces that as one rule
 across both rather than as a split.
 
-**Do not cross the renderers.** An admin section cannot compose a `<Button>`
-into a template literal, and a shell component handed `AdminUI.card` is a
-reconciled tree being given markup meant for an `innerHTML` host — the first
-crack in the seam. Both directions are enforced by the same test: no admin
-source imports from `@/components/ui/`, and nothing outside `features/admin/`
-mentions `AdminUI` in code (prose in comments is fine). It also holds the
-console to its own registry: a section module may not hand-write a class string
-a recipe of five or more utilities already covers — interpolate the key, or the
-copy stops tracking the recipe the first time it changes.
+**Do not cross the surfaces.** What is left after the reskin is a density
+boundary, and it does not dissolve as sections convert to React: a 44px tap
+target and a card with 1.5rem of padding are right on `#home` and wrong in a
+table of 130 rows on a 27" display. A shell component handed `AdminUI.card`
+and an admin section reaching for `<Button>` are the same mistake in the two
+directions, and the same test catches both — no admin source imports from
+`@/components/ui/`, and nothing outside `features/admin/` mentions `AdminUI`
+in code (prose in comments is fine). It also holds the console to its own
+registry: a section may not hand-write a class string a recipe of five or more
+utilities already covers — interpolate the key, or the copy stops tracking the
+recipe the first time it changes.
 
-Converting the console's `innerHTML` rendering to React is still a separate,
-un-started job — sharing a palette did not make it step-3 work. Its 250-odd
-`innerHTML` writes are its own idiom and its own tests; leave that alone unless
-an issue asks for it by name.
+### Converting a console section to React
+
+The console's sections are moving off `innerHTML` one at a time. The seam is
+`AdminConsole._renderSection`, which hands each section module its content host
+and calls `mod.render(host)` — so a converted section keeps that same
+`{ render, destroy }` shape and swaps the assignment for a portal:
+
+```js
+render(el) { host = el; mountLegacyPortal(el, <Section/>); },
+destroy()  { unmountLegacyPortal(host); host = null; },
+```
+
+`frontend/src/features/admin/admin-e2e.tsx` is the worked example. Four things
+that conversion establishes and the next one should copy:
+
+- **The host is genuinely single-owner.** Every path into
+  `#admin-section-content` — `_renderSection`, `_renderMobileMenu` — runs
+  `_teardownActiveSection()` first, so exactly one section occupies it at a
+  time and a converted one owns its whole subtree. That is the AGENTS.md
+  ownership rule satisfied at the section boundary, not at a node inside it.
+- **`destroy()` is the state reset.** Dropping the portal entry gives the next
+  `render()` a fresh `seq` and therefore a fresh component instance, which is
+  what the hand-rolled `generation` counters were doing.
+- **Rename the file to `.tsx`, keep the registry.** Every `${AdminUI.td}` in a
+  template becomes `className={AdminUI.td}`. It is a renderer swap, not a
+  restyle: the rendered markup should be like-for-like, ids included, so the
+  diff is reviewable. `esc()` goes away — React escapes text children.
+- **Scope the host in the ownership audit.** Add
+  `{ sel: '#admin-section-content', when: '#admin/<key>' }` to `OWNED` in
+  `scripts/audit-react-ownership.mjs` and the route to `ROUTES`. The `when`
+  clause is load-bearing: the host is shared, so an unscoped entry would report
+  every un-converted section's own `innerHTML` as a violation.
 
 ## Shell CSS is generated by the image build — do not commit it
 
