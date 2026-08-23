@@ -1303,9 +1303,30 @@ html, body {
 .home-panel-fill {
   flex: 0 0 auto;
 }
-/* 16px including its own hairline — the figure the row budget above spends. */
+/* 16px including its own hairline — the figure the row budget above spends.
+   Still 16px now the hairline is a pseudo-element: the box is border-box, so
+   the pixel the border used to occupy is inside the height either way. */
 .home-panel-fill-label {
+  position: relative;
   height: 1rem;
+}
+
+/* The two GROUP boundaries inside the card — above the leaderboard fill's
+   label, and above the footer — take the same 0.625rem inset as the row
+   hairlines above. Consistency is the point: with the row rules inset and
+   these two full-bleed, the card had two kinds of hairline and the full-bleed
+   pair were the ones reaching its corner radius. One lane for every rule
+   inside the card. */
+.home-panel-fill-label::before,
+.home-panel-footer::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0.625rem;
+  right: 0;
+  height: 1px;
+  background: var(--border-light);
+  pointer-events: none;
 }
 
 /* 44px rows: the native kit's minimum touch target, and the whole row is
@@ -1333,8 +1354,27 @@ html, body {
   white-space: nowrap;
   overflow: hidden;
 }
-.home-panel-row + .home-panel-row {
-  border-top: 1px solid var(--border-light);
+/* INSET to the row's text lane, not the card's edge. The widget language's
+   grouped list (frontend/@/components/ui/grouped-list.tsx) separates rows with
+   a hairline that starts where the content starts; a rule running the full
+   width of a `rounded-2xl` card reaches its corner radius and reads as the
+   list escaping the card rather than as one row ending. 0.625rem is the row's
+   own `px-2.5`, i.e. the `text` inset depth in that component's table.
+
+   A pseudo-element rather than a border because the row is a fixed-height box
+   whose height budget (--home-panel-row-h) is spent exactly: a 1px border is
+   part of the border box and would make every row after the first a pixel
+   shorter than the first, which is the whole reason the 4-slot budget above
+   is stated in whole rows. */
+.home-panel-row + .home-panel-row::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0.625rem;
+  right: 0;
+  height: 1px;
+  background: var(--border-light);
+  pointer-events: none;
 }
 
 /* The meter lane is reserved on EVERY row of a metered panel, not only on
@@ -1369,6 +1409,7 @@ html, body {
    Challenges screen. Same height family as the title bar so the block
    reads as chrome-rows-around-content. */
 .home-panel-footer {
+  position: relative; /* its hairline is a ::before — see .home-panel-fill-label */
   min-height: 1.625rem; /* 26px */
 }
 
@@ -1701,9 +1742,22 @@ html, body {
   width: 100%;
   aspect-ratio: 1 / 1;
 }
-/* The "Popular" caption sits on its own hairline row between the lanes. */
+/* The "Popular" caption sits on its own hairline row between the lanes — on
+   the same 0.625rem inset lane as every other rule inside a home panel card,
+   see .home-panel-row + .home-panel-row::before above. */
 .home-discover-divider {
+  position: relative;
   min-height: 1.125rem; /* 18px */
+}
+.home-discover-divider::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0.625rem;
+  right: 0;
+  height: 1px;
+  background: var(--border-light);
+  pointer-events: none;
 }
 /* The empty state: no tile lane at all, one centred line in its place, so
    the block reads as a compact strip rather than a mostly-blank box. */

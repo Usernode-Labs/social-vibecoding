@@ -387,8 +387,16 @@ test('Discover is one bordered block: lanes under a bar that carries the browse 
   assert.match(src, /titleHtml = `[\s\S]*?id="home-browse-btn"[\s\S]*?`;/);
   assert.match(src, /home-panel-browse/);
   // The second lane is separated by a hairline, so it reads as part of the
-  // same block rather than a second card.
-  assert.match(src, /home-discover-divider[^`]*border-t/);
+  // same block rather than a second card. The hairline used to be a
+  // `border-t` utility ON the divider; the reskin moved it into app.css as an
+  // INSET ::before, because a rule running the full width of a rounded card
+  // reaches its corner radius. So the markup half of the contract is now just
+  // that the divider element is still there, and the rule itself is asserted
+  // where it lives.
+  assert.match(src, /home-discover-divider/);
+  assert.match(read('public/css/app.css'),
+    /\.home-discover-divider::before \{[^}]*background: var\(--border-light\)/,
+    'app.css draws the divider hairline');
 });
 
 // The width bound is on the FEED, not on each box: #home-body is a

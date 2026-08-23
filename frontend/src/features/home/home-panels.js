@@ -513,7 +513,7 @@ const HomePanels = {
       ? 'Show less'
       : (total ? `See all ${esc(total)} challenges` : 'See all challenges');
     return `
-      <div class="home-panel-footer flex-none flex items-center justify-between gap-2 px-2.5 border-t border-zinc-200 dark:border-zinc-800">
+      <div class="home-panel-footer flex-none flex items-center justify-between gap-2 px-2.5">
         <button type="button" class="home-panel-expand flex items-center gap-1 text-[12px] font-medium text-violet-600 dark:text-violet-400 hover:underline whitespace-nowrap"
           data-panel-key="${esc(key)}" aria-expanded="${expanded ? 'true' : 'false'}"
           title="${expanded ? 'Collapse this widget' : 'Show every challenge in this widget'}">
@@ -546,7 +546,7 @@ const HomePanels = {
       : 'Go to the Leaderboard screen';
     const label = k === 'kudos' ? 'See full kudos board' : 'See full standings';
     return `
-      <div class="home-panel-footer flex-none flex items-center justify-end gap-2 px-2.5 border-t border-zinc-200 dark:border-zinc-800">
+      <div class="home-panel-footer flex-none flex items-center justify-end gap-2 px-2.5">
         <button type="button" class="home-panel-lb-open flex items-center gap-1 text-[12px] font-medium text-zinc-500 dark:text-zinc-400 hover:text-violet-600 dark:hover:text-violet-400 whitespace-nowrap"
           data-lb-kind="${esc(k)}"
           title="${esc(title)}" aria-label="${esc(label)}">
@@ -599,7 +599,7 @@ const HomePanels = {
       .join('');
     return `
       <div class="home-panel-fill flex-none" data-fill-kind="${esc(kind)}">
-        <div class="home-panel-fill-label flex items-center px-2.5 text-[0.9375rem] text-zinc-400 dark:text-zinc-500 border-t border-zinc-200 dark:border-zinc-800">${esc(label)}</div>
+        <div class="home-panel-fill-label flex items-center px-2.5 text-[0.9375rem] text-zinc-400 dark:text-zinc-500">${esc(label)}</div>
         ${rowsHtml}
       </div>`;
   },
@@ -836,7 +836,7 @@ const HomePanels = {
     // apology stacked under the first. The featured lane (or its note) then
     // has the whole box, which is exactly the pre-#949 rendering.
     const popularHtml = popular.length
-      ? `<div class="home-discover-divider flex-none flex items-center px-2.5 border-t border-zinc-200 dark:border-zinc-800">
+      ? `<div class="home-discover-divider flex-none flex items-center px-2.5">
           <span class="text-[0.9375rem] text-zinc-400 dark:text-zinc-500">Popular</span>
         </div>${lane(popular, 'home-discover-popular')}`
       : '';
