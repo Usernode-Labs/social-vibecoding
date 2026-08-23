@@ -5,6 +5,7 @@
 - Step 2 closeout
 - Plan deviations
 - Remaining legacy-owned hosts
+- The admin console: done
 - Step 3 sequence
 - Staging fixtures
 
@@ -41,9 +42,6 @@ now reconciles — and is the thing to update when one moves across.
 - `#home-panels` and the home grid's panel slots.
 - `#settings-nav-desktop`, `#settings-mobile-menu-host`, and the settings
   interior.
-- `#admin-section-content` — **partly converted**. Every section but one
-  renders from React (see below); `admin-topochain.js`'s eleven sub-sections
-  are the only ones that still assign `innerHTML` into it.
 - the two remaining leaderboard panes, the notification list, and the
   work-drawer list.
 - the group chat's composer, thread shell, vote controls, spec-share panel and
@@ -51,57 +49,56 @@ now reconciles — and is the thing to update when one moves across.
 
 Convert them one screen at a time, not as a sweep.
 
-## The admin console's per-section seam
+## The admin console: done
 
-Eighteen of the console's section modules render from React (every `.tsx` in
-`frontend/src/features/admin/`). The pattern is documented in AGENTS.md under
-"Converting a console section to React"; the short version is that
-`AdminConsole._renderSection` hands each module its host, so a converted
-section swaps the `innerHTML` assignment for `mountLegacyPortal` and its
-`destroy()` for `unmountLegacyPortal`. Everything else about the chassis is
-untouched, which is why the two idioms coexist with no bridge.
+**Every admin section and every programme screen renders from React.** The
+console has no `innerHTML` section left, and neither chassis builds markup:
 
-The console had TWO populations of section, and the difference matters:
+- `frontend/src/features/admin/admin-console.js` — 1,244 lines (from 3,420).
+  Routing, the nav, `canWrite` / `_alert` / `_confirm`, the money helpers, and
+  four WS forwarders. `_renderSection` is a `SECTION_MODULES` lookup plus the
+  Overview default; the `switch` it dispatched its own renderers through is
+  gone.
+- `frontend/src/features/admin/admin-topochain.js` — 424 lines (from 4,550).
+  A router for the eleven programme screens: the address
+  (`_subFromHash` / `_readSeasonEventsDeepLink` / `_syncHash`), the
+  screen-switch lifecycle, and the three helpers the screens defer to. Its
+  whole markup-helper family — `esc`, `safeHref`, `_field`, `_panel`, `_list`,
+  `_pagerHtml`, `_skeleton`, `_empty`, `_error` … — is deleted, not kept as a
+  second copy that drifts.
+- `frontend/src/features/admin/*.tsx` — the eighteen console sections.
+- `frontend/src/features/admin/topochain/*.tsx` — the eleven programme screens
+  plus the programme users card, over `ui.tsx` (the shared chrome),
+  `tokens.ts` (the control-styling strings both renderers used while the
+  conversion ran), `api.ts` (fetch + the picker sources) and
+  `challenge-fields.ts` (the Add-challenge template contract, as pure
+  functions).
 
-- **Delegated modules** — the ten that were already their own files behind
-  `SECTION_MODULES`. All ten are `.tsx`: status, node, analytics, estimator,
-  merges, gallery, campaigns, mail, push, e2e.
-- **Self-rendered sections** — eight that the chassis drew itself, dispatched
-  by a `switch` in `_renderSection`. All eight have MOVED OUT into their own
-  `.tsx` modules (overview, codes, featured-apps, db-export, features, limits,
-  users, and the rollover/staging-reap pair); each move deleted a `switch` arm
-  and registered a `SECTION_MODULES` entry. Moving them out first, rather than
-  converting them in place, is what kept the chassis file imperative:
-  converting in place would have meant turning a 3,400-line router into a
-  React file. The `switch` is gone entirely now — `_renderSection` is the
-  `SECTION_MODULES` lookup plus the Overview default, and `admin-console.js`
-  is down to 1,244 lines and 9 `innerHTML` sites from 3,420 and 47.
+The pattern for adding one is in AGENTS.md under "The console is React — add a
+section the same way". Four things that run through the whole conversion and
+are worth knowing before touching it:
 
-One file remains untouched:
-
-- `admin-topochain.js` — about 4,550 lines, 138 `innerHTML` sites across
-  eleven sub-sections with their own sub-nav. Convert it sub-section by
-  sub-section, not as one chunk.
-
-`overview` is the console's DEFAULT section, so `_renderSection`'s default
-path dispatches through `_renderModule` too — that helper exists so both the
-named and the default arm share one place that records the active module for
-`_teardownActiveSection`.
-
-### The one seam that is not the host
-
-Rollover and Stale previews are the only sections with a caller outside the
-console: `public/js/app.js` routes `admin_rollover_status` /
-`admin_staging_reap_status` frames from the shell's `/ws/events` socket to
-`AdminConsole.handleRolloverStatus` / `handleStagingReapStatus`, and calls
-`loadRollover` / `loadStagingReap` on reconnect. That surface is the SHELL's,
-so the conversion left it exactly where app.js looks for it: `admin-console.js`
-keeps four thin forwarders and the two modules publish `handleStatus` /
-`reload`. Each module holds a module-level `live` handle, set and cleared by an
-effect, so a frame that arrives while the admin is elsewhere is dropped and the
-next mount reads the job from the GET. Copy that shape for any future section
-with an out-of-console caller — changing app.js instead would put shell routing
-on the console's schedule.
+- **The two nested hosts.** `#admin-section-content` is the console's; a
+  programme screen's is `#admin-topo-content`, which `admin-topochain.js`
+  recreates on every screen switch — so a converted screen is unmounted BEFORE
+  the `innerHTML` that discards the node.
+- **The seams that are not the host.** `public/js/app.js` routes two WS frame
+  types to `AdminConsole.handleRolloverStatus` / `handleStagingReapStatus` and
+  calls two loaders on socket reconnect; that surface is the SHELL's, so the
+  console keeps thin forwarders and the modules publish `handleStatus` /
+  `reload`. Delegations' "View account" imports `openAccountDetail` from
+  Onchain accounts. Seasons' "View events" writes `_se.seasonFilter` and jumps.
+  Copy the explicit-export shape for any new one: a bare global read broke the
+  first of them silently.
+- **The address stayed with the router.** Season events is deep-linkable at
+  `#admin/season-events/<id>[/new-challenge[/<templateId>]]`, and
+  `admin-topochain.js` still parses and writes it. The screen seeds itself
+  from `_se` / `_ch` and publishes back through one helper.
+- **Two exemptions retired with the work.** The audit's
+  `except: ['#admin-users-programme']` (the programme users card's host) and
+  `shell-icon-set.test.js`'s byte-for-byte glyph anchor against `_panel()`
+  both went when the thing they described stopped existing. Read their
+  replacements before adding a new exemption of your own.
 
 ## Step 3 sequence
 
@@ -111,8 +108,9 @@ Treat each row below as a separate chunk. Sizes are current.
 
 `#app-list` (home app grid), `#browse-list`, `#standings-tabs`, the settings
 App-AI grants and agent-files lists, the group-chat transcript
-(`#gc-messages` / `#gc-thread-messages`), and the eighteen admin sections
-above — every console section except topochain's eleven.
+(`#gc-messages` / `#gc-thread-messages`), and the WHOLE admin console —
+eighteen console sections, eleven programme screens and the programme users
+card.
 
 ### Small, self-contained
 
@@ -144,11 +142,7 @@ above — every console section except topochain's eleven.
 1. Dev screen — `public/js/app-view.js`, about 14,140 lines and 71 sites.
 2. Dev chat — `features/dev-chat/dev-chat.js`, about 9,820 lines and 58 sites.
    Streaming assistant output is the complication.
-3. Admin interior — `admin-topochain.js`, about 4,550 lines and 138 sites,
-   per the seam above. It is all that is left of the console: the chassis
-   (`admin-console.js`) is 1,244 lines and 9 sites, none of them a section.
-   Convert its eleven sub-sections one at a time; they share a sub-nav, so
-   the sub-nav host is its own ownership boundary and should go last.
+3. ~~Admin interior~~ — **done**. See "The admin console: done" above.
 
 ## Staging fixtures
 
@@ -158,3 +152,11 @@ flag is read from `location.search`, so it goes BEFORE the hash. It covers the
 screenshot gallery, merge debug, analytics, estimator accuracy, container
 rollover and stale previews. Running the local server with
 `USERNODE_ENV=staging` is what enables the substitution.
+
+Two things the seed does NOT cover, worth knowing before concluding a screen
+is broken: `waitlist_signups.answers` is empty on every row, so the survey
+block on Stale previews' sibling screen is unreachable in a preview (its
+executed test is `tests/topochain-waitlist-survey.test.js`); and
+`available-activity-types` lists only templates an event has NOT used, so the
+Add-challenge picker is empty on a fully-populated event — use one of the
+unfilled seeded events.
