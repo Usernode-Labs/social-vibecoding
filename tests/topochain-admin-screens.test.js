@@ -220,9 +220,7 @@ test('every built screen key is present in SUBS, no gap key is, and each is a re
 
 test('every built screen has a render function reachable from _renderSub', () => {
   const fn = topoJs.slice(topoJs.indexOf('  _renderSub() {'), topoJs.indexOf('  // ══'.repeat(1), topoJs.indexOf('  _renderSub() {')));
-  const renderFns = [
-    'renderSeasonEvents', 'renderChallengeTemplates', 'renderSeasons',
-  ];
+  const renderFns = ['renderSeasonEvents', 'renderSeasons'];
   for (const name of renderFns) {
     assert.ok(fn.includes(name), `_renderSub dispatches to ${name}`);
     assert.match(topoJs, new RegExp(`\\b${name}\\(host\\) \\{|async ${name}\\(host\\) \\{`),
@@ -245,6 +243,7 @@ test('every built screen has a render function reachable from _renderSub', () =>
     ['onchain-accounts', 'OnchainAccountsScreen'],
     ['user-activities', 'UserActivitiesScreen'],
     ['delegations', 'DelegationsScreen'],
+    ['challenge-templates', 'ChallengeTemplatesScreen'],
   ]) {
     assert.ok(!new RegExp(`case '${key}':`).test(fn), `${key} left the switch`);
     const renderer = `render${component.replace('Screen', '')}`;
@@ -402,9 +401,7 @@ test('the shared _inputHtml/_textareaHtml/_selectHtml builders escape their valu
 // Spot-check a sampling of fields rendered directly (not through the
 // shared input builders) actually pass through esc(...).
 test('table-rendered API fields pass through esc()', () => {
-  for (const field of [
-    'ev.name', 'u.email', 't.category', 't.reward',
-  ]) {
+  for (const field of ['ev.name', 'u.email']) {
     const re = new RegExp(`esc\\(${field.replace('.', '\\.')}`);
     assert.ok(re.test(topoJs), `${field} passes through esc() somewhere in admin-topochain.js`);
   }
@@ -417,6 +414,7 @@ test('table-rendered API fields pass through esc()', () => {
     ['settings.tsx', /cell: \(s\) => s\.key/],
     ['app-version.tsx', /cell: \(c\) => c\.os/],
     ['onchain-accounts.tsx', /\{a\.public_key\}/],
+    ['challenge-templates.tsx', /cell: \(t\) => t\.category/],
   ]) {
     const src = fs.readFileSync(
       path.join(root, 'frontend/src/features/admin/topochain', file), 'utf8');
@@ -433,7 +431,8 @@ test('every AdminTopochain.send(...) mutating call sits inside a canWrite()-guar
   const fnHeaderRe = /^\s{2}(async )?_?\w+\([^)]*\)\s*\{\s*$/;
   const sendCallLineIdxs = [];
   lines.forEach((line, i) => { if (line.includes('AdminTopochain.send(')) sendCallLineIdxs.push(i); });
-  assert.ok(sendCallLineIdxs.length >= 15, `expected many send() call sites, found ${sendCallLineIdxs.length}`);
+  assert.ok(sendCallLineIdxs.length >= 8,
+    `expected many send() call sites, found ${sendCallLineIdxs.length}`);
 
   for (const callIdx of sendCallLineIdxs) {
     // Walk upward to the nearest enclosing top-level (2-space indented)
@@ -450,6 +449,33 @@ test('every AdminTopochain.send(...) mutating call sits inside a canWrite()-guar
     assert.match(scope, /canWrite\(\)\) return;/,
       `send() call at line ${callIdx + 1} is guarded by an early canWrite() return in its scope:\n${scope.slice(0, 200)}`);
   }
+
+  // The same rule on the converted screens, where `send` is an imported
+  // function rather than a method. Every call site must sit under a
+  // `if (!canWrite()) return;` in its own handler — the count only falls in
+  // admin-topochain.js because the screens moved, not because the rule did.
+  const reactDir = path.join(root, 'frontend/src/features/admin/topochain');
+  let reactSends = 0;
+  for (const file of fs.readdirSync(reactDir).filter((f) => f.endsWith('.tsx'))) {
+    const src = fs.readFileSync(path.join(reactDir, file), 'utf8');
+    const srcLines = src.split('\n');
+    srcLines.forEach((line, i) => {
+      if (!/\bawait send\(/.test(line)) return;
+      reactSends += 1;
+      // Walk up to the nearest handler head (a useCallback or a plain
+      // async arrow assigned to a const) and require the guard between.
+      let start = -1;
+      for (let j = i; j >= 0; j -= 1) {
+        if (/^\s*const \w+ = (useCallback\(async|async)/.test(srcLines[j])) { start = j; break; }
+      }
+      assert.ok(start >= 0, `${file}:${i + 1} send() has an enclosing handler`);
+      const scope = srcLines.slice(start, i + 1).join('\n');
+      assert.match(scope, /if \(!canWrite\(\)\) return;/,
+        `${file}:${i + 1} send() is guarded by an early canWrite() return:\n${scope.slice(0, 200)}`);
+    });
+  }
+  assert.ok(reactSends >= 8,
+    `expected the converted screens to carry their share of the writes, found ${reactSends}`);
 });
 
 test('the one non-mutating POST (sql-query/execute) is explicitly NOT canWrite-gated, with a comment saying why', () => {
@@ -780,7 +806,7 @@ test('a panel header sticks to the top and carries a visible dismiss control', (
 test('every open-a-form entry point renders through _panel with a wired close control', () => {
   const FORMS = [
     '_openSeasonEventForm', '_openChallengeForm', '_openUserForm',
-    '_openUserImportForm', '_openUserExport', '_openTemplateForm', '_moveChallenge',
+    '_openUserImportForm', '_openUserExport', '_moveChallenge',
   ];
   for (const fn of FORMS) {
     const start = topoJs.indexOf(`  async ${fn}(`);
@@ -805,6 +831,7 @@ test('every open-a-form entry point renders through _panel with a wired close co
     ['user-activities.tsx', 'Close the activity form'],
     ['user-activities.tsx', 'Close the import panel'],
     ['user-activities.tsx', 'Close the totals panel'],
+    ['challenge-templates.tsx', 'Close the template form'],
   ]) {
     const src = fs.readFileSync(
       path.join(root, 'frontend/src/features/admin/topochain', file), 'utf8');
@@ -828,7 +855,7 @@ test('no two static admin-topo-* element ids collide', () => {
 
 test('every screen opens with the shared _screenHeader, toolbar and all', () => {
   const SCREENS = [
-    'renderSeasons', 'renderSeasonEvents', 'renderUsers', 'renderChallengeTemplates',
+    'renderSeasons', 'renderSeasonEvents', 'renderUsers',
   ];
   for (const fn of SCREENS) {
     const start = topoJs.search(new RegExp(`\\n  (?:async )?${fn}\\(host\\) \\{`));
@@ -917,8 +944,22 @@ test('every form reports failures through the shared inline error slot', () => {
     topoJs.indexOf('  _formErrorSlot(id) {') + 500);
   assert.match(slot, /class="hidden /, 'rendered hidden, revealed by the save handler');
   assert.match(slot, /role="alert"/, 'a validation failure is announced, not just coloured red');
-  assert.ok((topoJs.match(/_formErrorSlot\(/g) || []).length >= 8,
+  // Spans both renderers: a converted screen renders <FormError message=…/>,
+  // which is the same slot seen from the other side — it renders nothing when
+  // there is nothing to say, instead of an empty paragraph toggled by class.
+  const reactDir = path.join(root, 'frontend/src/features/admin/topochain');
+  const reactSlots = fs.readdirSync(reactDir).filter((f) => f.endsWith('.tsx'))
+    .reduce((n, f) => n + ((fs.readFileSync(path.join(reactDir, f), 'utf8')
+      .match(/<FormError message=/g) || []).length), 0);
+  assert.ok((topoJs.match(/_formErrorSlot\(/g) || []).length + reactSlots >= 8,
     'every form panel carries one');
+  const uiTsx = fs.readFileSync(path.join(reactDir, 'ui.tsx'), 'utf8');
+  const reactSlot = uiTsx.slice(uiTsx.indexOf('export function FormError('),
+    uiTsx.indexOf('export function FormActions('));
+  assert.match(reactSlot, /if \(!message\) return null;/,
+    'the React slot is absent rather than hidden');
+  assert.match(reactSlot, /role="alert"/,
+    'and a validation failure is still announced, not just coloured red');
   // The save handlers toggle `hidden` on that element by id — the slot
   // must keep that contract rather than inventing a second mechanism.
   assert.ok((topoJs.match(/errEl\.classList\.remove\('hidden'\)/g) || []).length >= 5,
