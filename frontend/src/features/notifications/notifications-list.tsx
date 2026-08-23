@@ -519,7 +519,7 @@ export function NotificationsBody(): ReactNode {
       */}
       <div id="notifications-saved" className="shrink-0 overflow-y-auto max-h-48">
         {saved.length ? (
-          <div className="px-3 py-1.5 text-[0.7rem] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400 border-b border-zinc-200 dark:border-zinc-800">
+          <div className="px-3 py-1.5 text-[0.7rem] font-semibold text-zinc-500 dark:text-zinc-400 border-b border-zinc-200 dark:border-zinc-800">
             Saved
           </div>
         ) : null}
@@ -534,7 +534,7 @@ export function NotificationsBody(): ReactNode {
       */}
       <div id="notifications-invites" className="shrink-0 overflow-y-auto max-h-48">
         {invites.length ? (
-          <div className="px-3 py-1.5 text-[0.7rem] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400 border-b border-zinc-200 dark:border-zinc-800">
+          <div className="px-3 py-1.5 text-[0.7rem] font-semibold text-zinc-500 dark:text-zinc-400 border-b border-zinc-200 dark:border-zinc-800">
             Invites
           </div>
         ) : null}

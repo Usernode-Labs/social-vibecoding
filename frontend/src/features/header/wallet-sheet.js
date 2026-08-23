@@ -301,7 +301,7 @@
         'dark:border-zinc-800 p-4';
 
       const eyebrow = document.createElement('div');
-      eyebrow.className = 'text-xs font-semibold uppercase tracking-wide ' +
+      eyebrow.className = 'text-[0.9375rem] font-semibold ' +
         'text-zinc-500 dark:text-zinc-400';
       eyebrow.textContent = 'Block production';
       card.appendChild(eyebrow);

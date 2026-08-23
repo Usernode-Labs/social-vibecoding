@@ -288,7 +288,7 @@ function TokenCard({ token }: { token: any }): ReactNode {
   }
   return (
     <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 p-4">
-      <div className="text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400 mb-1">
+      <div className="text-[0.9375rem] text-zinc-500 dark:text-zinc-400 mb-1">
         Token allocation
       </div>
       <div
@@ -381,7 +381,7 @@ export function ProfileRoot(): ReactNode {
       {/* Rank + points header (native ScoreHeader equivalent). */}
       <div className="text-center mb-5">
         <div className="text-4xl font-extrabold tracking-tight">{view.points}</div>
-        <div className="text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400 mt-1">
+        <div className="text-[0.9375rem] text-zinc-500 dark:text-zinc-400 mt-1">
           points
         </div>
         {view.sub ? (

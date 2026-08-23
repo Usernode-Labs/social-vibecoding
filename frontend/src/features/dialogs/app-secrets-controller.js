@@ -270,7 +270,7 @@ const Secrets = {
       }
       list.innerHTML = manifestNotice + groups.map((g) => `
         <div class="mb-3">
-          <h3 class="text-xs uppercase tracking-wide text-zinc-500 mb-1">${escapeHtml(g)}</h3>
+          <h3 class="text-[0.9375rem] text-zinc-500 mb-1">${escapeHtml(g)}</h3>
           ${Secrets.groupNoteHtml(g, data)}
           ${byGroup.get(g).map((s) => Secrets.renderRow(s, canWrite)).join('')}
         </div>`).join('');

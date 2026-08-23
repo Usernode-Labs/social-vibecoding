@@ -599,7 +599,7 @@ const HomePanels = {
       .join('');
     return `
       <div class="home-panel-fill flex-none" data-fill-kind="${esc(kind)}">
-        <div class="home-panel-fill-label flex items-center px-2.5 text-[10px] uppercase tracking-wide text-zinc-400 dark:text-zinc-500 border-t border-zinc-200 dark:border-zinc-800">${esc(label)}</div>
+        <div class="home-panel-fill-label flex items-center px-2.5 text-[0.9375rem] text-zinc-400 dark:text-zinc-500 border-t border-zinc-200 dark:border-zinc-800">${esc(label)}</div>
         ${rowsHtml}
       </div>`;
   },

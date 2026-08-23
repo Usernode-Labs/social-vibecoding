@@ -319,7 +319,7 @@ function DetailPanel({ view }: { view: DetailView }): ReactNode {
       ) : null}
       {view.cta ? <Cta view={view.cta} /> : null}
       <div className="border-t border-zinc-200 dark:border-zinc-800 pt-3">
-        <div className="text-xs uppercase tracking-wide text-zinc-500 mb-1">Participants</div>
+        <div className="text-[0.9375rem] text-zinc-500 mb-1">Participants</div>
         {view.totals ? <p className="text-xs text-zinc-500 mb-2">{view.totals}</p> : null}
         <Entries view={view.entries} />
       </div>
@@ -343,7 +343,7 @@ function ProfileBody({ view }: { view: ProfileView }): ReactNode {
           </div>
         ))}
       </div>
-      <div className="text-xs uppercase tracking-wide text-zinc-500 mb-1">Activities</div>
+      <div className="text-[0.9375rem] text-zinc-500 mb-1">Activities</div>
       {view.activities ? (
         <ul className="space-y-1">
           {view.activities.map((a) => (

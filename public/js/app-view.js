@@ -4547,7 +4547,7 @@ const AppView = {
       const isBot = AppView._isBotCommentAuthor(c.author);
       const author = c.author ? escapeHtml(c.author) : 'unknown';
       const botTag = isBot
-        ? ' <span class="text-[10px] uppercase tracking-wide text-sky-600 dark:text-sky-400">bot</span>'
+        ? ' <span class="text-[0.9375rem] text-sky-600 dark:text-sky-400">bot</span>'
         : '';
       return `<div class="dev-feed-comment">
           <span class="dev-feed-comment-author">${author}</span>${botTag}
@@ -6306,7 +6306,7 @@ const AppView = {
       const author = c.author ? escapeHtml(c.author) : 'unknown';
       const date = (c.createdAt || '').slice(0, 10);
       const botTag = isBot
-        ? ' <span class="text-[10px] uppercase tracking-wide text-sky-600 dark:text-sky-400">bot</span>'
+        ? ' <span class="text-[0.9375rem] text-sky-600 dark:text-sky-400">bot</span>'
         : '';
       return `<div class="dev-issue-comment border border-zinc-200 dark:border-zinc-800 rounded-xl p-3">
           <div class="flex items-center gap-2 mb-1">
@@ -6326,7 +6326,7 @@ const AppView = {
       : '';
 
     return `<div class="flex flex-col gap-2 mt-2">
-        <div class="text-[11px] uppercase tracking-wide text-zinc-400 dark:text-zinc-500 px-1">Discussion</div>
+        <div class="text-[0.9375rem] text-zinc-400 dark:text-zinc-500 px-1">Discussion</div>
         ${omitted}
         ${rows.join('')}
       </div>`;
@@ -7306,7 +7306,7 @@ const AppView = {
       const name = escapeHtml(String((r && r.name) || 'test'));
       const path = (r && r.path) ? `<span class="opacity-60 font-mono">${escapeHtml(String(r.path))}</span>` : '';
       const chip = advisory
-        ? ' <span class="rounded bg-zinc-500/10 px-1 text-[0.65rem] uppercase tracking-wide opacity-70">advisory</span>'
+        ? ' <span class="rounded bg-zinc-500/10 px-1 text-[0.65rem] opacity-70">advisory</span>'
         : '';
       let detail = '';
       if (!pass) {
@@ -11142,7 +11142,7 @@ const AppView = {
       const marker = (clickToPlay && !v.webm)
         ? ' <span class="text-zinc-400 dark:text-zinc-500" style="text-transform:none;letter-spacing:0">· no recording</span>'
         : '';
-      const labelHtml = `<div class="text-[0.65rem] font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400" style="margin-bottom:2px">${label}${marker}</div>`;
+      const labelHtml = `<div class="text-[0.65rem] font-medium text-zinc-500 dark:text-zinc-400" style="margin-bottom:2px">${label}${marker}</div>`;
       // Without the overlay there's nothing to click — render an inert
       // figure so the tile isn't a button that does nothing.
       if (!overlay) {
@@ -11163,7 +11163,7 @@ const AppView = {
         a && a.gif ? `data-after-gif="${a.gif}"` : '',
       ].filter(Boolean).join(' ');
       return `<button type="button" ${dataAttrs} title="${label} — open before/after comparison" style="flex:1 1 0;min-width:0;display:block;text-align:left;padding:0;border:0;background:none;cursor:pointer;font:inherit;color:inherit" onclick="AppView.openVisualComparison(this)">
-        <div class="text-[0.65rem] font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400" style="margin-bottom:2px">${label}</div>
+        <div class="text-[0.65rem] font-medium text-zinc-500 dark:text-zinc-400" style="margin-bottom:2px">${label}</div>
         ${media}
       </button>`;
     };
@@ -11244,7 +11244,7 @@ const AppView = {
     const mediaStyle = 'display:block;width:100%;max-height:78vh;object-fit:contain;object-position:top;background:rgba(0,0,0,0.35);border:1px solid rgba(127,127,127,0.25);border-radius:8px';
     const column = (label, v) => {
       const has = v && (v.png || v.webm || v.gif);
-      const heading = `<div class="text-[0.7rem] font-semibold uppercase tracking-wide text-zinc-400">${label}</div>`;
+      const heading = `<div class="text-[0.7rem] font-semibold text-zinc-400">${label}</div>`;
       if (!has) {
         return `<div style="${colStyle}">${heading}<div class="text-xs text-zinc-500" style="padding:24px 0;text-align:center;border:1px dashed rgba(127,127,127,0.3);border-radius:8px">No ${label.toLowerCase()} version to compare.</div></div>`;
       }

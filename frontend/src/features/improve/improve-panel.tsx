@@ -63,7 +63,7 @@ const ROW_CLASS =
 const ROW_LABEL_CLASS = 'text-sm font-medium flex-1 min-w-0 truncate';
 
 const SECTION_LABEL_CLASS =
-  'px-4 pt-3 pb-1 text-[0.7rem] font-semibold uppercase tracking-wide '
+  'px-4 pt-3 pb-1 text-[0.7rem] font-semibold '
   + 'text-zinc-500 dark:text-zinc-400';
 
 /**

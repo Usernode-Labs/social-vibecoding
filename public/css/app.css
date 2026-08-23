@@ -1095,8 +1095,6 @@ html, body {
 
 .home-section-header {
   font-size: 0.75rem;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
   color: var(--text-muted);
   padding: 0.25rem 0;
 }
@@ -3863,10 +3861,8 @@ span.gc-vote-btn-icon { cursor: default; }
   margin: 2px 0;
 }
 .dev-col-divider-label {
-  font-size: 10px;
+  font-size: 0.9375rem;
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
   color: var(--text-faint);
   white-space: nowrap;
   cursor: help;
@@ -3911,10 +3907,8 @@ span.gc-vote-btn-icon { cursor: default; }
   background: var(--bg-card);
 }
 .dev-detail-reasons-head {
-  font-size: 11px;
+  font-size: 0.9375rem;
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
   color: var(--text-muted);
   margin-bottom: 5px;
 }
@@ -6824,10 +6818,8 @@ button.attr-chip { cursor: pointer; }
   padding: 4px;
 }
 .attr-pop-head {
-  font-size: 10px;
+  font-size: 0.9375rem;
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
   color: var(--text-muted);
   padding: 4px 8px 2px;
 }
@@ -7136,7 +7128,7 @@ button.attr-chip { cursor: pointer; }
   margin: 4px 0 4px 22px;
   background: var(--bg-card);
 }
-.st-spec-head { font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); }
+.st-spec-head { font-size: 0.9375rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); }
 .st-spec-snippet { font-size: 12px; color: var(--text-secondary); }
 
 /* Attachment chips are inert here — names only, no bytes (the sanitiser

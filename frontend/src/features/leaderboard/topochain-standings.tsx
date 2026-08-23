@@ -147,7 +147,7 @@ function Cell({ column, row }: { column: ColumnKey; row: RowView }): ReactNode {
         <span className="font-medium text-zinc-900 dark:text-zinc-100">{row.user}</span>
         {row.nonPodium ? (
           <span
-            className="text-[10px] uppercase tracking-wide text-zinc-400"
+            className="text-[0.9375rem] text-zinc-400"
             title="Excluded from podium ranking"
           >{' non-podium'}</span>
         ) : null}
@@ -174,7 +174,7 @@ function StandingsTable(
   return (
     <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
       <table className="w-full">
-        <thead className="bg-zinc-50 dark:bg-zinc-900 text-xs uppercase tracking-wide text-zinc-500">
+        <thead className="bg-zinc-50 dark:bg-zinc-900 text-[0.9375rem] text-zinc-500">
           <tr>
             {view.columns.map((c) => (
               <th key={c} className={`px-3 py-2 ${ALIGN[c]}`}>{view.headers[c]}</th>
@@ -362,7 +362,7 @@ function Profile({ view }: { view: DrillView['profile'] }): ReactNode {
   }
   return (
     <div className="mb-4">
-      <div className="text-xs uppercase tracking-wide text-zinc-500 mb-1">Your profile</div>
+      <div className="text-[0.9375rem] text-zinc-500 mb-1">Your profile</div>
       {inner}
     </div>
   );
@@ -395,11 +395,11 @@ function Drill({ view }: { view: DrillView | null }): ReactNode {
         <Profile view={view.profile} />
         <div className="grid sm:grid-cols-2 gap-4">
           <div>
-            <div className="text-xs uppercase tracking-wide text-zinc-500 mb-1">Activities</div>
+            <div className="text-[0.9375rem] text-zinc-500 mb-1">Activities</div>
             <Activities view={view.activities} />
           </div>
           <div>
-            <div className="text-xs uppercase tracking-wide text-zinc-500 mb-1">Epoch breakdown</div>
+            <div className="text-[0.9375rem] text-zinc-500 mb-1">Epoch breakdown</div>
             <EpochBreakdown view={view.epoch} />
           </div>
         </div>
