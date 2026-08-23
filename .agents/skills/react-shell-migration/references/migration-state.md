@@ -39,8 +39,8 @@ now reconciles — and is the thing to update when one moves across.
 - `#app-content` and `#dc-view` — the Dev screen. `#dc-view` is created at
   runtime by `public/js/app-view.js`, so it cannot be converted independently.
 - `#dev-body` — the Dev chat.
-- `#settings-nav-desktop`, `#settings-mobile-menu-host`, and the settings
-  interior.
+- `#settings-nav-desktop`, `#settings-mobile-menu-host`, and
+  `#settings-usernode-section` — see "The settings interior" below.
 - nothing on the Leaderboard screen. See the note under "Converted".
 - the group chat's composer, thread shell, vote controls, spec-share panel and
   the two autocomplete menus.
@@ -118,6 +118,24 @@ Treat each row below as a separate chunk. Sizes are current.
   `#profile-root`, the notifications list, Browse (`#browse-list` /
   `#browse-detail`) and the work-drawer list. Each kept its module — the data,
   the fetches and the gestures stayed — and gained a store plus components.
+- **The settings interior, except one section.** The panes have been React
+  markup since chunk D, with settings.js binding every control by id; what this
+  run converted is the five places it also BUILT rows — the CLI credentials
+  list, the connectors list, the social-account block (~330 lines: tier card,
+  provider rows, audit and stranded notes, the admin diagnostics panel), the
+  attached-machines list, and the build-flow preference, which it had been
+  INJECTING into the Connections pane at runtime.
+
+  **`#settings-usernode-section` is deliberately NOT converted.** It is ~1,100
+  lines across a helper family (`_unEl` / `_unSection` / `_unToggle` /
+  `_unButton` / `_unStatusRow`) and eight sub-sections, and it is unverifiable
+  from a browser: `_renderUsernodeBody` does `if (this._unDemoMode()) return;`
+  after the connection and permissions boxes, because "the sections below all
+  read the live bridge, which a browser does not have". So `?usernodedemo=ios`
+  covers maybe 200 of those lines and the rest — node sleep, block production,
+  privacy, widget icons, diagnostics, about & legal, the account hint, social
+  push — needs a real device. Convert it as its own chunk, on a phone; the
+  `mobile-push-testing` skill exists for that half of it.
 - **The WHOLE Leaderboard screen.** The three panes went first; the shared
   event bar (`#leaderboard-event-bar`, the picker and hero both Topochain-domain
   panes select through) followed. `kudos.js` still contains `innerHTML` and is
@@ -150,8 +168,7 @@ Two things from the home conversion are worth reading before the next screen:
 
 ### Medium
 
-1. Settings interior — about 5,500 lines and nine sites.
-2. Group chat, everything but the transcript — `public/js/group-chat.js`,
+1. Group chat, everything but the transcript — `public/js/group-chat.js`,
    about 3,580 lines and 21 sites. The transcript conversion left the
    composer, the thread shell, `[data-gc-vote-controls]`, the spec-share card
    and the mention/ref autocomplete menus as legacy hosts on purpose; each is
