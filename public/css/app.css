@@ -14,9 +14,21 @@
   --text-muted: #6c6c70;
   --text-faint: #8e8e93;
   --text-code: #3a3a3c;
-  --accent: #0a7cff;
+  /* #0a6ee0, not the #0a7cff eyedropped from the design screenshots.
+     White on that blue is 3.93:1 — below AA for normal text, which made EVERY
+     primary button in the product (Send, Open, Publish profile, Improve, New
+     conversation) a control you could see and a label you could not quite
+     read. It failed the same way as ink: `text-violet-600` on white was the
+     identical 3.93. One step darker clears both at 4.86, and the hue is
+     unchanged to two decimal places of what the deck shows.
+
+     The DARK accent below is untouched: it is a lighter blue on purpose,
+     because against a near-black page it has to be, and it is used mostly as
+     ink rather than as a fill. Where it IS a fill, --accent-ink supplies the
+     near-black text that goes on it. */
+  --accent: #0a6ee0;
   --accent-light: #1f86ff;
-  --accent-tint: rgba(10, 124, 255, 0.08);
+  --accent-tint: rgba(10, 110, 224, 0.08);
   /* Text ON the accent — the outgoing message bubble is the only place the
      shell puts type on a saturated fill, and it must not follow the page. */
   --accent-ink: #ffffff;

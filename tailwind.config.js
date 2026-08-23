@@ -90,7 +90,10 @@ module.exports = {
   // at three points and interpolated between:
   //   zinc-100  the page background the cards float on
   //   zinc-400  secondary label text ("Private, 3m ago agent finished")
-  //   violet-600  the outgoing message bubble
+  //   violet-600  the outgoing message bubble — CORRECTED from the eyedropped
+//               #0a7cff to #0a6ee0, because white on the original is 3.93:1
+//               and so is the original as ink on white. See the note beside
+//               --accent in public/css/app.css.
   theme: { extend: {
     colors: {
       zinc: { 50:'#f5f5f7',100:'#eaeaea',200:'#e3e3e6',300:'#c7c7cc',400:'#8e8e93',500:'#6c6c70',600:'#48484a',700:'#3a3a3c',800:'#2c2c2e',900:'#1c1c1e',950:'#0b0b0c' },
@@ -103,7 +106,7 @@ module.exports = {
       // remap total rather than partial.
       violet: {
         50:'#eaf4ff',100:'#d6e9ff',200:'#b3d6ff',300:'#85bcff',400:'#5aa9ff',
-        500:'#1f86ff',600:'#0a7cff',700:'#0062cc',800:'#004fa3',900:'#003b7a',950:'#00264d',
+        500:'#1f86ff',600:'#0a6ee0',700:'#0062cc',800:'#004fa3',900:'#003b7a',950:'#00264d',
       },
     },
     // The language is markedly rounder than the shell was. Remapping the

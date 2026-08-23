@@ -124,7 +124,12 @@ test('the platform palette reached the output', () => {
   const triplets = {
     'zinc-950 (#0b0b0c) — the dark page ground': '11 11 12',
     'zinc-100 (#eaeaea) — the light page ground cards float on': '234 234 234',
-    'violet-600 (#0a7cff) — the accent': '10 124 255',
+    // Corrected from the eyedropped #0a7cff: white on that is 3.93:1, so every
+    // primary button in the product was a control you could see and a label
+    // you could not quite read — and the same hex as INK on white failed
+    // identically. #0a6ee0 clears both at 4.86. See the note beside --accent
+    // in public/css/app.css.
+    'violet-600 (#0a6ee0) — the accent': '10 110 224',
     'violet-400 (#5aa9ff) — the dark-mode accent': '90 169 255',
   };
   for (const [name, rgb] of Object.entries(triplets)) {
