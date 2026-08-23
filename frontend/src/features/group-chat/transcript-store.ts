@@ -75,6 +75,19 @@ export interface TranscriptMessage {
   unread: boolean;
   bookmarked: boolean;
   canEdit: boolean;
+  /**
+   * Whether each of the row's three header controls renders. The module
+   * decides — `_readOnly()` and `App.user` are its state, not the
+   * component's — which is the same split every other field here runs under.
+   *
+   * They were MISSING from this type and from the component until the
+   * conversion was checked against a seeded chat: the legacy row emitted an
+   * edit button, a save button and an add-reaction button, and the first
+   * React transcript silently rendered none of the three.
+   */
+  showEdit: boolean;
+  showBookmark: boolean;
+  showReact: boolean;
   quote: Quote | null;
   reactions: Reaction[];
   /** Whether to emit the module-filled attachments host for this row. */

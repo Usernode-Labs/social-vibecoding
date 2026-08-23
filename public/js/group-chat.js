@@ -451,7 +451,12 @@ const GroupChat = {
         // has scrolled up to read the topic body or older replies.
         const nearBottom =
           scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 80;
-        el.insertAdjacentHTML('beforeend', GroupChat.renderMessageHtml(msg));
+        // Appended to the MODEL. #gc-thread-messages is the same React
+        // transcript #gc-messages is (mounted with the 'thread' key a few
+        // methods down), so the insertAdjacentHTML this replaces was legacy
+        // markup spliced into a reconciled tree: the row carried none of the
+        // component's handlers and the next store update erased it.
+        GroupChat._react()?.appendTranscriptMessage(GroupChat._messageView(msg), 'thread');
         if (nearBottom) scroll.scrollTop = scroll.scrollHeight;
         return;
       }
@@ -585,6 +590,12 @@ const GroupChat = {
       unread: !!msg.has_unread_notification,
       bookmarked: !!(msg.saved || msg.bookmarked),
       canEdit: msg.userId === App.user?.id || msg.user_id === App.user?.id,
+      // The three header controls, gated exactly as the string template gated
+      // them: edit is your own message and not read-only (#621), react is not
+      // read-only, save needs a signed-in viewer.
+      showEdit: (msg.userId === App.user?.id || msg.user_id === App.user?.id) && !GroupChat._readOnly(),
+      showReact: !GroupChat._readOnly(),
+      showBookmark: !!(window.App && App.user),
       quote: q ? {
         username: q.author || (q.source === 'pr' ? `PR #${q.prNumber || ''}`.trim() : 'system'),
         excerpt: GroupChat._collapseSnippet(q.snippet).slice(0, 160),
@@ -1304,19 +1315,19 @@ const GroupChat = {
 
   // Patch just the button(s) for one message — the row may be rendered
   // twice (general stream and a mounted thread), so every match is painted.
+  //
+  // It writes the MODEL, not the button. The button lives inside #gc-messages,
+  // which features/group-chat/transcript.tsx owns end to end, so the
+  // classList / setAttribute / innerHTML writes this replaces were a second
+  // author in a reconciled tree — they worked until the next store update
+  // repainted the row from the model and silently reverted them.
+  //
+  // patchTranscriptMessage patches EVERY transcript by design, which is
+  // exactly what the two-selector sweep was doing by hand.
   _paintBookmark(messageId, on) {
-    document.querySelectorAll(
-      `#gc-messages [data-msg-id="${messageId}"] .gc-msg-save,`
-      + ` #gc-thread-messages [data-msg-id="${messageId}"] .gc-msg-save`
-    ).forEach((btn) => {
-      btn.classList.toggle('gc-msg-saved', !!on);
-      btn.setAttribute('aria-pressed', on ? 'true' : 'false');
-      btn.setAttribute('aria-label', on ? 'Unsave message' : 'Save message');
-      btn.setAttribute('title', on ? 'Saved — click to unsave' : 'Save to your notifications');
-      // The mark is hollow or solid, so a class toggle alone would leave
-      // the icon showing the state it had before the click.
-      btn.innerHTML = GroupChat._bookmarkSvg(!!on);
-    });
+    const gc = (typeof window !== 'undefined' && window.UsernodeReact)
+      ? window.UsernodeReact.groupChat : null;
+    if (gc && gc.patchTranscriptMessage) gc.patchTranscriptMessage(messageId, { bookmarked: !!on });
   },
 
   // Apply a fresh reaction aggregate (from the WS 'reaction' broadcast or
@@ -1494,8 +1505,7 @@ const GroupChat = {
     }
     // Optimistically paint the new content so there's no flash; the
     // authoritative content + "edited" marker arrive via the broadcast.
-    const contentEl = row.querySelector('.gc-msg-content');
-    if (contentEl) contentEl.innerHTML = renderMessageBody(content);
+    GroupChat._patchBody(id, content);
     GroupChat._cancelEdit(row);
   },
 
@@ -1512,26 +1522,31 @@ const GroupChat = {
     // If the author had this open in an editor, close it — the broadcast is
     // authoritative.
     GroupChat._cancelEdit(row);
-    const contentEl = row.querySelector('.gc-msg-content');
-    if (contentEl) contentEl.innerHTML = renderMessageBody(content);
-    GroupChat._patchEditedMarker(row, editedAt);
+    GroupChat._patchBody(messageId, content, editedAt);
   },
 
-  // Insert or refresh the "edited" marker after a row's timestamp.
-  _patchEditedMarker(row, editedAt) {
-    if (!editedAt) return;
-    const timeEl = row.querySelector('.gc-msg-header .gc-msg-time');
-    if (!timeEl) return;
-    const title = GroupChat._editedTitle(editedAt);
-    let marker = row.querySelector('.gc-msg-header .gc-msg-edited');
-    if (marker) {
-      marker.title = title;
-    } else {
-      timeEl.insertAdjacentHTML(
-        'afterend',
-        `<span class="gc-msg-edited" title="${escapeHtml(title)}">edited</span>`
-      );
-    }
+  // Patch a message's rendered body — and, when an edit produced it, the
+  // "edited" marker — through the transcript store.
+  //
+  // This replaces three DOM writes that all landed inside #gc-messages, which
+  // features/group-chat/transcript.tsx owns: two `contentEl.innerHTML`
+  // assignments and an `insertAdjacentHTML` that spliced the marker in after
+  // the timestamp. The last of those has no equivalent here BECAUSE it needs
+  // none — `editedTitle` is a field on the message, and the component renders
+  // the marker from it.
+  //
+  // Writing the DOM was not merely redundant. `Body` memoises its
+  // `{__html}` wrapper on the string, so React leaves the node alone while
+  // the model says the old content — and repaints the row from that stale
+  // model the next time anything else about it changes. An edit followed by
+  // a reaction reverted the text on screen.
+  _patchBody(messageId, content, editedAt) {
+    const gc = (typeof window !== 'undefined' && window.UsernodeReact)
+      ? window.UsernodeReact.groupChat : null;
+    if (!gc || !gc.patchTranscriptMessage) return;
+    const patch = { bodyHtml: renderMessageBody(content) };
+    if (editedAt) patch.editedTitle = GroupChat._editedTitle(editedAt);
+    gc.patchTranscriptMessage(messageId, patch);
   },
 
   // ── #25: reaction bar (WhatsApp-style quick row + curated grid) ──────

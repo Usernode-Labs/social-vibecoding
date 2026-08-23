@@ -285,11 +285,22 @@ test('the mark is hollow when unsaved and solid when saved', () => {
     'the saved mark is a fill');
   assert.match(svg[1], /fill="none" stroke="currentColor"/,
     'and the unsaved one is an outline — the state is the shape, not the opacity');
-  // A class toggle alone would leave the previous state's mark on screen.
+  // A class toggle alone would leave the previous state's mark on screen, so
+  // the optimistic toggle has to change the SHAPE. It used to do that by
+  // rewriting the button's innerHTML; the transcript is React now
+  // (frontend/src/features/group-chat/transcript.tsx) and that button lives
+  // inside a host the component owns, so the toggle writes the MODEL and the
+  // component picks the glyph. Same contract, one writer.
   const paint = CHAT_SRC.match(/_paintBookmark\(messageId, on\) \{([\s\S]*?)\n  \},/);
   assert.ok(paint, '_paintBookmark() found');
-  assert.match(paint[1], /innerHTML = GroupChat\._bookmarkSvg\(!!on\)/,
-    'an optimistic toggle redraws the mark, not just the classes');
+  assert.match(paint[1], /patchTranscriptMessage\(messageId, \{ bookmarked: !!on \}\)/,
+    'an optimistic toggle patches the saved flag on the message');
+  assert.doesNotMatch(paint[1], /innerHTML|classList|setAttribute/,
+    'and does not write the button — the transcript is React-owned');
+  const row = fs.readFileSync(
+    path.join(__dirname, '..', 'frontend/src/features/group-chat/transcript.tsx'), 'utf8');
+  assert.match(row, /saved \? <BookmarkSolidIcon \/> : <BookmarkIcon/,
+    'the component draws solid when saved and outline when not');
 });
 
 test('the save button is available where react and edit are not', () => {

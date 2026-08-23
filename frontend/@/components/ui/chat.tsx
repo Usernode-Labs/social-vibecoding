@@ -61,11 +61,18 @@ export function MessageBubble({ className, from, ...props }: MessageBubbleProps)
  * component knowing what any of them are.
  */
 export function ChatMessageRow({
-  className, avatar, name, timestamp, children, ...props
+  className, avatar, name, timestamp, actions, children, ...props
 }: {
   avatar?: React.ReactNode;
   name: React.ReactNode;
   timestamp?: React.ReactNode;
+  /**
+   * Per-row controls, pinned to the header's trailing edge — the group chat's
+   * edit / save / react buttons. A separate slot from `timestamp` because that
+   * one is a muted text span and a button inheriting `text-zinc-400` on a
+   * transcript is a control you cannot see.
+   */
+  actions?: React.ReactNode;
 } & React.HTMLAttributes<HTMLDivElement>) {
   return (
     <div className={cn('flex gap-3 px-4 py-2', className)} {...props}>
@@ -76,6 +83,7 @@ export function ChatMessageRow({
           {timestamp ? (
             <span className="shrink-0 text-[0.9375rem] text-zinc-400 dark:text-zinc-500">{timestamp}</span>
           ) : null}
+          {actions ? <span className="ml-auto flex shrink-0 items-center gap-1">{actions}</span> : null}
         </div>
         <div className="text-[1.0625rem] leading-snug text-zinc-900 dark:text-zinc-100">{children}</div>
       </div>

@@ -30,12 +30,31 @@
  * Both are rendered ONCE as empty hosts with constant `className`, so React
  * never writes an attribute the module has since changed. Same rule the dialog
  * islands run under (see ../../lib/legacy-dom.ts).
+ *
+ * ── The inline editor is the third, and it is a different shape ───────
+ *
+ * `GroupChat._startEdit` puts a `.gc-edit` block into a row: it INSERTS a
+ * sibling after `.gc-msg-content` and hides that node with an inline
+ * `display:none`. It does not write any node React renders — React manages
+ * this row's `className` and its body's `dangerouslySetInnerHTML`, neither of
+ * which the editor touches, and an unknown sibling plus an inline style are
+ * both things the reconciler leaves alone. The row's key is `m<id>`, so the
+ * element itself survives every repaint the editor could overlap with.
+ *
+ * That is why it stays where it is. What did NOT stay is anything that wrote
+ * a node React owns: the save button's icon and attributes, and the two
+ * `.gc-msg-content.innerHTML` assignments the edit paths used, all of which
+ * are store patches now (`_paintBookmark`, `_patchBody` in group-chat.js).
+ * The `innerHTML` ones were not merely redundant — `Body` memoises on the
+ * string, so React kept believing the old content and repainted the row from
+ * it the next time anything else about the message changed.
  */
 
 import { useMemo } from 'react';
 
 import { ChatMessageRow, ThreadReplySummary } from '@/components/ui/chat';
 import { Avatar, ReactionPill } from '@/components/ui/feed';
+import { BookmarkIcon, BookmarkSolidIcon } from '@/components/ui/icons';
 
 import { useStoreState } from '../../lib/use-store-state';
 import { transcriptStore, type TranscriptMessage } from './transcript-store';
@@ -103,6 +122,59 @@ function SystemRow({ msg }: { msg: TranscriptMessage }) {
   );
 }
 
+/**
+ * The row's three header controls: edit, save, react.
+ *
+ * NO onClick. group-chat.js binds ONE delegated `click` listener to the
+ * messages container and dispatches on `closest('.gc-msg-save')` and friends —
+ * delegation does not care which renderer made the node, so the module's
+ * existing handlers catch these the moment they exist. Wiring them here would
+ * be a second handler for the same click.
+ *
+ * `tabindex={-1}` on edit and react is the legacy behaviour and deliberate:
+ * both are hover affordances with a long-press equivalent on touch, and
+ * putting them in the tab order would mean two extra stops per message.
+ * Save is NOT one of those — it is the row's only keyboard-reachable control
+ * and carries `aria-pressed`, which is how its state is announced.
+ *
+ * These three were dropped when the transcript became React: the store
+ * modelled `bookmarked` and `canEdit` and the component rendered neither, so
+ * every message in the group chat quietly lost all three. Found by seeding a
+ * chat and counting the buttons, not by a test.
+ */
+function RowActions({ msg }: { msg: TranscriptMessage }) {
+  if (!(msg.showEdit || msg.showBookmark || msg.showReact)) return null;
+  const saved = msg.bookmarked;
+  return (
+    <>
+      {msg.showEdit ? (
+        <button type="button" className="gc-msg-edit" title="Edit" aria-label="Edit message" tabIndex={-1}>
+          {'\u270F\uFE0F'}
+        </button>
+      ) : null}
+      {msg.showBookmark ? (
+        <button
+          type="button"
+          className={saved ? 'gc-msg-save gc-msg-saved' : 'gc-msg-save'}
+          title={saved ? 'Saved — click to unsave' : 'Save to your notifications'}
+          aria-label={saved ? 'Unsave message' : 'Save message'}
+          aria-pressed={saved}
+        >
+          {/* Solid when saved, outline when not — the state lives in the SHAPE,
+              which is legible at 12px and in a screenshot. Not one path with
+              its fill flipped; see the note in @/components/ui/icons.tsx. */}
+          {saved ? <BookmarkSolidIcon /> : <BookmarkIcon strokeWidth="1.5" />}
+        </button>
+      ) : null}
+      {msg.showReact ? (
+        <button type="button" className="gc-react-add" title="React" aria-label="Add reaction" tabIndex={-1}>
+          {'\u{1F642}'}
+        </button>
+      ) : null}
+    </>
+  );
+}
+
 function MessageRow({ msg }: { msg: TranscriptMessage }) {
   return (
     <ChatMessageRow
@@ -128,6 +200,7 @@ function MessageRow({ msg }: { msg: TranscriptMessage }) {
           ) : null}
         </>
       )}
+      actions={<RowActions msg={msg} />}
     >
       {msg.quote ? (
         <ThreadReplySummary
