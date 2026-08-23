@@ -94,14 +94,16 @@ test('the admin screen ships hidden in the shell like its siblings', () => {
     'the section host ships EMPTY: sections render into it from the module');
 });
 
-test('the console island imports all twelve admin modules, console first', () => {
+test('the console island imports every admin module, console first', () => {
   // The load-order cluster the retired <script> tags used to express. The
   // section modules read the AdminUI registry admin-console.js exports, and
   // admin-topochain.js reads it while its module body evaluates — so if the
   // console import ever stops coming first, the prerender pass throws.
   //
-  // `admin-overview` joined the list in #1120 slice 16, when the console's own
-  // default section moved out of the chassis into a module of its own.
+  // The list GROWS as #1120 moves the console's own sections out of the
+  // chassis one at a time — `admin-overview` in slice 16, `admin-codes` in
+  // slice 17. Six of the eight self-rendered sections are still inline in
+  // admin-console.js; each will add a line here.
   const island = fs.readFileSync(
     path.join(root, 'frontend/src/features/admin/index.tsx'), 'utf8');
   // `.tsx` as well as `.js`: sections are converting to React one at a time
@@ -111,10 +113,10 @@ test('the console island imports all twelve admin modules, console first', () =>
     .map((m) => m[1] || m[2]);
   assert.equal(order[0], 'admin-console', 'admin-console.js is imported first');
   assert.deepEqual(order.slice(1).sort(), [
-    'admin-analytics', 'admin-campaigns', 'admin-estimator', 'admin-gallery',
-    'admin-mail', 'admin-merges', 'admin-node', 'admin-overview', 'admin-push',
-    'admin-status', 'admin-topochain',
-  ], 'all eleven section modules are imported by the island');
+    'admin-analytics', 'admin-campaigns', 'admin-codes', 'admin-estimator',
+    'admin-gallery', 'admin-mail', 'admin-merges', 'admin-node',
+    'admin-overview', 'admin-push', 'admin-status', 'admin-topochain',
+  ], 'every section module is imported by the island');
 });
 
 test('every full-screen exit path also exits the admin screen', () => {

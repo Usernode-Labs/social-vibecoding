@@ -1048,6 +1048,7 @@ const AdminConsole = {
     // `overview` is also the console's DEFAULT section — see the `default:`
     // arm of _renderSection, which dispatches through the same helper.
     overview: 'AdminOverview',
+    codes: 'AdminCodes',
     status: 'AdminStatus',
     node: 'AdminNode',
     analytics: 'AdminAnalytics',
@@ -1125,7 +1126,6 @@ const AdminConsole = {
     if (modName) return AdminConsole._renderModule(host, modName, key);
     switch (key) {
       case 'users': return AdminConsole.renderUsersSection(host);
-      case 'codes': return AdminConsole.renderCodesSection(host);
       case 'limits': return AdminConsole.renderLimitsSection(host);
       case 'features': return AdminConsole.renderFeaturesSection(host);
       case 'featured-apps': return AdminConsole.renderFeaturedAppsSection(host);
@@ -2108,96 +2108,6 @@ const AdminConsole = {
       status.className = 'text-xs mt-2 text-red-400';
       status.classList.remove('hidden');
     }
-  },
-
-  // ── Activation codes ────────────────────────────────────────────────────
-
-  renderCodesSection(host) {
-    const canWrite = AdminConsole.canWrite();
-    host.innerHTML = `
-      <div class="${AdminUI.card} p-4">
-        <div class="flex items-center justify-between mb-3">
-          <h2 class="${AdminUI.cardTitle}">Activation Codes</h2>
-          ${canWrite ? `<button id="admin-generate-code-btn" class="${AdminUI.btn.primary}">Generate Code</button>` : ''}
-        </div>
-        <div id="admin-code-list" class="space-y-2"></div>
-        <p id="admin-code-empty" class="text-sm text-zinc-500 dark:text-zinc-400 hidden">No activation codes yet.</p>
-      </div>`;
-    document.getElementById('admin-generate-code-btn')
-      ?.addEventListener('click', async () => {
-        await fetch('/api/admin/codes', { method: 'POST' });
-        AdminConsole.loadCodes();
-      });
-    AdminConsole.loadCodes();
-  },
-
-  async loadCodes() {
-    const { data } = await AdminConsole.fetchJson('/api/admin/codes');
-    if (!Array.isArray(data)) return;
-    if (AdminConsole._section !== 'codes') return;
-    AdminConsole._paintCodes(data);
-  },
-
-  _paintCodes(codes) {
-    const esc = AdminConsole.esc;
-    const list = document.getElementById('admin-code-list');
-    const empty = document.getElementById('admin-code-empty');
-    if (!list) return;
-    list.innerHTML = '';
-    if (!codes.length) {
-      empty.classList.remove('hidden');
-      return;
-    }
-    empty.classList.add('hidden');
-    const canWrite = AdminConsole.canWrite();
-
-    for (const code of codes) {
-      const el = document.createElement('div');
-      el.className = 'flex flex-wrap items-center justify-between gap-3 p-2.5 rounded-lg bg-zinc-100 dark:bg-zinc-800';
-      const used = !!code.used_by_username;
-      let statusHtml;
-      if (used) {
-        const date = new Date(code.used_at).toLocaleDateString();
-        statusHtml = `<span class="text-xs text-zinc-500 dark:text-zinc-400">Used by <strong class="text-zinc-400">${esc(code.used_by_username)}</strong> on ${date}</span>`;
-      } else {
-        statusHtml = `<span class="${AdminUI.badge.success}">Available</span>`;
-      }
-      el.innerHTML = `
-        <div class="flex-1 min-w-0 flex flex-wrap items-center gap-x-3 gap-y-1">
-          <code class="font-mono text-sm ${used ? 'text-zinc-400 line-through' : 'text-violet-400'}">${esc(code.code)}</code>
-          ${statusHtml}
-        </div>
-        <div class="flex items-center gap-2 shrink-0">
-          ${!used ? `<button class="admin-copy-code-btn text-xs text-zinc-400 hover:text-violet-800 dark:hover:text-violet-300 transition-colors" data-code="${esc(code.code)}">Copy</button>` : ''}
-          ${!used ? `<button class="admin-share-code-btn text-xs text-zinc-400 hover:text-green-400 transition-colors" data-code="${esc(code.code)}">Share link</button>` : ''}
-          ${!used && canWrite ? `<button class="admin-delete-code-btn text-xs text-zinc-400 hover:text-red-400 transition-colors" data-id="${code.id}" aria-label="Delete code">&times;</button>` : ''}
-        </div>`;
-      list.appendChild(el);
-    }
-
-    list.querySelectorAll('.admin-copy-code-btn').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        navigator.clipboard.writeText(btn.dataset.code);
-        btn.textContent = 'Copied!';
-        setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
-      });
-    });
-    list.querySelectorAll('.admin-share-code-btn').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        // In-SPA register route (fold-auth-pages-into-SPA); the old
-        // /register.html?code=… form still works via the redirect stub.
-        const url = `${location.origin}/#register/${encodeURIComponent(btn.dataset.code)}`;
-        navigator.clipboard.writeText(url);
-        btn.textContent = 'Link copied!';
-        setTimeout(() => { btn.textContent = 'Share link'; }, 1500);
-      });
-    });
-    list.querySelectorAll('.admin-delete-code-btn').forEach((btn) => {
-      btn.addEventListener('click', async () => {
-        await fetch(`/api/admin/codes/${btn.dataset.id}`, { method: 'DELETE' });
-        AdminConsole.loadCodes();
-      });
-    });
   },
 
   // ── Users ───────────────────────────────────────────────────────────────
