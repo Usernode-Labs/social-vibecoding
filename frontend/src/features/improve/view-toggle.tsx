@@ -39,17 +39,45 @@
  * Kanban are only ever active while the Dev half is the one on screen, which is
  * exactly the `tab === 'dev' && mode === …` conjunction below.
  *
- * ── The App segment is conditional ─────────────────────────────────────
+ * ── All three segments render everywhere, home included (#1386) ────────
  *
- * A self-hosted row (the platform's own app, which is what home targets) has no
- * per-slug iframe URL, so its App tab does not resolve — `App.switchTab()`
- * coerces any request for it to the Dev forum. Rendering a segment that
- * silently redirects would be a dead option in a control whose whole job is
- * saying where you are, so it is not rendered there at all. That is the same
- * exclusion the retired App/Dev switch made, for the same reason.
+ * They did not always. A self-hosted row — the platform's own app, which is
+ * what home targets — has no per-slug iframe URL, so its App TAB does not
+ * resolve: `App.switchTab('app')` coerces any request for it to the Dev forum.
+ * A segment that silently redirects is a dead option in a control whose whole
+ * job is saying where you are, so it was left out for that row, the same
+ * exclusion the retired App/Dev switch made.
+ *
+ * That reasoning held for the tab and not for the DESTINATION. "The app
+ * itself" is not missing for the platform — it simply is not an iframe. The
+ * platform's product surface IS the home screen, which is the very screen
+ * `Home.publishImproveTarget()` publishes this target from. So the segment
+ * renders for the self-hosted row too and `Improve.openApp()` sends it home,
+ * which closes the same one-way trip the toggle was built to fix: before this,
+ * following Kanban out of home left a control reading Feed | Kanban with
+ * NEITHER segment selected and nothing in it to get back.
+ *
+ * `active` needed no change to say so. On home no app is open, so the store's
+ * `tab` is still `App.currentTab`'s own initial 'app' and the segment reads as
+ * selected; opening the Dev half republishes 'dev' and Feed or Kanban takes
+ * over.
+ *
+ * ── Why the platform's segment reads "Home" ────────────────────────────
+ *
+ * A segment names WHERE IT GOES, and for the platform that is the home screen,
+ * not an app. Labelling it "App" there would name a destination that does not
+ * exist — the platform has no app tab, which is the whole reason this segment
+ * lands on home instead — so the label, the icon and the tooltip all follow the
+ * destination together.
+ *
+ * `data-view-segment` does NOT: it stays "app" on both. It is the selector
+ * contract dapp.json's declared checks and `select()` are written against, and
+ * it identifies the segment's ROLE (the first, non-dev one), which is the same
+ * on either row. A visible label is for the reader; the attribute is for the
+ * code, and only one of them is about the destination.
  */
 
-import { AppWindowIcon, BoardIcon, ListLinesIcon } from '@/components/ui/icons';
+import { AppWindowIcon, BoardIcon, HomeIcon, ListLinesIcon } from '@/components/ui/icons';
 
 import { useStoreState } from '../../lib/use-store-state';
 import { useDevViewMode } from '../dev-board/view-mode-store';
@@ -96,6 +124,8 @@ export function ImproveViewToggle({ compact }: { compact: boolean }) {
   if (!target || !slug) return null;
 
   const active: Segment = tab === 'dev' ? (mode === 'kanban' ? 'kanban' : 'feed') : 'app';
+  // Capitalised binding: JSX reads a lowercase tag as a literal element name.
+  const HomeSegmentIcon = selfHosted ? HomeIcon : AppWindowIcon;
 
   const select = (segment: Segment) => {
     if (segment === 'app') Improve.openApp();
@@ -117,20 +147,18 @@ export function ImproveViewToggle({ compact }: { compact: boolean }) {
       role="tablist"
       aria-label="App view"
     >
-      {selfHosted ? null : (
-        <button
-          type="button"
-          role="tab"
-          data-view-segment="app"
-          aria-selected={active === 'app' ? 'true' : 'false'}
-          className={segmentCls(active === 'app', compact)}
-          onClick={() => select('app')}
-          title="The app itself"
-        >
-          <AppWindowIcon className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-          App
-        </button>
-      )}
+      <button
+        type="button"
+        role="tab"
+        data-view-segment="app"
+        aria-selected={active === 'app' ? 'true' : 'false'}
+        className={segmentCls(active === 'app', compact)}
+        onClick={() => select('app')}
+        title={selfHosted ? 'The platform itself' : 'The app itself'}
+      >
+        <HomeSegmentIcon className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+        {selfHosted ? 'Home' : 'App'}
+      </button>
       <button
         type="button"
         role="tab"

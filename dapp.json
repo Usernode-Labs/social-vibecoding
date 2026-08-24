@@ -1348,9 +1348,14 @@
       "expectSelector": "#improve-view-toggle [data-view-segment=\"kanban\"][aria-selected=\"true\"]"
     },
     {
-      "name": "The self-hosted row gets no App segment (its iframe target does not resolve)",
+      "name": "The self-hosted platform row gets an App segment too (#1386)",
       "path": "/?demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#improve-view-toggle:not(:has([data-view-segment=\"app\"]))"
+      "expectSelector": "#improve-view-toggle [data-view-segment=\"app\"] + [data-view-segment=\"feed\"] + [data-view-segment=\"kanban\"]"
+    },
+    {
+      "name": "Home is the platform's App segment, and it reads as selected (#1386)",
+      "path": "/",
+      "expectSelector": "#improve-view-toggle [data-view-segment=\"app\"][aria-selected=\"true\"]"
     },
     {
       "name": "Home shows the platform Improve button (improve Social Vibecoding itself)",
@@ -1393,7 +1398,7 @@
       "expectSelector": "#dev-actions #dev-plus-btn"
     },
     {
-      "name": "The header toggle offers App, Feed and Kanban",
+      "name": "The header toggle offers three segments, Kanban last",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#improve-view-toggle [data-view-segment=\"feed\"] + [data-view-segment=\"kanban\"]",
       "expectText": "Kanban"
