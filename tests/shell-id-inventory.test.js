@@ -115,6 +115,9 @@ const RETIRED_IDS = {
 const ADDED_IDS = {
   // ── Streamlined Concept: the drawer leads with Your apps ─────────
   'drawer-your-apps': 'The drawer\'s "Your apps" section container — React-owned, filled on drawer open from /api/apps via the home screen\'s partition (see drawer-apps.tsx).',
+  'drawer-top-rows': 'The drawer\'s leading group — Notifications and Messages rows (owner review round 2).',
+  'drawer-row-your-apps': 'The "Your apps" NAV ROW — navigates home, where the apps grid lives; a distinct item like Notifications (owner review round 2).',
+  'drawer-your-apps-toggle': 'The chevron disclosure beside that row — folds the app list.',
   'drawer-row-notifications': 'Badged Notifications nav row — the way into the full-screen #notifications view now that the list left the drawer.',
   'drawer-notifications-badge': 'Notifications-only unread count on that row (bell unread + invites), painted by Notifications._renderBadge.',
   // #1281 — the session-CLI bridge opt-in. The spec marks that venue

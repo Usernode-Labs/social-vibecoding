@@ -176,15 +176,49 @@ export function HeaderMenu() {
         */}
         <div id="header-menu-rows" className="flex-1 min-h-0 overflow-hidden flex flex-col">
           {/*
-              YOUR APPS, anchored to the TOP of the drawer (Streamlined
-              Concept). The notifications block that led the drawer since THE
-              UI OVERHAUL moved to its own screen (#notifications, see
-              features/notifications/notifications-screen.tsx) — reachable
-              through the badged Notifications ROW below, which is what the
-              Figma board draws. What leads the catch-all menu now is the
-              thing the platform is actually about: the viewer's apps, in the
-              home screen's own "Your apps" order, with the open app
-              highlighted. Fully React-owned — see ./drawer-apps.tsx.
+              THE TOP OF THE DRAWER (owner review, round 2): Notifications
+              and Messages lead — the two "what happened while I was away"
+              rows — then the collapsible Your-apps section. Only Profile,
+              Settings and Admin & moderation stay in the bottom-anchored
+              group.
+          */}
+          <div id="drawer-top-rows" className="shrink-0">
+            {/*
+                Notifications — the full-screen view (Streamlined Concept).
+                The list left the drawer for #notifications; this badged row
+                is the way in, first of the nav rows because "what happened
+                while I was away" keeps its top-of-menu billing. Real anchor,
+                like every nav row. The badge (#drawer-notifications-badge) is
+                painted by Notifications._renderBadge — notifications-only
+                (bell unread + invites), while the hamburger's red badge sums
+                Messages in as the whole drawer's number.
+            */}
+            <a
+              id="drawer-row-notifications"
+              href="#notifications"
+              className="flex items-center gap-3 px-4 min-h-[44px] border-b border-zinc-100 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800"
+            >
+              <BellIcon className="w-5 h-5 shrink-0" />
+              <span className="text-sm font-medium">Notifications</span>
+              <span id="drawer-notifications-badge" className="hidden ml-auto min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold leading-[18px] text-center" aria-label="Unread notifications"></span>
+            </a>
+            {/* Platform-wide direct and group conversations (#488). A real
+                anchor keeps deep links and modified clicks browser-native;
+                the badge is updated by the React Messages store. */}
+            <a
+              id="drawer-row-messages"
+              href="#messages"
+              className="flex items-center gap-3 px-4 min-h-[44px] border-b border-zinc-100 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800"
+            >
+              <ChatBubbleTailIcon className="w-5 h-5 shrink-0" />
+              <span className="text-sm font-medium">Messages</span>
+              <span id="drawer-messages-badge" className="hidden ml-auto min-w-[18px] h-[18px] px-1 rounded-full bg-violet-600 text-white text-[10px] font-bold leading-[18px] text-center" aria-label="Unread messages"></span>
+            </a>
+          </div>
+          {/*
+              YOUR APPS — a nav item of its own AND a collapsible section:
+              the row navigates home (where the grid lives), the chevron
+              folds the app list. Fully React-owned — see ./drawer-apps.tsx.
           */}
           <DrawerApps />
           {/*
@@ -248,50 +282,7 @@ export function HeaderMenu() {
                 then the admin surface; the app-scoped and reference rows sit
                 outside this group (status pane above, footer below).
             */}
-            {/*
-                Notifications — the full-screen view (Streamlined Concept).
-                The list left the drawer for #notifications; this badged row
-                is the way in, first of the nav rows because "what happened
-                while I was away" keeps its top-of-menu billing. Real anchor,
-                like every nav row. The badge (#drawer-notifications-badge) is
-                painted by Notifications._renderBadge — notifications-only
-                (bell unread + invites), while the hamburger's red badge sums
-                Messages in as the whole drawer's number.
-            */}
-            {/*
-                THE ROW HAIRLINE IS INSET past the glyph — `left-12` is this
-                row's `px-4` (1rem) plus the 20px icon plus `gap-3` (0.75rem),
-                i.e. exactly where the label starts. It is a pseudo-element
-                rather than `border-b` because a border cannot be inset.
 
-                Same treatment, same reason, as the home panels' rules and
-                @/components/ui/grouped-list.tsx: the widget language starts a
-                row separator at the content, not at the sheet's edge. The
-                drawer's own chrome boundaries (the close-button strip at the
-                top, the notifications pane's foot) keep their full-bleed
-                borders — those divide PANES, not rows.
-            */}
-            <a
-              id="drawer-row-notifications"
-              href="#notifications"
-              className="flex items-center gap-3 px-4 min-h-[44px] relative after:absolute after:bottom-0 after:left-12 after:right-0 after:h-px after:bg-zinc-100 dark:after:bg-zinc-800 after:content-[''] text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800"
-            >
-              <BellIcon className="w-5 h-5 shrink-0" />
-              <span className="text-sm font-medium">Notifications</span>
-              <span id="drawer-notifications-badge" className="hidden ml-auto min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold leading-[18px] text-center" aria-label="Unread notifications"></span>
-            </a>
-            {/* Platform-wide direct and group conversations (#488). A real
-                anchor keeps deep links and modified clicks browser-native;
-                the badge is updated by the React Messages store. */}
-            <a
-              id="drawer-row-messages"
-              href="#messages"
-              className="flex items-center gap-3 px-4 min-h-[44px] relative after:absolute after:bottom-0 after:left-12 after:right-0 after:h-px after:bg-zinc-100 dark:after:bg-zinc-800 after:content-[''] text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800"
-            >
-              <ChatBubbleTailIcon className="w-5 h-5 shrink-0" />
-              <span className="text-sm font-medium">Messages</span>
-              <span id="drawer-messages-badge" className="hidden ml-auto min-w-[18px] h-[18px] px-1 rounded-full bg-violet-600 text-white text-[10px] font-bold leading-[18px] text-center" aria-label="Unread messages"></span>
-            </a>
             {/*
                 The Leaderboard row used to sit here — the one entry point for
                 shared progress (Topochain standings, Kudos, the season's
@@ -304,6 +295,44 @@ export function HeaderMenu() {
                 beside the challenges themselves is where you notice it.
                 #leaderboard is unchanged as a route.
             */}
+            {/*
+                Profile — leads the bottom group (owner review, round 2:
+                Profile, Settings, Admin & moderation and nothing else down
+                here). Same id, same avatar swap — App.applyUserAvatar still
+                resolves #drawer-avatar / #drawer-profile-glyph by id.
+                Original web-screen note (#profile hash route, public/js/profile.js;
+                profile-and-settings-to-web migration). Always visible: the row
+                used to be hidden until the Usernode bridge reported the
+                getProfileInfo capability, but /challenges-api/me/* scopes to
+                the platform session server-side since the topochain merge, so
+                the screen works in any browser. Real anchor (like Challenges)
+                so hash navigation drives the screen. The former native-push
+                Profile / App Settings rows are gone: App Settings merged into
+                the Settings modal as capability-gated sections (settings.js).
+                
+                #982: when the viewer has set a profile picture, it REPLACES the
+                generic person glyph here — App.applyUserAvatar (public/js/app.js)
+                swaps which of the two is `hidden` from App.user.avatarUrl, so the
+                row shows the same face the profile screen does. The <img> ships
+                hidden with no src: a signed-out shell and a user with no picture
+                both keep the glyph, and nothing requests /avatars/ until there is
+                something to request.
+            */}
+            <a
+              id="drawer-row-profile"
+              href="#profile"
+              className="flex items-center gap-3 px-4 min-h-[44px] border-b border-zinc-100 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800"
+            >
+              <UserIcon id="drawer-profile-glyph" className="w-5 h-5 shrink-0" />
+              <img
+                id="drawer-avatar"
+                alt=""
+                className="hidden w-5 h-5 shrink-0 rounded-full object-cover bg-zinc-100 dark:bg-zinc-800"
+              />
+              <span className="text-sm font-medium">
+                Profile
+              </span>
+            </a>
             {/*
                 Settings — always shown; green dot is the BYOK "key configured"
                 indicator, toggled directly by settings.js _renderIndicator().
@@ -352,45 +381,7 @@ export function HeaderMenu() {
                 Admin &amp; moderation
               </span>
             </a>
-            {/*
-                Profile — the drawer's FOOTER row now (Streamlined Concept:
-                the Figma drawer has no Profile entry mid-list, so the avatar
-                row closes the menu instead). Same id, same avatar swap —
-                App.applyUserAvatar still resolves #drawer-avatar /
-                #drawer-profile-glyph by id. Original web-screen note
-                (#profile hash route, public/js/profile.js;
-                profile-and-settings-to-web migration). Always visible: the row
-                used to be hidden until the Usernode bridge reported the
-                getProfileInfo capability, but /challenges-api/me/* scopes to
-                the platform session server-side since the topochain merge, so
-                the screen works in any browser. Real anchor (like Challenges)
-                so hash navigation drives the screen. The former native-push
-                Profile / App Settings rows are gone: App Settings merged into
-                the Settings modal as capability-gated sections (settings.js).
-                
-                #982: when the viewer has set a profile picture, it REPLACES the
-                generic person glyph here — App.applyUserAvatar (public/js/app.js)
-                swaps which of the two is `hidden` from App.user.avatarUrl, so the
-                row shows the same face the profile screen does. The <img> ships
-                hidden with no src: a signed-out shell and a user with no picture
-                both keep the glyph, and nothing requests /avatars/ until there is
-                something to request.
-            */}
-            <a
-              id="drawer-row-profile"
-              href="#profile"
-              className="flex items-center gap-3 px-4 min-h-[44px] relative after:absolute after:bottom-0 after:left-12 after:right-0 after:h-px after:bg-zinc-100 dark:after:bg-zinc-800 after:content-[''] text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800"
-            >
-              <UserIcon id="drawer-profile-glyph" className="w-5 h-5 shrink-0" />
-              <img
-                id="drawer-avatar"
-                alt=""
-                className="hidden w-5 h-5 shrink-0 rounded-full object-cover bg-zinc-100 dark:bg-zinc-800"
-              />
-              <span className="text-sm font-medium">
-                Profile
-              </span>
-            </a>
+
           </div>
           {/*
               ── Drawer footer ────────────────────────────────────────────────

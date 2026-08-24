@@ -114,6 +114,10 @@ export const ChevronLeftInsetIcon = stroked('ChevronLeftInsetIcon', 'M15 18l-6-6
 
 export const ChevronRightIcon = stroked('ChevronRightIcon', 'M9 5l7 7-7 7');
 
+// Heroicons v1 outline view-grid — the drawer's "Your apps" row (owner
+// review round 2: the section header is a nav item of its own).
+export const Squares2X2Icon = stroked('Squares2X2Icon', 'M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z');
+
 /**
  * An app WINDOW — a framed rectangle with a title bar (#1367).
  *
