@@ -30,9 +30,9 @@ import { useCallback, type ReactNode } from 'react';
 import {
   AppWindowIcon,
   BoardIcon,
-  DiscussionIcon,
   GitHubIcon,
   HomeIcon,
+  NewspaperIcon,
   PlusIcon,
   ShareIcon,
   TerminalIcon,
@@ -190,7 +190,7 @@ export function AppContextSheet() {
             <ContextRow
               id="app-context-row-activity"
               row="activity"
-              icon={<DiscussionIcon className="w-5 h-5 shrink-0" />}
+              icon={<NewspaperIcon className="w-5 h-5 shrink-0" />}
               label="Activity"
               detail="Project updates and discussions"
               href={slug ? `#app/${slug}/activity` : undefined}
