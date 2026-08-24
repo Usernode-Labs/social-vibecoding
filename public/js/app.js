@@ -590,6 +590,7 @@ const App = {
     App._applyLaunchShot();
     App._applyOfflineAppShot();
     App._applyFeedbackShot();
+    App._applyAppContextShot();
   },
 
   // Screenshot-state deep link `?shot=improve`: open the Improve panel at
@@ -621,6 +622,26 @@ const App = {
   // check asserts panel MARKUP that renders closed, not an open surface.)
   IMPROVE_SHOT_TRIES: 40,
   IMPROVE_SHOT_INTERVAL_MS: 100,
+
+  // `?shot=app-context`: open the app-context sheet at boot — the surface
+  // behind the header's "app name ⌄" tab (Streamlined Concept). Same
+  // wait-for-a-target poll as ?shot=improve below, and for the same reason:
+  // the sheet refuses to open until an app target is published.
+  _applyAppContextShot() {
+    let shot = null;
+    try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
+    if (shot !== 'app-context') return;
+    let tries = App.IMPROVE_SHOT_TRIES;
+    const attempt = () => {
+      try {
+        window.AppContext?.open();
+        const panel = document.getElementById('app-context-sheet');
+        if (panel && panel.hasAttribute('data-open')) return;
+      } catch (err) { /* ignore */ }
+      if (--tries > 0) setTimeout(attempt, App.IMPROVE_SHOT_INTERVAL_MS);
+    };
+    setTimeout(attempt, 50);
+  },
 
   _applyImproveShot() {
     let shot = null;

@@ -532,58 +532,29 @@ test('the view toggle lives in the panel; the header center is the title tab', (
     'and it must do it through the store, not by repainting a node');
 });
 
-test('the home-indicator inset is not counted twice inside a kit surface', () => {
-  // #improve-footer carries .platform-safe-scroll, which is correct in the
-  // two cases where nothing else reserves the home indicator: the desktop
-  // slide-over (inset 0) and mobile Safari, where the kit is absent and the
-  // panel stays a fixed slide-over.
-  //
-  // Inside an adopted kit surface it is applied TWICE — `.un-sheet` already
-  // sets padding-bottom from the same inset, and `.un-sheet-body` adds 20px
-  // under it. Measured with a 34px indicator: 88px below the version row
-  // (34 + 20 + 34) instead of 54.
-  const css = read('public/css/app.css');
-  const rule = css.match(
-    /\.platform-sheet-adopted #improve-footer,\s*\n\.platform-panel-adopted #improve-footer \{[^}]*\}/);
-  assert.ok(rule, 'both adopted surfaces zero the footer padding');
-  assert.match(rule[0], /padding-bottom:\s*0\s*!important/,
-    '!important, because .platform-safe-scroll uses it too');
-  // …and the footer still ASKS for the inset, for the un-adopted cases.
-  const panel = read('frontend/src/features/improve/improve-panel.tsx');
-  const foot = panel.slice(panel.indexOf('id="improve-footer"'));
-  assert.match(foot.slice(0, 300), /platform-safe-scroll/,
-    'mobile Safari has no kit — something has to clear the indicator there');
-});
-
-test('the Improve panel bottom-anchors its version / GitHub / share block', () => {
-  const panel = read('frontend/src/features/improve/improve-panel.tsx');
+test('the app-context sheet bottom-anchors the version / GitHub / share block', () => {
+  // Streamlined Concept: the reference footer moved to the app-context sheet
+  // — the app's own surface — keeping its ids, its writers and this layout.
+  const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
   const html = read('public/index.html');
 
-  // The footer reached the foot with `mt-auto` — free space collected ABOVE
-  // it — which meant it stopped being at the foot exactly when the panel was
-  // full, i.e. when a viewer had several sessions running. Everything in this
-  // panel is a control except the session list, so the LIST is the flexing,
-  // scrolling element now and every control is `shrink-0`. The footer is
-  // simply the last of them.
-  const bodyAt = html.indexOf('id="improve-body"');
+  // Same `mt-auto` trick the hamburger's own footer used before these rows
+  // moved: the free space collects ABOVE the block, so it hugs the foot of a
+  // tall sidebar and degrades to "at the end of the scroll" when the rows
+  // above it fill the sheet. No measurement, one rule, both behaviours.
+  const bodyAt = html.indexOf('id="app-context-body"');
   const bodyTag = html.slice(bodyAt, html.indexOf('>', bodyAt));
-  assert.match(bodyTag, /flex flex-col/, '#improve-body stays the column flex');
-  assert.ok(!/overflow-y-auto/.test(bodyTag),
-    'the panel body itself must not scroll — a control must never scroll away');
+  assert.match(bodyTag, /flex flex-col/,
+    '#app-context-body must be the column flex the anchor needs');
+  assert.match(bodyTag, /overflow-y-auto/, 'and still the scroller');
 
   const footAt = html.indexOf('id="improve-footer"');
   const footTag = html.slice(footAt, html.indexOf('>', footAt));
+  assert.match(footTag, /\bmt-auto\b/, 'the footer must hug the bottom');
   assert.match(footTag, /\bshrink-0\b/,
-    'the footer must not be compressed by the rows above it');
-  assert.ok(!/\bmt-auto\b/.test(footTag),
-    'and must not depend on free space existing above it');
+    'and must not be compressed by the rows above it');
   assert.ok(bodyAt < footAt, 'the footer is inside the body it anchors within');
-  assert.match(panel, /id="improve-footer"/);
-
-  // Exactly one scroller, and it is the session list.
-  const body = html.slice(bodyAt, footAt);
-  assert.equal((body.match(/overflow-y-auto/g) || []).length, 1,
-    'the session list is the only scrolling region between body and footer');
+  assert.match(sheet, /id="improve-footer"/);
 });
 
 test('app.css drops the tab-bar rules and draws the Improve panel', () => {
