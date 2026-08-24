@@ -130,6 +130,12 @@ function checksHtml(AppView, pr) {
   return AppView._checksStatusNotes(pr).map(noteBoxHtml).join('');
 }
 
+/** #1370's "Full proposal details" disclosure alone. */
+function proposalBodyHtml(AppView, pr) {
+  const b = AppView._proposalBodyView(pr);
+  return b ? renderToHtml(createElement(mod().ProposalBody, { b })) : '';
+}
+
 /** The shared-chat disclosure alone. */
 function transcriptHtml(AppView, item) {
   const t = AppView._transcriptSectionView(item);
@@ -209,6 +215,7 @@ const budgets = () => ({ ACTION_PRIMARY_MAX: mod().ACTION_PRIMARY_MAX, BADGE_MAX
 
 module.exports = {
   actionHtml,
+  proposalBodyHtml,
   previewHtml,
   topicHeadHtml,
   transcriptHtml,

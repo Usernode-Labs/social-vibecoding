@@ -677,13 +677,6 @@
     {
       "source": "src/routes/votes.js",
       "kind": "structural-template",
-      "fingerprint": "18dd0edeafca08104ed0",
-      "count": 1,
-      "preview": "`SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.pr_summary_md, cs.staging_url, cs.testing_md, cs.testing_path, cs.user_id, cs.stat"
-    },
-    {
-      "source": "src/routes/votes.js",
-      "kind": "structural-template",
       "fingerprint": "760e6c035395e025ef99",
       "count": 1,
       "preview": "`SELECT i.id, i.kind, i.title, i.description, i.payload, i.status, i.github_issue_number, i.created_by, i.created_at, u.username AS created_by_username, (SELECT"
@@ -708,6 +701,13 @@
       "fingerprint": "a5b4a368484cb1330963",
       "count": 1,
       "preview": "`SELECT pv.vote, u.username, pv.user_id FROM pr_votes pv JOIN users u ON pv.user_id = u.id JOIN chat_sessions cs ON cs.id = pv.session_id WHERE pv.session_id = "
+    },
+    {
+      "source": "src/routes/votes.js",
+      "kind": "structural-template",
+      "fingerprint": "d13fdd50061758cfd07c",
+      "count": 1,
+      "preview": "`SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.pr_summary_md, cs.pr_body, cs.staging_url, cs.testing_md, cs.testing_path, cs.user"
     },
     {
       "source": "src/routes/votes.js",

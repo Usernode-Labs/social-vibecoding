@@ -161,6 +161,16 @@ export interface TopicBody {
   comments?: boolean;
   /** A proposal's plain-language summary, already rendered. */
   summaryHtml?: string | null;
+  /**
+   * #1370's "Full proposal details" disclosure — the complete GitHub PR
+   * description, deliberately quieter than the generated summary above it.
+   *
+   * The open flag lives in app-view.js (`_proposalBodyOpen`), not in
+   * component state: the head repaints on every checks poll and WS event,
+   * and the same rule the before/after visuals and the transcript section
+   * follow keeps the disclosure from collapsing under the reader.
+   */
+  proposalBody?: { id: number | null; open: boolean; html: string } | null;
   details?: ProposalDetails | null;
   /** The one-line explainer under a session or governance card. */
   note?: string | null;

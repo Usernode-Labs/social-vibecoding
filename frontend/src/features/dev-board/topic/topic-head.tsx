@@ -38,6 +38,7 @@ import type {
   ProposalDetails,
   RosterView,
   TextRun,
+  TopicBody,
   TranscriptSection,
 } from './model';
 
@@ -241,6 +242,35 @@ function DetailsView({ d }: { d: ProposalDetails }): ReactNode {
   );
 }
 
+/**
+ * #1370's "Full proposal details". The `<details>` is uncontrolled — its
+ * `open` is a DEFAULT, and the toggle reports back to app-view.js, which is
+ * what remembers it across the head's frequent repaints. Controlling it
+ * would fight the browser's own disclosure animation for no gain, since the
+ * model is republished from the same flag.
+ */
+export function ProposalBody({ b }: { b: NonNullable<TopicBody['proposalBody']> }): ReactNode {
+  return (
+    <details
+      className="border border-zinc-200 dark:border-zinc-800 rounded-xl mt-2 overflow-hidden"
+      open={b.open}
+      onToggle={(e) => {
+        if (b.id != null) call('_setProposalBodyOpen', b.id, e.currentTarget.open);
+      }}
+    >
+      <summary className="cursor-pointer select-none px-3 py-2 text-xs font-medium text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-900/50">
+        Full proposal details
+      </summary>
+      {/* DevChat.renderMarkdown's output — sanitised where it is built, and
+          the same pipeline the issue body above uses. */}
+      <div
+        className="dev-issue-body text-xs text-zinc-600 dark:text-zinc-300 border-t border-zinc-200 dark:border-zinc-800 p-3"
+        dangerouslySetInnerHTML={{ __html: b.html }}
+      />
+    </details>
+  );
+}
+
 function Transcript({ t }: { t: TranscriptSection }): ReactNode {
   // "Fork this chat" is painted INSIDE the body, after its fetch, by
   // `_transcriptActionsHtml` — so it cannot be a child's onClick. The
@@ -332,6 +362,7 @@ export function TopicHead(): ReactNode {
           dangerouslySetInnerHTML={{ __html: body.summaryHtml }}
         />
       ) : null}
+      {body.proposalBody ? <ProposalBody b={body.proposalBody} /> : null}
       {body.details ? <DetailsView d={body.details} /> : null}
       {body.note ? <div className="text-xs text-zinc-500 dark:text-zinc-400 mt-2 px-1">{body.note}</div> : null}
       {body.transcript ? <Transcript t={body.transcript} /> : null}

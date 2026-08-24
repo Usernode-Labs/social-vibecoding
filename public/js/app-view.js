@@ -2493,6 +2493,9 @@ const AppView = {
       body = {
         actions: AppView._detailActionsView('proposal', item),
         summaryHtml: AppView._proposalSummaryHtml(item),
+        // #1370's "Full proposal details" disclosure, between the generated
+        // summary and the detail block, exactly where it was inserted.
+        proposalBody: AppView._proposalBodyView(item),
         details: AppView._proposalDetailsView(item),
         // shared_at (and so transcript_shared) survives promotion and merge,
         // so a proposal whose owner published the dev chat keeps offering it
@@ -6294,6 +6297,48 @@ const AppView = {
       ? (s) => DevChat.renderMarkdown(s)
       : (s) => `<pre class="whitespace-pre-wrap font-sans">${escapeHtml(s)}</pre>`;
     return `<div class="dev-issue-body text-xs text-zinc-600 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3 mt-2">${renderMd(md)}</div>`;
+  },
+
+  // The complete GitHub PR description is deliberately quieter than the
+  // generated summary above: reviewers can expand it when they need the
+  // implementation and testing detail without making every proposal topic
+  // start with a wall of text. Keep the disclosure state outside the DOM so
+  // checks polling and websocket-driven topic repaints do not collapse it.
+  _proposalBodyOpen: new Set(),
+
+  _setProposalBodyOpen(proposalId, open) {
+    const id = Number(proposalId);
+    if (!Number.isInteger(id) || id <= 0) return;
+    if (open) AppView._proposalBodyOpen.add(id);
+    else AppView._proposalBodyOpen.delete(id);
+  },
+
+  // The disclosure as a MODEL. `topic/topic-head.tsx` draws it; the open
+  // flag stays HERE rather than becoming component state, for the reason the
+  // note above gives — a repaint must not collapse it — and because that is
+  // the same seam the before/after visuals and the transcript section use.
+  // `html` is `DevChat.renderMarkdown`'s output: another renderer's markup,
+  // sanitised where it is built, rendered through a sink.
+  _proposalBodyView(pr) {
+    const md = pr && typeof pr.pr_body === 'string' ? pr.pr_body.trim() : '';
+    if (!md) return null;
+    const id = Number(pr && pr.id);
+    const hasStableId = Number.isInteger(id) && id > 0;
+    const renderMd = (typeof DevChat !== 'undefined' && DevChat.renderMarkdown)
+      // Proposal descriptions can carry the same reviewer evidence as issue
+      // bodies (for example an annotated screenshot). Keep image rendering
+      // opt-in at this trusted surface; renderMarkdown still permits only
+      // HTTPS or same-origin absolute URLs and sanitizes the resulting HTML.
+      ? (s) => DevChat.renderMarkdown(s, { images: true })
+      : (s) => `<pre class="whitespace-pre-wrap font-sans">${escapeHtml(s)}</pre>`;
+    return {
+      // A proposal with no stable id cannot have its open state remembered,
+      // so it renders the disclosure without one rather than keying a Set on
+      // NaN — same rule the string version applied to its `ontoggle`.
+      id: hasStableId ? id : null,
+      open: hasStableId && AppView._proposalBodyOpen.has(id),
+      html: renderMd(md),
+    };
   },
 
   // The placeholder-title marker (AI naming was unavailable when this

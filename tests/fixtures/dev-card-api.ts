@@ -12,7 +12,7 @@
 export { ActionButton, DevCard, StatusPill, Badge, Preview, CardIcon, fmtCountdown, BADGE_MAX, ACTION_PRIMARY_MAX } from '../../frontend/src/features/dev-board/card/dev-card';
 export { DevFeed, FooterView } from '../../frontend/src/features/dev-board/card/dev-feed';
 export { DevKanban } from '../../frontend/src/features/dev-board/card/dev-kanban';
-export { TopicHead, NoteBoxView, ChecksVerdictView } from '../../frontend/src/features/dev-board/topic/topic-head';
+export { TopicHead, NoteBoxView, ChecksVerdictView, ProposalBody } from '../../frontend/src/features/dev-board/topic/topic-head';
 export { topicHeadStore } from '../../frontend/src/features/dev-board/topic/topic-store';
 export { ListRowView } from '../../frontend/src/features/dev-board/card/list-rows';
 export {
