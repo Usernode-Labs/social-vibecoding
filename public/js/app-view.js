@@ -9979,6 +9979,8 @@ const AppView = {
       PlatformUI.toast(errorText || "You're out of today's free AI credits.");
       return;
     }
+    const react = AppView._reactDevBoard();
+    if (!react) return;
     const root = document.createElement('div');
     root.id = 'credit-options-modal';
     root.className = 'fixed inset-0 z-[60] overflow-y-auto overscroll-contain bg-black/60';
@@ -9999,17 +10001,8 @@ const AppView = {
       sessionBridgeEnabled: !!(typeof App !== 'undefined' && App.user
         && App.user.sessionBridgeEnabled),
     };
-    root.innerHTML = `
-      <div class="min-h-full flex items-center justify-center p-4">
-        <div class="dc-credits-modal-card w-full max-w-lg rounded-xl bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 shadow-xl p-4">
-          ${CreditOptions.cardHtml(state)}
-          <div class="flex justify-end mt-3">
-            <button type="button" data-credits-close
-              class="rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-sm font-medium text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">Not now</button>
-          </div>
-        </div>
-      </div>`;
     const close = () => {
+      react.unmount(root);
       root.remove();
       document.removeEventListener('keydown', onKey);
     };
@@ -10020,6 +10013,11 @@ const AppView = {
     });
     document.addEventListener('keydown', onKey);
     document.body.appendChild(root);
+    // The card is `features/dev-board/modals/credit-options-modal.tsx`; the
+    // BODY inside it is still CreditOptions' own markup, and `wire` binds
+    // below it on the next line — which is why the store flushes
+    // synchronously.
+    react.mountCreditOptionsModal(root, { cardHtml: CreditOptions.cardHtml(state) });
     // #1049: "Use Claude Code" / "Use Codex" start the guided walkthrough in
     // a new session rather than dropping the user in Settings to work out
     // what to do next. Every other route is still a hash navigation, which
@@ -10050,6 +10048,8 @@ const AppView = {
   _showAutoSessionModal(issueNumber, models, preselect, modalOptions = {}) {
     let root = document.getElementById('auto-session-modal');
     if (root) root.remove();
+    const react = AppView._reactDevBoard();
+    if (!react) return Promise.resolve(null);
     root = document.createElement('div');
     root.id = 'auto-session-modal';
     root.className = 'fixed inset-0 z-[60] overflow-y-auto overscroll-contain bg-black/60';
@@ -10066,90 +10066,70 @@ const AppView = {
         ? DevChat.modelOptionText(m)
         : (m.label || m.name || m.id);
     };
-    const options = models.map((m) =>
-      `<option value="${escapeAttr(m.id)}"${m.id === preselect ? ' selected' : ''}>${escapeHtml(optionText(m) || m.id)}</option>`
-    ).join('');
+    // #800's caption, RESOLVED PER OPTION rather than recomputed by a change
+    // handler. The picker used to bind `change` and rewrite one <p>; the
+    // caption is component state now, so each option carries its own.
+    const noteText = (m) => (openRouter
+      ? ((typeof DevChat !== 'undefined' && DevChat._openRouterModelCostSummary)
+        ? `${DevChat._openRouterModelCostSummary(m)}. ${DevChat._openRouterModelCompatibilitySummary(m)}`
+        : '')
+      : ((typeof DevChat !== 'undefined' && DevChat.modelNoteText)
+        ? DevChat.modelNoteText(m)
+        : ''));
+    const noteTitle = (text) => (!openRouter && text
+      && typeof DevChat !== 'undefined' && DevChat.MODEL_GUIDANCE_TOOLTIP
+      ? DevChat.MODEL_GUIDANCE_TOOLTIP
+      : '');
+    const options = models.map((m) => {
+      const note = noteText(m) || '';
+      return { id: m.id, label: optionText(m) || m.id, note, noteTitle: noteTitle(note) };
+    });
     const venue = window.BuildVenues ? BuildVenues.venue(modalOptions.venueId || 'usernode-claude') : null;
-    const venueHtml = venue
-      ? `Building in <b>${escapeHtml(venue.label)}</b> — your saved default. ${escapeHtml(venue.blurb)}`
-      : '';
-    root.innerHTML = `
-      <div data-modal-backdrop class="flex min-h-full items-center justify-center p-4">
-        <div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-md shadow-xl relative">
-          <h2 class="text-lg font-bold mb-2 text-zinc-900 dark:text-zinc-100">Generate proposal for issue #${issueNumber}?</h2>
-          <p class="text-sm text-zinc-600 dark:text-zinc-400 mb-3">
-            ${openRouter
-              ? 'This sends the issue directly to your selected <b>OpenRouter model</b>. It can inspect the repository, answer with a question, or commit and push a change to its own branch (never a PR or deploy). The run bills your OpenRouter key and does not use platform Claude credits.'
-              : 'This spins up a <b>headless AI session</b> that immediately starts working on the issue on its own — investigating the repo and drafting a spec, pushing a code change, or coming back with a question. When the drafted spec looks straightforward, the session <b>may also implement it</b> in the same run (committing and pushing to its own branch — never a PR or deploy). It is not connected to your dev chat, but it <b>will automatically use your tokens/credits</b> the moment you confirm.'}
-          </p>
-          <p class="text-xs text-amber-500 mb-2">
-            Experimental — not recommended for normal users at the moment. Costs are billed
-            to you even if the result isn't useful.
-          </p>
-          <!-- WHERE it builds, named before you confirm — the pot the costs
-               above land in depends on it. Empty when build-venues.js
-               hasn't loaded, which leaves the popup as it was. -->
-          <p class="text-xs text-zinc-500 dark:text-zinc-400 mb-4">${venueHtml}</p>
-          <label class="block text-xs font-medium text-zinc-500 dark:text-zinc-400 mb-1" for="auto-session-model">${openRouter ? 'OpenRouter model' : 'Chat model'}</label>
-          <select id="auto-session-model"
-            class="w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100">
-            ${options}
-          </select>
-          <!-- #800: caption for the selected model, kept in sync below. -->
-          <p id="auto-session-model-note" class="mt-1 mb-5 text-[11px] leading-snug text-zinc-500 dark:text-zinc-400"></p>
-          <div class="flex justify-end gap-2">
-            <button data-role="cancel" type="button"
-              class="rounded-lg border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">Cancel</button>
-            <button data-role="confirm" type="button"
-              class="rounded-lg px-4 py-2 text-sm font-medium text-white bg-violet-600 hover:bg-violet-500 transition-colors">Generate proposal</button>
-          </div>
-        </div>
-      </div>`;
-    document.body.appendChild(root);
+    const intro = openRouter
+      ? 'This sends the issue directly to your selected OpenRouter model. It can inspect the repository, answer with a question, or commit and push a change to its own branch (never a PR or deploy). The run bills your OpenRouter key and does not use platform Claude credits.'
+      : 'This spins up a headless AI session that immediately starts working on the issue on its own — investigating the repo and drafting a spec, pushing a code change, or coming back with a question. When the drafted spec looks straightforward, the session may also implement it in the same run (committing and pushing to its own branch — never a PR or deploy). It is not connected to your dev chat, but it will automatically use your tokens/credits the moment you confirm.';
 
-    // #800: describe whichever model is selected, updating on change.
-    const modelSel = root.querySelector('#auto-session-model');
-    const noteEl = root.querySelector('#auto-session-model-note');
-    const paintNote = () => {
-      if (!noteEl) return;
-      const chosen = models.find((m) => m.id === (modelSel && modelSel.value));
-      const text = openRouter
-        ? ((typeof DevChat !== 'undefined' && DevChat._openRouterModelCostSummary)
-          ? `${DevChat._openRouterModelCostSummary(chosen)}. ${DevChat._openRouterModelCompatibilitySummary(chosen)}`
-          : '')
-        : ((typeof DevChat !== 'undefined' && DevChat.modelNoteText)
-          ? DevChat.modelNoteText(chosen)
-          : '');
-      noteEl.textContent = text;
-      noteEl.title = !openRouter && text && typeof DevChat !== 'undefined' && DevChat.MODEL_GUIDANCE_TOOLTIP
-        ? DevChat.MODEL_GUIDANCE_TOOLTIP
-        : '';
-    };
-    paintNote();
-    if (modelSel) modelSel.addEventListener('change', paintNote);
+    document.body.appendChild(root);
+    react.mountAutoSessionModal(root, {
+      issueNumber,
+      intro,
+      venue: venue ? { label: venue.label, blurb: venue.blurb } : null,
+      pickerLabel: openRouter ? 'OpenRouter model' : 'Chat model',
+      options,
+      preselect: preselect || (options[0] && options[0].id) || '',
+    });
 
     return new Promise((resolve) => {
       let settled = false;
       const cleanup = (result) => {
         if (settled) return;
         settled = true;
+        AppView._autoSessionCleanup = null;
         document.removeEventListener('keydown', onKey, true);
+        react.unmount(root);
         root.remove();
         resolve(result);
       };
       const onKey = (e) => {
         if (e.key === 'Escape') { e.preventDefault(); cleanup(null); }
       };
-      root.querySelector('[data-role="cancel"]').addEventListener('click', () => cleanup(null));
-      root.querySelector('[data-role="confirm"]').addEventListener('click', () => {
-        const sel = root.querySelector('#auto-session-model');
-        cleanup((sel && sel.value) || null);
-      });
+      // The card's two buttons dispatch by NAME (the same shape the cards
+      // use), so the resolver has to be reachable from outside this closure.
+      AppView._autoSessionCleanup = cleanup;
       root.addEventListener('click', (e) => {
         if (e.target === root || e.target.dataset.modalBackdrop !== undefined) cleanup(null);
       });
       document.addEventListener('keydown', onKey, true);
     });
+  },
+
+  /** The Generate-proposal dialog's two outcomes, called from its card. */
+  _autoSessionCleanup: null,
+  _autoSessionCancel() {
+    if (AppView._autoSessionCleanup) AppView._autoSessionCleanup(null);
+  },
+  _autoSessionConfirm(modelId) {
+    if (AppView._autoSessionCleanup) AppView._autoSessionCleanup(modelId || null);
   },
 
   // "Start session from proposal" — clone the finished headless session
@@ -13594,6 +13574,8 @@ const AppView = {
   // confirm-modal.js. Resolves { dailyCapCents, allowByok } on Allow,
   // null on "Not now" / backdrop / Esc.
   _llmModalEl: null,
+  /** The open dialog's resolver, so its card's buttons can dispatch by name. */
+  _llmConsentSettle: null,
   showLlmConsentModal(info) {
     return new Promise((resolve) => {
       // Recreate the element on every open so listeners from a prior
@@ -13602,6 +13584,8 @@ const AppView = {
         AppView._llmModalEl.remove();
         AppView._llmModalEl = null;
       }
+      const react = AppView._reactDevBoard();
+      if (!react) { resolve(null); return; }
       const root = document.createElement('div');
       root.id = 'llm-consent-modal';
       root.className = 'hidden fixed inset-0 z-[60] overflow-y-auto overscroll-contain bg-black/60';
@@ -13620,58 +13604,43 @@ const AppView = {
       const byokOnly = !noCapacity
         && Number(info.entitlement?.limitCents) === 0
         && !!info.hasApiKey;
-      const purposeLine = info.llm?.purpose
-        ? `<p class="text-sm text-zinc-600 dark:text-zinc-400 mb-3 italic">&ldquo;${escapeHtml(info.llm.purpose)}&rdquo;</p>`
-        : '';
-      const suggestedNote = suggested != null
-        ? `<p class="text-xs text-zinc-500 dark:text-zinc-500 mt-1">Suggested by this app &mdash; you can change it.</p>`
-        : `<p class="text-xs text-zinc-500 dark:text-zinc-500 mt-1">You can change this anytime in Settings.</p>`;
-      const byokBlock = info.hasApiKey
-        ? `<label class="flex items-start gap-2 cursor-pointer select-none mt-4">
-             <input id="llm-consent-byok" type="checkbox" ${byokOnly ? 'checked' : ''} class="accent-violet-500 w-4 h-4 mt-0.5" />
-             <span class="text-xs text-zinc-700 dark:text-zinc-300">${byokOnly
-               ? 'Use my own API key for this app (required until platform credits are unlocked; still limited by the cap above).'
-               : 'If my daily platform budget runs out, let this app keep going on my own API key (still limited by the cap above).'}</span>
-           </label>`
-        : '';
-      const capacityBlock = noCapacity
-        ? `<div class="rounded-lg border border-amber-300/70 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30 p-3 text-sm text-amber-900 dark:text-amber-200">
-             ${eligibilityUnavailable
-               ? 'Credit eligibility could not be checked. Close this dialog and try again shortly.'
-               : 'No AI payer is available yet. <a class="underline font-medium" href="#settings/connectors">Connect GitHub or X</a> to unlock $10/day, or <a class="underline font-medium" href="#settings/api-key">add your own Anthropic API key</a>.'}
-           </div>`
-        : `<label class="block text-xs font-medium text-zinc-700 dark:text-zinc-300 mb-1" for="llm-consent-cap">Daily cap for this app ($ per day)</label>
-           <input id="llm-consent-cap" type="number" min="0.01" step="0.01"
-             value="${(prefillCents / 100).toFixed(2)}"
-             class="w-32 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500 font-mono" />
-           ${suggestedNote}
-           ${byokBlock}`;
 
-      root.innerHTML = `
-        <div data-modal-backdrop class="flex min-h-full items-center justify-center p-4">
-          <div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-md shadow-xl relative">
-            <h2 class="text-lg font-bold mb-2 text-zinc-900 dark:text-zinc-100">Allow ${escapeHtml(appName)} to use AI?</h2>
-            ${purposeLine}
-            <p class="text-sm text-zinc-600 dark:text-zinc-400 mb-3">
-              ${byokOnly
-                ? `This lets <strong>${escapeHtml(appName)}</strong> use your own Anthropic API key, without exposing the key to the app.`
-                : `This lets <strong>${escapeHtml(appName)}</strong> spend from your daily AI budget &mdash; the same one your dev chats use &mdash; up to the daily cap below.`}
-            </p>
-            ${capacityBlock}
-            <div id="llm-consent-error" class="hidden text-sm text-red-500 mt-3"></div>
-            <div class="flex justify-end gap-2 mt-5">
-              <button id="llm-consent-decline" type="button"
-                class="rounded-lg border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">Not now</button>
-              <button id="llm-consent-allow" type="button"
-                ${noCapacity ? 'disabled' : ''}
-                class="rounded-lg bg-violet-600 hover:bg-violet-500 disabled:opacity-40 disabled:cursor-not-allowed px-4 py-2 text-sm font-medium text-white transition-colors">${noCapacity ? 'Unavailable' : 'Allow'}</button>
-            </div>
-          </div>
-        </div>`;
+      react.mountLlmConsentModal(root, {
+        appName,
+        purpose: info.llm?.purpose ? String(info.llm.purpose) : null,
+        intro: byokOnly
+          ? `This lets ${appName} use your own Anthropic API key, without exposing the key to the app.`
+          : `This lets ${appName} spend from your daily AI budget — the same one your dev chats use — up to the daily cap below.`,
+        capacity: noCapacity
+          ? { t: 'blocked', eligibilityUnavailable }
+          : {
+            t: 'cap',
+            prefill: (prefillCents / 100).toFixed(2),
+            suggestedNote: suggested != null
+              ? 'Suggested by this app — you can change it.'
+              : 'You can change this anytime in Settings.',
+            byok: info.hasApiKey
+              ? {
+                checked: byokOnly,
+                label: byokOnly
+                  ? 'Use my own API key for this app (required until platform credits are unlocked; still limited by the cap above).'
+                  : 'If my daily platform budget runs out, let this app keep going on my own API key (still limited by the cap above).',
+              }
+              : null,
+          },
+      });
 
+      // The dialog used to be HIDDEN on close and only removed by the next
+      // open. It is unmounted and removed now: a hidden scrim holding a live
+      // React portal is a leak `rootCount()` would count, and the node had
+      // no other reader.
       const done = (result) => {
+        AppView._llmConsentSettle = null;
         root.classList.add('hidden');
         document.removeEventListener('keydown', onKey);
+        react.unmount(root);
+        root.remove();
+        if (AppView._llmModalEl === root) AppView._llmModalEl = null;
         resolve(result);
       };
       const onKey = (ev) => {
@@ -13682,33 +13651,45 @@ const AppView = {
       root.addEventListener('click', (ev) => {
         if (ev.target === root || ev.target.dataset.modalBackdrop !== undefined) done(null);
       }, { once: false });
-      root.querySelector('#llm-consent-decline').addEventListener('click', () => done(null));
-      root.querySelector('#llm-consent-allow').addEventListener('click', () => {
+
+      // The three validation branches stay HERE, not in the card: what they
+      // decide is the value the dialog resolves with, and the message goes
+      // into `#llm-consent-error`, a host the card renders once and empty.
+      AppView._llmConsentSettle = (allow) => {
+        if (!allow) { done(null); return; }
         if (noCapacity) return;
         const errEl = root.querySelector('#llm-consent-error');
         const dollars = parseFloat(root.querySelector('#llm-consent-cap').value);
         const cents = Math.round(dollars * 100);
-        if (!Number.isFinite(dollars) || !Number.isInteger(cents) || cents <= 0) {
-          errEl.textContent = 'Enter a valid daily cap (at least $0.01).';
+        const fail = (msg) => {
+          errEl.textContent = msg;
           errEl.classList.remove('hidden');
+        };
+        if (!Number.isFinite(dollars) || !Number.isInteger(cents) || cents <= 0) {
+          fail('Enter a valid daily cap (at least $0.01).');
           return;
         }
         if (cents > maxCents) {
-          errEl.textContent = `The cap can't exceed your own daily limit ($${(maxCents / 100).toFixed(2)}).`;
-          errEl.classList.remove('hidden');
+          fail(`The cap can't exceed your own daily limit ($${(maxCents / 100).toFixed(2)}).`);
           return;
         }
         const byokInput = root.querySelector('#llm-consent-byok');
         if (byokOnly && !(byokInput && byokInput.checked)) {
-          errEl.textContent = 'Your own API key must be enabled while platform credits are locked.';
-          errEl.classList.remove('hidden');
+          fail('Your own API key must be enabled while platform credits are locked.');
           return;
         }
         done({ dailyCapCents: cents, allowByok: !!(byokInput && byokInput.checked) });
-      });
+      };
 
       root.classList.remove('hidden');
     });
+  },
+
+  _llmConsentDecline() {
+    if (AppView._llmConsentSettle) AppView._llmConsentSettle(false);
+  },
+  _llmConsentAllow() {
+    if (AppView._llmConsentSettle) AppView._llmConsentSettle(true);
   },
 };
 

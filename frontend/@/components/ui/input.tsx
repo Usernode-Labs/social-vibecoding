@@ -75,6 +75,10 @@ const inputVariants = cva('', {
       flex1: 'flex-1',
       // #members-approvals-n, the approvals-threshold number field.
       hiddenW16: 'hidden w-16',
+      // #llm-consent-cap, the app-consent dialog's dollars-per-day field —
+      // wide enough for "1000.00" and no wider, so it reads as an amount
+      // rather than as a text field.
+      w32: 'w-32',
       none: '',
     },
     box: {

@@ -391,7 +391,10 @@ test('the caption text itself survives, for the picker that is met once', () => 
   const APP_VIEW = fs.readFileSync(
     path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf8'
   );
-  assert.match(APP_VIEW, /DevChat\.modelNoteText\(chosen\)/, 'and that popup still calls it');
+  // The popup builds its caption PER OPTION now (#1367 retired the change
+  // handler that rewrote one <p>), so the call site takes the model rather
+  // than the currently-chosen one — but it is still this helper.
+  assert.match(APP_VIEW, /DevChat\.modelNoteText\(m\)/, 'and that popup still calls it');
 });
 
 test('the dropdown still follows the selection without a caption to update', () => {

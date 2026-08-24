@@ -257,10 +257,10 @@ rendered before believing a zero.
 
 ### Large
 
-1. **Dev screen — `public/js/app-view.js`. The board and the topic head have
-   both converted; what is left is three body-mounted modals.** Every card,
-   every surface that draws one, and every floating surface around them is
-   React:
+1. **Dev screen — `public/js/app-view.js`. The board, the topic head and the
+   three body-mounted modals have all converted; what is left is the App
+   tab's own frame.** Every card, every surface that draws one, and every
+   floating surface around them is React:
 
    | converted | host |
    | --- | --- |
@@ -275,8 +275,11 @@ rendered before believing a zero.
    | **the list feed, every card in it** | `#dev-feed` |
    | **the kanban board, its columns and tabs** | `#dev-kanban-board` |
    | **the opened topic's head — the card AND its body** | `#gc-thread-head` |
+   | **the Generate-proposal dialog** | `#auto-session-modal` |
+   | **the out-of-credits dialog** | `#credit-options-modal` |
+   | **the app-AI consent dialog** | `#llm-consent-modal` |
 
-   Three of those are body-mounted floating hosts and share the seam the group
+   Six of those are body-mounted floating hosts and share the seam the group
    chat's menus established: the module creates the element, measures it
    against something on screen and owns its `hidden` (or removes it on close);
    React owns only its children. Each store installs `setFlush(flushSync)`,
@@ -413,10 +416,41 @@ rendered before believing a zero.
    affordance has exactly one renderer again. Its two eye glyphs moved to
    `icons.tsx`.
 
-   What is LEFT on this screen is the three body-mounted modals
-   (generate-proposal, LLM consent, credits — the last embeds
-   `CreditOptions.cardHtml`, another module's markup, so it keeps a
-   controller-host seam) and `renderAppTab`'s shell.
+   **The three body-mounted modals converted last**, as one chunk:
+   `#auto-session-modal` (Generate proposal), `#credit-options-modal` (out
+   of credits) and `#llm-consent-modal` (an app asking for AI access). They
+   were three hand-transcribed copies of one dialog — scrim, centring
+   wrapper, white/zinc-900 card, two-button footer — and the footer is where
+   the reskin lands: an OUTLINED secondary on a floating card, which the
+   widget language never draws, became `<Button variant="neutral"
+   ink="neutral">`. They keep the body-mounted floating-host seam: the
+   module still creates the scrim, owns its `hidden` and its dismissal, and
+   removes it; React owns only the children.
+
+   Three things in that chunk generalise:
+
+   - **A dialog that RESOLVES needs its buttons to dispatch by name.** The
+     promise lives in the module, so the card calls
+     `AppView._autoSessionConfirm(id)` / `_llmConsentAllow()` and the module
+     holds the settler. Same shape as a card's `{ fn, args }`.
+   - **Validation is not view state.** The consent dialog's three checks
+     decide what the promise resolves with, so they stayed in the module and
+     `#llm-consent-error` is a controller host — rendered once, empty and
+     `hidden`, exactly as it shipped.
+   - **A caption driven by a `change` listener becomes per-option data.**
+     `#auto-session-model-note` was rewritten by a handler; each option
+     carries its own resolved `note`/`noteTitle` now and the selection is
+     `useState`. The `<select>` stays uncontrolled.
+
+   `CreditOptions.cardHtml` is still another module's markup, rendered
+   through `dangerouslySetInnerHTML` from a string the model carries, and
+   `CreditOptions.wire` only adds a delegated listener — so that seam needs
+   no ownership-audit exception, and neither does the error line above
+   (`textContent` and `classList` are not patched APIs).
+
+   What is LEFT on this screen is `renderAppTab`'s shell — the app iframe's
+   host and its three status/offline states — and `renderDevChatTab`'s
+   `#dc-view`, which belongs to the Dev chat below.
 
 2. **Dev chat — `frontend/src/features/dev-chat/dev-chat.js`, about 9,820
    lines and 58 sites. Started at the composer.** Four strips have converted:

@@ -59,6 +59,19 @@ import { DevKanban } from './card/dev-kanban';
 import type { DevFeedView, DevKanbanView } from './card/model';
 import { TopicHead } from './topic/topic-head';
 import { topicHeadStore, type TopicHeadState } from './topic/topic-store';
+import { AutoSessionModal } from './modals/auto-session-modal';
+import { CreditOptionsModal } from './modals/credit-options-modal';
+import { LlmConsentModal } from './modals/llm-consent-modal';
+import {
+  autoSessionModalStore,
+  creditOptionsModalStore,
+  llmConsentModalStore,
+} from './modals/modals-store';
+import type {
+  AutoSessionModalView,
+  CreditOptionsModalView,
+  LlmConsentModalView,
+} from './modals/model';
 
 /** What app-view.js passes for the card list. */
 export interface MountBoardOptions extends DevBoardFrameProps {
@@ -103,6 +116,9 @@ export interface DevBoardBridge {
   publishKanban(view: DevKanbanView): void;
   mountTopicHead(host: Element | null): void;
   publishTopicHead(state: TopicHeadState): void;
+  mountAutoSessionModal(host: Element | null, view: AutoSessionModalView): void;
+  mountCreditOptionsModal(host: Element | null, view: CreditOptionsModalView): void;
+  mountLlmConsentModal(host: Element | null, view: LlmConsentModalView): void;
   publishCardNow(now: number): void;
   publishAiEnabled(enabled: boolean): void;
   publishViewMode(mode: string): void;
@@ -156,6 +172,16 @@ cardNowStore.setFlush(flushSync);
 // repaint that opened it, and `_loadIssueComments` mounts into the comment
 // host the same way.
 topicHeadStore.setFlush(flushSync);
+
+/**
+ * And the three body-mounted modals'. Each `_show*Modal` appends its scrim to
+ * `<body>` and then binds the dialog's dismissal by querying inside it, so
+ * the card has to be in the DOM on the next line — the same contract the
+ * `innerHTML` assignment these replace gave them.
+ */
+autoSessionModalStore.setFlush(flushSync);
+creditOptionsModalStore.setFlush(flushSync);
+llmConsentModalStore.setFlush(flushSync);
 
 export const devBoardBridge: DevBoardBridge = {
   mountBoard(host, options) {
@@ -289,6 +315,26 @@ export const devBoardBridge: DevBoardBridge = {
 
   publishTopicHead(state) {
     topicHeadStore.set(state);
+  },
+
+  // The three body-mounted modals. Each host is created by app-view.js on
+  // every open and removed on close, so the view rides in with the mount
+  // rather than through a separate publish: there is no "already open"
+  // state to update, and a mount-then-publish pair would render the scrim
+  // empty for one frame.
+  mountAutoSessionModal(host, view) {
+    autoSessionModalStore.set({ view });
+    mountLegacyPortal(host, createElement(AutoSessionModal));
+  },
+
+  mountCreditOptionsModal(host, view) {
+    creditOptionsModalStore.set({ view });
+    mountLegacyPortal(host, createElement(CreditOptionsModal));
+  },
+
+  mountLlmConsentModal(host, view) {
+    llmConsentModalStore.set({ view });
+    mountLegacyPortal(host, createElement(LlmConsentModal));
   },
 
   // The 30s countdown tick (see card/dev-card.tsx's header).

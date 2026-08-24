@@ -143,6 +143,20 @@ const OWNED = [
   // The card's ⋯ menu (features/dev-board/card-menu.tsx). Same story as the
   // picker above: on screen only mid-gesture, so this sweep never sees one.
   { sel: '.dev-card-menu' },
+  // The three body-mounted Dev modals (features/dev-board/modals/). Same
+  // story again — each scrim is created on open and removed on close, so
+  // this sweep never sees one; the coverage is
+  // tests/dev-modals-render.test.js plus the chunk's browser probe.
+  //
+  // Neither of the two legacy seams inside them needs an exception, for
+  // reasons worth stating rather than rediscovering: `CreditOptions.wire`
+  // only adds a delegated listener (the card's markup is React's own
+  // `dangerouslySetInnerHTML`, which `reactWroteHtml` recognises), and the
+  // consent dialog's validation writes `textContent` and a class into
+  // `#llm-consent-error`, neither of which is a patched API.
+  { sel: '#auto-session-modal' },
+  { sel: '#credit-options-modal' },
+  { sel: '#llm-consent-modal' },
   // The two card surfaces (features/dev-board/card/dev-feed.tsx and
   // dev-kanban.tsx). Both hosts are app-view.js's — `_repaintDevBody`
   // writes them into #dev-body — but every card below them is React's.
