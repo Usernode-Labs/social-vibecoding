@@ -39,6 +39,8 @@ import { DevBoardFrame, type DevBoardFrameProps } from './board-frame';
 import { CardMenu } from './card-menu';
 import { cardMenuStore, type CardMenuRowView } from './card-menu-store';
 import { DevChatSubView } from './chat-frame';
+import { IssueComments } from './issue-comments';
+import { issueCommentsStore, type IssueCommentsState } from './issue-comments-store';
 import { KanbanFilters } from './kanban-filters';
 import { kanbanFiltersStore, type KanbanFiltersState } from './kanban-filters-store';
 import { DevSessionShell } from './session-frame';
@@ -76,6 +78,8 @@ export interface DevBoardBridge {
   publishAttrPopover(patch: Partial<AttrPopoverState>): void;
   mountCardMenu(host: Element | null): void;
   publishCardMenu(rows: CardMenuRowView[]): void;
+  mountIssueComments(host: Element | null): void;
+  publishIssueComments(state: IssueCommentsState): void;
   mountKanbanFilters(host: Element | null): void;
   publishKanbanFilters(patch: Partial<KanbanFiltersState>): void;
   mountVotingHelp(host: Element | null, props: VotingHelpProps): void;
@@ -179,6 +183,17 @@ export const devBoardBridge: DevBoardBridge = {
   // The kanban board's filter strip. Mounted once per kanban entry; the feed
   // has no filters and publishes `mounted: false`, which draws nothing and
   // lets `empty:hidden` collapse the shared action row's host.
+  // The issue thread. `_renderTopicHead` rebuilds its host on every
+  // WS-driven refresh, so this mounts per fill; the previous host's entry is
+  // swept as detached.
+  mountIssueComments(host) {
+    mountLegacyPortal(host, createElement(IssueComments));
+  },
+
+  publishIssueComments(state) {
+    issueCommentsStore.set(state);
+  },
+
   mountKanbanFilters(host) {
     mountLegacyPortal(host, createElement(KanbanFilters));
   },

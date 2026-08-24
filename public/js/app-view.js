@@ -6259,42 +6259,30 @@ const AppView = {
   // thread on GitHub. Returns '' when there are no comments so nothing
   // renders. Markdown goes through the same DevChat.renderMarkdown pipeline
   // as the body.
-  _issueCommentsHtml(comments, truncated, htmlUrl) {
+  // The GitHub thread under an issue's topic card, as the view model
+  // features/dev-board/issue-comments.tsx draws.
+  //
+  // `_issueCommentsHtml` lived here. What it decided stays: which authors are
+  // bots, the date's slice, and the SANITIZER — a comment body is arbitrary
+  // GitHub markdown, run through `DevChat.renderMarkdown` (the same one the
+  // dev chat and the group chat's transcript use), with an escaped-`<pre>`
+  // fallback for a page where dev-chat.js did not load.
+  _issueCommentsView(comments, truncated, htmlUrl) {
     const list = Array.isArray(comments) ? comments : [];
-    if (!list.length) return '';
     const renderMd = (typeof DevChat !== 'undefined' && DevChat.renderMarkdown)
-      ? (s) => DevChat.renderMarkdown(s)
-      : (s) => `<pre class="whitespace-pre-wrap font-sans">${escapeHtml(s)}</pre>`;
-
-    const rows = list.map((c) => {
-      const isBot = AppView._isBotCommentAuthor(c.author);
-      const author = c.author ? escapeHtml(c.author) : 'unknown';
-      const date = (c.createdAt || '').slice(0, 10);
-      const botTag = isBot
-        ? ' <span class="text-[0.9375rem] text-sky-600 dark:text-sky-400">bot</span>'
-        : '';
-      return `<div class="dev-issue-comment border border-zinc-200 dark:border-zinc-800 rounded-xl p-3">
-          <div class="flex items-center gap-2 mb-1">
-            <span class="text-xs font-medium text-zinc-700 dark:text-zinc-200">${author}</span>${botTag}
-            ${date ? `<span class="text-[10px] text-zinc-400 dark:text-zinc-500">${escapeHtml(date)}</span>` : ''}
-          </div>
-          <div class="text-xs text-zinc-600 dark:text-zinc-300">${renderMd(c.body || '')}</div>
-        </div>`;
-    });
-
-    const omitted = truncated
-      ? `<div class="text-[11px] text-zinc-400 dark:text-zinc-500 px-1">Earlier comments omitted — ${
-          htmlUrl
-            ? `<a href="${escapeHtml(htmlUrl)}" target="_blank" rel="noopener" class="underline hover:text-zinc-600 dark:hover:text-zinc-300">view the full thread on GitHub</a>`
-            : 'view the full thread on GitHub'
-        }.</div>`
-      : '';
-
-    return `<div class="flex flex-col gap-2 mt-2">
-        <div class="text-[0.9375rem] text-zinc-400 dark:text-zinc-500 px-1">Discussion</div>
-        ${omitted}
-        ${rows.join('')}
-      </div>`;
+      ? (str) => DevChat.renderMarkdown(str)
+      : (str) => `<pre class="whitespace-pre-wrap font-sans">${escapeHtml(str)}</pre>`;
+    return {
+      comments: list.map((c, i) => ({
+        key: String(c.id != null ? c.id : `i${i}`),
+        author: c.author || 'unknown',
+        bot: AppView._isBotCommentAuthor(c.author),
+        date: (c.createdAt || '').slice(0, 10),
+        bodyHtml: renderMd(c.body || ''),
+      })),
+      truncated: !!truncated,
+      htmlUrl: htmlUrl || null,
+    };
   },
 
   // ── Shared dev-chat transcript (read-only) ─────────────────────────
@@ -6477,7 +6465,13 @@ const AppView = {
       if (!t || t.kind !== 'issue' || t.id !== number) return;
       const slot = document.getElementById('dev-issue-comments');
       if (!slot) return;
-      slot.innerHTML = AppView._issueCommentsHtml(data.comments, data.truncated, item.htmlUrl);
+      // The thread is features/dev-board/issue-comments.tsx's. The host is
+      // re-rendered by `_renderTopicHead` on every WS-driven refresh, so this
+      // mounts each time — the portal registry keys on the element, and the
+      // one the previous head left behind is swept as detached.
+      AppView._reactDevBoard()?.mountIssueComments(slot);
+      AppView._reactDevBoard()?.publishIssueComments(
+        AppView._issueCommentsView(data.comments, data.truncated, item.htmlUrl));
     };
 
     const cached = AppView._ghComments[number];

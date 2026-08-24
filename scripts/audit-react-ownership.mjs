@@ -131,6 +131,10 @@ const OWNED = [
   // The kanban board's filter strip (features/dev-board/kanban-filters.tsx).
   // Swept on #app/recipebot/dev whenever the board is in kanban mode.
   { sel: '#dev-kanban-filterbar' },
+  // An issue topic page's GitHub thread
+  // (features/dev-board/issue-comments.tsx), inside the topic card that
+  // app-view.js still fills. Swept on the topic route above.
+  { sel: '#dev-issue-comments' },
   // The thread panel's shell (features/group-chat/thread-shell.tsx). TWO hosts
   // inside it stay their modules': the topic card that app-view.js innerHTMLs,
   // and the transcript's own portal target. Each is rendered once, empty, with
