@@ -313,12 +313,6 @@ export const ChatBubbleTailIcon = stroked(
   'M8 10h.01M12 10h.01M16 10h.01M21 12a8 8 0 01-8 8H7l-4 2 1.3-4A9 9 0 1121 12z',
 );
 
-/** The dev board's discussion glyph — a squared bubble with a tail. */
-export const DiscussionIcon = stroked(
-  'DiscussionIcon',
-  'M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z',
-);
-
 export const ThumbsUpIcon = stroked(
   'ThumbsUpIcon',
   'M14 10h4.764a2 2 0 011.789 2.894l-3.5 7A2 2 0 0115.263 21h-4.017c-.163 0-.326-.02-.485-.06L7 20m7-10V5a2 2 0 00-2-2h-.095c-.5 0-.905.405-.905.905 0 .714-.211 1.412-.608 2.006L7 11v9m7-10h-2M7 20H5a2 2 0 01-2-2v-6a2 2 0 012-2h2.5',
@@ -362,6 +356,19 @@ export const UserGroupIcon = stroked(
  * module exists to prevent — so it became an export rather than a duplicate.
  */
 export const BoardIcon = stroked('BoardIcon', 'M4 5h4v14H4zM10 5h4v9h-4zM16 5h4v6h-4z');
+
+/**
+ * A NEWSPAPER — the Activity row and screen.
+ *
+ * The Figma board names this slot `lucide/newspaper`, and the glyph is right:
+ * Activity is the project's record of what happened, not a chat. The path is
+ * the shell's own set's Heroicons v1 outline newspaper rather than lucide's,
+ * for the reason in this file's header — one grid, one stroke rhythm.
+ */
+export const NewspaperIcon = stroked(
+  'NewspaperIcon',
+  'M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z',
+);
 
 /**
  * Three equal rules — the Dev screen's Feed tab, and the Improve panel's row
