@@ -137,29 +137,20 @@ const DevChat = {
   budget: null,
 
   // ----- Cross-app active sessions panel state -----
-  // Powers the "Active Sessions (x/y)" section at the top of the
-  // dev-chat tab. Lists every non-archived session the user owns
-  // across all apps, with a `busy` flag for the ones where Claude
-  // is actively running a turn right now. The point is "see all
-  // your in-progress AI work at a glance, even from other apps"
-  // so the user can hop between them without losing context.
+  // Every non-archived session the user owns across all apps, with a `busy`
+  // flag for the ones where Claude is running a turn right now.
   //
-  // Refresh model: poll every 5s while the dev-chat tab is the
-  // mounted tab; stop polling when the tab is unmounted (the
-  // `_activePollTimer` guard cleans up). 5s is a compromise — fast
-  // enough that the busy indicator feels live, slow enough that we
-  // don't hammer the cross-app endpoint just because the user is
-  // sitting on the dev-chat tab.
-  // `caps` seeds the regular-user denominators so the counter renders
-  // sanely on the very first paint, before the first poll lands; the
-  // server's per-viewer values (raised for full platform admins)
-  // replace them in loadActiveSessions.
+  // This fed an "Active Sessions (x/y)" panel at the top of the dev-chat
+  // tab, on a 5s poll. That panel's hosts are gone and its renderer and poll
+  // went with them (#1367); what the payload is FOR now is seeding
+  // `SessionState` — see loadActiveSessions — so only `.sessions` is read.
+  // The totals and caps are kept in the shape because the endpoint sends
+  // them and the seed reads the array off this object.
   activeSessions: {
     sessions: [],
     totals: { active: 0, promoted: 0, paused: 0, busy: 0, total: 0 },
     caps: { activeSessions: 3, promotedSessions: 5 },
   },
-  _activePollTimer: null,
 
   // ----- Spec viewer state -----
   // Read-only viewer for the current session's spec doc + frozen
@@ -1226,7 +1217,6 @@ const DevChat = {
     DevChat._lastSeenSeq = null;
     DevChat._resetSpecViewer();
     DevChat._resetStagingPanel();
-    DevChat.stopActiveSessionsPoll();
     if (DevChat._abortController) {
       try { DevChat._abortController.abort(); } catch {}
       DevChat._abortController = null;
@@ -2778,223 +2768,18 @@ const DevChat = {
       if (typeof window !== 'undefined' && window.SessionState) {
         SessionState.seed(DevChat.activeSessions.sessions, issuedAt);
       }
-      DevChat.renderActiveSessions();
     } catch {}
   },
 
-  // Start the 5s poll that drives the active-sessions panel. Safe
-  // to call multiple times — it tears down any previous timer
-  // before installing a new one, which keeps double-mounts (e.g.
-  // restoreFromHash → renderDevChatTab during navigation) from
-  // stacking.
-  startActiveSessionsPoll() {
-    DevChat.stopActiveSessionsPoll();
-    DevChat.loadActiveSessions();
-    DevChat._activePollTimer = setInterval(() => {
-      DevChat.loadActiveSessions();
-    }, 5000);
-  },
-
-  stopActiveSessionsPoll() {
-    if (DevChat._activePollTimer) {
-      clearInterval(DevChat._activePollTimer);
-      DevChat._activePollTimer = null;
-    }
-  },
-
-  renderActiveSessions() {
-    const container = document.getElementById('dc-active-list');
-    const counter = document.getElementById('dc-active-counter');
-    if (!container || !counter) return;
-
-    const { sessions, totals, caps } = DevChat.activeSessions;
-    // Counter shows running-vs-cap on the left and the promoted/paused
-    // backlogs on the right. Both denominators come from the server
-    // (`caps` on /api/me/active-sessions) and are per-viewer — full
-    // platform admins get raised caps — so the display can't drift from
-    // the ceiling actually enforced by /api/apps/:slug/sessions,
-    // /api/sessions/:id/resume and /api/sessions/:id/promote. (It used to
-    // be a hardcoded "/3", which lied the moment an operator retuned
-    // MAX_USER_SESSIONS.)
-    //
-    // The numerator counts only 'active' sessions (#193): promoted ones
-    // (PR in a merge vote) are un-pausable and exempt from the
-    // active-session cap, so they're surfaced as their own
-    // " · N/M in vote" segment against their own budget instead of
-    // inflating the numerator. Paused sessions are unlimited so they're
-    // surfaced separately too. Zero-count segments are omitted to keep
-    // the common case clean.
-    const activeCap = (caps && caps.activeSessions) || 3;
-    const promotedCap = (caps && caps.promotedSessions) || 5;
-    const segments = [`(${totals.active}/${activeCap})`];
-    if (totals.promoted > 0) segments.push(`${totals.promoted}/${promotedCap} in vote`);
-    if (totals.paused > 0) segments.push(`${totals.paused} paused`);
-    counter.textContent = segments.join(' · ');
-
-    if (totals.total === 0) {
-      container.innerHTML = `
-        <div class="px-3 py-2 text-xs text-zinc-500 dark:text-zinc-400">
-          No open dev sessions yet.
-        </div>`;
-      return;
-    }
-
-    // Sort: busy → other active → paused, then most-recent within
-    // each bucket. Surfaces in-flight work first, paused at the
-    // bottom where it's still visible but doesn't compete with the
-    // sessions the user is actively working on.
-    const rank = (s) => (s.busy ? 0 : s.status === 'paused' ? 2 : 1);
-    const sorted = sessions.slice().sort((a, b) => {
-      const dr = rank(a) - rank(b);
-      if (dr !== 0) return dr;
-      return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
-    });
-
-    const currentSlug = (typeof AppView !== 'undefined' && AppView.appData && AppView.appData.slug) || '';
-
-    container.innerHTML = sorted.map((s) => {
-      const title = escapeHtml(s.session_title || s.pr_title || s.branch_name || 'Session');
-      const appName = escapeHtml(s.app_name || s.app_slug || '');
-      const isOtherApp = s.app_slug && s.app_slug !== currentSlug;
-      // Dot color tracks lifecycle:
-      //   active   → emerald
-      //   promoted → violet
-      //   paused   → zinc/gray (no warm container)
-      // Busy modifier adds a pulse ring on top, only meaningful
-      // for active/promoted (paused sessions can't be busy).
-      let statusClass;
-      let dotTitle;
-      // Preserve the legacy Claude tooltip byte-for-byte; only OpenRouter rows
-      // need a different provider name.
-      const runningAgent = DevChat._activityAgentBackend(s) === 'codex_openrouter'
-        ? 'OpenRouter'
-        : 'Claude';
-      if (s.status === 'paused') { statusClass = 'dc-active-dot-paused'; dotTitle = 'Paused'; }
-      else if (s.status === 'promoted') {
-        statusClass = 'dc-active-dot-promoted';
-        // #405: "Promoted (merged)" was ambiguous (a promoted PR is in a
-        // vote, NOT merged). Use the canonical lifecycle label instead.
-        const pLife = (window.MergeStatus && MergeStatus.lifecycle) ? MergeStatus.lifecycle(s) : null;
-        const pLabel = (pLife && pLife.label) || 'Proposed';
-        dotTitle = s.busy ? `${runningAgent} is running · ${pLabel}` : pLabel;
-      }
-      else { statusClass = 'dc-active-dot-active'; dotTitle = s.busy ? `${runningAgent} is running` : 'Active'; }
-      const busyClass = s.busy ? ' dc-active-dot-busy' : '';
-      const isPaused = s.status === 'paused';
-      // Primary action toggles between Pause and Resume. Archive is
-      // a secondary, quieter affordance for the "really delete this"
-      // case. data-action lets the click handler dispatch.
-      const primaryAction = isPaused ? 'resume' : 'pause';
-      const primaryLabel = isPaused ? 'Resume' : 'Pause';
-      return `
-        <div class="dc-active-item" data-id="${s.id}" data-slug="${escapeHtml(s.app_slug || '')}">
-          <span class="dc-active-dot ${statusClass}${busyClass}" title="${dotTitle}"></span>
-          <span class="dc-active-title" title="${title}">${title}</span>
-          ${isOtherApp ? `<span class="dc-active-app" title="${appName}">${appName}</span>` : ''}
-          <button class="dc-active-action ${isPaused ? 'dc-active-action-resume' : 'dc-active-action-pause'}" data-id="${s.id}" data-action="${primaryAction}">${primaryLabel}</button>
-          <button class="dc-active-archive" data-id="${s.id}" data-name="${title}" title="Archive (frees the slot; restorable for a while)">Archive</button>
-          <svg class="dc-active-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
-        </div>`;
-    }).join('');
-
-    container.querySelectorAll('.dc-active-item').forEach((el) => {
-      // #1036: the row can't BE an anchor (it wraps the Pause/Resume
-      // button and a PR link), so cmd/middle-click is intercepted
-      // instead — it opens the same address the plain click routes to.
-      const hrefFor = () => {
-        const id = parseInt(el.dataset.id, 10);
-        const slug = el.dataset.slug;
-        if (!Number.isFinite(id) || !slug) return null;
-        return `#app/${encodeURIComponent(slug)}/dev/sessions/${id}`;
-      };
-      const activate = () => {
-        const id = parseInt(el.dataset.id, 10);
-        const slug = el.dataset.slug;
-        if (!Number.isFinite(id) || !slug) return;
-        // Same-app click: keep the in-memory state warm by routing
-        // through openSession + renderChatView, then sync the URL.
-        // Cross-app click: just set the hash and let restoreFromHash
-        // handle the full app+tab+session restore — that path also
-        // closes the previous app cleanly via App.openApp.
-        if (typeof AppView !== 'undefined' && AppView.appData && AppView.appData.slug === slug) {
-          DevChat.openSession(id, { userOpened: true }).then(() => {
-            DevChat.renderChatView();
-            if (typeof App !== 'undefined' && App.updateHash) App.updateHash();
-          });
-        } else {
-          location.hash = `#app/${slug}/dev/sessions/${id}`;
-        }
-      };
-      if (window.NavLink) NavLink.wireModified(el, hrefFor, activate);
-      else el.addEventListener('click', activate);
-    });
-
-    // Pause / Resume primary action. Stop propagation so the row's
-    // navigate-to-session click doesn't fire alongside the toggle.
-    container.querySelectorAll('.dc-active-action').forEach((btn) => {
-      btn.addEventListener('click', async (ev) => {
-        ev.stopPropagation();
-        const id = parseInt(btn.dataset.id, 10);
-        const action = btn.dataset.action;
-        const original = btn.textContent;
-        btn.textContent = action === 'pause' ? 'Pausing…' : 'Resuming…';
-        btn.disabled = true;
-        let body = {};
-        try {
-          const resp = await fetch(`/api/sessions/${id}/${action}`, { method: 'POST' });
-          body = await resp.json().catch(() => ({}));
-          if (!resp.ok) {
-            PlatformUI.toast(body.error || `Failed to ${action} session`);
-            btn.textContent = original;
-            btn.disabled = false;
-            return;
-          }
-        } catch {
-          btn.textContent = original;
-          btn.disabled = false;
-          return;
-        }
-        // Deliberate pause of the session that's open in the chat view:
-        // sync the local copy so the heartbeat's refocus auto-resume
-        // (which only heals *sweeper* pauses the client doesn't know
-        // about) doesn't silently undo it (#193). keptPromoted means the
-        // server left the status 'promoted', so don't mislabel it.
-        if (action === 'pause' && !body.keptPromoted
-            && DevChat.currentSession && Number(DevChat.currentSession.id) === id) {
-          DevChat.currentSession.status = 'paused';
-        }
-        await DevChat._refreshSessionListsAfterMutation();
-      });
-    });
-
-    // Archive (destructive, irreversible — drops Claude's memory,
-    // destroys the warm worker + CC volume, and closes the PR). Gate
-    // behind ConfirmModal (a webview-safe replacement for native
-    // window.confirm, which is no-op'd in several mobile/in-app
-    // browsers the platform runs in). data-name carries the PR/branch
-    // title (escapeHtml'd at render time) so the prompt can name the
-    // thing being archived.
-    container.querySelectorAll('.dc-active-archive').forEach((btn) => {
-      btn.addEventListener('click', async (ev) => {
-        ev.stopPropagation();
-        const name = btn.dataset.name || 'this session';
-        const ok = await ConfirmModal.show({
-          title: `Archive "${name}"?`,
-          message: "This closes the PR and frees the slot. You can Unarchive it later from the app's session list (chat memory is kept for 30 days).",
-          confirmLabel: 'Archive',
-          danger: true,
-        });
-        if (!ok) return;
-        btn.textContent = '...';
-        btn.disabled = true;
-        const id = parseInt(btn.dataset.id, 10);
-        try {
-          await fetch(`/api/sessions/${id}/archive`, { method: 'POST' });
-        } catch {}
-        await DevChat._refreshSessionListsAfterMutation();
-      });
-    });
-  },
+  // `startActiveSessionsPoll` / `stopActiveSessionsPoll` /
+  // `renderActiveSessions` are retired (#1367). They drove an
+  // "Active Sessions (x/y)" panel whose hosts — `#dc-active-list` and
+  // `#dc-active-counter` — no longer exist in any markup, so the renderer
+  // resolved nothing and returned on its first line, and the 5s poll had no
+  // caller left at all. `loadActiveSessions` STAYS: five callers depend on
+  // it, and its real job now is seeding `SessionState` with the per-row busy
+  // flags that payload carries. The `.dc-active-*` rules in app.css go with
+  // them.
 
   // Shared post-mutation refresh for pause/resume/archive: pull the
   // cross-app panel data, and if we're currently viewing the same
@@ -7168,188 +6953,181 @@ const DevChat = {
   },
 
   // ── Session list ──────────────────────────────────────────
+  //
+  // Builds the row models; features/dev-chat/session-list.tsx draws them.
+  // The HOST stays ours (renderChatView's template writes `#dc-session-list`
+  // with the pane's scroll geometry) and its CHILDREN are React's.
+  //
+  // Which buttons a row gets is the substance here, and none of it follows
+  // from the status alone — see ./session-list-store.ts's header for the
+  // three rules, and why Archive is gated independently of the rest.
+  _sessionRow(s) {
+    const title = s.session_title || s.pr_title || s.branch_name || 'Session';
+    // #1038: this list is the one session surface that never had a working
+    // indicator — GET /api/apps/:slug/sessions returns `warm` (a container
+    // exists) but no `busy`. The live store supplies it client-side, so the
+    // row matches the board and the cog drawer without widening that payload.
+    const busy = (typeof window !== 'undefined' && window.SessionState)
+      ? SessionState.isBusy(s.id, false) : false;
+    // Promoted sessions can't be demoted to 'paused' (their PR must stay
+    // votable), but a warm worker can still be freed — same endpoint, server
+    // keeps status 'promoted' (keptPromoted). Once the worker is gone
+    // (`warm` false) there's nothing left to free, so no button.
+    const actions = [];
+    if (s.status === 'active') {
+      actions.push({
+        key: 'pause', label: 'Pause', busy: 'Pausing…', tone: 'quiet',
+        fn: '_sessionListPause', args: [s.id, 'pause'],
+      });
+    }
+    if (s.status === 'promoted' && s.warm) {
+      actions.push({
+        key: 'free', label: 'Free worker', busy: 'Freeing…', tone: 'quiet',
+        title: 'Frees the AI worker. The PR stays up for voting.',
+        fn: '_sessionListPause', args: [s.id, 'pause'],
+      });
+    }
+    if (s.status === 'paused') {
+      actions.push({
+        key: 'resume', label: 'Resume', busy: 'Resuming…', tone: 'go',
+        fn: '_sessionListPause', args: [s.id, 'resume'],
+      });
+    }
+    if (s.status === 'archived') {
+      actions.push({
+        key: 'unarchive', label: 'Unarchive', busy: '...', tone: 'go',
+        title: 'Restore this session (reopens the PR)',
+        fn: '_sessionListUnarchive', args: [s.id],
+      });
+    }
+    // Archive is gated INDEPENDENTLY of the three above: the backend
+    // archives any open session (active/promoted/paused) regardless of warm
+    // state, so a cold promoted proposal keeps its Archive button even
+    // though it has nothing left to Free. (Re-coupling this to the others is
+    // the regression this restores.)
+    if (s.status === 'active' || s.status === 'promoted' || s.status === 'paused') {
+      actions.push({
+        key: 'archive', label: 'Archive', busy: '...', tone: 'danger',
+        title: 'Archive (frees the slot; restorable for a while)',
+        fn: '_sessionListArchive', args: [s.id, title],
+      });
+    }
+    return {
+      id: s.id,
+      status: s.status,
+      statusTone: (s.status === 'active' || s.status === 'promoted' || s.status === 'paused')
+        ? s.status : 'other',
+      title,
+      branch: s.branch_name || '',
+      busy,
+      pr: s.pr_url ? { url: s.pr_url, number: s.pr_number } : null,
+      date: new Date(s.created_at).toLocaleDateString(),
+      actions,
+    };
+  },
 
   renderSessionList() {
     const container = document.getElementById('dc-session-list');
     if (!container) return;
+    const react = (typeof window !== 'undefined' && window.UsernodeReact)
+      ? window.UsernodeReact.devChat : null;
+    if (!react) return;
+    react.mountSessionList(container, {
+      rows: DevChat.sessions.map((s) => DevChat._sessionRow(s)),
+    });
+  },
 
-    if (DevChat.sessions.length === 0) {
-      container.innerHTML = `
-        <div class="text-center px-6 py-12">
-          <p class="text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-1">Want to change this app? Just ask.</p>
-          <p class="text-xs text-zinc-500 dark:text-zinc-400 mb-3 max-w-xs mx-auto">
-            Describe what you'd like different in plain English — an AI writes the code and opens a
-            real pull request. No coding required. The app's users then vote it in.
-          </p>
-          <p class="text-xs text-zinc-500 dark:text-zinc-500">
-            Hit <span class="font-medium text-emerald-600 dark:text-emerald-400">+ New Session</span>
-            above to start, e.g. <span class="italic">"make the header dark blue"</span>.
-          </p>
-        </div>`;
-      return;
+  // ── What the rows' buttons do ─────────────────────────────
+  //
+  // The list used to bind these per render, by class, over markup it had
+  // just written. They are named calls now (the component dispatches by
+  // name — dev-chat.js cannot be imported, see ./mount.ts), and each
+  // returns the label to FLASH on the button or null to restore it. That is
+  // the whole of what the DOM writes in here used to do.
+
+  async openSessionFromList(id) {
+    await DevChat.openSession(parseInt(id), { userOpened: true });
+    DevChat.renderChatView();
+    App.updateHash();
+    return null;
+  },
+
+  // Reload this app's sessions and repaint the list. Every action ends here.
+  async _reloadSessionList() {
+    if (AppView.appData) {
+      await DevChat.loadSessions(AppView.appData.slug);
+      DevChat.renderSessionList();
     }
+    await DevChat.loadActiveSessions();
+  },
 
-    container.innerHTML = DevChat.sessions.map((s) => {
-      const statusColor =
-        s.status === 'active' ? 'text-emerald-400' :
-        s.status === 'promoted' ? 'text-violet-400' :
-        s.status === 'paused' ? 'text-zinc-400' :
-        'text-zinc-500';
-      // #1038: this list is the one session surface that never had a
-      // working indicator — GET /api/apps/:slug/sessions returns `warm`
-      // (a container exists) but no `busy`. The live store supplies it
-      // client-side, so the row matches the board and the cog drawer
-      // without widening that payload.
-      const busy = (typeof window !== 'undefined' && window.SessionState)
-        ? SessionState.isBusy(s.id, false) : false;
-      const busyTag = busy
-        ? '<span class="inline-flex items-center gap-1 text-xs text-emerald-500 shrink-0"><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>working…</span>'
-        : '';
-      // Promoted sessions can't be demoted to 'paused' (their PR must
-      // stay votable), but a warm worker can still be freed — same
-      // endpoint, server keeps status 'promoted' (keptPromoted). Once
-      // the worker is gone (`warm` false) there's nothing left to free,
-      // so no button.
-      const isPausable = s.status === 'active';
-      const isFreeable = s.status === 'promoted' && s.warm;
-      const isPaused = s.status === 'paused';
-      const isArchived = s.status === 'archived';
-      const isActionable = isPausable || isFreeable || isPaused;
-      // Archive is gated independently of isActionable: the backend
-      // archives any open session (active/promoted/paused) regardless of
-      // warm state, so a cold promoted proposal must keep its Archive
-      // button even though it has nothing left to Free. (Re-coupling this
-      // to isActionable is the regression this restores.)
-      const isArchivable = s.status === 'active' || s.status === 'promoted' || s.status === 'paused';
-      const date = new Date(s.created_at).toLocaleDateString();
-      return `
-        <div class="dc-session-item px-3 py-2 cursor-pointer hover:bg-zinc-800/50 flex items-center gap-2" data-id="${s.id}">
-          <span class="text-xs ${statusColor} font-mono">${s.status}</span>
-          <span class="text-sm text-zinc-300 flex-1 truncate" title="${escapeHtml(s.branch_name || '')}">${escapeHtml(s.session_title || s.pr_title || s.branch_name || 'Session')}</span>
-          ${busyTag}
-          ${s.pr_url ? `<a href="${s.pr_url}" target="_blank" class="text-xs text-violet-600 hover:text-violet-700 dark:text-violet-400 dark:hover:text-violet-300" onclick="event.stopPropagation()">PR#${s.pr_number}</a>` : ''}
-          ${isPausable ? `<button class="dc-pause-btn text-xs text-zinc-400 hover:text-emerald-400" data-id="${s.id}" data-action="pause" onclick="event.stopPropagation()">Pause</button>` : ''}
-          ${isFreeable ? `<button class="dc-pause-btn text-xs text-zinc-400 hover:text-emerald-400" data-id="${s.id}" data-action="pause" data-freeing="1" title="Frees the AI worker. The PR stays up for voting." onclick="event.stopPropagation()">Free worker</button>` : ''}
-          ${isPaused ? `<button class="dc-pause-btn text-xs text-emerald-400 hover:text-emerald-300" data-id="${s.id}" data-action="resume" onclick="event.stopPropagation()">Resume</button>` : ''}
-          ${isArchived ? `<button class="dc-unarchive-btn text-xs text-emerald-400 hover:text-emerald-300" data-id="${s.id}" onclick="event.stopPropagation()" title="Restore this session (reopens the PR)">Unarchive</button>` : ''}
-          ${isArchivable ? `<button class="dc-archive-btn text-xs text-zinc-500 dark:text-zinc-400 hover:text-red-400" data-id="${s.id}" data-name="${escapeHtml(s.session_title || s.pr_title || s.branch_name || 'Session')}" title="Archive (frees the slot; restorable for a while)" onclick="event.stopPropagation()">Archive</button>` : ''}
-          <span class="text-xs text-zinc-500 dark:text-zinc-400">${date}</span>
-        </div>`;
-    }).join('');
+  // Pause / Free-worker / Resume. One method, dispatched on `action`, so we
+  // don't have near-identical handlers ("Free worker" is the pause endpoint
+  // hitting a promoted session — the server frees the worker and answers
+  // keptPromoted). On 4xx (e.g. cap reached on resume), surface the server's
+  // error message rather than silently failing.
+  async _sessionListPause(id, action) {
+    let body = {};
+    try {
+      const resp = await fetch(`/api/sessions/${id}/${action}`, { method: 'POST' });
+      body = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        PlatformUI.toast(body.error || `Failed to ${action} session`);
+        return null;
+      }
+    } catch {
+      return null;
+    }
+    // Same deliberate-pause sync as the cross-app panel (#193): keep the
+    // local currentSession copy honest so the refocus auto-resume doesn't
+    // silently re-activate a session the user just paused. keptPromoted =
+    // server left the status 'promoted'; don't mislabel.
+    if (action === 'pause' && !body.keptPromoted
+        && DevChat.currentSession && Number(DevChat.currentSession.id) === Number(id)) {
+      DevChat.currentSession.status = 'paused';
+    }
+    await DevChat._reloadSessionList();
+    // The row re-renders without the button (warm flips false), so flash the
+    // outcome here, where the user just clicked.
+    return body.keptPromoted ? 'Worker freed' : null;
+  },
 
-    container.querySelectorAll('.dc-session-item').forEach((el) => {
-      el.addEventListener('click', async () => {
-        await DevChat.openSession(parseInt(el.dataset.id), { userOpened: true });
-        DevChat.renderChatView();
-        App.updateHash();
-      });
+  // Archive. Reversible: it frees the active-session slot, tears down
+  // staging + worker, and closes the PR, but keeps Claude's memory and the
+  // branch so Unarchive can restore it (until the retention GC eventually
+  // purges memory). Wording reflects that it's recoverable.
+  async _sessionListArchive(id, name) {
+    const ok = await ConfirmModal.show({
+      title: `Archive "${name || 'this session'}"?`,
+      message: "This closes the PR and frees the slot. You can Unarchive it later to restore it (chat memory is kept for 30 days).",
+      confirmLabel: 'Archive',
+      danger: true,
     });
+    if (!ok) return null;
+    await fetch(`/api/sessions/${id}/archive`, { method: 'POST' });
+    await DevChat._reloadSessionList();
+    return null;
+  },
 
-    // Pause / Free-worker / Resume buttons. All share the .dc-pause-btn
-    // class and dispatch via data-action so we don't have near-identical
-    // handlers ("Free worker" is the pause endpoint hitting a promoted
-    // session — the server frees the worker and answers keptPromoted).
-    // On 4xx (e.g. cap reached on resume), surface the server's error
-    // message rather than silently failing.
-    container.querySelectorAll('.dc-pause-btn').forEach((btn) => {
-      btn.addEventListener('click', async () => {
-        const id = btn.dataset.id;
-        const action = btn.dataset.action;
-        const freeing = !!btn.dataset.freeing;
-        const original = btn.textContent;
-        btn.textContent = action === 'pause' ? (freeing ? 'Freeing…' : 'Pausing…') : 'Resuming…';
-        btn.disabled = true;
-        let body = {};
-        try {
-          const resp = await fetch(`/api/sessions/${id}/${action}`, { method: 'POST' });
-          body = await resp.json().catch(() => ({}));
-          if (!resp.ok) {
-            PlatformUI.toast(body.error || `Failed to ${action} session`);
-            btn.textContent = original;
-            btn.disabled = false;
-            return;
-          }
-          const data = await resp.json().catch(() => ({}));
-          // The row will re-render without the button (warm flips false),
-          // so flash the outcome here where the user just clicked.
-          if (data.keptPromoted) btn.textContent = 'Worker freed';
-        } catch {
-          btn.textContent = original;
-          btn.disabled = false;
-          return;
-        }
-        // Same deliberate-pause sync as the cross-app panel (#193): keep
-        // the local currentSession copy honest so the refocus auto-resume
-        // doesn't silently re-activate a session the user just paused.
-        // keptPromoted = server left the status 'promoted'; don't mislabel.
-        if (action === 'pause' && !body.keptPromoted
-            && DevChat.currentSession && Number(DevChat.currentSession.id) === Number(id)) {
-          DevChat.currentSession.status = 'paused';
-        }
-        if (AppView.appData) {
-          await DevChat.loadSessions(AppView.appData.slug);
-          DevChat.renderSessionList();
-        }
-        await DevChat.loadActiveSessions();
-      });
-    });
-
-    // Archive. Reversible now: it frees the active-session slot, tears
-    // down staging + worker, and closes the PR, but keeps Claude's memory
-    // and the branch so Unarchive can restore it (until the retention GC
-    // eventually purges memory). Wording reflects that it's recoverable.
-    container.querySelectorAll('.dc-archive-btn').forEach((btn) => {
-      btn.addEventListener('click', async () => {
-        const name = btn.dataset.name || 'this session';
-        const ok = await ConfirmModal.show({
-          title: `Archive "${name}"?`,
-          message: "This closes the PR and frees the slot. You can Unarchive it later to restore it (chat memory is kept for 30 days).",
-          confirmLabel: 'Archive',
-          danger: true,
-        });
-        if (!ok) return;
-        btn.textContent = '...';
-        await fetch(`/api/sessions/${btn.dataset.id}/archive`, { method: 'POST' });
-        if (AppView.appData) {
-          await DevChat.loadSessions(AppView.appData.slug);
-          DevChat.renderSessionList();
-        }
-        await DevChat.loadActiveSessions();
-      });
-    });
-
-    // Unarchive. Restores an archived session to 'paused' (opening it then
-    // auto-resumes) and best-effort reopens its PR. If the retention GC
-    // already purged the CC volume, we warn that Claude starts fresh.
-    container.querySelectorAll('.dc-unarchive-btn').forEach((btn) => {
-      btn.addEventListener('click', async () => {
-        const original = btn.textContent;
-        btn.textContent = '...';
-        btn.disabled = true;
-        try {
-          const resp = await fetch(`/api/sessions/${btn.dataset.id}/unarchive`, { method: 'POST' });
-          const data = await resp.json().catch(() => ({}));
-          if (!resp.ok) {
-            PlatformUI.toast(data.error || 'Failed to unarchive session');
-            btn.textContent = original;
-            btn.disabled = false;
-            return;
-          }
-          if (data.ccPurged) {
-            PlatformUI.alert({ title: 'Session restored', message: "Claude's memory had already been cleared, so this picks up as a fresh chat on the same branch." });
-          }
-        } catch {
-          btn.textContent = original;
-          btn.disabled = false;
-          return;
-        }
-        if (AppView.appData) {
-          await DevChat.loadSessions(AppView.appData.slug);
-          DevChat.renderSessionList();
-        }
-        await DevChat.loadActiveSessions();
-      });
-    });
+  // Unarchive. Restores an archived session to 'paused' (opening it then
+  // auto-resumes) and best-effort reopens its PR. If the retention GC
+  // already purged the CC volume, we warn that Claude starts fresh.
+  async _sessionListUnarchive(id) {
+    try {
+      const resp = await fetch(`/api/sessions/${id}/unarchive`, { method: 'POST' });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        PlatformUI.toast(data.error || 'Failed to unarchive session');
+        return null;
+      }
+      if (data.ccPurged) {
+        PlatformUI.alert({ title: 'Session restored', message: "Claude's memory had already been cleared, so this picks up as a fresh chat on the same branch." });
+      }
+    } catch {
+      return null;
+    }
+    await DevChat._reloadSessionList();
+    return null;
   },
 
   // ── Sync-with-main banner (#8, progress #252) ─────────────
@@ -7768,7 +7546,7 @@ const DevChat = {
       // leaving the session closes a docked preview with it.
       if (DevChat.stagingPanel.open) DevChat._resetStagingPanel();
       content.innerHTML = `
-        <div id="dc-session-list" class="divide-y divide-zinc-800 platform-safe-scroll" style="flex:1;overflow-y:auto;min-height:0"></div>`;
+        <div id="dc-session-list" class="divide-y divide-zinc-200 dark:divide-zinc-800 platform-safe-scroll" style="flex:1;overflow-y:auto;min-height:0"></div>`;
       DevChat.renderSessionList();
       return;
     }

@@ -514,8 +514,8 @@ rendered before believing a zero.
    four other callers — and `renderDevChatTab`'s `#dc-view`, which belongs to
    the Dev chat below.
 
-2. **Dev chat — `frontend/src/features/dev-chat/dev-chat.js`, about 9,820
-   lines and 58 sites. Started at the composer.** Four strips have converted:
+2. **Dev chat — `frontend/src/features/dev-chat/dev-chat.js`, about 9,700
+   lines. Started at the composer.** Five regions have converted:
 
    | converted | host |
    | --- | --- |
@@ -523,6 +523,42 @@ rendered before believing a zero.
    | the credit meter | `#dc-budget` |
    | the quick-reply pills | `#dc-quick-replies` |
    | the "Run on" controls | `#dc-runner` |
+   | **the app's session list** | `#dc-session-list` |
+
+   ### Two orphaned surfaces, and what to do with each
+
+   The sweeps found two whole screens in here with no way to reach them.
+   They are not the same case and were NOT treated the same way — the
+   difference is worth having:
+
+   - **`renderActiveSessions` is RETIRED.** Its hosts, `#dc-active-list`
+     and `#dc-active-counter`, exist in NO markup anywhere in the tree, so
+     the renderer resolved nothing and returned on its first line
+     unconditionally, and `startActiveSessionsPoll` — a 5s cross-app poll —
+     had no caller at all. That is a mechanical artifact, and
+     `tests/nav-new-tab.test.js` was pinning a modifier-click contract for
+     rows nobody could see. `loadActiveSessions` STAYS: five callers
+     depend on it and its real job is seeding `SessionState` with the
+     per-row busy flags the payload carries. The `.dc-active-*` rules in
+     `app.css` are now orphaned too — left in place deliberately, because
+     `tests/ios-native-performance.test.js` pins two of them as part of a
+     native motion contract that cannot be verified from a browser.
+   - **`renderSessionList` CONVERTED, and stays.** Its host is real markup
+     — `renderChatView` writes it — but the branch that writes it runs only
+     when the chat is open with `currentSession` null, and no route reaches
+     that: `renderDevChatTab` bounces to the forum without a session id, the
+     back control navigates to the forum, and the bare
+     `#app/…/dev/sessions` route renders nothing. Verified in a browser with
+     a counter around `renderChatView`, not inferred. **Deleting a product
+     screen is not a migration's call to make**, so it converted like any
+     other region and the finding is recorded here instead. Its dark-only
+     tokens (`text-zinc-300` titles on `hover:bg-zinc-800/50`) were paired
+     while converting: if the screen does come back it is legible in light
+     mode, which it was not.
+
+   The general rule the pair suggests: **a renderer whose HOST does not
+   exist is dead and goes; a renderer whose host exists behind an
+   unreachable branch is a product question and gets flagged.**
 
    All four are the host-is-mine/children-are-React's seam: `renderChatView`'s
    template writes each ELEMENT and the module toggles the class that gives it

@@ -3811,13 +3811,12 @@ const App = {
     // one owner for the attribute, which is the whole ownership rule.
     window.Improve?.setTab(tab);
 
-    // Tear down the cross-app active-sessions poll when leaving the
-    // Sessions sub-tab. renderDevChatTab will spin it back up on
-    // re-entry. Without this the poll keeps firing on the other
-    // surfaces even though there's no UI to update.
+    // Leaving the Sessions sub-tab. The cross-app active-sessions POLL used
+    // to be torn down here; it and the panel it drove are retired (#1367),
+    // so what is left is the two pieces of per-session state that are scoped
+    // to "the user is on the dev-chat tab".
     const onSessions = tab === 'dev' && App.currentSubTab === 'sessions';
-    if (!onSessions && typeof DevChat !== 'undefined' && DevChat.stopActiveSessionsPoll) {
-      DevChat.stopActiveSessionsPoll();
+    if (!onSessions && typeof DevChat !== 'undefined') {
       // The title status indicator (#108) is scoped to "user is on the
       // dev-chat tab" — leaving the tab clears it. Re-entering while a
       // run is live re-applies it via openSession's busy check.

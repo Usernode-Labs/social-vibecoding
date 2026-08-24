@@ -436,15 +436,20 @@ const ROWS = [
     href: /#app\/\$\{encodeURIComponent\(card\.dataset\.slug\)\}\/app/,
     guards: ['card-add-btn', 'card-menu-btn', "card.dataset.demo === 'true'", 'awaiting_secrets'],
   },
-  {
-    label: 'dev-chat session rows',
-    src: () => devChatJs, file: 'dev-chat.js',
-    anchor: ".querySelectorAll('.dc-active-item')",
-    wire: /NavLink\.wireModified\(el, hrefFor, activate\)/,
-    href: /#app\/\$\{encodeURIComponent\(slug\)\}\/dev\/sessions\/\$\{id\}/,
-    guards: ['Number.isFinite(id)'],
-  },
+  // The dev chat's cross-app "Active Sessions" rows were the second entry
+  // here. They are gone (#1367): `#dc-active-list` and `#dc-active-counter`
+  // exist in no markup, so `renderActiveSessions` resolved nothing and
+  // returned on its first line, and the 5s poll that drove it had no caller
+  // left. A modifier-click contract for rows nobody can see is not a
+  // contract — the assertion below replaces it, so the wiring cannot come
+  // back without the surface.
 ];
+
+test('the retired cross-app session rows leave no half of themselves behind', () => {
+  assert.ok(!/dc-active-item/.test(devChatJs), 'no rows');
+  assert.ok(!/dc-active-list|dc-active-counter/.test(devChatJs.replace(/\/\/[^\n]*/g, '')),
+    'and no lookups for the hosts they needed');
+});
 
 for (const r of ROWS) {
   test(`${r.label} open in a new tab under a modifier`, () => {

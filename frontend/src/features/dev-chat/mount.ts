@@ -34,6 +34,8 @@ import {
   type QuickRepliesState,
   type RunnerState,
 } from './composer-chrome-store';
+import { SessionList } from './session-list';
+import { sessionListStore, type SessionListState } from './session-list-store';
 
 export interface DevChatBridge {
   mountAttachStrip(host: Element | null): void;
@@ -45,6 +47,8 @@ export interface DevChatBridge {
   publishQuickReplies(state: QuickRepliesState): void;
   mountRunnerControls(host: Element | null): void;
   publishRunner(state: RunnerState): void;
+  mountSessionList(host: Element | null, state: SessionListState): void;
+  publishSessionList(state: SessionListState): void;
 }
 
 export const devChatBridge: DevChatBridge = {
@@ -98,6 +102,20 @@ export const devChatBridge: DevChatBridge = {
 
   publishRunner(state) {
     runnerStore.set(state);
+  },
+
+  // The app's own session list. `renderChatView` writes `#dc-session-list`
+  // (the element carries the pane's scroll geometry) and calls the renderer
+  // on the very next line, so the rows ride in WITH the mount: publishing
+  // after it would paint an empty list for one frame on every render.
+  mountSessionList(host, state) {
+    if (!host) return;
+    sessionListStore.set(state);
+    mountLegacyPortal(host, createElement(SessionList));
+  },
+
+  publishSessionList(state) {
+    sessionListStore.set(state);
   },
 };
 

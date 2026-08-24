@@ -164,6 +164,18 @@ const OWNED = [
   // (features/header/ai-budget.tsx). It used to be an empty
   // `#ai-budget-slot` that ai-credit.js `innerHTML`ed; the module publishes
   // a view model now and this is the only writer below the row.
+  // The dev chat's own session list (features/dev-chat/session-list.tsx).
+  // `renderChatView` writes the host — it carries the pane's scroll
+  // geometry — and its rows are React's.
+  //
+  // This sweep NEVER SEES IT, and that is worth stating rather than
+  // rediscovering: the branch that draws it runs only when the chat is open
+  // with no session, and every route into the chat carries a session id (see
+  // migration-state.md). Listed so a write into it is a finding the day the
+  // surface is reachable again; the coverage until then is
+  // tests/archive-session-list.test.js plus the chunk's browser probe,
+  // which drives the branch by hand.
+  { sel: '#dc-session-list' },
   { sel: '#drawer-row-ai-budget' },
   { sel: '#auto-session-modal' },
   { sel: '#credit-options-modal' },
