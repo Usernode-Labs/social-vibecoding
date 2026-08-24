@@ -5853,7 +5853,20 @@ const DevChat = {
 
   // ── Rendering ─────────────────────────────────────────────
 
-  
+  // Message rows carry fractional CENTS from both sources, but under two
+  // field names: live usage events write camel-case `costCents`, while the
+  // session-history query returns PostgreSQL's snake-case `cost_cents` as a
+  // numeric string. Normalize at the rendering seam so a refresh neither
+  // drops the label nor changes its units. The lower-right meter is today's
+  // cumulative spend; this label deliberately says "reply" because it covers
+  // only this assistant row.
+  _messageCostLabel(msg) {
+    const raw = msg?.costCents ?? msg?.cost_cents;
+    if (raw === null || raw === undefined || raw === '') return '';
+    const cents = Number(raw);
+    if (!Number.isFinite(cents) || cents <= 0) return '';
+    return ` · reply $${(cents / 100).toFixed(3)}`;
+  },
 
   renderMessages() {
     const container = document.getElementById('dc-messages');
@@ -6332,7 +6345,7 @@ const DevChat = {
 
       const isUser = msg.role === 'user';
       const isCCOutput = (msg.model || '').startsWith('claude-code/');
-      const costLabel = msg.costCents ? ` · $${(msg.costCents).toFixed(3)}` : '';
+      const costLabel = DevChat._messageCostLabel(msg);
       const ts = msg.created_at ? new Date(msg.created_at).getTime() : '';
       const idLabel = msg.id ? `#${msg.id}` : '';
       const rawContent = msg.content || '';
