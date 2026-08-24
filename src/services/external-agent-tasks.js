@@ -2428,6 +2428,161 @@ async function submitWorkLocked(deps, params) {
   const forkRepo = callerForkRepo || (task ? task.fork_repo : repo);
   const branch = callerBranch || (task ? task.branch_name : null);
 
+  // ── #1347: work that goes to the IN-PROGRESS area, not to a vote ─────
+  //
+  // A task carries `session_id` only once its work has been shared: the
+  // ordinary submit path writes that column at the same moment it sets
+  // `status = 'submitted'`, so an OPEN task with a session on it can only be
+  // one thing — a card already sitting in the app's In-progress area.
+  //
+  // A plain submit against that task must not open a second proposal for a
+  // branch the group can already see. It is refused, and the refusal names the
+  // exact call that does what the caller meant: shape (4) with `propose: true`,
+  // which promotes the existing card. That surface already exists and is
+  // already documented; pointing at it is better than quietly promoting here,
+  // because the promotion is a separate loopback the tool layer owns (it is
+  // the same act as the owner's Propose-to-group button) and doing it from
+  // this depth would return a result shaped like an update to a caller that
+  // asked for a create.
+  if (task && task.session_id && !params.share && !prNumber && !patch) {
+    return fail(
+      'already_shared',
+      `That work is already shared as in-progress session ${Number(task.session_id)}, so submitting it again `
+      + 'would open a second proposal for a branch the group can already see. To put it up for the vote, call '
+      + `submit_work with proposalId ${Number(task.session_id)}, the branch you pushed, and propose: true — that `
+      + 'promotes the card that is already there. To push more commits to it without proposing it, pass '
+      + '`share: true` again.'
+    );
+  }
+
+  if (params.share) {
+    if (typeof params.shareWork !== 'function') {
+      return fail(
+        'platform_unavailable',
+        'This Usernode client cannot share work to the in-progress area. Try again shortly.',
+        { retryable: true }
+      );
+    }
+    // A patch writes a branch in the APP's repository and is create-only by
+    // construction; a prNumber names a pull request, which is a review
+    // artefact by definition. Neither can be "work still underway".
+    if (patch || prNumber) {
+      return fail(
+        'invalid_request',
+        'Share the work as a branch you pushed to your own fork. A patch or an open pull request is a submission '
+        + 'for review, which is the other destination — drop `share` to use it.'
+      );
+    }
+    if (!branch) {
+      return fail('invalid_request', 'Pass `branch`: the branch in your own fork that carries the work.');
+    }
+    const testing = params.testing || {};
+    const payload = {
+      branch,
+      ...(callerForkRepo ? { forkRepo: callerForkRepo } : {}),
+      ...(params.expectedHeadSha ? { expectedHeadSha: String(params.expectedHeadSha).trim().toLowerCase() } : {}),
+      ...(testing.testingPaths ? { testingPaths: testing.testingPaths } : {}),
+      ...(testing.testingSteps ? { testingSteps: testing.testingSteps } : {}),
+      ...(title ? { title: stripEnvelope(title) } : {}),
+      ...(params.body ? { description: stripEnvelope(params.body) } : {}),
+      ...(linkedIssuesFor(task).length ? { linkedIssues: linkedIssuesFor(task) } : {}),
+      // Which coding agent wrote it, resolved HERE rather than at the tool
+      // layer: normalizeAgent already folds the self-reported name together
+      // with the connected client's, and the badge on the shared card should
+      // read the same as the badge on a proposal from the same agent.
+      externalAgent: normalizeAgent(agent, clientName),
+    };
+
+    // Sharing the same task twice pushes onto the SAME card rather than making
+    // a second one. That is what keeps a long piece of work to one row in
+    // everyone's In-progress area while it is still moving — and the card is
+    // already a continuable session, so advancing it is the ordinary
+    // update-from-fork path, not a special case.
+    const existing = task && task.session_id ? Number(task.session_id) : null;
+    if (existing) {
+      if (typeof params.updateProposal !== 'function') {
+        return fail(
+          'platform_unavailable',
+          'This Usernode client cannot advance a shared session. Try again shortly.',
+          { retryable: true }
+        );
+      }
+      const advanced = await params.updateProposal(slug, existing, payload);
+      if (!advanced || !advanced.ok) {
+        return {
+          ok: false,
+          code: 'share_failed',
+          message: (advanced && advanced.body && (advanced.body.message || advanced.body.error))
+            || 'Usernode could not advance that shared session.',
+          status: advanced ? advanced.status : 0,
+          platformResult: advanced,
+        };
+      }
+      return {
+        ok: true,
+        shared: true,
+        reshared: true,
+        proposalId: existing,
+        sessionId: existing,
+        prNumber: null,
+        prUrl: null,
+        appSlug: slug,
+        externalAgent: normalizeAgent(agent, clientName),
+        headSha: (advanced.body && advanced.body.headSha) || null,
+        previewRebuilding: !!(advanced.body && advanced.body.previewRebuilding),
+        testingPaths: (advanced.body && advanced.body.testingPaths) || null,
+        testingPathsRejected: (advanced.body && advanced.body.testingPathsRejected) || null,
+      };
+    }
+
+    const shared = await params.shareWork(slug, payload);
+    if (!shared || !shared.ok) {
+      return {
+        ok: false,
+        code: 'share_failed',
+        message: (shared && shared.body && (shared.body.message || shared.body.error))
+          || 'Usernode could not share that work to the in-progress area.',
+        status: shared ? shared.status : 0,
+        platformResult: shared,
+      };
+    }
+    const sessionId = shared.body && shared.body.sessionId;
+    const label = normalizeAgent(agent, clientName);
+    // The task stays OPEN on purpose. Sharing says the work is UNDERWAY, so
+    // closing the reservation would leave the agent needing a fresh work order
+    // to keep going on a branch it is still committing to. `session_id` is
+    // what the two follow-up branches above key off.
+    if (task && sessionId) {
+      try {
+        await pool.query(
+          `UPDATE external_agent_tasks
+              SET session_id = $2, submitted_branch = $4,
+                  submitted_source = $5, submitted_client_id = $6
+            WHERE id = $1 AND user_id = $3`,
+          [task.id, sessionId, user.id, branch, normalizeSource(source), clientId || null]
+        );
+      } catch (err) {
+        // The card exists and the group can see it; only the bookkeeping
+        // missed. Never fail a share that has already landed.
+        log.warn('external-agent-tasks', 'share task stamp failed', { taskId: task.id, err: err.message });
+      }
+    }
+    return {
+      ok: true,
+      shared: true,
+      proposalId: sessionId || null,
+      sessionId: sessionId || null,
+      prNumber: null,
+      prUrl: null,
+      appSlug: slug,
+      externalAgent: label,
+      headSha: (shared.body && shared.body.headSha) || null,
+      previewRebuilding: !!(shared.body && shared.body.previewRebuilding),
+      testingPaths: (shared.body && shared.body.testingPaths) || null,
+      testingPathsRejected: (shared.body && shared.body.testingPathsRejected) || null,
+    };
+  }
+
   // The promoted-session cap. pr-import does not apply it (importing was a
   // one-at-a-time human action before this existed), so it is applied here,
   // with the same bound and the same wording the browser's promote path
