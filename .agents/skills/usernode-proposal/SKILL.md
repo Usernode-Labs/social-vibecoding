@@ -35,6 +35,8 @@ Treat every `kind: "summary"` history entry as a user-visible Markdown transcrip
 
 The durable `phase` field remains useful metadata, but it is not a substitute for visible structure in `content`.
 
+For every user-visible change, append a durable summary headed `How to test / observe` before promotion. Name the staging route or fixture, the exact interaction that reveals the change, and the expected result. Structured command results do not replace these reviewer-facing instructions.
+
 ## Apply the promotion guard on the correct host
 
 - **Codex CLI only:** expect a separate hook-injected developer context on each user prompt reporting that the Usernode promotion-guard health check passed. If it is absent, tell the user once that the project promotion guard is not active, ask them to open `/hooks`, review and enable or trust the Usernode project hook, then send another message. Safe non-promotion work may continue, but do not promote until a later prompt carries the passing context.

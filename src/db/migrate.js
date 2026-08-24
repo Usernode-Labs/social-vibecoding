@@ -8513,6 +8513,7 @@ async function seedStagingMyOpenPr(pool, config) {
   const target = users[0];
 
   const branch = 'staging-fixture/my-open-pr';
+  const prBody = '## What changed\n\nThe proposal improves the Dev voting experience while preserving the existing vote and merge workflow.\n\n## How to test\n\n1. Review the proposal summary and merge status.\n2. Cast or clear a vote.\n3. Confirm the proposal remains open with the updated tally.';
   let sessionId;
   const { rows: existing } = await pool.query(
     'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
@@ -8523,14 +8524,15 @@ async function seedStagingMyOpenPr(pool, config) {
   } else {
     const { rows } = await pool.query(
       `INSERT INTO chat_sessions
-         (app_id, user_id, branch_name, pr_number, pr_title, pr_summary_md, status,
+         (app_id, user_id, branch_name, pr_number, pr_title, pr_summary_md, pr_body, status,
           votes_required, created_at)
        VALUES
          ($1, $2, $3, 9200, '[staging fixture] My open PR — awaiting votes',
-          $5, 'promoted', $4, NOW() - INTERVAL '15 minutes')
+          $5, $6, 'promoted', $4, NOW() - INTERVAL '15 minutes')
        RETURNING id`,
       [appId, target.id, branch, Math.max(1, Math.ceil(users.length / 2)),
-       'In plain terms: this proposed change makes the app a little nicer to use. Open it to read the details and cast your vote.']
+       'In plain terms: this proposed change makes the app a little nicer to use. Open it to read the details and cast your vote.',
+       prBody]
     );
     sessionId = rows[0].id;
   }
@@ -8565,9 +8567,10 @@ async function seedStagingMyOpenPr(pool, config) {
         SET merge_conflict_state = 'conflict',
             conflict_files = '["src/app.js","public/index.html"]'::jsonb,
             behind_main = 2,
-            conflict_checked_at = NOW()
+            conflict_checked_at = NOW(),
+            pr_body = $2
       WHERE id = $1`,
-    [sessionId]
+    [sessionId, prBody]
   );
 
   // #361: two sibling promoted fixtures so all the new badge states show
@@ -9109,6 +9112,7 @@ async function seedStagingExternalAgentProposal(pool, config) {
       agent: 'claude-code',
       title: '[staging fixture] Built with Claude Code — keyboard shortcuts for the vote panel',
       summary: 'In plain terms: a member asked Claude Code on the web to build this. Their own coding agent wrote the code in their GitHub fork, and Usernode opened the pull request so the group can vote on it.',
+      body: '## What changed\n\nThe vote panel now supports keyboard shortcuts for casting and clearing a vote.\n\n## How to test\n\n1. Focus the vote panel.\n2. Use the displayed shortcuts.\n3. Confirm the selected vote updates without leaving the proposal.',
     },
     {
       branch: 'staging-fixture/external-agent-codex',
@@ -9117,6 +9121,7 @@ async function seedStagingExternalAgentProposal(pool, config) {
       agent: 'codex',
       title: '[staging fixture] Built with Codex — remember the last tab you were on',
       summary: 'In plain terms: a member asked Codex to build this from their ChatGPT account. Their own coding agent wrote the code in their GitHub fork, and Usernode opened the pull request so the group can vote on it.',
+      body: '## What changed\n\nThe Dev screen remembers the last tab you selected and restores it when you return.\n\n## How to test\n\n1. Select a different Dev tab.\n2. Leave the screen and return.\n3. Confirm the selected tab is restored.',
     },
   ];
 
@@ -9130,20 +9135,20 @@ async function seedStagingExternalAgentProposal(pool, config) {
     if (!id) {
       const { rows: ins } = await pool.query(
         `INSERT INTO chat_sessions
-           (app_id, user_id, branch_name, pr_number, pr_url, pr_title, pr_summary_md,
+           (app_id, user_id, branch_name, pr_number, pr_url, pr_title, pr_summary_md, pr_body,
             status, source, external_agent, imported_pr_head_sha, imported_pr_author,
             check_state, test_results, checks_commit_sha, checks_checked_at,
             votes_required, promoted_at, created_at)
          VALUES
-           ($1, $2, $3, $4, $5, $6, $7,
-            'promoted', 'imported', $8, $9, $10,
+           ($1, $2, $3, $4, $5, $6, $7, $8,
+            'promoted', 'imported', $9, $10, $11,
             'passing', '[{"name":"loads with no console errors","status":"pass"}]'::jsonb,
-            $9, NOW() - INTERVAL '6 minutes',
-            $11, NOW() - INTERVAL '7 minutes', NOW() - INTERVAL '7 minutes')
+            $10, NOW() - INTERVAL '6 minutes',
+            $12, NOW() - INTERVAL '7 minutes', NOW() - INTERVAL '7 minutes')
          RETURNING id`,
         [appId, proposer.id, row.branch, row.prNumber,
          `https://github.com/example/example/pull/${row.prNumber}`,
-         row.title, row.summary, row.agent, row.headSha, forkOwner, votesRequired]
+         row.title, row.summary, row.body, row.agent, row.headSha, forkOwner, votesRequired]
       );
       id = ins[0].id;
     } else {
@@ -9154,10 +9159,11 @@ async function seedStagingExternalAgentProposal(pool, config) {
         `UPDATE chat_sessions
             SET source = 'imported', external_agent = $2,
                 imported_pr_head_sha = $3, imported_pr_author = $4,
+                pr_body = $5,
                 check_state = 'passing', checks_commit_sha = $3,
                 checks_checked_at = NOW()
           WHERE id = $1`,
-        [id, row.agent, row.headSha, forkOwner]
+        [id, row.agent, row.headSha, forkOwner, row.body]
       );
     }
     // One yes vote so the tally pill renders next to the chip rather than an

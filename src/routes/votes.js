@@ -1455,7 +1455,7 @@ async function reconcilePromotedSweepHead({ config, pool, session }) {
 // user id (for the per-viewer my_vote / my_kudos subqueries). Callers
 // append their own WHERE / ORDER / LIMIT.
 function mergedRowSelect() {
-  return `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_summary_md, cs.user_id, cs.status, cs.linked_issues, u.username, cs.created_at,
+  return `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_summary_md, cs.pr_body, cs.user_id, cs.status, cs.linked_issues, u.username, cs.created_at,
            -- #1264: the exact merge time (and the promotion time beside it)
            -- so the progress report can date completed work by when it
            -- actually landed instead of when it was started. NULL on rows
@@ -2896,7 +2896,7 @@ function voteRoutes(config) {
       // majority threshold is crossed and only reappears in the "merged"
       // list at the very end, making it look like the vote was lost.
       const { rows } = await pool.query(
-        `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.pr_summary_md, cs.staging_url, cs.testing_md, cs.testing_path, cs.user_id, cs.status, cs.linked_issues, u.username, cs.created_at,
+        `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.pr_summary_md, cs.pr_body, cs.staging_url, cs.testing_md, cs.testing_path, cs.user_id, cs.status, cs.linked_issues, u.username, cs.created_at,
            -- #687 (PR-import): provenance so the client can render the
            -- "Imported PR" badge + GitHub-maintained note and hide the
            -- dev-side controls for externally-authored proposals.
