@@ -97,6 +97,7 @@ import './features/app-frame/mount';
 // browser entry (never from Shell.tsx) keeps its 8,800 lines out of the
 // prerender graph entirely. Its `window.DevChat` publication and its
 // visibility/focus/pagehide listeners are guarded anyway.
+import './features/dev-chat/mount';
 import './features/dev-chat/dev-chat.js';
 
 registerServiceWorker();

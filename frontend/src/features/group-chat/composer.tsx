@@ -36,12 +36,15 @@
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 
+import {
+  PendingStrip,
+  type PendingAttachmentView,
+} from '../attachments/pending-strip';
 import { useStoreState } from '../../lib/use-store-state';
 import {
   composerStore,
   type ComposerScope,
   type ComposerSlot,
-  type PendingAttachmentView,
   type QuoteChipView,
 } from './composer-store';
 
@@ -126,54 +129,21 @@ function AttachError({ scope, text }: { scope: ComposerScope; text: string | nul
   );
 }
 
-function AttachItem({
-  scope, item, index,
-}: { scope: ComposerScope; item: PendingAttachmentView; index: number }) {
-  // An upload in flight offers no remove control — cancelling mid-PUT would
-  // leave a half-written row the sweep has to find anyway.
-  const remove = item.uploading ? (
-    <span className="dc-attach-uploading">…</span>
-  ) : (
-    <button
-      type="button"
-      className="dc-attach-remove"
-      title="Remove"
-      aria-label={`Remove ${item.name}`}
-      onClick={() => controller()?._removeAttachmentAt?.(index, scope)}
-    >
-      ×
-    </button>
-  );
-  if (item.kind === 'image' && item.thumbUrl) {
-    return (
-      <div className="dc-attach-item">
-        <img className="dc-attach-thumb" src={item.thumbUrl} alt={item.name} title={item.name} />
-        {remove}
-      </div>
-    );
-  }
-  return (
-    <div className="dc-attach-item dc-attach-chip" title={item.name}>
-      {item.badge ? <span className="dc-attach-kind">{item.badge}</span> : null}
-      <span className="dc-attach-name">{item.name}</span>
-      <span className="dc-attach-size">{item.size}</span>
-      {remove}
-    </div>
-  );
-}
-
+/**
+ * The pending-upload strip is ../attachments/pending-strip.tsx's — the dev
+ * chat draws the same one, and always did (the comment on `#gc-attachments`
+ * has said "reuses the dev-chat dc-attach-* styles" since #694). What stays
+ * here is which host it goes in and how a row is removed: the live entry holds
+ * a File and an object URL, so it never leaves group-chat.js and the row
+ * reports its position instead.
+ */
 function AttachStrip({ scope, items }: { scope: ComposerScope; items: PendingAttachmentView[] }) {
-  // `dc-attach-strip-active` is what gives the strip its height and border;
-  // an empty strip keeps the node (the module finds it by id) and no class.
   return (
-    <div
+    <PendingStrip
       id={IDS[scope].strip}
-      className={items.length ? 'dc-attach-strip dc-attach-strip-active' : 'dc-attach-strip'}
-    >
-      {items.map((item, i) => (
-        <AttachItem key={item.key} scope={scope} item={item} index={i} />
-      ))}
-    </div>
+      items={items}
+      onRemove={(index) => controller()?._removeAttachmentAt?.(index, scope)}
+    />
   );
 }
 

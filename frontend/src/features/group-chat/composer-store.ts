@@ -26,6 +26,7 @@
  */
 
 import { createStore } from '../../lib/plain-store.js';
+import type { PendingAttachmentView } from '../attachments/pending-strip';
 
 /** The staged reply chip: "↩ Replying to @alice" over a one-line snippet. */
 export interface QuoteChipView {
@@ -33,21 +34,10 @@ export interface QuoteChipView {
   snippet: string;
 }
 
-/** One pending upload, as its chip or thumbnail draws it. */
-export interface PendingAttachmentView {
-  /** Stable across re-renders of the same strip — the module's own key. */
-  key: string;
-  name: string;
-  kind: string;
-  /** MD / HTML / BIN, or null where the kind carries no tag. */
-  badge: string | null;
-  /** Pre-formatted by the module: "2 KB", "3.0 MB". */
-  size: string;
-  /** An image's local preview, before the upload finishes. Null otherwise. */
-  thumbUrl: string | null;
-  /** While true the chip shows "…" instead of a remove control. */
-  uploading: boolean;
-}
+// `PendingAttachmentView` lived here. It is
+// ../attachments/pending-strip.tsx's now, because the dev chat's composer
+// draws the same strip from the same shape — see that file's header for the
+// two things the two chats actually differ on.
 
 export interface ComposerSlot {
   quote: QuoteChipView | null;

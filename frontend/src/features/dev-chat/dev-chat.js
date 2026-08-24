@@ -32,10 +32,22 @@
 // `with`, no octal literals, no `arguments.callee`).
 //
 // renderChatView() is still a template that writes `#dc-view.innerHTML`, so
-// the chat screen is not React-owned yet: this commit makes the conversion
-// POSSIBLE by putting the module in the bundle, and does not attempt it. That
+// the chat screen is not React-owned yet: that commit made the conversion
+// POSSIBLE by putting the module in the bundle, and did not attempt it. That
 // conversion has to take the frame and the composer's streaming state
 // together — see the note at renderChatView().
+//
+// #1191 took the FIRST piece of it: the pending-upload strip is a component
+// now, shared with the group chat's composers
+// (features/attachments/pending-strip.tsx).
+//
+// IT REACHES REACT BY NAME, through `window.UsernodeReact.devChat`, even
+// though this file is in the same bundle and could import directly. That is
+// not an oversight. A dozen test files load this source into a `vm` context as
+// a SCRIPT — `vm.runInContext(SRC)` — to drive `DevChat` against a DOM stub,
+// and a top-level `import` is a syntax error there. Adding two of them turned
+// 194 tests red at once. The bridge is in ./mount.ts, published at
+// module-evaluation time like every other one.
 //
 // localStorage key for the user's last-chosen model. Single global
 // key (not per-app/per-session) so the preference is sticky wherever
@@ -8343,39 +8355,50 @@ const DevChat = {
   },
 
   // Small kind badge for zip/binary chips ("ZIP · 214 files", "BIN").
-  // '' for image/text, which stay visually as before.
-  _attachKindBadgeHtml(a) {
+  // Null for image/text, which carry no tag.
+  _attachKindBadge(a) {
     if (a.kind === 'zip') {
       const count = a.meta && Number.isFinite(Number(a.meta.entryCount))
         ? ` · ${a.meta.entryCount} files` : '';
-      return `<span class="dc-attach-kind">ZIP${count}</span>`;
+      return `ZIP${count}`;
     }
-    if (a.kind === 'binary') return '<span class="dc-attach-kind">BIN</span>';
-    return '';
+    if (a.kind === 'binary') return 'BIN';
+    return null;
   },
 
+  // …and its HTML spelling, for the message-bubble row, which is still a
+  // string renderer. One source of truth for the label either way.
+  _attachKindBadgeHtml(a) {
+    const label = DevChat._attachKindBadge(a);
+    return label ? `<span class="dc-attach-kind">${label}</span>` : '';
+  },
+
+  // The strip is features/attachments/pending-strip.tsx's, shared with the
+  // group chat's two composers. `renderChatView` rebuilds `#dc-attachments`
+  // on every chat-view render, so this mounts per publish; the previous host's
+  // portal entry is swept as detached (lib/legacy-portals.tsx).
+  //
+  // The ELEMENT stays ours — the template writes it and this toggles its
+  // `dc-attach-strip-active` (the class that gives the strip its height and
+  // border) — and only its ROWS are React's.
   _renderAttachStrip() {
     const strip = document.getElementById('dc-attachments');
     if (!strip) return;
-    const items = DevChat.pendingAttachments;
-    if (!items.length) {
-      strip.innerHTML = '';
-      strip.classList.remove('dc-attach-strip-active');
-      return;
-    }
-    strip.classList.add('dc-attach-strip-active');
-    strip.innerHTML = items.map((a, i) => {
-      const name = escapeHtml(a.filename);
-      const removeBtn = a.uploading
-        ? '<span class="dc-attach-uploading">…</span>'
-        : `<button type="button" class="dc-attach-remove" data-attach-idx="${i}" title="Remove" aria-label="Remove ${name}">&times;</button>`;
-      if (a.kind === 'image' && a.objectUrl) {
-        return `<div class="dc-attach-item"><img class="dc-attach-thumb" src="${a.objectUrl}" alt="${name}" title="${name}">${removeBtn}</div>`;
-      }
-      return `<div class="dc-attach-item dc-attach-chip" title="${name}">${DevChat._attachKindBadgeHtml(a)}<span class="dc-attach-name">${name}</span><span class="dc-attach-size">${DevChat._humanSize(a.sizeBytes)}</span>${removeBtn}</div>`;
-    }).join('');
-    strip.querySelectorAll('.dc-attach-remove').forEach((btn) => {
-      btn.addEventListener('click', () => DevChat._removeAttachment(Number(btn.dataset.attachIdx)));
+    const react = (typeof window !== 'undefined' && window.UsernodeReact)
+      ? window.UsernodeReact.devChat : null;
+    if (!react) return;
+    react.mountAttachStrip(strip);
+    strip.classList.toggle('dc-attach-strip-active', DevChat.pendingAttachments.length > 0);
+    react.publishAttachStrip({
+      items: DevChat.pendingAttachments.map((a, i) => ({
+        key: a.id || `p${i}:${a.filename}`,
+        name: a.filename || 'file',
+        kind: a.kind,
+        badge: DevChat._attachKindBadge(a),
+        size: DevChat._humanSize(a.sizeBytes),
+        thumbUrl: a.objectUrl || null,
+        uploading: !!a.uploading,
+      })),
     });
   },
 
