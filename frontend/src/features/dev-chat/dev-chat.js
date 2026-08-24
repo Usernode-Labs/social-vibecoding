@@ -1380,10 +1380,26 @@ const DevChat = {
     DevChat._applyCreditsLowBanner();
     const el = document.getElementById('dc-budget');
     if (!el) return;
-    if (DevChat._isOpenRouterSession()) {
-      el.innerHTML = '';
-      return;
-    }
+    const react = (typeof window !== 'undefined' && window.UsernodeReact)
+      ? window.UsernodeReact.devChat : null;
+    if (!react) return;
+    // The HOST stays ours — the template writes it, and a dapp.json check
+    // selects it as `#dc-venue-detail ~ #dc-budget`, so where it sits is part
+    // of the contract. Its CHILDREN are features/dev-chat/budget-pill.tsx's.
+    react.mountBudgetPill(el);
+    react.publishBudgetPill(DevChat._budgetPillView());
+  },
+
+  // The meter's nine states, as fragments. Every decision is here — the
+  // thresholds, the wording, the dollar formatting, the reset sentence, and
+  // the limit-first billing rule — and the component only draws them.
+  _budgetPillView() {
+    const NONE = { title: null, parts: [] };
+    const muted = 'text-zinc-500 dark:text-zinc-400';
+    // An OpenRouter session bills the user's own provider key, so the
+    // platform meter has nothing to say about it.
+    if (DevChat._isOpenRouterSession()) return NONE;
+
     // #593: the reset time, rendered rather than hidden in a tooltip — it
     // is what someone deciding whether to start another turn is looking
     // for, and a title attribute is invisible on touch and absent from
@@ -1394,18 +1410,31 @@ const DevChat = {
     if (state && state.level === 'locked') {
       if (hasApiKey) {
         const last4 = window.Settings.state.keyLast4 || '••••';
-        el.innerHTML = `<span title="Platform credits are locked until you connect GitHub or X. Your own Anthropic key remains available."><a href="#settings/connectors" class="text-amber-700 dark:text-amber-400 hover:underline">platform credits locked</a><span class="text-zinc-500 dark:text-zinc-400"> · </span><span class="text-emerald-700 dark:text-emerald-400">your key · ${escapeHtml(last4)}</span></span>`;
-      } else {
-        el.innerHTML = '<a href="#settings/connectors" class="text-amber-700 dark:text-amber-400 font-medium hover:underline" title="Connect GitHub or X to unlock $10/day">verify account · unlock $10/day</a>';
+        return {
+          title: 'Platform credits are locked until you connect GitHub or X. Your own Anthropic key remains available.',
+          parts: [
+            { text: 'platform credits locked', className: 'text-amber-700 dark:text-amber-400 hover:underline', href: '#settings/connectors' },
+            { text: ' · ', className: muted },
+            { text: `your key · ${last4}`, className: 'text-emerald-700 dark:text-emerald-400' },
+          ],
+        };
       }
-      return;
+      return {
+        title: null,
+        parts: [{
+          text: 'verify account · unlock $10/day',
+          className: 'text-amber-700 dark:text-amber-400 font-medium hover:underline',
+          href: '#settings/connectors',
+          title: 'Connect GitHub or X to unlock $10/day',
+        }],
+      };
     }
     if (state && state.level === 'unavailable') {
-      el.innerHTML = hasApiKey
-        ? '<span class="text-emerald-700 dark:text-emerald-400" title="Platform credit eligibility is temporarily unavailable; your own key remains available.">your key available</span>'
-        : '<span class="text-amber-700 dark:text-amber-400" title="Platform credit eligibility could not be verified. Try again shortly.">credits temporarily unavailable</span>';
-      return;
+      return hasApiKey
+        ? { title: null, parts: [{ text: 'your key available', className: 'text-emerald-700 dark:text-emerald-400', title: 'Platform credit eligibility is temporarily unavailable; your own key remains available.' }] }
+        : { title: null, parts: [{ text: 'credits temporarily unavailable', className: 'text-amber-700 dark:text-amber-400', title: 'Platform credit eligibility could not be verified. Try again shortly.' }] };
     }
+
     // #1353: no "· $X left" alongside the pair. The remainder is $limit
     // minus $spent — both of which are right there, two characters apart —
     // so the meter was stating the same fact twice on the narrowest strip
@@ -1420,12 +1449,14 @@ const DevChat = {
     // thresholds as everyone else) and a "your key $X" figure only once
     // spillover billing to their key has actually started today. The
     // BYOK figure never gets threshold coloring — no cap applies to it.
-    if (window.Settings?.state?.hasApiKey) {
+    if (hasApiKey) {
       const last4 = window.Settings.state.keyLast4 || '••••';
       if (!DevChat.budget) {
         // Budget fetch hasn't landed yet — static badge until it does.
-        el.innerHTML = `<span class="text-emerald-700 dark:text-emerald-400" title="Using your Anthropic API key">your key · ${last4}</span>`;
-        return;
+        return {
+          title: null,
+          parts: [{ text: `your key · ${last4}`, className: 'text-emerald-700 dark:text-emerald-400', title: 'Using your Anthropic API key' }],
+        };
       }
       const byokCents = DevChat.budget.byokSpentCents || 0;
       const byok = (byokCents / 100).toFixed(2);
@@ -1433,34 +1464,50 @@ const DevChat = {
       const limit = (DevChat.budget.limitCents / 100).toFixed(2);
       const pct = Math.min(100, (DevChat.budget.spentCents / DevChat.budget.limitCents) * 100);
       const color = pct > 80 ? 'text-red-700 dark:text-red-400' : pct > 50 ? 'text-yellow-700 dark:text-yellow-400' : 'text-emerald-700 dark:text-emerald-400';
-      const tip = `Today: $${spent} of your $${limit} platform daily limit`
-        + (byokCents > 0 ? ` + $${byok} billed to your Anthropic key (…${last4})` : '')
-        + `. The daily limit is used first; your key (…${last4}) takes over once it runs out. `
-        + (resetTip || 'Resets at midnight UTC.');
-      let html = `<span class="text-zinc-500 dark:text-zinc-400">limit </span><span class="${color}">$${spent}</span><span class="text-zinc-500 dark:text-zinc-400">/$${limit}</span>`;
+      const parts = [
+        { text: 'limit ', className: muted },
+        { text: `$${spent}`, className: color },
+        { text: `/$${limit}`, className: muted },
+      ];
       if (byokCents > 0) {
-        html += `<span class="text-zinc-500 dark:text-zinc-400"> · </span><span class="text-emerald-700 dark:text-emerald-400">your key $${byok}</span>`;
+        parts.push({ text: ' · ', className: muted });
+        parts.push({ text: `your key $${byok}`, className: 'text-emerald-700 dark:text-emerald-400' });
       }
-      el.innerHTML = `<span title="${escapeHtml(tip)}">${html}</span>`;
-      return;
+      return {
+        title: `Today: $${spent} of your $${limit} platform daily limit`
+          + (byokCents > 0 ? ` + $${byok} billed to your Anthropic key (…${last4})` : '')
+          + `. The daily limit is used first; your key (…${last4}) takes over once it runs out. `
+          + (resetTip || 'Resets at midnight UTC.'),
+        parts,
+      };
     }
-    if (!DevChat.budget) return;
+
+    if (!DevChat.budget) return NONE;
     const spent = (DevChat.budget.spentCents / 100).toFixed(2);
     const limit = (DevChat.budget.limitCents / 100).toFixed(2);
     // #463: exhausted (no key saved) keeps the familiar $spent/$limit
     // pair — just unmistakably red, with the tooltip pointing at the
     // BYOK escape hatch. The banner carries the wordy explanation.
     if (DevChat._creditsExhausted()) {
-      const tip = `Your free daily AI credits are used up. ${
-        resetTip || 'Resets at midnight UTC.'} Or add your own Anthropic API key in Settings to keep working now.`;
-      el.innerHTML = `<span title="${escapeHtml(tip)}"><span class="text-red-500 font-semibold">$${spent}</span><span class="text-red-700 dark:text-red-400">/$${limit}</span></span>`;
-      return;
+      return {
+        title: `Your free daily AI credits are used up. ${
+          resetTip || 'Resets at midnight UTC.'} Or add your own Anthropic API key in Settings to keep working now.`,
+        parts: [
+          { text: `$${spent}`, className: 'text-red-500 font-semibold' },
+          { text: `/$${limit}`, className: 'text-red-700 dark:text-red-400' },
+        ],
+      };
     }
     const pct = Math.min(100, (DevChat.budget.spentCents / DevChat.budget.limitCents) * 100);
     const color = pct > 80 ? 'text-red-700 dark:text-red-400' : pct > 50 ? 'text-yellow-700 dark:text-yellow-400' : 'text-emerald-700 dark:text-emerald-400';
-    const tip = `Today: $${spent} of your $${limit} free daily AI credits. ${
-      resetTip || 'Resets at midnight UTC.'}`;
-    el.innerHTML = `<span title="${escapeHtml(tip)}"><span class="${color}">$${spent}</span><span class="text-zinc-500 dark:text-zinc-400">/$${limit}</span></span>`;
+    return {
+      title: `Today: $${spent} of your $${limit} free daily AI credits. ${
+        resetTip || 'Resets at midnight UTC.'}`,
+      parts: [
+        { text: `$${spent}`, className: color },
+        { text: `/$${limit}`, className: muted },
+      ],
+    };
   },
 
   // #463: true when the signed-in user is out of free credits AND has no

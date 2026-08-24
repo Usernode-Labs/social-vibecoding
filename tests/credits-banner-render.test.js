@@ -18,6 +18,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { renderComponent } = require('./lib/render-tsx');
 
 const SRC = fs.readFileSync(
   path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'dev-chat.js'),
@@ -33,11 +34,12 @@ const BUILD_VENUES_SRC = fs.readFileSync(
 );
 
 function makeDevChat({ hasApiKey = false } = {}) {
-  let budgetHtml = '';
-  const budgetEl = {
-    set innerHTML(v) { budgetHtml = v; },
-    get innerHTML() { return budgetHtml; },
-  };
+  // #1191: the meter's markup is features/dev-chat/budget-pill.tsx's, so
+  // `renderBudget()` publishes fragments instead of assigning innerHTML.
+  // `meterHtml()` below renders the component from whatever was published, so
+  // every assertion in this file still reads the meter as a reader sees it.
+  let published = { title: null, parts: [] };
+  const budgetEl = { innerHTML: '' };
   const noopEl = {
     style: {}, classList: { add: () => {}, remove: () => {}, toggle: () => {} },
     addEventListener: () => {}, setAttribute: () => {}, removeAttribute: () => {},
@@ -66,6 +68,14 @@ function makeDevChat({ hasApiKey = false } = {}) {
   sandbox.globalThis = sandbox;
   sandbox.window.addEventListener = () => {};
   sandbox.Settings = { state: { hasApiKey, keyLast4: hasApiKey ? '1234' : null } };
+  sandbox.UsernodeReact = {
+    devChat: {
+      mountBudgetPill: () => {},
+      publishBudgetPill: (state) => { published = state; },
+      mountAttachStrip: () => {},
+      publishAttachStrip: () => {},
+    },
+  };
   vm.createContext(sandbox);
   // credit-options.js owns the banner's CTA row (and the same routes the
   // in-chat card and the Generate-proposal modal render). index.html loads
@@ -79,7 +89,10 @@ function makeDevChat({ hasApiKey = false } = {}) {
   vm.runInContext(`${SRC}\n;globalThis.__DevChat = DevChat;`, sandbox);
   return {
     DevChat: sandbox.__DevChat,
-    meterHtml: () => budgetHtml,
+    meterHtml: () => renderComponent(
+      'frontend/src/features/dev-chat/budget-pill.tsx', 'BudgetPillView',
+      JSON.parse(JSON.stringify(published)),
+    ),
   };
 }
 

@@ -21,6 +21,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { renderComponent } = require('./lib/render-tsx');
 
 const root = path.join(__dirname, '..');
 const CO = require('../public/js/credit-options.js');
@@ -185,11 +186,12 @@ test('the shared-cap refusal says when it lifts (it used to say "tomorrow")', ()
 // plain script, so it is evaluated in a vm context with the globals it
 // touches stubbed and #dc-budget captured.
 function makeDevChat({ hasApiKey = false, search = '' } = {}) {
-  let budgetHtml = '';
-  const budgetEl = {
-    set innerHTML(v) { budgetHtml = v; },
-    get innerHTML() { return budgetHtml; },
-  };
+  // #1191: the meter's markup is features/dev-chat/budget-pill.tsx's, so
+  // `renderBudget()` publishes fragments. `meterHtml()` renders the component
+  // from what was published, so the assertions still read the meter as a
+  // reader sees it.
+  let published = { title: null, parts: [] };
+  const budgetEl = { innerHTML: '' };
   const sandbox = {
     console,
     escapeHtml: (s) => String(s == null ? '' : s)
@@ -214,11 +216,25 @@ function makeDevChat({ hasApiKey = false, search = '' } = {}) {
   sandbox.globalThis = sandbox;
   sandbox.window.addEventListener = () => {};
   sandbox.Settings = { state: { hasApiKey, keyLast4: hasApiKey ? '1234' : null } };
+  sandbox.UsernodeReact = {
+    devChat: {
+      mountBudgetPill: () => {},
+      publishBudgetPill: (state) => { published = state; },
+      mountAttachStrip: () => {},
+      publishAttachStrip: () => {},
+    },
+  };
   vm.createContext(sandbox);
   vm.runInContext(fs.readFileSync(path.join(root, 'public/js/build-venues.js'), 'utf8'), sandbox);
   vm.runInContext(fs.readFileSync(path.join(root, 'public/js/credit-options.js'), 'utf8'), sandbox);
   vm.runInContext(`${DEV_CHAT_SRC}\n;globalThis.__DevChat = DevChat;`, sandbox);
-  return { DevChat: sandbox.__DevChat, meterHtml: () => budgetHtml };
+  return {
+    DevChat: sandbox.__DevChat,
+    meterHtml: () => renderComponent(
+      'frontend/src/features/dev-chat/budget-pill.tsx', 'BudgetPillView',
+      JSON.parse(JSON.stringify(published)),
+    ),
+  };
 }
 
 test('the composer meter is the pair and the reset, and nothing else', () => {

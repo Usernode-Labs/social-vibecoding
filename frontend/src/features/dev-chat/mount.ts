@@ -25,11 +25,15 @@ import { createElement } from 'react';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
 import { DevAttachStrip } from './attach-strip';
 import { attachStripStore, type AttachStripState } from './attach-strip-store';
+import { BudgetPill } from './budget-pill';
+import { budgetPillStore, type BudgetPillState } from './budget-pill-store';
 
 export interface DevChatBridge {
   mountAttachStrip(host: Element | null): void;
   unmountAttachStrip(host: Element | null): void;
   publishAttachStrip(state: AttachStripState): void;
+  mountBudgetPill(host: Element | null): void;
+  publishBudgetPill(state: BudgetPillState): void;
 }
 
 export const devChatBridge: DevChatBridge = {
@@ -50,6 +54,18 @@ export const devChatBridge: DevChatBridge = {
 
   publishAttachStrip(state) {
     attachStripStore.set(state);
+  },
+
+  // The credit meter. `#dc-budget` is written by `renderChatView`'s template
+  // and a dapp.json check selects it as a SIBLING of `#dc-venue-detail`, so
+  // the element stays the module's and only its children are React's.
+  mountBudgetPill(host) {
+    if (!host) return;
+    mountLegacyPortal(host, createElement(BudgetPill));
+  },
+
+  publishBudgetPill(state) {
+    budgetPillStore.set(state);
   },
 };
 
