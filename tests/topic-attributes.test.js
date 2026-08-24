@@ -21,6 +21,10 @@ const path = require('path');
 
 // ── 1. Pure helpers ────────────────────────────────────────────────────
 const attrs = require('../src/services/topic-attributes');
+const { renderComponent } = require('./lib/render-tsx');
+
+const ROOT = path.join(__dirname, '..');
+const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
 
 test('normalizeValue: priority accepts only low/medium/high', () => {
   assert.equal(attrs.normalizeValue('priority', 'high'), 'high');
@@ -769,12 +773,18 @@ test('card renderer emits the three chips (priority, category, assignee)', () =>
 // escaping on every label interpolation.
 test('category dropdown offers a text box + the app custom block', () => {
   const fe = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf-8');
-  assert.match(fe, /id="attr-category-input"/, 'the type-a-category box exists');
-  assert.match(fe, /maxlength="\$\{AppView\.ATTR_CATEGORY_MAX_LEN\}"/,
+  // The dropdown's markup is features/dev-board/attr-popover.tsx since #1191;
+  // what app-view.js still decides is the SHAPE it hands over.
+  const pop = read('frontend/src/features/dev-board/attr-popover.tsx');
+  assert.match(fe, /inputId: 'attr-category-input'/, 'the type-a-category box exists');
+  assert.match(fe, /maxLength: AppView\.ATTR_CATEGORY_MAX_LEN/,
     'the box caps typed length from the mirrored constant');
   assert.match(fe, /ATTR_CATEGORY_MAX_LEN: 24/, 'FE cap mirrors the service MAX_CATEGORY_LEN');
-  assert.match(fe, /id="attr-category-add"/, 'the Add button exists');
-  assert.match(fe, /attr-pop-head-divided">Custom</, 'customs sit under a divided "Custom" heading');
+  assert.match(fe, /buttonId: 'attr-category-add'/, 'the Add button exists');
+  assert.match(pop, /maxLength=\{add\.maxLength\}/, 'the component applies that cap');
+  assert.match(fe, /head: 'Custom', divided: true/, 'customs sit under a divided "Custom" heading');
+  assert.match(pop, /'attr-pop-head attr-pop-head-divided' : 'attr-pop-head'/,
+    'and the component draws the rule above it');
   assert.match(fe, /_customCategories\(\)/, 'the custom block reads the app vocabulary');
 
   // The vocabulary is loaded once per Dev mount and refreshed from the
@@ -787,7 +797,23 @@ test('category dropdown offers a text box + the app custom block', () => {
   // dropdown row must run them through escapeHtml.
   assert.match(fe, /<span class="attr-dot \$\{meta\.cls\}"><\/span>\$\{escapeHtml\(meta\.label\)\}/,
     'category chip escapes its label');
-  assert.match(fe, /escapeHtml\(meta\.label\)/, 'popover rows escape the label');
+  // The popover row is a component now, so its label is a text child — the
+  // property `escapeHtml` was there to give it. Rendered, not grepped.
+  assert.match(
+    renderComponent('frontend/src/features/dev-board/attr-popover.tsx', 'AttrPopoverView', {
+      phase: 'ready',
+      field: 'category',
+      groups: [{
+        head: 'Custom',
+        divided: true,
+        options: [{ value: 'x', dot: 'bg-sky-500/10', label: '<img src=x onerror=alert(1)>', count: 0, mine: false }],
+      }],
+      emptyNote: null,
+      add: null,
+      suggestions: [],
+    }),
+    /&lt;img src=x onerror=alert\(1\)&gt;/,
+  );
   assert.match(fe, /`<option value="\$\{escapeAttr\(v\)\}"/, 'filter options escape the value attribute');
 
   // _categoryMeta must resolve unknown (custom) slugs rather than returning
@@ -861,13 +887,18 @@ test('app_topic_categories is declared idempotently and is NOT staging:private',
 // standalone "Assign to me" button (that approach was replaced).
 test('assignee dropdown defaults the name box to the viewer, gated on no prior vote', () => {
   const fe = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf-8');
-  // The pre-fill lives in the assignee branch of _renderAttrPopoverBody:
-  // reads App.user.username, gated on !data.myValue, sets + selects the box.
+  // The pre-fill is still app-view.js's decision — it reads App.user.username
+  // and gates on !data.myValue — but it arrives as the box's `defaultValue`
+  // now rather than as a `.value` write after the paint. The SELECT stays a
+  // DOM call, because "typing replaces it" is a selection, not markup.
   assert.match(fe, /const me = \(typeof App !== 'undefined' && App\.user && App\.user\.username\)/,
     'reads the signed-in username');
-  assert.match(fe, /if \(me && !data\.myValue\) \{/, 'only pre-fills when the viewer has no current pick');
-  assert.match(fe, /input\.value = me;/, 'sets the name box to the viewer');
-  assert.match(fe, /input\.select\(\);/, 'selects the pre-filled text so typing replaces it');
+  assert.match(fe, /defaultValue: \(me && !data\.myValue\) \? me : '',/,
+    'only pre-fills when the viewer has no current pick');
+  assert.match(fe, /if \(add\.defaultValue\) input\.select\(\);/,
+    'selects the pre-filled text so typing replaces it');
+  assert.match(read('frontend/src/features/dev-board/attr-popover.tsx'),
+    /defaultValue=\{add\.defaultValue\}/, 'the field is uncontrolled, seeded from the model');
 
   // The standalone button + its plumbing are gone.
   assert.doesNotMatch(fe, /_assignToMeBtnHtml/, 'no assign-to-me button helper');

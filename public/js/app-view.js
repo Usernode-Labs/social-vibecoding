@@ -8662,8 +8662,15 @@ const AppView = {
     const pop = document.createElement('div');
     pop.id = 'attr-popover';
     pop.className = 'attr-popover';
-    pop.innerHTML = '<div class="px-3 py-2 text-xs text-zinc-500 dark:text-zinc-400">Loading…</div>';
     document.body.appendChild(pop);
+    // The HOST stays ours — created here, placed under the chip below,
+    // removed on close — and its CHILDREN are
+    // features/dev-board/attr-popover.tsx's, mounted once per open. A new
+    // element each time means a new portal entry; the previous open's entry is
+    // swept by `pruneDetachedLegacyPortals` (lib/legacy-portals.tsx), because
+    // `_closeAttrPopover` removes the node.
+    AppView._reactDevBoard()?.mountAttrPopover(pop);
+    AppView._publishAttrPopover({ phase: 'loading', field, groups: [], emptyNote: null, add: null, suggestions: [] });
     AppView._attrPopover = { field, targetType, targetRef, slug };
 
     // Position under the chip, clamped to the viewport.
@@ -8686,9 +8693,14 @@ const AppView = {
         AppView._positionAttrPopover(pop, chip);
       }
     } catch {
-      const live = document.getElementById('attr-popover');
-      if (live) live.innerHTML = '<div class="px-3 py-2 text-xs text-red-500">Couldn\'t load options.</div>';
+      if (document.getElementById('attr-popover')) {
+        AppView._publishAttrPopover({ phase: 'error', field, groups: [], emptyNote: null, add: null, suggestions: [] });
+      }
     }
+  },
+
+  _publishAttrPopover(patch) {
+    AppView._reactDevBoard()?.publishAttrPopover(patch);
   },
 
   // Place the popover just under `chip`, clamped to the viewport. Shared
@@ -8727,162 +8739,147 @@ const AppView = {
     pop.style.top = `${top}px`;
   },
 
-  // Render the popover contents from a { field, options, myValue } payload
-  // and wire its controls. Re-run after each vote so counts/checks update
-  // in place without closing the dropdown.
+  // Build the popover's view model from a { field, options, myValue } payload
+  // and hand it to features/dev-board/attr-popover.tsx. Re-run after each vote
+  // so counts and checks update in place without closing the dropdown.
+  //
+  // This was `_renderAttrPopoverBody`, which built the markup AND re-bound
+  // every listener on each repaint. The rows' click, the Add button and the
+  // typeahead are props on the component now; what stays here is every
+  // DECISION — the vocabulary, the tints, the counts, and #600's
+  // default-to-me rule.
   _renderAttrPopoverBody(data) {
     const pop = document.getElementById('attr-popover');
     if (!pop) return;
     const field = data.field;
-    const check = '<svg class="w-3.5 h-3.5 text-violet-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>';
+    const byVal = new Map((data.options || []).map((o) => [o.value, o]));
+    const row = (value, dot, label) => {
+      const o = byVal.get(value);
+      return { value, dot, label, count: o ? o.count : 0, mine: !!(o && o.mine) };
+    };
 
-    // #1187: `data-attr-opt-mine` marks the option the viewer already voted
-    // for, so the click handler below can treat a re-click as a deselect
-    // (assignee only — see the wiring). The title spells the affordance out.
-    const optRow = (label, value, count, mine) =>
-      `<button type="button" class="attr-opt" data-attr-opt-value="${escapeAttr(value)}" data-attr-opt-mine="${mine ? '1' : '0'}"${mine && field === 'assignee' ? ' title="Click again to remove your pick"' : ''}>
-        <span class="attr-opt-label">${label}</span>
-        <span class="attr-opt-right">${count ? `<span class="attr-opt-count">${count}</span>` : ''}${mine ? check : ''}</span>
-      </button>`;
-
-    let inner = '';
+    const groups = [];
+    let emptyNote = null;
+    let add = null;
     if (field === 'priority') {
-      const byVal = new Map((data.options || []).map((o) => [o.value, o]));
-      inner += '<div class="attr-pop-head">Priority</div>';
-      for (const v of AppView.ATTR_PRIORITY_VALUES) {
-        const o = byVal.get(v);
-        const meta = AppView._priorityMeta(v);
-        inner += optRow(`<span class="attr-dot ${meta.cls}"></span>${meta.label}`, v, o ? o.count : 0, !!(o && o.mine));
-      }
+      groups.push({
+        head: 'Priority',
+        divided: false,
+        options: AppView.ATTR_PRIORITY_VALUES.map((v) => {
+          const meta = AppView._priorityMeta(v);
+          return row(v, meta.cls, meta.label);
+        }),
+      });
     } else if (field === 'category') {
-      // #504: list the fixed category set (like priority), each with its
-      // colour swatch, showing counts + the viewer's current check.
-      // #780: then the app's CUSTOM options under a divider, and a text box
-      // to type a new one. Counts come from this card's tally either way, so
-      // an option nobody has voted for here shows 0.
-      const byVal = new Map((data.options || []).map((o) => [o.value, o]));
+      // #504: the fixed set, each with its colour swatch, showing counts and
+      // the viewer's current check. #780: then the app's CUSTOM options under
+      // a divider, and a box to type a new one. Counts come from this card's
+      // tally either way, so an option nobody has voted for here shows 0.
       const catRow = (v) => {
-        const o = byVal.get(v);
         const meta = AppView._categoryMeta(v);
-        return optRow(
-          `<span class="attr-dot ${meta.cls}"></span>${escapeHtml(meta.label)}`,
-          v, o ? o.count : 0, !!(o && o.mine)
-        );
+        return row(v, meta.cls, meta.label);
       };
-      inner += '<div class="attr-pop-head">Category</div>';
-      for (const v of AppView.ATTR_CATEGORY_VALUES) inner += catRow(v);
+      groups.push({
+        head: 'Category',
+        divided: false,
+        options: AppView.ATTR_CATEGORY_VALUES.map(catRow),
+      });
       const customs = AppView._customCategories();
       if (customs.length) {
-        inner += '<div class="attr-pop-head attr-pop-head-divided">Custom</div>';
-        for (const c of customs) inner += catRow(c.value);
+        groups.push({ head: 'Custom', divided: true, options: customs.map((c) => catRow(c.value)) });
       }
-      inner += `<div class="attr-pop-add">
-        <input type="text" id="attr-category-input" class="attr-pop-input" placeholder="Type a category…" autocomplete="off" maxlength="${AppView.ATTR_CATEGORY_MAX_LEN}" />
-        <button type="button" id="attr-category-add" class="attr-pop-addbtn">Add</button>
-      </div>`;
+      add = {
+        inputId: 'attr-category-input',
+        buttonId: 'attr-category-add',
+        placeholder: 'Type a category…',
+        maxLength: AppView.ATTR_CATEGORY_MAX_LEN,
+        defaultValue: '',
+        suggest: false,
+      };
     } else {
-      inner += '<div class="attr-pop-head">Assigned person</div>';
       const opts = data.options || [];
-      if (opts.length) {
-        for (const o of opts) {
-          inner += optRow(`@${escapeHtml(o.value)}`, o.value, o.count, !!o.mine);
-        }
-      } else {
-        inner += '<div class="px-3 py-1.5 text-xs text-zinc-400 dark:text-zinc-500">No suggestions yet.</div>';
-      }
-      inner += `<div class="attr-pop-add">
-        <input type="text" id="attr-assignee-input" class="attr-pop-input" placeholder="Type a name…" autocomplete="off" maxlength="64" />
-        <div id="attr-assignee-suggest" class="attr-pop-suggest hidden"></div>
-        <button type="button" id="attr-assignee-add" class="attr-pop-addbtn">Add</button>
-      </div>`;
-    }
-
-    pop.innerHTML = inner;
-
-    // Vote on an existing option. #1187: the assignee row is a TOGGLE —
-    // clicking the name the viewer already voted for withdraws that vote
-    // (unassign) instead of re-casting it, mirroring the PM view's
-    // drag-to-Unassigned. Priority/category keep the idempotent re-vote:
-    // their checked state doubles as "my current pick" and un-picking them
-    // was never the reported gap.
-    pop.querySelectorAll('.attr-opt').forEach((b) => {
-      b.addEventListener('click', () => {
-        if (field === 'assignee' && b.dataset.attrOptMine === '1') {
-          AppView._withdrawAttrVote();
-        } else {
-          AppView._castAttrVote(b.dataset.attrOptValue);
-        }
+      groups.push({
+        head: 'Assigned person',
+        divided: false,
+        // `dot: null` is what tells the component to draw `@name` instead of
+        // a swatch and a word.
+        options: opts.map((o) => ({
+          value: o.value, dot: null, label: o.value, count: o.count, mine: !!o.mine,
+        })),
       });
-    });
-
-    if (field === 'category') {
-      // #780: type a new category. No typeahead (unlike assignee) — the
-      // options are all listed right above. Before POSTing we fold the typed
-      // text onto an option already listed when it matches case-insensitively,
-      // so "Bug" votes for the built-in `bug` and "PERFORMANCE" votes for the
-      // existing custom option rather than attempting a duplicate.
-      const input = pop.querySelector('#attr-category-input');
-      const addBtn = pop.querySelector('#attr-category-add');
-      const submit = () => {
-        const typed = (input.value || '').trim().replace(/\s+/g, ' ');
-        if (!typed) return;
-        const lower = typed.toLowerCase();
-        const known = AppView.ATTR_CATEGORY_VALUES.includes(lower)
-          ? lower
-          : (AppView._customCategories().find((c) => c.value.toLowerCase() === lower) || {}).value;
-        AppView._castAttrVote(known || typed);
-      };
-      addBtn.addEventListener('click', submit);
-      input.addEventListener('keydown', (ev) => {
-        if (ev.key === 'Enter') { ev.preventDefault(); submit(); }
-      });
-      input.focus();
-    } else if (field === 'assignee') {
-      const input = pop.querySelector('#attr-assignee-input');
-      const addBtn = pop.querySelector('#attr-assignee-add');
-      const suggest = pop.querySelector('#attr-assignee-suggest');
-      const submit = () => {
-        const v = (input.value || '').trim();
-        if (v) AppView._castAttrVote(v);
-      };
-      addBtn.addEventListener('click', submit);
-      input.addEventListener('keydown', (ev) => {
-        if (ev.key === 'Enter') { ev.preventDefault(); submit(); }
-      });
-      // Username typeahead off /api/users/search (same endpoint the invite
-      // typeahead uses). Free text is still allowed — these are hints only.
-      input.addEventListener('input', () => {
-        const q = (input.value || '').trim();
-        clearTimeout(AppView._attrSuggestTimer);
-        if (!q) { suggest.classList.add('hidden'); suggest.innerHTML = ''; return; }
-        AppView._attrSuggestTimer = setTimeout(async () => {
-          try {
-            const res = await fetch(`/api/users/search?q=${encodeURIComponent(q)}`);
-            if (!res.ok) return;
-            const { users } = await res.json();
-            if (!users || !users.length) { suggest.classList.add('hidden'); suggest.innerHTML = ''; return; }
-            suggest.innerHTML = users.map((u) =>
-              `<button type="button" class="attr-suggest-item" data-attr-suggest="${escapeAttr(u.username)}">@${escapeHtml(u.username)}</button>`).join('');
-            suggest.classList.remove('hidden');
-            suggest.querySelectorAll('[data-attr-suggest]').forEach((it) => {
-              it.addEventListener('click', () => AppView._castAttrVote(it.dataset.attrSuggest));
-            });
-          } catch { /* ignore */ }
-        }, 200);
-      });
+      if (!opts.length) emptyNote = 'No suggestions yet.';
       // #600: default the name box to the signed-in user's own username so
       // "assign it to me" is one click of Add — but only when the viewer has
-      // no current pick (!data.myValue), so we never quietly overwrite a vote
-      // they already made. Setting .value programmatically does NOT fire the
-      // `input` listener above, so the typeahead stays closed; select() keeps
-      // "assign someone else" a first-keystroke away.
+      // no current pick, so a vote they already made is never quietly
+      // overwritten. `select()` below keeps "assign someone else" one
+      // keystroke away.
       const me = (typeof App !== 'undefined' && App.user && App.user.username) || '';
-      if (me && !data.myValue) {
-        input.value = me;
-        input.select();
-      }
-      input.focus();
+      add = {
+        inputId: 'attr-assignee-input',
+        buttonId: 'attr-assignee-add',
+        placeholder: 'Type a name…',
+        maxLength: 64,
+        defaultValue: (me && !data.myValue) ? me : '',
+        suggest: true,
+      };
     }
+
+    AppView._publishAttrPopover({ phase: 'ready', field, groups, emptyNote, add, suggestions: [] });
+
+    // The publish is flushed, so the field exists on the next line — the same
+    // contract the `innerHTML` assignment this replaces gave.
+    if (!add) return;
+    const input = document.getElementById(add.inputId);
+    if (!input) return;
+    if (add.defaultValue) input.select();
+    input.focus();
+  },
+
+  // The typed value in whichever add box is open, committed.
+  //
+  // #780: no typeahead for a category (the options are all listed right
+  // above), and before POSTing we fold the typed text onto an option already
+  // listed when it matches case-insensitively — so "Bug" votes for the
+  // built-in `bug` and "PERFORMANCE" votes for the existing custom option
+  // rather than attempting a duplicate.
+  _submitAttrTyped() {
+    const ctx = AppView._attrPopover;
+    if (!ctx) return;
+    if (ctx.field === 'category') {
+      const input = document.getElementById('attr-category-input');
+      const typed = ((input && input.value) || '').trim().replace(/\s+/g, ' ');
+      if (!typed) return;
+      const lower = typed.toLowerCase();
+      const known = AppView.ATTR_CATEGORY_VALUES.includes(lower)
+        ? lower
+        : (AppView._customCategories().find((c) => c.value.toLowerCase() === lower) || {}).value;
+      AppView._castAttrVote(known || typed);
+      return;
+    }
+    const input = document.getElementById('attr-assignee-input');
+    const v = ((input && input.value) || '').trim();
+    if (v) AppView._castAttrVote(v);
+  },
+
+  // Username typeahead off /api/users/search (the same endpoint the invite
+  // typeahead uses). Free text is still allowed — these are hints only. The
+  // debounce, the fetch and the failure handling stay here; the component
+  // draws whatever list this publishes.
+  _onAttrAssigneeInput() {
+    const input = document.getElementById('attr-assignee-input');
+    const q = ((input && input.value) || '').trim();
+    clearTimeout(AppView._attrSuggestTimer);
+    if (!q) { AppView._publishAttrPopover({ suggestions: [] }); return; }
+    AppView._attrSuggestTimer = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/users/search?q=${encodeURIComponent(q)}`);
+        if (!res.ok) return;
+        const { users } = await res.json();
+        AppView._publishAttrPopover({
+          suggestions: (users || []).map((u) => u.username),
+        });
+      } catch { /* ignore */ }
+    }, 200);
   },
 
   // POST the caller's vote for `value`, then repaint the on-card chips and

@@ -118,6 +118,13 @@ const OWNED = [
   { sel: '#gc-mention-menu' },               // features/group-chat/autocomplete.tsx
   { sel: '#gc-ref-menu' },                   // ditto
   { sel: '#gc-spec-side-panel' },            // features/group-chat/spec-panel.tsx
+  // The card metadata picker (features/dev-board/attr-popover.tsx). Its host
+  // is created and removed by app-view.js on every open, so it is only on
+  // screen mid-gesture — this sweep never opens one, and the coverage for it
+  // is tests/attr-vote-toggle.test.js plus the browser probe in the chunk's
+  // commit. Listed anyway so a future write into it is a finding the day the
+  // sweep learns to open one.
+  { sel: '#attr-popover' },
   // The thread panel's shell (features/group-chat/thread-shell.tsx). TWO hosts
   // inside it stay their modules': the topic card that app-view.js innerHTMLs,
   // and the transcript's own portal target. Each is rendered once, empty, with

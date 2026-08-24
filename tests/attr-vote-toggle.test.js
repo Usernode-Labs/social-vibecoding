@@ -5,11 +5,16 @@
 //
 // Covered here:
 //   1. _renderAttrPopoverBody marks each option row with data-attr-opt-mine
-//      so the click handler can tell "my pick" from the rest, and spells the
-//      affordance out in a title on the assignee row.
+//      so the row can tell "my pick" from the rest, and spells the affordance
+//      out in a title on the assignee row.
 //   2. The click dispatch: a mine assignee row goes to _withdrawAttrVote, any
 //      other row (including a mine PRIORITY row — no toggle there) goes to
 //      _castAttrVote.
+//
+// #1191 split those two across the seam: the module publishes the view model
+// (1) and features/dev-board/attr-popover.tsx draws it and carries the click
+// (2), so each half is checked where it lives — the model in the vm sandbox
+// below, the row by rendering it and invoking its onClick for real.
 //   3. _withdrawAttrVote DELETEs the caller's vote and repaints chips + the
 //      open popover from the refreshed tally, mirroring _castAttrVote.
 //   4. Source guard: the DELETE route feeds linkedIssues into clearVote so a
@@ -25,6 +30,29 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { loadTsx, renderComponent } = require('./lib/render-tsx');
+
+const POPOVER = 'frontend/src/features/dev-board/attr-popover.tsx';
+
+// Invoke a row's onClick against a stubbed AppView, and report which method it
+// reached. This is the dispatch the delegated listener used to do.
+function clickRow(option, field) {
+  const { AttrOptionRow } = loadTsx(POPOVER);
+  const calls = [];
+  const previous = global.window;
+  global.window = {
+    AppView: {
+      _withdrawAttrVote: () => calls.push(['withdraw']),
+      _castAttrVote: (v) => calls.push(['cast', v]),
+    },
+  };
+  try {
+    AttrOptionRow({ option, field }).props.onClick();
+  } finally {
+    if (previous === undefined) delete global.window; else global.window = previous;
+  }
+  return calls;
+}
 
 const SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'app-view.js'),
@@ -49,12 +77,10 @@ function fakeEl(extra) {
   return Object.assign(el, extra || {});
 }
 
-// A button stub that records its click listener so the test can fire it.
-function fakeBtn(dataset) {
-  const btn = fakeEl({ dataset, _click: null });
-  btn.addEventListener = (type, fn) => { if (type === 'click') btn._click = fn; };
-  return btn;
-}
+// `fakeBtn` lived here — a button stub that recorded the click listener
+// `_renderAttrPopoverBody` bound to it, so a test could fire it. The rows are
+// a component with an onClick prop now, which `clickRow` above invokes
+// directly; there is no listener to intercept.
 
 function fakeDoc(ids) {
   return {
@@ -105,8 +131,9 @@ function assigneePop(optBtns) {
 
 test('option rows carry data-attr-opt-mine, and the mine assignee row a deselect title', () => {
   const { AppView, sandbox } = makeSandbox();
-  const pop = assigneePop([]);
-  sandbox.document = fakeDoc({ 'attr-popover': pop });
+  const published = [];
+  sandbox.document = fakeDoc({ 'attr-popover': assigneePop([]) });
+  sandbox.UsernodeReact = { devBoard: { publishAttrPopover: (p) => published.push(p) } };
 
   AppView._renderAttrPopoverBody({
     field: 'assignee',
@@ -117,62 +144,53 @@ test('option rows carry data-attr-opt-mine, and the mine assignee row a deselect
     myValue: 'alice',
   });
 
-  assert.match(pop.innerHTML, /data-attr-opt-value="alice" data-attr-opt-mine="1" title="/);
-  assert.match(pop.innerHTML, /data-attr-opt-value="bob" data-attr-opt-mine="0"/);
+  // The module's half: which row is the viewer's.
+  const view = JSON.parse(JSON.stringify(published.pop()));
+  assert.equal(view.phase, 'ready');
+  assert.deepEqual(view.groups[0].options.map((o) => [o.value, o.mine]),
+    [['alice', true], ['bob', false]]);
+
+  // The component's half: the attributes and the title that state it.
+  const html = renderComponent(POPOVER, 'AttrPopoverView', { ...view, suggestions: [] });
+  assert.match(html, /data-attr-opt-value="alice" data-attr-opt-mine="1" title="Click again to remove your pick"/);
+  assert.match(html, /data-attr-opt-value="bob" data-attr-opt-mine="0"/);
+  assert.ok(!/data-attr-opt-mine="0"[^>]*title=/.test(html), 'and only on the mine row');
 });
 
 test('clicking my own assignee pick withdraws; clicking another name casts', () => {
-  const { AppView, sandbox } = makeSandbox();
-  const mineBtn = fakeBtn({ attrOptValue: 'alice', attrOptMine: '1' });
-  const otherBtn = fakeBtn({ attrOptValue: 'bob', attrOptMine: '0' });
-  sandbox.document = fakeDoc({ 'attr-popover': assigneePop([mineBtn, otherBtn]) });
-
-  let withdrawals = 0;
-  const casts = [];
-  AppView._withdrawAttrVote = () => { withdrawals += 1; };
-  AppView._castAttrVote = (v) => { casts.push(v); };
-
-  AppView._renderAttrPopoverBody({
-    field: 'assignee',
-    options: [
-      { value: 'alice', count: 2, mine: true },
-      { value: 'bob', count: 1, mine: false },
-    ],
-    myValue: 'alice',
-  });
-
-  mineBtn._click();
-  assert.equal(withdrawals, 1, 're-clicking my pick deselects it');
-  assert.equal(casts.length, 0);
-
-  otherBtn._click();
-  assert.deepEqual(casts, ['bob'], 'other names still cast a vote');
-  assert.equal(withdrawals, 1);
+  assert.deepEqual(
+    clickRow({ value: 'alice', dot: null, label: 'alice', count: 2, mine: true }, 'assignee'),
+    [['withdraw']],
+    're-clicking my pick deselects it',
+  );
+  assert.deepEqual(
+    clickRow({ value: 'bob', dot: null, label: 'bob', count: 1, mine: false }, 'assignee'),
+    [['cast', 'bob']],
+    'other names still cast a vote',
+  );
 });
 
 test('priority keeps the idempotent re-vote — no toggle on a mine row', () => {
-  const { AppView, sandbox } = makeSandbox();
-  const mineBtn = fakeBtn({ attrOptValue: 'high', attrOptMine: '1' });
-  sandbox.document = fakeDoc({
-    'attr-popover': fakeEl({
-      querySelectorAll: (sel) => (sel === '.attr-opt' ? [mineBtn] : []),
-    }),
-  });
-
-  let withdrawals = 0;
-  const casts = [];
-  AppView._withdrawAttrVote = () => { withdrawals += 1; };
-  AppView._castAttrVote = (v) => { casts.push(v); };
-
-  AppView._renderAttrPopoverBody({
+  assert.deepEqual(
+    clickRow({ value: 'high', dot: 'bg-red-500/10 text-red-500', label: 'High', count: 1, mine: true }, 'priority'),
+    [['cast', 'high']],
+    'a mine priority row re-casts rather than withdrawing',
+  );
+  // …and it carries no deselect title, because there is no deselect.
+  const html = renderComponent(POPOVER, 'AttrPopoverView', {
+    phase: 'ready',
     field: 'priority',
-    options: [{ value: 'high', count: 1, mine: true }],
-    myValue: 'high',
+    groups: [{
+      head: 'Priority',
+      divided: false,
+      options: [{ value: 'high', dot: 'bg-red-500/10 text-red-500', label: 'High', count: 1, mine: true }],
+    }],
+    emptyNote: null,
+    add: null,
+    suggestions: [],
   });
-
-  mineBtn._click();
-  assert.equal(withdrawals, 0);
-  assert.deepEqual(casts, ['high']);
+  assert.ok(!html.includes('title='), 'no toggle affordance is offered');
+  assert.match(html, /<span class="attr-dot bg-red-500\/10 text-red-500"><\/span>High/);
 });
 
 test('_withdrawAttrVote DELETEs the vote and repaints from the refreshed tally', async () => {

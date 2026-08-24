@@ -25,6 +25,7 @@
  */
 
 import { createElement } from 'react';
+import { flushSync } from 'react-dom';
 
 import {
   mountLegacyPortal,
@@ -32,6 +33,8 @@ import {
   unmountLegacyPortal,
   legacyPortalCount,
 } from '../../lib/legacy-portals';
+import { AttrPopover } from './attr-popover';
+import { attrPopoverStore, type AttrPopoverState } from './attr-popover-store';
 import { DevBoardFrame, type DevBoardFrameProps } from './board-frame';
 import { DevChatSubView } from './chat-frame';
 import { DevSessionShell } from './session-frame';
@@ -64,6 +67,8 @@ export interface DevBoardBridge {
     host: Element | null,
     options: { backHref: string; onBackClick: (event: MouseEvent) => void },
   ): void;
+  mountAttrPopover(host: Element | null): void;
+  publishAttrPopover(patch: Partial<AttrPopoverState>): void;
   mountSessionShell(host: Element | null): void;
   publishViewMode(mode: string): void;
   unmount(host: Element | null): void;
@@ -71,6 +76,16 @@ export interface DevBoardBridge {
   /** Live portal count — the leak assertion in tests reads this. */
   rootCount(): number;
 }
+
+/**
+ * `setFlush(flushSync)` on the picker's store, and it is load-bearing twice:
+ * `_renderAttrPopoverBody` focuses (and sometimes selects) the add box on the
+ * line after it publishes, and `_openAttrPopover` re-measures the popover's
+ * height once the real body has replaced the "Loading…" line — a popover
+ * anchored low in the viewport has to flip above its chip, and a measurement
+ * taken against the previous frame would place it off screen.
+ */
+attrPopoverStore.setFlush(flushSync);
 
 export const devBoardBridge: DevBoardBridge = {
   mountBoard(host, options) {
@@ -109,6 +124,19 @@ export const devBoardBridge: DevBoardBridge = {
         onBackClick: (event) => options.onBackClick(event as unknown as MouseEvent),
       }),
     );
+  },
+
+  // The metadata picker a card's chip opens. Its host is created and removed
+  // by app-view.js on every open, so this mounts once per open; the previous
+  // open's entry is swept by `pruneDetachedLegacyPortals`.
+  mountAttrPopover(host) {
+    mountLegacyPortal(host, createElement(AttrPopover));
+  },
+
+  // A patch, not a whole publish: the typeahead updates `suggestions` and
+  // nothing else, and it runs while the rows are already on screen.
+  publishAttrPopover(patch) {
+    attrPopoverStore.set((s) => ({ ...s, ...patch }));
   },
 
   mountSessionShell(host) {
