@@ -42,11 +42,7 @@
 import { useCallback } from 'react';
 
 import { Button } from '@/components/ui/button';
-import {
-  ChatIcon,
-  PlusIcon,
-  XIcon,
-} from '@/components/ui/icons';
+import { XIcon } from '@/components/ui/icons';
 
 import { useStoreState } from '../../lib/use-store-state';
 import { improveStore } from './improve-store.js';
@@ -146,18 +142,20 @@ export function ImprovePanel() {
               even though its label is the board's "Build a change" now.
           */}
           <div className="px-4 pt-3 pb-2 flex flex-col gap-3 shrink-0">
+            {/* One line per action, always: the button label never wraps
+                (whitespace-nowrap, no icon to steal width) and the
+                description truncates rather than folding (owner review). */}
             <div className="flex items-center gap-3">
               <Button
                 id="improve-row-feedback"
                 type="button"
                 size="sm"
-                className="un-touch-target shrink-0"
+                className="un-touch-target shrink-0 whitespace-nowrap"
                 onClick={() => Improve.giveFeedback()}
               >
-                <ChatIcon className="w-4 h-4 shrink-0" />
                 Give feedback
               </Button>
-              <span className="text-xs text-zinc-500 dark:text-zinc-400 min-w-0">
+              <span className="text-xs text-zinc-500 dark:text-zinc-400 min-w-0 truncate">
                 Share an idea or report a problem
               </span>
             </div>
@@ -167,13 +165,12 @@ export function ImprovePanel() {
                   id="improve-row-new-session"
                   type="button"
                   size="sm"
-                  className="un-touch-target shrink-0"
+                  className="un-touch-target shrink-0 whitespace-nowrap"
                   onClick={() => Improve.startSession()}
                 >
-                  <PlusIcon className="w-4 h-4 shrink-0" />
                   Build a change
                 </Button>
-                <span className="text-xs text-zinc-500 dark:text-zinc-400 min-w-0">
+                <span className="text-xs text-zinc-500 dark:text-zinc-400 min-w-0 truncate">
                   Describe what you want to change
                 </span>
               </div>

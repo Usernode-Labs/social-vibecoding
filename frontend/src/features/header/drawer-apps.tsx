@@ -12,7 +12,9 @@
  * `HeaderMenu.open()` triggers the store's loader.
  */
 
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
+
+import { ChevronDownIcon } from '@/components/ui/icons';
 
 import { useStoreState } from '../../lib/use-store-state';
 import { drawerAppsStore } from './drawer-apps-store.js';
@@ -53,15 +55,35 @@ export function DrawerApps() {
     current: string | null;
   };
   const rows = apps || [];
+  // Owner review: the section is COLLAPSIBLE, per the Figma board's collapse
+  // hint on the drawer. Expanded by default; the state lives on the island
+  // (the drawer never unmounts), so it survives open/close within a visit.
+  const [collapsed, setCollapsed] = useState(false);
 
   return (
     <div id="drawer-your-apps" className="flex-1 min-h-0 overflow-y-auto border-b border-zinc-100 dark:border-zinc-800">
       {rows.length ? (
-        <div className="px-4 py-2 text-[0.7rem] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-          Your apps
-        </div>
+        <button
+          id="drawer-your-apps-toggle"
+          type="button"
+          aria-expanded={collapsed ? 'false' : 'true'}
+          className={'w-full flex items-center gap-1 px-4 py-2 text-[0.7rem] font-semibold '
+            + 'uppercase tracking-wide text-zinc-500 dark:text-zinc-400 '
+            + 'hover:text-zinc-700 dark:hover:text-zinc-200'}
+          onClick={() => setCollapsed((v) => !v)}
+        >
+          <span className="flex-1 text-left">
+            Your apps
+          </span>
+          <ChevronDownIcon
+            className={collapsed
+              ? 'w-3.5 h-3.5 shrink-0 -rotate-90 transition-transform'
+              : 'w-3.5 h-3.5 shrink-0 transition-transform'}
+            aria-hidden="true"
+          />
+        </button>
       ) : null}
-      {rows.map((app) => {
+      {collapsed ? null : rows.map((app) => {
         const selected = current === app.slug;
         return (
           <a
