@@ -51,7 +51,6 @@ import {
 import { useStoreState } from '../../lib/use-store-state';
 import { improveStore } from './improve-store.js';
 import { Improve } from './improve-controller.js';
-import { ImproveViewToggle } from './view-toggle';
 
 export function ImprovePanel() {
   const state = useStoreState(improveStore);
@@ -180,12 +179,11 @@ export function ImprovePanel() {
               </div>
             )}
             {/*
-                The App / Feed / Kanban toggle, under the two actions —
-                TRANSITIONAL (Streamlined Concept): it comes out entirely when
-                the Board grows its own Kanban|Feed control, and Activity /
-                Board become the app-context sheet's rows.
+                The transitional App/Feed/Kanban toggle is gone (Streamlined
+                Concept, final step): the app-context sheet's rows are the
+                navigation between views, and the Board draws its own
+                Kanban|Feed control (dev-board/board-frame.tsx).
             */}
-            <ImproveViewToggle compact={false} />
           </div>
         </div>
       </div>

@@ -273,20 +273,15 @@ for (const a of ANCHORS) {
   });
 }
 
-// The dev general-chat back link, split by #1084 chunk G: the anchor is JSX in
-// frontend/src/features/dev-board/chat-frame.tsx, and the plain-click handler is
-// the onBackClick prop AppView._renderChatSubView still passes in. Same two
-// properties as the loop above asserts for every other control — a real <a>
-// with a resolvable target, and a guard that runs before preventDefault.
-test('"back out of the app-wide dev chat" is a real anchor with a real target', () => {
-  assert.match(chatFrameTsx, /<a\s+id="dev-chat-back"/,
-    'chat-frame.tsx: the control must be an <a>');
-  assert.ok(!/<button[^>]*id="dev-chat-back"/.test(chatFrameTsx + appViewJs),
-    'the old <button> tag is gone from both the component and app-view.js');
-  assert.match(chatFrameTsx, /href=\{backHref\}/,
-    'chat-frame.tsx: the anchor must carry the href prop, not a bare "#"');
-  assert.match(appViewJs, /backHref: AppView\._devPageHref\(\),/,
-    'app-view.js must resolve that href through the same shared helper as before');
+// The dev general-chat back link (#1084 chunk G) is GONE, and staying gone is
+// the contract now:
+test('the app-wide dev chat carries no back control any more', () => {
+  // Streamlined Concept: the general chat is the ACTIVITY screen — a
+  // first-class destination with its own hash, named by the header's title
+  // tab and left through the eye button or the app-context sheet. A back
+  // bar over it would be a second navigation system.
+  assert.ok(!/dev-chat-back/.test(chatFrameTsx),
+    'chat-frame.tsx: the back anchor is retired');
 });
 
 // The dev session's back link, split by the session-header conversion: the
