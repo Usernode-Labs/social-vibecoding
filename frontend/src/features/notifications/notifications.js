@@ -693,11 +693,19 @@ const Notifications = {
     // The app-context sheet's per-change unread dots (Streamlined Concept):
     // which sessions have an unread session-kind notification right now.
     // Published into the notifications store — the sheet's rows subscribe.
-    Notifications._store?.set({
-      sessionUnreadIds: Notifications.items
+    //
+    // Only when the SET changes. The store compares by identity, so pushing a
+    // freshly-built array every time would notify every subscriber (the
+    // screen, the pinned sections and every session row) on every badge
+    // repaint — and _renderBadge runs on each WS event and each refresh.
+    if (Notifications._store) {
+      const ids = Notifications.items
         .filter((n) => isSessionNotif(n) && !n.readAt && n.sessionId)
-        .map((n) => n.sessionId),
-    });
+        .map((n) => n.sessionId);
+      const prev = Notifications._store.get().sessionUnreadIds || [];
+      const same = prev.length === ids.length && prev.every((v, i) => v === ids[i]);
+      if (!same) Notifications._store.set({ sessionUnreadIds: ids });
+    }
     Notifications._updateTitle();
     // The cog drawer used to render a pinned section from this same items
     // store and was nudged here whenever the store changed. It is retired;

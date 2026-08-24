@@ -1251,11 +1251,6 @@ const DevChat = {
     }
   },
 
-  // #771: drop the staging side-panel slot and, if the preview overlay is
-  // currently docked onto it, close the preview too (a docked overlay
-  // must never outlive its slot). open=false is set BEFORE the close call
-  // so closeStagingOverlay's own slot-collapse branch sees nothing to do
-  // — no re-render loop.
   /**
    * Publish whether the OPEN session has a staging preview (Streamlined
    * Concept).
@@ -1274,6 +1269,11 @@ const DevChat = {
     );
   },
 
+  // #771: drop the staging side-panel slot and, if the preview overlay is
+  // currently docked onto it, close the preview too (a docked overlay
+  // must never outlive its slot). open=false is set BEFORE the close call
+  // so closeStagingOverlay's own slot-collapse branch sees nothing to do
+  // — no re-render loop.
   _resetStagingPanel() {
     DevChat.stagingPanel = { open: false };
     if (typeof AppView !== 'undefined' && AppView._stagingMode === 'docked'
@@ -3682,7 +3682,7 @@ const DevChat = {
                 DevChat.scrollToBottom();
                 if (data.url) {
                   DevChat.currentSession.staging_url = data.url;
-          DevChat._publishPreview();
+                  DevChat._publishPreview();
                   // #127: testing guidance rides along so the PR card's
                   // "Test this change" button works without a refetch.
                   if ('testingMd' in data) DevChat.currentSession.testing_md = data.testingMd;
