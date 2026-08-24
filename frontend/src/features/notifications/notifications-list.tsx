@@ -1,6 +1,6 @@
 /**
- * The bell drawer's contents — the pinned invites section, the grouped list
- * and the empty hint (#1191 slice 6, conversion 2).
+ * The bell drawer's contents — the pinned invites section, the flat
+ * notification list and the empty hint (#1191 slice 6, conversion 2).
  *
  * ── What changed, and what deliberately did not ────────────────────────
  *
@@ -11,9 +11,23 @@
  * #notifications-invites and #notifications-list.
  *
  * The markup is like-for-like: same class strings, same `data-notif-id` /
- * `data-invite-app` / `data-group-toggle` attributes, same between-apps
- * divider (between entries only — never before the first or after the last).
- * The attributes stay because they are how the rows were addressed.
+ * `data-invite-app` attributes. They stay because they are how the rows were
+ * addressed.
+ *
+ * ── The list is flat (#1385) ───────────────────────────────────────────
+ *
+ * `Group` and its `data-group-toggle` / `data-group-markread` /
+ * `data-group-showmore` chrome are gone, and so is the heavier between-apps
+ * divider that separated one app's entry from the next: with rows interleaved
+ * in arrival order there are no app runs left for it to sit between, and every
+ * row already carries its own `border-b`. `list` is now a flat array of row
+ * descriptors — see ./notifications-store.js.
+ *
+ * What replaced the per-group "Show more" is one pager at the FOOT of the list.
+ * It is not the same control moved: the group one revealed already-fetched
+ * leaves that the collapsed header was hiding, and only reached the network
+ * once it ran out. Nothing is hidden in a flat list, so this one is purely the
+ * network call.
  *
  * `Row` is exported as `NotificationRow` because the cog drawer's pinned
  * "Needs attention" section renders these same four session kinds. Conversion
@@ -63,21 +77,6 @@ export type NotificationRowView = {
   body: { text: string; medium: boolean; mention: boolean } | null;
 };
 
-type GroupView = {
-  key: string;
-  appId: number | '';
-  conversationId: number | '';
-  expanded: boolean;
-  hasUnread: boolean;
-  accent: string;
-  chevron: string;
-  appName: string;
-  count: number;
-  preview: string;
-  leaves: NotificationRowView[];
-  more: { key: string; label: string } | null;
-};
-
 type SavedView = {
   messageId: number;
   slug: string;
@@ -97,8 +96,6 @@ type InviteView = {
   appName: string;
   time: string;
 };
-
-type Entry = { type: 'row'; row: NotificationRowView } | { type: 'group'; group: GroupView };
 
 // The controller is a classic-script-shaped global; this island reads it the
 // same way app.js does rather than importing it, because ./notifications.js
@@ -267,77 +264,6 @@ function Row({ view, touch }: { view: NotificationRowView; touch: boolean }): Re
 
 export { Row as NotificationRow };
 
-/** The collapsed/expanded app header, plus its leaves when expanded. */
-function Group({ view, touch }: { view: GroupView; touch: boolean }): ReactNode {
-  return (
-    <>
-      <div className={`flex items-stretch border-b border-zinc-200 dark:border-zinc-800 ${view.accent}`}>
-        <button
-          data-group-toggle={view.key}
-          aria-expanded={view.expanded}
-          className="flex-1 min-w-0 text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 transition-colors"
-          onClick={(e) => {
-            e.stopPropagation();
-            controller()?._toggleGroup(view.key);
-          }}
-        >
-          <div className="flex items-center gap-1.5 mb-0.5">
-            <span aria-hidden="true" className="text-zinc-400 dark:text-zinc-500">{view.chevron}</span>
-            {view.hasUnread ? <UnreadDot unread={true} /> : null}
-            <span className="font-medium text-zinc-800 dark:text-zinc-200 truncate">{view.appName}</span>
-            {/*
-                Just the number, centered in a fixed-size pill (no "new"
-                wording). Unread groups show the unread count in the violet
-                accent pill; fully read groups show the total in a muted one.
-            */}
-            {view.hasUnread ? (
-              <span className="inline-flex items-center justify-center min-w-[1.1rem] h-[1.1rem] px-1 text-[0.65rem] font-bold leading-none text-white bg-violet-500 rounded-full">
-                {view.count}
-              </span>
-            ) : (
-              <span className="inline-flex items-center justify-center min-w-[1.1rem] h-[1.1rem] px-1 text-[0.65rem] font-medium leading-none text-zinc-500 dark:text-zinc-400 bg-zinc-200 dark:bg-zinc-800 rounded-full">
-                {view.count}
-              </span>
-            )}
-          </div>
-          <div className="text-xs text-zinc-500 dark:text-zinc-400 truncate pl-5">{view.preview}</div>
-        </button>
-        {view.hasUnread ? (
-          <button
-            data-group-markread={view.key}
-            data-app-id={view.appId}
-            data-conversation-id={view.conversationId}
-            className="shrink-0 text-[0.7rem] text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200 px-1.5 py-1"
-            onClick={(e) => {
-              e.stopPropagation();
-              controller()?._markGroupRead(view.key, view.appId, view.conversationId);
-            }}
-          >
-            Mark read
-          </button>
-        ) : null}
-      </div>
-      {view.expanded ? (
-        <div className="pl-2 bg-zinc-50/50 dark:bg-zinc-950/30">
-          {view.leaves.map((leaf) => <Row key={leaf.id} view={leaf} touch={touch} />)}
-          {view.more ? (
-            <button
-              data-group-showmore={view.more.key}
-              className="w-full text-left px-3 py-2 text-xs text-violet-500 hover:text-violet-400 border-b border-zinc-200 dark:border-zinc-800"
-              onClick={(e) => {
-                e.stopPropagation();
-                controller()?._showMoreGroup(view.more!.key);
-              }}
-            >
-              {view.more.label}
-            </button>
-          ) : null}
-        </div>
-      ) : null}
-    </>
-  );
-}
-
 /**
  * One saved message (#1280). Clicking the body opens the message where it
  * lives; the Unsave button — and, on touch, a swipe action carrying the same
@@ -479,22 +405,23 @@ function Invite({ view, touch }: { view: InviteView; touch: boolean }): ReactNod
   );
 }
 
-const DIVIDER = <div role="separator" className="border-t-2 border-zinc-200 dark:border-zinc-700"></div>;
 
 export function NotificationsBody(): ReactNode {
   const state = useStoreState(notificationsStore) as {
     saved: SavedView[] | null;
     invites: InviteView[] | null;
-    list: Entry[] | null;
+    list: NotificationRowView[] | null;
     empty: boolean;
     caughtUp: boolean;
     olderCount: number;
     showOlder: boolean;
+    canLoadMore: boolean;
+    loadingMore: boolean;
     touch: boolean;
   };
   const saved = state.saved || [];
   const invites = state.invites || [];
-  const entries = state.list || [];
+  const rows = state.list || [];
 
   return (
     <>
@@ -530,14 +457,32 @@ export function NotificationsBody(): ReactNode {
         ))}
       </div>
       <div id="notifications-list" className="flex-1 overflow-y-auto">
-        {entries.map((entry, i) => (
-          <div key={entry.type === 'row' ? `r${entry.row.id}` : `g${entry.group.key}`}>
-            {i > 0 ? DIVIDER : null}
-            {entry.type === 'row'
-              ? <Row view={entry.row} touch={state.touch} />
-              : <Group view={entry.group} touch={state.touch} />}
-          </div>
+        {rows.map((row) => (
+          <Row key={row.id} view={row} touch={state.touch} />
         ))}
+        {/*
+            The foot pager (#1385). It sits INSIDE the scroller, after the last
+            row, because it is the end of the list rather than drawer chrome —
+            unlike #notifications-older-toggle below, which is pinned under the
+            scroller and toggles a filter over what is already in hand.
+        */}
+        {state.canLoadMore ? (
+          <button
+            id="notifications-load-more"
+            type="button"
+            disabled={state.loadingMore}
+            className="w-full text-left px-3 py-2 text-xs text-violet-500 hover:text-violet-400 disabled:text-zinc-400 border-b border-zinc-200 dark:border-zinc-800"
+            onClick={(e) => {
+              // Same reason every other handler in this file stops the click:
+              // the re-render detaches this node, and the document-level
+              // outside-click handler would then dismiss the drawer.
+              e.stopPropagation();
+              controller()?.loadOlder();
+            }}
+          >
+            {state.loadingMore ? 'Loading…' : 'Load older notifications →'}
+          </button>
+        ) : null}
       </div>
       {/*
           CAUGHT UP (#1367 follow-up) — nothing unread, but there is history.

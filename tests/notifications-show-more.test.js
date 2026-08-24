@@ -1,14 +1,25 @@
-// Frontend tests for the notification drawer's per-group "Show more →"
-// pager (#279).
+// Frontend tests for how the notification drawer reaches OLDER notifications.
 //
-// History: the drawer once had a global bottom-of-list control to load
-// older notifications — first a passive "Scroll for older…" hint, then a
-// "Show older notifications" button, then a reveal-all-collapsed-groups
-// handler. All three confused users on the grouped/collapsed layout, so
-// the global control was removed entirely. Older notifications are now
-// reached only by expanding an app group and clicking that group's own
-// "Show more →" link, which reveals already-loaded leaves and falls
-// through to loadMore() to fetch older pages on demand.
+// History, and why this file has now changed sides twice (#279, #1385):
+//
+//   1. The drawer had a global bottom-of-list control — first a passive
+//      "Scroll for older…" hint, then a "Show older notifications" button,
+//      then a reveal-all-collapsed-groups handler. All three confused people,
+//      and #279 removed the global control entirely.
+//   2. Older notifications were then reached ONLY by expanding an app group
+//      and clicking that group's own "Show more →", which revealed
+//      already-loaded leaves and fell through to loadMore() for older pages.
+//   3. #1385 flattened the list. There are no groups to expand, so step 2's
+//      control had nowhere to live — and it was the only caller of loadMore()
+//      in the codebase, so removing it without a replacement would have
+//      stranded server pagination on page one.
+//
+// So a foot-of-list pager is back. That is not step 1 repeating itself: what
+// #279 actually killed was a SCROLL-DRIVEN reveal of rows that were loaded but
+// deliberately hidden, on a collapsed layout where "older" was ambiguous
+// (hidden inside a fold? or not yet fetched?). This one is an explicit button,
+// it hides nothing, and on a flat list "older" has exactly one meaning. The
+// assertions below still pin every piece of the scroll machinery as gone.
 //
 // We extract the REAL functions/methods from the shipped source (so the
 // tests can't drift from what runs) and exercise them against stubs.
@@ -38,12 +49,29 @@ const MIGRATE_SRC = fs.readFileSync(
   'utf8'
 );
 
-// GROUP_LEAF_CAP as shipped — the reveal increment for "Show more →".
-const GROUP_LEAF_CAP = (() => {
-  const m = SRC.match(/const GROUP_LEAF_CAP\s*=\s*(\d+)/);
-  assert.ok(m, 'GROUP_LEAF_CAP literal found');
-  return Number(m[1]);
-})();
+// The "X is gone" assertions below are about CODE, not prose: several comments
+// in these files deliberately NAME the thing they replaced, and that history is
+// the most useful part of them. So strip comments before asserting absence —
+// the same distinction AGENTS.md draws for the AdminUI registry, where prose in
+// comments is explicitly fine and only code mentions are policed.
+//
+// Only whole-line `//` comments are stripped, so a `https://` inside a string
+// survives; block comments include JSX's `{/* … */}`, which collapses to `{}`.
+function codeOnly(src) {
+  return src
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/.*$/gm, '');
+}
+
+const CODE = codeOnly(SRC);
+const LIST_CODE = codeOnly(LIST_SRC);
+
+/** The #notifications-list scroller, comments stripped. */
+function listBlock() {
+  const m = LIST_CODE.match(/id="notifications-list"[\s\S]*?\n {6}<\/div>/);
+  assert.ok(m, 'the #notifications-list container found');
+  return m[0];
+}
 
 // Pull a 2-space-indented object method's body out of the source so we can
 // rebuild it as a standalone callable closing over injected stubs.
@@ -54,126 +82,127 @@ function methodBody(name) {
   return m[1];
 }
 
-// ── the global control is gone ──────────────────────────────────────────
+// ── the SCROLL-driven machinery stays gone ──────────────────────────────
 
-test('no global "load older" control remains in source', () => {
-  assert.doesNotMatch(SRC, /renderLoadMore/, 'renderLoadMore() removed');
-  assert.doesNotMatch(SRC, /data-loadmore/, 'footer button hook removed');
-  assert.doesNotMatch(SRC, /id="notifications-loadmore"/, 'footer markup removed');
-  assert.doesNotMatch(SRC, /Show older notifications/, 'global button label removed');
-});
-
-test('the prior misleading "Scroll for older" copy is still gone', () => {
-  assert.doesNotMatch(SRC, /Scroll for older/, 'no passive scroll hint remains');
-});
-
-test('no global reveal/scroll handlers remain', () => {
-  // The retired machinery was a SCROLL-driven reveal of rows already loaded
-  // but held back — `showOlder()` was its entry point. #1367's follow-up
-  // introduced an unrelated `showOlder` FLAG (the new-vs-older filter behind
-  // the drawer's footer button), so this pins the retired function rather than
-  // the word: a bare /showOlder/ would now fail on the thing that replaced it.
+test('no scroll-driven reveal machinery remains in source', () => {
+  // #279's actual target. #1385's button is an explicit click, so none of
+  // this comes back with it.
+  assert.doesNotMatch(CODE, /renderLoadMore/, 'renderLoadMore() removed');
+  assert.doesNotMatch(CODE, /data-loadmore/, 'old footer button hook removed');
+  assert.doesNotMatch(CODE, /id="notifications-loadmore"/, 'old footer markup removed');
+  assert.doesNotMatch(CODE, /Show older notifications/, 'old global button label removed');
+  assert.doesNotMatch(CODE, /Scroll for older/, 'no passive scroll hint remains');
   assert.doesNotMatch(SRC, /\bshowOlder\s*\([^)]*\)\s*\{/, 'showOlder() removed');
-  assert.doesNotMatch(SRC, /_hasHiddenOlder/, '_hasHiddenOlder() removed');
-  assert.doesNotMatch(SRC, /_revealLoadedHidden/, '_revealLoadedHidden() removed');
-  assert.doesNotMatch(SRC, /_wireScroll/, '_wireScroll() removed');
-  assert.doesNotMatch(SRC, /_renderLoadingState/, '_renderLoadingState() removed');
+  assert.doesNotMatch(CODE, /_hasHiddenOlder/, '_hasHiddenOlder() removed');
+  assert.doesNotMatch(CODE, /_revealLoadedHidden/, '_revealLoadedHidden() removed');
+  assert.doesNotMatch(CODE, /_wireScroll/, '_wireScroll() removed');
+  assert.doesNotMatch(CODE, /_renderLoadingState/, '_renderLoadingState() removed');
   assert.doesNotMatch(SRC, /addEventListener\('scroll'/, 'no scroll listener bound');
-  assert.doesNotMatch(SRC, /LOAD_MORE_THRESHOLD/, 'unused scroll constant removed');
+  assert.doesNotMatch(CODE, /LOAD_MORE_THRESHOLD/, 'unused scroll constant removed');
 });
 
-test('_renderList no longer appends a footer to the list markup', () => {
-  // #1191 slice 6: _renderList pushes a descriptor tree instead of an HTML
-  // string, so the "no footer" claim is now two assertions — the controller
-  // publishes exactly the grouped entries, and the component that renders
-  // them puts nothing after the last one.
-  // Written across several lines since the follow-up added the older-count
-  // fields beside it, so the match is anchored on the key rather than the
-  // whole call's formatting.
-  const m = SRC.match(/store\.set\(\{\s*list:\s*([A-Za-z_$][\w$]*),/);
-  assert.ok(m, 'the grouped-entries store push found');
-  assert.equal(m[1], 'entries', 'publishes just the grouped entries');
-  assert.doesNotMatch(LIST_SRC, /loadmore|load more/i, 'no footer control in the renderer');
-  // The drawer DOES have a footer button now — "See N older notifications" —
-  // but it is a SIBLING of #notifications-list, not a child of it. That is the
-  // distinction this test has always been about: the scroller holds entries
-  // and nothing else, so a paging control can never ride the scroll position.
-  assert.match(LIST_SRC, /id="notifications-older-toggle"/,
-    'the older toggle exists…');
-  const listBlock0 = LIST_SRC.match(/id="notifications-list"[\s\S]*?\n {6}<\/div>/);
-  assert.ok(listBlock0 && !/notifications-older-toggle/.test(listBlock0[0]),
-    '…and sits outside the entries scroller');
-  const listBlock = LIST_SRC.match(/id="notifications-list"[\s\S]*?\n {6}<\/div>/);
-  assert.ok(listBlock, 'the #notifications-list container found');
-  assert.match(listBlock[0], /entries\.map\(/, 'renders one child per entry');
+// ── the list is FLAT (#1385) ────────────────────────────────────────────
+
+test('every trace of the grouped layout is gone from both files', () => {
+  for (const [name, src] of [['notifications.js', CODE], ['notifications-list.tsx', LIST_CODE]]) {
+    assert.doesNotMatch(src, /_groupByApp/, `${name}: the grouping transform is gone`);
+    assert.doesNotMatch(src, /groupView/, `${name}: the group descriptor is gone`);
+    assert.doesNotMatch(src, /_toggleGroup/, `${name}: expand/collapse is gone`);
+    assert.doesNotMatch(src, /_markGroupRead/, `${name}: per-group mark-read is gone`);
+    assert.doesNotMatch(src, /_showMoreGroup/, `${name}: the per-group pager is gone`);
+    assert.doesNotMatch(src, /data-group-(toggle|markread|showmore)/, `${name}: group hooks gone`);
+    assert.doesNotMatch(src, /GROUP_LEAF_CAP/, `${name}: the per-group reveal cap is gone`);
+  }
+  // The persisted expansion set goes with it — including the storage key, so a
+  // returning viewer's old localStorage entry is simply never read again.
+  assert.doesNotMatch(CODE, /notif_expanded_groups_v1/, 'the expansion storage key is gone');
+  assert.doesNotMatch(CODE, /_loadExpanded|_saveExpanded|_pruneExpanded|_foldAllGroups/,
+    'the expansion lifecycle is gone');
 });
 
-// ── the per-group "Show more →" pager still works ───────────────────────
+test('_renderList publishes one row descriptor per notification, in feed order', () => {
+  const body = methodBody('_renderList');
+  // Straight `map(rowView)` over the filtered feed: no partition, no re-sort,
+  // no entry wrapper. That IS the flat list.
+  assert.match(body, /list:\s*Notifications\._bellItems\(\)\.map\(rowView\)/,
+    'maps the feed straight to row descriptors');
+  assert.doesNotMatch(body, /\{\s*type:\s*'(row|group)'/, 'no tagged entry wrapper survives');
+  assert.doesNotMatch(body, /\.sort\(/, 'and does not reorder the feed');
+});
 
-// Rebuild _showMoreGroup(key) as a standalone callable over injected stubs.
-function buildShowMoreGroup() {
-  const body = methodBody('_showMoreGroup');
-  return new Function('Notifications', 'GROUP_LEAF_CAP', 'key', body);
+test('the renderer maps rows directly, with no between-apps divider', () => {
+  assert.match(listBlock(), /rows\.map\(/, 'renders one child per row');
+  assert.doesNotMatch(LIST_CODE, /DIVIDER/,
+    'the heavier between-apps divider is gone — rows carry their own border');
+});
+
+// ── the foot pager reaches loadMore() (#1385) ───────────────────────────
+
+// Rebuild loadOlder() as a standalone callable over injected stubs.
+function buildLoadOlder() {
+  return new Function('Notifications', methodBody('loadOlder'));
 }
 
-test('_showMoreGroup reveals already-loaded leaves without fetching', () => {
-  const showMore = buildShowMoreGroup();
+test('loadOlder fetches the next page when the server has one', () => {
   const calls = [];
-  const stub = {
-    revealed: new Map(),                       // cap defaults to GROUP_LEAF_CAP
-    hasMore: true,                             // would fetch if leaves were exhausted
-    _groupByApp: () => [{ key: 'a', items: new Array(GROUP_LEAF_CAP + 5) }],
-    _renderList: () => calls.push('render'),
-    loadMore: () => calls.push('loadMore'),
-  };
-  showMore(stub, GROUP_LEAF_CAP, 'a');
-  assert.equal(stub.revealed.get('a'), GROUP_LEAF_CAP * 2, 'bumps the reveal cap by one page');
-  assert.deepEqual(calls, ['render'], 're-renders locally, does not fetch');
+  const stub = { hasMore: true, loading: false, loadMore: () => calls.push('loadMore') };
+  buildLoadOlder()(stub);
+  assert.deepEqual(calls, ['loadMore'], 'pulls the next page');
 });
 
-test('_showMoreGroup fetches the next page when loaded leaves are exhausted and hasMore', () => {
-  const showMore = buildShowMoreGroup();
+test('loadOlder does nothing once the cursor is exhausted', () => {
   const calls = [];
-  const stub = {
-    revealed: new Map([['a', GROUP_LEAF_CAP]]), // already showing all loaded leaves
-    hasMore: true,
-    _groupByApp: () => [{ key: 'a', items: new Array(GROUP_LEAF_CAP) }],
-    _renderList: () => calls.push('render'),
-    loadMore: () => calls.push('loadMore'),
-  };
-  showMore(stub, GROUP_LEAF_CAP, 'a');
-  assert.equal(stub.revealed.get('a'), GROUP_LEAF_CAP * 2, 'raises the cap so fetched leaves show');
-  assert.deepEqual(calls, ['loadMore'], 'fetches the next cross-app page on demand');
+  const stub = { hasMore: false, loading: false, loadMore: () => calls.push('loadMore') };
+  buildLoadOlder()(stub);
+  assert.deepEqual(calls, [], 'no fetch with nothing left to fetch');
 });
 
-test('_showMoreGroup does nothing when nothing is loaded and the server is exhausted', () => {
-  const showMore = buildShowMoreGroup();
+test('loadOlder does not stack requests while a page is in flight', () => {
   const calls = [];
-  const stub = {
-    revealed: new Map([['a', GROUP_LEAF_CAP]]),
-    hasMore: false,
-    _groupByApp: () => [{ key: 'a', items: new Array(GROUP_LEAF_CAP) }],
-    _renderList: () => calls.push('render'),
-    loadMore: () => calls.push('loadMore'),
-  };
-  showMore(stub, GROUP_LEAF_CAP, 'a');
-  assert.deepEqual(calls, [], 'no reveal, no fetch — group fully shown');
+  const stub = { hasMore: true, loading: true, loadMore: () => calls.push('loadMore') };
+  buildLoadOlder()(stub);
+  assert.deepEqual(calls, [], 'a double-tap cannot queue a second page');
 });
 
-test('groupView offers a "Show more →" button while the server has more pages', () => {
-  // Source-level assertion: the expanded-group descriptor must still carry a
-  // per-group pager in the hasMore branch, and the component must render it
-  // with the same data-group-showmore hook the sweep used to bind.
-  const m = SRC.match(/function groupView\([\s\S]*?\n\}/);
-  assert.ok(m, 'groupView() found');
-  assert.match(m[0], /else if \(Notifications\.hasMore\)/, 'has a hasMore fallthrough branch');
-  assert.match(m[0], /Show more/, 'labels it "Show more"');
-  assert.match(LIST_SRC, /data-group-showmore=/, 'emits the per-group "Show more" control');
+test('the pager renders inside the scroller and is wired to loadOlder', () => {
+  const block = listBlock();
+  // INSIDE the scroller, because it is the end of the list. Contrast the
+  // older-toggle below, which is drawer chrome over what is already in hand.
+  assert.match(block, /id="notifications-load-more"/, 'the pager sits after the rows');
+  assert.match(block, /controller\(\)\?\.loadOlder\(\)/, 'wired to the controller');
+  assert.match(block, /disabled=\{state\.loadingMore\}/, 'refuses clicks mid-flight');
+  assert.match(block, /state\.canLoadMore/, 'offered only when a page exists');
+  assert.match(block, /e\.stopPropagation\(\)/,
+    'stops the click, or the re-render dismisses the drawer');
+});
+
+test('the older-toggle is a different control, and still outside the scroller', () => {
+  // Two distinct affordances: this one reveals READ rows already fetched, the
+  // pager goes and gets more from the server. Conflating them is the exact
+  // ambiguity that made #279 remove the original global control.
+  assert.match(LIST_CODE, /id="notifications-older-toggle"/, 'the older toggle exists…');
+  assert.doesNotMatch(listBlock(), /notifications-older-toggle/,
+    '…and sits outside the rows scroller');
 });
 
 // ── staging seed (unchanged) ────────────────────────────────────────────
 
-test('staging seed keeps the >100-row backlog so the per-group pager is exercisable', () => {
+// The pager is pinned HERE and not by a dapp.json check, and that is deliberate.
+//
+// One was tried (#1385) and failed against staging: `hasMore` is
+// `rows.length === limit` over `listForUser(pool, req.user.id)`, so the pager
+// only renders for a viewer with a full 100-row FIRST PAGE. The backlog below
+// seeds 110 rows to ONE user — the first admin — so whether the control exists
+// depends on who opens the preview, not on whether the code is right. A
+// declared check there asserts on data, not on this change.
+//
+// The two things that ARE about the change — the list is flat, and no group
+// headers survive — are declared checks and pass. Everything about the pager
+// lives in the loadOlder tests above, which do not care how many notifications
+// anybody has. Do not "fix" a failing pager check by forcing `hasMore` from a
+// query param: that fabricates the exact signal the code reads, which is what
+// the platform's staging-seed rule warns against.
+test('staging seed keeps the >100-row backlog so the foot pager is exercisable', () => {
   const fn = MIGRATE_SRC.match(
     /async function seedStagingNotifications\([\s\S]*?\n\}/
   );
@@ -183,8 +212,9 @@ test('staging seed keeps the >100-row backlog so the per-group pager is exercisa
   // Strictly staging-gated (no-op in production).
   assert.match(body, /USERNODE_ENV !== 'staging'/, 'seed is staging-gated');
 
-  // A deep single-app backlog (> GROUP_LEAF_CAP) makes the self-app group
-  // show a "Show more →" a tester can page through.
+  // A backlog deeper than the 100-row first page is what makes `hasMore` true,
+  // which is the only thing that renders the pager at all — for the seed's
+  // target user, which is what makes it hand-testable in a staging preview.
   const countMatch = body.match(/BACKLOG_COUNT\s*=\s*(\d+)/);
   assert.ok(countMatch, 'BACKLOG_COUNT is defined');
   assert.ok(

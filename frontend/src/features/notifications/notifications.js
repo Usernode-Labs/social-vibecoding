@@ -24,20 +24,28 @@
 //  - clicking a leaf item navigates to the app's group-chat tab and
 //    marks that one read.
 //
-// #84 grouping: `items` stays the single newest-first source of truth.
-// The dropdown renders a PURE TRANSFORM of it (_groupByApp) — one
-// collapsed header row per app with a count + latest-notification
-// preview, expandable to reveal the per-kind leaf rows. Single-item
-// apps render as a plain leaf row (no group chrome). Expansion state is
-// persisted to localStorage and survives refreshes. Scrolling near the
-// bottom loads older pages via the keyset cursor (nextBefore/hasMore).
-
-const EXPANDED_STORAGE_KEY = 'notif_expanded_groups_v1';
-// Per-expanded-group leaf cap — initial number of leaves shown for an
-// expanded group, and the increment for each inline "Show more" click.
-// Beyond this the group renders an inline pagination button that reveals
-// the next page of already-loaded leaves in place (no navigation away).
-const GROUP_LEAF_CAP = 10;
+// #1385 flat list: `items` stays the single newest-first source of truth, and
+// the dropdown renders ONE ROW PER NOTIFICATION in that order — no per-app
+// headers, no expand/collapse, no per-group leaf pager.
+//
+// It used to nest (#84): a collapsed header row per app carrying a count and
+// the newest item's preview, expandable to reveal per-kind leaves, with the
+// expansion set persisted to localStorage. That earned its keep when the
+// drawer showed everything ever received, where one busy app could bury
+// another's single row. Two later changes took the premise away —
+// notifications arrive newest-first, and #1367's follow-up moved the READ ones
+// behind "See older notifications", so the default list is only what is new.
+// Grouping a short unread list by app costs a tap to read anything and buys
+// nothing back. Every row also NAMES its own app in its text already (see
+// rowView, which builds every kind's segments around `appLine`), so the header
+// was repeating the row directly beneath it.
+//
+// Older pages still load through the keyset cursor (nextBefore/hasMore). The
+// control that pulls them is now ONE button at the foot of the list instead of
+// one inside each expanded group, and that relocation is load-bearing rather
+// than cosmetic: `_showMoreGroup` was the only caller of `loadMore()` in the
+// codebase, so removing the group chrome without replacing it would have
+// stranded server pagination on page one.
 const NATIVE_INVALIDATION_TIMEOUT_MS = 10000;
 const NATIVE_INVALIDATION_REFRESH_VERSION = 1;
 
@@ -78,16 +86,10 @@ const Notifications = {
   // owns the presentation, so this module derives the state rather than
   // storing a flag that would disagree with the screen during the drawer's
   // deferred exit. A plain `open: false` here would shadow it.
-  // Pagination cursor for the per-group "Show more →" pager.
+  // Pagination cursor for the list's foot "Load older notifications" pager.
   nextBefore: null,  // { createdAt, id } | null
   hasMore: false,
   loading: false,
-  // Set<string> of expanded group keys (appId as string, or 'general').
-  expanded: new Set(),
-  // Map<string, number> of group key -> how many leaves to reveal for
-  // that group. Ephemeral (not persisted): resets on reload so the
-  // drawer opens compact. An absent key means the default GROUP_LEAF_CAP.
-  revealed: new Map(),
   // Only the newest first-page refresh may replace the authoritative feed.
   // This prevents an older boot/bell request from completing after a native
   // network-only invalidation and overwriting its fresher result.
@@ -100,8 +102,6 @@ const Notifications = {
   _networkFreshnessFloor: false,
 
   init() {
-    Notifications._loadExpanded();
-
     // THE UI OVERHAUL merged the bell into the hamburger, so #notifications-btn
     // is gone and so is the outside-click dismissal that used to live here:
     // opening, closing and dismissing this list are all the drawer's business
@@ -110,12 +110,11 @@ const Notifications = {
     const markAll = document.getElementById('notifications-mark-all');
     if (markAll) markAll.addEventListener('click', Notifications.markAllRead);
 
-    // Every drawer open starts folded, and on the "new" list rather than
-    // wherever the last visit left it. Both are the same idea — the drawer
-    // opens on what is NEW — and both key off the one announcement the
-    // controller makes for both presentations.
+    // Every drawer open starts on the "new" list rather than wherever the last
+    // visit left it: the drawer opens on what is NEW. This used to re-fold the
+    // app groups on the same announcement; #1385 removed them, so the show-older
+    // reset is all that is left of that pair.
     document.addEventListener('sv:drawer-open', () => {
-      Notifications._foldAllGroups();
       Notifications._setShowOlder(false);
     });
 
@@ -125,67 +124,6 @@ const Notifications = {
     if (window.App && App.user) Notifications.refresh();
     else document.addEventListener('sv:authed',
       () => Notifications.refresh(), { once: true });
-  },
-
-  // --- expansion --------------------------------------------------------
-  //
-  // Each app GROUP is folded by default, and re-folds on every drawer open —
-  // that is the collapse #1367's follow-up actually asked for, at the grain
-  // where it helps. A viewer with four apps sees four one-line headers and
-  // opens the one they care about, instead of scrolling past thirty rows.
-  //
-  // The persisted set is still loaded at boot and still written on toggle, so
-  // an expansion survives a re-render, a WS refresh and the leaf pager within
-  // one visit. It just does not survive CLOSING the drawer: `_foldAllGroups`
-  // below runs on `sv:drawer-open` (announced by
-  // ../header/header-menu-controller.js for both the desktop and the kit
-  // presentation), so "collapsed by default" means every time rather than only
-  // the first time.
-  _foldAllGroups() {
-    if (!Notifications.expanded.size) return;
-    Notifications.expanded.clear();
-    Notifications._saveExpanded();
-    // Only repaint if the drawer already has rows — the open itself triggers a
-    // refresh, and re-rendering an empty store here would be a wasted pass.
-    if (Notifications.items.length) Notifications._renderList();
-  },
-
-
-  _loadExpanded() {
-    try {
-      const raw = localStorage.getItem(EXPANDED_STORAGE_KEY);
-      const arr = raw ? JSON.parse(raw) : [];
-      Notifications.expanded = new Set(Array.isArray(arr) ? arr.map(String) : []);
-    } catch {
-      Notifications.expanded = new Set();
-    }
-  },
-
-  _saveExpanded() {
-    try {
-      localStorage.setItem(
-        EXPANDED_STORAGE_KEY,
-        JSON.stringify([...Notifications.expanded])
-      );
-    } catch { /* storage may be unavailable; non-fatal */ }
-  },
-
-  // Drop persisted expansion entries for apps that no longer have any
-  // notifications, so the store doesn't grow unbounded over time.
-  _pruneExpanded(liveKeys) {
-    let changed = false;
-    for (const key of [...Notifications.expanded]) {
-      if (!liveKeys.has(key)) {
-        Notifications.expanded.delete(key);
-        changed = true;
-      }
-    }
-    if (changed) Notifications._saveExpanded();
-    // Reveal counts are ephemeral, but still drop entries for apps with
-    // no notifications so the map doesn't grow unbounded over a session.
-    for (const key of [...Notifications.revealed.keys()]) {
-      if (!liveKeys.has(key)) Notifications.revealed.delete(key);
-    }
   },
 
   // --- fetching --------------------------------------------------------
@@ -489,46 +427,6 @@ const Notifications = {
     if (!Notifications.items.some(isPriorityNotif)) DevChat.setCompletionTitle(null);
   },
 
-  // Per-group "Mark read": app groups and platform-conversation groups use
-  // separate backend scopes so equal integer ids can never clear each other.
-  async _markGroupRead(groupKey, appId, conversationId) {
-    const numericAppId = (appId != null && appId !== '') ? Number(appId) : null;
-    const numericConversationId = (conversationId != null && conversationId !== '')
-      ? Number(conversationId) : null;
-    // No backend scope for the synthetic "general" (null-app) bucket —
-    // fall back to clearing its leaves by id.
-    if ((numericAppId == null || Number.isNaN(numericAppId))
-        && (numericConversationId == null || Number.isNaN(numericConversationId))) {
-      const ids = Notifications.items
-        .filter((n) => groupKeyFor(n) === groupKey && !n.readAt)
-        .map((n) => n.id);
-      for (const id of ids) await Notifications._markOneRead(id);
-      Notifications._renderList();
-      return;
-    }
-    try {
-      const res = await fetch('/api/notifications/read', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(numericConversationId != null
-          ? { conversation_id: numericConversationId }
-          : { app_id: numericAppId }),
-      });
-      if (!res.ok) return;
-      const data = await res.json();
-      Notifications.unread = data.unread || 0;
-      const now = new Date().toISOString();
-      Notifications.items = Notifications.items.map((n) =>
-        (groupKeyFor(n) === groupKey && !n.readAt) ? { ...n, readAt: now } : n
-      );
-      Notifications._reconcileCompletionTitle();
-      Notifications._renderBadge();
-      Notifications._renderList();
-    } catch (err) {
-      console.warn('[notifications] markGroupRead failed', err);
-    }
-  },
-
   async _markOneRead(id) {
     // Optimistically mark read in-memory and re-render the open drawer
     // right away: the unread dot disappears and unread-first sorting
@@ -691,13 +589,6 @@ const Notifications = {
           : `#app/${item.appSlug}/dev/chat`;
       }
     }
-  },
-
-  _toggleGroup(groupKey) {
-    if (Notifications.expanded.has(groupKey)) Notifications.expanded.delete(groupKey);
-    else Notifications.expanded.add(groupKey);
-    Notifications._saveExpanded();
-    Notifications._renderList();
   },
 
   // --- rendering -------------------------------------------------------
@@ -993,50 +884,13 @@ const Notifications = {
     return Notifications.items.filter((n) => !n.readAt);
   },
 
-  _groupByApp() {
-    const byKey = new Map();
-    for (const n of Notifications._bellItems()) {
-      const key = groupKeyFor(n);
-      let g = byKey.get(key);
-      if (!g) {
-        g = {
-          key,
-          appId: n.appId != null ? n.appId : null,
-          appName: n.conversationId != null
-            ? (n.conversationTitle || 'Messages')
-            : (n.appName || 'General'),
-          appSlug: n.appSlug || null,
-          conversationId: n.conversationId != null ? n.conversationId : null,
-          items: [],
-          unreadCount: 0,
-          hasUnreadPriority: false,
-        };
-        byKey.set(key, g);
-      }
-      g.items.push(n);
-      if (!n.readAt) g.unreadCount += 1;
-      if (isPriorityNotif(n)) g.hasUnreadPriority = true;
-    }
-    const groups = [...byKey.values()];
-    for (const g of groups) {
-      if (!g.hasUnreadPriority) continue;
-      // Array.prototype.sort is spec-stable, so this is a stable
-      // partition: priority items first, newest-first inside each half.
-      g.items.sort((a, b) => (isPriorityNotif(a) ? 0 : 1) - (isPriorityNotif(b) ? 0 : 1));
-    }
-    groups.sort((a, b) => (a.hasUnreadPriority ? 0 : 1) - (b.hasUnreadPriority ? 0 : 1));
-    return groups;
-  },
-
-  // One descriptor per top-level entry (an app group or a single-notif leaf
-  // row). The list component joins them with the stronger between-apps
-  // divider — never before the first or after the last — and owns every
-  // handler this method used to attach by querySelectorAll: the leaf clicks,
-  // the group toggle, per-group "Mark read", inline "Show more" and the touch
-  // swipe tray. All of them still stopPropagation, for the reason they always
-  // did: a re-render detaches the clicked node, and the document-level
-  // outside-click handler would then see a target outside the panel and
-  // wrongly dismiss the drawer.
+  // One descriptor per notification, newest-first — the whole list, flat
+  // (#1385). The list component owns every handler this method used to attach
+  // by querySelectorAll: the row clicks, the foot pager and the touch swipe
+  // tray. All of them still stopPropagation, for the reason they always did: a
+  // re-render detaches the clicked node, and the document-level outside-click
+  // handler would then see a target outside the panel and wrongly dismiss the
+  // drawer.
   _renderList() {
     const store = Notifications._store;
     if (!store) return;
@@ -1068,64 +922,57 @@ const Notifications = {
         caughtUp: olderCount > 0 && !Notifications.showOlder,
         olderCount,
         showOlder: Notifications.showOlder,
+        // Nothing to append a pager to — see the note in the populated branch.
+        canLoadMore: false,
+        loadingMore: false,
         touch,
       });
       return;
     }
 
-    const groups = Notifications._groupByApp();
-    // Keep persisted expansion tidy: drop apps that have no notifs now.
-    Notifications._pruneExpanded(new Set(groups.map((g) => g.key)));
-
-    const entries = [];
-    for (const g of groups) {
-      // App-associated notifications ALWAYS render under their app group
-      // header (header + dot + expand/pagination chrome), even when the
-      // app only has one notification — so the layout is consistent
-      // regardless of count. Only app-less ("general") notifications fall
-      // back to a plain leaf row when there's a single one.
-      if (g.items.length === 1 && g.appId == null) {
-        entries.push({ type: 'row', row: rowView(g.items[0]) });
-        continue;
-      }
-      entries.push({ type: 'group', group: groupView(g, Notifications.expanded.has(g.key)) });
-    }
+    // Straight through, in `items` order. No partition and no re-sort: the
+    // feed is already newest-first, and a flat list that reorders itself is
+    // exactly the thing #1385 asked to stop. (Unread completion notifications
+    // used to float to the top of the grouped list; see PRIORITY_KINDS.)
     store.set({
-      list: entries,
+      list: Notifications._bellItems().map(rowView),
       empty: false,
       caughtUp: false,
       olderCount,
       showOlder: Notifications.showOlder,
+      // The foot pager, and whether a page is already in flight. Offered only
+      // when there are rows to append to — with none, the empty/caught-up hint
+      // owns that space and the older-toggle is the affordance that belongs
+      // there.
+      canLoadMore: Notifications.hasMore,
+      loadingMore: Notifications.loading,
       touch,
     });
   },
 
-  // Reveal one more page (GROUP_LEAF_CAP) of leaves for a group. If every
-  // already-loaded leaf is shown but more pages exist server-side, bump
-  // the intended reveal and pull the next cross-app page; loadMore()
-  // re-renders on completion, so the freshly-arrived leaves appear.
-  _showMoreGroup(key) {
-    if (!key) return;
-    const g = Notifications._groupByApp().find((x) => x.key === key);
-    const current = Notifications.revealed.get(key) || GROUP_LEAF_CAP;
-    const loaded = g ? g.items.length : 0;
-    if (current < loaded) {
-      Notifications.revealed.set(key, current + GROUP_LEAF_CAP);
-      Notifications._renderList();
-    } else if (Notifications.hasMore) {
-      Notifications.revealed.set(key, current + GROUP_LEAF_CAP);
-      Notifications.loadMore();
-    }
+  /**
+   * The list's foot pager: pull the next page of older notifications.
+   *
+   * This is the flat-list replacement for `_showMoreGroup`, which #1385
+   * retired along with the group chrome it lived in. It is deliberately a
+   * method rather than a direct `loadMore` binding on the button, because the
+   * two are not the same thing: `loadMore()` is the transport (it no-ops while
+   * a page is in flight, or once the cursor is exhausted) and this is the
+   * user-facing action, which the drawer may later want to guard differently.
+   *
+   * There is NO client-side reveal cap any more. The old one existed to keep
+   * an expanded group from unrolling thirty rows inside a collapsed list; a
+   * flat list already shows what it has loaded, so a second cap on top of the
+   * server's page size would only hide rows the viewer had already paid to
+   * fetch. `loadMore()` re-renders on completion, so the arriving page simply
+   * appears at the bottom.
+   */
+  loadOlder() {
+    if (!Notifications.hasMore || Notifications.loading) return;
+    Notifications.loadMore();
   },
 
 };
-
-// Stable group key for a notification: the app id when present, else a
-// synthetic 'general' bucket so app-less notifications are never dropped.
-function groupKeyFor(n) {
-  if (n && n.conversationId != null) return `conversation:${n.conversationId}`;
-  return n && n.appId != null ? String(n.appId) : 'general';
-}
 
 const CONVERSATION_NOTIF_KINDS = new Set([
   'conversation_invite',
@@ -1135,11 +982,19 @@ const CONVERSATION_NOTIF_KINDS = new Set([
   'conversation_reaction',
 ]);
 
-// #161: completion notifications pin to the top of the drawer while
-// UNREAD — a finished session demands attention; once read it returns
-// to its natural chronological position. Deliberately limited to these
-// two kinds; grow this set rather than adding a server-side priority
-// column if more "priority" kinds emerge.
+// #161 defined these as the kinds that "demand attention": a finished dev
+// session or headless run, while still unread.
+//
+// #1385 stopped the DRAWER acting on it. The pin was a grouped-list device — it
+// floated an app's group above the others and led within it, which is also what
+// made it the collapsed header's preview — and a flat list the request asked to
+// be chronological cannot also reorder itself. Nothing was deleted: the set
+// still drives DevChat's completion title through isPriorityNotif() below, and
+// restoring a top-of-list pin is one stable partition in _renderList if the
+// group decides it wants one.
+//
+// Deliberately limited to these two kinds; grow this set rather than adding a
+// server-side priority column if more "priority" kinds emerge.
 const PRIORITY_KINDS = new Set(['session_done', 'auto_solve_done']);
 function isPriorityNotif(n) {
   return !!n && PRIORITY_KINDS.has(n.kind) && !n.readAt;
@@ -1207,51 +1062,12 @@ function inviteView(inv) {
   };
 }
 
-// Collapsed/expanded group header + (when expanded) its leaf rows, as data.
-// `count` is the unread count on an unread group and the total on a fully
-// read one — two different pills, which is why `hasUnread` travels with it.
-function groupView(g, isExpanded) {
-  const hasUnread = g.unreadCount > 0;
-  const latest = g.items[0];
-
-  // Expanded: reveal up to `visible` leaves (default GROUP_LEAF_CAP, grown
-  // by inline "Show more" clicks), then an inline pagination button.
-  const visible = Notifications.revealed.get(g.key) || GROUP_LEAF_CAP;
-  const shown = isExpanded ? g.items.slice(0, visible) : [];
-  const localRemaining = g.items.length - shown.length;
-  let more = null;
-  if (isExpanded) {
-    if (localRemaining > 0) {
-      // More already-loaded leaves to reveal in place.
-      more = { key: g.key, label: `Show ${Math.min(GROUP_LEAF_CAP, localRemaining)} more →` };
-    } else if (Notifications.hasMore) {
-      // All loaded leaves shown, but older pages may add more to this group.
-      more = { key: g.key, label: 'Show more →' };
-    }
-  }
-
-  return {
-    key: g.key,
-    appId: g.appId != null ? g.appId : '',
-    conversationId: g.conversationId != null ? g.conversationId : '',
-    expanded: isExpanded,
-    hasUnread,
-    accent: hasUnread
-      ? 'bg-violet-500/5 border-l-2 border-violet-500'
-      : 'border-l-2 border-transparent',
-    chevron: isExpanded ? '▾' : '▸', // ▾ / ▸
-    appName: g.appName || 'General',
-    count: hasUnread ? g.unreadCount : g.items.length,
-    preview: `${previewText(latest)} · ${relativeTime(latest.createdAt)}`,
-    leaves: shown.map(rowView),
-    more,
-  };
-}
 
 // #138: derive the title/body + deep-link fields for a completion alert
-// (chime/OS notification) from a notification row. Mirrors the per-kind
-// copy in previewText / the row renderers so the OS notification reads the
-// same as the bell-menu entry.
+// (chime/OS notification) from a notification row. Mirrors the per-kind copy in
+// rowView so the OS notification reads the same as the bell-menu entry. (It
+// used to name previewText too — that was the collapsed group header's
+// one-liner, which #1385 retired with the rest of the group chrome.)
 function completionAlertInfo(n) {
   const appName = n.appName || 'your app';
   if (n.kind === 'auto_solve_done') {
@@ -1290,38 +1106,6 @@ function completionAlertInfo(n) {
   };
 }
 
-// One-line summary used in a collapsed group header. Mirrors the per-kind
-// verbs used by renderRow's full rows.
-function previewText(n) {
-  const who = n.sourceUsername ? `@${n.sourceUsername}` : 'someone';
-  switch (n.kind) {
-    case 'conversation_invite':   return `✉️ ${who} invited you to a conversation`;
-    case 'conversation_message':  return `💬 ${who} sent a message`;
-    case 'conversation_mention':  return `${who} mentioned you`;
-    case 'conversation_reply':    return `${who} replied to you`;
-    case 'conversation_reaction': return `${n.detail || '❤️'} ${who} reacted to your message`;
-    case 'kudos':       return `\u{1F44F} ${who} gave kudos to your PR`;
-    case 'reaction':    return `${n.detail || '❤️'} ${who} reacted to your message`;
-    case 'stale_pr':    return `⏳ Your PR is going stale`;
-    case 'check_failed': return `⚠️ Your proposal's preview won't boot`;
-    case 'pr_proposed': return `\u{1F5F3}️ ${who} proposed a PR to vote on`;
-    case 'reply':       return `${who} replied to you`;
-    case 'mention':     return `${who} mentioned you`;
-    case 'spec_shared': return `\u{1F4CB} ${who} shared a spec with you`;
-    case 'collab_invite':          return `✉️ ${who} invited you to collaborate`;
-    case 'collab_invite_accepted': return `✅ ${who} accepted your invite`;
-    case 'approver_invite':          return `🗳️ ${who} invited you to be an approver`;
-    case 'approver_invite_accepted': return `✅ ${who} accepted your approver invite`;
-    case 'session_done':           return `✅ Your dev session finished`;
-    case 'auto_solve_done':
-      return n.detail === 'failed'
-        ? `⚠️ Proposal for issue #${n.headlessIssueNumber || '?'} failed`
-        : n.detail === 'question'
-          ? `🤖 Proposal for issue #${n.headlessIssueNumber || '?'} has questions for you`
-          : `🤖 Proposal for issue #${n.headlessIssueNumber || '?'} is ready`;
-    default:            return who;
-  }
-}
 
 // One notification row, as data. It has ONE renderer again — NotificationRow in
 // ./notifications-list.tsx — which both drawers use: the bell's own list, and
