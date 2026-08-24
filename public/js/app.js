@@ -3941,7 +3941,7 @@ const App = {
     // App/Feed/Kanban toggle (#1367) — but it is React-rendered from the
     // Improve store, so this publishes the fact instead of repainting a node:
     // one owner for the attribute, which is the whole ownership rule.
-    window.Improve?.setTab(tab);
+    window.Improve?.setTab(tab, App.currentSubTab);
 
     // Leaving the Sessions sub-tab. The cross-app active-sessions POLL used
     // to be torn down here; it and the panel it drove are retired (#1367),

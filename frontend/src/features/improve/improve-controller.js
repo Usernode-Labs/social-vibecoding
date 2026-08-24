@@ -209,13 +209,31 @@ const Improve = {
    * assigned. Only meaningful while there IS a target, so a switch with none
    * published is dropped rather than stored against nothing.
    */
-  setTab(tab) {
+  setTab(tab, subTab) {
     if (!improveStore.get().slug) return;
-    // #1406: 'other' is a platform screen that is neither half of an app. It
-    // is passed explicitly by App._enterScreenChrome and never inferred, so
-    // anything unrecognised still collapses to 'app' exactly as before.
+    // #1406's 'other' value survives in the store's type but has no publisher
+    // since the Streamlined Concept took platform screens back to a plain
+    // title; anything unrecognised still collapses to 'app' exactly as before.
     const next = tab === 'dev' ? 'dev' : (tab === 'other' ? 'other' : 'app');
-    improveStore.set({ tab: next });
+    improveStore.set({
+      tab: next,
+      // Which dev sub-view: the header's eye is a PREVIEW control on a
+      // session and a back-to-the-app control everywhere else.
+      subTab: next === 'dev' ? (subTab || 'forum') : null,
+    });
+  },
+
+  /**
+   * The open session's staging preview, or null.
+   *
+   * Called by DevChat._publishPreview() whenever the open session or its
+   * `staging_url` changes. Gates the header's eye — see improve-button.tsx.
+   */
+  setSessionPreview(preview) {
+    improveStore.set({
+      previewSessionId: (preview && preview.sessionId) || null,
+      previewUrl: (preview && preview.url) || null,
+    });
   },
 
   /**

@@ -83,6 +83,9 @@ import { createStore } from '../../lib/plain-store.js';
  * @property {number} sessionUnread
  * @property {number} sessionDone
  * @property {'idle'|'deploying'|'stale'} versionState
+ * @property {'forum'|'chat'|'sessions'|'topic'|null} subTab
+ * @property {number|null} previewSessionId
+ * @property {string|null} previewUrl
  */
 
 /** @type {ImproveState} */
@@ -147,14 +150,14 @@ const INITIAL = {
   /** True once a session load has resolved at least once. */
   sessionsLoaded: false,
 
-  // ── The three things the BUTTON says, with the panel shut ────────────
+  // ── The indicators the store carries with the panel shut ─────────────
   //
-  // All three used to be painted onto other controls by classic modules that
-  // resolved a span by id and wrote `classList` / `textContent` into it. The
-  // button is React-owned end to end (see ./improve-button.tsx), so they are
-  // state here and the component renders them — the same reason
-  // #feedback-queue-dot goes through the visibility store rather than being
-  // toggled by id.
+  // All of these used to be painted onto other controls by classic modules
+  // that resolved a span by id and wrote `classList` / `textContent` into it.
+  // Their nodes are React-owned now (<MenuIndicators/> on the hamburger —
+  // see ../header/platform-header.tsx), so they are state here and the
+  // component renders them — the same reason #feedback-queue-dot goes
+  // through the visibility store rather than being toggled by id.
   //
   // None of them is derived from `sessions` below, deliberately: that array is
   // only loaded while the panel is OPEN, and every one of these has to be true
@@ -162,13 +165,13 @@ const INITIAL = {
   // SessionState's live entries and the notification stream.
 
   /**
-   * A dev session the viewer can see is mid-turn. Drives the glyph: a spinner
-   * instead of the lightbulb, so "something is running" is legible without
-   * opening anything. From `SessionState.anyActive()`.
+   * A dev session the viewer can see is mid-turn. Drives the emerald badge's
+   * pulse, so "something is running" is legible without opening anything.
+   * From `SessionState.anyActive()`.
    */
   working: false,
   /**
-   * Unread session-related notifications — the green count on the button.
+   * Unread session-related notifications — the green count on the hamburger.
    * Split out of the bell's red count by Notifications._renderBadge so the
    * two never double-count; this is that same split, published rather than
    * written into a span.
@@ -181,13 +184,28 @@ const INITIAL = {
    */
   sessionDone: 0,
   /**
-   * The platform version row's state, mirrored onto the button as a dot:
+   * The platform version row's state, mirrored onto the hamburger's dot:
    * amber while a deploy is in flight, violet once the platform has rolled
-   * past the SHA this tab loaded against. The version rows themselves live in
-   * the panel's footer, which is why the cue belongs on this button and not
-   * on the hamburger where it used to sit.
+   * past the SHA this tab loaded against.
    */
   versionState: 'idle',
+  /**
+   * Which dev sub-view is on screen ('forum' | 'chat' | 'sessions' | 'topic'),
+   * or null off the Dev half. Republished with `tab` from App.switchTab —
+   * the header's eye needs to know whether it is looking at a SESSION.
+   */
+  subTab: null,
+  /**
+   * The open session's staging PREVIEW, or null when there is none.
+   *
+   * The header's eye is the preview affordance on a session screen — the
+   * same eye glyph the cards use (AppView.PREVIEW_EYE_SVG, gated on
+   * `staging_url`) — so it only renders when there is something to preview.
+   * Published by DevChat._publishPreview() at every point the open session
+   * or its staging_url changes.
+   */
+  previewSessionId: null,
+  previewUrl: null,
 };
 
 export const improveStore = createStore(INITIAL);
