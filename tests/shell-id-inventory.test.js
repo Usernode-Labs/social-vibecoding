@@ -248,6 +248,18 @@ const ADDED_IDS = {
   'settings-openrouter-copy': 'Copy action for the one-time child-key reveal (#1344).',
   'settings-openrouter-dismiss-reveal': 'Clears the one-time plaintext key from the settings DOM (#1344).',
   'settings-openrouter-personal-controls': 'Personal-BYOK controls hidden while a managed key owns the credential slot (#1344).',
+  // ── Streamlined Concept: the Board Filters dialog ────────────────
+  // The Figma board (Streamlined Concept / Dev Sessions and Navigation)
+  // moves the Board's filter selects and the needs-vote toggle off the
+  // filter bar into a dialog; the bar keeps search and gains a
+  // `Filters (n)` chip plus dismissable active-filter chips (those are
+  // runtime-injected, so only the dialog's ids land in the shell).
+  'board-filters-modal': 'The Filters dialog root — tenth shell dialog, same useDialog/static-modal contract as the nine.',
+  'board-filters-priority': 'Priority select inside the Filters dialog (was #dev-kanban-priority on the bar).',
+  'board-filters-category': 'Category select inside the Filters dialog (was #dev-kanban-category on the bar).',
+  'board-filters-assignee': 'Assignee select inside the Filters dialog (was #dev-kanban-assignee on the bar).',
+  'board-filters-needsvote': 'The "Needs my vote" switch inside the Filters dialog (was the bar chip #dev-kanban-needsvote).',
+  'board-filters-done': 'The dialog\'s Done button — applies the staged filters via AppView.applyKanbanFilters.',
 };
 
 test('the shell still carries every id in the frozen baseline', () => {

@@ -231,9 +231,12 @@ test('category filter matches a CUSTOM category slug like a built-in', () => {
   assert.equal(AppView._devCardMatches('issue', issue({ category: { top: 'bug', count: 5 } }), f), false);
 });
 
-// #780: the filter dropdown is built from the app's vocabulary — built-ins
-// first, then customs — instead of the hardcoded six.
-test('category filter options list built-ins then the app custom categories', () => {
+// #780: the category vocabulary is built from the app's registry — built-ins
+// first, then customs — instead of the hardcoded six. The Streamlined
+// Concept moved the select into the Filters dialog, so the vocabulary is
+// DATA now (_kanbanCategoryChoices feeds the dialog's payload); the "Any
+// category" default is the dialog's own leading option, not an entry here.
+test('category choices list built-ins then the app custom categories', () => {
   const AppView = makeAppView();
   AppView._kanbanFilters = { ...none };
   AppView._appCategories = [
@@ -241,51 +244,83 @@ test('category filter options list built-ins then the app custom categories', ()
     { value: 'dev experience', label: 'Dev Experience', custom: true },
     { value: 'performance', label: 'Performance', custom: true },
   ];
-  // #1191: the select is features/dev-board/kanban-filters.tsx's, so the
-  // module hands over an option LIST rather than a string of <option>s. Same
-  // rules, one fewer renderer.
-  // (JSON round-trip: the list comes back from the vm's realm, so a
-  // deepEqual would compare prototypes rather than contents.)
-  const opts = JSON.parse(JSON.stringify(AppView._kanbanCategoryOptionList()));
-  assert.deepEqual(opts[0], { value: '', label: 'Any category' }, 'the any-category default leads');
-  // Built-ins keep their fixed display labels and come first.
+  const choices = Array.from(AppView._kanbanCategoryChoices());
   assert.deepEqual(
-    opts.map((o) => o.value),
-    ['', ...AppView.ATTR_CATEGORY_VALUES, 'dev experience', 'performance'],
+    Array.from(choices, (c) => c.value),
+    [...Array.from(AppView.ATTR_CATEGORY_VALUES), 'dev experience', 'performance'],
     'built-ins precede the customs, in registry order'
   );
-  assert.ok(opts.some((o) => o.label === 'Dev Experience'), 'a custom option shows its registered label');
+  assert.equal(
+    choices.find((c) => c.value === 'dev experience').label,
+    'Dev Experience',
+    'a custom choice shows its registered label'
+  );
 
   // With no vocabulary loaded it degrades to built-ins only (pre-#780 view).
   AppView._appCategories = null;
   assert.deepEqual(
-    JSON.parse(JSON.stringify(AppView._kanbanCategoryOptionList())).map((o) => o.value),
-    ['', ...AppView.ATTR_CATEGORY_VALUES],
+    Array.from(AppView._kanbanCategoryChoices(), (c) => c.value),
+    Array.from(AppView.ATTR_CATEGORY_VALUES)
   );
 });
 
-// Mirrors the assignee select's rule: an active selection is never dropped
-// from the list, so a filter can't silently self-clear on a refresh.
-test('category filter keeps an active selection that left the vocabulary', () => {
+// Mirrors the assignee list's rule: an active selection is never dropped
+// from the vocabulary, so a filter can't silently self-clear on a refresh.
+test('category choices keep an active selection that left the vocabulary', () => {
   const AppView = makeAppView();
   AppView._appCategories = null;
   AppView._kanbanFilters = { ...none, category: 'retired category' };
-  assert.ok(AppView._kanbanCategoryOptionList().some((o) => o.value === 'retired category'),
-    'the active filter survives');
-  // …and the select shows it as chosen, which is the `selected` attribute the
-  // string renderer used to write by hand.
+  const values = Array.from(AppView._kanbanCategoryChoices(), (c) => c.value);
+  assert.ok(values.includes('retired category'), 'the active filter survives');
+});
+
+// The Filters dialog's write-back merges the dialog-owned keys over the
+// current set — search stays the bar's own — and repaints through the
+// normal surface path.
+test('applyKanbanFilters merges dialog keys and preserves the search text', () => {
+  const AppView = makeAppView();
+  let repainted = 0;
+  AppView._repaintBoardSurface = () => { repainted += 1; };
+  AppView._kanbanFilters = { ...none, q: 'ripple', priority: 'low' };
+  AppView.applyKanbanFilters({ priority: 'high', category: 'bug', assignee: null, needsVote: true });
+  // Field-by-field (the object comes from the vm realm, so deepEqual would
+  // trip on its foreign Object prototype rather than its contents).
+  const f = AppView._kanbanFilters;
+  assert.equal(f.q, 'ripple', 'search text is preserved');
+  assert.equal(f.priority, 'high');
+  assert.equal(f.category, 'bug');
+  assert.equal(f.assignee, null);
+  assert.equal(f.needsVote, true);
+  assert.equal(repainted, 1, 'one repaint per apply');
+});
+
+// The bar itself is features/dev-board/kanban-filters.tsx's — search, the
+// `Filters (n)` chip that opens the dialog, and one dismissable chip per
+// active filter. The selects it used to render live in the dialog now.
+test('the bar renders search, the Filters chip, and dismissable active chips', () => {
   const html = renderComponent(
     'frontend/src/features/dev-board/kanban-filters.tsx', 'KanbanFiltersView',
     {
-      mounted: true, q: '', priority: '', category: 'retired category', assignee: '',
-      needsVote: false, active: true, seq: 0,
-      categories: JSON.parse(JSON.stringify(AppView._kanbanCategoryOptionList())),
-      assignees: [{ value: '', label: 'Anyone' }],
+      mounted: true,
+      q: '',
+      seq: 0,
+      count: 2,
+      chips: [
+        { key: 'priority', label: 'High priority' },
+        { key: 'needsVote', label: 'Needs my vote' },
+      ],
     },
   );
-  assert.match(html, /<option value="retired category" selected="">Retired category<\/option>/);
-  // The chip also reads as SET while a filter is on — the filled tonal state.
-  assert.match(html, /id="dev-kanban-category"[^>]*bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"/);
+  assert.match(html, /id="dev-kanban-search"[^>]*placeholder="Search title, author, or #"/);
+  assert.match(html, /id="dev-kanban-filters-btn"[^>]*aria-haspopup="dialog"/);
+  assert.match(html, />Filters \(2\)</, 'the chip counts the dialog-owned filters');
+  // The chip reads as SET while any dialog filter is on — the filled tonal state.
+  assert.match(html, /id="dev-kanban-filters-btn"[^>]*bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900/);
+  assert.match(html, /data-filter-chip="priority"/);
+  assert.match(html, /aria-label="Remove filter: High priority"/);
+  assert.match(html, /data-filter-chip="needsVote"/);
+  // No select survives in the strip.
+  assert.ok(!/<select/.test(html), 'the selects moved into the Filters dialog');
 });
 
 test('person filter matches either the top-voted assignee or the author', () => {
@@ -412,14 +447,10 @@ test('_kanbanAssigneeOptions unions assignees and authors and keeps the current 
   assert.deepEqual(names(), ['alex', 'casey', 'evan', 'kim', 'maya', 'sam', 'zoe']);
   // The Unassigned sentinel is a fixed dropdown option, never a name —
   // an active Unassigned filter must not leak into the alphabetized list.
+  // (The "Anyone" / "Unassigned" leading options are the Filters dialog's
+  // own now — this list is just the names its payload carries.)
   AppView._kanbanFilters.assignee = AppView.KANBAN_ASSIGNEE_UNASSIGNED;
   assert.deepEqual(names(), ['casey', 'evan', 'kim', 'maya', 'sam', 'zoe']);
-  // The dropdown is React's now (features/dev-board/kanban-filters.tsx), so
-  // the module hands it OPTIONS rather than markup — same assertion, one
-  // layer down.
-  const opts = Array.from(AppView._kanbanAssigneeOptionList()).map((o) => ({ ...o }));
-  assert.deepEqual(opts[0], { value: '', label: 'Assignee or author' },
-    'the default option describes both ways a person can match');
 });
 
 // ── Persistence helpers (sessionStorage-backed, per app slug) ──────────
@@ -650,67 +681,68 @@ test('the second column reads "Underway" but keeps its inprogress key and id', (
   assert.equal((html.match(/dev-kanban-col-head[^>]*title="/g) || []).length, 1);
 });
 
-// ── The bar itself (#1191) ──────────────────────────────────────────────
+// ── The bar itself (#1191, then Streamlined Concept) ────────────────────
 //
-// The strip was an `innerHTML` template plus six re-bound listeners, and Clear
-// worked by rebuilding the whole thing so every control snapped back. Two
-// properties carried the design and neither had a test:
+// The strip was an `innerHTML` template plus six re-bound listeners; #1191
+// made it React's, and the Streamlined Concept slimmed it to search + the
+// `Filters (n)` chip + the active-filter chips. One property carried through
+// every shape and still needs pinning:
 //
-//   1. An ordinary board repaint must NOT disturb the search box. That is why
-//      `#dev-kanban-filterbar` was left untouched while `#dev-kanban-board`
-//      was rewritten around it — a rebuild would have taken the caret with it.
-//      The box is uncontrolled for the same reason, and Clear is the one path
-//      allowed to replace it (through a `seq` that is its React key).
-//   2. Rebuilding a select's options closes an open dropdown, so a select the
-//      reader is currently in keeps the list it was opened with.
+//   An ordinary board repaint must NOT disturb the search box. That is why
+//   `#dev-kanban-filterbar` was left untouched while `#dev-kanban-board` was
+//   rewritten around it — a rebuild would have taken the caret with it. The
+//   box is uncontrolled for the same reason, and dismissing the Search chip
+//   is the one path allowed to replace it (through a `seq` that is its React
+//   key).
 
-test('the search box survives a repaint and only Clear replaces it', () => {
-  const AppView = makeAppView();
-  const view = (over) => renderComponent(
-    'frontend/src/features/dev-board/kanban-filters.tsx', 'KanbanFiltersView',
-    {
-      mounted: true, q: '', priority: '', category: '', assignee: '',
-      needsVote: false, active: false, seq: 0,
-      categories: [{ value: '', label: 'Any category' }],
-      assignees: [{ value: '', label: 'Anyone' }],
-      ...over,
-    },
-  );
+test('the search box survives a repaint; only its chip dismissal replaces it', () => {
   // Uncontrolled: the typed text is the DOM's, seeded once. A `value` prop
   // here would re-render the box on every repaint and move the caret.
-  const html = view({ q: 'photo' });
+  const html = renderComponent(
+    'frontend/src/features/dev-board/kanban-filters.tsx', 'KanbanFiltersView',
+    { mounted: true, q: 'photo', seq: 0, count: 0, chips: [] },
+  );
   assert.match(html, /id="dev-kanban-search"[^>]*value="photo"/);
   const tsx = read('frontend/src/features/dev-board/kanban-filters.tsx');
   assert.match(tsx, /defaultValue=\{q\}/, 'the search field is uncontrolled');
   assert.doesNotMatch(tsx, /\bvalue=\{q\}/, 'a controlled one would move the caret on every repaint');
-  assert.match(tsx, /key=\{`q\$\{seq\}`\}/, 'and its identity is the seq Clear bumps');
+  assert.match(tsx, /key=\{`q\$\{seq\}`\}/, 'and its identity is the seq the dismissal bumps');
 
-  // Clear bumps that seq, which is what puts the box back to empty.
-  const clear = read('public/js/app-view.js')
-    .match(/_clearKanbanFilters\(\) \{([\s\S]*?)\n {2}\},/);
-  assert.ok(clear, '_clearKanbanFilters() found');
-  assert.match(clear[1], /AppView\._kanbanFilters = AppView\._defaultKanbanFilters\(\);/);
-  assert.match(clear[1], /AppView\._kanbanFilterSeq \+= 1;/);
+  // Dismissing the Search chip bumps that seq — the one write that empties
+  // the box. The dialog-owned keys just null out, seq untouched.
+  const AppView = makeAppView();
+  AppView._repaintBoardSurface = () => {};
+  AppView._kanbanFilters = { ...none, q: 'photo', priority: 'high' };
+  const seq0 = AppView._kanbanFilterSeq;
+  AppView._dismissKanbanFilter('priority');
+  assert.equal(AppView._kanbanFilters.priority, null);
+  assert.equal(AppView._kanbanFilterSeq, seq0, 'a non-search dismissal leaves the box alone');
+  AppView._dismissKanbanFilter('q');
+  assert.equal(AppView._kanbanFilters.q, '');
+  assert.equal(AppView._kanbanFilterSeq, seq0 + 1, 'the Search dismissal re-keys the field');
 });
 
-test('a select the reader has open keeps the options it was opened with', () => {
+test('a repaint republishes the whole strip: count and chips track the filters', () => {
   const AppView = makeAppView();
-  AppView._kanbanFilters = { ...none };
+  AppView._kanbanFilters = {
+    ...none, q: ' ripple ', priority: 'high', assignee: AppView.KANBAN_ASSIGNEE_UNASSIGNED, needsVote: true,
+  };
   const seen = [];
   AppView._reactDevBoard = () => ({ publishKanbanFilters: (p) => seen.push(p) });
   // `_updateKanbanFilterBarUI` bails when the host is absent, so give it one.
-  const doc = AppView.__sandbox.document;
-  doc.getElementById = (id) => (id === 'dev-kanban-filterbar' ? { id } : null);
-
-  // Nothing focused: both lists are refreshed.
+  AppView.__sandbox.document.getElementById =
+    (id) => (id === 'dev-kanban-filterbar' ? { id } : null);
   AppView._updateKanbanFilterBarUI();
-  assert.ok('categories' in seen[0] && 'assignees' in seen[0]);
-
-  // The assignee dropdown is open: its options are left alone, and the rest of
-  // the bar still updates. The next repaint catches it up.
-  AppView.__sandbox.document.activeElement = { id: 'dev-kanban-assignee' };
-  AppView._updateKanbanFilterBarUI();
-  assert.ok('categories' in seen[1], 'the other select still refreshes');
-  assert.ok(!('assignees' in seen[1]), 'the open one does not');
-  assert.equal(seen[1].active, false, 'and the Clear link still tracks the filters');
+  const view = seen[0];
+  assert.equal(view.count, 3, 'search stays out of the Filters (n) count');
+  // One chip per active filter, in the module's fixed order, labels resolved.
+  assert.deepEqual(
+    Array.from(view.chips, (c) => ({ ...c })),
+    [
+      { key: 'q', label: 'Search: ripple' },
+      { key: 'priority', label: 'High priority' },
+      { key: 'assignee', label: 'Unassigned' },
+      { key: 'needsVote', label: 'Needs my vote' },
+    ],
+  );
 });

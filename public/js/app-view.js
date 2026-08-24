@@ -4977,47 +4977,25 @@ const AppView = {
     return Array.from(set).sort((a, b) => a.localeCompare(b));
   },
 
-  // #780: the category filter's options — built-ins then this app's custom
-  // categories, mirroring the dropdown's order. Like the assignee select, the
-  // current selection is always kept in the list even if it vanishes from the
-  // vocabulary, so an active filter never silently self-clears.
-  _kanbanCategoryOptionList() {
-    const f = AppView._kanbanFilters || {};
-    const seen = new Set();
-    const out = [{ value: '', label: 'Any category' }];
-    const push = (v) => { seen.add(v); out.push({ value: v, label: AppView._categoryMeta(v).label }); };
-    for (const v of AppView.ATTR_CATEGORY_VALUES) push(v);
-    for (const c of AppView._customCategories()) if (!seen.has(c.value)) push(c.value);
-    // The current selection is always kept in the list even if it vanished
-    // from the vocabulary, so an active filter never silently self-clears.
-    if (f.category && !seen.has(f.category)) push(f.category);
-    return out;
-  },
-
   // ── The filter bar's chips moved to React ────────────────────────
   //
   // `KANBAN_CHIP_BASE`/`_IDLE`/`_ON` and the two builders that read them
   // (`_kanbanNeedsVoteChipCls`, `_kanbanChipSelectCls`) are retired: the bar
   // is `frontend/src/features/dev-board/kanban-filters.tsx` now, and it is the
   // only writer below `#dev-kanban-filterbar`. The class runs live there, as
-  // `CHIP_BASE`/`CHIP_IDLE`/`CHIP_ON`.
+  // `CHIP_BASE`/`CHIP_IDLE`/`CHIP_ON`. Streamlined Concept: the bar's selects
+  // and the needs-vote toggle moved on into the Filters DIALOG
+  // (frontend/src/features/dialogs/board-filters.tsx), so the bar is just
+  // search + a `Filters (n)` chip + one dismissable chip per active filter,
+  // and the option vocabularies feed the dialog's open() payload instead of
+  // a select's list (`_kanbanCategoryChoices` below replaced
+  // `_kanbanCategoryOptionList`).
   //
   // They are transcribed there rather than imported from here, and that is not
   // an oversight worth undoing: this file is a classic script the bundle
   // cannot import, and Tailwind's extractor is a regex over source text
   // (AGENTS.md), so a class name whose only occurrence is in this file would
   // compile to nothing for the component that actually renders it.
-
-  _kanbanAssigneeOptionList() {
-    return [
-      // "Assignee or author" rather than "Anyone" since #1404: the filter
-      // matches a person against BOTH the top-voted assignee and the card's
-      // author, so the empty option is naming what it clears, not who.
-      { value: '', label: 'Assignee or author' },
-      { value: AppView.KANBAN_ASSIGNEE_UNASSIGNED, label: 'Unassigned' },
-      ...AppView._kanbanAssigneeOptions().map((name) => ({ value: name, label: name })),
-    ];
-  },
 
   // #625 made the filter bar shared between the kanban and PM views, so every
   // bar control routed its change through this dispatcher rather than calling
@@ -5050,23 +5028,19 @@ const AppView = {
     AppView._reactDevBoard()?.publishKanbanFilters(patch);
   },
 
-  // The whole bar's state, from the module's filters plus the two data-driven
-  // option lists. `except` skips a select whose dropdown is open — rebuilding
-  // its options would close it, and the next repaint catches it up.
-  _kanbanFilterView(except) {
+  // The whole bar's state. The selects' option lists are no longer part of
+  // it — the vocabularies feed the Filters dialog's open() payload instead —
+  // so the view is just the search text, the `Filters (n)` count and one
+  // entry per active filter for the dismissable chip row.
+  _kanbanFilterView() {
     const f = AppView._kanbanFilters || {};
-    const view = {
+    return {
       mounted: true,
       q: f.q || '',
-      priority: f.priority || '',
-      category: f.category || '',
-      assignee: f.assignee || '',
-      needsVote: !!f.needsVote,
-      active: AppView._kanbanFiltersActive(),
+      seq: AppView._kanbanFilterSeq,
+      count: AppView._kanbanFilterCount(),
+      chips: AppView._kanbanActiveChips(),
     };
-    if (except !== 'category') view.categories = AppView._kanbanCategoryOptionList();
-    if (except !== 'assignee') view.assignees = AppView._kanbanAssigneeOptionList();
-    return view;
   },
 
   _renderKanbanFilterBar() {
@@ -5093,48 +5067,114 @@ const AppView = {
     }, 150);
   },
 
-  _setKanbanFilter(field, value) {
-    AppView._kanbanFilters[field] = value || null;
-    AppView._publishKanbanFilters(AppView._kanbanFilterView());
-    AppView._repaintBoardSurface();
-  },
-
-  _toggleKanbanNeedsVote() {
-    AppView._kanbanFilters.needsVote = !AppView._kanbanFilters.needsVote;
-    AppView._publishKanbanFilters(AppView._kanbanFilterView());
-    AppView._repaintBoardSurface();
-  },
-
   _kanbanFilterSeq: 0,
 
-  _clearKanbanFilters() {
-    AppView._kanbanFilters = AppView._defaultKanbanFilters();
-    // A new `seq` is a new key on the search field, which is what puts an
-    // uncontrolled box back to empty. Every other control reads its value from
-    // the model and follows on its own.
-    AppView._kanbanFilterSeq += 1;
-    AppView._publishKanbanFilters({
-      ...AppView._kanbanFilterView(),
-      seq: AppView._kanbanFilterSeq,
-    });
+  // A chip's × — remove exactly one filter. The dialog-owned keys just null
+  // out; dismissing the Search chip also has to empty the uncontrolled box,
+  // and a new `seq` is a new key on the field, which is what does that.
+  _dismissKanbanFilter(key) {
+    if (key === 'q') {
+      AppView._kanbanFilters.q = '';
+      AppView._kanbanFilterSeq += 1;
+    } else if (key === 'needsVote') {
+      AppView._kanbanFilters.needsVote = false;
+    } else {
+      AppView._kanbanFilters[key] = null;
+    }
     AppView._repaintBoardSurface();
   },
 
-  // Keep the stable filter bar in sync after each board repaint: Clear-link
-  // visibility, and the assignee option list (which follows the data).
+  // How many of the dialog-owned filters are active — the count on the
+  // `Filters (n)` chip. Search is excluded: it has its own field and chip.
+  _kanbanFilterCount() {
+    const f = AppView._kanbanFilters || {};
+    return (f.priority ? 1 : 0) + (f.category ? 1 : 0)
+      + (f.assignee ? 1 : 0) + (f.needsVote ? 1 : 0);
+  },
+  // One entry per active filter, in a fixed order — the dismissable chip
+  // row's data. The chips themselves (Material selected filter-chip with a
+  // trailing ×) render in kanban-filters.tsx; clicking one calls
+  // `_dismissKanbanFilter` with its key.
+  _kanbanActiveChips() {
+    const f = AppView._kanbanFilters || {};
+    const chips = [];
+    if (f.q && f.q.trim()) chips.push({ key: 'q', label: `Search: ${f.q.trim()}` });
+    if (f.priority) {
+      const label = f.priority.charAt(0).toUpperCase() + f.priority.slice(1);
+      chips.push({ key: 'priority', label: `${label} priority` });
+    }
+    if (f.category) {
+      chips.push({ key: 'category', label: AppView._categoryMeta(f.category).label });
+    }
+    if (f.assignee) {
+      chips.push({
+        key: 'assignee',
+        label: f.assignee === AppView.KANBAN_ASSIGNEE_UNASSIGNED ? 'Unassigned' : f.assignee,
+      });
+    }
+    if (f.needsVote) chips.push({ key: 'needsVote', label: 'Needs my vote' });
+    return chips;
+  },
+  // The category vocabulary as DATA — built-ins then this app's customs,
+  // mirroring the retired select's order (#780), with the active selection
+  // kept in the list even if it vanishes from the vocabulary so an active
+  // filter never silently self-clears. Feeds the Filters dialog's payload.
+  _kanbanCategoryChoices() {
+    const f = AppView._kanbanFilters || {};
+    const seen = new Set();
+    const out = [];
+    const add = (v) => {
+      if (!v || seen.has(v)) return;
+      seen.add(v);
+      out.push({ value: v, label: AppView._categoryMeta(v).label });
+    };
+    AppView.ATTR_CATEGORY_VALUES.forEach(add);
+    AppView._customCategories().forEach((c) => add(c.value));
+    add(f.category);
+    return out;
+  },
+  // Open the Filters dialog with a snapshot of the current filters and the
+  // option vocabularies. The dialog is a staging area: nothing changes until
+  // its Done calls applyKanbanFilters below.
+  _openKanbanFiltersDialog() {
+    const f = AppView._kanbanFilters || AppView._defaultKanbanFilters();
+    window.UsernodeReact?.dialogs?.boardFilters?.open({
+      filters: {
+        priority: f.priority || null,
+        category: f.category || null,
+        assignee: f.assignee || null,
+        needsVote: !!f.needsVote,
+      },
+      categories: AppView._kanbanCategoryChoices(),
+      assignees: AppView._kanbanAssigneeOptions(),
+      unassigned: AppView.KANBAN_ASSIGNEE_UNASSIGNED,
+    });
+  },
+  // The Filters dialog's write-back. Merges the dialog-owned keys over the
+  // current set (search stays the bar's own) and repaints; persistence rides
+  // the repaint like every other filter change (_repaintKanbanBoard saves).
+  applyKanbanFilters(next) {
+    const n = next || {};
+    AppView._kanbanFilters = {
+      ...AppView._kanbanFilters,
+      priority: n.priority || null,
+      category: n.category || null,
+      assignee: n.assignee || null,
+      needsVote: !!n.needsVote,
+    };
+    AppView._repaintBoardSurface();
+  },
+
+  // Keep the stable filter bar in sync after each board repaint: the
+  // `Filters (n)` chip's count + fill, and the active-chip row (which
+  // follows the filter state the repaint just applied).
   _updateKanbanFilterBarUI() {
     const bar = document.getElementById('dev-kanban-filterbar');
     if (!bar) return;
-    // Rebuilding a select's options closes an open dropdown, so a select the
-    // reader is currently in keeps the list it was opened with; the next
-    // repaint catches it up. #780: the category list gets the same treatment,
-    // so an option created during this session — or a vocabulary that
-    // finished loading after the bar was built — shows up without a reload.
-    const active = document.activeElement;
-    const id = active && active.id;
-    const except = id === 'dev-kanban-assignee' ? 'assignee'
-      : (id === 'dev-kanban-category' ? 'category' : null);
-    AppView._publishKanbanFilters(AppView._kanbanFilterView(except));
+    // The dropdown-preserving `except` dance died with the bar's selects —
+    // everything left in the strip (Filters chip count, active chips, the
+    // uncontrolled search box React never re-keys) republishes safely.
+    AppView._publishKanbanFilters(AppView._kanbanFilterView());
   },
 
   // Repaint only the board region (#dev-kanban-board) from cached data,

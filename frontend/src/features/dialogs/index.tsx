@@ -31,6 +31,7 @@ import { MembersDialog } from './members';
 import { FeedbackDialog } from './feedback';
 import { ShareDialog } from './share';
 import { AppSecretsDialog } from './app-secrets';
+import { BoardFiltersDialog } from './board-filters';
 
 export function Dialogs() {
   return (
@@ -44,6 +45,13 @@ export function Dialogs() {
       <FeedbackDialog />
       <ShareDialog />
       <AppSecretsDialog />
+      {/*
+          Streamlined Concept: the Board's filter selects + "Needs my vote"
+          toggle, moved off the filter bar into a dialog. New markup (no
+          legacy baseline) appended LAST so the nine originals keep their
+          byte positions in the prerendered document.
+      */}
+      <BoardFiltersDialog />
     </>
   );
 }
@@ -58,4 +66,5 @@ export {
   FeedbackDialog,
   ShareDialog,
   AppSecretsDialog,
+  BoardFiltersDialog,
 };
