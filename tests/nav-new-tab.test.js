@@ -37,6 +37,7 @@ const browseListTsx = read('frontend/src/features/apps/browse-list.tsx');
 const browseDetailTsx = read('frontend/src/features/apps/browse-detail.tsx');
 const devChatJs = read('frontend/src/features/dev-chat/dev-chat.js');
 const chatFrameTsx = read('frontend/src/features/dev-board/chat-frame.tsx');
+const topicFrameTsx = read('frontend/src/features/dev-board/topic-frame.tsx');
 const { HOME_SRC: homeJs } = require('./helpers/home-modules');
 const leaderboardJs = read('frontend/src/features/leaderboard/leaderboard.js');
 const kudosPaneTsx = read('frontend/src/features/leaderboard/kudos-pane.tsx');
@@ -242,14 +243,11 @@ const ANCHORS = [
   // converted that sub-view's frame to React, which splits the control across
   // two files, and every entry here has a single source. It gets the same two
   // assertions by hand below.
-  {
-    label: 'back out of an issue / proposal / governance topic',
-    src: () => appViewJs, file: 'app-view.js',
-    markup: /<a id="dev-topic-back"/,
-    oldTag: /<button id="dev-topic-back"/,
-    href: /href="\$\{AppView\._devPageHref\(\)\}"/,
-    handler: "document.getElementById('dev-topic-back').addEventListener",
-  },
+  // 'back out of an issue / proposal / governance topic' is NOT in this list
+  // any more, for the same reason as the dev general-chat link above: #1191
+  // converted the topic sub-view's frame to React
+  // (frontend/src/features/dev-board/topic-frame.tsx), which splits the
+  // control across two files. It gets the same two assertions by hand below.
   // 'back to the top-users leaderboard' is NOT in this list either, and for
   // the same reason as the dev general-chat link above: #1191 slice 6
   // conversion 6 made the Kudos pane a component, so the anchor is JSX in
@@ -293,8 +291,34 @@ test('"back out of the app-wide dev chat" is a real anchor with a real target', 
     'app-view.js must resolve that href through the same shared helper as before');
 });
 
+// The topic back link, split the same way by #1191: the anchor is JSX in
+// frontend/src/features/dev-board/topic-frame.tsx, and the plain-click handler
+// is the onBackClick prop AppView._renderTopicSubView passes in. Both
+// assertions are anchored on the mount call rather than on the bare
+// `onBackClick`, because app-view.js now passes two of them.
+test('"back out of an issue / proposal / governance topic" is a real anchor with a real target', () => {
+  assert.match(topicFrameTsx, /<a\s+id="dev-topic-back"/,
+    'topic-frame.tsx: the control must be an <a>');
+  assert.ok(!/<button[^>]*id="dev-topic-back"/.test(topicFrameTsx + appViewJs),
+    'the old <button> tag is gone from both the component and app-view.js');
+  assert.match(topicFrameTsx, /href=\{backHref\}/,
+    'topic-frame.tsx: the anchor must carry the href prop, not a bare "#"');
+  assert.match(appViewJs, /mountTopicSubView\(content, \{\s*\n\s*backHref: AppView\._devPageHref\(\),/,
+    'app-view.js must resolve that href through the same shared helper as before');
+});
+
+test('"back out of an issue / proposal / governance topic" leaves a modified click to the browser', () => {
+  const body = handlerAfter(appViewJs, 'mountTopicSubView(content, {', 600);
+  const guard = body.indexOf('NavLink.isNativeClick(e)');
+  const prevent = body.indexOf('e.preventDefault()');
+  assert.ok(guard !== -1, 'app-view.js: the modified-click guard went missing');
+  assert.ok(prevent !== -1, 'app-view.js: a plain click must still be intercepted');
+  assert.ok(guard < prevent,
+    'app-view.js: preventDefault ahead of the guard swallows the new tab');
+});
+
 test('"back out of the app-wide dev chat" leaves a modified click to the browser', () => {
-  const body = handlerAfter(appViewJs, 'onBackClick: (e) => {', 400);
+  const body = handlerAfter(appViewJs, 'mountChatSubView(content, {', 600);
   const guard = body.indexOf('NavLink.isNativeClick(e)');
   const prevent = body.indexOf('e.preventDefault()');
   assert.ok(guard !== -1, 'app-view.js: the modified-click guard went missing');

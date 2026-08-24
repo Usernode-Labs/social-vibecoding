@@ -2006,13 +2006,12 @@ const AppView = {
     if (typeof GroupChat !== 'undefined' && GroupChat.unmountThread) GroupChat.unmountThread();
     if (subTab !== 'topic') AppView._devTopic = null;
 
-    // #1084 chunk G: the topic sub-view is still an innerHTML template, so it
-    // has to retire whatever interim root the previous surface left on
-    // #app-content. The other three branches re-render that root instead of
-    // replacing it, which is why this is scoped rather than unconditional —
-    // unmount-then-remount on every Dev navigation would throw away the
-    // frame's state (the view mode) that the board is meant to keep.
-    if (subTab === 'topic' && ref && ref.kind && ref.id) AppView._teardownDevRoots();
+    // The topic sub-view used to be an `innerHTML` template, so it had to
+    // retire whatever interim root the previous surface had left on
+    // #app-content before overwriting it by hand. It is
+    // features/dev-board/topic-frame.tsx now and re-renders that root like the
+    // other three branches, so the teardown — and the one Dev navigation that
+    // threw the board frame's state away — is gone with the template.
 
     // Session view — a single DevChat session, full-screen, reached
     // from the Your-sessions strip, proposal cards, or the "+" flow.
@@ -2209,19 +2208,19 @@ const AppView = {
     // and the discussion scroll as ONE area (matching the general chat, where
     // only the composer is pinned). The topic's icon, title and number live on
     // that header card, so repeating them up here would be pure duplication.
-    content.innerHTML = `
-      <div class="flex flex-col h-full min-h-0">
-        <div class="flex items-center gap-2 px-3 py-1.5 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
-          <a id="dev-topic-back" class="inline-flex items-center gap-1 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 text-sm shrink-0" title="Back to the dev page" href="${AppView._devPageHref()}">&larr; Back</a>
-        </div>
-        <div id="dev-topic-thread" class="flex-1 min-h-0"></div>
-      </div>`;
-
-    document.getElementById('dev-topic-back').addEventListener('click', (e) => {
-      // #1036: real anchor — leave a modified click to the browser.
-      if (window.NavLink && NavLink.isNativeClick(e)) return;
-      e.preventDefault();
-      App.switchTab('dev');
+    // <DevTopicSubView/> — the back bar plus `#dev-topic-thread`, which
+    // GroupChat.mountThread fills. This was the LAST hand-written
+    // `#app-content.innerHTML` on the Dev screen; the back link's click
+    // handler moved into the component's onClick prop rather than being bound
+    // after the fact, with the guard and the target unchanged.
+    AppView._reactDevBoard()?.mountTopicSubView(content, {
+      backHref: AppView._devPageHref(),
+      onBackClick: (e) => {
+        // #1036: real anchor — leave a modified click to the browser.
+        if (window.NavLink && NavLink.isNativeClick(e)) return;
+        e.preventDefault();
+        App.switchTab('dev');
+      },
     });
 
     const ok = await AppView._loadDevData();

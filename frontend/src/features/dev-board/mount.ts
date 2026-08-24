@@ -35,6 +35,7 @@ import {
 import { DevBoardFrame, type DevBoardFrameProps } from './board-frame';
 import { DevChatSubView } from './chat-frame';
 import { DevSessionShell } from './session-frame';
+import { DevTopicSubView } from './topic-frame';
 import { publishViewMode } from './view-mode-store';
 
 /** What app-view.js passes for the card list. */
@@ -56,6 +57,10 @@ export interface MountBoardOptions extends DevBoardFrameProps {
 export interface DevBoardBridge {
   mountBoard(host: Element | null, options: MountBoardOptions): void;
   mountChatSubView(
+    host: Element | null,
+    options: { backHref: string; onBackClick: (event: MouseEvent) => void },
+  ): void;
+  mountTopicSubView(
     host: Element | null,
     options: { backHref: string; onBackClick: (event: MouseEvent) => void },
   ): void;
@@ -89,6 +94,18 @@ export const devBoardBridge: DevBoardBridge = {
         // reads modifier keys and `button`, both of which the synthetic event
         // exposes directly, so either would do. Passing the synthetic one keeps
         // `preventDefault()` on the React side, which is where it belongs.
+        onBackClick: (event) => options.onBackClick(event as unknown as MouseEvent),
+      }),
+    );
+  },
+
+  // The same shape as mountChatSubView, and the same note about the synthetic
+  // event applies.
+  mountTopicSubView(host, options) {
+    mountLegacyPortal(
+      host,
+      createElement(DevTopicSubView, {
+        backHref: options.backHref,
         onBackClick: (event) => options.onBackClick(event as unknown as MouseEvent),
       }),
     );

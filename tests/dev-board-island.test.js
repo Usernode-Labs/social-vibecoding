@@ -140,8 +140,9 @@ test('the mount is synchronous, because the legacy caller reads the DOM next', (
 
 test('no portal outlives its surface', () => {
   // Every hand-written replacement of #app-content retires the root first.
+  // Three of them left after the topic sub-view stopped being one (below).
   const teardowns = APP_VIEW.split('AppView._teardownDevRoots();').length - 1;
-  assert.ok(teardowns >= 4,
+  assert.ok(teardowns >= 3,
     `every #app-content writer retires the portal (found ${teardowns} call sites)`);
   assert.match(APP_VIEW, /_teardownDevRoots\(\) \{\s*\n\s*AppView\._reactDevBoard\(\)\?\.unmountAll\(\);/,
     'the teardown helper sweeps every live portal');
@@ -152,13 +153,25 @@ test('no portal outlives its surface', () => {
     close < APP.indexOf("content.innerHTML = ''", close),
     'the teardown runs BEFORE the node is blanked'
   );
-  // The topic sub-view is still a template, so it is the one Dev branch that
-  // must retire the root rather than re-render it.
-  assert.match(
-    APP_VIEW,
-    /if \(subTab === 'topic' && ref && ref\.kind && ref\.id\) AppView\._teardownDevRoots\(\);/,
-    'the still-templated topic branch retires the root'
-  );
+  // The topic sub-view USED to be the one Dev branch that had to retire the
+  // root rather than re-render it, because it was still an innerHTML template.
+  // It is features/dev-board/topic-frame.tsx now, so that branch is gone —
+  // and with it the one Dev navigation that threw the board frame's state
+  // away.
+  assert.doesNotMatch(APP_VIEW, /subTab === 'topic' && ref && ref\.kind && ref\.id\) AppView\._teardownDevRoots/);
+  assert.match(APP_VIEW, /mountTopicSubView\(content, \{/, 'the topic sub-view is mounted');
+
+  // What replaces it for every host a caller is NOT in a position to know
+  // about: a sub-view swap re-renders `#app-content`'s portal, and React
+  // discards `#dev-chat-body` / `#dev-topic-thread` and everything under them
+  // without telling their owners. Before this sweep, walking board → topic →
+  // board → chat left two dead entries per hop and the count climbed without
+  // bound.
+  assert.match(PORTALS, /export function pruneDetachedLegacyPortals\(keep\?: Element \| null\): boolean \{/);
+  assert.match(PORTALS, /if \(host === keep \|\| host\.isConnected\) continue;/,
+    'an entry is dropped only when its host has genuinely left the document');
+  assert.match(PORTALS, /pruneDetachedLegacyPortals\(host\);\n\s*const existing = entries\.get\(host\);/,
+    'every mount sweeps first — a mount IS a surface swap');
   // …and a leak assertion is reachable from the bridge. The name kept its
   // chunk-G spelling because app-view.js calls it; it counts live portals now.
   assert.match(MOUNT, /rootCount\(\): number/, 'the bridge exposes a live-portal count');
