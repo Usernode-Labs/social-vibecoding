@@ -1,10 +1,16 @@
 /**
  * A row — the compact shape the cog drawer used, minus the app column.
  *
- * Extracted from improve-panel.tsx (Streamlined Concept) because the surface
- * that renders it moved: the app-context sheet's "Changes in progress" /
- * "Changes in other apps" lists. One row, one implementation — the same rule
- * that unified the notification rows in #1191 slice 6.
+ * Extracted from improve-panel.tsx (Streamlined Concept) for the app-context
+ * sheet's "Changes in progress" / "Changes in other apps" lists. One row,
+ * one implementation — the same rule that unified the notification rows in
+ * #1191 slice 6.
+ *
+ * The Figma board's change row reads: [busy dot] title … relative time,
+ * unread dot, chevron. The unread dot means "a session-kind notification
+ * about this change is unread" and comes from the notifications store's
+ * `sessionUnreadIds` (published by Notifications._renderBadge), so it clears
+ * live when the notification is read anywhere.
  *
  * Serves both kinds (#1417). The destination arrives on the row as `href`
  * rather than being built here from an id: a session's id addresses a session
@@ -16,6 +22,11 @@
  * host knows which sheet that is.
  */
 
+import { ChevronRightIcon } from '@/components/ui/icons';
+
+import { useStoreState } from '../../lib/use-store-state';
+import { notificationsStore } from '../notifications/notifications-store.js';
+
 export type SessionRowView = {
   key: string;
   kind: 'session' | 'task';
@@ -26,7 +37,21 @@ export type SessionRowView = {
   href: string;
   status: string | null;
   busy: boolean;
+  lastActivityAt?: string | null;
 };
+
+/** Compact relative time — same buckets as the home grid's helper. */
+function relTime(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return null;
+  const seconds = Math.floor((Date.now() - t) / 1000);
+  if (seconds < 60) return 'just now';
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+  if (seconds < 86400 * 30) return `${Math.floor(seconds / 86400)}d ago`;
+  return `${Math.floor(seconds / (86400 * 30))}mo ago`;
+}
 
 export function SessionRow({
   session,
@@ -37,6 +62,12 @@ export function SessionRow({
   showApp: boolean;
   onNavigate: () => void;
 }) {
+  const { sessionUnreadIds } = useStoreState(notificationsStore) as {
+    sessionUnreadIds: number[];
+  };
+  const unread = sessionUnreadIds.includes(session.id);
+  const time = relTime(session.lastActivityAt);
+
   return (
     <a
       href={session.href}
@@ -76,6 +107,20 @@ export function SessionRow({
           {session.status}
         </span>
       ) : null}
+      {time ? (
+        <span className="text-xs text-zinc-500 dark:text-zinc-400 shrink-0">
+          {time}
+        </span>
+      ) : null}
+      {unread ? (
+        <span
+          className="w-2 h-2 rounded-full bg-violet-500 shrink-0"
+          role="img"
+          aria-label="Unread activity"
+          data-session-unread={session.id}
+        />
+      ) : null}
+      <ChevronRightIcon className="w-4 h-4 shrink-0 text-zinc-400 dark:text-zinc-500" />
     </a>
   );
 }

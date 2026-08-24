@@ -690,6 +690,14 @@ const Notifications = {
 
     const markAll = document.getElementById('notifications-mark-all');
     if (markAll) markAll.disabled = Notifications._bellUnread() === 0;
+    // The app-context sheet's per-change unread dots (Streamlined Concept):
+    // which sessions have an unread session-kind notification right now.
+    // Published into the notifications store — the sheet's rows subscribe.
+    Notifications._store?.set({
+      sessionUnreadIds: Notifications.items
+        .filter((n) => isSessionNotif(n) && !n.readAt && n.sessionId)
+        .map((n) => n.sessionId),
+    });
     Notifications._updateTitle();
     // The cog drawer used to render a pinned section from this same items
     // store and was nudged here whenever the store changed. It is retired;

@@ -93,6 +93,9 @@ function toRow(session, appNameFallback) {
     status: statusLabel(session),
     busy: isBusy(session),
     sortAt: timeOf(session.last_activity_at) || timeOf(session.created_at),
+    // Streamlined Concept: the app-context sheet's change rows show a
+    // relative time, the way the Figma board draws them.
+    lastActivityAt: session.last_activity_at || session.created_at || null,
   };
 }
 

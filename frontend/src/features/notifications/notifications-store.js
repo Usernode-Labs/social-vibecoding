@@ -84,4 +84,10 @@ export const notificationsStore = createStore({
   loadingMore: false,
   /** PlatformUI.isTouch() at render time — gates the swipe-action wiring. */
   touch: false,
+  /**
+   * Streamlined Concept: ids of dev sessions with an UNREAD session-kind
+   * notification, published by Notifications._renderBadge. The app-context
+   * sheet's change rows read it to draw their unread dot.
+   */
+  sessionUnreadIds: [],
 });

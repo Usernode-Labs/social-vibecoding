@@ -39,7 +39,7 @@
  * produces. Sessions load from `Improve.open()`, never from render.
  */
 
-import { useCallback, type ReactNode } from 'react';
+import { useCallback } from 'react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -52,64 +52,6 @@ import { useStoreState } from '../../lib/use-store-state';
 import { improveStore } from './improve-store.js';
 import { Improve } from './improve-controller.js';
 import { ImproveViewToggle } from './view-toggle';
-
-const ROW_CLASS =
-  'w-full flex items-center gap-3 px-4 min-h-[44px] text-left text-zinc-600 '
-  + 'dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors';
-
-const ROW_LABEL_CLASS = 'text-sm font-medium flex-1 min-w-0 truncate';
-
-/**
- * One tappable row.
- *
- * Rendered as a `<button>` rather than an `<a>` unless an `href` is given: the
- * navigating rows go through `App`'s router so the panel can dismiss itself
- * first, and only the two genuinely external destinations (the repo, a shared
- * link) are real anchors.
- */
-function ImproveRow({
-  id,
-  icon,
-  label,
-  detail,
-  onClick,
-  href,
-  external,
-}: {
-  id?: string;
-  icon: ReactNode;
-  label: string;
-  detail?: ReactNode;
-  onClick?: () => void;
-  href?: string;
-  external?: boolean;
-}) {
-  const body = (
-    <>
-      {icon}
-      <span className={ROW_LABEL_CLASS}>{label}</span>
-      {detail}
-    </>
-  );
-  if (href) {
-    return (
-      <a
-        id={id}
-        href={href}
-        {...(external ? { target: '_blank', rel: 'noreferrer' } : {})}
-        className={ROW_CLASS}
-        onClick={() => Improve.dismissForNav()}
-      >
-        {body}
-      </a>
-    );
-  }
-  return (
-    <button id={id} type="button" className={ROW_CLASS} onClick={onClick}>
-      {body}
-    </button>
-  );
-}
 
 export function ImprovePanel() {
   const state = useStoreState(improveStore);
@@ -192,57 +134,58 @@ export function ImprovePanel() {
           className="flex-1 min-h-0 flex flex-col overflow-hidden"
         >
           {/*
-              ── The two controls at the top (#1367) ────────────────────
+              ── The Figma board's two primary actions ──────────────────
 
-              Feedback first, and deliberately: it is the one action that needs
-              nothing of the viewer — no collaborator bit, no session, no repo.
-              Everything below it asks for progressively more.
+              "Give feedback — Share an idea or report a problem" and
+              "Build a change — Describe what you want to change". Feedback
+              first, deliberately: it is the one action that needs nothing of
+              the viewer — no collaborator bit, no session, no repo.
 
-              It is a BUTTON now rather than a list row. The panel is a stack of
-              rows that all look alike, and the one thing here that every
-              viewer can always do looked exactly like the six they mostly
-              cannot. Same handler, same id — `#improve-row-feedback` is what
-              the dot's writer and the checks select on — only the chrome
-              changed.
+              Both keep their ids: `#improve-row-feedback` is what the outbox
+              dot's writer and the checks select on, and
+              `#improve-row-new-session` keeps naming Improve.startSession()
+              even though its label is the board's "Build a change" now.
           */}
-          <div className="px-4 pt-3 pb-2 flex flex-col gap-2 shrink-0">
-            <Button
-              id="improve-row-feedback"
-              type="button"
-              layout="fullIconRow"
-              size="sm"
-              className="un-touch-target"
-              onClick={() => Improve.giveFeedback()}
-            >
-              <ChatIcon className="w-4 h-4 shrink-0" />
-              Give feedback
-            </Button>
+          <div className="px-4 pt-3 pb-2 flex flex-col gap-3 shrink-0">
+            <div className="flex items-center gap-3">
+              <Button
+                id="improve-row-feedback"
+                type="button"
+                size="sm"
+                className="un-touch-target shrink-0"
+                onClick={() => Improve.giveFeedback()}
+              >
+                <ChatIcon className="w-4 h-4 shrink-0" />
+                Give feedback
+              </Button>
+              <span className="text-xs text-zinc-500 dark:text-zinc-400 min-w-0">
+                Share an idea or report a problem
+              </span>
+            </div>
+            {state.readOnly ? null : (
+              <div className="flex items-center gap-3">
+                <Button
+                  id="improve-row-new-session"
+                  type="button"
+                  size="sm"
+                  className="un-touch-target shrink-0"
+                  onClick={() => Improve.startSession()}
+                >
+                  <PlusIcon className="w-4 h-4 shrink-0" />
+                  Build a change
+                </Button>
+                <span className="text-xs text-zinc-500 dark:text-zinc-400 min-w-0">
+                  Describe what you want to change
+                </span>
+              </div>
+            )}
             {/*
-                The App / Feed / Kanban toggle, directly under it. `sm:hidden`
-                lives on the component: on a wide screen this copy steps aside
-                and the header's takes over, immediately left of #improve-btn.
-                See ./view-toggle.tsx for why both are always rendered.
+                The App / Feed / Kanban toggle, under the two actions —
+                TRANSITIONAL (Streamlined Concept): it comes out entirely when
+                the Board grows its own Kanban|Feed control, and Activity /
+                Board become the app-context sheet's rows.
             */}
             <ImproveViewToggle compact={false} />
-          </div>
-
-          {/*
-              THE SESSION SECTIONS AND THE REFERENCE FOOTER ARE GONE
-              (Streamlined Concept): both moved to the app-context sheet
-              behind the header's "app name ⌄" tab —
-              features/app-context/app-context-sheet.tsx — which is the
-              app's own surface now. What stays here is what Improve IS:
-              feedback, and starting a change.
-          */}
-          <div className="shrink-0">
-            {state.readOnly ? null : (
-              <ImproveRow
-                id="improve-row-new-session"
-                icon={<PlusIcon className="w-5 h-5 shrink-0" />}
-                label="Start a new session"
-                onClick={() => Improve.startSession()}
-              />
-            )}
           </div>
         </div>
       </div>
