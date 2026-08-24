@@ -157,7 +157,7 @@ test('the module still owns the host — it just stopped painting inside it', ()
   assert.ok(start > 0, 'located the reaction bar block');
   // The next member after the bar's five — the comment banner between them is
   // gone with the rest of the comments.
-  const end = code.indexOf('  _unreadDotHtml(msg) {', start);
+  const end = code.indexOf('  _clearMessageDot(messageId) {', start);
   assert.ok(end > start, 'located the end of the reaction bar block');
   const body = code.slice(start, end);
 

@@ -133,7 +133,7 @@ export function QuoteCard({
 }
 
 const pill = cva(
-  'inline-flex items-center gap-1.5 rounded-full bg-zinc-100 font-medium text-zinc-900 transition-colors hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700',
+  'inline-flex items-center gap-1.5 rounded-full font-medium transition-colors',
   {
     variants: {
       size: {
@@ -142,8 +142,24 @@ const pill = cva(
         action: 'h-10 px-4 text-[1.0625rem]',
         reaction: 'h-8 px-3 text-[0.9375rem]',
       },
+      // `accent` is "this one is YOURS" — the reaction you already added, and
+      // the same shape of state on an action pill. A tinted accent ground
+      // with accent ink, not an outline: the language fills its controls, and
+      // a bordered pill among filled ones reads as a different component
+      // rather than a different state. The pre-reskin spelling of this was
+      // `.gc-react-mine` in app.css — an accent border over a surface that
+      // Tailwind then won back, so it drew nothing at all.
+      //
+      // `hover:text-violet-800` is not decoration: accent ink on the light
+      // hover ground is 3.86:1 without it and 5.28:1 with it. The neutral
+      // tone needs no such correction (13.9:1 at hover) and the dark accent
+      // does not either (5.71:1).
+      tone: {
+        neutral: 'bg-zinc-100 text-zinc-900 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700',
+        accent: 'bg-violet-100 text-violet-700 hover:bg-violet-200 hover:text-violet-800 dark:bg-violet-950 dark:text-violet-300 dark:hover:bg-violet-900',
+      },
     },
-    defaultVariants: { size: 'action' },
+    defaultVariants: { size: 'action', tone: 'neutral' },
   },
 );
 
@@ -154,9 +170,9 @@ export interface ActionPillProps
   chevron?: boolean;
 }
 
-export function ActionPill({ className, size, chevron, children, ...props }: ActionPillProps) {
+export function ActionPill({ className, size, tone, chevron, children, ...props }: ActionPillProps) {
   return (
-    <button type="button" className={cn(pill({ size }), className)} {...props}>
+    <button type="button" className={cn(pill({ size, tone }), className)} {...props}>
       {children}
       {chevron ? <ChevronRightIcon className="h-4 w-4" aria-hidden="true" /> : null}
     </button>
@@ -164,10 +180,12 @@ export function ActionPill({ className, size, chevron, children, ...props }: Act
 }
 
 export function ReactionPill({
-  emoji, count, className, ...props
-}: { emoji: React.ReactNode; count?: number } & Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, 'type'>) {
+  emoji, count, tone, className, ...props
+}: { emoji: React.ReactNode; count?: number }
+  & Pick<VariantProps<typeof pill>, 'tone'>
+  & Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, 'type'>) {
   return (
-    <button type="button" className={cn(pill({ size: 'reaction' }), className)} {...props}>
+    <button type="button" className={cn(pill({ size: 'reaction', tone }), className)} {...props}>
       <span aria-hidden="true">{emoji}</span>
       {typeof count === 'number' ? <span>{count}</span> : null}
     </button>

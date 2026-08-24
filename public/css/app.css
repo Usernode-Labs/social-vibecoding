@@ -5017,28 +5017,11 @@ span.gc-vote-btn-icon { cursor: default; }
 .gc-reactions:empty { margin-top: 0; }
 .gc-msg-system .gc-reactions { justify-content: center; }
 
-.gc-react-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  padding: 1px 7px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--bg-secondary);
-  color: var(--text-secondary);
-  font-size: 12px;
-  line-height: 1.4;
-  cursor: pointer;
-  transition: background 100ms, border-color 100ms;
-}
-.gc-react-pill:hover { border-color: var(--accent); }
-.gc-react-mine {
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 16%, transparent);
-  color: var(--accent);
-}
-.gc-react-emoji { font-size: 13px; }
-.gc-react-count { font-size: 11px; }
+/* The pill itself is @/components/ui/feed's `ReactionPill` — surface, radius,
+   hover and the "yours" state (`tone="accent"`) all come from the widget
+   language now, so `.gc-react-pill`, `.gc-react-mine`, `.gc-react-emoji` and
+   `.gc-react-count` are gone with the string renderer that emitted them.
+   `.gc-reactions` stays: it is the row's own flex container. */
 
 /* Floating reaction bar (quick row + curated grid). */
 .gc-react-bar {

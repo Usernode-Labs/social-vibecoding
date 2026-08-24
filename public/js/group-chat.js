@@ -1075,14 +1075,12 @@ const GroupChat = {
     container.addEventListener('pointercancel', endPress, true);
 
     container.addEventListener('click', (e) => {
-      // Reaction pill → toggle that emoji for the viewer.
-      const pill = e.target.closest('.gc-react-pill');
-      if (pill) {
-        const row = pill.closest('[data-msg-id]');
-        const id = row && parseInt(row.dataset.msgId || '', 10);
-        if (id) GroupChat.sendReact(id, pill.dataset.emoji);
-        return;
-      }
+      // A reaction pill is NOT dispatched here. The reskin draws it with
+      // @/components/ui/feed's `ReactionPill`, so no node carries
+      // `.gc-react-pill` any more and this branch had nothing to match; the
+      // pill calls `GroupChat.sendReact` from an onClick in
+      // features/group-chat/transcript.tsx instead. It is a <button>, so the
+      // tap-to-quote tail below already declines it.
       // #1280: save/unsave button → toggle this message in the viewer's
       // own saved list. Handled before tap-to-quote (like Edit below) so
       // the click doesn't also stage a reply.
@@ -1186,34 +1184,18 @@ const GroupChat = {
   },
 
   // ── #25: reaction rendering ─────────────────────────────────────────
+  //
+  // `_renderReactionPills` and `_renderReactionsHtml` lived here — the pills
+  // and their (possibly empty) container as an HTML string. Both are
+  // features/group-chat/transcript.tsx's `<Reactions>` now, and the empty
+  // container is still always rendered so `.gc-reactions:empty` keeps
+  // collapsing its margin.
 
-  _renderReactionPills(msg) {
-    const rx = (msg && msg.reactions) || [];
-    if (!rx.length) return '';
-    const me = App.user && App.user.username;
-    return rx.map((r) => {
-      const users = Array.isArray(r.users) ? r.users : [];
-      const mine = me && users.includes(me);
-      return `<button class="gc-react-pill${mine ? ' gc-react-mine' : ''}" data-emoji="${escapeHtml(r.emoji)}" title="${escapeHtml(users.join(', '))}">` +
-        `<span class="gc-react-emoji">${escapeHtml(r.emoji)}</span>` +
-        `<span class="gc-react-count">${r.count}</span>` +
-        `</button>`;
-    }).join('');
-  },
-
-  // Always render the (possibly empty) container so live updates have a
-  // stable target to patch without re-rendering the whole row.
-  _renderReactionsHtml(msg) {
-    return `<div class="gc-reactions" id="gc-react-${msg.id || ''}">${GroupChat._renderReactionPills(msg)}</div>`;
-  },
-
-  // Desktop hover affordance to open the reaction bar. tabindex -1 keeps it
-  // out of the tab order; touch devices use long-press instead (CSS hides
-  // it where there's no hover).
-  _renderReactAddBtn(_msg) {
-    if (GroupChat._readOnly()) return ''; // #621: no reactions read-only
-    return `<button class="gc-react-add" title="React" aria-label="Add reaction" tabindex="-1">\u{1F642}</button>`;
-  },
+  // `_renderReactAddBtn` lived here — the desktop hover affordance that opens
+  // the bar. It is transcript.tsx's `RowActions` now, gated by the same
+  // `showReact` (#621: no reactions read-only) and still `tabindex="-1"` so it
+  // stays out of the tab order; touch devices long-press instead, and CSS
+  // hides it where there is no hover.
 
   // ── #1280: save (bookmark) a message ────────────────────────────────
 
@@ -1660,14 +1642,12 @@ const GroupChat = {
 
   // ── per-message unread dot ──────────────────────────────────────────
 
-  // Dot markup for a message this user has an unread mention/reply/
-  // reaction notification for. Driven by the server's
-  // has_unread_notification flag on loaded history; live messages never
-  // carry it (a brand-new message can't yet have a notification for you).
-  _unreadDotHtml(msg) {
-    if (!msg || !msg.has_unread_notification) return '';
-    return `<span class="gc-unread-dot" data-unread-dot="${msg.id || ''}" aria-label="Unread mention"></span>`;
-  },
+  // `_unreadDotHtml` lived here. The dot is `unread` on the row's view model
+  // now (features/group-chat/transcript.tsx renders it beside the name), and
+  // both paths below patch that field instead of adding and removing a span.
+  // Driven by the server's has_unread_notification flag on loaded history;
+  // live messages never carry it (a brand-new message can't yet have a
+  // notification for you).
 
   // Clear the dot for one message (the "click a dotted message" path):
   // optimistically drop it locally, then confirm read on the server by
@@ -1677,8 +1657,7 @@ const GroupChat = {
     const msg = GroupChat.messages.find((m) => String(m.id) === String(messageId));
     if (!msg || !msg.has_unread_notification) return;
     msg.has_unread_notification = false;
-    const dot = document.querySelector(`[data-unread-dot="${messageId}"]`);
-    if (dot) dot.remove();
+    GroupChat._react()?.patchTranscriptMessage(Number(messageId), { unread: false });
     fetch('/api/notifications/read', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1713,13 +1692,9 @@ const GroupChat = {
       const unread = state.get(msg.id);
       if (!!msg.has_unread_notification === unread) continue;
       msg.has_unread_notification = unread;
-      const existing = document.querySelector(`[data-unread-dot="${msg.id}"]`);
-      if (unread && !existing) {
-        const row = document.querySelector(`.gc-msg[data-msg-id="${msg.id}"] .gc-msg-header`);
-        if (row) row.insertAdjacentHTML('afterbegin', GroupChat._unreadDotHtml(msg));
-      } else if (!unread && existing) {
-        existing.remove();
-      }
+      // A field update on whichever transcripts hold the message, not an
+      // insertAdjacentHTML into a row React renders.
+      GroupChat._react()?.patchTranscriptMessage(Number(msg.id), { unread });
     }
   },
 

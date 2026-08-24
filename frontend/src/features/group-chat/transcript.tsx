@@ -90,7 +90,26 @@ function Body({ html }: { html: string }) {
   return <div className="gc-msg-content" dangerouslySetInnerHTML={wrapper} />;
 }
 
-function Reactions({ msg }: { msg: TranscriptMessage }) {
+/**
+ * The pills under a message, and the one control here that is NOT delegated.
+ *
+ * The three header controls below have no `onClick` on purpose — group-chat.js
+ * dispatches them off one listener on the container, and delegation does not
+ * care which renderer made the node. A pill cannot go through that listener,
+ * because the class it dispatched on (`.gc-react-pill`) is gone: the reskin
+ * draws these with @/components/ui/feed's `ReactionPill`, whose classes come
+ * from the widget language. So the click is a prop, and it calls the module's
+ * own `sendReact` — the same fire-and-forget over the chat socket the
+ * delegated branch called, with the server's aggregate coming back as a
+ * `reaction` frame and landing through `patchTranscriptMessage`.
+ *
+ * "Yours" is `tone="accent"` on the primitive — the widget language's own
+ * spelling of the state. It used to be `.gc-react-mine` in app.css, an accent
+ * border over the pill's surface; against the reskinned pill that rule drew
+ * nothing at all (Tailwind's ground wins the cascade, and preflight zeroes
+ * the border width), so the affordance had quietly gone missing.
+ */
+export function Reactions({ msg }: { msg: TranscriptMessage }) {
   if (!msg.reactions.length) return <div className="gc-reactions" id={`gc-react-${msg.id ?? ''}`} />;
   return (
     <div className="gc-reactions" id={`gc-react-${msg.id ?? ''}`}>
@@ -99,10 +118,10 @@ function Reactions({ msg }: { msg: TranscriptMessage }) {
           key={r.emoji}
           emoji={r.emoji}
           count={r.count}
-          className={r.mine ? 'gc-react-mine' : undefined}
+          tone={r.mine ? 'accent' : 'neutral'}
           title={r.users.join(', ')}
           data-emoji={r.emoji}
-          onClick={() => controller()?.toggleReaction?.(msg.id, r.emoji)}
+          onClick={() => controller()?.sendReact?.(msg.id, r.emoji)}
         />
       ))}
     </div>
@@ -287,7 +306,7 @@ export function MessageRow({ msg }: { msg: TranscriptMessage }) {
       )}
       name={(
         <>
-          {msg.unread ? <span className="gc-unread-dot" aria-label="Unread" /> : null}
+          {msg.unread ? <span className="gc-unread-dot" aria-label="Unread mention" /> : null}
           <span className={msg.mine ? 'gc-msg-username-self' : undefined}>{msg.username}</span>
         </>
       )}
