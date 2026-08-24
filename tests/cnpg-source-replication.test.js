@@ -86,6 +86,11 @@ test('the deployment consumes one supplied password and provisions the role idem
     'the source must provide the certificate-authenticated role used for CNPG instance joins');
   assert.match(deploy,
     /ALTER ROLE streaming_replica WITH LOGIN REPLICATION NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS/);
+  assert.match(deploy, /WHERE NOT EXISTS \([\s\S]*rolname = 'cnpg_metrics_exporter'/,
+    'the source must provide the least-privilege monitoring role required by CNPG 1.30');
+  assert.match(deploy,
+    /ALTER ROLE cnpg_metrics_exporter WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS INHERIT/);
+  assert.match(deploy, /GRANT pg_monitor TO cnpg_metrics_exporter/);
   assert.match(deploy, /WHERE NOT EXISTS \([\s\S]*rolname = 'social_cnpg_replica'/);
   assert.match(deploy, /ALTER ROLE %I WITH LOGIN REPLICATION NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS/);
   assert.doesNotMatch(deploy, /openssl rand|pwgen|generate-password/,
