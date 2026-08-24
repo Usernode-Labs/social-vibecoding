@@ -8,10 +8,12 @@
  * to this subtree from React's side.
  *
  * Everything INSIDE this bar is still written by public/js/app.js by id
- * (App.setBackIcon on #back-btn, the title text, the badges), so React must
- * never reconcile over those nodes: every class string below is a constant
- * prop, rendered once at hydration and never again. The ONE exception is
- * <ImproveButton/>, which is React-owned end to end — see its own header.
+ * (App.setBackIcon on #back-btn, the title text, the red unread badge), so
+ * React must never reconcile over those nodes: every class string below is a
+ * constant prop, rendered once at hydration and never again. The exceptions
+ * are React-owned end to end: <ImproveButton/>, <HeaderTitleTab/>, and the
+ * hamburger's <MenuIndicators/> (whose writers publish through improveStore
+ * rather than touching the DOM — see its header).
  *
  * The bar's OWN visibility is the one piece of state it holds. Chromeless mode
  * (`#app/<slug>/app`) hides the whole header, and App.setChromeless used to do
@@ -36,10 +38,67 @@ import {
 
 import { useHiddenClass } from '../../lib/legacy-dom';
 import { useVisibility } from '../../lib/visibility-store';
+import { useStoreState } from '../../lib/use-store-state';
 import { ChromelessPill } from './chromeless-pill';
+import { HeaderTitleTab } from './header-title-tab';
 import { ImproveButton } from '../improve/improve-button';
-import { ImproveViewToggle } from '../improve/view-toggle';
+import { improveStore } from '../improve/improve-store.js';
 import { useHeaderLayout } from './use-header-layout';
+
+/** Amber while a deploy runs, violet once the platform has rolled past us. */
+const VERSION_DOT: Record<string, string> = {
+  deploying: 'bg-amber-500',
+  stale: 'bg-violet-400',
+};
+
+const AI_BADGE_CLS =
+  'absolute -top-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full '
+  + 'bg-emerald-500 text-white text-[0.65rem] font-bold flex items-center justify-center';
+
+/**
+ * The hamburger's store-rendered indicators (Streamlined Concept × #1412).
+ *
+ * #1412 moved the green session count and the version dot onto the Improve
+ * button, spinning its lightbulb while a turn ran. The Streamlined header has
+ * no lightbulb to spin — the right slot is a slim text action or the eye —
+ * and the board keeps the hamburger as THE badge cluster, so the indicators
+ * re-homed here instead. What #1412 actually built is kept whole: the writers
+ * publish through improveStore (Improve.setSessionBadge / setVersionState —
+ * never a classList write by id), the count carries `data-session-done` for
+ * the declared checks, the dot knows the violet "platform rolled past this
+ * tab" state, and the working cue survives as a pulse on the emerald badge —
+ * which also shows, dot-sized and empty, when a turn runs with nothing
+ * unread yet.
+ *
+ * At rest everything is `hidden` with the exact class runs the prerender
+ * always shipped, so hydration matches and the badge-geometry test can keep
+ * diffing this badge against the red one as twins.
+ */
+function MenuIndicators() {
+  const { working, sessionUnread, sessionDone, versionState } = useStoreState(improveStore);
+  const showAi = working || sessionUnread > 0;
+  return (
+    <>
+      <span
+        id="notifications-badge-ai"
+        data-session-done={String(sessionDone)}
+        className={showAi
+          ? `${AI_BADGE_CLS}${working ? ' animate-pulse' : ''}`
+          : `hidden ${AI_BADGE_CLS}`}
+      >
+        {sessionUnread > 0 ? (sessionUnread > 99 ? '99+' : String(sessionUnread)) : ''}
+      </span>
+      <span
+        id="header-menu-deploy-dot"
+        className={VERSION_DOT[versionState]
+          ? `absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full ${VERSION_DOT[versionState]}`
+          : 'hidden absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-amber-500'}
+        aria-hidden="true"
+      >
+      </span>
+    </>
+  );
+}
 
 export function PlatformHeader() {
   // The four elements the centering measurement needs. Passing them as refs
@@ -114,36 +173,80 @@ export function PlatformHeader() {
         className="un-safe-top-extend relative flex items-center gap-3 px-4 py-3 shrink-0"
       >
         {/*
-            20px wide (never changes — use-header-layout.ts measures this as
-            the title's left side group, via leftGroupRef), 28px tall (the
-            header's content-row floor), with the 20px icon centred inside it.
+            The LEFT group (Streamlined Concept): hamburger first, then the
+            back slot. use-header-layout.ts measures this group's offsetWidth
+            via leftGroupRef, so the group grew a real width when the
+            hamburger moved here from the right — the centering decision
+            adapts because it measures rather than assumes. 28px tall (the
+            header's content-row floor).
+
+            The hamburger keeps its three badges: the red unread count keeps
+            its legacy writer (Notifications._renderBadge) and its constant
+            class string, while the green session count and the version dot
+            became <MenuIndicators/> — upstream #1412 turned their writers
+            into improveStore publishes (Improve.setSessionBadge /
+            Improve.setVersionState), so they render from the store now,
+            here, on the control whose badge cluster the Streamlined board
+            keeps. See the note on <MenuIndicators/> for why they did not
+            follow #1412 onto the Improve button itself.
         */}
-        <div ref={leftGroupRef} className="w-5 h-7 shrink-0 flex items-center">
+        <div ref={leftGroupRef} className="h-7 shrink-0 flex items-center gap-1">
+          <button
+            id="header-menu-btn"
+            className="relative w-7 h-7 flex items-center justify-center un-touch-target text-zinc-400 hover:text-zinc-200"
+            aria-label="Open menu"
+            aria-expanded="false"
+          >
+            <Bars3Icon className="w-6 h-6" />
+            {/*
+                The red unread badge. Painted by Notifications._renderBadge —
+                a classic module — so its className is a constant, rendered
+                once. The green badge beside it is store-rendered; the two
+                counts stay distinct (emerald = your work in flight, red =
+                unread) so the hamburger can say "there are two different
+                reasons to open me" without a third icon.
+                tests/header-status-pane.test.js diffs the two class lists
+                with the colour token dropped to keep them twins.
+            */}
+            <span
+              id="notifications-badge"
+              className="hidden absolute -top-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-red-500 text-white text-[0.65rem] font-bold flex items-center justify-center"
+            >
+            </span>
+            <MenuIndicators />
+          </button>
           {/*
-              #1036: a real anchor, not a button, so cmd/ctrl-click,
-              middle-click and right-click → "Open in new tab" work on it.
-              Its href is maintained by App.setBackIcon(mode, href) — the
-              single choke point every screen entry already goes through
-              (App._showOnlyScreen). `inline-flex items-center` keeps the
-              20px icon centred: an <a> is `inline` where a <button> was
-              `inline-block`, and while this element is a flex item today
-              (so it is blockified anyway) the 28px header content-row floor
-              is load-bearing enough not to leave to that. No target=_blank:
-              in the native WebView that would push a plain tap out to the
-              system browser.
+              The back slot keeps its own fixed 20px wrapper so toggling the
+              button's `hidden` class doesn't change the group's width (the
+              ResizeObserver would catch it, but a title that never moves
+              beats one that recenters a frame later).
           */}
-          <a id="back-btn" className="inline-flex items-center text-zinc-900 hover:text-zinc-500 dark:text-zinc-100 dark:hover:text-zinc-400 un-touch-target hidden" aria-label="Home">
-            <HomeIcon id="back-icon-home" className="w-5 h-5" />
-            <ChevronLeftIcon id="back-icon-arrow" className="w-5 h-5 hidden" />
-          </a>
+          <div className="w-5 h-7 shrink-0 flex items-center">
+            {/*
+                #1036: a real anchor, not a button, so cmd/ctrl-click,
+                middle-click and right-click → "Open in new tab" work on it.
+                Its href is maintained by App.setBackIcon(mode, href) — the
+                single choke point every screen entry already goes through
+                (App._showOnlyScreen). `inline-flex items-center` keeps the
+                20px icon centred: an <a> is `inline` where a <button> was
+                `inline-block`, and while this element is a flex item today
+                (so it is blockified anyway) the 28px header content-row floor
+                is load-bearing enough not to leave to that. No target=_blank:
+                in the native WebView that would push a plain tap out to the
+                system browser.
+            */}
+            <a id="back-btn" className="inline-flex items-center text-zinc-900 hover:text-zinc-500 dark:text-zinc-100 dark:hover:text-zinc-400 un-touch-target hidden" aria-label="Home">
+              <HomeIcon id="back-icon-home" className="w-5 h-5" />
+              <ChevronLeftIcon id="back-icon-arrow" className="w-5 h-5 hidden" />
+            </a>
+          </div>
         </div>
-        <h1
-          ref={titleRef}
-          id="header-title"
-          className={"flex-1 min-w-0 text-lg font-bold pointer-events-none truncate\n               text-left"}
-        >
-          Social Vibecoding
-        </h1>
+        {/*
+            The center tab (Streamlined Concept): the screen's only h1, and —
+            while an app context is on screen — a tappable "name ⌄" control
+            that opens the app-context sheet. See header-title-tab.tsx.
+        */}
+        <HeaderTitleTab titleRef={titleRef} />
         <div ref={rightGroupRef} className="ml-auto shrink-0 flex items-center">
           {/*
               HEADER SLIM-DOWN: the fork label, the platform + app build pills
@@ -199,84 +302,21 @@ export function PlatformHeader() {
               rendered rather than constant. See ../improve/improve-button.tsx.
           */}
           {/*
-              The App / Feed / Kanban toggle, immediately LEFT of the Improve
-              button (#1367), on wide screens only — the component carries its
-              own `hidden sm:inline-flex`, and below that breakpoint the copy
-              inside the Improve panel is the one on screen. Switching views is
-              the thing people do most often in an app, and behind a sheet it
-              cost two taps and a dismissal.
-
-              Inside the right-group div for the same reason #improve-btn is:
-              rightGroupRef is what use-header-layout.ts measures as the
-              title's right side group. A control parked outside it would not
-              count towards the clearance the centering decision needs, and the
-              title would overlap it at exactly the widths where this renders.
+              The App / Feed / Kanban segmented control rode here between
+              #1367 and the Streamlined Concept. The app-context sheet behind
+              the center title tab is the view switcher now — a segmented
+              control and a dropdown tab announcing the same three
+              destinations would be two owners of one decision.
           */}
-          <ImproveViewToggle compact={true} />
           <ImproveButton />
           {/*
-              The bell (#notifications-btn) used to sit here, between Improve
-              and the hamburger. THE UI OVERHAUL merged it INTO the hamburger:
-              two top-right drawers that opened the same way, one slot apart,
-              were one affordance too many, and the notifications list is the
-              first thing in that panel now. Its unread badge merged too — see
-              #notifications-badge on the hamburger below, which
-              Notifications._renderBadge paints exactly as it painted this one.
+              The bell (#notifications-btn) used to sit here, then THE UI
+              OVERHAUL merged it into the hamburger — and the Streamlined
+              Concept moved the hamburger itself to the LEFT group, badges
+              and all, mirroring the drawer it opens. What remains on the
+              right is the one contextual action: Improve (or the eye that
+              returns to the app — see improve-button.tsx).
           */}
-          {/*
-              Hamburger: LAST in the group at every width — it's the catch-all
-              menu now (build status, kudos, standings, admin, theme), so the
-              rightmost slot is the conventional home for it.
-              
-              It carries ONE indicator now — the bell's red unread count. The
-              deploy dot and the green session count moved to #improve-btn
-              with the things they are about; see the note on the button
-              itself for which corner each took and why.
-          */}
-          <button
-            id="header-menu-btn"
-            className="relative w-7 h-7 flex items-center justify-center rounded-full bg-white hover:bg-zinc-50 dark:bg-zinc-900 dark:hover:bg-zinc-800 shadow-sm transition-colors un-touch-target text-zinc-900 dark:text-zinc-100 mr-2.5"
-            aria-label="Open menu"
-            aria-expanded="false"
-          >
-            {/*
-                16px, not 24px. The disc is 28px — the header content row's
-                ceiling, so it cannot grow — and a 24px glyph left 2px of ring
-                on each side, which reads as a bar crammed into a circle rather
-                than as a control on a disc. 16px is also exactly the glyph
-                size its neighbour uses (#improve-btn's lightbulb at the same
-                h-7), so the two controls now share one optical weight.
-            */}
-            <Bars3Icon className="w-4 h-4" />
-            {/*
-                THE BELL'S RED UNREAD BADGE — the only indicator left here.
-
-                Two others used to sit on this button and both have gone to
-                #improve-btn, because both were about things that live behind
-                THAT control:
-
-                  - the green session count (#notifications-badge-ai). Sessions
-                    are not notifications, and this drawer is not where you go
-                    to look at one. Green-and-red on one icon was what let the
-                    hamburger say "two different reasons to open me"; the two
-                    reasons are two controls now, which says it better.
-                  - the amber deploy dot (#header-menu-deploy-dot). It read the
-                    platform version row, and THE UI OVERHAUL had already moved
-                    that row into the Improve panel's footer — so the dot was
-                    pointing at something behind a different button. It is
-                    #improve-version-dot there, and it can show the violet
-                    "platform rolled past this tab" state too.
-
-                What is left keeps its id, its writer
-                (Notifications._renderBadge) and its geometry, so the two
-                badges still read as one convention across the two controls.
-            */}
-            <span
-              id="notifications-badge"
-              className="hidden absolute -top-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-red-500 text-white text-[0.65rem] font-bold flex items-center justify-center"
-            >
-            </span>
-          </button>
           {/*
               The "Create new app" entry point used to live here in the header
               as a "+" pill; it's been moved into the home-screen feed itself,

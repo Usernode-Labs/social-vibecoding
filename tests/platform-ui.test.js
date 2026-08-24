@@ -307,7 +307,7 @@ test('neither the bottom tab bar nor the header switch ships', () => {
   assert.ok(!/class="[^"]*app-mode-seg/.test(INDEX), 'an orphan segment still ships');
 });
 
-test('#improve-btn lives inside the header, leading the icon group', () => {
+test('#improve-btn lives inside the header, alone in the right group', () => {
   const header = INDEX.slice(
     INDEX.indexOf('id="platform-header"'),
     INDEX.indexOf('</header>')
@@ -321,9 +321,12 @@ test('#improve-btn lives inside the header, leading the icon group', () => {
     header.indexOf('id="improve-btn"') > header.indexOf('id="header-title"'),
     'Improve must sit after the title, in the right group'
   );
+  // Streamlined Concept: the hamburger moved to the LEFT group, mirroring
+  // the drawer it opens, so it now PRECEDES the title — and Improve (or the
+  // eye that swaps in on the Dev screens) is the right group's one control.
   assert.ok(
-    header.indexOf('id="improve-btn"') < header.indexOf('id="header-menu-btn"'),
-    'Improve must lead the icon group'
+    header.indexOf('id="header-menu-btn"') < header.indexOf('id="header-title"'),
+    'the hamburger leads the bar, before the title'
   );
 });
 
@@ -459,17 +462,18 @@ test('the Improve panel leads with a feedback BUTTON and the view toggle', () =>
     'and the panel renders the toggle in their place');
 });
 
-test('the view toggle renders in BOTH homes, and CSS picks which one shows', () => {
+test('the view toggle lives in the panel; the header center is the title tab', () => {
   const toggle = read('frontend/src/features/improve/view-toggle.tsx');
   const header = read('frontend/src/features/header/platform-header.tsx');
   const panel = read('frontend/src/features/improve/improve-panel.tsx');
 
-  // Both copies are always rendered and the breakpoint decides. Choosing one
-  // from a measured width would make the PRERENDERED document depend on a
-  // viewport the SSG pass does not have — a hydration mismatch on every phone
-  // or every desktop, whichever way the default fell.
-  assert.match(toggle, /hidden sm:inline-flex/, 'the header copy is wide-screen only');
-  assert.match(toggle, /flex sm:hidden/, 'the panel copy is phone only');
+  // Streamlined Concept: the header copy is retired — the tappable center
+  // title tab (header-title-tab.tsx) is the header's way into the app's
+  // views now, and the panel copy renders at every width in the interim.
+  assert.ok(!/ImproveViewToggle/.test(header),
+    'the header renders no view-toggle copy');
+  assert.match(header, /<HeaderTitleTab titleRef=\{titleRef\} \/>/,
+    'the center of the bar is the title tab');
   // Read the CODE, not the comment that explains why the code is this way.
   const toggleCode = toggle
     .replace(/\/\*[\s\S]*?\*\//g, '')
@@ -481,17 +485,6 @@ test('the view toggle renders in BOTH homes, and CSS picks which one shows', () 
   // the generated stylesheet, not in the class attribute.
   assert.ok(!/const TRACK_CLS = '(inline-)?flex/.test(toggle),
     'the shared track must carry no display utility of its own');
-
-  // LEFT of #improve-btn, and inside the right group: rightGroupRef is what
-  // use-header-layout.ts measures for the title-centering decision, so a
-  // control parked outside it would be invisible to that measurement and the
-  // title would overlap it at exactly the widths where this renders.
-  const toggleAt = header.indexOf('<ImproveViewToggle compact={true} />');
-  const btnAt = header.indexOf('<ImproveButton />');
-  const groupAt = header.indexOf('ref={rightGroupRef}');
-  assert.ok(toggleAt !== -1 && btnAt !== -1 && groupAt !== -1);
-  assert.ok(groupAt < toggleAt && toggleAt < btnAt,
-    'the toggle sits inside the right group, immediately left of #improve-btn');
 
   // Three segments, and the third is the app itself — which the panel had no
   // way back to once you had followed Kanban out of it.

@@ -352,10 +352,10 @@ test('the view toggle is real React state, and the className writer is gone', ()
   assert.match(TOGGLE, /aria-selected=\{active === '(app|feed|kanban)' \? 'true' : 'false'\}/,
     'aria-selected reflects the active segment');
   // BOTH form factors keep a switch — that is what makes removing the strip
-  // safe. The header copy is wide-screen only and the Improve panel carries
-  // the phone copy.
-  assert.match(TOGGLE, /hidden sm:inline-flex/, 'header copy is wide-screen only');
-  assert.match(TOGGLE, /flex sm:hidden/, 'panel copy covers the phone');
+  // safe. Streamlined Concept (transitional): the header copy is retired and
+  // the Improve panel's copy covers every width until the app-context sheet
+  // takes over as the view switcher.
+  assert.match(TOGGLE, /`flex \$\{TRACK_CLS\} w-full`/, 'panel copy covers every width');
   // Seeded from the module before the first paint, so ?view=kanban does not
   // flash list first.
   assert.match(MOUNT, /publishViewMode\(options\.viewMode\);/, 'the store is seeded at mount');

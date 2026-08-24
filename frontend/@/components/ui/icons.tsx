@@ -155,7 +155,10 @@ export const PlusIcon = stroked('PlusIcon', 'M12 5v14M5 12h14');
  */
 export const PlusWideIcon = stroked('PlusWideIcon', 'M12 4v16m8-8H4');
 
-/** The disclosure caret the home panels' expand toggle rotates. */
+/**
+ * The disclosure caret the home panels' expand toggle rotates — and
+ * (Streamlined Concept) the header title tab's "name ⌄" caret.
+ */
 export const ChevronDownIcon = stroked('ChevronDownIcon', 'M19 9l-7 7-7-7');
 
 export const HomeIcon = strokedPath(

@@ -173,7 +173,10 @@ export function ImproveViewToggle({ compact }: { compact: boolean }) {
       className={
         compact
           ? `hidden sm:inline-flex ${TRACK_ON_GROUND} h-7 mr-2`
-          : `flex sm:hidden ${TRACK_ON_CARD} w-full`
+          // Transitional (Streamlined Concept): the header copy is retired, so
+          // until the app-context sheet takes over as the view switcher the
+          // panel copy renders at EVERY width, not just under `sm`.
+          : `flex ${TRACK_ON_CARD} w-full`
       }
       role="tablist"
       aria-label="App view"
