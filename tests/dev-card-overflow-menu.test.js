@@ -15,6 +15,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 const vm = require('node:vm');
+const { renderComponent } = require('./lib/render-tsx');
 
 const MERGE_STATUS_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'merge-status.js'), 'utf8');
@@ -48,6 +49,17 @@ function makeAppView(opts) {
     setTimeout, clearTimeout, setInterval, clearInterval,
     addEventListener: () => {},
     localStorage: { getItem: () => null, setItem: () => {} },
+  };
+  // #1191: the menu's ROWS are features/dev-board/card-menu.tsx's, published
+  // through this bridge. Everything these tests are about — which descriptors
+  // a card offers, the host, the re-anchor, the touch action sheet — is still
+  // app-view.js's, so the bridge just records what was published.
+  sandbox.publishedMenuRows = [];
+  sandbox.UsernodeReact = {
+    devBoard: {
+      mountCardMenu: () => {},
+      publishCardMenu: (rows) => { sandbox.publishedMenuRows = rows; },
+    },
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
@@ -503,9 +515,12 @@ test('re-anchoring refreshes the rows from the newly-registered descriptors', ()
   ];
   AppView._reanchorCardMenu();
 
-  assert.match(menu.innerHTML, /Hide/);
-  assert.match(menu.innerHTML, /Archive/);
-  assert.doesNotMatch(menu.innerHTML, /Make visible/, 'no stale row left behind');
+  // The rows are re-PUBLISHED, not re-rendered into the node: the host and its
+  // one delegated click listener survive the repaint, which is the whole
+  // reason the menu is usable on a board that refreshes under it.
+  const rows = AppView.__sandbox.publishedMenuRows;
+  assert.deepEqual(rows.map((r) => r.label), ['Hide', 'Archive'], 'no stale row left behind');
+  assert.deepEqual(rows.map((r) => r.danger), [false, true]);
 });
 
 test('re-anchoring closes the menu when the card itself is gone', () => {
@@ -672,10 +687,19 @@ test('the dropdown draws the glyph in a decorative leading column', () => {
     getBoundingClientRect: () => ({ top: 100, bottom: 120, right: 400, left: 380 }),
   });
   assert.ok(menuEl, 'a dropdown was built');
-  assert.match(menuEl.innerHTML,
+  // The glyph is chosen here and drawn by features/dev-board/card-menu.tsx, so
+  // the check runs end to end: the published row carries the glyph, and the
+  // component puts it in its own aria-hidden span beside the label.
+  assert.deepEqual(AppView.__sandbox.publishedMenuRows.map((r) => r.glyph),
+    [AppView.MENU_ICONS.withdraw]);
+  const menuHtml = renderComponent(
+    'frontend/src/features/dev-board/card-menu.tsx', 'CardMenuView',
+    { rows: JSON.parse(JSON.stringify(AppView.__sandbox.publishedMenuRows)) },
+  );
+  assert.match(menuHtml,
     new RegExp(`<span class="dev-card-menu-icon" aria-hidden="true">${AppView.MENU_ICONS.withdraw}</span>`),
     'glyph in its own aria-hidden span');
-  assert.match(menuEl.innerHTML, /<span class="dev-card-menu-label">Withdraw<\/span>/,
+  assert.match(menuHtml, /<span class="dev-card-menu-label">Withdraw<\/span>/,
     'the LABEL is still the accessible name — the glyph is not part of it');
 });
 

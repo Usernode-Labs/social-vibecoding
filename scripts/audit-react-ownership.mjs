@@ -125,6 +125,9 @@ const OWNED = [
   // commit. Listed anyway so a future write into it is a finding the day the
   // sweep learns to open one.
   { sel: '#attr-popover' },
+  // The card's ⋯ menu (features/dev-board/card-menu.tsx). Same story as the
+  // picker above: on screen only mid-gesture, so this sweep never sees one.
+  { sel: '.dev-card-menu' },
   // The thread panel's shell (features/group-chat/thread-shell.tsx). TWO hosts
   // inside it stay their modules': the topic card that app-view.js innerHTMLs,
   // and the transcript's own portal target. Each is rendered once, empty, with

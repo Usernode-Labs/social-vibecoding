@@ -23,6 +23,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
+const { renderComponent } = require('./lib/render-tsx');
+
 const SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf8');
 
@@ -142,6 +144,20 @@ function makeAppView() {
     innerWidth: 1280,
     innerHeight: 800,
   };
+  // #1191: the menu's ROWS are features/dev-board/card-menu.tsx's, published
+  // through this bridge. The host, its placement, its dismissers and the one
+  // delegated click are still app-view.js's, which is what these tests are
+  // about — so the bridge records what was published and the row nodes are
+  // still built by hand below.
+  sandbox.publishedMenuRows = [];
+  sandbox.UsernodeReact = {
+    devBoard: {
+      mountCardMenu: () => {},
+      mountAttrPopover: () => {},
+      publishCardMenu: (rows) => { sandbox.publishedMenuRows = rows; },
+      publishAttrPopover: () => {},
+    },
+  };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
@@ -154,9 +170,10 @@ function makeAppView() {
 }
 
 // Open the ⋯ menu for one card and hand back the row element for `field`.
-// The menu's rows are HTML (innerHTML), so the row node is built here with
-// the same dataset the real button carries.
-function openMenuRow(AppView, doc, field, items) {
+// The rows are a React component in the browser; here the published view
+// model stands in for them, and the row NODE is built with the same dataset
+// the real button carries.
+function openMenuRow(AppView, doc, field, items, sandbox) {
   const trigger = mkEl('button');
   trigger.dataset.cardMenu = 'issue:5';
   AppView._cardMenus['issue:5'] = items;
@@ -164,8 +181,10 @@ function openMenuRow(AppView, doc, field, items) {
   const menu = AppView._openCardMenu.el;
   const idx = items.findIndex((it) => it.icon === field);
   assert.ok(idx >= 0, `no ${field} row registered`);
-  assert.match(menu.innerHTML, new RegExp(`data-menu-row="${field}"`),
-    'the row carries its meaning as a stable hook');
+  if (sandbox) {
+    assert.ok(sandbox.publishedMenuRows.some((r) => r.row === field),
+      'the row carries its meaning as a stable hook');
+  }
   const row = mkEl('button');
   row.dataset.menuIdx = String(idx);
   row.dataset.menuRow = field;
@@ -188,9 +207,9 @@ test('the ⋯ row for an attribute is wired to open its picker', () => {
 });
 
 test('the click that RUNS the row does not also dismiss the picker it opened', () => {
-  const { AppView, doc } = makeAppView();
+  const { AppView, doc, sandbox } = makeAppView();
   const rows = attrRows(AppView);
-  const { row } = openMenuRow(AppView, doc, 'assignee', rows);
+  const { row } = openMenuRow(AppView, doc, 'assignee', rows, sandbox);
   // The card is on screen with no assignee chip yet — the unset case the row
   // exists for, so the popover anchors to the card.
   const card = mkEl('div');
@@ -359,16 +378,44 @@ test('the row handler stamps the acting event and the dismisser skips exactly it
 });
 
 test('every ⋯ row exposes its meaning as data-menu-row', () => {
-  const { AppView } = makeAppView();
-  const menu = mkEl('div');
-  AppView._fillCardMenu(menu, [
+  const { AppView, sandbox } = makeAppView();
+  AppView._fillCardMenu(mkEl('div'), [
     { label: 'Change assignee…', icon: 'assignee', act: () => {} },
     { label: 'Open on GitHub', icon: 'github', act: () => {} },
     { label: 'No icon', act: () => {} },
   ]);
-  assert.match(menu.innerHTML, /data-menu-row="assignee"/);
-  assert.match(menu.innerHTML, /data-menu-row="github"/);
-  // The hook is the icon key, so a row without one simply has no hook rather
-  // than an empty attribute to match by accident.
-  assert.doesNotMatch(menu.innerHTML, /data-menu-row=""/);
+  // The module's half: the hook is the descriptor's icon key, and a row
+  // without one carries null rather than an empty string.
+  assert.deepEqual(sandbox.publishedMenuRows.map((r) => r.row), ['assignee', 'github', null]);
+
+  // The component's half: null means the attribute is ABSENT, not empty —
+  // an empty one would match `[data-menu-row]` by accident.
+  const html = renderComponent(
+    'frontend/src/features/dev-board/card-menu.tsx', 'CardMenuView',
+    { rows: JSON.parse(JSON.stringify(sandbox.publishedMenuRows)) },
+  );
+  assert.match(html, /data-menu-row="assignee"/);
+  assert.match(html, /data-menu-row="github"/);
+  assert.doesNotMatch(html, /data-menu-row=""/);
+  // …and the three things the delegated handler and the styles need.
+  assert.match(html, /data-menu-idx="0"[^>]*data-menu-row="assignee"/);
+  assert.match(html, /role="menuitem"/);
+  assert.match(html, /<span class="dev-card-menu-icon" aria-hidden="true">@<\/span><span class="dev-card-menu-label">Change assignee…<\/span>/);
+});
+
+test('a danger row is red, and an inert row is disabled rather than hidden', () => {
+  const { AppView, sandbox } = makeAppView();
+  AppView._fillCardMenu(mkEl('div'), [
+    { label: 'Withdraw', icon: 'withdraw', danger: true, act: () => {} },
+    // No `act` — "Close proposed" and friends, kept so they can explain
+    // themselves rather than disappearing.
+    { label: 'Close proposed', icon: 'close', title: 'A close vote is already open' },
+  ]);
+  const html = renderComponent(
+    'frontend/src/features/dev-board/card-menu.tsx', 'CardMenuView',
+    { rows: JSON.parse(JSON.stringify(sandbox.publishedMenuRows)) },
+  );
+  assert.match(html, /class="dev-card-menu-item dev-card-menu-item-danger"[^>]*data-menu-idx="0"/);
+  assert.match(html, /data-menu-idx="1"[^>]*title="A close vote is already open" disabled=""/);
+  assert.equal((html.match(/disabled/g) || []).length, 1, 'only the inert row is disabled');
 });

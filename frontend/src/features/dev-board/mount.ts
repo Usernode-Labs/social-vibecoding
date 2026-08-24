@@ -36,6 +36,8 @@ import {
 import { AttrPopover } from './attr-popover';
 import { attrPopoverStore, type AttrPopoverState } from './attr-popover-store';
 import { DevBoardFrame, type DevBoardFrameProps } from './board-frame';
+import { CardMenu } from './card-menu';
+import { cardMenuStore, type CardMenuRowView } from './card-menu-store';
 import { DevChatSubView } from './chat-frame';
 import { DevSessionShell } from './session-frame';
 import { DevTopicSubView } from './topic-frame';
@@ -69,6 +71,8 @@ export interface DevBoardBridge {
   ): void;
   mountAttrPopover(host: Element | null): void;
   publishAttrPopover(patch: Partial<AttrPopoverState>): void;
+  mountCardMenu(host: Element | null): void;
+  publishCardMenu(rows: CardMenuRowView[]): void;
   mountSessionShell(host: Element | null): void;
   publishViewMode(mode: string): void;
   unmount(host: Element | null): void;
@@ -86,6 +90,14 @@ export interface DevBoardBridge {
  * taken against the previous frame would place it off screen.
  */
 attrPopoverStore.setFlush(flushSync);
+
+/**
+ * And the ⋯ menu's, for two reads on the lines after the publish:
+ * `_positionCardMenu` measures the menu's width and height to decide whether
+ * it flips above its trigger, and `_toggleCardMenu` focuses the first enabled
+ * row. Both would run against an empty menu if the update were batched.
+ */
+cardMenuStore.setFlush(flushSync);
 
 export const devBoardBridge: DevBoardBridge = {
   mountBoard(host, options) {
@@ -137,6 +149,17 @@ export const devBoardBridge: DevBoardBridge = {
   // nothing else, and it runs while the rows are already on screen.
   publishAttrPopover(patch) {
     attrPopoverStore.set((s) => ({ ...s, ...patch }));
+  },
+
+  // The card's ⋯ menu. Its host is created on open and removed on close, but
+  // it SURVIVES a board repaint — see ./card-menu-store.ts — so the rows are a
+  // publish rather than a re-mount.
+  mountCardMenu(host) {
+    mountLegacyPortal(host, createElement(CardMenu));
+  },
+
+  publishCardMenu(rows) {
+    cardMenuStore.set({ rows });
   },
 
   mountSessionShell(host) {

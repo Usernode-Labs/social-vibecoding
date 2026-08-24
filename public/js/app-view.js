@@ -3135,8 +3135,15 @@ const AppView = {
     const menu = document.createElement('div');
     menu.className = 'dev-card-menu';
     menu.setAttribute('role', 'menu');
-    AppView._fillCardMenu(menu, items);
     document.body.appendChild(menu);
+    // The HOST stays ours — created here, placed below, dismissed and
+    // re-anchored by this module — and its ROWS are
+    // features/dev-board/card-menu.tsx's, mounted once per open. A new element
+    // each time means a new portal entry; the previous open's is swept by
+    // `pruneDetachedLegacyPortals` (lib/legacy-portals.tsx), because
+    // `_closeCardMenu` removes the node.
+    AppView._reactDevBoard()?.mountCardMenu(menu);
+    AppView._fillCardMenu(menu, items);
     AppView._positionCardMenu(menu, trigger);
     menu.addEventListener('click', (ev) => {
       const btn = ev.target.closest('[data-menu-idx]');
@@ -3161,26 +3168,23 @@ const AppView = {
     if (first && first.focus) first.focus();
   },
 
-  // Render `items` into an existing menu element. Split out of
-  // _toggleCardMenu so a repaint can refresh the rows in place without
-  // tearing the menu down (the click handler is bound on the menu element,
-  // so replacing its innerHTML keeps the wiring).
+  // Publish `items` as the open menu's rows. Split out of _toggleCardMenu so a
+  // repaint can refresh them in place without tearing the menu down — the
+  // click handler is bound on the menu ELEMENT, which survives, so the rows
+  // can be replaced under it. `menu` is unused now that the rows go through a
+  // store rather than into a node, and is kept in the signature because both
+  // call sites read as "fill THIS menu".
   _fillCardMenu(menu, items) {
-    menu.innerHTML = (items || []).map((it, i) => {
-      const cls = 'dev-card-menu-item' + (it.danger ? ' dev-card-menu-item-danger' : '');
-      const t = it.title ? ` title="${escapeAttr(it.title)}"` : '';
-      const dis = (it.disabled || !it.act) ? ' disabled' : '';
-      // The glyph is aria-hidden and the label keeps its own element, so the
-      // button's accessible name stays exactly the label text.
-      const icon = `<span class="dev-card-menu-icon" aria-hidden="true">${escapeHtml(AppView._menuIconGlyph(it))}</span>`;
-      // The descriptor's icon key doubles as a stable hook for the row's
-      // MEANING — what `?shot=card-menu&row=assignee` aims at and what a
-      // dapp.json test asserts on, neither of which should have to match the
-      // row's wording (which changes with the card's state).
-      const row = it.icon ? ` data-menu-row="${escapeAttr(it.icon)}"` : '';
-      return `<button type="button" role="menuitem" class="${cls}" data-menu-idx="${i}"${row}${t}${dis}>`
-        + `${icon}<span class="dev-card-menu-label">${escapeHtml(it.label)}</span></button>`;
-    }).join('');
+    AppView._reactDevBoard()?.publishCardMenu((items || []).map((it) => ({
+      label: it.label,
+      title: it.title || null,
+      glyph: AppView._menuIconGlyph(it),
+      row: it.icon || null,
+      // A purely informational row ("Close proposed") has no `act` and is
+      // rendered inert rather than hidden, so it can still explain itself.
+      disabled: !!(it.disabled || !it.act),
+      danger: !!it.danger,
+    })));
   },
 
   // Flip / clamp into the viewport, same arithmetic as _positionAttrPopover.
