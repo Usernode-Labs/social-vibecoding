@@ -39,6 +39,8 @@ import { DevBoardFrame, type DevBoardFrameProps } from './board-frame';
 import { CardMenu } from './card-menu';
 import { cardMenuStore, type CardMenuRowView } from './card-menu-store';
 import { DevChatSubView } from './chat-frame';
+import { KanbanFilters } from './kanban-filters';
+import { kanbanFiltersStore, type KanbanFiltersState } from './kanban-filters-store';
 import { DevSessionShell } from './session-frame';
 import { VotingHelp, type VotingHelpProps } from './voting-help';
 import { DevTopicSubView } from './topic-frame';
@@ -74,6 +76,8 @@ export interface DevBoardBridge {
   publishAttrPopover(patch: Partial<AttrPopoverState>): void;
   mountCardMenu(host: Element | null): void;
   publishCardMenu(rows: CardMenuRowView[]): void;
+  mountKanbanFilters(host: Element | null): void;
+  publishKanbanFilters(patch: Partial<KanbanFiltersState>): void;
   mountVotingHelp(host: Element | null, props: VotingHelpProps): void;
   mountSessionShell(host: Element | null): void;
   publishViewMode(mode: string): void;
@@ -100,6 +104,14 @@ attrPopoverStore.setFlush(flushSync);
  * row. Both would run against an empty menu if the update were batched.
  */
 cardMenuStore.setFlush(flushSync);
+
+/**
+ * The filter bar's too: `_renderKanbanFilterBar` mounts and publishes, and the
+ * kanban entry path reads the bar back — and `_clearKanbanFilters` publishes a
+ * new `seq` and then repaints the board, which must not see a half-applied
+ * bar.
+ */
+kanbanFiltersStore.setFlush(flushSync);
 
 export const devBoardBridge: DevBoardBridge = {
   mountBoard(host, options) {
@@ -162,6 +174,19 @@ export const devBoardBridge: DevBoardBridge = {
 
   publishCardMenu(rows) {
     cardMenuStore.set({ rows });
+  },
+
+  // The kanban board's filter strip. Mounted once per kanban entry; the feed
+  // has no filters and publishes `mounted: false`, which draws nothing and
+  // lets `empty:hidden` collapse the shared action row's host.
+  mountKanbanFilters(host) {
+    mountLegacyPortal(host, createElement(KanbanFilters));
+  },
+
+  // A patch, so `_updateKanbanFilterBarUI` can leave one select's options
+  // alone while its dropdown is open.
+  publishKanbanFilters(patch) {
+    kanbanFiltersStore.set((s) => ({ ...s, ...patch }));
   },
 
   // Read-only, computed once at open: the props ARE the publish.

@@ -13,6 +13,9 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { renderComponent } = require('./lib/render-tsx');
+
+const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 
 const APP_VIEW_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'app-view.js'),
@@ -63,7 +66,13 @@ function makeCtx(over) {
 }
 
 function makeAppView() {
-  return makeCtx().__AppView;
+  const sandbox = makeCtx();
+  // The bar's markup is features/dev-board/kanban-filters.tsx's since #1191,
+  // so a test that drives the module needs the sandbox back to see what was
+  // published — and `document.activeElement`, which decides whether a select
+  // the reader has open keeps its options.
+  sandbox.__AppView.__sandbox = sandbox;
+  return sandbox.__AppView;
 }
 
 // Default (empty) filters — the fast-path that must match everything.
@@ -224,21 +233,27 @@ test('category filter options list built-ins then the app custom categories', ()
     { value: 'dev experience', label: 'Dev Experience', custom: true },
     { value: 'performance', label: 'Performance', custom: true },
   ];
-  const html = AppView._kanbanCategoryOptionsHtml();
-  assert.match(html, /<option value="">Any category<\/option>/, 'the any-category default leads');
+  // #1191: the select is features/dev-board/kanban-filters.tsx's, so the
+  // module hands over an option LIST rather than a string of <option>s. Same
+  // rules, one fewer renderer.
+  // (JSON round-trip: the list comes back from the vm's realm, so a
+  // deepEqual would compare prototypes rather than contents.)
+  const opts = JSON.parse(JSON.stringify(AppView._kanbanCategoryOptionList()));
+  assert.deepEqual(opts[0], { value: '', label: 'Any category' }, 'the any-category default leads');
   // Built-ins keep their fixed display labels and come first.
-  const order = [...html.matchAll(/<option value="([^"]*)"/g)].map((m) => m[1]);
   assert.deepEqual(
-    order,
+    opts.map((o) => o.value),
     ['', ...AppView.ATTR_CATEGORY_VALUES, 'dev experience', 'performance'],
     'built-ins precede the customs, in registry order'
   );
-  assert.match(html, /Dev Experience/, 'a custom option shows its registered label');
+  assert.ok(opts.some((o) => o.label === 'Dev Experience'), 'a custom option shows its registered label');
 
   // With no vocabulary loaded it degrades to built-ins only (pre-#780 view).
   AppView._appCategories = null;
-  const bare = [...AppView._kanbanCategoryOptionsHtml().matchAll(/<option value="([^"]*)"/g)].map((m) => m[1]);
-  assert.deepEqual(bare, ['', ...AppView.ATTR_CATEGORY_VALUES]);
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(AppView._kanbanCategoryOptionList())).map((o) => o.value),
+    ['', ...AppView.ATTR_CATEGORY_VALUES],
+  );
 });
 
 // Mirrors the assignee select's rule: an active selection is never dropped
@@ -247,8 +262,22 @@ test('category filter keeps an active selection that left the vocabulary', () =>
   const AppView = makeAppView();
   AppView._appCategories = null;
   AppView._kanbanFilters = { ...none, category: 'retired category' };
-  const html = AppView._kanbanCategoryOptionsHtml();
-  assert.match(html, /<option value="retired category" selected>/, 'the active filter survives');
+  assert.ok(AppView._kanbanCategoryOptionList().some((o) => o.value === 'retired category'),
+    'the active filter survives');
+  // …and the select shows it as chosen, which is the `selected` attribute the
+  // string renderer used to write by hand.
+  const html = renderComponent(
+    'frontend/src/features/dev-board/kanban-filters.tsx', 'KanbanFiltersView',
+    {
+      mounted: true, q: '', priority: '', category: 'retired category', assignee: '',
+      needsVote: false, active: true, seq: 0,
+      categories: JSON.parse(JSON.stringify(AppView._kanbanCategoryOptionList())),
+      assignees: [{ value: '', label: 'Anyone' }],
+    },
+  );
+  assert.match(html, /<option value="retired category" selected="">Retired category<\/option>/);
+  // The chip also reads as SET while a filter is on — the filled tonal state.
+  assert.match(html, /id="dev-kanban-category"[^>]*bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"/);
 });
 
 test('assignee filter matches the top-voted assignee; unassigned cards fail', () => {
@@ -578,4 +607,69 @@ test('the second column reads "Underway" but keeps its inprogress key and id', (
   assert.match(head[1], /paused/i);
   // …and only that column has one, so the other three heads are unchanged.
   assert.equal((html.match(/dev-kanban-col-head[^>]*title="/g) || []).length, 1);
+});
+
+// ── The bar itself (#1191) ──────────────────────────────────────────────
+//
+// The strip was an `innerHTML` template plus six re-bound listeners, and Clear
+// worked by rebuilding the whole thing so every control snapped back. Two
+// properties carried the design and neither had a test:
+//
+//   1. An ordinary board repaint must NOT disturb the search box. That is why
+//      `#dev-kanban-filterbar` was left untouched while `#dev-kanban-board`
+//      was rewritten around it — a rebuild would have taken the caret with it.
+//      The box is uncontrolled for the same reason, and Clear is the one path
+//      allowed to replace it (through a `seq` that is its React key).
+//   2. Rebuilding a select's options closes an open dropdown, so a select the
+//      reader is currently in keeps the list it was opened with.
+
+test('the search box survives a repaint and only Clear replaces it', () => {
+  const AppView = makeAppView();
+  const view = (over) => renderComponent(
+    'frontend/src/features/dev-board/kanban-filters.tsx', 'KanbanFiltersView',
+    {
+      mounted: true, q: '', priority: '', category: '', assignee: '',
+      needsVote: false, active: false, seq: 0,
+      categories: [{ value: '', label: 'Any category' }],
+      assignees: [{ value: '', label: 'Anyone' }],
+      ...over,
+    },
+  );
+  // Uncontrolled: the typed text is the DOM's, seeded once. A `value` prop
+  // here would re-render the box on every repaint and move the caret.
+  const html = view({ q: 'photo' });
+  assert.match(html, /id="dev-kanban-search"[^>]*value="photo"/);
+  const tsx = read('frontend/src/features/dev-board/kanban-filters.tsx');
+  assert.match(tsx, /defaultValue=\{q\}/, 'the search field is uncontrolled');
+  assert.doesNotMatch(tsx, /\bvalue=\{q\}/, 'a controlled one would move the caret on every repaint');
+  assert.match(tsx, /key=\{`q\$\{seq\}`\}/, 'and its identity is the seq Clear bumps');
+
+  // Clear bumps that seq, which is what puts the box back to empty.
+  const clear = read('public/js/app-view.js')
+    .match(/_clearKanbanFilters\(\) \{([\s\S]*?)\n {2}\},/);
+  assert.ok(clear, '_clearKanbanFilters() found');
+  assert.match(clear[1], /AppView\._kanbanFilters = AppView\._defaultKanbanFilters\(\);/);
+  assert.match(clear[1], /AppView\._kanbanFilterSeq \+= 1;/);
+});
+
+test('a select the reader has open keeps the options it was opened with', () => {
+  const AppView = makeAppView();
+  AppView._kanbanFilters = { ...none };
+  const seen = [];
+  AppView._reactDevBoard = () => ({ publishKanbanFilters: (p) => seen.push(p) });
+  // `_updateKanbanFilterBarUI` bails when the host is absent, so give it one.
+  const doc = AppView.__sandbox.document;
+  doc.getElementById = (id) => (id === 'dev-kanban-filterbar' ? { id } : null);
+
+  // Nothing focused: both lists are refreshed.
+  AppView._updateKanbanFilterBarUI();
+  assert.ok('categories' in seen[0] && 'assignees' in seen[0]);
+
+  // The assignee dropdown is open: its options are left alone, and the rest of
+  // the bar still updates. The next repaint catches it up.
+  AppView.__sandbox.document.activeElement = { id: 'dev-kanban-assignee' };
+  AppView._updateKanbanFilterBarUI();
+  assert.ok('categories' in seen[1], 'the other select still refreshes');
+  assert.ok(!('assignees' in seen[1]), 'the open one does not');
+  assert.equal(seen[1].active, false, 'and the Clear link still tracks the filters');
 });

@@ -128,6 +128,9 @@ const OWNED = [
   // The card's ⋯ menu (features/dev-board/card-menu.tsx). Same story as the
   // picker above: on screen only mid-gesture, so this sweep never sees one.
   { sel: '.dev-card-menu' },
+  // The kanban board's filter strip (features/dev-board/kanban-filters.tsx).
+  // Swept on #app/recipebot/dev whenever the board is in kanban mode.
+  { sel: '#dev-kanban-filterbar' },
   // The thread panel's shell (features/group-chat/thread-shell.tsx). TWO hosts
   // inside it stay their modules': the topic card that app-view.js innerHTMLs,
   // and the transcript's own portal target. Each is rendered once, empty, with

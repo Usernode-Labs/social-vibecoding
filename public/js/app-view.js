@@ -5024,25 +5024,17 @@ const AppView = {
   // categories, mirroring the dropdown's order. Like the assignee select, the
   // current selection is always kept in the list even if it vanishes from the
   // vocabulary, so an active filter never silently self-clears.
-  _kanbanCategoryOptionsHtml() {
+  _kanbanCategoryOptionList() {
     const f = AppView._kanbanFilters || {};
-    const opt = (v, label) =>
-      `<option value="${escapeAttr(v)}"${f.category === v ? ' selected' : ''}>${escapeHtml(label)}</option>`;
     const seen = new Set();
-    let html = '<option value="">Any category</option>';
-    for (const v of AppView.ATTR_CATEGORY_VALUES) {
-      seen.add(v);
-      html += opt(v, AppView._categoryMeta(v).label);
-    }
-    for (const c of AppView._customCategories()) {
-      if (seen.has(c.value)) continue;
-      seen.add(c.value);
-      html += opt(c.value, AppView._categoryMeta(c.value).label);
-    }
-    if (f.category && !seen.has(f.category)) {
-      html += opt(f.category, AppView._categoryMeta(f.category).label);
-    }
-    return html;
+    const out = [{ value: '', label: 'Any category' }];
+    const push = (v) => { seen.add(v); out.push({ value: v, label: AppView._categoryMeta(v).label }); };
+    for (const v of AppView.ATTR_CATEGORY_VALUES) push(v);
+    for (const c of AppView._customCategories()) if (!seen.has(c.value)) push(c.value);
+    // The current selection is always kept in the list even if it vanished
+    // from the vocabulary, so an active filter never silently self-clears.
+    if (f.category && !seen.has(f.category)) push(f.category);
+    return out;
   },
 
   // ── The filter bar's chips (Material filter-chip shape) ──────────
@@ -5075,13 +5067,12 @@ const AppView = {
       + (active ? AppView.KANBAN_CHIP_ON : AppView.KANBAN_CHIP_IDLE);
   },
 
-  _kanbanAssigneeOptionsHtml() {
-    const f = AppView._kanbanFilters || {};
-    const un = AppView.KANBAN_ASSIGNEE_UNASSIGNED;
-    return '<option value="">Anyone</option>'
-      + `<option value="${escapeAttr(un)}"${f.assignee === un ? ' selected' : ''}>Unassigned</option>`
-      + AppView._kanbanAssigneeOptions().map((name) =>
-        `<option value="${escapeAttr(name)}"${f.assignee === name ? ' selected' : ''}>${escapeHtml(name)}</option>`).join('');
+  _kanbanAssigneeOptionList() {
+    return [
+      { value: '', label: 'Anyone' },
+      { value: AppView.KANBAN_ASSIGNEE_UNASSIGNED, label: 'Unassigned' },
+      ...AppView._kanbanAssigneeOptions().map((name) => ({ value: name, label: name })),
+    ];
   },
 
   // #625 made the filter bar shared between the kanban and PM views, so every
@@ -5094,91 +5085,95 @@ const AppView = {
     AppView._repaintKanbanBoard();
   },
 
-  // Build the filter bar into #dev-kanban-filterbar and wire its controls.
-  // Called once per kanban mount (and by Clear, to reset control
-  // values); ordinary board repaints leave this node untouched so the
-  // search input keeps its focus and text.
+  // The filter bar is features/dev-board/kanban-filters.tsx's. Mounted once
+  // per kanban entry; every control below publishes and repaints.
+  //
+  // `_renderKanbanFilterBar` used to build the markup and re-bind six
+  // listeners, and Clear worked by rebuilding the whole thing so the controls
+  // snapped back to their defaults. That last part is the only piece that
+  // needed care in the conversion: the search box must NOT be re-rendered from
+  // the model on an ordinary repaint, or it would take the caret with it — so
+  // it is uncontrolled, and Clear bumps `seq`, which is the field's React key.
+
   // Empty the shared action row's filter host. Called on the way into the
   // feed, which has no filters; `empty:hidden` on the host then collapses it
   // so the "+" sits alone at the right of the row.
   _clearKanbanFilterBar() {
-    const el = document.getElementById('dev-kanban-filterbar');
-    if (el) el.innerHTML = '';
+    AppView._publishKanbanFilters({ mounted: false });
+  },
+
+  _publishKanbanFilters(patch) {
+    AppView._reactDevBoard()?.publishKanbanFilters(patch);
+  },
+
+  // The whole bar's state, from the module's filters plus the two data-driven
+  // option lists. `except` skips a select whose dropdown is open — rebuilding
+  // its options would close it, and the next repaint catches it up.
+  _kanbanFilterView(except) {
+    const f = AppView._kanbanFilters || {};
+    const view = {
+      mounted: true,
+      q: f.q || '',
+      priority: f.priority || '',
+      category: f.category || '',
+      assignee: f.assignee || '',
+      needsVote: !!f.needsVote,
+      active: AppView._kanbanFiltersActive(),
+    };
+    if (except !== 'category') view.categories = AppView._kanbanCategoryOptionList();
+    if (except !== 'assignee') view.assignees = AppView._kanbanAssigneeOptionList();
+    return view;
   },
 
   _renderKanbanFilterBar() {
     const el = document.getElementById('dev-kanban-filterbar');
     if (!el) return;
-    const f = AppView._kanbanFilters || {};
-    const priOpt = (v, label) =>
-      `<option value="${v}"${f.priority === v ? ' selected' : ''}>${label}</option>`;
-    // The search field is the one control that is NOT a chip: it takes typing,
-    // so it keeps a real field's affordance. It wears the chip's height and
-    // radius so the row still reads as one strip.
-    const searchCls = 'h-8 rounded-full border border-zinc-300 dark:border-zinc-700 '
-      + 'bg-white dark:bg-zinc-800 px-3 text-xs text-zinc-900 dark:text-zinc-100 '
-      + 'flex-1 min-w-[10rem]';
-    el.innerHTML = `
-      <div id="dev-filter-row" class="flex flex-wrap items-center gap-2">
-        <input id="dev-kanban-search" type="search" placeholder="Filter by title, author or #number"
-          value="${escapeAttr(f.q || '')}" aria-label="Filter cards"
-          class="${searchCls}" />
-        <select id="dev-kanban-priority" class="${AppView._kanbanChipSelectCls(!!f.priority)}" aria-label="Filter by priority">
-          <option value="">Any priority</option>
-          ${priOpt('high', 'High')}${priOpt('medium', 'Medium')}${priOpt('low', 'Low')}
-        </select>
-        <select id="dev-kanban-category" class="${AppView._kanbanChipSelectCls(!!f.category)}" aria-label="Filter by category">
-          ${AppView._kanbanCategoryOptionsHtml()}
-        </select>
-        <select id="dev-kanban-assignee" class="${AppView._kanbanChipSelectCls(!!f.assignee)}" aria-label="Filter by assignee">
-          ${AppView._kanbanAssigneeOptionsHtml()}
-        </select>
-        <button id="dev-kanban-needsvote" type="button" aria-pressed="${f.needsVote ? 'true' : 'false'}"
-          class="${AppView._kanbanNeedsVoteChipCls(!!f.needsVote)}"
-          title="Show only proposals you haven't voted on">Needs my vote</button>
-        <button id="dev-kanban-clear" type="button"
-          class="text-xs text-violet-500 hover:underline shrink-0${AppView._kanbanFiltersActive() ? '' : ' hidden'}">Clear</button>
-      </div>`;
     // No re-parenting here, deliberately. #dev-kanban-filterbar is a host the
     // React frame renders INSIDE #dev-actions, one flex sibling to the left of
     // the "+" — so filling it is all it takes to put the chips beside the
     // button. See the comment on that row in features/dev-board/board-frame.tsx
     // for why the button can never move into #dev-body instead.
+    AppView._reactDevBoard()?.mountKanbanFilters(el);
+    AppView._publishKanbanFilters(AppView._kanbanFilterView());
+  },
 
-    const input = el.querySelector('#dev-kanban-search');
-    let debounce = null;
-    input.addEventListener('input', () => {
-      clearTimeout(debounce);
-      debounce = setTimeout(() => {
-        AppView._kanbanFilters.q = input.value;
-        AppView._repaintBoardSurface();
-      }, 150);
-    });
-    el.querySelector('#dev-kanban-priority').addEventListener('change', (ev) => {
-      AppView._kanbanFilters.priority = ev.target.value || null;
+  // Typing filters the cached cards, so it commits on a 150ms debounce rather
+  // than on blur — there is no server round trip to pace.
+  _onKanbanSearchInput() {
+    const input = document.getElementById('dev-kanban-search');
+    if (!input) return;
+    clearTimeout(AppView._kanbanSearchDebounce);
+    AppView._kanbanSearchDebounce = setTimeout(() => {
+      AppView._kanbanFilters.q = input.value;
       AppView._repaintBoardSurface();
+    }, 150);
+  },
+
+  _setKanbanFilter(field, value) {
+    AppView._kanbanFilters[field] = value || null;
+    AppView._publishKanbanFilters(AppView._kanbanFilterView());
+    AppView._repaintBoardSurface();
+  },
+
+  _toggleKanbanNeedsVote() {
+    AppView._kanbanFilters.needsVote = !AppView._kanbanFilters.needsVote;
+    AppView._publishKanbanFilters(AppView._kanbanFilterView());
+    AppView._repaintBoardSurface();
+  },
+
+  _kanbanFilterSeq: 0,
+
+  _clearKanbanFilters() {
+    AppView._kanbanFilters = AppView._defaultKanbanFilters();
+    // A new `seq` is a new key on the search field, which is what puts an
+    // uncontrolled box back to empty. Every other control reads its value from
+    // the model and follows on its own.
+    AppView._kanbanFilterSeq += 1;
+    AppView._publishKanbanFilters({
+      ...AppView._kanbanFilterView(),
+      seq: AppView._kanbanFilterSeq,
     });
-    el.querySelector('#dev-kanban-category').addEventListener('change', (ev) => {
-      AppView._kanbanFilters.category = ev.target.value || null;
-      AppView._repaintBoardSurface();
-    });
-    el.querySelector('#dev-kanban-assignee').addEventListener('change', (ev) => {
-      AppView._kanbanFilters.assignee = ev.target.value || null;
-      AppView._repaintBoardSurface();
-    });
-    const chip = el.querySelector('#dev-kanban-needsvote');
-    chip.addEventListener('click', () => {
-      AppView._kanbanFilters.needsVote = !AppView._kanbanFilters.needsVote;
-      chip.className = AppView._kanbanNeedsVoteChipCls(AppView._kanbanFilters.needsVote);
-      chip.setAttribute('aria-pressed', AppView._kanbanFilters.needsVote ? 'true' : 'false');
-      AppView._repaintBoardSurface();
-    });
-    el.querySelector('#dev-kanban-clear').addEventListener('click', () => {
-      AppView._kanbanFilters = AppView._defaultKanbanFilters();
-      // Rebuild the bar so every control snaps back to its default value.
-      AppView._renderKanbanFilterBar();
-      AppView._repaintBoardSurface();
-    });
+    AppView._repaintBoardSurface();
   },
 
   // Keep the stable filter bar in sync after each board repaint: Clear-link
@@ -5186,21 +5181,16 @@ const AppView = {
   _updateKanbanFilterBarUI() {
     const bar = document.getElementById('dev-kanban-filterbar');
     if (!bar) return;
-    const clear = bar.querySelector('#dev-kanban-clear');
-    if (clear) clear.classList.toggle('hidden', !AppView._kanbanFiltersActive());
-    const sel = bar.querySelector('#dev-kanban-assignee');
-    // Rebuilding options closes an open dropdown — skip while the select is
-    // being interacted with; the next repaint catches it up.
-    if (sel && document.activeElement !== sel) {
-      sel.innerHTML = AppView._kanbanAssigneeOptionsHtml();
-    }
-    // #780: same treatment for the category select, so a category created
-    // during this session (or a vocabulary that finished loading after the
-    // bar was built) shows up without a reload.
-    const catSel = bar.querySelector('#dev-kanban-category');
-    if (catSel && document.activeElement !== catSel) {
-      catSel.innerHTML = AppView._kanbanCategoryOptionsHtml();
-    }
+    // Rebuilding a select's options closes an open dropdown, so a select the
+    // reader is currently in keeps the list it was opened with; the next
+    // repaint catches it up. #780: the category list gets the same treatment,
+    // so an option created during this session — or a vocabulary that
+    // finished loading after the bar was built — shows up without a reload.
+    const active = document.activeElement;
+    const id = active && active.id;
+    const except = id === 'dev-kanban-assignee' ? 'assignee'
+      : (id === 'dev-kanban-category' ? 'category' : null);
+    AppView._publishKanbanFilters(AppView._kanbanFilterView(except));
   },
 
   // Repaint only the board region (#dev-kanban-board) from cached data,
