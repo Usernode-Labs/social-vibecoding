@@ -620,6 +620,58 @@ test('leaving the app drops the frame; a non-running app never gets one', async 
   assert.match(h.status().message, /spinning up/, 'the placeholder is published');
 });
 
+// ── canEagerLaunch is a PREDICATE ────────────────────────────────────────
+//
+// It answers "would an eager launch mount the same frame renderAppTab would
+// build?", and it answers no far more often than yes: a demo card, a
+// self-hosted app, a non-app tab, and every app that is not running. It used
+// to tear down the interim React roots that own `#app-content` on its way to
+// that answer, which was invisible while the App tab's placeholders were
+// hand-written innerHTML — `unmountAllLegacyPortals` cannot touch those.
+//
+// #1085 chunk H made the placeholders a portal, and the side effect became a
+// blank App tab on exactly the apps the predicate refuses: `renderAppTab`
+// painted "App failed to start · View build log", `beginLaunch` asked the
+// predicate milliseconds later, and the answer arrived with the placeholder
+// already swept away. A declared check reported the build-log button missing
+// from a page that had rendered it.
+
+test('asking whether an app can eager-launch does not disturb the placeholder', async () => {
+  const h = await makeHarness();
+  const { AppView, bridge } = h;
+
+  for (const status of ['error', 'creating', 'awaiting_secrets']) {
+    // Both sources say the app is not running: `renderAppTab` reads
+    // `appData`, `canEagerLaunch` reads the HOME list record.
+    h.sandbox.Home._apps[0].status = status;
+    h.sandbox.Home._apps[0].url = null;
+    AppView.appData = { slug: SLUG, status, url: null, lastFailure: { reason: 'boom' } };
+    AppView.renderAppTab();
+    const painted = h.status();
+    assert.ok(painted, `${status}: the placeholder is published`);
+
+    // The answer is no for every one of these — there is no running app to
+    // launch onto — and asking must not cost the surface that IS on screen.
+    assert.equal(AppView.canEagerLaunch(SLUG, 'app'), false, `${status}: no eager launch`);
+    assert.equal(h.status(), painted, `${status}: the placeholder survives the question`);
+    assert.equal(bridge.frame(), null, `${status}: and no frame appears`);
+  }
+});
+
+test('a refused beginLaunch leaves the screen exactly as it found it', async () => {
+  const h = await makeHarness();
+  const { AppView } = h;
+
+  h.sandbox.Home._apps[0].status = 'error';
+  h.sandbox.Home._apps[0].url = null;
+  AppView.appData = { slug: SLUG, status: 'error', url: null, lastFailure: { reason: 'boom' } };
+  AppView.renderAppTab();
+  const painted = h.status();
+
+  assert.equal(AppView.beginLaunch(SLUG, 'app'), false, 'nothing to launch onto');
+  assert.equal(h.status(), painted, 'the placeholder is still the one on screen');
+});
+
 test('offline shows the placeholder and drops the frame — for an app with no worker of its own', async () => {
   const h = await makeHarness({ offline: true });
   const { AppView, bridge } = h;

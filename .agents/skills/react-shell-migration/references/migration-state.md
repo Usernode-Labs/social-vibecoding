@@ -301,9 +301,23 @@ behaviour change:
 | `.gc-vote-btn[onclick*="markIssueInProgress"]` | the inline handler became a closure |
 | `.gc-vote-btn[onclick*="_setSessionShared"]` | same |
 
-The first is the one to remember, because it is invisible in the DOM
-inspector's own rendering and in every screenshot: the tiles are in the right
-cells and the check still reports "selector not found". A per-item inline
+A fourth broke on the commit AFTER those three, and it is the sharpest of the
+set because the code that caused it did not change: **`canEagerLaunch` — a
+predicate — tore down the React roots that own `#app-content` on its way to
+answering.** That was harmless while the App tab's placeholders were
+hand-written `innerHTML`, which `unmountAllLegacyPortals` cannot touch. Once
+they became a portal, `renderAppTab` painted "App failed to start · View build
+log", `beginLaunch` asked the predicate four milliseconds later, and the
+answer — no, this app is not running — arrived with the placeholder already
+swept away. Nothing repainted it. **A function that decides must not tear down
+before it has decided**; the teardown belongs at the write, in `beginLaunch`,
+which is where it is now. It is worth grepping any predicate a converted
+surface reaches for `_teardown`.
+
+The `grid-row` one is the one to remember for a different reason: it is
+invisible in the DOM inspector's own rendering and in every screenshot — the
+tiles are in the right cells and the check still reports "selector not
+found". A per-item inline
 style that must keep its authored SPELLING has to be written with
 `setAttribute` — see the header note in `frontend/src/features/home/app-grid.tsx`,
 which also says why the effect is keyed on the placement rather than run on
@@ -322,6 +336,21 @@ subtree, and resolve each selector in a real browser on the route the check
 names. `tests/declared-check-action-hooks.test.js` is the pattern for pinning
 one locally afterwards — it reads the real dapp.json entry, renders the real
 model, and fails here rather than on the platform.
+
+Two traps in writing that browser sweep, both of which hid a real failure:
+
+- **Normalise the path the way the runner does.** The platform IS the app under
+  test, so `services/visuals.js` rewrites its own routes through
+  `selfAppHashPath` before visiting them — `/app/x/dev` becomes `/#app/x/dev`.
+  A sweep that visits the raw path lands somewhere else and reports three
+  false failures.
+- **`expectText` is a SEPARATE assertion, and it is `textContent`.** A check
+  can have no selector at all — #288, "Errored app view shows the failure
+  reason and build-log button", is only an `expectText` — so a sweep that
+  resolves selectors and nothing else skips it entirely. That is how a blank
+  App tab reached the platform. Use `textContent`, not `innerText`: `innerText`
+  drops what CSS hides, and the native-kit demo and the admin console both keep
+  real, declared-checked sections off screen.
 
 ### Large
 

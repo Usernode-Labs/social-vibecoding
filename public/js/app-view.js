@@ -1149,10 +1149,6 @@ const AppView = {
     // placeholder rather than animating open onto a frame that can't paint.
     if (window.Offline && Offline.isOffline() && !AppView.offlineReadyFor(slug)) return false;
     const rec = AppView.launchRecordFor(slug);
-
-    // #1084 chunk G: this path replaces #app-content by hand, so retire any
-    // interim React root that owns it first — see _teardownDevRoots.
-    AppView._teardownDevRoots();
     if (!rec) return false;
     if (rec.demo) return false;
     if (rec.self_hosted) return false;
@@ -1330,6 +1326,24 @@ const AppView = {
     const content = document.getElementById('app-content');
     if (!content) return false;
     const rec = AppView.launchRecordFor(slug);
+
+    // #1084 chunk G: this path replaces #app-content, so retire any interim
+    // React root that owns it first — see _teardownDevRoots.
+    //
+    // It lives HERE and not in `canEagerLaunch`, where it started, because
+    // that is a PREDICATE: it answers "would an eager launch be the same
+    // frame renderAppTab builds?" and returns false four times out of five.
+    // Tearing down from inside it destroyed a surface this call was never
+    // going to replace — and once the App tab's placeholders became a portal
+    // (#1085 chunk H), that surface was `renderAppTab`'s own placeholder,
+    // painted milliseconds earlier on exactly the apps `canEagerLaunch`
+    // refuses: an errored app, one still spinning up, one awaiting secrets.
+    // The result was a blank App tab and a declared check reporting the
+    // build-log button missing from a page that had rendered it.
+    //
+    // Nothing above this line writes to the document, so a `false` from the
+    // predicate now leaves the screen exactly as it found it.
+    AppView._teardownDevRoots();
 
     AppView._launchId += 1;
     const launchId = AppView._launchId;
