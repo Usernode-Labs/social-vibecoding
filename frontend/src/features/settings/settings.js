@@ -134,15 +134,16 @@
       // looking for and the only one that needs no explanation.
       { key: 'theme', label: 'Theme', group: 'Preferences' },
 
+      { key: 'openrouter', label: 'OpenRouter', group: 'AI & agents' },
       { key: 'api-key', label: 'Anthropic API key', group: 'AI & agents' },
       // Own section (not folded into 'cli') so the out-of-credits card can
       // deep-link #settings/connectors as one of its three routes; see
       // public/js/credit-options.js.
       { key: 'connectors', label: 'Social accounts & connectors', group: 'AI & agents' },
-      { key: 'openrouter', label: 'OpenRouter', group: 'AI & agents' },
       { key: 'app-ai', label: 'App AI permissions', group: 'AI & agents' },
       { key: 'agent-files', label: 'Agent instructions & skills', group: 'AI & agents' },
 
+      { key: 'username', label: 'Username', group: 'Account' },
       { key: 'password', label: 'Password', group: 'Account' },
       { key: 'wallet', label: 'Usernode Wallet', group: 'Account', gate: 'wallet-section' },
 
@@ -186,11 +187,17 @@
       // existence so the section degrades cleanly if the feature flag is
       // off server-side (the section markup stays, the controls no-op).
       const orSave = document.getElementById('settings-openrouter-save');
+      const orClaim = document.getElementById('settings-openrouter-claim');
+      const orCopy = document.getElementById('settings-openrouter-copy');
+      const orDismissReveal = document.getElementById('settings-openrouter-dismiss-reveal');
       const orRemove = document.getElementById('settings-openrouter-remove');
       const orSetDefault = document.getElementById('settings-openrouter-set-default');
       const orModel = document.getElementById('settings-openrouter-model');
       const claudeSetDefault = document.getElementById('settings-claude-set-default');
       if (orSave) orSave.addEventListener('click', () => this._saveOpenRouterKey());
+      if (orClaim) orClaim.addEventListener('click', () => this._claimManagedOpenRouterKey());
+      if (orCopy) orCopy.addEventListener('click', () => this._copyManagedOpenRouterKey());
+      if (orDismissReveal) orDismissReveal.addEventListener('click', () => this._dismissManagedOpenRouterReveal());
       if (orRemove) orRemove.addEventListener('click', () => this._removeOpenRouterKey());
       if (orSetDefault) orSetDefault.addEventListener('click', () => this._saveOpenRouterDefault());
       if (orModel) orModel.addEventListener('change', () => this._syncOpenRouterModelDetails());
@@ -267,6 +274,19 @@
       this._wireConnectorNameSpelling();
 
       // Change password (issue #282) → POST /api/me/password.
+      const cuSave = document.getElementById('cu-save');
+      if (cuSave) cuSave.addEventListener('click', () => this.changeUsername());
+      // Enter in either field submits, like the password form's fields do
+      // not — this one is two fields and a button, and a rename typed on a
+      // phone should not require reaching for the button.
+      ['cu-new', 'cu-password'].forEach((id) => {
+        const el = document.getElementById(id);
+        if (el) {
+          el.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') { e.preventDefault(); this.changeUsername(); }
+          });
+        }
+      });
       const cpSave = document.getElementById('cp-save');
       if (cpSave) cpSave.addEventListener('click', () => this.changePassword());
 
@@ -487,6 +507,7 @@
       this._renderAgentFilesSection();
       this._renderWalletSection();
       this._renderDevFlowSection();
+      this._renderChangeUsernameSection();
       this._renderChangePasswordSection();
       this._renderDevConsoleSection();
       this._renderLanguageSection();
@@ -2492,7 +2513,7 @@
       const modelLabel = section.querySelector('label[for="settings-openrouter-model"]');
       if (heading) heading.textContent = 'OpenRouter';
       if (intro) {
-        intro.textContent = 'Use any compatible model exposed by your OpenRouter key for all chat and coding in an OpenRouter session. These sessions do not use your platform Claude allowance. Your key is encrypted at rest, injected only for each turn, and removed completely when you delete it here.';
+        intro.textContent = 'Use any compatible model for all chat and coding in an OpenRouter session. These sessions do not use your platform Claude allowance. OpenRouter is preferred after you add or claim a key; GLM 5.3 is selected when available, while the complete key-visible model list stays available. Keys are encrypted at rest and injected only for each turn.';
       }
       if (modelLabel) modelLabel.textContent = 'OpenRouter model';
       const betaGate = document.getElementById('settings-openrouter-beta-gated');
@@ -2574,6 +2595,10 @@
       const input = document.getElementById('settings-openrouter-key');
       const saveBtn = document.getElementById('settings-openrouter-save');
       const modelsWrap = document.getElementById('settings-openrouter-models-wrap');
+      const managedCard = document.getElementById('settings-openrouter-managed-card');
+      const managedMessage = document.getElementById('settings-openrouter-managed-message');
+      const claimBtn = document.getElementById('settings-openrouter-claim');
+      const personalControls = document.getElementById('settings-openrouter-personal-controls');
       try {
         const r = await fetch('/api/me/coding-agent', { credentials: 'same-origin' });
         const prefs = r.ok ? await r.json() : {};
@@ -2584,17 +2609,43 @@
       try {
         const r = await fetch('/api/me/credentials/openrouter', { credentials: 'same-origin' });
         const j = r.ok ? await r.json() : {};
+        const managed = j.managed || null;
+        const provisioning = j.managedProvisioning || {};
+        if (managedCard) managedCard.classList.toggle('hidden', !provisioning.available && !managed);
+        if (claimBtn) claimBtn.classList.toggle('hidden', !provisioning.canClaim);
+        if (managedMessage) {
+          if (managed?.status === 'active') {
+            managedMessage.textContent = `Your Usernode-managed key is active with a $${Number(managed.dailyLimitUsd || 0).toFixed(2)} daily limit. Admins can block or remove it; you may choose any available model.`;
+          } else if (managed?.status === 'disabled') {
+            managedMessage.textContent = 'An admin has blocked this company key. Contact the platform admins if it should be enabled again.';
+          } else if (managed?.status === 'deleted') {
+            managedMessage.textContent = 'Your included key was deleted by an admin. Included keys are issued once, but you may add a personal key below.';
+          } else if (managed?.status === 'needs_review' || managed?.status === 'provisioning') {
+            managedMessage.textContent = 'This key needs admin review. Usernode did not retry the provider request, which prevents accidental duplicate keys.';
+          } else if (!provisioning.verified) {
+            managedMessage.textContent = 'Connect and verify GitHub or X in Social accounts & connectors to claim one limited company key.';
+          } else if (!provisioning.available) {
+            managedMessage.textContent = 'Included keys are not configured by the platform administrator yet.';
+          } else if (provisioning.reason === 'personal_key_configured') {
+            managedMessage.textContent = 'Remove your personal key first if you want to claim the included company key.';
+          } else {
+            managedMessage.textContent = `Verified users can create one included key with a $${Number(provisioning.dailyLimitUsd || 0).toFixed(2)} daily limit.`;
+          }
+        }
+        const managedOwnsCredential = !!managed && managed.status !== 'deleted';
+        if (personalControls) personalControls.classList.toggle('hidden', managedOwnsCredential);
         if (j.configured) {
           if (display) display.classList.remove('hidden');
           if (last4) last4.textContent = j.last4 || '••••';
-          if (removeBtn) removeBtn.classList.remove('hidden');
+          if (removeBtn) removeBtn.classList.toggle('hidden', managedOwnsCredential);
           if (input) { input.placeholder = 'Paste a new key to replace'; input.value = ''; }
           if (saveBtn) saveBtn.textContent = 'Replace';
-          if (info && j.keyInfo) {
+          if (info && (j.keyInfo || managed)) {
             info.classList.remove('hidden');
-            const lim = j.keyInfo.limit != null ? `$${j.keyInfo.limit}` : '';
-            const rem = j.keyInfo.limitRemaining != null ? `$${j.keyInfo.limitRemaining}` : '';
-            info.textContent = lim ? `Key limit: ${lim} · Remaining: ${rem}` : (j.keyInfo.label || '');
+            const lim = j.keyInfo?.limit != null ? `$${j.keyInfo.limit}` : '';
+            const rem = j.keyInfo?.limitRemaining != null ? `$${j.keyInfo.limitRemaining}` : '';
+            const owner = managedOwnsCredential ? 'Usernode-managed' : 'Personal key';
+            info.textContent = lim ? `${owner} · Daily limit: ${lim} · Remaining: ${rem}` : `${owner} · ${j.keyInfo?.label || ''}`;
           }
           await this._loadOpenRouterModels();
         } else {
@@ -2606,6 +2657,56 @@
           if (modelsWrap) modelsWrap.classList.add('hidden');
         }
       } catch {}
+    },
+
+    async _claimManagedOpenRouterKey() {
+      const btn = document.getElementById('settings-openrouter-claim');
+      if (btn) btn.disabled = true;
+      this._setOrStatus('Creating your limited OpenRouter key…', 'info');
+      try {
+        const r = await fetch('/api/me/credentials/openrouter/managed', {
+          method: 'POST', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: '{}',
+        });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          this._setOrStatus(j.error || 'Could not create the key.', 'error');
+          await this._refreshOpenRouter();
+          return;
+        }
+        const reveal = document.getElementById('settings-openrouter-reveal');
+        const key = document.getElementById('settings-openrouter-revealed-key');
+        if (key) key.value = j.apiKey || '';
+        if (reveal) reveal.classList.remove('hidden');
+        if (typeof App !== 'undefined' && App.user) App.user.openrouterAvailable = true;
+        this._setOrStatus(`Created and selected OpenRouter${j.defaultModel ? ` with ${j.defaultModel}` : ''} as your default. Save the displayed key now.`, 'ok');
+        await this._refreshOpenRouter();
+      } catch (err) {
+        this._setOrStatus(`Network error: ${err.message}`, 'error');
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    },
+
+    async _copyManagedOpenRouterKey() {
+      const key = document.getElementById('settings-openrouter-revealed-key');
+      if (!key?.value) return;
+      try {
+        await navigator.clipboard.writeText(key.value);
+        this._setOrStatus('Key copied. Keep it somewhere secure.', 'ok');
+      } catch {
+        key.select();
+        document.execCommand('copy');
+        this._setOrStatus('Key copied. Keep it somewhere secure.', 'ok');
+      }
+    },
+
+    _dismissManagedOpenRouterReveal() {
+      const reveal = document.getElementById('settings-openrouter-reveal');
+      const key = document.getElementById('settings-openrouter-revealed-key');
+      if (key) key.value = '';
+      if (reveal) reveal.classList.add('hidden');
     },
 
     async _loadOpenRouterModels() {
@@ -2661,7 +2762,8 @@
         });
         const j = await r.json();
         if (!r.ok) { this._setOrStatus(j.error || 'Failed to save key.', 'error'); return; }
-        this._setOrStatus('Saved and encrypted. OpenRouter sessions bill to this key.', 'ok');
+        this._setOrStatus('Saved, encrypted, and selected as your default coding agent.', 'ok');
+        if (typeof App !== 'undefined' && App.user) App.user.openrouterAvailable = true;
         input.value = '';
         await this._refreshOpenRouter();
       } catch (err) {
@@ -2680,6 +2782,7 @@
         if (!r.ok) { this._setOrStatus(j.error || 'Failed to remove key.', 'error'); return; }
         const note = j.defaultReset ? ' Key removed; your default agent was reset to Claude Code.' : '';
         this._setOrStatus('Key removed.' + note, 'ok');
+        if (typeof App !== 'undefined' && App.user) App.user.openrouterAvailable = false;
         this._openRouterModels = [];
         await this._refreshOpenRouter();
       } catch {
@@ -2823,6 +2926,81 @@
         } else {
           this._setCpStatus(`Wallet change failed: ${err.message || err}`, 'error');
         }
+      } finally {
+        btn.disabled = false;
+      }
+    },
+
+    _setCuStatus(text, kind) {
+      const el = document.getElementById('cu-status');
+      if (!el) return;
+      el.textContent = text;
+      el.classList.remove('hidden', 'text-red-500', 'text-emerald-500', 'text-zinc-500');
+      const cls = kind === 'error' ? 'text-red-500' : kind === 'ok' ? 'text-emerald-500' : 'text-zinc-500';
+      el.classList.add(cls);
+    },
+
+    // Paint the current handle. Called from _renderAllSections on every
+    // open, so the row is right even after a rename made somewhere else in
+    // this tab (or in another one, once /api/auth/me is re-read).
+    _renderChangeUsernameSection() {
+      const cur = document.getElementById('cu-current');
+      if (!cur) return;
+      const name = (typeof App !== 'undefined' && App.user && App.user.username) || '';
+      cur.textContent = name ? `@${name}` : '—';
+    },
+
+    // POST /api/me/username. The server is the authority on every rule
+    // here (charset, reserved names, availability against the retired
+    // ledger, the cooldown, the password); this only avoids a round-trip
+    // for the two states the form can see on its own.
+    async changeUsername() {
+      const nameEl = document.getElementById('cu-new');
+      const pwEl = document.getElementById('cu-password');
+      const btn = document.getElementById('cu-save');
+      if (!nameEl || !pwEl || !btn) return;
+
+      const username = nameEl.value.trim();
+      const currentPassword = pwEl.value;
+
+      if (!username) { this._setCuStatus('Enter a new username.', 'error'); return; }
+      if (!currentPassword) { this._setCuStatus('Enter your current password.', 'error'); return; }
+
+      btn.disabled = true;
+      this._setCuStatus('Saving…', 'info');
+      try {
+        const r = await fetch('/api/me/username', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ username, currentPassword }),
+        });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) { this._setCuStatus(j.error || 'Failed to change username.', 'error'); return; }
+
+        nameEl.value = '';
+        pwEl.value = '';
+
+        // The handle is on the drawer row, the identity card and every
+        // link this tab is about to build, so App.user has to move with
+        // it — a stale copy would keep deep-linking the OLD name, which
+        // now resolves through the retired ledger and would quietly
+        // redirect on every click.
+        if (typeof App !== 'undefined' && App.user) {
+          App.user.username = j.username;
+          if (typeof App.saveSessionSnapshot === 'function') App.saveSessionSnapshot(App.user);
+          try { App.resyncCurrentView(); } catch (_) { /* best effort */ }
+        }
+        this._renderChangeUsernameSection();
+
+        this._setCuStatus(
+          j.unchanged
+            ? 'That is already your username.'
+            : `You are now @${j.username}.`,
+          'ok',
+        );
+      } catch (err) {
+        this._setCuStatus(`Network error: ${err.message}`, 'error');
       } finally {
         btn.disabled = false;
       }
@@ -4800,8 +4978,15 @@
     //     already fetched, and the ?shot=terms-consent /
     //     ?shot=terms-consent-blocking screenshot states pass a fixed one
     //     so the shots do no fetch and no writes.
+    _termsSheetOpen: false,
     async showTermsSheet(onAccepted, opts) {
       opts = opts || {};
+      // Reentrancy guard (#1361): never lift a second terms overlay over
+      // an open one. Return-early, not dismiss-and-replace, so a blocking
+      // native modal can never be displaced by a later plain open. The
+      // flag clears in the wrapped onClosed below — the kit fires
+      // onDismiss on every teardown, programmatic dismiss included.
+      if (this._termsSheetOpen) return;
       const firstRun = opts.firstRun === true;
       let payload = opts.payload || null;
       if (!payload) {
@@ -4948,8 +5133,13 @@
         panel.appendChild(closeBtn);
       }
 
-      const onClosed = typeof opts.onClosed === 'function'
-        ? opts.onClosed : null;
+      // Re-check after the awaits above: a concurrent call could have
+      // presented while this one was still fetching /terms/current.
+      if (this._termsSheetOpen) return;
+      const onClosed = () => {
+        Settings._termsSheetOpen = false;
+        if (typeof opts.onClosed === 'function') opts.onClosed();
+      };
       if (blocking && window.PlatformUI &&
           typeof PlatformUI.modal === 'function') {
         // Non-dismissible modal (#1328): no backdrop tap, no Escape, no
@@ -4969,50 +5159,9 @@
           ? PlatformUI.sheet({ contentEl: panel, onDismiss: onClosed })
           : null;
       }
-    },
-
-    // ── First-entry terms prompt (#1297) ──────────────────────────────
-    // The consent gate only guards the mobile/challenges API surfaces, so
-    // a web-only account could use the whole platform without ever seeing
-    // the published terms. Present the sheet above once, on the boot that
-    // enters the full shell, while the account has never responded to the
-    // current version (consent.status null — an accept OR a decline is a
-    // response, so neither is re-prompted). One prompt per (user, version)
-    // per browser; a new published version prompts again, and Settings ›
-    // About & legal keeps the always-available path.
-    _termsPromptSeenKey(user, versionId) {
-      const who = user && user.id != null ? String(user.id) : (user && user.username) || 'anon';
-      return 'sv-terms-prompted:' + who + ':' + versionId;
-    },
-    async maybePromptTerms(user) {
-      // Screenshot fixtures and the native demo states must never get a
-      // sheet lifted over them — the declared checks select on the screen
-      // underneath.
-      try {
-        if (new URLSearchParams(location.search).get('shot')) return;
-      } catch (_) { /* ignore */ }
-      if (this._unDemoMode()) return;
-      let payload = null;
-      try {
-        const res = await fetch('/challenges-api/terms/current', {
-          credentials: 'same-origin',
-        });
-        // 404 = nothing published (gate open); any other failure is not
-        // worth interrupting the boot over — the Settings path remains.
-        if (!res.ok) return;
-        const body = await res.json().catch(() => null);
-        if (!body || !body.success || !body.data) return;
-        payload = body.data;
-      } catch (_) {
-        return;
-      }
-      const consent = payload.consent || {};
-      if (consent.status != null) return;
-      let seen = null;
-      try { seen = localStorage.getItem(this._termsPromptSeenKey(user, payload.id)); } catch (_) { /* private mode */ }
-      if (seen) return;
-      try { localStorage.setItem(this._termsPromptSeenKey(user, payload.id), '1'); } catch (_) { /* private mode */ }
-      this.showTermsSheet();
+      // Only an actually-presented overlay latches — a kit-less boot
+      // (sheet null) must keep later opens working.
+      this._termsSheetOpen = !!sheet;
     },
 
     // `readError` / `loading` only matter when there is NO snapshot: the
@@ -5486,26 +5635,10 @@
   // module graph in Node (#1081 chunk D).
   if (typeof window !== 'undefined') window.Settings = Settings;
 
-  // First-entry terms prompt (#1297). `sv:authed` fires at most once per
-  // page load, and only for sessions that enter the full shell — the
-  // waiting room returns from enterAuthed before the dispatch. The delay
-  // lets the boot paint and kit adoption settle before a sheet lifts;
-  // the already-authed branch mirrors notifications.js's boot idiom for
-  // the (theoretical) case where this module evaluates after the event.
-  if (typeof document !== 'undefined' && typeof window !== 'undefined') {
-    const promptTerms = (user) => {
-      setTimeout(() => {
-        try {
-          Settings.maybePromptTerms(user || (window.App && App.user) || {});
-        } catch (_) { /* never break boot */ }
-      }, 1500);
-    };
-    if (window.App && App.user) promptTerms(App.user);
-    else {
-      document.addEventListener('sv:authed',
-        (e) => promptTerms(e && e.detail && e.detail.user), { once: true });
-    }
-  }
+  // The first-entry terms prompt lives in ./terms-first-run.js — the ONE
+  // boot trigger that auto-presents showTermsSheet (issue #1361 was two
+  // parallel implementations of #1297 both riding sv:authed, stacking two
+  // sheets at login; the settings.js copy was removed in its fix).
 
   // init() is called from SettingsScreen's layout effect (../index.tsx), not
   // from DOMContentLoaded. Same moment in practice — the React entry is a

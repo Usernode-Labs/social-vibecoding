@@ -46,10 +46,34 @@ export const notificationsStore = createStore({
   saved: null,
   /** null until the first _renderInvites; else an array of invite descriptors. */
   invites: null,
-  /** null until the first _renderList; else an array of entry descriptors. */
+  /**
+   * null until the first _renderList; else the flat, newest-first array of row
+   * descriptors (#1385). It carried a mix of `{type:'row'}` and `{type:'group'}`
+   * entries while the list nested; there is one shape now.
+   */
   list: null,
   /** The "you'll get pinged here" hint. Hidden in the shipped markup. */
   empty: false,
+  /**
+   * Caught up: nothing unread, but there ARE read ones behind "See older"
+   * (#1367 follow-up). Distinct from `empty`, which still means "you have
+   * never had a notification" — telling a viewer that when they have a month
+   * of history reads as the drawer having lost it.
+   */
+  caughtUp: false,
+  /** How many read notifications the older view would reveal. */
+  olderCount: 0,
+  /** Whether the older ones are currently revealed. Per drawer open. */
+  showOlder: false,
+  /**
+   * Whether the server has older pages behind the keyset cursor, i.e. whether
+   * the list's foot pager is offered (#1385). Distinct from `olderCount`, which
+   * counts READ rows already fetched and sitting behind the show-older toggle:
+   * one reveals what is in hand, the other goes and gets more.
+   */
+  canLoadMore: false,
+  /** A page is in flight — the pager says so and stops taking clicks. */
+  loadingMore: false,
   /** PlatformUI.isTouch() at render time — gates the swipe-action wiring. */
   touch: false,
 });

@@ -332,8 +332,8 @@ test('the Improve button ships hidden and opens the panel', () => {
   assert.ok(m, 'missing #improve-btn');
   const el = m[0];
   // Ships hidden for the same reason the switch did: there is nothing to
-  // improve until a target is published. The publisher is the same call —
-  // App.DrawerStatus.setAppOpen — plus App._improveHome() on the home screen.
+  // improve until a target is published. The one publisher is
+  // App.DrawerStatus.setAppOpen — an open app, and nowhere else.
   assert.ok(el.includes('hidden'), 'ships hidden — a published target reveals it');
   assert.ok(el.includes('aria-haspopup="dialog"'), 'it opens a dialog surface');
   assert.ok(el.includes('aria-expanded="false"'), 'closed state reaches the a11y tree');
@@ -353,23 +353,194 @@ test('setAppOpen publishes the Improve target instead of toggling a switch', () 
   assert.ok(fn.includes('setTarget(null)'),
     'closing an app must clear the target, or the button outlives its subject');
   // Unlike the switch it replaced, the self-hosted platform row is NOT
-  // excluded: everything Improve offers works on it, and that row is exactly
-  // what the home screen's Improve button points at.
+  // excluded: everything Improve offers works on it, opened like any other
+  // app.
   assert.ok(fn.includes('self_hosted'), 'the platform row is still classified');
   assert.ok(!/self_hosted[\s\S]{0,120}classList\.toggle\('hidden'/.test(fn),
     'the platform row must no longer be hidden out of the header');
 });
 
-test('the home screen points Improve at the platform\'s own app row', () => {
+test('home publishes the PLATFORM Improve target, from render and not only on return', () => {
+  // #1367 put an Improve button on the home screen, scoped to the platform's
+  // own self-hosted row — "improve Social Vibecoding itself".
+  //
+  // THE UI OVERHAUL shipped that once and reverted it, and this test pins the
+  // shape of the fix rather than just the feature. The reverted version
+  // re-targeted the platform row on the RETURN paths only (App._improveHome),
+  // so a cold boot at `/` never published one: the button appeared after
+  // backing out of an app and vanished on refresh, which read as a stale
+  // leftover of the app just closed. What makes it consistent now is that the
+  // publish lives in Home.render() — the call every path funnels through —
+  // with navigateHome only RE-publishing so the swap is same-frame.
   const src = read('public/js/app.js');
-  assert.ok(src.includes('_improveHome()'), 'the helper went missing');
-  const fn = src.slice(src.indexOf('_improveHome() {'), src.indexOf('DrawerStatus: {'));
-  assert.ok(fn.includes('App.user?.platformApp'),
-    'the slug comes from /api/auth/me — GET /api/apps hides self-hosted rows');
-  assert.ok(fn.includes("kind: 'platform'"), 'the target is classified as the platform');
-  // Both entry points: a cold boot landing on home, and every later return.
-  assert.ok(src.indexOf('App._improveHome();') !== src.lastIndexOf('App._improveHome();'),
-    'both navigateHome and the restoreFromHash home fallback must publish it');
+  const home = read('frontend/src/features/home/home.js');
+
+  // 1. The publisher is Home's, and it is called from render(). This is the
+  //    property the first attempt lacked; without it the rest is cosmetic.
+  assert.ok(home.includes('publishImproveTarget()'),
+    'Home must own the platform target publisher');
+  const renderStart = home.indexOf('  render() {');
+  const render = home.slice(renderStart, home.indexOf('\n  },', renderStart));
+  assert.ok(render.includes('Home.publishImproveTarget();'),
+    'render() must publish the target — the one call a cold boot, a WS repaint '
+    + 'and the return from an app all reach');
+
+  // 2. It is the platform's own row, resolved from the list the viewer was
+  //    actually served — never a hardcoded slug, which would both rot and
+  //    leak the row's existence to non-admins the API hides it from.
+  const pubStart = home.indexOf('  publishImproveTarget() {');
+  const publish = home.slice(pubStart, home.indexOf('\n  },', pubStart));
+  assert.ok(/self_hosted/.test(publish),
+    'the target is found by the self_hosted flag on the served apps list');
+  assert.ok(publish.includes("kind: 'platform'"),
+    'and published as the platform kind, not as an ordinary app');
+  assert.ok(!/slug:\s*['"]usernode/.test(publish),
+    'never a hardcoded platform slug');
+
+  // 3. Both gates. Publishing while an app is open would overwrite that app's
+  //    own target, so the header button would describe the wrong thing.
+  assert.ok(publish.includes('currentApp'),
+    'must not publish while an app is open');
+  assert.ok(publish.includes("_isScreenVisible('home-screen')"),
+    'must not publish while another screen is on show');
+
+  // 4. navigateHome still CLEARS the app's target first, then republishes
+  //    home's — in that order, so nothing inherits the closed app's facts.
+  const navStart = src.indexOf('navigateHome() {');
+  const nav = src.slice(navStart, src.indexOf('after: () => {', navStart));
+  assert.ok(/App\.DrawerStatus\.setAppOpen\(false\);[\s\S]{0,900}Home\.publishImproveTarget\(\)/.test(nav),
+    'navigateHome must clear the app target before republishing home\'s');
+  // The retired helper stays retired: the publish belongs to Home, and a
+  // second copy in app.js is how the return-path-only bug got in.
+  assert.ok(!src.includes('_improveHome'),
+    'the old return-path-only helper must not come back');
+
+  // The restoreFromHash unrecognised-hash fallback lands on home too, and a
+  // lingering APP target there is the same bug in a different door. It clears
+  // and then calls Home.load(), whose render() publishes home's own.
+  const fallbackIdx = src.indexOf("App._showOnlyScreen('home-screen');");
+  const fallback = src.slice(fallbackIdx, src.indexOf('Home.load();', fallbackIdx));
+  assert.ok(fallback.includes('App.DrawerStatus.setAppOpen(false);'),
+    'the hash-fallback home landing must clear the app target too');
+});
+
+// ── #1367: the App/Feed/Kanban toggle, and what it replaced ──────────
+
+test('the Improve panel leads with a feedback BUTTON and the view toggle', () => {
+  const panel = read('frontend/src/features/improve/improve-panel.tsx');
+
+  // "Give feedback" is the one action here that needs nothing of the viewer —
+  // no collaborator bit, no session, no repo — and it looked exactly like the
+  // six rows most viewers cannot use. It is a primary button now, routed
+  // through the shell's <Button> primitive rather than hand-written (which is
+  // what tests/shell-primitive-adoption.test.js enforces), and it keeps its id
+  // because the outbox dot's writer and the checks select on it.
+  assert.match(panel, /<Button\s+id="improve-row-feedback"/,
+    'the feedback control must be a <Button>, not a list row');
+  assert.match(panel, /Improve\.giveFeedback\(\)/, 'with the same handler');
+
+  // The two navigating rows it used to sit above are the toggle now.
+  // The ids, not the words: the file still NAMES both rows, in the comment
+  // that records why they went and where their behaviour lives now.
+  assert.ok(!/id="improve-row-kanban"/.test(panel), 'the Kanban ROW is retired');
+  assert.ok(!/id="improve-row-feed"/.test(panel), 'the Feed ROW is retired');
+  assert.match(panel, /<ImproveViewToggle compact=\{false\} \/>/,
+    'and the panel renders the toggle in their place');
+});
+
+test('the view toggle renders in BOTH homes, and CSS picks which one shows', () => {
+  const toggle = read('frontend/src/features/improve/view-toggle.tsx');
+  const header = read('frontend/src/features/header/platform-header.tsx');
+  const panel = read('frontend/src/features/improve/improve-panel.tsx');
+
+  // Both copies are always rendered and the breakpoint decides. Choosing one
+  // from a measured width would make the PRERENDERED document depend on a
+  // viewport the SSG pass does not have — a hydration mismatch on every phone
+  // or every desktop, whichever way the default fell.
+  assert.match(toggle, /hidden sm:inline-flex/, 'the header copy is wide-screen only');
+  assert.match(toggle, /flex sm:hidden/, 'the panel copy is phone only');
+  // Read the CODE, not the comment that explains why the code is this way.
+  const toggleCode = toggle
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/.*$/gm, '');
+  assert.ok(!/matchMedia|innerWidth/.test(toggleCode),
+    'the toggle must not measure the viewport — that is what the breakpoint is for');
+  // Display utilities lead each variant exactly once: `hidden` and
+  // `inline-flex` are both display, so which wins is decided by their order in
+  // the generated stylesheet, not in the class attribute.
+  assert.ok(!/const TRACK_CLS = '(inline-)?flex/.test(toggle),
+    'the shared track must carry no display utility of its own');
+
+  // LEFT of #improve-btn, and inside the right group: rightGroupRef is what
+  // use-header-layout.ts measures for the title-centering decision, so a
+  // control parked outside it would be invisible to that measurement and the
+  // title would overlap it at exactly the widths where this renders.
+  const toggleAt = header.indexOf('<ImproveViewToggle compact={true} />');
+  const btnAt = header.indexOf('<ImproveButton />');
+  const groupAt = header.indexOf('ref={rightGroupRef}');
+  assert.ok(toggleAt !== -1 && btnAt !== -1 && groupAt !== -1);
+  assert.ok(groupAt < toggleAt && toggleAt < btnAt,
+    'the toggle sits inside the right group, immediately left of #improve-btn');
+
+  // Three segments, and the third is the app itself — which the panel had no
+  // way back to once you had followed Kanban out of it.
+  assert.match(toggle, /Improve\.openApp\(\)/);
+  assert.match(toggle, /Improve\.openDev\(segment\)/);
+  // #1386: the App segment renders for EVERY row, the platform's self-hosted
+  // one included. Its iframe target still does not resolve, so openApp() sends
+  // that row home instead — the platform's product surface is the home screen,
+  // and leaving the segment out was what left the control reading Feed | Kanban
+  // with neither selected once you had followed Kanban out of home.
+  assert.ok(!/selfHosted \? null :/.test(toggle),
+    'the App segment must not be withheld from the self-hosted row');
+  // A segment names where it GOES, so the platform's reads "Home" — label, icon
+  // and tooltip together. "App" there would name a destination that does not
+  // exist, which is the very reason it lands on home.
+  assert.match(toggle, /\{selfHosted \? 'Home' : 'App'\}/,
+    "the platform's segment is labelled Home, an app's App");
+  assert.match(toggle, /const HomeSegmentIcon = selfHosted \? HomeIcon : AppWindowIcon;/,
+    'and the icon follows the destination with it');
+  // The ATTRIBUTE does not follow: it names the segment's role, not its
+  // destination, and it is the contract dapp.json's checks are written against.
+  assert.match(toggle, /data-view-segment="app"/,
+    'data-view-segment stays "app" on both rows — it is the selector contract');
+  const controller = read('frontend/src/features/improve/improve-controller.js');
+  assert.match(controller, /if \(selfHosted\) \{\s*\n\s*if \(window\.App\.currentApp\) window\.App\.navigateHome\(\);/,
+    'openApp() sends the self-hosted row home, and no-ops when it is already there');
+
+  // Active state comes from two stores because it genuinely lives in two
+  // places — which HALF of the app is on screen, and which dev view.
+  assert.match(toggle, /useDevViewMode\(\)/);
+  assert.match(toggle, /tab === 'dev'/);
+  // `tab` is republished from the single place App.currentTab is assigned.
+  const appJs = read('public/js/app.js');
+  assert.match(appJs, /App\.currentTab = tab;[\s\S]{0,600}window\.Improve\?\.setTab\(tab\)/,
+    'switchTab must publish the active tab for the toggle to render');
+  assert.ok(!panel.includes('app-mode-seg'),
+    'and it must do it through the store, not by repainting a node');
+});
+
+test('the Improve panel bottom-anchors its version / GitHub / share block', () => {
+  const panel = read('frontend/src/features/improve/improve-panel.tsx');
+  const html = read('public/index.html');
+
+  // Same `mt-auto` trick the hamburger's own footer used before these rows
+  // moved here: the free space collects ABOVE the block, so it hugs the foot
+  // of a tall sidebar and degrades to "at the end of the scroll" when the rows
+  // above it fill the panel. No measurement, one rule, both behaviours.
+  const bodyAt = html.indexOf('id="improve-body"');
+  const bodyTag = html.slice(bodyAt, html.indexOf('>', bodyAt));
+  assert.match(bodyTag, /flex flex-col/,
+    '#improve-body must be the column flex the anchor needs');
+  assert.match(bodyTag, /overflow-y-auto/, 'and still the scroller');
+
+  const footAt = html.indexOf('id="improve-footer"');
+  const footTag = html.slice(footAt, html.indexOf('>', footAt));
+  assert.match(footTag, /\bmt-auto\b/, 'the footer must hug the bottom');
+  assert.match(footTag, /\bshrink-0\b/,
+    'and must not be compressed by the rows above it');
+  assert.ok(bodyAt < footAt, 'the footer is inside the body it anchors within');
+  assert.match(panel, /id="improve-footer"/);
 });
 
 test('app.css drops the tab-bar rules and draws the Improve panel', () => {

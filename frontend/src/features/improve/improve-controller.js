@@ -95,10 +95,15 @@ const Improve = {
   // ── What the panel is about ──────────────────────────────────────
   //
   // Called from App.DrawerStatus.setAppOpen() for an open app, and from
-  // App.navigateHome() with the platform's own self-hosted row so that
-  // "Improve" on the home screen means "improve Social Vibecoding itself".
-  // Passing null clears the target, which hides the header button — that is
-  // what every other platform screen (settings, admin, profile…) does.
+  // Home.publishImproveTarget() for the platform's own self-hosted row while
+  // home is on screen (#1367). Passing null clears the target, which hides the
+  // header button — every OTHER screen does that.
+  //
+  // Home's publisher lives in Home.render() rather than on the navigation
+  // paths, and that is load-bearing: the reverted first attempt published only
+  // when returning from an app, so the button appeared after backing out and
+  // vanished on refresh. Both callers land here identically; only the moment
+  // they fire differs.
   setTarget(target) {
     if (!target || !target.slug) {
       if (improveStore.get().open) Improve.close();
@@ -113,6 +118,9 @@ const Improve = {
         readOnly: false,
         showTerminal: false,
         canShare: false,
+        // Back to App.currentTab's own initial value, so the next target does
+        // not inherit the last one's half.
+        tab: 'app',
       });
       return;
     }
@@ -136,6 +144,53 @@ const Improve = {
       showTerminal: slugChanged ? false : prev.showTerminal,
     });
     if (slugChanged) Improve._rebucket();
+  },
+
+  /**
+   * Publish which half of the app is on screen — the App tab or the Dev area.
+   *
+   * Called from `App.switchTab()`, the single place `App.currentTab` is
+   * assigned. Only meaningful while there IS a target, so a switch with none
+   * published is dropped rather than stored against nothing.
+   */
+  setTab(tab) {
+    if (!improveStore.get().slug) return;
+    improveStore.set({ tab: tab === 'dev' ? 'dev' : 'app' });
+  },
+
+  /**
+   * The App/Feed/Kanban toggle's first segment: back to the app itself.
+   *
+   * The counterpart of openDev below. It does NOT go through _withApp, which
+   * always lands on Dev — this is the one destination that is the other tab.
+   *
+   * ── The self-hosted row goes HOME (#1386) ──────────────────────────
+   *
+   * The platform's own row has no per-slug iframe URL, so `switchTab('app')`
+   * coerces the request to the Dev forum — which is why the segment used not to
+   * be rendered for it at all. That reasoning held for the TAB and not for the
+   * destination: "the app itself" is not missing for the platform, it merely is
+   * not an iframe. The platform's product surface IS the home screen, and home
+   * is the very screen `Home.publishImproveTarget()` publishes this target
+   * from. So the segment renders there too and lands home, which closes the
+   * one-way trip the toggle exists to fix.
+   *
+   * Already home — no app open — is the state that segment renders as ACTIVE,
+   * so there is nowhere to go and the click is a no-op rather than a pointless
+   * re-entry transition. Those are the only two states this can be reached in:
+   * every screen other than home and an open app clears the target outright
+   * (setAppOpen(false)), which unrenders the whole control.
+   */
+  openApp() {
+    Improve.close();
+    const { slug, selfHosted } = improveStore.get();
+    if (!slug || !window.App) return;
+    if (selfHosted) {
+      if (window.App.currentApp) window.App.navigateHome();
+      return;
+    }
+    if (window.App.currentApp === slug) window.App.switchTab('app');
+    else window.App.navigateToApp(slug, 'app');
   },
 
   /** Patch fields on the CURRENT target — app-view.js calls this as data lands. */
@@ -359,12 +414,12 @@ const Improve = {
   /**
    * Put the panel's TARGET on screen, then run `then` against it.
    *
-   * Improve can be opened for an app that is not the one currently rendered —
-   * on the home screen it is about the platform's own row, and nothing has
-   * loaded `/api/apps/<platform>` at that point. So the actions that need
-   * `AppView.appData` navigate first and await the same promise the router
-   * awaits, rather than firing at an `AppView` that is still describing the
-   * previous app (or none).
+   * Improve can be opened for an app whose `/api/apps/<slug>` payload is not
+   * the one `AppView` currently describes (a target published before the
+   * app's own fetch settles). So the actions that need `AppView.appData`
+   * navigate first and await the same promise the router awaits, rather than
+   * firing at an `AppView` that is still describing the previous app (or
+   * none).
    */
   async _withApp(then, opts) {
     const { slug } = improveStore.get();
@@ -400,8 +455,7 @@ const Improve = {
       return;
     }
     // Otherwise there is no open app for "This app" to mean, so the dialog
-    // opens on its Platform default — which is correct on the home screen,
-    // where the target IS the platform.
+    // opens on its Platform default.
     window.App.openFeedbackModal();
   },
 

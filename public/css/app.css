@@ -7516,3 +7516,128 @@ body.is-offline [data-offline-disabled] {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* ── Dev filter chips (#1367 follow-up) ────────────────────────
+   The Dev screen's filter controls are Material-shaped filter chips now:
+   a 32px fully-rounded pill, hairline outline when idle, filled violet when
+   the filter is actually narrowing something. The classes themselves live in
+   AppView.KANBAN_CHIP_* (public/js/app-view.js) because the bar is rendered
+   as a template literal; only the two things Tailwind cannot express are
+   here.
+
+   A <select> needs `appearance: none` to keep the pill shape — the native
+   control paints its own square background and arrow on most platforms and
+   would square off the corners. Removing the arrow means drawing one, which
+   is the inline SVG below: a chevron as a background image, positioned in the
+   `pr-7` the class run reserves for it.
+
+   currentColor is deliberately NOT used — a background-image cannot read it —
+   so the caret is drawn twice, once per state, keyed off the same violet the
+   filled chip uses. */
+.dev-chip-select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='%2371717a' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 8l4 4 4-4'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.5rem center;
+  background-size: 1rem 1rem;
+}
+/* The filled state: a zinc caret on violet is close to invisible. */
+.dev-chip-select.bg-violet-600 {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 8l4 4 4-4'/%3E%3C/svg%3E");
+}
+
+/* ── The Dev FEED reads as a feed (#1367 follow-up) ─────────────
+   Everything here is scoped to #dev-feed on purpose. The row renderers
+   (_renderIssueRow, _renderProposalCard, _renderMergedCard, …) are SHARED
+   with the kanban columns, where a bordered tile is exactly right — a
+   column of cards is what a board is. Scoping by ancestor is what lets one
+   renderer draw a tile on the board and a stream row here with no branch
+   in the JS and no second set of markup to keep in step.
+
+   THE ROWS ARE FULL-BLEED. #dev-body carries `px-3`, so each row pulls
+   itself back out to the container edge and re-applies the gutter as its
+   own padding. That is what makes a separator run the full width of the
+   column instead of floating with a gap at each end — the thing that most
+   makes a stack of tiles read as a stream. */
+#dev-feed .dev-feed-entry {
+  margin-left: -0.75rem;   /* cancel #dev-body's px-3 … */
+  margin-right: -0.75rem;
+  border-bottom: 1px solid rgb(228 228 231); /* zinc-200 */
+}
+.dark #dev-feed .dev-feed-entry {
+  border-bottom-color: rgb(39 39 42); /* zinc-800 */
+}
+#dev-feed .dev-feed-entry:last-child { border-bottom: 0; }
+
+/* The card chrome comes off: no border, no radius, no fill. The row keeps
+   its own padding (…re-applying the gutter the wrapper just cancelled) so
+   the content still lines up with everything else in the column. */
+#dev-feed .dev-feed-entry > .gc-vote-item {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding-left: 0.75rem;
+  padding-right: 0.75rem;
+}
+#dev-feed .dev-feed-entry > .gc-vote-item:hover {
+  background: rgb(250 250 250); /* zinc-50 — a row highlight, not a border */
+}
+.dark #dev-feed .dev-feed-entry > .gc-vote-item:hover {
+  background: rgb(24 24 27); /* zinc-900 */
+}
+
+/* THE MERGE BAR. A landed change is not another thing to read — it is a
+   marker that the stream crossed a line. So it is a slim full-width band
+   rather than a row: tinted, quieter type, and an emerald edge running its
+   whole length, which is the "full-length" part. Sitting flush against its
+   neighbours (the wrapper's negative margins) is what makes it a bar. */
+#dev-feed .dev-feed-entry > .gc-vote-item[data-completed] {
+  background: rgb(236 253 245); /* emerald-50 */
+  border-left: 3px solid rgb(16 185 129); /* emerald-500 */
+  padding-top: 0.4rem;
+  padding-bottom: 0.4rem;
+  padding-left: calc(0.75rem - 3px);
+}
+.dark #dev-feed .dev-feed-entry > .gc-vote-item[data-completed] {
+  background: rgba(6, 78, 59, 0.28); /* emerald-900 at low alpha */
+}
+#dev-feed .dev-feed-entry > .gc-vote-item[data-completed]:hover {
+  background: rgb(209 250 229); /* emerald-100 */
+}
+.dark #dev-feed .dev-feed-entry > .gc-vote-item[data-completed]:hover {
+  background: rgba(6, 78, 59, 0.42);
+}
+
+/* ── Inline comments ───────────────────────────────────────────
+   The tail of a thread, indented under the row it belongs to, with no box
+   of its own — the indent and the muted type are the whole treatment. A
+   bordered comment card inside a de-carded row would put the chrome back
+   one level down. */
+#dev-feed .dev-feed-comments:empty { display: none; }
+#dev-feed .dev-feed-comments {
+  padding: 0 0.75rem 0.5rem 2.75rem;
+}
+#dev-feed .dev-feed-comment {
+  font-size: 0.75rem;
+  line-height: 1.5;
+  color: rgb(82 82 91); /* zinc-600 */
+  padding: 0.15rem 0;
+}
+.dark #dev-feed .dev-feed-comment { color: rgb(212 212 216); /* zinc-300 */ }
+#dev-feed .dev-feed-comment-author {
+  font-weight: 500;
+  color: rgb(63 63 70); /* zinc-700 */
+}
+.dark #dev-feed .dev-feed-comment-author { color: rgb(228 228 231); }
+/* The body sits INLINE after the author, like a chat line. Its markdown
+   arrives as block elements, so they are flattened back to inline here —
+   a paragraph per comment would otherwise put the text on its own line and
+   undo the compactness that makes this worth showing inline at all. */
+#dev-feed .dev-feed-comment-body { display: inline; }
+#dev-feed .dev-feed-comment-body > * { display: inline; margin: 0; }
+#dev-feed .dev-feed-comment-more {
+  font-size: 0.6875rem;
+  color: rgb(161 161 170); /* zinc-400 */
+  padding: 0.15rem 0;
+}

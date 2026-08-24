@@ -4297,8 +4297,12 @@ const AppView = {
       // typed text survive WS-driven refreshes); only the board region
       // re-renders. Switching list → kanban rebuilds the bar from the
       // surviving _kanbanFilters, so filter state outlives the toggle.
-      if (!document.getElementById('dev-kanban-filterbar')
-          || !document.getElementById('dev-kanban-board')) {
+      // Keyed on the BOARD alone. #dev-kanban-filterbar used to be built into
+      // #dev-body beside it, so its absence was a fair "not mounted yet"
+      // signal; it is a permanent host in the React frame's action row now
+      // (#1367 follow-up) and is always present, so testing for it here would
+      // never rebuild the bar. The board is still the node this branch owns.
+      if (!document.getElementById('dev-kanban-board')) {
         // Restore this app's persisted filters before building the bar, so
         // the controls (and the board) come back exactly as the user left
         // them across navigation / reload. Keyed per slug, so switching apps
@@ -4307,7 +4311,7 @@ const AppView = {
         // #814: restore this app's active mobile tab alongside its filters,
         // so switching apps shows that app's own column (or Issues).
         AppView._kanbanTab = AppView._loadKanbanTab(App.currentApp);
-        body.innerHTML = '<div id="dev-kanban-filterbar" class="mb-2"></div><div id="dev-kanban-board"></div>';
+        body.innerHTML = '<div id="dev-kanban-board"></div>';
         AppView._renderKanbanFilterBar();
       }
       AppView._repaintKanbanBoard();
@@ -4322,6 +4326,11 @@ const AppView = {
     if (!document.getElementById('dev-feed')) {
       body.innerHTML = '<div id="dev-feed"></div>';
     }
+    // The feed has no filters, so the shared action row shows the "+" alone.
+    // Emptying the host rather than hiding it lets `empty:hidden` collapse it,
+    // and means a switch back to kanban rebuilds the chips from the surviving
+    // _kanbanFilters exactly as a fresh mount does.
+    AppView._clearKanbanFilterBar();
     AppView._rerenderFeed();
     AppView._reanchorCardMenu();
   },
@@ -4435,17 +4444,33 @@ const AppView = {
     }
 
     const shown = Math.min(AppView._feedShown || 20, items.length);
-    html += '<div class="space-y-2">';
+    // `dev-feed-stream` and not `space-y-2`: the feed's rows are flush now,
+    // separated by a hairline rather than by a gap, so the column reads as one
+    // continuous stream instead of a stack of tiles. See app.css.
+    html += '<div class="dev-feed-stream">';
     for (let i = 0; i < shown; i++) {
       const it = items[i];
-      if (it.kind === 'issue') html += AppView._renderIssueRow(it.item);
-      else if (it.kind === 'proposal') html += AppView._renderProposalCard(it.item);
-      else if (it.kind === 'shared-session') html += AppView._renderSharedSessionCard(it.item);
+      // Each entry is WRAPPED here rather than inside the row renderers,
+      // because those renderers are shared with the kanban columns and the
+      // kanban board must keep its cards. The wrapper is what carries the
+      // inline-comment slot and what the de-carding CSS is scoped through.
+      if (it.kind === 'issue') {
+        html += AppView._feedEntryHtml(
+          AppView._renderIssueRow(it.item),
+          { commentsFor: it.item && it.item.number }
+        );
+      } else if (it.kind === 'proposal') {
+        html += AppView._feedEntryHtml(AppView._renderProposalCard(it.item));
+      } else if (it.kind === 'shared-session') {
+        html += AppView._feedEntryHtml(AppView._renderSharedSessionCard(it.item));
       // Completed work, folded into the stream by _feedItems rather than
       // parked in a block below it. _renderMergedRow is the same renderer
       // the Completed block used, called one row at a time.
-      else if (it.kind === 'merged') html += AppView._renderMergedRow(it.item);
-      else html += AppView._renderGovCard(it.item);
+      } else if (it.kind === 'merged') {
+        html += AppView._feedEntryHtml(AppView._renderMergedRow(it.item));
+      } else {
+        html += AppView._feedEntryHtml(AppView._renderGovCard(it.item));
+      }
     }
     html += '</div>';
 
@@ -4469,6 +4494,135 @@ const AppView = {
     return html;
   },
 
+  // ── The feed's entry wrapper ──────────────────────────────────────
+  //
+  // One row of the stream: the card renderer's markup, plus — for an issue —
+  // an empty slot the inline comment preview lands in.
+  //
+  // The wrapping happens HERE and not inside the row renderers because every
+  // one of them is shared with the kanban columns, and the kanban board keeps
+  // its cards. `.dev-feed-entry` is the hook the de-carding CSS is scoped
+  // through, so the same renderer draws a bordered tile on the board and a
+  // full-bleed row in the feed with no branch in the JS.
+  _feedEntryHtml(rowHtml, opts) {
+    if (!rowHtml) return '';
+    const number = opts && opts.commentsFor;
+    // Ships EMPTY and stays empty until the row is actually scrolled to —
+    // see _wireFeedComments. An issue with no comments never fills it, so
+    // nothing reserves space for a thread that does not exist.
+    const slot = number != null
+      ? `<div class="dev-feed-comments" data-comments-for="${escapeAttr(String(number))}"></div>`
+      : '';
+    return `<div class="dev-feed-entry">${rowHtml}${slot}</div>`;
+  },
+
+  // A comment thread as the FEED shows it: the last few, flat, no card chrome.
+  //
+  // Deliberately not _issueCommentsHtml. That one is the opened-topic view —
+  // every comment, each in its own bordered box, under a "Discussion" heading.
+  // Inline in a stream the point is the opposite: enough to see what people
+  // said without leaving, and no chrome competing with the row above it. So
+  // this shows the LAST few (a thread's tail is the live part), as plain
+  // indented lines, with a count when there is more behind them.
+  FEED_COMMENT_PREVIEW: 2,
+
+  _feedCommentsHtml(comments) {
+    const list = Array.isArray(comments) ? comments : [];
+    if (!list.length) return '';
+    const renderMd = (typeof DevChat !== 'undefined' && DevChat.renderMarkdown)
+      ? (s) => DevChat.renderMarkdown(s)
+      : (s) => `<pre class="whitespace-pre-wrap font-sans">${escapeHtml(s)}</pre>`;
+    const tail = list.slice(-AppView.FEED_COMMENT_PREVIEW);
+    const hidden = list.length - tail.length;
+    const more = hidden > 0
+      ? `<div class="dev-feed-comment-more">${hidden} earlier ${hidden === 1 ? 'reply' : 'replies'}</div>`
+      : '';
+    const rows = tail.map((c) => {
+      const isBot = AppView._isBotCommentAuthor(c.author);
+      const author = c.author ? escapeHtml(c.author) : 'unknown';
+      const botTag = isBot
+        ? ' <span class="text-[10px] uppercase tracking-wide text-sky-600 dark:text-sky-400">bot</span>'
+        : '';
+      return `<div class="dev-feed-comment">
+          <span class="dev-feed-comment-author">${author}</span>${botTag}
+          <span class="dev-feed-comment-body">${renderMd(c.body || '')}</span>
+        </div>`;
+    }).join('');
+    return `${more}${rows}`;
+  },
+
+  // ── Inline comments, loaded lazily ────────────────────────────────
+  //
+  // A feed of thirty issues must not fire thirty requests on paint, and most
+  // of them are below the fold anyway. So each slot is filled when its row is
+  // actually scrolled to, through one IntersectionObserver over the feed.
+  //
+  // The existing per-issue cache (`_ghComments`) and the existing endpoint do
+  // the work — this is the same data the opened-topic view already fetches, so
+  // opening a row you have scrolled past costs nothing, and a row whose thread
+  // you have already read paints from cache with no request at all.
+  //
+  // The observer is rebuilt on every feed render because _rerenderFeed replaces
+  // the container's innerHTML, which detaches every node it was watching.
+  _feedCommentObserver: null,
+
+  _wireFeedComments(root) {
+    if (AppView._feedCommentObserver) {
+      AppView._feedCommentObserver.disconnect();
+      AppView._feedCommentObserver = null;
+    }
+    if (!root || typeof IntersectionObserver !== 'function') return;
+    const slots = root.querySelectorAll('.dev-feed-comments[data-comments-for]');
+    if (!slots.length) return;
+    const observer = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue;
+        // Once per slot: unobserve BEFORE the await, or a fast scroll can
+        // queue the same fetch several times over.
+        observer.unobserve(entry.target);
+        AppView._fillFeedComments(entry.target);
+      }
+    }, { rootMargin: '200px 0px' });
+    for (const slot of slots) observer.observe(slot);
+    AppView._feedCommentObserver = observer;
+  },
+
+  async _fillFeedComments(slot) {
+    if (!slot) return;
+    const number = parseInt(slot.getAttribute('data-comments-for'), 10);
+    if (!Number.isFinite(number)) return;
+
+    // Re-resolve by number rather than holding the node: a WS repaint between
+    // the request and its answer detaches this one, and writing into an
+    // orphan would silently drop the comments.
+    const paint = (entry) => {
+      const feed = document.getElementById('dev-feed');
+      if (!feed) return;
+      const live = feed.querySelector(`.dev-feed-comments[data-comments-for="${number}"]`);
+      if (!live) return;
+      live.innerHTML = AppView._feedCommentsHtml(entry.comments);
+    };
+
+    const cached = AppView._ghComments[number];
+    if (cached) { paint(cached); return; }
+
+    try {
+      const slug = AppView.appData && AppView.appData.slug;
+      if (!slug) return;
+      const res = await fetch(
+        `/api/apps/${slug}/github-issues/${number}/comments${AppView._demoQS()}`
+      );
+      if (!res.ok) return;
+      const data = await res.json();
+      const entry = {
+        comments: Array.isArray(data.comments) ? data.comments : [],
+        truncated: !!data.truncated,
+      };
+      AppView._ghComments[number] = entry;
+      paint(entry);
+    } catch (_) { /* best-effort: the row simply shows no replies */ }
+  },
+
   // Re-render the feed in place from the cached data, then re-mount the
   // expanded card's thread + roster (innerHTML replacement wipes any
   // previous mount).
@@ -4476,6 +4630,9 @@ const AppView = {
     const el = document.getElementById('dev-feed');
     if (!el) return;
     el.innerHTML = AppView._renderFeedInner();
+    // Rebuilt every time: the assignment above detached every node the previous
+    // observer was watching.
+    AppView._wireFeedComments(el);
     if (window.Kudos) Kudos.attach(el);
     AppView._applyExploreChatAvailability(el);
     AppView._startMergeCountdownTimer();
@@ -4907,11 +5064,34 @@ const AppView = {
     return html;
   },
 
+  // ── The filter bar's chips (Material filter-chip shape) ──────────
+  //
+  // Every control in this bar is now the SAME pill: 32px tall, fully rounded,
+  // hairline outline, compact label. Material's filter chip in the two states
+  // it actually has here — unselected is an outlined transparent pill, selected
+  // is a filled tonal one that keeps the outline so the row's rhythm does not
+  // shift by a pixel when you toggle it.
+  //
+  // One shared base string and no computed class names: Tailwind's extractor is
+  // a regex over source text (AGENTS.md), and these are read from a template
+  // literal rather than JSX, which does not make the rule any softer.
+  KANBAN_CHIP_BASE: 'h-8 rounded-full border text-xs transition-colors shrink-0 '
+    + 'inline-flex items-center gap-1',
+  KANBAN_CHIP_IDLE: 'border-zinc-300 dark:border-zinc-700 bg-transparent '
+    + 'text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800',
+  KANBAN_CHIP_ON: 'border-violet-600 bg-violet-600 text-white hover:bg-violet-500',
+
   _kanbanNeedsVoteChipCls(active) {
-    return 'text-xs px-2.5 py-1.5 rounded-lg border transition-colors shrink-0 '
-      + (active
-        ? 'bg-violet-600 border-violet-600 text-white'
-        : 'border-zinc-300 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800');
+    return `${AppView.KANBAN_CHIP_BASE} px-3 `
+      + (active ? AppView.KANBAN_CHIP_ON : AppView.KANBAN_CHIP_IDLE);
+  },
+
+  // A <select> wearing the same pill. `appearance-none` and the explicit right
+  // padding are what stop the native arrow from breaking the shape; the caret
+  // is drawn as a background image in app.css off `.dev-chip-select`.
+  _kanbanChipSelectCls(active) {
+    return `${AppView.KANBAN_CHIP_BASE} dev-chip-select pl-3 pr-7 `
+      + (active ? AppView.KANBAN_CHIP_ON : AppView.KANBAN_CHIP_IDLE);
   },
 
   _kanbanAssigneeOptionsHtml() {
@@ -4937,26 +5117,39 @@ const AppView = {
   // Called once per kanban mount (and by Clear, to reset control
   // values); ordinary board repaints leave this node untouched so the
   // search input keeps its focus and text.
+  // Empty the shared action row's filter host. Called on the way into the
+  // feed, which has no filters; `empty:hidden` on the host then collapses it
+  // so the "+" sits alone at the right of the row.
+  _clearKanbanFilterBar() {
+    const el = document.getElementById('dev-kanban-filterbar');
+    if (el) el.innerHTML = '';
+  },
+
   _renderKanbanFilterBar() {
     const el = document.getElementById('dev-kanban-filterbar');
     if (!el) return;
     const f = AppView._kanbanFilters || {};
-    const ctlCls = 'rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-2 py-1.5 text-xs text-zinc-900 dark:text-zinc-100';
     const priOpt = (v, label) =>
       `<option value="${v}"${f.priority === v ? ' selected' : ''}>${label}</option>`;
+    // The search field is the one control that is NOT a chip: it takes typing,
+    // so it keeps a real field's affordance. It wears the chip's height and
+    // radius so the row still reads as one strip.
+    const searchCls = 'h-8 rounded-full border border-zinc-300 dark:border-zinc-700 '
+      + 'bg-white dark:bg-zinc-800 px-3 text-xs text-zinc-900 dark:text-zinc-100 '
+      + 'flex-1 min-w-[10rem]';
     el.innerHTML = `
-      <div class="flex flex-wrap items-center gap-2">
+      <div id="dev-filter-row" class="flex flex-wrap items-center gap-2">
         <input id="dev-kanban-search" type="search" placeholder="Filter by title, author or #number"
           value="${escapeAttr(f.q || '')}" aria-label="Filter cards"
-          class="${ctlCls} flex-1 min-w-[10rem]" />
-        <select id="dev-kanban-priority" class="${ctlCls}" aria-label="Filter by priority">
+          class="${searchCls}" />
+        <select id="dev-kanban-priority" class="${AppView._kanbanChipSelectCls(!!f.priority)}" aria-label="Filter by priority">
           <option value="">Any priority</option>
           ${priOpt('high', 'High')}${priOpt('medium', 'Medium')}${priOpt('low', 'Low')}
         </select>
-        <select id="dev-kanban-category" class="${ctlCls}" aria-label="Filter by category">
+        <select id="dev-kanban-category" class="${AppView._kanbanChipSelectCls(!!f.category)}" aria-label="Filter by category">
           ${AppView._kanbanCategoryOptionsHtml()}
         </select>
-        <select id="dev-kanban-assignee" class="${ctlCls}" aria-label="Filter by assignee">
+        <select id="dev-kanban-assignee" class="${AppView._kanbanChipSelectCls(!!f.assignee)}" aria-label="Filter by assignee">
           ${AppView._kanbanAssigneeOptionsHtml()}
         </select>
         <button id="dev-kanban-needsvote" type="button" aria-pressed="${f.needsVote ? 'true' : 'false'}"
@@ -4965,6 +5158,11 @@ const AppView = {
         <button id="dev-kanban-clear" type="button"
           class="text-xs text-violet-500 hover:underline shrink-0${AppView._kanbanFiltersActive() ? '' : ' hidden'}">Clear</button>
       </div>`;
+    // No re-parenting here, deliberately. #dev-kanban-filterbar is a host the
+    // React frame renders INSIDE #dev-actions, one flex sibling to the left of
+    // the "+" — so filling it is all it takes to put the chips beside the
+    // button. See the comment on that row in features/dev-board/board-frame.tsx
+    // for why the button can never move into #dev-body instead.
 
     const input = el.querySelector('#dev-kanban-search');
     let debounce = null;
@@ -9637,7 +9835,7 @@ const AppView = {
     const actions = AppView._cardActionsHtml({ primary: [kudosBtn] });
 
     return `
-        <div class="gc-vote-item ${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}" data-ref-pr="${pr.pr_number || pr.id}" data-proposal-row="${pr.id}" title="Open this proposal's discussion">
+        <div class="gc-vote-item ${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}" data-completed="1" data-ref-pr="${pr.pr_number || pr.id}" data-proposal-row="${pr.id}" title="Open this proposal's discussion">
           ${AppView._cardContentHtml({
             icon: AppView._devCardIcon('done'),
             titleHtml: mergedLabel,
@@ -9699,7 +9897,7 @@ const AppView = {
     // sits in the same Done column as merged PR cards, and an inch-shorter
     // card there is exactly the raggedness the four bands exist to remove.
     return `
-        <div class="gc-vote-item ${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}" data-gov-row="${row.id}"${issueN ? ` data-ref-issue="${issueN}"` : ''} title="Open this proposal's discussion">
+        <div class="gc-vote-item ${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}" data-completed="1" data-gov-row="${row.id}"${issueN ? ` data-ref-issue="${issueN}"` : ''} title="Open this proposal's discussion">
           ${AppView._cardContentHtml({
             icon: AppView._devCardIcon('done'),
             titleHtml: `${escapeHtml(titleText)}${who}`,

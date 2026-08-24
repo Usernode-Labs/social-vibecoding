@@ -67,10 +67,36 @@ function stubExplicitCodexServices(t, {
   });
 }
 
-test('no preference → Claude default', async () => {
+test('no preference and no OpenRouter key → Claude default', async () => {
   const { pool } = makePool({ prefRow: null });
   const out = await resolveDefaultAgentPreference(pool, 7, BASE_CONFIG);
   assert.deepEqual(out, { backend: 'claude_code', provider: 'anthropic', model: null, reasoningEffort: null });
+});
+
+test('no preference and a usable OpenRouter key → live-catalog OpenRouter default', async (t) => {
+  const credentialStore = require('../src/services/credential-store');
+  const agentModels = require('../src/services/agent-models');
+  const originals = {
+    readMetadata: credentialStore.readMetadata,
+    readSecret: credentialStore.readSecret,
+    listOpenRouterModels: agentModels.listOpenRouterModels,
+  };
+  credentialStore.readMetadata = async () => ({ id: 2, status: 'valid', revision: 5 });
+  credentialStore.readSecret = async () => 'sk-or-v1-existing';
+  agentModels.listOpenRouterModels = async () => ({ recommendedModelId: 'z-ai/glm-5.3' });
+  t.after(() => {
+    credentialStore.readMetadata = originals.readMetadata;
+    credentialStore.readSecret = originals.readSecret;
+    agentModels.listOpenRouterModels = originals.listOpenRouterModels;
+  });
+  const { pool } = makePool({ prefRow: null });
+  const out = await resolveDefaultAgentPreference(pool, 7, {
+    ...BASE_CONFIG, openrouterDefaultCodexModel: 'z-ai/glm-5.3',
+  });
+  assert.deepEqual(out, {
+    backend: 'codex_openrouter', provider: 'openrouter',
+    model: 'z-ai/glm-5.3', reasoningEffort: null,
+  });
 });
 
 test('Claude default → Claude', async () => {

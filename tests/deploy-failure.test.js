@@ -123,3 +123,49 @@ test('summarizeBootFailure keeps the legacy string shape (containerStatus prefix
   const bare = deployFailure.summarizeBootFailure(new Error('plain failure'));
   assert.equal(bare, 'plain failure');
 });
+
+test('a refused `docker run` surfaces the daemon reason, not the argv', () => {
+  // execFile formats its rejection message as `Command failed: <argv>\n<stderr>`,
+  // and a `docker run` argv is every -e env var — kilobytes of it. The reason
+  // budget is 280 chars, so the author used to see nothing but a truncated
+  // command line. The container never started, so there are no containerLogs;
+  // the daemon's explanation is only ever on stderr.
+  const argv = `docker run -d --name usernode-staging-x--1 --hostname usernode-staging-x--1 ${
+    Array.from({ length: 40 }, (_, i) => `-e SOME_LONG_ENV_VAR_${i}=some-fairly-long-value-${i}`).join(' ')
+  } usernode-staging-x:abc123`;
+  const stderr = 'docker: Error response from daemon: failed to create task for container: '
+    + 'failed to create shim task: OCI runtime create failed: runc create failed: '
+    + 'unable to start container process: error during container init: '
+    + 'sethostname: invalid argument: unknown.';
+  const err = new Error(`Command failed: ${argv}\n${stderr}`);
+  err.stderr = stderr;
+  err.stdout = '';
+
+  const reason = deployFailure.summarizeBootFailure(err);
+  assert.match(reason, /sethostname/,
+    'the daemon said why it refused; that is the only useful part');
+  assert.ok(!reason.startsWith('Command failed: docker run'),
+    'the argv must not eat the whole reason budget');
+  assert.ok(reason.length <= 280);
+
+  // Same error with no .stderr property still recovers the tail from the
+  // message, because execFile has already appended stderr there.
+  const noStderr = new Error(`Command failed: ${argv}\n${stderr}`);
+  assert.match(deployFailure.summarizeBootFailure(noStderr), /sethostname/);
+
+  // And it flows through classify(), which is what persists last_failure.
+  const classified = deployFailure.classify(err);
+  assert.match(classified.reason, /sethostname/);
+});
+
+test('containerLogs still win over stderr when the container did boot', () => {
+  // A crash-on-boot has both: the logs are the app's own message and stay
+  // the better answer. Only a container that never started falls to stderr.
+  const err = new Error('Command failed: docker run -d --name x\nsome docker noise');
+  err.stderr = 'some docker noise';
+  err.containerLogs = 'Error: connect ECONNREFUSED 127.0.0.1:5432';
+  assert.equal(
+    deployFailure.summarizeBootFailure(err),
+    'Error: connect ECONNREFUSED 127.0.0.1:5432'
+  );
+});

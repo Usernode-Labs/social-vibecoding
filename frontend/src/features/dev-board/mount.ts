@@ -38,10 +38,19 @@ import { DevSessionShell } from './session-frame';
 import { publishViewMode } from './view-mode-store';
 
 /** What app-view.js passes for the card list. */
-export interface MountBoardOptions extends Omit<DevBoardFrameProps, 'onSelectViewMode'> {
+export interface MountBoardOptions extends DevBoardFrameProps {
   /** `AppView._getViewMode()`, used to seed the store before the first render. */
   viewMode: string;
-  onSelectViewMode: (mode: string) => void;
+  /**
+   * Kept in the options shape, and deliberately UNUSED by the frame.
+   *
+   * The Dev screen drew its own Feed/Kanban tabs and this was their handler.
+   * The tabs are the platform header's App/Feed/Kanban toggle now, so nothing
+   * in the frame calls it — but app-view.js still passes it, and the store
+   * seeding above is still what a cold `?view=kanban` deep link needs, so the
+   * option is accepted and dropped here rather than removed from every caller.
+   */
+  onSelectViewMode?: (mode: string) => void;
 }
 
 export interface DevBoardBridge {
@@ -63,14 +72,12 @@ export const devBoardBridge: DevBoardBridge = {
     // Seed before the first render so a cold `?view=kanban` deep link paints
     // kanban immediately rather than list-then-kanban.
     publishViewMode(options.viewMode);
-    const { viewMode: _viewMode, onSelectViewMode, ...rest } = options;
-    mountLegacyPortal(
-      host,
-      createElement(DevBoardFrame, {
-        ...rest,
-        onSelectViewMode: (mode) => onSelectViewMode(mode),
-      }),
-    );
+    const {
+      viewMode: _viewMode,
+      onSelectViewMode: _onSelectViewMode,
+      ...rest
+    } = options;
+    mountLegacyPortal(host, createElement(DevBoardFrame, rest));
   },
 
   mountChatSubView(host, options) {

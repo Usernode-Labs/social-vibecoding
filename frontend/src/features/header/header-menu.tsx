@@ -13,6 +13,22 @@
  * The list is rendered by the same components from the same store, so
  * ../notifications/notifications.js is unchanged.
  *
+ * ── What #1367 changed ────────────────────────────────────────────────
+ *
+ * The two blocks are anchored to OPPOSITE ENDS of the panel — notifications to
+ * the top, the navigation rows to the bottom via `mt-auto` — rather than
+ * stacked from the top with all the slack underneath. That is why
+ * #drawer-notifications is a sibling of #drawer-main-rows rather than its
+ * first child.
+ *
+ * #1367 also collapsed the notifications SECTION behind a disclosure, and its
+ * follow-up took that back out: the useful grain is each GROUP inside the
+ * section, not the section itself. See the note in the component body.
+ *
+ * So this island is markup-only again, exactly as the header above describes —
+ * no state, no disclosure, and <NotificationsBody/> still the one subtree that
+ * renders from a store.
+ *
  * Five things left: the theme selector (a SETTING now, and the first one —
  * features/settings/sections/theme.tsx), the kudos and AI-credit meters
  * (ambient numbers nobody acts on from a menu), the Leaderboard row (the home
@@ -90,6 +106,18 @@ import './header-menu-controller.js';
 import '../notifications/mount';
 
 export function HeaderMenu() {
+  // ── The notifications AREA is not collapsible ────────────────────────
+  //
+  // #1367 briefly collapsed this whole section behind a disclosure. That was
+  // the wrong grain: what is worth collapsing is each GROUP inside it — an app
+  // with nine notifications should fold to one line, but the section itself is
+  // the reason the drawer has a top half at all, and hiding it behind a tap
+  // just moved the work. The per-group fold is where it belongs, and it lives
+  // in ../notifications/notifications.js (`Notifications.expanded`, cleared on
+  // every drawer open so each one starts folded).
+  //
+  // So this island holds no notifications state again, and the section renders
+  // exactly the markup it shipped: header, "Mark all read", body.
   useIsomorphicLayoutEffect(() => {
     window.NodePill?.init();
     window.WalletSheet?.init();
@@ -148,60 +176,83 @@ export function HeaderMenu() {
           </button>
         </div>
         {/*
-            Panel body — ONE scroller, laid out as a COLUMN FLEX so the
-            footer block at its end can be bottom-anchored with `mt-auto`:
-            when the rows above are short the free space collects above the
-            footer and it hugs the bottom of the panel; when they overflow
-            (a short viewport) there is no free space and the footer simply
-            sits at the end of the scroll. One rule, both behaviours, no
-            measurement. On touch the panel fills a full-height kit side
-            drawer (.platform-panel-adopted), so the footer sits at the
-            bottom of the screen there too.
-            
-            The theme selector and the status pane are first in DOM order
-            rather than pinned outside the scroller: pinning blocks above
-            the list would leave a short viewport almost no room for the
-            navigation rows. Being first means they're on screen the moment
-            the drawer opens at any realistic viewport.
+            Panel body — ONE scroller, laid out as a COLUMN FLEX with its two
+            blocks anchored to OPPOSITE ENDS (#1367): notifications at the top,
+            the navigation rows at the bottom via `mt-auto`. The free space
+            between them belongs to neither, so a viewer with three
+            notifications gets their nav rows under their thumb instead of
+            stranded halfway up a tall panel.
+
+            The column flex is the same one the retired #drawer-footer needed,
+            and it degrades the same way: when the two blocks together overflow
+            (a short viewport, an expanded list) there is no free space to
+            collect and `mt-auto` contributes nothing, so the rows simply sit
+            at the end of the scroll. One rule, both behaviours, no
+            measurement. On touch the panel fills a full-height kit side drawer
+            (.platform-panel-adopted), so the bottom really is the bottom of
+            the screen there.
         */}
         <div id="header-menu-rows" className="flex-1 min-h-0 overflow-y-auto flex flex-col">
-          <div id="drawer-main-rows" className="shrink-0">
-            {/*
-                NOTIFICATIONS, first in the drawer.
+          {/*
+              NOTIFICATIONS, anchored to the TOP of the drawer (#1367).
 
-                THE UI OVERHAUL merged the bell into the hamburger: two
-                top-right drawers that opened the same way, one slot apart,
-                were one affordance too many, and "what happened while I was
-                away" belongs at the top of the catch-all menu rather than
-                behind an icon of its own. #notifications-panel is gone; its
-                whole body lives here, rendered by the same components from
-                the same store, so ./notifications.js is unchanged.
+              THE UI OVERHAUL merged the bell into the hamburger: two
+              top-right drawers that opened the same way, one slot apart,
+              were one affordance too many, and "what happened while I was
+              away" belongs at the top of the catch-all menu rather than
+              behind an icon of its own. #notifications-panel is gone; its
+              whole body lives here, rendered by the same components from
+              the same store, so ./notifications.js is unchanged.
 
-                Bounded height with its own scroller, so a long list cannot
-                push the navigation rows below it off a short viewport — the
-                anchored dropdown it replaced had exactly this cap (max-h-[70vh]
-                on the panel) for the same reason.
-            */}
-            <div
-              id="drawer-notifications"
-              className="border-b border-zinc-100 dark:border-zinc-800"
-            >
-              <div className="flex items-center gap-2 px-4 py-2">
-                <span className="text-[0.7rem] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-                  Notifications
-                </span>
-                <span className="flex-1">
-                </span>
-                <button
-                  id="notifications-mark-all"
-                  className="text-xs text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200 disabled:opacity-40"
-                  disabled={true}
-                >
-                  Mark all read
-                </button>
-              </div>
-              <NotificationsBody />
+              It is a SIBLING of #drawer-main-rows now rather than its first
+              child, which is what lets the two ends of the panel be anchored
+              independently: this block sits at the top, the navigation rows
+              carry `mt-auto` and hug the bottom, and the free space between
+              them belongs to neither. Both keep their ids — nothing moved
+              out of the drawer, the nesting changed.
+
+              Bounded height with its own scroller, so a long list cannot
+              push the navigation rows below it off a short viewport — the
+              anchored dropdown it replaced had exactly this cap (max-h-[70vh]
+              on the panel) for the same reason.
+          */}
+          <div
+            id="drawer-notifications"
+            className="shrink-0 border-b border-zinc-100 dark:border-zinc-800"
+          >
+            <div className="flex items-center gap-2 px-4 py-2">
+              <span className="text-[0.7rem] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                Notifications
+              </span>
+              <span className="flex-1">
+              </span>
+              <button
+                id="notifications-mark-all"
+                className="text-xs text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200 disabled:opacity-40"
+                disabled={true}
+              >
+                Mark all read
+              </button>
             </div>
+            <NotificationsBody />
+          </div>
+          {/*
+              THE NAVIGATION ROWS, anchored to the BOTTOM (#1367).
+
+              `mt-auto` inside #header-menu-rows' column flex collects the
+              free space ABOVE this block, so the rows hug the foot of the
+              panel whenever the notifications above them leave room, and
+              degrade to "just after the list" when they do not (a short
+              viewport, an expanded list). One rule, both behaviours, no
+              measurement — the same trick the retired #drawer-footer used,
+              which is the reason #header-menu-rows was made a column flex in
+              the first place.
+
+              On touch the panel fills a full-height kit side drawer
+              (.platform-panel-adopted), so this sits at the bottom of the
+              screen there too — which is where a thumb actually is.
+          */}
+          <div id="drawer-main-rows" className="shrink-0 mt-auto">
             {/*
                 The theme selector used to be the first thing in this drawer,
                 and the kudos + AI-credit meters (#drawer-status-pane) sat

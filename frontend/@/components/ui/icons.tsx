@@ -111,6 +111,19 @@ export const ChevronLeftInsetIcon = stroked('ChevronLeftInsetIcon', 'M15 18l-6-6
 
 export const ChevronRightIcon = stroked('ChevronRightIcon', 'M9 5l7 7-7 7');
 
+/**
+ * An app WINDOW — a framed rectangle with a title bar (#1367).
+ *
+ * The "App" segment of the App/Feed/Kanban toggle, sitting beside BoardIcon
+ * (kanban columns) and ListLinesIcon (a feed). Those two draw what their view
+ * looks like, so this one does too: the running app in its frame, which is the
+ * one of the three that is not a view OF the development work.
+ */
+export const AppWindowIcon = stroked('AppWindowIcon', [
+  'M4 6a1 1 0 011-1h14a1 1 0 011 1v12a1 1 0 01-1 1H5a1 1 0 01-1-1V6z',
+  'M4 9.5h16',
+]);
+
 export const ArrowRightIcon = stroked('ArrowRightIcon', 'M14 5l7 7m0 0l-7 7m7-7H3');
 
 /**

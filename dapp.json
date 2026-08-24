@@ -331,13 +331,40 @@
       "group": "AI & coding agents",
       "required": false,
       "default": "true",
-      "description": "Emergency availability switch for the Codex via OpenRouter BYOK backend. This does not select a provider globally: when true, Claude Code and Codex are both available and each user chooses which one a session uses. Set false only to hide/refuse Codex while leaving Claude unchanged."
+      "description": "Emergency availability switch for the OpenRouter coding-agent backend. When true, OpenRouter is preferred for users with a usable key while Claude remains available and is the fallback for users without one. Set false to hide/refuse OpenRouter without affecting Claude."
     },
     {
       "key": "CODEX_OPENROUTER_BETA_USER_IDS",
       "group": "AI & coding agents",
       "required": false,
       "description": "Optional comma-separated user-id allowlist for Codex via OpenRouter. Leave unset or empty to make the option available to every user; setting ids restricts only Codex and never disables Claude Code."
+    },
+    {
+      "key": "OPENROUTER_MANAGEMENT_API_KEY",
+      "group": "AI & coding agents",
+      "required": false,
+      "private": true,
+      "description": "Deploy-owned OpenRouter Management API key used only by the platform server to create, block, enable, and delete limited child keys for verified users. It cannot be written from the admin UI and is never passed to a browser, worker, child app, or database. Configure the GitHub Actions secret USERNODE_OPENROUTER_MANAGEMENT_API_KEY."
+    },
+    {
+      "key": "OPENROUTER_MANAGED_DAILY_LIMIT_USD",
+      "group": "AI & coding agents",
+      "required": false,
+      "default": "1",
+      "description": "Positive USD limit assigned to every company-funded child key. OpenRouter resets it daily. Set the matching GitHub Actions variable before deploying if the desired allowance is not $1/day."
+    },
+    {
+      "key": "OPENROUTER_MANAGED_WORKSPACE_ID",
+      "group": "AI & coding agents",
+      "required": false,
+      "description": "Optional OpenRouter workspace id that owns newly-created company child keys. A dedicated funded Usernode workspace is recommended so aggregate spend is isolated and visible. Set the matching GitHub Actions variable."
+    },
+    {
+      "key": "OPENROUTER_DEFAULT_CODEX_MODEL",
+      "group": "AI & coding agents",
+      "required": false,
+      "default": "z-ai/glm-5.3",
+      "description": "Preferred OpenRouter model for new coding-agent sessions. The complete key-visible catalog remains selectable; if this slug is absent, Usernode safely recommends another compatible model."
     },
     {
       "key": "GITHUB_LINK_CLIENT_ID",
@@ -1013,6 +1040,11 @@
       "expectText": "this is a long one — some runs go 30 min+"
     },
     {
+      "name": "A turn the server cannot stop offers a spinner, not a red Stop (#1378)",
+      "path": "/#app/usernode-2d5619/dev/sessions/900812",
+      "expectSelector": "#dc-send-btn.dc-btn-streaming[aria-label=\"Working\"]"
+    },
+    {
       "name": "Visible own session offers the \"Share chat\" opt-in in its ⋯ menu",
       "path": "/?demo=1&shot=card-menu&card=session:990103#app/usernode-2d5619/dev",
       "expectSelector": ".dev-card-menu [data-menu-idx][title^=\"Let everyone read this chat\"]",
@@ -1306,6 +1338,31 @@
       "expectSelector": "#improve-btn:not(.hidden)"
     },
     {
+      "name": "The App/Feed/Kanban toggle rides the header on a wide screen",
+      "path": "/app/staging-demo-admins/dev",
+      "expectSelector": "#improve-view-toggle [data-view-segment=\"app\"]"
+    },
+    {
+      "name": "The header toggle marks the Dev view actually on screen",
+      "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
+      "expectSelector": "#improve-view-toggle [data-view-segment=\"kanban\"][aria-selected=\"true\"]"
+    },
+    {
+      "name": "The self-hosted platform row gets an App segment too (#1386)",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#improve-view-toggle [data-view-segment=\"app\"] + [data-view-segment=\"feed\"] + [data-view-segment=\"kanban\"]"
+    },
+    {
+      "name": "Home is the platform's App segment, and it reads as selected (#1386)",
+      "path": "/",
+      "expectSelector": "#improve-view-toggle [data-view-segment=\"app\"][aria-selected=\"true\"]"
+    },
+    {
+      "name": "Home shows the platform Improve button (improve Social Vibecoding itself)",
+      "path": "/",
+      "expectSelector": "#improve-btn:not(.hidden)"
+    },
+    {
       "name": "The self-hosted platform row keeps its DEV caption (no header switch)",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#dev-plus-btn"
@@ -1336,31 +1393,30 @@
       "expectSelector": "#dev-kanban-tabs [data-kanban-tab=\"done\"]"
     },
     {
-      "name": "Dev screen offers exactly two tabs, Feed and Kanban",
+      "name": "The Dev screen draws no view tabs of its own — the header toggle owns them",
       "path": "/?demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-view-tabs #dev-view-feed[data-view=\"feed\"] + #dev-view-kanban[data-view=\"kanban\"]",
+      "expectSelector": "#dev-actions #dev-plus-btn"
+    },
+    {
+      "name": "The header toggle offers three segments, Kanban last",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#improve-view-toggle [data-view-segment=\"feed\"] + [data-view-segment=\"kanban\"]",
       "expectText": "Kanban"
     },
     {
-      "name": "The Dev tabs sit under a Dev caption",
-      "path": "/?demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-view-tabs[role=\"tablist\"]",
-      "expectText": "Dev"
-    },
-    {
-      "name": "Feed is the selected tab on a ?view=feed deep link",
+      "name": "Feed is the selected segment on a ?view=feed deep link",
       "path": "/?demo=1&view=feed#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-view-feed[aria-selected=\"true\"]"
+      "expectSelector": "#improve-view-toggle [data-view-segment=\"feed\"][aria-selected=\"true\"]"
     },
     {
       "name": "A retired ?view=list link still resolves onto the Feed",
       "path": "/?demo=1&view=list#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-view-feed[aria-selected=\"true\"] ~ #dev-view-kanban[aria-selected=\"false\"]"
+      "expectSelector": "#improve-view-toggle [data-view-segment=\"feed\"][aria-selected=\"true\"] ~ [data-view-segment=\"kanban\"][aria-selected=\"false\"]"
     },
     {
-      "name": "Kanban is the selected tab on a ?view=kanban deep link",
+      "name": "Kanban is the selected segment on a ?view=kanban deep link",
       "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-view-kanban[aria-selected=\"true\"]"
+      "expectSelector": "#improve-view-toggle [data-view-segment=\"kanban\"][aria-selected=\"true\"]"
     },
     {
       "name": "The Feed renders activity rows into #dev-feed",
@@ -1598,7 +1654,7 @@
     {
       "name": "The hamburger carries the notifications list, first in the panel",
       "path": "/?demo=1",
-      "expectSelector": "#header-menu-rows > #drawer-main-rows > #drawer-notifications #notifications-list"
+      "expectSelector": "#header-menu-rows > #drawer-notifications #notifications-list"
     },
     {
       "name": "Work-in-flight badge moved off the cog onto the hamburger",
@@ -1746,6 +1802,21 @@
       "name": "The Anthropic API key section renders at its deep link",
       "path": "/#settings/api-key",
       "expectSelector": "#settings-section-content [data-settings-section=\"api-key\"]:not(.hidden) #settings-api-key"
+    },
+    {
+      "name": "The Username section renders at its deep link",
+      "path": "/#settings/username",
+      "expectSelector": "#settings-section-content [data-settings-section=\"username\"]:not(.hidden) #change-username-section #cu-new"
+    },
+    {
+      "name": "Changing a username asks for the current password",
+      "path": "/#settings/username",
+      "expectSelector": "#change-username-section #cu-password[type=\"password\"]"
+    },
+    {
+      "name": "The Username section says the old handle stays reserved",
+      "path": "/#settings/username",
+      "expectText": "kept reserved for you"
     },
     {
       "name": "Settings offers Log out outside the section list",
@@ -2174,7 +2245,7 @@
     {
       "name": "The hamburger opens as a kit panel with notifications at its top",
       "path": "/?shot=menu&un-platform=ios",
-      "expectSelector": ".un-panel #header-menu-panel.platform-panel-adopted #header-menu-rows > #drawer-main-rows > #drawer-notifications"
+      "expectSelector": ".un-panel #header-menu-panel.platform-panel-adopted #header-menu-rows > #drawer-notifications"
     },
     {
       "name": "Hamburger status area shows the viewer's own AI credit (#555)",
@@ -2523,6 +2594,52 @@
       "path": "/reports/00abcdef00abcdef00abcdef00abcdef",
       "expectSelector": ".staging-fixture-report",
       "expectText": "staging fixture"
+    },
+    {
+      "name": "The Dev filter controls are chips sharing a row with the + button",
+      "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-actions > #dev-kanban-filterbar #dev-kanban-needsvote.rounded-full"
+    },
+    {
+      "name": "The filter chips and the + button are siblings in one row",
+      "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-actions > #dev-kanban-filterbar + div > #dev-plus-btn"
+    },
+    {
+      "name": "A filter select wears the chip pill",
+      "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-kanban-priority.dev-chip-select.rounded-full"
+    },
+    {
+      "name": "The feed shows the + button with no filter chips beside it",
+      "path": "/?demo=1&view=feed#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-actions > #dev-kanban-filterbar:empty + div > #dev-plus-btn"
+    },
+    {
+      "name": "The notifications drawer offers its older notifications",
+      "path": "/?shot=notifications&demo=1",
+      "expectSelector": "#notifications-older-toggle",
+      "expectText": "older notification"
+    },
+    {
+      "name": "The notifications drawer is a flat list of rows (#1385)",
+      "path": "/?shot=notifications&demo=1",
+      "expectSelector": "#notifications-list > [data-notif-id]"
+    },
+    {
+      "name": "No app-group headers survive in the notifications drawer (#1385)",
+      "path": "/?shot=notifications&demo=1",
+      "expectSelector": "#notifications-list:not(:has([data-group-toggle]))"
+    },
+    {
+      "name": "The Dev feed renders as a de-carded stream",
+      "path": "/?demo=1&view=feed#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-feed .dev-feed-entry > .gc-vote-item"
+    },
+    {
+      "name": "Feed issue rows carry an inline-comment slot",
+      "path": "/?demo=1&view=feed#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-feed .dev-feed-entry .dev-feed-comments[data-comments-for]"
     }
   ],
   "governance": {

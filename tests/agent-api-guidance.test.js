@@ -123,6 +123,18 @@ test('shared Usernode skills retain API safety and scope the hook UI to Codex CL
   assert.match(proposal, /Structured command results do not replace/);
 });
 
+test('proposal summaries remain scannable user-visible Markdown', () => {
+  const proposal = readSkill('usernode-proposal');
+
+  assert.match(proposal, /`kind: "summary"`.*user-visible Markdown transcript message/);
+  assert.match(proposal, /one concrete finding, change, or test result per bullet/);
+  assert.match(proposal, /each distinct issue and its corresponding fix/);
+  assert.match(proposal, /omit empty sections instead of filling a template/);
+  assert.match(proposal, /commit, managed-head, session, build, or similar identifiers/);
+  assert.match(proposal, /Do not compress several defects, fixes, results, and identifiers into one dense paragraph/);
+  assert.match(proposal, /`phase` field.*not a substitute for visible structure in `content`/);
+});
+
 test('machine-local agent setup artifacts are ignored', () => {
   const ignore = fs.readFileSync(path.join(root, '.gitignore'), 'utf8');
   assert.match(ignore, /^\.codex\/config\.toml$/m);

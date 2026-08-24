@@ -809,12 +809,13 @@ function appRoutes(config) {
     }
 
     const crypto = require('crypto');
-    const base = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-    if (!base) {
+    const code = crypto.randomBytes(3).toString('hex');
+    // Length-capped so the derived container name and preview host stay
+    // inside a DNS label — see appManifest.MAX_APP_SLUG_LENGTH.
+    const slug = appManifest.buildAppSlug(name, code);
+    if (!slug) {
       return res.status(400).json({ error: 'Invalid app name' });
     }
-    const code = crypto.randomBytes(3).toString('hex');
-    const slug = `${base}-${code}`;
 
     try {
       // Per-user app-creation quota (FULL admins bypass — parity with the
@@ -980,9 +981,8 @@ function appRoutes(config) {
       }
 
       const crypto = require('crypto');
-      const base = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-      if (!base) return res.status(400).json({ error: 'Invalid app name' });
-      const slug = `${base}-${crypto.randomBytes(3).toString('hex')}`;
+      const slug = appManifest.buildAppSlug(name, crypto.randomBytes(3).toString('hex'));
+      if (!slug) return res.status(400).json({ error: 'Invalid app name' });
 
       // Reference-only lineage: appId + slug, NEVER the name (resolved
       // live at serialize time). Inherit the source's visibility.

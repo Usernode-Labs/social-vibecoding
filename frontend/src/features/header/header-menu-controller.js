@@ -56,8 +56,7 @@ const DrawerStatus = {
     // replaced. That exclusion existed because the row's App mode had no
     // reachable iframe target, which made a two-option control a control with
     // one dead option. Improve has no such problem — everything it offers
-    // works on the platform's own row, and that row is precisely what the
-    // home screen's Improve button points at.
+    // works on the platform's own row, opened like any other app.
     const appData = window.AppView?.appData;
     if (open && appData?.slug) {
       window.Improve?.setTarget({
@@ -73,9 +72,13 @@ const DrawerStatus = {
       });
     } else if (!open) {
       // Cleared here rather than per-screen: every navigation away from an
-      // app already funnels through this call. App.navigateHome() re-publishes
-      // the platform's own row straight after, which is what keeps Improve on
-      // the home screen.
+      // app already funnels through this call, home included — which is what
+      // keeps the Improve button from lingering in the header after backing
+      // out of an app.
+      //
+      // Home immediately republishes the PLATFORM's own row on top of this
+      // (#1367, Home.publishImproveTarget) — so on home the clear is a swap,
+      // not an absence. Every other screen leaves it cleared.
       window.Improve?.setTarget(null);
     }
     DrawerStatus.refreshDeployDot();
@@ -187,8 +190,23 @@ const HeaderMenu = {
   // same contract _renderThemeButtons() had when it was called from this
   // file. THE UI OVERHAUL moved the control to Settings, and the announcement
   // went with it: settings.js dispatches `usernode:settings-section` from
-  // _renderContent(), which is the equivalent moment there. Nothing else ever
-  // listened, so the drawer's open is silent again.
+  // _renderContent(), which is the equivalent moment there.
+  //
+  // #1367 gave the drawer a second thing that has to reset on every open —
+  // the notifications section, which is collapsed by default — so the
+  // announcement is back, under the name that says what happened rather than
+  // which element it happened to. ./header-menu.tsx listens; see the
+  // `notificationsOpen` state there for why re-collapsing on each open is the
+  // requirement rather than a preference to remember.
+  //
+  // Dispatched from open() ONCE, above the touch/desktop fork, because both
+  // presentations are the drawer becoming visible and a listener that had to
+  // know which one it was would be reading an implementation detail.
+  _announceOpen() {
+    try {
+      document.dispatchEvent(new CustomEvent('sv:drawer-open'));
+    } catch (err) { /* ignore — a browser too old for CustomEvent */ }
+  },
 
   open() {
     const panel = document.getElementById('header-menu-panel');
@@ -198,6 +216,9 @@ const HeaderMenu = {
     // A fresh presentation ends any "still sliding out" window the
     // legacy path was counting down (#977).
     HeaderMenu._closingAt = 0;
+    // "The drawer is opening" — both paths, before either presents. See
+    // _announceOpen above.
+    HeaderMenu._announceOpen();
     // The #555 AI-credit refresh used to fire here, because the row only
     // rendered in this drawer and opening it was exactly when the number
     // mattered. The row is a Settings section now (Anthropic API key), so the
