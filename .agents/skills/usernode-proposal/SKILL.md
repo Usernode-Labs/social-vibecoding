@@ -26,6 +26,15 @@ The returned `webPath` is an optional continuation surface, not a required step.
 
 Give history entries stable event IDs. Include exact user-visible requests and concise agent summaries. Never upload hidden reasoning, credentials, raw tool logs, or unrelated conversation.
 
+Treat every `kind: "summary"` history entry as a user-visible Markdown transcript message, not a machine-only log record. Format it for scanning:
+
+- Use short `###` sections for only the parts that matter, such as `Problems found`, `Fix`, `Verification`, and `References`; omit empty sections instead of filling a template.
+- Put one concrete finding, change, or test result per bullet. For bug fixes, identify each distinct issue and its corresponding fix instead of burying either in a generic completion sentence.
+- Put commit, managed-head, session, build, or similar identifiers in a final `### References` section, one item per bullet, rather than embedding them in prose.
+- Keep the content concise and factual. Do not compress several defects, fixes, results, and identifiers into one dense paragraph.
+
+The durable `phase` field remains useful metadata, but it is not a substitute for visible structure in `content`.
+
 ## Apply the promotion guard on the correct host
 
 - **Codex CLI only:** expect a separate hook-injected developer context on each user prompt reporting that the Usernode promotion-guard health check passed. If it is absent, tell the user once that the project promotion guard is not active, ask them to open `/hooks`, review and enable or trust the Usernode project hook, then send another message. Safe non-promotion work may continue, but do not promote until a later prompt carries the passing context.
