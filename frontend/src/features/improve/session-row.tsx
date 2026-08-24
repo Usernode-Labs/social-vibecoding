@@ -75,24 +75,39 @@ export function SessionRow({
       className="flex items-center gap-2 px-4 min-h-[44px] text-left hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors"
       onClick={onNavigate}
     >
-      {/* The busy dot is the whole reason a session row is worth scanning:
-          it says an AI turn is in flight right now. Pulsing only while busy —
-          a static dot on every row would say nothing.
+      {/*
+          THE STATE DOT (owner review) — the reason a change row is worth
+          scanning, so it is bright and big enough to find at a glance rather
+          than a grey speck.
 
-          A work order is never busy: its agent runs on the user's own machine,
-          where the platform cannot see whether a turn is in flight. It gets
-          the idle dot, hollow rather than filled, so the row reads as "handed
-          off, state unknown here" instead of borrowing a liveness claim this
-          side has no way to make. */}
+          Two states for a session, because with paused rows filtered out of
+          these lists (see isParked in ../improve/improve-controller.js) two
+          is all there is: AMBER PULSING while an AI turn is in flight — the
+          platform's own "something is building" colour, borrowed from the
+          header's deploy dot — and SOLID EMERALD once it stops, which is the
+          success green that says the change is back with you. The halo ring
+          is what makes either readable against a busy row at arm's length.
+
+          A work order (#1417) is never busy: its agent runs on the user's
+          own machine, where the platform cannot see whether a turn is in
+          flight. It keeps the HOLLOW dot, so the row reads as "handed off,
+          state unknown here" instead of borrowing a liveness claim this side
+          has no way to make.
+
+          Announced exactly once: the dot carries the label only when the row
+          renders no status text of its own.
+      */}
       <span
         className={
           session.busy
-            ? 'w-2 h-2 rounded-full bg-emerald-500 shrink-0 animate-pulse'
+            ? 'w-2.5 h-2.5 rounded-full bg-amber-400 ring-2 ring-amber-400/30 shrink-0 animate-pulse'
             : session.kind === 'task'
-              ? 'w-2 h-2 rounded-full border border-zinc-400 dark:border-zinc-500 shrink-0'
-              : 'w-2 h-2 rounded-full bg-zinc-300 dark:bg-zinc-600 shrink-0'
+              ? 'w-2.5 h-2.5 rounded-full border border-zinc-400 dark:border-zinc-500 shrink-0'
+              : 'w-2.5 h-2.5 rounded-full bg-emerald-500 ring-2 ring-emerald-500/25 shrink-0'
         }
-        aria-hidden="true"
+        {...(session.status
+          ? { 'aria-hidden': 'true' as const }
+          : { role: 'img', 'aria-label': 'Ready for you' })}
       />
       {showApp ? (
         <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400 shrink-0 max-w-[35%] truncate">

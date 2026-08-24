@@ -55,6 +55,19 @@ function isBusy(session) {
 }
 
 /**
+ * A PARKED session (owner review).
+ *
+ * "Changes in progress" and "Changes in other apps" are lists of what is
+ * MOVING. A paused session is not in progress — it is set down — and listing
+ * it under that heading both overstates the list and pushes the rows that are
+ * actually running further from the thumb. Paused work stays reachable where
+ * parked work belongs: the Board, and the session's own screen.
+ */
+function isParked(session) {
+  return String((session && session.status) || '').toLowerCase() === 'paused';
+}
+
+/**
  * A session row's display status.
  *
  * Deliberately the same three words the cog drawer used, so a viewer who knew
@@ -447,6 +460,10 @@ const Improve = {
       else others.push(row);
     };
     for (const session of Improve._all) {
+      // Active only — see isParked. (statusLabel keeps its 'Paused' branch:
+      // it is the shared vocabulary, and a caller that does not filter still
+      // gets the right word.)
+      if (isParked(session)) continue;
       place(toRow(session, session.app_slug === slug ? name : null), session.app_slug);
     }
     // #1417: open connector work orders go in the SAME two buckets, by the
