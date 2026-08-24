@@ -43,8 +43,8 @@ now reconciles — and is the thing to update when one moves across.
 - `#settings-nav-desktop`, `#settings-mobile-menu-host`, and
   `#settings-usernode-section` — see "The settings interior" below.
 - nothing on the Leaderboard screen. See the note under "Converted".
-- `#dev-body` and the card family it holds — the Dev screen's remaining chunk.
-  See "Large" below for what that is and what has to move with it.
+- nothing on the Dev screen but `showLaunchCoverShot`'s launch cover, which
+  is deliberate — see "Large" below.
 - the header's own strays: `header/ai-credit.js`, `header/wallet-sheet.js`,
   `header/node-pill.js`, `native-chrome.js` and `screenshot-select.js`.
 
@@ -257,10 +257,11 @@ rendered before believing a zero.
 
 ### Large
 
-1. **Dev screen — `public/js/app-view.js`. The board, the topic head and the
-   three body-mounted modals have all converted; what is left is the App
-   tab's own frame.** Every card, every surface that draws one, and every
-   floating surface around them is React:
+1. **Dev screen — `public/js/app-view.js`. Done, bar the launch-cover
+   screenshot state.** The board, the topic head, the three body-mounted
+   modals and the App tab's placeholders have all converted. Every card,
+   every surface that draws one, and every floating surface around them is
+   React:
 
    | converted | host |
    | --- | --- |
@@ -278,6 +279,7 @@ rendered before believing a zero.
    | **the Generate-proposal dialog** | `#auto-session-modal` |
    | **the out-of-credits dialog** | `#credit-options-modal` |
    | **the app-AI consent dialog** | `#llm-consent-modal` |
+   | **the App tab's five placeholder states** | `#app-content` (App tab) |
 
    Six of those are body-mounted floating hosts and share the seam the group
    chat's menus established: the module creates the element, measures it
@@ -448,9 +450,41 @@ rendered before believing a zero.
    no ownership-audit exception, and neither does the error line above
    (`textContent` and `classList` are not patched APIs).
 
-   What is LEFT on this screen is `renderAppTab`'s shell — the app iframe's
-   host and its three status/offline states — and `renderDevChatTab`'s
-   `#dc-view`, which belongs to the Dev chat below.
+   **And the App tab's placeholder states**, the five things `#app-content`
+   shows when there is no running app to frame: spinning up, awaiting
+   secrets, failed to start, not available, and offline-with-no-app-worker.
+   They were five `innerHTML` strings plus two buttons bound by id
+   afterwards — the branch re-renders on every status change, so a delegated
+   listener would have re-attached — and they are one `AppStatusView` and one
+   component now (`features/app-frame/app-status.tsx`).
+
+   Two things about that host are worth carrying forward:
+
+   - **`#app-content` is SHARED and single-owner anyway**, at the boundary
+     rather than at a node inside it: every path into it runs
+     `_teardownDevRoots()` first, exactly as `AdminConsole._renderSection`
+     tears the previous section down. The audit entry is scoped with
+     `when: '#app/recipebot/app'` for that reason; unscoped it would report
+     every sibling surface's writes.
+   - **There is NO string twin, deliberately.** `_appFrameDom` has one
+     because the frame's element IDENTITY has to be assertable in Node; a
+     placeholder is pure markup from data, so a second renderer would only
+     be a copy to drift. `tests/app-frame-identity.test.js` holds the real
+     store and asserts on the published view instead of on `innerHTML` —
+     which is the general answer whenever a node-side harness is the reason
+     a conversion looks blocked.
+
+   `_teardownDevRoots` grew two lines with those chunks, and both are the
+   same lesson: **a portal sweep does not clean up what is not a portal.** A
+   body-mounted dialog's SCRIM is the module's, so `unmountAll` would have
+   emptied its card and left an opaque overlay with no way out; and the
+   placeholder's store would still have held the view its swept portal was
+   rendering. The helper dismisses the dialogs and clears the store.
+
+   What is LEFT on this screen is `showLaunchCoverShot` — deliberately, it is
+   the one launch surface with no app behind it and `_launchCoverHtml` has
+   four other callers — and `renderDevChatTab`'s `#dc-view`, which belongs to
+   the Dev chat below.
 
 2. **Dev chat — `frontend/src/features/dev-chat/dev-chat.js`, about 9,820
    lines and 58 sites. Started at the composer.** Four strips have converted:

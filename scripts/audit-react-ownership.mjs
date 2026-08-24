@@ -154,6 +154,12 @@ const OWNED = [
   // `dangerouslySetInnerHTML`, which `reactWroteHtml` recognises), and the
   // consent dialog's validation writes `textContent` and a class into
   // `#llm-consent-error`, neither of which is a patched API.
+  // The App tab's placeholder states (features/app-frame/app-status.tsx).
+  // `#app-content` is a SHARED host — the four Dev sub-views mount their own
+  // frames into it and `showLaunchCoverShot` still writes it by hand — so
+  // this is scoped to the App tab, where the placeholder is the one thing in
+  // there. Unscoped it would report every sibling surface's writes.
+  { sel: '#app-content', when: '#app/recipebot/app' },
   { sel: '#auto-session-modal' },
   { sel: '#credit-options-modal' },
   { sel: '#llm-consent-modal' },
@@ -284,7 +290,7 @@ const OWNED = [
 const ROUTES = [
   '#home', '#apps', '#apps/recipebot', '#settings', '#settings/app-ai',
   '#settings/agent-files', '#settings/cli', '#settings/connectors', '#settings/experimental', '#profile', '#leaderboard', '#messages',
-  '#app/recipebot', '#app/recipebot/dev', '#app/recipebot/dev/chat',
+  '#app/recipebot', '#app/recipebot/app', '#app/recipebot/dev', '#app/recipebot/dev/chat',
   '#app/recipebot/dev/sessions/1',
   // A TOPIC page, which is the only route that mounts `.dev-thread` — the
   // thread panel, its composer and the topic card app-view.js fills. Without

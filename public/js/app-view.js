@@ -1613,6 +1613,70 @@ const AppView = {
     document.getElementById('back-btn')?.classList.remove('hidden');
   },
 
+  // ── The App tab's placeholder states ────────────────────────────────
+  //
+  // Five of them, and what distinguishes them is data, not markup: a dot or
+  // no dot, a line of prose, sometimes a mono red detail line, sometimes one
+  // button. `renderAppTab` used to build five `innerHTML` strings and then
+  // bind two buttons by id; it builds the ANSWER here and
+  // `features/app-frame/app-status.tsx` draws it.
+  //
+  // Unlike `_appFrameDom` above there is NO string twin. That adapter exists
+  // because the frame's element identity has to be assertable in Node; a
+  // placeholder is pure markup from data, so a second renderer would only be
+  // a copy to drift. `tests/app-frame-identity.test.js` holds the real store
+  // and asserts on the view instead.
+  _appStatusView(appData) {
+    if (appData?.status === 'creating') {
+      return { dot: 'creating', message: 'App is spinning up...', detail: null, action: null };
+    }
+    if (appData?.status === 'awaiting_secrets') {
+      const missing = Array.isArray(appData.missingSecrets) ? appData.missingSecrets : [];
+      return {
+        dot: 'creating',
+        message: 'Awaiting required secrets — deploy is blocked.',
+        detail: missing.length ? missing.join(', ') : null,
+        action: appData.slug
+          ? { key: 'secrets', label: 'Configure secrets', slug: appData.slug }
+          : null,
+      };
+    }
+    if (appData?.status === 'error') {
+      // #416: show the one-line failure reason (server-gated `lastFailure`
+      // from the detail fetch, or the live WS errorReason) plus a "View build
+      // log" button for involved users. Outsiders keep the bare state.
+      const failReason = (appData.lastFailure && appData.lastFailure.reason)
+        || appData.errorReason || null;
+      const involved = !!(appData.lastFailure || appData.is_collaborator || appData.can_manage);
+      return {
+        dot: 'error',
+        message: 'App failed to start',
+        detail: failReason ? String(failReason).slice(0, 280) : null,
+        action: (involved && appData.slug)
+          ? { key: 'buildLog', label: 'View build log', slug: appData.slug }
+          : null,
+      };
+    }
+    return { dot: null, message: 'App not available', detail: null, action: null };
+  },
+
+  _reactAppStatus() {
+    return (typeof window !== 'undefined' && window.UsernodeReact
+      && window.UsernodeReact.appStatus) || null;
+  },
+
+  _paintAppStatus(host, view) {
+    AppView._reactAppStatus()?.mount(host, view);
+  },
+
+  /** The two placeholder buttons' openers, dispatched by name from the card. */
+  openAwaitingSecrets(slug) {
+    if (window.Secrets && slug) Secrets.open(slug);
+  },
+  openAppBuildLog(slug) {
+    if (window.BuildLog && slug) BuildLog.open(slug);
+  },
+
   renderAppTab() {
     const content = document.getElementById('app-content');
     const appData = AppView.appData;
@@ -1639,68 +1703,15 @@ const AppView = {
       // app is no longer running (creating / awaiting_secrets / error / gone),
       // so there is nothing worth keeping alive behind the placeholder.
       AppView._unmountAppFrame();
-      let inner;
-      if (appData?.status === 'creating') {
-        inner = '<div class="status-dot creating"></div><p class="text-sm">App is spinning up...</p>';
-      } else if (appData?.status === 'awaiting_secrets') {
-        const missing = Array.isArray(appData.missingSecrets) && appData.missingSecrets.length
-          ? appData.missingSecrets : (appData.missingSecrets || []);
-        const missingList = missing.length
-          ? `<p class="text-xs font-mono text-red-500">${missing.map(escapeHtml).join(', ')}</p>` : '';
-        inner = `
-          <div class="status-dot creating"></div>
-          <p class="text-sm">Awaiting required secrets — deploy is blocked.</p>
-          ${missingList}
-          <button id="awaiting-open-secrets"
-            class="mt-3 rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white">
-            Configure secrets
-          </button>
-        `;
-      } else if (appData?.status === 'error') {
-        // #416: show the one-line failure reason (server-gated
-        // `lastFailure` from the detail fetch, or the live WS
-        // errorReason) plus a "View build log" button for involved
-        // users. Outsiders keep the bare failed-to-start state.
-        const failReason = (appData.lastFailure && appData.lastFailure.reason)
-          || appData.errorReason || null;
-        const reasonHtml = failReason
-          ? `<p class="text-xs font-mono text-red-500 max-w-md break-words">${escapeHtml(String(failReason).slice(0, 280))}</p>`
-          : '';
-        const involved = !!(appData.lastFailure || appData.is_collaborator || appData.can_manage);
-        const logBtnHtml = involved
-          ? `<button id="app-error-build-log"
-              class="mt-3 rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white">
-              View build log
-            </button>`
-          : '';
-        inner = `
-          <div class="status-dot error"></div>
-          <p class="text-sm">App failed to start</p>
-          ${reasonHtml}
-          ${logBtnHtml}
-        `;
-      } else {
-        inner = '<p class="text-sm">App not available</p>';
-      }
-      content.innerHTML = `
-        <div class="flex flex-col items-center justify-center h-full text-zinc-500 dark:text-zinc-400 gap-2 p-4 text-center">
-          ${inner}
-        </div>`;
+      AppView._paintAppStatus(content, AppView._appStatusView(appData));
       // #970: platform-rendered status text, not an app — keep the
       // home-indicator clearance.
       AppView._setSurface('platform');
-      // The "Configure secrets" button is wired here rather than via a
-      // delegated handler because this branch re-renders on every
-      // status change and the listener would otherwise re-attach.
-      const openBtn = document.getElementById('awaiting-open-secrets');
-      if (openBtn && window.Secrets && appData?.slug) {
-        openBtn.addEventListener('click', () => Secrets.open(appData.slug));
-      }
-      // Same wiring rationale for the build-log button (#416).
-      const buildLogBtn = document.getElementById('app-error-build-log');
-      if (buildLogBtn && window.BuildLog && appData?.slug) {
-        buildLogBtn.addEventListener('click', () => BuildLog.open(appData.slug));
-      }
+      // The two buttons used to be bound here, by id, right after the write:
+      // this branch re-renders on every status change, so a delegated
+      // listener would have re-attached. They are onClicks now
+      // (features/app-frame/app-status.tsx), dispatched by name into the two
+      // openers below.
       // Status updates pushed via WebSocket — no polling needed
       return;
     }
@@ -1721,10 +1732,12 @@ const AppView = {
       // Same as the status branch above: offline, the frame would render a
       // broken cross-origin document, so it goes rather than parks.
       AppView._unmountAppFrame();
-      content.innerHTML = `
-        <div class="flex flex-col items-center justify-center h-full text-zinc-500 dark:text-zinc-400 gap-2 p-4 text-center">
-          <p class="text-sm">This app needs a connection — reconnect to open it.</p>
-        </div>`;
+      AppView._paintAppStatus(content, {
+        dot: null,
+        message: 'This app needs a connection — reconnect to open it.',
+        detail: null,
+        action: null,
+      });
       // #970: our placeholder, not the app — keep the clearance.
       AppView._setSurface('platform');
       const retry = (ev) => {
@@ -1954,7 +1967,24 @@ const AppView = {
   // longer in the document. It also stops the frame's store subscription and
   // effects outliving the surface they belong to.
   _teardownDevRoots() {
+    // A body-mounted dialog is a portal too (features/dev-board/modals/), and
+    // `unmountAll` would empty its card while leaving the scrim standing —
+    // an opaque black overlay with nothing in it and no way out. Settle each
+    // one first: leaving the Dev screen IS a dismissal, and each settler
+    // removes its own scrim. Cheap no-ops when nothing is open.
+    AppView._dismissDevModals();
     AppView._reactDevBoard()?.unmountAll();
+    // The sweep above drops the App tab's placeholder portal too; this
+    // forgets the value it was rendering (see appStatusBridge.clear).
+    AppView._reactAppStatus()?.clear();
+  },
+
+  /** Close whatever Dev dialog is open, resolving it the way Escape does. */
+  _creditsModalClose: null,
+  _dismissDevModals() {
+    AppView._autoSessionCancel();
+    AppView._llmConsentDecline();
+    if (AppView._creditsModalClose) AppView._creditsModalClose();
   },
 
   // ── Dev mode (#194, forum revision): one page ──────────────────────
@@ -10002,10 +10032,14 @@ const AppView = {
         && App.user.sessionBridgeEnabled),
     };
     const close = () => {
+      AppView._creditsModalClose = null;
       react.unmount(root);
       root.remove();
       document.removeEventListener('keydown', onKey);
     };
+    // Published so `_dismissDevModals` can close this the same way Escape
+    // does — listener removal included.
+    AppView._creditsModalClose = close;
     const onKey = (e) => { if (e.key === 'Escape') close(); };
     root.addEventListener('click', (e) => {
       if (e.target === root) close();

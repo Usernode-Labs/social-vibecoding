@@ -144,8 +144,18 @@ test('no portal outlives its surface', () => {
   const teardowns = APP_VIEW.split('AppView._teardownDevRoots();').length - 1;
   assert.ok(teardowns >= 3,
     `every #app-content writer retires the portal (found ${teardowns} call sites)`);
-  assert.match(APP_VIEW, /_teardownDevRoots\(\) \{\s*\n\s*AppView\._reactDevBoard\(\)\?\.unmountAll\(\);/,
+  assert.match(APP_VIEW, /_teardownDevRoots\(\) \{[\s\S]{0,600}?AppView\._reactDevBoard\(\)\?\.unmountAll\(\);/,
     'the teardown helper sweeps every live portal');
+  // Two things the sweep alone cannot do, both added with the surfaces that
+  // needed them: a body-mounted dialog's SCRIM is not a portal, so emptying
+  // its card would leave an opaque overlay with no way out; and the App
+  // tab's placeholder store would still hold the view its swept portal was
+  // rendering.
+  const teardown = APP_VIEW.slice(APP_VIEW.indexOf('_teardownDevRoots() {'));
+  assert.match(teardown.slice(0, 700), /AppView\._dismissDevModals\(\);/,
+    'an open dialog is dismissed, not left as an empty scrim');
+  assert.match(teardown.slice(0, 700), /AppView\._reactAppStatus\(\)\?\.clear\(\);/,
+    'and the placeholder view is forgotten with its portal');
   // Including closing the app screen entirely, which blanks #app-content.
   const close = APP.indexOf('AppView._teardownDevRoots();');
   assert.ok(close !== -1, 'closeApp retires the root before blanking #app-content');
