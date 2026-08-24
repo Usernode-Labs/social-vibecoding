@@ -609,7 +609,7 @@
     {
       "name": "Dev board: an issue card offers its claim toggle as a pill, not only in ⋯",
       "path": "/?demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-body [data-issue-row] .gc-card-actions .gc-vote-btn[onclick*=\"markIssueInProgress\"]",
+      "expectSelector": "#dev-body [data-issue-row] .gc-card-actions .gc-vote-btn[data-act=\"markIssueInProgress\"]",
       "expectText": "Claim this issue"
     },
     {
@@ -644,7 +644,7 @@
     {
       "name": "Dev board: your own session card offers its visibility toggle as a pill",
       "path": "/?demo=1&view=kanban&col=inprogress#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-kanban-col-inprogress [data-session-chip] .gc-card-actions .gc-vote-btn[onclick*=\"_setSessionShared\"]"
+      "expectSelector": "#dev-kanban-col-inprogress [data-session-chip] .gc-card-actions .gc-vote-btn[data-act=\"_setSessionShared\"]"
     },
     {
       "name": "Dev board (mobile): the In-progress column shows section dividers, not grey captions",

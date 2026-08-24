@@ -38,12 +38,24 @@
  * (tailwind.config.js) and app.css, not by respelling the classes here — so
  * the reskin and this conversion stay independently reviewable.
  *
- * ── Why the cell is an inline style ───────────────────────────────────
+ * ── Why the cell is an inline style, written as an ATTRIBUTE ──────────
  *
  * Per-cell placement is `grid-column`/`grid-row` on the item. Those cannot be
  * Tailwind utilities: the values are per-viewer data, and Tailwind's extractor
  * is a regex over source text, so an arbitrary-value class built from a
  * variable would never compile. Inline is also what the string version did.
+ *
+ * It is written with `setAttribute`, not through React's `style` prop, and
+ * that is load-bearing. React sets styles through the CSSOM, one longhand at
+ * a time, and `grid-column` + `grid-row` together cover all four longhands of
+ * `grid-area` — so the browser re-serializes the declaration block as the
+ * SHORTHAND: `style="grid-area: 1 / 2 / span 1 / span 1"`. The text
+ * `grid-row` disappears from the attribute, and dapp.json's declared check
+ * for placed tiles selects on `.app-card[data-yours="true"][style*="grid-row"]`.
+ * Writing the attribute keeps the exact spelling the string version emitted,
+ * which is the like-for-like rule applied to a value the CSSOM would
+ * otherwise rewrite underneath us. React does not manage `style` on this
+ * element (no `style` prop is passed), so there is no writer to race.
  */
 
 import { useCallback, useEffect, useRef } from 'react';
@@ -59,13 +71,10 @@ function controller(): any {
   return (typeof window !== 'undefined' ? (window as any).Home : null) || null;
 }
 
-function cellStyle(item: GridItem): React.CSSProperties | undefined {
+function cellStyle(item: GridItem): string | undefined {
   const p = item.placement;
   if (!p) return undefined;
-  return {
-    gridColumn: `${p.col + 1}/span ${p.w}`,
-    gridRow: `${p.row + 1}/span ${p.h}`,
-  };
+  return `grid-column:${p.col + 1}/span ${p.w};grid-row:${p.row + 1}/span ${p.h}`;
 }
 
 function AppIcon({ icon }: { icon: IconView }) {
@@ -90,8 +99,10 @@ function AppIcon({ icon }: { icon: IconView }) {
  */
 const wired = new WeakSet<Element>();
 
-function AppCardTile({ app, style, yours }: { app: HomeAppView; style?: React.CSSProperties; yours: boolean }) {
+function AppCardTile({ app, style, yours }: { app: HomeAppView; style?: string; yours: boolean }) {
+  const node = useRef<HTMLDivElement | null>(null);
   const wireRef = useCallback((el: HTMLDivElement | null) => {
+    node.current = el;
     if (!el || wired.has(el)) return;
     wired.add(el);
     const N = controller();
@@ -101,6 +112,25 @@ function AppCardTile({ app, style, yours }: { app: HomeAppView; style?: React.CS
     // the search view (no layout to write) and inert staging demo tiles.
     if (!yours || app.demo) N?._wireCardLongPressMenu?.(el);
   }, [app.demo, yours]);
+
+  // See the header note: the cell is an attribute so the CSSOM cannot fold
+  // `grid-column` + `grid-row` into a `grid-area` shorthand. Layout effect,
+  // not `useEffect`, because the tile must be in its cell in the same frame
+  // it appears — a paint at the grid's default flow position is a visible
+  // jump, and home.js measures cards right after a re-render.
+  //
+  // Keyed on `style`, so a repaint that did not MOVE the tile leaves the
+  // attribute alone. That matters mid-gesture: home.js's displacement preview
+  // writes `transform` onto real cards through the CSSOM, and rewriting the
+  // whole attribute under it would drop the slide. When the placement does
+  // change, the drop has already landed and the stale transform should go
+  // with it — which is what this then does.
+  useIsomorphicLayoutEffect(() => {
+    const el = node.current;
+    if (!el) return;
+    if (style) el.setAttribute('style', style);
+    else el.removeAttribute('style');
+  }, [style]);
 
   return (
     <div
@@ -113,7 +143,6 @@ function AppCardTile({ app, style, yours }: { app: HomeAppView; style?: React.CS
       data-locked={String(app.locked)}
       {...(app.demo ? { 'data-demo': 'true' } : null)}
       {...(yours ? { 'data-yours': 'true' } : null)}
-      style={style}
       onClick={(e) => {
         const N = controller();
         // A completed drag (or a long-press that opened the menu) ends with

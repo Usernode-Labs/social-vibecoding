@@ -389,11 +389,26 @@ export function ActionButton({ a }: { a: ActionSpec }): ReactNode {
       </button>
     );
   }
+  // `data-act` is the name of the AppView method this pill calls.
+  //
+  // These handlers were inline `onclick="AppView.markIssueInProgress(12)"`
+  // strings, and two of dapp.json's declared checks assert that a particular
+  // action is offered IN THE BAND rather than buried in the ⋯ menu by
+  // matching `[onclick*="markIssueInProgress"]` / `[onclick*="_setSessionShared"]`.
+  // The migration replaced those strings with closures, which is what made
+  // the attribute — and with it the checks' only hook — disappear.
+  //
+  // The model already carries the answer (`act.fn`), so publishing it keeps
+  // the assertion expressible without reintroducing a global-name handler.
+  // Both checks select on `[data-act="…"]` now: the same claim about the same
+  // button, matched exactly instead of by substring over a fragment of
+  // JavaScript source.
   return (
     <button
       className={a.cls || 'gc-vote-btn'}
       disabled={a.disabled}
       title={a.title}
+      data-act={a.act?.fn}
       onClick={a.act ? (e) => call(a.act, a.passNode ? e.currentTarget : undefined) : undefined}
     >
       {a.label}

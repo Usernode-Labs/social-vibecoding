@@ -844,34 +844,6 @@ const Home = {
     return tracks.join(' ');
   },
 
-  // One placed item → its grid markup, carrying its cell as an INLINE
-  // style. Inline and not Tailwind classes: Tailwind here is the CDN JIT
-  // (see index.html), so per-cell arbitrary classes would be generated at
-  // runtime — and a cell that paints a frame late is a tile visibly jumping
-  // into place. `overflow` items get no placement at all so they flow.
-  renderGridItem(item, cols, overflow) {
-    const [w, h] = HomeLayout.sizeOf(item, cols);
-    const style = overflow
-      ? ''
-      : ` style="grid-column:${item.col + 1}/span ${w};grid-row:${item.row + 1}/span ${h}"`;
-    // The `item.type === 'widget'` branch that planted a
-    // `[data-panel-slot]` host here is gone: THE UI OVERHAUL made Discover,
-    // Challenges and Create app fixed sections below the grid, so every item
-    // on this canvas is an app tile.
-    const app = (Home._apps || []).find((a) => a.slug === item.slug);
-    if (!app) return '';
-    let card = Home.renderAppCard(app);
-    // ONE splice for both attributes, onto the card's root element. Two
-    // sequential replaces looked equivalent and was not: inserting
-    // `data-yours` ahead of `class=` moved the anchor the placement replace
-    // was matching on, so every app tile silently lost its cell and fell
-    // back to flowing — the grid looked plausible and was not placed at all.
-    card = card.replace('class="app-card ',
-      `data-yours="true"${style} class="app-card `);
-    card = card.replace('cursor-pointer', 'cursor-grab');
-    return card;
-  },
-
   // ===== Hidden search bar (pull-to-reveal) =====
   //
   // The bar is the first child INSIDE #home-screen and is not sticky,

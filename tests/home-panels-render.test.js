@@ -992,10 +992,28 @@ test('Discover cannot be hidden, from either end', async () => {
 });
 
 test('home.js places every item at an explicit cell, with no flow fallback', () => {
-  // Each item carries its own grid-column / grid-row. Inline, because the
-  // page's Tailwind is the CDN JIT and a per-cell arbitrary class would be
-  // generated at runtime — a tile visibly jumping into place.
-  assert.match(HOME, /grid-column:\$\{item\.col \+ 1\}\/span \$\{w\};grid-row:\$\{item\.row \+ 1\}\/span \$\{h\}/);
+  // Placement is DATA now: home.js hands each item a `{col,row,w,h}` and
+  // app-grid.tsx spells the cell. `overflow` is the one case with no cell —
+  // items past the 8-row canvas flow, rather than being stranded.
+  assert.match(HOME, /const placement = overflow \? null : \{ col: item\.col, row: item\.row, w, h \}/);
+
+  // The cell is written as an ATTRIBUTE, and that is load-bearing. React sets
+  // styles through the CSSOM one longhand at a time, and `grid-column` +
+  // `grid-row` together cover all four longhands of `grid-area` — so the
+  // browser re-serializes the block as the SHORTHAND and the text `grid-row`
+  // vanishes from the attribute. dapp.json's declared check for placed tiles
+  // selects on `.app-card[data-yours="true"][style*="grid-row"]`, so a
+  // `style` prop would break it invisibly: the tiles land in the right cells
+  // and the check reports "selector not found".
+  const GRID_TSX = fs.readFileSync(path.join(
+    __dirname, '..', 'frontend', 'src', 'features', 'home', 'app-grid.tsx'), 'utf8');
+  assert.match(GRID_TSX, /grid-column:\$\{p\.col \+ 1\}\/span \$\{p\.w\};grid-row:\$\{p\.row \+ 1\}\/span \$\{p\.h\}/);
+  assert.match(GRID_TSX, /el\.setAttribute\('style', style\)/);
+  assert.doesNotMatch(GRID_TSX, /style=\{style\}/,
+    'the style prop would go back through the CSSOM and fold the shorthand');
+  const check = (JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'dapp.json'), 'utf8')).tests || [])
+    .find((t) => /\[style\*="grid-row"\]/.test(t.expectSelector || ''));
+  assert.ok(check, 'and the declared check that depends on it is still there');
   // ONE layout array, and it is app tiles all the way down now.
   assert.match(HOME, /HomeLayout\.canvasItems\(layout\)/);
   assert.match(HOME, /HomeLayout\.overflowItems\(layout\)/);
