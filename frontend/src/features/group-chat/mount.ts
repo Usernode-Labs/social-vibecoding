@@ -37,6 +37,12 @@ import {
   type MentionOption,
   type RefOption,
 } from './autocomplete-store';
+import {
+  composerStore,
+  type ComposerScope,
+  type ComposerSlot,
+} from './composer-store';
+import { GeneralChat, type GeneralChatProps } from './general-chat';
 import { ReactionBar, type ReactionBarProps } from './reaction-bar';
 import { reactionBarStore, type ReactionBarState } from './reaction-bar-store';
 import { SpecPanel } from './spec-panel';
@@ -162,6 +168,15 @@ specPanelStore.setFlush(flushSync);
  */
 reactionBarStore.setFlush(flushSync);
 
+/**
+ * The composer's store gets it too. `setupAttachments` publishes the strip and
+ * then reads the paperclip and the file input back by id on the next line;
+ * `mountThread` publishes the staged reply and then measures the composer to
+ * place an autocomplete against it. Both were synchronous when they were
+ * `innerHTML`, so the flush keeps the contract rather than changing it.
+ */
+composerStore.setFlush(flushSync);
+
 // ── The composer's two autocomplete menus ─────────────────────────────
 //
 // Same seam, one level smaller: `_ensureMenu` still creates the floating host
@@ -246,6 +261,41 @@ export function publishSpecPanel(next: SpecPanelState): void {
   specPanelStore.set(next);
 }
 
+// ── The two composers ─────────────────────────────────────────────────
+//
+// One store with a slot per scope, one set of components, two callers. See
+// ./composer-store.ts for why they are together.
+
+/**
+ * The general chat pane, into `#dev-chat-body`.
+ *
+ * `AppView.renderGroupChatTab` used to assign that host's `innerHTML` and then
+ * bind its listeners to what came back. The assignment is this; the listeners
+ * still attach to the same ids on the line after, exactly as `mountThread`
+ * does for the thread panel.
+ */
+export function mountGeneralChat(host: Element | null, props: GeneralChatProps): void {
+  if (!host) return;
+  mountLegacyPortal(host, createElement(GeneralChat, props));
+}
+
+export function unmountGeneralChat(host: Element | null): void {
+  if (!host) return;
+  unmountLegacyPortal(host);
+}
+
+/**
+ * Patch one composer's slot — the staged reply, the error line, the pending
+ * uploads, the status line — leaving the other scope's alone.
+ *
+ * A patch rather than a whole-state publish because the module's writers are
+ * independent: `_setAttachError` knows nothing about the strip, and the typing
+ * ticker knows nothing about either.
+ */
+export function publishComposer(scope: ComposerScope, patch: Partial<ComposerSlot>): void {
+  composerStore.set((s) => ({ ...s, [scope]: { ...s[scope], ...patch } }));
+}
+
 // ── The long-press reaction bar ───────────────────────────────────────
 //
 // One floating host for every message row, created and placed by
@@ -291,5 +341,8 @@ if (typeof window !== 'undefined') {
     mountThreadShell,
     mountReactionBar,
     publishReactionBar,
+    mountGeneralChat,
+    unmountGeneralChat,
+    publishComposer,
   };
 }

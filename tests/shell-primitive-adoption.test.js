@@ -88,15 +88,12 @@ const ALLOWED_BUTTON_FILES = new Set([
   // one `CONNECT_SURFACE` constant in the file, which is the same guarantee
   // the primitive would have given.
   'settings/social-identity.tsx',
-  // The THREAD composer — and it is one of a PAIR. The general chat's composer
-  // is byte-identical apart from its ids (public/js/app-view.js's
-  // `renderGroupChatTab`), and that one is still an HTML string in the Dev
-  // screen, which is its own deferred chunk. The two have to keep looking the
-  // same, so routing only this half through <Button> / <Textarea> — which
-  // would also need a new `box` variant for its `text-sm` field — would leave
-  // the pair written two different ways and free to drift. Convert them
-  // together with the Dev screen, or not at all.
-  'group-chat/thread-shell.tsx',
+  // The group chat composer's Send button was here, as one half of a PAIR
+  // whose other half was still an HTML string in public/js/app-view.js. Both
+  // halves are features/group-chat/composer.tsx now — ONE component with a
+  // `scope` — so the exception has nothing left to protect and the button
+  // routes through <Button>: `size` spells both paddings and the trailing
+  // `shrink-0` arrives through className, which cva emits last.
 ]);
 
 // Empty, and worth keeping empty: every field box in the tree now comes from
@@ -104,10 +101,10 @@ const ALLOWED_BUTTON_FILES = new Set([
 // `<div>`s — the header's theme-toggle groups reuse the field box as a
 // segmented control — and a div is not something Input renders.
 const ALLOWED_FIELD_FILES = new Set([
-  // The thread composer's textarea, for the same reason its Send button is on
-  // the button allow-list above: it is one half of a PAIR whose other half is
-  // still an HTML string in public/js/app-view.js. See that entry.
-  'group-chat/thread-shell.tsx',
+  // The composer's textarea went with its Send button — see the note above.
+  // Its box needed two new `inputVariants` values and a leading `lead` group
+  // for `.gc-composer-input`, all declared in the order the hand-written
+  // string was written, so the rendered class attribute did not move.
 ]);
 
 /*

@@ -477,12 +477,11 @@ const GroupChat = {
   },
 
   _renderThreadTyping(username) {
-    const el = document.getElementById('gc-thread-typing');
-    if (!el || username === App.user?.username) return;
-    el.textContent = `${username} is typing...`;
+    if (username === App.user?.username) return;
+    GroupChat._publishComposer('thread', { status: `${username} is typing...` });
     clearTimeout(GroupChat._threadTypingTimer);
     GroupChat._threadTypingTimer = setTimeout(() => {
-      if (el.isConnected) el.textContent = '';
+      GroupChat._publishComposer('thread', { status: '' });
     }, 3000);
   },
 
@@ -928,31 +927,21 @@ const GroupChat = {
   // Render (or clear) the composer's "Replying to …" preview chip —
   // into the thread composer's slot when a topic is open, else the
   // general composer's (only one of the two is ever in the DOM).
+  // Published to BOTH scopes, which is what it always meant. `replyDraft` is
+  // one value — entering a thread clears it (see mountThread) — and only one
+  // of the two composers is ever in the DOM, so "write into whichever host is
+  // present" and "tell both slots" describe the same behaviour. Saying it this
+  // way removes the question of which one wins.
   _renderQuotePreview() {
-    const el = document.getElementById('gc-thread-reply-preview')
-      || document.getElementById('gc-reply-preview');
-    if (!el) return;
     const q = GroupChat.replyDraft;
-    if (!q) {
-      el.classList.add('hidden');
-      el.innerHTML = '';
-      return;
-    }
-    const label = q.source === 'pr'
-      ? `PR #${q.prNumber || ''}`.trim()
-      : (q.author ? `@${q.author}` : 'message');
-    const snippet = GroupChat._collapseSnippet(q.snippet).slice(0, 120);
-    el.classList.remove('hidden');
-    el.innerHTML =
-      `<div class="gc-reply-preview-inner">` +
-        `<div class="gc-reply-preview-body">` +
-          `<span class="gc-reply-preview-label">\u21A9 Replying to ${escapeHtml(label)}</span>` +
-          `<span class="gc-reply-preview-snippet">${escapeHtml(snippet)}</span>` +
-        `</div>` +
-        `<button type="button" id="gc-reply-cancel" class="gc-reply-preview-x" aria-label="Cancel reply">\u2715</button>` +
-      `</div>`;
-    const x = document.getElementById('gc-reply-cancel');
-    if (x) x.onclick = () => GroupChat.clearQuote();
+    const view = q ? {
+      label: q.source === 'pr'
+        ? `PR #${q.prNumber || ''}`.trim()
+        : (q.author ? `@${q.author}` : 'message'),
+      snippet: GroupChat._collapseSnippet(q.snippet).slice(0, 120),
+    } : null;
+    GroupChat._publishComposer('general', { quote: view });
+    GroupChat._publishComposer('thread', { quote: view });
   },
 
   // True only for a clean tap: pointer barely moved AND no text is
@@ -1852,6 +1841,10 @@ const GroupChat = {
       }
       const entry = {
         scope: key,
+        // Stable identity for the strip's rows. `id` arrives only when the
+        // upload finishes, and the filename is not unique — two shots pasted
+        // in a row are both `pasted-image-<n>.png` only by luck.
+        key: `p${(GroupChat._attachSeq += 1)}`,
         uploading: true,
         id: null,
         kind: classified.kind,
@@ -1883,6 +1876,28 @@ const GroupChat = {
     }
   },
 
+  // The React bridge for one composer. Both are one renderer in
+  // features/group-chat/composer.tsx, so every writer below names a SCOPE
+  // ('general' | 'thread') where it used to pick an element id.
+  _publishComposer(scope, patch) {
+    GroupChat._react()?.publishComposer?.(scope, patch);
+  },
+
+  // The scope for a `thread` argument, which is how every attachment path
+  // spells the same choice.
+  _composerScope(thread) {
+    return thread ? 'thread' : 'general';
+  },
+
+  _attachSeq: 0,
+
+  // Remove by INDEX, because that is what a serialisable view model can carry:
+  // the live entry holds a File and an object URL and never leaves this module.
+  _removeAttachmentAt(index, scope) {
+    const thread = scope === 'thread' ? GroupChat.activeThread : null;
+    GroupChat._removeAttachment(GroupChat._pendingFor(thread)[index], thread);
+  },
+
   _removeAttachment(entry, thread) {
     if (!entry || entry.uploading) return;
     GroupChat.pendingAttachments = GroupChat.pendingAttachments.filter((a) => a !== entry);
@@ -1892,16 +1907,11 @@ const GroupChat = {
     GroupChat._renderAttachStrip(thread);
   },
 
+  // The error line above the composer. Its `hidden` follows from the text now
+  // — the component draws the row either way, so the module has one thing to
+  // say rather than two to keep in step.
   _setAttachError(msg, thread) {
-    const el = document.getElementById(thread ? 'gc-thread-attach-error' : 'gc-attach-error');
-    if (!el) return;
-    if (msg) {
-      el.textContent = msg;
-      el.classList.remove('hidden');
-    } else {
-      el.textContent = '';
-      el.classList.add('hidden');
-    }
+    GroupChat._publishComposer(GroupChat._composerScope(thread), { attachError: msg || null });
   },
 
   _humanAttSize(bytes) {
@@ -1911,15 +1921,15 @@ const GroupChat = {
     return `${n} B`;
   },
 
-  // Attribute-safe escape for filenames. escapeHtml (the div trick)
-  // deliberately mirrors browser text-node escaping, which leaves `"`
-  // alone — fine for text content, NOT fine inside a double-quoted
-  // attribute, where a crafted filename could break out and inject
-  // attributes. Filenames are the one fully user-controlled string these
-  // rows put into attributes, so they go through this instead.
-  _escAttr(s) {
-    return escapeHtml(String(s)).replace(/"/g, '&quot;');
-  },
+  // `_escAttr` lived here — an attribute-safe escape for filenames, because
+  // `escapeHtml` (the div trick) mirrors browser TEXT-node escaping and
+  // leaves `"` alone, which a crafted filename could break out of inside a
+  // double-quoted attribute. React escapes text and attributes alike, and
+  // both places that put a filename into markup are components now, so the
+  // hazard and its guard go together.
+  //
+  // `_attachKindBadgeHtml` went with the composer strip it wrapped. The label
+  // itself stays, because both strips read it.
 
   // Small kind badge for chips ("MD", "HTML", "BIN"). Null for image/text.
   _attachKindBadge(a) {
@@ -1929,35 +1939,17 @@ const GroupChat = {
     return null;
   },
 
-  // …and its HTML spelling, for the composer strip, which is still a string
-  // renderer. One source of truth for the label either way.
-  _attachKindBadgeHtml(a) {
-    const label = GroupChat._attachKindBadge(a);
-    return label ? `<span class="dc-attach-kind">${label}</span>` : '';
-  },
-
   _renderAttachStrip(thread) {
-    const strip = document.getElementById(thread ? 'gc-thread-attachments' : 'gc-attachments');
-    if (!strip) return;
-    const items = GroupChat._pendingFor(thread);
-    if (!items.length) {
-      strip.innerHTML = '';
-      strip.classList.remove('dc-attach-strip-active');
-      return;
-    }
-    strip.classList.add('dc-attach-strip-active');
-    strip.innerHTML = items.map((a, i) => {
-      const name = GroupChat._escAttr(a.filename);
-      const removeBtn = a.uploading
-        ? '<span class="dc-attach-uploading">…</span>'
-        : `<button type="button" class="dc-attach-remove" data-attach-idx="${i}" title="Remove" aria-label="Remove ${name}">&times;</button>`;
-      if (a.kind === 'image' && a.objectUrl) {
-        return `<div class="dc-attach-item"><img class="dc-attach-thumb" src="${a.objectUrl}" alt="${name}" title="${name}">${removeBtn}</div>`;
-      }
-      return `<div class="dc-attach-item dc-attach-chip" title="${name}">${GroupChat._attachKindBadgeHtml(a)}<span class="dc-attach-name">${name}</span><span class="dc-attach-size">${GroupChat._humanAttSize(a.sizeBytes)}</span>${removeBtn}</div>`;
-    }).join('');
-    strip.querySelectorAll('.dc-attach-remove').forEach((btn) => {
-      btn.addEventListener('click', () => GroupChat._removeAttachment(items[Number(btn.dataset.attachIdx)], thread));
+    GroupChat._publishComposer(GroupChat._composerScope(thread), {
+      attachments: GroupChat._pendingFor(thread).map((a) => ({
+        key: a.key || `p${a.id || a.filename}`,
+        name: a.filename || 'file',
+        kind: a.kind,
+        badge: GroupChat._attachKindBadge(a),
+        size: GroupChat._humanAttSize(a.sizeBytes),
+        thumbUrl: a.objectUrl || null,
+        uploading: !!a.uploading,
+      })),
     });
   },
 
@@ -2571,26 +2563,21 @@ const GroupChat = {
   // misleading. When connected, the typing-users line owns the slot
   // exactly as before.
   _renderStatusLine() {
-    const el = document.getElementById('gc-typing');
-    if (!el) return;
-
     const wsOpen = GroupChat.ws && GroupChat.ws.readyState === 1;
     if (!wsOpen && GroupChat.appSlug) {
       const queued = GroupChat._pendingOutgoing.length;
-      el.textContent = queued > 0
-        ? `Reconnecting… (${queued} queued)`
-        : 'Reconnecting…';
+      GroupChat._publishComposer('general', {
+        status: queued > 0 ? `Reconnecting… (${queued} queued)` : 'Reconnecting…',
+      });
       return;
     }
 
     const names = [...GroupChat.typingUsers.values()].filter((n) => n !== App.user?.username);
-    if (names.length === 0) {
-      el.textContent = '';
-      return;
-    }
-    el.textContent = names.length === 1
-      ? `${names[0]} is typing...`
-      : `${names.join(', ')} are typing...`;
+    GroupChat._publishComposer('general', {
+      status: names.length === 0 ? ''
+        : names.length === 1 ? `${names[0]} is typing...`
+          : `${names.join(', ')} are typing...`,
+    });
   },
 
   scrollToBottom() {

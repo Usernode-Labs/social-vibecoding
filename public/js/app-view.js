@@ -1932,6 +1932,15 @@ const AppView = {
       ? window.UsernodeReact.devBoard
       : null;
   },
+  // The group chat's half of the bridge — the transcript, the two composers
+  // and the floating menus all publish through it. Same shape and same
+  // `typeof window` reason as `_reactDevBoard` above.
+  _reactGroupChat() {
+    return (typeof window !== 'undefined' && window.UsernodeReact)
+      ? window.UsernodeReact.groupChat
+      : null;
+  },
+
   // Retire whatever interim root owns #app-content.
   //
   // Call this BEFORE replacing #app-content.innerHTML by hand. React keeps
@@ -3854,84 +3863,38 @@ const AppView = {
 
     // (#3) First-arrival framing: name what Group Chat is for. Group chat
     // is rarely empty (system messages), so a permanent banner would be
-    // clutter — show it once per browser, then it disappears.
-    const gcAppName = (AppView.appData && AppView.appData.name) ? AppView.appData.name : 'this app';
-    let gcIntroHtml = '';
+    // clutter — show it once per browser, then it disappears. The read AND
+    // the write stay here: whether it has been seen is a browser fact, and a
+    // component that stamped it would fire again on every re-render.
+    let introAppName = null;
     try {
       if (!localStorage.getItem('usernode_seen_gc_intro')) {
-        gcIntroHtml = `<div class="mx-3 mt-2 px-3 py-2 rounded-lg bg-violet-500/10 border border-violet-500/20 text-xs text-zinc-600 dark:text-zinc-300">This is where everyone using <span class="font-medium">${escapeHtml(gcAppName)}</span> talks and votes on proposed changes to it.</div>`;
+        introAppName = (AppView.appData && AppView.appData.name) ? AppView.appData.name : 'this app';
         localStorage.setItem('usernode_seen_gc_intro', '1');
       }
     } catch { /* private-mode / disabled storage: just skip the intro */ }
-    // Layout mirrors dev-chat's session view: a flex-row body that
-    // holds the chat pane on the left and a slot for the spec
-    // side-panel on the right. The slot is empty + display:none until
-    // "View full spec" is clicked, so the chat occupies 100% width by
-    // default. CSS toggles the side-panel layout vs. fullscreen-modal
-    // layout based on viewport width. (#194: the old vote/issue panel
-    // that sat above the chat is decomposed into the Issues and
-    // Proposals sub-tabs — this tab is the message stream only.)
-    content.innerHTML = `
-      <div class="flex flex-col h-full">
-        <div class="gc-tab-body flex-1 flex min-h-0">
-          <div class="gc-chat-pane flex-1 flex flex-col min-h-0">
-            ${gcIntroHtml}
-            <!-- Messages -->
-            <div id="gc-messages" class="flex-1 overflow-y-auto py-2 space-y-0.5"></div>
 
-            <!-- Typing indicator -->
-            <div id="gc-typing" class="px-3 text-xs text-zinc-500 dark:text-zinc-400 h-5 shrink-0"></div>
-
-            <!-- Input (#621: read-only viewers get a notice instead).
-                 platform-safe-bar (app.css) adds the home-indicator
-                 inset to this bar's own p-2 — it wraps both the composer
-                 and the read-only notice, so both clear the indicator.
-                 (No backticks in this comment: it lives inside a template
-                 literal, and one would close it.) -->
-            <div class="shrink-0 border-t border-zinc-200 dark:border-zinc-800 p-2 platform-safe-bar">
-              ${AppView.readOnly ? `
-              <div class="px-3 py-2 text-xs text-zinc-500 dark:text-zinc-400 text-center">You're viewing this app's dev space read-only — only collaborators can post.</div>
-              ` : `
-              <!-- #15: "Replying to …" preview chip; populated by
-                   GroupChat._renderQuotePreview when a quote is staged. -->
-              <div id="gc-reply-preview" class="hidden"></div>
-              <!-- #694: file attachments — error line + pending strip above
-                   the composer (reuses the dev-chat dc-attach-* styles). -->
-              <div id="gc-attach-error" class="dc-attach-error hidden"></div>
-              <div id="gc-attachments" class="dc-attach-strip"></div>
-              <form id="gc-form" class="flex gap-2 items-end">
-                <button type="button" id="gc-attach-btn" title="Attach files" aria-label="Attach files" class="shrink-0 rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-500 dark:text-zinc-400 hover:text-violet-500 hover:border-violet-500 transition-colors">&#128206;</button>
-                <input type="file" id="gc-file-input" class="hidden" multiple>
-                <textarea
-                  id="gc-input"
-                  maxlength="${typeof GC_MAX_MESSAGE_LEN !== 'undefined' ? GC_MAX_MESSAGE_LEN : 8000}"
-                  rows="1"
-                  placeholder="Type a message..."
-                  autocomplete="off"
-                  class="gc-composer-input flex-1 min-w-0 resize-none overflow-y-auto rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
-                ></textarea>
-                <button type="submit" class="rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors shrink-0">Send</button>
-              </form>`}
-            </div>
-          </div>
-
-          <!-- Draggable divider between chat pane and spec panel.
-               CSS keeps it display:none until both
-                 (a) .gc-spec-resizer-open is added (panel is open), and
-                 (b) viewport >= 1024px (side-panel layout, not modal).
-               GroupChat._initSpecPanelResizer wires a pointer-event
-               drag handler that updates the panel inline width and
-               persists the final value to localStorage. -->
-          <div id="gc-spec-resizer" class="gc-spec-resizer" role="separator" aria-orientation="vertical" aria-label="Resize spec panel"></div>
-
-          <!-- Spec side-panel slot. Lives empty in the DOM so a
-               re-render of this tab doesn't tear down a panel the
-               user has open. _showSpecPanel populates + toggles
-               .gc-spec-side-panel-open; CSS handles the responsive
-               side-panel-vs-fullscreen-modal switch at 1024px. -->
-          <div id="gc-spec-side-panel" class="gc-spec-side-panel"></div>
-        </div>
-      </div>`;
+    // The PANE is features/group-chat/general-chat.tsx's — the message
+    // stream, the status line, the composer and the spec panel's slot —
+    // mounted as a portal where this used to be one `content.innerHTML`
+    // string. Its shape is fixed for the life of a mount, so it travels as
+    // props rather than through a store; the parts that move while it is open
+    // (the staged reply, the uploads, the error line, the typing text) go
+    // through the composer store, which the THREAD composer shares.
+    //
+    // The transcript's own portal points INTO `#gc-messages`, so drop it
+    // before re-rendering the pane: React usually preserves that element, but
+    // the read-only branch does not render it at all, and a portal left
+    // pointing at a detached node keeps its subtree and its store
+    // subscription alive. (Rule 1 in lib/legacy-portals.tsx — the same one
+    // `mountThread` observes.)
+    const previousList = content.querySelector('#gc-messages');
+    if (previousList) AppView._reactGroupChat()?.unmountTranscript(previousList);
+    AppView._reactGroupChat()?.mountGeneralChat(content, {
+      introAppName,
+      readOnly: !!AppView.readOnly,
+      maxLength: typeof GC_MAX_MESSAGE_LEN !== 'undefined' ? GC_MAX_MESSAGE_LEN : 8000,
+    });
 
     // Kit polish: fixed-shell keyboard avoidance on the general-chat
     // scroller (the screen's top bar is the shared platform header, so

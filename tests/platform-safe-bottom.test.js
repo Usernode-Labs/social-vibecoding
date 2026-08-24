@@ -242,14 +242,29 @@ test('the dev-chat composer bar carries platform-safe-bar', () => {
     'the border is the part that goes when there is nothing to frame');
 });
 
-test('the general-chat composer bar carries platform-safe-bar', () => {
-  const idx = APP_VIEW.indexOf('id="gc-messages"');
-  assert.ok(idx > -1, '#gc-messages is missing from app-view.js');
-  const after = APP_VIEW.slice(idx, idx + 1200);
-  const bar = /<div class="shrink-0 border-t[^"]*"/.exec(after);
-  assert.ok(bar, "the general-chat composer's bar wrapper moved — re-anchor this test");
-  assert.match(bar[0], /platform-safe-bar/,
-    'the general-chat composer must sit above the home indicator');
+test('the general-chat composer bar carries platform-safe-bar, on both branches', () => {
+  // This markup left public/js/app-view.js's `renderGroupChatTab` template for
+  // features/group-chat/general-chat.tsx in #1191, so the check renders the
+  // component instead of reading a template literal — which also proves the
+  // class survives to the DOM rather than merely appearing in a source string.
+  //
+  // BOTH branches, because here the read-only notice sits INSIDE the bar
+  // rather than replacing it (the thread panel does the opposite, below), and
+  // a refactor that lifted the notice out would take the inset with it.
+  const pane = (readOnly) => renderComponent(
+    'frontend/src/features/group-chat/general-chat.tsx', 'GeneralChat',
+    { introAppName: null, readOnly, maxLength: 8000 },
+  );
+  for (const readOnly of [false, true]) {
+    const html = pane(readOnly);
+    const bar = /<div class="shrink-0 border-t[^"]*"/.exec(html);
+    assert.ok(bar, `readOnly=${readOnly}: the composer's bar wrapper moved — re-anchor this test`);
+    assert.match(bar[0], /platform-safe-bar/,
+      `readOnly=${readOnly}: the general-chat composer must sit above the home indicator`);
+  }
+  // The composer is inside that bar, not a sibling of it.
+  assert.match(pane(false), /platform-safe-bar[^>]*><div id="gc-reply-preview"/);
+  assert.match(pane(true), /platform-safe-bar[^>]*><div class="px-3 py-2 text-xs/);
 });
 
 test('the thread composer AND its read-only notice both carry the bar class', () => {

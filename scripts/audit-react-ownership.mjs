@@ -118,19 +118,27 @@ const OWNED = [
   { sel: '#gc-mention-menu' },               // features/group-chat/autocomplete.tsx
   { sel: '#gc-ref-menu' },                   // ditto
   { sel: '#gc-spec-side-panel' },            // features/group-chat/spec-panel.tsx
-  // The thread panel's shell (features/group-chat/thread-shell.tsx). Four
-  // hosts inside it stay their modules': the topic card that app-view.js
-  // innerHTMLs, the transcript's own portal target, the typing line, and the
-  // composer's three slots. Each is rendered once, empty, with a constant
-  // className and never looked inside — the controller-host seam AGENTS.md
-  // documents — so a write below one of them is the sanctioned pattern rather
-  // than a second author.
+  // The thread panel's shell (features/group-chat/thread-shell.tsx). TWO hosts
+  // inside it stay their modules': the topic card that app-view.js innerHTMLs,
+  // and the transcript's own portal target. Each is rendered once, empty, with
+  // a constant className and never looked inside — the controller-host seam
+  // AGENTS.md documents — so a write below one of them is the sanctioned
+  // pattern rather than a second author.
+  //
+  // The composer's three slots and the typing line were on that list until
+  // #1191 gave them a store: they are features/group-chat/composer.tsx's now,
+  // shared with the general chat, and a write into any of them is a real
+  // finding.
   {
     sel: '.dev-thread',
-    except: [
-      '#gc-thread-head', '#gc-thread-messages', '#gc-thread-typing',
-      '#gc-thread-reply-preview', '#gc-thread-attach-error', '#gc-thread-attachments',
-    ],
+    except: ['#gc-thread-head', '#gc-thread-messages'],
+  },
+  // The general chat pane (features/group-chat/general-chat.tsx). Same two
+  // exceptions in their general spelling — the transcript's portal target and
+  // the spec reader's, both listed above in their own right.
+  {
+    sel: '.gc-chat-pane',
+    except: ['#gc-messages'],
   },
   { sel: '#llm-grants-list' },               // features/settings/grants-list.tsx
   { sel: '#cli-tokens-list' },               // features/settings/cli-tokens-list.tsx
@@ -186,6 +194,12 @@ const ROUTES = [
   '#settings/agent-files', '#settings/cli', '#settings/connectors', '#settings/experimental', '#profile', '#leaderboard', '#messages',
   '#app/recipebot', '#app/recipebot/dev', '#app/recipebot/dev/chat',
   '#app/recipebot/dev/sessions/1',
+  // A TOPIC page, which is the only route that mounts `.dev-thread` — the
+  // thread panel, its composer and the topic card app-view.js fills. Without
+  // it that OWNED entry was swept on no route at all. The number is a seeded
+  // issue (scripts/seed-checks-db.js); if the seed changes, re-point it rather
+  // than dropping the route.
+  '#app/recipebot/dev/issues/900001',
   '#admin/e2e', '#admin/gallery', '#admin/node', '#admin/merges', '#admin/push', '#admin/campaigns', '#admin/mail', '#admin/estimator', '#admin/analytics', '#admin/overview', '#admin/codes', '#admin/featured-apps', '#admin/db-export', '#admin/features', '#admin/limits', '#admin/users', '#admin/status', '#admin/rollover', '#admin/staging-reap',
   '#admin/api-tester', '#admin/sql-console', '#admin/settings', '#admin/app-version', '#admin/waitlist', '#admin/onchain-accounts', '#admin/user-activities', '#admin/delegations',
   '#admin/challenge-templates', '#admin/seasons', '#admin/season-events',

@@ -25,7 +25,17 @@
  * The messages list does not scroll; the typing slot and composer are pinned
  * `shrink-0` siblings outside the scroller.
  *
- * ── Four hosts stay the modules' ──────────────────────────────────────
+ * ── The composer is shared with the general chat ──────────────────────
+ *
+ * The staged-reply chip, the attachment error, the pending-upload strip, the
+ * form and the status line are ./composer.tsx's, rendered here with
+ * `scope="thread"`. They were one renderer in public/js/group-chat.js — each
+ * of them opening with `thread ? 'gc-thread-…' : 'gc-…'` — and they stay one
+ * here. What this file keeps is the BAR around them, which really does differ
+ * between the two panes: here the read-only notice REPLACES the bar, and in
+ * the chat pane it sits inside it.
+ *
+ * ── Two hosts stay other owners' ──────────────────────────────────────
  *
  * Rendered once as empty elements with constant `className`, never looked
  * inside — the controller-host seam AGENTS.md documents:
@@ -36,9 +46,6 @@
  *   * `#gc-thread-messages` — the transcript's portal target. React renders
  *     the element and nothing else; `GroupChat.renderThread` mounts
  *     ./transcript.tsx into it.
- *   * `#gc-thread-typing` — one line of text from `_renderThreadTyping`.
- *   * `#gc-thread-reply-preview`, `#gc-thread-attach-error` and
- *     `#gc-thread-attachments` — the composer's three module-filled slots.
  *
  * ── The composer's listeners are still attached, not props ────────────
  *
@@ -48,6 +55,8 @@
  * app-grid.tsx makes for the canvas recognizer, and it keeps one owner for the
  * draft, the typing ping, the multi-line submit semantics and the Escape rule.
  */
+
+import { ComposerForm, ComposerSlots, StatusLine } from './composer';
 
 const SAFE_BAR = 'platform-safe-bar';
 
@@ -81,41 +90,8 @@ function Composer({ fill, readOnly, notice, placeholder, maxLength }: ThreadShel
   }
   return (
     <div className={`shrink-0 border-t border-zinc-200 dark:border-zinc-800 p-2 ${SAFE_BAR}`}>
-      <div id="gc-thread-reply-preview" className="hidden" />
-      <div id="gc-thread-attach-error" className="dc-attach-error hidden" />
-      <div id="gc-thread-attachments" className="dc-attach-strip" />
-      <form id="gc-thread-form" className="flex gap-2 items-end">
-        <button
-          type="button"
-          id="gc-thread-attach-btn"
-          title="Attach files"
-          aria-label="Attach files"
-          className={`shrink-0 rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 ${
-            fill ? 'py-2' : 'py-1.5'
-          } text-sm text-zinc-500 dark:text-zinc-400 hover:text-violet-500 hover:border-violet-500 transition-colors`}
-        >
-          📎
-        </button>
-        <input type="file" id="gc-thread-file-input" className="hidden" multiple />
-        <textarea
-          id="gc-thread-input"
-          maxLength={maxLength}
-          rows={1}
-          autoComplete="off"
-          placeholder={placeholder}
-          className={`gc-composer-input flex-1 min-w-0 resize-none overflow-y-auto rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 ${
-            fill ? 'py-2' : 'py-1.5'
-          } text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent`}
-        />
-        <button
-          type="submit"
-          className={`rounded-lg bg-violet-600 hover:bg-violet-500 ${
-            fill ? 'px-4 py-2' : 'px-3 py-1.5'
-          } text-sm font-medium text-white transition-colors shrink-0`}
-        >
-          Send
-        </button>
-      </form>
+      <ComposerSlots scope="thread" />
+      <ComposerForm scope="thread" fill={fill} placeholder={placeholder} maxLength={maxLength} />
     </div>
   );
 }
@@ -132,7 +108,7 @@ export function ThreadShell(props: ThreadShellProps) {
           {withHeader ? <div id="gc-thread-head" /> : null}
           <div id="gc-thread-messages" className="py-2 space-y-0.5" />
         </div>
-        <div id="gc-thread-typing" className="px-3 text-xs text-zinc-500 dark:text-zinc-400 h-5 shrink-0" />
+        <StatusLine scope="thread" className="px-3 text-xs text-zinc-500 dark:text-zinc-400 h-5 shrink-0" />
         <Composer {...props} />
       </div>
     );
@@ -144,7 +120,7 @@ export function ThreadShell(props: ThreadShellProps) {
         className="overflow-y-auto px-2 py-1 space-y-0.5"
         style={{ maxHeight: '40vh', minHeight: '60px' }}
       />
-      <div id="gc-thread-typing" className="px-3 text-xs text-zinc-500 dark:text-zinc-400 h-4 shrink-0" />
+      <StatusLine scope="thread" className="px-3 text-xs text-zinc-500 dark:text-zinc-400 h-4 shrink-0" />
       <Composer {...props} />
     </div>
   );
