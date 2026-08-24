@@ -1233,6 +1233,7 @@ const DevChat = {
     }
     DevChat.sessions = [];
     DevChat.currentSession = null;
+    DevChat._publishPreview();
     DevChat.messages = [];
     DevChat.isStreaming = false;
     DevChat.setTitleStatus(null);
@@ -1255,6 +1256,24 @@ const DevChat = {
   // must never outlive its slot). open=false is set BEFORE the close call
   // so closeStagingOverlay's own slot-collapse branch sees nothing to do
   // — no re-render loop.
+  /**
+   * Publish whether the OPEN session has a staging preview (Streamlined
+   * Concept).
+   *
+   * The header's eye is the preview affordance on a session screen — the
+   * same eye glyph the cards draw through AppView.cardPreviewHtml, gated on
+   * the same `staging_url` — so it must only render when there is something
+   * to preview. Called wherever `currentSession` or its `staging_url`
+   * changes; `window.Improve` is the bundle's own controller, optional-called
+   * because the vm harnesses that evaluate this file have no bundle.
+   */
+  _publishPreview() {
+    const s = DevChat.currentSession;
+    window.Improve?.setSessionPreview?.(
+      s && s.staging_url ? { sessionId: s.id, url: s.staging_url } : null,
+    );
+  },
+
   _resetStagingPanel() {
     DevChat.stagingPanel = { open: false };
     if (typeof AppView !== 'undefined' && AppView._stagingMode === 'docked'
@@ -3042,6 +3061,7 @@ const DevChat = {
       }
 
       DevChat.currentSession = session;
+      DevChat._publishPreview();
       // #940: reconcile this session's saved drafts against the server copy
       // — the cross-device sync AND the migration of drafts that only ever
       // existed in this browser. Deliberately NOT awaited: the list paints
@@ -3662,6 +3682,7 @@ const DevChat = {
                 DevChat.scrollToBottom();
                 if (data.url) {
                   DevChat.currentSession.staging_url = data.url;
+          DevChat._publishPreview();
                   // #127: testing guidance rides along so the PR card's
                   // "Test this change" button works without a refetch.
                   if ('testingMd' in data) DevChat.currentSession.testing_md = data.testingMd;
@@ -4173,6 +4194,7 @@ const DevChat = {
         DevChat.scrollToBottom();
         if (data.url && DevChat.currentSession) {
           DevChat.currentSession.staging_url = data.url;
+          DevChat._publishPreview();
           // #127: keep the replayed session's testing guidance in sync too.
           if ('testingMd' in data) DevChat.currentSession.testing_md = data.testingMd;
           if ('testingPath' in data) DevChat.currentSession.testing_path = data.testingPath;
@@ -7202,6 +7224,9 @@ const DevChat = {
     // and are unaffected).
     DevChat._resetStagingPanel();
     DevChat.currentSession = null;
+    // The header's eye gates on the open session's preview — leaving the
+    // session clears it (Streamlined Concept).
+    DevChat._publishPreview();
     DevChat.messages = [];
     // The title marker describes the session we just left — drop it
     // so the forum doesn't claim to be thinking / done.

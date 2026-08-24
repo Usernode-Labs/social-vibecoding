@@ -505,11 +505,19 @@ test('the Board owns the view control; the header center is the title tab', () =
   // Which HALF of the app is on screen is still published from the single
   // place App.currentTab is assigned — the eye/Improve swap renders from it.
   const appJs = read('public/js/app.js');
-  assert.match(appJs, /App\.currentTab = tab;[\s\S]{0,600}window\.Improve\?\.setTab\(tab\)/,
-    'switchTab must publish the active tab');
+  assert.match(appJs, /App\.currentTab = tab;[\s\S]{0,600}window\.Improve\?\.setTab\(tab, App\.currentSubTab\)/,
+    'switchTab must publish the active tab AND sub-tab — the header eye is a '
+    + 'preview control on a session and a back-to-the-app control elsewhere');
   const improveBtn = read('frontend/src/features/improve/improve-button.tsx');
   assert.match(improveBtn, /tab === 'dev'/,
     'the header right slot renders the eye from the published tab');
+  // The eye only offers what exists: a session shows it once that session
+  // has a staging preview, matching AppView.cardPreviewHtml's own gate.
+  assert.match(improveBtn, /const onSession = tab === 'dev' && subTab === 'sessions';/);
+  assert.match(improveBtn, /\(!onSession \|\| canPreview\)/,
+    'a session with no preview renders no eye');
+  assert.match(improveBtn, /swapToStagingForSession/,
+    'and the session eye opens that preview, the one preview affordance');
 });
 
 test('the app-context sheet bottom-anchors the version / GitHub / share block', () => {

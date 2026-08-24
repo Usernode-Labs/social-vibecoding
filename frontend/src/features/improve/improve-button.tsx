@@ -70,7 +70,8 @@ const IMPROVE_BTN_CLASS =
   + 'transition-colors un-touch-target';
 
 export function ImproveButton() {
-  const { target, open, tab } = useStoreState(improveStore);
+  const { target, open, tab, subTab, previewSessionId, previewUrl } =
+    useStoreState(improveStore);
   // "this app" is wrong on home, where the target is the platform itself
   // (#1367). The visible label stays the single word "Improve" at both — what
   // is being improved is named in the panel's own header.
@@ -92,15 +93,28 @@ export function ImproveButton() {
     (window as unknown as { HeaderLayout?: { refresh?: () => void } })
       .HeaderLayout?.refresh?.();
     // `tab` is a dependency because the pill ↔ eye swap below changes the
-    // right group's width just as materially as the pill appearing does.
-  }, [target, tab]);
+    // right group's width just as materially as the pill appearing does —
+    // and so do `subTab` / `previewUrl`, which decide whether a session
+    // screen shows the eye at all.
+  }, [target, tab, subTab, previewUrl]);
 
   // Streamlined Concept: the Improve pill belongs to the app's DEFAULT (use)
   // state only. On the Dev screens — Activity, Board, a session — the slot
-  // renders the EYE instead: "view and use the app", the way back that every
-  // Figma dev screen carries top-right. Client-only states both (the
-  // prerender has no target), so the swap can be a real conditional render.
-  const eye = !!target && tab === 'dev';
+  // renders the EYE instead. Client-only states both (the prerender has no
+  // target), so the swap can be a real conditional render.
+  //
+  // ── The eye means "go and look at the running thing" ─────────────────
+  //
+  // On Activity and Board that is the app itself, which is always there. On
+  // a SESSION it is that session's staging preview, which is not: a change
+  // has no preview until one is built. The rest of the platform already
+  // treats this eye glyph as exactly that gated affordance —
+  // AppView.cardPreviewHtml renders PREVIEW_EYE_SVG only for a session with
+  // a `staging_url` — so the header follows the same rule rather than
+  // offering a control that would have nothing to show (owner review).
+  const onSession = tab === 'dev' && subTab === 'sessions';
+  const canPreview = !!previewUrl;
+  const eye = !!target && tab === 'dev' && (!onSession || canPreview);
 
   if (eye) {
     return (
@@ -108,10 +122,22 @@ export function ImproveButton() {
         id="app-eye-btn"
         type="button"
         className={'w-7 h-7 mr-2.5 flex items-center justify-center un-touch-target '
-          + 'text-zinc-400 hover:text-zinc-200'}
-        aria-label="Use the app"
-        title="View and use the app"
-        onClick={() => Improve.openApp()}
+          + (onSession
+            ? 'text-violet-600 dark:text-violet-400 hover:text-violet-500'
+            : 'text-zinc-400 hover:text-zinc-200')}
+        aria-label={onSession ? 'Preview this change' : 'Use the app'}
+        title={onSession
+          ? 'Preview this change on staging'
+          : 'View and use the app'}
+        onClick={() => {
+          if (onSession) {
+            (window as unknown as {
+              AppView?: { swapToStagingForSession?: (id: number, url: string) => void };
+            }).AppView?.swapToStagingForSession?.(previewSessionId as number, previewUrl as string);
+            return;
+          }
+          Improve.openApp();
+        }}
       >
         <EyeIcon className="w-5 h-5" aria-hidden="true" />
       </button>

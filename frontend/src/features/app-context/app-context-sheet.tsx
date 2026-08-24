@@ -124,6 +124,14 @@ export function AppContextSheet() {
 
   const close = useCallback(() => AppContext.close(), []);
   const dismissForNav = useCallback(() => AppContext.dismissForNav(), []);
+  // Every action here takes the sheet down first. The Improve.* methods all
+  // call `Improve.close()`, which closes the improve PANEL — a different
+  // surface — so without this the sheet stayed up over whatever the action
+  // opened (owner review: "+ New change" left the sheet on screen).
+  const act = useCallback((run: () => void) => {
+    AppContext.dismissForNav();
+    run();
+  }, []);
 
   const AppRowIcon = selfHosted ? HomeIcon : AppWindowIcon;
 
@@ -177,10 +185,7 @@ export function AppContextSheet() {
               icon={<AppRowIcon className="w-5 h-5 shrink-0" />}
               label={selfHosted ? 'Home' : name || 'App'}
               detail={selfHosted ? 'The platform itself' : 'View and use the app'}
-              onClick={() => {
-                AppContext.dismissForNav();
-                Improve.openApp();
-              }}
+              onClick={() => act(() => Improve.openApp())}
             />
             <ContextRow
               id="app-context-row-activity"
@@ -210,7 +215,7 @@ export function AppContextSheet() {
                   id="app-context-new-change"
                   type="button"
                   className="inline-flex items-center gap-1 text-xs font-medium text-violet-600 dark:text-violet-400 hover:underline un-touch-target"
-                  onClick={() => Improve.startSession()}
+                  onClick={() => act(() => Improve.startSession())}
                 >
                   <PlusIcon className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
                   New change
@@ -265,7 +270,7 @@ export function AppContextSheet() {
                 id="improve-row-terminal"
                 type="button"
                 className={ROW_CLASS}
-                onClick={() => Improve.openTerminal()}
+                onClick={() => act(() => Improve.openTerminal())}
               >
                 <TerminalIcon className="w-5 h-5 shrink-0" />
                 <span className="text-sm font-medium flex-1 min-w-0 truncate">
@@ -308,10 +313,9 @@ export function AppContextSheet() {
                 type="button"
                 className={ROW_CLASS}
                 onClick={() => {
-                  // Share presents a dialog of its own; hand it the sheet's
-                  // completion so the two never animate at once.
-                  void AppContext.close();
-                  Improve.share();
+                  // Share presents a dialog of its own, so it waits for the
+                  // sheet to be GONE rather than fading in across its exit.
+                  void AppContext.close().then(() => Improve.share());
                 }}
               >
                 <ShareIcon className="w-5 h-5 shrink-0" />
