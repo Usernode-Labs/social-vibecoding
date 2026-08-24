@@ -560,6 +560,34 @@ rendered before believing a zero.
    exist is dead and goes; a renderer whose host exists behind an
    unreachable branch is a product question and gets flagged.**
 
+   ### What is left, and the one trap already found in it
+
+   Two big renderers and a handful of small ones:
+
+   - **`renderChatView`** (~420 lines) — the session header strip, four
+     banners, the launchpad slot, the panes and the composer wrapper. The
+     natural next chunk is the HEADER STRIP alone (`#dc-session-header`),
+     which is a clean boundary, but **check the venue button before
+     starting**: `dapp.json` selects
+     `#dc-session-header > button#dc-venue-select … :last-child`, a DIRECT
+     child and the last one, so `BuildVenues.selectorHtml`'s markup cannot
+     go in through a wrapped `dangerouslySetInnerHTML` sink. Either render
+     that button in React from a `BuildVenues.venue()` spec and retire
+     `selectorHtml` (one production caller, two test files assert on the
+     string), or leave the strip alone. The strip also carries two other
+     seams: `#dc-status-pill`, which `_patchHeaderStatusPill` rewrites
+     mid-stream ON PURPOSE so a live turn is not disturbed, and the header
+     element itself, which `PlatformUI.attachScreenFx` writes classes to at
+     runtime — so its `className` must stay constant.
+   - **`renderMessages`** (~580 lines) — the transcript. The hard part is
+     not the messages, it is `_writeStreamingHtml`: it assigns
+     `el.innerHTML` on a bubble's content node at up to 60fps. Publishing
+     that through a store would re-render the list every frame, so the
+     streaming bubble has to stay a controller host the module keeps
+     writing while React owns the finished messages. The group chat's
+     transcript solved the same problem for `.gc-msg-content`; read that
+     before designing this one.
+
    All four are the host-is-mine/children-are-React's seam: `renderChatView`'s
    template writes each ELEMENT and the module toggles the class that gives it
    a height (`dc-attach-strip-active`, `dc-quick-replies-active`), so React
