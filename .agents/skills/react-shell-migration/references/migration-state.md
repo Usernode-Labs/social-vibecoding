@@ -227,6 +227,17 @@ replaced, attribute by attribute.** The vote host and the quote block were
 both cases where a host existed, was filled by something, and still did not
 work, because the two ends had agreed on different names.
 
+And a fifth is about the ownership audit itself: **run it signed in, with the
+cookie's own host.** `scripts/audit-react-ownership.mjs` takes an `AUTH`
+storage state, and without one most of the route list renders an empty
+`#app-content` — no Dev board, no Dev chat composer, no admin console — while
+the script still prints a confident "0 legacy writes". The saved cookie is
+scoped to the host it was captured on, so `http://127.0.0.1:3000` and
+`http://localhost:3000` are not interchangeable; the wrong one is silently
+anonymous. Getting this wrong hid a real finding (`refreshVoteControls`
+writing into `#gc-messages`) behind a clean run. Check that one route actually
+rendered before believing a zero.
+
 ### Large
 
 1. **Dev screen — `public/js/app-view.js`. Started; the card family is what is
@@ -286,8 +297,47 @@ work, because the two ends had agreed on different names.
    transcript slot (its body comes from `public/js/session-transcript.js`),
    and `renderAppTab` / `renderDevChatTab`'s shells.
 
-2. Dev chat — `features/dev-chat/dev-chat.js`, about 9,820 lines and 58 sites.
-   Not started. Streaming assistant output is the complication.
+2. **Dev chat — `frontend/src/features/dev-chat/dev-chat.js`, about 9,820
+   lines and 58 sites. Started at the composer.** Four strips have converted:
+
+   | converted | host |
+   | --- | --- |
+   | the pending-upload strip | `#dc-attachments` |
+   | the credit meter | `#dc-budget` |
+   | the quick-reply pills | `#dc-quick-replies` |
+   | the "Run on" controls | `#dc-runner` |
+
+   All four are the host-is-mine/children-are-React's seam: `renderChatView`'s
+   template writes each ELEMENT and the module toggles the class that gives it
+   a height (`dc-attach-strip-active`, `dc-quick-replies-active`), so React
+   owns only the children. `renderChatView` rebuilds all four on every
+   chat-view render, so each mounts per publish and the previous host's portal
+   entry is swept as detached by `pruneDetachedLegacyPortals`. All four hosts
+   are in the ownership audit's `OWNED`, swept on
+   `#app/recipebot/dev/sessions/1`.
+
+   The pending strip is `features/attachments/pending-strip.tsx`, SHARED with
+   the group chat's two composers — the first component either screen took
+   from the other. It exports two things on purpose: `PendingStripRows` (the
+   rows alone, for a host the legacy template already emitted) and
+   `PendingStrip` (the element plus its rows, for a caller that owns the whole
+   thing). Mounting the wrong one nests `#dc-attachments` inside itself, which
+   is a real bug this made once and `tests/attachments-pending-strip.test.js`
+   now pins.
+
+   **`dev-chat.js` must stay import-free.** A dozen test files load it with
+   `vm.runInContext(SRC)` as a classic SCRIPT, where a top-level `import` is a
+   syntax error — adding four of them broke 194 tests. The bridge is
+   `features/dev-chat/mount.ts`, imported by `main.tsx` before the module and
+   published as `window.UsernodeReact.devChat`; the module reads it at call
+   time and bails when it is absent. Both files' headers say so, and the test
+   above asserts it.
+
+   What is left is the big half: `renderChatView`'s own shell, `renderMessages`
+   and the streaming assistant output. Streaming is the complication — the
+   message list is appended to token by token, so it wants a store that
+   patches one row rather than republishing the list.
+
 3. ~~Admin interior~~ — **done**. See "The admin console: done" above.
 
 ## Staging fixtures

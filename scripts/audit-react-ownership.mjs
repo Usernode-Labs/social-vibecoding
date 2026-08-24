@@ -47,8 +47,16 @@
  *
  * USAGE
  *
- *   node scripts/audit-react-ownership.mjs            # needs a dev server on :3000
  *   AUDIT_BASE=http://localhost:3000 AUTH=/path/auth.json node scripts/audit-react-ownership.mjs
+ *
+ * **PASS `AUTH`, AND MATCH ITS COOKIE'S HOST.** Signed out, most of the route
+ * list renders an empty `#app-content` — no Dev board, no Dev chat composer,
+ * no admin console — and the audit sweeps almost nothing while still printing
+ * a confident "0 legacy writes". It reported exactly that over a real finding
+ * once. The saved cookie is scoped to the host it was captured on, so
+ * `http://127.0.0.1:3000` and `http://localhost:3000` are not
+ * interchangeable: the wrong one is silently anonymous. When in doubt, open
+ * one route with the same storage state and check that something rendered.
  *
  * Exits non-zero when it finds anything, so it can gate a branch.
  */
@@ -113,8 +121,15 @@ const OWNED = [
   { sel: '#home-discover-section' },         // features/home/panels/sections.tsx
   { sel: '#home-challenges-section' },       // ditto
   { sel: '#home-create-section' },           // ditto
-  { sel: '#gc-messages' },                   // features/group-chat/transcript.tsx
-  { sel: '#gc-thread-messages' },            // ditto, mounted with the 'thread' key
+  // The transcript (features/group-chat/transcript.tsx). A vote row's inline
+  // controls are the one exception, and they are the controller-host seam
+  // AGENTS.md documents: transcript.tsx renders `.gc-vote-inline` ONCE as an
+  // empty span with a constant className and never looks inside it, and
+  // group-chat.js's `refreshVoteControls` fills it from AppView.voteState.
+  // The row's TINT is not exempt — that is a view-model field React renders,
+  // and the module patches the model rather than the class list.
+  { sel: '#gc-messages', except: ['[data-vote-controls]'] },
+  { sel: '#gc-thread-messages', except: ['[data-vote-controls]'] }, // 'thread' key
   { sel: '#gc-mention-menu' },               // features/group-chat/autocomplete.tsx
   { sel: '#gc-ref-menu' },                   // ditto
   { sel: '#gc-spec-side-panel' },            // features/group-chat/spec-panel.tsx
@@ -157,6 +172,16 @@ const OWNED = [
     sel: '.gc-chat-pane',
     except: ['#gc-messages'],
   },
+  // The dev chat composer's four strips. Each HOST is dev-chat.js's — its
+  // `renderChatView` template writes them, and each carries a class the module
+  // toggles for the strip's height (`dc-quick-replies-active`,
+  // `dc-attach-strip-active`) — but the CHILDREN are React's, so an innerHTML
+  // or an append below one is a second author. Swept on the session route
+  // above; the composer is on screen for every dev-chat session.
+  { sel: '#dc-attachments' },                // features/attachments/pending-strip.tsx
+  { sel: '#dc-quick-replies' },              // features/dev-chat/composer-chrome.tsx
+  { sel: '#dc-runner' },                     // ditto
+  { sel: '#dc-budget' },                     // features/dev-chat/budget-pill.tsx
   { sel: '#llm-grants-list' },               // features/settings/grants-list.tsx
   { sel: '#cli-tokens-list' },               // features/settings/cli-tokens-list.tsx
   { sel: '#connectors-list' },               // features/settings/connectors-list.tsx
@@ -232,10 +257,11 @@ function instrument(owned) {
       // A documented legacy-filled host INSIDE an owned one: rendered once
       // with constant props and never looked inside. Writes below it are the
       // sanctioned pattern, not a second author.
-      if (except && except.some((s2) => {
-        const h = document.querySelector(s2);
-        return h && (h === node || h.contains(node));
-      })) continue;
+      // ALL matches, not the first: `[data-vote-controls]` is one seam with
+      // one host per votable row, and `querySelector` would exempt only the
+      // topmost one and report every row below it.
+      if (except && except.some((s2) => [...document.querySelectorAll(s2)]
+        .some((h) => h === node || h.contains(node)))) continue;
       const host = document.querySelector(sel);
       // The host ITSELF counts, not just its descendants: appending a row
       // straight into `#gc-messages` is one of the two bugs this exists for.
