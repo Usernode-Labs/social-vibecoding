@@ -6727,6 +6727,56 @@ a.drawer-ver--fork:hover {
     transform: translateY(0);
   }
 }
+/* ── App-context sheet (Streamlined Concept) ──────────────────────
+   The surface behind the header's "app name ⌄" tab. Same dual idiom as
+   #improve-panel above — right-edge slide-over at `sm`+ for a mouse, a
+   bottom sheet below it, a real kit sheet on touch — and the same
+   always-mounted / data-open mechanics; read that block's comment for
+   the reasoning, which transfers wholesale. */
+#app-context-sheet {
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 20rem;
+  max-width: 85vw;
+  border-left-width: 1px;
+  transform: translateX(100%);
+}
+#app-context-sheet[data-open] {
+  transform: translateX(0);
+}
+.app-context-transition {
+  transition: transform 200ms ease-out;
+}
+#app-context-overlay {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 200ms ease-out;
+}
+#app-context-overlay[data-open] {
+  opacity: 1;
+  pointer-events: auto;
+}
+@media (max-width: 639px) {
+  #app-context-sheet {
+    top: auto;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: auto;
+    max-width: none;
+    max-height: 70vh;
+    border-left-width: 0;
+    border-top-width: 1px;
+    border-top-left-radius: 1rem;
+    border-top-right-radius: 1rem;
+    transform: translateY(100%);
+  }
+  #app-context-sheet[data-open] {
+    transform: translateY(0);
+  }
+}
+
 #header-menu-overlay {
   opacity: 0;
   transition: opacity 200ms ease-out;

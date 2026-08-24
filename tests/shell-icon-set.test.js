@@ -172,7 +172,6 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // disclosure caret; the follow-up removed that disclosure. Every call site
     // left is behind route state — the Dev board frame's General-chat card and
     // its group rows, none of which are in <Shell/>.
-    'M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z',
     'M9 5l7 7-7 7',
     // CheckIcon and ArrowRightShortIcon — the browse screen's Add button and
     // its detail page's Open pill (#1191 slice 6). Both render from row/detail
@@ -182,6 +181,10 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // which is behind the same iOS-only gate as InfoCircleIcon below.
     'M5 13l4 4L19 7',
     'M13 7l5 5m0 0l-5 5m5-5H6',
+    // DiscussionIcon / BoardIcon / AppWindowIcon left this list with the
+    // Streamlined Concept: the always-mounted app-context sheet draws all
+    // three, so they prerender now.
+    //
     // The home panels' three glyphs, all behind the same gate: Discover,
     // Challenges and Create app render from the /api/home-panels cache, which
     // is FETCHED, so the prerendered sections are empty by contract (see
@@ -272,13 +275,10 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     //
     // ListLinesIcon is NOT here: the Dev board frame's own Feed tab renders
     // it from <Shell/>, so it still lands in the static document.
-    'M4 5h4v14H4zM10 5h4v9h-4zM16 5h4v6h-4z',
     // AppWindowIcon — both subpaths of the toggle's "App" segment, which is
     // the most conditional glyph in the shell: it needs a target AND a target
     // that is not the platform's own self-hosted row (which has no reachable
     // App tab). New with the toggle, so it has never prerendered.
-    'M4 6a1 1 0 011-1h14a1 1 0 011 1v12a1 1 0 01-1 1H5a1 1 0 01-1-1V6z',
-    'M4 9.5h16',
     // ── The dev chat composer's five glyphs ─────────────────────────
     // None of them can prerender: the composer is written into #dc-view at
     // runtime by `renderChatView`, and the prerendered document ships that

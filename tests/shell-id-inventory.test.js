@@ -269,6 +269,18 @@ const ADDED_IDS = {
   'board-filters-assignee': 'Assignee select inside the Filters dialog (was #dev-kanban-assignee on the bar).',
   'board-filters-needsvote': 'The "Needs my vote" switch inside the Filters dialog (was the bar chip #dev-kanban-needsvote).',
   'board-filters-done': 'The dialog\'s Done button — applies the staged filters via AppView.applyKanbanFilters.',
+  // ── Streamlined Concept: the app-context sheet ───────────────────
+  // The surface behind the header's "app name ⌄" tab: the app's three
+  // views, its changes in progress/elsewhere, and the reference footer
+  // (which moved here from the Improve panel keeping its ids).
+  'app-context-sheet': 'The sheet root — always mounted, data-open slides it in; kit-adopted on touch (features/app-context).',
+  'app-context-overlay': 'Backdrop behind the sheet — opacity-faded, never hidden, like #improve-overlay.',
+  'app-context-body': 'The sheet\'s scroller — a column flex so #improve-footer bottom-anchors, exactly as #improve-body did.',
+  'app-context-close': 'Close button in the sheet header.',
+  'app-context-row-app': 'Destination row: view and use the app (Improve.openApp).',
+  'app-context-row-activity': 'Destination row: the Activity stream (#app/<slug>/activity).',
+  'app-context-row-board': 'Destination row: the Board (#app/<slug>/board).',
+  'app-context-new-change': 'The + New change action beside the Changes-in-progress heading (Improve.startSession).',
   // ── Streamlined Concept: the full-screen Notifications view ──────
   // A real screen behind the drawer's Notifications row, on the Messages
   // screen's fully-React pattern: All | Unread tabs, Today/Earlier

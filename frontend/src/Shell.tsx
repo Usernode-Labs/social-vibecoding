@@ -73,6 +73,7 @@ import { MoreScreen } from './features/auth/more';
 import { DevConsolePanel } from './features/dev-console';
 import { HomeScreen } from './features/home';
 import { ImproveIsland } from './features/improve';
+import { AppContextIsland } from './features/app-context';
 import { LeaderboardScreen } from './features/leaderboard';
 import { HeaderMenu } from './features/header/header-menu';
 import { PlatformHeader } from './features/header/platform-header';
@@ -237,7 +238,7 @@ export function Shell() {
           notifications store the drawer's list reads —
           App.navigateToNotifications publishes visibility on #notifications.
       */}
-      <NotificationsScreen />
+      <Island name="NotificationsScreen"><NotificationsScreen /></Island>
       {/*
           The Topochain leaderboard used to be its own <main> screen here
           (#topochain-leaderboard-screen, Task 14). The header slim-down
@@ -383,6 +384,14 @@ export function Shell() {
           sheet on touch where the kit is loaded.
       */}
       <Island name="ImproveIsland"><ImproveIsland /></Island>
+      {/*
+          The app-context sheet (Streamlined Concept) — the surface behind
+          the header's "app name ⌄" tab: the app's three views, its changes
+          in progress and elsewhere, and the reference footer that moved
+          here from the Improve panel. Fully React-owned, always mounted,
+          same dual-idiom presentation as the Improve panel above.
+      */}
+      <Island name="AppContextIsland"><AppContextIsland /></Island>
       {/* Developer console (slide-up panel, anchored to bottom) — an ISLAND
           since #1079 chunk B: features/dev-console owns the whole subtree and
           public/js/dev-console.js is retired. */}

@@ -505,15 +505,15 @@
       "expectText": "Whole-season standings"
     },
     {
-      "name": "Improve panel shows a session's title, not its dev name (#971)",
-      "path": "/?shot=improve&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#improve-panel[data-open] #improve-body a[href$=\"/sessions/990101\"]",
+      "name": "App-context sheet shows a change's title, not its dev name (#971, Streamlined Concept)",
+      "path": "/?shot=app-context&demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#app-context-sheet[data-open] #app-context-body a[href$=\"/sessions/990101\"]",
       "expectText": "[Mock] Your in-progress session"
     },
     {
-      "name": "Improve panel: a busy session row pulses from live state (#1038)",
-      "path": "/?shot=improve&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#improve-panel[data-open] a[href$=\"/sessions/990102\"] .animate-pulse"
+      "name": "App-context sheet: a busy change row pulses from live state (#1038)",
+      "path": "/?shot=app-context&demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#app-context-sheet[data-open] a[href$=\"/sessions/990102\"] .animate-pulse"
     },
     {
       "name": "Send Feedback offers a kudos bounty, unchecked by default (#964)",
@@ -1338,6 +1338,16 @@
       "expectSelector": "#improve-btn:not(.hidden)"
     },
     {
+      "name": "The app-context sheet offers the three views in order (Streamlined Concept)",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#app-context-sheet [data-context-row=\"app\"] ~ [data-context-row=\"activity\"] ~ [data-context-row=\"board\"]"
+    },
+    {
+      "name": "The app-context sheet carries the + New change action (Streamlined Concept)",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#app-context-sheet #app-context-new-change"
+    },
+    {
       "name": "The center title is a tappable app-context tab on an app screen (Streamlined Concept)",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#header-title #header-title-tab"
@@ -1722,8 +1732,8 @@
       "expectSelector": "#drawer-row-admin:not(.hidden)"
     },
     {
-      "name": "Improve footer renders the platform build as plain text, not a pill",
-      "path": "/?shot=improve",
+      "name": "The reference footer renders the platform build as plain text, not a pill",
+      "path": "/?shot=app-context",
       "expectSelector": "#improve-footer #drawer-row-platform-version #platform-version-pill-slot .drawer-ver"
     },
     {
@@ -1748,9 +1758,9 @@
       "expectText": "Platform version"
     },
     {
-      "name": "Improve footer holds GitHub + Share above the version rows",
-      "path": "/?shot=improve&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#improve-body > #improve-footer > #improve-row-github"
+      "name": "The reference footer holds GitHub + Share above the version rows (app-context sheet)",
+      "path": "/?shot=app-context&demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#app-context-body > #improve-footer > #improve-row-github"
     },
     {
       "name": "Main nav order is Profile, Messages, Settings, Admin & moderation",
