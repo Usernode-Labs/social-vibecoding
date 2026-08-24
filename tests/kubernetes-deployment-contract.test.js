@@ -99,11 +99,32 @@ test('PostgreSQL claim template uses only release-stable labels', () => {
   assert.doesNotMatch(claimTemplate, /social-vibecoding-platform\.labels/);
 });
 
-test('generated app database URLs use cross-namespace PostgreSQL DNS', () => {
+test('database URLs use the configured embedded or external PostgreSQL endpoint', () => {
   const secret = read('deploy/helm/social-vibecoding-platform/templates/secret.yaml');
-  assert.match(secret, /-postgresql\.%s\.svc\.%s:5432/);
-  assert.match(secret, /\.Release\.Namespace/);
-  assert.match(secret, /\.Values\.clusterDomain/);
+  const helpers = read('deploy/helm/social-vibecoding-platform/templates/_helpers.tpl');
+  assert.match(secret, /social-vibecoding-platform\.postgresqlHost/);
+  assert.match(secret, /\.Values\.postgresql\.port/);
+  assert.match(helpers, /postgresql\.host is required when postgresql\.enabled=false/);
+  assert.match(helpers, /-postgresql\.%s\.svc\.%s/);
+});
+
+test('platform, migration, and embedded PostgreSQL have independent activation gates', () => {
+  const platform = read('deploy/helm/social-vibecoding-platform/templates/platform.yaml');
+  const migration = read('deploy/helm/social-vibecoding-platform/templates/migration-job.yaml');
+  const postgresql = read('deploy/helm/social-vibecoding-platform/templates/postgresql.yaml');
+  const ingress = read('deploy/helm/social-vibecoding-platform/templates/ingress.yaml');
+  assert.match(platform, /and \.Values\.enabled \.Values\.platform\.enabled/);
+  assert.match(migration, /and \.Values\.enabled \.Values\.migration\.enabled/);
+  assert.match(postgresql, /and \.Values\.enabled \.Values\.postgresql\.enabled/);
+  assert.match(ingress, /\.Values\.platform\.enabled \.Values\.ingress\.enabled/);
+});
+
+test('chart default deny selects only chart-owned workloads', () => {
+  const policy = read('deploy/helm/social-vibecoding-platform/templates/networkpolicy.yaml');
+  const defaultDeny = policy.split('kind: NetworkPolicy')[1].split('---')[0];
+  assert.match(defaultDeny, /social-vibecoding-platform\.selectorLabels/);
+  assert.doesNotMatch(defaultDeny, /podSelector: \{\}/);
+  assert.match(policy, /social-vibecoding-platform\.postgresqlPodSelector/);
 });
 
 test('PostgreSQL ingress permits only runtime-managed generated app pods', () => {
@@ -112,7 +133,7 @@ test('PostgreSQL ingress permits only runtime-managed generated app pods', () =>
   assert.match(postgresqlPolicy, /databaseCallerNamespaces/);
   assert.match(postgresqlPolicy, /app\.kubernetes\.io\/managed-by: social-vibecoding-runtime/);
   assert.match(postgresqlPolicy, /app\.kubernetes\.io\/part-of: social-vibecoding/);
-  assert.match(postgresqlPolicy, /port: 5432/);
+  assert.match(postgresqlPolicy, /port: \{\{ \.Values\.postgresql\.port \}\}/);
 });
 
 test('public platform ingress is restricted to the Cilium ingress identity', () => {

@@ -1,9 +1,9 @@
 # Social Vibecoding Platform
 
-This application-owned chart deploys the platform process and its PostgreSQL
-database into `social-platform`. Generated applications, warm workers and
-capture Jobs are created later by the platform through the scoped runtime
-service account.
+This application-owned chart deploys the platform process and either its own
+PostgreSQL StatefulSet or an externally managed PostgreSQL cluster into
+`social-platform`. Generated applications, warm workers and capture Jobs are
+created later by the platform through the scoped runtime service account.
 
 The `Build Kubernetes images` workflow first publishes three immutable images,
 then packages their exact digests into `values.release.yaml` and publishes this
@@ -31,6 +31,15 @@ Resource ordering within the Application is:
 2. PostgreSQL Service and StatefulSet at sync wave `-2`.
 3. Idempotent migration `Sync` hook at wave `-1`.
 4. Platform Deployment, Service and Ingress at wave `0`.
+
+The master `enabled` gate is split further into `platform.enabled`,
+`migration.enabled`, and `postgresql.enabled`. All three default to `true` for
+backward compatibility. To use CloudNativePG or another external database, set
+`postgresql.enabled=false`, configure `postgresql.host`, `postgresql.port`, and
+the narrow `postgresql.podSelector`, then let the database-owning deployment
+control ingress to its Pods. This also permits a cutover-ready configuration
+with the platform, migration Job, and ingress disabled until the database is
+writable.
 
 Platform upgrades use a Kubernetes-native blue/green equivalent: a
 `RollingUpdate` Deployment creates a new ReplicaSet beside the live one,

@@ -183,6 +183,31 @@ jobs:
             --set secrets.create=false \
             --set secrets.existingSecret=social-vibecoding >/dev/null
 
+          inactive_manifest="$RUNNER_TEMP/social-vibecoding-platform-inactive.yaml"
+          helm template social-vibecoding-platform "$chart_dir" \
+            -f "$chart_dir/values.release.yaml" \
+            --set enabled=true \
+            --set platform.enabled=false \
+            --set migration.enabled=false \
+            --set postgresql.enabled=false \
+            --set postgresql.host=social-postgres-rw.social-platform.svc.cluster.local \
+            --set secrets.create=false \
+            --set secrets.existingSecret=social-vibecoding \
+            --set ingress.enabled=false >"$inactive_manifest"
+          test ! -s "$inactive_manifest"
+
+          external_manifest="$RUNNER_TEMP/social-vibecoding-platform-external.yaml"
+          helm template social-vibecoding-platform "$chart_dir" \
+            -f "$chart_dir/values.release.yaml" \
+            --set enabled=true \
+            --set postgresql.enabled=false \
+            --set postgresql.host=social-postgres-rw.social-platform.svc.cluster.local \
+            --set-json 'postgresql.podSelector={"cnpg.io/cluster":"social-postgres"}' \
+            --set secrets.create=false \
+            --set secrets.existingSecret=social-vibecoding >"$external_manifest"
+          ! grep -q '^kind: StatefulSet$' "$external_manifest"
+          grep -q 'cnpg.io/cluster: social-postgres' "$external_manifest"
+
           helm package "$chart_dir" \
             --destination "$package_dir" \
             --version "$chart_version" \

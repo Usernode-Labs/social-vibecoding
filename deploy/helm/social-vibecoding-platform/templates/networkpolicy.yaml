@@ -1,4 +1,4 @@
-{{- if and .Values.enabled .Values.networkPolicy.enabled }}
+{{- if and .Values.enabled .Values.networkPolicy.enabled (or .Values.platform.enabled .Values.migration.enabled .Values.postgresql.enabled) }}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -8,8 +8,13 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "-3"
 spec:
-  podSelector: {}
+  # Never select the whole namespace: CNPG and the source tunnel are managed
+  # by a separate Argo application with their own policy boundary.
+  podSelector:
+    matchLabels:
+      {{- include "social-vibecoding-platform.selectorLabels" . | nindent 6 }}
   policyTypes: [Ingress, Egress]
+{{- if .Values.platform.enabled }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -35,11 +40,19 @@ spec:
       ports: [{protocol: TCP, port: 3000}]
   egress:
     - to:
-        - podSelector:
+        - {{- if and (not .Values.postgresql.enabled) .Values.postgresql.namespace }}
+          namespaceSelector:
             matchLabels:
-              {{- include "social-vibecoding-platform.selectorLabels" . | nindent 14 }}
-              app.kubernetes.io/component: postgresql
-      ports: [{protocol: TCP, port: 5432}]
+              kubernetes.io/metadata.name: {{ .Values.postgresql.namespace | quote }}
+          podSelector:
+            matchLabels:
+              {{- include "social-vibecoding-platform.postgresqlPodSelector" . | nindent 14 }}
+          {{- else }}
+          podSelector:
+            matchLabels:
+              {{- include "social-vibecoding-platform.postgresqlPodSelector" . | nindent 14 }}
+          {{- end }}
+      ports: [{protocol: TCP, port: {{ .Values.postgresql.port }}}]
     {{- if .Values.networkPolicy.nodeRpc.enabled }}
     - to:
         - namespaceSelector:
@@ -71,6 +84,8 @@ spec:
     - ports: [{protocol: UDP, port: 53}, {protocol: TCP, port: 53}]
     - to: [{ipBlock: {cidr: 0.0.0.0/0}}]
       ports: [{protocol: TCP, port: 443}]
+{{- end }}
+{{- if .Values.migration.enabled }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -88,12 +103,22 @@ spec:
   policyTypes: [Egress]
   egress:
     - to:
-        - podSelector:
+        - {{- if and (not .Values.postgresql.enabled) .Values.postgresql.namespace }}
+          namespaceSelector:
             matchLabels:
-              {{- include "social-vibecoding-platform.selectorLabels" . | nindent 14 }}
-              app.kubernetes.io/component: postgresql
-      ports: [{protocol: TCP, port: 5432}]
+              kubernetes.io/metadata.name: {{ .Values.postgresql.namespace | quote }}
+          podSelector:
+            matchLabels:
+              {{- include "social-vibecoding-platform.postgresqlPodSelector" . | nindent 14 }}
+          {{- else }}
+          podSelector:
+            matchLabels:
+              {{- include "social-vibecoding-platform.postgresqlPodSelector" . | nindent 14 }}
+          {{- end }}
+      ports: [{protocol: TCP, port: {{ .Values.postgresql.port }}}]
     - ports: [{protocol: UDP, port: 53}, {protocol: TCP, port: 53}]
+{{- end }}
+{{- if .Values.postgresql.enabled }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -111,14 +136,18 @@ spec:
   policyTypes: [Ingress]
   ingress:
     - from:
+        {{- if .Values.platform.enabled }}
         - podSelector:
             matchLabels:
               {{- include "social-vibecoding-platform.selectorLabels" . | nindent 14 }}
               app.kubernetes.io/component: platform
+        {{- end }}
+        {{- if .Values.migration.enabled }}
         - podSelector:
             matchLabels:
               {{- include "social-vibecoding-platform.selectorLabels" . | nindent 14 }}
               app.kubernetes.io/component: migration
+        {{- end }}
         {{- range .Values.networkPolicy.databaseCallerNamespaces }}
         - namespaceSelector:
             matchLabels:
@@ -128,8 +157,9 @@ spec:
               app.kubernetes.io/managed-by: social-vibecoding-runtime
               app.kubernetes.io/part-of: social-vibecoding
         {{- end }}
-      ports: [{protocol: TCP, port: 5432}]
-{{- if .Values.networkPolicy.ciliumApiServerEgress }}
+      ports: [{protocol: TCP, port: {{ .Values.postgresql.port }}}]
+{{- end }}
+{{- if and .Values.platform.enabled .Values.networkPolicy.ciliumApiServerEgress }}
 ---
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
