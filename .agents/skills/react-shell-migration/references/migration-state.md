@@ -36,15 +36,15 @@ into it. The list below is the state after the widget-library run (#1120);
 `scripts/audit-react-ownership.mjs` carries the converse — every host React
 now reconciles — and is the thing to update when one moves across.
 
-- `#app-content` and `#dc-view` — the Dev screen. `#dc-view` is created at
-  runtime by `public/js/app-view.js`, so it cannot be converted independently.
-- `#dev-body` — the Dev chat.
+- `#dc-view` — the Dev chat's host, created at runtime by
+  `public/js/app-view.js`, so it cannot be converted independently.
+  `#app-content` itself is no longer on this list: all four Dev sub-views mount
+  a React frame into it.
 - `#settings-nav-desktop`, `#settings-mobile-menu-host`, and
   `#settings-usernode-section` — see "The settings interior" below.
 - nothing on the Leaderboard screen. See the note under "Converted".
-- the group chat's composer — the reply preview, the attach-error line and the
-  attachment strip — which is the Dev screen's boundary, not its own. See
-  "The group chat" below.
+- `#dev-body` and the card family it holds — the Dev screen's remaining chunk.
+  See "Large" below for what that is and what has to move with it.
 - the header's own strays: `header/ai-credit.js`, `header/wallet-sheet.js`,
   `header/node-pill.js`, `native-chrome.js` and `screenshot-select.js`.
 
@@ -229,11 +229,65 @@ work, because the two ends had agreed on different names.
 
 ### Large
 
-1. Dev screen — `public/js/app-view.js`, about 14,140 lines and 71 sites.
-   It also owns the group chat's general composer and `Kudos.renderButton`'s
-   hover popover, so those come across with it.
+1. **Dev screen — `public/js/app-view.js`. Started; the card family is what is
+   left.** Every FLOATING and INDEPENDENT surface has converted:
+
+   | converted | host |
+   | --- | --- |
+   | the general chat pane and its composer | `#dev-chat-body` |
+   | the topic sub-view's frame | `#app-content` |
+   | the metadata picker | `#attr-popover` |
+   | the card's ⋯ menu | `.dev-card-menu` |
+   | the voting-help popover | `#voting-help-popover` |
+   | the kanban filter bar | `#dev-kanban-filterbar` |
+   | an issue's GitHub thread | `#dev-issue-comments` |
+   | the locked-app banner | `#dev-locked-notice` |
+
+   Three of those are body-mounted floating hosts and share the seam the group
+   chat's menus established: the module creates the element, measures it
+   against something on screen and owns its `hidden` (or removes it on close);
+   React owns only its children. Each store installs `setFlush(flushSync)`,
+   because in every case the module measures or focuses on the line after it
+   publishes.
+
+   **What is left is one chunk, and it does not decompose.** The six card
+   renderers — `_renderIssueRow`, `_renderProposalCard`, `_renderGovCard`,
+   `_renderMySessionCard`, `_renderSharedSessionCard`, `_renderMergedCard` /
+   `_renderCompletedCloseIssueCard` — share one shell (`_cardContentHtml`,
+   `_cardBadgesHtml`, `_cardRailHtml`, `_cardActionsHtml`, `statusPillHtml`,
+   `voteCountPill`, `voteButtonsHtml`, `_attrChipHtml`, `cardPreviewHtml`,
+   `checksBadgeHtml`, `closesPillHtml`) and have exactly five consumers: the
+   feed (`_renderFeedInner`), the kanban (`_renderKanbanInner`), the
+   in-progress strip, the merged list and the topic head (`_renderTopicHead`).
+   A card cannot convert before its consumers, and a consumer cannot convert
+   before the cards it draws — so it is one commit of roughly 2,500 lines of
+   renderer, not a sequence.
+
+   **Two live in-place writers have to move with it**, and both are tractable:
+
+   - `_applyExploreChatAvailability` sets `disabled`, `title` and two classes
+     on every `.gc-explore-chat-btn` after a memoised `/api/budget` check. It
+     becomes an `aiEnabled` field on the view model, republished when the
+     promise settles.
+   - the 30s countdown ticker rewrites `.gc-vote-count-label`'s text on every
+     `[data-window-ends]` pill. It becomes a `now` tick the pills' labels
+     derive from — it already walks every pill, so the cost is unchanged.
+
+   `refreshVoteControls` needs no move: the group chat's transcript already
+   proved the pattern (the host's CONTENTS stay the module's, the row's TINT
+   becomes a patched field, and `patchTranscriptMessage` drops a patch that
+   says nothing new so the effect that calls it cannot loop).
+
+   Smaller pieces that are genuinely independent and could go first:
+   `#dev-locked-notice`'s siblings in the same list (`#dev-chat-card-preview`,
+   `#dc-secrets-state`), the three body-mounted modals (generate-proposal,
+   LLM consent, credits — the last embeds `CreditOptions.cardHtml`, another
+   module's markup, so it keeps a controller-host seam), the shared-session
+   transcript slot (its body comes from `public/js/session-transcript.js`),
+   and `renderAppTab` / `renderDevChatTab`'s shells.
+
 2. Dev chat — `features/dev-chat/dev-chat.js`, about 9,820 lines and 58 sites.
-   Streaming assistant output is the complication.
+   Not started. Streaming assistant output is the complication.
 3. ~~Admin interior~~ — **done**. See "The admin console: done" above.
 
 ## Staging fixtures
