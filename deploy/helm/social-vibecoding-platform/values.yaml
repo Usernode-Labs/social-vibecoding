@@ -15,6 +15,7 @@ release:
   sourceRevision: ""
 
 platform:
+  enabled: true
   replicas: 1
   image:
     repository: ghcr.io/replace-me/social-vibecoding-platform
@@ -38,6 +39,15 @@ platform:
   tmpSizeLimit: 2Gi
 
 postgresql:
+  # Deploy the chart-owned StatefulSet by default. Set enabled=false and host
+  # to use an externally managed PostgreSQL cluster such as CloudNativePG.
+  enabled: true
+  host: ""
+  port: 5432
+  # Selects external PostgreSQL Pods for platform and migration egress.
+  # Leave namespace empty when PostgreSQL runs in the release namespace.
+  namespace: ""
+  podSelector: {}
   image:
     repository: postgres
     tag: 17-bookworm
@@ -59,6 +69,7 @@ postgresql:
   sharedMemorySizeLimit: 1Gi
 
 migration:
+  enabled: true
   activeDeadlineSeconds: 1800
   ttlSecondsAfterFinished: 3600
   backoffLimit: 1
