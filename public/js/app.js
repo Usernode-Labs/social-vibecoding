@@ -2541,6 +2541,14 @@ const App = {
           const pm = fragQuery.match(/(?:^|&)path=(.*)$/);
           if (pm) innerPath = App._validateInnerPath(pm[1]);
         }
+        // Streamlined Concept aliases: the app-context sheet's two
+        // destinations get first-class hashes. `activity` IS the general
+        // chat stream (same screen dev/chat always was) and `board` IS the
+        // forum card area (feed and kanban are both board modes now), so
+        // both rewrite onto the vocabulary the switch below already
+        // handles — old `dev` / `dev/chat` links keep working unchanged.
+        if (tab === 'activity') { tab = 'dev'; parts[2] = 'dev'; parts[3] = 'chat'; }
+        else if (tab === 'board') { tab = 'dev'; parts[2] = 'dev'; parts[3] = null; }
         if (tab === 'dev') {
           const sec = parts[3] || null;
           if (sec === 'sessions' && parts[4]) {
@@ -3389,6 +3397,14 @@ const App = {
       // Strip the fragment-query (#743) so #app/x/full?path=/t/1 and
       // #app/x/full are the SAME screen (replace, not a spurious push).
       const segs = String(h || '').replace(/^#/, '').split('?')[0].split('/');
+      // Streamlined Concept aliases (see restoreFromHash): #app/x/activity
+      // is dev/chat and #app/x/board is dev, so an alias in the address bar
+      // and the canonical form updateHash computes are the SAME screen —
+      // replace, never a spurious push.
+      if (segs[0] === 'app') {
+        if (segs[2] === 'activity') segs.splice(2, 1, 'dev', 'chat');
+        else if (segs[2] === 'board') segs.splice(2, 1, 'dev');
+      }
       if (segs[0] === 'app' && segs[2] === 'dev') {
         return SUB_SCREENS.has(segs[3])
           ? segs.slice(0, 4).join('/')
@@ -3776,6 +3792,12 @@ const App = {
   // (Flutter logs and drops unknown methods), so this is safe to ship
   // ahead of the Flutter rebuild.
   setHeaderTitle(text) {
+    // Streamlined Concept groundwork: the title is becoming React state
+    // (frontend/src/features/header/header-title-store.js) so the center of
+    // the bar can render as a tappable app-context tab. Dual-write during
+    // the transition — publish through the bridge AND keep the direct
+    // textContent assignment until header-title-tab.tsx owns the subtree.
+    window.UsernodeReact?.headerTitle?.set?.(text);
     const headerEl = document.getElementById('header-title');
     if (headerEl) headerEl.textContent = text;
     document.title = text;
