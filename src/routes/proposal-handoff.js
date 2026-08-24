@@ -10,6 +10,7 @@ const visuals = require('../services/visuals');
 const sessionLifecycle = require('../services/session-lifecycle');
 const proposalUpdate = require('../services/proposal-update');
 const branchNames = require('../services/branch-names');
+const externalAgentHead = require('../services/external-agent-head');
 // The connector-error → HTTP status map. It lives in routes/dev-flow.js
 // because tests/dev-flow-routes.test.js scrapes the services' emitted codes
 // against it in both directions; importing it here rather than restating it is
@@ -781,6 +782,23 @@ function proposalHandoffRoutes(config) {
         return res.status(429).json({ error: capError.code, message: capError.message, retryable: true });
       }
 
+      // ── The branch the ROW carries is the app repository's, not the fork's
+      //
+      // `input.branch` is a branch in the caller's own fork; `branch_name` on
+      // a session is the branch in the APP's repository that everything
+      // downstream reads — the landing below pushes to it, promote opens its
+      // pull request from it, and `platformOwnedBranch` decides from its NAME
+      // that a row with no `source` lives in the app repo. Storing the fork's
+      // name there conflates the two, and puts a name the caller chose into a
+      // namespace the platform owns.
+      //
+      // So it is minted here, in `usernode/from-…`, exactly like the mirror
+      // rung's own heads. The branch does not exist yet — the landing creates
+      // it — and that is the whole reason `updateProposalFromForkBranch` has a
+      // first-landing case: there is no head to lease against on the first
+      // share of a piece of work.
+      const appRepoBranch = externalAgentHead.shareBranchName(req.user.id);
+
       // `shared_at` at creation, not afterwards: the point of the call is that
       // the card is visible, and a row that exists unshared for even one
       // failed statement is a private session the caller never asked for.
@@ -793,7 +811,7 @@ function proposalHandoffRoutes(config) {
         [
           app.id,
           req.user.id,
-          input.branch,
+          appRepoBranch,
           input.title || null,
           input.externalAgent,
         ]

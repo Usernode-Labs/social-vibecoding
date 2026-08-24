@@ -71,6 +71,33 @@ function nonce() {
   return crypto.randomBytes(4).toString('hex');
 }
 
+// Is `name` inside the namespace above — the one this file owns?
+//
+// services/proposal-update.js asks the same question of a session's stored
+// branch (`platformOwnedBranch`), and asks it about a name it READ. This asks
+// it about a name it is about to WRITE: the only branches a mirror may create
+// in an app's repository are ones nothing else on the platform could have
+// meant.
+function isMirrorNamespace(name) {
+  const branch = String(name == null ? '' : name).trim();
+  return branch.startsWith(MIRROR_BRANCH_PREFIX) || branch.startsWith(PATCH_BRANCH_PREFIX);
+}
+
+// The app-repo branch name for work SHARED to the in-progress area (#1347).
+//
+// Minted from the Usernode user id, not from a login or a username: 194 of
+// 303 production usernames are email addresses (see services/branch-names.js
+// on what that cost the dev-session path), and `@`/`+` are outside `REF_RE`
+// here. An integer is always a valid ref segment.
+//
+// It sits in the same namespace as the mirror rung's own names, which is what
+// makes the branch recognisably the platform's rather than the caller's — and
+// `usernode/from-` is exactly what `platformOwnedBranch` looks for when it has
+// to decide, later and from the row alone, where a session's head lives.
+function shareBranchName(userId) {
+  return `${MIRROR_BRANCH_PREFIX}u${Number(userId) || 0}-s${nonce()}`;
+}
+
 function sameLogin(a, b) {
   return String(a || '').toLowerCase() === String(b || '').toLowerCase();
 }
@@ -247,8 +274,29 @@ async function verifyForkBranch({
 // leave a stray branch on somebody's app.
 async function mirrorForkBranch({
   gh, githubPublic, owner, repo, forkOwner, forkRepo, branch, expectedLogin,
-  baseSha, taskId,
+  baseSha, taskId, targetBranch,
 }) {
+  // `targetBranch` names a branch the CALLER already recorded — #1347's share
+  // path, where the session row is written before the commits land and has to
+  // carry the name the landing will use. Without it the name is minted below,
+  // which is what the pr-import rung has always done.
+  //
+  // Either way the name must be one of ours: this pushes into the APP's
+  // repository with the platform's own credential, so a caller-supplied name
+  // is checked against the namespace rather than trusted. Checked FIRST, like
+  // every other argument on this path: an argument that can never be accepted
+  // is not worth a read of somebody's fork.
+  if (targetBranch !== undefined && targetBranch !== null) {
+    if (!validRef(targetBranch) || !isMirrorNamespace(targetBranch)) {
+      return {
+        ok: false,
+        code: 'invalid_request',
+        message: 'A mirrored branch has to be named in Usernode\'s own branch namespace.',
+        retryable: false,
+      };
+    }
+  }
+
   const verified = await verifyForkBranch({
     githubPublic, forkOwner, forkRepo, branch, expectedLogin,
   });
@@ -286,7 +334,7 @@ async function mirrorForkBranch({
     }
   }
 
-  const mirrorBranch = `${MIRROR_BRANCH_PREFIX}${forkOwner}-t${taskId || 0}-${nonce()}`;
+  const mirrorBranch = targetBranch || `${MIRROR_BRANCH_PREFIX}${forkOwner}-t${taskId || 0}-${nonce()}`;
   let credential;
   try {
     credential = await resolveWriteCredential(owner);
@@ -499,6 +547,8 @@ module.exports = {
   PATCH_BRANCH_PREFIX,
   UPDATE_FETCH_DEPTH,
   nonce,
+  isMirrorNamespace,
+  shareBranchName,
   sameLogin,
   validSegment,
   validRef,
