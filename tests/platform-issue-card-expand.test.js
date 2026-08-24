@@ -21,6 +21,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
+const { makeTranscriptBridge } = require('./lib/dev-transcript-html');
+
 const SRC = fs.readFileSync(
   path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'dev-chat.js'),
   'utf8'
@@ -31,10 +33,12 @@ const escapeHtml = (s) => String(s == null ? '' : s)
   .replace(/"/g, '&quot;');
 
 function makeDevChat() {
-  let captured = '';
+  // #1078: the rows are a React island. `renderMessages` publishes a view
+  // model instead of writing this element's innerHTML, so the element is only
+  // the portal's host and the markup comes back from the component.
+  const t = makeTranscriptBridge();
   const messagesEl = {
-    set innerHTML(v) { captured = v; },
-    get innerHTML() { return captured; },
+    innerHTML: '',
     querySelectorAll: () => ({ forEach: () => {} }),
     scrollTop: 0, scrollHeight: 0,
   };
@@ -64,6 +68,7 @@ function makeDevChat() {
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   sandbox.window.addEventListener = () => {};
+  sandbox.UsernodeReact = { devChat: t.bridge };
   vm.createContext(sandbox);
   vm.runInContext(`${SRC}\n;globalThis.__DevChat = DevChat;`, sandbox);
   const DevChat = sandbox.__DevChat;
@@ -74,8 +79,12 @@ function makeDevChat() {
       DevChat.messages = messages;
       DevChat.currentSession = session || { id: 7, status: 'active' };
       DevChat.renderMessages();
-      return captured;
+      return t.html();
     },
+    // The confirm / dismiss wiring was an inline onclick, because an
+    // innerHTML card had nowhere else to put a handler. A React card holds
+    // the closure, so the wiring is read off the MODEL.
+    draftRows: () => t.state().rows.filter((r) => r.t === 'issueDraft'),
   };
 }
 
@@ -127,7 +136,7 @@ test('a body at or under 300 chars keeps the plain single-div render (no toggle)
 });
 
 test('filed and dismissed cards with long bodies stay expandable', () => {
-  const { render } = makeDevChat();
+  const { render, draftRows } = makeDevChat();
   const html = render([
     draftMsg(
       { body: LONG_BODY, status: 'filed', issueUrl: 'https://github.com/x/y/issues/9', issueNumber: 9 },
@@ -140,17 +149,20 @@ test('filed and dismissed cards with long bodies stay expandable', () => {
   assert.match(html, /data-persist-id="43:pireport"/, 'dismissed card is expandable');
   assert.match(html, /Reported — issue #9/, 'filed state still renders its link');
   assert.match(html, /Dismissed/, 'dismissed state still renders its label');
-  assert.doesNotMatch(html, /resolvePlatformIssueDraft/, 'no confirm/dismiss buttons on resolved cards');
+  assert.ok(draftRows().every((r) => r.action.kind !== 'buttons'),
+    'no confirm/dismiss buttons on resolved cards');
+  assert.doesNotMatch(html, />Dismiss</, 'and none in the markup either');
 });
 
 test('confirm/dismiss buttons still render for pending drafts with the msgId wiring', () => {
-  const { render } = makeDevChat();
+  const { render, draftRows } = makeDevChat();
   const html = render([draftMsg({ body: LONG_BODY, msgId: 42 })]);
 
-  assert.match(html, /resolvePlatformIssueDraft\(42, 'confirm', this\)[^>]*>Report to platform</,
-    'Report to platform wired to confirm');
-  assert.match(html, /resolvePlatformIssueDraft\(42, 'dismiss', this\)[^>]*>Dismiss</,
-    'Dismiss wired to dismiss');
+  const [row] = draftRows();
+  assert.deepEqual(row.action, { kind: 'buttons', confirmLabel: 'Report to platform' });
+  assert.equal(row.msgId, 42, 'the row both buttons resolve');
+  assert.match(html, /class="dc-pr-btn dc-pr-btn-promote">Report to platform</);
+  assert.match(html, /class="dc-pr-btn dc-pr-btn-preview">Dismiss</);
 });
 
 test('a body containing markup is entity-escaped in both the preview and the remainder', () => {

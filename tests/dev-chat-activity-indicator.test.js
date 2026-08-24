@@ -31,35 +31,24 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
+const { makeTranscriptBridge } = require('./lib/dev-transcript-html');
+
 const SRC = fs.readFileSync(
   path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'dev-chat.js'),
   'utf8'
 );
 
-// A fake #dc-messages that captures innerHTML and models just enough of the
-// DOM for the imperative show/hide path: insertAdjacentHTML('beforeend') and
-// getElementById('dc-spinner') → node.remove().
+// #1078: the dots are a FIELD of the transcript's view model now, so this
+// harness no longer has to model the imperative path at all. `_syncActivityNode`
+// used to `insertAdjacentHTML('beforeend')` the row and `getElementById(
+// 'dc-spinner').remove()` it, precisely so a show/hide need not re-render the
+// list; both directions are one publish, and the list is a reconcile.
 function makeDevChat() {
-  let captured = '';
+  const t = makeTranscriptBridge();
   const messagesEl = {
-    set innerHTML(v) { captured = v; },
-    get innerHTML() { return captured; },
-    insertAdjacentHTML(where, html) {
-      assert.equal(where, 'beforeend');
-      captured += html;
-    },
+    innerHTML: '',
     querySelectorAll: () => ({ forEach: () => {} }),
     scrollTop: 0, scrollHeight: 0,
-  };
-  // The spinner "node" is derived from the captured HTML — present iff the
-  // markup contains its id, and .remove() strips exactly that element.
-  const spinnerNode = {
-    remove() {
-      captured = captured.replace(
-        /<div id="dc-spinner"[\s\S]*?<\/div><\/div>/,
-        ''
-      );
-    },
   };
   const noopEl = {
     style: {}, classList: { add: () => {}, remove: () => {}, toggle: () => {} },
@@ -73,13 +62,7 @@ function makeDevChat() {
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;'),
     document: {
-      getElementById: (id) => {
-        if (id === 'dc-messages') return messagesEl;
-        if (id === 'dc-spinner') {
-          return captured.includes('id="dc-spinner"') ? spinnerNode : null;
-        }
-        return null;
-      },
+      getElementById: (id) => (id === 'dc-messages' ? messagesEl : null),
       querySelector: () => null,
       querySelectorAll: () => ({ forEach: () => {} }),
       addEventListener: () => {},
@@ -88,6 +71,10 @@ function makeDevChat() {
     },
     fetch: async () => ({ ok: true, json: async () => ({}) }),
     alert: () => {},
+    // `_setStreamingUI` republishes the session header, which reads the
+    // current app for the back link. It used to bail before that on a null
+    // `#dc-session-header`; the strip is a portal now, so the stub is needed.
+    App: { currentApp: 'demo-app', switchTab: () => {} },
     PlatformUI: {
       isTouch: () => false, hasKit: () => false, toast: () => {},
       alert: async () => ({}), confirm: async () => true,
@@ -102,6 +89,7 @@ function makeDevChat() {
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   sandbox.window.addEventListener = () => {};
+  sandbox.UsernodeReact = { devChat: t.bridge };
   vm.createContext(sandbox);
   vm.runInContext(`${SRC}\n;globalThis.__DevChat = DevChat;`, sandbox);
   const DevChat = sandbox.__DevChat;
@@ -109,11 +97,11 @@ function makeDevChat() {
   DevChat.currentSession = { id: 1, status: 'active' };
   return {
     DevChat,
-    getHtml() { return captured; },
+    getHtml() { return t.html(); },
     render(messages) {
       if (messages) DevChat.messages = messages;
       DevChat.renderMessages();
-      return captured;
+      return t.html();
     },
   };
 }

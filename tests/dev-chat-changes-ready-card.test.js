@@ -20,18 +20,22 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
+const { makeTranscriptBridge } = require('./lib/dev-transcript-html');
+
 const SRC = fs.readFileSync(
   path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'dev-chat.js'),
   'utf8'
 );
 
-// Build a DevChat in a sandbox with a fake #dc-messages whose innerHTML is
-// captured. renderMessages() reads DevChat.messages + DevChat.currentSession.
+// Build a DevChat in a sandbox with a fake #dc-messages. #1078: the rows are
+// a React island, so `renderMessages` publishes a view model rather than
+// writing this element's innerHTML — the element is the portal's host and the
+// markup comes back from the component. `renderMessages` still reads
+// DevChat.messages + DevChat.currentSession, and is still what is under test.
 function makeDevChat() {
-  let captured = '';
+  const t = makeTranscriptBridge();
   const messagesEl = {
-    set innerHTML(v) { captured = v; },
-    get innerHTML() { return captured; },
+    innerHTML: '',
     querySelectorAll: () => ({ forEach: () => {} }),
     scrollTop: 0, scrollHeight: 0,
   };
@@ -85,6 +89,7 @@ function makeDevChat() {
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   sandbox.window.addEventListener = () => {};
+  sandbox.UsernodeReact = { devChat: t.bridge };
   vm.createContext(sandbox);
   vm.runInContext(`${SRC}\n;globalThis.__DevChat = DevChat;`, sandbox);
   const DevChat = sandbox.__DevChat;
@@ -94,26 +99,17 @@ function makeDevChat() {
     DevChat,
     alerts: sandbox.__alerts,
     setFetch(fn) { sandbox.__fetchImpl = fn; },
-    getHtml() { return captured; },
+    getHtml() { return t.html(); },
     render(messages, session) {
       DevChat.messages = messages;
       DevChat.currentSession = session || null;
       DevChat.renderMessages();
-      return captured;
+      return t.html();
     },
-  };
-}
-
-// #558: a minimal stand-in for the <button> the inline onclick passes as
-// `this`. Tracks disabled state + innerHTML the way promotePR() drives them.
-function makeButton() {
-  return {
-    disabled: false,
-    innerHTML: 'Propose to group',
-    _attrs: {},
-    setAttribute(k, v) { this._attrs[k] = v; },
-    removeAttribute(k) { delete this._attrs[k]; },
-    getAttribute(k) { return this._attrs[k] ?? null; },
+    // The card's five buttons carried inline onclicks, because an innerHTML
+    // card had nowhere else to put a handler. A React card holds the closure,
+    // so what a button DOES is read off the model.
+    changesRow: () => t.state().rows.find((r) => r.t === 'changes'),
   };
 }
 
@@ -193,7 +189,7 @@ test('CLI terminal checks derive a card without a preview, but drafts and pendin
 });
 
 test('changesReady WITHOUT stagingUrl renders the card with Propose + an ACTIVE (rebuild-on-click) Preview (#439)', () => {
-  const { render } = makeDevChat();
+  const { render, changesRow } = makeDevChat();
   const html = render([
     {
       role: 'system', content: 'Staging build failed',
@@ -209,14 +205,15 @@ test('changesReady WITHOUT stagingUrl renders the card with Propose + an ACTIVE 
   // on-demand rebuild rather than being a disabled "proposing will rebuild
   // it" dead-end. The fallback URL is empty (no live/message URL yet).
   assert.doesNotMatch(html, /disabled[^>]*>Preview staging</, 'Preview staging is NOT disabled');
-  assert.match(html, /previewStaging\('', false\)/, 'Preview wired to rebuild-on-click');
+  assert.deepEqual(changesRow().preview, { enabled: true, url: '', title: '' },
+    'Preview wired to rebuild-on-click, with no URL to rebuild from yet');
   // The old inline "proposing will rebuild it" note is gone — any failure
   // reason now surfaces in the preview loader on click instead.
   assert.doesNotMatch(html, /proposing will rebuild it/i, 'no stale disabled note');
 });
 
 test('a merged (previewGone) card keeps Preview disabled with the now-live tooltip (#439)', () => {
-  const { render } = makeDevChat();
+  const { render, changesRow } = makeDevChat();
   const html = render([
     {
       role: 'system', content: 'Staging deployed!',
@@ -228,11 +225,11 @@ test('a merged (previewGone) card keeps Preview disabled with the now-live toolt
   assert.match(html, /dc-pr-card/, 'card still renders post-merge');
   assert.match(html, /disabled[^>]*>Preview staging</, 'Preview is disabled once merged');
   assert.match(html, /now live in the app/i, 'tooltip explains the change is now live');
-  assert.doesNotMatch(html, /previewStaging\(/, 'no rebuild handler on a merged card');
+  assert.equal(changesRow().preview.enabled, false, 'no rebuild handler on a merged card');
 });
 
 test('stagingUrl renders the FULL card with a live Preview + Propose', () => {
-  const { render } = makeDevChat();
+  const { render, changesRow } = makeDevChat();
   const html = render([
     {
       role: 'system', content: 'Staging deployed!',
@@ -243,7 +240,8 @@ test('stagingUrl renders the FULL card with a live Preview + Propose', () => {
 
   assert.match(html, /dc-pr-card/, 'card renders');
   assert.match(html, /Propose to group/, 'Propose to group present');
-  assert.match(html, /previewStaging\('https:\/\/preview\.example\.org', false\)/, 'live Preview button wired');
+  assert.deepEqual(changesRow().preview,
+    { enabled: true, url: 'https://preview.example.org', title: '' }, 'live Preview button wired');
   assert.doesNotMatch(html, /disabled[^>]*>Preview staging</, 'Preview is NOT disabled when a URL exists');
 });
 
@@ -285,21 +283,28 @@ test('View on GitHub uses the message-carried prUrl when the session row lacks o
 // success path re-renders the card away, and both failure paths restore the
 // button so the user can retry.
 
+// #1078: the in-flight state moved off the button element and into the row
+// model. It had to: `renderMessages` runs on every 3s status poll, so a
+// repaint mid-request would have restored the label and cleared the re-entry
+// guard — the double-submit #558 exists to stop.
 test('promotePR disables the button and shows the spinner while the request is in flight (#558)', async () => {
   const h = makeDevChat();
-  h.DevChat.currentSession = { id: 7, status: 'active' };
-  // Deferred fetch so we can inspect the button mid-flight.
+  const cardOnScreen = () => h.render([
+    { role: 'system', content: 'Staging deployed!', changesReady: true,
+      stagingUrl: 'https://preview.example.org', _slug: 'prm001' },
+  ], activeSession({ id: 7 }));
+  cardOnScreen();
+  // Deferred fetch so we can inspect the card mid-flight.
   let release;
   h.setFetch(() => new Promise((res) => { release = () => res({ ok: true, json: async () => ({}) }); }));
 
-  const btn = makeButton();
-  const p = h.DevChat.promotePR(btn);
+  const p = h.DevChat.promotePR();
 
-  // Pending: greyed out (disabled) + spinner swapped in, aria-busy set.
-  assert.equal(btn.disabled, true, 'button is disabled while pending');
-  assert.match(btn.innerHTML, /dc-status-spinner-arc/, 'spinner shown while pending');
-  assert.match(btn.innerHTML, /Proposing/, 'label reads "Proposing…" while pending');
-  assert.equal(btn.getAttribute('aria-busy'), 'true', 'aria-busy set while pending');
+  assert.equal(h.changesRow().proposePending, true, 'the model says the request is in flight');
+  const html = h.getHtml();
+  assert.match(html, /class="dc-pr-btn dc-pr-btn-promote"[^>]*disabled/, 'button is disabled while pending');
+  assert.match(html, /aria-busy="true"/, 'aria-busy set while pending');
+  assert.match(html, /dc-status-spinner-arc[\s\S]*Proposing/, 'spinner and "Proposing…" in place of the label');
 
   release();
   await p;
@@ -312,10 +317,9 @@ test('promotePR re-entry guard: a second click while pending is a no-op (#558)',
   let release;
   h.setFetch(() => { calls++; return new Promise((res) => { release = () => res({ ok: true, json: async () => ({}) }); }); });
 
-  const btn = makeButton();
-  const p1 = h.DevChat.promotePR(btn);   // disables btn, fetch #1
-  await h.DevChat.promotePR(btn);        // btn.disabled → early return, no fetch
-  assert.equal(calls, 1, 'the disabled button blocks a second submit');
+  const p1 = h.DevChat.promotePR();   // takes the flag, fetch #1
+  await h.DevChat.promotePR();        // flag held for this session → no fetch
+  assert.equal(calls, 1, 'an in-flight request for this session blocks a second submit');
 
   release();
   await p1;
@@ -331,7 +335,7 @@ test('promotePR success re-renders the card without the Propose button (#558)', 
   assert.match(h.getHtml(), /Propose to group/, 'button present before promote');
 
   h.setFetch(async () => ({ ok: true, json: async () => ({ prNumber: 42, prUrl: 'https://github.com/x/y/pull/42' }) }));
-  await h.DevChat.promotePR(makeButton());
+  await h.DevChat.promotePR();
 
   // status flipped to 'promoted' → renderMessages drops the (active-only) button.
   assert.equal(h.DevChat.currentSession.status, 'promoted', 'session promoted');
@@ -340,27 +344,35 @@ test('promotePR success re-renders the card without the Propose button (#558)', 
 
 test('promotePR failure (non-OK) re-enables the button and restores its label (#558)', async () => {
   const h = makeDevChat();
-  h.DevChat.currentSession = { id: 7, status: 'active' };
+  const cardOnScreen = () => h.render([
+    { role: 'system', content: 'Staging deployed!', changesReady: true,
+      stagingUrl: 'https://preview.example.org', _slug: 'prm001' },
+  ], activeSession({ id: 7 }));
+  cardOnScreen();
   h.setFetch(async () => ({ ok: false, json: async () => ({ error: 'Nope' }) }));
 
-  const btn = makeButton();
-  await h.DevChat.promotePR(btn);
+  await h.DevChat.promotePR();
 
-  assert.equal(btn.disabled, false, 'button re-enabled after a failed response');
-  assert.equal(btn.innerHTML, 'Propose to group', 'original label restored');
-  assert.equal(btn.getAttribute('aria-busy'), null, 'aria-busy cleared');
+  assert.equal(h.changesRow().proposePending, false, 'button re-enabled after a failed response');
+  const html = h.getHtml();
+  assert.match(html, />Propose to group</, 'original label restored');
+  assert.doesNotMatch(html, /aria-busy/, 'aria-busy cleared');
+  assert.doesNotMatch(html, /Proposing/, 'and the spinner is gone');
   assert.deepEqual(h.alerts, ['Nope'], 'server error surfaced via alert');
 });
 
 test('promotePR failure (network error) re-enables the button and restores its label (#558)', async () => {
   const h = makeDevChat();
-  h.DevChat.currentSession = { id: 7, status: 'active' };
+  const cardOnScreen = () => h.render([
+    { role: 'system', content: 'Staging deployed!', changesReady: true,
+      stagingUrl: 'https://preview.example.org', _slug: 'prm001' },
+  ], activeSession({ id: 7 }));
+  cardOnScreen();
   h.setFetch(async () => { throw new Error('boom'); });
 
-  const btn = makeButton();
-  await h.DevChat.promotePR(btn);
+  await h.DevChat.promotePR();
 
-  assert.equal(btn.disabled, false, 'button re-enabled after a thrown error');
-  assert.equal(btn.innerHTML, 'Propose to group', 'original label restored');
+  assert.equal(h.changesRow().proposePending, false, 'button re-enabled after a thrown error');
+  assert.match(h.getHtml(), />Propose to group</, 'original label restored');
   assert.deepEqual(h.alerts, ['Network error'], 'network error surfaced via alert');
 });

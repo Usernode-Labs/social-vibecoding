@@ -328,6 +328,12 @@ const devChatSrc = fs.readFileSync(
 const sessionsSrc = fs.readFileSync(
   path.join(__dirname, '..', 'src', 'routes', 'sessions.js'), 'utf8'
 );
+// #1078: the transcript's rows are a React island. Everything a row DERIVES
+// from the clock — the elapsed suffix, the AI guess's count-down, the long-run
+// cohort hint — is computed here, from the anchors the model carries.
+const transcriptSrc = fs.readFileSync(
+  path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'transcript.tsx'), 'utf8'
+);
 
 test('index.html loads cc-progress-summary.js before the dev chat reads it', () => {
   // #1084 chunk G moved dev-chat.js into the React bundle, so there is no
@@ -342,12 +348,26 @@ test('index.html loads cc-progress-summary.js before the dev chat reads it', () 
     'the React entry must stay a deferred module so DevChat sees the progress helpers');
 });
 
-test('dev-chat.js actually calls the helpers (not dead code)', () => {
+test('the client actually calls the helpers (not dead code)', () => {
+  // The three formatters are split across the two halves of the transcript's
+  // seam now. dev-chat.js RESOLVES what cannot be derived from a clock — the
+  // progress summary, and a finished step's frozen "(took …)" — into the row
+  // model; the row itself re-derives its ticking text from `nowStore`, so the
+  // two per-second formatters are called in the component.
   assert.ok(/summarizeCcProgress\(/.test(devChatSrc), 'dev-chat.js must call summarizeCcProgress');
-  assert.ok(/formatElapsed\(/.test(devChatSrc), 'dev-chat.js must call formatElapsed');
-  assert.ok(/formatCountdown\(/.test(devChatSrc), 'dev-chat.js must call formatCountdown (#359)');
-  assert.ok(/data-elapsed-since/.test(devChatSrc), 'dev-chat.js must render the elapsed-ticker span');
-  assert.ok(/data-countdown-to/.test(devChatSrc), 'dev-chat.js must render the count-down span (#359)');
+  assert.ok(/typeof formatElapsed === 'function' \? formatElapsed : null/.test(devChatSrc),
+    'dev-chat.js must call formatElapsed for a SETTLED step');
+  assert.ok(/\(took \$\{fmtEl\(/.test(devChatSrc),
+    "a settled step's frozen label must be composed in the model, not per tick");
+  assert.ok(/formatElapsed/.test(transcriptSrc), 'a LIVE row must re-derive its elapsed label');
+  assert.ok(/formatCountdown\(/.test(transcriptSrc), 'the row must call formatCountdown (#359)');
+  assert.ok(/data-elapsed-since/.test(transcriptSrc), 'the row must render the elapsed-ticker anchor');
+  assert.ok(/data-countdown-to/.test(transcriptSrc), 'the row must render the count-down anchor (#359)');
+  // And the heartbeat still decides whether to run at all by asking the DOM
+  // whether this render left anything that ticks — which is why the anchors
+  // stay in the markup rather than living only in the model.
+  assert.match(devChatSrc, /#dc-messages \[data-elapsed-since\]/,
+    'the 1s heartbeat must still gate itself on a live anchor');
 });
 
 test("sessions.js persists durationMs on the completion status", () => {
@@ -391,12 +411,14 @@ const devChat = fs.readFileSync(
 );
 
 test('#892: the countdown span always renders a numeric form', () => {
-  // The span's initial text comes straight from formatCountdown, which has
-  // no non-numeric branch left — so a target already in the past still
-  // paints a time rather than a frozen "due now".
-  assert.match(devChat, /_countdownSpanHtml\(countdownTo\) \{/, 'the span builder must exist');
-  assert.match(devChat, /const initial = formatCountdown\(countdownTo, Date\.now\(\)\);/,
-    'the initial fill must go through formatCountdown');
+  // The span's text comes straight from formatCountdown, which has no
+  // non-numeric branch left — so a target already in the past still paints a
+  // time rather than a frozen "due now". It is re-derived on every tick now
+  // rather than filled once and patched, so the guard reads the row.
+  assert.match(transcriptSrc, /w\.formatCountdown\(p\.countdownTo, now > 0 \? now : Date\.now\(\)\)/,
+    'the countdown text must come from formatCountdown');
+  assert.match(transcriptSrc, /data-countdown-to=\{p\.countdownTo\}/,
+    'the span must carry the absolute target the heartbeat gate looks for');
   assert.equal(formatCountdown(Date.now() - 600_000, Date.now()), ' · under a minute left');
 });
 
@@ -424,17 +446,21 @@ test('#906: the render-time cohort gate is gone', () => {
 });
 
 test('#906: the side slot is resolved at tick time from live state only', () => {
-  const tickAt = devChat.indexOf('cohorts.forEach');
-  assert.ok(tickAt > 0, 'the cohort hint must tick');
-  const body = devChat.slice(tickAt, tickAt + 1600);
-  // Elapsed is the only input, recomputed every second from the DOM anchor.
-  assert.match(body, /parseInt\(el\.dataset\.cohortSince, 10\)/,
-    'the hint must be derived from the live elapsed anchor');
-  assert.match(body, /const hint = runCohortHint\(elapsed\);/,
-    'the whole visibility rule must live in the pure helper');
-  // An empty hint must blank the span rather than leave a dangling "· ".
-  assert.match(body, /el\.textContent = hint \? ' (·|\\u00b7) ' \+ hint : '';/,
-    'an empty hint must write an empty span, not a bare separator');
+  // The pass that walked `#dc-messages` for `[data-cohort-since]` and wrote
+  // `textContent` is gone; the row re-derives the hint from `nowStore` and the
+  // anchor its own model carries. What #906 actually pinned survives intact:
+  // ELAPSED TIME is the only input, and the whole visibility rule lives in the
+  // pure helper rather than in a flag frozen at render.
+  const at = transcriptSrc.indexOf('function ProgressSpans');
+  assert.ok(at > 0, 'the coding-run summary spans must exist');
+  const body = transcriptSrc.slice(at, transcriptSrc.indexOf('function Attached', at));
+  assert.match(body, /w\.runCohortHint\(Math\.max\(0, now - p\.cohortSince\)\)/,
+    'the hint must be derived from the live elapsed anchor, through the helper');
+  assert.doesNotMatch(body, /p\.estimate[^\n]*cohort|cohort[^\n]*p\.estimate/,
+    'the AI guess must not gate the hint — that was the frozen flag #906 removed');
+  // An empty hint must render an empty span rather than a dangling "· ".
+  assert.ok(body.includes("{hint ? ` · ${hint}` : ''}"),
+    'an empty hint must render an empty span, not a bare separator');
 });
 
 test('#906: the retired range copy ships nowhere in the client', () => {
@@ -455,21 +481,31 @@ test('#906: the retired range copy ships nowhere in the client', () => {
   }
 });
 
-test('#892: the deterministic stage label renders and is patched in place', () => {
-  assert.match(devChat, /class="dc-cc-phase"/, 'the stage label must have its own span');
-  assert.match(devChat, /summ\.phaseLabel \? `· \$\{escapeHtml\(summ\.phaseLabel\)\}` : ''/,
-    'the stage label must be escaped and empty-safe');
-  assert.match(devChat, /const phase = details\.querySelector\('\.dc-cc-phase'\);/,
-    'the label must be patched as lines stream in, not only on full re-render');
+test('#892: the deterministic stage label renders and refreshes as lines stream in', () => {
+  assert.match(transcriptSrc, /className="dc-cc-phase"/, 'the stage label must have its own span');
+  assert.ok(transcriptSrc.includes("{p.phase ? `· ${p.phase}` : ''}"),
+    'the stage label must be empty-safe — React escapes the text itself');
+  assert.match(devChat, /phase: summ\.phaseLabel \|\| '',/,
+    'the model must carry the deterministic label');
+  // It used to be written onto `.dc-cc-phase` by hand as lines arrived,
+  // because a full re-render mid-stream was too expensive. Republishing the
+  // rows is that cheap re-render, so the second writer must not come back.
+  assert.doesNotMatch(devChat, /querySelector\('\.dc-cc-phase'\)/,
+    'the label must be refreshed by a publish, not by a second author');
+  assert.match(devChat, /_patchProgressDom\(/,
+    'a streamed progress line must still refresh the summary');
 });
 
 test('#892: the summary row renders countdown and cohort in the specified order', () => {
-  const rowAt = devChat.indexOf('${currentSpan}${stepsSpan}');
+  const rowAt = transcriptSrc.indexOf('function ProgressSpans');
   assert.ok(rowAt > 0, 'the coding-run summary row must exist');
-  const row = devChat.slice(rowAt, rowAt + 200);
-  // current action · steps · phase · elapsed · countdown (inside estimate) · cohort
-  const order = ['${currentSpan}', '${stepsSpan}', '${phaseSpan}', '${elapsedHtml}',
-    '${estimateSpan}', '${cohortSpan}'];
+  const row = transcriptSrc.slice(rowAt, transcriptSrc.indexOf('function Attached', rowAt));
+  // current action · steps · phase · elapsed · countdown (inside estimate) · cohort.
+  // The elapsed suffix renders INSIDE this component precisely to hold that
+  // position: it is the one span of the six that also appears on a row with
+  // no progress at all, and hoisting it out put it after the cohort hint.
+  const order = ['dc-cc-current', 'dc-cc-steps', 'dc-cc-phase', '<Elapsed e={elapsed} />',
+    'dc-cc-estimate', 'dc-cc-countdown', 'dc-cc-cohort'];
   let at = -1;
   for (const token of order) {
     const next = row.indexOf(token);

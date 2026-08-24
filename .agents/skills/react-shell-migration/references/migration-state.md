@@ -603,7 +603,7 @@ Two traps in writing that browser sweep, both of which hid a real failure:
    the Dev chat below.
 
 2. **Dev chat — `frontend/src/features/dev-chat/dev-chat.js`, about 9,700
-   lines. Started at the composer.** Five regions have converted:
+   lines. Started at the composer.** Eight regions have converted:
 
    | converted | host |
    | --- | --- |
@@ -614,6 +614,10 @@ Two traps in writing that browser sweep, both of which hid a real failure:
    | the app's session list | `#dc-session-list` |
    | **the session header strip** | `#dc-session-header` |
    | **the four banners** | `#dc-banners` |
+   | **the transcript** | `#dc-messages` |
+
+   All eight are in the ownership audit's `OWNED`; it reports **0 legacy
+   writes** with `#dc-messages` in the list.
 
    ### Two orphaned surfaces, and what to do with each
 
@@ -656,7 +660,8 @@ Two traps in writing that browser sweep, both of which hid a real failure:
 
    - **`renderChatView`** (~420 lines) — **its header strip and its four
      banners are done**; what is left is the launchpad slot, the panes and the
-     composer wrapper.
+     composer wrapper. (`renderMessages`, the other big renderer, is done —
+     see below.)
 
      The strip was the natural first boundary and it carried three traps,
      all three of which generalise:
@@ -743,14 +748,110 @@ Two traps in writing that browser sweep, both of which hid a real failure:
      primary action's fill, and an amber `variant` would be a value invented
      for one call site in a table whose discipline is that every value is
      transcribed from a button that already exists.
-   - **`renderMessages`** (~580 lines) — the transcript. The hard part is
-     not the messages, it is `_writeStreamingHtml`: it assigns
-     `el.innerHTML` on a bubble's content node at up to 60fps. Publishing
-     that through a store would re-render the list every frame, so the
-     streaming bubble has to stay a controller host the module keeps
-     writing while React owns the finished messages. The group chat's
-     transcript solved the same problem for `.gc-msg-content`; read that
-     before designing this one.
+   - ~~**`renderMessages`**~~ — **done.** The transcript was one 560-line
+     `container.innerHTML = …` with SIX writers on top of it, each of which
+     existed because a full repaint mid-turn was too expensive: the streaming
+     bubble at up to 60fps, `_patchProgressDom`/`_patchProgressSummary` on the
+     log `<pre>` and four sibling spans, `_applyEstimate`/`_clearEstimate` on
+     `.dc-cc-estimate`, `_tickElapsed` walking three `data-*` anchors once a
+     second, `_syncActivityNode` appending and removing `#dc-spinner`, and one
+     more in a different file entirely (see below).
+     Every one of them is a publish now, because a republish IS the cheap
+     repaint they were all working around — React touches the one node whose
+     text changed.
+
+     The design note that was written here beforehand — "the streaming bubble
+     has to stay a controller host" — turned out to be **wrong, and instructive
+     about why**. The premise was right (publishing 60fps through the
+     transcript store would re-render every row) but the conclusion did not
+     follow: the fix is a SECOND store that exactly one row subscribes to.
+     `streamStore` carries one `{ key, html }`, the model marks the last
+     conversational row `live` for the duration of a turn, and only that row
+     renders the component that reads it. Keeping `.dc-msg-content` a
+     controller host would in fact have been HARDER: React would have to
+     render no children for a streaming row and `dangerouslySetInnerHTML` for
+     a sealed one, and the transition INTO streaming — which happens whenever
+     a status row arrives mid-turn — blanks the node until the next token.
+
+     Six things from it generalise:
+
+     - **Split the store by WRITE FREQUENCY, not by region.** Two stores for
+       one host is right when one field changes per frame and the rest change
+       per event. Same shape as the Dev card's `cardNowStore`.
+     - **A ticking span should DERIVE, not be written to.** Three
+       `textContent` passes over `#dc-messages` became one `nowStore` publish
+       on the 1s heartbeat, with each row re-deriving its own label. The
+       `data-elapsed-since` / `data-countdown-to` / `data-cohort-since`
+       anchors stay in the markup anyway, because `_syncElapsedTicker` still
+       reads them to decide whether the heartbeat needs to run at all — the
+       gate is a DOM question, and it is the honest one.
+     - **A "clear it now rather than wait for a render" writer is the same
+       trade, and gets the same answer.** `_clearEstimate` blanked every
+       `.dc-cc-estimate` by selector for exactly the reason
+       `_patchProgressDom` patched by persist-id. That one was found by a
+       test guard, not by the innerHTML grep, because it lives 700 lines from
+       the renderer. **Grep for the CLASS NAMES the component renders, not
+       only for the host id.**
+     - **In-flight button state is the model's, and this time it was a bug.**
+       `promotePR` set `btn.disabled` + `btn.innerHTML` on the button the
+       click arrived on, and `renderMessages` runs on every 3s status poll —
+       so a repaint mid-request would have restored the label AND cleared the
+       re-entry guard, which is the double-submit #558 exists to stop. Third
+       instance of the same lesson (`#dc-venue-select.disabled`, the
+       new-change button, this) and the first where the in-place write was
+       load-bearing rather than cosmetic.
+     - **A writer can live in a module you were not converting.**
+       `public/js/app.js`'s `mayor_reasoning` WS branch called
+       `_renderStreamingMarkdown(el, …)` with a node it had resolved as
+       `querySelectorAll('#dc-messages .dc-msg-assistant .dc-msg-content')
+       [length - 1]` — the sixth writer, in a different file, found only by a
+       repo-wide grep for the CLASS NAMES rather than for the host. It takes
+       the MESSAGE now, like the two call sites inside dev-chat.js. Reading
+       those three together also exposed a latent bug in the old shape: the
+       model SKIPS an assistant row with no content, so the resumable-SSE
+       `token` path — which pushed an empty placeholder, rendered, and only
+       then appended — left "the last content node on the page" pointing at
+       the PREVIOUS turn's bubble. That path now appends first and lets the
+       fresh bubble arrive through a render, matching the POST-SSE path.
+     - **A ref is not "after every render".** `_wireCreditsCards` and
+       `_wireDevFlowCard` hand two FOREIGN cards to their own modules'
+       idempotent `wire()`. A `useCallback` ref on a stable wrapper fires once
+       per MOUNT, so a card that appears in a later publish would go unwired —
+       the #1304 failure. They stayed three unconditional calls at the end of
+       `renderMessages`, which works because `transcriptStore` flushes
+       synchronously. `_bindDevFlowVisibility` in particular must not be gated
+       on the walkthrough rendering here: in a hand-off venue it renders in the
+       composer's place, and that path wires the card but not the re-check.
+
+     Two markup details worth copying. **Order is part of the contract even
+     inside one line**: the elapsed suffix sits BETWEEN the phase label and the
+     AI guess in the coding-run summary, so it renders inside `ProgressSpans`
+     rather than beside it — hoisting it to the component that owns the row
+     put it after the cohort hint, which nothing but a reading of the old
+     template would have caught. And **`data-default-open` belongs on the
+     `dc-cc-attached` family alone**, because that is where `_ccOpenAttrs` put
+     it; nothing reads it any more, and adding it to the four disclosures that
+     never carried it is markup a conversion is not entitled to change.
+
+     One finding from the browser pass, recorded rather than acted on:
+     **`devFlowHtml` is always `''` on the current venue set.** The transcript
+     asks for it as `_launchpadVenue() ? '' : _devFlowHtml()`, and
+     `_devFlowTarget` answers non-null for exactly `web-claude-code` /
+     `web-codex` — both of which `Launchpad.isLaunchpad` also claims, so the
+     walkthrough only ever renders in the composer's place. Preserved verbatim
+     (it predates this chunk, and which venues show a launchpad is a product
+     question), but it means the in-transcript branch is unreachable today and
+     could not be exercised in a browser.
+
+     The tests that drove `renderMessages` through a fake `innerHTML` setter
+     — seven files — go through `tests/lib/dev-transcript-html.js` now, the
+     same shape as `tests/lib/dev-card-html.js`: `renderMessages` is still
+     what runs (it drains the pending estimate, pairs each progress log with
+     its status line, decides which row is live) and the markup comes back
+     from the real component. Three serialization differences show up in
+     every such re-point and are worth expecting: React writes `open=""` not
+     a bare `open`, `&#x27;` for an apostrophe in a text child, and its own
+     attribute order.
 
    All four are the host-is-mine/children-are-React's seam: `renderChatView`'s
    template writes each ELEMENT and the module toggles the class that gives it
@@ -778,10 +879,11 @@ Two traps in writing that browser sweep, both of which hid a real failure:
    time and bails when it is absent. Both files' headers say so, and the test
    above asserts it.
 
-   What is left is the big half: `renderChatView`'s banners and panes,
-   `renderMessages` and the streaming assistant output. Streaming is the
-   complication — the message list is appended to token by token, so it wants
-   a store that patches one row rather than republishing the list.
+   What is left is `renderChatView`'s launchpad slot, its panes and the
+   composer wrapper — the composer being the boundary the group chat's own
+   composer is waiting on, because the reply preview, the attach-error line
+   and the attachment strip each exist twice and are drawn by one renderer
+   from one CSS rule.
 
 3. ~~Admin interior~~ — **done**. See "The admin console: done" above.
 

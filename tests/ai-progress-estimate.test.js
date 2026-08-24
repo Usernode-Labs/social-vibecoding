@@ -219,19 +219,24 @@ test('sessions route persists each estimate and backfills the actual outcome', (
 
 test('dev-chat renders a live count-down for the remaining-time guess (#359)', () => {
   const devChat = read('frontend/src/features/dev-chat/dev-chat.js');
-  // The numeric guess is now an absolute target end-timestamp the shared 1s
-  // ticker counts down from, rendered as a data-countdown-to child span.
+  // #1078: the row is a React island. The MODEL still carries the absolute
+  // target — that is the half this guard is really about, since a guess that
+  // is not anchored counts down from nothing — and the row re-derives its own
+  // text from the 1s clock instead of being written to by a ticker pass.
+  const transcript = read('frontend/src/features/dev-chat/transcript.tsx');
   assert.match(devChat, /_countdownTo\s*=\s*DevChat\._countdownTarget/,
     'apply/hydrate/pending must anchor _countdownTo from remainingSeconds');
-  assert.match(devChat, /data-countdown-to="\$\{countdownTo\}"/,
+  assert.match(devChat, /countdownTo: msg\._countdownTo != null \? msg\._countdownTo : null/,
+    'the row model must carry the anchor to the row that owns the guess');
+  assert.match(transcript, /data-countdown-to=\{p\.countdownTo\}/,
     'the estimate span must render a data-countdown-to child span');
-  assert.match(devChat, /class="dc-cc-countdown"/,
+  assert.match(transcript, /className="dc-cc-countdown"/,
     'the count-down lives in its own .dc-cc-countdown span');
-  // Both ticker hooks must know about the count-down span so the single
-  // shared DevChat._elapsedTimer drives it.
+  // The heartbeat still gates itself on the anchor being in the DOM, which is
+  // why the attribute survived the conversion at all.
   assert.match(devChat, /\[data-countdown-to\]/,
     '_syncElapsedTicker / _tickElapsed must reference data-countdown-to');
-  assert.match(devChat, /formatCountdown/,
+  assert.match(transcript, /formatCountdown/,
     'the count-down text must come from formatCountdown');
   // #891 added a third `opts` argument (estimatedAt + cleared); the
   // remainingSeconds pass-through this guard exists for is unchanged.
@@ -558,9 +563,19 @@ test('#323: _applyEstimate stashes a pending estimate instead of dropping it', (
     '_applyEstimate must stash the estimate when no active line exists');
   // renderMessages drains the pending estimate onto the active line.
   assert.match(devChat, /DevChat\._pendingEstimate\)/, 'renderMessages must drain a pending estimate');
-  // Patch is scoped to THIS run's DOM node by persist-id, not the last span.
-  assert.match(devChat, /data-persist-id="\$\{pid\}"\]\s*\.dc-cc-estimate/,
-    'in-place patch must target the active run by persist-id');
+  // #1078: the guess reaches THIS run's row and no other. That used to be an
+  // in-place write scoped by persist-id — deliberately not "the last estimate
+  // span on the page", the fallback that painted a guess onto an
+  // already-finished card. It is structural now: the guess is set on the
+  // message object, and a publish can only paint the row that holds it.
+  const at = devChat.indexOf('_applyEstimate(text, remainingSeconds, opts)');
+  assert.ok(at > 0, '_applyEstimate must exist');
+  const body = devChat.slice(at, devChat.indexOf('\n  },', at));
+  assert.match(body, /target\._estimate = /, 'the guess is set on the row that owns it');
+  assert.match(body, /target\._countdownTo = nextTarget;/, 'and so is its anchor');
+  assert.match(body, /DevChat\._publishTranscript\(\);/, 'and the row is republished');
+  assert.doesNotMatch(devChat, /\.dc-cc-estimate['"]\)/,
+    'no path may resolve an estimate span by selector any more');
 });
 
 // ── 5. Terminal-state teardown (#891) ───────────────────────────────────

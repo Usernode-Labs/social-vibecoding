@@ -1740,10 +1740,13 @@ const App = {
         } else if (am.content !== data.text) {
           am.content = data.text;
           const displayContent = am.content.replace(/^\[CHAT_ONLY\]\s*/i, '');
-          const els = document.querySelectorAll('#dc-messages .dc-msg-assistant .dc-msg-content');
-          const el = els[els.length - 1];
-          if (el && typeof DevChat._renderStreamingMarkdown === 'function') {
-            DevChat._renderStreamingMarkdown(el, displayContent);
+          // #1078: the transcript is a React island, so the streaming writer
+          // takes the MESSAGE and publishes a frame keyed to its row. It no
+          // longer resolves a content node as "the last `.dc-msg-content` on
+          // the page" — which was the PREVIOUS turn's bubble whenever this
+          // one had not been rendered yet.
+          if (typeof DevChat._renderStreamingMarkdown === 'function') {
+            DevChat._renderStreamingMarkdown(am, displayContent);
           } else {
             DevChat.renderMessages();
           }

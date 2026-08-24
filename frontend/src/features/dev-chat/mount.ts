@@ -41,6 +41,14 @@ import { SessionHeader } from './session-header';
 import { sessionHeaderStore, type SessionHeaderState } from './session-header-store';
 import { SessionList } from './session-list';
 import { sessionListStore, type SessionListState } from './session-list-store';
+import { DevChatTranscript } from './transcript';
+import {
+  nowStore,
+  streamStore,
+  transcriptStore,
+  type StreamState,
+  type TranscriptState,
+} from './transcript-store';
 
 export interface DevChatBridge {
   mountAttachStrip(host: Element | null): void;
@@ -58,6 +66,10 @@ export interface DevChatBridge {
   publishSessionHeader(state: SessionHeaderState): void;
   mountBanners(host: Element | null, state: BannersState): void;
   publishBanners(state: BannersState): void;
+  mountTranscript(host: Element | null, state: TranscriptState): void;
+  publishTranscript(state: TranscriptState): void;
+  publishStream(state: StreamState): void;
+  publishNow(now: number): void;
 }
 
 // Both of `renderChatView`'s converted STRIPS flush synchronously, and for the
@@ -69,6 +81,20 @@ export interface DevChatBridge {
 // same. Restoring the contract costs a synchronous render of one small strip.
 sessionHeaderStore.setFlush(flushSync);
 bannersStore.setFlush(flushSync);
+
+// The transcript and its live bubble flush for the same reason, and it is the
+// sharpest case on the screen: `DevChat.scrollToBottom()` runs on the line
+// after `renderMessages()` in nineteen places, and again after every streamed
+// frame. It measures `#dc-messages`' `scrollHeight` — the height of the
+// content the publish above it just changed. Batched, it would measure the
+// PREVIOUS paint and the view would sit one row short of the bottom for the
+// whole of a turn.
+//
+// `nowStore` is deliberately NOT flushed: the 1s heartbeat publishes it, no
+// caller measures afterwards, and letting React batch that tick with whatever
+// else the same frame touched is the cheaper of the two behaviours.
+transcriptStore.setFlush(flushSync);
+streamStore.setFlush(flushSync);
 
 export const devChatBridge: DevChatBridge = {
   // `renderChatView` rebuilds `#dc-attachments` on every chat-view render, so
@@ -169,6 +195,37 @@ export const devChatBridge: DevChatBridge = {
   // stream; a publish does that by construction.
   publishBanners(state) {
     bannersStore.set(state);
+  },
+
+  // `#dc-messages` — the transcript. `renderChatView` writes the element (it
+  // carries the pane's scroll geometry, and `initScrollTracking` binds click,
+  // keydown and scroll on it) and calls `renderMessages` on the next line, so
+  // the rows ride in WITH the mount: publishing after it would blank the whole
+  // conversation for a frame on every chat-view render.
+  mountTranscript(host, state) {
+    if (!host) return;
+    transcriptStore.set(state);
+    mountLegacyPortal(host, createElement(DevChatTranscript));
+  },
+
+  publishTranscript(state) {
+    transcriptStore.set(state);
+  },
+
+  // The live bubble, per animation frame. It is its own store so that a
+  // streaming turn re-renders ONE row instead of the entire list sixty times a
+  // second — see ./transcript-store.ts. `key` names the row the html belongs
+  // to, so a frame left over from the previous turn cannot paint into the
+  // next one's bubble.
+  publishStream(state) {
+    streamStore.set(state);
+  },
+
+  // The 1s heartbeat. Three `textContent` passes over `#dc-messages` — the
+  // elapsed suffixes, the AI guess's count-down and the long-run cohort hint —
+  // are one publish now; each span re-derives its own text from this clock.
+  publishNow(now) {
+    nowStore.set({ now });
   },
 };
 

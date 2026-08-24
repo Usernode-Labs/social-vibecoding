@@ -3286,7 +3286,7 @@ const DevChat = {
             }
             // #990: and re-arm the trailing dots for the same reason — a tab
             // that loads mid-fetch must not render a transcript that looks
-            // finished. _activityHtml() re-checks the live-CC-run gate, so a
+            // finished. `_activitySpec` re-checks the live-CC-run gate, so a
             // reload during a coding run still suppresses them.
             DevChat._activity = { label: null };
             // #937: rebuild the stopping row and its escalation ladder from
@@ -3559,9 +3559,7 @@ const DevChat = {
                   // line and throttles to one paint/frame so checkbox rows
                   // don't blink as partial markdown re-parses.
                   const displayContent = assistantMsg.content.replace(/^\[CHAT_ONLY\]\s*/i, '');
-                  const msgEls = document.querySelectorAll('#dc-messages .dc-msg-assistant .dc-msg-content');
-                  const lastEl = msgEls[msgEls.length - 1];
-                  if (lastEl) DevChat._renderStreamingMarkdown(lastEl, displayContent);
+                  DevChat._renderStreamingMarkdown(assistantMsg, displayContent);
                 }
                 DevChat.scrollToBottom();
                 break;
@@ -3989,17 +3987,25 @@ const DevChat = {
         // No assistant message yet for this turn → push a fresh one.
         // The user message is already in DevChat.messages so insertion
         // order is correct.
+        let freshBubble = false;
         if (!am || am._finalized) {
           DevChat._deactivateStatusForFreshBubble();
           am = { role: 'assistant', content: '', created_at: new Date().toISOString() };
           DevChat.messages.push(am);
-          DevChat.renderMessages();
+          freshBubble = true;
         }
         am.content += data.text;
         const displayContent = am.content.replace(/^\[CHAT_ONLY\]\s*/i, '');
-        const els = document.querySelectorAll('#dc-messages .dc-msg-assistant .dc-msg-content');
-        const el = els[els.length - 1];
-        if (el) DevChat._renderStreamingMarkdown(el, displayContent);
+        // The first token of a fresh bubble arrives through a full render, not
+        // through the streaming writer — the same order the POST-SSE path
+        // above uses, and for a reason that only became visible once the
+        // writer stopped guessing its target: the model SKIPS an assistant row
+        // with no content, so rendering the placeholder before the append put
+        // no bubble on screen for this turn. The old writer then resolved
+        // `querySelectorAll('#dc-messages .dc-msg-assistant .dc-msg-content')
+        // [length - 1]` — the PREVIOUS turn's bubble — and wrote into it.
+        if (freshBubble) DevChat.renderMessages();
+        else DevChat._renderStreamingMarkdown(am, displayContent);
         DevChat.scrollToBottom();
         break;
       }
@@ -4028,10 +4034,7 @@ const DevChat = {
           // still runs when a new bubble is pushed above.
           am.content = data.text;
           const displayContent = am.content.replace(/^\[CHAT_ONLY\]\s*/i, '');
-          const els = document.querySelectorAll('#dc-messages .dc-msg-assistant .dc-msg-content');
-          const el = els[els.length - 1];
-          if (el) DevChat._renderStreamingMarkdown(el, displayContent);
-          else DevChat.renderMessages();
+          DevChat._renderStreamingMarkdown(am, displayContent);
         }
         DevChat.scrollToBottom();
         break;
@@ -4841,27 +4844,6 @@ const DevChat = {
   // renderMessages (as part of the single innerHTML write) and from
   // _syncActivityNode (for the imperative show/hide path) so both produce
   // byte-identical DOM.
-  _activityHtml() {
-    if (!DevChat.isStreaming || !DevChat._activity) return '';
-    // Suppressed while a coding agent's own live log is what's painting
-    // progress: that row already carries a scrolling log and an ETA, so
-    // dots pinned underneath read as noise rather than reassurance. The
-    // pre-log gap ("Spinning up coding agent…") is still covered, because
-    // that status line is not a live CC run yet.
-    for (let i = DevChat.messages.length - 1; i >= 0; i--) {
-      const m = DevChat.messages[i];
-      if (!m || m.role !== 'system') continue;
-      if (!m._active) continue;
-      if (DevChat._isLiveCcRun(m)) return '';
-      break;
-    }
-    const label = DevChat._activity.label
-      ? `<span class="dc-activity-label">${DevChat._escActivity(DevChat._activity.label)}</span>`
-      : '';
-    return '<div id="dc-spinner" class="dc-status-line dc-activity-line">'
-      + '<div class="dc-streaming-dots"><span></span><span></span><span></span></div>'
-      + `${label}</div>`;
-  },
 
   // #990: a fresh assistant bubble opening means the step the ladder still
   // shows as live ("Thinking about what came back…") has in fact finished —
@@ -4897,13 +4879,10 @@ const DevChat = {
   // in both directions, so callers may show/hide freely and may (or may not)
   // follow up with renderMessages().
   _syncActivityNode() {
-    const container = document.getElementById('dc-messages');
-    if (!container) return;
-    const existing = document.getElementById('dc-spinner');
-    const html = DevChat._activityHtml();
-    if (!html) { if (existing) existing.remove(); return; }
-    if (existing) return;
-    container.insertAdjacentHTML('beforeend', html);
+    // It appended `#dc-spinner` to `#dc-messages` (or removed it) so a
+    // show/hide need not re-render the list. The dots are a field of the
+    // transcript model now, so both directions are one publish.
+    DevChat._publishTranscript();
   },
 
   // Retained as the single legacy entry point: every existing call site
@@ -5066,54 +5045,21 @@ const DevChat = {
   // Targeted DOM update so we don't rebuild the whole message list on every
   // streamed line (which would flicker and reset scroll). Falls back to a
   // full renderMessages() if the collapsible hasn't been rendered yet.
+  // A progress line just arrived. This found the `<pre>` by persist-id and
+  // wrote `textContent` into it, then patched three sibling spans — because a
+  // full `renderMessages` used to mean rebuilding `#dc-messages`' innerHTML
+  // mid-run, re-parsing every message in it.
+  //
+  // That cost is gone: a republish is a reconcile, and React touches the one
+  // `<pre>` whose text changed. So both patches are one publish, and the four
+  // summary spans re-derive from `summarizeCcProgress` in the model exactly
+  // as they did in `_patchProgressSummary`.
+  //
+  // The auto-scroll the old code did on the `<pre>` goes with it: the
+  // container's own MutationObserver (`initScrollTracking`) already follows
+  // the transcript to the bottom while the reader is locked there.
   _patchProgressDom(msg) {
-    const pid = DevChat._detailsId(msg, 'progress');
-    // The element with this pid is either:
-    //   - the inner <pre> in the merged "Claude Code is running"
-    //     <details> (current shape — no surrounding box), OR
-    //   - the legacy gray-box <details> wrapping a <pre> (orphan
-    //     progress messages persisted in the DB before the merge).
-    const target = document.querySelector(`#dc-messages [data-persist-id="${CSS.escape(pid)}"]`);
-    if (!target) {
-      DevChat.renderMessages();
-      return;
-    }
-    const text = msg.progressLog.join('\n');
-    if (target.tagName === 'PRE') {
-      target.textContent = text;
-      target.scrollTop = target.scrollHeight;
-      DevChat._patchProgressSummary(target, msg);
-      return;
-    }
-    // Legacy details-wrapping element: keep updating the inner pre
-    // and the line-count summary so old timeline entries still work.
-    const summary = target.querySelector('.dc-cc-log-toggle');
-    const pre = target.querySelector('.dc-cc-log-content');
-    if (summary) summary.textContent = `${DevChat._activityAgentName(msg)} output (${msg.progressLog.length} lines)`;
-    if (pre) {
-      pre.textContent = text;
-      pre.scrollTop = pre.scrollHeight;
-    }
-  },
-
-  // #50: keep the running summary's live-activity snippet + step counter in
-  // sync as progress lines stream in, without a full re-render. `target` is
-  // the inner <pre> _patchProgressDom just updated; the spans live in the
-  // enclosing <details>' summary. Covers both the live-append path
-  // (_appendProgressLine) and the polling fallback (_replaceProgressLog),
-  // since both funnel through _patchProgressDom.
-  _patchProgressSummary(target, msg) {
-    if (typeof summarizeCcProgress !== 'function') return;
-    const details = target.closest ? target.closest('details.dc-cc-attached') : null;
-    if (!details) return;
-    const summ = summarizeCcProgress(msg.progressLog || []);
-    const cur = details.querySelector('.dc-cc-current');
-    if (cur) cur.textContent = summ.currentLabel ? `— ${summ.currentLabel}` : '';
-    const steps = details.querySelector('.dc-cc-steps');
-    if (steps) steps.textContent = summ.steps ? `· ${summ.steps} steps` : '';
-    // #892: the deterministic stage label moves as phase markers land.
-    const phase = details.querySelector('.dc-cc-phase');
-    if (phase) phase.textContent = summ.phaseLabel ? `· ${summ.phaseLabel}` : '';
+    DevChat._publishTranscript();
   },
 
   // Experimental AI progress estimate (opt-in, server-gated). Stores the
@@ -5149,23 +5095,17 @@ const DevChat = {
     return base + n * 1000;
   },
 
-  // The trailing live count-down span (#359, replacing the static "· ~X
-  // left" suffix from #50). Carries an absolute `data-countdown-to`
-  // end-timestamp that _tickElapsed recomputes each second; empty (no span)
-  // when there's no numeric guess to count down from. The initial
-  // textContent is filled here so the span isn't blank for the up-to-1s
-  // before the first tick.
-  _countdownSpanHtml(countdownTo) {
-    if (countdownTo == null || typeof formatCountdown !== 'function') return '';
-    const initial = formatCountdown(countdownTo, Date.now());
-    return `<span class="dc-cc-countdown" data-countdown-to="${countdownTo}">${initial}</span>`;
-  },
-
   // Wipe every trace of an AI guess from the timeline (#891). Called on an
-  // explicit cleared cc_estimate, when /status stops carrying one (the
-  // coding run reached its terminal marker), and when no live coding run
-  // exists to own the guess. Blanks the spans directly rather than waiting
-  // for a full re-render, since the wrap-up can run for minutes without one.
+  // explicit cleared cc_estimate, when /status stops carrying one (the coding
+  // run reached its terminal marker), and when no live coding run exists to
+  // own the guess.
+  //
+  // It used to walk `#dc-messages` for `.dc-cc-estimate` and blank each span's
+  // innerHTML, because the wrap-up can run for minutes without a re-render and
+  // waiting for one would leave a dead guess on screen. That is the same
+  // trade `_patchProgressDom` was making, and it has the same answer: a
+  // republish is a reconcile, so clearing the flags and publishing touches the
+  // one span whose text changed.
   _clearEstimate() {
     DevChat._pendingEstimate = null;
     DevChat._lastEstimateAt = null;
@@ -5175,8 +5115,7 @@ const DevChat = {
       delete m._estimateRemaining;
       delete m._countdownTo;
     }
-    const spans = document.querySelectorAll('#dc-messages .dc-cc-estimate');
-    for (let i = 0; i < spans.length; i++) spans[i].innerHTML = '';
+    DevChat._publishTranscript();
   },
 
   // Is this message the row of a coding run that is CURRENTLY running?
@@ -5244,16 +5183,14 @@ const DevChat = {
       nextTarget = target._countdownTo;
     }
     target._countdownTo = nextTarget;
-    // Patch in place within THIS run's own DOM node (keyed by persist-id)
-    // rather than the last estimate span on the page, so a prior collapsed
-    // run's span can't be mis-targeted (#323). There is deliberately NO
-    // "last span on the page" fallback (#891): that fallback is what
-    // painted the guess onto an already-finished Claude Code card.
-    const pid = DevChat._detailsId(target, 'ccrun');
-    const span = document.querySelector(`#dc-messages [data-persist-id="${pid}"] .dc-cc-estimate`);
-    // innerHTML (not textContent): the count-down lives in a child span the
-    // ticker patches in place. The phrase is escaped because it's model output.
-    if (span) span.innerHTML = `· ✦ AI guess: ${escapeHtml(clean)}${DevChat._countdownSpanHtml(target._countdownTo)}`;
+    // The guess belongs to THIS run's row and no other. It used to be written
+    // into that row's `.dc-cc-estimate` by persist-id — deliberately not "the
+    // last estimate span on the page" (#323/#891), because that fallback is
+    // what painted a guess onto an already-finished Claude Code card. The
+    // model carries it on the row it belongs to now, which makes the same
+    // guarantee structural: a publish can only paint the run whose message
+    // object holds `_estimate`.
+    DevChat._publishTranscript();
   },
 
   // ── #50: elapsed-time ticker ────────────────────────────────
@@ -5288,78 +5225,30 @@ const DevChat = {
     if (any) DevChat._tickElapsed();
   },
 
+  // The 1s heartbeat. It used to walk `#dc-messages` three times — for
+  // `[data-elapsed-since]`, `[data-countdown-to]` and `[data-cohort-since]` —
+  // and write `textContent` into each match. All three spans are the
+  // transcript component's now and re-derive their own text, so what is left
+  // is publishing the clock they derive from. Three writers, one store.
+  //
+  // The DOM query stays, for the one thing it was ALSO deciding: whether
+  // anything on screen still ticks, and therefore whether the timer should
+  // keep running. The component renders the same `data-*` anchors precisely
+  // so this answer does not need a second source.
   _tickElapsed() {
-    const els = document.querySelectorAll('#dc-messages [data-elapsed-since]');
-    // #359: count-down spans share this loop — anchored to an absolute
-    // target end-timestamp and floored at 30s (formatCountdown), so a
-    // late-firing tick under tab throttling still shows the right value.
-    const downs = document.querySelectorAll('#dc-messages [data-countdown-to]');
-    // #892: the population-context line crosses its 10 min / 30 min
-    // thresholds mid-run, so it ticks on the same heartbeat.
-    const cohorts = document.querySelectorAll('#dc-messages [data-cohort-since]');
-    if (!els.length && !downs.length && !cohorts.length) {
+    const any = document.querySelector(
+      '#dc-messages [data-elapsed-since], #dc-messages [data-countdown-to], #dc-messages [data-cohort-since]'
+    );
+    if (!any) {
       if (DevChat._elapsedTimer) {
         clearInterval(DevChat._elapsedTimer);
         DevChat._elapsedTimer = null;
       }
       return;
     }
-    const now = Date.now();
-    if (typeof formatElapsed === 'function') {
-      els.forEach((el) => {
-        const since = parseInt(el.dataset.elapsedSince, 10);
-        if (!Number.isFinite(since)) return;
-        el.textContent = formatElapsed(Math.max(0, now - since));
-      });
-    }
-    if (typeof formatCountdown === 'function') {
-      downs.forEach((el) => {
-        const to = parseInt(el.dataset.countdownTo, 10);
-        if (!Number.isFinite(to)) return;
-        el.textContent = formatCountdown(to, now);
-      });
-    }
-    if (typeof runCohortHint === 'function') {
-      cohorts.forEach((el) => {
-        const since = parseInt(el.dataset.cohortSince, 10);
-        if (!Number.isFinite(since)) return;
-        const elapsed = Math.max(0, now - since);
-        // #906: resolved HERE, on every tick, from live state only. The
-        // retired `data-cohort-gated` flag was the second input to this
-        // decision and the frozen one — stamped at render from msg._estimate
-        // and never refreshed — which is why the range blurb kept rendering
-        // beside a live AI countdown for the rest of the run. Elapsed is the
-        // only input left, and runCohortHint owns the whole rule: '' below
-        // ten minutes (so the slot stays empty unless a real estimate fills
-        // it), long-run context above. An empty hint writes an empty span,
-        // never a dangling separator.
-        const hint = runCohortHint(elapsed);
-        el.textContent = hint ? ' \u00b7 ' + hint : '';
-      });
-    }
-  },
-
-  // The elapsed/duration suffix for a system status row:
-  //   - `_active` rows get the live ticker span (filled by _tickElapsed);
-  //   - finished rows show a static "(took Xm Ys)" from the server's
-  //     persisted durationMs (reload-safe) or the client-side freeze
-  //     stamped by _deactivateLastStatus (live-session only).
-  _statusElapsedHtml(msg) {
-    // A server-persisted duration wins even while the row is still
-    // `_active` (e.g. "Claude Code finished" arriving mid-turn): the row
-    // describes a completed step, so a fresh ticker would be misleading.
-    if (msg.durationMs != null && typeof formatElapsed === 'function') {
-      return `<span class="dc-status-elapsed">(took ${formatElapsed(Math.max(0, msg.durationMs))})</span>`;
-    }
-    if (msg._active && msg.created_at) {
-      const since = new Date(msg.created_at).getTime();
-      if (!Number.isFinite(since)) return '';
-      return `<span class="dc-status-elapsed" data-elapsed-since="${Math.min(since, Date.now())}"></span>`;
-    }
-    if (msg._elapsedFinalMs != null && typeof formatElapsed === 'function') {
-      return `<span class="dc-status-elapsed">(took ${formatElapsed(Math.max(0, msg._elapsedFinalMs))})</span>`;
-    }
-    return '';
+    const react = (typeof window !== 'undefined' && window.UsernodeReact)
+      ? window.UsernodeReact.devChat : null;
+    if (react && react.publishNow) react.publishNow(Date.now());
   },
 
   // Re-apply the arc spinner to a trailing `stagingBuild: 'running'` row
@@ -5492,27 +5381,31 @@ const DevChat = {
     }
   },
 
-  async promotePR(btn = null) {
+  // #558's in-flight state, as the id of the session being proposed.
+  //
+  // It was `btn.disabled` plus a swapped `btn.innerHTML`, written onto the
+  // button the click arrived on — a second author on a node the card renders
+  // now. That is not merely untidy here: `renderMessages` runs on every 3s
+  // status poll, so a repaint mid-request would have restored the label AND
+  // cleared the re-entry guard, which is the double-submit #558 exists to
+  // stop. Keyed by session, so switching sessions mid-flight cannot leave the
+  // next one's card spinning.
+  _proposing: null,
+
+  async promotePR() {
     if (!DevChat.currentSession?.id) return;
-    // #558: disable + spinner the moment the button is clicked so a slow
-    // request can't be double-submitted by impatient clicking. Re-entry
-    // guard (an already-disabled button means a request is in flight),
-    // then swap the label for a spinner while preserving the original
-    // text so the failure paths can restore it (success re-renders the
-    // whole card, so only failures need cleanup).
-    let originalLabel = null;
-    if (btn) {
-      if (btn.disabled) return;
-      originalLabel = btn.innerHTML;
-      btn.disabled = true;
-      btn.setAttribute('aria-busy', 'true');
-      btn.innerHTML = '<span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span> Proposing…';
-    }
+    const sessionId = DevChat.currentSession.id;
+    // #558: the spinner goes up the moment the button is clicked so a slow
+    // request can't be double-submitted by impatient clicking, and an
+    // in-flight request for THIS session is the re-entry guard.
+    if (Number(DevChat._proposing) === Number(sessionId)) return;
+    DevChat._proposing = sessionId;
+    DevChat._publishTranscript();
+    // Back to a pressable button. Only the failure paths need it — success
+    // re-renders a card that no longer offers Propose at all.
     const restoreBtn = () => {
-      if (!btn) return;
-      btn.disabled = false;
-      btn.removeAttribute('aria-busy');
-      if (originalLabel != null) btn.innerHTML = originalLabel;
+      DevChat._proposing = null;
+      DevChat._publishTranscript();
     };
     // #707: the request keeps running through navigation (no abort
     // signal — the server does the work regardless, so let it finish),
@@ -5522,7 +5415,6 @@ const DevChat = {
     // the await used to throw into the catch below and surface a
     // spurious "Network error" alert on whatever page the user had
     // moved to.
-    const sessionId = DevChat.currentSession.id;
     const stillCurrent = () => Number(DevChat.currentSession?.id) === Number(sessionId);
     try {
       const res = await fetch(`/api/sessions/${sessionId}/promote`, { method: 'POST' });
@@ -5582,9 +5474,15 @@ const DevChat = {
         PlatformUI.toast('Network error');
         restoreBtn();
       } else {
-        // Stale rejection: swallow (the button node is detached DOM).
+        // Stale rejection: swallow. The card it belongs to is not on screen.
         console.warn('Propose request failed after leaving the session:', err?.message || err);
       }
+    } finally {
+      // Whatever happened, this session is no longer proposing. The REPAINT is
+      // the failure paths' job above (`restoreBtn`), because on success the
+      // card has already been re-rendered without the button; this only makes
+      // sure a stale outcome cannot leave the flag set for a later re-entry.
+      DevChat._proposing = null;
     }
   },
 
@@ -5663,9 +5561,119 @@ const DevChat = {
     return ` · reply $${(cents / 100).toFixed(3)}`;
   },
 
-  renderMessages() {
-    const container = document.getElementById('dc-messages');
-    if (!container) return;
+  // ── The transcript, as a MODEL ────────────────────────────────────
+  //
+  // `renderMessages` built one `innerHTML` string for `#dc-messages` and then
+  // five other things wrote into what it had just painted: the streaming
+  // bubble at 60fps, a 1s ticker over three kinds of span, the AI-estimate
+  // spans, the `<details>` open-state restore, and two delegated-listener
+  // scans. Each is gone or scoped — see features/dev-chat/transcript-store.ts.
+  //
+  // What did NOT move: every rule about WHICH row is which, and every string
+  // another module owns (`renderMarkdown`, `AppView.visualsTilesHtml`,
+  // `CreditOptions.cardHtml`, `DevFlowSelect`). This carries their answers.
+  _rowKey(msg, msgIdx) {
+    return String(msg.id || msg._slug || `i${msgIdx}`);
+  },
+
+  /** The stamp every row carries: "<id> <epoch ms>". */
+  _rowStamp(msg) {
+    const ts = msg.created_at ? new Date(msg.created_at).getTime() : '';
+    return `${msg.id || msg._slug || ''} ${ts}`;
+  },
+
+  _detailsSpec(msg, kind, defaultOpen) {
+    return { persistId: DevChat._detailsId(msg, kind), defaultOpen: !!defaultOpen };
+  },
+
+  /**
+   * The elapsed/duration suffix for a status row, in its three shapes:
+   *   - a server-persisted `durationMs` wins even while the row is still
+   *     `_active` ("Claude Code finished" arriving mid-turn describes a
+   *     COMPLETED step, so a fresh ticker would be misleading);
+   *   - an `_active` row hands over its start epoch and the row re-derives
+   *     its own label from `nowStore` on the 1s heartbeat;
+   *   - a finished row shows the client-side freeze `_deactivateLastStatus`
+   *     stamped (live sessions only — a reload has the server's duration).
+   */
+  _elapsedSpec(msg) {
+    const fmtEl = typeof formatElapsed === 'function' ? formatElapsed : null;
+    if (msg.durationMs != null && fmtEl) {
+      return { kind: 'fixed', label: `(took ${fmtEl(Math.max(0, msg.durationMs))})` };
+    }
+    if (msg._active && msg.created_at) {
+      const since = new Date(msg.created_at).getTime();
+      if (!Number.isFinite(since)) return null;
+      return { kind: 'since', since: Math.min(since, Date.now()) };
+    }
+    if (msg._elapsedFinalMs != null && fmtEl) {
+      return { kind: 'fixed', label: `(took ${fmtEl(Math.max(0, msg._elapsedFinalMs))})` };
+    }
+    return null;
+  },
+
+  /**
+   * A status row. `html` rather than `text` where the old template
+   * interpolated `msg.content` UNESCAPED — those rows carry platform-authored
+   * copy with markup in it, and escaping them now would be a visible change.
+   */
+  _statusRow(msg, msgIdx, over) {
+    return {
+      t: 'status',
+      key: DevChat._rowKey(msg, msgIdx),
+      icon: msg._active ? 'spinner' : 'check',
+      text: msg.content || '',
+      html: msg.content || '',
+      elapsed: DevChat._elapsedSpec(msg),
+      stamp: DevChat._rowStamp(msg),
+      ...over,
+    };
+  },
+
+  // The attachment strip inside a user bubble. It is a SIBLING of the
+  // rendered markdown, never part of it: the DOMPurify allowlist strips
+  // `<img>` and must keep doing so for untrusted markdown, so an image
+  // attachment can only reach the page from outside that pass. Optimistic
+  // sends carry `objectUrl` until the reload swaps in the server URL.
+  _attachmentRows(msg) {
+    const atts = msg.attachments;
+    if (!Array.isArray(atts) || !atts.length) return undefined;
+    const sid = DevChat.currentSession?.id;
+    const out = [];
+    for (const a of atts) {
+      const idOk = typeof a.id === 'string' && /^[a-f0-9]{32}$/.test(a.id);
+      const url = a.objectUrl || (idOk && sid ? `/api/sessions/${sid}/attachments/${a.id}` : null);
+      if (!url) continue;
+      const name = String(a.filename || 'file');
+      if (a.kind === 'image') out.push({ kind: 'image', href: url, name });
+      else {
+        out.push({
+          kind: 'file', href: url, name, download: true,
+          badgeHtml: DevChat._attachKindBadgeHtml(a),
+          size: DevChat._humanSize(a.sizeBytes),
+        });
+      }
+    }
+    return out.length ? out : undefined;
+  },
+
+  _qaSpec(msg) {
+    const groups = msg.suggestions;
+    const multi = groups.length > 1;
+    return {
+      multi,
+      groups: groups.map((g, gi) => ({
+        label: multi && g.question ? g.question : '',
+        answers: (g.answers || []).map((a, ai) => ({
+          text: a,
+          suggested: ai === 0,
+          selected: multi && DevChat._qaSelection[gi] === ai,
+        })),
+      })),
+    };
+  },
+
+  _transcriptView() {
     const session = DevChat.currentSession;
 
     // Drain a pending AI progress estimate (#323): an estimate can arrive
@@ -5765,6 +5773,7 @@ const DevChat = {
       }
     }
 
+
     // Q/A mode (#32): suggested-answer chips render only under the LAST
     // non-system message — and only when the session is one the viewer
     // can still act in. Once the user replies (chip or typed), the
@@ -5776,509 +5785,378 @@ const DevChat = {
     }
     const qaInteractive = !!session && (session.status === 'active' || session.status === 'promoted');
 
-    container.innerHTML = DevChat.messages.map((msg, msgIdx) => {
-      // System messages — each is a single immutable status line
+    // The one row a live turn is writing into: the last assistant row while a
+    // turn is in flight. Only it subscribes to `streamStore`, which is what
+    // keeps a 60fps publish from re-rendering the list.
+    let liveIdx = -1;
+    if (DevChat.isStreaming || DevChat._streamKey) {
+      for (let i = DevChat.messages.length - 1; i >= 0; i--) {
+        const m = DevChat.messages[i];
+        if (m.role === 'system') continue;
+        if (m.role === 'assistant' && !m.creditsCard) liveIdx = i;
+        break;
+      }
+    }
+
+    const rows = [];
+    DevChat.messages.forEach((msg, msgIdx) => {
+      const key = DevChat._rowKey(msg, msgIdx);
+      const stamp = DevChat._rowStamp(msg);
+
       if (msg.role === 'system') {
-        // Inline spec preview card. The Mayor's scout dispatch
-        // emits this metadata alongside the status line; clicking the
-        // card opens the read-only spec viewer (side panel on wide
-        // viewports, fullscreen modal on narrow). We clip the snippet
-        // server-side (~400 chars) and again here client-side so the
-        // card stays compact in the timeline.
+        // Inline spec preview card. The Mayor's scout dispatch emits this
+        // metadata alongside the status line; clicking the card opens the
+        // read-only spec viewer.
         if (msg.specPreview) {
-          const sTs = msg.created_at ? new Date(msg.created_at).getTime() : '';
-          const sId = msg.id || msg._slug || '';
-          const lineCount = msg.specLines || (msg.specPreview.split('\n').length);
-          // Clip the snippet to WHOLE LINES only, so a partial task item is
-          // never half-included: as a scout redraft shifts the text, a
-          // `- [ ]` line near the boundary would otherwise pop in and out
-          // (its checkbox flickering) between drafts. clipSpecSnippet drops
-          // any line the 200-char boundary would bisect; it falls back to
-          // the old whitespace-boundary clip only for a single over-long
-          // line with no newline in range (no task item to bisect there).
+          const lineCount = msg.specLines || msg.specPreview.split('\n').length;
+          // Clip to WHOLE LINES, so a partial task item is never half-included:
+          // as a scout redraft shifts the text, a `- [ ]` line near the
+          // boundary would otherwise pop in and out between drafts.
           const snippet = typeof clipSpecSnippet === 'function'
-            ? clipSpecSnippet(msg.specPreview, 200)
-            : msg.specPreview;
-          const versionAttr = msg.specVersion != null ? msg.specVersion : 'latest';
-          const headerLabel = msg.specVersion != null
-            ? `Spec v${msg.specVersion} · ${lineCount} lines`
-            : `Spec drafted · ${lineCount} lines`;
-          return `
-            <div class="dc-status-line"><span class="dc-status-icon dc-status-check" aria-hidden="true">&#10003;</span> ${msg.content} ${DevChat._statusElapsedHtml(msg)}<span style="font-size:9px;opacity:0.4;margin-left:auto">${sId} ${sTs}</span></div>
-            <div class="dc-spec-preview-card" data-spec-version="${versionAttr}" role="button" tabindex="0" aria-label="Open spec viewer">
-              <div class="dc-spec-preview-header">
-                <span class="dc-spec-preview-title">${escapeHtml(headerLabel)}</span>
-                <span class="dc-spec-preview-cta">View full spec →</span>
-              </div>
-              <div class="dc-spec-preview-snippet">${DevChat.renderMarkdown(snippet, { breaks: false })}</div>
-            </div>`;
+            ? clipSpecSnippet(msg.specPreview, 200) : msg.specPreview;
+          rows.push({
+            t: 'spec', key,
+            status: DevChat._statusRow(msg, msgIdx, { icon: 'check', elapsed: DevChat._elapsedSpec(msg) }),
+            version: msg.specVersion != null ? String(msg.specVersion) : 'latest',
+            header: msg.specVersion != null
+              ? `Spec v${msg.specVersion} · ${lineCount} lines`
+              : `Spec drafted · ${lineCount} lines`,
+            snippetHtml: DevChat.renderMarkdown(snippet, { breaks: false }),
+          });
+          return;
         }
-        // Issue-report draft card (human gate). Two sources: the build
-        // agent escalating a platform-level blocker on its own initiative,
-        // and (#1037) the Mayor answering an explicit "create an issue for
-        // this" from the user. Nothing is filed until a user taps the
-        // confirm button; Dismiss kills the draft. Both buttons need the
-        // DB msgId — a live-pushed draft carries it in the event, a
-        // rehydrated one gets it from the row id.
+        // Issue-report draft card (human gate). Nothing is filed until a user
+        // taps confirm; Dismiss kills the draft.
         if (msg.platformIssueDraft) {
           const d = msg.platformIssueDraft;
-          // #1037: a draft carries `target` ('platform' | 'app'). Drafts
-          // written before that (and the staging fixture's legacy rows)
-          // have no target and are platform-destined, so the default here
-          // must stay the platform copy.
+          // #1037: a draft carries `target`. Rows written before that (and the
+          // staging fixture's legacy ones) have none and are platform-destined.
           const isAppTarget = d.target === 'app';
-          const destLabel = isAppTarget
-            ? `Issue draft — ${d.appName || 'this app'}`
-            : 'Suggested platform report';
-          const confirmLabel = isAppTarget ? 'File issue' : 'Report to platform';
-          const pTs = msg.created_at ? new Date(msg.created_at).getTime() : '';
-          const pId = msg.id || msg._slug || '';
-          // #699: bodies longer than the 300-char preview render as a
-          // <details>: the summary holds the preview plus a "Show full
-          // report" cue (hidden while open), the content holds the
-          // remainder, so the open state reads as one continuous text.
-          // data-persist-id keeps the open state across the full-innerHTML
-          // re-renders renderMessages does mid-turn (and across reloads).
           const fullBody = String(d.body || '');
-          let bodyHtml = '';
+          let body = { kind: 'none' };
           if (fullBody.length > 300) {
-            // Back the clip up to the last whitespace before 300 (when one
-            // exists past 200) so the collapsed cut — and the seam between
-            // summary and remainder when open — falls between words.
+            // #699: back the clip up to the last whitespace before 300 (when
+            // one exists past 200) so the collapsed cut — and the seam when
+            // open — falls between words.
             let clip = 300;
-            const ws = Math.max(
-              fullBody.lastIndexOf(' ', 300), fullBody.lastIndexOf('\n', 300));
+            const ws = Math.max(fullBody.lastIndexOf(' ', 300), fullBody.lastIndexOf('\n', 300));
             if (ws > 200) clip = ws;
-            const pid = DevChat._detailsId(msg, 'pireport');
-            bodyHtml = `<details class="dc-pi-report" data-persist-id="${pid}"><summary class="dc-pi-report-summary">${escapeHtml(fullBody.slice(0, clip))}<span class="dc-pi-report-cue">… Show full report</span></summary><div class="dc-pi-report-rest">${escapeHtml(fullBody.slice(clip))}</div></details>`;
+            body = {
+              kind: 'details',
+              details: DevChat._detailsSpec(msg, 'pireport', false),
+              summary: fullBody.slice(0, clip),
+              rest: fullBody.slice(clip),
+            };
           } else if (fullBody) {
-            bodyHtml = `<div style="font-size:13px;color:var(--text-muted);white-space:pre-wrap;margin-bottom:6px">${escapeHtml(fullBody)}</div>`;
+            body = { kind: 'plain', text: fullBody };
           }
-          let actionsHtml = '';
+          let action = { kind: 'none' };
           if (d.status === 'filed' && d.issueUrl) {
-            actionsHtml = `<a href="${escapeHtml(d.issueUrl)}" target="_blank" class="dc-pr-btn dc-pr-btn-preview" style="text-decoration:none">Reported — issue #${d.issueNumber}</a>`;
+            action = { kind: 'link', href: d.issueUrl, label: `Reported — issue #${d.issueNumber}` };
           } else if (d.status === 'filed') {
-            actionsHtml = `<span style="color:var(--text-muted);font-size:12px">${isAppTarget ? 'Filed on this app\'s repo' : 'Reported to the platform'}</span>`;
+            action = { kind: 'note', text: isAppTarget ? "Filed on this app's repo" : 'Reported to the platform' };
           } else if (d.status === 'dismissed') {
-            actionsHtml = '<span style="color:var(--text-muted);font-size:12px">Dismissed</span>';
+            action = { kind: 'note', text: 'Dismissed' };
           } else if (d.msgId) {
-            actionsHtml = `
-              <button class="dc-pr-btn dc-pr-btn-promote" onclick="DevChat.resolvePlatformIssueDraft(${d.msgId}, 'confirm', this)">${escapeHtml(confirmLabel)}</button>
-              <button class="dc-pr-btn dc-pr-btn-preview" onclick="DevChat.resolvePlatformIssueDraft(${d.msgId}, 'dismiss', this)">Dismiss</button>`;
+            action = { kind: 'buttons', confirmLabel: isAppTarget ? 'File issue' : 'Report to platform' };
           }
-          return `
-            <div class="dc-status-line"><span class="dc-status-icon dc-status-check" aria-hidden="true">&#9873;</span> ${escapeHtml(msg.content || 'The AI suggests reporting this to the platform')}<span style="font-size:9px;opacity:0.4;margin-left:auto">${pId} ${pTs}</span></div>
-            <div class="dc-pr-card" data-platform-issue-msg="${d.msgId || ''}">
-              <div class="dc-pr-card-header">
-                <span style="color:var(--text-muted);font-size:11px;text-transform:uppercase;letter-spacing:0.05em">${escapeHtml(destLabel)}</span>
-              </div>
-              <div style="font-weight:600;margin:4px 0 2px">${escapeHtml(d.title || '')}</div>
-              ${bodyHtml}
-              <div class="dc-pr-card-actions">${actionsHtml}</div>
-            </div>`;
+          rows.push({
+            t: 'issueDraft', key,
+            status: {
+              t: 'status', key: `${key}:s`, icon: 'flag',
+              text: msg.content || 'The AI suggests reporting this to the platform',
+              elapsed: null, stamp,
+            },
+            msgId: d.msgId || null,
+            destLabel: isAppTarget ? `Issue draft — ${d.appName || 'this app'}` : 'Suggested platform report',
+            title: d.title || '',
+            body, action,
+          });
+          return;
         }
         if (msg.ccLog) {
-          const pid = DevChat._detailsId(msg, 'cclog');
-          return `<details class="dc-cc-log" data-persist-id="${pid}"><summary class="dc-cc-log-toggle">${DevChat._activityAgentName(msg)} log</summary><pre class="dc-cc-log-content">${msg.ccLog.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre></details>`;
+          rows.push({
+            t: 'ccLog', key,
+            details: DevChat._detailsSpec(msg, 'cclog', false),
+            label: DevChat._activityAgentName(msg),
+            log: msg.ccLog,
+          });
+          return;
         }
         if (msg.progressLog?.length) {
-          // Already merged into a parent "Claude Code is running"
-          // status line by the pre-pass above — nothing to render here.
-          if (mergedProgress.has(msg)) return '';
-          // Orphan progress message — old DB rows that didn't have a
-          // matching predecessor status line. Render in the SAME new
-          // attached style (not the legacy gray box) with a synthetic
-          // status line, so the visual stays consistent across the
-          // timeline regardless of how the row was originally written.
-          const logText = msg.progressLog.join('\n').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-          const innerPid = DevChat._detailsId(msg, 'progress');
-          const outerPid = DevChat._detailsId(msg, 'ccrunorphan');
-          const ts = msg.created_at ? new Date(msg.created_at).getTime() : '';
-          const id = msg.id || msg._slug || '';
-          const icon = '<span class="dc-status-icon dc-status-check" aria-hidden="true">&#10003;</span>';
-          return `<details class="dc-cc-attached" data-persist-id="${outerPid}" ${DevChat._ccOpenAttrs(msg)}><summary class="dc-status-line dc-cc-attached-summary">${icon} ${DevChat._activityAgentName(msg)} output<span class="dc-cc-attached-chevron" aria-hidden="true"></span><span style="font-size:9px;opacity:0.4;margin-left:auto">${id} ${ts}</span></summary><pre class="dc-cc-attached-log" data-persist-id="${innerPid}">${logText}</pre></details>`;
+          // Already merged into a parent "Claude Code is running" status line
+          // by the pre-pass — nothing to render here.
+          if (mergedProgress.has(msg)) return;
+          // Orphan progress message — old DB rows with no matching
+          // predecessor status line. Rendered in the SAME attached style with
+          // a synthetic status line, so the timeline stays consistent.
+          rows.push({
+            t: 'attached', key,
+            details: DevChat._detailsSpec(msg, 'ccrunorphan', DevChat._ccDefaultOpen(msg)),
+            icon: 'check',
+            text: `${DevChat._activityAgentName(msg)} output`,
+            elapsed: null, stamp,
+            body: {
+              kind: 'log',
+              persistId: DevChat._detailsId(msg, 'progress'),
+              text: msg.progressLog.join('\n'),
+            },
+          });
+          return;
         }
-        // #361: the "Changes ready" card renders whenever the turn produced
-        // a reviewable commit — i.e. either a preview built (msg.stagingUrl)
-        // OR the staging-independent marker (msg.changesReady) is set on the
-        // message (staging-failed turns, rehydrated metadata, cloned rows).
-        // Staging is an ENRICHMENT of the card, not its on/off switch: when
-        // the preview is absent, the Preview button is shown disabled with a
-        // short "rebuild on propose" note (surfacing the missing-secret hint
-        // when that was the cause), while Propose still works — promote
-        // lazily creates the PR and rebuilds staging itself (routes/votes.js).
+        // #361: the "Changes ready" card renders whenever the turn produced a
+        // reviewable commit — a preview built (stagingUrl) OR the
+        // staging-independent marker. Staging is an ENRICHMENT of the card,
+        // not its on/off switch.
         if (msg.stagingUrl || msg.changesReady) {
-          const stgTs = msg.created_at ? new Date(msg.created_at).getTime() : '';
-          const stgId = msg.id || msg._slug || '';
-          // Once the PR merges (or is mid-merge), the merge path tears down
-          // the staging container, so this historical preview link is dead —
-          // clicking it lands on a 502/blank page. Disable it instead, with a
-          // tooltip pointing the user at the now-live app.
-          const previewGone = !!session && (session.status === 'merged' || session.status === 'merging' || !!session.merged_at);
-          // #439: the Preview button is ACTIVE whenever this card represents
-          // reviewable work that isn't merged. Clicking always routes through
-          // DevChat.previewStaging → ensure-staging, which opens a live
-          // preview as-is OR rebuilds a torn-down one on demand (idle GC /
-          // lost container) — no more dead links or "proposing will rebuild
-          // it" dead-ends. It renders disabled only once the change is merged
-          // (previewGone), when the preview is intentionally gone and the
-          // change is live in the app.
+          // Once the PR merges the merge path tears down the staging
+          // container, so the historical preview link is dead.
+          const previewGone = !!session
+            && (session.status === 'merged' || session.status === 'merging' || !!session.merged_at);
           const canPreview = !previewGone;
-          // Best-known URL handed to the opener as a fallback. ensure-staging
-          // keys off the session id and prefers the session's live
-          // staging_url, so this is only used for the already-live fast path;
-          // prefer the session row over the (possibly stale) message URL.
+          // Prefer the session row over the (possibly stale) message URL.
           const liveUrl = (session && session.staging_url) || msg.stagingUrl || '';
-          // #127: bot-emitted testing guidance lives on the session row
-          // (testing_md / testing_path). When present, offer a "Test this
-          // change" button that opens the preview at the deep link with the
-          // instructions panel showing. The markdown is looked up at click
-          // time (DevChat.previewStaging) — never inlined in the attribute.
+          // #127: bot-emitted testing guidance lives on the session row. The
+          // markdown is looked up at click time, never inlined.
           const hasTesting = !!(session?.testing_md || session?.testing_path);
-          // Active Test button whenever a preview can be opened/rebuilt; the
-          // disabled "Test this change" only once the merge tore it down.
-          const testBtn = !hasTesting ? '' : (canPreview
-            ? `<button class="dc-pr-btn dc-pr-btn-preview" onclick="DevChat.previewStaging('${liveUrl}', true)">Test this change</button>`
-            : `<button class="dc-pr-btn dc-pr-btn-preview" disabled title="Preview removed after merge — this change is now live in the app">Test this change</button>`);
-          // Disabled tooltip only applies to the merged case now — a missing/
-          // failed-build preview is rebuilt on click and surfaces any reason
-          // (missing secret, etc.) in the preview loader, not here.
-          const previewBtnTitle = 'Preview removed after merge — this change is now live in the app';
-          const previewBtnHtml = canPreview
-            ? `<button class="dc-pr-btn dc-pr-btn-preview" onclick="DevChat.previewStaging('${liveUrl}', false)">Preview staging</button>`
-            : `<button class="dc-pr-btn dc-pr-btn-preview" disabled title="${escapeHtml(previewBtnTitle)}">Preview staging</button>`;
-          // #439: no inline "proposing will rebuild it" note anymore — the
-          // Preview button itself rebuilds on click.
-          const previewNote = '';
-          // PR link prefers the session row, falling back to the marker the
-          // message carries (so a rehydrated/cloned failure card still links
-          // out even before the session refetch lands).
-          const prUrl = session?.pr_url || msg.prUrl || null;
-          const prNumber = session?.pr_number || msg.prNumber || null;
-          // #195: before/after capture tiles. Visuals are latest-set-per-
-          // session, so only the NEWEST staging card carries them — older
-          // cards from earlier turns would just repeat the same media. The
-          // scan recognizes changesReady cards too so a later success card
-          // still wins; visuals only attach to a card that has a live URL.
+          // #195: before/after tiles. Visuals are latest-set-per-session, so
+          // only the NEWEST staging card carries them.
           let visualsHtml = '';
           if (window.AppView && session?.visuals) {
-            let latestStagingMsg = null;
+            let latest = null;
             for (let vi = DevChat.messages.length - 1; vi >= 0; vi--) {
-              if (DevChat.messages[vi].stagingUrl || DevChat.messages[vi].changesReady) { latestStagingMsg = DevChat.messages[vi]; break; }
+              if (DevChat.messages[vi].stagingUrl || DevChat.messages[vi].changesReady) {
+                latest = DevChat.messages[vi]; break;
+              }
             }
-            if (latestStagingMsg === msg && msg.stagingUrl) visualsHtml = AppView.visualsTilesHtml(session.visuals);
+            if (latest === msg && msg.stagingUrl) visualsHtml = AppView.visualsTilesHtml(session.visuals);
           }
-          // #405: the change card's status used to freeze on "Proposed!"
-          // and never reflect the later merge stages. Drive it from the
-          // shared lifecycle helper so it tracks In vote → Passed → Merging…
-          // → ✓ Merged; the merged case gets a friendlier, self-explanatory
-          // label that doubles as the reason the preview link is gone.
-          let cardStatusHtml = '';
+          // #405: driven by the shared lifecycle helper so the card tracks
+          // In vote → Passed → Merging… → ✓ Merged rather than freezing on
+          // "Proposed!".
+          let status2 = { kind: 'none' };
           if (session && session.status !== 'active' && window.MergeStatus && MergeStatus.lifecycle) {
-            const cardLife = MergeStatus.lifecycle(session);
-            if (cardLife && cardLife.key === 'merged') {
-              cardStatusHtml = '<span class="ms-badge ms-badge-violet" title="This change is merged and now live in the app.">✓ Merged — now live in the app</span>';
-            } else if (cardLife && cardLife.label) {
-              cardStatusHtml = MergeStatus.badgeHtml(cardLife);
-            }
+            const life = MergeStatus.lifecycle(session);
+            if (life && life.key === 'merged') status2 = { kind: 'merged' };
+            else if (life && life.label) status2 = { kind: 'badge', html: MergeStatus.badgeHtml(life) };
           }
-          return `
-            <div class="dc-status-line"><span class="dc-status-icon dc-status-check" aria-hidden="true">&#10003;</span> ${msg.content} <span style="font-size:9px;opacity:0.4;margin-left:auto">${stgId} ${stgTs}</span></div>
-            <div class="dc-pr-card" id="dc-pr-card">
-              <div class="dc-pr-card-header">
-                ${prUrl ? `<a href="${prUrl}" target="_blank" class="dc-pr-link">PR #${prNumber}</a>` : '<span style="color:var(--text-muted)">Changes ready</span>'}
-                ${(session?.session_title || session?.pr_title) ? `<span class="dc-pr-title">${escapeHtml(session.session_title || session.pr_title)}</span>` : ''}
-                ${window.AppView ? AppView.closesPillHtml(session) : ''}
-                <span style="font-size:9px;opacity:0.4;margin-left:8px">${stgId} ${stgTs}</span>
-              </div>
-              ${visualsHtml ? `<div class="dc-pr-card-visuals" style="margin:6px 0 2px">${visualsHtml}</div>` : ''}
-              <div class="dc-pr-card-actions">
-                ${previewBtnHtml}
-                ${testBtn}
-                ${prUrl ? `<a href="${prUrl}" target="_blank" class="dc-pr-btn dc-pr-btn-preview" style="text-decoration:none">View on GitHub</a>` : ''}
-                ${session?.status === 'active' ? `<button class="dc-pr-btn dc-pr-btn-promote" onclick="DevChat.promotePR(this)">Propose to group</button>` : ''}
-                ${cardStatusHtml}
-              </div>
-              ${previewNote}
-            </div>`;
+          rows.push({
+            t: 'changes', key,
+            status: { t: 'status', key: `${key}:s`, icon: 'check', html: msg.content || '', text: msg.content || '', elapsed: null, stamp },
+            prUrl: session?.pr_url || msg.prUrl || null,
+            prNumber: session?.pr_number || msg.prNumber || null,
+            title: session?.session_title || session?.pr_title || '',
+            closesHtml: window.AppView ? AppView.closesPillHtml(session) : '',
+            stamp,
+            visualsHtml,
+            preview: { enabled: canPreview, url: liveUrl, title: '' },
+            test: hasTesting ? { enabled: canPreview, url: liveUrl } : null,
+            canPropose: session?.status === 'active',
+            // #558's in-flight spinner, which used to be written onto the
+            // button element the click came from. See `promotePR`.
+            proposePending: Number(DevChat._proposing) === Number(session?.id),
+            status2,
+          });
+          return;
         }
-        const sTs = msg.created_at ? new Date(msg.created_at).getTime() : '';
-        const sId = msg.id || msg._slug || '';
-        // While `_active`, show a CSS arc spinner (clearly rotating, unlike
-        // the near-symmetric gear glyph). Once done, swap to a check mark
-        // so the user can see at a glance which steps have completed.
-        const iconHtml = msg._active
-          ? '<span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>'
-          : '<span class="dc-status-icon dc-status-check" aria-hidden="true">&#10003;</span>';
 
-        const sumClass = 'dc-status-line dc-cc-attached-summary';
-        const chevron = '<span class="dc-cc-attached-chevron" aria-hidden="true"></span>';
-        const tsSpan = `<span style="font-size:9px;opacity:0.4;margin-left:auto">${sId} ${sTs}</span>`;
-        // #50: live elapsed ticker while `_active`, static "(took …)" once
-        // the step finishes (server durationMs or client-side freeze).
-        const elapsedHtml = DevChat._statusElapsedHtml(msg);
-
-        // Attached live progress log? Render the status line as the
-        // <summary> of an open-by-default <details>, with the
-        // streaming log block inline below. No box, slightly muted
-        // monospaced text — clicking the summary collapses the log
-        // (preserved across renders via _applyDetailsPersistence).
+        const elapsed = DevChat._elapsedSpec(msg);
+        // Attached live progress log? The status line becomes the <summary> of
+        // an open-by-default <details>, with the streaming log inline below.
         const attachedProgress = progressByStatus.get(msg);
         if (attachedProgress) {
-          const logText = (attachedProgress.progressLog || []).join('\n')
-            .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-          const outerPid = DevChat._detailsId(msg, 'ccrun');
-          // Inner pre keeps the legacy progress pid so
-          // _patchProgressDom() can target it directly when streaming
-          // appends new lines mid-run.
-          const innerPid = DevChat._detailsId(attachedProgress, 'progress');
-          // #50: live activity snippet + step counter, visible even when
-          // the log is collapsed. The spans render unconditionally (even
-          // empty) so _patchProgressSummary can patch them in place as
-          // lines stream in.
           const summ = typeof summarizeCcProgress === 'function'
             ? summarizeCcProgress(attachedProgress.progressLog || [])
-            : { currentLabel: '', steps: 0 };
-          const currentSpan = `<span class="dc-cc-current">${summ.currentLabel ? `— ${escapeHtml(summ.currentLabel)}` : ''}</span>`;
-          const stepsSpan = `<span class="dc-cc-steps">${summ.steps ? `· ${summ.steps} steps` : ''}</span>`;
-          // #892: the DETERMINISTIC stage readout, derived from the phase
-          // markers the run genuinely emits (Syncing with main / Claude is
-          // working / Committing / Pushing / Finished). Unlike the AI guess
-          // beside it, this cannot be wrong — it is what the user has to
-          // look at when the estimate is uncertain.
-          const phaseSpan = `<span class="dc-cc-phase">${summ.phaseLabel ? `· ${escapeHtml(summ.phaseLabel)}` : ''}</span>`;
-          // #892: long-run context, from the measured distribution of 880
-          // real runs — a statement about the population, not a prediction
-          // about this one, so it can never be individually wrong.
-          //
-          // #906: NO VISIBILITY FLAG. This span used to carry
-          // `data-cohort-gated`, computed once here from msg._estimate to
-          // mean "an AI countdown owns the slot, stay quiet until 10 min".
-          // msg._estimate is necessarily falsy at first render — the first
-          // guess is a full 60s estimator tick away — and neither
-          // _applyEstimate nor _patchProgressSummary ever refreshed the
-          // attribute, so every run rendered gated="0" and the range blurb
-          // sat beside the live countdown for the whole run. The rule now
-          // lives entirely in runCohortHint, evaluated fresh on every tick
-          // from the one input that is actually live: elapsed time.
+            : { currentLabel: '', steps: 0, phaseLabel: '' };
           const cohortSince = msg._active && msg.created_at
-            ? new Date(msg.created_at).getTime() : NaN;
-          const cohortSpan = Number.isFinite(cohortSince)
-            ? `<span class="dc-cc-cohort" data-cohort-since="${Math.min(cohortSince, Date.now())}"></span>`
-            : '';
-          // Experimental AI progress estimate: rendered unconditionally
-          // (even empty) so _applyEstimate can patch it in place; only
-          // populated while the server emits cc_estimate for this run.
-          // #359: the remaining-time portion is a live count-down child span
-          // (data-countdown-to) the shared ticker decrements; the phrase stays
-          // plain escaped text. Empty when there's no numeric guess.
-          const estimateSpan = `<span class="dc-cc-estimate" title="Experimental: a small AI model's rough guess from the progress log. May be wrong.">${msg._estimate ? `· ✦ AI guess: ${escapeHtml(msg._estimate)}${DevChat._countdownSpanHtml(msg._countdownTo)}` : ''}</span>`;
-          // #647: the open default follows the STATUS row (the one whose id
-          // supplies the ccrun persist-id), not the attached progress row.
-          // After the clone marker both carry the flag; keying off `msg`
-          // keeps the default aligned with the persisted state's key.
-          return `<details class="dc-cc-attached" data-persist-id="${outerPid}" ${DevChat._ccOpenAttrs(msg)}><summary class="${sumClass}">${iconHtml} ${msg.content}${currentSpan}${stepsSpan}${phaseSpan}${elapsedHtml}${estimateSpan}${cohortSpan}${chevron}${tsSpan}</summary><pre class="dc-cc-attached-log" data-persist-id="${innerPid}">${logText}</pre></details>`;
+            ? Math.min(new Date(msg.created_at).getTime(), Date.now()) : NaN;
+          rows.push({
+            t: 'attached', key,
+            // #647: the open default follows the STATUS row, not the attached
+            // progress row — keying off `msg` keeps it aligned with the
+            // persisted state's key.
+            details: DevChat._detailsSpec(msg, 'ccrun', DevChat._ccDefaultOpen(msg)),
+            icon: msg._active ? 'spinner' : 'check',
+            html: msg.content || '', text: msg.content || '',
+            elapsed, stamp,
+            progress: {
+              current: summ.currentLabel || '',
+              steps: summ.steps || 0,
+              phase: summ.phaseLabel || '',
+              estimate: msg._estimate || '',
+              countdownTo: msg._countdownTo != null ? msg._countdownTo : null,
+              cohortSince: Number.isFinite(cohortSince) ? cohortSince : null,
+            },
+            body: {
+              kind: 'log',
+              // The inner pre keeps the legacy progress pid. Nothing targets
+              // it any more — a streamed line is a republish — but it is the
+              // id the row has always carried, and it names the PROGRESS row
+              // while the disclosure around it names the STATUS row.
+              persistId: DevChat._detailsId(attachedProgress, 'progress'),
+              text: (attachedProgress.progressLog || []).join('\n'),
+            },
+          });
+          return;
         }
-
-        // Post-turn ccOutput (the markdown summary that the worker
-        // emits when the run finishes — typically attached to a
-        // "Claude Code finished" status line). Same merged shape as
-        // the live-progress case: status line is the <summary>,
-        // markdown body inline below in muted text. We use a
-        // dedicated body class because the content is rendered
-        // markdown HTML, not a monospaced log dump — different font
-        // and indentation than .dc-cc-attached-log.
+        // Post-turn ccOutput — the markdown summary the worker emits when the
+        // run finishes. Same merged shape, a markdown body rather than a log.
         if (msg.ccOutput) {
-          const outerPid = DevChat._detailsId(msg, 'ccout');
-          return `<details class="dc-cc-attached" data-persist-id="${outerPid}" ${DevChat._ccOpenAttrs(msg)}><summary class="${sumClass}">${iconHtml} ${msg.content}${elapsedHtml}${chevron}${tsSpan}</summary><div class="dc-cc-attached-md">${DevChat.renderMarkdown(msg.ccOutput)}</div></details>`;
+          rows.push({
+            t: 'attached', key,
+            details: DevChat._detailsSpec(msg, 'ccout', DevChat._ccDefaultOpen(msg)),
+            icon: msg._active ? 'spinner' : 'check',
+            html: msg.content || '', text: msg.content || '',
+            elapsed, stamp,
+            body: { kind: 'md', html: DevChat.renderMarkdown(msg.ccOutput) },
+          });
+          return;
         }
-
-        // #664: mid-turn payer switch onto the user's own API key. A
-        // subtle inline notice — key glyph instead of the pipeline
-        // check mark, so it reads as an FYI rather than a completed
-        // build step.
+        // #664: mid-turn payer switch onto the user's own API key. A key glyph
+        // instead of the pipeline check, so it reads as an FYI.
         if (msg.billingSwitch) {
-          return `<div class="dc-status-line" style="opacity:0.8"><span class="dc-status-icon" aria-hidden="true">&#128273;</span> ${escapeHtml(msg.content)}${tsSpan}</div>`;
+          rows.push({ t: 'status', key, icon: 'key', text: msg.content || '', elapsed: null, stamp, dim: true });
+          return;
         }
-
-        // #937: the stop-escalation row. Once the stop has been pending
-        // long enough that it is clearly not landing (the ladder's 40s
-        // rung sets `_forceOffered`), the row grows a Force stop button —
-        // the user's only way out of what was otherwise a permanent
-        // "Stopping…". Same inline-onclick shape as the other in-row
-        // actions (the platform-issue draft card above).
+        // #937: once a stop is clearly not landing, the row grows a Force stop
+        // button — the user's only way out of a permanent "Stopping…".
         if (msg._stopping && msg._forceOffered) {
-          return `<div class="dc-status-line">${iconHtml} ${escapeHtml(msg.content)} ${elapsedHtml}`
-            + '<button class="dc-force-stop-btn" onclick="DevChat._forceStopTurn(this)">Force stop</button>'
-            + `${tsSpan}</div>`;
+          rows.push({
+            t: 'status', key, icon: msg._active ? 'spinner' : 'check',
+            text: msg.content || '', elapsed, stamp, forceStop: true,
+          });
+          return;
         }
-
-        return `<div class="dc-status-line">${iconHtml} ${msg.content} ${elapsedHtml}${tsSpan}</div>`;
+        rows.push({
+          t: 'status', key, icon: msg._active ? 'spinner' : 'check',
+          html: msg.content || '', text: msg.content || '', elapsed, stamp,
+        });
+        return;
       }
 
-      // Out-of-credits card: the dev chat's reply to a 429
-      // { code: 'budget_exceeded' }. Replaces the assistant bubble entirely
-      // with the three routes out — own API key / a coding tool on your
-      // computer / a connected Claude.ai or ChatGPT subscription. Markup,
-      // copy and destinations all live in public/js/credit-options.js so
-      // the card, the red banner and the Generate-proposal modal can't
-      // drift apart. Client-only and never persisted: the refusal wrote no
-      // server row.
-      //
-      // MUST come before the empty-assistant skip below: this row carries
-      // no `content` by design (the card IS the message), so the skip would
-      // otherwise swallow it.
+      // Out-of-credits card: the dev chat's reply to a 429. MUST come before
+      // the empty-assistant skip — this row carries no `content` by design.
       if (msg.creditsCard) {
-        return window.CreditOptions ? CreditOptions.cardHtml(msg.creditsCard) : '';
+        if (window.CreditOptions) rows.push({ t: 'credits', key, html: CreditOptions.cardHtml(msg.creditsCard) });
+        return;
       }
-
       // Skip truly empty assistant placeholders that exist only as the
-      // streaming-target before any tokens arrived. Once content is present
-      // (even if just a [CHAT_ONLY] marker with no body) we always render so
-      // the user can see the reasoning collapsible.
-      if (msg.role === 'assistant' && !msg.content) return '';
+      // streaming target before any tokens arrived.
+      if (msg.role === 'assistant' && !msg.content) return;
 
       const isUser = msg.role === 'user';
       const isCCOutput = (msg.model || '').startsWith('claude-code/');
-      const costLabel = DevChat._messageCostLabel(msg);
-      const ts = msg.created_at ? new Date(msg.created_at).getTime() : '';
-      const idLabel = msg.id ? `#${msg.id}` : '';
       const rawContent = msg.content || '';
       const hadChatOnly = /^\[CHAT_ONLY\]/i.test(rawContent);
       const content = rawContent.replace(/^\[CHAT_ONLY\]\s*/i, '');
-      const displayContent = content.trim()
-        ? DevChat.renderMarkdown(content)
-        : `<span style="color:var(--text-muted);font-style:italic">(no visible reply — see reasoning below)</span>`;
-      // For any assistant message that carried a [CHAT_ONLY] tag, surface the
-      // raw output in a collapsible so nothing is ever invisibly swallowed.
-      const reasoningDetail = hadChatOnly
-        ? `<details class="dc-cc-log" style="margin-top:6px" data-persist-id="${DevChat._detailsId(msg, 'mayorraw')}"><summary class="dc-cc-log-toggle">Mayor reasoning (raw)</summary><pre class="dc-cc-log-content">${rawContent.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre></details>`
-        : '';
+      const idLabel = msg.id ? `#${msg.id}` : '';
+      const ts = msg.created_at ? new Date(msg.created_at).getTime() : '';
+      const msgStamp = `${idLabel} ${ts}`;
 
       if (isCCOutput) {
-        // Extract summary (first line or paragraph) vs full details
         const lines = content.replace(/^\*\*Claude Code output:\*\*\n?/i, '').trim();
         const firstPara = lines.split('\n\n')[0] || lines.split('\n')[0];
-        const hasMore = lines.length > firstPara.length + 10;
-        return `
-          <div class="dc-msg dc-msg-assistant">
-            <div class="dc-msg-header">
-              <span class="text-emerald-400">Claude Code</span>
-              <span class="dc-msg-meta">${idLabel} ${ts}</span>
-            </div>
-            <div class="dc-msg-content">${DevChat.renderMarkdown(firstPara)}</div>
-            ${hasMore ? `<details class="dc-cc-log" style="margin-top:6px" data-persist-id="${DevChat._detailsId(msg, 'ccfull')}"><summary class="dc-cc-log-toggle">Full output</summary><div class="dc-msg-content" style="padding:8px 10px">${DevChat.renderMarkdown(lines)}</div></details>` : ''}
-          </div>`;
+        rows.push({
+          t: 'msg', key, who: 'cc', model: '', stamp: msgStamp,
+          contentHtml: DevChat.renderMarkdown(firstPara),
+          ...(lines.length > firstPara.length + 10
+            ? { more: { details: DevChat._detailsSpec(msg, 'ccfull', false), html: DevChat.renderMarkdown(lines) } }
+            : null),
+        });
+        return;
       }
 
-      // Q/A chips (#32): only on the latest assistant message of an
-      // interactive session. Rendered even mid-stream (the 'done' event
-      // re-renders before isStreaming flips, so gating on it here would
-      // hide the chips forever) — taps are guarded by isStreaming in the
-      // click handlers instead.
-      const qaChips = (!isUser
-        && msgIdx === qaLastConvoIdx
-        && qaInteractive
-        && Array.isArray(msg.suggestions) && msg.suggestions.length)
-        ? DevChat._qaChipsHtml(msg)
-        : '';
+      // Q/A chips (#32): only on the latest non-system row of an interactive
+      // session. Rendered even mid-stream — the 'done' event re-renders before
+      // isStreaming flips, so gating on it here would hide them forever; taps
+      // are guarded by isStreaming in the click handlers instead.
+      const wantsQa = !isUser && msgIdx === qaLastConvoIdx && qaInteractive
+        && Array.isArray(msg.suggestions) && msg.suggestions.length;
 
-      return `
-        <div class="dc-msg ${isUser ? 'dc-msg-user' : 'dc-msg-assistant'}">
-          <div class="dc-msg-header">
-            <span class="${isUser ? 'text-violet-400' : 'text-emerald-700 dark:text-emerald-400'}">${isUser ? 'You' : 'AI'}</span>
-            ${msg.model ? `<span class="dc-msg-model">${msg.model.split('-').slice(0, 2).join('-')}${costLabel}</span>` : ''}
-            <span class="dc-msg-meta">${idLabel} ${ts}</span>
-          </div>
-          <div class="dc-msg-content">${isUser ? DevChat.renderMarkdown(content) : displayContent}</div>
-          ${isUser ? DevChat._attachmentsRowHtml(msg) : ''}
-          ${isUser ? '' : reasoningDetail}
-          ${qaChips}
-        </div>`;
-      // #1049: the flow picker / walkthrough sits at the END of the
-      // transcript, so on an empty session it is the only thing in the pane
-      // and on a resumed walkthrough it stays next to the composer the user
-      // is typing their brief into. Part of the SAME assignment rather than
-      // an insertAdjacentHTML afterwards — one write to innerHTML is one
-      // repaint, and it keeps the card inside the string the rest of this
-      // method's tests render through. Returns '' for every session that is
-      // already under way.
-      // #990: the trailing activity indicator is part of the SAME
-      // assignment for the same reason the flow card is — one write, one
-      // repaint — and because an appended-afterwards node is exactly what
-      // used to get wiped by every re-render.
-    }).join('')
+      rows.push({
+        t: 'msg', key, who: isUser ? 'user' : 'ai',
+        model: msg.model ? `${msg.model.split('-').slice(0, 2).join('-')}${DevChat._messageCostLabel(msg)}` : '',
+        stamp: msgStamp,
+        contentHtml: content.trim()
+          ? DevChat.renderMarkdown(content)
+          : '<span style="color:var(--text-muted);font-style:italic">(no visible reply — see reasoning below)</span>',
+        ...(msgIdx === liveIdx ? { live: true } : null),
+        ...(isUser ? { attachments: DevChat._attachmentRows(msg) } : null),
+        // For any assistant message that carried a [CHAT_ONLY] tag, surface
+        // the raw output so nothing is ever invisibly swallowed.
+        ...(!isUser && hadChatOnly
+          ? { reasoning: { details: DevChat._detailsSpec(msg, 'mayorraw', false), raw: rawContent } }
+          : null),
+        ...(wantsQa ? { qa: DevChat._qaSpec(msg) } : null),
+      });
+    });
+
+    return {
+      rows,
       // #1281: in a hand-off venue the walkthrough IS the launchpad and
-      // renders in the composer's place instead of at the end of the
-      // transcript — rendering it here as well would show it twice.
-      + (DevChat._launchpadVenue() ? '' : DevChat._devFlowHtml())
-      + DevChat._activityHtml();
+      // renders in the composer's place instead — rendering it here as well
+      // would show it twice.
+      devFlowHtml: DevChat._launchpadVenue() ? '' : DevChat._devFlowHtml(),
+      activity: DevChat._activitySpec(),
+    };
+  },
 
+  /** #990's trailing dots, as data. */
+  _activitySpec() {
+    if (!DevChat.isStreaming || !DevChat._activity) return null;
+    // Suppressed while a coding agent's own live log is painting progress:
+    // that row already carries a scrolling log and an ETA, so dots pinned
+    // underneath read as noise. The pre-log gap is still covered, because
+    // that status line is not a live CC run yet.
+    for (let i = DevChat.messages.length - 1; i >= 0; i--) {
+      const m = DevChat.messages[i];
+      if (!m || m.role !== 'system') continue;
+      if (!m._active) continue;
+      if (DevChat._isLiveCcRun(m)) return null;
+      break;
+    }
+    return { label: DevChat._activity.label || '' };
+  },
+
+  renderMessages() {
+    const container = document.getElementById('dc-messages');
+    if (!container) return;
+    const react = (typeof window !== 'undefined' && window.UsernodeReact)
+      ? window.UsernodeReact.devChat : null;
+    if (!react || !react.mountTranscript) return;
+    react.mountTranscript(container, DevChat._transcriptView());
+
+    // The two FOREIGN cards in the transcript — `DevFlowSelect`'s walkthrough
+    // and `CreditOptions`' out-of-credits card — are handed to their own
+    // module's `wire()`, which only adds a delegated listener and is
+    // idempotent per element. Unconditional, and after every render rather
+    // than once per mount: a card that appears in a later publish would
+    // otherwise go unwired, which is the #1304 failure. Safe on the line
+    // after the publish because `transcriptStore` flushes synchronously — the
+    // cards are in the document by now, exactly as they were when the line
+    // above was an `innerHTML` assignment. `_bindDevFlowVisibility` in
+    // particular must NOT be gated on the walkthrough rendering here: in a
+    // hand-off venue it renders in the composer's place instead, and that
+    // path wires the card but not the visibility re-check.
     DevChat._wireDevFlowCard();
     DevChat._bindDevFlowVisibility();
-
-    // Delegated hash navigation for any out-of-credits card just rendered
-    // (idempotent per node, so repeated renders never stack handlers).
     DevChat._wireCreditsCards();
 
-    DevChat._applyDetailsPersistence();
-    // #50: start/stop the shared elapsed ticker based on whether this
-    // render left any active status line in the DOM.
+    // #50: start/stop the shared heartbeat based on whether this render left
+    // any ticking span. The spans are the component's now and re-derive their
+    // own text from `nowStore`; what is left here is the timer that publishes
+    // the clock.
     DevChat._syncElapsedTicker();
-    // #285: keep the quick-reply pill bar in sync with the latest message
-    // (it clears once a sent user row becomes the last message).
+    // #285: keep the quick-reply pill bar in sync with the latest message.
     DevChat._renderQuickReplies();
   },
 
-  // ── Q/A mode: suggested-answer chips (#32) ─────────────────
-  //
-  // `suggestions` is [{ question, answers }] — sanitized server-side
-  // (the Mayor's suggest_answers tool) and persisted as
-  // metadata.suggestions on the assistant row. Single question: tapping
-  // a chip sends that answer immediately. Multiple questions: taps
-  // select one answer per group (held in _qaSelection, keyed by group
-  // index) and "Send answers" / "Use the suggested defaults" compose a
-  // numbered reply. The textarea stays usable throughout — chips are a
-  // shortcut, never a constraint.
-
-  _qaSelection: {},
-
-  _qaChipsHtml(msg) {
-    const groups = msg.suggestions;
-    const multi = groups.length > 1;
-    const groupsHtml = groups.map((g, gi) => {
-      const chips = (g.answers || []).map((a, ai) => {
-        const selected = multi && DevChat._qaSelection[gi] === ai;
-        const cls = `dc-qa-chip${ai === 0 ? ' dc-qa-chip-default' : ''}${selected ? ' dc-qa-chip-selected' : ''}`;
-        const hint = ai === 0 ? '<span class="dc-qa-chip-hint">suggested</span>' : '';
-        return `<button type="button" class="${cls}" data-qa-group="${gi}" data-qa-answer="${ai}">${escapeHtml(a)}${hint}</button>`;
-      }).join('');
-      const label = multi && g.question
-        ? `<div class="dc-qa-group-label">${escapeHtml(g.question)}</div>`
-        : '';
-      return `<div class="dc-qa-group">${label}<div class="dc-qa-chip-row">${chips}</div></div>`;
-    }).join('');
-    const actions = multi
-      ? `<div class="dc-qa-actions">
-          <button type="button" class="dc-qa-send" data-qa-send="1">Send answers</button>
-          <button type="button" class="dc-qa-defaults" data-qa-defaults="1">Use the suggested defaults</button>
-        </div>`
-      : '';
-    return `<div class="dc-qa-chips">${groupsHtml}${actions}</div>`;
-  },
-
-  // The chips on screen always belong to the last non-system message
-  // (renderMessages gates rendering to exactly that row), so handlers
-  // resolve the suggestion groups from it rather than trusting the DOM.
-  _qaCurrentGroups() {
-    for (let i = DevChat.messages.length - 1; i >= 0; i--) {
-      const m = DevChat.messages[i];
-      if (m.role === 'system') continue;
-      return (m.role === 'assistant' && Array.isArray(m.suggestions) && m.suggestions.length)
-        ? m.suggestions
-        : null;
-    }
-    return null;
+  /** Republish the transcript without re-mounting — every patch path's end. */
+  _publishTranscript() {
+    const react = (typeof window !== 'undefined' && window.UsernodeReact)
+      ? window.UsernodeReact.devChat : null;
+    if (!react || !react.publishTranscript) return;
+    react.publishTranscript(DevChat._transcriptView());
   },
 
   _onQaChipClick(chip) {
@@ -6605,16 +6483,6 @@ const DevChat = {
     return !(msg && msg.inherited);
   },
 
-  // Attribute pair for a dc-cc-attached <details>. The bare `open` is
-  // emitted only when the block should start expanded: relying on
-  // _applyDetailsPersistence to close it after paint would flash the full
-  // log for a frame and fire a spurious toggle.
-  _ccOpenAttrs(msg) {
-    return DevChat._ccDefaultOpen(msg)
-      ? 'data-default-open="1" open'
-      : 'data-default-open="0"';
-  },
-
   // ── <details> open/closed persistence ─────────────────────
   //
   // renderMessages() blows away the DOM on every re-render, so native <details>
@@ -6640,34 +6508,36 @@ const DevChat = {
     catch {}
   },
 
-  _applyDetailsPersistence() {
+  // ── The <details> open state, which survives a repaint ────────────
+  //
+  // `_applyDetailsPersistence` walked `#dc-messages` after EVERY render, set
+  // `.open` from the stored map and bound a `toggle` listener to write it
+  // back. Both halves are the component's now, and these are what it asks:
+  // `_detailsOpen` for the initial state, `_detailsToggled` when the reader
+  // changes it. The storage convention is unchanged —
+  //
+  //   state[key] === 1 → the reader opened a default-closed widget
+  //   state[key] === 0 → the reader closed a default-open widget
+  //   missing          → the widget's own default
+  //
+  // — which is what keeps a session's disclosures where the reader left them
+  // across a reload, not just across a repaint.
+  _detailsOpen(persistId, defaultOpen) {
     const sid = DevChat.currentSession?.id;
-    if (!sid) return;
+    if (!sid || !persistId) return !!defaultOpen;
     const state = DevChat._readDetailsState(sid);
-    document.querySelectorAll('#dc-messages [data-persist-id]').forEach((el) => {
-      // The persistence layer applies to <details> only — the inner
-      // <pre> we tag with a persist-id (so live progress updates can
-      // find it) isn't a disclosure widget and has no toggle event.
-      if (el.tagName !== 'DETAILS') return;
-      const key = el.dataset.persistId;
-      const defaultOpen = el.dataset.defaultOpen === '1';
-      // Storage convention:
-      //   state[key] === 1 → user explicitly opened a default-closed widget
-      //   state[key] === 0 → user explicitly closed a default-open widget
-      //   missing          → use the widget's default
-      if (state[key] === 1) el.open = true;
-      else if (state[key] === 0) el.open = false;
-      else el.open = defaultOpen;
-      el.addEventListener('toggle', () => {
-        const s = DevChat._readDetailsState(sid);
-        if (el.open === defaultOpen) {
-          delete s[key]; // back to default — drop the override
-        } else {
-          s[key] = el.open ? 1 : 0;
-        }
-        DevChat._writeDetailsState(sid, s);
-      });
-    });
+    if (state[persistId] === 1) return true;
+    if (state[persistId] === 0) return false;
+    return !!defaultOpen;
+  },
+
+  _detailsToggled(persistId, defaultOpen, open) {
+    const sid = DevChat.currentSession?.id;
+    if (!sid || !persistId) return;
+    const s = DevChat._readDetailsState(sid);
+    if (!!open === !!defaultOpen) delete s[persistId]; // back to default
+    else s[persistId] = open ? 1 : 0;
+    DevChat._writeDetailsState(sid, s);
   },
 
   // Render markdown to sanitized HTML.
@@ -6840,45 +6710,70 @@ const DevChat = {
     });
   },
 
-  // Stabilized updater for the LIVE streaming assistant bubble. Replaces the
-  // old per-token `el.innerHTML = renderMarkdown(partialContent)` with three
+  // ── The live bubble (#dc-messages' one 60fps writer) ──────────────
+  //
+  // The stabilized updater for a streaming assistant bubble, with three
   // anti-flicker behaviours (see the proposal/dev-session spec):
   //   • Holds back the trailing incomplete line — only the completed portion
   //     is parsed as markdown, the in-progress final line is appended as
   //     escaped plaintext. A `- [ ]` fragment never momentarily renders as a
   //     checkbox; the row appears once, when its line is finished.
-  //   • Throttles DOM writes to one paint per animation frame, so rows above
-  //     the cursor don't redraw on every token.
-  //   • Swaps idempotently — the rendered HTML is cached on the element and
-  //     the innerHTML assignment is skipped when it hasn't changed.
-  // `el` is the .dc-msg-content node; `fullText` is the full display content
-  // so far; `opts.breaks` honours the caller's chat-vs-spec line-break mode.
-  _renderStreamingMarkdown(el, fullText, opts = {}) {
-    if (!el) return;
-    el._streamPending = { fullText, breaks: opts.breaks !== false };
-    DevChat._streamEl = el;
-    if (el._streamRaf != null) return; // a flush is already scheduled
+  //   • Throttles to one paint per animation frame, so rows above the cursor
+  //     don't redraw on every token.
+  //   • Publishes idempotently — the rendered HTML is cached in `_streamHtml`
+  //     and an unchanged frame is dropped.
+  //
+  // It used to throw `el.innerHTML` at the last `.dc-msg-assistant
+  // .dc-msg-content` in the transcript, found by `querySelectorAll(…)[length
+  // - 1]`. The transcript is a component now, so it publishes into
+  // `streamStore` instead — a store exactly ONE row subscribes to, which is
+  // what keeps a per-frame publish from re-rendering the whole list (see
+  // features/dev-chat/transcript-store.ts).
+  //
+  // `_streamKey` is the row it belongs to. Non-null means "a turn is writing
+  // right now", which is also how `_transcriptView` decides which row is live.
+  // `fullText` is the display content so far; `opts.breaks` honours the
+  // caller's chat-vs-spec line-break mode.
+  _streamKey: null,
+  _streamPending: null,
+  _streamRaf: null,
+  _streamRafKind: null,
+  _streamHtml: null,
+
+  _renderStreamingMarkdown(msg, fullText, opts = {}) {
+    const key = DevChat._liveRowKey(msg);
+    if (!key) return;
+    DevChat._streamPending = { key, fullText, breaks: opts.breaks !== false };
+    DevChat._streamKey = key;
+    if (DevChat._streamRaf != null) return; // a flush is already scheduled
     const flush = () => {
-      el._streamRaf = null;
-      const pend = el._streamPending;
+      DevChat._streamRaf = null;
+      const pend = DevChat._streamPending;
       if (!pend) return;
-      el._streamPending = null;
-      DevChat._writeStreamingHtml(el, pend.fullText, pend.breaks, false);
+      DevChat._streamPending = null;
+      DevChat._writeStreamingHtml(pend.key, pend.fullText, pend.breaks, false);
     };
     if (typeof requestAnimationFrame === 'function') {
-      el._streamRaf = requestAnimationFrame(flush);
-      el._streamRafKind = 'raf';
+      DevChat._streamRaf = requestAnimationFrame(flush);
+      DevChat._streamRafKind = 'raf';
     } else {
-      el._streamRaf = setTimeout(flush, 16);
-      el._streamRafKind = 'timeout';
+      DevChat._streamRaf = setTimeout(flush, 16);
+      DevChat._streamRafKind = 'timeout';
     }
   },
 
-  // Compute the bubble HTML (held-back tail unless `final`) and assign it
-  // only when it differs from the last write, eliminating redundant node
-  // churn. `final` renders the FULL content with no held-back line so a
-  // finished bubble is byte-exact.
-  _writeStreamingHtml(el, fullText, breaks, final) {
+  /** The transcript row a message occupies, by the same rule the model uses. */
+  _liveRowKey(msg) {
+    if (!msg) return null;
+    const idx = DevChat.messages.indexOf(msg);
+    return DevChat._rowKey(msg, idx < 0 ? DevChat.messages.length - 1 : idx);
+  },
+
+  // Compute the bubble HTML (held-back tail unless `final`) and publish it
+  // only when it differs from the last write, eliminating redundant renders.
+  // `final` renders the FULL content with no held-back line so a finished
+  // bubble is byte-exact.
+  _writeStreamingHtml(key, fullText, breaks, final) {
     let html;
     if (final) {
       html = fullText ? DevChat.renderMarkdown(fullText, { breaks }) : '';
@@ -6892,9 +6787,11 @@ const DevChat = {
       // Helper script failed to load — degrade to the plain full render.
       html = DevChat.renderMarkdown(fullText, { breaks });
     }
-    if (el._streamHtml === html) return;
-    el._streamHtml = html;
-    el.innerHTML = html;
+    if (DevChat._streamHtml === html) return;
+    DevChat._streamHtml = html;
+    const react = (typeof window !== 'undefined' && window.UsernodeReact)
+      ? window.UsernodeReact.devChat : null;
+    if (react && react.publishStream) react.publishStream({ key, html });
   },
 
   // Flush any pending throttled render and re-render the active streaming
@@ -6902,20 +6799,26 @@ const DevChat = {
   // done / stopped / assistant_message_end / _finishStreaming so the sealed
   // bubble is exact even if a frame was still queued.
   _flushStreamingFinal() {
-    const el = DevChat._streamEl;
-    if (!el) return;
-    DevChat._streamEl = null;
-    if (el._streamRaf != null) {
-      if (el._streamRafKind === 'raf' && typeof cancelAnimationFrame === 'function') {
-        cancelAnimationFrame(el._streamRaf);
+    const key = DevChat._streamKey;
+    if (!key) return;
+    // Cleared FIRST, and that is the whole seam: `renderMessages` runs on the
+    // very next line of the `done` handler, and `_transcriptView` reads this
+    // to decide which row is live. A row that is no longer being written must
+    // render its content from the model — `msg.content` is authoritative by
+    // then — or the sealed text would vanish on the render that follows.
+    DevChat._streamKey = null;
+    if (DevChat._streamRaf != null) {
+      if (DevChat._streamRafKind === 'raf' && typeof cancelAnimationFrame === 'function') {
+        cancelAnimationFrame(DevChat._streamRaf);
       } else {
-        clearTimeout(el._streamRaf);
+        clearTimeout(DevChat._streamRaf);
       }
-      el._streamRaf = null;
+      DevChat._streamRaf = null;
     }
-    const pend = el._streamPending;
-    el._streamPending = null;
-    if (pend) DevChat._writeStreamingHtml(el, pend.fullText, pend.breaks, true);
+    const pend = DevChat._streamPending;
+    DevChat._streamPending = null;
+    if (pend) DevChat._writeStreamingHtml(pend.key, pend.fullText, pend.breaks, true);
+    DevChat._streamHtml = null;
   },
 
   _lockedToBottom: true,
@@ -8281,27 +8184,6 @@ const DevChat = {
         uploading: !!a.uploading,
       })),
     });
-  },
-
-  // Attachment row inside a user bubble. Rendered OUTSIDE renderMarkdown
-  // (the DOMPurify allowlist strips <img>, and must keep doing so for
-  // untrusted markdown). Optimistic sends carry objectUrl until the
-  // reload swaps in the server URL.
-  _attachmentsRowHtml(msg) {
-    const atts = msg.attachments;
-    if (!Array.isArray(atts) || !atts.length) return '';
-    const sid = DevChat.currentSession?.id;
-    const items = atts.map((a) => {
-      const name = escapeHtml(String(a.filename || 'file'));
-      const idOk = typeof a.id === 'string' && /^[a-f0-9]{32}$/.test(a.id);
-      const url = a.objectUrl || (idOk && sid ? `/api/sessions/${sid}/attachments/${a.id}` : null);
-      if (!url) return '';
-      if (a.kind === 'image') {
-        return `<a href="${url}" target="_blank" rel="noopener" title="${name} — open full size"><img class="dc-msg-att-img" src="${url}" alt="${name}" loading="lazy"></a>`;
-      }
-      return `<a class="dc-msg-att-chip" href="${url}" download="${name}" title="Download ${name}">${DevChat._attachKindBadgeHtml(a)}<span class="dc-attach-name">${name}</span><span class="dc-attach-size">${DevChat._humanSize(a.sizeBytes)}</span></a>`;
-    }).filter(Boolean).join('');
-    return items ? `<div class="dc-msg-attachments">${items}</div>` : '';
   },
 
   _setupTextareaResize() {

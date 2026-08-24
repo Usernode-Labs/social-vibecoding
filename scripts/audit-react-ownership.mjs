@@ -270,6 +270,15 @@ const OWNED = [
   // `bannerActionsHtml` markup arrives through a dangerouslySetInnerHTML sink
   // React itself owns.
   { sel: '#dc-banners' },                    // features/dev-chat/banners.tsx
+  // The transcript. The HOST is dev-chat.js's — `renderChatView` writes the
+  // element, it carries the pane's scroll geometry, and `initScrollTracking`
+  // binds click, keydown and scroll on it once per render — but every ROW
+  // below it is React's, including the live bubble a streaming turn writes
+  // into. `.dc-msg-content` used to be a controller host that
+  // `_renderStreamingMarkdown` assigned `innerHTML` on up to sixty times a
+  // second; that writer is a `streamStore` publish now, so there is no
+  // exception to carve out here.
+  { sel: '#dc-messages' },                   // features/dev-chat/transcript.tsx
   { sel: '#llm-grants-list' },               // features/settings/grants-list.tsx
   { sel: '#cli-tokens-list' },               // features/settings/cli-tokens-list.tsx
   { sel: '#connectors-list' },               // features/settings/connectors-list.tsx
