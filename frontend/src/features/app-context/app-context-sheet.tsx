@@ -73,14 +73,19 @@ function ContextRow({
   onClick?: () => void;
   href?: string;
 }) {
+  // ONE line per row (owner review): the name leads, the description sits
+  // beside it on the same baseline and truncates — the Figma board's row.
   const body = (
     <>
       {icon}
-      <span className="flex-1 min-w-0">
-        <span className="block text-sm font-medium truncate text-zinc-800 dark:text-zinc-200">
+      <span className="flex-1 min-w-0 flex items-baseline gap-2">
+        {/* The name may itself be long (it can be the app's display name),
+            so it truncates rather than pushing the row wide; the detail
+            takes what is left and truncates after it. */}
+        <span className="text-sm font-medium truncate max-w-[55%] shrink-0 text-zinc-800 dark:text-zinc-200">
           {label}
         </span>
-        <span className="block text-xs text-zinc-500 dark:text-zinc-400 truncate">
+        <span className="text-xs text-zinc-500 dark:text-zinc-400 truncate min-w-0">
           {detail}
         </span>
       </span>
