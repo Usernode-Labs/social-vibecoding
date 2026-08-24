@@ -27,6 +27,7 @@
 // evaluates this module's whole graph in Node.
 
 import { adoptKitSurface } from '../../lib/kit-surface';
+import { refreshDrawerApps } from './drawer-apps-store.js';
 
 // Drawer status/version rows (header slim-down): the kudos + AI-credit meters
 // render into #drawer-status-pane, and the platform version + mobile-app release +
@@ -231,6 +232,9 @@ const HeaderMenu = {
     // "The drawer is opening" — both paths, before either presents. See
     // _announceOpen above.
     HeaderMenu._announceOpen();
+    // Refresh the "Your apps" section on every open (Streamlined Concept) —
+    // the list is only worth fetching for a drawer someone is looking at.
+    refreshDrawerApps();
     // The #555 AI-credit refresh used to fire here, because the row only
     // rendered in this drawer and opening it was exactly when the number
     // mattered. The row is a Settings section now (Anthropic API key), so the
@@ -238,13 +242,15 @@ const HeaderMenu = {
     // neighbours — and firing it from a drawer that no longer shows it would
     // be a poll with no reader.
     // Touch platforms: present the drawer as a kit side panel — a
-    // right-edge slide-in with 1:1 drag-to-dismiss, matching what
-    // desktop's CSS slide-over already does positionally (it used to
-    // come up from the bottom as a sheet capped at 70vh, which cut the
-    // bottom-anchored footer off). The panel element itself is adopted
-    // via contentEl — its row listeners ride along — and is restored to
-    // <body> (off-screen, as usual) when the panel dismisses. Desktop
-    // keeps the right-side slide-over below.
+    // LEFT-edge slide-in (Streamlined Concept: the drawer mirrors the
+    // hamburger, which leads the header's left group) with 1:1
+    // drag-to-dismiss, matching what desktop's CSS slide-over already does
+    // positionally. The panel element itself is adopted via contentEl — its
+    // row listeners ride along — and is restored to <body> (off-screen, as
+    // usual) when the panel dismisses. Desktop keeps the left-side
+    // slide-over below. If a hosted kit build predates side:'left' and
+    // presents on the right, the drawer still works — flag it at review
+    // rather than gating on a kit version probe.
     // Assigned right below; captured here so onDismiss can tell its own
     // teardown apart from a newer one's (see stillOwns).
     let adoption = null;
@@ -258,7 +264,7 @@ const HeaderMenu = {
       contentEl: panel,
       home: 'body',
       gate: 'touch',
-      present: { side: 'right' },
+      present: { side: 'left' },
       onDismissStart: () => {
         // The drawer this handle owned has left the screen, so anyone
         // who chained a presentation behind close() may go — resolved

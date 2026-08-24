@@ -26,13 +26,14 @@
  * exactly what the SSG prerender ships.
  */
 
-import { useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 
 import { ChevronRightIcon } from '@/components/ui/icons';
 
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { useStoreState } from '../../lib/use-store-state';
 import { notificationsStore } from './notifications-store.js';
+import { NotificationsPinnedSections } from './notifications-list';
 import type { NotificationRowView } from './notifications-list';
 
 type ScreenRowView = NotificationRowView & {
@@ -118,6 +119,21 @@ export function NotificationsScreen() {
   const screenRef = useRef<HTMLElement | null>(null);
   useVisibilityHiddenClass(screenRef, 'notifications-screen', false);
 
+  // The list's pull-to-refresh, moved here with the list itself (it attached
+  // to the drawer's #notifications-list while the rows rendered there). The
+  // screen root is the scroller and is never re-created, so attaching once
+  // is the same contract; the kit no-ops it on desktop.
+  useEffect(() => {
+    const el = screenRef.current;
+    const ui = (typeof window !== 'undefined'
+      ? (window as any).PlatformUI : null);
+    if (!el || !ui?.pullToRefresh) return;
+    ui.pullToRefresh(
+      el,
+      () => (window as any).Notifications?.refresh() ?? Promise.resolve(),
+    );
+  }, []);
+
   const snap = useStoreState(notificationsStore) as {
     screenList: ScreenRowView[] | null;
     screenCanLoadMore?: boolean;
@@ -179,6 +195,13 @@ export function NotificationsScreen() {
           Mark all read
         </button>
       </div>
+      {/*
+          Saved messages + collaborator invites, pinned above the rows — they
+          moved here with the list from the drawer's notifications block.
+          Above the tab sections deliberately: an invite is actionable on
+          either tab, and a save has no read state to filter by.
+      */}
+      <NotificationsPinnedSections />
       {today.length ? (
         <>
           <SectionHead>

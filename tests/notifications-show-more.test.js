@@ -36,11 +36,12 @@ const SRC = fs.readFileSync(
   path.join(__dirname, '..', 'frontend', 'src', 'features', 'notifications', 'notifications.js'),
   'utf8'
 );
-// #1191 slice 6 moved the drawer's markup out of the controller and into this
-// component, so the "what does the list render" assertions read it instead.
+// #1191 slice 6 moved the drawer's markup out of the controller; the
+// Streamlined Concept then made the list its own SCREEN, so the "what does
+// the list render" assertions read notifications-screen.tsx now.
 const LIST_SRC = fs.readFileSync(
   path.join(
-    __dirname, '..', 'frontend', 'src', 'features', 'notifications', 'notifications-list.tsx'
+    __dirname, '..', 'frontend', 'src', 'features', 'notifications', 'notifications-screen.tsx'
   ),
   'utf8'
 );
@@ -66,10 +67,10 @@ function codeOnly(src) {
 const CODE = codeOnly(SRC);
 const LIST_CODE = codeOnly(LIST_SRC);
 
-/** The #notifications-list scroller, comments stripped. */
+/** The screen's row-rendering half (tabs bar to end), comments stripped. */
 function listBlock() {
-  const m = LIST_CODE.match(/id="notifications-list"[\s\S]*?\n {6}<\/div>/);
-  assert.ok(m, 'the #notifications-list container found');
+  const m = LIST_CODE.match(/id="notifications-screen-tabs"[\s\S]*$/);
+  assert.ok(m, 'the screen body found');
   return m[0];
 }
 
@@ -131,7 +132,7 @@ test('_renderList publishes one row descriptor per notification, in feed order',
 });
 
 test('the renderer maps rows directly, with no between-apps divider', () => {
-  assert.match(listBlock(), /rows\.map\(/, 'renders one child per row');
+  assert.match(listBlock(), /\.map\(\(view\) => <ScreenRow/, 'renders one child per row');
   assert.doesNotMatch(LIST_CODE, /DIVIDER/,
     'the heavier between-apps divider is gone — rows carry their own border');
 });
@@ -164,25 +165,17 @@ test('loadOlder does not stack requests while a page is in flight', () => {
   assert.deepEqual(calls, [], 'a double-tap cannot queue a second page');
 });
 
-test('the pager renders inside the scroller and is wired to loadOlder', () => {
+test('the pager renders after the rows and is wired to loadOlder', () => {
   const block = listBlock();
-  // INSIDE the scroller, because it is the end of the list. Contrast the
-  // older-toggle below, which is drawer chrome over what is already in hand.
-  assert.match(block, /id="notifications-load-more"/, 'the pager sits after the rows');
+  // The end of the list, exactly as the drawer's pager was. The drawer-era
+  // older-TOGGLE (a reveal of read rows already in hand) has no successor:
+  // the screen's All tab always shows read rows, so the only "older" left is
+  // the server cursor this pager pulls.
   assert.match(block, /controller\(\)\?\.loadOlder\(\)/, 'wired to the controller');
-  assert.match(block, /disabled=\{state\.loadingMore\}/, 'refuses clicks mid-flight');
-  assert.match(block, /state\.canLoadMore/, 'offered only when a page exists');
-  assert.match(block, /e\.stopPropagation\(\)/,
-    'stops the click, or the re-render dismisses the drawer');
-});
-
-test('the older-toggle is a different control, and still outside the scroller', () => {
-  // Two distinct affordances: this one reveals READ rows already fetched, the
-  // pager goes and gets more from the server. Conflating them is the exact
-  // ambiguity that made #279 remove the original global control.
-  assert.match(LIST_CODE, /id="notifications-older-toggle"/, 'the older toggle exists…');
-  assert.doesNotMatch(listBlock(), /notifications-older-toggle/,
-    '…and sits outside the rows scroller');
+  assert.match(block, /disabled=\{snap\.loadingMore\}/, 'refuses clicks mid-flight');
+  assert.match(block, /snap\.screenCanLoadMore/, 'offered only when a page exists');
+  assert.doesNotMatch(LIST_CODE, /notifications-older-toggle/,
+    'the drawer-era reveal toggle stays gone');
 });
 
 // ── staging seed (unchanged) ────────────────────────────────────────────

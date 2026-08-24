@@ -6645,7 +6645,9 @@ a.drawer-ver--fork:hover {
    the right; adding `data-open` slides it into view. The overlay
    fades in on the same timer via the sibling rule below. */
 #header-menu-panel {
-  transform: translateX(100%);
+  /* Slides from the LEFT (Streamlined Concept) — it mirrors the hamburger,
+     which leads the header's left group. */
+  transform: translateX(-100%);
 }
 #header-menu-panel[data-open] {
   transform: translateX(0);

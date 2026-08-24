@@ -40,6 +40,14 @@ const after = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
 
 // Ids a conversion chunk deliberately removed, each with the reason.
 const RETIRED_IDS = {
+  // ── Streamlined Concept: the notification list left the drawer ───
+  // The rows render on the full-screen #notifications view now
+  // (notifications-screen.tsx, its own ids in ADDED_IDS below); the saved +
+  // invites sections moved WITH the surface keeping their ids, so only the
+  // drawer-specific chrome is gone.
+  'notifications-mark-all': 'The drawer block\'s mark-all control; the screen renders its own (#notifications-screen-mark-all), React-wired.',
+  'notifications-list': 'The drawer\'s list scroller; the screen renders rows directly.',
+  'notifications-empty': 'Drawer-only never-had-one hint; the screen\'s All tab empty state says it now.',
   'drawer-row-app-version': 'Per-dApp SHA removed from platform information; app versions remain on app cards.',
   'app-version-pill-slot': 'Drawer-only per-dApp SHA renderer removed with its row.',
   // ── THE UI OVERHAUL: four header controls became one ──────────────
@@ -105,6 +113,10 @@ const RETIRED_IDS = {
 
 // Ids a conversion chunk deliberately added, each with the reason.
 const ADDED_IDS = {
+  // ── Streamlined Concept: the drawer leads with Your apps ─────────
+  'drawer-your-apps': 'The drawer\'s "Your apps" section container — React-owned, filled on drawer open from /api/apps via the home screen\'s partition (see drawer-apps.tsx).',
+  'drawer-row-notifications': 'Badged Notifications nav row — the way into the full-screen #notifications view now that the list left the drawer.',
+  'drawer-notifications-badge': 'Notifications-only unread count on that row (bell unread + invites), painted by Notifications._renderBadge.',
   // #1281 — the session-CLI bridge opt-in. The spec marks that venue
   // settings-gated and "most users: no", so the gate needs somewhere to
   // live: Settings → Experimental, beside the other per-user preview flag.
@@ -155,10 +167,8 @@ const ADDED_IDS = {
   'improve-close': 'Close button in the Improve panel header.',
   'improve-body': 'The panel\'s scroller.',
   'improve-row-feedback': 'Opens the feedback dialog — the retired #feedback-btn.',
-  'notifications-caught-up': 'The drawer\'s "you\'re all caught up" state — nothing unread, but there IS history behind "See more notifications". Deliberately a different node and sentence from #notifications-empty, which still means "you have never had a notification".',
   'improve-row-new-session': 'Starts a dev session — the Dev "+" menu\'s "Propose a change".',
   'improve-footer': 'Reference block: View on GitHub, Share app, version — all three moved out of the hamburger drawer.',
-  'drawer-notifications': 'The notifications region at the top of the hamburger, where the bell dropdown\'s body now renders.',
   'settings-theme-section': 'The Theme settings pane\'s inner node, matching every other section\'s wrapper/inner pair.',
   // ── THE UI OVERHAUL: the home screen's four areas ────────────────
   // Your apps, Discover, Challenges, Create app — stacked, in that order.

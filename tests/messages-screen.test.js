@@ -31,8 +31,10 @@ test('Messages is a hidden React-owned top-level screen with global navigation',
   // hamburger — a link to shared progress belongs beside the shared progress,
   // so it is the Challenges area's now — and the four rows left are the
   // navigation the drawer was always for.
+  // Streamlined Concept order: Notifications leads the nav rows and the
+  // Profile row closes the drawer as its footer.
   assert.ok(dapp.tests.some((entry) => entry.expectSelector
-    === '#drawer-row-profile + #drawer-row-messages + #drawer-row-settings + #drawer-row-admin'));
+    === '#drawer-row-notifications + #drawer-row-messages + #drawer-row-settings + #drawer-row-admin + #drawer-row-profile'));
   assert.match(screen, /useVisibilityHiddenClass\(screenRef, 'messages-screen', false\)/);
   assert.match(app, /REACT_SCREEN_IDS:[\s\S]*?'messages-screen'/);
   assert.match(app, /parts\[0\] === 'messages'[\s\S]{0,600}navigateToMessages/);
