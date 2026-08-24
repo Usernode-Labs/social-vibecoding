@@ -283,6 +283,46 @@ anonymous. Getting this wrong hid a real finding (`refreshVoteControls`
 writing into `#gc-messages`) behind a clean run. Check that one route actually
 rendered before believing a zero.
 
+### And a sixth: `dapp.json`'s checks are part of the contract, and some of
+their hooks are side effects of string rendering
+
+`tests/dapp-selectors-resolve.test.js` resolves declared selectors against the
+STATIC prerendered document and explicitly excludes runtime-injected markup —
+which is exactly what every converted card, chip and dialog is. So the local
+suite cannot see a declared check that a conversion broke. The platform can,
+and it costs a build and a vote to find out.
+
+Three of the 405 broke on the Dev/home chunks, and none of them was a
+behaviour change:
+
+| the check's hook | why the conversion lost it |
+| --- | --- |
+| `.app-card[data-yours="true"][style*="grid-row"]` | React sets styles through the CSSOM one longhand at a time; `grid-column` + `grid-row` cover all four longhands of `grid-area`, so the browser re-serialises the block as the SHORTHAND and the text `grid-row` leaves the attribute |
+| `.gc-vote-btn[onclick*="markIssueInProgress"]` | the inline handler became a closure |
+| `.gc-vote-btn[onclick*="_setSessionShared"]` | same |
+
+The first is the one to remember, because it is invisible in the DOM
+inspector's own rendering and in every screenshot: the tiles are in the right
+cells and the check still reports "selector not found". A per-item inline
+style that must keep its authored SPELLING has to be written with
+`setAttribute` — see the header note in `frontend/src/features/home/app-grid.tsx`,
+which also says why the effect is keyed on the placement rather than run on
+every render.
+
+The other two are the general case: **an `[onclick*="…"]` check names the
+handler, and a conversion removes handler names from the markup.** The model
+already carries the answer, so publish it — the card's `ActionButton` renders
+`data-act={a.act?.fn}` — and move the check to `[data-act="…"]` in the same
+commit. That is a change to a declared check and belongs in the proposal's
+description, not in a quiet diff.
+
+So, before submitting a chunk that converts anything a declared check selects
+on: `grep` `dapp.json` for the ids, classes and attributes in the converted
+subtree, and resolve each selector in a real browser on the route the check
+names. `tests/declared-check-action-hooks.test.js` is the pattern for pinning
+one locally afterwards — it reads the real dapp.json entry, renders the real
+model, and fails here rather than on the platform.
+
 ### Large
 
 1. **Dev screen — `public/js/app-view.js`. Done, bar the launch-cover
@@ -429,6 +469,25 @@ rendered before believing a zero.
    loader a converted renderer kicks off per paint has this shape**; check
    for it before publishing, because a test that renders in a vm resolves its
    stubbed `fetch` instantly and simply hangs.
+
+   It had a second instance, and that one reached the platform. The shared-chat
+   transcript's loader repainted the head unconditionally to swap the collapsed
+   label ("Read the dev chat (9 messages)") for the expanded one, and
+   `_renderTopicHead` calls it on every paint of an EXPANDED transcript. The
+   first pass survives — it awaits its fetch, which unwinds the stack; the pass
+   after it finds the cache, stays SYNCHRONOUS, and recurses until the stack
+   overflows. Five console errors on load of every `/dev/shared/<id>` page,
+   where `_renderTopicSubView` sets `_transcriptOpen` so the section arrives
+   already open. Probing proposal topics and collapsed transcripts — which is
+   what the chunk's own browser pass did — never reached it.
+
+   So the rule is worth stating without the microtask detail: **a loader a
+   renderer calls per paint must not unconditionally re-enter that renderer.**
+   The roster guards with an in-flight set plus a cache; the transcript
+   repaints only when the label it exists to swap has actually CHANGED.
+   `tests/topic-head-loader-reentry.test.js` states it for both, and a
+   renderer spy that counts its own calls is how a regression reports a number
+   instead of a `RangeError` from inside the harness.
 
    **What stayed another owner's**, and why each is not a regression:
 
