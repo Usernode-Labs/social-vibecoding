@@ -28,6 +28,10 @@ const read = (...p) => fs.readFileSync(path.join(ROOT, ...p), 'utf8');
 const platformUiSrc = read('public', 'js', 'platform-ui.js');
 const devChatSrc = read('frontend', 'src', 'features', 'dev-chat', 'dev-chat.js');
 const groupChatSrc = read('public', 'js', 'group-chat.js');
+// The panel's MARKUP moved to a component in #1191; group-chat.js keeps the
+// fetch, the raw-source stash and the gate that decides whether Copy appears.
+const panelTsx = read('frontend', 'src', 'features', 'group-chat', 'spec-panel.tsx');
+const { renderComponent } = require('./lib/render-tsx');
 const appCss = read('public', 'css', 'app.css');
 const sessionsSrc = read('src', 'routes', 'sessions.js');
 
@@ -130,24 +134,50 @@ test('the copy button flashes its own label and reports failure', () => {
 test('_showSpecPanel stashes the raw markdown in JS state', () => {
   const src = methodSource(groupChatSrc, '_showSpecPanel', 'group-chat.js');
   assert.ok(/GroupChat\._specPanelRaw = content/.test(src),
-    '_showSpecPanel must stash `content` on _specPanelRaw (the panel rewrites its innerHTML)');
+    '_showSpecPanel must stash `content` on _specPanelRaw — the panel does not '
+    + 'hold the raw source, it renders the markdown');
   // Multi-KB markdown with quotes/newlines must never be inlined into markup.
   assert.ok(!/data-spec-(?:raw|content|markdown)/.test(src),
     'the raw spec must not be interpolated into a data- attribute');
-  assert.ok(/PlatformUI\.copyText\(GroupChat\._specPanelRaw\)/.test(src),
+  // The copy handler moved into the panel component with the markup (#1191);
+  // what it copies did not change, and it still reaches the stash by name
+  // because that is where the raw source lives.
+  assert.ok(!/data-spec-(?:raw|content|markdown)/.test(panelTsx),
+    'nor into one on the React side');
+  assert.ok(/copyText\?\.\(controller\(\)\?\._specPanelRaw\)/.test(panelTsx),
     'the panel copy handler must copy the stashed raw markdown');
 });
 
 test('the panel copy button is gated on canCopy and a non-error body', () => {
+  // The GATE is still decided in the module, where `isError` and the option
+  // live; the button is drawn from the one field it produces.
   const src = methodSource(groupChatSrc, '_showSpecPanel', 'group-chat.js');
   assert.ok(/canCopy = true/.test(src),
     '_showSpecPanel must accept a canCopy option defaulting to true');
-  assert.ok(/\(canCopy && !isError && content\)/.test(src),
+  assert.ok(/canCopy: !!\(canCopy && !isError && content\)/.test(src),
     'the button must render only for a copyable, non-error, non-empty body');
-  const copyIdx = src.indexOf('${copyBtnHtml}');
-  const closeIdx = src.indexOf('gc-spec-panel-close" aria-label');
-  assert.ok(copyIdx !== -1 && closeIdx !== -1, 'header template missing copy/close buttons');
-  assert.ok(copyIdx < closeIdx, 'the copy button must sit left of the close ✕');
+
+  // …and the header's order is checked on the RENDERED markup rather than on
+  // template-literal positions, which is a stronger statement of the same
+  // thing: the copy control sits left of the close ✕.
+  const header = (state) => renderComponent(
+    'frontend/src/features/group-chat/spec-panel.tsx', 'SpecPanelView', state);
+  const base = {
+    open: true, title: 'Spec', subtitle: 'v1', canCopy: true,
+    body: { kind: 'markdown', html: '<p>hi</p>' },
+  };
+  const withCopy = header(base);
+  assert.ok(withCopy.indexOf('gc-spec-panel-copy') < withCopy.indexOf('gc-spec-panel-close'),
+    'the copy button must sit left of the close ✕');
+  // Gated off: an error body, and an explicit canCopy: false.
+  assert.ok(!header({ ...base, canCopy: false }).includes('gc-spec-panel-copy'));
+  assert.ok(!header({ ...base, canCopy: false, body: { kind: 'error', text: 'Not found' } })
+    .includes('gc-spec-panel-copy'));
+  // An error body is TEXT, never markdown — formatting a 404 makes it look
+  // like a document.
+  const err = header({ ...base, canCopy: false, body: { kind: 'error', text: '<b>404</b>' } });
+  assert.ok(!err.includes('<b>404</b>'), 'the error message is not markup');
+  assert.match(err, /gc-spec-panel-error">&lt;b&gt;404&lt;\/b&gt;</);
 });
 
 test('the reload-restore skeleton is not copyable', () => {

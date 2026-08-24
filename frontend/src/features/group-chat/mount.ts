@@ -37,6 +37,8 @@ import {
   type MentionOption,
   type RefOption,
 } from './autocomplete-store';
+import { SpecPanel } from './spec-panel';
+import { specPanelStore, type SpecPanelState } from './spec-panel-store';
 import { Transcript } from './transcript';
 import {
   EMPTY_VIEW,
@@ -131,6 +133,15 @@ export function patchTranscriptMessage(id: number, patch: Partial<TranscriptMess
  */
 autocompleteStore.setFlush(flushSync);
 
+/**
+ * The spec panel's store gets the same flush, for the same shape of reason:
+ * `_renderSpecPanel` publishes and then immediately calls
+ * `_applySavedSpecPanelWidth()` and adds the open class, and the resizer's
+ * drag measures the panel. All of those read a panel the publish is supposed
+ * to have filled.
+ */
+specPanelStore.setFlush(flushSync);
+
 // ── The composer's two autocomplete menus ─────────────────────────────
 //
 // Same seam, one level smaller: `_ensureMenu` still creates the floating host
@@ -169,6 +180,33 @@ export function publishRefMenu(items: RefOption[], active: number): void {
   autocompleteStore.set({ ref: { items, active } });
 }
 
+// ── The shared-spec reader ────────────────────────────────────────────
+//
+// `#gc-spec-side-panel` is written into `#app-content` by
+// `AppView.renderDevChatTab`, so — like the transcript — it is a runtime host
+// that has to be (re)mounted rather than rendered from the tree, and it is
+// torn down by the same `unmountAllLegacyPortals` in
+// `AppView._teardownDevRoots`.
+
+/** Establish the panel's contents. Idempotent per host. */
+export function mountSpecPanel(host: Element | null): void {
+  if (!host) return;
+  mountLegacyPortal(host, createElement(SpecPanel));
+}
+
+/**
+ * Open the panel with a document, or close it.
+ *
+ * Closing publishes `open: false` rather than clearing the host: the host is
+ * React's subtree now, and an `innerHTML = ''` behind its back is exactly the
+ * write the ownership rule forbids. The host's own
+ * `gc-spec-side-panel-open` class stays group-chat.js's — it is what the
+ * resizer and the width restore read.
+ */
+export function publishSpecPanel(next: SpecPanelState): void {
+  specPanelStore.set(next);
+}
+
 if (typeof window !== 'undefined') {
   const w = window as unknown as { UsernodeReact?: Record<string, unknown> };
   w.UsernodeReact = w.UsernodeReact || {};
@@ -182,5 +220,7 @@ if (typeof window !== 'undefined') {
     mountRefMenu,
     publishMentionMenu,
     publishRefMenu,
+    mountSpecPanel,
+    publishSpecPanel,
   };
 }

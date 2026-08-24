@@ -2455,54 +2455,50 @@ const GroupChat = {
     // comment for why we use a bare `DevChat` reference + `typeof`
     // guard rather than `window.DevChat` (const-declared globals don't
     // attach to window).
-    const bodyHtml = isError
-      ? `<div class="gc-spec-panel-error">${escapeHtml(content)}</div>`
+    // An error renders as TEXT and a spec as markdown, and that split is
+    // deliberate: formatting a 404 message turns it into something that looks
+    // like a document. It used to be two branches of one HTML string; it is
+    // two tags in features/group-chat/spec-panel.tsx now, so the error path
+    // cannot acquire markup by accident. See the renderSpecShareCard comment
+    // for why this is a bare `DevChat` reference behind a `typeof` guard
+    // rather than `window.DevChat` (const-declared globals don't attach).
+    const body = isError
+      ? { kind: 'error', text: String(content == null ? '' : content) }
       : (typeof DevChat !== 'undefined' && DevChat.renderMarkdown
-          ? DevChat.renderMarkdown(content)
-          : escapeHtml(content));
+        ? { kind: 'markdown', html: DevChat.renderMarkdown(content) }
+        : { kind: 'error', text: String(content == null ? '' : content) });
 
-    // (#1012) Copy the whole document as raw markdown. Suppressed for an
-    // error body (a 404 message is not a spec) and for a caller that
-    // opted out via canCopy — the reload-restore skeleton, whose
-    // placeholder "Loading…" must never be copyable.
-    const copyBtnHtml = (canCopy && !isError && content)
-      ? `<button class="gc-spec-panel-copy" aria-label="Copy the whole spec as markdown" title="Copy the whole spec as markdown">Copy markdown</button>`
-      : '';
-
-    panel.innerHTML = `
-      <div class="gc-spec-panel-header">
-        <div class="gc-spec-panel-titlewrap">
-          <div class="gc-spec-panel-title">${escapeHtml(title)}</div>
-          ${subtitle ? `<div class="gc-spec-panel-subtitle">${escapeHtml(subtitle)}</div>` : ''}
-        </div>
-        ${copyBtnHtml}
-        <button class="gc-spec-panel-close" aria-label="Close spec panel">×</button>
-      </div>
-      <div class="gc-spec-panel-body">${bodyHtml}</div>`;
+    GroupChat._react()?.mountSpecPanel?.(panel);
+    GroupChat._react()?.publishSpecPanel?.({
+      open: true,
+      title: String(title == null ? '' : title),
+      subtitle: subtitle || null,
+      // (#1012) Copy the whole document as raw markdown. Suppressed for an
+      // error body (a 404 message is not a spec) and for a caller that opted
+      // out via canCopy — the reload-restore skeleton, whose placeholder
+      // "Loading…" must never be copyable.
+      canCopy: !!(canCopy && !isError && content),
+      body,
+    });
+    // The HOST's class stays ours: it is the AUTHORITATIVE open state that the
+    // resizer and the width restore both read.
     panel.classList.add('gc-spec-side-panel-open');
     GroupChat._applySavedSpecPanelWidth();
 
     const handle = document.getElementById('gc-spec-resizer');
     if (handle) handle.classList.add('gc-spec-resizer-open');
-
-    panel.querySelector('.gc-spec-panel-close').addEventListener('click', () => GroupChat._closeSpecPanel());
-
-    const copyBtn = panel.querySelector('.gc-spec-panel-copy');
-    if (copyBtn) {
-      copyBtn.addEventListener('click', async () => {
-        const ok = await PlatformUI.copyText(GroupChat._specPanelRaw);
-        copyBtn.textContent = ok ? 'Copied!' : 'Copy failed';
-        if (!ok) PlatformUI.toast('Couldn\'t copy — select the text and copy it manually');
-        setTimeout(() => { copyBtn.textContent = 'Copy markdown'; }, 1500);
-      });
-    }
   },
 
   _closeSpecPanel() {
     const panel = document.getElementById('gc-spec-side-panel');
     if (!panel) return;
     panel.classList.remove('gc-spec-side-panel-open');
-    panel.innerHTML = '';
+    // Publish "closed" rather than clearing the host: its subtree is React's,
+    // and an innerHTML wipe behind React's back is the write the ownership
+    // rule forbids. The portal stays mounted and draws nothing.
+    GroupChat._react()?.publishSpecPanel?.({
+      open: false, title: '', subtitle: null, canCopy: false, body: null,
+    });
     // Don't leave a closed panel's document copyable.
     GroupChat._specPanelRaw = null;
     if (panel._gcKeyHandler) {
