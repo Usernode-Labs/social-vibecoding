@@ -90,6 +90,11 @@ import './features/staging/mount';
 // assign `src`. A bridge that only appeared at first render of the island would
 // miss that window and the eager launch would silently fall back.
 import './features/app-frame/mount';
+// Streamlined Concept groundwork: publishes window.UsernodeReact.headerTitle.
+// App.setHeaderTitle() forwards every title set through this bridge, so it
+// must exist before DOMContentLoaded (the earliest App.init() can navigate) —
+// module scope here, not first render of the header island.
+import './features/header/mount';
 // #1084 chunk G: the retired public/js/dev-chat.js, moved into the bundle
 // verbatim. Imported HERE rather than from a Shell island for the same reason
 // as the dev board above — #dc-view is written into an empty #app-content at
