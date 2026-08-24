@@ -368,7 +368,10 @@ const Notifications = {
     try { shot = new URLSearchParams(location.search).get('shot'); } catch { /* ignore */ }
     if (shot !== 'notifications') return;
     Notifications._shotOpened = true;
-    Notifications.show();
+    // The list is the full-screen Notifications view now (Streamlined
+    // Concept), so the deep link lands there rather than opening the drawer.
+    if (window.App?.navigateToNotifications) window.App.navigateToNotifications();
+    else Notifications.show();
   },
 
   // #1329: a presented drawer is MODAL on touch — it covers the screen the
@@ -644,7 +647,13 @@ const Notifications = {
     // classic script in a vm, where a top-level `import` is a syntax error —
     // the same constraint dev-chat.js documents). window.Improve is the seam.
     const aiUnread = Notifications._sessionUnread();
-    const redCount = Notifications._bellUnread() + Notifications.invites.length;
+    const notifCount = Notifications._bellUnread() + Notifications.invites.length;
+    // Streamlined Concept: the hamburger's red number is the DRAWER'S number —
+    // everything behind it that wants attention — so unread Messages count in.
+    // The messages store publishes its sum on a window seam (this module must
+    // stay import-free) and nudges a repaint whenever it changes.
+    const messagesUnread = Number(window.__usernodeMessagesUnread) || 0;
+    const redCount = notifCount + messagesUnread;
 
     const badge = document.getElementById('notifications-badge');
     if (badge) {
@@ -656,6 +665,24 @@ const Notifications = {
       }
     }
 
+    // The drawer's Notifications ROW badge: notifications only (bell unread +
+    // invites) — Messages has its own row badge right below it.
+    const rowBadge = document.getElementById('drawer-notifications-badge');
+    if (rowBadge) {
+      if (notifCount > 0) {
+        rowBadge.textContent = notifCount > 99 ? '99+' : String(notifCount);
+        rowBadge.classList.remove('hidden');
+      } else {
+        rowBadge.classList.add('hidden');
+      }
+    }
+
+    // The green session badge (#notifications-badge-ai on the hamburger) is
+    // React-owned (<MenuIndicators/> in platform-header.tsx): it PUBLISHES
+    // rather than paints — a classList write by id would be a hydration
+    // mismatch React patches straight back out. window.Improve is the seam,
+    // because this module loads as a classic script and cannot import the
+    // store.
     if (typeof window !== 'undefined' && window.Improve
       && typeof window.Improve.setSessionBadge === 'function') {
       window.Improve.setSessionBadge(aiUnread, Notifications._sessionDoneUnread());

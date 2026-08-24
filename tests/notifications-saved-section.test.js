@@ -190,12 +190,14 @@ test('saves are kept out of the notification feed proper', () => {
   assert.doesNotMatch(bellItems[1], /saved/, 'the grouping transform still runs on items alone');
 });
 
-test('the section renders above the invites and the list, and only when non-empty', () => {
+test('the section renders above the invites, and only when non-empty', () => {
+  // Streamlined Concept: the pinned pair renders on the Notifications
+  // SCREEN now (notifications-screen.tsx mounts <NotificationsPinnedSections/>
+  // under the tabs); Saved still leads Invites.
   const savedIdx = LIST_SRC.indexOf('id="notifications-saved"');
   const invitesIdx = LIST_SRC.indexOf('id="notifications-invites"');
-  const listIdx = LIST_SRC.indexOf('id="notifications-list"');
-  assert.ok(savedIdx > 0 && invitesIdx > savedIdx && listIdx > invitesIdx,
-    'the saved section is the TOP section of the drawer');
+  assert.ok(savedIdx > 0 && invitesIdx > savedIdx,
+    'the saved section is the TOP pinned section');
   assert.match(LIST_SRC, /saved\.length \? \([\s\S]{0,400}Saved\n/,
     'the "Saved" header only renders when something is saved');
   assert.match(STORE_SRC, /saved: null,/,

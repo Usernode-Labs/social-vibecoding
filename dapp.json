@@ -1665,14 +1665,14 @@
       "expectSelector": "#home-search-input"
     },
     {
-      "name": "Notifications drawer renders its Mark-all-read control",
+      "name": "The Notifications screen renders its Mark-all-read control (Streamlined Concept)",
       "path": "/",
-      "expectSelector": "#notifications-mark-all"
+      "expectSelector": "#notifications-screen-mark-all"
     },
     {
       "name": "Saved messages pin to the top of the notifications drawer (#1280)",
       "path": "/?shot=notifications&demo=1",
-      "expectSelector": "#header-menu-panel #notifications-saved [data-saved-message]",
+      "expectSelector": "#notifications-screen #notifications-saved [data-saved-message]",
       "expectText": "The deploy runbook lives in docs/deploy.md"
     },
     {
@@ -1697,9 +1697,9 @@
       "expectSelector": "#improve-panel #improve-row-feedback"
     },
     {
-      "name": "The hamburger carries the notifications list, first in the panel",
+      "name": "The hamburger leads with the Your-apps section (Streamlined Concept)",
       "path": "/?demo=1",
-      "expectSelector": "#header-menu-rows > #drawer-notifications #notifications-list"
+      "expectSelector": "#header-menu-rows > #drawer-your-apps"
     },
     {
       "name": "The hamburger ships the native Node status row",
@@ -1755,7 +1755,7 @@
     {
       "name": "Main nav order is Profile, Messages, Settings, Admin & moderation",
       "path": "/?shot=menu",
-      "expectSelector": "#drawer-row-profile + #drawer-row-messages + #drawer-row-settings + #drawer-row-admin"
+      "expectSelector": "#drawer-row-notifications + #drawer-row-messages + #drawer-row-settings + #drawer-row-admin + #drawer-row-profile"
     },
     {
       "name": "The Challenges area is the way to the Leaderboard screen",
@@ -2275,7 +2275,7 @@
     {
       "name": "Native kit: side panel presents from the right edge with a scrollable body",
       "path": "/usernode-native/v1/demo.html?un-platform=ios&un-demo=panel",
-      "expectSelector": ".un-panel[data-un-side=\"right\"] > .un-panel-body"
+      "expectSelector": ".un-panel[data-un-side=\"left\"] > .un-panel-body"
     },
     {
       "name": "Native kit: the touch action sheet actually presents (#929 regression lock)",
@@ -2290,12 +2290,12 @@
     {
       "name": "Hamburger menu opens as a right-side panel on touch, not a bottom sheet",
       "path": "/?shot=menu&un-platform=ios",
-      "expectSelector": ".un-panel[data-un-side=\"right\"] #header-menu-panel.platform-panel-adopted #header-menu-rows"
+      "expectSelector": ".un-panel[data-un-side=\"left\"] #header-menu-panel.platform-panel-adopted #header-menu-rows"
     },
     {
       "name": "The hamburger opens as a kit panel with notifications at its top",
       "path": "/?shot=menu&un-platform=ios",
-      "expectSelector": ".un-panel #header-menu-panel.platform-panel-adopted #header-menu-rows > #drawer-notifications"
+      "expectSelector": ".un-panel #header-menu-panel.platform-panel-adopted #header-menu-rows > #drawer-your-apps"
     },
     {
       "name": "Hamburger status area shows the viewer's own AI credit (#555)",
@@ -2666,20 +2666,14 @@
       "expectSelector": "#dev-actions > #dev-kanban-filterbar:empty + div > #dev-plus-btn"
     },
     {
-      "name": "The notifications drawer offers the rest of its notifications",
+      "name": "The Notifications screen shows read rows on the All tab (Streamlined Concept)",
       "path": "/?shot=notifications&demo=1",
-      "expectSelector": "#notifications-older-toggle",
-      "expectText": "See more notifications"
+      "expectSelector": "#notifications-screen:not(.hidden) [data-notif-id]"
     },
     {
-      "name": "The notifications drawer is a flat list of rows (#1385)",
+      "name": "The Notifications screen is a flat list of rows (#1385)",
       "path": "/?shot=notifications&demo=1",
-      "expectSelector": "#notifications-list > [data-notif-id]"
-    },
-    {
-      "name": "No app-group headers survive in the notifications drawer (#1385)",
-      "path": "/?shot=notifications&demo=1",
-      "expectSelector": "#notifications-list:not(:has([data-group-toggle]))"
+      "expectSelector": "#notifications-screen:not(:has([data-group-toggle]))"
     },
     {
       "name": "The Dev feed renders as a de-carded stream",

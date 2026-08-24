@@ -205,6 +205,17 @@ function validId(value: unknown): value is number {
 function syncDrawerBadge(): void {
   if (typeof document === 'undefined') return;
   const count = state.conversations.reduce((sum, item) => sum + Math.max(0, item.unreadCount || 0), 0);
+  // Streamlined Concept: the hamburger's red number sums Messages in, and
+  // notifications.js (import-free) paints it — publish the count on the
+  // window seam and nudge a repaint when it changes.
+  const host = window as unknown as {
+    __usernodeMessagesUnread?: number;
+    Notifications?: { _renderBadge?: () => void };
+  };
+  if (host.__usernodeMessagesUnread !== count) {
+    host.__usernodeMessagesUnread = count;
+    host.Notifications?._renderBadge?.();
+  }
   const badge = document.getElementById('drawer-messages-badge');
   if (!badge) return;
   badge.textContent = count > 99 ? '99+' : String(count);
