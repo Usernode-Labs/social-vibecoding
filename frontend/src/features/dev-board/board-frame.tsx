@@ -29,10 +29,10 @@
  *     "Loading…". Rendering `#dev-feed` as a JSX child instead would make
  *     every view-mode re-render reconcile against nodes the module has since
  *     replaced.
- *   * `#dev-chat-card-preview`, `#dc-secrets-state` —
- *     leaves the module writes text or `innerHTML` into. They are safe because
- *     React renders their
- *     `className` (and the preview's placeholder text) as CONSTANT props: React
+ *   * `#dc-secrets-state` —
+ *     a leaf the module writes text or `innerHTML` into. It is safe because
+ *     React renders its
+ *     `className` as a CONSTANT prop: React
  *     only writes an attribute when the prop CHANGES, so a re-render of this
  *     component does not clobber a class or a string the module has since
  *     written. That is the same rule the dialog islands run under — see the

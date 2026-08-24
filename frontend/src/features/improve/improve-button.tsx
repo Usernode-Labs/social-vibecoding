@@ -115,6 +115,11 @@ export function ImproveButton() {
   const onSession = tab === 'dev' && subTab === 'sessions';
   const canPreview = !!previewUrl;
   const eye = !!target && tab === 'dev' && (!onSession || canPreview);
+  // The pill is the USE state's control and nothing else's. Gating it on
+  // `target` alone would hand it back the moment the eye stands down — a
+  // session with no preview yet — which is the one place the board is
+  // explicit that Improve does not belong. The slot is simply empty there.
+  const pill = !!target && tab !== 'dev';
 
   if (eye) {
     return (
@@ -148,7 +153,7 @@ export function ImproveButton() {
     <button
       id="improve-btn"
       type="button"
-      className={target ? IMPROVE_BTN_CLASS : `hidden ${IMPROVE_BTN_CLASS}`}
+      className={pill ? IMPROVE_BTN_CLASS : `hidden ${IMPROVE_BTN_CLASS}`}
       aria-label={label}
       aria-haspopup="dialog"
       aria-expanded={open ? 'true' : 'false'}
