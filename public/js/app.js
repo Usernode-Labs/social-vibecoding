@@ -3845,14 +3845,12 @@ const App = {
   // (Flutter logs and drops unknown methods), so this is safe to ship
   // ahead of the Flutter rebuild.
   setHeaderTitle(text) {
-    // Streamlined Concept groundwork: the title is becoming React state
-    // (frontend/src/features/header/header-title-store.js) so the center of
-    // the bar can render as a tappable app-context tab. Dual-write during
-    // the transition — publish through the bridge AND keep the direct
-    // textContent assignment until header-title-tab.tsx owns the subtree.
+    // Streamlined Concept: #header-title is React-owned now
+    // (frontend/src/features/header/header-title-tab.tsx renders it as the
+    // tappable app-context tab), so the text goes through the bridge into
+    // header-title-store — never a direct textContent write, which React
+    // would reconcile away.
     window.UsernodeReact?.headerTitle?.set?.(text);
-    const headerEl = document.getElementById('header-title');
-    if (headerEl) headerEl.textContent = text;
     document.title = text;
     // Re-apply the dev-chat status marker ("⏳ thinking / ✅ done",
     // #108) that the plain title assignment above just wiped, then let
