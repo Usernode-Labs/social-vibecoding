@@ -58,14 +58,26 @@
  * NEITHER segment selected and nothing in it to get back.
  *
  * `active` needed no change to say so. On home no app is open, so the store's
- * `tab` is still `App.currentTab`'s own initial 'app' and the App segment reads
- * as selected; opening the Dev half republishes 'dev' and Feed or Kanban takes
- * over. The label stays "App" in both homes — a segmented control whose labels
- * move around is a control you have to re-read — and only the tooltip names the
- * platform case.
+ * `tab` is still `App.currentTab`'s own initial 'app' and the segment reads as
+ * selected; opening the Dev half republishes 'dev' and Feed or Kanban takes
+ * over.
+ *
+ * ── Why the platform's segment reads "Home" ────────────────────────────
+ *
+ * A segment names WHERE IT GOES, and for the platform that is the home screen,
+ * not an app. Labelling it "App" there would name a destination that does not
+ * exist — the platform has no app tab, which is the whole reason this segment
+ * lands on home instead — so the label, the icon and the tooltip all follow the
+ * destination together.
+ *
+ * `data-view-segment` does NOT: it stays "app" on both. It is the selector
+ * contract dapp.json's declared checks and `select()` are written against, and
+ * it identifies the segment's ROLE (the first, non-dev one), which is the same
+ * on either row. A visible label is for the reader; the attribute is for the
+ * code, and only one of them is about the destination.
  */
 
-import { AppWindowIcon, BoardIcon, ListLinesIcon } from '@/components/ui/icons';
+import { AppWindowIcon, BoardIcon, HomeIcon, ListLinesIcon } from '@/components/ui/icons';
 
 import { useStoreState } from '../../lib/use-store-state';
 import { useDevViewMode } from '../dev-board/view-mode-store';
@@ -112,6 +124,8 @@ export function ImproveViewToggle({ compact }: { compact: boolean }) {
   if (!target || !slug) return null;
 
   const active: Segment = tab === 'dev' ? (mode === 'kanban' ? 'kanban' : 'feed') : 'app';
+  // Capitalised binding: JSX reads a lowercase tag as a literal element name.
+  const HomeSegmentIcon = selfHosted ? HomeIcon : AppWindowIcon;
 
   const select = (segment: Segment) => {
     if (segment === 'app') Improve.openApp();
@@ -140,10 +154,10 @@ export function ImproveViewToggle({ compact }: { compact: boolean }) {
         aria-selected={active === 'app' ? 'true' : 'false'}
         className={segmentCls(active === 'app', compact)}
         onClick={() => select('app')}
-        title={selfHosted ? 'The platform itself — back to home' : 'The app itself'}
+        title={selfHosted ? 'The platform itself' : 'The app itself'}
       >
-        <AppWindowIcon className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-        App
+        <HomeSegmentIcon className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+        {selfHosted ? 'Home' : 'App'}
       </button>
       <button
         type="button"

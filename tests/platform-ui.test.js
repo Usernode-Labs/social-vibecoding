@@ -493,8 +493,17 @@ test('the view toggle renders in BOTH homes, and CSS picks which one shows', () 
   // with neither selected once you had followed Kanban out of home.
   assert.ok(!/selfHosted \? null :/.test(toggle),
     'the App segment must not be withheld from the self-hosted row');
-  assert.match(toggle, /title=\{selfHosted \?/,
-    'only the tooltip distinguishes the platform case; the label stays "App"');
+  // A segment names where it GOES, so the platform's reads "Home" — label, icon
+  // and tooltip together. "App" there would name a destination that does not
+  // exist, which is the very reason it lands on home.
+  assert.match(toggle, /\{selfHosted \? 'Home' : 'App'\}/,
+    "the platform's segment is labelled Home, an app's App");
+  assert.match(toggle, /const HomeSegmentIcon = selfHosted \? HomeIcon : AppWindowIcon;/,
+    'and the icon follows the destination with it');
+  // The ATTRIBUTE does not follow: it names the segment's role, not its
+  // destination, and it is the contract dapp.json's checks are written against.
+  assert.match(toggle, /data-view-segment="app"/,
+    'data-view-segment stays "app" on both rows — it is the selector contract');
   const controller = read('frontend/src/features/improve/improve-controller.js');
   assert.match(controller, /if \(selfHosted\) \{\s*\n\s*if \(window\.App\.currentApp\) window\.App\.navigateHome\(\);/,
     'openApp() sends the self-hosted row home, and no-ops when it is already there');
