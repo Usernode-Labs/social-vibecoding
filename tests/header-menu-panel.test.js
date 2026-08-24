@@ -351,27 +351,32 @@ test('Your apps anchor to the top of the drawer, the nav rows to the bottom', ()
 // each fails silently if it drifts (a section that quietly ships collapsed
 // again, or groups that stay expanded from the last visit).
 
-test('the Your-apps SECTION has no disclosure of its own', () => {
+test('Your apps is a nav row of its own, with a fold beside it', () => {
   const block = html.slice(
     html.indexOf('id="drawer-your-apps"'),
     html.indexOf('id="drawer-main-rows"'),
   );
-  // The body is rendered plainly — not behind a `hidden` wrapper, which is
-  // what the retired disclosure used and what took the saved-message rows out
-  // of `document.body.innerText` and broke #1280's two checks.
-  assert.ok(!/<div class="hidden">/.test(block),
-    'the section body must not ship inside a hidden wrapper');
-  assert.ok(!/aria-expanded/.test(block),
-    'and its header must not be a disclosure control');
-  // The island holds no state for it either.
-  assert.ok(!/notificationsOpen/.test(headerMenuTsx),
-    'no section-collapse state survives in the island');
-  // The nav rows the drawer must still carry (Streamlined order:
-  // Notifications, Messages, Settings, Admin, then the Profile footer row).
+  // Owner review round 2: the section header is BOTH a distinct nav item
+  // (navigates home, where the apps grid lives) and a collapsible
+  // disclosure. The fold is the chevron BUTTON beside the anchor — the
+  // anchor itself never carries the disclosure semantics.
+  assert.ok(/id="drawer-row-your-apps"/.test(block), 'the nav row exists');
+  assert.ok(/id="drawer-your-apps-toggle"/.test(block), 'with its fold beside it');
+  assert.ok(/aria-expanded/.test(block), 'the fold is a real disclosure');
+  // The drawer's groups (owner review round 2): Notifications + Messages on
+  // top, then Your apps; Profile, Settings, Admin close the menu.
   for (const id of ['drawer-row-notifications', 'drawer-row-messages',
-    'drawer-row-settings', 'drawer-row-admin', 'drawer-row-profile']) {
+    'drawer-row-your-apps', 'drawer-row-profile', 'drawer-row-settings',
+    'drawer-row-admin']) {
     assert.ok(html.includes(`id="${id}"`), `#${id} survives in the drawer`);
   }
+  assert.ok(
+    html.indexOf('id="drawer-row-notifications"') < html.indexOf('id="drawer-your-apps"'),
+    'Notifications and Messages sit ABOVE the apps section');
+  assert.ok(
+    html.indexOf('id="drawer-row-profile"') < html.indexOf('id="drawer-row-settings"')
+    && html.indexOf('id="drawer-row-settings"') < html.indexOf('id="drawer-row-admin"'),
+    'the bottom group runs Profile, Settings, Admin & moderation');
 });
 
 test('each drawer open starts on what is NEW', () => {

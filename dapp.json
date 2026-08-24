@@ -1749,9 +1749,19 @@
       "expectSelector": "#app-context-body > #improve-footer > #improve-row-github"
     },
     {
-      "name": "Main nav order is Profile, Messages, Settings, Admin & moderation",
+      "name": "Notifications and Messages lead the drawer, above Your apps",
       "path": "/?shot=menu",
-      "expectSelector": "#drawer-row-notifications + #drawer-row-messages + #drawer-row-settings + #drawer-row-admin + #drawer-row-profile"
+      "expectSelector": "#drawer-top-rows > #drawer-row-notifications + #drawer-row-messages"
+    },
+    {
+      "name": "The bottom group is Profile, Settings, Admin & moderation and nothing else",
+      "path": "/?shot=menu",
+      "expectSelector": "#drawer-main-rows #drawer-row-profile + #drawer-row-settings + #drawer-row-admin"
+    },
+    {
+      "name": "Your apps is a nav row of its own, with its fold beside it",
+      "path": "/?shot=menu",
+      "expectSelector": "#drawer-your-apps #drawer-row-your-apps + #drawer-your-apps-toggle"
     },
     {
       "name": "The Challenges area is the way to the Leaderboard screen",

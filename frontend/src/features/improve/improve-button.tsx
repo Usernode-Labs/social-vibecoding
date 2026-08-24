@@ -18,14 +18,12 @@
  * now — the call every path funnels through — so the button is either there on
  * every home visit or on none.
  *
- * ── Why a labelled pill and not a fifth icon ───────────────────────────
+ * ── Why a labelled text action and not an icon ─────────────────────────
  *
- * Everything else in the right group is a 28px glyph, and a sixth would have
- * been unreadable — "improve" has no conventional glyph the way a bell or a
- * hamburger does. It also has to carry the weight the segmented switch carried:
- * that control was the one thing in the header that changed what the screen
- * WAS, and its replacement should not read as another notification affordance.
- * So it is a pill with a word in it, sized to the header's 28px content row.
+ * "improve" has no conventional glyph the way a bell or a hamburger does, so
+ * it is a word. Per owner review it is a PLAIN violet text action, not a
+ * pill — the header stays quiet and the word carries it — sized to the
+ * header's 28px content row.
  *
  * ── What the button says while the panel is SHUT ───────────────────────
  *
@@ -63,9 +61,12 @@ import { Improve } from './improve-controller.js';
  * thing that appears in the header when an app opens, so its height IS the
  * header's height there.
  */
+// Owner review (twice): Improve is NOT a button — a plain violet text
+// action, no fill, no border. The element stays a <button> for semantics
+// and its ids/handlers; only the chrome is text.
 const IMPROVE_BTN_CLASS =
-  'relative inline-flex items-center h-7 px-3 mr-2.5 rounded-lg '
-  + 'bg-violet-600 hover:bg-violet-500 text-white text-xs font-medium '
+  'relative inline-flex items-center h-7 px-1 mr-2.5 '
+  + 'text-violet-600 dark:text-violet-400 hover:text-violet-500 text-sm font-medium '
   + 'transition-colors un-touch-target';
 
 export function ImproveButton() {

@@ -199,10 +199,8 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // state elsewhere (chat surfaces; nothing draws the bulb today).
     'M8 10h.01M12 10h.01M16 10h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z',
     'M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z',
-    // ChevronDownIcon — the Challenges footer's expand caret, and (Streamlined
-    // Concept) the center title tab's caret, which renders only once an app
-    // context is published.
-    'M19 9l-7 7-7-7',
+    // (ChevronDownIcon left this list when the drawer's Your-apps fold put
+    // it in the shipped markup — owner review round 2.)
     // PlusWideIcon — Discover's add badge and the Create app tile. Its other
     // call site is an HTML string in features/home/home.js's card menu, which
     // is not rendered by <Shell/> either.
