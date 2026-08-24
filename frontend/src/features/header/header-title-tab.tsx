@@ -53,7 +53,7 @@ export function HeaderTitleTab({ titleRef }: { titleRef: RefObject<HTMLHeadingEl
     <h1
       ref={titleRef}
       id="header-title"
-      className={"flex-1 min-w-0 text-lg font-bold pointer-events-none truncate\n               text-left"}
+      className={"flex-1 min-w-0 text-base font-semibold pointer-events-none truncate\n               text-left"}
     >
       {interactive ? (
         <button

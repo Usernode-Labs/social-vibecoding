@@ -29,31 +29,27 @@
  *
  * ── What the button says while the panel is SHUT ───────────────────────
  *
- * Two things, and each is here because the thing it is about is behind this
- * button rather than anywhere else:
+ * One thing: `#feedback-queue-dot` (bottom-left, amber) came with the retired
+ * feedback button, kept its id and its writer, and belongs here because this
+ * button is the only way to reach the feedback dialog — an unsent draft with
+ * no visible cue is the failure it exists to prevent.
  *
- *   - THE GLYPH is a spinner instead of a lightbulb while a dev session is
- *     mid-turn (#1412). It is the ambient "something is running" cue, and it
- *     costs no space at all.
- *   - `#feedback-queue-dot` (bottom-left, amber) came with the retired
- *     feedback button, kept its id and its writer, and belongs here because
- *     this button is the only way to reach the feedback dialog — an unsent
- *     draft with no visible cue is the failure it exists to prevent.
+ * #1412 parked the green session count, the version dot and a
+ * spinner-while-working glyph here; the Streamlined Concept re-homed all of
+ * that onto the hamburger's badge cluster — see <MenuIndicators/> in
+ * ../header/platform-header.tsx (the working cue is the emerald badge's
+ * pulse there) — because this slot slims to a plain word and the board keeps
+ * the hamburger as THE indicator cluster.
  *
- * #1412 also parked the green session count and the version dot here; the
- * Streamlined Concept re-homed both onto the hamburger's badge cluster —
- * see <MenuIndicators/> in ../header/platform-header.tsx — because this slot
- * is about to slim down further and the board keeps the hamburger as THE
- * indicator cluster.
- *
- * Both render from ./improve-store.js. Neither may be written by id from a
- * classic module: this button is React-owned end to end, and a pre-hydration
- * `classList` write is a mismatch React patches straight back out.
+ * The dot's visibility rides the visibility store; nothing here may be
+ * written by id from a classic module: this button is React-owned end to
+ * end, and a pre-hydration `classList` write is a mismatch React patches
+ * straight back out.
  */
 
 import { useRef } from 'react';
 
-import { EyeIcon, LightBulbIcon, SpinnerArcIcon } from '@/components/ui/icons';
+import { EyeIcon } from '@/components/ui/icons';
 
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
@@ -68,12 +64,12 @@ import { Improve } from './improve-controller.js';
  * header's height there.
  */
 const IMPROVE_BTN_CLASS =
-  'relative inline-flex items-center gap-1.5 h-7 px-2.5 mr-2.5 rounded-lg '
+  'relative inline-flex items-center h-7 px-3 mr-2.5 rounded-lg '
   + 'bg-violet-600 hover:bg-violet-500 text-white text-xs font-medium '
   + 'transition-colors un-touch-target';
 
 export function ImproveButton() {
-  const { target, open, tab, working } = useStoreState(improveStore);
+  const { target, open, tab } = useStoreState(improveStore);
   // "this app" is wrong on home, where the target is the platform itself
   // (#1367). The visible label stays the single word "Improve" at both — what
   // is being improved is named in the panel's own header.
@@ -131,9 +127,6 @@ export function ImproveButton() {
       aria-expanded={open ? 'true' : 'false'}
       onClick={() => Improve.toggle()}
     >
-      {working
-        ? <SpinnerArcIcon className="w-4 h-4 animate-spin" aria-hidden="true" />
-        : <LightBulbIcon className="w-4 h-4" aria-hidden="true" />}
       Improve
       {/* Bottom-LEFT, where it landed when #1412's green count took the
           top-right corner; the count re-homed to the hamburger since, but

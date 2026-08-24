@@ -2910,7 +2910,8 @@ const App = {
   // Same ordering rule as _showOnlyScreen: inside the transition
   // callback only.
   _enterScreenChrome() {
-    document.getElementById('back-btn').classList.remove('hidden');
+    // #back-btn visibility is setBackIcon's alone now (arrow mode only) —
+    // the blanket reveal that lived here showed the retired home icon.
     // The GitHub and Share drawer rows were hidden by hand here. Both are
     // Improve panel rows now, and setAppOpen(false) below clears the panel's
     // target — which retires them for the same reason and in one move.
@@ -3623,7 +3624,6 @@ const App = {
     const appViewEl = document.getElementById('app-view');
     PlatformUI.transition(() => {
       App._setScreenVisible('app-view', true);
-      document.getElementById('back-btn').classList.remove('hidden');
       // Best-effort: returns false (and changes nothing) for anything whose
       // App tab wouldn't be a plain production iframe — self-hosted apps,
       // demo cards, non-running apps, an explicit non-app tab, offline.
@@ -3794,6 +3794,11 @@ const App = {
     if (chevron) chevron.classList.toggle('hidden', !arrow);
     const btn = document.getElementById('back-btn');
     if (btn) {
+      // Streamlined Concept (owner review): there is never a HOME button
+      // beside the hamburger — home is the drawer and the title tab's
+      // business. The slot renders only as a level-2 BACK arrow, so this
+      // is now the single owner of the anchor's visibility.
+      btn.classList.toggle('hidden', !arrow);
       btn.setAttribute('aria-label', arrow ? 'Back' : 'Home');
       const target = href || (window.NavLink ? NavLink.homeHref() : '/');
       btn.setAttribute('href', target);

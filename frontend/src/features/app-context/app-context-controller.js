@@ -103,4 +103,10 @@ export const AppContext = {
 
 if (typeof window !== 'undefined') {
   window.AppContext = AppContext;
+  // The sheet is modal over whatever the address bar now names, so ANY
+  // hash-driven navigation dismisses it — rows call dismissForNav
+  // themselves, but browser back/forward and programmatic hash writes
+  // arrive here instead (found in the evidence run: a deep link rendered
+  // Activity underneath a still-open sheet).
+  window.addEventListener('hashchange', () => AppContext.dismissForNav());
 }
