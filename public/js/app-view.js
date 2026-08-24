@@ -6154,10 +6154,27 @@ const AppView = {
       // the payload names the owner. It used to be written straight onto
       // `[data-transcript-label]`; the head renders that text, so the label
       // is cached here and the repaint below picks it up.
+      //
+      // THE REPAINT IS CONDITIONAL, and that is not an optimisation.
+      // `_renderTopicHead` calls this loader on every paint of an expanded
+      // transcript, so an unconditional repaint here closes a SYNCHRONOUS
+      // cycle: paint → render → load → (cached) paint → render → … The
+      // first pass survives because it awaits the fetch, which unwinds the
+      // stack; the pass after it finds the cache and recurses until the
+      // stack overflows. That is a hard error on every load of a shared
+      // session's page, where the transcript arrives already expanded.
+      //
+      // Same shape as the vote roster's re-entry (see `_loadVoteRoster`),
+      // and the same rule: a loader a renderer calls per paint must not
+      // unconditionally re-enter that renderer. Here the repaint exists
+      // solely to pick up a CHANGED label, so that is what gates it.
+      let labelChanged = false;
       if (typeof SessionTranscript !== 'undefined' && SessionTranscript.headerText) {
-        AppView._transcriptLabels[sessionId] = SessionTranscript.headerText(data.session, { expanded: true });
+        const next = SessionTranscript.headerText(data.session, { expanded: true });
+        labelChanged = AppView._transcriptLabels[sessionId] !== next;
+        AppView._transcriptLabels[sessionId] = next;
       }
-      AppView._renderTopicHead();
+      if (labelChanged) AppView._renderTopicHead();
       // The BODY stays session-transcript.js's — a controller host the head
       // renders once, empty, and never looks inside. The publish above
       // flushes synchronously, so the fresh host is already here.
