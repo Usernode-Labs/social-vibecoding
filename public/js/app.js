@@ -45,6 +45,7 @@ const App = {
   // Platform-wide direct and group conversations (#488). The screen itself
   // is React-owned; this flag only coordinates the classic shell router.
   _inMessages: false,
+  _inNotifications: false,
 
   // Chromeless full-screen mode (#app/<slug>/full): the App tab with the
   // platform header + tab bar hidden, so the embedded app fills the
@@ -2333,6 +2334,7 @@ const App = {
         else if (App._inSettings) App.navigateHome();
         else if (App._inBrowse) App.navigateHome();
         else if (App._inMessages) App.navigateHome();
+        else if (App._inNotifications) App.navigateHome();
         else {
           // Already on home (no app, no leaderboard). Don't call
           // navigateHome() — that would pushState, AppView.close(),
@@ -2356,7 +2358,8 @@ const App = {
         // regression test for the mode toggle uses (#748).
         App.setChromeless(false);
         if (App.currentApp || App._inLeaderboard || App._inProfile
-          || App._inAdmin || App._inSettings || App._inBrowse || App._inMessages) {
+          || App._inAdmin || App._inSettings || App._inBrowse || App._inMessages
+          || App._inNotifications) {
           App.navigateHome();
         } else {
           App.setHeaderTitle('Social Vibecoding');
@@ -2471,6 +2474,13 @@ const App = {
         // a signed-out visitor to login and remembered the deep link.
         App.setChromeless(false);
         App.navigateToSettings(parts[1] || null);
+        return;
+      }
+      if (parts[0] === 'notifications') {
+        // The full-screen Notifications view (Streamlined Concept). No
+        // sub-routes: rows navigate away themselves via _onItemClick.
+        App.setChromeless(false);
+        App.navigateToNotifications();
         return;
       }
       if (parts[0] === 'messages') {
@@ -2591,6 +2601,7 @@ const App = {
         if (App._inAdmin) App._exitAdminConsole();
         if (App._inSettings) App._exitSettings();
         if (App._inMessages) App._exitMessages();
+        if (App._inNotifications) App._exitNotifications();
         App.setChromeless(chromeless);
         // Stash the validated inner path where renderAppTab / the token
         // refresh read it. Set on EVERY pass (null when absent) so
@@ -2628,6 +2639,7 @@ const App = {
         if (App._inAdmin) App._exitAdminConsole();
         if (App._inSettings) App._exitSettings();
         if (App._inMessages) App._exitMessages();
+        if (App._inNotifications) App._exitNotifications();
         if (App._inBrowse) App._exitBrowse();
         App._showOnlyScreen('home-screen');
         document.getElementById('back-btn').classList.add('hidden');
@@ -2746,7 +2758,7 @@ const App = {
   // the zoom transition).
   SCREEN_IDS: ['app-view', 'home-screen', 'browse-screen',
     'leaderboard-screen', 'profile-screen', 'admin-screen',
-    'settings-screen', 'messages-screen'],
+    'settings-screen', 'messages-screen', 'notifications-screen'],
 
   // Reveal `revealId`, hide every other screen root (except any id in
   // `keepAlso`), and hand the header's back chevron back to its default
@@ -2800,6 +2812,8 @@ const App = {
     'leaderboard-screen',
     // #488 — the fully React-owned platform Messages screen.
     'messages-screen',
+    // Streamlined Concept — the fully React-owned Notifications screen.
+    'notifications-screen',
     // ...and home last. This is the first converted root that ships
     // VISIBLE, which is why _isScreenVisible below grew a DOM fallback.
     'home-screen',
@@ -2987,6 +3001,7 @@ const App = {
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inSettings) App._exitSettings();
     if (App._inMessages) App._exitMessages();
+    if (App._inNotifications) App._exitNotifications();
     if (App._inBrowse) App._exitBrowse();
     // Screen reveal + chrome, all inside the transition callback so the
     // outgoing page is snapshotted as it actually looked (#979).
@@ -3080,6 +3095,7 @@ const App = {
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inSettings) App._exitSettings();
     if (App._inMessages) App._exitMessages();
+    if (App._inNotifications) App._exitNotifications();
     if (App._inBrowse) App._exitBrowse();
     const screen = document.getElementById('profile-screen');
     PlatformUI.transition(() => {
@@ -3135,6 +3151,7 @@ const App = {
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inSettings) App._exitSettings();
     if (App._inMessages) App._exitMessages();
+    if (App._inNotifications) App._exitNotifications();
     const screen = document.getElementById('browse-screen');
     App._inBrowse = true;
     // Renders into the still-hidden screen; `chrome: false` holds back its
@@ -3207,6 +3224,7 @@ const App = {
     if (App._inProfile) App._exitProfile();
     if (App._inSettings) App._exitSettings();
     if (App._inMessages) App._exitMessages();
+    if (App._inNotifications) App._exitNotifications();
     if (App._inBrowse) App._exitBrowse();
     const screen = document.getElementById('admin-screen');
     App._inAdmin = true;
@@ -3256,6 +3274,7 @@ const App = {
     if (App._inProfile) App._exitProfile();
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inMessages) App._exitMessages();
+    if (App._inNotifications) App._exitNotifications();
     if (App._inBrowse) App._exitBrowse();
     const screen = document.getElementById('settings-screen');
     App._inSettings = true;
@@ -3320,6 +3339,38 @@ const App = {
   _exitMessages() {
     App._inMessages = false;
     window.UsernodeReact?.messages?.close?.();
+  },
+
+  // The full-screen Notifications view (Streamlined Concept), on the
+  // Messages screen's pattern minus the island controller: the screen is
+  // always mounted and renders purely from the notifications store, so the
+  // swap is all there is — no route() to call, no chrome to sync. The data
+  // is already live (Notifications.init() ran at hydration and the WS keeps
+  // it fresh), which is exactly the drawer's own contract.
+  navigateToNotifications() {
+    if (App._inNotifications) return;
+    const fromIframe = !!(App.currentApp && App.currentTab === 'app');
+    const leavingApp = !!App.currentApp;
+    App.currentApp = null;
+    if (App._inLeaderboard) App._exitLeaderboard();
+    if (App._inProfile) App._exitProfile();
+    if (App._inAdmin) App._exitAdminConsole();
+    if (App._inSettings) App._exitSettings();
+    if (App._inBrowse) App._exitBrowse();
+    if (App._inMessages) App._exitMessages();
+    const screen = document.getElementById('notifications-screen');
+    App._inNotifications = true;
+    PlatformUI.transition(() => {
+      if (leavingApp) AppView.close();
+      App._showOnlyScreen('notifications-screen');
+      App._enterScreenChrome();
+      App.setHeaderTitle('Notifications');
+    }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
+  },
+
+  // State-only teardown; the incoming transition hides the root.
+  _exitNotifications() {
+    App._inNotifications = false;
   },
 
   // navigateToTopochainLeaderboard / _exitTopochainLeaderboard used to
@@ -3570,6 +3621,7 @@ const App = {
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inSettings) App._exitSettings();
     if (App._inMessages) App._exitMessages();
+    if (App._inNotifications) App._exitNotifications();
     // Real screen navigation. From a launcher grid (home's "Your apps" /
     // featured row, or the #apps browse screen) the app view expands out
     // of the clicked tile (kit 'zoom-in'); from anywhere else (deep link,
@@ -3679,6 +3731,7 @@ const App = {
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inSettings) App._exitSettings();
     if (App._inMessages) App._exitMessages();
+    if (App._inNotifications) App._exitNotifications();
     if (App._inBrowse) App._exitBrowse();
     // Preferred: shrink the app view back into its home tile (kit
     // 'zoom-out': fn reveals home beneath the pinned overlay, `after`

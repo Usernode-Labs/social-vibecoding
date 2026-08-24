@@ -1672,6 +1672,16 @@
       "expectText": "Unsave"
     },
     {
+      "name": "The Notifications screen renders its All | Unread tabs (Streamlined Concept)",
+      "path": "/?demo=1#notifications",
+      "expectSelector": "#notifications-screen:not(.hidden) #notifications-screen-tabs"
+    },
+    {
+      "name": "The Notifications screen renders notification rows (Streamlined Concept)",
+      "path": "/?demo=1#notifications",
+      "expectSelector": "#notifications-screen [data-notif-id]"
+    },
+    {
       "name": "Improve panel carries the feedback row",
       "path": "/",
       "expectSelector": "#improve-panel #improve-row-feedback"

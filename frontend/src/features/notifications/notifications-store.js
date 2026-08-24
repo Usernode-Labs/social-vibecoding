@@ -52,6 +52,14 @@ export const notificationsStore = createStore({
    * entries while the list nested; there is one shape now.
    */
   list: null,
+  /**
+   * The full-screen Notifications view's list (Streamlined Concept): EVERY
+   * fetched row, read and unread, in the same newest-first order — the
+   * screen's All | Unread tabs and Today/Earlier sections partition it
+   * client-side, so it never depends on the drawer's `showOlder` reveal.
+   * Published from the same _renderList pass that fills `list`.
+   */
+  screenList: null,
   /** The "you'll get pinged here" hint. Hidden in the shipped markup. */
   empty: false,
   /**

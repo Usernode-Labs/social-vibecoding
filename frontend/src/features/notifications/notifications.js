@@ -917,6 +917,10 @@ const Notifications = {
       // a bug.
       store.set({
         list: [],
+        // The full screen shows read rows regardless of the drawer's
+        // showOlder reveal, so its list maps ALL items even when the
+        // drawer's own list is empty (Streamlined Concept).
+        screenList: Notifications.items.map(rowView),
         // `empty` is still the ORIGINAL "you have never had a notification"
         // hint, so it now also requires that there be no older ones to
         // reveal — otherwise a fully-read drawer would claim nothing had
@@ -930,7 +934,10 @@ const Notifications = {
         showOlder: Notifications.showOlder,
         // Nothing to append a pager to — see the note in the populated branch.
         canLoadMore: false,
-        loadingMore: false,
+        // The screen HAS rows to append to (the read ones above), so its
+        // pager follows the server cursor even while the drawer's is off.
+        screenCanLoadMore: Notifications.hasMore,
+        loadingMore: Notifications.loading,
         touch,
       });
       return;
@@ -942,6 +949,7 @@ const Notifications = {
     // used to float to the top of the grouped list; see PRIORITY_KINDS.)
     store.set({
       list: Notifications._bellItems().map(rowView),
+      screenList: Notifications.items.map(rowView),
       empty: false,
       caughtUp: false,
       olderCount,
@@ -951,6 +959,7 @@ const Notifications = {
       // owns that space and the older-toggle is the affordance that belongs
       // there.
       canLoadMore: Notifications.hasMore,
+      screenCanLoadMore: Notifications.hasMore,
       loadingMore: Notifications.loading,
       touch,
     });
@@ -1140,6 +1149,13 @@ function rowView(n) {
     unread: !n.readAt,
     unreadCls,
     time: relativeTime(n.createdAt),
+    // Streamlined Concept: the full-screen Notifications view buckets rows
+    // into Today/Earlier and leads each with an avatar-initial chip, so the
+    // raw timestamp and the resolved names ride along as data. The drawer's
+    // renderer ignores all three.
+    createdAtMs: Date.parse(n.createdAt) || 0,
+    who,
+    appLine,
     // The meta line's own layout. `mb` and `wrap` differ per kind, and the
     // plain mention/reply row is the only one that is not a flex row at all.
     mb: true,
