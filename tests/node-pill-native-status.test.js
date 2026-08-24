@@ -73,6 +73,9 @@ function loadNodePill({ hasNodeStatus, snapshot = null, isNative = true }) {
     dot,
     status,
     get statusReads() { return statusReads; },
+    networkHeightFor(detail) {
+      return sandbox.window.NodePill._networkHeightFor(detail);
+    },
     dispatchNodeStatus(detail) {
       if (windowListeners['usernode:node-status']) {
         windowListeners['usernode:node-status']({ detail });
@@ -147,3 +150,19 @@ test('desktop keeps the native-only Node row hidden', async () => {
   assert.equal(loaded.row.classList.contains('hidden'), true);
   assert.equal(loaded.statusReads, 0);
   });
+
+test('Network block height follows the node sync state', async () => {
+  const loaded = loadNodePill({ hasNodeStatus: Promise.resolve(false) });
+  await settle();
+
+  assert.equal(loaded.networkHeightFor({
+    status: 'synced',
+    localBestHeight: 120,
+    networkBestHeight: 130,
+  }), 120, 'a synced node uses its own best tip');
+  assert.equal(loaded.networkHeightFor({
+    status: 'syncing',
+    localBestHeight: 120,
+    networkBestHeight: 130,
+  }), 130, 'a syncing node uses its target best tip');
+});

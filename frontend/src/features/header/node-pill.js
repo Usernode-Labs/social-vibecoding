@@ -133,6 +133,12 @@
       return row;
     },
 
+    _networkHeightFor(s) {
+      // Once synced, our own best tip is the height the network has reached.
+      // While catching up, the peer-derived height is the node's sync target.
+      return s.status === 'synced' ? s.localBestHeight : s.networkBestHeight;
+    },
+
     _renderSheetBody() {
       const body = document.getElementById('node-pill-sheet-body');
       if (!body) return;
@@ -155,7 +161,7 @@
       body.appendChild(NodePill._sheetRow('Your block height',
         fmt(s.localBestHeight)));
       body.appendChild(NodePill._sheetRow('Network block height',
-        fmt(s.networkBestHeight)));
+        fmt(NodePill._networkHeightFor(s))));
       body.appendChild(NodePill._sheetRow('Peers',
         s.connectedPeers == null
           ? '—'
