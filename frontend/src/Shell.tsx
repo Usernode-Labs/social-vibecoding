@@ -77,6 +77,7 @@ import { LeaderboardScreen } from './features/leaderboard';
 import { HeaderMenu } from './features/header/header-menu';
 import { PlatformHeader } from './features/header/platform-header';
 import { MessagesScreen } from './features/messages';
+import { NotificationsScreen } from './features/notifications/notifications-screen';
 import { SettingsScreen } from './features/settings';
 import { Dialogs } from './features/dialogs';
 import { StagingOverlay, VisualCompareOverlay } from './features/staging';
@@ -229,6 +230,14 @@ export function Shell() {
           feature loads authenticated data only after #messages opens.
       */}
       <Island name="MessagesScreen"><MessagesScreen /></Island>
+      {/*
+          The full-screen Notifications view (Streamlined Concept). Same
+          contract as Messages above: fully React-owned, ships hidden and
+          empty for prerender/hydration parity, and renders from the same
+          notifications store the drawer's list reads —
+          App.navigateToNotifications publishes visibility on #notifications.
+      */}
+      <NotificationsScreen />
       {/*
           The Topochain leaderboard used to be its own <main> screen here
           (#topochain-leaderboard-screen, Task 14). The header slim-down

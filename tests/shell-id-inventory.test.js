@@ -260,6 +260,14 @@ const ADDED_IDS = {
   'board-filters-assignee': 'Assignee select inside the Filters dialog (was #dev-kanban-assignee on the bar).',
   'board-filters-needsvote': 'The "Needs my vote" switch inside the Filters dialog (was the bar chip #dev-kanban-needsvote).',
   'board-filters-done': 'The dialog\'s Done button — applies the staged filters via AppView.applyKanbanFilters.',
+  // ── Streamlined Concept: the full-screen Notifications view ──────
+  // A real screen behind the drawer's Notifications row, on the Messages
+  // screen's fully-React pattern: All | Unread tabs, Today/Earlier
+  // sections, avatar-initial rows. Renders from the same notifications
+  // store as the drawer's list.
+  'notifications-screen': 'The Notifications screen root — in App.SCREEN_IDS and REACT_SCREEN_IDS, revealed by App.navigateToNotifications on #notifications.',
+  'notifications-screen-tabs': 'The screen\'s sticky All | Unread tab row, with its own Mark-all-read control.',
+  'notifications-screen-mark-all': 'Mark-all-read on the screen — same controller action as the drawer\'s #notifications-mark-all, React-wired instead of id-bound.',
 };
 
 test('the shell still carries every id in the frozen baseline', () => {
