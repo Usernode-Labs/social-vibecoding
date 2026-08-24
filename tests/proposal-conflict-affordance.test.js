@@ -19,6 +19,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { proposalCardHtml } = require('./lib/dev-card-html');
 
 const APP_VIEW_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'app-view.js'),
@@ -78,7 +79,7 @@ const baseProposal = (over) => ({
 
 test("card: a 'conflict' snapshot (merge attempt failed) shows the red 'Merge failed' badge", () => {
   const AppView = makeAppView(ME);
-  const html = AppView._renderProposalCard(baseProposal({
+  const html = proposalCardHtml(AppView, baseProposal({
     merge_conflict_state: 'conflict',
     conflict_files: ['src/app.js', 'public/index.html'],
     behind_main: 2,
@@ -92,7 +93,7 @@ test("card: a 'conflict' snapshot (merge attempt failed) shows the red 'Merge fa
 
 test("card: a 'conflict' snapshot with the resolver in flight shows 'Resolving conflicts…' instead", () => {
   const AppView = makeAppView(ME);
-  const html = AppView._renderProposalCard(baseProposal({
+  const html = proposalCardHtml(AppView, baseProposal({
     merge_conflict_state: 'conflict',
     behind_main: 2,
     resolving: true,
@@ -103,7 +104,7 @@ test("card: a 'conflict' snapshot with the resolver in flight shows 'Resolving c
 
 test("card: a 'failed' snapshot shows the red 'Conflict resolution failed' affordance", () => {
   const AppView = makeAppView(ME);
-  const html = AppView._renderProposalCard(baseProposal({
+  const html = proposalCardHtml(AppView, baseProposal({
     merge_conflict_state: 'failed',
     conflict_files: ['src/server.js'],
     behind_main: 1,
@@ -115,7 +116,7 @@ test("card: a 'failed' snapshot shows the red 'Conflict resolution failed' affor
 
 test("card: a plain 'behind' snapshot still shows the amber Behind badge", () => {
   const AppView = makeAppView(ME);
-  const html = AppView._renderProposalCard(baseProposal({
+  const html = proposalCardHtml(AppView, baseProposal({
     merge_conflict_state: 'behind',
     behind_main: 3,
   }));

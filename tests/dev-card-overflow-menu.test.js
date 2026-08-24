@@ -16,6 +16,9 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('node:vm');
 const { renderComponent } = require('./lib/render-tsx');
+const {
+  cardHtml, closeIssueCardHtml, govCardHtml, hasAction, issueCardHtml, mergedCardHtml, mySessionCardHtml, proposalCardHtml, sharedSessionCardHtml,
+} = require('./lib/dev-card-html');
 
 const MERGE_STATUS_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'merge-status.js'), 'utf8');
@@ -95,6 +98,14 @@ function menuLabels(AppView, html) {
 }
 
 const ISSUE = (over) => ({ number: 5, title: 'Fix the thing', ...over });
+
+// A card model with nothing but a rail, for the trigger cases above.
+const BARE = (over) => ({
+  key: 'k', cls: 'gc-vote-item', attrs: {}, icon: null,
+  title: { text: 'T', title: 'T' }, meta: [], pill: null, linked: [], badges: [],
+  chatCount: null, actions: [], rail: { chevron: false }, extra: [],
+  dense: true, uncapped: false, ...over,
+});
 const GOV = (over) => ({
   id: 11, kind: 'secret_change', title: 'Set API key', up_count: 0, down_count: 0,
   created_by: 999, created_at: '2026-06-01T00:00:00Z', ...over,
@@ -102,34 +113,41 @@ const GOV = (over) => ({
 
 // ── The trigger ─────────────────────────────────────────────────────────
 
+// The trigger's MARKUP is card/dev-card.tsx's rail; the registry — which a
+// descriptor's `act` closure cannot leave — is still app-view.js's, and
+// `_registerCardMenu` is the seam: it returns the key the rail stamps as
+// `data-card-menu`, or '' when there is nothing to demote.
 test('no ⋯ trigger when there is nothing to demote', () => {
   const AppView = makeAppView();
-  assert.equal(AppView._cardMenuTriggerHtml('k', []), '');
-  assert.equal(AppView._cardMenuTriggerHtml('k', null), '');
+  assert.equal(AppView._registerCardMenu('k', []), '');
+  assert.equal(AppView._registerCardMenu('k', null), '');
   // Falsy entries are dropped, so callers can inline conditionals.
-  assert.equal(AppView._cardMenuTriggerHtml('k', [null, false, undefined]), '');
+  assert.equal(AppView._registerCardMenu('k', [null, false, undefined]), '');
+  assert.equal(menuKeyOf(cardHtml(BARE({ rail: { chevron: true, menuKey: '' } }))), null);
 });
 
 test('the trigger registers its descriptors under a stable key', () => {
   const AppView = makeAppView();
-  const html = AppView._cardMenuTriggerHtml('proposal:7', [{ label: 'A', act: () => {} }]);
+  const key = AppView._registerCardMenu('proposal:7', [{ label: 'A', act: () => {} }]);
+  assert.equal(key, 'proposal:7');
+  assert.equal(AppView._cardMenus['proposal:7'].length, 1);
+  const html = cardHtml(BARE({ rail: { chevron: false, menuKey: key } }));
   assert.match(html, /data-card-menu="proposal:7"/);
   assert.match(html, /aria-haspopup="true"/);
   assert.match(html, /aria-label="More actions"/);
   assert.match(html, /gc-vote-btn-icon/, 'the icon pill variant, so it never outsizes a text pill');
   assert.match(html, /dev-card-menu-btn/, 'and the corner-placement class');
-  assert.equal(AppView._cardMenus['proposal:7'].length, 1);
 });
 
 test('the trigger is pinned in the top-right RAIL on every card type that has one', () => {
   const AppView = makeAppView({ admin: true });
   AppView._sharedById = {};
   const cards = {
-    proposal: AppView._renderProposalCard(PR()),
-    issue: AppView._renderIssueRow(ISSUE({ htmlUrl: 'https://gh/i/5' })),
-    gov: AppView._renderGovCard(GOV()),
-    merged: AppView._renderMergedCard(PR({ status: 'merged', chat_count: 0 }), 3),
-    session: AppView._renderMySessionCard({ id: 51, session_title: 'Mine', status: 'active' }),
+    proposal: proposalCardHtml(AppView, PR()),
+    issue: issueCardHtml(AppView, ISSUE({ htmlUrl: 'https://gh/i/5' })),
+    gov: govCardHtml(AppView, GOV()),
+    merged: mergedCardHtml(AppView, PR({ status: 'merged', chat_count: 0 }), 3),
+    session: mySessionCardHtml(AppView, { id: 51, session_title: 'Mine', status: 'active' }),
   };
   for (const [kind, html] of Object.entries(cards)) {
     assert.match(html, /dev-card-head-main/, `${kind}: uses the shared head`);
@@ -157,18 +175,20 @@ test('a card with no ⋯ still gets its chevron, with no empty rail around it', 
   const AppView = makeAppView();
   // A shared session demotes nothing, so with nothing to preview either
   // _cardRailHtml returns the bare chevron rather than a one-child column.
-  const html = AppView._renderSharedSessionCard({
+  const model = AppView._sharedSessionCardModel({
     id: 71, session_title: 'Theirs', username: 'them', user_id: 9,
   });
+  const html = cardHtml(model);
   assert.equal(menuKeyOf(html), null);
   assert.doesNotMatch(html, /dev-card-rail/);
   assert.match(html, /M9 5l7 7-7 7/, 'the chevron survives on its own');
 
   // Give that same card a preview and the column DOES appear — the eye needs
   // something to be pinned to the bottom of, even with no ⋯ above it.
-  const withPreview = AppView._renderSharedSessionCard({
+  const withPreviewModel = AppView._sharedSessionCardModel({
     id: 71, session_title: 'Theirs', username: 'them', user_id: 9, staging_url: 'https://s',
   });
+  const withPreview = cardHtml(withPreviewModel);
   assert.equal(menuKeyOf(withPreview), null, 'still nothing demoted');
   assert.match(withPreview, /dev-card-rail/);
   const rail = withPreview.slice(withPreview.indexOf('dev-card-rail'));
@@ -179,10 +199,11 @@ test('a card with no ⋯ still gets its chevron, with no empty rail around it', 
 
 test('an applied close-issue card has no ⋯ and no action row at all', () => {
   const AppView = makeAppView();
-  const html = AppView._renderCompletedCloseIssueCard({
+  const model = AppView._completedCloseIssueCardModel({
     id: 9, chat_count: 0, created_at: '2026-06-01T00:00:00Z', up_count: 2, down_count: 0,
     payload: { issueNumber: 5, issueTitle: 'T', appliedAt: '2026-06-02T00:00:00Z', appliedBy: 'group-vote', required: 2 },
   });
+  const html = cardHtml(model);
   assert.equal(menuKeyOf(html), null);
   // The four-band card RESERVES an action band on every dense card, so this
   // one now renders an empty .gc-card-actions rather than none: the point is
@@ -195,8 +216,8 @@ test('an applied close-issue card has no ⋯ and no action row at all', () => {
 
 test('a repaint under the same key OVERWRITES rather than accumulating', () => {
   const AppView = makeAppView();
-  AppView._cardMenuTriggerHtml('proposal:7', [{ label: 'A', act: () => {} }]);
-  AppView._cardMenuTriggerHtml('proposal:7', [{ label: 'B', act: () => {} }, { label: 'C', act: () => {} }]);
+  AppView._registerCardMenu('proposal:7', [{ label: 'A', act: () => {} }]);
+  AppView._registerCardMenu('proposal:7', [{ label: 'B', act: () => {} }, { label: 'C', act: () => {} }]);
   assert.equal(AppView._cardMenus['proposal:7'].map((i) => i.label).join('|'), 'B|C');
 });
 
@@ -204,7 +225,7 @@ test('the registry resets rather than growing without bound', () => {
   const AppView = makeAppView();
   AppView._cardMenuSeq = 4001;
   AppView._cardMenus['stale:1'] = [{ label: 'old' }];
-  AppView._cardMenuTriggerHtml(null, [{ label: 'fresh', act: () => {} }]);
+  AppView._registerCardMenu(null, [{ label: 'fresh', act: () => {} }]);
   assert.equal(AppView._cardMenus['stale:1'], undefined, 'the runaway backstop cleared it');
   assert.equal(AppView._cardMenuSeq, 1);
 });
@@ -213,20 +234,21 @@ test('the registry resets rather than growing without bound', () => {
 
 test('proposal, foreign, plain collaborator', () => {
   const AppView = makeAppView();
-  const labels = menuLabels(AppView, AppView._renderProposalCard(PR()));
+  const labels = menuLabels(AppView, proposalCardHtml(AppView, PR()));
   assert.ok(!labels.some((l) => /Admin merge/.test(l)), 'not an admin');
   assert.ok(!labels.some((l) => /Open session|Withdraw/.test(l)), 'not the author');
   // Explore moved to the card FACE for exactly this viewer (foreign, live
   // proposal, can collaborate), so it is deliberately absent from ⋯.
   assert.ok(!labels.some((l) => /Explore in dev chat/.test(l)), 'promoted onto the face');
-  assert.match(AppView._renderProposalCard(PR()), /gc-explore-chat-btn/, '…where it is');
+  assert.match(proposalCardHtml(AppView, PR()), /gc-explore-chat-btn/, '…where it is');
   assert.ok(labels.some((l) => /kudos/i.test(l)));
   assert.ok(labels.some((l) => /Set priority/.test(l)));
 });
 
 test('proposal, platform admin: Admin merge is offered and marked danger', () => {
   const AppView = makeAppView({ admin: true });
-  const html = AppView._renderProposalCard(PR());
+  const model = AppView._proposalCardModel(PR());
+  const html = cardHtml(model);
   const item = menuItems(AppView, html).find((i) => /Admin merge/.test(i.label));
   assert.ok(item, 'offered');
   assert.ok(item.danger, 'a vote bypass is a danger row');
@@ -236,18 +258,18 @@ test('proposal, platform admin: Admin merge is offered and marked danger', () =>
 test('proposal, app admin: Admin merge, except on an admins-changing PR', () => {
   const AppView = makeAppView();
   AppView._proposalsCtx = { majority: 3, isAppAdmin: true };
-  const ordinary = menuLabels(AppView, AppView._renderProposalCard(PR()));
+  const ordinary = menuLabels(AppView, proposalCardHtml(AppView, PR()));
   assert.ok(ordinary.some((l) => /Admin merge/.test(l)), 'app admins may force-merge');
   // Self-escalation carve-out: an app admin cannot force-merge a proposal
   // that edits the admins block.
-  const escalating = menuLabels(AppView, AppView._renderProposalCard(
+  const escalating = menuLabels(AppView, proposalCardHtml(AppView, 
     PR({ requires_explicit_approval: true })));
   assert.ok(!escalating.some((l) => /Admin merge/.test(l)));
 });
 
 test('proposal, author: Open session + Withdraw, and no Explore', () => {
   const AppView = makeAppView();
-  const labels = menuLabels(AppView, AppView._renderProposalCard(PR({ user_id: ME })));
+  const labels = menuLabels(AppView, proposalCardHtml(AppView, PR({ user_id: ME })));
   assert.ok(labels.some((l) => /Open session/.test(l)));
   assert.ok(labels.some((l) => /^Withdraw$/.test(l)));
   assert.ok(!labels.some((l) => /Explore in dev chat/.test(l)));
@@ -255,33 +277,34 @@ test('proposal, author: Open session + Withdraw, and no Explore', () => {
 
 test('proposal, author, imported PR: no Open session (there is no in-app session)', () => {
   const AppView = makeAppView();
-  const labels = menuLabels(AppView, AppView._renderProposalCard(
+  const labels = menuLabels(AppView, proposalCardHtml(AppView, 
     PR({ user_id: ME, source: 'imported' })));
   assert.ok(!labels.some((l) => /Open session/.test(l)));
 });
 
 test('proposal, read-only viewer: only read-safe rows survive', () => {
   const AppView = makeAppView({ readOnly: true, admin: true });
-  const labels = menuLabels(AppView, AppView._renderProposalCard(PR({ pr_url: 'https://gh/pr/7' })));
+  const labels = menuLabels(AppView, proposalCardHtml(AppView, PR({ pr_url: 'https://gh/pr/7' })));
   assert.equal(labels.join('|'), 'View PR on GitHub');
 });
 
 test('proposal: Retry preview only after a preview error', () => {
   const AppView = makeAppView();
-  assert.ok(!menuLabels(AppView, AppView._renderProposalCard(PR({ staging_url: 'https://s' })))
+  assert.ok(!menuLabels(AppView, proposalCardHtml(AppView, PR({ staging_url: 'https://s' })))
     .some((l) => /Retry preview/.test(l)));
-  assert.ok(menuLabels(AppView, AppView._renderProposalCard(PR({ staging_error: 'boom' })))
+  assert.ok(menuLabels(AppView, proposalCardHtml(AppView, PR({ staging_error: 'boom' })))
     .some((l) => /Retry preview/.test(l)));
 });
 
 test('proposal: Before/after only when captures exist, and it opens the detail view', () => {
   const AppView = makeAppView();
-  assert.ok(!menuLabels(AppView, AppView._renderProposalCard(PR()))
+  assert.ok(!menuLabels(AppView, proposalCardHtml(AppView, PR()))
     .some((l) => /Before\/after/.test(l)));
-  const withVisuals = AppView._renderProposalCard(PR({
+  const withVisualsModel = AppView._proposalCardModel(PR({
     // A real capture set: 32-hex artifact ids are what the tile renderer accepts.
     visuals: { before: { png: 'a'.repeat(32) }, after: { png: 'b'.repeat(32) } },
   }));
+  const withVisuals = cardHtml(withVisualsModel);
   const item = menuItems(AppView, withVisuals).find((i) => /Before\/after/.test(i.label));
   assert.ok(item, 'offered when there is something to show');
   // The captures live on the detail view now; the row pre-expands them there.
@@ -295,32 +318,33 @@ test('proposal: Before/after only when captures exist, and it opens the detail v
 test('merged proposal: Undo, and never twice over a revert', () => {
   const AppView = makeAppView();
   const merged = (over) => PR({ status: 'merged', chat_count: 0, ...over });
-  assert.ok(menuLabels(AppView, AppView._renderMergedCard(merged(), 3))
+  assert.ok(menuLabels(AppView, mergedCardHtml(AppView, merged(), 3))
     .some((l) => /^Undo$/.test(l)));
   // Undoing a revert would be an infinite undo-undo loop.
-  assert.ok(!menuLabels(AppView, AppView._renderMergedCard(merged({ revert_of_session_id: 4 }), 3))
+  assert.ok(!menuLabels(AppView, mergedCardHtml(AppView, merged({ revert_of_session_id: 4 }), 3))
     .some((l) => /^Undo$/.test(l)));
   // A revert already exists — its status reads on the meta line instead.
-  assert.ok(!menuLabels(AppView, AppView._renderMergedCard(
+  assert.ok(!menuLabels(AppView, mergedCardHtml(AppView, 
     merged({ revert_session_id: 9, revert_pr_number: 900 }), 3))
     .some((l) => /^Undo$/.test(l)));
 });
 
 test('merged proposal: completed-task attributes stay editable for collaborators', () => {
   const AppView = makeAppView();
-  const populated = AppView._renderMergedCard(PR({
+  const populatedModel = AppView._mergedCardModel(PR({
     status: 'merged', chat_count: 0,
     priority: { top: 'high', count: 1 },
     assignee: { top: 'snait', count: 1 },
     category: { top: 'feature', count: 1 },
   }), 3);
+  const populated = cardHtml(populatedModel);
 
   for (const field of ['priority', 'assignee', 'category']) {
     assert.match(populated, new RegExp(`<button[^>]+data-attr-field="${field}"`),
       `${field} is an interactive chip after merge`);
   }
 
-  const unset = menuLabels(AppView, AppView._renderMergedCard(
+  const unset = menuLabels(AppView, mergedCardHtml(AppView, 
     PR({ status: 'merged', chat_count: 0 }), 3));
   assert.ok(unset.includes('Set priority…'));
   assert.ok(unset.includes('Assign someone…'));
@@ -328,8 +352,8 @@ test('merged proposal: completed-task attributes stay editable for collaborators
 
   // The completed task's detail header has no overflow menu, so all three
   // unset controls remain directly visible there.
-  const detail = AppView._renderProposalCard(
-    PR({ status: 'merged', chat_count: 0 }), { noNav: true });
+  const detailModel = AppView._proposalCardModel(PR({ status: 'merged', chat_count: 0 }), { noNav: true });
+  const detail = cardHtml(detailModel);
   assert.match(detail, /Set priority/);
   assert.match(detail, /Unassigned/);
   assert.match(detail, /Set category/);
@@ -338,12 +362,13 @@ test('merged proposal: completed-task attributes stay editable for collaborators
 
 test('merged proposal: completed-task attributes remain read-only without collaboration access', () => {
   const AppView = makeAppView({ readOnly: true });
-  const html = AppView._renderMergedCard(PR({
+  const model = AppView._mergedCardModel(PR({
     status: 'merged', chat_count: 0,
     priority: { top: 'high', count: 1 },
     assignee: { top: 'snait', count: 1 },
     category: { top: 'feature', count: 1 },
   }), 3);
+  const html = cardHtml(model);
 
   assert.doesNotMatch(html, /data-attr-chip/, 'populated chips are non-interactive spans');
   const labels = menuLabels(AppView, html);
@@ -353,13 +378,14 @@ test('merged proposal: completed-task attributes remain read-only without collab
 
 test('issue: the full demoted set, and Open on GitHub last', () => {
   const AppView = makeAppView();
-  const labels = menuLabels(AppView, AppView._renderIssueRow(
+  const labels = menuLabels(AppView, issueCardHtml(AppView, 
     ISSUE({ htmlUrl: 'https://gh/i/5' })));
   assert.equal(labels[0], 'Generate proposal');
   assert.ok(labels.some((l) => /Pledge kudos/.test(l)));
   // The claim toggle is PROMOTED to the action band, so it left the menu.
   assert.ok(!labels.some((l) => /Claim this issue/.test(l)), 'promoted onto the face');
-  assert.match(AppView._renderIssueRow(ISSUE()), /gc-card-actions[\s\S]*?markIssueInProgress/);
+  assert.ok(hasAction(AppView._issueCardModel(ISSUE()), 'markIssueInProgress'),
+    'and is wired on the face instead');
   assert.ok(labels.some((l) => /Propose to close/.test(l)));
   assert.equal(labels[labels.length - 1], 'Open on GitHub');
 });
@@ -368,7 +394,7 @@ test('issue: a disabled row still EXPLAINS itself rather than vanishing', () => 
   const AppView = makeAppView();
   // An open close proposal: the row stays, disabled, saying why.
   AppView._govProposals = [{ kind: 'close_issue', status: 'open', payload: { issueNumber: 5 } }];
-  const closed = menuItems(AppView, AppView._renderIssueRow(ISSUE()))
+  const closed = menuItems(AppView, issueCardHtml(AppView, ISSUE()))
     .find((i) => /Close proposed/.test(i.label));
   assert.ok(closed.disabled);
   assert.match(closed.title, /up for vote/);
@@ -377,7 +403,7 @@ test('issue: a disabled row still EXPLAINS itself rather than vanishing', () => 
   // Weekly kudos allowance spent.
   AppView._govProposals = [];
   AppView._ghIssuesMeta = { myRemaining: 0 };
-  const kudos = menuItems(AppView, AppView._renderIssueRow(ISSUE()))
+  const kudos = menuItems(AppView, issueCardHtml(AppView, ISSUE()))
     .find((i) => /Pledge kudos/.test(i.label));
   assert.ok(kudos.disabled);
   assert.match(kudos.title, /allowance spent/);
@@ -385,17 +411,18 @@ test('issue: a disabled row still EXPLAINS itself rather than vanishing', () => 
 
 test('gov: Admin merge / View campaign / Withdraw by role', () => {
   const AppView = makeAppView({ admin: true });
-  const mine = menuLabels(AppView, AppView._renderGovCard(GOV({ created_by: ME })));
+  const mine = menuLabels(AppView, govCardHtml(AppView, GOV({ created_by: ME })));
   assert.equal(mine.join('|'), 'Admin merge|Withdraw');
 
-  const campaign = menuLabels(AppView, AppView._renderGovCard(GOV({
+  const campaign = menuLabels(AppView, govCardHtml(AppView, GOV({
     kind: 'maintenance_campaign', payload: { campaignId: 3 },
   })));
   assert.equal(campaign.join('|'), 'Admin merge|View campaign');
 
   // A rename proposal is not admin-appliable, so a non-creator admin gets
   // nothing and therefore no ⋯ at all.
-  const rename = AppView._renderGovCard(GOV({ kind: 'rename', payload: { newName: 'X' } }));
+  const renameModel = AppView._govCardModel(GOV({ kind: 'rename', payload: { newName: 'X' } }));
+  const rename = cardHtml(renameModel);
   assert.equal(menuKeyOf(rename), null);
 });
 
@@ -407,18 +434,22 @@ test('own session: visibility, chat-sharing, discussion and Archive', () => {
   // Visibility is PROMOTED to the action band now (the four-band card reserves
   // one, and this is the single thing you do to your own session), so it is a
   // pill on the face and NOT a ⋯ row. Everything else stays demoted.
-  const privHtml = AppView._renderMySessionCard(sess());
-  assert.match(privHtml, /gc-card-actions[\s\S]*?_setSessionShared\(51, true[^>]*>Make visible</);
+  const privHtmlModel = AppView._mySessionCardModel(sess());
+  const privHtml = cardHtml(privHtmlModel);
+  assert.ok(hasAction(privHtmlModel, '_setSessionShared', 51, true));
+  assert.match(privHtml, /gc-card-actions[\s\S]*?>Make visible</);
   assert.equal(menuLabels(AppView, privHtml).join('|'), 'Archive',
     'a private session has nowhere for a reader to reach its chat from');
 
-  const visHtml = AppView._renderMySessionCard(sess({ shared_at: '2026-06-01T00:00:00Z' }));
-  assert.match(visHtml, /gc-card-actions[\s\S]*?_setSessionShared\(51, false[^>]*>Hide</,
-    'the same pill, flipped');
+  const visHtmlModel = AppView._mySessionCardModel(sess({ shared_at: '2026-06-01T00:00:00Z' }));
+
+  const visHtml = cardHtml(visHtmlModel);
+  assert.ok(hasAction(visHtmlModel, '_setSessionShared', 51, false), 'the same pill, flipped');
+  assert.match(visHtml, /gc-card-actions[\s\S]*?>Hide</);
   assert.equal(menuLabels(AppView, visHtml).join('|'),
     'Share chat|Open public discussion (2)|Archive');
 
-  const shared = menuItems(AppView, AppView._renderMySessionCard(
+  const shared = menuItems(AppView, mySessionCardHtml(AppView, 
     sess({ shared_at: '2026-06-01T00:00:00Z', transcript_shared_at: '2026-06-01T01:00:00Z' })));
   assert.ok(shared.some((i) => /Chat shared/.test(i.label)));
   assert.ok(shared.find((i) => /Archive/.test(i.label)).danger, 'Archive is a danger row');
@@ -432,7 +463,8 @@ test('own session: visibility, chat-sharing, discussion and Archive', () => {
 test('session cards: the ⋯ trigger is a <button>, so the card-open handler skips it', () => {
   const AppView = makeAppView();
   AppView._sharedById = {};
-  const own = AppView._renderMySessionCard({ id: 51, session_title: 'Mine', status: 'active' });
+  const ownModel = AppView._mySessionCardModel({ id: 51, session_title: 'Mine', status: 'active' });
+  const own = cardHtml(ownModel);
   // The trigger is inside the card element, not a sibling of it.
   assert.match(own, /data-session-chip="51"/);
   assert.match(own, /<button[^>]*class="[^"]*dev-card-menu-btn[^"]*"[^>]*data-card-menu="session:51"/,
@@ -443,9 +475,10 @@ test('session cards: the ⋯ trigger is a <button>, so the card-open handler ski
 
 test('someone else’s shared session has nothing to demote, so no ⋯ at all', () => {
   const AppView = makeAppView();
-  const html = AppView._renderSharedSessionCard({
+  const model = AppView._sharedSessionCardModel({
     id: 990001, session_title: 'Theirs', username: 'other', status: 'active',
   });
+  const html = cardHtml(model);
   assert.match(html, /data-shared-session-row="990001"/);
   assert.equal(menuKeyOf(html), null, 'visibility/archive are owner-only, so the menu is empty');
 });
@@ -549,8 +582,8 @@ test('_reanchorCardMenu is a no-op with no menu open', () => {
 test('every repaint path re-anchors instead of dismissing', () => {
   // _repaintPmView was a third repaint path until THE UI OVERHAUL retired the
   // PM view; the two left are the Feed's and the board's.
-  for (const fn of ['_repaintDevBody', '_repaintKanbanBoard']) {
-    const start = SRC.indexOf(`\n  ${fn}() {`);
+  for (const fn of ['_repaintDevBody()', '_repaintKanbanBoard(remount)']) {
+    const start = SRC.indexOf(`\n  ${fn} {`);
     assert.ok(start > 0, `expected ${fn}`);
     const body = SRC.slice(start, SRC.indexOf('\n  },', start));
     assert.match(body, /_reanchorCardMenu\(\)/, `${fn} must re-anchor an open menu`);
@@ -615,21 +648,21 @@ function everyDescriptor(AppView) {
   AppView._sharedById = { 51: { id: 51, chat_count: 2 } };
   const out = [];
   const collect = (html) => out.push(...menuItems(AppView, html));
-  collect(AppView._renderProposalCard(PR({
+  collect(proposalCardHtml(AppView, PR({
     pr_url: 'https://gh/pr/7', staging_error: 'boom',
     visuals: { before: { png: 'a'.repeat(32) }, after: { png: 'b'.repeat(32) } },
   })));
-  collect(AppView._renderProposalCard(PR({ user_id: ME, pr_url: 'https://gh/pr/7' })));
-  collect(AppView._renderMergedCard(PR({ status: 'merged', chat_count: 0, pr_url: 'https://gh/pr/7' }), 3));
-  collect(AppView._renderIssueRow(ISSUE({ htmlUrl: 'https://gh/i/5' })));
-  collect(AppView._renderIssueRow(ISSUE({
+  collect(proposalCardHtml(AppView, PR({ user_id: ME, pr_url: 'https://gh/pr/7' })));
+  collect(mergedCardHtml(AppView, PR({ status: 'merged', chat_count: 0, pr_url: 'https://gh/pr/7' }), 3));
+  collect(issueCardHtml(AppView, ISSUE({ htmlUrl: 'https://gh/i/5' })));
+  collect(issueCardHtml(AppView, ISSUE({
     number: 6, htmlUrl: 'https://gh/i/6', my_bounty: 1,
     in_progress: { claims: [{ mine: true }] },
   })));
-  collect(AppView._renderGovCard(GOV({ created_by: ME })));
-  collect(AppView._renderGovCard(GOV({ kind: 'maintenance_campaign', payload: { campaignId: 3 } })));
-  collect(AppView._renderMySessionCard({ id: 51, session_title: 'Mine', status: 'active' }));
-  collect(AppView._renderMySessionCard({
+  collect(govCardHtml(AppView, GOV({ created_by: ME })));
+  collect(govCardHtml(AppView, GOV({ kind: 'maintenance_campaign', payload: { campaignId: 3 } })));
+  collect(mySessionCardHtml(AppView, { id: 51, session_title: 'Mine', status: 'active' }));
+  collect(mySessionCardHtml(AppView, {
     id: 51, session_title: 'Mine', status: 'active',
     shared_at: '2026-06-01T00:00:00Z', transcript_shared_at: '2026-06-01T01:00:00Z',
   }));
@@ -707,7 +740,7 @@ test('the ✨ that used to live inside the Explore label is now its icon', () =>
   const AppView = makeAppView();
   // Read off a MERGED card: a live proposal promotes Explore onto its face, so
   // the merged board is where the ⋯ row still lives.
-  const item = menuItems(AppView, AppView._renderMergedCard(
+  const item = menuItems(AppView, mergedCardHtml(AppView, 
     PR({ status: 'merged', chat_count: 0 }), 3))
     .find((i) => /Explore in dev chat/.test(i.label));
   assert.equal(item.label, 'Explore in dev chat', 'no glyph baked into the label');

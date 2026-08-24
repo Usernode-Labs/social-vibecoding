@@ -14,6 +14,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { proposalCardHtml } = require('./lib/dev-card-html');
 
 const SRC = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf8');
 
@@ -71,7 +72,7 @@ test('checksBadgeHtml: passing renders the OK-tone badge, not the merged violet'
 
 test('card: green checks + an open vote surface the vote state in the pill', () => {
   const AppView = makeAppView(ME);
-  const html = AppView._renderProposalCard(baseProposal({
+  const html = proposalCardHtml(AppView, baseProposal({
     check_state: 'passing', test_results: [], yes_count: 1, no_count: 0, my_vote: 'yes',
   }));
   assert.match(html, /dev-status-pill/, 'one composite pill');
@@ -80,7 +81,7 @@ test('card: green checks + an open vote surface the vote state in the pill', () 
 
 test('card: check_state="failing" is a BLOCKED pill, never a plain tally', () => {
   const AppView = makeAppView(ME);
-  const html = AppView._renderProposalCard(baseProposal({
+  const html = proposalCardHtml(AppView, baseProposal({
     check_state: 'failing',
     yes_count: 3, no_count: 0, votes_required: 3, my_vote: 'yes',
     test_results: [
@@ -108,14 +109,14 @@ test('checksBadgeHtml: failing carries the blocked tone (it gates the merge)', (
 
 test('card: check_state="pending" renders the running pill', () => {
   const AppView = makeAppView(ME);
-  const html = AppView._renderProposalCard(baseProposal({ check_state: 'pending', test_results: [] }));
+  const html = proposalCardHtml(AppView, baseProposal({ check_state: 'pending', test_results: [] }));
   assert.match(html, /Checks running/);
   assert.match(html, /dc-status-spinner-arc/, 'spinner inside the pill');
 });
 
 test('card: check_state="error" is a blocked pill naming the boot failure', () => {
   const AppView = makeAppView(ME);
-  const html = AppView._renderProposalCard(baseProposal({ check_state: 'error', test_results: [] }));
+  const html = proposalCardHtml(AppView, baseProposal({ check_state: 'error', test_results: [] }));
   assert.match(html, /Preview won/, 'the pill names WHY checks could not run');
   assert.match(html, /gc-vote-count-blocked/);
   // The standalone helper keeps its own wording for the other surfaces.
@@ -124,7 +125,7 @@ test('card: check_state="error" is a blocked pill naming the boot failure', () =
 
 test('a legacy row (no check_state) surfaces its console errors in the pill', () => {
   const AppView = makeAppView(ME);
-  const html = AppView._renderProposalCard(baseProposal({
+  const html = proposalCardHtml(AppView, baseProposal({
     console_check_state: 'errors',
     console_errors: [{ kind: 'console', message: 'oops' }],
   }));
@@ -179,7 +180,7 @@ test('checksBadgeHtml: "skipped" is grey, spinner-free and non-blocking', () => 
 
 test('card: a skipped verdict blocks nothing, so the pill shows the vote state', () => {
   const AppView = makeAppView(ME);
-  const html = AppView._renderProposalCard(baseProposal({
+  const html = proposalCardHtml(AppView, baseProposal({
     check_state: 'skipped', test_results: [], my_vote: 'yes',
     yes_count: 1, no_count: 0, votes_required: 2,
     check_error_detail: 'branch has no commits beyond main — nothing to test',
@@ -205,7 +206,7 @@ test('the checks detail shows a skipped block with the reason and the re-run but
 // explicit in-progress state instead of silence / a bare re-run button.
 test('card: a fresh row with no verdict renders the "Checks starting…" pill', () => {
   const AppView = makeAppView(ME);
-  const html = AppView._renderProposalCard(baseProposal({}));
+  const html = proposalCardHtml(AppView, baseProposal({}));
   assert.match(html, /Checks starting/);
   assert.match(html, /dc-status-spinner-arc/);
   assert.match(html, /dev-status-pill/, 'one pill, not a badge stacked beside a tally');

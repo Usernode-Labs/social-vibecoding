@@ -5,13 +5,13 @@
 // width, comment slots that never fill — so each is pinned against the shipped
 // source here rather than left to a staging screenshot.
 //
-// THE CONSTRAINT BEHIND ALL THREE: the row renderers (_renderIssueRow,
-// _renderProposalCard, _renderMergedCard, …) are SHARED with the kanban
+// THE CONSTRAINT BEHIND ALL THREE: the card builders (_issueCardModel,
+// _proposalCardModel, _mergedCardModel, …) are SHARED with the kanban
 // columns, where a bordered tile is exactly right. Nothing here may change
-// what those renderers emit; the feed's treatment is scoped by ancestor
-// (#dev-feed) and carried by a wrapper the feed adds around each row. A test
-// that let the renderers branch on "am I in the feed?" would be pinning the
-// wrong design.
+// what those builders emit; the feed's treatment is scoped by ancestor
+// (#dev-feed) and carried by a wrapper the FEED adds around each row
+// (card/dev-feed.tsx's `.dev-feed-entry`). A test that let a card branch on
+// "am I in the feed?" would be pinning the wrong design.
 //
 // Run with: node --test tests/dev-feed-stream.test.js
 
@@ -24,32 +24,37 @@ const root = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
 
 const APP_VIEW = read('public/js/app-view.js');
+const FEED = read('frontend/src/features/dev-board/card/dev-feed.tsx');
 const CSS = read('public/css/app.css');
 const dapp = JSON.parse(read('dapp.json'));
 
-test('the feed wraps each entry, and the row renderers stay shared', () => {
-  // The wrapper is added by the FEED, not by the renderers — that is what
-  // keeps one renderer drawing a tile on the board and a stream row here.
-  assert.match(APP_VIEW, /_feedEntryHtml\(rowHtml, opts\)/,
-    'the feed has an entry wrapper');
-  assert.match(APP_VIEW, /<div class="dev-feed-entry">\$\{rowHtml\}\$\{slot\}<\/div>/,
-    'which wraps the renderer output rather than replacing it');
+test('the feed wraps each entry, and the card builders stay shared', () => {
+  // The wrapper is the FEED's, not the card's — that is what keeps one
+  // builder drawing a tile on the board and a stream row here.
+  assert.match(FEED, /className="dev-feed-entry"/, 'the feed has an entry wrapper');
+  assert.match(FEED, /<ListRowView row=\{row\} \/>/,
+    'which wraps the card rather than replacing it');
+  assert.match(FEED, /className="dev-feed-stream"/, 'the stream container is rendered');
+  // Flush rows, not a gap-separated stack. `space-y-2` was the tile spacing,
+  // and it is still what the PINNED BLOCK above the stream uses — so the
+  // check has to be scoped to the stream itself.
+  const stream = FEED.slice(FEED.indexOf('dev-feed-stream'));
+  assert.ok(!stream.includes('space-y-2'), 'the gap between tiles is gone');
 
-  // Every branch of the feed loop goes through it, so no entry type can
-  // silently keep the old chrome.
-  const at = APP_VIEW.indexOf("html += '<div class=\"dev-feed-stream\">'");
-  assert.ok(at !== -1, 'the stream container is rendered');
-  const loop = APP_VIEW.slice(at, APP_VIEW.indexOf("html += '</div>';", at));
-  for (const renderer of [
-    '_renderIssueRow', '_renderProposalCard', '_renderSharedSessionCard',
-    '_renderMergedRow', '_renderGovCard',
+  // Every entry type goes through the same wrapper, so none can silently
+  // keep the old chrome: _feedView builds one `card` row per kind and the
+  // component wraps every row it is given.
+  const at = APP_VIEW.indexOf('  _feedView()');
+  assert.ok(at !== -1, 'the feed view model is built');
+  const loop = APP_VIEW.slice(at, APP_VIEW.indexOf('\n  },', at));
+  for (const builder of [
+    '_issueCardModel', '_proposalCardModel', '_sharedSessionCardModel',
+    '_mergedRowModel', '_govCardModel',
   ]) {
-    const call = new RegExp(`_feedEntryHtml\\([\\s\\S]{0,80}AppView\\.${renderer}\\(`);
-    assert.match(loop, call, `${renderer}'s output is wrapped`);
+    assert.ok(loop.includes(`AppView.${builder}(`), `${builder} feeds the stream`);
   }
-
-  // Flush rows, not a gap-separated stack. `space-y-2` was the tile spacing.
-  assert.ok(!loop.includes('space-y-2'), 'the gap between tiles is gone');
+  assert.equal((loop.match(/entries\.push\(\{ t: 'card'/g) || []).length, 5,
+    'and every one of them is pushed as an ordinary card row');
 });
 
 test('the de-carding is scoped to the feed, so the kanban keeps its cards', () => {
@@ -78,11 +83,11 @@ test('the merge bar runs the full width of the column', () => {
   assert.match(CSS, /#dev-feed \.dev-feed-entry \{[^}]*margin-left:\s*-0\.75rem/,
     'entries cancel the body gutter to go full-bleed');
 
-  // Completed work is marked by the RENDERER (both kinds), so the feed can
-  // draw it as a bar without knowing which renderer produced it.
-  const marked = APP_VIEW.match(/data-completed="1"/g) || [];
+  // Completed work is marked by the CARD BUILDER (both kinds), so the feed
+  // can draw it as a bar without knowing which builder produced the row.
+  const marked = APP_VIEW.match(/'data-completed': '1'/g) || [];
   assert.equal(marked.length, 2,
-    'both completed renderers — merged PR and applied issue-close — are marked');
+    'both completed builders — merged PR and applied issue-close — are marked');
 
   // …and the bar itself: an emerald edge along its length, tighter than a row.
   assert.match(CSS, /\[data-completed\]\s*\{[^}]*border-left:\s*3px solid/,

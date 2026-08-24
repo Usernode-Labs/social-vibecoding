@@ -48,6 +48,17 @@ import { DevSessionShell } from './session-frame';
 import { VotingHelp, type VotingHelpProps } from './voting-help';
 import { DevTopicSubView } from './topic-frame';
 import { publishViewMode } from './view-mode-store';
+import {
+  aiEnabledStore,
+  cardNowStore,
+  devFeedStore,
+  devKanbanStore,
+  topicCardStore,
+} from './card/cards-store';
+import { DevFeed } from './card/dev-feed';
+import { DevKanban } from './card/dev-kanban';
+import { TopicCard } from './card/topic-card';
+import type { DevCardModel, DevFeedView, DevKanbanView } from './card/model';
 
 /** What app-view.js passes for the card list. */
 export interface MountBoardOptions extends DevBoardFrameProps {
@@ -86,6 +97,14 @@ export interface DevBoardBridge {
   publishKanbanFilters(patch: Partial<KanbanFiltersState>): void;
   mountVotingHelp(host: Element | null, props: VotingHelpProps): void;
   mountSessionShell(host: Element | null): void;
+  mountFeed(host: Element | null): void;
+  publishFeed(view: DevFeedView): void;
+  mountKanban(host: Element | null): void;
+  publishKanban(view: DevKanbanView): void;
+  mountTopicCard(host: Element | null): void;
+  publishTopicCard(card: DevCardModel | null): void;
+  publishCardNow(now: number): void;
+  publishAiEnabled(enabled: boolean): void;
   publishViewMode(mode: string): void;
   unmount(host: Element | null): void;
   unmountAll(): void;
@@ -118,6 +137,20 @@ cardMenuStore.setFlush(flushSync);
  * bar.
  */
 kanbanFiltersStore.setFlush(flushSync);
+
+/**
+ * And every card surface: each publish replaces what used to be an
+ * `innerHTML` assignment whose caller's NEXT LINES read the fresh DOM —
+ * `_rerenderFeed` wires the comment observer and fills the kudos hosts,
+ * `_repaintKanbanBoard` re-binds drag and re-anchors an open ⋯ menu, and
+ * `_renderTopicHead` binds the transcript toggle it just painted around
+ * the card. cardNowStore ticks inside no such read, but flushing it keeps
+ * a countdown label and its expiry refetch on the same beat.
+ */
+devFeedStore.setFlush(flushSync);
+devKanbanStore.setFlush(flushSync);
+topicCardStore.setFlush(flushSync);
+cardNowStore.setFlush(flushSync);
 
 export const devBoardBridge: DevBoardBridge = {
   mountBoard(host, options) {
@@ -217,6 +250,49 @@ export const devBoardBridge: DevBoardBridge = {
 
   mountSessionShell(host) {
     mountLegacyPortal(host, createElement(DevSessionShell));
+  },
+
+  // ── The card surfaces ──────────────────────────────────────────────
+  //
+  // Both list hosts stay app-view.js's (`_repaintDevBody` writes them into
+  // #dev-body); the module mounts once per host occupancy and PUBLISHES on
+  // every repaint. The stores flush synchronously (below) because the
+  // repaint paths read the fresh DOM on their next lines — `Kudos.attach`,
+  // `_wireFeedComments`, `_initKanbanDrag`, `_reanchorCardMenu`.
+  mountFeed(host) {
+    mountLegacyPortal(host, createElement(DevFeed));
+  },
+
+  publishFeed(view) {
+    devFeedStore.set(view);
+  },
+
+  mountKanban(host) {
+    mountLegacyPortal(host, createElement(DevKanban));
+  },
+
+  publishKanban(view) {
+    devKanbanStore.set(view);
+  },
+
+  // The topic head's card slot. `_renderTopicHead` rebuilds the host on
+  // every paint, so this mounts per paint; the previous entry is swept.
+  mountTopicCard(host) {
+    mountLegacyPortal(host, createElement(TopicCard));
+  },
+
+  publishTopicCard(card) {
+    topicCardStore.set({ card });
+  },
+
+  // The 30s countdown tick (see card/dev-card.tsx's header).
+  publishCardNow(now) {
+    cardNowStore.set({ now });
+  },
+
+  // `/api/budget`'s aiEnabled answer, for the Explore pills.
+  publishAiEnabled(enabled) {
+    aiEnabledStore.set({ enabled });
   },
 
   publishViewMode,

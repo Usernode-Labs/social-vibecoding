@@ -22,6 +22,22 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 const vm = require('node:vm');
+const { api } = require('./lib/dev-card-html');
+const { renderToHtml, createElement } = require('./lib/render-tsx');
+
+// ── Rendering the pill ──────────────────────────────────────────────────
+//
+// `statusPillHtml` built the markup as a string; #1367's card chunk moved it
+// to frontend/src/features/dev-board/card/dev-card.tsx (`StatusPill`), which
+// renders `statusPillState`'s output — the half this file mostly tests, and
+// the half worth unit-testing. This composes the two exactly as a card does.
+// A state with no label draws nothing, which is what the '' cases below mean.
+function pillHtml(AppView, item, opts) {
+  const s = AppView.statusPillState(item, opts);
+  if (!s || !s.label) return '';
+  return renderToHtml(createElement(api().StatusPill, { s, inline: !!(opts && opts.inline) }));
+}
+
 
 const MERGE_STATUS_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'merge-status.js'), 'utf8');
@@ -289,7 +305,7 @@ test('tier 6 — the plain tally, and the at-least-N approvals variant', () => {
 
 test('the advisory surplus rides inside the label, not beside the pill', () => {
   const AppView = makeAppView();
-  const html = AppView.statusPillHtml(PR({
+  const html = pillHtml(AppView, PR({
     check_state: 'passing', approval_policy: 'invited',
     yes_count: 3, qualified_yes_count: 1, votes_required: 2, my_vote: 'yes',
   }));
@@ -299,7 +315,7 @@ test('the advisory surplus rides inside the label, not beside the pill', () => {
 
 test('explicit approval is a lock glyph inside the pill, not a chip', () => {
   const AppView = makeAppView();
-  const html = AppView.statusPillHtml(PR({
+  const html = pillHtml(AppView, PR({
     check_state: 'passing', requires_explicit_approval: true,
     yes_count: 1, votes_required: 3, my_vote: 'yes',
   }));
@@ -314,7 +330,7 @@ test('multiple reasons: the pill names the worst and counts the rest', () => {
     check_state: 'failing', test_results: [{ name: 'a', status: 'fail' }],
     behind_main: 2, console_check_state: 'errors', console_errors: [{ message: 'x' }],
   });
-  const html = AppView.statusPillHtml(pr);
+  const html = pillHtml(AppView, pr);
   assert.match(html, /Checks failing · 1/);
   assert.match(html, /and 2 more reasons — open for details/);
   assert.equal(AppView.blockReasons(pr).length, 3);
@@ -324,18 +340,18 @@ test('multiple reasons: the pill names the worst and counts the rest', () => {
 
 test('the proportional fill markup is preserved on the tally tiers', () => {
   const AppView = makeAppView();
-  const partial = AppView.statusPillHtml(PR({
+  const partial = pillHtml(AppView, PR({
     check_state: 'passing', yes_count: 1, no_count: 1, votes_required: 4, my_vote: 'yes',
   }));
   assert.match(partial, /gc-vote-fill gc-vote-fill-yes" style="width:25%/);
   assert.match(partial, /gc-vote-fill gc-vote-fill-no" style="width:25%/);
 
   // A side crossing the threshold still fills the pill solid.
-  const wonYes = AppView.statusPillHtml(PR({
+  const wonYes = pillHtml(AppView, PR({
     check_state: 'passing', yes_count: 4, votes_required: 4, my_vote: 'yes',
   }));
   assert.match(wonYes, /gc-vote-fill-full gc-vote-fill-full-yes/);
-  const wonNo = AppView.statusPillHtml(PR({
+  const wonNo = pillHtml(AppView, PR({
     check_state: 'passing', yes_count: 0, no_count: 4, votes_required: 4, my_vote: 'no',
   }));
   assert.match(wonNo, /gc-vote-fill-full gc-vote-fill-full-no/);
@@ -343,7 +359,7 @@ test('the proportional fill markup is preserved on the tally tiers', () => {
 
 test('a countdown carries the ticker contract the 30s timer reads', () => {
   const AppView = makeAppView();
-  const html = AppView.statusPillHtml(PR({
+  const html = pillHtml(AppView, PR({
     check_state: 'passing', yes_count: 1, no_count: 0, votes_required: 2,
     merge_window_ends_at: hoursAhead(30),
   }));
@@ -358,11 +374,11 @@ test('the pill is FULL WIDTH on a card, and a capsule in the detail head', () =>
   // Default (the board): a block that spans the card's content width, so the
   // proportional fill reads as a progress bar rather than a thumbnail-sized
   // capsule wedged between chips.
-  const block = AppView.statusPillHtml(pr);
+  const block = pillHtml(AppView, pr);
   assert.match(block, /dev-status-pill-block/);
   // opts.inline keeps the capsule for the detail head, which already has the
   // full page width — a second full-width bar there is just a rule.
-  const inline = AppView.statusPillHtml(pr, { inline: true });
+  const inline = pillHtml(AppView, pr, { inline: true });
   assert.doesNotMatch(inline, /dev-status-pill-block/);
   assert.match(inline, /gc-vote-count /);
   // Both forms keep the same fill markup, so the bar scales with the tally.
@@ -375,7 +391,7 @@ test('the fill still stretches the whole pill at every level', () => {
   const AppView = makeAppView();
   // Empty, partial and full — the widths are a pure function of the tally,
   // and full width is what makes them legible.
-  const at = (yes) => AppView.statusPillHtml(PR({
+  const at = (yes) => pillHtml(AppView, PR({
     check_state: 'passing', my_vote: 'yes', yes_count: yes, votes_required: 4,
   }));
   assert.match(at(0), /gc-vote-fill-yes" style="width:0%/);
@@ -388,10 +404,16 @@ test('every tone maps to a declared class, and the pill is one element', () => {
   for (const tone of AppView.STATUS_PILL_TONES) {
     assert.ok(typeof tone === 'string' && tone.length);
   }
-  const html = AppView.statusPillHtml(PR({ check_state: 'passing', yes_count: 1, votes_required: 2, my_vote: 'yes' }));
+  const html = pillHtml(AppView, PR({ check_state: 'passing', yes_count: 1, votes_required: 2, my_vote: 'yes' }));
   assert.equal((html.match(/class="gc-vote-count /g) || []).length, 1, 'exactly one pill');
   assert.match(html, /dev-status-pill/);
-  assert.equal(AppView.statusPillHtml(null), '');
+  // A row with nothing to say draws no pill at all.
+  assert.equal(pillHtml(AppView, null), '');
+  // And the card carries the very state this file tests — the model's `pill`
+  // is statusPillState's output, handed straight to the component above.
+  const pr = PR({ check_state: 'passing', yes_count: 1, votes_required: 2, my_vote: 'yes' });
+  assert.equal(AppView._proposalCardModel(pr).pill.state.label,
+    AppView.statusPillState(pr, { majority: 1 }).label);
 });
 
 // ── A governance proposal has no checks ─────────────────────────────────

@@ -23,6 +23,24 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const {
+  cardHtml, hasAction, issueCardHtml, mySessionCardHtml, proposalCardHtml, sharedSessionCardHtml,
+} = require('./lib/dev-card-html');
+const { api } = require('./lib/dev-card-html');
+const { renderToHtml, createElement } = require('./lib/render-tsx');
+
+// ── Rendering one chip ──────────────────────────────────────────────────
+//
+// `issueChipsHtml` and `_inProgressChipHtml` built strings; #1367's card
+// chunk split each into a SPEC (still here, still what this file is about)
+// and card/dev-card.tsx's `Badge`, which draws it.
+function badgeHtml(b) {
+  return b ? renderToHtml(createElement(api().Badge, { b })) : '';
+}
+function workChipHtml(AppView, issue) {
+  return badgeHtml(AppView._inProgressChipSpec(issue));
+}
+
 
 const SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'app-view.js'),
@@ -78,21 +96,23 @@ const baseIssue = (over) => ({
 
 // ── 1. issueChipsHtml ────────────────────────────────────────────────────
 
-test('issueChipsHtml sanitizes, dedupes, sorts, and navigates in-app', () => {
+test('issueChipSpecs sanitizes, dedupes, sorts, and navigates in-app', () => {
   const AppView = makeAppView();
-  const html = AppView.issueChipsHtml([9, '2', 9, -1, 'junk', 2.5, 4]);
+  const specs = AppView.issueChipSpecs([9, '2', 9, -1, 'junk', 2.5, 4]);
   // Sorted ascending, deduped, junk dropped.
-  const order = [...html.matchAll(/data-issue-chip="(\d+)"/g)].map((m) => Number(m[1]));
-  assert.deepEqual(order, [2, 4, 9]);
+  // JSON round-trip: the specs come from a vm sandbox, so a bare deepEqual
+  // compares across realms and fails on the array's constructor.
+  assert.deepEqual(JSON.parse(JSON.stringify(specs.map((c) => c.n))), [2, 4, 9]);
   // Chips are in-app buttons (openTopic), never external links.
-  assert.match(html, /onclick="AppView\.openTopic\('issue', 2\)"/);
+  const html = specs.map((b) => badgeHtml(b)).join('');
+  assert.match(html, /data-issue-chip="2"/);
   assert.ok(!html.includes('<a '), 'no external anchors');
   // Empty / invalid input renders nothing.
-  assert.equal(AppView.issueChipsHtml([]), '');
-  assert.equal(AppView.issueChipsHtml(null), '');
-  assert.equal(AppView.issueChipsHtml(['x', -3]), '');
+  assert.equal(AppView.issueChipSpecs([]).length, 0);
+  assert.equal(AppView.issueChipSpecs(null).length, 0);
+  assert.equal(AppView.issueChipSpecs(['x', -3]).length, 0);
   // Optional label prefix (the proposal card's "Closes #N" wording).
-  assert.match(AppView.issueChipsHtml([5], { label: 'Closes' }), /Closes #5/);
+  assert.match(badgeHtml(AppView.issueChipSpecs([5], { label: 'Closes' })[0]), /Closes #5/);
 });
 
 // ── 2. the work-state chip ───────────────────────────────────────────────
@@ -209,7 +229,7 @@ test('_issueWorkState precedence: first match wins, in the documented order', ()
 
 test('chip names the viewer as "you" and suffixes the TRUE extra headcount', () => {
   const AppView = makeAppView();
-  const chip = (ip) => AppView._inProgressChipHtml(baseIssue({ in_progress: ip }));
+  const chip = (ip) => workChipHtml(AppView, baseIssue({ in_progress: ip }));
 
   assert.match(chip({
     count: 1, users: ['maya'], peopleTotal: 1, mine: false, claims: [],
@@ -236,14 +256,14 @@ test('chip names the viewer as "you" and suffixes the TRUE extra headcount', () 
     claims: [], sessions: [sess()], target: null,
   }), /Being worked on · maya \+5/);
   // The three bot states name nobody — there is no person at a keyboard.
-  const auto = AppView._inProgressChipHtml(baseIssue({ headless: { status: 'generating' } }));
+  const auto = workChipHtml(AppView, baseIssue({ headless: { status: 'generating' } }));
   assert.match(auto, /Auto-solving…/);
   assert.ok(!auto.includes(' · '), 'no name on a bot state');
 });
 
 test('the chip is exactly ONE badge carrying its state key', () => {
   const AppView = makeAppView();
-  const html = AppView._inProgressChipHtml(baseIssue({
+  const html = workChipHtml(AppView, baseIssue({
     in_progress: {
       count: 1, users: ['maya'], peopleTotal: 1, mine: false, claims: [],
       sessions: [sess({ status: 'paused' })], target: null,
@@ -266,16 +286,23 @@ test('a payload with no sessions[] still renders a state', () => {
 
 test('chip is a button when a target exists, a plain span otherwise', () => {
   const AppView = makeAppView();
-  const linked = AppView._inProgressChipHtml(baseIssue({
+  const linked = workChipHtml(AppView, baseIssue({
     in_progress: {
       count: 1, users: ['maya'], mine: false, claims: [],
       target: { kind: 'proposal', sessionId: 88 },
     },
   }));
   assert.match(linked, /<button/);
-  assert.match(linked, /AppView\.openInProgressTarget\('proposal', 88\)/);
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(AppView._inProgressChipSpec(baseIssue({
+      in_progress: {
+        count: 1, users: ['maya'], mine: false, claims: [],
+        target: { kind: 'proposal', sessionId: 88 },
+      },
+    })).act)),
+    { fn: 'openInProgressTarget', args: ['proposal', 88] });
 
-  const plain = AppView._inProgressChipHtml(baseIssue({
+  const plain = workChipHtml(AppView, baseIssue({
     in_progress: { count: 1, users: ['maya'], mine: false, claims: [], target: null },
   }));
   assert.match(plain, /<span/);
@@ -283,7 +310,7 @@ test('chip is a button when a target exists, a plain span otherwise', () => {
 
   // Headless-only status renders the informational chip (its row's own
   // auto-solve buttons navigate).
-  const headlessOnly = AppView._inProgressChipHtml(baseIssue({
+  const headlessOnly = workChipHtml(AppView, baseIssue({
     headless: { status: 'generating' },
   }));
   assert.match(headlessOnly, /<span/);
@@ -333,9 +360,10 @@ function claimLabels(AppView, html) {
 
 test('issue row renders the chip and offers "Claim this issue" when the viewer holds no claim', () => {
   const AppView = makeAppView();
-  const html = AppView._renderIssueRow(baseIssue({
+  const model = AppView._issueCardModel(baseIssue({
     in_progress: { count: 1, users: ['maya'], mine: false, claims: [], sessions: [sess()], target: null },
   }));
+  const html = cardHtml(model);
   assert.match(html, /Being worked on · maya/);
   assert.equal(claimLabels(AppView, html).join('|'), 'Claim this issue');
   // #1112: the label no longer promises progress, and no longer repeats the
@@ -345,33 +373,36 @@ test('issue row renders the chip and offers "Claim this issue" when the viewer h
 
 test('issue row swaps to "Release my claim" when the viewer holds a claim', () => {
   const AppView = makeAppView();
-  const html = AppView._renderIssueRow(baseIssue({
+  const model = AppView._issueCardModel(baseIssue({
     in_progress: {
       count: 0, users: [], mine: true, sessions: [],
       claims: [{ username: 'me', userId: 42, mine: true }], target: null,
     },
   }));
+  const html = cardHtml(model);
   assert.equal(claimLabels(AppView, html).join('|'), 'Release my claim',
     'the viewer can only clear their OWN claim from here');
 });
 
 test('other users\' claims never block the viewer\'s own claim button', () => {
   const AppView = makeAppView();
-  const html = AppView._renderIssueRow(baseIssue({
+  const model = AppView._issueCardModel(baseIssue({
     in_progress: {
       count: 0, users: [], mine: false, sessions: [],
       claims: [{ username: 'maya', userId: 8, mine: false }], target: null,
     },
   }));
+  const html = cardHtml(model);
   // Claims are per-user and never exclusive.
   assert.equal(claimLabels(AppView, html).join('|'), 'Claim this issue');
 });
 
 test('read-only viewers see the chip but no action buttons', () => {
   const AppView = makeAppView({ readOnly: true });
-  const html = AppView._renderIssueRow(baseIssue({
+  const model = AppView._issueCardModel(baseIssue({
     in_progress: { count: 1, users: ['maya'], mine: false, claims: [], sessions: [sess()], target: null },
   }));
+  const html = cardHtml(model);
   assert.match(html, /Being worked on · maya/);
   assert.ok(!html.includes('Claim this issue'));
 });
@@ -384,16 +415,17 @@ test('admin claim list renders in the topic view (noNav) only, for write-admins 
     },
   };
   const admin = makeAppView({ admin: true });
-  const topicHtml = admin._renderIssueRow(baseIssue(withClaims), { noNav: true });
+  const topicModel = admin._issueCardModel(baseIssue(withClaims), { noNav: true });
+  const topicHtml = cardHtml(topicModel);
   assert.match(topicHtml, /Claims:/);
   assert.ok(!topicHtml.includes('In-progress claims:'), '#1112 dropped the redundant prefix');
-  assert.match(topicHtml, /AppView\.clearIssueClaim\(3, 8\)/);
+  assert.ok(hasAction(topicModel, 'clearIssueClaim', 3, 8), 'each claim clears itself');
   // Feed variant: no admin list even for admins.
-  const feedHtml = admin._renderIssueRow(baseIssue(withClaims));
+  const feedHtml = issueCardHtml(admin, baseIssue(withClaims));
   assert.ok(!feedHtml.includes('Claims:'));
   // Non-admin topic view: no list.
   const user = makeAppView();
-  const userTopic = user._renderIssueRow(baseIssue(withClaims), { noNav: true });
+  const userTopic = issueCardHtml(user, baseIssue(withClaims), { noNav: true });
   assert.ok(!userTopic.includes('Claims:'));
 });
 
@@ -410,7 +442,8 @@ test('the topic head prints a plain dated work note; the feed card does not', ()
       target: null,
     },
   });
-  const topic = AppView._renderIssueRow(issue, { noNav: true });
+  const topicModel = AppView._issueCardModel(issue, { noNav: true });
+  const topic = cardHtml(topicModel);
   const note = topic.match(/data-work-note="paused"[^>]*>([^<]*)</);
   assert.ok(note, 'the head carries a [data-work-note]');
   assert.match(note[1], /maya started work on this and paused it 5 days ago/);
@@ -419,27 +452,30 @@ test('the topic head prints a plain dated work note; the feed card does not', ()
   const clears = new Date(Date.now() + 2 * 86400000).toLocaleDateString();
   assert.ok(note[1].includes(clears), `note names ${clears}: ${note[1]}`);
   // Dense feed cards have no room; the chip's tooltip carries the same text.
-  const feed = AppView._renderIssueRow(issue);
+  const feedModel = AppView._issueCardModel(issue);
+  const feed = cardHtml(feedModel);
   assert.ok(!feed.includes('data-work-note'));
   assert.match(feed, /title="[^"]*paused it 5 days ago/);
 });
 
 test('the work note adds an "Also:" clause when more than one thing applies', () => {
   const AppView = makeAppView();
-  const html = AppView._renderIssueRow(baseIssue({
+  const model = AppView._issueCardModel(baseIssue({
     in_progress: {
       count: 1, users: ['maya'], peopleTotal: 2, mine: false,
       claims: [{ username: 'bob', userId: 8, mine: false }],
       sessions: [sess({ status: 'paused' })], target: null,
     },
   }), { noNav: true });
+  const html = cardHtml(model);
   const note = html.match(/data-work-note="paused"[^>]*>([^<]*)</);
   assert.match(note[1], /Also: claimed by bob\./);
 });
 
 test('no live signal → no chip and no work note', () => {
   const AppView = makeAppView();
-  const html = AppView._renderIssueRow(baseIssue(), { noNav: true });
+  const model = AppView._issueCardModel(baseIssue(), { noNav: true });
+  const html = cardHtml(model);
   assert.ok(!html.includes('data-work-note'));
   assert.ok(!html.includes('data-work-state'));
 });
@@ -456,19 +492,22 @@ const baseSession = (over) => ({
 test('own session card renders "#N" chips from linked_issues', () => {
   const AppView = makeAppView();
   AppView._sharedById = {};
-  const html = AppView._renderMySessionCard(baseSession({ linked_issues: [7, 4] }));
+  const model = AppView._mySessionCardModel(baseSession({ linked_issues: [7, 4] }));
+  const html = cardHtml(model);
   const order = [...html.matchAll(/data-issue-chip="(\d+)"/g)].map((m) => Number(m[1]));
   assert.deepEqual(order, [4, 7]);
   // No chips when the session links nothing.
-  const empty = AppView._renderMySessionCard(baseSession());
+  const emptyModel = AppView._mySessionCardModel(baseSession());
+  const empty = cardHtml(emptyModel);
   assert.ok(!empty.includes('data-issue-chip'));
 });
 
 test('shared session card renders "#N" chips from linked_issues', () => {
   const AppView = makeAppView();
-  const html = AppView._renderSharedSessionCard(baseSession({
+  const model = AppView._sharedSessionCardModel(baseSession({
     username: 'maya', linked_issues: [11], can_preview: false,
   }));
+  const html = cardHtml(model);
   assert.match(html, /data-issue-chip="11"/);
 });
 
@@ -482,16 +521,18 @@ const baseProposal = (over) => ({
 
 test('LIVE proposal card links "Closes #N" to the in-app issue topic', () => {
   const AppView = makeAppView();
-  const html = AppView._renderProposalCard(baseProposal());
+  const model = AppView._proposalCardModel(baseProposal());
+  const html = cardHtml(model);
   assert.match(html, /data-issue-chip="6"/);
   assert.match(html, /Closes #6/);
-  assert.match(html, /AppView\.openTopic\('issue', 6\)/);
+  assert.ok(hasAction(model, 'openTopic', 'issue', 6), 'and opens the topic in-app');
   assert.ok(!html.includes('github.com/o/r/issues/6'), 'no external issue link on live cards');
 });
 
 test('MERGED proposal card keeps the external GitHub "Closed #N" links', () => {
   const AppView = makeAppView();
-  const html = AppView._renderProposalCard(baseProposal({ status: 'merged' }));
+  const model = AppView._proposalCardModel(baseProposal({ status: 'merged' }));
+  const html = cardHtml(model);
   assert.ok(!html.includes('data-issue-chip'), 'merged cards do not use in-app chips');
   assert.match(html, /github\.com\/o\/r\/issues\/6/);
   assert.match(html, /Closed #6/);

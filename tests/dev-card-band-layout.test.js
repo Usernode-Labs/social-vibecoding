@@ -46,9 +46,22 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { cardHtml, closeIssueCardHtml, govCardHtml, issueCardHtml, mergedCardHtml, mySessionCardHtml, proposalCardHtml, sharedSessionCardHtml } = require('./lib/dev-card-html');
 
 const SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf8');
+const CARD_TSX = fs.readFileSync(path.join(
+  __dirname, '..', 'frontend', 'src', 'features', 'dev-board', 'card', 'dev-card.tsx'), 'utf8');
+
+// The bands are card/dev-card.tsx's since #1367's card chunk, driven by the
+// model's inputs. A bare model is how the composer cases below reach them.
+const BANDS = (over) => cardHtml({
+  key: 'k', cls: 'gc-vote-item', attrs: {}, icon: null,
+  title: { text: 'x', title: 'x' }, meta: [], pill: null, linked: [], badges: [],
+  chatCount: null, actions: [], rail: { chevron: false }, extra: [],
+  dense: true, uncapped: false, ...over,
+});
+const CHIP = (label, data) => ({ t: 'chip', key: label, cls: 'dev-badge', label, data });
 const CSS = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'css', 'app.css'), 'utf8');
 
@@ -121,13 +134,13 @@ const CLOSE_ROW = (over) => ({
 
 function everyCard(AppView) {
   return {
-    proposal: AppView._renderProposalCard(PR()),
-    issue: AppView._renderIssueRow(ISSUE()),
-    gov: AppView._renderGovCard(GOV()),
-    merged: AppView._renderMergedCard(MERGED(), 2),
-    closeIssue: AppView._renderCompletedCloseIssueCard(CLOSE_ROW()),
-    mySession: AppView._renderMySessionCard({ id: 51, session_title: 'Mine', status: 'active' }),
-    sharedSession: AppView._renderSharedSessionCard({
+    proposal: proposalCardHtml(AppView, PR()),
+    issue: issueCardHtml(AppView, ISSUE()),
+    gov: govCardHtml(AppView, GOV()),
+    merged: mergedCardHtml(AppView, MERGED(), 2),
+    closeIssue: closeIssueCardHtml(AppView, CLOSE_ROW()),
+    mySession: mySessionCardHtml(AppView, { id: 51, session_title: 'Mine', status: 'active' }),
+    sharedSession: sharedSessionCardHtml(AppView, {
       id: 71, session_title: 'Theirs', username: 'them', user_id: 9,
     }),
   };
@@ -165,7 +178,8 @@ test('bands 2 and 4 reserve unconditionally: a bare card still emits them empty'
   const AppView = makeAppView();
   // The settled close-issue row is the extreme case: no actions of any kind
   // (by design — a decided vote has nothing to offer) and no chips.
-  const html = AppView._renderCompletedCloseIssueCard(CLOSE_ROW());
+  const model = AppView._completedCloseIssueCardModel(CLOSE_ROW());
+  const html = cardHtml(model);
   assert.match(html, /<div class="gc-card-actions"><\/div>/,
     'the action band renders EMPTY rather than not at all');
   assert.match(html, /class="dev-card-badges dev-card-status"/,
@@ -174,7 +188,7 @@ test('bands 2 and 4 reserve unconditionally: a bare card still emits them empty'
     'so it is NOT flagged empty');
   // A session card has no subtitle-less form, so use the raw composer for the
   // truly empty meta case.
-  const bare = AppView._cardContentHtml({ titleHtml: 'x' });
+  const bare = BANDS();
   assert.match(bare, /<div class="dev-card-meta"><\/div>/, 'empty meta band too');
   assert.match(bare, /<div class="gc-card-actions"><\/div>/);
 });
@@ -183,7 +197,7 @@ test('bands 2 and 4 reserve unconditionally: a bare card still emits them empty'
 
 test('#1139: an empty status band is still EMITTED, but flagged data-empty', () => {
   const AppView = makeAppView();
-  const bare = AppView._cardContentHtml({ titleHtml: 'x' });
+  const bare = BANDS();
   // Emitted — the action band's cap is `.dev-card-status + .gc-card-actions`,
   // so dropping the node would uncap the action row on exactly these cards,
   // and several dapp.json checks walk the same four-band chain.
@@ -199,7 +213,8 @@ test('#1139: a bare issue card — nothing voted, claimed or said — is flagged
   const AppView = makeAppView();
   // The common case, and the one the issue was filed about: no attribute
   // votes, no claim, no close vote, an empty thread.
-  const html = AppView._renderIssueRow(ISSUE({ chatCount: 0 }));
+  const model = AppView._issueCardModel(ISSUE({ chatCount: 0 }));
+  const html = cardHtml(model);
   const open = html.indexOf('class="dev-card-badges dev-card-status"');
   assert.ok(open > 0, 'the band is still in the DOM');
   assert.match(html.slice(open, open + 120), /data-empty="1"/);
@@ -213,31 +228,31 @@ test('#1139: a bare issue card — nothing voted, claimed or said — is flagged
 
 test('#1139: a 0 chat count is not content, a real one is', () => {
   const AppView = makeAppView();
-  const zero = AppView._cardContentHtml({ titleHtml: 'x', chatCount: 0 });
+  const zero = BANDS({ chatCount: 0 });
   assert.match(zero, /data-empty="1"/, '💬 0 is invisible, so the band is empty');
-  const one = AppView._cardContentHtml({ titleHtml: 'x', chatCount: 1 });
+  const one = BANDS({ chatCount: 1 });
   assert.doesNotMatch(one, /data-empty/, 'one message fills the band');
   assert.match(one, /dev-chat-badge/);
   // null/undefined mean "this card type has no thread badge at all".
-  assert.match(AppView._cardContentHtml({ titleHtml: 'x', chatCount: null }),
+  assert.match(BANDS({ chatCount: null }),
     /data-empty="1"/);
 });
 
 test('#1139: any single visible pill keeps the band reserved', () => {
   const AppView = makeAppView();
   const cases = {
-    'a state bar': { pill: '<div class="dev-status-pill-block">2/3</div>' },
-    'a Closes-#N pill': { linkedHtml: '<span class="dev-badge">Closes #4</span>' },
-    'one metadata chip': { badges: ['<span class="dev-badge">High</span>'] },
-    'a work-state chip': { badges: ['', '<span class="dev-badge" data-work-state="paused">Paused · maya</span>'] },
+    'a state bar': { pill: { state: { tier: 6, key: 't', label: '2/3', tone: 'progress', yes: 2, no: 0, majority: 3, advisory: 0, lock: false }, inline: false } },
+    'a Closes-#N pill': { linked: [{ t: 'issueChip', key: 'i4', n: 4, prefix: 'Closes ', cls: 'dev-badge', title: 'i' }] },
+    'one metadata chip': { badges: [CHIP('High')] },
+    'a work-state chip': { badges: [CHIP('Paused · maya', { 'data-work-state': 'paused' })] },
   };
-  for (const [what, opts] of Object.entries(cases)) {
-    const html = AppView._cardContentHtml({ titleHtml: 'x', ...opts });
-    assert.doesNotMatch(html, /data-empty/, `${what} is content`);
+  for (const [what, over] of Object.entries(cases)) {
+    assert.doesNotMatch(BANDS(over), /data-empty/, `${what} is content`);
   }
-  // All-empty strings in `badges` are not content — every chip helper returns
-  // '' when it has nothing to say, which is what makes this check enough.
-  assert.match(AppView._cardContentHtml({ titleHtml: 'x', badges: ['', '', ''] }),
+  // A chip that has nothing to say is dropped by the BUILDER (every chip spec
+  // returns null and the builders `.filter(Boolean)`), so an empty list is
+  // what reaches the band — which is what makes this check enough.
+  assert.match(BANDS({ badges: [] }),
     /data-empty="1"/);
 });
 
@@ -246,15 +261,11 @@ test('#1139: the non-dense head omits a row holding only a hidden badge', () => 
   // Reachable from a shared session's own discussion page, which passes
   // `chatCount: s.chat_count` with `noNav: true`. `badges` was non-empty (the
   // hidden 0-count 💬), so the old truthiness test rendered a 5px strip.
-  const loose = AppView._cardContentHtml({
-    titleHtml: 'x', dense: false, chatCount: 0,
-  });
+  const loose = BANDS({ dense: false, chatCount: 0 });
   assert.doesNotMatch(loose, /dev-card-badges/, 'no row at all');
   assert.doesNotMatch(loose, /data-empty/, 'and no flag needed — it collapses');
   // With a real count it still renders, uncapped and unflagged as before.
-  const withChat = AppView._cardContentHtml({
-    titleHtml: 'x', dense: false, chatCount: 3,
-  });
+  const withChat = BANDS({ dense: false, chatCount: 3 });
   assert.match(withChat, /<div class="dev-card-badges">/);
   assert.doesNotMatch(withChat, /dev-card-status/);
 });
@@ -262,17 +273,22 @@ test('#1139: the non-dense head omits a row holding only a hidden badge', () => 
 test('#1139: bumpThreadBadge clears the flag when it reveals the badge', () => {
   // The one path that makes a pill visible without a repaint — so it is the
   // one path that has to un-hide the band itself.
+  // It used to write the count, the tint, `hidden` and the band's flag onto
+  // nodes the card renderer owns. All four are model fields now, so it bumps
+  // the CACHE and repaints — and the flag comes back out of the render
+  // inputs, which is the thing it cannot drift from.
   const bump = SRC.slice(SRC.indexOf('bumpThreadBadge(type, ref) {'));
   const body = bump.slice(0, bump.indexOf('\n  },'));
-  assert.match(body, /classList\.remove\('hidden'/, 'it un-hides the badge');
-  assert.match(body, /closest\('\.dev-card-status'\)/,
-    'and walks up to the band it lives in');
-  assert.match(body, /removeAttribute\('data-empty'\)/);
+  assert.match(body, /_repaintCards\(\)/, 'it repaints from the bumped cache');
+  assert.doesNotMatch(body, /classList\./, 'no in-place class write');
+  assert.doesNotMatch(body, /removeAttribute\('data-empty'\)/, 'nor an in-place flag write');
+  assert.match(CARD_TSX, /statusHasContent/, 'the flag is computed at render');
 });
 
 test('bands are SIBLINGS of the head, so only the head is indented', () => {
   const AppView = makeAppView();
-  const html = AppView._renderProposalCard(PR());
+  const model = AppView._proposalCardModel(PR());
+  const html = cardHtml(model);
   // The head closes before the meta line opens — the meta/status/action bands
   // are not nested inside the icon's flex row.
   const head = html.indexOf('class="dev-card-head"');
@@ -290,7 +306,8 @@ test('a board title carries the clamp class AND its full text as `title`', () =>
   const AppView = makeAppView();
   const long = 'A deliberately enormous proposal title that runs well past two '
     + 'lines in a narrow kanban column so the clamp has something to bite on';
-  const html = AppView._renderProposalCard(PR({ pr_title: long }));
+  const model = AppView._proposalCardModel(PR({ pr_title: long }));
+  const html = cardHtml(model);
   assert.match(html, /class="dev-card-title dev-card-title-clamp" title="/,
     'the clamped element itself carries the tooltip');
   assert.ok(html.includes(long), 'the full title is still in the DOM, un-truncated');
@@ -310,10 +327,11 @@ test('every board card type clamps its title', () => {
 
 test('the state bar, the Closes pills and the chips share ONE band', () => {
   const AppView = makeAppView();
-  const html = AppView._renderProposalCard(PR({
+  const model = AppView._proposalCardModel(PR({
     linked_issues: [4],
     priority: { top: 'high', count: 1, myValue: null },
   }));
+  const html = cardHtml(model);
   const open = html.indexOf('class="dev-card-badges dev-card-status"');
   assert.ok(open > 0, 'the merged band exists');
   const band = html.slice(open, html.indexOf('<div class="gc-card-actions"', open));
@@ -328,7 +346,8 @@ test('the state bar, the Closes pills and the chips share ONE band', () => {
 
 test('Closes-#N pills left the META line for the status band', () => {
   const AppView = makeAppView();
-  const html = AppView._renderProposalCard(PR({ linked_issues: [4] }));
+  const model = AppView._proposalCardModel(PR({ linked_issues: [4] }));
+  const html = cardHtml(model);
   const meta = html.slice(html.indexOf('class="dev-card-meta"'),
     html.indexOf('class="dev-card-badges dev-card-status"'));
   assert.doesNotMatch(meta, /dev-badge/,
@@ -339,9 +358,10 @@ test('Closes-#N pills left the META line for the status band', () => {
 
 test('the state bar LEADS the band and flexes rather than filling it', () => {
   const AppView = makeAppView();
-  const html = AppView._renderProposalCard(PR({
+  const model = AppView._proposalCardModel(PR({
     priority: { top: 'high', count: 1, myValue: null },
   }));
+  const html = cardHtml(model);
   const band = html.indexOf('dev-card-badges dev-card-status');
   assert.ok(html.indexOf('dev-status-pill-block', band) < html.indexOf('High', band),
     'state first — it is the card\'s headline, and the band clips at its end');
@@ -351,7 +371,8 @@ test('the state bar LEADS the band and flexes rather than filling it', () => {
 
 test('the detail head (noNav) collapses its empty bands instead of reserving', () => {
   const AppView = makeAppView();
-  const head = AppView._renderProposalCard(PR(), { noNav: true });
+  const headModel = AppView._proposalCardModel(PR(), { noNav: true });
+  const head = cardHtml(headModel);
   assert.doesNotMatch(head, /dev-card-status/, 'no reserved status band');
   assert.doesNotMatch(head, /dev-card-title-clamp/, 'and no two-line clamp');
   assert.match(head, /dev-card-title/, 'it still uses the shared title cell');
@@ -363,8 +384,8 @@ test('the detail head (noNav) collapses its empty bands instead of reserving', (
 
 test('the composer\'s dense flag is what decides all of it', () => {
   const AppView = makeAppView();
-  const dense = AppView._cardContentHtml({ titleHtml: 'x' });
-  const loose = AppView._cardContentHtml({ titleHtml: 'x', dense: false });
+  const dense = BANDS();
+  const loose = BANDS({ dense: false });
   assert.match(dense, /dev-card-title-clamp/);
   assert.match(dense, /dev-card-meta/);
   assert.match(dense, /dev-card-status/);
@@ -445,8 +466,9 @@ test('#1139: a flagged-empty status band is hidden, not merely collapsed', () =>
   // display:none preserves sibling adjacency; removing the node would not.
   const cap = rule('.dev-card-status + .gc-card-actions');
   assert.match(cap, /max-height: 24px/, 'the action-band cap still exists…');
-  assert.match(SRC, /dev-card-badges dev-card-status"\$\{[^}]*data-empty/,
-    '…and the composer still emits the band either way, flag or no flag');
+  assert.match(CARD_TSX,
+    /className="dev-card-badges dev-card-status" data-empty=\{statusHasContent \? undefined : '1'\}/,
+    '…and the card still emits the band either way, flag or no flag');
 });
 
 test('the action band is capped only where it follows a dense status band', () => {
@@ -496,7 +518,7 @@ test('the preview eye is pinned to the BOTTOM of the card\'s right-hand rail', (
   const c = rule('.dev-card-rail > svg');
   assert.match(c, /margin-top: auto/);
   assert.match(c, /margin-bottom: auto/);
-  assert.match(SRC, /gc-vote-btn gc-vote-btn-icon dev-card-menu-btn/,
+  assert.match(CARD_TSX, /gc-vote-btn gc-vote-btn-icon dev-card-menu-btn/,
     'the ⋯ trigger is a <button>, so the centring rule does not match it');
   assert.match(rule('.dev-card-rail > .gc-vote-btn-icon'), /flex: none/,
     'and neither pill may be shrunk in height by a short card');
@@ -510,26 +532,31 @@ test('the preview eye is pinned to the BOTTOM of the card\'s right-hand rail', (
 
 test('the rail emits ⋯, then the chevron, then the preview — in that order', () => {
   const AppView = makeAppView();
-  const menu = [{ label: 'Withdraw', act: () => {} }];
-  const eye = '<button class="gc-vote-btn gc-vote-btn-preview gc-vote-btn-icon">eye</button>';
-  const full = AppView._cardRailHtml('k:1', menu, { preview: eye });
+  const key = AppView._registerCardMenu('k:1', [{ label: 'Withdraw', act: () => {} }]);
+  const eye = { state: 'live', sessionId: 1, url: 'u', title: 'p', iconOnly: true };
+  const railOf = (rail) => {
+    const html = BANDS({ rail });
+    const at = html.indexOf('<div class="dev-card-rail">');
+    return at < 0 ? '' : html.slice(at, html.lastIndexOf('</div>'));
+  };
   // The order IS the layout: the auto margins on the chevron centre it in the
   // gap between whatever precedes and follows it, so emitting the eye before
   // the chevron would put the eye in the middle and the chevron at the bottom.
-  assert.match(full, /^<div class="dev-card-rail"><button [^>]*dev-card-menu-btn[\s\S]*?<svg [^>]*class="w-4 h-4[\s\S]*?<\/svg><button [^>]*gc-vote-btn-preview[^>]*>eye<\/button><\/div>$/);
+  assert.match(railOf({ menuKey: key, chevron: true, preview: eye }),
+    /^<div class="dev-card-rail"><button [^>]*dev-card-menu-btn[\s\S]*?<svg [^>]*class="w-4 h-4[\s\S]*?<\/svg><button [^>]*gc-vote-btn-preview[\s\S]*$/);
 
-  // No preview → byte-for-byte the rail as it was before this moved: no
-  // reserved slot, so a card with nothing to preview looks untouched.
-  assert.equal(AppView._cardRailHtml('k:1', menu, { preview: '' }),
-    AppView._cardRailHtml('k:1', menu));
+  // No preview → the rail as it was before this moved: no reserved slot, so a
+  // card with nothing to preview looks untouched.
+  assert.equal(railOf({ menuKey: key, chevron: true, preview: null }),
+    railOf({ menuKey: key, chevron: true }));
 
   // A card with a preview but no ⋯ still needs the column (the shared-session
-  // card): a bare chevron is only returned when it is the rail's sole content.
-  const noMenu = AppView._cardRailHtml('', null, { preview: eye });
-  assert.match(noMenu, /^<div class="dev-card-rail"><svg [\s\S]*>eye<\/button><\/div>$/);
-  assert.doesNotMatch(AppView._cardRailHtml('', null, {}), /dev-card-rail/,
+  // card): a bare chevron is only rendered when it is the rail's sole content.
+  assert.match(railOf({ chevron: true, preview: eye }),
+    /^<div class="dev-card-rail"><svg [\s\S]*gc-vote-btn-preview[\s\S]*$/);
+  assert.doesNotMatch(BANDS({ rail: { chevron: true } }), /dev-card-rail/,
     'a lone chevron needs no column to be centred in');
-  assert.equal(AppView._cardRailHtml('', null, { chevron: false }), '');
+  assert.doesNotMatch(BANDS({ rail: { chevron: false } }), /dev-card-rail|w-4 h-4/);
 });
 
 test('no dense renderer puts the preview back in the action band', () => {
@@ -537,14 +564,16 @@ test('no dense renderer puts the preview back in the action band', () => {
   // rail; only the noNav (detail head) branch keeps it in the action list,
   // because that head has no chevron for the eye to sit under and its band is
   // uncapped and wrapping.
-  const calls = SRC.match(/_cardActionsHtml\(\{[^}]*preview[^}]*\}\)/g) || [];
-  for (const c of calls) {
-    assert.match(c, /preview: noNav \? preview : ''/,
+  // The model says it directly: `actionPreview` is only ever the noNav
+  // branch, and every dense card hands its eye to the rail.
+  const inBand = SRC.match(/actionPreview: [^,\n]*/g) || [];
+  for (const c of inBand) {
+    assert.match(c, /actionPreview: (null|noNav \? preview : null)/,
       `dense action band must not carry the preview: ${c}`);
   }
-  const rails = SRC.match(/_cardRailHtml\([^;]*?preview[^;]*?\}\)/g) || [];
+  const rails = SRC.match(/(preview: noNav \? null : preview|chevron: [^,]+, preview )/g) || [];
   assert.ok(rails.length >= 4,
-    `expected the dense renderers to pass a preview to the rail, saw ${rails.length}`);
+    `expected the dense builders to pass a preview to the rail, saw ${rails.length}`);
 });
 
 test('the state bar flexes into whatever the chips leave, over a floor', () => {

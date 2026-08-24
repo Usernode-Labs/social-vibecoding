@@ -143,6 +143,28 @@ const OWNED = [
   // The card's ⋯ menu (features/dev-board/card-menu.tsx). Same story as the
   // picker above: on screen only mid-gesture, so this sweep never sees one.
   { sel: '.dev-card-menu' },
+  // The two card surfaces (features/dev-board/card/dev-feed.tsx and
+  // dev-kanban.tsx). Both hosts are app-view.js's — `_repaintDevBody`
+  // writes them into #dev-body — but every card below them is React's.
+  //
+  // Three slots inside stay legacy-FILLED, and each is the controller-host
+  // seam: rendered once, empty, with a constant className, never looked
+  // inside. `.dev-feed-comments` is filled by `_fillFeedComments` when its
+  // row scrolls into view; `[data-kudos-host]` by `_fillKudosHosts` (and
+  // then by Kudos.attach / _refreshButton / _renderPopover, four writers in
+  // another module); `#dev-issue-title-error` by `saveIssueTitle`.
+  {
+    sel: '#dev-feed',
+    except: ['.dev-feed-comments', '[data-kudos-host]'],
+  },
+  {
+    sel: '#dev-kanban-board',
+    except: ['[data-kudos-host]'],
+  },
+  // The topic head's card slot (features/dev-board/card/topic-card.tsx).
+  // `_renderTopicHead` innerHTMLs #gc-thread-head around it on every paint
+  // and mounts this host fresh; the body block beside it stays a template.
+  { sel: '#dev-topic-card', except: ['[data-kudos-host]', '#dev-issue-title-error'] },
   // The kanban board's filter strip (features/dev-board/kanban-filters.tsx).
   // Swept on #app/recipebot/dev whenever the board is in kanban mode.
   { sel: '#dev-kanban-filterbar' },

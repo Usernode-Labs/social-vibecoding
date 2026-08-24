@@ -170,8 +170,11 @@ test('an imported proposal gets no chip, because it has no venue to be in', () =
   // already happened somewhere Usernode never saw. A chip saying "Your
   // computer · your own tools" on a card with no session behind it would
   // read as a place you could go.
-  const fnStart = APP_VIEW_SRC.indexOf('_sessionVenueChipHtml(s) {');
-  assert.ok(fnStart !== -1, '_sessionVenueChipHtml must exist');
+  // The chip's MARKUP is card/dev-card.tsx's `venue` badge since #1367's
+  // card chunk; the resolution — which is what this test is about — is
+  // `_sessionVenueChipSpec`.
+  const fnStart = APP_VIEW_SRC.indexOf('_sessionVenueChipSpec(s) {');
+  assert.ok(fnStart !== -1, '_sessionVenueChipSpec must exist');
   const fn = APP_VIEW_SRC.slice(fnStart, APP_VIEW_SRC.indexOf('\n  },', fnStart));
   assert.match(fn, /s\.source === 'imported'/, 'imported rows are excluded');
   assert.match(fn, /\bBV\.currentVenue\(/, 'and the rest resolve through the shared chain');

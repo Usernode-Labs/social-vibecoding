@@ -11,6 +11,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
+const CARD_TSX = fs.readFileSync(path.join(
+  __dirname, '..', 'frontend', 'src', 'features', 'dev-board', 'card', 'dev-card.tsx'), 'utf8');
 
 const src = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'app-view.js'),
@@ -48,6 +50,11 @@ test('DEV_CARD_ICONS issueProposalMine is also a sky chip', () => {
 });
 
 test('_devCardIcon supports the pulse and title opts', () => {
-  assert.match(src, /opts && opts\.pulse \? ' animate-pulse' : ''/);
-  assert.match(src, /opts && opts\.title \? ` title="\$\{escapeAttr\(opts\.title\)\}"` : ''/);
+  // It returns the icon's SPEC now (card/dev-card.tsx draws it), so the two
+  // opts ride on the model rather than in a class string and a title
+  // attribute the builder concatenated.
+  assert.match(src, /pulse: \(opts && opts\.pulse\) \? true : undefined/);
+  assert.match(src, /title: \(opts && opts\.title\) \|\| undefined/);
+  assert.match(CARD_TSX, /spec\.pulse \? ' animate-pulse' : ''/, 'and the chip animates');
+  assert.match(CARD_TSX, /title=\{spec\.title\}/, 'and carries the tooltip');
 });

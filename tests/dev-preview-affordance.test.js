@@ -19,6 +19,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 const vm = require('node:vm');
+const { hasAction, issueCardHtml, mySessionCardHtml, proposalCardHtml, sharedSessionCardHtml } = require('./lib/dev-card-html');
 
 const MERGE_STATUS_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'merge-status.js'), 'utf8');
@@ -138,10 +139,17 @@ test('a long staging_error is clipped rather than pasted whole into an attribute
 
 test('can_preview with no live URL is offered, and routes through ensure-staging', () => {
   const AppView = makeAppView();
-  const html = AppView.cardPreviewHtml({ id: 71, can_preview: true, staging_url: null },
-    { kind: 'shared-session', sessionId: 71 });
-  assert.match(html, /swapToStagingForSession\(71, ''\)/, 'no last-known URL — the server decides');
+  const item = { id: 71, can_preview: true, staging_url: null };
+  const opts = { kind: 'shared-session', sessionId: 71 };
+  const html = AppView.cardPreviewHtml(item, opts);
+  // No last-known URL — the click routes through ensure-staging and the
+  // server decides live-vs-rebuild.
+  assert.match(html, /swapToStagingForSession\(71, ''\)/);
   assert.match(html, /rebuilds it if it went to sleep/);
+  // The card's own affordance renders from the same spec.
+  const spec = AppView._cardPreviewSpec(item, opts);
+  assert.equal(spec.state, 'live');
+  assert.equal(spec.url, '');
 });
 
 test('an own session is previewable once a PR exists (pr_number)', () => {
@@ -189,17 +197,17 @@ test('each kind gets its own wording, and all four call sites use this helper', 
   }
 
   // 1. proposal card
-  assert.match(AppView._renderProposalCard(PR({ staging_url: 'https://s' })),
+  assert.match(proposalCardHtml(AppView, PR({ staging_url: 'https://s' })),
     /gc-vote-btn-preview[^>]*gc-vote-btn-icon|gc-vote-btn-icon[^>]*gc-vote-btn-preview/);
   // 2. own session card
   AppView._sharedById = {};
-  assert.match(AppView._renderMySessionCard({ id: 51, session_title: 'M', pr_number: 9 }),
+  assert.match(mySessionCardHtml(AppView, { id: 51, session_title: 'M', pr_number: 9 }),
     /gc-vote-btn-preview/);
   // 3. shared session card
-  assert.match(AppView._renderSharedSessionCard({ id: 71, session_title: 'T', username: 'them', staging_url: 'https://s' }),
+  assert.match(sharedSessionCardHtml(AppView, { id: 71, session_title: 'T', username: 'them', staging_url: 'https://s' }),
     /gc-vote-btn-preview/);
   // 4. the issue card's headless run
-  assert.match(AppView._renderIssueRow({
+  assert.match(issueCardHtml(AppView, {
     number: 5, title: 'x',
     headless: { status: 'ready', outcome: 'code', sessionId: 90, stagingUrl: 'https://s' },
   }), /gc-vote-btn-preview/);
@@ -207,10 +215,10 @@ test('each kind gets its own wording, and all four call sites use this helper', 
 
 test('an issue run with no preview (or a spec-only outcome) shows no affordance', () => {
   const AppView = makeAppView();
-  assert.doesNotMatch(AppView._renderIssueRow({
+  assert.doesNotMatch(issueCardHtml(AppView, {
     number: 5, title: 'x', headless: { status: 'ready', outcome: 'spec', sessionId: 90 },
   }), /gc-vote-btn-preview/);
-  assert.doesNotMatch(AppView._renderIssueRow({
+  assert.doesNotMatch(issueCardHtml(AppView, {
     number: 5, title: 'x',
     headless: { status: 'ready', outcome: 'code', sessionId: 90, stagingUrl: null },
   }), /gc-vote-btn-preview/);
@@ -226,13 +234,13 @@ test('on a board card the eye is the RAIL\'s last child — the bottom-right cor
   // dense action band no longer carries it at all.
   const AppView = makeAppView();
   const cards = {
-    proposal: AppView._renderProposalCard(PR({ staging_url: 'https://s' })),
-    issue: AppView._renderIssueRow({
+    proposal: proposalCardHtml(AppView, PR({ staging_url: 'https://s' })),
+    issue: issueCardHtml(AppView, {
       number: 5, title: 'x',
       headless: { status: 'ready', outcome: 'code', sessionId: 90, stagingUrl: 'https://s' },
     }),
-    ownSession: AppView._renderMySessionCard({ id: 51, session_title: 'M', pr_number: 9 }),
-    sharedSession: AppView._renderSharedSessionCard({
+    ownSession: mySessionCardHtml(AppView, { id: 51, session_title: 'M', pr_number: 9 }),
+    sharedSession: sharedSessionCardHtml(AppView, {
       id: 71, session_title: 'T', username: 'them', staging_url: 'https://s',
     }),
   };
@@ -266,7 +274,7 @@ test('a card with nothing to preview keeps exactly the rail it had before', () =
   // The move must not cost a reserved empty slot at the bottom of every other
   // card's rail — that would read as a broken gap under the chevron.
   const AppView = makeAppView();
-  const html = AppView._renderProposalCard(PR({ staging_url: null }));
+  const html = proposalCardHtml(AppView, PR({ staging_url: null }));
   const rail = html.slice(html.indexOf('dev-card-rail'));
   assert.doesNotMatch(rail, /gc-vote-btn-preview|gc-checks-running-badge|gc-conflict-badge/);
   const children = rail.match(/<(?:button|span|svg)\b[^>]*class="[^"]*"/g) || [];

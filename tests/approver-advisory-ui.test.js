@@ -15,6 +15,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { govCardHtml } = require('./lib/dev-card-html');
 
 const read = (f) => fs.readFileSync(path.join(__dirname, '..', 'public', 'js', f), 'utf8');
 const MERGE_STATUS_SRC = read('merge-status.js');
@@ -135,7 +136,7 @@ test('voteButtonsHtml: default-policy rows keep the raw totals unchanged', () =>
 test('_renderGovCard: threads the qualified fields into the pill and buttons', () => {
   const AppView = makeAppView();
   AppView.readOnly = false;
-  const html = AppView._renderGovCard({
+  const html = govCardHtml(AppView, {
     id: 9, kind: 'secret_change', title: 'Set FOO_KEY',
     payload: { key: 'FOO_KEY', action: 'set', hasValue: true },
     created_by: 2, created_by_username: 'alice',

@@ -753,14 +753,14 @@ test('server wires the topic-attributes route', () => {
 
 test('card renderer emits the three chips (priority, category, assignee)', () => {
   const fe = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf-8');
-  assert.match(fe, /_attrChipsHtml\('issue'/, 'issue rows render chips');
-  assert.match(fe, /_attrChipsHtml\('proposal'/, 'proposal cards render chips');
+  assert.match(fe, /_attrChipSpecs\('issue'/, 'issue rows render chips');
+  assert.match(fe, /_attrChipSpecs\('proposal'/, 'proposal cards render chips');
   // …and the BOARD passes omitUnset, so a card with no metadata carries no
   // grey "Set priority / Set category / Unassigned" placeholders. The detail
   // view (noNav) opts out — that page is where metadata gets set.
   assert.match(fe, /omitUnset: !noNav/, 'the board omits unset chips, the detail view keeps them');
   assert.match(fe, /data-attr-chip/, 'chip carries the delegated-click hook');
-  // The three fields are a table inside _attrChipsHtml now (priority,
+  // The three fields are a table inside _attrChipSpecs now (priority,
   // assignee, category — the badge-priority order) rather than three
   // hand-written calls, so the omitUnset filter applies uniformly.
   assert.match(fe, /\['category', it\.category\]/, 'the category chip is in the field table');
@@ -793,9 +793,20 @@ test('category dropdown offers a text box + the app custom block', () => {
   assert.match(fe, /topic-categories/, 'hits the vocabulary endpoint');
   assert.match(fe, /_setAppCategories\(data\.categories\)/, 'a cast adopts the refreshed vocabulary');
 
-  // Escaping: custom labels are user-supplied, so both the chip and the
-  // dropdown row must run them through escapeHtml.
-  assert.match(fe, /<span class="attr-dot \$\{meta\.cls\}"><\/span>\$\{escapeHtml\(meta\.label\)\}/,
+  // Escaping: custom labels are user-supplied. The chip is a component now
+  // (card/dev-card.tsx's `attr` badge), so its label is a TEXT CHILD and
+  // React escapes it — the property `escapeHtml` was there to give it.
+  // Rendered, not grepped, exactly like the popover row below.
+  assert.match(
+    renderComponent('tests/fixtures/dev-card-api.ts', 'Badge', {
+      b: {
+        t: 'attr', key: 'attr:category', field: 'category', targetType: 'issue',
+        targetRef: 5, cls: 'bg-sky-500/10', hover: 'hover:bg-sky-500/20',
+        title: 'Vote on this card\'s category', count: 0, readonly: false,
+        label: { kind: 'dot', cls: 'bg-sky-500/10', text: '<img src=x onerror=alert(1)>' },
+      },
+    }),
+    /&lt;img src=x onerror=alert\(1\)&gt;/,
     'category chip escapes its label');
   // The popover row is a component now, so its label is a text child — the
   // property `escapeHtml` was there to give it. Rendered, not grepped.
@@ -952,16 +963,17 @@ test('chips reuse the sibling-badge pill recipe + tint-deepening hover', () => {
   // Every chip in a card's badge row shares ONE geometry class now — the row
   // used to mix three sizes, each computing its own height from its own
   // padding + line-height. The utility classes supply only the tint.
-  assert.match(fe, /const base = 'attr-chip dev-badge'/,
+  const cardTsx = fs.readFileSync(path.join(__dirname, '..', 'frontend', 'src',
+    'features', 'dev-board', 'card', 'dev-card.tsx'), 'utf-8');
+  assert.match(cardTsx, /`attr-chip dev-badge \$\{b\.cls\}/,
     'chip base uses the shared badge geometry class');
-  for (const other of [/dev-chat-badge dev-badge /, /'dev-badge font-mono bg-violet/]) {
-    assert.match(fe, other, 'the sibling badges share it too');
-  }
+  assert.match(cardTsx, /dev-chat-badge dev-badge /, 'the 💬 badge shares it too');
+  assert.match(fe, /'dev-badge font-mono bg-violet/, 'and so do the linked-issue chips');
   // #1112: the work-state chip picks its tint from a table (it has five of
   // them now), so its class list is composed rather than a single literal —
   // but it still leads with the same shared geometry class, and every tint in
   // the table is the same `bg-<hue>-500/10 text-<hue>-…` badge recipe.
-  assert.match(fe, /class="dev-badge \$\{tone\}/, 'the work-state chip leads with dev-badge');
+  assert.match(fe, /cls: `dev-badge \$\{tone\}`/, 'the work-state chip leads with dev-badge');
   const toneTable = fe.slice(fe.indexOf('_WORK_TONE_CLS:'), fe.indexOf('_WORK_TONE_HOVER:'));
   assert.match(toneTable, /sky: 'bg-sky-500\/10 text-sky-500'/, 'sky tint is the badge recipe');
   for (const line of toneTable.split('\n')) {

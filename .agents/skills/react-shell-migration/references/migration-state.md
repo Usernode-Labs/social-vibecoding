@@ -213,8 +213,11 @@ Three sweeps catch this class, and they are cheap enough to run after every
 chunk:
 
 1. **Uncalled members.** For each `^  name(` in a converted module, search the
-   whole repo for a call site — with comments stripped, or a retirement note
-   naming the thing counts as a use.
+   whole repo for a call site — with comments stripped PER FILE (see the
+   fourth check below), or a retirement note naming the thing counts as a use
+   and an unterminated `/*` in one file hides every symbol in the next. It
+   caught `_assigneeAvatarPlaceholderHtml` the day the chip spec started
+   resolving the avatar itself.
 2. **Empty hosts.** For each element a component renders with no children and
    an `id` or `data-*`, search for something that fills it. One reference (the
    render itself) means nothing does.
@@ -222,10 +225,24 @@ chunk:
    search for something that renders `id="x"`. This is the mirror image, and
    it is how the unread dot turned up.
 
-A fourth check has no script: **read the component against the renderer it
-replaced, attribute by attribute.** The vote host and the quote block were
-both cases where a host existed, was filled by something, and still did not
-work, because the two ends had agreed on different names.
+A fourth check has no script by default: **read the component against the
+renderer it replaced, attribute by attribute.** The vote host and the quote
+block were both cases where a host existed, was filled by something, and
+still did not work, because the two ends had agreed on different names.
+
+For a conversion big enough to be worth it, AUTOMATE that one: render the
+same fixture rows through the pre-conversion builder (`git show HEAD:` it)
+and through the model plus component, tokenise both — tag name, SORTED
+attributes, normalised text — and diff the streams. Four normalisations make
+it usable and none of them hides a behaviour change: entity spelling (React
+writes `·`, the builders wrote `&middot;`), attribute order (React's is prop
+order), `onclick` (a closure now, checked separately through the model), and
+`<path/>` versus `<path></path>`. Two traps in writing it: strip comments PER
+FILE before joining, or a `/*` inside one file's template literal swallows the
+head of the next; and collapse an empty element's close tag on both sides, or
+one extra `/path` token shifts everything after it and every card reads as
+different. It found the card family identical in ten of eleven variants,
+which is the difference between believing the conversion and knowing it.
 
 And a fifth is about the ownership audit itself: **run it signed in, with the
 cookie's own host.** `scripts/audit-react-ownership.mjs` takes an `AUTH`
@@ -240,8 +257,9 @@ rendered before believing a zero.
 
 ### Large
 
-1. **Dev screen — `public/js/app-view.js`. Started; the card family is what is
-   left.** Every FLOATING and INDEPENDENT surface has converted:
+1. **Dev screen — `public/js/app-view.js`. The card family has converted;
+   what is left is the topic head's BODY block.** Every card, every surface
+   that draws one, and every floating surface around them is React:
 
    | converted | host |
    | --- | --- |
@@ -253,6 +271,9 @@ rendered before believing a zero.
    | the kanban filter bar | `#dev-kanban-filterbar` |
    | an issue's GitHub thread | `#dev-issue-comments` |
    | the locked-app banner | `#dev-locked-notice` |
+   | **the list feed, every card in it** | `#dev-feed` |
+   | **the kanban board, its columns and tabs** | `#dev-kanban-board` |
+   | **the topic head's card** | `#dev-topic-card` |
 
    Three of those are body-mounted floating hosts and share the seam the group
    chat's menus established: the module creates the element, measures it
@@ -261,41 +282,85 @@ rendered before believing a zero.
    because in every case the module measures or focuses on the line after it
    publishes.
 
-   **What is left is one chunk, and it does not decompose.** The six card
-   renderers — `_renderIssueRow`, `_renderProposalCard`, `_renderGovCard`,
-   `_renderMySessionCard`, `_renderSharedSessionCard`, `_renderMergedCard` /
-   `_renderCompletedCloseIssueCard` — share one shell (`_cardContentHtml`,
-   `_cardBadgesHtml`, `_cardRailHtml`, `_cardActionsHtml`, `statusPillHtml`,
-   `voteCountPill`, `voteButtonsHtml`, `_attrChipHtml`, `cardPreviewHtml`,
-   `checksBadgeHtml`, `closesPillHtml`) and have exactly five consumers: the
-   feed (`_renderFeedInner`), the kanban (`_renderKanbanInner`), the
-   in-progress strip, the merged list and the topic head (`_renderTopicHead`).
-   A card cannot convert before its consumers, and a consumer cannot convert
-   before the cards it draws — so it is one commit of roughly 2,500 lines of
-   renderer, not a sequence.
+   **The card family: one model, one component, seven builders.** Six card
+   renderers plus the settled close-issue row shared one band builder and had
+   five consumers, so a card could not convert before its consumers and a
+   consumer could not convert before its cards. What converted is the shape
+   they share: `card/model.ts` is a plain serialisable view model,
+   `card/dev-card.tsx` renders it, and each `_render*Card` became a
+   `_*CardModel` builder. `_feedView()` and `_kanbanView()` build the two list
+   surfaces the same way.
 
-   **Two live in-place writers have to move with it**, and both are tractable:
+   **Everything in the model is RESOLVED data.** `DEV_CARD_ICONS`,
+   `ASSIGNEE_AVATAR_TINTS`, `_priorityMeta`, `_categoryMeta`,
+   `statusPillState`, `blockReasons` — every table and derivation stayed in
+   app-view.js and the builder puts the ANSWER in the model: the icon arrives
+   as its tint classes and its SVG path, a chip as its label and its tint.
+   That is not tidiness. app-view.js is a classic script the bundle cannot
+   import and Tailwind's extractor is a regex over source text, so a palette
+   copied into the component would exist twice with only one copy able to
+   change colour.
 
-   - `_applyExploreChatAvailability` sets `disabled`, `title` and two classes
-     on every `.gc-explore-chat-btn` after a memoised `/api/budget` check. It
-     becomes an `aiEnabled` field on the view model, republished when the
-     promise settles.
-   - the 30s countdown ticker rewrites `.gc-vote-count-label`'s text on every
-     `[data-window-ends]` pill. It becomes a `now` tick the pills' labels
-     derive from — it already walks every pill, so the cost is unchanged.
+   **Handlers are named calls, not closures.** A card's `onclick="AppView.
+   castVote(12, 'yes')"` became `{ fn: 'castVote', args: [12, 'yes'] }`,
+   because the model has to survive being published through a plain store.
+   `call()` in the component dispatches by name and no-ops on an unknown one.
+   The ⋯ menu is the exception and keeps its registry: a descriptor's `act`
+   IS a closure, so `_registerCardMenu` still returns a key the rail stamps
+   as `data-card-menu`.
 
-   `refreshVoteControls` needs no move: the group chat's transcript already
-   proved the pattern (the host's CONTENTS stay the module's, the row's TINT
-   becomes a patched field, and `patchTranscriptMessage` drops a patch that
-   says nothing new so the effect that calls it cannot loop).
+   **Four in-place DOM passes became publishes**, and each was a second
+   author on a node the card renders:
 
-   Smaller pieces that are genuinely independent and could go first:
-   `#dev-locked-notice`'s siblings in the same list (`#dev-chat-card-preview`,
-   `#dc-secrets-state`), the three body-mounted modals (generate-proposal,
-   LLM consent, credits — the last embeds `CreditOptions.cardHtml`, another
-   module's markup, so it keeps a controller-host seam), the shared-session
-   transcript slot (its body comes from `public/js/session-transcript.js`),
-   and `renderAppTab` / `renderDevChatTab`'s shells.
+   - the 30s countdown ticker rewrote every pill's label; it publishes
+     `Date.now()` through `cardNowStore` and each pill re-derives its own.
+   - `_applyExploreChatAvailability` dimmed each Explore pill; the card pills
+     read `aiEnabledStore`. The DOM pass stays for the detail block, which is
+     still a template.
+   - `_applyKanbanTab` toggled six classes per tab; `_onKanbanTabSelect`
+     republishes `activeTab`.
+   - `bumpThreadBadge` wrote the count, the tint, `hidden` and the band's
+     #1139 `data-empty` flag; it bumps the cache and repaints, and the flag
+     comes back out of the render inputs it cannot drift from.
+
+   **Three seams stayed legacy-filled**, each rendered once, empty, with a
+   constant className: `[data-kudos-host]` (`Kudos.renderButton` builds it,
+   `attach`/`_refreshButton`/`_renderPopover` keep writing inside — four
+   writers in another module), `.dev-feed-comments` (filled when its row
+   scrolls into view) and `#dev-issue-title-error`.
+
+   **The drag recognizer needs a REMOUNT, not a publish.** `_commitBoardOrder`
+   calls `_repaintKanbanBoard(true)`, which drops the portal and mounts a
+   fresh one: the recognizer physically moved those nodes, and React
+   reconciling keyed children over rearranged DOM leaves cards where the
+   gesture put them. `_dragState` still blocks every publish mid-gesture.
+
+   **What the conversion was checked against.** Ten of the eleven card
+   variants render structurally IDENTICAL markup to the pre-conversion string
+   builders — same tags, same attributes, same text, compared token by token
+   over fixture rows. The one difference is the kudos slot above. That check
+   is the fourth one below, automated; the script is not checked in because
+   it diffs against `git show HEAD:`, but it is worth rebuilding for any
+   conversion this size.
+
+   Two behaviours changed on purpose. The archived-sessions list is component
+   state, so a background repaint no longer snaps it shut; and the inline
+   title editor is rendered FROM `_editingIssueTitle` rather than written over
+   the title, so it survives a repaint (the guard that skips the repaint is
+   still there, and is now purely about not discarding typed text).
+
+   What is LEFT on this screen is `_detailActionsHtml` and the bodies beside
+   it — the topic head's action list, the blocked-reason enumeration, the
+   before/after visuals, `_proposalDetailsHtml`, `_checksDetailHtml`,
+   `_issueBodyHtml` and `_transcriptSectionHtml`. They are one `innerHTML`
+   into `#gc-thread-head` around the card slot, and they decompose: each is a
+   separate block with its own data.
+
+   Also still string-built, and genuinely independent: the three body-mounted
+   modals (generate-proposal, LLM consent, credits — the last embeds
+   `CreditOptions.cardHtml`, another module's markup, so it keeps a
+   controller-host seam), the shared-session transcript slot (its body comes
+   from `public/js/session-transcript.js`), and `renderAppTab`'s shell.
 
 2. **Dev chat — `frontend/src/features/dev-chat/dev-chat.js`, about 9,820
    lines and 58 sites. Started at the composer.** Four strips have converted:

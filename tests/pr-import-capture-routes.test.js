@@ -145,5 +145,5 @@ test('the detail head really does omit the rows this falls back for', () => {
   // shows up here rather than as a check that quietly stops asserting.
   assert.match(APPVIEW_SRC, /if \(!st\.noNav\) \{\s*\n\s*items\.push\(\.\.\.AppView\._attrMenuItems\('proposal', pr\.id, pr\)\);/);
   // …and that it renders the chips instead, which is what the fallback clicks.
-  assert.match(APPVIEW_SRC, /omitUnset: !noNav, asArray: true,/);
+  assert.match(APPVIEW_SRC, /_attrChipSpecs\('proposal', pr\.id, pr, \{ omitUnset: !noNav \}\)/);
 });

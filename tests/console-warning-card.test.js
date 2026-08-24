@@ -15,6 +15,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { proposalCardHtml } = require('./lib/dev-card-html');
 
 // #405: the proposal card's merge-state badge is driven by window.MergeStatus;
 // load it into the sandbox first (mirrors index.html's load order).
@@ -67,7 +68,7 @@ const baseProposal = (over) => ({
 
 test('console_check_state="errors" renders the amber warning badge with a count', () => {
   const AppView = makeAppView(ME);
-  const html = AppView._renderProposalCard(baseProposal({
+  const html = proposalCardHtml(AppView, baseProposal({
     console_check_state: 'errors',
     console_errors: [{ kind: 'pageerror', message: 'boom' }, { kind: 'console', message: 'splat' }],
   }));
@@ -78,18 +79,18 @@ test('console_check_state="errors" renders the amber warning badge with a count'
 
 test('console_check_state="clean" renders NO warning badge', () => {
   const AppView = makeAppView(ME);
-  const html = AppView._renderProposalCard(baseProposal({ console_check_state: 'clean', console_errors: [] }));
+  const html = proposalCardHtml(AppView, baseProposal({ console_check_state: 'clean', console_errors: [] }));
   assert.doesNotMatch(html, /gc-warning-badge/, 'clean proposal has no warning');
 });
 
 test('console_check_state="unknown" / missing renders NO warning badge', () => {
   const AppView = makeAppView(ME);
   assert.doesNotMatch(
-    AppView._renderProposalCard(baseProposal({ console_check_state: 'unknown' })),
+    proposalCardHtml(AppView, baseProposal({ console_check_state: 'unknown' })),
     /gc-warning-badge/, 'unknown state shows nothing'
   );
   assert.doesNotMatch(
-    AppView._renderProposalCard(baseProposal()),
+    proposalCardHtml(AppView, baseProposal()),
     /gc-warning-badge/, 'absent state shows nothing'
   );
 });
@@ -105,7 +106,7 @@ test('two reasons at once: the pill names the worst and counts the rest', () => 
     console_check_state: 'errors',
     console_errors: [{ kind: 'console', message: 'oops' }],
   });
-  const html = AppView._renderProposalCard(pr);
+  const html = proposalCardHtml(AppView, pr);
   assert.match(html, /Behind main · 3/, 'the worst reason is the pill label');
   assert.match(html, /and 1 more reason — open for details/, 'the rest are counted, not hidden');
   assert.doesNotMatch(html, /gc-warning-badge/, 'no second badge stacked beside it');
@@ -130,7 +131,7 @@ test('a HARD reason beside a soft one: the heading names the block', () => {
     console_check_state: 'errors',
     console_errors: [{ kind: 'console', message: 'oops' }],
   });
-  const html = AppView._renderProposalCard(pr);
+  const html = proposalCardHtml(AppView, pr);
   assert.match(html, /Checks failing · 1/, 'the hard reason wins the label');
   assert.match(html, /gc-vote-count-blocked/);
   assert.match(html, /and 2 more reasons/);

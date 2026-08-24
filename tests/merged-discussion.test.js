@@ -1,7 +1,7 @@
 // #194 follow-up: the Completed (merged) proposal list becomes openable
 // and its discussion thread stays LIVE (editable composer, no read-only
 // lock) after merge. Covers the three app-view.js changes:
-//   1. _renderMergedInner() rows carry the open-discussion affordance
+//   1. merged rows carry the open-discussion affordance
 //      (data-proposal-row, hover class, chevron) + the 💬 badge.
 //   2. the delegated #gc-merged click handler opens the proposal topic
 //      on a bare-row tap but NOT on its inner button/link controls.
@@ -20,6 +20,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { mergedCardHtml } = require('./lib/dev-card-html');
 
 const SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'app-view.js'),
@@ -118,39 +119,39 @@ const mergedPr = (over) => ({
   ...over,
 });
 
-test('_renderMergedInner row is openable: data-proposal-row + hover + chevron', () => {
+// The standalone "Completed" SECTION (`_renderMergedInner`) is retired — the
+// Feed folds completed rows into its own stream and the kanban Done column
+// renders the same cards. What these three tests are actually about is the
+// merged CARD, so they render one.
+test('a merged row is openable: data-proposal-row + hover + chevron', () => {
   const { AppView } = makeAppView();
   AppView._merged = [mergedPr()];
   AppView._mergedCtx = { majority: 2, activeUsers: 3 };
-  AppView._mergedExpanded = false;
-  const html = AppView._renderMergedInner();
+  const html = mergedCardHtml(AppView, mergedPr(), 2);
   assert.match(html, /data-proposal-row="55"/, 'row carries the proposal-row hook');
   assert.match(html, /data-ref-pr="700"/, 'existing data-ref-pr preserved');
   // A tappable card has no border left to tint, so the affordance moved to the
   // surface — the same `hover:` fill the language's list rows use.
   assert.match(html, /hover:bg-zinc-50/, 'hover affordance present');
-  assert.match(html, /title="Open this proposal's discussion"/, 'open hint title present');
+  // React escapes the apostrophe in an attribute value.
+  assert.match(html, /title="Open this proposal&#x27;s discussion"/, 'open hint title present');
   assert.match(html, /M9 5l7 7-7 7/, 'chevron svg path present');
 });
 
-test('_renderMergedInner shows a visible 💬 badge when chat_count > 0', () => {
+test('a merged row shows a visible 💬 badge when chat_count > 0', () => {
   const { AppView } = makeAppView();
-  AppView._merged = [mergedPr({ chat_count: 4 })];
   AppView._mergedCtx = { majority: 2, activeUsers: 3 };
-  AppView._mergedExpanded = false;
-  const html = AppView._renderMergedInner();
+  const html = mergedCardHtml(AppView, mergedPr({ chat_count: 4 }), 2);
   assert.match(html, /dev-chat-badge[^"]*"[^>]*data-count="4"/, 'badge carries the count');
   // The badge wrapper for a non-zero count must NOT carry the `hidden` class.
   const badge = html.match(/<span class="dev-chat-badge[^>]*data-count="4"[^>]*>/)[0];
   assert.doesNotMatch(badge, /\bhidden\b/, 'non-empty badge is visible');
 });
 
-test('_renderMergedInner hides the 💬 badge when chat_count is 0', () => {
+test('a merged row hides the 💬 badge when chat_count is 0', () => {
   const { AppView } = makeAppView();
-  AppView._merged = [mergedPr({ chat_count: 0 })];
   AppView._mergedCtx = { majority: 2, activeUsers: 3 };
-  AppView._mergedExpanded = false;
-  const html = AppView._renderMergedInner();
+  const html = mergedCardHtml(AppView, mergedPr({ chat_count: 0 }), 2);
   const badge = html.match(/<span class="dev-chat-badge[^>]*data-count="0"[^>]*>/)[0];
   assert.match(badge, /\bhidden\b/, 'empty badge is hidden');
 });

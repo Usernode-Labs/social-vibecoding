@@ -210,6 +210,14 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     'M21.4 11.6l-8.5 8.5a6 6 0 01-8.5-8.5l9-9a4 4 0 015.7 5.7l-9 9a2 2 0 01-2.8-2.8l8.4-8.4',
     'M12 3v12m0-12l-4 4m4-4l4 4M5 13v7h14v-7',
     'M4 4l17 8-17 8 3-8-3-8zm3 8h14',
+    // ── The Dev card's glyphs (#1367's card chunk) ──────────────────
+    // The card family renders inside #dev-feed / #dev-kanban-board /
+    // #dev-topic-card, all of which app-view.js writes at runtime on the Dev
+    // route — none is in <Shell/>, so none of the four prerenders. The eye,
+    // the ⋯ dots and the drag grip are circles rather than paths, so they
+    // never appear in this list at all.
+    // PencilSquareIcon — the author-only inline title edit on a topic head.
+    'M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z',
     // ── Retired by THE UI OVERHAUL, with their surfaces ─────────────
     // GitHubIcon and ShareIcon left the hamburger drawer's footer for the
     // Improve panel — which IS in <Shell/>, so they would still be here…

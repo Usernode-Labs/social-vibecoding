@@ -14,6 +14,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const { renderComponent } = require('./lib/render-tsx');
+const { kanbanHtml } = require('./lib/dev-card-html');
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 
@@ -495,7 +496,7 @@ test('a text filter now applies to session cards too (they used to be exempt)', 
   ];
   AppView._archivedSessions = [];
   AppView._kanbanFilters = { q: 'zzz-no-match', priority: null, assignee: null, needsVote: false };
-  const html = AppView._renderKanbanInner();
+  const html = kanbanHtml(AppView);
   // Session cards used to be EXEMPT from the filter bar entirely — type a
   // search term and they just sat there unexplained. Now they filter on
   // their displayed label like every other card.
@@ -525,13 +526,13 @@ test('a session matches on its LABEL and on the issue numbers it links', () => {
 
   const byTitle = { q: 'dark', priority: null, category: null, assignee: null, needsVote: false };
   AppView._kanbanFilters = byTitle;
-  assert.match(AppView._renderKanbanInner(), /Dark mode work/, 'matches its displayed label');
+  assert.match(kanbanHtml(AppView), /Dark mode work/, 'matches its displayed label');
 
   AppView._kanbanFilters = { ...byTitle, q: '#900002' };
-  assert.match(AppView._renderKanbanInner(), /Dark mode work/, 'matches a linked issue number');
+  assert.match(kanbanHtml(AppView), /Dark mode work/, 'matches a linked issue number');
 
   AppView._kanbanFilters = { ...byTitle, q: '#900999' };
-  assert.doesNotMatch(AppView._renderKanbanInner(), /Dark mode work/, 'an unrelated number does not');
+  assert.doesNotMatch(kanbanHtml(AppView), /Dark mode work/, 'an unrelated number does not');
 });
 
 test('priority / category / assignee are a VISIBLE no-op on session cards', () => {
@@ -551,11 +552,11 @@ test('priority / category / assignee are a VISIBLE no-op on session cards', () =
       created_at: '2026-06-01T01:00:00Z', last_activity_at: '2026-06-01T01:00:00Z' },
   ];
   AppView._kanbanFilters = { q: '', priority: 'high', category: null, assignee: null, needsVote: false };
-  const html = AppView._renderKanbanInner();
+  const html = kanbanHtml(AppView);
   // A dev session carries no such metadata, so hiding it would be silently
   // wrong — it stays, and the column SAYS why the filter didn't apply.
   assert.match(html, /Dark mode work/, 'the session survives an inapplicable filter');
-  assert.match(html, /Dev sessions don't carry priority, category or assignee/);
+  assert.match(html, /Dev sessions don&#x27;t carry priority, category or assignee/);
   assert.match(html, /not filtered by priority/);
 
   // The predicate itself is the explicit no-op.
@@ -588,7 +589,7 @@ test('the second column reads "Underway" but keeps its inprogress key and id', (
   AppView._sharedSessions = [];
   AppView._archivedSessions = [];
   AppView._kanbanFilters = { q: '', priority: null, category: null, assignee: null, needsVote: false };
-  const html = AppView._renderKanbanInner();
+  const html = kanbanHtml(AppView);
 
   assert.match(html, /Underway <span[^>]*>· 1<\/span>/, 'column head retitled');
   assert.ok(!/In progress <span/.test(html), 'the old title is gone');

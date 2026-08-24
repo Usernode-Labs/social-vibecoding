@@ -17,6 +17,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { govCardHtml, proposalCardHtml } = require('./lib/dev-card-html');
 
 const SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'app-view.js'),
@@ -76,7 +77,7 @@ const baseProposal = (over) => ({
 
 test('my own promoted proposal renders the Withdraw control', () => {
   const AppView = makeAppView(ME);
-  const html = AppView._renderProposalCard(baseProposal());
+  const html = proposalCardHtml(AppView, baseProposal());
   assert.ok(menuHas(AppView, html, /^Withdraw$/), 'Withdraw offered from ⋯');
   // The descriptor's label is the wording, not the markup — the ⋯ rows are
   // built from descriptors so the same list can render as a dropdown or as a
@@ -87,20 +88,20 @@ test('my own promoted proposal renders the Withdraw control', () => {
 
 test("someone else's promoted proposal does NOT render Withdraw", () => {
   const AppView = makeAppView(ME);
-  const html = AppView._renderProposalCard(baseProposal({ user_id: 999 }));
+  const html = proposalCardHtml(AppView, baseProposal({ user_id: 999 }));
   assert.ok(!menuHas(AppView, html, /^Withdraw$/), 'not the proposer — no Withdraw');
   assert.ok(!menuHas(AppView, html, /Open session/), 'not the proposer — no Open session');
 });
 
 test('my merged proposal does NOT render Withdraw', () => {
   const AppView = makeAppView(ME);
-  const html = AppView._renderProposalCard(baseProposal({ status: 'merged' }));
+  const html = proposalCardHtml(AppView, baseProposal({ status: 'merged' }));
   assert.ok(!menuHas(AppView, html, /^Withdraw$/), 'merged card has no Withdraw');
 });
 
 test('my merging proposal does NOT render Withdraw', () => {
   const AppView = makeAppView(ME);
-  const html = AppView._renderProposalCard(baseProposal({ status: 'merging' }));
+  const html = proposalCardHtml(AppView, baseProposal({ status: 'merging' }));
   assert.ok(!menuHas(AppView, html, /^Withdraw$/), 'merging card has no Withdraw');
 });
 
@@ -108,7 +109,7 @@ test('my merging proposal does NOT render Withdraw', () => {
 // the owner-scoped Withdraw button renders on them too.
 test('my own rename PR proposal renders Withdraw', () => {
   const AppView = makeAppView(ME);
-  const html = AppView._renderProposalCard(baseProposal({ pr_title: 'Rename to "Cooler App"' }));
+  const html = proposalCardHtml(AppView, baseProposal({ pr_title: 'Rename to "Cooler App"' }));
   assert.ok(menuHas(AppView, html, /^Withdraw$/), 'rename PR shows Withdraw in ⋯');
 });
 
@@ -117,7 +118,7 @@ test('my own rename PR proposal renders Withdraw', () => {
 // omitted on the viewer's own cards.
 test("someone else's proposal renders the Explore-in-dev-chat card button", () => {
   const AppView = makeAppView(ME);
-  const html = AppView._renderProposalCard(baseProposal({ user_id: 999 }));
+  const html = proposalCardHtml(AppView, baseProposal({ user_id: 999 }));
   // On the FACE now, not in ⋯: the four-band card reserves an action band, and
   // on a live foreign proposal Explore is what fills it beside Yes/No.
   assert.match(html, /gc-card-actions[\s\S]*?gc-explore-chat-btn/,
@@ -128,13 +129,13 @@ test("someone else's proposal renders the Explore-in-dev-chat card button", () =
 
 test('my own proposal does NOT render the Explore-in-dev-chat card button', () => {
   const AppView = makeAppView(ME);
-  const html = AppView._renderProposalCard(baseProposal());
+  const html = proposalCardHtml(AppView, baseProposal());
   assert.ok(!menuHas(AppView, html, /Explore in dev chat/), 'own card has none (Open session covers it)');
 });
 
 test("someone else's merged proposal renders the Explore-in-dev-chat button", () => {
   const AppView = makeAppView(ME);
-  const html = AppView._renderProposalCard(baseProposal({ user_id: 999, status: 'merged' }));
+  const html = proposalCardHtml(AppView, baseProposal({ user_id: 999, status: 'merged' }));
   assert.ok(menuHas(AppView, html, /Explore in dev chat/), 'Explore offered from ⋯ on a foreign merged card');
 });
 
@@ -143,7 +144,7 @@ test("someone else's merged proposal renders the Explore-in-dev-chat button", ()
 // left the owner of a PR they imported with no AI affordance at all.
 test('my own IMPORTED proposal DOES render the Explore-in-dev-chat button (#1045)', () => {
   const AppView = makeAppView(ME);
-  const html = AppView._renderProposalCard(baseProposal({ source: 'imported' }));
+  const html = proposalCardHtml(AppView, baseProposal({ source: 'imported' }));
   assert.match(html, /gc-explore-chat-btn/, 'Explore pill present on my imported proposal');
   assert.match(html, /data-proposal-id="7"/, 'wired to the proposal id');
   assert.doesNotMatch(html, /openProposalSession/,
@@ -337,13 +338,13 @@ const baseGov = (over) => ({
 
 test('my own governance proposal renders a creator-only Withdraw button', () => {
   const AppView = makeAppView(ME);
-  const html = AppView._renderGovCard(baseGov());
+  const html = govCardHtml(AppView, baseGov());
   assert.ok(menuHas(AppView, html, /^Withdraw$/), 'Withdraw offered from ⋯');
 });
 
 test("someone else's governance proposal does NOT render Withdraw", () => {
   const AppView = makeAppView(ME);
-  const html = AppView._renderGovCard(baseGov({ created_by: 999 }));
+  const html = govCardHtml(AppView, baseGov({ created_by: 999 }));
   assert.ok(!menuHas(AppView, html, /^Withdraw$/), 'not the creator — no Withdraw');
 });
 

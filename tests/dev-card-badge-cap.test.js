@@ -14,6 +14,10 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 const vm = require('node:vm');
+const { budgets, cardHtml, issueCardHtml, proposalCardHtml } = require('./lib/dev-card-html');
+
+// The cap moved to the component with the markup it governs.
+const { BADGE_MAX } = budgets();
 
 const MERGE_STATUS_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'merge-status.js'), 'utf8');
@@ -99,47 +103,57 @@ const ATTRS = {
 
 // ── The cap ─────────────────────────────────────────────────────────────
 
-test('_cardBadgesHtml slices to BADGE_MAX and pins 💬 outside it', () => {
-  const AppView = makeAppView();
-  const badges = ['<i>1</i>', '<i>2</i>', '<i>3</i>', '<i>4</i>', '<i>5</i>', '<i>6</i>'];
-  const html = AppView._cardBadgesHtml(badges, 7);
-  assert.equal((html.match(/<i>/g) || []).length, AppView.BADGE_MAX);
-  assert.match(html, /<i>1<\/i><i>2<\/i><i>3<\/i><i>4<\/i>/, 'kept in priority order');
-  assert.doesNotMatch(html, /<i>5</, 'the fifth is dropped, not wrapped');
+// The cap is card/dev-card.tsx's now, applied to the model's `badges`. A
+// bare model with N numbered chips is the clearest way to see it.
+const CHIPS = (n) => Array.from({ length: n }, (_, i) => ({
+  t: 'chip', key: `c${i + 1}`, cls: 'marker', label: String(i + 1),
+}));
+const BANDS = (over) => cardHtml({
+  key: 'k', cls: 'gc-vote-item', attrs: {}, icon: null,
+  title: { text: 'T', title: 'T' }, meta: [], pill: null, linked: [], badges: [],
+  chatCount: null, actions: [], rail: { chevron: false }, extra: [],
+  dense: true, uncapped: false, ...over,
+});
+const kept = (html) => (html.match(/class="marker"/g) || []).length;
+
+test('the status band slices to BADGE_MAX and pins 💬 outside it', () => {
+  const html = BANDS({ badges: CHIPS(6), chatCount: 7 });
+  assert.equal(kept(html), BADGE_MAX);
+  assert.match(html, />1<\/span><span class="marker">2<\/span>/, 'kept in priority order');
+  assert.doesNotMatch(html, /class="marker">5</, 'the fifth is dropped, not wrapped');
   assert.match(html, /dev-chat-badge/, '💬 rides outside the cap');
   assert.match(html, /data-count="7"/);
 });
 
-test('_cardBadgesHtml drops falsy entries before counting', () => {
+test('the builder drops falsy entries before the cap counts them', () => {
   const AppView = makeAppView();
-  const html = AppView._cardBadgesHtml(['', null, '<i>a</i>', undefined, '<i>b</i>'], 0);
-  assert.equal((html.match(/<i>/g) || []).length, 2, 'a conditioned-away badge costs no slot');
+  // `_attrChipSpecs` and the card builders `.filter(Boolean)` their chip
+  // lists, so a conditioned-away badge costs no slot.
+  const model = AppView._issueCardModel(ISSUE());
+  assert.ok(model.badges.every(Boolean));
 });
 
 test('a null chat count omits the 💬 badge entirely', () => {
-  const AppView = makeAppView();
-  assert.doesNotMatch(AppView._cardBadgesHtml(['<i>a</i>'], null), /dev-chat-badge/);
-  assert.match(AppView._cardBadgesHtml(['<i>a</i>'], 0), /dev-chat-badge/);
+  assert.doesNotMatch(BANDS({ badges: CHIPS(1), chatCount: null }), /dev-chat-badge/);
+  assert.match(BANDS({ badges: CHIPS(1), chatCount: 0 }), /dev-chat-badge/);
 });
 
 test('the detail head opts OUT of the cap (every chip must be reachable there)', () => {
-  const AppView = makeAppView();
-  const badges = ['<i>1</i>', '<i>2</i>', '<i>3</i>', '<i>4</i>', '<i>5</i>'];
-  const capped = AppView._cardBadgesHtml(badges, 0);
-  const uncapped = AppView._cardBadgesHtml(badges, 0, { uncapped: true });
-  assert.equal((capped.match(/<i>/g) || []).length, AppView.BADGE_MAX);
-  assert.equal((uncapped.match(/<i>/g) || []).length, 5);
+  assert.equal(kept(BANDS({ badges: CHIPS(5), chatCount: 0 })), BADGE_MAX);
+  assert.equal(kept(BANDS({ badges: CHIPS(5), chatCount: 0, uncapped: true })), 5);
 });
 
 // ── Unset chips no longer render ────────────────────────────────────────
 
 test('a card with NO metadata carries no grey placeholder chips', () => {
   const AppView = makeAppView();
-  const issue = AppView._renderIssueRow(ISSUE());
+  const issueModel = AppView._issueCardModel(ISSUE());
+  const issue = cardHtml(issueModel);
   assert.doesNotMatch(issue, /Set priority/);
   assert.doesNotMatch(issue, /Set category/);
   assert.doesNotMatch(issue, /Unassigned/);
-  const pr = AppView._renderProposalCard(PR());
+  const prModel = AppView._proposalCardModel(PR());
+  const pr = cardHtml(prModel);
   assert.doesNotMatch(pr, /Set priority/);
   assert.doesNotMatch(pr, /Set category/);
   assert.doesNotMatch(pr, /Unassigned/);
@@ -147,7 +161,8 @@ test('a card with NO metadata carries no grey placeholder chips', () => {
 
 test('a SET value still renders its chip', () => {
   const AppView = makeAppView();
-  const html = AppView._renderIssueRow(ISSUE(ATTRS));
+  const model = AppView._issueCardModel(ISSUE(ATTRS));
+  const html = cardHtml(model);
   assert.match(html, /High/);
   assert.match(html, /Bug/);
   assert.match(html, /@maya/);
@@ -155,7 +170,8 @@ test('a SET value still renders its chip', () => {
 
 test('a partially-set card renders only what is set', () => {
   const AppView = makeAppView();
-  const html = AppView._renderIssueRow(ISSUE({ priority: { top: 'high', count: 1 } }));
+  const model = AppView._issueCardModel(ISSUE({ priority: { top: 'high', count: 1 } }));
+  const html = cardHtml(model);
   assert.match(html, /High/);
   assert.doesNotMatch(html, /Set category/);
   assert.doesNotMatch(html, /Unassigned/);
@@ -163,33 +179,37 @@ test('a partially-set card renders only what is set', () => {
 
 test('the DETAIL head keeps all three, including unset ones', () => {
   const AppView = makeAppView();
-  const head = AppView._renderIssueRow(ISSUE(), { noNav: true });
+  const headModel = AppView._issueCardModel(ISSUE(), { noNav: true });
+  const head = cardHtml(headModel);
   assert.match(head, /Set priority/, 'the detail view is where metadata gets set');
   assert.match(head, /Set category/);
   assert.match(head, /Unassigned/);
 });
 
-test('_attrChipsHtml: omitUnset, asArray and the field ORDER', () => {
+test('_attrChipSpecs: omitUnset and the field ORDER', () => {
   const AppView = makeAppView();
   // priority → assignee → category: who owns it reads before what kind of
   // work it is, which is also the badge-priority order.
-  const arr = AppView._attrChipsHtml('issue', 5, ATTRS, { asArray: true });
+  const arr = AppView._attrChipSpecs('issue', 5, ATTRS, {});
   assert.equal(arr.length, 3);
-  assert.match(arr[0], /High/);
-  assert.match(arr[1], /@maya/);
-  assert.match(arr[2], /Bug/);
-  assert.equal(AppView._attrChipsHtml('issue', 5, {}, { omitUnset: true, asArray: true }).length, 0);
-  assert.equal(AppView._attrChipsHtml('issue', 5, {}, { asArray: true }).length, 3);
-  assert.equal(typeof AppView._attrChipsHtml('issue', 5, ATTRS, {}), 'string');
+  assert.equal(arr[0].label.text, 'High');
+  assert.equal(arr[1].label.text, '@maya');
+  assert.equal(arr[2].label.text, 'Bug');
+  // JSON round-trip: the specs come from a vm sandbox, so deepEqual would
+  // compare across realms and fail on the constructor.
+  assert.deepEqual(JSON.parse(JSON.stringify(arr.map((c) => c.field))),
+    ['priority', 'assignee', 'category']);
+  assert.equal(AppView._attrChipSpecs('issue', 5, {}, { omitUnset: true }).length, 0);
+  assert.equal(AppView._attrChipSpecs('issue', 5, {}, {}).length, 3);
 });
 
 test('the setting entry points move into ⋯, wording by set/unset', () => {
   const AppView = makeAppView();
-  const unset = menuLabels(AppView, AppView._renderIssueRow(ISSUE()));
+  const unset = menuLabels(AppView, issueCardHtml(AppView, ISSUE()));
   assert.ok(unset.includes('Set priority…'));
   assert.ok(unset.includes('Set category…'));
   assert.ok(unset.includes('Assign someone…'));
-  const set = menuLabels(AppView, AppView._renderIssueRow(ISSUE(ATTRS)));
+  const set = menuLabels(AppView, issueCardHtml(AppView, ISSUE(ATTRS)));
   assert.ok(set.includes('Change priority…'));
   assert.ok(set.includes('Change assignee…'));
 });
@@ -203,7 +223,8 @@ test('read-only viewers get no attribute rows at all', () => {
 
 test('proposal: the pill LEADS one merged status band, chips beside it', () => {
   const AppView = makeAppView();
-  const html = AppView._renderProposalCard(PR({ ...ATTRS, my_vote: 'yes', check_state: 'passing' }));
+  const model = AppView._proposalCardModel(PR({ ...ATTRS, my_vote: 'yes', check_state: 'passing' }));
+  const html = cardHtml(model);
   // History: the pill first led the badge row and counted against the cap,
   // then got a full-width row of its own (.dev-status-row) underneath. The
   // four-band card merges those two rows back into ONE reserved status band,
@@ -221,7 +242,8 @@ test('proposal: the pill LEADS one merged status band, chips beside it', () => {
 
 test('the detail head keeps the INLINE capsule, not a second full-width bar', () => {
   const AppView = makeAppView();
-  const head = AppView._renderProposalCard(PR({ my_vote: 'yes', check_state: 'passing' }), { noNav: true });
+  const headModel = AppView._proposalCardModel(PR({ my_vote: 'yes', check_state: 'passing' }), { noNav: true });
+  const head = cardHtml(headModel);
   assert.match(head, /gc-vote-count/, 'the pill is still there');
   assert.doesNotMatch(head, /dev-status-pill-block/, 'as a capsule — that page is already full width');
   // And no reserved band either: the detail head is the one non-dense caller,
@@ -231,10 +253,11 @@ test('the detail head keeps the INLINE capsule, not a second full-width bar', ()
 
 test('the pill is exempt from the cap, so four chips still fit beside it', () => {
   const AppView = makeAppView();
-  const html = AppView._renderIssueRow({
+  const model = AppView._issueCardModel({
     number: 5, title: 'x', ...ATTRS,
     in_progress: { count: 1, users: ['maya'], peopleTotal: 1, mine: false, claims: [], sessions: [{ sessionId: 1, username: 'maya', mine: false, status: 'active', busy: false, lastActivityAt: null }], target: null },
   });
+  const html = cardHtml(model);
   // The one work-state chip + priority + assignee + category is exactly
   // BADGE_MAX — #1112 renamed the chip, it is still ONE badge.
   for (const chip of ['Being worked on · maya', 'High', '@maya', 'Bug']) {
@@ -244,9 +267,10 @@ test('the pill is exempt from the cap, so four chips still fit beside it', () =>
 
 test('issue: the work-state chip leads, then the three chips', () => {
   const AppView = makeAppView();
-  const html = AppView._renderIssueRow(ISSUE({
+  const model = AppView._issueCardModel(ISSUE({
     ...ATTRS, in_progress: { count: 1, users: ['maya'], peopleTotal: 1, mine: false, claims: [], sessions: [{ sessionId: 1, username: 'maya', mine: false, status: 'active', busy: false, lastActivityAt: null }], target: null },
   }));
+  const html = cardHtml(model);
   assert.ok(html.indexOf('Being worked on · maya') < html.indexOf('High'));
 });
 
@@ -255,7 +279,8 @@ test('an over-budget proposal drops the LOWEST-priority chip, never the pill', (
   // Pill + three chips = exactly four. Adding the In-progress signal (which
   // proposals don't carry) would be a fifth, so the cap is exercised via the
   // composer instead — but the pill must always survive on the card.
-  const html = AppView._renderProposalCard(PR({ ...ATTRS, my_vote: 'yes', check_state: 'passing' }));
+  const model = AppView._proposalCardModel(PR({ ...ATTRS, my_vote: 'yes', check_state: 'passing' }));
+  const html = cardHtml(model);
   assert.match(html, /gc-vote-count/, 'the pill is never the one dropped');
   assert.match(html, /High/);
   assert.match(html, /Bug/, 'four badges exactly fit the budget');
@@ -265,10 +290,11 @@ test('an over-budget proposal drops the LOWEST-priority chip, never the pill', (
 
 test('proposal provenance reads on the meta line, not as badges', () => {
   const AppView = makeAppView();
-  const html = AppView._renderProposalCard(PR({
+  const model = AppView._proposalCardModel(PR({
     source: 'imported', imported_pr_author: 'octo', external_agent: 'codex',
     pr_title_fallback: true,
   }));
+  const html = cardHtml(model);
   const meta = html.slice(html.indexOf('dev-card-meta'), html.indexOf('</div>', html.indexOf('dev-card-meta')) + 6);
   assert.match(meta, /imported from GitHub \(octo\)/);
   assert.match(meta, /built with Codex/);
@@ -287,7 +313,9 @@ test('_proposalProvenanceWords is empty for an ordinary in-platform proposal', (
 
 test('the issue bounty count reads on the meta line, not as a ★ chip', () => {
   const AppView = makeAppView();
-  const html = AppView._renderIssueRow(ISSUE({ bounty_count: 3, title_fallback: true }));
-  assert.match(html, /dev-card-meta[\s\S]*?&#9733; 3/);
+  const model = AppView._issueCardModel(ISSUE({ bounty_count: 3, title_fallback: true }));
+  const html = cardHtml(model);
+  // React renders the star as the character, not as the entity.
+  assert.match(html, /dev-card-meta[\s\S]*?★ 3/);
   assert.match(html, /auto-title pending/);
 });
