@@ -3,6 +3,8 @@ import { SectionHeading, StatusLine } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 
+import { AiBudgetRow } from '../../header/ai-budget';
+
 /**
  * Bring-your-own Anthropic key. Read and written by Settings._saveKey() /
  * _removeKey() / _refreshSpend() through #settings-api-key, #settings-save,
@@ -23,23 +25,16 @@ export function ApiKeySection() {
           being deleted with the row, because this section is already the page
           about "what happens when your allowance runs out" — the sentence
           above it says so — and the figure is the thing that sentence is
-          about. The renderer is unchanged: features/header/ai-credit.js
-          resolves #ai-budget-slot by id, so only its parent moved.
+          about.
 
-          Ships EMPTY, exactly as the drawer row did: the me-scoped fetch that
-          fills it is what confirms there is an audience, so a signed-out
-          visitor never sees a stub.
+          The row is `features/header/ai-budget.tsx` now: it renders from a
+          store `features/header/ai-credit.js` publishes into, instead of
+          being an empty `#ai-budget-slot` that module `innerHTML`ed. It still
+          ships EMPTY and VISIBLE — the me-scoped fetch that fills it is what
+          confirms there is an audience, and the row hides itself only once
+          that fetch has answered with nothing to show.
       */}
-      <div
-        id="drawer-row-ai-budget"
-        className="flex items-center gap-2 flex-wrap rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-xs mb-3 text-zinc-600 dark:text-zinc-400"
-      >
-        <span className="font-medium text-zinc-700 dark:text-zinc-300">
-          AI credit
-        </span>
-        <span id="ai-budget-slot" className="ml-auto grow min-w-0 text-right">
-        </span>
-      </div>
+      <AiBudgetRow />
       <Label className="mb-1" htmlFor="settings-api-key">
         Anthropic API key
       </Label>

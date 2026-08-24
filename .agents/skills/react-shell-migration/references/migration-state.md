@@ -45,8 +45,13 @@ now reconciles — and is the thing to update when one moves across.
 - nothing on the Leaderboard screen. See the note under "Converted".
 - nothing on the Dev screen but `showLaunchCoverShot`'s launch cover, which
   is deliberate — see "Large" below.
-- the header's own strays: `header/ai-credit.js`, `header/wallet-sheet.js`,
-  `header/node-pill.js`, `native-chrome.js` and `screenshot-select.js`.
+- the header's own strays, ALL of them native-only now:
+  `header/wallet-sheet.js`, `header/node-pill.js` and
+  `header/native-app-version.js` each `return` unless
+  `window.usernode.isNative === true`, so like `#settings-usernode-section`
+  they need a phone, not a browser. `native-chrome.js` and
+  `screenshot-select.js` build no markup. `header/ai-credit.js` was the one
+  browser-visible stray and has converted — see below.
 
 `members-controller.js` and `app-secrets-controller.js` are NOT on this list
 and should not be added: AGENTS.md documents both as legitimate legacy hosts
@@ -119,6 +124,29 @@ Treat each row below as a separate chunk. Sizes are current.
   `#profile-root`, the notifications list, Browse (`#browse-list` /
   `#browse-detail`) and the work-drawer list. Each kept its module — the data,
   the fetches and the gestures stayed — and gained a store plus components.
+- **The AI-credit row** (`#drawer-row-ai-budget` / `#ai-budget-slot`, in
+  Settings → Anthropic API key). `header/ai-credit.js` publishes a view model
+  and `header/ai-budget.tsx` draws it; the fetch, the throttle, the
+  thresholds and the reset wording stay in the module. Three things from it:
+
+  - **`.drawer-meter-part` is `white-space: nowrap`**, so the space BETWEEN
+    parts is the only place the value may break. A separator folded into a
+    part would make the whole figure unbreakable on a 15rem panel — the
+    component renders a real space text node between parts for that reason,
+    and a test pins it.
+  - **`hidden` is a third state, not `!view`.** The row ships VISIBLE and
+    empty and hides only once the me-scoped fetch has answered with nothing;
+    collapsing that into "no view means hidden" would hide it on a document
+    that has not fetched, and a declared check resolves
+    `#drawer-row-ai-budget #ai-budget-slot` on a plain `/#settings/api-key`.
+  - **A store a legacy module imports directly must be plain `.js`, imported
+    WITH its extension.** `ai-credit.js` is an ES module in the bundle, so a
+    test can `import()` it — but only if Node's resolver can follow the
+    import, which it cannot do for a bare `./x` pointing at a `.ts`. Same
+    arrangement as `app-frame/app-frame-store.js`. And the test reads the
+    store from NODE's graph, not from the `loadTsx` bundle: esbuild gives
+    each entry its own copy, so those are two different objects.
+
 - **The settings interior, except one section.** The panes have been React
   markup since chunk D, with settings.js binding every control by id; what this
   run converted is the five places it also BUILT rows — the CLI credentials

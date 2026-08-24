@@ -160,6 +160,11 @@ const OWNED = [
   // this is scoped to the App tab, where the placeholder is the one thing in
   // there. Unscoped it would report every sibling surface's writes.
   { sel: '#app-content', when: '#app/recipebot/app' },
+  // The AI-credit row in Settings → Anthropic API key
+  // (features/header/ai-budget.tsx). It used to be an empty
+  // `#ai-budget-slot` that ai-credit.js `innerHTML`ed; the module publishes
+  // a view model now and this is the only writer below the row.
+  { sel: '#drawer-row-ai-budget' },
   { sel: '#auto-session-modal' },
   { sel: '#credit-options-modal' },
   { sel: '#llm-consent-modal' },
@@ -289,7 +294,7 @@ const OWNED = [
 
 const ROUTES = [
   '#home', '#apps', '#apps/recipebot', '#settings', '#settings/app-ai',
-  '#settings/agent-files', '#settings/cli', '#settings/connectors', '#settings/experimental', '#profile', '#leaderboard', '#messages',
+  '#settings/agent-files', '#settings/api-key', '#settings/cli', '#settings/connectors', '#settings/experimental', '#profile', '#leaderboard', '#messages',
   '#app/recipebot', '#app/recipebot/app', '#app/recipebot/dev', '#app/recipebot/dev/chat',
   '#app/recipebot/dev/sessions/1',
   // A TOPIC page, which is the only route that mounts `.dev-thread` — the

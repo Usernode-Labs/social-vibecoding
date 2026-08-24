@@ -330,7 +330,13 @@ test('?shot=credits-low paints the warning without a fetch or a write', () => {
 // ── The drawer row ──────────────────────────────────────────────────────
 
 test('the drawer row renders the remainder and shares the reset wording', () => {
-  assert.match(AI_CREDIT_SRC, /data-credits-remaining/, 'same hook as the composer meter');
+  // #1367: the hook is rendered by features/header/ai-budget.tsx, from the
+  // `remaining` flag this module sets on that part.
+  assert.match(AI_CREDIT_SRC, /remaining: true/, 'same hook as the composer meter');
+  assert.match(
+    fs.readFileSync(path.join(root, 'frontend/src/features/header/ai-budget.tsx'), 'utf8'),
+    /'data-credits-remaining': '1'/,
+  );
   assert.match(AI_CREDIT_SRC, /money\(remaining\) \+ ' left'/, 'rendered, not tooltip-only');
   assert.match(AI_CREDIT_SRC, /CO\.resetSentence\(state\)/,
     'one wording for the boundary, shared with the dev chat');
