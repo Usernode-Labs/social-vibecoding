@@ -6936,17 +6936,11 @@ const AppView = {
   // fractions are env-tunable (MERGE_GATE_CONSTANTS in
   // services/active-users.js) and per-app thresholds are on the roadmap
   // (issue #428) — so quoting fixed numbers here would drift out of date.
-  _VOTING_HELP_RULES_HTML:
-    '<ul class="voting-help-rules">'
-    + '<li>Only people who’ve actually used the app recently count as voters. The number of Yes votes needed scales with how many active testers there are.</li>'
-    + '<li>A proposal with clear support and no objections merges on its own after a short visibility window (a few days), so everyone has a chance to look — <strong>silence counts as agreement</strong>.</li>'
-    + '<li>The more support a proposal has, the shorter the wait. A clear majority merges almost immediately; thin, unopposed support waits longer.</li>'
-    + '<li><strong>No</strong> votes make a proposal harder to pass: they raise the number of Yes votes needed and lengthen the wait.</li>'
-    + '<li>If enough people vote No, the proposal becomes <strong>Contested</strong> — the time-based path turns off and it needs a straight majority of Yes votes to merge.</li>'
-    + '<li>A proposal that’s being voted down with little support is closed automatically after a countdown (“Rejecting in …”).</li>'
-    + '<li>Even after winning the vote, a proposal only merges once its <strong>automated checks pass</strong> and it’s <strong>up to date with the main app</strong>. Locked apps also need an admin’s Yes.</li>'
-    + '<li>Apps can customize these rules: restricting approvals to <strong>invited approvers</strong> (everyone else’s votes stay visible but advisory) and/or requiring a fixed <strong>“at least N approvals”</strong> instead of the timed majority system.</li>'
-    + '</ul>',
+  // `_VOTING_HELP_RULES_HTML` lived here — the eight-rule blurb as one
+  // concatenated HTML string with `<strong>` runs escaped inside it. It is
+  // features/dev-board/voting-help.tsx's markup now, verbatim: prose with
+  // emphasis is the thing JSX is better at than a string, and it is the part
+  // of this popover a reader is most likely to edit.
 
   // The live "This proposal, right now" line. Reads the serialized gate
   // fields the /promoted endpoint attaches (votes_required,
@@ -7115,15 +7109,13 @@ const AppView = {
     pop.className = 'voting-help-popover';
     pop.setAttribute('role', 'dialog');
     pop.setAttribute('aria-label', 'How voting and merges work');
-    const live = AppView._votingHelpText(pr);
-    pop.innerHTML =
-      '<div class="attr-pop-head">How voting &amp; merges work</div>'
-      + (live
-        ? '<div class="vh-live"><div class="vh-live-title">This proposal, right now</div>'
-          + `<div class="vh-live-body">${escapeHtml(live)}</div></div>`
-        : '')
-      + `<div class="vh-rules">${AppView._VOTING_HELP_RULES_HTML}</div>`;
     document.body.appendChild(pop);
+    // The BODY is features/dev-board/voting-help.tsx's — the head, the live
+    // line and the rules — mounted as a portal where this used to be one
+    // `innerHTML` string. Everything below stays: the anchor's rect, which
+    // side has more room, and the height cap that makes the body scroll
+    // internally instead of spilling past the viewport.
+    AppView._reactDevBoard()?.mountVotingHelp(pop, { live: AppView._votingHelpText(pr) });
     AppView._votingHelpOpen = { prId: pr && pr.id };
 
     // Position under the anchor, fully clamped to the viewport so it never

@@ -40,6 +40,7 @@ import { CardMenu } from './card-menu';
 import { cardMenuStore, type CardMenuRowView } from './card-menu-store';
 import { DevChatSubView } from './chat-frame';
 import { DevSessionShell } from './session-frame';
+import { VotingHelp, type VotingHelpProps } from './voting-help';
 import { DevTopicSubView } from './topic-frame';
 import { publishViewMode } from './view-mode-store';
 
@@ -73,6 +74,7 @@ export interface DevBoardBridge {
   publishAttrPopover(patch: Partial<AttrPopoverState>): void;
   mountCardMenu(host: Element | null): void;
   publishCardMenu(rows: CardMenuRowView[]): void;
+  mountVotingHelp(host: Element | null, props: VotingHelpProps): void;
   mountSessionShell(host: Element | null): void;
   publishViewMode(mode: string): void;
   unmount(host: Element | null): void;
@@ -160,6 +162,11 @@ export const devBoardBridge: DevBoardBridge = {
 
   publishCardMenu(rows) {
     cardMenuStore.set({ rows });
+  },
+
+  // Read-only, computed once at open: the props ARE the publish.
+  mountVotingHelp(host, props) {
+    mountLegacyPortal(host, createElement(VotingHelp, props));
   },
 
   mountSessionShell(host) {
