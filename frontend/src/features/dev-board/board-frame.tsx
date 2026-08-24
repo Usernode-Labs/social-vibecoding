@@ -29,9 +29,9 @@
  *     "Loading…". Rendering `#dev-feed` as a JSX child instead would make
  *     every view-mode re-render reconcile against nodes the module has since
  *     replaced.
- *   * `#dev-locked-notice`, `#dev-chat-card-preview`, `#dc-secrets-state` —
- *     leaves the module writes text or `innerHTML` into, and in the notice's
- *     case toggles `hidden` on. They are safe because React renders their
+ *   * `#dev-chat-card-preview`, `#dc-secrets-state` —
+ *     leaves the module writes text or `innerHTML` into. They are safe because
+ *     React renders their
  *     `className` (and the preview's placeholder text) as CONSTANT props: React
  *     only writes an attribute when the prop CHANGES, so a re-render of this
  *     component does not clobber a class or a string the module has since
@@ -57,6 +57,9 @@ import {
   ChevronRightIcon,
   DiscussionIcon,
 } from '@/components/ui/icons';
+
+import { useStoreState } from '../../lib/use-store-state';
+import { lockedNoticeStore, type LockedNoticeState } from './locked-notice-store';
 
 /** `AppView.DEV_CARD_CLS`, unchanged. Passed in so there is one source of truth. */
 export interface DevBoardFrameProps {
@@ -179,6 +182,7 @@ export function DevBoardFrame({
   cardCls,
   cardHoverCls,
 }: DevBoardFrameProps) {
+  const { locked } = useStoreState<LockedNoticeState>(lockedNoticeStore);
   return (
     <div className="flex flex-col h-full min-h-0">
       {/*
@@ -329,7 +333,21 @@ export function DevBoardFrame({
         id="dev-forum-scroll"
         className="flex-1 min-h-0 overflow-y-auto overscroll-contain platform-safe-scroll"
       >
-        <div id="dev-locked-notice" className="px-3 pt-2 hidden"></div>
+        {/*
+            The locked-app banner. It used to be one of the leaves above — a
+            host the module toggled `hidden` on and wrote `innerHTML` into —
+            which meant TWO owners of one node's class attribute, tolerated only
+            because React rendered that class as a constant. It is a field on
+            the view-mode store now, so the node has one writer and the banner
+            has one spelling.
+        */}
+        <div id="dev-locked-notice" className={locked ? 'px-3 pt-2' : 'px-3 pt-2 hidden'}>
+          {locked ? (
+            <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3.5 py-2.5 text-xs text-amber-600 dark:text-amber-400">
+              App is locked — an admin must approve any proposal before it applies.
+            </div>
+          ) : null}
+        </div>
         <div className="px-3 pt-2">
           <button
             id="dev-chat-card"

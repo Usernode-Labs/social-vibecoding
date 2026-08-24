@@ -42,6 +42,7 @@ import { DevChatSubView } from './chat-frame';
 import { IssueComments } from './issue-comments';
 import { issueCommentsStore, type IssueCommentsState } from './issue-comments-store';
 import { KanbanFilters } from './kanban-filters';
+import { lockedNoticeStore } from './locked-notice-store';
 import { kanbanFiltersStore, type KanbanFiltersState } from './kanban-filters-store';
 import { DevSessionShell } from './session-frame';
 import { VotingHelp, type VotingHelpProps } from './voting-help';
@@ -78,6 +79,7 @@ export interface DevBoardBridge {
   publishAttrPopover(patch: Partial<AttrPopoverState>): void;
   mountCardMenu(host: Element | null): void;
   publishCardMenu(rows: CardMenuRowView[]): void;
+  publishLockedNotice(locked: boolean): void;
   mountIssueComments(host: Element | null): void;
   publishIssueComments(state: IssueCommentsState): void;
   mountKanbanFilters(host: Element | null): void;
@@ -186,6 +188,10 @@ export const devBoardBridge: DevBoardBridge = {
   // The issue thread. `_renderTopicHead` rebuilds its host on every
   // WS-driven refresh, so this mounts per fill; the previous host's entry is
   // swept as detached.
+  publishLockedNotice(locked) {
+    lockedNoticeStore.set({ locked });
+  },
+
   mountIssueComments(host) {
     mountLegacyPortal(host, createElement(IssueComments));
   },

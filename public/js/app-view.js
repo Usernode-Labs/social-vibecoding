@@ -4318,14 +4318,12 @@ const AppView = {
 
   // Locked-app banner at the very top of the card list (above the
   // General chat card), per the card-list polish revision.
+  // The banner and its `hidden` are features/dev-board/board-frame.tsx's now;
+  // this publishes the one fact it draws from. `_proposalsCtx.locked` is
+  // server truth, loaded with the feed.
   _renderLockedNotice() {
-    const el = document.getElementById('dev-locked-notice');
-    if (!el) return;
-    const locked = !!(AppView._proposalsCtx && AppView._proposalsCtx.locked);
-    el.classList.toggle('hidden', !locked);
-    el.innerHTML = locked
-      ? '<div class="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3.5 py-2.5 text-xs text-amber-600 dark:text-amber-400">App is locked — an admin must approve any proposal before it applies.</div>'
-      : '';
+    AppView._reactDevBoard()?.publishLockedNotice(
+      !!(AppView._proposalsCtx && AppView._proposalsCtx.locked));
   },
 
   // The Feed's display order: STRICTLY most-recent-activity-first, across
