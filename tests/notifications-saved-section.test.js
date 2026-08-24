@@ -35,6 +35,7 @@ const STORE_SRC = fs.readFileSync(
   'utf8'
 );
 const CHAT_SRC = fs.readFileSync(path.join(ROOT, 'public', 'js', 'group-chat.js'), 'utf8');
+const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 const ICONS_SRC = fs.readFileSync(
   path.join(ROOT, 'frontend', '@', 'components', 'ui', 'icons.tsx'), 'utf8'
 );
@@ -255,10 +256,23 @@ test('the drawer can be opened by URL, so the section is screenshot-able', () =>
 
 // ── the message-side button ─────────────────────────────────────────────
 
+// The three kinds of row all carry a save button, and this used to be counted
+// as three `_renderBookmarkBtn(msg)` calls in the string renderer. That
+// renderer is gone (#1191): the transcript is React, and the button is
+// `<RowActions>` — one component, rendered by each of the three rows.
 test('every message kind carries the save button', () => {
-  const calls = CHAT_SRC.match(/GroupChat\._renderBookmarkBtn\(msg\)/g) || [];
-  assert.equal(calls.length, 3,
-    'ordinary messages, system/vote rows and spec-share cards all get one');
+  const tsx = read('frontend/src/features/group-chat/transcript.tsx');
+  const rows = ['MessageRow', 'SystemRow', 'SpecShareRow'];
+  for (const row of rows) {
+    const start = tsx.indexOf(`function ${row}(`);
+    assert.ok(start > 0, `located ${row}`);
+    const body = tsx.slice(start, tsx.indexOf('\n}', start));
+    assert.match(body, /<RowActions msg=\{msg\} \/>/,
+      `${row} renders the row's header controls`);
+  }
+  // …and the save button is inside it, gated on a signed-in viewer.
+  assert.match(tsx, /msg\.showBookmark \? \(/);
+  assert.match(tsx, /className=\{saved \? 'gc-msg-save gc-msg-saved' : 'gc-msg-save'\}/);
 });
 
 test('the message button draws the shell’s own bookmark, not a second one', () => {

@@ -140,15 +140,25 @@ test('no attachments (or foreign metadata) renders nothing', () => {
   assert.equal(GroupChat._attachmentsRowHtml({ id: 1 }), '');
 });
 
-test('renderMessageHtml includes the attachments row for a file-only message', () => {
+// The row's HOST, not the bubbles: the attachment strip is filled in place by
+// `_renderMessageAttachments` after the row exists, so what the transcript has
+// to get right is that a file-only message still emits a body AND the host.
+// This was `renderMessageHtml`, which the transcript conversion retired; the
+// same contract is now `_messageView`'s `hasAttachments` and the component's
+// `[data-gc-attachments]`.
+test('a file-only message still carries a body and the attachments host', () => {
   const GroupChat = loadGroupChat();
-  const html = GroupChat.renderMessageHtml({
+  const view = GroupChat._messageView({
     id: 9, userId: 2, username: 'bob', content: '',
     msgType: 'message', createdAt: '2026-07-20T12:00:00.000Z',
     metadata: { attachments: [{ id: ID('a'), kind: 'image', filename: 'shot.png', sizeBytes: 10 }] },
   });
-  assert.match(html, /dc-msg-attachments/);
-  assert.match(html, /gc-msg-content/);
+  assert.equal(view.kind, 'message');
+  assert.equal(view.hasAttachments, true, 'the host is emitted for this row');
+  const tsx = fs.readFileSync(
+    path.join(__dirname, '..', 'frontend/src/features/group-chat/transcript.tsx'), 'utf8');
+  assert.match(tsx, /msg\.hasAttachments \? <div data-gc-attachments=\{msg\.id \?\? ''\} \/> : null/);
+  assert.match(tsx, /className="gc-msg-content"/, 'and the body it hangs under');
 });
 
 test('_quoteFromRow falls back to the 📎-filename snippet for a file-only message', () => {

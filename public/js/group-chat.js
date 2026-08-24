@@ -569,8 +569,14 @@ const GroupChat = {
     const kindRaw = msg.msgType || msg.msg_type || 'message';
     const meta = msg.metadata || msg.meta || {};
     const isVote = kindRaw === 'vote';
-    const isSystem = kindRaw === 'system';
     const isSpecShare = kindRaw === 'spec_share' && !!meta.specShare;
+    // A spec_share whose snapshot context is missing — an older server, or a
+    // share whose metadata did not survive — degrades to a SYSTEM line, which
+    // is what the string renderer's `if (!meta)` branch did. Without this
+    // clause it fell through to `message`, and the row acquired an avatar, an
+    // author name and a trip through the markdown pipeline it was never meant
+    // to have.
+    const isSystem = kindRaw === 'system' || (kindRaw === 'spec_share' && !isSpecShare);
     const kind = isSpecShare ? 'spec_share' : (isVote ? 'vote' : (isSystem ? 'system' : 'message'));
     const username = msg.username || 'System';
     const me = App.user && App.user.username;
@@ -610,6 +616,7 @@ const GroupChat = {
       hasAttachments: Array.isArray(atts) && atts.length > 0 && !!GroupChat._attachSlug(),
       voteRowClass: isVote
         ? GroupChat._rowVoteClass(GroupChat._resolvePr(...GroupChat._voteRef(msg))) : '',
+      specShare: isSpecShare ? GroupChat._specShareView(meta.specShare, msg) : null,
     };
   },
 
@@ -1024,7 +1031,8 @@ const GroupChat = {
   },
 
   // Delegated tap-to-quote + quote-jump + reactions on the messages
-  // container. Bound once (idempotent), mirroring _attachSpecCardHandlers.
+  // container. Bound once (idempotent) — the same shape the spec card's own
+  // delegate had before its button became a React control (see openSharedSpec).
   //
   // Interaction model (#15 + #25, mobile-first):
   //   • quick tap         → quote the row (#15)
@@ -2108,89 +2116,15 @@ const GroupChat = {
     }
   },
 
-  renderMessageHtml(msg) {
-    const time = new Date(msg.createdAt || msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    const username = msg.username || 'System';
-    const isSystem = msg.msgType === 'system' || msg.msg_type === 'system';
-    const isVote = msg.msgType === 'vote' || msg.msg_type === 'vote';
-    const isSpecShare = msg.msgType === 'spec_share' || msg.msg_type === 'spec_share';
-    const isSelf = msg.userId === App.user?.id || msg.user_id === App.user?.id;
+  // `renderMessageHtml` lived here: one HTML string per row, dispatching on
+  // msgType to a spec-share card, a system/vote line or an ordinary message.
+  // The transcript conversion replaced it with `_messageView` +
+  // features/group-chat/transcript.tsx and left it with NO CALLERS — which is
+  // how the spec-share card came to render as an empty `[data-gc-spec-share]`
+  // host that nothing filled. Its last live branch is `_specShareView` below;
+  // the rest was already duplicated by the view builder, so keeping a second
+  // copy of it would only be a second thing to keep in step.
 
-    if (isSpecShare) {
-      // Server attaches the full snapshot context in `metadata.specShare`.
-      // Older browsers (or older servers) might miss the metadata —
-      // fall back to a plain system line in that case so the row still
-      // renders rather than vanishing.
-      const meta = (msg.metadata || msg.meta || {}).specShare;
-      if (!meta) {
-        return `<div class="gc-msg-system">${escapeHtml(msg.content)}</div>`;
-      }
-      return GroupChat.renderSpecShareCard(msg, meta, time);
-    }
-
-    if (isSystem || isVote) {
-      // Vote-activity rows (promote / vote cast) render live vote buttons
-      // inline next to the text — wired to the same AppView.castVote /
-      // castAdminMerge / swapToStaging the vote panel uses. We always emit
-      // the wrapper (carrying the precise metadata session id when present
-      // AND the "PR #N" parsed from the text) so refreshVoteControls() can
-      // fill it once AppView.voteState is ready — even when the chat
-      // renders before the vote panel finishes its first fetch.
-      const inlineControls = isVote ? GroupChat._voteControlsHtml(msg) : '';
-      // Tint the row text by the viewer's vote status on this PR: faded
-      // (--accent-light) once they've voted, full-strength (--accent) while
-      // their vote is still outstanding, so unvoted rows draw the eye.
-      const voteRowClass = isVote ? GroupChat._rowVoteClass(GroupChat._resolvePr(...GroupChat._voteRef(msg))) : '';
-      return `<div class="gc-msg-system ${isVote ? 'gc-msg-vote' : ''}${voteRowClass ? ' ' + voteRowClass : ''}" data-msg-id="${msg.id || ''}">` +
-        `<span class="gc-msg-system-text">${escapeHtml(msg.content)}</span>` +
-        inlineControls +
-        GroupChat._renderBookmarkBtn(msg) +
-        GroupChat._renderReactAddBtn(msg) +
-        GroupChat._renderReactionsHtml(msg) +
-        `</div>`;
-    }
-
-    // #15: a user message may carry a quote (reply) in metadata. Render the
-    // quoted block above the content; data-msg-id lets a reply elsewhere
-    // scroll back to this row. #25: reactions + the hover react button.
-    const quotedHtml = GroupChat._renderQuotedBlock(msg.metadata || msg.meta);
-    // Editing: an "edited" marker (with the full edit timestamp in its
-    // tooltip) once edited_at is set, and an Edit affordance on the user's
-    // OWN ordinary messages (hover on desktop; long-press bar on touch).
-    const editedAt = msg.editedAt || msg.edited_at;
-    const editedMarker = editedAt
-      ? `<span class="gc-msg-edited" title="${escapeHtml(GroupChat._editedTitle(editedAt))}">edited</span>`
-      : '';
-    const editBtn = isSelf ? GroupChat._renderEditBtn(msg) : '';
-    return `
-      <div class="gc-msg ${isSelf ? 'gc-msg-self' : ''}" data-msg-id="${msg.id || ''}" data-username="${escapeHtml(username)}">
-        <div class="gc-msg-header">
-          ${GroupChat._unreadDotHtml(msg)}
-          <span class="gc-msg-username ${isSelf ? 'gc-msg-username-self' : ''}">${escapeHtml(username)}</span>
-          <span class="gc-msg-time">${time}</span>
-          ${editedMarker}
-          ${editBtn}
-          ${GroupChat._renderBookmarkBtn(msg)}
-          ${GroupChat._renderReactAddBtn(msg)}
-        </div>
-        ${quotedHtml}
-        <div class="gc-msg-content">${renderMessageBody(msg.content)}</div>
-        ${GroupChat._attachmentsRowHtml(msg)}
-        ${GroupChat._renderReactionsHtml(msg)}
-      </div>`;
-  },
-
-  // Inline vote buttons for a "promoted / voted" activity row. State comes
-  // from AppView.voteState (populated by AppView.loadVotePanel), so the
-  // buttons reflect live counts / my_vote and collapse to nothing once the
-  // PR leaves the votable set (merged / closed). The wrapper carries
-  // data-session-id so refreshVoteControls() can re-fill it in place when
-  // votes change, without re-rendering the whole chat.
-  // Wrapper for a vote-activity row. Carries the precise metadata session
-  // id (new server) when present AND the "PR #N" parsed from the row text,
-  // so the buttons can be (re)resolved against AppView.voteState at fill
-  // time. data-session-id / data-pr-number let refreshVoteControls() patch
-  // it in place without re-rendering the chat.
   _voteControlsHtml(msg) {
     const [sid, prNum] = GroupChat._voteRef(msg);
     if (sid === '' && prNum === '') return '';
@@ -2293,119 +2227,113 @@ const GroupChat = {
       `</div>`;
   },
 
-  renderSpecShareCard(msg, meta, time) {
-    const sharedBy = meta.sharedBy?.username || msg.username || 'Someone';
-    const built = meta.builtAt ? new Date(meta.builtAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
-    const prLink = meta.prNumber
-      ? `<a class="gc-spec-pr" href="#" data-pr="${meta.prNumber}">PR #${meta.prNumber}</a>`
-      : '';
-    // `meta.title` is set by the share endpoint when the spec content
-    // starts with an H1; older shares predate that field and fall
-    // back to "Spec v<n>". The snippet is rendered as markdown so the
-    // preview matches what the user sees in the dev-chat spec viewer
-    // (shared markdown helper from DevChat).
-    //
-    // Reach DevChat via a bare reference and `typeof` guard rather
-    // than `window.DevChat` — DevChat is declared with `const` at
-    // dev-chat.js's top level, which does NOT install it as a
-    // property on `window` (only `var` / function declarations do).
-    // It IS visible as a global identifier across <script> tags
-    // because both files share the same script-scope, so a bare
-    // `DevChat.renderMarkdown(...)` works; the `typeof` keeps things
-    // safe if dev-chat.js ever fails to load.
-    const title = meta.title || `Spec v${meta.version}`;
+  // The shared-spec card, as data.
+  //
+  // Was `renderSpecShareCard`, reached from `renderMessageHtml` — which the
+  // transcript conversion left with no callers, so the card had quietly
+  // stopped rendering at all: the transcript emitted `[data-gc-spec-share]`
+  // as an empty host and nothing filled it. This is what fills it, through
+  // features/group-chat/transcript.tsx, and the row is markup again.
+  //
+  // `meta.title` is set by the share endpoint when the spec content starts
+  // with an H1; older shares predate that field and fall back to
+  // "Spec v<n>". The snippet is rendered as markdown so the preview matches
+  // what the user sees in the dev-chat spec viewer (shared markdown helper
+  // from DevChat).
+  //
+  // Reach DevChat via a bare reference and a `typeof` guard rather than
+  // `window.DevChat` — DevChat is declared with `const` at dev-chat.js's top
+  // level, which does NOT install it as a property on `window` (only `var` /
+  // function declarations do). It IS visible as a global identifier across
+  // <script> tags because both files share the same script scope, so a bare
+  // `DevChat.renderMarkdown(...)` works; the `typeof` keeps things safe if
+  // dev-chat.js ever fails to load.
+  _specShareView(meta, msg) {
     const renderMd = typeof DevChat !== 'undefined' && DevChat.renderMarkdown
-      ? (s) => DevChat.renderMarkdown(s)
-      : (s) => escapeHtml(s);
-    const snippetHtml = meta.snippet ? renderMd(meta.snippet) : '';
-    const titleAttr = meta.title || `spec v${meta.version}`;
-    return `
-      <div class="gc-spec-card" data-msg-id="${msg.id || ''}" data-spec-title="${escapeHtml(titleAttr)}" data-session-id="${meta.sessionId || ''}" data-shared-by="${escapeHtml(sharedBy)}">
-        <div class="gc-spec-card-header">
-          <span class="gc-spec-card-icon">📋</span>
-          <span class="gc-spec-card-title">${escapeHtml(title)}</span>
-          <span class="gc-msg-time">${time}</span>
-        </div>
-        <div class="gc-spec-card-attribution">
-          Shared by <strong>${escapeHtml(sharedBy)}</strong> · v${meta.version}${built ? ' · ' + escapeHtml(built) : ''}${prLink ? ' · ' + prLink : ''}
-        </div>
-        ${snippetHtml ? `<div class="gc-spec-card-snippet">${snippetHtml}</div>` : ''}
-        <div class="gc-spec-card-actions">
-          <button class="gc-spec-card-view" data-session-id="${meta.sessionId}" data-version="${meta.version}">View full spec</button>
-        </div>
-        ${GroupChat._renderReactionsHtml(msg)}
-        ${GroupChat._renderBookmarkBtn(msg)}
-        ${GroupChat._renderReactAddBtn(msg)}
-      </div>`;
+      ? (str) => DevChat.renderMarkdown(str)
+      : null;
+    const built = meta.builtAt
+      ? new Date(meta.builtAt).toLocaleString([],
+        { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+      : null;
+    return {
+      title: meta.title || `Spec v${meta.version}`,
+      // The preview title the panel header shows while the fetch is in
+      // flight. It was a `data-spec-title` attribute the click delegate read
+      // back off the card; it is a field now, so nothing has to round-trip
+      // through the DOM to find it.
+      previewTitle: meta.title || `spec v${meta.version}`,
+      sharedBy: meta.sharedBy?.username || msg.username || 'Someone',
+      version: meta.version,
+      built,
+      prNumber: meta.prNumber || null,
+      sessionId: meta.sessionId || null,
+      // Markdown, so `dangerouslySetInnerHTML`; null when the share carried
+      // no snippet, or when dev-chat.js is not loaded to render one.
+      snippetHtml: meta.snippet && renderMd ? renderMd(meta.snippet) : null,
+      // …and the raw text as the fallback, escaped by React as a text child.
+      snippetText: meta.snippet && !renderMd ? String(meta.snippet) : null,
+    };
   },
 
-  // Click delegate: View full spec → modal with the frozen content.
-  // Bound once to the messages container in attachScrollHandlers; idempotent.
-  _attachSpecCardHandlers(container) {
-    if (container._gcSpecHandlersBound) return;
-    container._gcSpecHandlersBound = true;
-    container.addEventListener('click', async (e) => {
-      const btn = e.target.closest('.gc-spec-card-view');
-      if (!btn) return;
-      e.preventDefault();
-      const sessionId = btn.dataset.sessionId;
-      const version = btn.dataset.version;
-      if (!sessionId || !version) return;
-      btn.disabled = true;
-      btn.textContent = 'Loading…';
-      // Title preview from the card so the modal header isn't empty
-      // while the network request is in flight. Falls back to the
-      // version label if the card's data attribute is missing (older
-      // shares, or unusual DOM states).
-      const card = btn.closest('.gc-spec-card');
-      const previewTitle = (card && card.dataset.specTitle) || `Spec v${version}`;
-      // Persist the open state so a refresh re-opens this same
-      // spec automatically. Per-app keying ensures switching apps
-      // doesn't drag this open state along with you.
-      GroupChat._writeSpecPanelOpen(GroupChat.appSlug, {
-        sessionId: parseInt(sessionId, 10),
-        version: parseInt(version, 10),
-        title: previewTitle,
-      });
-      try {
-        const resp = await fetch(`/api/sessions/${sessionId}/specs/${version}${GroupChat._specDemoQS()}`);
-        // After #6, the server allows any authed user to read a spec
-        // version that was explicitly shared into the group chat. A
-        // 404 here therefore means the share was withdrawn or the
-        // version row is gone (rare — would require manual DB edits
-        // or a session DELETE CASCADE) rather than the routine
-        // "not the owner" case it used to mean.
-        if (!resp.ok) {
-          GroupChat._showSpecPanel({
-            title: previewTitle,
-            version,
-            content: resp.status === 404
-              ? 'This spec is no longer available. The sharer may have deleted the session.'
-              : `Failed to load spec (HTTP ${resp.status}).`,
-            isError: true,
-          });
-          return;
-        }
-        const data = await resp.json();
+  // Open a shared spec in the side panel.
+  //
+  // Was the body of `_attachSpecCardHandlers`, a click delegate bound to the
+  // messages container that read the button's `data-session-id` /
+  // `data-version` and then wrote `disabled` and `textContent` back onto it.
+  // Those two writes were the problem: the card is React's since #1191, and
+  // the button's in-flight state is the component's own — so this returns a
+  // promise and the component brackets it. The address bookkeeping, the fetch
+  // and every failure wording stay here.
+  //
+  // `previewTitle` fills the panel header while the request is in flight, so
+  // the panel is never a blank box; it falls back to the version label for an
+  // older share that predates `metadata.specShare.title`.
+  async openSharedSpec(sessionId, version, previewTitle) {
+    if (!sessionId || !version) return;
+    const title = previewTitle || `Spec v${version}`;
+    // Persist the open state so a refresh re-opens this same spec
+    // automatically. Per-app keying ensures switching apps doesn't drag this
+    // open state along with you.
+    GroupChat._writeSpecPanelOpen(GroupChat.appSlug, {
+      sessionId: parseInt(sessionId, 10),
+      version: parseInt(version, 10),
+      title,
+    });
+    try {
+      const resp = await fetch(`/api/sessions/${sessionId}/specs/${version}${GroupChat._specDemoQS()}`);
+      // After #6, the server allows any authed user to read a spec version
+      // that was explicitly shared into the group chat. A 404 here therefore
+      // means the share was withdrawn or the version row is gone (rare —
+      // would require manual DB edits or a session DELETE CASCADE) rather
+      // than the routine "not the owner" case it used to mean.
+      if (!resp.ok) {
         GroupChat._showSpecPanel({
-          title: previewTitle,
+          title,
           version,
-          content: data.spec.content || '(empty spec)',
-          builtAt: data.spec.built_at,
-          prNumber: data.spec.pr_number,
-        });
-      } catch (err) {
-        GroupChat._showSpecPanel({
-          title: previewTitle,
-          version,
-          content: `Error: ${err.message}`,
+          content: resp.status === 404
+            ? 'This spec is no longer available. The sharer may have deleted the session.'
+            : `Failed to load spec (HTTP ${resp.status}).`,
           isError: true,
         });
-      } finally {
-        btn.disabled = false;
-        btn.textContent = 'View full spec';
+        return;
       }
-    });
+      const data = await resp.json();
+      GroupChat._showSpecPanel({
+        title,
+        version,
+        content: data.spec.content || '(empty spec)',
+        builtAt: data.spec.built_at,
+        prNumber: data.spec.pr_number,
+      });
+    } catch (err) {
+      GroupChat._showSpecPanel({
+        title,
+        version,
+        content: `Error: ${err.message}`,
+        isError: true,
+      });
+    }
   },
 
   // (#1012) Raw markdown currently displayed in the spec panel, kept in
@@ -2451,7 +2379,7 @@ const GroupChat = {
 
     // Render markdown for normal content; error / 404 messages are
     // plain text so we don't accidentally turn an error into a
-    // misleadingly-formatted bit of markup. See the renderSpecShareCard
+    // misleadingly-formatted bit of markup. See the _specShareView
     // comment for why we use a bare `DevChat` reference + `typeof`
     // guard rather than `window.DevChat` (const-declared globals don't
     // attach to window).
@@ -2459,7 +2387,7 @@ const GroupChat = {
     // deliberate: formatting a 404 message turns it into something that looks
     // like a document. It used to be two branches of one HTML string; it is
     // two tags in features/group-chat/spec-panel.tsx now, so the error path
-    // cannot acquire markup by accident. See the renderSpecShareCard comment
+    // cannot acquire markup by accident. See the _specShareView comment
     // for why this is a bare `DevChat` reference behind a `typeof` guard
     // rather than `window.DevChat` (const-declared globals don't attach).
     const body = isError
@@ -2758,7 +2686,6 @@ const GroupChat = {
   attachScrollHandlers() {
     const container = document.getElementById('gc-messages');
     if (!container) return;
-    GroupChat._attachSpecCardHandlers(container);
     GroupChat._attachQuoteHandlers(container);
     if (container._gcScrollBound) return;
     container._gcScrollBound = true;

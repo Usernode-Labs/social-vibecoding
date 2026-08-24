@@ -17,19 +17,20 @@
  * bookmark toggle swapped an icon element in place. All three are store
  * updates now.
  *
- * Two things stay module-filled hosts, per the controller-host seam in
- * AGENTS.md:
+ * ONE thing stays a module-filled host, per the controller-host seam in
+ * AGENTS.md: `[data-gc-vote-controls]`, the inline vote buttons on a vote row.
+ * Its markup is `AppView.voteButtonsHtml` + `voteCountPill` + the merge
+ * badges — the Dev screen's own vote renderers, sixteen call sites of them in
+ * public/js/app-view.js — re-filled in place by `refreshVoteControls()` from
+ * `AppView.voteState`, which arrives on its own schedule. So it is not
+ * independently convertible: its ownership boundary is the Dev screen, not
+ * this transcript. It is rendered ONCE as an empty host with a constant
+ * `className`, so React never writes an attribute the module has since
+ * changed — the same rule the dialog islands run under (see
+ * ../../lib/legacy-dom.ts).
  *
- *   * `[data-gc-vote-controls]` — the inline vote buttons on a vote row. Their
- *     markup comes from `AppView.voteState`, which arrives on its own schedule
- *     and is re-filled in place by `refreshVoteControls()` without touching the
- *     transcript. Modelling it here would mean re-rendering every row whenever
- *     any vote changed.
- *   * `[data-gc-spec-share]` — the spec-share card, a whole second renderer.
- *
- * Both are rendered ONCE as empty hosts with constant `className`, so React
- * never writes an attribute the module has since changed. Same rule the dialog
- * islands run under (see ../../lib/legacy-dom.ts).
+ * `[data-gc-spec-share]` used to be the second one, and it was never filled by
+ * anything — see SpecShareRow below.
  *
  * ── The inline editor is the third, and it is a different shape ───────
  *
@@ -50,7 +51,7 @@
  * it the next time anything else about the message changed.
  */
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 
 import { ChatMessageRow, ThreadReplySummary } from '@/components/ui/chat';
 import { Avatar, ReactionPill } from '@/components/ui/feed';
@@ -183,7 +184,97 @@ function SystemRow({ msg }: { msg: TranscriptMessage }) {
   );
 }
 
-function MessageRow({ msg }: { msg: TranscriptMessage }) {
+/**
+ * A shared spec, as a card in the transcript.
+ *
+ * ── It had stopped rendering ──────────────────────────────────────────
+ *
+ * This host — `[data-gc-spec-share]` — was emitted empty for group-chat.js to
+ * fill, exactly like the vote controls below it. Nothing filled it: the card's
+ * only renderer lived in `GroupChat.renderMessageHtml`, which the transcript
+ * conversion left with no callers, so a shared spec has been an invisible
+ * empty div in the chat ever since. Found by publishing a spec_share row into
+ * a running transcript and counting what came out.
+ *
+ * ── The button owns its own in-flight state ───────────────────────────
+ *
+ * "View full spec" used to be reached by a click delegate on the messages
+ * container, which wrote `disabled` and `textContent` back onto it. Those two
+ * writes are exactly what a React-owned row must not receive from outside, so
+ * `GroupChat.openSharedSpec` returns a promise and this brackets it. The
+ * address bookkeeping, the fetch and every failure wording stay in the module.
+ */
+export function SpecShareRow({ msg }: { msg: TranscriptMessage }) {
+  const [loading, setLoading] = useState(false);
+  const spec = msg.specShare;
+  if (!spec) return null;
+  return (
+    <div
+      className="gc-spec-card"
+      data-msg-id={msg.id ?? ''}
+      data-spec-title={spec.previewTitle}
+      data-session-id={spec.sessionId ?? ''}
+      data-shared-by={spec.sharedBy}
+    >
+      <div className="gc-spec-card-header">
+        <span className="gc-spec-card-icon">📋</span>
+        <span className="gc-spec-card-title">{spec.title}</span>
+        <span className="gc-msg-time">{msg.time}</span>
+      </div>
+      <div className="gc-spec-card-attribution">
+        {'Shared by '}
+        <strong>{spec.sharedBy}</strong>
+        {` · v${spec.version}`}
+        {spec.built ? ` · ${spec.built}` : null}
+        {spec.prNumber ? (
+          <>
+            {' · '}
+            <a
+              className="gc-spec-pr"
+              href="#"
+              data-pr={spec.prNumber}
+            >
+              {`PR #${spec.prNumber}`}
+            </a>
+          </>
+        ) : null}
+      </div>
+      {spec.snippetHtml ? <SpecSnippet html={spec.snippetHtml} /> : null}
+      {spec.snippetText ? (
+        <div className="gc-spec-card-snippet">{spec.snippetText}</div>
+      ) : null}
+      <div className="gc-spec-card-actions">
+        <button
+          className="gc-spec-card-view"
+          data-session-id={spec.sessionId ?? ''}
+          data-version={spec.version}
+          disabled={loading}
+          onClick={async (e) => {
+            e.preventDefault();
+            setLoading(true);
+            try {
+              await controller()?.openSharedSpec?.(spec.sessionId, spec.version, spec.previewTitle);
+            } finally {
+              setLoading(false);
+            }
+          }}
+        >
+          {loading ? 'Loading…' : 'View full spec'}
+        </button>
+      </div>
+      <Reactions msg={msg} />
+      <RowActions msg={msg} />
+    </div>
+  );
+}
+
+/** Memoised on the string, for the reason `Body` gives. */
+function SpecSnippet({ html }: { html: string }) {
+  const wrapper = useMemo(() => ({ __html: html }), [html]);
+  return <div className="gc-spec-card-snippet" dangerouslySetInnerHTML={wrapper} />;
+}
+
+export function MessageRow({ msg }: { msg: TranscriptMessage }) {
   return (
     <ChatMessageRow
       className={`gc-msg ${msg.mine ? 'gc-msg-self' : ''}`}
@@ -254,7 +345,7 @@ export function Transcript({ source = 'main' }: { source?: string }) {
       ) : null}
       {view.messages.map((msg, i) => {
         const key = msg.id != null ? `m${msg.id}` : `i${i}`;
-        if (msg.kind === 'spec_share') return <div key={key} data-gc-spec-share={msg.id ?? ''} />;
+        if (msg.kind === 'spec_share') return <SpecShareRow key={key} msg={msg} />;
         if (msg.kind === 'message') return <MessageRow key={key} msg={msg} />;
         return <SystemRow key={key} msg={msg} />;
       })}

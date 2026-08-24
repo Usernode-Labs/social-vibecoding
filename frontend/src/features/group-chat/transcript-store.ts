@@ -94,6 +94,30 @@ export interface TranscriptMessage {
   hasAttachments: boolean;
   /** Vote rows only: the tint class the module derives from the viewer's vote. */
   voteRowClass: string;
+  /** Spec-share rows only — see SpecShareView. Null on every other kind. */
+  specShare: SpecShareView | null;
+}
+
+/**
+ * A shared spec, as its card draws it.
+ *
+ * `snippetHtml` is markdown the module rendered through `DevChat.renderMarkdown`
+ * so the preview matches the dev-chat spec viewer exactly; `snippetText` is the
+ * fallback for a page where dev-chat.js did not load, and arrives as a text
+ * child. At most one of the two is ever set.
+ */
+export interface SpecShareView {
+  title: string;
+  /** The header the panel shows while the fetch is in flight. */
+  previewTitle: string;
+  sharedBy: string;
+  version: number;
+  /** Formatted build time, or null when the share carried none. */
+  built: string | null;
+  prNumber: number | null;
+  sessionId: number | null;
+  snippetHtml: string | null;
+  snippetText: string | null;
 }
 
 /**
