@@ -994,21 +994,64 @@ async function advanceAppRepoBranch(ctx) {
   // The head as GITHUB has it, read now. Both the ancestry base and the
   // push's lease come from this one value: a lease pinned to anything the
   // caller supplied would be a lease against the caller's own belief.
+  //
+  // ── …unless there is no head yet ────────────────────────────────────
+  //
+  // A 404 here is not an unreadable head. It is a branch NOBODY HAS CREATED,
+  // and the row it belongs to is the one #1347's share route writes: a session
+  // whose commits are still only in the author's fork, recorded ahead of the
+  // landing that puts them in the app's repository. Read as a failure — which
+  // it was until this branch existed — no first share could ever succeed, and
+  // the route deleted the card it had just made.
+  //
+  // Both of the things this function does before a push exist to protect a
+  // head that is already there:
+  //
+  //   * the LEASE stops two agents silently overwriting each other's
+  //     revision, and
+  //   * the ANCESTRY check stops a branch that does not build on the reviewed
+  //     commit from dropping commits the group has read.
+  //
+  // Neither has anything to guard when the branch does not exist, which is why
+  // external-agent-head's mirror rung — the platform's own "copy a verified
+  // fork branch into a NEW app-repo branch", used by pr-import — takes no
+  // lease either. So a first landing skips exactly those two and nothing else:
+  // the attribution gate below still runs, twice, as it does on every push.
+  //
+  // Narrowed to the platform's OWN branch namespace, which is the one the
+  // share route mints into. A `dev/…` head missing from the app repository is
+  // a different story with a different cause (routes/sessions.js creates that
+  // branch best-effort, and a session whose creation failed has a pull request
+  // and possibly a tally pinned to it), so it keeps the answer it has always
+  // had rather than being quietly re-created underneath a proposal.
   let liveHead;
+  let firstLanding = false;
   try {
     liveHead = await gh.getBranchSha(owner, repo, targetBranch);
   } catch (err) {
-    log.warn('proposal-update', 'could not read the proposal branch head', {
-      sessionId, targetBranch, err: err.message,
-    });
-    return fail('platform_unavailable', 'Usernode could not read this proposal\'s current commit. Try again shortly.', { retryable: true });
+    if (err && err.status === 404 && platformOwnedBranch(targetBranch)) {
+      firstLanding = true;
+    } else {
+      log.warn('proposal-update', 'could not read the proposal branch head', {
+        sessionId, targetBranch, err: err.message,
+      });
+      return fail('platform_unavailable', 'Usernode could not read this proposal\'s current commit. Try again shortly.', { retryable: true });
+    }
   }
-  if (!liveHead || !SHA_RE.test(String(liveHead).trim())) {
-    return fail('platform_unavailable', 'Usernode could not read this proposal\'s current commit. Try again shortly.', { retryable: true });
-  }
-  liveHead = String(liveHead).trim().toLowerCase();
-  if (expectedHeadSha && expectedHeadSha !== liveHead) {
-    return movedError(liveHead);
+  if (!firstLanding) {
+    if (!liveHead || !SHA_RE.test(String(liveHead).trim())) {
+      return fail('platform_unavailable', 'Usernode could not read this proposal\'s current commit. Try again shortly.', { retryable: true });
+    }
+    liveHead = String(liveHead).trim().toLowerCase();
+    if (expectedHeadSha && expectedHeadSha !== liveHead) {
+      return movedError(liveHead);
+    }
+  } else {
+    // `expectedHeadSha` names the commit the caller believes this proposal is
+    // at. There is no such commit, so there is nothing for it to disagree
+    // with — and refusing a first share for naming one would be refusing it
+    // for the caller's optimism rather than for a conflict.
+    liveHead = null;
   }
 
   // THE ATTRIBUTION GATE. Run here for the ancestry comparison, and again
@@ -1020,12 +1063,14 @@ async function advanceAppRepoBranch(ctx) {
   });
   if (!verified.ok) return renameHeadFailure(verified, branch);
 
-  // Nothing to push — but a resubmit may still be correcting the capture
-  // routes, which is the one thing that used to have no way through (#1199).
-  if (verified.headSha === liveHead) return resubmitUnchanged(ctx, liveHead, 'update_branch');
+  if (!firstLanding) {
+    // Nothing to push — but a resubmit may still be correcting the capture
+    // routes, which is the one thing that used to have no way through (#1199).
+    if (verified.headSha === liveHead) return resubmitUnchanged(ctx, liveHead, 'update_branch');
 
-  const ancestry = await checkAncestry({ gh, owner, repo, base: liveHead, head: verified.headSha, branch });
-  if (ancestry) return ancestry;
+    const ancestry = await checkAncestry({ gh, owner, repo, base: liveHead, head: verified.headSha, branch });
+    if (ancestry) return ancestry;
+  }
 
   // Which of the three tails this push takes, decided from the row read UNDER
   // the lock — `params.session` is the caller's snapshot and may be minutes
@@ -1039,10 +1084,19 @@ async function advanceAppRepoBranch(ctx) {
   // has nothing to count and nothing to clear.
   const votesCleared = promoted ? await countVotes(pool, sessionId) : 0;
 
-  const pushed = await head.pushForkBranchToAppBranch({
-    githubPublic, owner, repo, forkOwner, forkRepo, branch, expectedLogin,
-    targetBranch, expectedRemoteSha: liveHead, sessionId,
-  });
+  // The lease-less create and the lease-checked advance are the same push with
+  // the same gate in front of it; `mirrorForkBranch` is not a second
+  // implementation of anything, it is the one the mirror rung already uses,
+  // pointed at the name this row recorded instead of one it mints.
+  const pushed = firstLanding
+    ? await head.mirrorForkBranch({
+      gh, githubPublic, owner, repo, forkOwner, forkRepo, branch, expectedLogin,
+      targetBranch,
+    })
+    : await head.pushForkBranchToAppBranch({
+      githubPublic, owner, repo, forkOwner, forkRepo, branch, expectedLogin,
+      targetBranch, expectedRemoteSha: liveHead, sessionId,
+    });
   if (!pushed.ok) return renameHeadFailure(pushed, branch);
 
   // BEFORE the tails, every one of which ends in a capture that reads the

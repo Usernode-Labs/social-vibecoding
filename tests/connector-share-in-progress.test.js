@@ -35,6 +35,7 @@ const path = require('node:path');
 
 const svc = require('../src/services/external-agent-tasks');
 const limits = require('../src/services/connector-limits');
+const head = require('../src/services/external-agent-head');
 
 const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 const ROUTE_SRC = read('src/routes/proposal-handoff.js');
@@ -296,6 +297,53 @@ test('the route creates a SHARED, ACTIVE session and hands it to the shared gate
   assert.ok(accessAt !== -1 && capAt !== -1 && insertAt !== -1);
   assert.ok(accessAt < insertAt, 'app access is checked before anything is written');
   assert.ok(capAt < insertAt, 'and so is the cap, so a refusal leaves no card');
+});
+
+test('the row records an APP-REPO branch of the platform\'s own, not the caller\'s fork branch', () => {
+  const route = shareRoute();
+  // `branch_name` on a session is the branch in the APP repository —
+  // the one the landing pushes to, the one promote opens a pull request from,
+  // and the one `platformOwnedBranch` reads to decide, from the row alone,
+  // where a source-less session's head lives. The caller's fork branch is a
+  // different thing and travels separately, as `branch`.
+  assert.match(route, /externalAgentHead\.shareBranchName\(req\.user\.id\)/,
+    'the app-repo branch is minted here');
+  const insert = route.slice(route.indexOf('INSERT INTO chat_sessions'));
+  assert.match(insert, /appRepoBranch,/, 'and it is what the row stores');
+  assert.doesNotMatch(insert.slice(0, insert.indexOf('RETURNING id') + 400), /input\.branch,/,
+    "the caller's fork branch name never lands in the app repo's namespace");
+  // It still travels to the landing, which reads it from the FORK.
+  assert.match(route, /branch: input\.branch,/);
+});
+
+test('a shared branch name is in Usernode\'s namespace and is always a valid ref', () => {
+  const seen = new Set();
+  for (const id of [1, 7, 4021, 0, null, undefined, 'not-a-number']) {
+    const name = head.shareBranchName(id);
+    assert.ok(name.startsWith(head.MIRROR_BRANCH_PREFIX), name);
+    assert.ok(head.isMirrorNamespace(name), name);
+    assert.ok(head.validRef(name), name);
+    seen.add(name);
+  }
+  assert.equal(seen.size, 7, 'the nonce makes two shares by one user two branches');
+  // Minted from the USER ID, never a username: 194 of 303 production
+  // usernames are email addresses, and `@`/`+` are outside the ref charset
+  // this file's validRef enforces (services/branch-names.js has the story).
+  assert.ok(head.validRef(head.shareBranchName(7)));
+  assert.equal(head.validRef('usernode/from-alice@example.com-s0badf00d'), false);
+});
+
+test('a mirror will not write a branch name that is not one of ours', async () => {
+  // The mirror pushes into the APP's repository with the platform's own
+  // credential. A target branch supplied by a caller is checked against the
+  // namespace rather than trusted — the same rule the minted names obey.
+  const refused = await head.mirrorForkBranch({
+    githubPublic: {}, owner: 'o', repo: 'r', forkOwner: 'evan-gh', forkRepo: 'r',
+    branch: 'fix/thing', expectedLogin: 'evan-gh',
+    targetBranch: 'main',
+  });
+  assert.equal(refused.ok, false);
+  assert.equal(refused.code, 'invalid_request');
 });
 
 test('a failed hand-off deletes the card it had just created', () => {
