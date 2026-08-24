@@ -82,6 +82,12 @@ const STATUS_BY_CODE = {
   branch_moved: 409,
   session_busy: 409,
   fork_branch_not_found: 404,
+  // #1347's two. `already_shared` is a 409 for the same reason the three
+  // above are: the caller's picture of the work is out of date — it is already
+  // a card in the In-progress area — rather than forbidden. `share_failed`
+  // matches import_failed, its exact twin on the other destination.
+  already_shared: 409,
+  share_failed: 502,
 };
 
 // Same-origin guard for the two writes, copied in spirit from

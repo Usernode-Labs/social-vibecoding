@@ -111,6 +111,43 @@ async function checkPromotedCap(pool, config, user) {
   return null;
 }
 
+// ── 1b. The active-session cap, for shared in-progress work ────────────
+//
+// #1347 lets a connector share work to the IN-PROGRESS area instead of only
+// submitting it for review. That card is a real dev session with a real
+// staging preview behind it, so it costs a warm container — which is exactly
+// what config.maxUserSessions already bounds for the browser's own "start a
+// session" button (routes/sessions.js).
+//
+// So this reuses that bound rather than inventing a connector-only one. The
+// promoted cap above says why: a connector doing what the browser permits
+// must not be cut off earlier than the browser, and a full admin keeps the
+// admin tier here as they do everywhere else. Headless rows are excluded, as
+// they are in every other count in this module — an auto run holds no warm
+// worker of the user's.
+//
+// Counted BEFORE the session row is inserted, so an over-cap share leaves no
+// card behind and no branch copied into the app's repository.
+async function checkActiveCap(pool, config, user) {
+  const caps = effectiveSessionCaps(config, user);
+  const count = await countOr(
+    pool,
+    `SELECT COUNT(*) AS cnt FROM chat_sessions
+      WHERE user_id = $1 AND status = 'active' AND is_headless = FALSE`,
+    [user.id],
+    'active-cap'
+  );
+  if (count === null) return UNAVAILABLE;
+  if (count >= caps.activeSessions) {
+    return limitError(
+      'at_capacity',
+      `You already have ${caps.activeSessions} sessions open. Pause or archive one first, `
+      + 'or submit this work for review instead of sharing it as in-progress.'
+    );
+  }
+  return null;
+}
+
 // ── 2. prepare_work reservations ───────────────────────────────────────
 //
 // How many work orders are held open at once — a stock, and the only bound
@@ -177,6 +214,7 @@ async function checkFallbackStart(pool, config, user) {
 module.exports = {
   LIMITS,
   checkPromotedCap,
+  checkActiveCap,
   checkOpenWorkOrders,
   checkFallbackStart,
 };
