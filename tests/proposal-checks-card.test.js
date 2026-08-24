@@ -14,7 +14,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
-const { proposalCardHtml } = require('./lib/dev-card-html');
+const { actionHtml, checksHtml, proposalCardHtml } = require('./lib/dev-card-html');
 
 const SRC = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf8');
 
@@ -136,7 +136,7 @@ test('a legacy row (no check_state) surfaces its console errors in the pill', ()
 
 test('the checks detail lists per-test rows with failure reasons', () => {
   const AppView = makeAppView(ME);
-  const html = AppView._checksDetailHtml(baseProposal({
+  const html = checksHtml(AppView, baseProposal({
     check_state: 'failing',
     checks_checked_at: '2026-06-01T00:00:00Z',
     test_results: [
@@ -154,13 +154,14 @@ test('the checks detail lists per-test rows with failure reasons', () => {
 
 test('the checks detail shows a "couldn\'t run" block for error state', () => {
   const AppView = makeAppView(ME);
-  const html = AppView._checksDetailHtml(baseProposal({ check_state: 'error', test_results: [] }));
-  assert.match(html, /couldn't run/);
+  const html = checksHtml(AppView, baseProposal({ check_state: 'error', test_results: [] }));
+  // React escapes the apostrophe in text children.
+  assert.match(html, /couldn&#x27;t run/);
 });
 
 test('passing with no result detail renders nothing (the green badge is enough)', () => {
   const AppView = makeAppView(ME);
-  assert.equal(AppView._checksDetailHtml(baseProposal({ check_state: 'passing', test_results: [] })), '');
+  assert.equal(checksHtml(AppView, baseProposal({ check_state: 'passing', test_results: [] })), '');
 });
 
 // #461: an explicit terminal 'skipped' verdict renders a grey, non-blocking
@@ -191,7 +192,7 @@ test('card: a skipped verdict blocks nothing, so the pill shows the vote state',
 
 test('the checks detail shows a skipped block with the reason and the re-run button for the owner', () => {
   const AppView = makeAppView(ME);
-  const html = AppView._checksDetailHtml(baseProposal({
+  const html = checksHtml(AppView, baseProposal({
     check_state: 'skipped', test_results: [], user_id: ME,
     check_error_detail: 'branch has no commits beyond main — nothing to test',
   }));
@@ -214,7 +215,7 @@ test('card: a fresh row with no verdict renders the "Checks starting…" pill', 
 
 test('a fresh-NULL detail shows "Checks are starting…" with NO re-run button', () => {
   const AppView = makeAppView(ME);
-  const html = AppView._checksDetailHtml(baseProposal({
+  const html = checksHtml(AppView, baseProposal({
     user_id: ME,
     created_at: new Date(Date.now() - 2 * 60 * 1000).toISOString(),
   }));
@@ -226,14 +227,14 @@ test('a fresh-NULL detail shows "Checks are starting…" with NO re-run button',
 test('a stale fresh-NULL row (old created_at) offers the re-run escape hatch to the owner', () => {
   const AppView = makeAppView(ME);
   // baseProposal's created_at is far in the past → past the 10-min window.
-  const html = AppView._checksDetailHtml(baseProposal({ user_id: ME }));
+  const html = checksHtml(AppView, baseProposal({ user_id: ME }));
   assert.match(html, /Checks are starting/);
   assert.match(html, /Re-run checks/);
 });
 
 test('a FRESH pending run shows the spinner + started line and hides the re-run button', () => {
   const AppView = makeAppView(ME);
-  const html = AppView._checksDetailHtml(baseProposal({
+  const html = checksHtml(AppView, baseProposal({
     user_id: ME, check_state: 'pending', test_results: [],
     checks_checked_at: new Date(Date.now() - 2 * 60 * 1000).toISOString(),
   }));
@@ -250,7 +251,7 @@ test('a FRESH pending run shows the spinner + started line and hides the re-run 
 // are the NULL/legacy-wording guard.
 test('a pending run in its BUILDING half names the preview-preparation stage', () => {
   const AppView = makeAppView(ME);
-  const html = AppView._checksDetailHtml(baseProposal({
+  const html = checksHtml(AppView, baseProposal({
     user_id: ME, check_state: 'pending', check_phase: 'building', test_results: [],
     checks_checked_at: new Date(Date.now() - 60 * 1000).toISOString(),
   }));
@@ -264,7 +265,7 @@ test('a pending run in its BUILDING half names the preview-preparation stage', (
 
 test('a pending run in its TESTING half names the test stage', () => {
   const AppView = makeAppView(ME);
-  const html = AppView._checksDetailHtml(baseProposal({
+  const html = checksHtml(AppView, baseProposal({
     user_id: ME, check_state: 'pending', check_phase: 'testing', test_results: [],
     checks_checked_at: new Date(Date.now() - 60 * 1000).toISOString(),
   }));
@@ -278,7 +279,7 @@ test('an unrecognised phase falls back to the previous wording verbatim', () => 
   // render an unknown caption.
   const AppView = makeAppView(ME);
   for (const check_phase of [null, undefined, '', 'cloning', 'BUILDING', 42]) {
-    const html = AppView._checksDetailHtml(baseProposal({
+    const html = checksHtml(AppView, baseProposal({
       user_id: ME, check_state: 'pending', check_phase, test_results: [],
       checks_checked_at: new Date(Date.now() - 60 * 1000).toISOString(),
     }));
@@ -291,7 +292,7 @@ test('the phase caption still renders the stale-run escape hatch', () => {
   // The phase is only the wording — the freshness gate that reveals "Re-run
   // checks" is unchanged, so a wedged BUILDING run is still recoverable.
   const AppView = makeAppView(ME);
-  const html = AppView._checksDetailHtml(baseProposal({
+  const html = checksHtml(AppView, baseProposal({
     user_id: ME, check_state: 'pending', check_phase: 'building', test_results: [],
     checks_checked_at: new Date(Date.now() - 2 * 3600 * 1000).toISOString(),
   }));
@@ -306,7 +307,7 @@ test('the phase caption still renders the stale-run escape hatch', () => {
 // on screen is theirs.
 test('a pending run names what triggered it, alongside the stage and the start time', () => {
   const AppView = makeAppView(ME);
-  const html = AppView._checksDetailHtml(baseProposal({
+  const html = checksHtml(AppView, baseProposal({
     user_id: ME, check_state: 'pending', check_phase: 'building',
     check_trigger: 'commit-push', test_results: [],
     checks_checked_at: new Date(Date.now() - 60 * 1000).toISOString(),
@@ -326,7 +327,7 @@ test('a platform-initiated run says so, rather than looking like unexplained chu
     ['manual-recheck', /Triggered by someone asking for a re-run\./],
     ['promote-kick', /Triggered by this proposal being put to a vote\./],
   ]) {
-    const html = AppView._checksDetailHtml(baseProposal({
+    const html = checksHtml(AppView, baseProposal({
       user_id: ME, check_state: 'pending', check_trigger: trigger, test_results: [],
       checks_checked_at: new Date(Date.now() - 60 * 1000).toISOString(),
     }));
@@ -339,7 +340,7 @@ test('an unrecognised or absent trigger renders no caption at all', () => {
   // new ones — an "unknown" line on all of them would be worse than silence.
   const AppView = makeAppView(ME);
   for (const check_trigger of [null, undefined, '', 'capture', 'COMMIT-PUSH', 42]) {
-    const html = AppView._checksDetailHtml(baseProposal({
+    const html = checksHtml(AppView, baseProposal({
       user_id: ME, check_state: 'pending', check_trigger, test_results: [],
       checks_checked_at: new Date(Date.now() - 60 * 1000).toISOString(),
     }));
@@ -350,7 +351,7 @@ test('an unrecognised or absent trigger renders no caption at all', () => {
 
 test('a STALE pending run (past the 10-min window) still offers the re-run button', () => {
   const AppView = makeAppView(ME);
-  const html = AppView._checksDetailHtml(baseProposal({
+  const html = checksHtml(AppView, baseProposal({
     user_id: ME, check_state: 'pending', test_results: [],
     checks_checked_at: new Date(Date.now() - 2 * 3600 * 1000).toISOString(),
   }));
@@ -365,10 +366,10 @@ test('an in-flight recheck renders a disabled "Re-running…" button on re-rende
   const AppView = makeAppView(ME);
   const pr = baseProposal({ user_id: ME, check_state: 'error', test_results: [] });
   AppView._recheckInFlight.add(pr.id);
-  const html = AppView._recheckBtnHtml(pr);
-  assert.match(html, /Re-running…/);
-  assert.match(html, /disabled/);
-  assert.doesNotMatch(html, /castRecheck/);
+  const a = AppView._recheckAction(pr);
+  assert.match(actionHtml(a), /Re-running…/);
+  assert.match(actionHtml(a), /disabled/);
+  assert.equal(a.act, undefined, 'the disabled button dispatches nothing');
 });
 
 test('the board pins failing/error proposals above ordinary ones', () => {

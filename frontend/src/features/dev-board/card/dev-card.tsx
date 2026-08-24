@@ -368,6 +368,9 @@ export function ActionButton({ a }: { a: ActionSpec }): ReactNode {
     // The controller host — `AppView._fillKudosHosts` owns everything below.
     return <span className="contents" data-kudos-host={a.kudos}></span>;
   }
+  // The topic head's LABELLED preview — the same component as the card's
+  // eye, which is also what covers its two badge states.
+  if (a.preview) return <Preview spec={a.preview} />;
   if (a.explore != null) {
     // #313/#827/#621. Availability is `/api/budget`'s answer, published
     // through aiEnabledStore — the store replaces the

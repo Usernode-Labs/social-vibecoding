@@ -19,7 +19,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
-const { proposalCardHtml } = require('./lib/dev-card-html');
+const { mergeConflictHtml, proposalCardHtml } = require('./lib/dev-card-html');
 
 const APP_VIEW_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'app-view.js'),
@@ -128,7 +128,7 @@ test("card: a plain 'behind' snapshot still shows the amber Behind badge", () =>
 
 test("detail: a 'conflict' snapshot renders the merge-failed detail box naming the creator", () => {
   const AppView = makeAppView(ME);
-  const html = AppView._mergeConflictDetailHtml(baseProposal({
+  const html = mergeConflictHtml(AppView, baseProposal({
     merge_conflict_state: 'conflict',
     conflict_files: ['src/app.js'],
     conflict_checked_at: '2026-06-01T00:00:00Z',
@@ -141,7 +141,7 @@ test("detail: a 'conflict' snapshot renders the merge-failed detail box naming t
 
 test("detail: a 'conflict' snapshot with the resolver in flight renders nothing (progress badge covers it)", () => {
   const AppView = makeAppView(ME);
-  const html = AppView._mergeConflictDetailHtml(baseProposal({
+  const html = mergeConflictHtml(AppView, baseProposal({
     merge_conflict_state: 'conflict',
     conflict_files: ['src/app.js'],
     resolving: true,
@@ -151,7 +151,7 @@ test("detail: a 'conflict' snapshot with the resolver in flight renders nothing 
 
 test("detail: a 'failed' snapshot renders the red 'resolution failed' detail box", () => {
   const AppView = makeAppView(ME);
-  const html = AppView._mergeConflictDetailHtml(baseProposal({
+  const html = mergeConflictHtml(AppView, baseProposal({
     merge_conflict_state: 'failed',
     conflict_files: ['src/server.js'],
     conflict_checked_at: '2026-06-01T00:00:00Z',

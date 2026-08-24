@@ -17,7 +17,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
-const { govCardHtml, proposalCardHtml } = require('./lib/dev-card-html');
+const { govCardHtml, proposalCardHtml, topicHeadHtml } = require('./lib/dev-card-html');
 
 const SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'app-view.js'),
@@ -153,10 +153,17 @@ test('my own IMPORTED proposal DOES render the Explore-in-dev-chat button (#1045
 });
 
 // #321/#827: the topic detail view (_renderTopicHead) shows exactly ONE AI
-// affordance — the card's gc-explore-chat-btn PILL, wired here because the
-// head has no delegated handler. The old standalone #proposal-ask-ai button
-// is gone entirely: it was the governance-only entry point into the retired
-// advisor panel, and governance proposals get no replacement (#827).
+// affordance — the card's gc-explore-chat-btn PILL. The old standalone
+// #proposal-ask-ai button is gone entirely: it was the governance-only
+// entry point into the retired advisor panel, and governance proposals get
+// no replacement (#827).
+//
+// #1367's topic chunk turned the head into a React island, so
+// `_renderTopicHead` publishes a view model instead of assigning innerHTML
+// and binding the pill by hand. The harness below captures that publish and
+// renders it, which is strictly more than the string version could check:
+// the pill's WIRING is in the model, so "painted but inert" is now visible
+// as a missing `explore` field rather than only as a missing listener.
 function makeTopicHarness(viewerId) {
   const els = {};
   const opened = [];
@@ -180,6 +187,15 @@ function makeTopicHarness(viewerId) {
     addEventListener: () => {},
     localStorage: { getItem: () => null, setItem: () => {} },
   };
+  // The head mounts through the devBoard bridge; capture what it publishes.
+  const published = [];
+  sandbox.UsernodeReact = {
+    devBoard: {
+      mountTopicHead: () => {},
+      publishTopicHead: (state) => { published.push(state); },
+      publishAiEnabled: () => {},
+    },
+  };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
@@ -192,96 +208,88 @@ function makeTopicHarness(viewerId) {
   AppView._ensureAiAvailability = () => Promise.resolve(true);
   // Spy on the opener the pill should reach (the real one navigates away).
   AppView.exploreProposalInDevChat = (...a) => { opened.push(a); };
-  return { AppView, els, opened };
+  // The head's markup, from the last publish — the two halves composed
+  // exactly as the store composes them at runtime.
+  const headHtml = () => {
+    const last = published[published.length - 1];
+    return last ? topicHeadHtml(JSON.parse(JSON.stringify(last.card)),
+      JSON.parse(JSON.stringify(last.body))) : '';
+  };
+  return { AppView, els, opened, published, headHtml };
 }
 
-// A fake #gc-thread-head whose innerHTML setter records the HTML and exposes
-// a stub button node for the pill so we can probe click wiring.
+// A fake #gc-thread-head. It is a MOUNT HOST now rather than an innerHTML
+// sink — `_fillKudosHosts` is the only thing that still reads inside it.
 function fakeHead() {
-  const btnStub = () => ({
-    disabled: false,
-    title: '',
-    classList: { add: () => {}, remove: () => {} },
-    _click: null,
-    addEventListener(ev, fn) { if (ev === 'click') this._click = fn; },
-  });
   return {
-    _html: '',
-    _pill: null,
-    get innerHTML() { return this._html; },
-    set innerHTML(v) {
-      this._html = v;
-      this._pill = /gc-explore-chat-btn/.test(v) ? btnStub() : null;
-    },
-    querySelector(sel) {
-      if (sel === '.gc-explore-chat-btn') return this._pill;
-      return null;
-    },
-    querySelectorAll(sel) {
-      if (sel === '.gc-explore-chat-btn') return this._pill ? [this._pill] : [];
-      return [];
-    },
+    querySelector: () => null,
+    querySelectorAll: () => [],
   };
 }
 
+/** The `explore` pill's session id, from the published model. */
+function explorePillId(state) {
+  const a = state && state.body && state.body.actions;
+  const pill = a && a.pills.find((p) => p.explore != null);
+  return pill ? pill.explore : null;
+}
+
 test("topic head for another user's proposal wires the pill to the dev chat", () => {
-  const { AppView, els, opened } = makeTopicHarness(ME);
-  const head = fakeHead();
-  els['gc-thread-head'] = head;
+  const { AppView, els, published, headHtml } = makeTopicHarness(ME);
+  els['gc-thread-head'] = fakeHead();
   AppView._devTopic = { kind: 'proposal', id: 7 };
   AppView._findTopicItem = () => baseProposal({ user_id: 999 });
 
   AppView._renderTopicHead();
 
-  assert.match(head._html, /gc-explore-chat-btn/, 'the pill is present');
-  assert.doesNotMatch(head._html, /id="proposal-ask-ai"/, 'the retired standalone is gone');
-  assert.ok(head._pill && typeof head._pill._click === 'function', 'pill click is wired');
-  head._pill._click();
-  assert.deepEqual(opened, [[7, head._pill]],
-    'pill click reaches exploreProposalInDevChat with the id and the button node');
+  const html = headHtml();
+  assert.match(html, /gc-explore-chat-btn/, 'the pill is present');
+  assert.doesNotMatch(html, /id="proposal-ask-ai"/, 'the retired standalone is gone');
+  assert.equal(explorePillId(published[published.length - 1]), 7,
+    'the pill carries the session it opens — a painted-but-inert pill is a '
+    + 'missing field here, not a missing listener');
 });
 
 test("topic head for the viewer's OWN proposal shows no AI button", () => {
   // #348: owners reach the Mayor via "Open session" on their own PR, so the
   // detail view shows no pill (matching the card behaviour from #313).
-  const { AppView, els } = makeTopicHarness(ME);
-  const head = fakeHead();
-  els['gc-thread-head'] = head;
+  const { AppView, els, published, headHtml } = makeTopicHarness(ME);
+  els['gc-thread-head'] = fakeHead();
   AppView._devTopic = { kind: 'proposal', id: 7 };
   AppView._findTopicItem = () => baseProposal({ user_id: ME });
 
   AppView._renderTopicHead();
 
-  assert.doesNotMatch(head._html, /id="proposal-ask-ai"/, 'no standalone button');
-  assert.doesNotMatch(head._html, /gc-explore-chat-btn/, 'no card pill on own proposal');
+  const html = headHtml();
+  assert.ok(html, 'the head did paint — the assertions below are not vacuous');
+  assert.doesNotMatch(html, /id="proposal-ask-ai"/, 'no standalone button');
+  assert.doesNotMatch(html, /gc-explore-chat-btn/, 'no card pill on own proposal');
+  assert.equal(explorePillId(published[published.length - 1]), null);
 });
 
 test("topic head for the viewer's OWN IMPORTED proposal wires the pill (#1045)", () => {
   // The head has no delegated handler, so it must both PAINT the pill and
   // bind it — a head whose gate disagrees with the card leaves an inert
   // button. This is the case that regressed: mine && imported.
-  const { AppView, els, opened } = makeTopicHarness(ME);
-  const head = fakeHead();
-  els['gc-thread-head'] = head;
+  const { AppView, els, published, headHtml } = makeTopicHarness(ME);
+  els['gc-thread-head'] = fakeHead();
   AppView._devTopic = { kind: 'proposal', id: 7 };
   AppView._findTopicItem = () => baseProposal({ user_id: ME, source: 'imported' });
 
   AppView._renderTopicHead();
 
-  assert.match(head._html, /gc-explore-chat-btn/, 'the pill is present on my imported proposal');
-  assert.doesNotMatch(head._html, /openProposalSession/, 'still no Open session (#687)');
-  assert.ok(head._pill && typeof head._pill._click === 'function', 'pill click is wired');
-  head._pill._click();
-  assert.deepEqual(opened, [[7, head._pill]],
-    'pill click reaches exploreProposalInDevChat with the id and the button node');
+  const last = published[published.length - 1];
+  assert.match(headHtml(), /gc-explore-chat-btn/, 'the pill is present on my imported proposal');
+  assert.ok(!last.body.actions.pills.some((p) => p.key === 'session'),
+    'still no Open session (#687)');
+  assert.equal(explorePillId(last), 7, 'and the pill knows which session to open');
 });
 
 test('topic head for a governance proposal has NO AI button at all (#827)', () => {
   // A dev chat can't act on a rename / secret change / close-issue vote, so
   // the governance-only standalone button was dropped with no replacement.
-  const { AppView, els } = makeTopicHarness(ME);
-  const head = fakeHead();
-  els['gc-thread-head'] = head;
+  const { AppView, els, headHtml } = makeTopicHarness(ME);
+  els['gc-thread-head'] = fakeHead();
   AppView._devTopic = { kind: 'gov', id: 5 };
   AppView._findTopicItem = () => ({
     id: 5, kind: 'gov', title: 'Adopt a code of conduct',
@@ -291,8 +299,10 @@ test('topic head for a governance proposal has NO AI button at all (#827)', () =
 
   AppView._renderTopicHead();
 
-  assert.doesNotMatch(head._html, /id="proposal-ask-ai"/, 'standalone Ask AI removed');
-  assert.doesNotMatch(head._html, /gc-explore-chat-btn/, 'gov cards have no Explore pill');
+  const html = headHtml();
+  assert.match(html, /Adopt a code of conduct/, 'the head did paint the gov card');
+  assert.doesNotMatch(html, /id="proposal-ask-ai"/, 'standalone Ask AI removed');
+  assert.doesNotMatch(html, /gc-explore-chat-btn/, 'gov cards have no Explore pill');
 });
 
 test('withdrawProposal POSTs to the archive endpoint and reloads the feed', async () => {

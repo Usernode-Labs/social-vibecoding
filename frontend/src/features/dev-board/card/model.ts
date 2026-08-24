@@ -96,6 +96,12 @@ export interface ActionRef {
   args?: (string | number | boolean | null)[];
 }
 
+/** The icon Preview affordance, in its three states. */
+export type PreviewSpec =
+  | { state: 'live'; sessionId: number; url: string; title: string; iconOnly: boolean }
+  | { state: 'building'; title: string; iconOnly: boolean }
+  | { state: 'error'; title: string; iconOnly: boolean };
+
 /** A text pill in the action band, or a disabled one that explains itself. */
 export interface ActionSpec {
   key: string;
@@ -113,15 +119,16 @@ export interface ActionSpec {
   passNode?: boolean;
   /** The kudos button — a controller host, see the header. */
   kudos?: number;
+  /**
+   * The LABELLED Preview affordance, for the topic head's action list. The
+   * card's own eye rides in `actionPreview` / the rail instead; this is the
+   * same component with `iconOnly: false`, and it covers the two states
+   * that are a badge rather than a button (building, unavailable).
+   */
+  preview?: PreviewSpec;
   /** #313/#827 — "Explore in dev chat", claimed by a delegated handler. */
   explore?: number;
 }
-
-/** The icon Preview affordance, in its three states. */
-export type PreviewSpec =
-  | { state: 'live'; sessionId: number; url: string; title: string; iconOnly: boolean }
-  | { state: 'building'; title: string; iconOnly: boolean }
-  | { state: 'error'; title: string; iconOnly: boolean };
 
 /** Everything that can appear in the status band, as a tagged union. */
 export type BadgeSpec =

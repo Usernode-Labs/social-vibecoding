@@ -161,10 +161,6 @@ const OWNED = [
     sel: '#dev-kanban-board',
     except: ['[data-kudos-host]'],
   },
-  // The topic head's card slot (features/dev-board/card/topic-card.tsx).
-  // `_renderTopicHead` innerHTMLs #gc-thread-head around it on every paint
-  // and mounts this host fresh; the body block beside it stays a template.
-  { sel: '#dev-topic-card', except: ['[data-kudos-host]', '#dev-issue-title-error'] },
   // The kanban board's filter strip (features/dev-board/kanban-filters.tsx).
   // Swept on #app/recipebot/dev whenever the board is in kanban mode.
   { sel: '#dev-kanban-filterbar' },
@@ -172,20 +168,38 @@ const OWNED = [
   // (features/dev-board/issue-comments.tsx), inside the topic card that
   // app-view.js still fills. Swept on the topic route above.
   { sel: '#dev-issue-comments' },
-  // The thread panel's shell (features/group-chat/thread-shell.tsx). TWO hosts
-  // inside it stay their modules': the topic card that app-view.js innerHTMLs,
-  // and the transcript's own portal target. Each is rendered once, empty, with
-  // a constant className and never looked inside — the controller-host seam
-  // AGENTS.md documents — so a write below one of them is the sanctioned
-  // pattern rather than a second author.
+  // The thread panel's shell (features/group-chat/thread-shell.tsx). ONE host
+  // inside it stays its module's — the transcript's own portal target —
+  // rendered once, empty, with a constant className and never looked inside,
+  // the controller-host seam AGENTS.md documents.
   //
-  // The composer's three slots and the typing line were on that list until
+  // `#gc-thread-head` was on that list too, because app-view.js innerHTMLed
+  // the whole opened-topic head into it. It is
+  // features/dev-board/topic/topic-head.tsx's now, so it is listed below in
+  // its own right with the three seams it keeps.
+  //
+  // The composer's three slots and the typing line were exceptions until
   // #1191 gave them a store: they are features/group-chat/composer.tsx's now,
   // shared with the general chat, and a write into any of them is a real
   // finding.
   {
     sel: '.dev-thread',
-    except: ['#gc-thread-head', '#gc-thread-messages'],
+    except: ['#gc-thread-messages'],
+  },
+  // The opened topic's head — the card and everything under it
+  // (features/dev-board/topic/topic-head.tsx). Three seams inside it stay
+  // legacy-FILLED, each rendered once, empty, with a constant className:
+  // `[data-transcript-body]` (public/js/session-transcript.js writes the
+  // chat and its Fork button), `[data-kudos-host]` in the detail action row,
+  // and `#dev-issue-comments`, which is a React island of its own listed
+  // below. Swept on the topic route.
+  {
+    sel: '#gc-thread-head',
+    except: [
+      '[data-transcript-body]', '[data-kudos-host]', '#dev-issue-comments',
+      // saveIssueTitle writes the error line by id while the editor is open.
+      '#dev-issue-title-error',
+    ],
   },
   // The general chat pane (features/group-chat/general-chat.tsx). Same two
   // exceptions in their general spelling — the transcript's portal target and

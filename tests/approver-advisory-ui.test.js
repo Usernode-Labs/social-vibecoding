@@ -156,30 +156,30 @@ test('_renderGovCard: threads the qualified fields into the pill and buttons', (
 
 // ── _loadVoteRoster ──────────────────────────────────────────────────
 
+// The roster used to be written into a `#dev-vote-roster-N` node; it is a
+// field on the topic head's model now (topic/model.ts), so the fetch caches
+// its answer under `_voteRoster` and the head renders it.
 test('_loadVoteRoster: invited roster splits the headline into Q✓ + A advisory', async () => {
-  const el = { innerHTML: '', textContent: '' };
   const AppView = makeAppView({
-    el,
     fetchData: { yes: ['alice', 'bob'], no: [], approvers: ['alice'] },
   });
   AppView._proposals = [];
   await AppView._loadVoteRoster(1);
-  assert.match(el.innerHTML, /Yes \(1✓ \+ 1 advisory\):/);
-  assert.match(el.innerHTML, /No \(0✓\):/);
-  assert.match(el.innerHTML, /@alice&nbsp;✓/);
-  assert.match(el.innerHTML, /only invited approvers/);
+  const r = AppView._voteRoster[1];
+  assert.equal(r.phase, 'ready');
+  assert.match(r.yes.label, /Yes \(1✓ \+ 1 advisory\)/);
+  assert.match(r.no.label, /No \(0✓\)/);
+  assert.match(r.yes.names, /@alice\u00a0✓/);
+  assert.match(r.needs, /only invited approvers/);
 });
 
 test('_loadVoteRoster: default policy keeps the plain totals', async () => {
-  const el = { innerHTML: '', textContent: '' };
-  const AppView = makeAppView({
-    el,
-    fetchData: { yes: ['alice', 'bob'], no: [] },
-  });
+  const AppView = makeAppView({ fetchData: { yes: ['alice', 'bob'], no: [] } });
   AppView._proposals = [];
   await AppView._loadVoteRoster(1);
-  assert.match(el.innerHTML, /Yes \(2\):/);
-  assert.doesNotMatch(el.innerHTML, /advisory/);
+  const r = AppView._voteRoster[1];
+  assert.match(r.yes.label, /Yes \(2\)/);
+  assert.doesNotMatch(JSON.stringify(r), /advisory/);
 });
 
 // ── _votingHelpText ──────────────────────────────────────────────────

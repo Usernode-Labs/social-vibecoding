@@ -15,7 +15,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
-const { proposalCardHtml } = require('./lib/dev-card-html');
+const { consoleCheckHtml, detailActionsHtml, proposalCardHtml } = require('./lib/dev-card-html');
 
 // #405: the proposal card's merge-state badge is driven by window.MergeStatus;
 // load it into the sandbox first (mirrors index.html's load order).
@@ -116,7 +116,7 @@ test('two reasons at once: the pill names the worst and counts the rest', () => 
   assert.equal(reasons.length, 2);
   assert.equal(reasons.map((r) => r.key).join(','), 'behind,console_errors');
 
-  const detail = AppView._detailActionsHtml('proposal', pr);
+  const detail = detailActionsHtml(AppView, 'proposal', pr);
   assert.match(detail, /Worth knowing before you vote/, 'neither reason blocks, so the heading says so');
   assert.match(detail, /Behind main · 3/);
   assert.match(detail, /Console errors · 1/);
@@ -135,7 +135,7 @@ test('a HARD reason beside a soft one: the heading names the block', () => {
   assert.match(html, /Checks failing · 1/, 'the hard reason wins the label');
   assert.match(html, /gc-vote-count-blocked/);
   assert.match(html, /and 2 more reasons/);
-  const detail = AppView._detailActionsHtml('proposal', pr);
+  const detail = detailActionsHtml(AppView, 'proposal', pr);
   assert.match(detail, /Why this can’t merge yet/);
   assert.match(detail, /Checks failing · 1[\s\S]*Behind main · 2[\s\S]*Console errors · 1/,
     'enumerated severity-first');
@@ -143,7 +143,7 @@ test('a HARD reason beside a soft one: the heading names the block', () => {
 
 test('the console-error detail block lists the captured messages', () => {
   const AppView = makeAppView(ME);
-  const html = AppView._consoleCheckDetailHtml(baseProposal({
+  const html = consoleCheckHtml(AppView, baseProposal({
     console_check_state: 'errors',
     console_checked_at: '2026-06-01T00:00:00Z',
     console_errors: [{ kind: 'pageerror', message: "TypeError: x is undefined", source: 'app.js:1' }],
@@ -156,5 +156,5 @@ test('the console-error detail block lists the captured messages', () => {
 
 test('the detail block is empty for a clean proposal', () => {
   const AppView = makeAppView(ME);
-  assert.equal(AppView._consoleCheckDetailHtml(baseProposal({ console_check_state: 'clean' })), '');
+  assert.equal(consoleCheckHtml(AppView, baseProposal({ console_check_state: 'clean' })), '');
 });

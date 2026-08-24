@@ -74,6 +74,75 @@ function kanbanHtml(AppView) {
   return renderToHtml(createElement(m.DevKanban));
 }
 
+// ── The topic head's body blocks ────────────────────────────────────────
+//
+// `_detailActionsHtml`, `_proposalDetailsHtml`, `_checksDetailHtml`,
+// `_platformEnvDetailHtml`, `_consoleCheckDetailHtml` and
+// `_mergeConflictDetailHtml` all built strings. #1367's topic chunk split
+// each into a view builder (still in app-view.js, still where the decisions
+// are) and topic/topic-head.tsx, which draws them. These compose the two so
+// the assertions that were written against the strings keep working.
+
+// A card model with nothing in it, so a body-block helper renders its block
+// and nothing else. The head always draws a card; these are about what is
+// UNDER it.
+const BLANK_CARD = {
+  key: 'k', cls: '', attrs: {}, icon: null, title: { text: '', title: '' }, meta: [],
+  pill: null, linked: [], badges: [], chatCount: null, actions: [],
+  rail: { chevron: false }, extra: [], dense: false, uncapped: true,
+};
+
+/** The proposal detail block: the meta line, its notes and its boxes. */
+function detailsHtml(AppView, pr) {
+  return topicHeadHtml(BLANK_CARD, { actions: null, details: AppView._proposalDetailsView(pr) });
+}
+
+/** The detail ACTION block alone — the pills, the reasons, the visuals. */
+function detailActionsHtml(AppView, kind, item) {
+  return topicHeadHtml(BLANK_CARD, { actions: AppView._detailActionsView(kind, item) });
+}
+
+/** The Preview affordance, from `AppView._cardPreviewSpec`'s truth table. */
+function previewHtml(AppView, item, opts) {
+  const spec = AppView._cardPreviewSpec(item, opts);
+  return spec ? renderToHtml(createElement(mod().Preview, { spec })) : '';
+}
+
+/** One action pill — the Re-run checks button, a note box's fix button. */
+function actionHtml(a) {
+  return a ? renderToHtml(createElement(mod().ActionButton, { a })) : '';
+}
+
+/** One note box (conflict / platform variables / console errors). */
+function noteBoxHtml(box) {
+  return box ? renderToHtml(createElement(mod().NoteBoxView, { box })) : '';
+}
+
+/** One conflict / platform-variables / console-errors box. */
+const platformEnvHtml = (AppView, pr) => noteBoxHtml(AppView._platformEnvNote(pr));
+const consoleCheckHtml = (AppView, pr) => noteBoxHtml(AppView._consoleCheckNote(pr));
+const mergeConflictHtml = (AppView, pr) => noteBoxHtml(AppView._mergeConflictNote(pr));
+
+/** The checks block: the verdict when there is one, else its status note. */
+function checksHtml(AppView, pr) {
+  const v = AppView._checksVerdictView(pr);
+  if (v) return renderToHtml(createElement(mod().ChecksVerdictView, { v }));
+  return AppView._checksStatusNotes(pr).map(noteBoxHtml).join('');
+}
+
+/** The shared-chat disclosure alone. */
+function transcriptHtml(AppView, item) {
+  const t = AppView._transcriptSectionView(item);
+  return t ? topicHeadHtml(BLANK_CARD, { actions: null, transcript: t }) : '';
+}
+
+/** Render the opened topic's whole head from `AppView._renderTopicHead`'s two halves. */
+function topicHeadHtml(card, body) {
+  const m = mod();
+  m.topicHeadStore.set({ card, body });
+  return renderToHtml(createElement(m.TopicHead));
+}
+
 /** Render one ListRow (a divider, the filter note, the archived block). */
 function listRowHtml(row) {
   return renderToHtml(createElement(mod().ListRowView, { row }));
@@ -139,6 +208,17 @@ function hasAction(model, fn, ...args) {
 const budgets = () => ({ ACTION_PRIMARY_MAX: mod().ACTION_PRIMARY_MAX, BADGE_MAX: mod().BADGE_MAX });
 
 module.exports = {
+  actionHtml,
+  previewHtml,
+  topicHeadHtml,
+  transcriptHtml,
+  detailsHtml,
+  detailActionsHtml,
+  noteBoxHtml,
+  platformEnvHtml,
+  consoleCheckHtml,
+  mergeConflictHtml,
+  checksHtml,
   budgets,
   actionRefs,
   hasAction,

@@ -53,12 +53,12 @@ import {
   cardNowStore,
   devFeedStore,
   devKanbanStore,
-  topicCardStore,
 } from './card/cards-store';
 import { DevFeed } from './card/dev-feed';
 import { DevKanban } from './card/dev-kanban';
-import { TopicCard } from './card/topic-card';
-import type { DevCardModel, DevFeedView, DevKanbanView } from './card/model';
+import type { DevFeedView, DevKanbanView } from './card/model';
+import { TopicHead } from './topic/topic-head';
+import { topicHeadStore, type TopicHeadState } from './topic/topic-store';
 
 /** What app-view.js passes for the card list. */
 export interface MountBoardOptions extends DevBoardFrameProps {
@@ -101,8 +101,8 @@ export interface DevBoardBridge {
   publishFeed(view: DevFeedView): void;
   mountKanban(host: Element | null): void;
   publishKanban(view: DevKanbanView): void;
-  mountTopicCard(host: Element | null): void;
-  publishTopicCard(card: DevCardModel | null): void;
+  mountTopicHead(host: Element | null): void;
+  publishTopicHead(state: TopicHeadState): void;
   publishCardNow(now: number): void;
   publishAiEnabled(enabled: boolean): void;
   publishViewMode(mode: string): void;
@@ -149,8 +149,13 @@ kanbanFiltersStore.setFlush(flushSync);
  */
 devFeedStore.setFlush(flushSync);
 devKanbanStore.setFlush(flushSync);
-topicCardStore.setFlush(flushSync);
 cardNowStore.setFlush(flushSync);
+// The topic head's too, and it is load-bearing three times:
+// `_renderTopicHead` fills the kudos hosts it just rendered,
+// `_loadSessionTranscript` fills the transcript body on the line after the
+// repaint that opened it, and `_loadIssueComments` mounts into the comment
+// host the same way.
+topicHeadStore.setFlush(flushSync);
 
 export const devBoardBridge: DevBoardBridge = {
   mountBoard(host, options) {
@@ -275,14 +280,15 @@ export const devBoardBridge: DevBoardBridge = {
     devKanbanStore.set(view);
   },
 
-  // The topic head's card slot. `_renderTopicHead` rebuilds the host on
-  // every paint, so this mounts per paint; the previous entry is swept.
-  mountTopicCard(host) {
-    mountLegacyPortal(host, createElement(TopicCard));
+  // The opened topic's whole head — the card AND everything under it.
+  // `_renderTopicHead` mounts per paint into `#gc-thread-head`, which the
+  // thread panel owns; the previous entry is swept as detached.
+  mountTopicHead(host) {
+    mountLegacyPortal(host, createElement(TopicHead));
   },
 
-  publishTopicCard(card) {
-    topicCardStore.set({ card });
+  publishTopicHead(state) {
+    topicHeadStore.set(state);
   },
 
   // The 30s countdown tick (see card/dev-card.tsx's header).

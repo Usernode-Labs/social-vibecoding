@@ -257,9 +257,10 @@ rendered before believing a zero.
 
 ### Large
 
-1. **Dev screen — `public/js/app-view.js`. The card family has converted;
-   what is left is the topic head's BODY block.** Every card, every surface
-   that draws one, and every floating surface around them is React:
+1. **Dev screen — `public/js/app-view.js`. The board and the topic head have
+   both converted; what is left is three body-mounted modals.** Every card,
+   every surface that draws one, and every floating surface around them is
+   React:
 
    | converted | host |
    | --- | --- |
@@ -273,7 +274,7 @@ rendered before believing a zero.
    | the locked-app banner | `#dev-locked-notice` |
    | **the list feed, every card in it** | `#dev-feed` |
    | **the kanban board, its columns and tabs** | `#dev-kanban-board` |
-   | **the topic head's card** | `#dev-topic-card` |
+   | **the opened topic's head — the card AND its body** | `#gc-thread-head` |
 
    Three of those are body-mounted floating hosts and share the seam the group
    chat's menus established: the module creates the element, measures it
@@ -315,8 +316,8 @@ rendered before believing a zero.
    - the 30s countdown ticker rewrote every pill's label; it publishes
      `Date.now()` through `cardNowStore` and each pill re-derives its own.
    - `_applyExploreChatAvailability` dimmed each Explore pill; the card pills
-     read `aiEnabledStore`. The DOM pass stays for the detail block, which is
-     still a template.
+     read `aiEnabledStore`; the detail block's pills read it too now, so the
+     DOM pass is gone entirely.
    - `_applyKanbanTab` toggled six classes per tab; `_onKanbanTabSelect`
      republishes `activeTab`.
    - `bumpThreadBadge` wrote the count, the tint, `hidden` and the band's
@@ -349,18 +350,73 @@ rendered before believing a zero.
    the title, so it survives a repaint (the guard that skips the repaint is
    still there, and is now purely about not discarding typed text).
 
-   What is LEFT on this screen is `_detailActionsHtml` and the bodies beside
-   it — the topic head's action list, the blocked-reason enumeration, the
-   before/after visuals, `_proposalDetailsHtml`, `_checksDetailHtml`,
-   `_issueBodyHtml` and `_transcriptSectionHtml`. They are one `innerHTML`
-   into `#gc-thread-head` around the card slot, and they decompose: each is a
-   separate block with its own data.
+   **The topic head's BODY converted next, and unlike the card family it
+   decomposed.** `_renderTopicHead` used to build the card and eight string
+   renderers into one `innerHTML` and then bind four handlers into what it
+   had just painted. It publishes `{ card, body }` now — `topic/model.ts`,
+   drawn by `topic/topic-head.tsx` — and the handlers are closures. Nine
+   builders retired into view builders that stayed in app-view.js:
+   `_detailActionsHtml`, `_proposalDetailsHtml`, `_checksDetailHtml`,
+   `_platformEnvDetailHtml`, `_consoleCheckDetailHtml`,
+   `_mergeConflictDetailHtml`, `_voteRosterHtml`, `_transcriptSectionHtml`
+   and `_recheckBtnHtml`.
 
-   Also still string-built, and genuinely independent: the three body-mounted
-   modals (generate-proposal, LLM consent, credits — the last embeds
+   **Four renderers were drawing the same box.** The conflict note, the
+   platform-variables note, the console-errors note and three of the checks
+   block's five states were all a bordered, tinted box with a heading, some
+   lines, sometimes a list, sometimes a button — written out four times with
+   four hand-copied class strings. They are one `NoteBox` shape and one
+   component now, and the tint is a NAME (`ok` / `warn` / `error` /
+   `neutral`) resolved to complete class literals in one table. That is what
+   keeps them one box as the palette moves. The checks VERDICT kept its own
+   shape: its rows nest and its passing rows fold behind a `<details>`,
+   neither of which the shared box should know about.
+
+   Two things about the model that the string version got for free and a
+   plain store does not:
+
+   - **Prose with emphasis needs a run list.** Several of these sentences
+     set a name mid-sentence in `font-medium` — "imported by **maya**",
+     "Built with **Claude Code** by **maya**". `TextRun = string | { b }` is
+     what carries that; a plain string silently drops it, and the tests
+     caught exactly that.
+   - **Block ORDER is the contract.** Conflict → checks → platform
+     variables is what a reader scanning a blocked proposal reads top to
+     bottom. Three separate fields let the component reorder them (the
+     first cut did); a tagged `DetailBlock[]` cannot.
+
+   **A publish that repaints can re-enter its own loader.** `_renderTopicHead`
+   calls `_loadVoteRoster` on every paint — it always did, harmlessly, because
+   the roster was written straight into a `#dev-vote-roster-N` node. Publishing
+   the answer means REPAINTING, so the same line became fetch → publish →
+   paint → fetch, a microtask loop that pegged a CPU core the moment a
+   proposal topic opened. The load is guarded (one in-flight per session, and
+   a cache), and the cache entry is dropped where the DATA changes —
+   navigation and `refreshDevData` — not where the paint happens. **Any
+   loader a converted renderer kicks off per paint has this shape**; check
+   for it before publishing, because a test that renders in a vm resolves its
+   stubbed `fetch` instantly and simply hangs.
+
+   **What stayed another owner's**, and why each is not a regression:
+
+   - an issue's body and a proposal's summary — `DevChat.renderMarkdown`'s
+     output, sanitised where it is built, rendered through
+     `dangerouslySetInnerHTML` from a string the model carries.
+   - the before/after tiles — `AppView.visualsTilesHtml`, which four other
+     surfaces still call, so it stays a string builder.
+   - `#dev-issue-comments` and `[data-transcript-body]` — genuine controller
+     hosts, rendered once, empty, with a constant className.
+
+   `cardPreviewHtml` went away with them: the string twin of the card's
+   `Preview` existed only for `_detailActionsHtml`, and the head renders the
+   labelled variant from the same `_cardPreviewSpec` truth table now, so the
+   affordance has exactly one renderer again. Its two eye glyphs moved to
+   `icons.tsx`.
+
+   What is LEFT on this screen is the three body-mounted modals
+   (generate-proposal, LLM consent, credits — the last embeds
    `CreditOptions.cardHtml`, another module's markup, so it keeps a
-   controller-host seam), the shared-session transcript slot (its body comes
-   from `public/js/session-transcript.js`), and `renderAppTab`'s shell.
+   controller-host seam) and `renderAppTab`'s shell.
 
 2. **Dev chat — `frontend/src/features/dev-chat/dev-chat.js`, about 9,820
    lines and 58 sites. Started at the composer.** Four strips have converted:

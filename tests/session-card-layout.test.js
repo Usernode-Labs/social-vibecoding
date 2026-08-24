@@ -29,6 +29,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const {
   api, cardHtml, hasAction, listRowHtml, mySessionCardHtml, sharedSessionCardHtml,
+  transcriptHtml,
 } = require('./lib/dev-card-html');
 const { renderToHtml, createElement } = require('./lib/render-tsx');
 
@@ -350,7 +351,7 @@ test('the "Read chat" PILL is gone — the transcript lives on the detail page',
   // The shared transcript is hosted by the session's own detail page, which
   // is exactly where a tap on this card already goes.
   assert.match(on, /data-shared-session-row="71"/);
-  assert.match(AppView._transcriptSectionHtml(sharedSess({ transcript_shared: true })),
+  assert.match(transcriptHtml(AppView, sharedSess({ transcript_shared: true })),
     /data-transcript-section="71"/, 'the detail page hosts it');
 });
 
@@ -368,7 +369,7 @@ test('read-only viewers still reach a published transcript (via the detail page)
   AppView.appData = { can_collaborate: false };
   const html = sharedSessionCardHtml(AppView, sharedSess({ transcript_shared: true }));
   assert.match(html, /data-shared-session-row="71"/, 'the card still navigates');
-  assert.match(AppView._transcriptSectionHtml(sharedSess({ transcript_shared: true })),
+  assert.match(transcriptHtml(AppView, sharedSess({ transcript_shared: true })),
     /read-only/);
 });
 
@@ -376,30 +377,30 @@ test('read-only viewers still reach a published transcript (via the detail page)
 
 test('transcript section renders only when the item reports the chat shared', () => {
   const AppView = makeAppView();
-  assert.strictEqual(AppView._transcriptSectionHtml({ id: 5 }), '');
-  assert.strictEqual(AppView._transcriptSectionHtml({ id: 5, transcript_shared: false }), '');
-  assert.strictEqual(AppView._transcriptSectionHtml(null), '');
+  assert.strictEqual(transcriptHtml(AppView, { id: 5 }), '');
+  assert.strictEqual(transcriptHtml(AppView, { id: 5, transcript_shared: false }), '');
+  assert.strictEqual(transcriptHtml(AppView, null), '');
 
   // Shared-session / proposal rows carry the boolean…
-  const shared = AppView._transcriptSectionHtml({ id: 5, transcript_shared: true, message_count: 9 });
+  const shared = transcriptHtml(AppView, { id: 5, transcript_shared: true, message_count: 9 });
   assert.match(shared, /data-transcript-section="5"/);
   assert.match(shared, /data-transcript-toggle="5"/);
   assert.match(shared, /data-transcript-body="5"/);
   assert.match(shared, /read-only/);
   // …the viewer's OWN rows carry the timestamp instead (the owner gets the
   // section too, as the "preview what everyone else sees" path).
-  const mine = AppView._transcriptSectionHtml({ id: 5, transcript_shared_at: '2026-07-01T00:00:00Z' });
+  const mine = transcriptHtml(AppView, { id: 5, transcript_shared_at: '2026-07-01T00:00:00Z' });
   assert.match(mine, /data-transcript-section="5"/);
 });
 
 test('transcript section starts collapsed unless the reader asked to read it', () => {
   const AppView = makeAppView();
-  const collapsed = AppView._transcriptSectionHtml({ id: 5, transcript_shared: true });
+  const collapsed = transcriptHtml(AppView, { id: 5, transcript_shared: true });
   assert.match(collapsed, /aria-expanded="false"/);
   assert.match(collapsed, /hidden/);
 
   AppView._transcriptOpen = 5;
-  const open = AppView._transcriptSectionHtml({ id: 5, transcript_shared: true });
+  const open = transcriptHtml(AppView, { id: 5, transcript_shared: true });
   assert.match(open, /aria-expanded="true"/);
   assert.doesNotMatch(open, /data-transcript-body="5" hidden/);
 });
@@ -413,16 +414,16 @@ test('an expanded transcript SURVIVES a topic-head repaint', () => {
   const item = { id: 5, transcript_shared: true, message_count: 3 };
   AppView._transcriptOpen = 5;
   for (let repaint = 0; repaint < 3; repaint++) {
-    assert.match(AppView._transcriptSectionHtml(item), /aria-expanded="true"/,
+    assert.match(transcriptHtml(AppView, item), /aria-expanded="true"/,
       'stays expanded across repaints');
   }
   // …and an explicit collapse likewise sticks across repaints.
   AppView._transcriptOpen = null;
-  assert.match(AppView._transcriptSectionHtml(item), /aria-expanded="false"/);
+  assert.match(transcriptHtml(AppView, item), /aria-expanded="false"/);
   // The flag is per-session: another session's open state never leaks.
   AppView._transcriptOpen = 5;
   assert.match(
-    AppView._transcriptSectionHtml({ id: 6, transcript_shared: true }),
+    transcriptHtml(AppView, { id: 6, transcript_shared: true }),
     /aria-expanded="false"/
   );
 });

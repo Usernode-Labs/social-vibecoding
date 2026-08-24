@@ -212,7 +212,7 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     'M4 4l17 8-17 8 3-8-3-8zm3 8h14',
     // ── The Dev card's glyphs (#1367's card chunk) ──────────────────
     // The card family renders inside #dev-feed / #dev-kanban-board /
-    // #dev-topic-card, all of which app-view.js writes at runtime on the Dev
+    // #gc-thread-head, all of which app-view.js mounts at runtime on the Dev
     // route — none is in <Shell/>, so none of the four prerenders. The eye,
     // the ⋯ dots and the drag grip are circles rather than paths, so they
     // never appear in this list at all.

@@ -27,7 +27,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
-const { proposalCardHtml } = require('./lib/dev-card-html');
+const { detailsHtml, proposalCardHtml } = require('./lib/dev-card-html');
 
 const MERGE_STATUS_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'merge-status.js'), 'utf8'
@@ -152,7 +152,7 @@ test('a proposal built by a coding agent still behaves like an import', () => {
 
 test('the detail says whose subscription paid for the code', () => {
   const AppView = makeAppView(ME);
-  const html = AppView._proposalDetailsHtml(connectorProposal(), { majority: 1 });
+  const html = detailsHtml(AppView, connectorProposal(), { majority: 1 });
   assert.match(html, /Built with <span class="font-medium">Claude Code<\/span>/);
   assert.match(html, /someone/);
   assert.match(html, /their own coding-agent subscription/);
@@ -164,7 +164,7 @@ test('the detail says whose subscription paid for the code', () => {
 
 test('the detail note is absent for a proposal nobody’s agent built', () => {
   const AppView = makeAppView(ME);
-  const html = AppView._proposalDetailsHtml(
+  const html = detailsHtml(AppView, 
     connectorProposal({ external_agent: null }), { majority: 1 }
   );
   assert.doesNotMatch(html, /Built with/);
