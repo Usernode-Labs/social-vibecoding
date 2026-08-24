@@ -187,6 +187,21 @@ test('the older-toggle is a different control, and still outside the scroller', 
 
 // ── staging seed (unchanged) ────────────────────────────────────────────
 
+// The pager is pinned HERE and not by a dapp.json check, and that is deliberate.
+//
+// One was tried (#1385) and failed against staging: `hasMore` is
+// `rows.length === limit` over `listForUser(pool, req.user.id)`, so the pager
+// only renders for a viewer with a full 100-row FIRST PAGE. The backlog below
+// seeds 110 rows to ONE user — the first admin — so whether the control exists
+// depends on who opens the preview, not on whether the code is right. A
+// declared check there asserts on data, not on this change.
+//
+// The two things that ARE about the change — the list is flat, and no group
+// headers survive — are declared checks and pass. Everything about the pager
+// lives in the loadOlder tests above, which do not care how many notifications
+// anybody has. Do not "fix" a failing pager check by forcing `hasMore` from a
+// query param: that fabricates the exact signal the code reads, which is what
+// the platform's staging-seed rule warns against.
 test('staging seed keeps the >100-row backlog so the foot pager is exercisable', () => {
   const fn = MIGRATE_SRC.match(
     /async function seedStagingNotifications\([\s\S]*?\n\}/
@@ -198,7 +213,8 @@ test('staging seed keeps the >100-row backlog so the foot pager is exercisable',
   assert.match(body, /USERNODE_ENV !== 'staging'/, 'seed is staging-gated');
 
   // A backlog deeper than the 100-row first page is what makes `hasMore` true,
-  // which is the only thing that renders the pager at all.
+  // which is the only thing that renders the pager at all — for the seed's
+  // target user, which is what makes it hand-testable in a staging preview.
   const countMatch = body.match(/BACKLOG_COUNT\s*=\s*(\d+)/);
   assert.ok(countMatch, 'BACKLOG_COUNT is defined');
   assert.ok(
