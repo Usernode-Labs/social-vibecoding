@@ -440,74 +440,56 @@ test('home publishes the PLATFORM Improve target, from render and not only on re
 
 // ── #1367: the App/Feed/Kanban toggle, and what it replaced ──────────
 
-test('the Improve panel leads with a feedback BUTTON and the view toggle', () => {
+test('the Improve panel is exactly its two actions', () => {
   const panel = read('frontend/src/features/improve/improve-panel.tsx');
 
   // "Give feedback" is the one action here that needs nothing of the viewer —
-  // no collaborator bit, no session, no repo — and it looked exactly like the
-  // six rows most viewers cannot use. It is a primary button now, routed
-  // through the shell's <Button> primitive rather than hand-written (which is
-  // what tests/shell-primitive-adoption.test.js enforces), and it keeps its id
-  // because the outbox dot's writer and the checks select on it.
+  // no collaborator bit, no session, no repo. It is a primary button routed
+  // through the shell's <Button> primitive, and it keeps its id because the
+  // outbox dot's writer and the checks select on it. "Build a change" is the
+  // old Start-a-new-session row, id and handler unchanged (Figma copy).
   assert.match(panel, /<Button\s+id="improve-row-feedback"/,
     'the feedback control must be a <Button>, not a list row');
   assert.match(panel, /Improve\.giveFeedback\(\)/, 'with the same handler');
+  assert.match(panel, /id="improve-row-new-session"/, 'Build a change survives');
+  assert.match(panel, /Improve\.startSession\(\)/, 'with the same handler');
 
-  // The two navigating rows it used to sit above are the toggle now.
-  // The ids, not the words: the file still NAMES both rows, in the comment
-  // that records why they went and where their behaviour lives now.
+  // Everything else left: the session sections and reference footer are the
+  // app-context sheet's, and the view toggle is the Board's own control now.
   assert.ok(!/id="improve-row-kanban"/.test(panel), 'the Kanban ROW is retired');
   assert.ok(!/id="improve-row-feed"/.test(panel), 'the Feed ROW is retired');
-  assert.match(panel, /<ImproveViewToggle compact=\{false\} \/>/,
-    'and the panel renders the toggle in their place');
+  assert.ok(!/ImproveViewToggle/.test(panel), 'no view-toggle copy survives');
 });
 
-test('the view toggle lives in the panel; the header center is the title tab', () => {
-  const toggle = read('frontend/src/features/improve/view-toggle.tsx');
+test('the Board owns the view control; the header center is the title tab', () => {
   const header = read('frontend/src/features/header/platform-header.tsx');
-  const panel = read('frontend/src/features/improve/improve-panel.tsx');
+  const frame = read('frontend/src/features/dev-board/board-frame.tsx');
 
-  // Streamlined Concept: the header copy is retired — the tappable center
-  // title tab (header-title-tab.tsx) is the header's way into the app's
-  // views now, and the panel copy renders at every width in the interim.
+  // Streamlined Concept, final state: navigation between the app's views is
+  // the app-context sheet behind the tappable center title tab; Kanban vs
+  // Feed is the Board's own display mode, drawn by the frame.
   assert.ok(!/ImproveViewToggle/.test(header),
     'the header renders no view-toggle copy');
   assert.match(header, /<HeaderTitleTab titleRef=\{titleRef\} \/>/,
     'the center of the bar is the title tab');
-  // Read the CODE, not the comment that explains why the code is this way.
-  const toggleCode = toggle
+  assert.match(frame, /id="dev-view-toggle"/, 'the Board draws its own control');
+  const frameCode = frame
     .replace(/\/\*[\s\S]*?\*\//g, '')
     .replace(/^\s*\/\/.*$/gm, '');
-  assert.ok(!/matchMedia|innerWidth/.test(toggleCode),
-    'the toggle must not measure the viewport — that is what the breakpoint is for');
-  // Display utilities lead each variant exactly once: `hidden` and
-  // `inline-flex` are both display, so which wins is decided by their order in
-  // the generated stylesheet, not in the class attribute.
-  assert.ok(!/const TRACK_CLS = '(inline-)?flex/.test(toggle),
-    'the shared track must carry no display utility of its own');
+  assert.ok(!/matchMedia|innerWidth/.test(frameCode),
+    'the control must not measure the viewport');
 
-  // Three segments, and the third is the app itself — which the panel had no
-  // way back to once you had followed Kanban out of it.
-  assert.match(toggle, /Improve\.openApp\(\)/);
-  assert.match(toggle, /Improve\.openDev\(segment\)/);
-  // #1386: the App segment renders for EVERY row, the platform's self-hosted
-  // one included. Its iframe target still does not resolve, so openApp() sends
-  // that row home instead — the platform's product surface is the home screen,
-  // and leaving the segment out was what left the control reading Feed | Kanban
-  // with neither selected once you had followed Kanban out of home.
-  assert.ok(!/selfHosted \? null :/.test(toggle),
-    'the App segment must not be withheld from the self-hosted row');
-  // A segment names where it GOES, so the platform's reads "Home" — label, icon
-  // and tooltip together. "App" there would name a destination that does not
-  // exist, which is the very reason it lands on home.
-  assert.match(toggle, /\{selfHosted \? 'Home' : 'App'\}/,
-    "the platform's segment is labelled Home, an app's App");
-  assert.match(toggle, /const HomeSegmentIcon = selfHosted \? HomeIcon : AppWindowIcon;/,
+  // A destination names where it GOES, and the "use the app" row's label
+  // follows the target: the platform's reads "Home", an app's reads its own
+  // name. That logic lives on the app-context sheet's rows now.
+  const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
+  assert.match(sheet, /label=\{selfHosted \? 'Home' : name \|\| 'App'\}/,
+    "the platform's row is labelled Home, an app's by its name");
+  assert.match(sheet, /const AppRowIcon = selfHosted \? HomeIcon : AppWindowIcon;/,
     'and the icon follows the destination with it');
-  // The ATTRIBUTE does not follow: it names the segment's role, not its
-  // destination, and it is the contract dapp.json's checks are written against.
-  assert.match(toggle, /data-view-segment="app"/,
-    'data-view-segment stays "app" on both rows — it is the selector contract');
+  // The ATTRIBUTE names the row's role, not its destination — the selector
+  // contract dapp.json's checks are written against.
+  assert.match(sheet, /row="app"/, 'data-context-row stays "app" on both rows');
   const controller = read('frontend/src/features/improve/improve-controller.js');
   // #1406 widened where this segment is reachable from. It used to be true
   // that "no app open" meant "already home", because every other screen
@@ -520,16 +502,14 @@ test('the view toggle lives in the panel; the header center is the title tab', (
   assert.match(controller, /if \(!onHome\) window\.App\.navigateHome\(\);/,
     'and navigates home from anywhere that is not home');
 
-  // Active state comes from two stores because it genuinely lives in two
-  // places — which HALF of the app is on screen, and which dev view.
-  assert.match(toggle, /useDevViewMode\(\)/);
-  assert.match(toggle, /tab === 'dev'/);
-  // `tab` is republished from the single place App.currentTab is assigned.
+  // Which HALF of the app is on screen is still published from the single
+  // place App.currentTab is assigned — the eye/Improve swap renders from it.
   const appJs = read('public/js/app.js');
   assert.match(appJs, /App\.currentTab = tab;[\s\S]{0,600}window\.Improve\?\.setTab\(tab\)/,
-    'switchTab must publish the active tab for the toggle to render');
-  assert.ok(!panel.includes('app-mode-seg'),
-    'and it must do it through the store, not by repainting a node');
+    'switchTab must publish the active tab');
+  const improveBtn = read('frontend/src/features/improve/improve-button.tsx');
+  assert.match(improveBtn, /tab === 'dev'/,
+    'the header right slot renders the eye from the published tab');
 });
 
 test('the app-context sheet bottom-anchors the version / GitHub / share block', () => {

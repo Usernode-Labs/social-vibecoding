@@ -1358,44 +1358,30 @@
       "expectSelector": "#platform-header #app-eye-btn"
     },
     {
-      "name": "The App/Feed/Kanban toggle lives in the Improve panel (transitional, Streamlined Concept)",
+      "name": "The Board draws its own Kanban|Feed control (Streamlined Concept)",
       "path": "/app/staging-demo-admins/dev",
-      "expectSelector": "#improve-view-toggle-panel [data-view-segment=\"app\"]"
+      "expectSelector": "#dev-view-toggle [data-view-segment=\"kanban\"]"
     },
     {
-      "name": "The panel toggle marks the Dev view actually on screen",
+      "name": "The Board control marks the view actually on screen",
       "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
-      "expectSelector": "#improve-view-toggle-panel [data-view-segment=\"kanban\"][aria-selected=\"true\"]"
+      "expectSelector": "#dev-view-toggle [data-view-segment=\"kanban\"][aria-selected=\"true\"]"
     },
     {
-      "name": "The self-hosted platform row gets an App segment too (#1386)",
+      "name": "The self-hosted platform row gets a use-the-app row too (#1386, Streamlined Concept)",
       "path": "/?demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#improve-view-toggle-panel [data-view-segment=\"app\"] + [data-view-segment=\"feed\"] + [data-view-segment=\"kanban\"]"
+      "expectSelector": "#app-context-sheet [data-context-row=\"app\"]",
+      "expectText": "The platform itself"
     },
     {
-      "name": "Home is the platform's App segment, and it reads as selected (#1386)",
+      "name": "Home offers the platform's app-context tab in the header (#1386, Streamlined Concept)",
       "path": "/",
-      "expectSelector": "#improve-view-toggle-panel [data-view-segment=\"app\"][aria-selected=\"true\"]"
+      "expectSelector": "#header-title #header-title-tab"
     },
     {
       "name": "Home shows the platform Improve button (improve Social Vibecoding itself)",
       "path": "/",
       "expectSelector": "#improve-btn:not(.hidden)"
-    },
-    {
-      "name": "The Improve button survives onto Settings (#1406)",
-      "path": "/#settings",
-      "expectSelector": "#improve-btn:not(.hidden)"
-    },
-    {
-      "name": "The view selector survives onto Settings too (#1406)",
-      "path": "/#settings",
-      "expectSelector": "#improve-view-toggle [data-view-segment=\"app\"]"
-    },
-    {
-      "name": "On Settings the selector claims no segment — you are on none of them (#1406)",
-      "path": "/#settings",
-      "expectSelector": "#improve-view-toggle:not(:has([aria-selected=\"true\"]))"
     },
     {
       "name": "The self-hosted platform row keeps its DEV caption (no header switch)",
@@ -1438,30 +1424,30 @@
       "expectSelector": "#dev-kanban-tabs [data-kanban-tab=\"done\"]"
     },
     {
-      "name": "The Dev screen draws no view tabs of its own — the view toggle owns them",
+      "name": "The + button shares the actions row with the filter host",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#dev-actions #dev-plus-btn"
     },
     {
-      "name": "The view toggle offers three segments, Kanban last",
+      "name": "The Board control offers Kanban then Feed, per the Figma board",
       "path": "/?demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#improve-view-toggle-panel [data-view-segment=\"feed\"] + [data-view-segment=\"kanban\"]",
-      "expectText": "Kanban"
+      "expectSelector": "#dev-view-toggle [data-view-segment=\"kanban\"] + [data-view-segment=\"feed\"]",
+      "expectText": "Feed"
     },
     {
       "name": "Feed is the selected segment on a ?view=feed deep link",
       "path": "/?demo=1&view=feed#app/usernode-2d5619/dev",
-      "expectSelector": "#improve-view-toggle-panel [data-view-segment=\"feed\"][aria-selected=\"true\"]"
+      "expectSelector": "#dev-view-toggle [data-view-segment=\"feed\"][aria-selected=\"true\"]"
     },
     {
       "name": "A retired ?view=list link still resolves onto the Feed",
       "path": "/?demo=1&view=list#app/usernode-2d5619/dev",
-      "expectSelector": "#improve-view-toggle-panel [data-view-segment=\"feed\"][aria-selected=\"true\"] ~ [data-view-segment=\"kanban\"][aria-selected=\"false\"]"
+      "expectSelector": "#dev-view-toggle [data-view-segment=\"kanban\"][aria-selected=\"false\"] ~ [data-view-segment=\"feed\"][aria-selected=\"true\"]"
     },
     {
       "name": "Kanban is the selected segment on a ?view=kanban deep link",
       "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
-      "expectSelector": "#improve-view-toggle-panel [data-view-segment=\"kanban\"][aria-selected=\"true\"]"
+      "expectSelector": "#dev-view-toggle [data-view-segment=\"kanban\"][aria-selected=\"true\"]"
     },
     {
       "name": "The Feed renders activity rows into #dev-feed",

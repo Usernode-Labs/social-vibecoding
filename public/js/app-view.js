@@ -1706,6 +1706,12 @@ const AppView = {
     const content = document.getElementById('app-content');
     const appData = AppView.appData;
 
+    // Streamlined Concept: coming back from Activity / Board (which title
+    // themselves) the header returns to the app's name — the use state the
+    // Figma board draws. (Optional-called: the app-frame vm harnesses stub
+    // App without it.)
+    if (appData?.name) App.setHeaderTitle?.(appData.name);
+
     // #685: an issue-state announcement is invalidated by the frame that made
     // it going away, and a WindowProxy keeps its identity across same-iframe
     // navigations, so it has to be cleared wherever the frame is replaced or
@@ -2083,9 +2089,11 @@ const AppView = {
       return;
     }
 
-    // Full-screen general chat (card-list revision: chat is a card you
-    // tap into, not a pinned pane).
+    // Full-screen general chat — the ACTIVITY screen (Streamlined Concept):
+    // a first-class destination (#app/<slug>/activity) reached from the
+    // app-context sheet, so the header names it.
     if (subTab === 'chat') {
+      App.setHeaderTitle?.('Activity');
       AppView._renderChatSubView(content);
       return;
     }
@@ -2124,6 +2132,9 @@ const AppView = {
       onSelectViewMode: (mode) => AppView._selectViewMode(mode),
     });
 
+    // The card area is the BOARD (Streamlined Concept) — kanban and feed are
+    // its two display modes — and the header names it.
+    App.setHeaderTitle?.('Board');
     AppView._wirePlusMenu(content);
     // Pull down on the dev feed to re-pull it (touch only; the scroller
     // is re-created on every render so this re-attaches each time).
@@ -2131,12 +2142,10 @@ const AppView = {
     if (devScroll) {
       PlatformUI.pullToRefresh(devScroll, () => AppView._loadDevFeed());
     }
-    // _wireViewToggle is gone: <DevBoardFrame/> binds the toggle's onClick and
-    // routes it to _selectViewMode below (#1084 chunk G).
-    document.getElementById('dev-chat-card').addEventListener('click', () => {
-      App.switchTab('dev', null, 'chat');
-    });
-    AppView._loadChatCardPreview();
+    // The General-chat CARD is retired (Streamlined Concept): Activity is an
+    // app-context sheet row and a first-class hash now, so the board no
+    // longer offers a second door to it. <DevBoardFrame/> binds its own
+    // Kanban|Feed control to _selectViewMode.
 
     // Delegated card-open handler: tapping a topic card anywhere except
     // its links/pills opens that topic full-screen. Bound on the stable
@@ -3659,23 +3668,6 @@ const AppView = {
     }
   },
 
-  // Best-effort one-line preview of the latest general-chat message for
-  // the chat card. A failed fetch leaves the static fallback line.
-  async _loadChatCardPreview() {
-    const el = document.getElementById('dev-chat-card-preview');
-    if (!el || !AppView.appData) return;
-    try {
-      const res = await fetch(`/api/apps/${AppView.appData.slug}/messages?limit=1`);
-      if (!res.ok) return;
-      const { messages } = await res.json();
-      const m = messages && messages[messages.length - 1];
-      if (!m || !m.content) return;
-      const live = document.getElementById('dev-chat-card-preview');
-      if (!live) return;
-      const who = m.username || 'System';
-      live.textContent = `${who}: ${String(m.content).slice(0, 140)}`;
-    } catch { /* keep the fallback line */ }
-  },
 
   // Re-pull live data for the dev card list. Called from the WS event
   // handlers in app.js (vote_update / issue_update / session_update /

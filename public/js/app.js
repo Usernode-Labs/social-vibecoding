@@ -2914,61 +2914,14 @@ const App = {
     // The GitHub and Share drawer rows were hidden by hand here. Both are
     // Improve panel rows now, and setAppOpen(false) below clears the panel's
     // target — which retires them for the same reason and in one move.
+    //
+    // #1406 used to re-publish the PLATFORM target right after this clear, so
+    // the improve button and the view selector survived onto settings,
+    // profile and messages. The Streamlined Concept takes the other side of
+    // that decision on purpose: a platform screen carries a plain title and
+    // an empty right slot — navigation lives in the drawer, and the title
+    // tab means "an app context is on screen", which these screens are not.
     App.DrawerStatus.setAppOpen(false);
-    // #1406: …and then the PLATFORM's own row goes back, so the improve button
-    // and the view selector survive onto settings, profile, messages and the
-    // rest instead of disappearing the moment you leave home.
-    //
-    // The clear above still has to happen FIRST: it is what drops the OPEN
-    // APP's target, and these screens are reached from inside an app as often
-    // as from home. So this is a swap, exactly as it already is on home — the
-    // same call, from the one function every non-home platform screen enters
-    // through, which is why it lands in one place rather than six.
-    App._publishPlatformChrome();
-  },
-
-  // The half of _enterScreenChrome that describes the PLATFORM in the header:
-  // the improve target, and then which selector segment is current. Extracted
-  // because it has to be able to run a second time (see below) while the rest
-  // of _enterScreenChrome must not — setAppOpen(false) there is destructive by
-  // design, and re-running it after an app has opened would clear that app's
-  // own target.
-  //
-  // The two calls stay in THIS order. setTab is a no-op while there is no
-  // slug, so the target has to be published first or the tab is dropped.
-  _publishPlatformChrome() {
-    if (typeof Home === 'undefined' || !Home.publishImproveTarget) return;
-
-    // On a DIRECT load of one of these screens (a refresh on /#settings, a
-    // link straight to it) the app list has never been fetched — only home
-    // and browse fetch it, each gated on its own screen — so there is no
-    // platform row to publish yet and the call below correctly publishes
-    // nothing. Ask for the payload once and run this again when it lands.
-    //
-    // ensureAppsLoaded answers null once it has been asked, so the second
-    // pass does not recurse — on success and on failure alike.
-    const loading = Home.ensureAppsLoaded?.();
-    if (loading) {
-      loading.then(() => {
-        // Only if one of these screens is still the one on show. A slow
-        // payload can land after the viewer has opened an app or gone home,
-        // and both of those own the header themselves — describing the
-        // platform then would overwrite what they published, which is the
-        // same mistake publishImproveTarget's own two gates exist to avoid.
-        if (App.currentApp) return;
-        if (App._isScreenVisible('home-screen')) return;
-        App._publishPlatformChrome();
-      }).catch(() => {});
-    }
-
-    // #1406: the PLATFORM's own row goes back, so the improve button and the
-    // view selector survive onto settings, profile, messages and the rest
-    // instead of disappearing the moment you leave home.
-    Home.publishImproveTarget();
-    // …and say which of the selector's segments is current: none of them.
-    // This screen is not home, not the app tab and not the dev area, so a
-    // control whose job is saying where you are must not mark one.
-    window.Improve?.setTab?.('other');
   },
 
   // Show the Leaderboard screen. Sibling to navigateToApp/navigateHome —
@@ -3424,7 +3377,9 @@ const App = {
         if (App.currentSubTab === 'sessions' && DevChat.currentSession) {
           newHash = `#app/${App.currentApp}/dev/sessions/${DevChat.currentSession.id}`;
         } else if (App.currentSubTab === 'chat') {
-          newHash = `#app/${App.currentApp}/dev/chat`;
+          // Streamlined Concept: the general chat is the ACTIVITY screen and
+          // its canonical address; old /dev/chat links still parse.
+          newHash = `#app/${App.currentApp}/activity`;
         } else if (App.currentSubTab === 'topic'
             && typeof AppView !== 'undefined' && AppView._devTopic) {
           const t = AppView._devTopic;
@@ -3433,7 +3388,9 @@ const App = {
             : t.kind === 'session' ? 'shared' : 'governance';
           newHash = `#app/${App.currentApp}/dev/${seg}/${t.id}`;
         } else {
-          newHash = `#app/${App.currentApp}/dev`;
+          // The card area is the BOARD (Streamlined Concept); old /dev links
+          // still parse.
+          newHash = `#app/${App.currentApp}/board`;
         }
       } else {
         // Chromeless mode round-trips through reloads/history via its
@@ -3710,8 +3667,10 @@ const App = {
     // "what's actually on screen right now" signal.
     if (App.currentApp !== slug) return;
 
-    // After app data is loaded, swap header to the display name.
-    if (AppView.appData?.name) {
+    // After app data is loaded, swap header to the display name — unless a
+    // Dev view owns the title by now (Streamlined Concept: Activity / Board
+    // name themselves; the app's name lives on the center tab's sheet).
+    if (AppView.appData?.name && App.currentTab !== 'dev') {
       App.setHeaderTitle(AppView.appData.name);
     }
 

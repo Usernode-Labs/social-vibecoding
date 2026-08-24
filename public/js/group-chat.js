@@ -2079,7 +2079,18 @@ const GroupChat = {
     // 'merging' AND 'merged' rows stay resolvable so the tally pill + "You
     // voted X" don't vanish during or after a merge — a "Merging…"/"Merged"
     // badge is appended alongside instead.
-    return pr && (pr.status === 'promoted' || pr.status === 'merging' || pr.status === 'merged') ? pr : null;
+    if (pr && (pr.status === 'promoted' || pr.status === 'merging' || pr.status === 'merged')) return pr;
+    // Streamlined Concept: a SETTLED vote row keeps its "✓ Merged" chip even
+    // after the PR leaves the votable set — the Figma Activity stream shows
+    // history as history. Recently-merged rows are already in hand
+    // (AppView._merged), so resolve against them and mark the result settled:
+    // _voteInnerHtml renders the badge alone for these (no live tally left).
+    if (prNum && Array.isArray(typeof AppView !== 'undefined' && AppView._merged)) {
+      const merged = AppView._merged.find((m) => m
+        && (String(m.pr_number) === String(prNum) || (sid && String(m.session_id || m.id) === String(sid))));
+      if (merged) return { status: 'merged', pr_number: merged.pr_number, _settled: true };
+    }
+    return null;
   },
 
   // Inner HTML for a resolved votable PR: the live "yes / majority" count
@@ -2087,6 +2098,9 @@ const GroupChat = {
   // wrapper collapses and the row falls back to a plain activity line.
   _voteInnerHtml(pr) {
     if (!pr || typeof AppView.voteButtonsHtml !== 'function') return '';
+    // A settled historical row (see _resolvePr): the persistent "✓ Merged"
+    // chip alone — there is no live tally or castable vote left to draw.
+    if (pr._settled) return AppView.mergedBadgeHtml();
     const st = (typeof AppView !== 'undefined' && AppView.voteState) || {};
     // collapseVoted: in the chat, a cast vote collapses to a "You voted X"
     // box (the drawer keeps the full set so it stays re-castable there).

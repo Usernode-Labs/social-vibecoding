@@ -77,16 +77,6 @@ import type {
 export interface MountBoardOptions extends DevBoardFrameProps {
   /** `AppView._getViewMode()`, used to seed the store before the first render. */
   viewMode: string;
-  /**
-   * Kept in the options shape, and deliberately UNUSED by the frame.
-   *
-   * The Dev screen drew its own Feed/Kanban tabs and this was their handler.
-   * The tabs are the platform header's App/Feed/Kanban toggle now, so nothing
-   * in the frame calls it — but app-view.js still passes it, and the store
-   * seeding above is still what a cold `?view=kanban` deep link needs, so the
-   * option is accepted and dropped here rather than removed from every caller.
-   */
-  onSelectViewMode?: (mode: string) => void;
 }
 
 export interface DevBoardBridge {
@@ -188,26 +178,18 @@ export const devBoardBridge: DevBoardBridge = {
     // Seed before the first render so a cold `?view=kanban` deep link paints
     // kanban immediately rather than list-then-kanban.
     publishViewMode(options.viewMode);
-    const {
-      viewMode: _viewMode,
-      onSelectViewMode: _onSelectViewMode,
-      ...rest
-    } = options;
+    // The Board draws its own Kanban|Feed control again (Streamlined
+    // Concept), so `onSelectViewMode` reaches the frame rather than being
+    // dropped here.
+    const { viewMode: _viewMode, ...rest } = options;
     mountLegacyPortal(host, createElement(DevBoardFrame, rest));
   },
 
-  mountChatSubView(host, options) {
-    mountLegacyPortal(
-      host,
-      createElement(DevChatSubView, {
-        backHref: options.backHref,
-        // React's synthetic event carries `nativeEvent`; NavLink.isNativeClick
-        // reads modifier keys and `button`, both of which the synthetic event
-        // exposes directly, so either would do. Passing the synthetic one keeps
-        // `preventDefault()` on the React side, which is where it belongs.
-        onBackClick: (event) => options.onBackClick(event as unknown as MouseEvent),
-      }),
-    );
+  mountChatSubView(host, _options) {
+    // The back-bar props are accepted and dropped (Streamlined Concept):
+    // Activity is a first-class destination with no in-frame back control,
+    // and keeping the signature saves touching app-view.js's call site.
+    mountLegacyPortal(host, createElement(DevChatSubView));
   },
 
   // The same shape as mountChatSubView, and the same note about the synthetic
