@@ -97,7 +97,7 @@ test('a cached transcript paint does not re-enter the renderer', async () => {
   // The first paint has already run and cached the expanded label — which is
   // the state a repaint (checks poll, WS event) finds.
   AppView._transcriptLabels[32] = AppView._transcriptLabels[32]
-    || 'Dev chat by alice · 9 messages · read-only';
+    || 'Dev chat by alice · 9 messages';
 
   const calls = renderingSpy(AppView, () => AppView._loadSessionTranscript(32));
   await AppView._loadSessionTranscript(32);
@@ -117,7 +117,7 @@ test('the first cached paint repaints exactly once, to swap the label in', async
   assert.equal(calls.n, 1, 'one repaint carries the expanded label, then it settles');
   assert.equal(
     AppView._transcriptLabels[32],
-    'Dev chat by alice · 9 messages · read-only'
+    'Dev chat by alice · 9 messages'
   );
 });
 
@@ -139,10 +139,10 @@ test('the collapsed label is what the section shows until the payload lands', ()
 
   assert.equal(AppView._transcriptSectionView(item).label, 'Read the dev chat (9 messages)');
   AppView._transcriptOpen = 32;
-  AppView._transcriptLabels[32] = 'Dev chat by alice · 9 messages · read-only';
+  AppView._transcriptLabels[32] = 'Dev chat by alice · 9 messages';
   assert.equal(
     AppView._transcriptSectionView(item).label,
-    'Dev chat by alice · 9 messages · read-only',
+    'Dev chat by alice · 9 messages',
     'and the cached expanded label survives a repaint'
   );
 });

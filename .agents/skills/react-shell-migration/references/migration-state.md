@@ -613,6 +613,7 @@ Two traps in writing that browser sweep, both of which hid a real failure:
    | the "Run on" controls | `#dc-runner` |
    | the app's session list | `#dc-session-list` |
    | **the session header strip** | `#dc-session-header` |
+   | **the four banners** | `#dc-banners` |
 
    ### Two orphaned surfaces, and what to do with each
 
@@ -653,9 +654,9 @@ Two traps in writing that browser sweep, both of which hid a real failure:
 
    Two big renderers and a handful of small ones:
 
-   - **`renderChatView`** (~420 lines) — **its header strip is done**; what
-     is left is four banners, the launchpad slot, the panes and the composer
-     wrapper.
+   - **`renderChatView`** (~420 lines) — **its header strip and its four
+     banners are done**; what is left is the launchpad slot, the panes and the
+     composer wrapper.
 
      The strip was the natural first boundary and it carried three traps,
      all three of which generalise:
@@ -691,6 +692,57 @@ Two traps in writing that browser sweep, both of which hid a real failure:
      went through a child — `getElementById('dc-back')?.closest('div')` —
      now names the element directly, because reaching a host through a child
      the portal owns depends on the portal having mounted.
+
+     **The four banners went next**, as one chunk — not because they are
+     similar (the sync banner is about the branch, the credits pair about
+     money) but because they shared ONE slot and three copies of the same
+     in-place dance. Each `_apply*Banner` read the live element, swapped its
+     `outerHTML` when there was still something to say, `remove()`d it when
+     there was not, and `insertAdjacentHTML`'d it back before
+     `.dc-session-body` when it had to reappear; `_applySyncBanner` could not
+     even do that last part and fell through to a whole `renderChatView` —
+     rebuilding the transcript to make a strip appear. All of it exists for
+     one reason, that a banner must change mid-session without disturbing an
+     in-flight stream, and a store does that by construction.
+
+     Three things from it generalise:
+
+     - **`display: contents` is the answer when a host would change the box
+       tree.** `#dc-view` is a flex column and the four banners were its
+       direct flex children; a plain wrapper would have taken their place and
+       made them block children of it — a different layout for the same
+       markup, with nothing to fail. `#dc-banners` carries Tailwind's
+       `contents`, so it generates no box. Same trick for the
+       `CreditOptions.bannerActionsHtml` sink inside the credits banners,
+       which a declared check selects into.
+     - **Four templates that drifted become one shape.** The credits pair is
+       one banner in two tenses, and its red half had three reasons (locked /
+       unavailable / exhausted) written as three more templates. One
+       `CreditsBannerView` with a tone, an icon NAME, a bold lead, an optional
+       `[data-credits-reset]` sentence and a tail covers all four.
+     - **Converting a renderer surfaces the in-place writes around it.**
+       `startNewChange` set `btn.disabled` and `btn.textContent` by id — fine
+       beside a string renderer, a write React clobbers on its next paint
+       beside a rendered `disabled`. It is a published `pending` flag now.
+       Same lesson as `#dc-venue-select.disabled` in the header chunk, and
+       worth the grep every time: **after converting a host, look for
+       in-place writes to the ATTRIBUTES its children render, not just for
+       `innerHTML`.**
+
+     Two shell rules bite on any chunk that brings new markup, and both are
+     worth knowing before writing it rather than after the suite says so:
+     `tests/shell-icon-set.test.js` forbids inline `d="M…"` in a feature file
+     (the five banner glyphs became exports in
+     `@/components/ui/icons.tsx`, and the ones that cannot prerender go in
+     that file's expected-absent list with a reason), and
+     `tests/shell-primitive-adoption.test.js` forbids a hand-written
+     `bg-violet-600` button (the new-change button routes through `<Button>`;
+     its cva table needed one new `disabledStyle` value, and the result is
+     byte-identical, attribute order included). The sync banner's amber button
+     stays hand-written on purpose — a warning strip's button is not the
+     primary action's fill, and an amber `variant` would be a value invented
+     for one call site in a table whose discipline is that every value is
+     transcribed from a button that already exists.
    - **`renderMessages`** (~580 lines) — the transcript. The hard part is
      not the messages, it is `_writeStreamingHtml`: it assigns
      `el.innerHTML` on a bubble's content node at up to 60fps. Publishing

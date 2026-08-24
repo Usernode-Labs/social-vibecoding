@@ -162,6 +162,11 @@ const buttonVariants = cva('', {
       dim: 'disabled:opacity-50',
       // #create-app-import-check.
       block: 'disabled:opacity-50 disabled:cursor-not-allowed',
+      // #dc-new-change-btn — the dev chat's "Start a new change" banner
+      // button, which writes the same pair one step less dim. Transcribed,
+      // not normalised: folding it into `block` would be a visual change on
+      // the one strip this value exists for.
+      dim60: 'disabled:opacity-60 disabled:cursor-not-allowed',
     },
     /** Padding, optional text size, and weight — written as one run. */
     size: {

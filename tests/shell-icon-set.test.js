@@ -218,6 +218,23 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // never appear in this list at all.
     // PencilSquareIcon — the author-only inline title edit on a topic head.
     'M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z',
+    // ── The dev chat's banner glyphs ────────────────────────────────
+    // All four render inside `#dc-banners`, which `renderChatView` writes on
+    // the dev-chat route — not in <Shell/> — and each is additionally behind
+    // its own condition: a branch behind main, a proposed PR, an exhausted
+    // allowance, a nearly-exhausted one. The prerendered document has no
+    // session open at all, so none of them can be there.
+    // PlusThinIcon — the new-change banner.
+    'M12 4.5v15m7.5-7.5h-15',
+    // ClockIcon — the low-credits warning.
+    'M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z',
+    // WarningTriangleIcon — the sync banner's idle and failed states, and the
+    // exhausted-credits banner.
+    'M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.732 0 2.814-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z',
+    // CheckLongIcon — the sync banner's settled success.
+    'M4.5 12.75l6 6 9-13.5',
+    // UserCircleIcon — the credits banner's connect-an-account variant.
+    'M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z',
     // ── Retired by THE UI OVERHAUL, with their surfaces ─────────────
     // GitHubIcon and ShareIcon left the hamburger drawer's footer for the
     // Improve panel — which IS in <Shell/>, so they would still be here…

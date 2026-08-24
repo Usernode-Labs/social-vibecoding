@@ -182,14 +182,10 @@ function makeHarness() {
     'renderMessages', 'refreshBudget', 'initScrollTracking', 'restoreSessionScroll',
     '_setupTextareaResize', '_setupKeyboardShortcuts', '_restoreDraft',
     'renderSessionList', '_loadSpecViewer', '_startHeartbeat', '_setNotifyOnDone',
-    '_renderQuickReplies', '_wireQuickReplies', '_wireCreditsBanner',
+    '_renderQuickReplies', '_wireQuickReplies',
+    '_renderBanners', '_renderSessionHeader',
     '_setupAttachments', '_renderSavedDrafts', '_wireSavedDrafts', '_syncSaveDraftBtn',
   ]) DevChat[fn] = () => {};
-  for (const fn of [
-    '_renderSyncBannerHtml', '_renderNewChangeBannerHtml', '_renderCreditsBannerHtml',
-    '_renderHeaderStatusPill',
-  ]) DevChat[fn] = () => '';
-
   DevChat.currentSession = { id: 7, branch_name: 'dev/x', session_title: 'A change' };
   DevChat.messages = [];
 

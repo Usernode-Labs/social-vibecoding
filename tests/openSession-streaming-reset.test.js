@@ -177,8 +177,9 @@ function makeHarness() {
   DevChat._setupKeyboardShortcuts = () => {};
   DevChat._restoreDraft = () => {};
   DevChat.renderSessionList = () => {};
-  DevChat._renderSyncBannerHtml = () => '';
-  DevChat._renderNewChangeBannerHtml = () => '';
+  // The banners are a portal now — `_renderBanners` no-ops without the
+  // bridge, so there is nothing left to neutralize here.
+  DevChat._renderBanners = () => {};
   DevChat._loadSpecViewer = () => {};
   DevChat._startHeartbeat = () => {};
   DevChat._setNotifyOnDone = () => {};

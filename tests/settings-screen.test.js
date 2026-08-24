@@ -572,15 +572,22 @@ test('the credits banner deep-links all three ways to keep building', () => {
   // delegates to CreditOptions, which owns the same three routes the
   // in-chat card and the Generate-proposal modal render — so the wiring
   // assertion moved with it.
-  const fn = devChatJs.slice(devChatJs.indexOf('  _wireCreditsBanner() {'));
+  // The banner is a component since the four strips converted, so the wiring
+  // moved from `_wireCreditsBanner` in dev-chat.js to a ref in
+  // features/dev-chat/banners.tsx — one delegated click per mounted element,
+  // which is what `CreditOptions.wire` has always bound.
+  const bannersTsx = fs.readFileSync(
+    path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'banners.tsx'), 'utf8'
+  );
+  const fn = bannersTsx.slice(bannersTsx.indexOf('const wireRef'));
   // #1049 added a second argument: the two hand-off routes are handled in
   // place (they start the walkthrough in this chat) rather than navigated.
   // #1348 added a third: "Change session type" opens the venue sheet here
   // too, in blocked mode — the bar is two buttons now, and that is the one
   // standing in for every venue the bar used to list.
-  assert.match(fn.slice(0, 800), /CreditOptions\.wire\(banner, \{\s*\n?\s*onFlow:/,
+  assert.match(fn.slice(0, 800), /CO\?\.wire\?\.\(el, \{\s*\n?\s*onFlow:/,
     'the shared module wires the banner');
-  assert.match(fn.slice(0, 800), /onVenue: \(button\) => DevChat\.openVenueSheet\(button, \{ blocked: true \}\)/,
+  assert.match(fn.slice(0, 800), /openVenueSheet\?\.\(button, \{ blocked: true \}\)/,
     'and the venue door opens the sheet blocked, on the refusal banner');
   assert.doesNotMatch(fn.slice(0, 800), /Settings\.open\(/,
     'no direct module call any more');

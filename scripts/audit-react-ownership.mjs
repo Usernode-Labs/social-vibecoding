@@ -262,6 +262,14 @@ const OWNED = [
   // controller host; `_repaintSessionHeader` republishes the strip where
   // `_patchHeaderStatusPill` used to write that span's innerHTML.
   { sel: '#dc-session-header' },             // features/dev-chat/session-header.tsx
+  // The four banners. `#dc-banners` is a display:contents host, so what is
+  // below it are still `#dc-view`'s own flex children — and every one of them
+  // is the component's, including the two credits banners' buttons.
+  // `CreditOptions.wire` only ADDS a delegated listener to the banner element,
+  // which is not a DOM write and so needs no exception here; its
+  // `bannerActionsHtml` markup arrives through a dangerouslySetInnerHTML sink
+  // React itself owns.
+  { sel: '#dc-banners' },                    // features/dev-chat/banners.tsx
   { sel: '#llm-grants-list' },               // features/settings/grants-list.tsx
   { sel: '#cli-tokens-list' },               // features/settings/cli-tokens-list.tsx
   { sel: '#connectors-list' },               // features/settings/connectors-list.tsx

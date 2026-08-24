@@ -21,6 +21,7 @@
  */
 
 import { createElement } from 'react';
+import { flushSync } from 'react-dom';
 
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
 import { DevAttachStrip } from './attach-strip';
@@ -34,6 +35,8 @@ import {
   type QuickRepliesState,
   type RunnerState,
 } from './composer-chrome-store';
+import { DevChatBanners } from './banners';
+import { bannersStore, type BannersState } from './banners-store';
 import { SessionHeader } from './session-header';
 import { sessionHeaderStore, type SessionHeaderState } from './session-header-store';
 import { SessionList } from './session-list';
@@ -53,7 +56,19 @@ export interface DevChatBridge {
   publishSessionList(state: SessionListState): void;
   mountSessionHeader(host: Element | null, state: SessionHeaderState): void;
   publishSessionHeader(state: SessionHeaderState): void;
+  mountBanners(host: Element | null, state: BannersState): void;
+  publishBanners(state: BannersState): void;
 }
+
+// Both of `renderChatView`'s converted STRIPS flush synchronously, and for the
+// same reason the dev board's stores do: the line that used to publish them
+// was an `innerHTML` or an `outerHTML` assignment, so every caller was written
+// against a DOM that had already changed by the next statement.
+// `_maybeOpenShotVenueSheet` resolves `#dc-venue-select` on the line after the
+// header mounts, and every `_apply*Banner` inherited a caller that could do the
+// same. Restoring the contract costs a synchronous render of one small strip.
+sessionHeaderStore.setFlush(flushSync);
+bannersStore.setFlush(flushSync);
 
 export const devChatBridge: DevChatBridge = {
   // `renderChatView` rebuilds `#dc-attachments` on every chat-view render, so
@@ -138,6 +153,22 @@ export const devChatBridge: DevChatBridge = {
   // header alone and leaves the transcript's portal untouched.
   publishSessionHeader(state) {
     sessionHeaderStore.set(state);
+  },
+
+  // The four banners. `#dc-banners` is a `display: contents` host, so what
+  // mounts here are still `#dc-view`'s own flex children.
+  mountBanners(host, state) {
+    if (!host) return;
+    bannersStore.set(state);
+    mountLegacyPortal(host, createElement(DevChatBanners));
+  },
+
+  // Every `_apply*Banner` lands here. They were three copies of an
+  // outerHTML-swap / remove / insertAdjacentHTML dance whose whole purpose was
+  // to change a strip WITHOUT re-rendering the transcript under an in-flight
+  // stream; a publish does that by construction.
+  publishBanners(state) {
+    bannersStore.set(state);
   },
 };
 

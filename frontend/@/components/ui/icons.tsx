@@ -196,6 +196,44 @@ export const TrophyIcon = stroked(
  */
 export const CheckIcon = stroked('CheckIcon', 'M5 13l4 4L19 7');
 
+// ── The dev chat's banner glyphs ─────────────────────────────────────────
+//
+// Five ports, moved here from inline `<svg>`s in `renderChatView`'s four
+// banner templates when that strip converted. Each is the heroicons 24-outline
+// path the templates carried; none is a redraw, and none of the four glyphs
+// above is the same shape — `CheckIcon` and `PlusWideIcon` are the shell's own
+// smaller-box spellings, and swapping either in would have been a visual
+// change on a strip this slice does not otherwise touch.
+export const CheckLongIcon = stroked('CheckLongIcon', 'M4.5 12.75l6 6 9-13.5');
+export const PlusThinIcon = stroked('PlusThinIcon', 'M12 4.5v15m7.5-7.5h-15');
+export const ClockIcon = stroked('ClockIcon', 'M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z');
+export const UserCircleIcon = stroked(
+  'UserCircleIcon',
+  'M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z'
+);
+export const WarningTriangleIcon = stroked(
+  'WarningTriangleIcon',
+  'M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.732 0 2.814-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z'
+);
+
+/**
+ * The spinning arc, as the sync banner draws it.
+ *
+ * Not a `stroked()` glyph: it is a faint ring with a bright quarter-arc laid
+ * over it — a `<circle>` and a FILLED `<path>`, two different kinds of child —
+ * so the helpers above cannot express it. The colour and the size come from
+ * `className`, like every other icon here; `animate-spin` is the caller's, so
+ * a still frame of it can be rendered where a capture would otherwise be
+ * non-deterministic.
+ */
+export const SpinnerArcIcon = ({ id, className, ...rest }: IconProps) => (
+  <svg id={id} className={className} fill="none" viewBox="0 0 24 24" {...rest}>
+    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
+  </svg>
+);
+SpinnerArcIcon.displayName = 'SpinnerArcIcon';
+
 /**
  * A trophy on a plinth — the door to the Leaderboard screen, drawn on the
  * 24 grid at a finer weight than TrophyIcon's blockier mark. TrophyIcon was

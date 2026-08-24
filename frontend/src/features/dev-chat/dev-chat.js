@@ -1513,83 +1513,80 @@ const DevChat = {
     return userOut || globalOut;
   },
 
-  // #463: the credits-exhausted banner (sibling of the sync banner,
-  // #dc-sync-banner). Empty string when the show-condition doesn't hold.
-  _renderCreditsBannerHtml() {
-    if (!DevChat._creditsExhausted()) return '';
+  // #463: the credits-exhausted banner. Null when the show-condition does
+  // not hold; otherwise a `CreditsBannerView` (features/dev-chat/
+  // banners-store.ts) in one of its three reasons.
+  //
+  // The copy is RAW text, not entities: React escapes what it renders, and a
+  // `&rsquo;` in the model would arrive on screen as those seven characters.
+  _creditsBannerView() {
+    if (!DevChat._creditsExhausted()) return null;
     const b = DevChat.budget;
     const state = DevChat._creditState();
+    const actions = (over) => (window.CreditOptions
+      ? CreditOptions.bannerActionsHtml({
+        hasApiKey: false,
+        globalOut: false,
+        externalFlowsAvailable: DevChat._externalFlowsAvailable(),
+        sessionBridgeEnabled: DevChat._sessionBridgeEnabled(),
+        ...over,
+      })
+      : '');
+    const base = {
+      id: 'dc-credits-banner',
+      leadTagged: false,
+      reset: null,
+      // #1348: blocked, so the sheet marks the venue that just refused the
+      // turn instead of offering it as a way out of its own refusal.
+      blockedVenue: true,
+    };
     if (state && state.level === 'locked') {
-      return `
-        <div id="dc-credits-banner" class="flex flex-wrap items-center gap-2 px-3 py-2 bg-amber-50 dark:bg-amber-950/30 border-b border-amber-200 dark:border-amber-900/50 text-xs">
-          <svg class="w-4 h-4 text-amber-500 dark:text-amber-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z"/>
-          </svg>
-          <span class="text-amber-900 dark:text-amber-200 flex-1 min-w-[14rem]"><span class="font-semibold">Connect GitHub or X to unlock $10/day of Usernode credits.</span> Either account unlocks the same tier; connecting both does not stack credits.</span>
-          ${window.CreditOptions ? CreditOptions.bannerActionsHtml({
-            hasApiKey: false,
-            verificationRequired: true,
-            globalOut: false,
-            externalFlowsAvailable: DevChat._externalFlowsAvailable(),
-            sessionBridgeEnabled: DevChat._sessionBridgeEnabled(),
-          }) : ''}
-        </div>`;
+      return {
+        ...base,
+        tone: 'amber',
+        icon: 'person',
+        lead: 'Connect GitHub or X to unlock $10/day of Usernode credits.',
+        tail: ' Either account unlocks the same tier; connecting both does not stack credits.',
+        actionsHtml: actions({ verificationRequired: true }),
+      };
     }
     if (state && state.level === 'unavailable') {
-      return `
-        <div id="dc-credits-banner" class="flex flex-wrap items-center gap-2 px-3 py-2 bg-amber-50 dark:bg-amber-950/30 border-b border-amber-200 dark:border-amber-900/50 text-xs">
-          <span class="text-amber-900 dark:text-amber-200 flex-1 min-w-[14rem]"><span class="font-semibold">Credit eligibility could not be verified.</span> Try again shortly, or use your own API key or another build venue.</span>
-          ${window.CreditOptions ? CreditOptions.bannerActionsHtml({
-            hasApiKey: false,
-            verificationRequired: false,
-            globalOut: false,
-            externalFlowsAvailable: DevChat._externalFlowsAvailable(),
-            sessionBridgeEnabled: DevChat._sessionBridgeEnabled(),
-          }) : ''}
-        </div>`;
+      return {
+        ...base,
+        tone: 'amber',
+        icon: null,
+        lead: 'Credit eligibility could not be verified.',
+        tail: ' Try again shortly, or use your own API key or another build venue.',
+        actionsHtml: actions({ verificationRequired: false }),
+      };
     }
     const userOut = b.spentCents >= b.limitCents;
-    const lead = userOut
-      ? 'You&rsquo;ve used up today&rsquo;s free AI credits.'
-      : 'The platform&rsquo;s shared daily AI budget is used up.';
-    return `
-      <div id="dc-credits-banner" class="flex flex-wrap items-center gap-2 px-3 py-2 bg-red-50 dark:bg-red-950/30 border-b border-red-200 dark:border-red-900/50 text-xs">
-        <svg class="w-4 h-4 text-red-500 dark:text-red-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"/>
-        </svg>
-        <span class="text-red-800 dark:text-red-200 flex-1 min-w-[14rem]"><span class="font-semibold">${lead}</span> <span data-credits-reset="1">${escapeHtml(DevChat._creditResetSentence() || 'Free credits reset at midnight UTC.')}</span> Or keep working right now ${DevChat._externalFlowsAvailable()
-          ? 'on your own Claude or ChatGPT plan, with your own API key, or with a coding tool on your computer.'
-          : 'with your own API key, a coding tool on your computer, or your Claude.ai / ChatGPT subscription.'}</span>
-        ${window.CreditOptions ? CreditOptions.bannerActionsHtml({
-          hasApiKey: !!(window.Settings && Settings.state && Settings.state.hasApiKey),
-          globalOut: !userOut,
-          externalFlowsAvailable: DevChat._externalFlowsAvailable(),
-          sessionBridgeEnabled: DevChat._sessionBridgeEnabled(),
-        }) : ''}
-      </div>`;
+    return {
+      ...base,
+      tone: 'red',
+      icon: 'warn',
+      lead: userOut
+        ? 'You\u2019ve used up today\u2019s free AI credits.'
+        : 'The platform\u2019s shared daily AI budget is used up.',
+      reset: DevChat._creditResetSentence() || 'Free credits reset at midnight UTC.',
+      tail: ' Or keep working right now ' + (DevChat._externalFlowsAvailable()
+        ? 'on your own Claude or ChatGPT plan, with your own API key, or with a coding tool on your computer.'
+        : 'with your own API key, a coding tool on your computer, or your Claude.ai / ChatGPT subscription.'),
+      actionsHtml: actions({
+        hasApiKey: !!(window.Settings && Settings.state && Settings.state.hasApiKey),
+        globalOut: !userOut,
+      }),
+    };
   },
 
-  // Swap/insert/remove the banner in place (mirror of _applySyncBanner,
-  // minus the full re-render fallback: the banner slot sits directly
-  // above .dc-session-body, so we can insert without re-rendering and
-  // avoid disturbing an in-flight stream).
+  // The banner's own repaint. It read the live element, swapped its
+  // `outerHTML`, `remove()`d it or `insertAdjacentHTML`'d it back before
+  // `.dc-session-body` — three code paths for "say something different here"
+  // — precisely so a banner could change mid-session without re-rendering the
+  // transcript under an in-flight stream. A publish does that by
+  // construction, and the message list is not in the subtree.
   _applyCreditsBanner() {
-    const existing = document.getElementById('dc-credits-banner');
-    const html = DevChat.currentSession ? DevChat._renderCreditsBannerHtml() : '';
-    if (existing) {
-      if (html) {
-        existing.outerHTML = html;
-        DevChat._wireCreditsBanner();
-      } else {
-        existing.remove();
-      }
-    } else if (html) {
-      const body = document.querySelector('.dc-session-body');
-      if (body) {
-        body.insertAdjacentHTML('beforebegin', html);
-        DevChat._wireCreditsBanner();
-      }
-    }
+    DevChat._publishBanners();
   },
 
   // ── The proactive low-balance warning (#593) ───────────────────────
@@ -1618,60 +1615,36 @@ const DevChat = {
 
   // Amber sibling of the red banner, same slot and the same route buttons
   // — nothing has been refused yet, so the copy states the headroom and
-  // the boundary instead of announcing a failure.
-  _renderCreditsLowBannerHtml() {
-    if (!DevChat._creditsLow()) return '';
+  // the boundary instead of announcing a failure. ONE shape with it
+  // (features/dev-chat/banners-store.ts): they are one banner in two tenses,
+  // and writing them as two templates is what let their copy drift.
+  _creditsLowBannerView() {
+    if (!DevChat._creditsLow()) return null;
     const CO = window.CreditOptions;
-    if (!CO) return '';
+    if (!CO) return null;
     const state = DevChat._creditState();
-    return `
-      <div id="dc-credits-low-banner" class="flex flex-wrap items-center gap-2 px-3 py-2 bg-amber-50 dark:bg-amber-950/30 border-b border-amber-200 dark:border-amber-900/50 text-xs">
-        <svg class="w-4 h-4 text-amber-500 dark:text-amber-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z"/>
-        </svg>
-        <span class="text-amber-900 dark:text-amber-200 flex-1 min-w-[14rem]"><span class="font-semibold" data-credits-low-lead="1">${escapeHtml(CO.lowLead(state))}</span> <span data-credits-reset="1">${escapeHtml(CO.resetSentence(state))}</span> Set up another way to keep building before it runs out mid-change.</span>
-        ${CO.bannerActionsHtml({
-    hasApiKey: false,
-    globalOut: false,
-    externalFlowsAvailable: DevChat._externalFlowsAvailable(),
-    sessionBridgeEnabled: DevChat._sessionBridgeEnabled(),
-  })}
-      </div>`;
+    return {
+      id: 'dc-credits-low-banner',
+      tone: 'amber',
+      icon: 'clock',
+      lead: CO.lowLead(state),
+      leadTagged: true,
+      reset: CO.resetSentence(state),
+      tail: ' Set up another way to keep building before it runs out mid-change.',
+      actionsHtml: CO.bannerActionsHtml({
+        hasApiKey: false,
+        globalOut: false,
+        externalFlowsAvailable: DevChat._externalFlowsAvailable(),
+        sessionBridgeEnabled: DevChat._sessionBridgeEnabled(),
+      }),
+      // NOT blocked: credits are low, not gone — the in-chat venue still
+      // works, and marking it unavailable would be a lie told early.
+      blockedVenue: false,
+    };
   },
 
-  // Same insert/swap/remove dance as _applyCreditsBanner, and the same
-  // reason for it: the slot sits directly above .dc-session-body, so the
-  // banner can appear mid-session without re-rendering the transcript
-  // under an in-flight stream.
   _applyCreditsLowBanner() {
-    const existing = document.getElementById('dc-credits-low-banner');
-    const html = DevChat.currentSession ? DevChat._renderCreditsLowBannerHtml() : '';
-    if (existing) {
-      if (html) {
-        existing.outerHTML = html;
-        DevChat._wireCreditsLowBanner();
-      } else {
-        existing.remove();
-      }
-    } else if (html) {
-      const body = document.querySelector('.dc-session-body');
-      if (body) {
-        body.insertAdjacentHTML('beforebegin', html);
-        DevChat._wireCreditsLowBanner();
-      }
-    }
-  },
-
-  _wireCreditsLowBanner() {
-    const banner = document.getElementById('dc-credits-low-banner');
-    if (banner && window.CreditOptions) {
-      CreditOptions.wire(banner, {
-        onFlow: (flow) => DevChat._devFlowFromCredits(flow),
-        // NOT blocked: credits are low, not gone — the in-chat venue still
-        // works, and marking it unavailable would be a lie told early.
-        onVenue: (button) => DevChat.openVenueSheet(button),
-      });
-    }
+    DevChat._publishBanners();
   },
 
   // Screenshot-state deep link `?shot=credits-low` (#593).
@@ -1733,22 +1706,6 @@ const DevChat = {
   // "no" rather than briefly offering a venue the user never enabled.
   _sessionBridgeEnabled() {
     return !!(typeof App !== 'undefined' && App.user && App.user.sessionBridgeEnabled);
-  },
-
-  _wireCreditsBanner() {
-    // Every route is rendered and wired by CreditOptions, which does the hash
-    // navigation — real navigations, so the browser / device back gesture
-    // returns the user to this chat. The two #1049 entries are handled in
-    // place instead: they start the walkthrough right here.
-    const banner = document.getElementById('dc-credits-banner');
-    if (banner && window.CreditOptions) {
-      CreditOptions.wire(banner, {
-        onFlow: (flow) => DevChat._devFlowFromCredits(flow),
-        // #1348: blocked, so the sheet marks the venue that just refused
-        // the turn instead of offering it as a way out of its own refusal.
-        onVenue: (button) => DevChat.openVenueSheet(button, { blocked: true }),
-      });
-    }
   },
 
   // Best-effort: a failed save must not block the venue the user just chose.
@@ -4534,8 +4491,11 @@ const DevChat = {
 
     // #252: the sync banner's button disables (with a hint) while a
     // chat turn holds the worker — keep it in step with every
-    // streaming transition. Cheap no-op when no banner is mounted.
-    if (document.getElementById('dc-sync-banner')) DevChat._applySyncBanner();
+    // streaming transition. The `#dc-sync-banner` guard is gone with the
+    // element lookup it protected: a publish with no banner to draw costs one
+    // shallow render of an empty fragment, and asking the DOM whether there is
+    // a banner is now asking the wrong owner.
+    DevChat._publishBanners();
 
     // #285: hide the quick-reply pills while a turn is streaming (they're
     // stale until the new reply lands), restore them when it settles.
@@ -6535,6 +6495,18 @@ const DevChat = {
   // The rows ride in WITH the mount rather than in a publish after it: an
   // empty strip for one frame is a visible flicker on the one row that is
   // supposed to be the constant on this screen.
+  // Fill `#dc-banners`, the display:contents host `renderChatView` writes.
+  // Mounted per render like the other strips, with the state riding in so a
+  // banner that has something to say never blinks in a frame late.
+  _renderBanners() {
+    const host = document.getElementById('dc-banners');
+    if (!host) return;
+    const react = (typeof window !== 'undefined' && window.UsernodeReact)
+      ? window.UsernodeReact.devChat : null;
+    if (!react || !react.mountBanners) return;
+    react.mountBanners(host, DevChat._bannersView());
+  },
+
   _renderSessionHeader() {
     const host = document.getElementById('dc-session-header');
     if (!host) return;
@@ -7404,68 +7376,26 @@ const DevChat = {
     } catch { /* network blip — ignore, next event/reload reconciles */ }
   },
 
-  _renderSyncBannerHtml(session) {
-    const behind = session && Number(session.behind_main) || 0;
+  // The sync-with-main banner, as a view (features/dev-chat/banners-store.ts)
+  // in its four states. Which state is entirely `_syncStateFor`'s and
+  // `behind_main`'s; this carries the answer.
+  _syncBannerView(session) {
+    const behind = (session && Number(session.behind_main)) || 0;
     const sync = DevChat._syncStateFor(session);
-    if (behind <= 0 && !sync) return '';
-
-    const warnIcon = `<svg class="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.732 0 2.814-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"/>
-        </svg>`;
-    const btnCls = 'rounded-md bg-amber-600 hover:bg-amber-500 disabled:opacity-60 disabled:cursor-not-allowed px-3 py-1 text-xs font-medium text-white transition-colors shrink-0';
-    const chatBusy = !!DevChat.isStreaming;
-    const busyAttr = chatBusy
-      ? 'disabled title="Claude is busy with a turn — sync will be available when it finishes"'
-      : '';
-
-    // In flight — spinner + phase text, disabled button.
+    if (behind <= 0 && !sync) return null;
+    // Mid-turn a sync is refused by the route anyway (409, "a chat turn holds
+    // the worker"), so the button says so before the click rather than after.
+    const busy = !!DevChat.isStreaming;
     if (sync && !sync.terminal) {
-      return `
-      <div id="dc-sync-banner" class="flex items-center gap-2 px-3 py-2 bg-amber-50 dark:bg-amber-950/30 border-b border-amber-200 dark:border-amber-900/50 text-xs">
-        <svg class="w-4 h-4 animate-spin text-amber-600 dark:text-amber-400 shrink-0" fill="none" viewBox="0 0 24 24">
-          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
-        </svg>
-        <span class="text-amber-800 dark:text-amber-200 flex-1">${escapeHtml(DevChat._syncPhaseLabel(sync.phase))}</span>
-        <button id="dc-sync-btn" type="button" disabled class="${btnCls}">Syncing…</button>
-      </div>`;
+      return { kind: 'inflight', message: DevChat._syncPhaseLabel(sync.phase) };
     }
-
-    // Terminal success — green confirmation; auto-dismissed by the
-    // timer in _setSyncTerminal (the behind_main → 0 broadcast removes
-    // the banner anyway).
     if (sync && sync.terminal && sync.ok) {
-      return `
-      <div id="dc-sync-banner" class="flex items-center gap-2 px-3 py-2 bg-emerald-50 dark:bg-emerald-950/30 border-b border-emerald-200 dark:border-emerald-900/50 text-xs">
-        <svg class="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5"/>
-        </svg>
-        <span class="text-emerald-800 dark:text-emerald-200 flex-1">${escapeHtml(sync.message || 'Synced with main.')}</span>
-      </div>`;
+      return { kind: 'ok', message: sync.message || 'Synced with main.' };
     }
-
-    // Terminal failure (unresolved conflict, budget/infra error, or the
-    // 409 chat-turn-busy notice) — the message stays put with a
-    // re-enabled Try again button. No alert() popups.
     if (sync && sync.terminal && !sync.ok) {
-      return `
-      <div id="dc-sync-banner" class="flex items-center gap-2 px-3 py-2 bg-amber-50 dark:bg-amber-950/30 border-b border-amber-200 dark:border-amber-900/50 text-xs">
-        ${warnIcon}
-        <span class="text-amber-800 dark:text-amber-200 flex-1">${escapeHtml(sync.message || 'Sync with main failed.')}</span>
-        <button id="dc-sync-btn" type="button" ${busyAttr} class="${btnCls}">Try again</button>
-      </div>`;
+      return { kind: 'failed', message: sync.message || 'Sync with main failed.', busy };
     }
-
-    // Idle — behind main, nothing in flight.
-    const noun = behind === 1 ? 'commit' : 'commits';
-    return `
-      <div id="dc-sync-banner" class="flex items-center gap-2 px-3 py-2 bg-amber-50 dark:bg-amber-950/30 border-b border-amber-200 dark:border-amber-900/50 text-xs">
-        ${warnIcon}
-        <span class="text-amber-800 dark:text-amber-200 flex-1">
-          main has moved <span class="font-semibold">${behind}</span> ${noun} ahead of this branch.
-        </span>
-        <button id="dc-sync-btn" type="button" ${busyAttr} class="${btnCls}">Sync with main</button>
-      </div>`;
+    return { kind: 'behind', behind, busy };
   },
 
   // A session maps to exactly one branch + one PR. Once that PR exists
@@ -7476,67 +7406,115 @@ const DevChat = {
   // already has a PR and it's past the active-editing stage
   // (promoted / merging / merged). Active sessions with a PR don't get
   // the banner — the user is presumably still refining that change.
-  _renderNewChangeBannerHtml(session) {
-    if (!session || !session.pr_number) return '';
+  _newChangeBannerView(session) {
+    if (!session || !session.pr_number) return null;
     const status = session.status;
-    if (status !== 'promoted' && status !== 'merging' && status !== 'merged') return '';
+    if (status !== 'promoted' && status !== 'merging' && status !== 'merged') return null;
     const proposed = status === 'promoted' || status === 'merging';
-    const stateLabel = proposed
-      ? `proposed to the group (PR #${session.pr_number})`
-      : `merged (PR #${session.pr_number})`;
-    return `
-      <div id="dc-new-change-banner" class="flex items-center gap-2 px-3 py-2 bg-violet-50 dark:bg-violet-950/30 border-b border-violet-200 dark:border-violet-900/50 text-xs">
-        <svg class="w-4 h-4 text-violet-600 dark:text-violet-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/>
-        </svg>
-        <span class="text-violet-800 dark:text-violet-200 flex-1">
-          This change has been ${stateLabel}. New work in this chat is added to the same PR — start a new change to keep PRs focused.
-        </span>
-        <button id="dc-new-change-btn" type="button"
-          class="rounded-md bg-violet-600 hover:bg-violet-500 disabled:opacity-60 disabled:cursor-not-allowed px-3 py-1 text-xs font-medium text-white transition-colors shrink-0">
-          Start a new change
-        </button>
-      </div>`;
+    return {
+      stateLabel: proposed
+        ? `proposed to the group (PR #${session.pr_number})`
+        : `merged (PR #${session.pr_number})`,
+      pending: !!DevChat._newChangePending,
+    };
   },
 
   // Spin up a fresh session (new branch → new PR) for the same app and
   // open it. Reuses createSession's per-user active-session cap (whatever
   // the server resolves for this viewer — see `caps`) + error alerting. Intentionally does NOT carry over Claude's memory or
   // the spec — a new change starts clean on its own branch.
+  // The button's own busy state. It was `btn.disabled` + `btn.textContent`
+  // written onto the element by id — a second author on a node the banners
+  // component renders now, so it is a published flag instead.
+  _newChangePending: false,
+
   async startNewChange() {
     const slug = (typeof AppView !== 'undefined' && AppView.appData && AppView.appData.slug)
       || (DevChat.currentSession && DevChat.currentSession.app_slug);
     if (!slug) return;
-    const btn = document.getElementById('dc-new-change-btn');
-    if (btn) { btn.disabled = true; btn.textContent = 'Starting…'; }
+    DevChat._newChangePending = true;
+    DevChat._publishBanners();
     const session = await DevChat.createSession(slug);
     if (!session) {
-      if (btn) { btn.disabled = false; btn.textContent = 'Start a new change'; }
+      DevChat._newChangePending = false;
+      DevChat._publishBanners();
       return;
     }
+    DevChat._newChangePending = false;
     await DevChat.openSession(session.id, { userOpened: true });
     DevChat.renderChatView();
     if (typeof App !== 'undefined' && App.updateHash) App.updateHash();
     if (typeof DevChat.loadActiveSessions === 'function') DevChat.loadActiveSessions();
   },
 
-  // Replace just the banner element if the rest of the chat view is
-  // mounted; otherwise full re-render so the new element lands in the
-  // right slot. Shared by every path that mutates banner-relevant
-  // state (behind_main updates, sync_status events, the click handler).
+  // Every path that changes banner-relevant state — a behind_main update, a
+  // sync_status event, the click handler — ends here.
+  //
+  // It used to read the live `#dc-sync-banner`, swap its `outerHTML`,
+  // `remove()` it, or fall through to a whole `renderChatView` when the
+  // element was not there to swap. That last branch was the expensive one: it
+  // rebuilt the transcript to make a strip appear. All four banners publish
+  // into one store now, so appearing, changing and vanishing are the same act
+  // and none of them touches the message list.
   _applySyncBanner() {
-    const existing = document.getElementById('dc-sync-banner');
-    const html = DevChat.currentSession
-      ? DevChat._renderSyncBannerHtml(DevChat.currentSession) : '';
-    if (existing) {
-      if (html) {
-        existing.outerHTML = html;
-        DevChat._wireSyncBanner();
+    DevChat._publishBanners();
+  },
+
+  // The one publish, from the four models.
+  _publishBanners() {
+    const react = (typeof window !== 'undefined' && window.UsernodeReact)
+      ? window.UsernodeReact.devChat : null;
+    if (!react || !react.publishBanners) return;
+    react.publishBanners(DevChat._bannersView());
+  },
+
+  _bannersView() {
+    const session = DevChat.currentSession;
+    return {
+      sync: session ? DevChat._syncBannerView(session) : null,
+      newChange: session ? DevChat._newChangeBannerView(session) : null,
+      credits: session ? DevChat._creditsBannerView() : null,
+      creditsLow: session ? DevChat._creditsLowBannerView() : null,
+    };
+  },
+
+  // Start a sync, from the banner's button. Named, because the component
+  // dispatches by name rather than holding a closure over a render.
+  async startSyncWithMain() {
+    const st = DevChat._syncState;
+    if (st && !st.terminal) return; // already in flight
+    const sessionId = DevChat.currentSession?.id;
+    if (!sessionId) return;
+    // Optimistic in-flight state; the WS sync_status events and the
+    // poll fallback take over from here. If a sync is already
+    // running server-side this POST coalesces onto it and returns
+    // the same final result.
+    DevChat._setSyncInFlight(sessionId, 'starting');
+    try {
+      const resp = await fetch(`/api/sessions/${sessionId}/sync-main`, { method: 'POST' });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        // 409 = a chat turn holds the worker (friendly message from
+        // the route); anything else is a real failure. Either way:
+        // inline banner text, never alert().
+        DevChat._setSyncTerminal(sessionId, {
+          ok: false,
+          message: data.error || `Sync failed (HTTP ${resp.status}).`,
+        });
       } else {
-        existing.remove();
+        // The POST response is the authoritative final result —
+        // applied idempotently with the WS terminal event. Refresh
+        // the session record so behind_main + the system note pick
+        // up the new state even if the tab missed the WS events.
+        DevChat._setSyncTerminal(sessionId, {
+          ok: data.ok !== false,
+          message: data.message,
+        });
+        await DevChat.openSession(sessionId);
+        DevChat.renderChatView();
       }
-    } else if (html) {
-      DevChat.renderChatView();
+    } catch (err) {
+      DevChat._setSyncTerminal(sessionId, { ok: false, message: `Sync failed: ${err.message}` });
     }
   },
 
@@ -7634,48 +7612,6 @@ const DevChat = {
       clearInterval(DevChat._syncPollTimer);
       DevChat._syncPollTimer = null;
     }
-  },
-
-  _wireSyncBanner() {
-    const btn = document.getElementById('dc-sync-btn');
-    if (!btn) return;
-    btn.addEventListener('click', async () => {
-      const st = DevChat._syncState;
-      if (st && !st.terminal) return; // already in flight
-      const sessionId = DevChat.currentSession?.id;
-      if (!sessionId) return;
-      // Optimistic in-flight state; the WS sync_status events and the
-      // poll fallback take over from here. If a sync is already
-      // running server-side this POST coalesces onto it and returns
-      // the same final result.
-      DevChat._setSyncInFlight(sessionId, 'starting');
-      try {
-        const resp = await fetch(`/api/sessions/${sessionId}/sync-main`, { method: 'POST' });
-        const data = await resp.json().catch(() => ({}));
-        if (!resp.ok) {
-          // 409 = a chat turn holds the worker (friendly message from
-          // the route); anything else is a real failure. Either way:
-          // inline banner text, never alert().
-          DevChat._setSyncTerminal(sessionId, {
-            ok: false,
-            message: data.error || `Sync failed (HTTP ${resp.status}).`,
-          });
-        } else {
-          // The POST response is the authoritative final result —
-          // applied idempotently with the WS terminal event. Refresh
-          // the session record so behind_main + the system note pick
-          // up the new state even if the tab missed the WS events.
-          DevChat._setSyncTerminal(sessionId, {
-            ok: data.ok !== false,
-            message: data.message,
-          });
-          await DevChat.openSession(sessionId);
-          DevChat.renderChatView();
-        }
-      } catch (err) {
-        DevChat._setSyncTerminal(sessionId, { ok: false, message: `Sync failed: ${err.message}` });
-      }
-    });
   },
 
   // Called by App.handleSessionUpdate when an action='behind_main'
@@ -7778,10 +7714,12 @@ const DevChat = {
            once the chat scrolls, and a rendered className would be a second
            author on the same attribute. -->
       <div id="dc-session-header" class="flex items-center gap-2 px-3 py-2 border-b border-zinc-200 dark:border-zinc-800 shrink-0"></div>
-      ${DevChat._renderSyncBannerHtml(DevChat.currentSession)}
-      ${DevChat._renderNewChangeBannerHtml(DevChat.currentSession)}
-      ${DevChat._renderCreditsBannerHtml()}
-      ${DevChat._renderCreditsLowBannerHtml()}
+      <!-- The four banners are React's (features/dev-chat/banners.tsx). The
+           host carries Tailwind's "contents" utility — display:contents — so
+           it generates NO box: #dc-view is a flex column and each banner has
+           to stay exactly the flex child it was, rather than becoming a block
+           child of a wrapper. -->
+      <div id="dc-banners" class="contents"></div>
       <div class="dc-session-body flex-1 flex min-h-0">
         <div id="dc-tab-chat" class="dc-chat-pane flex-1 flex flex-col min-h-0">
             <!-- #1348: the launchpad is PINNED TO THE TOP of the chat area.
@@ -7939,11 +7877,11 @@ const DevChat = {
     DevChat.renderMessages();
     DevChat._renderQuickReplies();
     DevChat._wireQuickReplies();
-    // #463: the template above may have rendered the credits banner from
-    // the cached budget — wire its button now; refreshBudget() re-syncs
-    // banner + meter once fresh figures land.
-    DevChat._wireCreditsBanner();
-    DevChat._wireCreditsLowBanner();
+    // #463: the banners may have something to say from the CACHED budget, so
+    // they mount with it; refreshBudget() re-syncs banner + meter once fresh
+    // figures land. Their buttons are the component's, and CreditOptions'
+    // delegated click is bound from its own ref.
+    DevChat._renderBanners();
     DevChat._wireLaunchpad();
     DevChat.refreshBudget();
     // Attach tracker first so the scroll set below is observed, then
@@ -8026,12 +7964,8 @@ const DevChat = {
     // `#dc-pr-header-link` and `#dc-back` are the header component's too —
     // `revealPrCard()` and `leaveSession()` above are what they call.
 
-    DevChat._wireSyncBanner();
-
-    const newChangeBtn = document.getElementById('dc-new-change-btn');
-    if (newChangeBtn) {
-      newChangeBtn.addEventListener('click', () => DevChat.startNewChange());
-    }
+    // `#dc-sync-btn` and `#dc-new-change-btn` are the banners component's —
+    // `startSyncWithMain()` and `startNewChange()` are what they call.
 
     document.getElementById('dc-form').addEventListener('submit', (e) => {
       e.preventDefault();
