@@ -114,6 +114,13 @@ export function patchTranscriptMessage(id: number, patch: Partial<TranscriptMess
         ...view,
         messages: view.messages.map((m: TranscriptMessage) => {
           if (m.id !== id) return m;
+          // A patch that says nothing new is not a state change. That is a
+          // saved repaint everywhere, and a REQUIREMENT for the one caller
+          // that runs after every render: `refreshVoteControls` patches each
+          // vote row's tint from the effect in transcript.tsx, so an
+          // unconditional new object would render → patch → render forever.
+          const keys = Object.keys(patch) as (keyof TranscriptMessage)[];
+          if (keys.every((key) => m[key] === patch[key])) return m;
           hit = true;
           return { ...m, ...patch };
         }),

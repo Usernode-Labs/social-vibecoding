@@ -51,14 +51,14 @@
  * it the next time anything else about the message changed.
  */
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
-import { ChatMessageRow, ThreadReplySummary } from '@/components/ui/chat';
+import { ChatMessageRow } from '@/components/ui/chat';
 import { Avatar, ReactionPill } from '@/components/ui/feed';
 import { BookmarkIcon, BookmarkSolidIcon } from '@/components/ui/icons';
 
 import { useStoreState } from '../../lib/use-store-state';
-import { transcriptStore, type TranscriptMessage } from './transcript-store';
+import { transcriptStore, type Attachment, type Quote, type TranscriptMessage } from './transcript-store';
 
 function controller(): any {
   return (typeof window !== 'undefined' ? (window as any).GroupChat : null) || null;
@@ -88,6 +88,167 @@ function swatchFor(name: string): string {
 function Body({ html }: { html: string }) {
   const wrapper = useMemo(() => ({ __html: html }), [html]);
   return <div className="gc-msg-content" dangerouslySetInnerHTML={wrapper} />;
+}
+
+/**
+ * The quoted reply above a message (#15).
+ *
+ * ── Why this is not a widget primitive ────────────────────────────────
+ *
+ * It was, briefly, and that is what went wrong: the conversion reached for
+ * `ThreadReplySummary`, the language's "N replies" control for a thread, so a
+ * quoted reply rendered "1 reply alice" — no icon, no snippet, and the wrong
+ * sentence. `.gc-quoted` is restored here, class for class.
+ *
+ * It stays on app.css for now because it SHARES its rules with
+ * `.gc-reply-preview-inner`, the composer's staged-reply chip — one border,
+ * one author line, one snippet line, drawn twice. That chip is still an HTML
+ * string in a host `public/js/app-view.js` owns, so reskinning this half alone
+ * would split a deliberate pair. Both convert together when the composer does.
+ *
+ * ── The attributes are the handler's ──────────────────────────────────
+ *
+ * No `onClick`. `_attachQuoteHandlers` binds one listener on the messages
+ * container, checks `.gc-quoted` BEFORE its "real links and buttons win" rule,
+ * and dispatches on `data-quote-source`: a PR opens `data-quote-href` in a new
+ * tab, anything else scrolls to `data-quote-ref` and flashes it. Those three
+ * attributes and the class are the whole contract.
+ */
+function QuoteBlock({ quote }: { quote: Quote }) {
+  return (
+    <div
+      className="gc-quoted"
+      data-quote-source={quote.source}
+      {...(quote.source === 'pr'
+        ? { 'data-quote-href': quote.href || '' }
+        : { 'data-quote-ref': quote.targetId ?? '' })}
+    >
+      <span className="gc-quoted-author">{`${quote.icon} ${quote.username}`}</span>
+      <span className="gc-quoted-snippet">{quote.excerpt}</span>
+    </div>
+  );
+}
+
+/**
+ * The files on a message.
+ *
+ * Four shapes, exactly as the string renderer this replaces drew them: an
+ * image is an inline thumbnail wrapped in a link to full size; a markdown
+ * file is a chip whose name opens the spec side panel; an HTML file is a chip
+ * with a sandboxed Preview beside its download; anything else is one download
+ * chip. It is rendered outside the message body because DOMPurify strips
+ * `<img>` out of untrusted markdown and must keep doing so — these elements
+ * point only at the app-gated attachment routes the module resolved.
+ *
+ * ── Two seams stay the module's ───────────────────────────────────────
+ *
+ * The markdown chip keeps `data-att-md` / `data-att-name` and NO onClick:
+ * `_ensureAttachClickHandler` binds one capture-phase listener on the
+ * document, and the capture plus `stopPropagation()` is what keeps the same
+ * click from also staging a tap-to-quote. Per-row handlers would not have
+ * that ordering.
+ *
+ * And `_quoteFromRow` reads `.dc-msg-attachments .dc-attach-name` (falling
+ * back to an `img`'s `alt`) to caption a reply to a file-only message, so
+ * those two hooks are a contract, not decoration.
+ */
+function AttachmentBadge({ badge }: { badge: string | null }) {
+  return badge ? <span className="dc-attach-kind">{badge}</span> : null;
+}
+
+function AttachmentImage({ att }: { att: Attachment }) {
+  // A staging clone copies chat_messages but not attachment bytes
+  // (staging:private), so a thumbnail whose blob is gone degrades to a plain
+  // chip rather than a broken-image icon. The module used to rewrite the
+  // anchor in place; this is the same anchor, drawn the other way.
+  const [broken, setBroken] = useState(false);
+  if (broken) {
+    return (
+      <a href={att.url} target="_blank" rel="noopener" className="dc-msg-att-chip">
+        {`🖼 ${att.name}`}
+      </a>
+    );
+  }
+  return (
+    <a href={att.url} target="_blank" rel="noopener" title={`${att.name} — open full size`}>
+      <img
+        className="dc-msg-att-img"
+        src={att.url}
+        alt={att.name}
+        loading="lazy"
+        onError={() => setBroken(true)}
+      />
+    </a>
+  );
+}
+
+function AttachmentChip({ att }: { att: Attachment }) {
+  const size = <span className="dc-attach-size">{att.size}</span>;
+  const download = (
+    <a className="gc-att-action" href={att.url} download={att.name} title={`Download ${att.name}`}>
+      ↓
+    </a>
+  );
+  if (att.kind === 'markdown') {
+    return (
+      <span className="dc-msg-att-chip">
+        <AttachmentBadge badge={att.badge} />
+        <button
+          type="button"
+          className="dc-attach-name gc-att-open"
+          data-att-md={att.url}
+          data-att-name={att.name}
+          title={`View ${att.name}`}
+        >
+          {att.name}
+        </button>
+        {size}
+        {download}
+      </span>
+    );
+  }
+  if (att.kind === 'html') {
+    return (
+      <span className="dc-msg-att-chip">
+        <AttachmentBadge badge={att.badge} />
+        <span className="dc-attach-name">{att.name}</span>
+        {size}
+        <a
+          className="gc-att-action"
+          href={`${att.url}/view`}
+          target="_blank"
+          rel="noopener"
+          title={`Open sandboxed preview of ${att.name}`}
+        >
+          Preview
+        </a>
+        {download}
+      </span>
+    );
+  }
+  return (
+    <a
+      className="dc-msg-att-chip"
+      href={att.url}
+      download={att.name}
+      title={`Download ${att.name}`}
+    >
+      <AttachmentBadge badge={att.badge} />
+      <span className="dc-attach-name">{att.name}</span>
+      {size}
+    </a>
+  );
+}
+
+export function Attachments({ items }: { items: Attachment[] }) {
+  if (!items.length) return null;
+  return (
+    <div className="dc-msg-attachments">
+      {items.map((att) => (att.kind === 'image'
+        ? <AttachmentImage key={att.id} att={att} />
+        : <AttachmentChip key={att.id} att={att} />))}
+    </div>
+  );
 }
 
 /**
@@ -182,14 +343,31 @@ function RowActions({ msg }: { msg: TranscriptMessage }) {
 }
 
 /** A system or vote row — one line of text, plus whatever the module fills in. */
-function SystemRow({ msg }: { msg: TranscriptMessage }) {
+export function SystemRow({ msg }: { msg: TranscriptMessage }) {
   return (
     <div
-      className={`gc-msg-system ${msg.kind === 'vote' ? 'gc-msg-vote' : ''}${msg.voteRowClass ? ` ${msg.voteRowClass}` : ''}`}
+      className={`gc-msg-system ${msg.kind === 'vote' ? 'gc-msg-vote' : ''}${msg.voteRowClass ? ` ${msg.voteRowClass}` : ''}${msg.flash ? ' gc-msg-flash' : ''}`}
       data-msg-id={msg.id ?? ''}
     >
       <span className="gc-msg-system-text">{msg.systemText}</span>
-      {msg.kind === 'vote' ? <span data-gc-vote-controls={msg.id ?? ''} /> : null}
+      {/*
+          The controls host, rendered once as an empty span with a constant
+          className and never looked inside — the controller-host seam. The
+          three attributes are the contract with `GroupChat.refreshVoteControls`:
+          it selects on `[data-vote-controls]` and resolves the pair beside it
+          against `AppView.voteState`. This span used to carry
+          `data-gc-vote-controls` and nothing else, which matched that selector
+          not at all, so the Yes/No pair and the tally pill were missing from
+          every vote row.
+      */}
+      {msg.kind === 'vote' && msg.voteRef ? (
+        <span
+          className="gc-vote-inline"
+          data-vote-controls=""
+          data-session-id={msg.voteRef.sessionId}
+          data-pr-number={msg.voteRef.prNumber}
+        />
+      ) : null}
       {/*
           A system or vote row is savable and reactable, exactly as the string
           template had it — the same two buttons, in the same place, before the
@@ -229,7 +407,7 @@ export function SpecShareRow({ msg }: { msg: TranscriptMessage }) {
   if (!spec) return null;
   return (
     <div
-      className="gc-spec-card"
+      className={msg.flash ? 'gc-spec-card gc-msg-flash' : 'gc-spec-card'}
       data-msg-id={msg.id ?? ''}
       data-spec-title={spec.previewTitle}
       data-session-id={spec.sessionId ?? ''}
@@ -296,7 +474,7 @@ function SpecSnippet({ html }: { html: string }) {
 export function MessageRow({ msg }: { msg: TranscriptMessage }) {
   return (
     <ChatMessageRow
-      className={`gc-msg ${msg.mine ? 'gc-msg-self' : ''}`}
+      className={`gc-msg ${msg.mine ? 'gc-msg-self' : ''}${msg.flash ? ' gc-msg-flash' : ''}`}
       data-msg-id={msg.id ?? ''}
       data-username={msg.username}
       avatar={(
@@ -320,16 +498,9 @@ export function MessageRow({ msg }: { msg: TranscriptMessage }) {
       )}
       actions={<RowActions msg={msg} />}
     >
-      {msg.quote ? (
-        <ThreadReplySummary
-          count={1}
-          timestamp={msg.quote.username}
-          className="gc-msg-quote"
-          onClick={() => controller()?.scrollToMessage?.(msg.quote?.targetId)}
-        />
-      ) : null}
+      {msg.quote ? <QuoteBlock quote={msg.quote} /> : null}
       <Body html={msg.bodyHtml} />
-      {msg.hasAttachments ? <div data-gc-attachments={msg.id ?? ''} /> : null}
+      <Attachments items={msg.attachments} />
       <Reactions msg={msg} />
     </ChatMessageRow>
   );
@@ -344,6 +515,30 @@ export function MessageRow({ msg }: { msg: TranscriptMessage }) {
 export function Transcript({ source = 'main' }: { source?: string }) {
   const state = useStoreState(transcriptStore);
   const view = state.byKey[source];
+
+  /**
+   * Fill the vote rows' controls hosts once they exist.
+   *
+   * `AppView.loadVotePanel` calls `refreshVoteControls` whenever the vote
+   * state moves, which covers a vote being cast — but not a vote row arriving
+   * on a transcript that has already rendered, and not the first paint of a
+   * chat whose panel finished loading before it. The string renderer had no
+   * such gap: it filled the wrapper inline as it built the row.
+   *
+   * Keyed on WHICH vote rows are present, not on every render: filling is an
+   * `innerHTML` write per host, and the rows themselves repaint on every
+   * reaction. `refreshVoteControls` patches each row's tint back, and
+   * `patchTranscriptMessage` drops a patch that says nothing new — which is
+   * what keeps this from looping.
+   */
+  const voteRows = (view ? view.messages : [])
+    .filter((m) => m.kind === 'vote')
+    .map((m) => m.id)
+    .join(',');
+  useEffect(() => {
+    if (voteRows) controller()?.refreshVoteControls?.();
+  }, [voteRows]);
+
   if (!state.ready || !view) return null;
   return (
     <>

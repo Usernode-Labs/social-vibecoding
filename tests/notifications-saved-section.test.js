@@ -276,29 +276,34 @@ test('every message kind carries the save button', () => {
 });
 
 test('the message button draws the shell’s own bookmark, not a second one', () => {
-  // frontend/@/components/ui/icons.tsx is the shell's icon set and
-  // tests/shell-icon-set.test.js forbids an inline <svg> anywhere under
-  // frontend/src — but public/js/** is a classic script that cannot import
-  // the module, so this one glyph exists in two places. That is only safe
-  // while the path data is identical, which is what this asserts: the
-  // strings are read OUT of the module, so redrawing the glyph there
-  // without updating the script fails here.
+  // This used to assert that the COPY of the two Heroicons paths in
+  // public/js/group-chat.js still matched the module's — the one duplication
+  // in the icon set, kept honest by reading both ends. There is no copy any
+  // more: the button is `<RowActions>` in the React transcript, which imports
+  // the glyphs, so the rule is now simply that neither end draws its own.
   const outline = ICONS_SRC.match(/BookmarkIcon',\s*\n\s*'([^']+)'/);
   const solid = ICONS_SRC.match(/BookmarkSolidIcon',\s*\n\s*'([^']+)'/);
   assert.ok(outline && solid, 'the module exports the outline/solid bookmark pair');
-  assert.ok(CHAT_SRC.includes(outline[1]), 'the unsaved button draws the module’s outline');
-  assert.ok(CHAT_SRC.includes(solid[1]), 'the saved button draws the module’s solid');
+  assert.ok(!CHAT_SRC.includes(outline[1]) && !CHAT_SRC.includes(solid[1]),
+    'group-chat.js no longer carries a second copy of the path data');
+  const chatCode = CHAT_SRC.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
+  assert.doesNotMatch(chatCode, /_bookmarkSvg|_BOOKMARK_PATH/,
+    'nor the renderer that drew it');
+  const row = read('frontend/src/features/group-chat/transcript.tsx');
+  assert.match(row, /import \{ BookmarkIcon, BookmarkSolidIcon \} from '@\/components\/ui\/icons'/,
+    'the message button imports the glyph rather than inlining one');
   assert.match(LIST_SRC, /BookmarkSolidIcon/,
     'the drawer row imports the glyph rather than inlining one');
 });
 
 test('the mark is hollow when unsaved and solid when saved', () => {
-  const svg = CHAT_SRC.match(/_bookmarkSvg\(on\) \{([\s\S]*?)\n  \},/);
-  assert.ok(svg, '_bookmarkSvg() found');
-  assert.match(svg[1], /on\s*\?\s*\n?\s*' fill="currentColor">'/,
-    'the saved mark is a fill');
-  assert.match(svg[1], /fill="none" stroke="currentColor"/,
-    'and the unsaved one is an outline — the state is the shape, not the opacity');
+  // The pair is drawn by the icon module now, so the "state is the SHAPE, not
+  // the opacity" rule is checked where the shapes are: a fill with no stroke
+  // for saved, a stroked outline with no fill for not.
+  assert.match(ICONS_SRC, /export const BookmarkSolidIcon = filled\(/, 'saved is a fill');
+  assert.match(ICONS_SRC, /export const BookmarkIcon = stroked\(/, 'unsaved is an outline');
+  assert.match(ICONS_SRC, /function filled\([\s\S]{0,200}?fill="currentColor"/);
+  assert.match(ICONS_SRC, /function stroked\([\s\S]{0,300}?fill="none"\s*\n\s*stroke="currentColor"/);
   // A class toggle alone would leave the previous state's mark on screen, so
   // the optimistic toggle has to change the SHAPE. It used to do that by
   // rewriting the button's innerHTML; the transcript is React now
@@ -318,13 +323,21 @@ test('the mark is hollow when unsaved and solid when saved', () => {
 });
 
 test('the save button is available where react and edit are not', () => {
-  const render = CHAT_SRC.match(/_renderBookmarkBtn\(msg\) \{([\s\S]*?)\n  \},/);
-  assert.ok(render, '_renderBookmarkBtn() found');
-  assert.doesNotMatch(render[1], /_readOnly/,
+  // The gate moved from `_renderBookmarkBtn` to `_messageView`, which is where
+  // every other per-row decision is now decided. The rule is unchanged.
+  const view = CHAT_SRC.match(/\n {6}showEdit:([\s\S]*?)\n {6}quote:/);
+  assert.ok(view, 'the three control gates found in _messageView');
+  const gates = view[1];
+  assert.match(gates, /showBookmark: !!\(window\.App && App\.user\)/,
+    'there is no personal list to save into while signed out');
+  assert.doesNotMatch(gates.match(/showBookmark:.*/)[0], /_readOnly/,
     '#621 read-only viewers may save what they can read — it writes nothing to the app');
-  assert.match(render[1], /window\.App && App\.user/,
-    'but there is no personal list to save into while signed out');
-  assert.match(render[1], /aria-pressed=/, 'the toggle state is exposed, not just drawn');
+  assert.match(gates, /showReact: !GroupChat\._readOnly\(\)/, 'react IS gated');
+  assert.match(gates.slice(0, gates.indexOf('showReact:')), /!GroupChat\._readOnly\(\)/,
+    'and so is edit');
+
+  const row = read('frontend/src/features/group-chat/transcript.tsx');
+  assert.match(row, /aria-pressed=\{saved\}/, 'the toggle state is exposed, not just drawn');
 });
 
 test('the toggle is optimistic and reverts when the server refuses', () => {

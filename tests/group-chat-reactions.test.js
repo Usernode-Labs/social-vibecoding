@@ -222,7 +222,7 @@ test('the dot itself is rendered, and the module no longer spells it', () => {
       id: 5, kind: 'message', username: 'bob', time: '10:00', bodyHtml: 'hi',
       mine: false, unread: true, bookmarked: false, reactions: [], quote: null,
       showEdit: false, showReact: true, showBookmark: true, editedTitle: null,
-      hasAttachments: false, voteRowClass: '', specShare: null, canEdit: false,
+      attachments: [], voteRowClass: '', specShare: null, canEdit: false,
     },
   });
   assert.match(dotted, /<span class="gc-unread-dot" aria-label="Unread mention"><\/span>/);

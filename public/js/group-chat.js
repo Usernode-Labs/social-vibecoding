@@ -611,17 +611,30 @@ const GroupChat = {
       showReact: !GroupChat._readOnly(),
       showBookmark: !!(window.App && App.user),
       quote: q ? {
+        icon: q.source === 'pr' ? '\u{1F500}' : (q.source === 'spec' ? '\u{1F4CB}' : '\u21A9'),
         username: q.author || (q.source === 'pr' ? `PR #${q.prNumber || ''}`.trim() : 'system'),
         excerpt: GroupChat._collapseSnippet(q.snippet).slice(0, 160),
+        source: q.source || '',
+        href: q.source === 'pr' ? (q.href || '') : null,
         targetId: q.refMsgId == null ? null : Number(q.refMsgId),
       } : null,
+      // Set by a jump-to-original and cleared 1.5s later; never true on a
+      // freshly built row.
+      flash: false,
       reactions: ((msg.reactions) || []).map((r) => {
         const users = Array.isArray(r.users) ? r.users : [];
         return { emoji: r.emoji, count: r.count, users, mine: !!(me && users.includes(me)) };
       }),
-      hasAttachments: Array.isArray(atts) && atts.length > 0 && !!GroupChat._attachSlug(),
+      attachments: GroupChat._attachmentsView(msg),
       voteRowClass: isVote
         ? GroupChat._rowVoteClass(GroupChat._resolvePr(...GroupChat._voteRef(msg))) : '',
+      // The controls host is module-filled, but only the message knows WHICH
+      // pull request it is about — so the pair rides on the view model and
+      // lands on the host as the two data-* attributes refreshVoteControls
+      // reads back.
+      voteRef: isVote
+        ? (([sessionId, prNumber]) => ({ sessionId, prNumber }))(GroupChat._voteRef(msg))
+        : null,
       specShare: isSpecShare ? GroupChat._specShareView(meta.specShare, msg) : null,
     };
   },
@@ -1010,8 +1023,10 @@ const GroupChat = {
     const target = container && container.querySelector(`[data-msg-id="${ref}"]`);
     if (!target) return;
     target.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    target.classList.add('gc-msg-flash');
-    setTimeout(() => target.classList.remove('gc-msg-flash'), 1500);
+    // The highlight is `flash` on the model, not a class written onto a row
+    // React renders — the next repaint would have taken it off mid-animation.
+    GroupChat._react()?.patchTranscriptMessage(ref, { flash: true });
+    setTimeout(() => GroupChat._react()?.patchTranscriptMessage(ref, { flash: false }), 1500);
   },
 
   // Delegated tap-to-quote + quote-jump + reactions on the messages
@@ -1199,64 +1214,14 @@ const GroupChat = {
 
   // ── #1280: save (bookmark) a message ────────────────────────────────
 
-  // The save toggle that sits beside the react button in a message's
-  // header. A saved message pins to the "Saved" section at the top of the
-  // notifications drawer until it is unsaved — from here, or from there.
-  //
-  // NOT gated on _readOnly(), unlike the react and edit affordances beside
-  // it: a save writes nothing to the app, only to the viewer's own private
-  // list, so a #621 read-only viewer may save what they can read (which is
-  // exactly what the route's 'view' gate allows). It IS gated on being
-  // signed in — there is no personal list to save into otherwise.
-  //
-  // Unlike the react button this stays in the tab order and is visible
-  // whenever it is ON: a saved message has to look saved without hovering
-  // it, or the only way to find out what you saved is to open the drawer.
-  _renderBookmarkBtn(msg) {
-    if (!(window.App && App.user)) return '';
-    const on = !!(msg && msg.bookmarked);
-    // The state lives in the SHAPE — hollow when it isn't saved, solid when
-    // it is — which is legible at 12px, in a screenshot, and to anyone who
-    // cannot tell 30% opacity from 100%. The faded/full-strength weighting
-    // stays as a second signal; the accessible name and aria-pressed carry
-    // the same state for anyone not looking at it.
-    return `<button class="gc-msg-save${on ? ' gc-msg-saved' : ''}"`
-      + ` title="${on ? 'Saved — click to unsave' : 'Save to your notifications'}"`
-      + ` aria-label="${on ? 'Unsave message' : 'Save message'}"`
-      + ` aria-pressed="${on ? 'true' : 'false'}">${GroupChat._bookmarkSvg(on)}</button>`;
-  },
-
-  // The bookmark mark itself: a rectangle with a notch cut out of its
-  // bottom edge, the "save for later" shape every product uses. Drawn
-  // rather than typed because NO character draws it — U+1F516 is the
-  // ribbon-and-tag bookmark, which turns to mud at this size — and the
-  // outline/solid pair is the whole reason this button doesn't have to
-  // signal its state through opacity alone.
-  //
-  // These are the shell's own glyphs: Heroicons v2, the set
-  // frontend/@/components/ui/icons.tsx exports as BookmarkIcon and
-  // BookmarkSolidIcon (drawn for stroke-width 1.5, hence the value below).
-  // This file is a classic script and cannot import that module, so the two
-  // paths are duplicated here on purpose — the ONLY duplication in the set,
-  // and tests/notifications-saved-section.test.js reads them out of the
-  // module and asserts these still match, so redrawing one end fails rather
-  // than quietly shipping two different bookmarks.
-  _BOOKMARK_PATH: 'M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0 1 11.186 0Z',
-  _BOOKMARK_SOLID_PATH: 'M6.32 2.577a49.255 49.255 0 0 1 11.36 0c1.497.174 2.57 1.46 2.57 2.93V21a.75.75 0 0 1-1.085.67L12 18.089l-7.165 3.583A.75.75 0 0 1 3.75 21V5.507c0-1.47 1.073-2.756 2.57-2.93Z',
-
-  _bookmarkSvg(on) {
-    // Solid is a FILL with no stroke and outline is the reverse, exactly as
-    // the module's two factories render them — the pair is not one path with
-    // its fill flipped.
-    return '<svg viewBox="0 0 24 24" aria-hidden="true"'
-      + (on
-        ? ' fill="currentColor">'
-          + `<path d="${GroupChat._BOOKMARK_SOLID_PATH}"></path>`
-        : ' fill="none" stroke="currentColor" stroke-width="1.5">'
-          + '<path stroke-linecap="round" stroke-linejoin="round"'
-          + ` d="${GroupChat._BOOKMARK_PATH}"></path>`)
-      + '</svg>';
-  },
+  // `_renderBookmarkBtn`, `_bookmarkSvg` and the two Heroicons path constants
+  // lived here. The button is transcript.tsx's `<RowActions>` now, drawing
+  // frontend/@/components/ui/icons.tsx's BookmarkIcon / BookmarkSolidIcon
+  // directly — so the duplicated path data this file used to carry, and the
+  // test that kept the two copies in step, are both gone rather than stale.
+  // What stays is the RULE the button ran on: `showBookmark` in `_messageView`
+  // (a signed-in viewer, and no `_readOnly()` gate — #621, saving writes
+  // nothing to the app) and the optimistic flip in `_paintBookmark` below.
 
   // Toggle the save state of one message. Optimistic: the button flips
   // immediately (a save is a personal, instantly-reversible act, and a
@@ -1370,12 +1335,10 @@ const GroupChat = {
     return `edited ${date}, ${time}`;
   },
 
-  // Hover affordance (desktop) to edit own message. Hidden on touch via CSS
-  // (long-press bar carries the Edit action there), mirroring gc-react-add.
-  _renderEditBtn(_msg) {
-    if (GroupChat._readOnly()) return ''; // #621: no edits read-only
-    return `<button class="gc-msg-edit" title="Edit" aria-label="Edit message" tabindex="-1">✏️</button>`;
-  },
+  // `_renderEditBtn` lived here — the desktop hover pencil for your own
+  // message, hidden on touch via CSS because the long-press bar carries Edit
+  // there. It is transcript.tsx's `RowActions` now, gated by the same
+  // `showEdit` (#621: no edits read-only).
 
   // Locate a message (and its containing thread state, if any) by id across
   // the general stream and every cached thread.
@@ -1958,12 +1921,19 @@ const GroupChat = {
     return escapeHtml(String(s)).replace(/"/g, '&quot;');
   },
 
-  // Small kind badge for chips ("MD", "HTML", "BIN"). '' for image/text.
+  // Small kind badge for chips ("MD", "HTML", "BIN"). Null for image/text.
+  _attachKindBadge(a) {
+    if (a.kind === 'markdown') return 'MD';
+    if (a.kind === 'html') return 'HTML';
+    if (a.kind === 'binary') return 'BIN';
+    return null;
+  },
+
+  // …and its HTML spelling, for the composer strip, which is still a string
+  // renderer. One source of truth for the label either way.
   _attachKindBadgeHtml(a) {
-    if (a.kind === 'markdown') return '<span class="dc-attach-kind">MD</span>';
-    if (a.kind === 'html') return '<span class="dc-attach-kind">HTML</span>';
-    if (a.kind === 'binary') return '<span class="dc-attach-kind">BIN</span>';
-    return '';
+    const label = GroupChat._attachKindBadge(a);
+    return label ? `<span class="dc-attach-kind">${label}</span>` : '';
   },
 
   _renderAttachStrip(thread) {
@@ -1991,55 +1961,48 @@ const GroupChat = {
     });
   },
 
-  // Attachments row inside a message bubble, from the server-derived
-  // metadata.attachments summary. Rendered OUTSIDE renderMessageBody —
-  // the DOMPurify allowlist strips <img> from untrusted markdown, and
-  // must keep doing so; these elements only ever point at the app-gated
-  // attachments routes. Per kind: image → inline thumbnail linking to
-  // full size; markdown → chip opening the side panel (+ download);
-  // html → chip with sandboxed Preview (+ download); text/binary →
-  // download chip.
-  _attachmentsRowHtml(msg) {
-    const meta = msg.metadata || msg.meta || {};
+  // The files on a message, from the server-derived metadata.attachments
+  // summary, as the view model features/group-chat/transcript.tsx draws.
+  //
+  // Resolved OUTSIDE the message body on purpose — the DOMPurify allowlist
+  // strips <img> from untrusted markdown and must keep doing so; these
+  // elements only ever point at the app-gated attachments routes, and the id
+  // check below is what keeps them there. Per kind: image → inline thumbnail
+  // linking to full size; markdown → chip opening the side panel (+
+  // download); html → chip with sandboxed Preview (+ download); text/binary
+  // → download chip.
+  //
+  // `_attachmentsRowHtml` lived here and built that as an HTML string. It had
+  // NO CALLERS after the transcript conversion, which is why a message with
+  // files was rendering an empty `[data-gc-attachments]` host and nothing
+  // else — the same way the spec-share card went missing. `_escAttr` is not
+  // needed on this path any more (React escapes both text and attributes);
+  // the composer strip still uses it.
+  //
+  // `_attImgError` went with it. A thumbnail whose bytes are missing — a
+  // staging clone copies chat_messages but not attachment blobs
+  // (staging:private) — degraded by rewriting the anchor's className and
+  // textContent in place, which is a write into a row React owns. The
+  // component holds that as its own state instead.
+  _attachmentsView(msg) {
+    const meta = (msg && (msg.metadata || msg.meta)) || {};
     const atts = meta.attachments;
-    if (!Array.isArray(atts) || !atts.length) return '';
+    if (!Array.isArray(atts) || !atts.length) return [];
     const slug = GroupChat._attachSlug();
-    if (!slug) return '';
+    if (!slug) return [];
     GroupChat._ensureAttachClickHandler();
-    const items = atts.map((a) => {
-      if (typeof a.id !== 'string' || !/^[a-f0-9]{32}$/.test(a.id)) return '';
-      const name = GroupChat._escAttr(a.filename || 'file');
-      const url = `/api/apps/${encodeURIComponent(slug)}/chat-attachments/${a.id}`;
-      const size = `<span class="dc-attach-size">${GroupChat._humanAttSize(a.sizeBytes)}</span>`;
-      const badge = GroupChat._attachKindBadgeHtml(a);
-      if (a.kind === 'image') {
-        // onerror: staging clones copy chat_messages but not attachment
-        // bytes (staging:private), so a broken thumbnail degrades to a
-        // plain chip instead of a broken-image icon.
-        return `<a href="${url}" target="_blank" rel="noopener" title="${name} — open full size"><img class="dc-msg-att-img" src="${url}" alt="${name}" loading="lazy" onerror="GroupChat._attImgError(this)"></a>`;
-      }
-      if (a.kind === 'markdown') {
-        return `<span class="dc-msg-att-chip">${badge}` +
-          `<button type="button" class="dc-attach-name gc-att-open" data-att-md="${url}" data-att-name="${name}" title="View ${name}">${name}</button>${size}` +
-          `<a class="gc-att-action" href="${url}" download="${name}" title="Download ${name}">&#8595;</a></span>`;
-      }
-      if (a.kind === 'html') {
-        return `<span class="dc-msg-att-chip">${badge}<span class="dc-attach-name">${name}</span>${size}` +
-          `<a class="gc-att-action" href="${url}/view" target="_blank" rel="noopener" title="Open sandboxed preview of ${name}">Preview</a>` +
-          `<a class="gc-att-action" href="${url}" download="${name}" title="Download ${name}">&#8595;</a></span>`;
-      }
-      return `<a class="dc-msg-att-chip" href="${url}" download="${name}" title="Download ${name}">${badge}<span class="dc-attach-name">${name}</span>${size}</a>`;
-    }).filter(Boolean).join('');
-    return items ? `<div class="dc-msg-attachments">${items}</div>` : '';
-  },
-
-  // Broken image thumbnail (missing bytes in a staging clone, or a
-  // deleted row) → degrade the wrapping link to a plain chip.
-  _attImgError(img) {
-    const a = img.closest ? img.closest('a') : null;
-    if (!a) return;
-    a.className = 'dc-msg-att-chip';
-    a.textContent = `\u{1F5BC} ${img.alt || 'image'}`;
+    return atts
+      // A filename is user-controlled; an id must be exactly what the server
+      // minted, or the URL it builds is not one of ours.
+      .filter((a) => a && typeof a.id === 'string' && /^[a-f0-9]{32}$/.test(a.id))
+      .map((a) => ({
+        id: a.id,
+        kind: a.kind,
+        name: a.filename || 'file',
+        url: `/api/apps/${encodeURIComponent(slug)}/chat-attachments/${a.id}`,
+        size: GroupChat._humanAttSize(a.sizeBytes),
+        badge: GroupChat._attachKindBadge(a),
+      }));
   },
 
   // One document-level delegated handler for markdown-chip clicks —
@@ -2089,13 +2052,16 @@ const GroupChat = {
   // the rest was already duplicated by the view builder, so keeping a second
   // copy of it would only be a second thing to keep in step.
 
-  _voteControlsHtml(msg) {
-    const [sid, prNum] = GroupChat._voteRef(msg);
-    if (sid === '' && prNum === '') return '';
-    return `<span class="gc-vote-inline" data-vote-controls data-session-id="${sid}" data-pr-number="${prNum}">`
-      + GroupChat._voteInnerHtml(GroupChat._resolvePr(sid, prNum))
-      + `</span>`;
-  },
+  // `_voteControlsHtml` lived here — the `.gc-vote-inline` wrapper plus its
+  // first fill, as one string. The wrapper is transcript.tsx's now (it is a
+  // vote row's markup, and the row is React's); the FILL is still
+  // `refreshVoteControls` below, because it comes from AppView's vote
+  // renderers and arrives on the vote panel's schedule.
+  //
+  // Retiring it left the host with the wrong attribute for a while:
+  // `[data-gc-vote-controls]` is not `[data-vote-controls]`, the selector
+  // below matched nothing, and every vote row rendered an empty span where
+  // its Yes/No pair and tally pill belonged.
 
   // [sessionId, prNumber] ref for a vote-activity row: the precise metadata
   // session id (new server) when present, plus the "PR #N" parsed from the
@@ -2161,35 +2127,34 @@ const GroupChat = {
         el.getAttribute('data-session-id') || '',
         el.getAttribute('data-pr-number') || ''
       );
+      // The host's CONTENTS stay ours — this is AppView's markup, and the
+      // element is rendered once as an empty span it never looks inside.
       el.innerHTML = GroupChat._voteInnerHtml(pr);
-      const row = el.closest('.gc-msg-vote');
-      if (row) {
-        row.classList.remove('gc-vote-voted', 'gc-vote-unvoted');
-        const cls = GroupChat._rowVoteClass(pr);
-        if (cls) row.classList.add(cls);
+      // The row's TINT is not: `voteRowClass` is on the view model and React
+      // renders it, so a classList write here would be undone by the next
+      // repaint. Patch the model instead — and only when it moved, or the
+      // effect that calls this after each render would publish forever.
+      const row = el.closest('.gc-msg-vote[data-msg-id]');
+      const id = row && parseInt(row.dataset.msgId || '', 10);
+      if (id) {
+        GroupChat._react()?.patchTranscriptMessage(id, { voteRowClass: GroupChat._rowVoteClass(pr) });
       }
     });
   },
 
-  // #15: the quote block shown on a message that is itself a reply. Click
-  // handling (jump-to-original / open PR) is delegated in
-  // _attachQuoteHandlers.
-  _renderQuotedBlock(metadata) {
-    const q = (metadata || {}).quote;
-    if (!q) return '';
-    const who = q.author
-      ? escapeHtml(q.author)
-      : (q.source === 'pr' ? `PR #${q.prNumber || ''}`.trim() : 'system');
-    const snippet = escapeHtml(GroupChat._collapseSnippet(q.snippet).slice(0, 160));
-    const icon = q.source === 'pr' ? '\u{1F500}' : (q.source === 'spec' ? '\u{1F4CB}' : '\u21A9');
-    const data = q.source === 'pr'
-      ? `data-quote-source="pr" data-quote-href="${escapeHtml(q.href || '')}"`
-      : `data-quote-source="${escapeHtml(q.source || '')}" data-quote-ref="${q.refMsgId || ''}"`;
-    return `<div class="gc-quoted" ${data}>` +
-      `<span class="gc-quoted-author">${icon} ${who}</span>` +
-      `<span class="gc-quoted-snippet">${snippet}</span>` +
-      `</div>`;
-  },
+  // `_renderQuotedBlock` lived here — the `.gc-quoted` block on a message
+  // that is itself a reply, as an HTML string. It is transcript.tsx's
+  // `QuoteBlock` now, drawn from the same four facts and carrying the same
+  // class and `data-quote-*` attributes, because `_handleQuotedClick` above
+  // is still what a click on it goes through.
+  //
+  // What the transcript conversion had put in its place drew a
+  // `ThreadReplySummary` — the widget language's "N replies" affordance for a
+  // thread, which is a different thing — so a quoted reply read "1 reply
+  // alice", lost its snippet and its icon entirely, and did nothing when
+  // clicked: the block carried none of the attributes the handler dispatches
+  // on, and the onClick it did carry called a `scrollToMessage` that is not a
+  // method of this module.
 
   // The shared-spec card, as data.
   //

@@ -151,8 +151,7 @@ export const PlusIcon = stroked('PlusIcon', 'M12 5v14M5 12h14');
  * add badge, and the Create app tile.
  *
  * Two of those still live in HTML strings (features/home/home.js's card menu)
- * — this export is the source of truth for that duplicate, the same
- * arrangement BookmarkIcon has with the group-chat save toggle.
+ * — this export is the source of truth for that duplicate.
  */
 export const PlusWideIcon = stroked('PlusWideIcon', 'M12 4v16m8-8H4');
 
@@ -353,12 +352,11 @@ export const PhotoIcon = stroked(
  * `strokeWidth="1.5"` — both call sites pass it, rather than the default '2'
  * this file's older v1 glyphs want.
  *
- * These two paths are ALSO inlined in public/js/group-chat.js, and that is
- * deliberate: the message's own save button is rendered by a classic script
- * that cannot import this module. It is the one duplication in the set, so
- * tests/notifications-saved-section.test.js reads the strings out of here and
- * asserts the script still carries them — redrawing the glyph in one place
- * fails rather than quietly shipping two bookmarks.
+ * These two paths used to be inlined in public/js/group-chat.js as well —
+ * the one duplication in the set, because the message's save button was
+ * rendered by a classic script that cannot import this module. The transcript
+ * is React and that button is `<RowActions>`, so the copy is gone and this is
+ * the only place either glyph is drawn.
  */
 export const BookmarkIcon = stroked(
   'BookmarkIcon',

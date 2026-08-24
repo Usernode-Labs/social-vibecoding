@@ -31,13 +31,21 @@
  *
  *   * vote controls, whose markup comes from `AppView.voteState`. That arrives
  *     on its own schedule and is re-filled in place, so modelling it would mean
- *     re-rendering every row whenever any vote changed;
- *   * the spec-share card, a whole second renderer;
- *   * the attachment row, whose hrefs are derived from the app slug and whose
- *     clicks go through a delegated handler the module installs.
+ *     re-rendering every row whenever any vote changed. What the row DOES
+ *     model is `voteRef` — the (sessionId, prNumber) pair
+ *     `refreshVoteControls` resolves against that state — because those come
+ *     off the message and nothing else can supply them;
+ *   * the spec-share card, a whole second renderer.
  *
- * Each is a second copy of logic that already exists, for markup that changes
+ * That is a second copy of logic that already exists, for markup that changes
  * only when the message does.
+ *
+ * The attachment row was on that list and should not have been. Its hrefs are
+ * derived from the app slug and its markdown chips go through a delegated
+ * handler, both of which stay the module's — but neither is markup, and
+ * nothing ever filled the host, so a message with files rendered an empty div
+ * where its thumbnails and download chips belonged. It is `attachments`
+ * below.
  */
 
 import { createStore } from '../../lib/plain-store.js';
@@ -50,15 +58,64 @@ export interface Reaction {
   mine: boolean;
 }
 
-/** A quoted reply block, shown above the content. */
+/**
+ * A vote row's reference to the pull request it is about.
+ *
+ * `sessionId` is the precise tag newer servers put in the message metadata;
+ * `prNumber` is parsed out of the row's own text and covers rows that predate
+ * it. Either may be `''`. They travel onto the controls host as
+ * `data-session-id` / `data-pr-number`, which is exactly where
+ * `GroupChat.refreshVoteControls` reads them back — the host is module-filled,
+ * so the attributes it fills FROM are part of that contract.
+ */
+export interface VoteRef {
+  sessionId: string;
+  prNumber: string;
+}
+
+/**
+ * A quoted reply block, shown above the content (#15, Signal-style reply).
+ *
+ * Everything the block DRAWS and everything the delegated click handler READS,
+ * because they are the same four facts: `_handleQuotedClick` dispatches on
+ * `data-quote-source`, opens `data-quote-href` for a PR and jumps to
+ * `data-quote-ref` for anything else.
+ */
 export interface Quote {
+  /** 🔀 for a PR, 📋 for a spec, ↩ otherwise. The module picks it. */
+  icon: string;
+  /** The author, or "PR #12" / "system" where there isn't one. */
   username: string;
   excerpt: string;
+  source: string;
+  /** PR quotes open this in a new tab; null on every other source. */
+  href: string | null;
   /** The row this quote points at, for scroll-into-view. */
   targetId: number | null;
 }
 
 export type MessageKind = 'message' | 'system' | 'vote' | 'spec_share';
+
+/**
+ * One file on a message, as its chip draws it.
+ *
+ * Resolved by the module, which owns the app slug the URL is built from and
+ * the 32-hex id check that drops anything else before it can reach an `href`.
+ * `kind` decides the shape: `image` is an inline thumbnail, `markdown` and
+ * `html` are chips with their own action, and everything else is a plain
+ * download. `badge` is the little MD / HTML / BIN tag, or null where the kind
+ * carries no tag.
+ */
+export interface Attachment {
+  id: string;
+  kind: string;
+  /** The filename, as a text child — never interpolated into an attribute. */
+  name: string;
+  url: string;
+  /** Pre-formatted by the module: "2 KB", "3.0 MB". */
+  size: string;
+  badge: string | null;
+}
 
 export interface TranscriptMessage {
   id: number | null;
@@ -74,6 +131,12 @@ export interface TranscriptMessage {
   editedTitle: string | null;
   unread: boolean;
   bookmarked: boolean;
+  /**
+   * The 1.5s highlight a jump-to-original lands on. On the MODEL because the
+   * row is React's: `_handleQuotedClick` used to `classList.add` it, which the
+   * next repaint would have swept away mid-animation.
+   */
+  flash: boolean;
   canEdit: boolean;
   /**
    * Whether each of the row's three header controls renders. The module
@@ -90,10 +153,12 @@ export interface TranscriptMessage {
   showReact: boolean;
   quote: Quote | null;
   reactions: Reaction[];
-  /** Whether to emit the module-filled attachments host for this row. */
-  hasAttachments: boolean;
+  /** The files on this message, already resolved to URLs. Empty for most rows. */
+  attachments: Attachment[];
   /** Vote rows only: the tint class the module derives from the viewer's vote. */
   voteRowClass: string;
+  /** Vote rows only: what the controls host is about. Null on every other kind. */
+  voteRef: VoteRef | null;
   /** Spec-share rows only — see SpecShareView. Null on every other kind. */
   specShare: SpecShareView | null;
 }
