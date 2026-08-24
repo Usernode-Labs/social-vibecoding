@@ -31,6 +31,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { renderComponent } = require('./lib/render-tsx');
 
 const root = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
@@ -252,22 +253,29 @@ test('the general-chat composer bar carries platform-safe-bar', () => {
 });
 
 test('the thread composer AND its read-only notice both carry the bar class', () => {
-  // GroupChat.mountThread renders one or the other; the notice REPLACES
-  // the composer, so it needs the identical clearance. This markup serves
-  // the issue / proposal topic sub-view.
-  const idx = GROUP_CHAT.indexOf('const composerHtml = opts.readOnly');
-  assert.ok(idx > -1, 'GroupChat.mountThread composer branch moved');
-  const block = GROUP_CHAT.slice(idx, idx + 900);
-
-  const notice = /\?\s*`<div class="([^"]*)"/.exec(block);
-  assert.ok(notice, 'the read-only notice branch moved');
-  assert.match(notice[1], /platform-safe-bar/,
-    'the read-only notice must clear the indicator like the composer it replaces');
-
-  const composer = /:\s*`<div class="(shrink-0 border-t[^"]*)"/.exec(block);
-  assert.ok(composer, 'the thread composer branch moved');
-  assert.match(composer[1], /platform-safe-bar/,
+  // The thread panel renders one or the other; the notice REPLACES the
+  // composer, so it needs the identical clearance. This markup serves the
+  // issue / proposal topic sub-view, and it moved out of GroupChat.mountThread
+  // into features/group-chat/thread-shell.tsx in #1191 — so this renders both
+  // branches rather than reading two template literals, which also proves the
+  // class SURVIVES to the DOM rather than merely appearing in a source string.
+  const shell = (readOnly) => renderComponent(
+    'frontend/src/features/group-chat/thread-shell.tsx', 'ThreadShell',
+    {
+      fill: true,
+      withHeader: false,
+      readOnly,
+      notice: 'This thread is read-only.',
+      placeholder: 'Reply in thread…',
+      maxLength: 8000,
+    },
+  );
+  const composer = shell(false);
+  assert.match(composer, /class="shrink-0 border-t[^"]*platform-safe-bar"/,
     'the thread composer must sit above the home indicator');
+  const notice = shell(true);
+  assert.match(notice, /class="px-3 py-2[^"]*platform-safe-bar">This thread is read-only\./,
+    'the read-only notice must clear the indicator like the composer it replaces');
 });
 
 // ── 5. Panels that escape #app-view ──────────────────────────────────

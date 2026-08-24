@@ -88,13 +88,27 @@ const ALLOWED_BUTTON_FILES = new Set([
   // one `CONNECT_SURFACE` constant in the file, which is the same guarantee
   // the primitive would have given.
   'settings/social-identity.tsx',
+  // The THREAD composer — and it is one of a PAIR. The general chat's composer
+  // is byte-identical apart from its ids (public/js/app-view.js's
+  // `renderGroupChatTab`), and that one is still an HTML string in the Dev
+  // screen, which is its own deferred chunk. The two have to keep looking the
+  // same, so routing only this half through <Button> / <Textarea> — which
+  // would also need a new `box` variant for its `text-sm` field — would leave
+  // the pair written two different ways and free to drift. Convert them
+  // together with the Dev screen, or not at all.
+  'group-chat/thread-shell.tsx',
 ]);
 
 // Empty, and worth keeping empty: every field box in the tree now comes from
 // the primitive. The two remaining literal occurrences of the string are on
 // `<div>`s — the header's theme-toggle groups reuse the field box as a
 // segmented control — and a div is not something Input renders.
-const ALLOWED_FIELD_FILES = new Set([]);
+const ALLOWED_FIELD_FILES = new Set([
+  // The thread composer's textarea, for the same reason its Send button is on
+  // the button allow-list above: it is one half of a PAIR whose other half is
+  // still an HTML string in public/js/app-view.js. See that entry.
+  'group-chat/thread-shell.tsx',
+]);
 
 /*
  * `features/admin/**` is skipped, and it is the one exclusion that is about a

@@ -39,6 +39,7 @@ import {
 } from './autocomplete-store';
 import { SpecPanel } from './spec-panel';
 import { specPanelStore, type SpecPanelState } from './spec-panel-store';
+import { ThreadShell, type ThreadShellProps } from './thread-shell';
 import { Transcript } from './transcript';
 import {
   EMPTY_VIEW,
@@ -180,6 +181,25 @@ export function publishRefMenu(items: RefOption[], active: number): void {
   autocompleteStore.set({ ref: { items, active } });
 }
 
+/**
+ * The thread panel's shell — scroller, messages host, typing slot, composer.
+ *
+ * `mountThread` used to assign `container.innerHTML` and then bind its
+ * listeners to what came back. The assignment is this; the listeners still
+ * attach to the same ids on the line after, which is what keeps the draft, the
+ * typing ping, the multi-line submit semantics and both autocompletes in one
+ * owner.
+ *
+ * The props go through the portal node rather than a store: they are fixed for
+ * the life of one mount and only change when `mountThread` runs again, and
+ * `mountLegacyPortal` re-renders and commits synchronously — so the node IS
+ * the publish.
+ */
+export function mountThreadShell(host: Element | null, props: ThreadShellProps): void {
+  if (!host) return;
+  mountLegacyPortal(host, createElement(ThreadShell, props));
+}
+
 // ── The shared-spec reader ────────────────────────────────────────────
 //
 // `#gc-spec-side-panel` is written into `#app-content` by
@@ -222,5 +242,6 @@ if (typeof window !== 'undefined') {
     publishRefMenu,
     mountSpecPanel,
     publishSpecPanel,
+    mountThreadShell,
   };
 }

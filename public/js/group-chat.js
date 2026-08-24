@@ -679,49 +679,27 @@ const GroupChat = {
     // (the topic sub-view paints into #gc-thread-head after mount). Off by
     // default, so the general-chat path and any legacy caller are unaffected.
     const withHeader = fill && !!opts.withHeader;
-    // `platform-safe-bar` (app.css) on BOTH variants: in fill mode this
-    // block is the bottom of the screen, so it carries the
-    // home-indicator inset above its own padding. The read-only notice
-    // replaces the composer and needs the identical clearance. In the
-    // legacy boxed layout the bar isn't screen-bottom-anchored, so the
-    // inset is inert there — harmless, and it keeps one class per role.
-    const composerHtml = opts.readOnly
-      ? `<div class="px-3 py-2 text-xs text-zinc-500 dark:text-zinc-400 border-t border-zinc-200 dark:border-zinc-800 shrink-0 platform-safe-bar">${escapeHtml(opts.notice || 'This thread is read-only.')}</div>`
-      : `<div class="shrink-0 border-t border-zinc-200 dark:border-zinc-800 p-2 platform-safe-bar">
-          <div id="gc-thread-reply-preview" class="hidden"></div>
-          <div id="gc-thread-attach-error" class="dc-attach-error hidden"></div>
-          <div id="gc-thread-attachments" class="dc-attach-strip"></div>
-          <form id="gc-thread-form" class="flex gap-2 items-end">
-            <button type="button" id="gc-thread-attach-btn" title="Attach files" aria-label="Attach files" class="shrink-0 rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 ${fill ? 'py-2' : 'py-1.5'} text-sm text-zinc-500 dark:text-zinc-400 hover:text-violet-500 hover:border-violet-500 transition-colors">&#128206;</button>
-            <input type="file" id="gc-thread-file-input" class="hidden" multiple>
-            <textarea id="gc-thread-input" maxlength="${GC_MAX_MESSAGE_LEN}" rows="1" autocomplete="off"
-              placeholder="${escapeHtml(opts.placeholder || 'Reply in thread…')}"
-              class="gc-composer-input flex-1 min-w-0 resize-none overflow-y-auto rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 ${fill ? 'py-2' : 'py-1.5'} text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"></textarea>
-            <button type="submit" class="rounded-lg bg-violet-600 hover:bg-violet-500 ${fill ? 'px-4 py-2' : 'px-3 py-1.5'} text-sm font-medium text-white transition-colors shrink-0">Send</button>
-          </form>
-        </div>`;
-    // #363: fill mode wraps an optional header slot + the messages list in a
-    // SINGLE scroll container (#gc-thread-scroll), so a topic's card/body and
-    // its discussion scroll as one area (matching the general chat, where only
-    // the composer is pinned). The messages list itself no longer scrolls; the
-    // typing slot and composer stay as pinned shrink-0 siblings outside the
-    // scroller. The legacy (non-fill) boxed layout keeps the messages list as
-    // its own 40vh scroller.
-    const headSlot = withHeader ? '<div id="gc-thread-head"></div>' : '';
-    container.innerHTML = fill
-      ? `<div class="dev-thread flex flex-col h-full min-h-0">
-          <div id="gc-thread-scroll" class="flex-1 min-h-0 overflow-y-auto overscroll-contain px-3">
-            ${headSlot}
-            <div id="gc-thread-messages" class="py-2 space-y-0.5"></div>
-          </div>
-          <div id="gc-thread-typing" class="px-3 text-xs text-zinc-500 dark:text-zinc-400 h-5 shrink-0"></div>
-          ${composerHtml}
-        </div>`
-      : `<div class="dev-thread border border-zinc-200 dark:border-zinc-800 rounded-xl flex flex-col bg-zinc-50/50 dark:bg-zinc-900/40">
-          <div id="gc-thread-messages" class="overflow-y-auto px-2 py-1 space-y-0.5" style="max-height:40vh;min-height:60px"></div>
-          <div id="gc-thread-typing" class="px-3 text-xs text-zinc-500 dark:text-zinc-400 h-4 shrink-0"></div>
-          ${composerHtml}
-        </div>`;
+    // The SHELL is features/group-chat/thread-shell.tsx's — scroller,
+    // messages host, typing slot and composer — mounted as a portal where
+    // this used to be one `container.innerHTML` string. Its shape is fixed for
+    // the life of a mount, so it travels as props rather than through a store.
+    //
+    // The transcript's own portal points INTO `#gc-thread-messages`, so drop
+    // it before re-rendering the shell: React usually preserves that element,
+    // but a layout flip recreates it, and a portal left pointing at a detached
+    // node keeps its subtree and its store subscription alive. (The
+    // `innerHTML` this replaces destroyed the node without telling React at
+    // all — rule 1 in lib/legacy-portals.tsx, quietly broken.)
+    const previousList = container.querySelector('#gc-thread-messages');
+    if (previousList) GroupChat._react()?.unmountTranscript(previousList);
+    GroupChat._react()?.mountThreadShell(container, {
+      fill,
+      withHeader,
+      readOnly: !!opts.readOnly,
+      notice: opts.notice || 'This thread is read-only.',
+      placeholder: opts.placeholder || 'Reply in thread…',
+      maxLength: GC_MAX_MESSAGE_LEN,
+    });
 
     // Kit polish: keyboard avoidance on the unified thread scroller
     // (fill mode only — the legacy boxed layout scrolls inside a card).

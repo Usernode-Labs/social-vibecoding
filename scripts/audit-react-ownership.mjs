@@ -118,6 +118,20 @@ const OWNED = [
   { sel: '#gc-mention-menu' },               // features/group-chat/autocomplete.tsx
   { sel: '#gc-ref-menu' },                   // ditto
   { sel: '#gc-spec-side-panel' },            // features/group-chat/spec-panel.tsx
+  // The thread panel's shell (features/group-chat/thread-shell.tsx). Four
+  // hosts inside it stay their modules': the topic card that app-view.js
+  // innerHTMLs, the transcript's own portal target, the typing line, and the
+  // composer's three slots. Each is rendered once, empty, with a constant
+  // className and never looked inside — the controller-host seam AGENTS.md
+  // documents — so a write below one of them is the sanctioned pattern rather
+  // than a second author.
+  {
+    sel: '.dev-thread',
+    except: [
+      '#gc-thread-head', '#gc-thread-messages', '#gc-thread-typing',
+      '#gc-thread-reply-preview', '#gc-thread-attach-error', '#gc-thread-attachments',
+    ],
+  },
   { sel: '#llm-grants-list' },               // features/settings/grants-list.tsx
   { sel: '#cli-tokens-list' },               // features/settings/cli-tokens-list.tsx
   { sel: '#connectors-list' },               // features/settings/connectors-list.tsx
