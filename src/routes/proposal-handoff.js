@@ -9,6 +9,7 @@ const staging = require('../services/staging');
 const visuals = require('../services/visuals');
 const sessionLifecycle = require('../services/session-lifecycle');
 const proposalUpdate = require('../services/proposal-update');
+const branchNames = require('../services/branch-names');
 // The connector-error → HTTP status map. It lives in routes/dev-flow.js
 // because tests/dev-flow-routes.test.js scrapes the services' emitted codes
 // against it in both directions; importing it here rather than restating it is
@@ -17,6 +18,7 @@ const proposalUpdate = require('../services/proposal-update');
 const { STATUS_BY_CODE: UPDATE_STATUS_BY_CODE } = require('./dev-flow');
 const { beginSessionOperation, isSessionBusy } = require('../services/active-workers');
 const { effectiveSessionCaps } = require('../services/session-caps');
+const connectorLimits = require('../services/connector-limits');
 const { drainGuard } = require('../services/lifecycle');
 const events = require('../services/events');
 const log = require('../services/logger');
@@ -301,6 +303,59 @@ function requireCliMiddleware(req, res, next) {
 // an update that omits them leaves the stored routes alone. Before this, they
 // were accepted by submit_work, dropped here, and every revised proposal
 // silently fell back to home-page screenshots.
+// #1347. The share-to-in-progress body. Deliberately the update body MINUS
+// `recheck`: there is no prior verdict on a card that does not exist yet, so
+// accepting a re-run flag here would name a control that could never do
+// anything. Everything else is the same field with the same cap, because the
+// two calls carry the same work — they differ only in where it lands.
+function parseShareInProgressBody(body) {
+  exactKeys(body, ['branch', 'forkRepo', 'expectedHeadSha', 'testingPaths', 'testingSteps', 'title', 'description', 'linkedIssues', 'externalAgent'], 'body');
+  const branch = boundedText(body.branch, { label: 'branch', min: 1, max: 255, trim: true });
+  const forkRepo = body.forkRepo == null
+    ? null
+    : boundedText(body.forkRepo, { label: 'forkRepo', min: 1, max: 100, trim: true });
+  const expectedHeadSha = body.expectedHeadSha == null
+    ? null
+    : parseSha(body.expectedHeadSha, 'expectedHeadSha');
+  if (body.testingPaths != null && !Array.isArray(body.testingPaths)) {
+    throw new ValidationError('testingPaths must be an array of in-app paths');
+  }
+  if (body.testingPaths != null && body.testingPaths.length > 50) {
+    throw new ValidationError('testingPaths must contain at most 50 entries');
+  }
+  if (body.testingSteps != null) {
+    boundedText(body.testingSteps, { label: 'testingSteps', max: 16 * 1024 });
+  }
+  const title = body.title == null
+    ? null
+    : boundedText(body.title, { label: 'title', min: 1, max: 256, trim: true });
+  if (body.linkedIssues != null && !Array.isArray(body.linkedIssues)) {
+    throw new ValidationError('linkedIssues must be an array of issue numbers');
+  }
+  const description = body.description == null
+    ? null
+    : boundedText(body.description, { label: 'description', min: 1, max: 4000, trim: true });
+  // Which coding agent wrote it — a badge, resolved by the connector service
+  // and carried through so the shared card reads the same as a proposal from
+  // the same agent. Bounded like any other caller-supplied label.
+  const externalAgent = body.externalAgent == null
+    ? null
+    : boundedText(body.externalAgent, { label: 'externalAgent', min: 1, max: 40, trim: true });
+  return {
+    branch,
+    forkRepo,
+    expectedHeadSha,
+    externalAgent,
+    title,
+    description,
+    linkedIssues: body.linkedIssues == null ? null : body.linkedIssues,
+    testing: {
+      ...(body.testingPaths != null ? { testingPaths: body.testingPaths } : {}),
+      ...(body.testingSteps != null ? { testingSteps: body.testingSteps } : {}),
+    },
+  };
+}
+
 function parseUpdateFromForkBody(body) {
   exactKeys(body, ['branch', 'forkRepo', 'expectedHeadSha', 'testingPaths', 'testingSteps', 'title', 'description', 'linkedIssues', 'recheck'], 'body');
   const branch = boundedText(body.branch, { label: 'branch', min: 1, max: 255, trim: true });
@@ -661,6 +716,154 @@ function proposalHandoffRoutes(config) {
     }
   });
 
+  // POST /api/apps/:slug/work/share-in-progress
+  //
+  // #1347. Land a coding agent's pushed branch in the app's IN-PROGRESS area
+  // instead of putting it up for a vote.
+  //
+  // ── Why this is a session and not a lighter-weight thing ─────────────
+  //
+  // "In progress" is not a separate table: routes/issues.js composes it from
+  // the dev SESSIONS linked to a request (composeInProgress), and a session is
+  // shared with everyone exactly when `shared_at` is set — the same flag the
+  // owner's own Share button writes. So sharing agent work to that area means
+  // creating the session the area is already made of. Nothing new appears on
+  // the Dev board that the board did not already know how to render.
+  //
+  // ── Why it reuses the update path to land the commits ────────────────
+  //
+  // Fetching a fork branch, verifying it belongs to the caller's linked GitHub
+  // account, copying it somewhere the platform can build, recording the head
+  // and starting the staging pipeline is a solved problem — it is exactly what
+  // proposal-update.updateProposalFromForkBranch does for a revision. A second
+  // implementation of it here would be a second place for the attribution gate
+  // to be subtly wrong. So this route only CREATES the empty session and then
+  // hands it to that function, which treats it as any other continuable
+  // session (isContinuableStatus('active') === 'session') and runs the same
+  // build + capture it runs for everything else.
+  //
+  // ── status 'active', and the cap that pays for it ────────────────────
+  //
+  // The session is created 'active' rather than 'paused' for two reasons that
+  // point the same way: 'active' is the status that carries a staging preview
+  // (settleActiveSession starts the pipeline; a paused row deliberately does
+  // not, and reports resumeRequired instead), and it is the status the promote
+  // route requires, so the card the group can see is also the card its owner
+  // can send to a vote without an extra step.
+  //
+  // An active session holds a warm container, so it is bounded by the SAME
+  // per-user active-session cap the browser's "start a session" button obeys —
+  // checked before the row is inserted, so an over-cap share leaves nothing
+  // behind. See services/connector-limits.js checkActiveCap.
+  //
+  // ── Failure leaves no litter ─────────────────────────────────────────
+  //
+  // If the hand-off refuses (a branch that is not the caller's, a base that
+  // does not match, GitHub unreachable), the session row created moments
+  // earlier is deleted before the error is returned. A half-made card in
+  // everyone's In-progress area, with no commits behind it, is worse than the
+  // refusal it came from.
+  router.post('/api/apps/:slug/work/share-in-progress', proposalJson, drainGuard, async (req, res) => {
+    let input;
+    try {
+      input = parseShareInProgressBody(req.body);
+    } catch (err) {
+      if (err instanceof ValidationError) return res.status(400).json({ error: 'invalid_request', message: err.message });
+      log.error('proposal-handoff', 'Share validation failed unexpectedly', { err: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+    try {
+      const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'collab', '*');
+      if (!app) return res.status(404).json({ error: 'App not found' });
+
+      const capError = await connectorLimits.checkActiveCap(pool, config, req.user);
+      if (capError) {
+        return res.status(429).json({ error: capError.code, message: capError.message, retryable: true });
+      }
+
+      // `shared_at` at creation, not afterwards: the point of the call is that
+      // the card is visible, and a row that exists unshared for even one
+      // failed statement is a private session the caller never asked for.
+      const { rows: created } = await pool.query(
+        `INSERT INTO chat_sessions
+           (app_id, user_id, branch_name, status, shared_at, session_title,
+            external_agent, last_activity_at)
+         VALUES ($1, $2, $3, 'active', NOW(), $4, $5, NOW())
+         RETURNING id`,
+        [
+          app.id,
+          req.user.id,
+          input.branch,
+          input.title || null,
+          input.externalAgent,
+        ]
+      );
+      const sessionId = created[0].id;
+
+      const { rows } = await pool.query(
+        `SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url,
+                a.collab_visibility, a.view_visibility
+           FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
+          WHERE cs.id = $1`,
+        [sessionId]
+      );
+      const session = rows[0];
+
+      const result = await proposalUpdate.updateProposalFromForkBranch(
+        { pool, config },
+        {
+          user: req.user,
+          session,
+          branch: input.branch,
+          forkRepo: input.forkRepo,
+          expectedHeadSha: input.expectedHeadSha,
+          testing: input.testing,
+          title: input.title,
+          description: input.description,
+          linkedIssues: input.linkedIssues,
+          origin: config.cliAuthOrigin || null,
+        }
+      );
+      if (!result.ok) {
+        await pool.query('DELETE FROM chat_sessions WHERE id = $1 AND user_id = $2', [sessionId, req.user.id])
+          .catch((err) => log.warn('proposal-handoff', 'could not clean up a failed share', {
+            sessionId, err: err.message,
+          }));
+        const status = UPDATE_STATUS_BY_CODE[result.code] || 400;
+        return res.status(status).json({
+          error: result.code,
+          message: result.message,
+          ...(result.retryable ? { retryable: true } : {}),
+          ...(result.expectedBase ? { expectedBase: result.expectedBase } : {}),
+          ...(result.headSha ? { headSha: result.headSha } : {}),
+          ...(result.settingsUrl ? { settingsUrl: result.settingsUrl } : {}),
+        });
+      }
+
+      // Same announcement the owner's Share button makes, so an open Dev board
+      // shows the card without a reload.
+      try {
+        const { pushSessionUpdate } = require('../services/ws');
+        pushSessionUpdate({ action: 'shared', sessionId, appId: app.id, appSlug: app.slug });
+      } catch (err) {
+        log.warn('proposal-handoff', 'share broadcast failed (non-fatal)', { sessionId, err: err.message });
+      }
+
+      log.info('proposal-handoff', 'work shared to in-progress', {
+        userId: req.user.id, slug: app.slug, sessionId, branch: input.branch,
+      });
+      return res.json({
+        ...result,
+        sessionId,
+        shared: true,
+        webPath: `/#app/${app.slug}/dev/sessions/${sessionId}`,
+      });
+    } catch (err) {
+      log.error('proposal-handoff', 'Share to in-progress failed', { slug: req.params.slug, err: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   router.post('/api/apps/:slug/proposal-handoffs', proposalJson, drainGuard, async (req, res) => {
     if (!requireCli(req, res)) return;
     let input;
@@ -719,6 +922,16 @@ function proposalHandoffRoutes(config) {
       }
 
       const branchName = `dev/cli-u${req.user.id}-${input.requestId}`;
+      // #1376: `requestId` is already validated to [a-z0-9-] and the user id
+      // is numeric, so this is safe by construction — assert it anyway, so a
+      // future change to either surfaces here rather than as an unpushable
+      // branch discovered after the agent has already done the work.
+      if (!branchNames.isValidBranchName(branchName)) {
+        log.error('proposal-handoff', 'Refusing to create an unpushable branch', {
+          app: app.slug, branchName,
+        });
+        return res.status(400).json({ error: 'bad_branch_name' });
+      }
       try {
         await github.ensureBranchAtSha(repo.owner, repo.repo, branchName, input.baseSha);
       } catch (err) {

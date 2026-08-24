@@ -376,10 +376,15 @@ function internalRoutes(_config) {
         const { sha } = await worker.execPushFromWorker(sessionId, session.branch_name);
         return res.json({ ok: true, branch: session.branch_name, sha });
       } catch (err) {
+        // #1376: `message` is the raw failure; `detail`/`permanent` carry the
+        // operator-readable version so the worker's __USERNODE_WARN__ line
+        // (and anything reading this response) says why, not just that.
         return res.status(502).json({
           ok: false,
           code: err.code || 'push_failed',
           message: err.message,
+          detail: err.userMessage || null,
+          permanent: err.permanent === true,
         });
       }
     }

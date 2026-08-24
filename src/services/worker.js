@@ -10,6 +10,7 @@ const models = require('./models');
 const inLoopBrowser = require('./in-loop-browser');
 const registry = require('../agents/registry');
 const turnLifecycle = require('./turn-lifecycle');
+const branchNames = require('./branch-names');
 const llmTelemetry = require('./llm-telemetry');
 
 const WORKER_IMAGE = 'usernode-worker:latest';
@@ -1697,7 +1698,10 @@ async function _bootstrapWarmContainer(sessionId, {
   const args = [
     'run', '-d',
     '--name', containerName,
-    '--hostname', containerName,
+    // Clamped for HOST_NAME_MAX; see docker.containerHostname. Worker names
+    // (`usernode-worker-<sessionId>`) are nowhere near the limit today — this
+    // is defence in depth so the whole platform shares one hostname rule.
+    '--hostname', docker.containerHostname(containerName),
     '--network', network,
     '--memory', WORKER_MEMORY,
     '--cpus', WORKER_CPUS,
@@ -3245,20 +3249,35 @@ async function cloneCcVolume(srcSessionId, destSessionId) {
 //
 // Branch is supplied by the caller (the route handler) AFTER looking up
 // the session's canonical `branch_name` from the DB. The worker doesn't
-// get to pick. Branch is sanitized to a strict charset before being
+// get to pick. Branch is checked against a strict charset before being
 // passed to bash so it can't break out of the shell expansion below.
-const BRANCH_NAME_RE = /^[A-Za-z0-9._/-]+$/;
+//
+// #1376: that charset lives in services/branch-names.js now, shared with
+// the routes that MINT the name. It used to be defined only here and
+// excluded `@`, which every email-address username produces — so those
+// sessions committed fine and then failed every push, heal included.
 
 async function execPushFromWorker(sessionId, branchName) {
   const botToken = process.env.GITHUB_BOT_TOKEN || '';
   if (!botToken) {
     const err = new Error('GITHUB_BOT_TOKEN not configured on platform');
     err.code = 'no_token';
+    // Also permanent — no amount of retrying conjures a bot token.
+    err.permanent = true;
+    err.userMessage =
+      'The platform has no GitHub bot token configured, so it cannot push on '
+      + "your behalf. This needs a platform admin — retrying won't help.";
     throw err;
   }
-  if (!branchName || !BRANCH_NAME_RE.test(branchName)) {
+  if (!branchNames.isValidBranchName(branchName)) {
     const err = new Error(`Invalid branch name: ${branchName}`);
     err.code = 'bad_branch';
+    // Permanent for this session: retrying pushes the same rejected name.
+    err.permanent = true;
+    err.userMessage =
+      `This session's branch name (${branchName}) isn't a valid git branch, `
+      + 'so the push can never succeed. Start a new session on this app — '
+      + 'its branch will be named correctly — or ask an admin to rename this one.';
     throw err;
   }
 
@@ -3321,7 +3340,37 @@ async function execPushFromWorker(sessionId, branchName) {
   }
 }
 
+/**
+ * #1376: turn an execPushFromWorker rejection into something a dev-chat
+ * reader can act on. The old copy was one fixed sentence ending "Retry
+ * your request to re-push" — which for a `bad_branch` session is advice
+ * that can only ever fail again, and which hid the actual reason in a
+ * platform WARN line nobody outside the container ever sees.
+ *
+ * Returns `{ text, permanent, code }`. `permanent` marks failures where
+ * retrying is provably useless, so callers can stop suggesting it.
+ */
+function describePushFailure(err) {
+  const code = err?.code || 'push_failed';
+  const permanent = err?.permanent === true;
+  const lead = "Push to GitHub failed — your changes are committed in the "
+    + "session's worker but not on GitHub.";
+
+  if (err?.userMessage) {
+    return { text: `${lead} ${err.userMessage}`, permanent, code };
+  }
+
+  const detail = String(err?.message || '').trim();
+  const reason = detail ? ` (${detail.substring(0, 200)})` : '';
+  return {
+    text: `${lead}${reason} Retry your request to re-push and open the PR.`,
+    permanent: false,
+    code,
+  };
+}
+
 module.exports = {
+  describePushFailure,
   ensureWorkerImage,
   // long-lived API
   ensureWorker,

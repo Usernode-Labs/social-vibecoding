@@ -42,7 +42,10 @@ function makeDb(initial = null) {
         );
         const phases = params[3] || null;
         const currentPhase = lifecycle.phaseOf(activeTurn);
-        if (!same || (phases && !phases.includes(currentPhase))) {
+        // #1378: markStopRequested's "first stop wins" guard.
+        const stopGuard = /stopRequestedAt' IS NULL/.test(text)
+          && activeTurn && activeTurn.stopRequestedAt;
+        if (!same || stopGuard || (phases && !phases.includes(currentPhase))) {
           return { rows: [], rowCount: 0 };
         }
         activeTurn = { ...activeTurn, ...JSON.parse(params[2]) };
@@ -229,4 +232,95 @@ test('delayed BYOK accounting cannot mutate a replacement turn', async () => {
   });
   assert.equal(owned.updated, true);
   assert.equal(db.activeTurn.byokCents, 11);
+});
+
+// #1378: a turn adopted after a platform restart has no in-process stop
+// handle, so "the user asked for this to end" has to survive the restart
+// somewhere. It lives on the active_turn record: the recovery path reads it
+// back when it re-adopts the turn, and answers the stop instead of narrating
+// an interruption and retrying.
+test('a stop request is stamped onto the turn that owns the session', async () => {
+  const db = makeDb({ turnId: 'turn-a', phase: 'executing', journal: '/turn-a.log' });
+
+  const res = await lifecycle.markStopRequested(db, {
+    sessionId: 42, turnId: 'turn-a', by: 'evan',
+  });
+
+  assert.equal(res.updated, true);
+  assert.equal(db.activeTurn.stopRequestedBy, 'evan');
+  assert.ok(db.activeTurn.stopRequestedAt, 'a timestamp is recorded');
+  // Deliberately NOT a phase move: stopping is an intent recorded against
+  // whatever phase the turn is in; the phase machine keeps running until the
+  // turn actually unwinds.
+  assert.equal(db.activeTurn.phase, 'executing');
+
+  const read = lifecycle.stopRequestOf(db.activeTurn);
+  assert.equal(read.by, 'evan');
+  assert.equal(read.at, db.activeTurn.stopRequestedAt);
+  assert.equal(typeof read.atMs, 'number');
+});
+
+test('the first stop wins — a repeat request cannot move the clock', async () => {
+  const db = makeDb({ turnId: 'turn-a', phase: 'executing' });
+  const first = await lifecycle.markStopRequested(db, {
+    sessionId: 42, turnId: 'turn-a', by: 'evan',
+  });
+  const stampedAt = db.activeTurn.stopRequestedAt;
+
+  // The client's ladder silently re-POSTs at 15s. Rewriting the timestamp
+  // there would restart the escalation and Force stop would never arrive.
+  const second = await lifecycle.markStopRequested(db, {
+    sessionId: 42, turnId: 'turn-a', by: 'someone-else',
+  });
+
+  assert.equal(first.updated, true);
+  assert.equal(second.updated, false);
+  assert.equal(db.activeTurn.stopRequestedAt, stampedAt);
+  assert.equal(db.activeTurn.stopRequestedBy, 'evan');
+  // A miss still hands back the current record, so the caller can read the
+  // stamp that IS there rather than re-querying.
+  assert.equal(lifecycle.stopRequestOf(second.activeTurn).by, 'evan');
+});
+
+test('a stop stamp never lands on a replacement turn', async () => {
+  const db = makeDb({ turnId: 'turn-new', phase: 'executing' });
+
+  const res = await lifecycle.markStopRequested(db, {
+    sessionId: 42, turnId: 'turn-old', by: 'evan',
+  });
+
+  assert.equal(res.updated, false);
+  assert.equal(db.activeTurn.stopRequestedAt, undefined, 'the live turn is untouched');
+  assert.equal(lifecycle.stopRequestOf(db.activeTurn), null);
+});
+
+test('markStopRequested is a quiet no-op when the turn is already gone', async () => {
+  const db = makeDb(null);
+  const res = await lifecycle.markStopRequested(db, {
+    sessionId: 42, turnId: 'turn-a', by: 'evan',
+  });
+  // Not a throw: a stop for a turn that just finished is ordinary, and the
+  // route answers it politely rather than 500ing.
+  assert.equal(res.updated, false);
+  assert.equal(res.activeTurn, null);
+});
+
+test('stopRequestOf tolerates every shape the caller can hand it', () => {
+  assert.equal(lifecycle.stopRequestOf(null), null);
+  assert.equal(lifecycle.stopRequestOf(undefined), null);
+  assert.equal(lifecycle.stopRequestOf('turn-a'), null);
+  assert.equal(lifecycle.stopRequestOf({ phase: 'executing' }), null);
+  // An unparsable timestamp still counts as "a stop was requested" — the
+  // intent is the load-bearing part; atMs is only the ladder's anchor.
+  const odd = lifecycle.stopRequestOf({ stopRequestedAt: 'not-a-date' });
+  assert.equal(odd.atMs, null);
+  assert.equal(odd.by, null);
+});
+
+test('a stopped turn is still a RECOVERABLE phase', () => {
+  // The recovery path must ADOPT such a turn (to answer the stop), not skip
+  // it — skipping would leave the agent running with nothing watching it.
+  assert.equal(lifecycle.RECOVERABLE_PHASES.has('executing'), true);
+  assert.equal(lifecycle.RECOVERABLE_PHASES.has('tail_pending'), true);
+  assert.equal(lifecycle.RECOVERABLE_PHASES.has('quarantined'), false);
 });

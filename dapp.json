@@ -1040,6 +1040,11 @@
       "expectText": "this is a long one — some runs go 30 min+"
     },
     {
+      "name": "A turn the server cannot stop offers a spinner, not a red Stop (#1378)",
+      "path": "/#app/usernode-2d5619/dev/sessions/900812",
+      "expectSelector": "#dc-send-btn.dc-btn-streaming[aria-label=\"Working\"]"
+    },
+    {
       "name": "Visible own session offers the \"Share chat\" opt-in in its ⋯ menu",
       "path": "/?demo=1&shot=card-menu&card=session:990103#app/usernode-2d5619/dev",
       "expectSelector": ".dev-card-menu [data-menu-idx][title^=\"Let everyone read this chat\"]",
@@ -1343,9 +1348,14 @@
       "expectSelector": "#improve-view-toggle [data-view-segment=\"kanban\"][aria-selected=\"true\"]"
     },
     {
-      "name": "The self-hosted row gets no App segment (its iframe target does not resolve)",
+      "name": "The self-hosted platform row gets an App segment too (#1386)",
       "path": "/?demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#improve-view-toggle:not(:has([data-view-segment=\"app\"]))"
+      "expectSelector": "#improve-view-toggle [data-view-segment=\"app\"] + [data-view-segment=\"feed\"] + [data-view-segment=\"kanban\"]"
+    },
+    {
+      "name": "Home is the platform's App segment, and it reads as selected (#1386)",
+      "path": "/",
+      "expectSelector": "#improve-view-toggle [data-view-segment=\"app\"][aria-selected=\"true\"]"
     },
     {
       "name": "Home shows the platform Improve button (improve Social Vibecoding itself)",
@@ -1388,7 +1398,7 @@
       "expectSelector": "#dev-actions #dev-plus-btn"
     },
     {
-      "name": "The header toggle offers App, Feed and Kanban",
+      "name": "The header toggle offers three segments, Kanban last",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#improve-view-toggle [data-view-segment=\"feed\"] + [data-view-segment=\"kanban\"]",
       "expectText": "Kanban"
@@ -1792,6 +1802,21 @@
       "name": "The Anthropic API key section renders at its deep link",
       "path": "/#settings/api-key",
       "expectSelector": "#settings-section-content [data-settings-section=\"api-key\"]:not(.hidden) #settings-api-key"
+    },
+    {
+      "name": "The Username section renders at its deep link",
+      "path": "/#settings/username",
+      "expectSelector": "#settings-section-content [data-settings-section=\"username\"]:not(.hidden) #change-username-section #cu-new"
+    },
+    {
+      "name": "Changing a username asks for the current password",
+      "path": "/#settings/username",
+      "expectSelector": "#change-username-section #cu-password[type=\"password\"]"
+    },
+    {
+      "name": "The Username section says the old handle stays reserved",
+      "path": "/#settings/username",
+      "expectText": "kept reserved for you"
     },
     {
       "name": "Settings offers Log out outside the section list",
@@ -2595,6 +2620,16 @@
       "path": "/?shot=notifications&demo=1",
       "expectSelector": "#notifications-older-toggle",
       "expectText": "older notification"
+    },
+    {
+      "name": "The notifications drawer is a flat list of rows (#1385)",
+      "path": "/?shot=notifications&demo=1",
+      "expectSelector": "#notifications-list > [data-notif-id]"
+    },
+    {
+      "name": "No app-group headers survive in the notifications drawer (#1385)",
+      "path": "/?shot=notifications&demo=1",
+      "expectSelector": "#notifications-list:not(:has([data-group-toggle]))"
     },
     {
       "name": "The Dev feed renders as a de-carded stream",

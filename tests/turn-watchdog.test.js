@@ -257,7 +257,13 @@ test('sessions.js heals a failed push, then errors instead of warning', () => {
   // The old soft warnings are gone.
   assert.ok(!/Warning: push reported a failure/.test(sessionsSrc),
     'the soft push-failure warning must be replaced by the terminal error');
-  assert.ok(/Push to GitHub failed — your changes are committed/.test(sessionsSrc),
+  // #1376: the copy now lives in worker.describePushFailure, which folds
+  // the REAL reason (bad branch name, missing bot token, git error) into
+  // the sentence and drops the retry advice when retrying cannot work.
+  assert.ok(/worker\.describePushFailure\(/.test(sessionsSrc),
+    'the push-failure tail must describe the failure, not hardcode one sentence');
+  const workerSrc = fs.readFileSync(path.join(__dirname, '..', 'src/services/worker.js'), 'utf8');
+  assert.ok(/Push to GitHub failed — your changes are committed/.test(workerSrc),
     'the visible push-failure error message must exist');
 });
 

@@ -60,6 +60,21 @@ function pickReasonLine(logs) {
   return lines.length ? lines[lines.length - 1] : '';
 }
 
+// child_process.execFile formats a rejection's message as
+//   `Command failed: <the entire argv>\n<stderr>`
+// and a `docker run` argv is every -e env var the container gets. That is
+// kilobytes of command line in front of the one line that matters, so a
+// 280-char reason was nothing but a truncated command and the daemon's
+// actual complaint never reached the proposal author. Drop the command
+// line and keep what the process said on stderr.
+function stripCommandFailedPrefix(message) {
+  const text = String(message || '');
+  if (!/^Command failed:/.test(text)) return text;
+  const nl = text.indexOf('\n');
+  const tail = nl === -1 ? '' : pickReasonLine(text.slice(nl + 1));
+  return tail || text;
+}
+
 // Legacy shape: extract a concise, human-readable reason from a
 // build/boot failure (docker.waitForHealthy attaches containerLogs /
 // containerStatus to the thrown error). Kept byte-compatible with the
@@ -67,7 +82,13 @@ function pickReasonLine(logs) {
 function summarizeBootFailure(err) {
   const logs = (err && err.containerLogs) ? String(err.containerLogs) : '';
   let reason = pickReasonLine(logs);
-  if (!reason) reason = (err && err.message) ? String(err.message) : 'staging preview failed to start';
+  // No container logs at all means the container never got far enough to
+  // produce any — a `docker run` the daemon refused outright (a bad
+  // --hostname, a name collision, an unsatisfiable resource limit). Its
+  // explanation is on the rejection's stderr, nowhere else.
+  if (!reason && err && err.stderr) reason = pickReasonLine(err.stderr);
+  if (!reason) reason = (err && err.message) ? stripCommandFailedPrefix(err.message) : '';
+  if (!reason) reason = 'staging preview failed to start';
   if (err && err.containerStatus) reason = `[${err.containerStatus}] ${reason}`;
   return capReason(reason);
 }
@@ -102,8 +123,13 @@ function classify(err, opts = {}) {
   // to err.message, but prefer stderr when execFile captured any.
   const stderr = err && err.stderr ? truncateLog(err.stderr) : '';
   const message = (err && err.message) ? String(err.message) : 'deploy failed';
+  // Same unwrapping as summarizeBootFailure: a rejected execFile puts its
+  // entire argv in front of the real message, and `docker run`'s argv is
+  // long enough to consume the whole 280-char budget on its own. Prefer the
+  // process's own stderr line; failing that, drop the command line.
+  const detail = pickReasonLine(stderr) || stripCommandFailedPrefix(message);
   const reason = capReason(
-    stage === 'repo' ? `GitHub repo creation failed: ${message}` : message
+    stage === 'repo' ? `GitHub repo creation failed: ${detail}` : detail
   );
   return { stage, reason, log: stderr };
 }

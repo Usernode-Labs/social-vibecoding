@@ -2231,7 +2231,7 @@ function registerTools(server, ctx) {
   // ── submit_work ──────────────────────────────────────────────────────
   server.registerTool('submit_work', {
     title: 'Submit finished work — a pushed branch, a patch, or an open PR',
-    description: "Turn finished work into a Usernode proposal: opens the pull request, builds a staging preview, runs the app's checks and puts it to the group's vote. FOUR SHAPES, each complete as written — (1) `taskId` plus the `branch` you actually pushed, whatever it is called; (2) `taskId` plus `patch`, when GitHub or the sandbox refused the push: Usernode applies the patch at the recorded base commit in the app's own repository and opens the pull request itself, so NO GitHub write access is needed on your side; (3) `slug` plus `prNumber` for a pull request that is already open; (4) `proposalId` plus `branch` to UPDATE a proposal of the user's that is already up for a vote — for fixing a failing check or acting on review comments — which advances that same proposal onto your new commit instead of opening a second one, and clears the votes it has collected. Shape (4) needs no `slug`: naming the proposal names the app. When shape (4)'s target is a dev SESSION (a work-order continuation that is not yet up for a vote), it also takes `propose: true`: once the update lands, Usernode promotes the session — the same act as the owner's Propose-to-group button, reopening a paused session first — so pass it only when the user has asked for the change to go to the vote; landing quietly stays the default. A task belongs to the USER'S USERNODE ACCOUNT, not to one chat — any session connected as that account, including a coding agent's own connector, can submit it, and doing so is the expected path. Only work from the user's own GitHub account is submitted under their name.",
+    description: "Turn finished work into a Usernode proposal: opens the pull request, builds a staging preview, runs the app's checks and puts it to the group's vote. FOUR SHAPES, each complete as written — (1) `taskId` plus the `branch` you actually pushed, whatever it is called; (2) `taskId` plus `patch`, when GitHub or the sandbox refused the push: Usernode applies the patch at the recorded base commit in the app's own repository and opens the pull request itself, so NO GitHub write access is needed on your side; (3) `slug` plus `prNumber` for a pull request that is already open; (4) `proposalId` plus `branch` to UPDATE a proposal of the user's that is already up for a vote — for fixing a failing check or acting on review comments — which advances that same proposal onto your new commit instead of opening a second one, and clears the votes it has collected. Shape (4) needs no `slug`: naming the proposal names the app. When shape (4)'s target is a dev SESSION (a work-order continuation that is not yet up for a vote), it also takes `propose: true`: once the update lands, Usernode promotes the session — the same act as the owner's Propose-to-group button, reopening a paused session first — so pass it only when the user has asked for the change to go to the vote; landing quietly stays the default. TWO DESTINATIONS: by default work goes up for a VOTE; `share: true` on shape (1) lands it in the app's IN-PROGRESS area instead \u2014 a shared session with a preview, no PR, no vote; the charter has the rule. A task belongs to the USER'S USERNODE ACCOUNT, not to one chat — any session connected as that account, including a coding agent's own connector, can submit it, and doing so is the expected path. Only work from the user's own GitHub account is submitted under their name.",
     inputSchema: {
       taskId: z.number().int().positive().optional()
         .describe('The task id from prepare_work — or printed in the work order text you were handed, which is the usual source when you are the coding agent. It belongs to the user’s Usernode account, not to the chat that gave it to you, so you can submit it yourself.'),
@@ -2258,6 +2258,8 @@ function registerTools(server, ctx) {
         .describe('Only for an update: the proposal’s current commit as you last read it, from get_proposal’s `branch.headSha`. Pass it and Usernode refuses with `branch_moved` if somebody advanced the proposal while you were working, instead of building on a head you have not seen. Optional — omitted, your branch still has to sit on top of whatever the current head is.'),
       recheck: z.boolean().optional()
         .describe('Only with proposalId, on the commit already there: re-run the automated checks and re-shoot the screenshots — the same act as the panel\'s "Re-run checks" button. No code moves and NO votes are cleared. Use it when the verdict is stale for a reason outside this proposal (a platform-side fix, a preview that had died) instead of pushing a commit to provoke a run.'),
+      share: z.boolean().optional()
+        .describe('Land this work in the app\u2019s IN-PROGRESS area instead of putting it up for a vote (#1347). Usernode creates a shared dev session on the branch you pushed, builds it a staging preview and shows it on the Dev board beside everyone else\u2019s work underway \u2014 no pull request, no checks gate, no votes cast. Use it while the work is still moving and worth others seeing: a long change, a second opinion, or "here is where I got to". The work order stays OPEN, so keep committing; passing `share: true` again pushes the new commits onto the SAME card rather than making a second one. When it is ready for the group, call submit_work again with proposalId set to the sessionId this returned, the branch, and propose: true. Requires taskId + branch: a patch or an open pull request is a submission for review by construction, and both are refused here. Bounded by the same per-user active-session cap the browser\u2019s own "start a session" button obeys, because the preview behind the card is a real container.'),
       propose: z.boolean().optional()
         .describe('Only with proposalId, when its target is a dev SESSION (a work-order continuation that is not yet up for a vote): after the update lands, promote the session to a group vote — the same act as the owner\'s "Propose to group" button, reopening the session first when it is paused. Pass it only when the user asked for this change to go to the vote; landing quietly stays the default, because the session is their workspace and they may want more turns on it. Ignored on a proposal that is already up for a vote.'),
       agent: z.enum(['claude-code', 'codex', 'external']).optional()
@@ -2299,12 +2301,18 @@ function registerTools(server, ctx) {
       // or the target was already a proposal (nothing to promote).
       proposed: z.boolean().nullable(),
       proposeError: z.string().nullable(),
+      // #1347. Set when the work went to the IN-PROGRESS area instead of to a
+      // vote: `shared` says which destination it took, and `sessionId` is the
+      // card's id — the same number a later submit_work passes as proposalId
+      // to promote it. `null` on every ordinary submission.
+      shared: z.boolean().nullable(),
+      sessionId: z.number().nullable(),
       nextStep: z.string(),
     },
     annotations: writeAnnotations,
   }, async ({
     taskId, slug, prNumber, proposalId, branch, forkRepo, patch, source, title, description, agent,
-    testingPaths, testingSteps, expectedHeadSha, propose, recheck,
+    testingPaths, testingSteps, expectedHeadSha, propose, recheck, share,
   }) => {
     const guard = scopeGuard(WRITE_SCOPE);
     if (guard) return guard;
@@ -2389,6 +2397,14 @@ function registerTools(server, ctx) {
       baseUrl, accessToken, 'POST', `/api/apps/${targetSlug}/proposals/${id}/update-from-fork`, payload
     );
 
+    // #1347's loopback, on the same arrangement as the two above: the POST
+    // carries this caller's own connector token, so the route applies the
+    // access gate, the active-session cap and the fork-attribution check
+    // exactly as it would for the browser.
+    const shareWork = (targetSlug, payload) => callPlatform(
+      baseUrl, accessToken, 'POST', `/api/apps/${targetSlug}/work/share-in-progress`, payload
+    );
+
     const result = await externalAgentTasks.submitWork(taskDeps(), {
       user,
       clientName,
@@ -2412,8 +2428,10 @@ function registerTools(server, ctx) {
       // submission named — or, when it named none, '/' — and the group voted
       // on home-page screenshots of a change to somewhere else entirely.
       testing,
+      share: share === true,
       importProposal,
       updateProposal,
+      shareWork,
     });
     if (!result.ok) {
       // A platform refusal is reported in the platform's own words — the
@@ -2541,6 +2559,11 @@ function registerTools(server, ctx) {
         captureRerun: result.captureRerun === true,
         proposed,
         proposeError,
+        // #1347: this submission went to the vote, not to the in-progress
+        // area — stated rather than omitted, because the field is on every
+        // answer and a missing key reads as an unknown destination.
+        shared: null,
+        sessionId: null,
         webPath: result.proposalId
           ? `${origin}/#app/${result.appSlug}/dev/sessions/${result.proposalId}`
           : `${origin}/#app/${result.appSlug}`,
@@ -2557,6 +2580,43 @@ function registerTools(server, ctx) {
     // Telling Usernode twice is not an error. The second caller gets the
     // proposal that already exists rather than being sent back to
     // prepare_work, which would open a duplicate for work already voting.
+    // #1347. The work went to the IN-PROGRESS area, so every sentence about
+    // votes, checks and merging is wrong for it — a card there is not gated on
+    // anything and nobody is being asked to approve it yet. What the caller
+    // needs instead is the sessionId, because that is the number a later
+    // submit_work passes as proposalId to promote it.
+    if (result.shared) {
+      return toolResult({
+        proposalId: result.sessionId,
+        sessionId: result.sessionId,
+        shared: true,
+        appSlug: result.appSlug,
+        prNumber: null,
+        prUrl: null,
+        externalAgent: result.externalAgent,
+        headSha: result.headSha || null,
+        votesCleared: null,
+        submittedVia: null,
+        testingPaths: require('./testing-notes').displayPaths(testing.testingPaths),
+        testingPathsRejected: result.testingPathsRejected || testing.rejectedPaths || null,
+        testingUpdated: null,
+        captureRerun: null,
+        proposed: null,
+        proposeError: null,
+        webPath: result.sessionId
+          ? `${origin}/#app/${result.appSlug}/dev/sessions/${result.sessionId}`
+          : `${origin}/#app/${result.appSlug}`,
+        nextStep: (result.reshared
+          ? 'The new commits are on the same in-progress card the group was already watching'
+          : 'It is now visible in the app\'s IN-PROGRESS area, not up for a vote')
+          + `${result.previewRebuilding ? ', and its staging preview is rebuilding' : ''}. `
+          + 'Nothing is gated on it and no votes are being collected. Keep committing and call submit_work with '
+          + '`share: true` again to push more commits onto this same card. When it is ready for the group, call '
+          + `submit_work with proposalId ${result.sessionId}, the branch, and propose: true — that puts THIS card `
+          + 'up for the vote instead of opening a second proposal for the same branch.',
+      });
+    }
+
     if (result.alreadySubmitted) {
       return toolResult({
         proposalId: result.proposalId,
@@ -2576,6 +2636,11 @@ function registerTools(server, ctx) {
         captureRerun: null,
         proposed: null,
         proposeError: null,
+        // #1347: this submission went to the vote, not to the in-progress
+        // area — stated rather than omitted, because the field is on every
+        // answer and a missing key reads as an unknown destination.
+        shared: null,
+        sessionId: null,
         webPath: result.proposalId
           ? `${origin}/#app/${result.appSlug}/dev/sessions/${result.proposalId}`
           : `${origin}/#app/${result.appSlug}`,
@@ -2605,6 +2670,11 @@ function registerTools(server, ctx) {
       // the session-update opt-in, so there is nothing extra to report here.
       proposed: null,
       proposeError: null,
+      // #1347: this submission went to the vote, not to the in-progress
+      // area — stated rather than omitted, because the field is on every
+      // answer and a missing key reads as an unknown destination.
+      shared: null,
+      sessionId: null,
       webPath: result.proposalId
         ? `${origin}/#app/${result.appSlug}/dev/sessions/${result.proposalId}`
         : `${origin}/#app/${result.appSlug}`,

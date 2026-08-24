@@ -1,4 +1,5 @@
 const { execFile, spawn } = require('child_process');
+const crypto = require('crypto');
 const { promisify } = require('util');
 const log = require('./logger');
 
@@ -111,8 +112,51 @@ async function buildImage(contextPath, tag, buildArgs = {}) {
   return { durationMs };
 }
 
+// Linux caps a hostname at HOST_NAME_MAX (64 bytes) and runc's
+// sethostname() rejects anything longer with EINVAL, so the container dies
+// during init with nothing but "error during container init: sethostname:
+// invalid argument" to show for it. Staging previews are named
+// `usernode-staging-<slug>--<sessionId>`, which is 66 characters for a
+// 43-character slug and a 4-digit session id — a real app hit that wall and
+// its preview could never boot, no matter how many times the heal sweep
+// retried, because the name is deterministic.
+//
+// Clamp only what we pass to --hostname. The container's --name must stay
+// byte-identical to what callers asked for: Caddy's map block derives the
+// upstream container name from the request host, staging-reap parses session
+// ids back out of it, and both staging_container_id and staging_runtime_name
+// persist it.
+//
+// #1379 stopped there, on the reasoning that "nothing on the platform
+// resolves a container by its hostname, so shortening it is invisible." The
+// first half of that is still true. The second half was not: Docker's
+// embedded DNS resolves container NAMES, and a name longer than 63 bytes is
+// not a legal DNS label, so nothing can look it up either. The same 66-byte
+// staging name that used to kill the container at init now boots fine and is
+// simply unreachable — Chrome answers ERR_NAME_NOT_RESOLVED before a byte of
+// app code runs, and Caddy's Go resolver rejects the label just as flatly.
+// The health gate never noticed because probeHealthOnce goes through
+// `docker exec` + 127.0.0.1, which resolves nothing.
+//
+// So the resolvable identity is a separate, short NETWORK ALIAS registered
+// alongside the long name (see `aliases` below and application-runtime's
+// deploy). The name stays the name; the alias is what anything speaking DNS
+// is handed.
+const MAX_HOSTNAME = 63; // RFC-1123 label limit; same convention as kubernetes.dnsName()
+
+function containerHostname(name) {
+  const value = String(name || '');
+  if (value.length <= MAX_HOSTNAME) return value;
+  // Hash the FULL name, not the truncated prefix: two sessions on the same
+  // long slug (…--3530 and …--3539) differ only in the tail that gets cut.
+  const digest = crypto.createHash('sha256').update(value).digest('hex').slice(0, 8);
+  const prefix = value.slice(0, MAX_HOSTNAME - digest.length - 1).replace(/-+$/, '');
+  return `${prefix}-${digest}`;
+}
+
 async function runContainer(name, {
   image, env = {}, port, memory = APP_MEMORY, cpus = APP_CPUS, labels = {},
+  aliases = [],
 }) {
   const envArgs = Object.entries(env).flatMap(([k, v]) => ['-e', `${k}=${v}`]);
   // Labels are metadata the platform can read back off a LIVE container
@@ -125,10 +169,21 @@ async function runContainer(name, {
   // anything that can run `docker inspect`.
   const labelArgs = Object.entries(labels).flatMap(([k, v]) => ['--label', `${k}=${v}`]);
 
+  // Extra DNS names this container answers to on SHARED_NETWORK. Every peer
+  // that reaches the container over the network — the capture browser, Caddy
+  // — resolves one of these rather than --name, which is allowed to exceed a
+  // DNS label's 63 bytes (see containerHostname above). Deduped and filtered
+  // so a caller passing the name itself, or nothing at all, is a no-op.
+  const aliasArgs = [...new Set(
+    (Array.isArray(aliases) ? aliases : [aliases])
+      .map((a) => String(a == null ? '' : a).trim())
+      .filter((a) => a && a !== name)
+  )].flatMap((a) => ['--network-alias', a]);
+
   const args = [
     'run', '-d',
     '--name', name,
-    '--hostname', name,
+    '--hostname', containerHostname(name),
     // #767: run Docker's bundled init (tini) as PID 1 instead of the app.
     //
     // Linux does NOT apply default signal dispositions to PID 1 — a signal
@@ -146,6 +201,7 @@ async function runContainer(name, {
     // clean drain. tini also reaps zombies for apps that spawn children.
     '--init',
     '--network', SHARED_NETWORK,
+    ...aliasArgs,
     '--memory', memory,
     '--cpus', cpus,
     '--security-opt', 'no-new-privileges:true',
@@ -467,6 +523,92 @@ async function inspectContainer(nameOrId) {
   }
 }
 
+// Read the network aliases a LIVE container answers to on SHARED_NETWORK.
+//
+// Deliberately a sibling of inspectContainer rather than a widening of it:
+// that function's three-way return (record / 'not_found' / null) is consumed
+// by the staleness sweep, where "cannot see" must never be confused with
+// "gone", and adding a field to it would put a second reason to return null
+// into the same channel. Here the tri-state is simpler — an array of aliases,
+// or null for "could not look", which callers treat as "leave it alone".
+async function containerNetworkAliases(nameOrId, network = SHARED_NETWORK) {
+  try {
+    const { stdout } = await execFileAsync('docker', [
+      'inspect', '--format', '{{json .NetworkSettings.Networks}}', nameOrId,
+    ], { timeout: 5000 });
+    const raw = String(stdout).trim();
+    if (!raw || raw === 'null') return [];
+    const networks = JSON.parse(raw);
+    if (!networks || typeof networks !== 'object') return [];
+    const entry = networks[network];
+    if (!entry) return [];
+    return (Array.isArray(entry.Aliases) ? entry.Aliases : [])
+      .map((a) => String(a == null ? '' : a));
+  } catch {
+    return null;
+  }
+}
+
+// Attach `alias` to a live container as a SHARED_NETWORK alias, if it is not
+// already there.
+//
+// This is the retroactive half of the long-name fix. A preview whose checks
+// failed with ERR_NAME_NOT_RESOLVED cannot be repaired by a rebuild: a
+// re-check reuses the live container, and the only thing that WOULD rebuild
+// it — a new commit — clears the proposal's votes. So the alias has to be
+// added in place, to a running container, with no image build and no database
+// clone. `docker network disconnect` + `connect --alias` does exactly that;
+// the container keeps running throughout and only its IP on the shared
+// network may change, which nothing caches.
+//
+// Idempotent and non-fatal by construction: already-aliased is a no-op, an
+// unreachable daemon or a container that has gone away is swallowed with a
+// warning. Every caller invokes it on a path that has something else to do
+// afterwards, and none of them should fail because a repair could not be
+// applied.
+//
+// Returns whether the container is now KNOWN to answer to `alias` — true both
+// when it already did and when this call attached it, false whenever that
+// could not be established. Callers use the false case to fall back to the
+// container's own name rather than aim a browser at a name nothing has
+// confirmed exists.
+async function ensureNetworkAlias(name, alias, network = SHARED_NETWORK) {
+  const target = String(alias == null ? '' : alias).trim();
+  const container = String(name == null ? '' : name).trim();
+  if (!container || !target || target === container) return false;
+
+  const existing = await containerNetworkAliases(container, network);
+  // null = could not inspect. Do NOT blindly reconnect on a blind guess:
+  // disconnecting a container we cannot see the state of is the one way this
+  // helper could make things worse.
+  if (existing === null) return false;
+  if (existing.includes(target)) return true;
+
+  // Preserve whatever aliases the container already had. Docker reports the
+  // container's own name (and, on some engine versions, its short id) in this
+  // list; both are re-registered automatically on connect, and the name may be
+  // longer than a DNS label allows — which is the whole reason we are here —
+  // so re-asserting either as an explicit --alias is at best noise and at
+  // worst a rejected argument.
+  const keep = existing.filter((a) => a && a !== container && a.length <= MAX_HOSTNAME
+    && !container.startsWith(a));
+
+  try {
+    await execFileAsync('docker', ['network', 'disconnect', network, container], { timeout: 15000 });
+    await execFileAsync('docker', [
+      'network', 'connect', '--alias', target, ...keep.flatMap((a) => ['--alias', a]),
+      network, container,
+    ], { timeout: 15000 });
+    log.info('docker', 'Network alias attached to live container', { name: container, alias: target });
+    return true;
+  } catch (err) {
+    log.warn('docker', 'Could not attach network alias (non-fatal)', {
+      name: container, alias: target, err: err.message,
+    });
+    return false;
+  }
+}
+
 async function containerExists(nameOrId) {
   const status = await getContainerStatus(nameOrId);
   return status !== 'not_found';
@@ -626,6 +768,7 @@ async function removeVolume(name) {
 
 module.exports = {
   execFileAsync,
+  containerHostname,
   execShellStdin,
   buildImage,
   runContainer,
@@ -636,6 +779,8 @@ module.exports = {
   getContainerStatus,
   getContainerLabels,
   inspectContainer,
+  containerNetworkAliases,
+  ensureNetworkAlias,
   containerExists,
   imageExists,
   waitForHealthy,

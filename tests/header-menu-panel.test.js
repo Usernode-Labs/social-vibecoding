@@ -361,19 +361,19 @@ test('the notifications SECTION has no disclosure of its own', () => {
   assert.ok(block.includes('id="notifications-mark-all"'));
 });
 
-test('every app GROUP re-folds on each drawer open', () => {
+test('each drawer open starts on what is NEW', () => {
   const notificationsJs = fs.readFileSync(
     path.join(root, 'frontend/src/features/notifications/notifications.js'), 'utf8');
-  // Folding is the module's, because `Notifications.expanded` is the module's.
-  assert.match(notificationsJs, /_foldAllGroups\(\)\s*\{/,
-    'the module owns a fold-all');
+  // This used to assert a second thing too: that every app GROUP re-folded on
+  // the same announcement. #1385 flattened the list, so there is nothing left
+  // to fold — the show-older reset is the whole of the drawer-open contract now.
   assert.match(notificationsJs, /addEventListener\('sv:drawer-open'/,
-    'and runs it on the drawer-open announcement');
-  const at = notificationsJs.indexOf('_foldAllGroups() {');
-  const body = notificationsJs.slice(at, notificationsJs.indexOf('\n  },', at));
-  assert.match(body, /Notifications\.expanded\.clear\(\)/,
-    'folding clears the expanded set…');
-  assert.match(body, /_saveExpanded\(\)/, '…and persists that, so it survives a repaint');
+    'the module listens for the drawer-open announcement');
+  const at = notificationsJs.indexOf("addEventListener('sv:drawer-open'");
+  const body = notificationsJs.slice(at, notificationsJs.indexOf('});', at));
+  assert.match(body, /_setShowOlder\(false\)/,
+    'and resets to the unread list, so a visit never opens on last time\u2019s "older"');
+  assert.doesNotMatch(body, /_foldAllGroups/, 'nothing folds any more — there are no groups');
   // The announcement is still dispatched once, above the touch/desktop fork.
   assert.match(headerMenuJs, /dispatchEvent\(new CustomEvent\('sv:drawer-open'\)\)/);
 });

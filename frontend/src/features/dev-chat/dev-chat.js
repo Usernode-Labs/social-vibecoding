@@ -3010,6 +3010,7 @@ const DevChat = {
       if (DevChat.stagingPanel.open) DevChat._resetStagingPanel();
       DevChat.isStreaming = false;
       DevChat._streamingPhase = null;
+      DevChat._streamingStoppable = true;
       // #990: never inherit the previous session's trailing dots.
       DevChat._activity = null;
       DevChat._stopProgressPolling();
@@ -3270,7 +3271,7 @@ const DevChat = {
         const statusRes = await fetch(`/api/sessions/${sessionId}/status${DevChat._demoQS()}`);
         if (statusRes.ok) {
           const statusPayload = await statusRes.json();
-          const { busy, progress, phase, sync, stopping, stopRequestedAt } = statusPayload;
+          const { busy, progress, phase, sync, stopping, stopRequestedAt, stoppable } = statusPayload;
           // #907: restore the Run-on selector / chip from the server, so a
           // reload of a session with a machine attached does not silently
           // claim the next turn runs on Usernode.
@@ -3299,7 +3300,7 @@ const DevChat = {
             // resurrected (it's client-only by design); the persisted
             // "…stopped by @user." row lands normally when the stop does.
             DevChat._stopping = !!stopping;
-            DevChat._setStreamingUI(true, phase || null);
+            DevChat._setStreamingUI(true, phase || null, { stoppable: stoppable !== false });
             // Reuse the most recent persisted progress message as the live
             // append target so the polling fallback updates IT instead of
             // creating a second "Claude Code output (N lines)" collapsible.
@@ -4313,6 +4314,15 @@ const DevChat = {
   // it's already in phase-2 anyway.
   _streamingPhase: null,
 
+  // #1378: whether POST /stop can actually do anything for this turn, as
+  // reported by /status. A turn adopted after a platform restart runs with
+  // no in-process stop handle, so the red Stop square would be a lie — the
+  // click reaches the server, finds nothing to stop, and the turn keeps
+  // going. Defaults to true: an older server omits the field, and the
+  // pre-#1378 behaviour (always offer Stop) is the right thing to fall back
+  // to when we genuinely don't know.
+  _streamingStoppable: true,
+
   // Title markers for the dev-chat status indicator (#108). Kept as a
   // map so applyTitleStatus can strip whichever one is currently
   // applied before re-prefixing.
@@ -4415,9 +4425,13 @@ const DevChat = {
     } catch (_) {}
   },
 
-  _setStreamingUI(streaming, phase = null) {
+  _setStreamingUI(streaming, phase = null, { stoppable = true } = {}) {
     if (streaming) DevChat._streamingPhase = phase;
     else DevChat._streamingPhase = null;
+    // #1378: kept alongside the phase so every repaint that only knows the
+    // phase (_enterStoppingState, _stopRequestFailed) doesn't silently
+    // re-offer a Stop button the server can't honour.
+    DevChat._streamingStoppable = streaming ? stoppable !== false : true;
 
     // #889: the turn is over (stopped, finished, or torn down by a failed
     // send / session switch), so any pending "stopping…" state is stale.
@@ -4444,6 +4458,11 @@ const DevChat = {
     const btn = document.getElementById('dc-send-btn');
     if (btn && streaming) {
       const isWrapUp = phase === 'mayor2';
+      // #1378: same spinner, different reason. A turn the server can't stop
+      // (no in-process handle — typically one adopted across a restart) must
+      // not paint a live red Stop: the click would reach the server, match
+      // nothing, and leave the user believing the turn was ending.
+      const notStoppable = stoppable === false;
       // #889: a requested-but-not-yet-landed stop outranks both of the
       // states below — the turn is still streaming (so we can't paint
       // Send), but the red Stop square is a lie: pressing it again does
@@ -4456,13 +4475,16 @@ const DevChat = {
         btn.setAttribute('aria-label', 'Stopping');
         btn.title = 'Stopping…';
         btn.innerHTML = '<span class="dc-send-spinner"></span><span class="dc-btn-stopping-label">Stopping…</span>';
-      } else if (isWrapUp) {
+      } else if (isWrapUp || notStoppable) {
         btn.disabled = true;
         btn.classList.remove('dc-btn-stop');
         btn.classList.remove('dc-btn-stopping');
         btn.classList.add('dc-btn-streaming');
-        btn.setAttribute('aria-label', 'Finishing up');
-        btn.title = 'Finishing up…';
+        const unstoppable = notStoppable && !isWrapUp;
+        btn.setAttribute('aria-label', unstoppable ? 'Working' : 'Finishing up');
+        btn.title = unstoppable
+          ? 'This turn is still running but can’t be stopped from here'
+          : 'Finishing up…';
         btn.innerHTML = '<span class="dc-send-spinner"></span>';
       } else {
         btn.disabled = false;
@@ -4656,7 +4678,7 @@ const DevChat = {
         DevChat._stoppingSince = stopRequestedAt;
         DevChat._armStoppingLadder();
       }
-      DevChat._setStreamingUI(true, DevChat._streamingPhase);
+      DevChat._setStreamingUI(true, DevChat._streamingPhase, { stoppable: DevChat._streamingStoppable });
       return;
     }
 
@@ -4686,7 +4708,7 @@ const DevChat = {
     DevChat._stopRetried = false;
     DevChat._armStoppingLadder();
 
-    DevChat._setStreamingUI(true, DevChat._streamingPhase);
+    DevChat._setStreamingUI(true, DevChat._streamingPhase, { stoppable: DevChat._streamingStoppable });
     DevChat.renderMessages();
     DevChat.scrollToBottom();
   },
@@ -4767,6 +4789,29 @@ const DevChat = {
     // (plus the persisted status row) when the turn actually unwinds.
     if (body.stopped) return;
 
+    // #1378: 'no active turn' has two very different meanings. Usually the
+    // turn really did end a moment before the click, and the teardown below
+    // is right. But it is ALSO what the server answers when the turn is very
+    // much alive and simply has no in-process stop handle — a turn adopted
+    // after a platform restart. Tearing the UI down there was the reported
+    // bug: it dropped the escalation ladder, so Force stop — the one path
+    // that actually ends such a turn — became unreachable, and the agent ran
+    // on with a Send button in front of it.
+    if (body.reason === 'no active turn') {
+      let stillBusy = false;
+      try {
+        const st = await fetch(`/api/sessions/${sessionId}/status`);
+        if (st.ok) stillBusy = !!(await st.json()).busy;
+      } catch {}
+      if (Number(sessionId) !== Number(DevChat.currentSession?.id)) return;
+      if (stillBusy || body.hasDurableTurn) {
+        console.warn('[dc] stop found no handle but the session is still busy');
+        // Leave _stopping set and the ladder armed: at STOPPING_STUCK_MS it
+        // offers Force, which takes the handle-less force-orphan path.
+        return;
+      }
+    }
+
     // The server declined. Both reasons mean "no stop is coming", so the
     // stopping row must not be left spinning forever.
     DevChat._clearStoppingState();
@@ -4806,7 +4851,7 @@ const DevChat = {
       created_at: new Date().toISOString(),
       _slug: Math.random().toString(36).slice(2, 8),
     });
-    DevChat._setStreamingUI(true, DevChat._streamingPhase);
+    DevChat._setStreamingUI(true, DevChat._streamingPhase, { stoppable: DevChat._streamingStoppable });
     DevChat.renderMessages();
     DevChat.scrollToBottom();
   },
@@ -4929,12 +4974,21 @@ const DevChat = {
         const res = await fetch(`/api/sessions/${sessionId}/status`);
         if (!res.ok) return;
         const payload = await res.json();
-        const { busy, progress, estimate, stopping } = payload;
+        const { busy, progress, estimate, stopping, stoppable } = payload;
         // #907: a machine can attach or detach mid-turn; keep the chip honest.
         DevChat._applyRunnerState(payload);
 
         if (progress?.length) {
           DevChat._replaceProgressLog(progress, payload);
+        }
+
+        // #1378: /status is the ONLY channel that carries `stoppable`, and
+        // for a turn adopted across a restart it can flip mid-turn (the
+        // recovery path registers a handle a beat after the turn is adopted).
+        // Repaint on change so the button converges within one 3s tick.
+        if (busy && DevChat.isStreaming && stoppable !== undefined
+            && DevChat._streamingStoppable !== (stoppable !== false)) {
+          DevChat._setStreamingUI(true, DevChat._streamingPhase, { stoppable });
         }
 
         // #889: missed-event safety net. If the `stopping` broadcast never
@@ -5633,7 +5687,20 @@ const DevChat = {
 
   // ── Rendering ─────────────────────────────────────────────
 
-  
+  // Message rows carry fractional CENTS from both sources, but under two
+  // field names: live usage events write camel-case `costCents`, while the
+  // session-history query returns PostgreSQL's snake-case `cost_cents` as a
+  // numeric string. Normalize at the rendering seam so a refresh neither
+  // drops the label nor changes its units. The lower-right meter is today's
+  // cumulative spend; this label deliberately says "reply" because it covers
+  // only this assistant row.
+  _messageCostLabel(msg) {
+    const raw = msg?.costCents ?? msg?.cost_cents;
+    if (raw === null || raw === undefined || raw === '') return '';
+    const cents = Number(raw);
+    if (!Number.isFinite(cents) || cents <= 0) return '';
+    return ` · reply $${(cents / 100).toFixed(3)}`;
+  },
 
   renderMessages() {
     const container = document.getElementById('dc-messages');
@@ -6112,7 +6179,7 @@ const DevChat = {
 
       const isUser = msg.role === 'user';
       const isCCOutput = (msg.model || '').startsWith('claude-code/');
-      const costLabel = msg.costCents ? ` · $${(msg.costCents).toFixed(3)}` : '';
+      const costLabel = DevChat._messageCostLabel(msg);
       const ts = msg.created_at ? new Date(msg.created_at).getTime() : '';
       const idLabel = msg.id ? `#${msg.id}` : '';
       const rawContent = msg.content || '';

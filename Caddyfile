@@ -9,7 +9,16 @@
 #   container *name* deterministically:
 #
 #     myapp.<domain>              -> usernode-app-myapp        (prod app)
-#     myapp--s42.<domain>         -> usernode-staging-myapp--42 (PR preview)
+#     myapp--s42.<domain>         -> usernode-staging-s42       (PR preview)
+#
+#   Note the asymmetry: a production app is reached by its container NAME,
+#   a staging preview by a short network ALIAS. Preview containers are named
+#   `usernode-staging-<slug>--<sessionId>`, which exceeds the 63-byte DNS
+#   label limit once the slug passes 43 characters — and Go's resolver, like
+#   every other, refuses to send a query for an over-long label, so the
+#   upstream would simply not resolve. The alias carries no slug, so it fits
+#   for every app; the slug capture group below survives only to keep this
+#   row distinguishable from the production one.
 #
 #   Those are exactly the container names the platform already gives its
 #   containers (services/staging.js + app-creator.js), and Caddy reaches
@@ -178,7 +187,7 @@ import /etc/caddy/active/platform-upstream.caddy
 	# Only production hosts get one; staging previews and the default row
 	# map to the empty string, which the @chromeless matcher excludes.
 	map {host} {upstream} {applink} {
-		~^([a-z0-9-]+?)--s(\d+)(?:--[a-z0-9]+)?\. usernode-staging-${1}--${2} ""
+		~^([a-z0-9-]+?)--s(\d+)(?:--[a-z0-9]+)?\. usernode-staging-s${2} ""
 		~^([a-z0-9-]+)\. usernode-app-${1} "https://{$USERNODE_DOMAIN}/#app/${1}/full"
 		default usernode ""
 	}

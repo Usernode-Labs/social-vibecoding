@@ -412,8 +412,14 @@ test('#906: /status reports the cohort fixtures as busy in staging only', () => 
     'the fixture-busy lookup must be staging-gated');
   assert.match(sessions, /branch_name LIKE 'staging-fixture\/cc-cohort-%'/,
     'it must match only the seeded cohort fixture branches');
-  assert.match(sessions, /if \(fixtures && fixtures\.has\(sessionId\)\) busy = true;/,
+  // #1378 turned the lookup into a Map so a fixture can also declare
+  // whether it is stoppable — the seeded cohort still forces busy.
+  assert.match(sessions, /const fixture = fixtures && fixtures\.get\(sessionId\);/,
+    'a seeded fixture session must be looked up by id');
+  assert.match(sessions, /if \(fixture\) \{\s*\n\s*busy = true;/,
     'a seeded fixture session must report busy so the row renders live');
+  assert.match(sessions, /fixtureStoppable = fixture\.stoppable;/,
+    'and must carry its declared stoppability into the /status payload');
   // It must never be able to mask a genuinely idle non-fixture session.
   assert.match(sessions, /let busy = isSessionBusy\(sessionId\);/,
     'the shared worker/operation registry must still be the primary source');

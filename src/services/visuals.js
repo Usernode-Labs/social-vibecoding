@@ -260,6 +260,30 @@ function usableRuntimeName(name) {
   return !value || CONTAINER_ID_RE.test(value) ? null : value;
 }
 
+// The same failure, one wall further out. A container ID is unresolvable
+// because Docker's DNS does not serve it; a container NAME longer than 63
+// bytes is unresolvable because 63 is the maximum length of a DNS label and
+// nothing — Chrome's resolver, Go's, glibc's — will even send the query.
+// `usernode-staging-<slug>--<sessionId>` crosses that line at a 43-character
+// slug, which is an app name a human can plausibly type, and the symptom is
+// identical: ERR_NAME_NOT_RESOLVED on every route, before a byte of app code
+// runs, scored as the app's fault.
+//
+// Containers therefore carry a short network ALIAS alongside the long name
+// (application-runtime.dnsAlias). Prefer it, but only when it is real: for a
+// name that still fits, an alias we could not confirm is strictly worse than
+// the name that has always worked. When the name does NOT fit there is no
+// safe fallback — the alias is the only thing that can resolve — so use it
+// either way and let the capture report honestly if it is missing too.
+const MAX_DNS_LABEL = 63;
+function dnsHostname(name, alias, { aliasConfirmed = false } = {}) {
+  const value = String(name == null ? '' : name).trim();
+  const short = String(alias == null ? '' : alias).trim();
+  if (!short) return value;
+  if (value.length > MAX_DNS_LABEL) return short;
+  return aliasConfirmed ? short : value;
+}
+
 function isFrontendFile(file) {
   const f = String(file || '').replace(/\\/g, '/');
   const ext = path.extname(f).toLowerCase();
@@ -493,6 +517,50 @@ function normalizeConsoleErrors(list) {
       message: String((e && e.message) || '').slice(0, CONSOLE_MAX_MSG_LEN),
       source: (e && e.source) ? String(e.source).slice(0, CONSOLE_MAX_MSG_LEN) : '',
     }));
+}
+
+// Origin-level browser failures: the request never reached the app because
+// the hostname did not resolve or nothing was listening. These are reported
+// as `kind: 'load'` console errors, and they are indistinguishable — from
+// inside a check row — from an app that renders a broken page.
+//
+// They are not the same thing, and scoring them the same way is what made
+// #1381 permanent. 'failing' is a verdict ABOUT THE APP: it sticks to the
+// commit, it records fail_count against the check's history, it schedules no
+// retry, and it escalates to nobody, because a failing test is the author's
+// problem to fix. An origin that does not resolve is the platform's problem,
+// and 'error' is the state that already handles it — backoff, a retry
+// schedule, `check_error_detail`, owner escalation, and "⚠ Checks couldn't
+// run" on the card instead of a red X next to the author's name.
+const UNREACHABLE_ORIGIN_RE = new RegExp([
+  'ERR_NAME_NOT_RESOLVED',
+  'ERR_CONNECTION_REFUSED',
+  'ECONNREFUSED',
+  'ERR_ADDRESS_UNREACHABLE',
+].join('|'), 'i');
+
+// Returns a human-readable detail string when EVERY container-produced row
+// failed at the origin, or null.
+//
+// "Every" is the load-bearing word. One unreachable route among passing ones
+// is an app-side deep link pointing at a host the app itself got wrong — a
+// real, author-fixable failure that must keep blocking. It is only when not a
+// single route could be reached that the origin, rather than the app, is the
+// thing that is broken.
+function unreachableOriginDetail(rows, origin) {
+  const list = Array.isArray(rows) ? rows : [];
+  if (!list.length) return null;
+  let sample = '';
+  for (const r of list) {
+    if (r.status === 'pass') return null;
+    const hit = (Array.isArray(r.consoleErrors) ? r.consoleErrors : []).find(
+      (e) => e && e.kind === 'load' && UNREACHABLE_ORIGIN_RE.test(String(e.message || ''))
+    );
+    if (!hit) return null;
+    if (!sample) sample = String(hit.message || '').slice(0, CONSOLE_MAX_MSG_LEN);
+  }
+  const where = origin ? ` at ${origin}` : '';
+  return `Staging preview unreachable${where} — no route could be loaded (${sample}).`;
 }
 
 // Classify the parsed test frames into the persisted snapshot:
@@ -1514,12 +1582,40 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     const prodRunning = (await applicationRuntime.status(config, {
       runtimeKind: prodRuntimeKind, runtimeName: prodName,
     })) === 'running';
+    // ── DNS-resolvable identities (#1381) ──
+    //
+    // Under the Kubernetes capture runtime the Service name is already
+    // clamped to 63 by kubernetes.dnsName(), so that branch is untouched.
+    // On docker, back-fill the short alias onto the LIVE containers first:
+    // a re-check reuses a running preview rather than rebuilding it, so a
+    // preview created before aliases existed would otherwise stay
+    // unreachable until a new commit — which would clear its votes. This is
+    // idempotent, costs one `docker inspect` on the overwhelmingly common
+    // already-aliased path, and never throws.
+    const stagingAlias = kubernetesCapture
+      ? null
+      : applicationRuntime.dnsAlias({ environment: 'staging', sessionId: session.id });
+    const prodAlias = kubernetesCapture && prodRuntimeKind === 'kubernetes'
+      ? null
+      : applicationRuntime.dnsAlias({ environment: 'production', dockerName: prodName });
+    const stagingAliasOk = stagingAlias
+      ? await docker.ensureNetworkAlias(stagingName, stagingAlias)
+      : false;
+    const prodAliasOk = prodAlias && prodRunning
+      ? await docker.ensureNetworkAlias(prodName, prodAlias)
+      : false;
+    const stagingHost = kubernetesCapture
+      ? stagingName
+      : dnsHostname(stagingName, stagingAlias, { aliasConfirmed: stagingAliasOk });
+    const prodHost = kubernetesCapture && prodRuntimeKind === 'kubernetes'
+      ? prodName
+      : dnsHostname(prodName, prodAlias, { aliasConfirmed: prodAliasOk });
     const stagingOrigin = kubernetesCapture
-      ? `http://${stagingName}.${appNamespace}.svc.cluster.local:3000`
-      : `http://${stagingName}:3000`;
+      ? `http://${stagingHost}.${appNamespace}.svc.cluster.local:3000`
+      : `http://${stagingHost}:3000`;
     const prodOrigin = kubernetesCapture && prodRuntimeKind === 'kubernetes'
-      ? `http://${prodName}.${appNamespace}.svc.cluster.local:3000`
-      : `http://${prodName}:3000`;
+      ? `http://${prodHost}.${appNamespace}.svc.cluster.local:3000`
+      : `http://${prodHost}:3000`;
 
     // Self-app "before" auth: the production platform never honours the
     // query token by design (replay protection — middleware/auth.js gates
@@ -1841,6 +1937,23 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     const checksResult = classifyTests(parseTests(stdout), tests.length, dispatched
       ? { dispatched, sentinel: parseTestsDone(stdout), extraRows }
       : { extraRows });
+
+    // Re-label a whole-origin outage as 'error' rather than 'failing'
+    // (#1381). Only rows the container actually produced count — the
+    // synthesized extraRows (over-ceiling guard, unit suite) never load a
+    // page and would otherwise veto the override for free.
+    if (checksResult.state === 'failing') {
+      const containerRows = checksResult.results.filter((r) => !extraRows.includes(r));
+      const detail = unreachableOriginDetail(containerRows, stagingOrigin);
+      if (detail) {
+        checksResult.state = 'error';
+        checksResult.errorDetail = detail;
+        log.warn('visuals', 'Checks unreachable origin — recorded as error, not failing', {
+          sessionId: session.id, origin: stagingOrigin, rows: containerRows.length,
+        });
+      }
+    }
+
     const blockingCount = Number.isInteger(checksResult.blockingCount)
       ? checksResult.blockingCount
       : checksResult.results.filter((r) => r.status !== 'pass' && !r.advisory).length;
@@ -1868,7 +1981,13 @@ async function captureForSession(config, session, app, commitHash, stagingResult
         // result was discarded as stale must not graduate anything either.
         // Rows the container never produced are absent here, so a check that
         // did not run neither graduates nor records a failure.
-        if (dispatched || unitOutcome) {
+        // An 'error' verdict is "we could not find out", not "this check
+        // failed". Recording it would stamp fail_count on checks that never
+        // executed — which is how seven of WorkQuest's rows reached
+        // pass_count 0 / fail_count 2 for a container that logged zero
+        // inbound requests — and, worse, could graduate nothing while
+        // permanently colouring the app's history with a platform outage.
+        if ((dispatched || unitOutcome) && checksResult.state !== 'error') {
           const historyRows = [];
           if (dispatched) {
             const byIndex = new Map(dispatched.map((d) => [d.index, d]));
@@ -2267,6 +2386,8 @@ module.exports = {
   parseTests,
   parseTestsDone,
   classifyTests,
+  unreachableOriginDetail,
+  dnsHostname,
   serializeTestResults,
   overCeilingCheckRow,
   storeChecks,
