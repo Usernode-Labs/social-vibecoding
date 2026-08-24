@@ -1106,39 +1106,29 @@ const DevChat = {
   _renderRunnerControls() {
     const host = document.getElementById('dc-runner');
     if (!host) return;
-    if (DevChat._isOpenRouterSession()) {
-      host.innerHTML = '';
-      return;
-    }
+    const react = (typeof window !== 'undefined' && window.UsernodeReact)
+      ? window.UsernodeReact.devChat : null;
+    if (!react) return;
+    // The HOST stays ours — the template writes it — and its CHILDREN are
+    // features/dev-chat/composer-chrome.tsx's.
+    react.mountRunnerControls(host);
+    react.publishRunner(DevChat._runnerView());
+  },
+
+  // Which of the three states the "Run on" strip is in. An OpenRouter session
+  // has no platform runner to talk about, and neither does a session with no
+  // machine attached that has never run one — both draw nothing, which is
+  // what keeps the composer row unchanged for everyone not using this.
+  //
+  // `_runnerLabel` outlives the lease on purpose: it is the name of the
+  // machine the LAST turn ran on, which is exactly what the past-tense chip
+  // needs once that machine has detached and `_localAgent` has gone null.
+  _runnerView() {
+    if (DevChat._isOpenRouterSession()) return { kind: 'none', label: '' };
     const agent = DevChat._localAgent;
-    if (!agent && DevChat._runner !== 'local') {
-      host.innerHTML = '';
-      return;
-    }
+    if (!agent && DevChat._runner !== 'local') return { kind: 'none', label: '' };
     const label = agent?.label || DevChat._runnerLabel || 'your machine';
-    if (!agent) {
-      // A previous turn ran locally but that machine has since detached, so
-      // the next one comes back here. Say so rather than leaving the chip up
-      // and implying work is still going somewhere it isn't.
-      host.innerHTML = `<span class="dc-runner-chip dc-runner-chip-past" title="The last turn ran on ${escapeHtml(label)}. That machine has detached, so the next turn runs on Usernode.">Last turn: ${escapeHtml(label)}</span>`;
-      return;
-    }
-    host.innerHTML = `
-      <label class="text-xs text-zinc-500 dark:text-zinc-400" for="dc-runner-select">Run on:</label>
-      <select id="dc-runner-select" class="rounded bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-2 py-1 text-xs text-zinc-700 dark:text-zinc-300 focus:outline-none focus:ring-2 focus:ring-violet-500">
-        <option value="local" selected>${escapeHtml(label)}</option>
-        <option value="platform">Usernode</option>
-      </select>
-      <span class="dc-runner-chip" title="Spec and coding turns in this session run on ${escapeHtml(label)}, using its own Claude subscription. A spec turn is read-only; after a coding turn Usernode still opens the PR, builds the preview and runs the checks.">Running on your machine</span>
-    `;
-    const select = document.getElementById('dc-runner-select');
-    if (select) {
-      select.addEventListener('change', (event) => {
-        if (event.target.value !== 'platform') return;
-        event.target.value = 'local';
-        DevChat._handBackToUsernode();
-      });
-    }
+    return { kind: agent ? 'live' : 'past', label };
   },
 
   // Release the lease from the browser. This is the escape hatch for the
@@ -6659,16 +6649,17 @@ const DevChat = {
   _renderQuickReplies() {
     const bar = document.getElementById('dc-quick-replies');
     if (!bar) return;
-    const replies = DevChat._currentQuickReplies();
-    if (!replies || !replies.length) {
-      bar.innerHTML = '';
-      bar.classList.remove('dc-quick-replies-active');
-      return;
-    }
-    bar.innerHTML = replies.map((r, i) =>
-      `<button type="button" class="dc-quick-pill" data-quick-reply-idx="${i}">${escapeHtml(r)}</button>`
-    ).join('');
-    bar.classList.add('dc-quick-replies-active');
+    const react = (typeof window !== 'undefined' && window.UsernodeReact)
+      ? window.UsernodeReact.devChat : null;
+    if (!react) return;
+    const replies = DevChat._currentQuickReplies() || [];
+    // The bar and its `dc-quick-replies-active` (the class that gives it a
+    // height) stay ours; the PILLS are the component's, and the delegated
+    // click `_wireQuickReplies` binds on this element still reads their
+    // `data-quick-reply-idx`.
+    react.mountQuickReplies(bar);
+    react.publishQuickReplies({ replies });
+    bar.classList.toggle('dc-quick-replies-active', replies.length > 0);
   },
 
   // Bind the pill-bar click delegation once per renderChatView (the bar

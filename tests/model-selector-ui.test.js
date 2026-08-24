@@ -28,6 +28,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { loadTsx, renderComponent } = require('./lib/render-tsx');
 
 const SRC = fs.readFileSync(
   path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'dev-chat.js'),
@@ -97,6 +98,12 @@ function makeElement(id) {
 
 function makeHarness() {
   const registry = new Map();
+  // #1191: the runner strip's markup is
+  // features/dev-chat/composer-chrome.tsx's, so `_renderRunnerControls()`
+  // publishes a { kind, label } view. `runnerHtml()` below renders the
+  // component from it, so the assertions still read the strip as a reader
+  // sees it — and the select's change handler is a prop, invoked directly.
+  let runnerView = { kind: 'none', label: '' };
   const getEl = (id) => {
     if (!registry.has(id)) registry.set(id, makeElement(id));
     return registry.get(id);
@@ -139,6 +146,18 @@ function makeHarness() {
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'),
     App: { currentTab: 'dev', currentSubTab: 'sessions' },
     Notifications: {},
+    UsernodeReact: {
+      devChat: {
+        mountRunnerControls: () => {},
+        publishRunner: (v) => { runnerView = v; },
+        mountQuickReplies: () => {},
+        publishQuickReplies: () => {},
+        mountBudgetPill: () => {},
+        publishBudgetPill: () => {},
+        mountAttachStrip: () => {},
+        publishAttachStrip: () => {},
+      },
+    },
     PlatformUI: {
       isTouch: () => false, hasKit: () => false, toast: () => {},
       alert: async () => ({}), confirm: async () => true,
@@ -174,7 +193,15 @@ function makeHarness() {
   DevChat.currentSession = { id: 7, branch_name: 'dev/x', session_title: 'A change' };
   DevChat.messages = [];
 
-  return { DevChat, getEl };
+  return {
+    DevChat,
+    getEl,
+    runnerView: () => JSON.parse(JSON.stringify(runnerView)),
+    runnerHtml: () => renderComponent(
+      'frontend/src/features/dev-chat/composer-chrome.tsx', 'RunnerControlsView',
+      JSON.parse(JSON.stringify(runnerView)),
+    ),
+  };
 }
 
 // The three-model map GET /api/models sends: label + guidance copy, and
@@ -439,23 +466,23 @@ test('the composer is byte-identical for a session with no machine attached', ()
   // The host span ships in the markup so nothing has to be inserted later,
   // and stays empty — .dc-runner:empty is display:none, so no gap appears.
   assert.ok(html.includes('id="dc-runner"'), 'the host span is in the composer');
-  const { DevChat } = makeHarness();
+  const { DevChat, runnerHtml } = makeHarness();
   DevChat._renderRunnerControls();
-  assert.equal(getEl('dc-runner').innerHTML, '');
+  assert.equal(runnerHtml(), '', 'the strip draws nothing at all');
   // Nobody who never runs the CLI sees the words.
   assert.ok(!html.includes('Run on:'));
   assert.ok(!html.includes('Running on your machine'));
 });
 
 test('an attached machine gets a selector and a live chip', () => {
-  const { DevChat, getEl } = makeHarness();
+  const { DevChat, runnerHtml } = makeHarness();
   DevChat._applyRunnerState({
     runner: 'local',
     localAgent: { leaseId: '7', label: "Evan's laptop", runtime: 'claude-code' },
   });
-  const html = getEl('dc-runner').innerHTML;
+  const html = runnerHtml();
   assert.match(html, /Run on:/);
-  assert.match(html, /<option value="local" selected>Evan&#39;s laptop|Evan's laptop/);
+  assert.match(html, /<option value="local"[^>]*>Evan&#x27;s laptop<\/option>/);
   assert.match(html, /<option value="platform">Usernode<\/option>/);
   assert.match(html, /Running on your machine/);
   // The chip explains the division of labour, because "running on your
@@ -464,25 +491,28 @@ test('an attached machine gets a selector and a live chip', () => {
 });
 
 test('a label the user typed on their own machine is escaped, not interpreted', () => {
-  const { DevChat, getEl } = makeHarness();
+  const { DevChat, runnerHtml } = makeHarness();
   DevChat._applyRunnerState({
     runner: 'local',
     localAgent: { leaseId: '7', label: '<img src=x onerror=alert(1)>' },
   });
-  const html = getEl('dc-runner').innerHTML;
-  assert.ok(!html.includes('<img'), 'the label reached innerHTML unescaped');
+  const html = runnerHtml();
+  assert.ok(!html.includes('<img'), 'the label reached the DOM unescaped');
   assert.match(html, /&lt;img/);
+  // It rides in a `title` too, which is the attribute context the string
+  // renderer needed a separate escape for.
+  assert.match(html, /title="The last turn ran on|title="Spec and coding turns in this session run on &lt;img/);
 });
 
 test('a machine that has gone leaves a past-tense chip, not a live one', () => {
-  const { DevChat, getEl } = makeHarness();
+  const { DevChat, runnerHtml } = makeHarness();
   DevChat._applyRunnerState({
     runner: 'local', runnerLabel: 'laptop', localAgent: { leaseId: '7', label: 'laptop' },
   });
   // The lease is gone but chat_sessions still remembers where the last turn
   // ran, which is what /status sends as runnerLabel.
   DevChat._applyRunnerState({ runner: 'local', runnerLabel: 'laptop', localAgent: null });
-  const html = getEl('dc-runner').innerHTML;
+  const html = runnerHtml();
   assert.match(html, /dc-runner-chip-past/);
   assert.match(html, /Last turn: laptop/);
   // No selector: there is nothing left to select between.
@@ -491,7 +521,7 @@ test('a machine that has gone leaves a past-tense chip, not a live one', () => {
 });
 
 test('choosing Usernode hands the session back and never leaves a half-set select', async () => {
-  const { DevChat, getEl } = makeHarness();
+  const { DevChat, runnerView } = makeHarness();
   const requests = [];
   let confirmed = true;
   DevChat._applyRunnerState({ runner: 'local', localAgent: { leaseId: '7', label: 'laptop' } });
@@ -503,21 +533,35 @@ test('choosing Usernode hands the session back and never leaves a half-set selec
     DevChat._localAgent = null;
     DevChat._renderRunnerControls();
   };
-  const select = getEl('dc-runner-select');
-  const event = { target: { value: 'platform' } };
-  select._fire('change', event);
-  await new Promise((resolve) => setImmediate(resolve));
-  // The select snaps back before the async work: a dropdown left reading
-  // "Usernode" while the lease is still held is a lie about where the next
-  // turn goes.
-  assert.equal(event.target.value, 'local');
-  assert.deepEqual(requests, ['DELETE /api/me/local-agents/7']);
+  // #1191: the handler is the select's onChange prop, so it is invoked
+  // directly rather than through a listener registry.
+  const { RunnerControlsView } = loadTsx('frontend/src/features/dev-chat/composer-chrome.tsx');
+  const onChange = () => {
+    const parts = RunnerControlsView(runnerView()).props.children;
+    const select = parts.find((child) => child && child.props && child.props.id === 'dc-runner-select');
+    assert.ok(select, 'the live strip renders a selector');
+    return select.props.onChange;
+  };
+  const previous = global.window;
+  global.window = { DevChat };
+  try {
+    const event = { target: { value: 'platform' } };
+    onChange()(event);
+    await new Promise((resolve) => setImmediate(resolve));
+    // The select snaps back before the async work: a dropdown left reading
+    // "Usernode" while the lease is still held is a lie about where the next
+    // turn goes.
+    assert.equal(event.target.value, 'local');
+    assert.deepEqual(requests, ['DELETE /api/me/local-agents/7']);
 
-  // Selecting the machine that is already running it is a no-op.
-  requests.length = 0;
-  DevChat._applyRunnerState({ runner: 'local', localAgent: { leaseId: '8', label: 'desktop' } });
-  getEl('dc-runner-select')._fire('change', { target: { value: 'local' } });
-  assert.deepEqual(requests, []);
+    // Selecting the machine that is already running it is a no-op.
+    requests.length = 0;
+    DevChat._applyRunnerState({ runner: 'local', localAgent: { leaseId: '8', label: 'desktop' } });
+    onChange()({ target: { value: 'local' } });
+    assert.deepEqual(requests, []);
+  } finally {
+    if (previous === undefined) delete global.window; else global.window = previous;
+  }
 });
 
 test('the hand-back is the browser-side escape hatch, and refuses demo rows', () => {

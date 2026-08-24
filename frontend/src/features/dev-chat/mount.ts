@@ -27,6 +27,13 @@ import { DevAttachStrip } from './attach-strip';
 import { attachStripStore, type AttachStripState } from './attach-strip-store';
 import { BudgetPill } from './budget-pill';
 import { budgetPillStore, type BudgetPillState } from './budget-pill-store';
+import { QuickReplies, RunnerControls } from './composer-chrome';
+import {
+  quickRepliesStore,
+  runnerStore,
+  type QuickRepliesState,
+  type RunnerState,
+} from './composer-chrome-store';
 
 export interface DevChatBridge {
   mountAttachStrip(host: Element | null): void;
@@ -34,6 +41,10 @@ export interface DevChatBridge {
   publishAttachStrip(state: AttachStripState): void;
   mountBudgetPill(host: Element | null): void;
   publishBudgetPill(state: BudgetPillState): void;
+  mountQuickReplies(host: Element | null): void;
+  publishQuickReplies(state: QuickRepliesState): void;
+  mountRunnerControls(host: Element | null): void;
+  publishRunner(state: RunnerState): void;
 }
 
 export const devChatBridge: DevChatBridge = {
@@ -66,6 +77,27 @@ export const devChatBridge: DevChatBridge = {
 
   publishBudgetPill(state) {
     budgetPillStore.set(state);
+  },
+
+  // The suggestion pills. The bar and its active class stay the module's —
+  // one delegated click is bound on that element per `renderChatView`.
+  mountQuickReplies(host) {
+    if (!host) return;
+    mountLegacyPortal(host, createElement(QuickReplies));
+  },
+
+  publishQuickReplies(state) {
+    quickRepliesStore.set(state);
+  },
+
+  // The "Run on" strip, which draws nothing at all in the common case.
+  mountRunnerControls(host) {
+    if (!host) return;
+    mountLegacyPortal(host, createElement(RunnerControls));
+  },
+
+  publishRunner(state) {
+    runnerStore.set(state);
   },
 };
 
