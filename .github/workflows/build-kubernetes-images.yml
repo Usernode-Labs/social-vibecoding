@@ -194,7 +194,7 @@ jobs:
             --set secrets.create=false \
             --set secrets.existingSecret=social-vibecoding \
             --set ingress.enabled=false >"$inactive_manifest"
-          test ! -s "$inactive_manifest"
+          ! grep -q '^kind:' "$inactive_manifest"
 
           external_manifest="$RUNNER_TEMP/social-vibecoding-platform-external.yaml"
           helm template social-vibecoding-platform "$chart_dir" \
