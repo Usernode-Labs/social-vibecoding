@@ -82,6 +82,10 @@ test('the deployment consumes one supplied password and provisions the role idem
   assert.match(deploy, /WHERE NOT EXISTS \([\s\S]*rolname = 'postgres'/,
     'the source must provide the conventional superuser expected by CNPG after physical restore');
   assert.match(deploy, /ALTER ROLE postgres WITH LOGIN SUPERUSER/);
+  assert.match(deploy, /WHERE NOT EXISTS \([\s\S]*rolname = 'streaming_replica'/,
+    'the source must provide the certificate-authenticated role used for CNPG instance joins');
+  assert.match(deploy,
+    /ALTER ROLE streaming_replica WITH LOGIN REPLICATION NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS/);
   assert.match(deploy, /WHERE NOT EXISTS \([\s\S]*rolname = 'social_cnpg_replica'/);
   assert.match(deploy, /ALTER ROLE %I WITH LOGIN REPLICATION NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS/);
   assert.doesNotMatch(deploy, /openssl rand|pwgen|generate-password/,

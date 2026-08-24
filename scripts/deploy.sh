@@ -612,6 +612,17 @@ WHERE NOT EXISTS (
 ALTER ROLE postgres WITH LOGIN SUPERUSER;
 
 SELECT format(
+  'CREATE ROLE %I WITH LOGIN REPLICATION',
+  'streaming_replica'
+)
+WHERE NOT EXISTS (
+  SELECT 1 FROM pg_roles WHERE rolname = 'streaming_replica'
+)
+\gexec
+
+ALTER ROLE streaming_replica WITH LOGIN REPLICATION NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
+
+SELECT format(
   'CREATE ROLE %I WITH LOGIN REPLICATION PASSWORD %L',
   'social_cnpg_replica',
   :'replication_password'
