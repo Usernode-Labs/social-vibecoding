@@ -2622,6 +2622,21 @@
       "expectText": "older notification"
     },
     {
+      "name": "The notifications drawer is a flat list of rows (#1385)",
+      "path": "/?shot=notifications&demo=1",
+      "expectSelector": "#notifications-list > [data-notif-id]"
+    },
+    {
+      "name": "No app-group headers survive in the notifications drawer (#1385)",
+      "path": "/?shot=notifications&demo=1",
+      "expectSelector": "#notifications-list:not(:has([data-group-toggle]))"
+    },
+    {
+      "name": "The flat list carries its own foot pager for older pages (#1385)",
+      "path": "/?shot=notifications&demo=1",
+      "expectSelector": "#notifications-list #notifications-load-more"
+    },
+    {
       "name": "The Dev feed renders as a de-carded stream",
       "path": "/?demo=1&view=feed#app/usernode-2d5619/dev",
       "expectSelector": "#dev-feed .dev-feed-entry > .gc-vote-item"
