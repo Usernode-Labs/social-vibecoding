@@ -62,6 +62,12 @@ const GroupChat = {
   _reactBar: null,
   _reactBarDismiss: null,
   _reactBarOpenedAt: 0,
+  // The bar's two moving parts, mirrored here because they are published
+  // rather than toggled in place: whether the `＋` grid is expanded, and
+  // whether the pointed-at row offers Edit. See
+  // frontend/src/features/group-chat/reaction-bar-store.ts.
+  _reactBarGridOpen: false,
+  _reactBarEditable: false,
   // Shell-injected staging iframe token, captured at script load so SPA
   // history rewrites can't lose it before a (re)connect needs it.
   _bootToken: new URLSearchParams(location.search).get('token'),
@@ -1544,20 +1550,6 @@ const GroupChat = {
     const bar = document.createElement('div');
     bar.id = 'gc-react-bar';
     bar.className = 'gc-react-bar hidden';
-    const quick = GroupChat.QUICK_REACTIONS
-      .map((e) => `<button class="gc-react-bar-emoji" data-emoji="${escapeHtml(e)}">${escapeHtml(e)}</button>`)
-      .join('');
-    const grid = GroupChat.GRID_REACTIONS
-      .map((e) => `<button class="gc-react-bar-emoji" data-emoji="${escapeHtml(e)}">${escapeHtml(e)}</button>`)
-      .join('');
-    bar.innerHTML =
-      `<div class="gc-react-bar-quick">${quick}` +
-        `<button class="gc-react-bar-more" aria-label="More emoji">\uFF0B</button>` +
-        // Touch-only Edit action for own ordinary messages (desktop uses the
-        // hover pencil). Visibility is toggled per-row in _openReactionBar.
-        `<button class="gc-react-bar-edit hidden" aria-label="Edit message">\u270F\uFE0F</button>` +
-      `</div>` +
-      `<div class="gc-react-bar-grid hidden">${grid}</div>`;
     bar.addEventListener('click', (e) => {
       const em = e.target.closest('.gc-react-bar-emoji');
       if (em) { GroupChat._reactFromBar(em.dataset.emoji); return; }
@@ -1568,12 +1560,28 @@ const GroupChat = {
         return;
       }
       if (e.target.closest('.gc-react-bar-more')) {
-        bar.querySelector('.gc-react-bar-grid').classList.toggle('hidden');
+        GroupChat._reactBarGridOpen = !GroupChat._reactBarGridOpen;
+        GroupChat._publishReactBar();
       }
     });
     document.body.appendChild(bar);
+    // The HOST stays ours — position:fixed, appended to the body, pointed at a
+    // row and placed by measurement on every open — and its CHILDREN are
+    // features/group-chat/reaction-bar.tsx's, mounted once here. The emoji sets
+    // ride along as props because they never change.
+    window.UsernodeReact?.groupChat?.mountReactionBar?.(bar, {
+      quick: GroupChat.QUICK_REACTIONS,
+      grid: GroupChat.GRID_REACTIONS,
+    });
     GroupChat._reactBar = bar;
     return bar;
+  },
+
+  _publishReactBar() {
+    window.UsernodeReact?.groupChat?.publishReactionBar?.({
+      gridOpen: !!GroupChat._reactBarGridOpen,
+      editable: !!GroupChat._reactBarEditable,
+    });
   },
 
   _openReactionBar(row) {
@@ -1582,11 +1590,14 @@ const GroupChat = {
     if (!id) return;
     const bar = GroupChat._ensureReactionBar();
     bar.dataset.msgId = String(id);
-    bar.querySelector('.gc-react-bar-grid').classList.add('hidden');
-    // Offer Edit only on the viewer's own ordinary messages.
-    const editable = row.classList.contains('gc-msg') && row.classList.contains('gc-msg-self');
-    const editBtn = bar.querySelector('.gc-react-bar-edit');
-    if (editBtn) editBtn.classList.toggle('hidden', !editable);
+    // Every open starts collapsed, and Edit is offered only on the viewer's
+    // own ordinary messages. Publishing goes through flushSync
+    // (features/group-chat/mount.ts), so the pencil is in or out of the DOM
+    // before the measurement below decides where the bar fits.
+    GroupChat._reactBarGridOpen = false;
+    GroupChat._reactBarEditable = row.classList.contains('gc-msg')
+      && row.classList.contains('gc-msg-self');
+    GroupChat._publishReactBar();
     bar.classList.remove('hidden');
     GroupChat._reactBarOpenedAt = Date.now();
 

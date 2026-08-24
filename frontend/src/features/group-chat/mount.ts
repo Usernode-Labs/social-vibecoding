@@ -37,6 +37,8 @@ import {
   type MentionOption,
   type RefOption,
 } from './autocomplete-store';
+import { ReactionBar, type ReactionBarProps } from './reaction-bar';
+import { reactionBarStore, type ReactionBarState } from './reaction-bar-store';
 import { SpecPanel } from './spec-panel';
 import { specPanelStore, type SpecPanelState } from './spec-panel-store';
 import { ThreadShell, type ThreadShellProps } from './thread-shell';
@@ -143,6 +145,16 @@ autocompleteStore.setFlush(flushSync);
  */
 specPanelStore.setFlush(flushSync);
 
+/**
+ * And the reaction bar's, for the third instance of the same sentence:
+ * `_openReactionBar` publishes `{ gridOpen: false, editable }` and then reads
+ * `bar.offsetWidth` / `bar.offsetHeight` to decide whether the bar fits above
+ * the row or has to flip below it. Whether the pencil is rendered changes the
+ * first of those, so a batched publish would place the bar against the
+ * PREVIOUS row's answer.
+ */
+reactionBarStore.setFlush(flushSync);
+
 // ── The composer's two autocomplete menus ─────────────────────────────
 //
 // Same seam, one level smaller: `_ensureMenu` still creates the floating host
@@ -227,6 +239,33 @@ export function publishSpecPanel(next: SpecPanelState): void {
   specPanelStore.set(next);
 }
 
+// ── The long-press reaction bar ───────────────────────────────────────
+//
+// One floating host for every message row, created and placed by
+// `_ensureReactionBar` / `_openReactionBar`. Its contents are a portal
+// established once, and its two moving parts are a publish.
+
+/**
+ * Establish the bar's contents. Idempotent — the host is cached by the module.
+ *
+ * The emoji sets arrive as props on the portal node rather than through the
+ * store: they are constants in public/js/group-chat.js, fixed for the life of
+ * the page, and `mountLegacyPortal` commits synchronously — so the mount IS
+ * their publish, the same way ThreadShell's layout is.
+ */
+export function mountReactionBar(host: Element | null, props: ReactionBarProps): void {
+  if (!host) return;
+  mountLegacyPortal(host, createElement(ReactionBar, props));
+}
+
+/**
+ * The grid's open state and whether this row offers Edit, together — the two
+ * `classList.toggle` calls that used to reach into the built markup.
+ */
+export function publishReactionBar(next: ReactionBarState): void {
+  reactionBarStore.set(next);
+}
+
 if (typeof window !== 'undefined') {
   const w = window as unknown as { UsernodeReact?: Record<string, unknown> };
   w.UsernodeReact = w.UsernodeReact || {};
@@ -243,5 +282,7 @@ if (typeof window !== 'undefined') {
     mountSpecPanel,
     publishSpecPanel,
     mountThreadShell,
+    mountReactionBar,
+    publishReactionBar,
   };
 }
