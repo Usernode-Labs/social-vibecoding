@@ -7780,36 +7780,6 @@ body.is-offline [data-offline-disabled] {
   text-overflow: ellipsis;
 }
 
-/* ── Dev filter chips (#1367 follow-up) ────────────────────────
-   The Dev screen's filter controls are Material-shaped filter chips now:
-   a 32px fully-rounded pill, hairline outline when idle, filled violet when
-   the filter is actually narrowing something. The classes themselves live in
-   AppView.KANBAN_CHIP_* (public/js/app-view.js) because the bar is rendered
-   as a template literal; only the two things Tailwind cannot express are
-   here.
-
-   A <select> needs `appearance: none` to keep the pill shape — the native
-   control paints its own square background and arrow on most platforms and
-   would square off the corners. Removing the arrow means drawing one, which
-   is the inline SVG below: a chevron as a background image, positioned in the
-   `pr-7` the class run reserves for it.
-
-   currentColor is deliberately NOT used — a background-image cannot read it —
-   so the caret is drawn twice, once per state, keyed off the same violet the
-   filled chip uses. */
-.dev-chip-select {
-  appearance: none;
-  -webkit-appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='%2371717a' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 8l4 4 4-4'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right 0.5rem center;
-  background-size: 1rem 1rem;
-}
-/* The filled state: a zinc caret on violet is close to invisible. */
-.dev-chip-select.bg-violet-600 {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 8l4 4 4-4'/%3E%3C/svg%3E");
-}
-
 /* ── The Dev FEED reads as a feed (#1367 follow-up) ─────────────
    Everything here is scoped to #dev-feed on purpose. The row renderers
    (_renderIssueRow, _renderProposalCard, _renderMergedCard, …) are SHARED

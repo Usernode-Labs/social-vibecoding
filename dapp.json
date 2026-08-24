@@ -1388,10 +1388,9 @@
       "expectSelector": "#dev-kanban-search"
     },
     {
-      "name": "The board person filter says it matches assignees or authors",
+      "name": "The board person filter lives in the Filters dialog (matches assignees or authors, #1404)",
       "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-kanban-assignee[aria-label=\"Filter by assignee or author\"]",
-      "expectText": "Assignee or author"
+      "expectSelector": "#board-filters-modal #board-filters-assignee"
     },
     {
       "name": "Mobile kanban tab strip ships one tab per column (#814)",
@@ -1455,9 +1454,9 @@
       "expectSelector": ".attr-avatar"
     },
     {
-      "name": "Kanban filter bar shows the category filter",
+      "name": "The Filters dialog offers the category select (Streamlined Concept)",
       "path": "/?demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-kanban-category"
+      "expectSelector": "#board-filters-modal #board-filters-category"
     },
     {
       "name": "Shared demo session renders in the In progress area",
@@ -2627,9 +2626,9 @@
       "expectText": "staging fixture"
     },
     {
-      "name": "The Dev filter controls are chips sharing a row with the + button",
+      "name": "The Filters button is a chip sharing a row with the + button (Streamlined Concept)",
       "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-actions > #dev-kanban-filterbar #dev-kanban-needsvote.rounded-full"
+      "expectSelector": "#dev-actions > #dev-kanban-filterbar #dev-kanban-filters-btn.rounded-full"
     },
     {
       "name": "The filter chips and the + button are siblings in one row",
@@ -2637,9 +2636,9 @@
       "expectSelector": "#dev-actions > #dev-kanban-filterbar + div > #dev-plus-btn"
     },
     {
-      "name": "A filter select wears the chip pill",
+      "name": "The Filters dialog offers the priority select (Streamlined Concept)",
       "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-kanban-priority.dev-chip-select.rounded-full"
+      "expectSelector": "#board-filters-modal #board-filters-priority"
     },
     {
       "name": "The feed shows the + button with no filter chips beside it",

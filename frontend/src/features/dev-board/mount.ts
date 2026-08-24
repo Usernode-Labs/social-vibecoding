@@ -148,9 +148,9 @@ cardMenuStore.setFlush(flushSync);
 
 /**
  * The filter bar's too: `_renderKanbanFilterBar` mounts and publishes, and the
- * kanban entry path reads the bar back — and `_clearKanbanFilters` publishes a
- * new `seq` and then repaints the board, which must not see a half-applied
- * bar.
+ * kanban entry path reads the bar back — and dismissing the Search chip
+ * publishes a new `seq` and then repaints the board, which must not see a
+ * half-applied bar.
  */
 kanbanFiltersStore.setFlush(flushSync);
 
@@ -268,8 +268,6 @@ export const devBoardBridge: DevBoardBridge = {
     mountLegacyPortal(host, createElement(KanbanFilters));
   },
 
-  // A patch, so `_updateKanbanFilterBarUI` can leave one select's options
-  // alone while its dropdown is open.
   publishKanbanFilters(patch) {
     kanbanFiltersStore.set((s) => ({ ...s, ...patch }));
   },
