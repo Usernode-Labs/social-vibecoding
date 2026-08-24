@@ -227,13 +227,16 @@ test('the venue control stays outside the swap — it is the way back', () => {
   // were inside #dc-composer-controls it would be hidden by exactly the
   // state it exists to undo, stranding the session in its launchpad. #1348
   // moved it further out of reach of the swap, into the session header.
-  const select = DEV_CHAT_SRC.indexOf('${venueSelectHtml}');
+  // The strip is a component now (features/dev-chat/session-header.tsx) and
+  // the button is one of its children, so "outside the swap" is a property of
+  // where the HEADER is written rather than of where the string landed.
   const header = DEV_CHAT_SRC.indexOf('id="dc-session-header"');
   const swap = DEV_CHAT_SRC.indexOf('id="dc-composer-controls"');
-  assert.ok(select !== -1, 'the venue selector is painted');
-  assert.ok(header !== -1 && header < select,
-    'inside the session header, which no venue swaps out');
-  assert.ok(select < swap, 'and before the composer wrapper opens');
+  assert.ok(header !== -1, 'the session header is painted');
+  assert.ok(header < swap, 'before the composer wrapper opens, so no venue swaps it out');
+  const headerTsx = fs.readFileSync(
+    path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'session-header.tsx'), 'utf8');
+  assert.match(headerTsx, /<VenueSelect/, 'and the venue selector is in that strip');
 });
 
 test('the walkthrough repaints on whichever surface it is living on', () => {

@@ -34,6 +34,8 @@ import {
   type QuickRepliesState,
   type RunnerState,
 } from './composer-chrome-store';
+import { SessionHeader } from './session-header';
+import { sessionHeaderStore, type SessionHeaderState } from './session-header-store';
 import { SessionList } from './session-list';
 import { sessionListStore, type SessionListState } from './session-list-store';
 
@@ -49,6 +51,8 @@ export interface DevChatBridge {
   publishRunner(state: RunnerState): void;
   mountSessionList(host: Element | null, state: SessionListState): void;
   publishSessionList(state: SessionListState): void;
+  mountSessionHeader(host: Element | null, state: SessionHeaderState): void;
+  publishSessionHeader(state: SessionHeaderState): void;
 }
 
 export const devChatBridge: DevChatBridge = {
@@ -116,6 +120,24 @@ export const devChatBridge: DevChatBridge = {
 
   publishSessionList(state) {
     sessionListStore.set(state);
+  },
+
+  // The session header strip. Same shape as the session list above — the
+  // element is `renderChatView`'s and the children are ours, and the state
+  // rides in with the mount so the one row that is constant on this screen
+  // never paints empty.
+  mountSessionHeader(host, state) {
+    if (!host) return;
+    sessionHeaderStore.set(state);
+    mountLegacyPortal(host, createElement(SessionHeader));
+  },
+
+  // `_patchHeaderStatusPill` — the mid-turn lifecycle repaint. It wrote
+  // `#dc-status-pill.innerHTML` in place precisely so a live stream was not
+  // disturbed by a full `renderChatView`; a publish here re-renders the
+  // header alone and leaves the transcript's portal untouched.
+  publishSessionHeader(state) {
+    sessionHeaderStore.set(state);
   },
 };
 

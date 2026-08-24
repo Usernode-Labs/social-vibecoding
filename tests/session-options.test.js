@@ -163,8 +163,17 @@ test('every row the menu carried still has a door', () => {
     path.join(__dirname, '../public/js/build-venues.js'), 'utf8'
   );
   // "Change how this is built" → the venue dropdown in the session header.
-  assert.match(BUILD_VENUES, /data-venue-change="1"/);
-  assert.match(DEV_CHAT_SRC, /DevChat\.openVenueSheet\(venueChange\)/);
+  // The button's MARKUP moved to features/dev-chat/session-header.tsx when
+  // that strip converted (a declared check pins it as a direct, last child, so
+  // it could not stay a string); what stayed here is every venue the sheet it
+  // opens offers.
+  assert.ok(Array.isArray(require('../public/js/build-venues').VENUES));
+  assert.match(BUILD_VENUES, /function open\(/, 'and the sheet itself');
+  const HEADER = fs.readFileSync(
+    path.join(__dirname, '../frontend/src/features/dev-chat/session-header.tsx'), 'utf8'
+  );
+  assert.match(HEADER, /data-venue-change="1"/);
+  assert.match(HEADER, /openVenueSheet\?\.\(e\.currentTarget\)/);
   // "Set/Change your API key" → the credits banner's own button, which
   // appears at the moment the allowance actually matters.
   const CREDIT_OPTIONS = fs.readFileSync(

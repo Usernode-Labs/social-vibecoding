@@ -38,6 +38,7 @@ const browseDetailTsx = read('frontend/src/features/apps/browse-detail.tsx');
 const devChatJs = read('frontend/src/features/dev-chat/dev-chat.js');
 const chatFrameTsx = read('frontend/src/features/dev-board/chat-frame.tsx');
 const topicFrameTsx = read('frontend/src/features/dev-board/topic-frame.tsx');
+const sessionHeaderTsx = read('frontend/src/features/dev-chat/session-header.tsx');
 const { HOME_SRC: homeJs } = require('./helpers/home-modules');
 const leaderboardJs = read('frontend/src/features/leaderboard/leaderboard.js');
 const kudosPaneTsx = read('frontend/src/features/leaderboard/kudos-pane.tsx');
@@ -231,14 +232,11 @@ test('the three up-one-level screens pass their own target', () => {
 // ── The converted back controls ────────────────────────────────────────
 
 const ANCHORS = [
-  {
-    label: 'back out of a dev session',
-    src: () => devChatJs, file: 'dev-chat.js',
-    markup: /<a id="dc-back"/,
-    oldTag: /<button id="dc-back"/,
-    href: /href="\$\{App\.currentApp \? `#app\/\$\{escapeHtml\(App\.currentApp\)\}\/dev` : ''\}"/,
-    handler: "document.getElementById('dc-back').addEventListener",
-  },
+  // 'back out of a dev session' is NOT in this list any more, and for the same
+  // reason as the three below: the session header strip converted, so the
+  // anchor is JSX in frontend/src/features/dev-chat/session-header.tsx and the
+  // plain-click path is DevChat.leaveSession(). It gets the same assertions by
+  // hand below.
   // 'back out of the app-wide dev chat' is NOT in this list: #1084 chunk G
   // converted that sub-view's frame to React, which splits the control across
   // two files, and every entry here has a single source. It gets the same two
@@ -289,6 +287,35 @@ test('"back out of the app-wide dev chat" is a real anchor with a real target', 
     'chat-frame.tsx: the anchor must carry the href prop, not a bare "#"');
   assert.match(appViewJs, /backHref: AppView\._devPageHref\(\),/,
     'app-view.js must resolve that href through the same shared helper as before');
+});
+
+// The dev session's back link, split by the session-header conversion: the
+// anchor is JSX in frontend/src/features/dev-chat/session-header.tsx, and the
+// plain-click path is `DevChat.leaveSession()`, which the component calls by
+// name. Same two properties the loop above asserts for every other control —
+// a real <a> with a resolvable target, and a guard that runs BEFORE
+// preventDefault, or a ⌘-click is swallowed.
+test('"back out of a dev session" is a real anchor with a real target', () => {
+  assert.match(sessionHeaderTsx, /<a\s+id="dc-back"/,
+    'session-header.tsx: the control must be an <a>');
+  assert.ok(!/<button[^>]*id="dc-back"/.test(sessionHeaderTsx + devChatJs),
+    'the old <button> tag is gone from both the component and dev-chat.js');
+  assert.match(sessionHeaderTsx, /href=\{s\.backHref\}/,
+    'session-header.tsx: the anchor must carry the href from the model, not a bare "#"');
+  assert.match(devChatJs, /backHref: App\.currentApp \? `#app\/\$\{App\.currentApp\}\/dev` : '',/,
+    'dev-chat.js must still resolve that href from the app in scope');
+});
+
+test('"back out of a dev session" leaves a modified click to the browser', () => {
+  const body = handlerAfter(sessionHeaderTsx, 'id="dc-back"', 700);
+  const guard = body.indexOf('NavLink?.isNativeClick(e)');
+  const prevent = body.indexOf('e.preventDefault()');
+  assert.ok(guard !== -1, 'session-header.tsx: the modified-click guard went missing');
+  assert.ok(prevent !== -1, 'session-header.tsx: a plain click must still be intercepted');
+  assert.ok(guard < prevent,
+    'session-header.tsx: preventDefault ahead of the guard swallows the new tab');
+  // And the work the plain click does is still dev-chat.js's.
+  assert.match(devChatJs, /leaveSession\(\) \{[\s\S]{0,900}?App\.switchTab\('dev'\)/);
 });
 
 // The topic back link, split the same way by #1191: the anchor is JSX in

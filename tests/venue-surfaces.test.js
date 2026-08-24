@@ -32,6 +32,9 @@ const vm = require('node:vm');
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 
 const DEV_CHAT_SRC = read('frontend/src/features/dev-chat/dev-chat.js');
+// #1348's button is JSX since the session header converted — see the note at
+// the first test below.
+const HEADER_TSX = read('frontend/src/features/dev-chat/session-header.tsx');
 const APP_VIEW_SRC = read('public/js/app-view.js');
 const SESSIONS_SRC = read('src/routes/sessions.js');
 const APP_CSS = read('public/css/app.css');
@@ -52,24 +55,35 @@ const BV = loadBuildVenues();
 
 // ── 1. The dropdown in the session header ────────────────────────────
 
-test('the selector states a venue for every session, with no empty case', () => {
-  // Every venue must produce a control. A venue that rendered '' would put
-  // the session back exactly where it was before #1086: no statement, and
-  // no door to the sheet either, since the change button IS the statement.
+// The button was `BuildVenues.selectorHtml`'s string until the session header
+// converted; it is JSX in features/dev-chat/session-header.tsx now, built from
+// the `venue()` spec that builder read. What has to hold is unchanged, so the
+// assertions moved rather than went: the venue LOOKUP is still this module's
+// and is asserted here, and the markup it produces is asserted against the
+// component in tests/dev-session-header.test.js.
+
+test('every venue resolves to a control this module can name', () => {
+  // Every venue must produce a control. A venue that resolved to nothing
+  // would put the session back exactly where it was before #1086: no
+  // statement, and no door to the sheet either, since the change button IS
+  // the statement.
   for (const v of BV.VENUES) {
-    const html = BV.selectorHtml({ current: v.id });
-    assert.ok(html.includes('data-venue-current="' + v.id + '"'), `${v.id} renders a control`);
-    assert.ok(html.includes(v.label), `${v.id} names itself`);
-    assert.ok(html.includes('data-venue-change="1"'), `${v.id} offers the change control`);
+    const spec = BV.venue(v.id);
+    assert.ok(spec, `${v.id} resolves`);
+    assert.equal(spec.id, v.id);
+    assert.ok(spec.label, `${v.id} names itself`);
+    assert.ok(spec.blurb, `${v.id} explains itself, which is the button's tooltip`);
   }
 });
 
-test('an unknown venue id renders nothing rather than a half sentence', () => {
+test('an unknown venue id resolves to nothing rather than a half sentence', () => {
   // `current` is derived from session columns, which are server data. A
   // value this list does not know about must not produce an empty chip.
-  assert.equal(BV.selectorHtml({ current: 'nonsense' }), '');
-  assert.equal(BV.selectorHtml({ current: 'constructor' }), '',
+  assert.equal(BV.venue('nonsense'), null);
+  assert.equal(BV.venue('constructor'), null,
     'including the prototype-chain members a bare lookup would answer');
+  // …and the component draws nothing for a null spec.
+  assert.match(HEADER_TSX, /s\.venue \? <VenueSelect/);
 });
 
 test('the selector is painted in the session header, top right (#1348)', () => {
@@ -77,26 +91,30 @@ test('the selector is painted in the session header, top right (#1348)', () => {
   // meter, the runner and the budget menu — the arrangement that made the
   // venue invisible. And after the status pill, so it lands on the right.
   const header = DEV_CHAT_SRC.indexOf('id="dc-session-header"');
-  const pill = DEV_CHAT_SRC.indexOf('_renderHeaderStatusPill(DevChat.currentSession)');
-  const select = DEV_CHAT_SRC.indexOf('${venueSelectHtml}');
   const body = DEV_CHAT_SRC.indexOf('class="dc-session-body');
   assert.ok(header !== -1, 'the session header row is addressable');
-  assert.ok(select !== -1, 'the selector is painted');
-  assert.ok(header < select && select < body,
-    'the selector sits inside the header row, before the chat body opens');
-  assert.ok(pill < select, 'and last in that row, so it is the top-right control');
-  assert.match(DEV_CHAT_SRC, /BuildVenues\.selectorHtml\(\{/,
-    'filled from the shared module, not retyped');
+  assert.ok(header < body, 'and it opens before the chat body does');
+  // The strip's ORDER is the component's now, and the venue button is last —
+  // which is the contract, because dapp.json selects it as `:last-child`.
+  const pill = HEADER_TSX.indexOf('id="dc-status-pill"');
+  const select = HEADER_TSX.indexOf('<VenueSelect');
+  assert.ok(pill !== -1 && select !== -1, 'both are painted');
+  assert.ok(pill < select, 'and the venue is last in that row, so it lands top-right');
+  assert.match(DEV_CHAT_SRC, /BuildVenues\.venue\(DevChat\._currentVenueId\(\)\)/,
+    'resolved through the shared module, not retyped');
 });
 
 test('the selector survives the launchpad swap that hides the composer', () => {
   // #1281 hides #dc-composer-controls for the three hand-off venues. A
   // venue control inside it would be hidden by exactly the state it exists
   // to undo, stranding the session in its launchpad.
-  const select = DEV_CHAT_SRC.indexOf('${venueSelectHtml}');
+  // The control is in the HEADER's subtree, and the header is written before
+  // the composer region opens — so it is outside the swap by construction.
+  const header = DEV_CHAT_SRC.indexOf('id="dc-session-header"');
   const swap = DEV_CHAT_SRC.indexOf('id="dc-composer-controls"');
-  assert.ok(select !== -1 && swap !== -1);
-  assert.ok(select < swap, 'the selector is painted outside the swapped region');
+  assert.ok(header !== -1 && swap !== -1);
+  assert.ok(header < swap, 'the strip that carries the selector is outside the swapped region');
+  assert.match(HEADER_TSX, /<VenueSelect/, 'and the selector is in that strip');
 });
 
 test('the selector is painted from the session row, so first paint is right', () => {
@@ -118,12 +136,23 @@ test('the change control is disabled mid-turn, in both places that paint it', ()
   // line no longer names. Two sites set it — the render and the streaming
   // sync — and a guard on only one of them is a guard that opens itself
   // on the next repaint.
+  // The RENDER's site is the model now — `_headerVenue` resolves `disabled`
+  // from the same flag, and the component renders it — so the two sites are
+  // one derivation and one in-place write rather than two in-place writes.
+  assert.match(DEV_CHAT_SRC, /disabled: !!DevChat\.isStreaming/,
+    'the render resolves it from the streaming flag');
+  assert.match(HEADER_TSX, /disabled=\{venue\.disabled\}/,
+    'and the component is the only thing that writes it on the render path');
   const sites = DEV_CHAT_SRC.match(
     /getElementById\('dc-venue-select'\)/g
   ) || [];
-  assert.ok(sites.length >= 2, `expected the render and the sync to both find it (got ${sites.length})`);
-  assert.match(DEV_CHAT_SRC, /venueChange\.disabled = DevChat\.isStreaming/,
-    'and both set .disabled from the streaming flag');
+  assert.ok(sites.length >= 1,
+    `the streaming sync still finds the button by id (got ${sites.length})`);
+  assert.match(DEV_CHAT_SRC, /_setStreamingUI[\s\S]*?DevChat\._repaintSessionHeader\(\)/,
+    'and the streaming sync republishes the strip rather than writing the '
+    + 'attribute React would overwrite on its next paint');
+  assert.doesNotMatch(DEV_CHAT_SRC, /venueChange\.disabled/,
+    'no second writer on a node the component renders');
 });
 
 test('each in-chat provider gets its own model control, and other venues get none', () => {

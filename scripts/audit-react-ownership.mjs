@@ -255,6 +255,13 @@ const OWNED = [
   { sel: '#dc-quick-replies' },              // features/dev-chat/composer-chrome.tsx
   { sel: '#dc-runner' },                     // ditto
   { sel: '#dc-budget' },                     // features/dev-chat/budget-pill.tsx
+  // The session header strip. The HOST is dev-chat.js's for a different
+  // reason from the four above — `PlatformUI.attachScreenFx` writes a hairline
+  // class onto the element once the chat scrolls — but the split is the same:
+  // every child is React's. `#dc-status-pill` is INSIDE it and is no longer a
+  // controller host; `_repaintSessionHeader` republishes the strip where
+  // `_patchHeaderStatusPill` used to write that span's innerHTML.
+  { sel: '#dc-session-header' },             // features/dev-chat/session-header.tsx
   { sel: '#llm-grants-list' },               // features/settings/grants-list.tsx
   { sel: '#cli-tokens-list' },               // features/settings/cli-tokens-list.tsx
   { sel: '#connectors-list' },               // features/settings/connectors-list.tsx

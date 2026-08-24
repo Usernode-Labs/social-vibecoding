@@ -4521,9 +4521,10 @@ const DevChat = {
     // #1086: the venue control replaced the coding-agent button that used
     // to sit here, and inherits its guard — a turn in flight holds the
     // worker, so the venue cannot move until it lands. #1348 moved the
-    // control to the header; the guard follows it.
-    const venueChange = document.getElementById('dc-venue-select');
-    if (venueChange) venueChange.disabled = !!streaming;
+    // control to the header, and the header is a component: the guard is
+    // `_headerVenue`'s `disabled` now, so this republishes the strip rather
+    // than writing the attribute React would overwrite on its next paint.
+    DevChat._repaintSessionHeader();
     const openRouterModelChange = document.getElementById('dc-openrouter-model-change');
     if (openRouterModelChange) openRouterModelChange.disabled = !!streaming;
     DevChat._syncSaveDraftBtn();
@@ -6527,6 +6528,22 @@ const DevChat = {
     });
   },
 
+  // Fill `#dc-session-header`. The element is `renderChatView`'s and is
+  // rebuilt on every render, so this mounts per render and the previous
+  // host's portal entry is swept as detached (lib/legacy-portals.tsx).
+  //
+  // The rows ride in WITH the mount rather than in a publish after it: an
+  // empty strip for one frame is a visible flicker on the one row that is
+  // supposed to be the constant on this screen.
+  _renderSessionHeader() {
+    const host = document.getElementById('dc-session-header');
+    if (!host) return;
+    const react = (typeof window !== 'undefined' && window.UsernodeReact)
+      ? window.UsernodeReact.devChat : null;
+    if (!react || !react.mountSessionHeader) return;
+    react.mountSessionHeader(host, DevChat._sessionHeaderView());
+  },
+
   // True when the device's PRIMARY pointer is coarse (finger) — i.e. a
   // phone/tablet, where focusing a text input pops the on-screen keyboard.
   // A desktop with a touchscreen still reports a fine primary pointer, so
@@ -7244,23 +7261,108 @@ const DevChat = {
   // merge_conflict_state / behind_main, plus yes_count + majority (added for
   // this feature) so the in-vote tally and the "Passed — merging shortly"
   // state resolve exactly as on the feed.
-  _renderHeaderStatusPill(session) {
-    return `<span id="dc-status-pill">${DevChat._statusPillInnerHtml(session)}</span>`;
-  },
-
-  _statusPillInnerHtml(session) {
-    if (!session || !(window.MergeStatus && MergeStatus.lifecycle)) return '';
+  // The lifecycle descriptor the header pill draws, or null when this
+  // session has none worth drawing (paused, archived, …). `MergeStatus`
+  // owns every rule that decides it; this only carries the answer, which is
+  // already a plain object and so crosses the store unchanged.
+  _headerLife(session) {
+    if (!session || !(window.MergeStatus && MergeStatus.lifecycle)) return null;
     const life = MergeStatus.lifecycle(session);
-    if (!life || !life.label) return '';
-    return MergeStatus.pillHtml(life);
+    return (life && life.label) ? life : null;
   },
 
-  // #405: patch the header pill in place (used while a turn is streaming, so
-  // we don't re-render the whole view and disrupt the live message stream).
-  _patchHeaderStatusPill() {
-    const el = document.getElementById('dc-status-pill');
-    if (!el) return;
-    el.innerHTML = DevChat._statusPillInnerHtml(DevChat.currentSession);
+  // #1348's dropdown, as the spec the component draws. `BuildVenues.venue()`
+  // is the same lookup `selectorHtml` did before this chunk retired it; the
+  // title sentence is that builder's, moved here whole.
+  _headerVenue(session) {
+    if (!window.BuildVenues || !BuildVenues.venue) return null;
+    const v = BuildVenues.venue(DevChat._currentVenueId());
+    if (!v) return null;
+    return {
+      id: v.id,
+      label: v.label,
+      title: 'Building in ' + v.label + '. ' + v.blurb
+        + ' Pick a different venue — on Usernode, on your computer, or handed to'
+        + ' Claude Code or Codex on the web.',
+      // Mid-turn the venue is not changeable: a running turn holds the
+      // worker, and moving it under itself is the failure the old
+      // `agentSelect.disabled` guarded against. Same rule, new control.
+      disabled: !!DevChat.isStreaming,
+    };
+  },
+
+  // `currentSession`, not an argument: `_headerVenue` resolves the venue
+  // through `_currentVenueId()`, which is deliberately the ONE place every
+  // input to "which venue is this?" meets. A session passed in here would be a
+  // second answer to that question, and both callers pass the same row anyway.
+  _sessionHeaderView() {
+    const session = DevChat.currentSession;
+    const s = session || {};
+    return {
+      backHref: App.currentApp ? `#app/${App.currentApp}/dev` : '',
+      title: s.session_title || s.pr_title || s.branch_name || 'Session',
+      branch: s.branch_name || '',
+      pr: s.pr_number || null,
+      prTitle: s.pr_number
+        ? `This session's pull request — every change in this chat goes to PR #${s.pr_number}. `
+          + 'Use “Start a new change” for separate work.'
+        : '',
+      newChangeTitle: 'This chat is one change → one pull request. A PR opens after the first build.',
+      life: DevChat._headerLife(session),
+      venue: DevChat._headerVenue(session),
+    };
+  },
+
+  // Repaint the header strip WITHOUT re-rendering the view.
+  //
+  // This was `_patchHeaderStatusPill`, and it existed because #405's
+  // lifecycle pill had to advance mid-turn (In vote → Passed → Merging…)
+  // while a live message stream was on screen, and a full `renderChatView`
+  // would have thrown that stream away. It wrote `#dc-status-pill.innerHTML`
+  // in place; the strip is its own portal now, so republishing it re-renders
+  // the header ALONE and touches nothing below it — which is what let the
+  // second in-place write on this strip go too (`_setStreamingUI` used to set
+  // `#dc-venue-select.disabled` by hand, and a rendered `disabled` would have
+  // clobbered it on the next paint anyway).
+  _repaintSessionHeader() {
+    const react = (typeof window !== 'undefined' && window.UsernodeReact)
+      ? window.UsernodeReact.devChat : null;
+    if (!react || !react.publishSessionHeader) return;
+    react.publishSessionHeader(DevChat._sessionHeaderView());
+  },
+
+  // The two header controls that used to be wired by id after the paint.
+  // Named, because the component dispatches by name into `window.DevChat`
+  // rather than holding a closure over a render that is already gone.
+
+  /** "PR #123" — jump to the change card below and flash it. */
+  revealPrCard() {
+    const card = document.getElementById('dc-pr-card');
+    if (!card) return;
+    card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    card.classList.add('dc-pr-card-highlight');
+    setTimeout(() => card.classList.remove('dc-pr-card-highlight'), 1500);
+  },
+
+  /** The back control's plain-click path — the modified-click guard is the
+   *  component's, because only it has the event. */
+  leaveSession() {
+    // #771: leaving the session unmounts the staging panel slot — close
+    // a docked preview with it (fullscreen previews float independently
+    // and are unaffected).
+    DevChat._resetStagingPanel();
+    DevChat.currentSession = null;
+    DevChat.messages = [];
+    // The title marker describes the session we just left — drop it
+    // so the forum doesn't claim to be thinking / done.
+    DevChat.setTitleStatus(null);
+    // Forum revision: backing out of a session returns to the dev
+    // forum page (there is no session-list screen anymore).
+    if (typeof App !== 'undefined' && App.switchTab) {
+      App.switchTab('dev');
+    } else {
+      DevChat.renderChatView();
+    }
   },
 
   // #405: re-read the open session's lifecycle fields after a vote_update /
@@ -7297,7 +7399,7 @@ const DevChat = {
       if (session.test_results !== undefined) DevChat.currentSession.test_results = session.test_results;
       if (session.conflict_files !== undefined) DevChat.currentSession.conflict_files = session.conflict_files;
       if (!changed) return;
-      if (DevChat.isStreaming) DevChat._patchHeaderStatusPill();
+      if (DevChat.isStreaming) DevChat._repaintSessionHeader();
       else DevChat.renderChatView();
     } catch { /* network blip — ignore, next event/reload reconciles */ }
   },
@@ -7651,9 +7753,6 @@ const DevChat = {
     // repaint of the same session doesn't keep re-explaining a settled fact.
     const venueFallbackReason =
       DevChat._venueFallbackReason || DevChat._shotVenueFallbackReason();
-    const venueSelectHtml = window.BuildVenues
-      ? BuildVenues.selectorHtml({ current: venueId })
-      : '';
     const venueNoteHtml = window.BuildVenues
       ? BuildVenues.noteHtml({ fallbackReason: venueFallbackReason })
       : '';
@@ -7672,20 +7771,13 @@ const DevChat = {
     const openRouterModel = String(DevChat.currentSession.agent_model || '').trim();
 
     content.innerHTML = `
-      <div id="dc-session-header" class="flex items-center gap-2 px-3 py-2 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
-        <a id="dc-back" class="text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200 text-sm" href="${App.currentApp ? `#app/${escapeHtml(App.currentApp)}/dev` : ''}">&larr;</a>
-        <span class="text-xs text-zinc-400 truncate flex-1" title="${escapeHtml(DevChat.currentSession.branch_name || '')}">${escapeHtml(DevChat.currentSession.session_title || DevChat.currentSession.pr_title || DevChat.currentSession.branch_name || 'Session')}</span>
-        ${DevChat.currentSession.pr_number
-          ? `<button id="dc-pr-header-link" class="text-xs text-violet-600 hover:text-violet-700 dark:text-violet-400 dark:hover:text-violet-300" title="This session's pull request — every change in this chat goes to PR #${DevChat.currentSession.pr_number}. Use “Start a new change” for separate work.">PR #${DevChat.currentSession.pr_number}</button>`
-          : '<span class="text-xs text-zinc-500 dark:text-zinc-400" title="This chat is one change → one pull request. A PR opens after the first build.">New change</span>'}
-        ${DevChat._renderHeaderStatusPill(DevChat.currentSession)}
-        <!-- #1348: where this session is built, top right of the session
-             area. It states the venue and opens the sheet that changes it,
-             which is the pair the composer caption used to carry. Here it
-             survives the launchpad swap below, and it is not competing with
-             the meter, the runner and the budget menu for the same strip. -->
-        ${venueSelectHtml}
-      </div>
+      <!-- The header's CHILDREN are React's (features/dev-chat/session-header
+           .tsx): the back control, the session's name, its pull request, the
+           lifecycle pill and #1348's venue dropdown. The ELEMENT stays here
+           because PlatformUI.attachScreenFx writes a hairline class onto it
+           once the chat scrolls, and a rendered className would be a second
+           author on the same attribute. -->
+      <div id="dc-session-header" class="flex items-center gap-2 px-3 py-2 border-b border-zinc-200 dark:border-zinc-800 shrink-0"></div>
       ${DevChat._renderSyncBannerHtml(DevChat.currentSession)}
       ${DevChat._renderNewChangeBannerHtml(DevChat.currentSession)}
       ${DevChat._renderCreditsBannerHtml()}
@@ -7839,6 +7931,11 @@ const DevChat = {
         <div id="dc-staging-panel" class="dc-staging-panel ${stagingOpen ? 'dc-staging-panel-open' : ''}"${stagingStyle}></div>
       </div>`;
 
+    // The header strip's children, FIRST: `_maybeOpenShotVenueSheet` below
+    // resolves `#dc-venue-select` to anchor its sheet against, and
+    // `attachScreenFx` measures the strip. The store flushes synchronously,
+    // so both find what they are looking for on the next line.
+    DevChat._renderSessionHeader();
     DevChat.renderMessages();
     DevChat._renderQuickReplies();
     DevChat._wireQuickReplies();
@@ -7863,7 +7960,11 @@ const DevChat = {
     PlatformUI.attachScreenFx(
       'dev-chat',
       document.getElementById('dc-messages'),
-      document.getElementById('dc-back')?.closest('div'),
+      // The header ELEMENT, by name. It used to be reached as
+      // `#dc-back`'s parent, which was true and is now indirect: the back
+      // control is rendered by the header's component, so a lookup through it
+      // would depend on the portal having mounted. This does not.
+      document.getElementById('dc-session-header'),
     );
     DevChat._setupAttachments();
     DevChat._restoreDraft();
@@ -7895,14 +7996,10 @@ const DevChat = {
     DevChat._closeSessionOptions();
     DevChat._maybeOpenShotOptions(optionsWereOpen);
 
-    const venueChange = document.getElementById('dc-venue-select');
-    if (venueChange) {
-      // Mid-turn the venue is not changeable: a running turn holds the
-      // worker, and moving it under itself is the failure the old
-      // `agentSelect.disabled` guarded against. Same rule, new control.
-      venueChange.disabled = DevChat.isStreaming;
-      venueChange.addEventListener('click', () => DevChat.openVenueSheet(venueChange));
-    }
+    // The venue dropdown's `disabled` and its click are the component's now
+    // (`_headerVenue` resolves the one, `VenueSelect` holds the other). What
+    // stays here is the screenshot deep link, which resolves the button by id
+    // exactly as it always did.
     DevChat._maybeOpenShotVenueSheet();
 
     const openRouterModelChange = document.getElementById('dc-openrouter-model-change');
@@ -7926,41 +8023,8 @@ const DevChat = {
       });
     }
 
-    const prHeaderLink = document.getElementById('dc-pr-header-link');
-    if (prHeaderLink) {
-      prHeaderLink.addEventListener('click', () => {
-        const card = document.getElementById('dc-pr-card');
-        if (card) {
-          card.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          card.classList.add('dc-pr-card-highlight');
-          setTimeout(() => card.classList.remove('dc-pr-card-highlight'), 1500);
-        }
-      });
-    }
-
-    document.getElementById('dc-back').addEventListener('click', (e) => {
-      // #1036: this is a real <a href="#app/<slug>/dev"> now — a
-      // cmd/ctrl/shift/middle click opens the dev page in a new tab and
-      // must leave THIS session mounted exactly as it is.
-      if (window.NavLink && NavLink.isNativeClick(e)) return;
-      e.preventDefault();
-      // #771: leaving the session unmounts the staging panel slot — close
-      // a docked preview with it (fullscreen previews float independently
-      // and are unaffected).
-      DevChat._resetStagingPanel();
-      DevChat.currentSession = null;
-      DevChat.messages = [];
-      // The title marker describes the session we just left — drop it
-      // so the forum doesn't claim to be thinking / done.
-      DevChat.setTitleStatus(null);
-      // Forum revision: backing out of a session returns to the dev
-      // forum page (there is no session-list screen anymore).
-      if (typeof App !== 'undefined' && App.switchTab) {
-        App.switchTab('dev');
-      } else {
-        DevChat.renderChatView();
-      }
-    });
+    // `#dc-pr-header-link` and `#dc-back` are the header component's too —
+    // `revealPrCard()` and `leaveSession()` above are what they call.
 
     DevChat._wireSyncBanner();
 

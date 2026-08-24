@@ -611,7 +611,8 @@ Two traps in writing that browser sweep, both of which hid a real failure:
    | the credit meter | `#dc-budget` |
    | the quick-reply pills | `#dc-quick-replies` |
    | the "Run on" controls | `#dc-runner` |
-   | **the app's session list** | `#dc-session-list` |
+   | the app's session list | `#dc-session-list` |
+   | **the session header strip** | `#dc-session-header` |
 
    ### Two orphaned surfaces, and what to do with each
 
@@ -652,21 +653,44 @@ Two traps in writing that browser sweep, both of which hid a real failure:
 
    Two big renderers and a handful of small ones:
 
-   - **`renderChatView`** (~420 lines) — the session header strip, four
-     banners, the launchpad slot, the panes and the composer wrapper. The
-     natural next chunk is the HEADER STRIP alone (`#dc-session-header`),
-     which is a clean boundary, but **check the venue button before
-     starting**: `dapp.json` selects
-     `#dc-session-header > button#dc-venue-select … :last-child`, a DIRECT
-     child and the last one, so `BuildVenues.selectorHtml`'s markup cannot
-     go in through a wrapped `dangerouslySetInnerHTML` sink. Either render
-     that button in React from a `BuildVenues.venue()` spec and retire
-     `selectorHtml` (one production caller, two test files assert on the
-     string), or leave the strip alone. The strip also carries two other
-     seams: `#dc-status-pill`, which `_patchHeaderStatusPill` rewrites
-     mid-stream ON PURPOSE so a live turn is not disturbed, and the header
-     element itself, which `PlatformUI.attachScreenFx` writes classes to at
-     runtime — so its `className` must stay constant.
+   - **`renderChatView`** (~420 lines) — **its header strip is done**; what
+     is left is four banners, the launchpad slot, the panes and the composer
+     wrapper.
+
+     The strip was the natural first boundary and it carried three traps,
+     all three of which generalise:
+
+     - **A declared check can pin a POSITION, not just a node.** `dapp.json`
+       selects the venue button as
+       `#dc-session-header > button#dc-venue-select … :last-child` — a DIRECT
+       child, and the last one. `BuildVenues.selectorHtml` built it as a
+       string, and there is no way to feed a string into a component and keep
+       it a direct child: a `dangerouslySetInnerHTML` wrapper becomes the
+       direct child and the button a grandchild. So the button is JSX built
+       from the `BuildVenues.venue()` spec that builder read, and
+       `selectorHtml` is RETIRED. Its assertions did not go with it — they
+       split: the venue LOOKUP is still asserted against build-venues.js, the
+       MARKUP against the component.
+     - **A mid-stream in-place patch becomes a scoped publish.**
+       `_patchHeaderStatusPill` wrote `#dc-status-pill.innerHTML` precisely so
+       a full `renderChatView` would not throw away a live message stream. Now
+       that the strip is its own portal, republishing it re-renders the header
+       ALONE — so it is `_repaintSessionHeader()`, and the pill is
+       `MergeStatus.lifecycle`'s DESCRIPTOR travelling as data with the
+       component drawing it, rather than `pillHtml`'s string.
+     - **Converting one writer can expose a second.** `_setStreamingUI` also
+       set `#dc-venue-select.disabled` in place. Harmless beside a string
+       renderer; beside a rendered `disabled` it is a write React would
+       clobber on its next paint. It republishes now. **After converting a
+       host, grep for every in-place write to the ATTRIBUTES its children
+       render, not just for `innerHTML`.**
+
+     The header ELEMENT stays the module's, and for a different reason from
+     the composer's four strips: `PlatformUI.attachScreenFx` writes a
+     hairline/blur class onto it once the chat scrolls. Its one reader that
+     went through a child — `getElementById('dc-back')?.closest('div')` —
+     now names the element directly, because reaching a host through a child
+     the portal owns depends on the portal having mounted.
    - **`renderMessages`** (~580 lines) — the transcript. The hard part is
      not the messages, it is `_writeStreamingHtml`: it assigns
      `el.innerHTML` on a bubble's content node at up to 60fps. Publishing
@@ -702,10 +726,10 @@ Two traps in writing that browser sweep, both of which hid a real failure:
    time and bails when it is absent. Both files' headers say so, and the test
    above asserts it.
 
-   What is left is the big half: `renderChatView`'s own shell, `renderMessages`
-   and the streaming assistant output. Streaming is the complication — the
-   message list is appended to token by token, so it wants a store that
-   patches one row rather than republishing the list.
+   What is left is the big half: `renderChatView`'s banners and panes,
+   `renderMessages` and the streaming assistant output. Streaming is the
+   complication — the message list is appended to token by token, so it wants
+   a store that patches one row rather than republishing the list.
 
 3. ~~Admin interior~~ — **done**. See "The admin console: done" above.
 

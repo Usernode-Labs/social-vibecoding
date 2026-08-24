@@ -415,26 +415,29 @@ test('an unknown fallback reason renders nothing at all', () => {
   }
 });
 
-// ── The rendered selector (#1348) ───────────────────────────────────
+// ── What the selector is BUILT FROM (#1348) ─────────────────────────
+//
+// `selectorHtml` used to be here and built the `#dc-venue-select` button as a
+// string. The session header is a component now and the button is JSX
+// (features/dev-chat/session-header.tsx), because a declared check selects it
+// as a DIRECT, LAST child of the strip and a `dangerouslySetInnerHTML` sink
+// would have made it a grandchild. What this module still owns is every
+// question the button ASKS it, so that is what these assert; the markup is
+// asserted against the component in tests/dev-session-header.test.js.
 
 test('the selector states where this is building, and is the way to change it', () => {
-  const html = BV.selectorHtml({ agentBackend: 'codex_openrouter' });
-  assert.match(html, /id="dc-venue-select"/);
-  assert.match(html, /data-venue-current="usernode-openrouter"/);
-  assert.match(html, /Usernode · OpenRouter/);
-  assert.match(html, /data-venue-change="1"/);
-  // It opens a menu, so it says so — the kit draws an action sheet on touch
-  // and a popover on a pointer, and neither is a native <select>.
-  assert.match(html, /aria-haspopup="menu"/);
-  // The visible LABEL is the venue and nothing else: this control sits in
-  // the header beside a truncating session title, so the caption sentence
-  // the old line carried survives only as the hover title.
-  const label = html.slice(html.indexOf('>', html.indexOf('<span class="dc-venue-name"')));
-  assert.ok(!/Building in/.test(label), 'the caption sentence is not in the label');
-  assert.match(html, /title="Building in Usernode · OpenRouter\./,
-    'it is in the tooltip, where the whole sentence still fits');
-  // The note is a separate render — the selector never carries it.
-  assert.ok(!/dc-venue-note/.test(html));
+  const id = BV.currentVenue({ agentBackend: 'codex_openrouter' });
+  assert.equal(id, 'usernode-openrouter');
+  const v = BV.venue(id);
+  assert.equal(v.label, 'Usernode · OpenRouter');
+  // The visible LABEL is the venue and nothing else: the control sits in the
+  // header beside a truncating session title, so the caption sentence the old
+  // line carried survives only as the hover title — assembled in dev-chat.js's
+  // `_headerVenue` from this `blurb`.
+  assert.ok(!/Building in/.test(v.label), 'the caption sentence is not in the label');
+  assert.ok(v.blurb, 'the sentence the tooltip is built from is here');
+  // The note is a separate render — the selector never carried it.
+  assert.ok(!/dc-venue-note/.test(v.label + v.blurb));
 });
 
 test('the fallback sentence renders on its own, away from the header', () => {
@@ -448,13 +451,13 @@ test('the fallback sentence renders on its own, away from the header', () => {
 });
 
 test('an imported proposal reports its own venue in the selector', () => {
-  const html = BV.selectorHtml({ source: 'imported', agentBackend: 'claude_code' });
-  assert.match(html, /data-venue-current="own-tools-pr"/);
-  assert.match(html, /Your computer · your own tools/);
+  const id = BV.currentVenue({ source: 'imported', agentBackend: 'claude_code' });
+  assert.equal(id, 'own-tools-pr');
+  assert.equal(BV.venue(id).label, 'Your computer · your own tools');
 });
 
 test('the selector and the chip refuse an unknown venue instead of half-rendering', () => {
-  assert.equal(BV.selectorHtml({ current: 'nope' }), '');
+  assert.equal(BV.venue('nope'), null);
   assert.equal(BV.chipHtml('nope'), '');
   assert.equal(BV.chipHtml(undefined), '');
 });
@@ -471,8 +474,9 @@ test('interpolated state is escaped', () => {
   assert.equal(BV.escapeHtml('<img src=x onerror=1>'), '&lt;img src=x onerror=1&gt;');
   assert.equal(BV.escapeHtml('a"b\'c&d'), 'a&quot;b&#39;c&amp;d');
   assert.equal(BV.escapeHtml(null), '');
-  const html = BV.selectorHtml({ current: 'usernode-claude' });
-  assert.ok(!/<script/i.test(html));
+  // The selector's own escaping moved with its markup: React escapes text
+  // children and attribute values, which is why `_headerVenue` carries the
+  // label and the sentence RAW. What is still a string here is the note.
   assert.ok(!/<script/i.test(BV.noteHtml({ current: 'usernode-claude', fallbackReason: 'flag_off' })));
 });
 
