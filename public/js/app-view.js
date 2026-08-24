@@ -5035,35 +5035,19 @@ const AppView = {
     return out;
   },
 
-  // ── The filter bar's chips (Material filter-chip shape) ──────────
+  // ── The filter bar's chips moved to React ────────────────────────
   //
-  // Every control in this bar is now the SAME pill: 32px tall, fully rounded,
-  // hairline outline, compact label. Material's filter chip in the two states
-  // it actually has here — unselected is an outlined transparent pill, selected
-  // is a filled tonal one that keeps the outline so the row's rhythm does not
-  // shift by a pixel when you toggle it.
+  // `KANBAN_CHIP_BASE`/`_IDLE`/`_ON` and the two builders that read them
+  // (`_kanbanNeedsVoteChipCls`, `_kanbanChipSelectCls`) are retired: the bar
+  // is `frontend/src/features/dev-board/kanban-filters.tsx` now, and it is the
+  // only writer below `#dev-kanban-filterbar`. The class runs live there, as
+  // `CHIP_BASE`/`CHIP_IDLE`/`CHIP_ON`.
   //
-  // One shared base string and no computed class names: Tailwind's extractor is
-  // a regex over source text (AGENTS.md), and these are read from a template
-  // literal rather than JSX, which does not make the rule any softer.
-  KANBAN_CHIP_BASE: 'h-8 rounded-full border border-transparent text-xs transition-colors shrink-0 '
-    + 'inline-flex items-center gap-1',
-  KANBAN_CHIP_IDLE: 'bg-white dark:bg-zinc-900 '
-    + 'text-zinc-900 dark:text-zinc-100 hover:bg-zinc-50 dark:hover:bg-zinc-800',
-  KANBAN_CHIP_ON: 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900',
-
-  _kanbanNeedsVoteChipCls(active) {
-    return `${AppView.KANBAN_CHIP_BASE} px-3 `
-      + (active ? AppView.KANBAN_CHIP_ON : AppView.KANBAN_CHIP_IDLE);
-  },
-
-  // A <select> wearing the same pill. `appearance-none` and the explicit right
-  // padding are what stop the native arrow from breaking the shape; the caret
-  // is drawn as a background image in app.css off `.dev-chip-select`.
-  _kanbanChipSelectCls(active) {
-    return `${AppView.KANBAN_CHIP_BASE} dev-chip-select pl-3 pr-7 `
-      + (active ? AppView.KANBAN_CHIP_ON : AppView.KANBAN_CHIP_IDLE);
-  },
+  // They are transcribed there rather than imported from here, and that is not
+  // an oversight worth undoing: this file is a classic script the bundle
+  // cannot import, and Tailwind's extractor is a regex over source text
+  // (AGENTS.md), so a class name whose only occurrence is in this file would
+  // compile to nothing for the component that actually renders it.
 
   _kanbanAssigneeOptionList() {
     return [

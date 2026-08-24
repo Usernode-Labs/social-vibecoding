@@ -8,9 +8,9 @@
  * rounded, hairline outline, compact label, in the two states it actually has
  * — unselected is an outlined transparent pill, selected is a filled tonal one
  * that KEEPS the outline so the row's rhythm does not shift by a pixel when
- * you toggle it. The class strings are the module's constants, imported here
- * rather than retyped, because they are also what `_kanbanNeedsVoteChipCls`
- * used to write onto the chip by hand.
+ * you toggle it. The class strings below are the ones `_kanbanNeedsVoteChipCls`
+ * used to write onto the chip by hand; that builder and its three constants
+ * are retired from app-view.js and this is where they live now.
  *
  * The search field is the one control that is not a chip: it takes typing, so
  * it keeps a real field's affordance. It wears the chip's height and radius so
@@ -50,8 +50,9 @@ function controller(): any {
  * Deliberately NOT imported from app-view.js — that file is a classic script
  * this bundle cannot import, and Tailwind's extractor is a regex over source
  * text, so a class name that only exists over there would compile to nothing
- * from here. They are transcribed, and tests/dev-kanban-filters.test.js reads
- * both ends to keep them identical.
+ * from here. That is also why the app-view.js copies were deleted rather than
+ * left in place as the source of truth: two ends to keep identical, only one
+ * of which Tailwind can see.
  */
 const CHIP_BASE = 'h-8 rounded-full border border-transparent text-xs transition-colors shrink-0 '
   + 'inline-flex items-center gap-1';
