@@ -42,8 +42,9 @@ now reconciles — and is the thing to update when one moves across.
 - `#settings-nav-desktop`, `#settings-mobile-menu-host`, and
   `#settings-usernode-section` — see "The settings interior" below.
 - nothing on the Leaderboard screen. See the note under "Converted".
-- the group chat's composer, thread shell, vote controls, spec-share panel and
-  the two autocomplete menus.
+- the group chat's composer — the reply preview, the attach-error line and the
+  attachment strip — which is the Dev screen's boundary, not its own. See
+  "The group chat" below.
 - the header's own strays: `header/ai-credit.js`, `header/wallet-sheet.js`,
   `header/node-pill.js`, `native-chrome.js` and `screenshot-select.js`.
 
@@ -166,17 +167,71 @@ Two things from the home conversion are worth reading before the next screen:
   other matching element, and leaving it would have left a structural DOM write
   pointed at a host React reconciles. Delete those with their caller.
 
-### Medium
+- **The group chat, except the composer.** The transcript went first; this run
+  took the rest, one boundary at a time: the two autocomplete menus
+  (`#gc-mention-menu` / `#gc-ref-menu`), the shared-spec reader
+  (`#gc-spec-side-panel`), the thread panel's whole shell
+  (`GroupChat.mountThread`), and the long-press reaction bar
+  (`#gc-react-bar`). Three of those are body-level floating hosts and share one
+  seam: the module still creates the element, measures it against something on
+  screen and owns its `hidden`; React owns only its children, through a portal
+  mounted once. All three stores install `setFlush(flushSync)`, because in each
+  case the module measures the host on the line after it publishes.
 
-1. Group chat, everything but the transcript — `public/js/group-chat.js`,
-   about 3,580 lines and 21 sites. The transcript conversion left the
-   composer, the thread shell, `[data-gc-vote-controls]`, the spec-share card
-   and the mention/ref autocomplete menus as legacy hosts on purpose; each is
-   its own ownership boundary.
+  **What is left is the composer, and it is the Dev screen's boundary.** The
+  reply preview, the attach-error line and the attachment strip each exist
+  TWICE — a general variant in a host `public/js/app-view.js` owns, and a
+  thread variant inside the React shell — drawn by one renderer from one CSS
+  rule. `.gc-quoted` shares its rules with `.gc-reply-preview-inner` the same
+  way. Converting either half alone splits a deliberate pair, so they go with
+  the Dev screen.
 
-### Large, deferred
+### Read this before the next screen: an empty host fails silently
+
+The single most productive thing in this run was not a conversion. It was
+asking, of every string renderer in a converted module: **who calls this?**
+
+`public/js/group-chat.js` had SIX members with no caller left, and four of them
+were a live regression rather than dead weight — the earlier transcript
+conversion had replaced each with an empty host and nothing ever filled it:
+
+| what was missing | how it looked |
+| --- | --- |
+| the shared-spec card | a `[data-gc-spec-share]` div with nothing in it |
+| a message's attachments | a `[data-gc-attachments]` div, ditto |
+| a vote row's Yes/No pair and tally | `data-gc-vote-controls` is not the `[data-vote-controls]` the module selects |
+| a reaction pill's click | an onClick calling `toggleReaction`, which is not a method |
+| a quoted reply's snippet and icon | drawn as `ThreadReplySummary` — "1 reply alice" |
+| the unread dot, both directions | a lookup for `[data-unread-dot]`, an attribute React does not render |
+
+None of it threw. None of it failed a test — one test asserted the EMPTY HOST
+was present and passed. The ownership audit could not see any of it either: it
+watches for legacy WRITES into React subtrees, and every one of these was a
+write that MISSED.
+
+Three sweeps catch this class, and they are cheap enough to run after every
+chunk:
+
+1. **Uncalled members.** For each `^  name(` in a converted module, search the
+   whole repo for a call site — with comments stripped, or a retirement note
+   naming the thing counts as a use.
+2. **Empty hosts.** For each element a component renders with no children and
+   an `id` or `data-*`, search for something that fills it. One reference (the
+   render itself) means nothing does.
+3. **Orphan lookups.** For each `getElementById('x')` / `querySelector('#x')`,
+   search for something that renders `id="x"`. This is the mirror image, and
+   it is how the unread dot turned up.
+
+A fourth check has no script: **read the component against the renderer it
+replaced, attribute by attribute.** The vote host and the quote block were
+both cases where a host existed, was filled by something, and still did not
+work, because the two ends had agreed on different names.
+
+### Large
 
 1. Dev screen — `public/js/app-view.js`, about 14,140 lines and 71 sites.
+   It also owns the group chat's general composer and `Kudos.renderButton`'s
+   hover popover, so those come across with it.
 2. Dev chat — `features/dev-chat/dev-chat.js`, about 9,820 lines and 58 sites.
    Streaming assistant output is the complication.
 3. ~~Admin interior~~ — **done**. See "The admin console: done" above.
