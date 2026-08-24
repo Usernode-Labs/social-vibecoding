@@ -79,6 +79,9 @@ test('the deployment consumes one supplied password and provisions the role idem
     'a missing database secret must fail before patch mode records the target GIT_SHA'
   );
   assert.match(deploy, /\$\{SOCIAL_CNPG_REPLICATION_PASSWORD:\?SOCIAL_CNPG_REPLICATION_PASSWORD is required\}/);
+  assert.match(deploy, /WHERE NOT EXISTS \([\s\S]*rolname = 'postgres'/,
+    'the source must provide the conventional superuser expected by CNPG after physical restore');
+  assert.match(deploy, /ALTER ROLE postgres WITH LOGIN SUPERUSER/);
   assert.match(deploy, /WHERE NOT EXISTS \([\s\S]*rolname = 'social_cnpg_replica'/);
   assert.match(deploy, /ALTER ROLE %I WITH LOGIN REPLICATION NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS/);
   assert.doesNotMatch(deploy, /openssl rand|pwgen|generate-password/,

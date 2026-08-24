@@ -567,9 +567,12 @@ fi
 docker compose up -d usernode-db usernode-node usernode-minio acme-dns caddy
 
 # ----------------------------------------------------------------------
-# Provision the least-privilege source role consumed by the external
-# CloudNativePG standby. The password is generated outside this deployment,
-# arrives through the secret-bearing workflow, and exists in the DB container
+# Provision the roles required by the external CloudNativePG standby. A
+# physical backup preserves the source role catalog, while CloudNativePG's
+# instance manager administers PostgreSQL through the conventional `postgres`
+# superuser. Ensure that role exists before taking or streaming future backups.
+# The replication password is generated outside this deployment, arrives
+# through the secret-bearing workflow, and exists in the DB container
 # environment only. Nothing here generates, prints, or exports it.
 #
 # This runs after Compose has reconciled usernode-db so the versioned HBA
@@ -596,6 +599,17 @@ docker exec -i usernode-db sh -eu <<'PROVISION_REPLICATION_ROLE'
 psql -X -U "${POSTGRES_USER:-usernode}" -d postgres <<'SQL'
 \set ON_ERROR_STOP on
 \getenv replication_password SOCIAL_CNPG_REPLICATION_PASSWORD
+
+SELECT format(
+  'CREATE ROLE %I WITH LOGIN SUPERUSER',
+  'postgres'
+)
+WHERE NOT EXISTS (
+  SELECT 1 FROM pg_roles WHERE rolname = 'postgres'
+)
+\gexec
+
+ALTER ROLE postgres WITH LOGIN SUPERUSER;
 
 SELECT format(
   'CREATE ROLE %I WITH LOGIN REPLICATION PASSWORD %L',
