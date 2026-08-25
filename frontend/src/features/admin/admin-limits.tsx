@@ -220,7 +220,7 @@ function LimitsSection() {
               onClick={saveLimits}>Save</button>
           ) : null}
         </div>
-        <StatusLine id="admin-limits-status" status={limitsStatus} okClass="text-green-500" />
+        <StatusLine id="admin-limits-status" status={limitsStatus} okClass="text-green-600 dark:text-green-400" />
       </div>
 
       {/* Anthropic credits (#555). Anthropic's API publishes billed spend,

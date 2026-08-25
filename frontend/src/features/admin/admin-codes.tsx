@@ -38,7 +38,7 @@ interface Code {
 }
 
 const ROW = 'flex flex-wrap items-center justify-between gap-3 p-2.5 rounded-lg bg-zinc-100 dark:bg-zinc-800';
-const LINK_BTN = 'text-xs text-zinc-400 transition-colors';
+const LINK_BTN = 'text-xs text-zinc-500 dark:text-zinc-400 transition-colors';
 
 /**
  * A copy button that says so for a moment. The timer lives with the button,
@@ -71,10 +71,10 @@ function CodeRow({ code, canWrite, onDelete }: {
   return (
     <div className={ROW}>
       <div className="flex-1 min-w-0 flex flex-wrap items-center gap-x-3 gap-y-1">
-        <code className={`font-mono text-sm ${used ? 'text-zinc-400 line-through' : 'text-violet-400'}`}>{code.code}</code>
+        <code className={`font-mono text-sm ${used ? 'text-zinc-500 dark:text-zinc-400 line-through' : 'text-violet-400'}`}>{code.code}</code>
         {used ? (
           <span className="text-xs text-zinc-500 dark:text-zinc-400">
-            {'Used by '}<strong className="text-zinc-400">{code.used_by_username}</strong>
+            {'Used by '}<strong className="text-zinc-500 dark:text-zinc-400">{code.used_by_username}</strong>
             {` on ${new Date(code.used_at as string).toLocaleDateString()}`}
           </span>
         ) : <span className={AdminUI.badge.success}>Available</span>}

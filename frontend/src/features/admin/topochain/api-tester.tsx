@@ -280,7 +280,7 @@ function ApiTesterScreen() {
               className="block text-xs font-medium text-zinc-600 dark:text-zinc-400 mb-1"
             >
               {'Path '}
-              <span className="font-mono font-normal text-zinc-400">(prefixed with /api/v4)</span>
+              <span className="font-mono font-normal text-zinc-500 dark:text-zinc-400">(prefixed with /api/v4)</span>
             </label>
             <Input
               id="admin-topo-api-path"
@@ -304,7 +304,7 @@ function ApiTesterScreen() {
             className="block text-xs font-medium text-zinc-600 dark:text-zinc-400 mb-1"
           >
             {'JSON body '}
-            <span className="font-normal text-zinc-400">(ignored for GET)</span>
+            <span className="font-normal text-zinc-500 dark:text-zinc-400">(ignored for GET)</span>
           </label>
           <Textarea
             id="admin-topo-api-body"

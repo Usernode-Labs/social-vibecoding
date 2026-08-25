@@ -257,7 +257,7 @@ function Breakdown({ title, rows, keyLabel }: { title: string; rows: any[]; keyL
       {rows.length ? (
         <table className="text-xs w-full">
           <thead>
-            <tr className="text-zinc-400">
+            <tr className="text-zinc-500 dark:text-zinc-400">
               <th className={TH_L}>{keyLabel}</th>
               <th className={TH_R}>Scored</th>
               <th className={TH_R}>Median err</th>
@@ -310,7 +310,7 @@ function DailyChart({ daily, errBar }: { daily: any[]; errBar: number }) {
     daily.forEach((d, i) => {
       tipStore[`est-day-${i}`] = `<div class="font-semibold mb-1">${dayLabel(d.day)}</div>
           <div>median error ${fmtSecs(Number(d.medianAbsErrS) || 0)}</div>
-          <div class="text-zinc-400">${fmtInt(d.scored)} scored guess${d.scored === 1 ? '' : 'es'}</div>`;
+          <div class="text-zinc-500 dark:text-zinc-400">${fmtInt(d.scored)} scored guess${d.scored === 1 ? '' : 'es'}</div>`;
     });
   }, [daily]);
 
@@ -416,7 +416,7 @@ function EstimatorCard({ e }: { e: any }) {
           </p>
           <table className="text-xs w-full">
             <thead>
-              <tr className="text-zinc-400">
+              <tr className="text-zinc-500 dark:text-zinc-400">
                 <th className={TH_L}>Prompt</th>
                 <th className={TH_R}>Scored</th>
                 <th className={TH_R}>Median err</th>
@@ -498,7 +498,7 @@ function EstimatorCard({ e }: { e: any }) {
           <h4 className={`${H4} mb-2`}>Baselines to beat</h4>
           <table className="text-xs w-full">
             <thead>
-              <tr className="text-zinc-400">
+              <tr className="text-zinc-500 dark:text-zinc-400">
                 <th className={TH_L}>Predictor</th>
                 <th className={TH_R}>Median err</th>
                 <th className={TH_R}>In band</th>
@@ -543,7 +543,7 @@ function EstimatorCard({ e }: { e: any }) {
           </p>
           <table className="text-xs w-full">
             <thead>
-              <tr className="text-zinc-400">
+              <tr className="text-zinc-500 dark:text-zinc-400">
                 <th className={TH_L}>Elapsed bucket</th>
                 <th className={TH_R}>Told the model</th>
                 <th className={TH_R}>Actually now</th>

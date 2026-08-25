@@ -296,7 +296,7 @@ function Swatch({ color, outline, children }: { color: string; outline?: boolean
 function AdminLegend({ includeAdmins, nonAdminColor = '#6366f1' }: { includeAdmins: boolean; nonAdminColor?: string }) {
   if (!includeAdmins) return null;
   return (
-    <div className="flex items-center gap-3 text-[10px] text-zinc-400 mb-2">
+    <div className="flex items-center gap-3 text-[10px] text-zinc-500 dark:text-zinc-400 mb-2">
       <Swatch color={nonAdminColor}>Non-admin</Swatch>
       <Swatch color={ADMIN_COLOR}>Admin</Swatch>
     </div>
@@ -637,7 +637,7 @@ function Retention({ r, mode }: { r: any; mode: string }) {
   // One coloured cell. `key` makes the tooltip id unique within the row.
   const Cell = (v: number | null | undefined, size: number, headLabel: string, ci: number, key: string) => {
     if (v == null) {
-      return <td key={key} className="px-2 py-1 text-center text-zinc-400 dark:text-zinc-700">·</td>;
+      return <td key={key} className="px-2 py-1 text-center text-zinc-400 dark:text-zinc-500">·</td>;
     }
     const p = pct(v, size);
     const alpha = Math.max(0.06, Math.min(1, p / 100));
@@ -651,8 +651,8 @@ function Retention({ r, mode }: { r: any; mode: string }) {
   };
 
   const head: React.ReactNode[] = [
-    <th key="_c" className="text-left px-2 py-1 font-medium text-zinc-400">Cohort</th>,
-    <th key="_u" className="px-2 py-1 font-medium text-zinc-400">Users</th>,
+    <th key="_c" className="text-left px-2 py-1 font-medium text-zinc-500 dark:text-zinc-400">Cohort</th>,
+    <th key="_u" className="px-2 py-1 font-medium text-zinc-500 dark:text-zinc-400">Users</th>,
   ];
   let rows: React.ReactNode[];
 
@@ -661,7 +661,7 @@ function Retention({ r, mode }: { r: any; mode: string }) {
     for (const c of cohorts) for (const k of Object.keys(c.offsets)) maxOffset = Math.max(maxOffset, Number(k));
     maxOffset = Math.min(maxOffset, 11); // keep the triangle readable
     for (let k = 0; k <= maxOffset; k += 1) {
-      head.push(<th key={`w${k}`} className="px-2 py-1 font-medium text-zinc-400">{`W${k}`}</th>);
+      head.push(<th key={`w${k}`} className="px-2 py-1 font-medium text-zinc-500 dark:text-zinc-400">{`W${k}`}</th>);
     }
     rows = cohorts.map((c: any, ci: number) => {
       const cells = [];
@@ -671,7 +671,7 @@ function Retention({ r, mode }: { r: any; mode: string }) {
       return (
         <tr key={c.cohortWeek}>
           <td className="px-2 py-1 whitespace-nowrap text-zinc-600 dark:text-zinc-300">{weekLabel(c.cohortWeek)}</td>
-          <td className="px-2 py-1 text-center text-zinc-400">{fmtInt(c.cohortSize)}</td>
+          <td className="px-2 py-1 text-center text-zinc-500 dark:text-zinc-400">{fmtInt(c.cohortSize)}</td>
           {cells}
         </tr>
       );
@@ -691,12 +691,12 @@ function Retention({ r, mode }: { r: any; mode: string }) {
     const allCols = Array.from(weekSet).sort(); // ascending YYYY-MM-DD
     const cols = allCols.slice(Math.max(0, allCols.length - 12)); // keep readable
     for (const wk of cols) {
-      head.push(<th key={wk} className="px-2 py-1 font-medium text-zinc-400 whitespace-nowrap">{weekLabel(wk)}</th>);
+      head.push(<th key={wk} className="px-2 py-1 font-medium text-zinc-500 dark:text-zinc-400 whitespace-nowrap">{weekLabel(wk)}</th>);
     }
     rows = cohorts.map((c: any, ci: number) => (
       <tr key={c.cohortWeek}>
         <td className="px-2 py-1 whitespace-nowrap text-zinc-600 dark:text-zinc-300">{weekLabel(c.cohortWeek)}</td>
-        <td className="px-2 py-1 text-center text-zinc-400">{fmtInt(c.cohortSize)}</td>
+        <td className="px-2 py-1 text-center text-zinc-500 dark:text-zinc-400">{fmtInt(c.cohortSize)}</td>
         {cols.map((wk) => Cell(cal[ci][wk], c.cohortSize,
           `${weekLabel(c.cohortWeek)} cohort · week of ${weekLabel(wk)}`, ci, wk))}
       </tr>
@@ -766,11 +766,11 @@ function PowerUserL4({ l4 }: { l4: any[] }) {
     const total = s.reduce((a, b) => a + b, 0);
     return `<div class="font-semibold">${esc(labels[i] || '')}</div>
           <div class="text-zinc-300">${fmtInt(total)} power users (trailing 4 wks)</div>
-          <div class="text-zinc-400 mt-1 text-[11px]">4/4 ${fmtInt(s[3])} · 3/4 ${fmtInt(s[2])} · 2/4 ${fmtInt(s[1])} · 1/4 ${fmtInt(s[0])}</div>`;
+          <div class="text-zinc-500 dark:text-zinc-400 mt-1 text-[11px]">4/4 ${fmtInt(s[3])} · 3/4 ${fmtInt(s[2])} · 2/4 ${fmtInt(s[1])} · 1/4 ${fmtInt(s[0])}</div>`;
   });
   return (
     <>
-      <div className="flex items-center gap-3 text-[10px] text-zinc-400 mb-2">
+      <div className="flex items-center gap-3 text-[10px] text-zinc-500 dark:text-zinc-400 mb-2">
         {(['1/4', '2/4', '3/4', '4/4'] as const).map((lab, i) => (
           <Swatch key={lab} color={L4_COLORS[i]}>{lab}</Swatch>
         ))}
@@ -792,7 +792,7 @@ function TopUsers({ users, includeAdmins }: { users: any[]; includeAdmins: boole
   const bw = 26; // per-bar slot
   const W = users.length * bw;
   const tipRow = (label: string, n: number) =>
-    `<div class="flex justify-between gap-3 text-zinc-400"><span>${label}</span><span class="text-zinc-300">${n}</span></div>`;
+    `<div class="flex justify-between gap-3 text-zinc-500 dark:text-zinc-400"><span>${label}</span><span class="text-zinc-300">${n}</span></div>`;
   const tips = users.map((u, i) => {
     const isAdmin = includeAdmins && !!u.is_admin;
     return `<div class="font-semibold">${esc(u.name)}${isAdmin ? ' (admin)' : ''}</div>
@@ -824,9 +824,9 @@ function TopUsers({ users, includeAdmins }: { users: any[]; includeAdmins: boole
               // eslint-disable-next-line react/no-array-index-key
               <g key={i}>
                 <rect x={(x + 3).toFixed(1)} y={y} width={bw - 6} height={h} fill={barColor} rx="2" />
-                <text x={cx} y={y - 3} textAnchor="middle" fontSize="9" fill="currentColor" className="text-zinc-400">{v}</text>
+                <text x={cx} y={y - 3} textAnchor="middle" fontSize="9" fill="currentColor" className="text-zinc-500 dark:text-zinc-400">{v}</text>
                 <text x={cx} y={H - botPad + 12} textAnchor="end" fontSize="9" fill="currentColor"
-                  className="text-zinc-400" transform={`rotate(-55 ${cx} ${H - botPad + 12})`}>{short}</text>
+                  className="text-zinc-500 dark:text-zinc-400" transform={`rotate(-55 ${cx} ${H - botPad + 12})`}>{short}</text>
                 <rect className="dc-hover" x={x.toFixed(1)} y={topPad} width={bw.toFixed(1)} height={plot}
                   fill="#6366f1" fillOpacity="0" pointerEvents="all" data-tip-id={`top-${i}`} />
               </g>
@@ -899,7 +899,7 @@ function StackedColumns({
 function Kudos({ weeks }: { weeks: any[] }) {
   const labels = weeks.map((w) => weekLabel(w.wk));
   const row = (label: string, num: number) =>
-    `<div class="flex justify-between gap-3"><span class="text-zinc-400">${label}</span><span>${num}</span></div>`;
+    `<div class="flex justify-between gap-3"><span class="text-zinc-500 dark:text-zinc-400">${label}</span><span>${num}</span></div>`;
   // Per-week breakdown tooltip covering the full column height. Banded buckets
   // can't yield an exact kudos total any more (a "6–10" bucket is 6..10 each),
   // so the headline reports the one figure the bands DO give exactly — how
@@ -919,7 +919,7 @@ function Kudos({ weeks }: { weeks: any[] }) {
   useTips('kudos', tips);
   return (
     <>
-      <div className="flex flex-wrap items-center gap-3 text-xs text-zinc-400 mb-2">
+      <div className="flex flex-wrap items-center gap-3 text-xs text-zinc-500 dark:text-zinc-400 mb-2">
         <span className="text-zinc-500 dark:text-zinc-400">Kudos given that week:</span>
         {KUDOS_SEGS.slice().reverse().map((s) => (
           <span key={s.key} className="inline-flex items-center gap-1">
@@ -953,7 +953,7 @@ function SpendDistribution({ days, includeZero }: { days: any[]; includeZero: bo
   const totals = days.map((x) => segs.reduce((a, s) => a + (Number(x[s.key]) || 0), 0));
   const labels = days.map((x) => weekLabel(x.day));
   const row = (label: string, color: string, v: number) =>
-    `<div class="flex justify-between gap-3"><span class="text-zinc-400"><span class="inline-block w-2 h-2 rounded-sm align-middle mr-1" style="background:${color}"></span>${label}</span><span>${fmtInt(v)}</span></div>`;
+    `<div class="flex justify-between gap-3"><span class="text-zinc-500 dark:text-zinc-400"><span class="inline-block w-2 h-2 rounded-sm align-middle mr-1" style="background:${color}"></span>${label}</span><span>${fmtInt(v)}</span></div>`;
   const tips = days.map((x, i) => `<div class="font-semibold mb-1">${esc(labels[i])}${i === days.length - 1 ? ' (today)' : ''}</div>
         <div class="mb-1">${fmtInt(totals[i])} user${totals[i] === 1 ? '' : 's'}</div>
         <div class="text-[11px] leading-tight">
@@ -962,7 +962,7 @@ function SpendDistribution({ days, includeZero }: { days: any[]; includeZero: bo
   useTips('spend-dist', tips);
   return (
     <>
-      <div className="flex flex-wrap items-center gap-3 text-xs text-zinc-400 mb-2">
+      <div className="flex flex-wrap items-center gap-3 text-xs text-zinc-500 dark:text-zinc-400 mb-2">
         {segs.slice().reverse().map((s) => (
           <span key={s.key} className="inline-flex items-center gap-1">
             <span className="inline-block w-3 h-3 rounded-sm" style={{ background: s.color }} />{s.label}
@@ -998,9 +998,9 @@ function Spend({
 
   const tips = days.map((_, i) => {
     const detail = mode === 'both'
-      ? `<div class="flex justify-between gap-3"><span class="text-zinc-400">Platform</span><span>${dollars(plat[i])}</span></div>
-           <div class="flex justify-between gap-3"><span class="text-zinc-400">User key</span><span>${dollars(byok[i])}</span></div>
-           <div class="flex justify-between gap-3 border-t border-zinc-700 mt-1 pt-1"><span class="text-zinc-400">Total</span><span>${dollars(plat[i] + byok[i])}</span></div>`
+      ? `<div class="flex justify-between gap-3"><span class="text-zinc-500 dark:text-zinc-400">Platform</span><span>${dollars(plat[i])}</span></div>
+           <div class="flex justify-between gap-3"><span class="text-zinc-500 dark:text-zinc-400">User key</span><span>${dollars(byok[i])}</span></div>
+           <div class="flex justify-between gap-3 border-t border-zinc-700 mt-1 pt-1"><span class="text-zinc-500 dark:text-zinc-400">Total</span><span>${dollars(plat[i] + byok[i])}</span></div>`
       : `<div class="text-zinc-300">${dollars(totals[i])}</div>`;
     // Admin portion for the active mode (#341): tooltip-only breakout.
     const adminCents = mode === 'platform' ? platAdmin[i] : mode === 'user' ? byokAdmin[i] : platAdmin[i] + byokAdmin[i];
@@ -1034,7 +1034,7 @@ function Spend({
         {`System tokens today: ${dollars(systemToday)} / ${dollars(systemCapCents)}`}
       </div>
       {anyLegend ? (
-        <div className="flex flex-wrap items-center gap-3 text-[10px] text-zinc-400 mb-2">
+        <div className="flex flex-wrap items-center gap-3 text-[10px] text-zinc-500 dark:text-zinc-400 mb-2">
           {mode === 'both' ? <Swatch color={SPEND_PLATFORM}>Platform key</Swatch> : null}
           {mode === 'both' ? <Swatch color={SPEND_USERKEY}>User key (BYOK)</Swatch> : null}
           {hasAdminSpend ? <Swatch color={ADMIN_COLOR}>Admin spend</Swatch> : null}
@@ -1115,7 +1115,7 @@ function SpendByBuilder({
   const W = sorted.length * bw;
   const color = mode === 'user' ? SPEND_USERKEY : SPEND_PLATFORM;
   const tipRow = (label: string, val: number) =>
-    `<div class="flex justify-between gap-3 text-zinc-400"><span>${label}</span><span class="text-zinc-300">${dollars(val)}</span></div>`;
+    `<div class="flex justify-between gap-3 text-zinc-500 dark:text-zinc-400"><span>${label}</span><span class="text-zinc-300">${dollars(val)}</span></div>`;
   const tips = sorted.map((b, i) => {
     const p = Number(b.platform_cents) || 0;
     const u = Number(b.user_key_cents) || 0;
@@ -1131,7 +1131,7 @@ function SpendByBuilder({
   return (
     <>
       {anyLegend ? (
-        <div className="flex flex-wrap items-center gap-3 text-[10px] text-zinc-400 mb-2">
+        <div className="flex flex-wrap items-center gap-3 text-[10px] text-zinc-500 dark:text-zinc-400 mb-2">
           {mode === 'both' ? <Swatch color={SPEND_PLATFORM}>Platform key</Swatch> : null}
           {mode === 'both' ? <Swatch color={SPEND_USERKEY}>User key (BYOK)</Swatch> : null}
           {/* Admin marker is an outline here (#341), so its swatch is outlined. */}
@@ -1175,7 +1175,7 @@ function SpendByBuilder({
               <g key={i}>
                 {segs}
                 <text x={cx} y={H - botPad + 12} textAnchor="end" fontSize="9" fill="currentColor"
-                  className="text-zinc-400" transform={`rotate(-55 ${cx} ${H - botPad + 12})`}>{short}</text>
+                  className="text-zinc-500 dark:text-zinc-400" transform={`rotate(-55 ${cx} ${H - botPad + 12})`}>{short}</text>
                 <rect className="dc-hover" x={x.toFixed(1)} y={topPad} width={bw.toFixed(1)} height={plot}
                   fill="#6366f1" fillOpacity="0" pointerEvents="all" data-tip-id={`builder-${i}`} />
               </g>

@@ -139,7 +139,7 @@ const PROBLEMS: Array<[string, string]> = [
   ['failed_or_skipped', 'Capture failed or skipped'],
 ];
 
-const DOT = <span className="text-zinc-400 dark:text-zinc-600">·</span>;
+const DOT = <span className="text-zinc-400 dark:text-zinc-500">·</span>;
 
 function Chip({ state, reason }: { state?: string; reason?: string }) {
   const chip = (state && CHIP[state]) || CHIP_UNKNOWN;

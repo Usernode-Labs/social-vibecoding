@@ -159,11 +159,11 @@ function FeaturedAppsSection() {
                 const label = m.name || slug;
                 return (
                   <div key={slug} className={ROW} data-featured-row={slug}>
-                    <span className="w-5 text-xs text-zinc-400 tabular-nums">{i + 1}</span>
+                    <span className="w-5 text-xs text-zinc-500 dark:text-zinc-400 tabular-nums">{i + 1}</span>
                     <AppIcon meta={m} />
                     <span className="min-w-0 flex-1">
                       <span className="block text-sm font-medium truncate">{label}</span>
-                      <span className="block text-[11px] text-zinc-400 truncate">{slug}</span>
+                      <span className="block text-[11px] text-zinc-500 dark:text-zinc-400 truncate">{slug}</span>
                     </span>
                     {canWrite ? (
                       <>

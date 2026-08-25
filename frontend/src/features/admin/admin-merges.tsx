@@ -170,7 +170,7 @@ function StepRow({ s }: { s: Step }) {
         <div className="flex-1 min-w-0">
           <div className="flex items-baseline gap-2">
             <span className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400 font-mono">{s.phase || ''}</span>
-            <span className="text-[10px] text-zinc-500 dark:text-zinc-600">{fmtTime(s.created_at)}</span>
+            <span className="text-[10px] text-zinc-500 dark:text-zinc-400">{fmtTime(s.created_at)}</span>
             {ms == null ? null : (
               <span className="text-[10px] font-mono px-1 rounded bg-zinc-200/70 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300">
                 {ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`}

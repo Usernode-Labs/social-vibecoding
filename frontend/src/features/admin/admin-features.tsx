@@ -74,7 +74,7 @@ function FeatureCard({ f, rank }: { f: Feature; rank: number }) {
   return (
     <div className="border border-zinc-200 dark:border-zinc-800 rounded-lg bg-zinc-100 dark:bg-zinc-800/60 p-4">
       <div className="flex items-start gap-3">
-        <div className="text-zinc-400 font-mono text-sm pt-0.5 w-8 shrink-0">{`#${rank}`}</div>
+        <div className="text-zinc-500 dark:text-zinc-400 font-mono text-sm pt-0.5 w-8 shrink-0">{`#${rank}`}</div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="font-semibold">{f.title}</span>
@@ -94,8 +94,8 @@ function FeatureCard({ f, rank }: { f: Feature; rank: number }) {
           </div>
         </div>
         <div className="text-right text-sm shrink-0">
-          <div className="text-green-500 dark:text-green-400 font-semibold">{`▲ ${f.up_count}`}</div>
-          <div className="text-zinc-400">{`▼ ${f.down_count}`}</div>
+          <div className="text-green-600 dark:text-green-400 font-semibold">{`▲ ${f.up_count}`}</div>
+          <div className="text-zinc-500 dark:text-zinc-400">{`▼ ${f.down_count}`}</div>
         </div>
       </div>
     </div>

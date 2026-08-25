@@ -125,7 +125,7 @@ function ChallengeLine(
   return (
     <p id="tc-lb-challenge-link" className="text-sm text-zinc-500 dark:text-zinc-400 mb-3">
       {`${line.completed} of ${line.total} challenges completed `}
-      <span className="text-zinc-400 dark:text-zinc-600">·</span>
+      <span className="text-zinc-400 dark:text-zinc-500">·</span>
       <button
         id="tc-lb-to-challenges"
         className="font-medium text-violet-600 dark:text-violet-400 hover:underline"

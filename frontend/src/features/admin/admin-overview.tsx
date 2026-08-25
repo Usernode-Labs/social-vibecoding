@@ -133,7 +133,7 @@ function OverviewSection() {
               {spenders.map((u) => (
                 <li key={u.username} className="flex items-center justify-between gap-3 p-2 rounded bg-zinc-100 dark:bg-zinc-800">
                   <span>{u.username}</span>
-                  <span className="text-xs font-mono text-zinc-400">{`$${(u.costCents / 100).toFixed(2)}`}</span>
+                  <span className="text-xs font-mono text-zinc-500 dark:text-zinc-400">{`$${(u.costCents / 100).toFixed(2)}`}</span>
                 </li>
               ))}
             </ul>

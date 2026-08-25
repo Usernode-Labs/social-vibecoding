@@ -229,7 +229,7 @@ function History({ account }: { account: string }) {
               ? <Badge label="Delegated" tone="green" />
               : <Badge label="Ended" tone="zinc" />}
             <span className="text-xs text-zinc-600 dark:text-zinc-300">{fmt(p.started_at)}</span>
-            <span className="text-xs text-zinc-400">→</span>
+            <span className="text-xs text-zinc-500 dark:text-zinc-400">→</span>
             <span className="text-xs text-zinc-600 dark:text-zinc-300">
               {p.ended_at ? fmt(p.ended_at) : 'now'}
             </span>

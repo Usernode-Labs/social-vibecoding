@@ -51,7 +51,7 @@ function Tab({ col, active }: { col: KanbanColView; active: boolean }): ReactNod
       ? 'border-violet-500 text-violet-500 font-semibold'
       : 'border-transparent text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200');
   const countCls = 'font-mono text-[11px] leading-tight '
-    + (active ? 'text-violet-400' : (col.count ? 'text-zinc-400 dark:text-zinc-500' : 'text-zinc-300 dark:text-zinc-600'));
+    + (active ? 'text-violet-400' : (col.count ? 'text-zinc-400 dark:text-zinc-500' : 'text-zinc-300 dark:text-zinc-500'));
   return (
     <button
       type="button"
@@ -76,7 +76,7 @@ function DragItem({ orderKey, children }: { orderKey?: string | null; children: 
     <div className="dev-drag-item relative pl-6" data-order-key={orderKey}>
       <button
         type="button"
-        className="dev-drag-handle absolute left-0 top-0 bottom-0 w-6 flex items-center justify-center text-zinc-300 dark:text-zinc-600 hover:text-zinc-500 dark:hover:text-zinc-400 cursor-grab touch-none"
+        className="dev-drag-handle absolute left-0 top-0 bottom-0 w-6 flex items-center justify-center text-zinc-300 dark:text-zinc-500 hover:text-zinc-500 dark:hover:text-zinc-400 cursor-grab touch-none"
         aria-label="Drag to reorder"
         title="Drag to reorder"
       >

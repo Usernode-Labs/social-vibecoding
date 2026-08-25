@@ -144,7 +144,7 @@ function Sender({ s }: { s: MailStatus }) {
   return (
     <div className="text-zinc-500 dark:text-zinc-400 mt-1">
       {'Sending as '}<Mono>{s.from || '(unset)'}</Mono>
-      {s.usingDefaultFrom ? <> <span className="text-zinc-400">(built-in default)</span></> : null}
+      {s.usingDefaultFrom ? <> <span className="text-zinc-500 dark:text-zinc-400">(built-in default)</span></> : null}
     </div>
   );
 }

@@ -107,7 +107,7 @@ function SurveyAnswers({ answers }: { answers: Answers }) {
               between two children: a whitespace-only JSX expression cannot
               survive hydration (React #418), and the span carries only a
               colour, so the space renders identically either side of it. */}
-          <span className="text-zinc-400">{`${label}: `}</span>
+          <span className="text-zinc-500 dark:text-zinc-400">{`${label}: `}</span>
           {value}
         </div>,
       );
@@ -152,13 +152,13 @@ function SurveyAnswers({ answers }: { answers: Answers }) {
     line('Invites', (
       <>
         {a.invites.join(', ')}
-        {a.admit_together ? <span className="text-zinc-400">{' (only together)'}</span> : null}
+        {a.admit_together ? <span className="text-zinc-500 dark:text-zinc-400">{' (only together)'}</span> : null}
       </>
     ));
   } else if (a.admit_together) {
-    line('Invites', <span className="text-zinc-400">only together</span>);
+    line('Invites', <span className="text-zinc-500 dark:text-zinc-400">only together</span>);
   }
-  if (!lines.length) return <div className="text-zinc-400">No survey answers.</div>;
+  if (!lines.length) return <div className="text-zinc-500 dark:text-zinc-400">No survey answers.</div>;
   return <>{lines}</>;
 }
 
@@ -269,7 +269,7 @@ const WAITLIST_COLUMNS: Column<WaitlistRow>[] = [
           </span>
         ) : (
           <span
-            className="text-zinc-400 text-xs"
+            className="text-zinc-500 dark:text-zinc-400 text-xs"
             title="Never followed the confirm link in the join email — this address is unproven"
           >
             {' unconfirmed'}
@@ -288,7 +288,7 @@ const WAITLIST_COLUMNS: Column<WaitlistRow>[] = [
           <span className="text-emerald-600 dark:text-emerald-400 text-xs">{' (has access)'}</span>
         ) : null}
       </>
-    ) : <span className="text-zinc-400">no account yet</span>),
+    ) : <span className="text-zinc-500 dark:text-zinc-400">no account yet</span>),
   },
   {
     label: 'Status',

@@ -392,7 +392,7 @@ export function Field({
       </label>
       <div className="mt-1">{children}</div>
       {help ? (
-        <span className="block mt-1 text-[11px] leading-snug text-zinc-400">{help}</span>
+        <span className="block mt-1 text-[11px] leading-snug text-zinc-500 dark:text-zinc-400">{help}</span>
       ) : null}
     </div>
   );
@@ -467,7 +467,7 @@ export function CheckField({
       <span className="text-xs">
         <span className="font-medium text-zinc-600 dark:text-zinc-400">{label}</span>
         {help ? (
-          <span className="block mt-0.5 text-[11px] leading-snug text-zinc-400">{help}</span>
+          <span className="block mt-0.5 text-[11px] leading-snug text-zinc-500 dark:text-zinc-400">{help}</span>
         ) : null}
       </span>
     </label>

@@ -71,7 +71,7 @@ interface User {
 const console_ = () => (window as any).AdminConsole;
 
 const SMALL_INPUT = 'rounded bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 px-2 py-1 text-xs font-mono disabled:opacity-60';
-const TINY_LABEL = 'text-xs text-zinc-400';
+const TINY_LABEL = 'text-xs text-zinc-500 dark:text-zinc-400';
 const CONTROL = 'flex items-center gap-1 shrink-0';
 
 const ROLE_LABEL: Record<string, string> = {
@@ -444,7 +444,7 @@ function UserRow({ user, fullAdminCount, canWrite, menuOpen, onMenu, onReload }:
             {`$${costToday} spent today `}
             {user.activation_code ? (
               <span className="text-xs text-zinc-500 dark:text-zinc-400">
-                {'code: '}<code className="text-zinc-400">{user.activation_code}</code>
+                {'code: '}<code className="text-zinc-500 dark:text-zinc-400">{user.activation_code}</code>
               </span>
             ) : null}
           </div>
@@ -579,7 +579,7 @@ function UsersSection() {
           {canWrite ? (
             <div id="admin-bulk-quota-control" className="flex items-center gap-2"
               title="Set every user's app quota to this number.">
-              <span className="text-xs text-zinc-400">Set all quotas to</span>
+              <span className="text-xs text-zinc-500 dark:text-zinc-400">Set all quotas to</span>
               <input id="admin-bulk-quota-input" type="number" min="0" step="1" inputMode="numeric"
                 className={`w-16 ${SMALL_INPUT}`} placeholder="0"
                 value={bulk} onChange={(e) => setBulk(e.target.value)} />

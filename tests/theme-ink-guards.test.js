@@ -23,14 +23,24 @@ const path = require('node:path');
 
 const root = path.join(__dirname, '..');
 
-// Every shell source that renders markup. The admin console is EXCLUDED on
-// purpose — it is the other design system (AGENTS.md, "Two design systems"),
-// it is gray/indigo rather than zinc/violet, and it is not part of the reskin.
+// Every source that renders markup, the admin console INCLUDED.
+//
+// It used to be excluded, on the written rationale that it "is gray/indigo
+// rather than zinc/violet, and is not part of the reskin". Both halves of that
+// stopped being true when the widget-language reskin folded the console into
+// this vocabulary — it is zinc/violet now and tests/admin-ui-registry.test.js
+// asserts that no gray or indigo survives anywhere. The exclusion outlived its
+// reason, and a live contrast sweep over the console then measured 114 failing
+// text styles in light mode behind it, including inks at 1.5:1.
+//
+// The lesson is worth more than the fix: an exemption carries the assumption
+// that justified it, and nothing re-checks that assumption when the world
+// moves. This one was pinned open by a comment that was simply out of date.
 function walk(dir, out = []) {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
     const p = path.join(dir, e.name);
     if (e.isDirectory()) {
-      if (e.name === 'node_modules' || p.includes(path.join('features', 'admin'))) continue;
+      if (e.name === 'node_modules') continue;
       walk(p, out);
     } else if (/\.(tsx?|js)$/.test(e.name)) {
       out.push(p);
@@ -43,7 +53,7 @@ const FILES = [
   ...walk(path.join(root, 'frontend', 'src')),
   ...walk(path.join(root, 'frontend', '@')),
   ...walk(path.join(root, 'public', 'js')),
-].filter((p) => !p.includes(path.join('features', 'admin')));
+];
 
 const SOURCES = FILES.map((p) => ({ path: path.relative(root, p), text: fs.readFileSync(p, 'utf8') }));
 
@@ -111,14 +121,47 @@ test('no bare -400 status ink outside the always-dark chrome', () => {
       bad.push(`${s.path}:${line} ${m[0]}`);
     }
   }
-  // This one is a BUDGET rather than a ban: 200-odd of these predate the
-  // reskin and most sit on surfaces the sweep has not reached (error states,
-  // rarely-open panels). The number may only go DOWN — a new bare -400 is a
-  // new light-mode contrast bug, and lowering this line is how a fix is
-  // recorded.
-  const BUDGET = 200;
+  // This one is a BUDGET rather than a ban: these predate the reskin and most
+  // sit on surfaces the live sweep has not reached (error states, rarely-open
+  // panels). The number may only go DOWN — a new bare -400 is a new
+  // light-mode contrast bug, and lowering this line is how a fix is recorded.
+  //
+  // It read 200 while the true count was 78, so 122 units of silent headroom
+  // sat in front of it and the ratchet was not ratcheting. Set to the measured
+  // number, admin included. If you are lowering it, say in the commit which
+  // sweep run you measured against.
+  const BUDGET = 78;
   assert.ok(bad.length <= BUDGET,
     `bare -400 status inks: ${bad.length} > ${BUDGET}. Newly added:\n  ${bad.slice(0, 8).join('\n  ')}`);
+});
+
+// ── 2b. A bare zinc-400 ink with no dark: partner ───────────────────────
+//
+// The neutral ramp's own version of rule 2, and the one that actually caught
+// the admin console: `text-zinc-400` is #8e8e93, which is 2.71:1 on the light
+// page ground (#eaeaea) — a fail at any text size. Paired as
+// `text-zinc-500 dark:text-zinc-400` it is the shell's ordinary secondary ink.
+//
+// A run that already names a `dark:` ink is somebody's considered pair and is
+// left alone; so is `placeholder:text-zinc-400`, which has its own contrast
+// rules and its own ramp.
+
+test('no unpaired zinc-400 ink outside the always-dark chrome', () => {
+  const bad = [];
+  for (const s of SOURCES.filter(themed)) {
+    const src = code(s.text);
+    for (const m of src.matchAll(/["'`]([^"'`\n]*\btext-zinc-400\b[^"'`\n]*)["'`]/g)) {
+      const run = m[1];
+      if (run.includes('placeholder:') || run.includes('dark:text-')) continue;
+      bad.push(`${s.path}:${src.slice(0, m.index).split('\n').length}`);
+    }
+  }
+  // Same ratchet as rule 2. 109 before the admin console was re-spelled to the
+  // shell's pair; 52 after, all of them outside admin.
+  const BUDGET = 52;
+  assert.ok(bad.length <= BUDGET,
+    `unpaired zinc-400 inks: ${bad.length} > ${BUDGET}. Pair them as `
+    + `text-zinc-500 dark:text-zinc-400. Newly added:\n  ${bad.slice(0, 8).join('\n  ')}`);
 });
 
 // ── 3. An `outline` Button with no ink ──────────────────────────────────

@@ -131,12 +131,12 @@ const APP_BADGE: Record<string, [string, string]> = {
   running: ['bg-violet-500/10 text-violet-500', 'Running'],
   pr_open: ['bg-sky-500/10 text-sky-600 dark:text-sky-400', 'PR open'],
   merged: ['bg-green-500/10 text-green-600 dark:text-green-400', 'Merged'],
-  skipped: ['bg-zinc-500/10 text-zinc-400', 'Skipped'],
+  skipped: ['bg-zinc-500/10 text-zinc-500 dark:text-zinc-400', 'Skipped'],
   failed: ['bg-red-500/10 text-red-500', 'Failed'],
 };
 
 function AppBadge({ state }: { state?: string }) {
-  const [cls, label] = (state && APP_BADGE[state]) || ['bg-zinc-500/10 text-zinc-400', state || '—'];
+  const [cls, label] = (state && APP_BADGE[state]) || ['bg-zinc-500/10 text-zinc-500 dark:text-zinc-400', state || '—'];
   return (
     <span className={`text-[0.65rem] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded ${cls} shrink-0`}>
       {label}
@@ -144,7 +144,7 @@ function AppBadge({ state }: { state?: string }) {
   );
 }
 
-const CHECK_CLASS = (s?: string) => (s === 'passing' ? 'text-green-500'
+const CHECK_CLASS = (s?: string) => (s === 'passing' ? 'text-green-600 dark:text-green-400'
   : (s === 'failing' || s === 'error') ? 'text-red-500 dark:text-red-400'
     : 'text-zinc-500 dark:text-zinc-400');
 
@@ -305,7 +305,7 @@ function CampaignRow({
   };
 
   const statusCls = c.status === 'running' ? 'text-violet-500'
-    : c.status === 'done' ? 'text-green-600 dark:text-green-400' : 'text-zinc-400';
+    : c.status === 'done' ? 'text-green-600 dark:text-green-400' : 'text-zinc-500 dark:text-zinc-400';
 
   return (
     <div className="rounded-lg bg-zinc-100 dark:bg-zinc-800 p-3" id={`admin-campaign-${c.id}`}>
@@ -482,7 +482,7 @@ function CampaignsSection() {
               disabled={submitting} onClick={submit}>Propose campaign</button>
           </div>
           <p id="admin-campaign-form-status"
-            className={formStatus ? `text-xs ${formStatus.ok ? 'text-green-500' : 'text-red-500 dark:text-red-400'}` : 'text-xs hidden'}>
+            className={formStatus ? `text-xs ${formStatus.ok ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}` : 'text-xs hidden'}>
             {formStatus ? formStatus.msg : ''}
           </p>
         </div>

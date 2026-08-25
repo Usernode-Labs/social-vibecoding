@@ -480,7 +480,7 @@ function OnchainAccountsScreen() {
       label: 'Delegation',
       cell: (a) => (a.delegated
         ? <Badge label="Delegated" tone="green" />
-        : <span className="text-zinc-400">—</span>),
+        : <span className="text-zinc-500 dark:text-zinc-400">—</span>),
     },
     { label: 'User', cell: (a) => (a.user ? a.user.username : '—'), tdClass: 'text-xs text-zinc-500' },
   ];

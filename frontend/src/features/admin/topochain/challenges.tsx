@@ -560,7 +560,7 @@ function EventDetail({ eventId, onBack }: { eventId: number; onBack: () => void 
       label: 'Enabled',
       cell: (c) => (c.enabled
         ? <span className="text-green-600 dark:text-green-400">enabled</span>
-        : <span className="text-zinc-400">disabled</span>),
+        : <span className="text-zinc-500 dark:text-zinc-400">disabled</span>),
     },
     { label: 'Completed', cell: (c) => (c.completed ? 'completed' : '—'), tdClass: 'text-zinc-500' },
   ], []);
