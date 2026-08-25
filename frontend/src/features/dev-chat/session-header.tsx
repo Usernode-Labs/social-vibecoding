@@ -6,6 +6,7 @@
 import type { MouseEvent, ReactNode } from 'react';
 
 import { useStoreState } from '../../lib/use-store-state';
+import { improveStore } from '../improve/improve-store.js';
 import {
   sessionHeaderStore,
   type MergeLife,
@@ -79,24 +80,15 @@ function VenueSelect({ venue }: { venue: NonNullable<SessionHeaderState['venue']
 
 export function SessionHeader(): ReactNode {
   const s = useStoreState(sessionHeaderStore);
+  // The Preview chip's flag lives on the improve store — the same
+  // `previewActive` that highlights the header's eye. One fact, one field.
+  const { previewActive } = useStoreState(improveStore) as { previewActive: boolean };
   return (
     <>
-      <a
-        id="dc-back"
-        className="text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200 text-sm"
-        href={s.backHref}
-        onClick={(e: MouseEvent<HTMLAnchorElement>) => {
-          // #1036: a real anchor — a cmd/ctrl/shift/middle click opens the dev
-          // page in a new tab and must leave THIS session mounted as it is.
-          // The guard runs before preventDefault, or the new tab is swallowed.
-          const N = controller();
-          if ((window as any).NavLink?.isNativeClick(e)) return;
-          e.preventDefault();
-          N?.leaveSession?.();
-        }}
-      >
-        {'←'}
-      </a>
+      {/* The in-strip ← retired (Streamlined Concept): the platform header's
+          own back arrow leads the session bar now — App.setBackIcon('arrow',
+          '#app/<slug>/board') on the way in, DevChat.handleBack on the way
+          out. One back control, in the bar the board draws it in. */}
       <span className="text-xs text-zinc-500 truncate flex-1 dark:text-zinc-400" title={s.branch}>{s.title}</span>
       {s.pr ? (
         <button
@@ -110,11 +102,29 @@ export function SessionHeader(): ReactNode {
       ) : (
         <span className="text-xs text-zinc-500 dark:text-zinc-400" title={s.newChangeTitle}>New change</span>
       )}
-      {/* The lifecycle pill's own host. It is rendered whether or not there is
-          a pill to draw, because `#dc-status-pill` is what a mid-turn patch
-          used to find — the patch is a publish now, and the empty span is
-          still the shape the strip's spacing was written against. */}
-      <span id="dc-status-pill">{s.life ? <MergeStatusPill life={s.life} /> : null}</span>
+      {/*
+          The MODE CHIP (Streamlined Concept) — the Figma title row's
+          `Building` / `Preview` state: violet while an AI turn is in flight
+          (doing), amber while the staging preview is on screen (seeing),
+          absent at rest. The lifecycle pill that stood here moved UP into
+          the platform header (#header-status-pill) — the board puts the
+          "Checks run…" state in the top bar, not the title row.
+      */}
+      {previewActive ? (
+        <span
+          id="dc-mode-chip"
+          className="text-[0.65rem] font-semibold px-2 py-0.5 rounded-full bg-amber-400/20 text-amber-700 dark:text-amber-400 shrink-0"
+        >
+          Preview
+        </span>
+      ) : s.busy ? (
+        <span
+          id="dc-mode-chip"
+          className="text-[0.65rem] font-semibold px-2 py-0.5 rounded-full bg-violet-500/15 text-violet-700 dark:text-violet-400 shrink-0"
+        >
+          Building
+        </span>
+      ) : null}
       {/* #1348: where this session is built, top right of the session area. It
           states the venue and opens the sheet that changes it. Here it
           survives the launchpad swap, and it is not competing with the meter,

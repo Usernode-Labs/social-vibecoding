@@ -307,7 +307,7 @@ test('neither the bottom tab bar nor the header switch ships', () => {
   assert.ok(!/class="[^"]*app-mode-seg/.test(INDEX), 'an orphan segment still ships');
 });
 
-test('#improve-btn lives inside the header, leading the icon group', () => {
+test('#improve-btn lives inside the header, alone in the right group', () => {
   const header = INDEX.slice(
     INDEX.indexOf('id="platform-header"'),
     INDEX.indexOf('</header>')
@@ -321,9 +321,12 @@ test('#improve-btn lives inside the header, leading the icon group', () => {
     header.indexOf('id="improve-btn"') > header.indexOf('id="header-title"'),
     'Improve must sit after the title, in the right group'
   );
+  // Streamlined Concept: the hamburger moved to the LEFT group, mirroring
+  // the drawer it opens, so it now PRECEDES the title — and Improve (or the
+  // eye that swaps in on the Dev screens) is the right group's one control.
   assert.ok(
-    header.indexOf('id="improve-btn"') < header.indexOf('id="header-menu-btn"'),
-    'Improve must lead the icon group'
+    header.indexOf('id="header-menu-btn"') < header.indexOf('id="header-title"'),
+    'the hamburger leads the bar, before the title'
   );
 });
 
@@ -437,84 +440,56 @@ test('home publishes the PLATFORM Improve target, from render and not only on re
 
 // ── #1367: the App/Feed/Kanban toggle, and what it replaced ──────────
 
-test('the Improve panel leads with a feedback BUTTON and the view toggle', () => {
+test('the Improve panel is exactly its two actions', () => {
   const panel = read('frontend/src/features/improve/improve-panel.tsx');
 
   // "Give feedback" is the one action here that needs nothing of the viewer —
-  // no collaborator bit, no session, no repo — and it looked exactly like the
-  // six rows most viewers cannot use. It is a primary button now, routed
-  // through the shell's <Button> primitive rather than hand-written (which is
-  // what tests/shell-primitive-adoption.test.js enforces), and it keeps its id
-  // because the outbox dot's writer and the checks select on it.
+  // no collaborator bit, no session, no repo. It is a primary button routed
+  // through the shell's <Button> primitive, and it keeps its id because the
+  // outbox dot's writer and the checks select on it. "Build a change" is the
+  // old Start-a-new-session row, id and handler unchanged (Figma copy).
   assert.match(panel, /<Button\s+id="improve-row-feedback"/,
     'the feedback control must be a <Button>, not a list row');
   assert.match(panel, /Improve\.giveFeedback\(\)/, 'with the same handler');
+  assert.match(panel, /id="improve-row-new-session"/, 'Build a change survives');
+  assert.match(panel, /Improve\.startSession\(\)/, 'with the same handler');
 
-  // The two navigating rows it used to sit above are the toggle now.
-  // The ids, not the words: the file still NAMES both rows, in the comment
-  // that records why they went and where their behaviour lives now.
+  // Everything else left: the session sections and reference footer are the
+  // app-context sheet's, and the view toggle is the Board's own control now.
   assert.ok(!/id="improve-row-kanban"/.test(panel), 'the Kanban ROW is retired');
   assert.ok(!/id="improve-row-feed"/.test(panel), 'the Feed ROW is retired');
-  assert.match(panel, /<ImproveViewToggle compact=\{false\} \/>/,
-    'and the panel renders the toggle in their place');
+  assert.ok(!/ImproveViewToggle/.test(panel), 'no view-toggle copy survives');
 });
 
-test('the view toggle renders in BOTH homes, and CSS picks which one shows', () => {
-  const toggle = read('frontend/src/features/improve/view-toggle.tsx');
+test('the Board owns the view control; the header center is the title tab', () => {
   const header = read('frontend/src/features/header/platform-header.tsx');
-  const panel = read('frontend/src/features/improve/improve-panel.tsx');
+  const frame = read('frontend/src/features/dev-board/board-frame.tsx');
 
-  // Both copies are always rendered and the breakpoint decides. Choosing one
-  // from a measured width would make the PRERENDERED document depend on a
-  // viewport the SSG pass does not have — a hydration mismatch on every phone
-  // or every desktop, whichever way the default fell.
-  assert.match(toggle, /hidden sm:inline-flex/, 'the header copy is wide-screen only');
-  assert.match(toggle, /flex sm:hidden/, 'the panel copy is phone only');
-  // Read the CODE, not the comment that explains why the code is this way.
-  const toggleCode = toggle
+  // Streamlined Concept, final state: navigation between the app's views is
+  // the app-context sheet behind the tappable center title tab; Kanban vs
+  // Feed is the Board's own display mode, drawn by the frame.
+  assert.ok(!/ImproveViewToggle/.test(header),
+    'the header renders no view-toggle copy');
+  assert.match(header, /<HeaderTitleTab titleRef=\{titleRef\} \/>/,
+    'the center of the bar is the title tab');
+  assert.match(frame, /id="dev-view-toggle"/, 'the Board draws its own control');
+  const frameCode = frame
     .replace(/\/\*[\s\S]*?\*\//g, '')
     .replace(/^\s*\/\/.*$/gm, '');
-  assert.ok(!/matchMedia|innerWidth/.test(toggleCode),
-    'the toggle must not measure the viewport — that is what the breakpoint is for');
-  // Display utilities lead each variant exactly once: `hidden` and
-  // `inline-flex` are both display, so which wins is decided by their order in
-  // the generated stylesheet, not in the class attribute.
-  assert.ok(!/const TRACK_CLS = '(inline-)?flex/.test(toggle),
-    'the shared track must carry no display utility of its own');
+  assert.ok(!/matchMedia|innerWidth/.test(frameCode),
+    'the control must not measure the viewport');
 
-  // LEFT of #improve-btn, and inside the right group: rightGroupRef is what
-  // use-header-layout.ts measures for the title-centering decision, so a
-  // control parked outside it would be invisible to that measurement and the
-  // title would overlap it at exactly the widths where this renders.
-  const toggleAt = header.indexOf('<ImproveViewToggle compact={true} />');
-  const btnAt = header.indexOf('<ImproveButton />');
-  const groupAt = header.indexOf('ref={rightGroupRef}');
-  assert.ok(toggleAt !== -1 && btnAt !== -1 && groupAt !== -1);
-  assert.ok(groupAt < toggleAt && toggleAt < btnAt,
-    'the toggle sits inside the right group, immediately left of #improve-btn');
-
-  // Three segments, and the third is the app itself — which the panel had no
-  // way back to once you had followed Kanban out of it.
-  assert.match(toggle, /Improve\.openApp\(\)/);
-  assert.match(toggle, /Improve\.openDev\(segment\)/);
-  // #1386: the App segment renders for EVERY row, the platform's self-hosted
-  // one included. Its iframe target still does not resolve, so openApp() sends
-  // that row home instead — the platform's product surface is the home screen,
-  // and leaving the segment out was what left the control reading Feed | Kanban
-  // with neither selected once you had followed Kanban out of home.
-  assert.ok(!/selfHosted \? null :/.test(toggle),
-    'the App segment must not be withheld from the self-hosted row');
-  // A segment names where it GOES, so the platform's reads "Home" — label, icon
-  // and tooltip together. "App" there would name a destination that does not
-  // exist, which is the very reason it lands on home.
-  assert.match(toggle, /\{selfHosted \? 'Home' : 'App'\}/,
-    "the platform's segment is labelled Home, an app's App");
-  assert.match(toggle, /const HomeSegmentIcon = selfHosted \? HomeIcon : AppWindowIcon;/,
+  // A destination names where it GOES, and the "use the app" row's label
+  // follows the target: the platform's reads "Home", an app's reads its own
+  // name. That logic lives on the app-context sheet's rows now.
+  const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
+  assert.match(sheet, /label=\{selfHosted \? 'Home' : name \|\| 'App'\}/,
+    "the platform's row is labelled Home, an app's by its name");
+  assert.match(sheet, /const AppRowIcon = selfHosted \? HomeIcon : AppWindowIcon;/,
     'and the icon follows the destination with it');
-  // The ATTRIBUTE does not follow: it names the segment's role, not its
-  // destination, and it is the contract dapp.json's checks are written against.
-  assert.match(toggle, /data-view-segment="app"/,
-    'data-view-segment stays "app" on both rows — it is the selector contract');
+  // The ATTRIBUTE names the row's role, not its destination — the selector
+  // contract dapp.json's checks are written against.
+  assert.match(sheet, /row="app"/, 'data-context-row stays "app" on both rows');
   const controller = read('frontend/src/features/improve/improve-controller.js');
   // #1406 widened where this segment is reachable from. It used to be true
   // that "no app open" meant "already home", because every other screen
@@ -527,70 +502,47 @@ test('the view toggle renders in BOTH homes, and CSS picks which one shows', () 
   assert.match(controller, /if \(!onHome\) window\.App\.navigateHome\(\);/,
     'and navigates home from anywhere that is not home');
 
-  // Active state comes from two stores because it genuinely lives in two
-  // places — which HALF of the app is on screen, and which dev view.
-  assert.match(toggle, /useDevViewMode\(\)/);
-  assert.match(toggle, /tab === 'dev'/);
-  // `tab` is republished from the single place App.currentTab is assigned.
+  // Which HALF of the app is on screen is still published from the single
+  // place App.currentTab is assigned — the eye/Improve swap renders from it.
   const appJs = read('public/js/app.js');
-  assert.match(appJs, /App\.currentTab = tab;[\s\S]{0,600}window\.Improve\?\.setTab\(tab\)/,
-    'switchTab must publish the active tab for the toggle to render');
-  assert.ok(!panel.includes('app-mode-seg'),
-    'and it must do it through the store, not by repainting a node');
+  assert.match(appJs, /App\.currentTab = tab;[\s\S]{0,600}window\.Improve\?\.setTab\(tab, App\.currentSubTab\)/,
+    'switchTab must publish the active tab AND sub-tab — the header eye is a '
+    + 'preview control on a session and a back-to-the-app control elsewhere');
+  const improveBtn = read('frontend/src/features/improve/improve-button.tsx');
+  assert.match(improveBtn, /tab === 'dev'/,
+    'the header right slot renders the eye from the published tab');
+  // The eye only offers what exists: a session shows it once that session
+  // has a staging preview, matching AppView.cardPreviewHtml's own gate.
+  assert.match(improveBtn, /const onSession = tab === 'dev' && subTab === 'sessions';/);
+  assert.match(improveBtn, /\(!onSession \|\| canPreview\)/,
+    'a session with no preview renders no eye');
+  assert.match(improveBtn, /swapToStagingForSession/,
+    'and the session eye opens that preview, the one preview affordance');
 });
 
-test('the home-indicator inset is not counted twice inside a kit surface', () => {
-  // #improve-footer carries .platform-safe-scroll, which is correct in the
-  // two cases where nothing else reserves the home indicator: the desktop
-  // slide-over (inset 0) and mobile Safari, where the kit is absent and the
-  // panel stays a fixed slide-over.
-  //
-  // Inside an adopted kit surface it is applied TWICE — `.un-sheet` already
-  // sets padding-bottom from the same inset, and `.un-sheet-body` adds 20px
-  // under it. Measured with a 34px indicator: 88px below the version row
-  // (34 + 20 + 34) instead of 54.
-  const css = read('public/css/app.css');
-  const rule = css.match(
-    /\.platform-sheet-adopted #improve-footer,\s*\n\.platform-panel-adopted #improve-footer \{[^}]*\}/);
-  assert.ok(rule, 'both adopted surfaces zero the footer padding');
-  assert.match(rule[0], /padding-bottom:\s*0\s*!important/,
-    '!important, because .platform-safe-scroll uses it too');
-  // …and the footer still ASKS for the inset, for the un-adopted cases.
-  const panel = read('frontend/src/features/improve/improve-panel.tsx');
-  const foot = panel.slice(panel.indexOf('id="improve-footer"'));
-  assert.match(foot.slice(0, 300), /platform-safe-scroll/,
-    'mobile Safari has no kit — something has to clear the indicator there');
-});
-
-test('the Improve panel bottom-anchors its version / GitHub / share block', () => {
-  const panel = read('frontend/src/features/improve/improve-panel.tsx');
+test('the app-context sheet bottom-anchors the version / GitHub / share block', () => {
+  // Streamlined Concept: the reference footer moved to the app-context sheet
+  // — the app's own surface — keeping its ids, its writers and this layout.
+  const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
   const html = read('public/index.html');
 
-  // The footer reached the foot with `mt-auto` — free space collected ABOVE
-  // it — which meant it stopped being at the foot exactly when the panel was
-  // full, i.e. when a viewer had several sessions running. Everything in this
-  // panel is a control except the session list, so the LIST is the flexing,
-  // scrolling element now and every control is `shrink-0`. The footer is
-  // simply the last of them.
-  const bodyAt = html.indexOf('id="improve-body"');
+  // Same `mt-auto` trick the hamburger's own footer used before these rows
+  // moved: the free space collects ABOVE the block, so it hugs the foot of a
+  // tall sidebar and degrades to "at the end of the scroll" when the rows
+  // above it fill the sheet. No measurement, one rule, both behaviours.
+  const bodyAt = html.indexOf('id="app-context-body"');
   const bodyTag = html.slice(bodyAt, html.indexOf('>', bodyAt));
-  assert.match(bodyTag, /flex flex-col/, '#improve-body stays the column flex');
-  assert.ok(!/overflow-y-auto/.test(bodyTag),
-    'the panel body itself must not scroll — a control must never scroll away');
+  assert.match(bodyTag, /flex flex-col/,
+    '#app-context-body must be the column flex the anchor needs');
+  assert.match(bodyTag, /overflow-y-auto/, 'and still the scroller');
 
   const footAt = html.indexOf('id="improve-footer"');
   const footTag = html.slice(footAt, html.indexOf('>', footAt));
+  assert.match(footTag, /\bmt-auto\b/, 'the footer must hug the bottom');
   assert.match(footTag, /\bshrink-0\b/,
-    'the footer must not be compressed by the rows above it');
-  assert.ok(!/\bmt-auto\b/.test(footTag),
-    'and must not depend on free space existing above it');
+    'and must not be compressed by the rows above it');
   assert.ok(bodyAt < footAt, 'the footer is inside the body it anchors within');
-  assert.match(panel, /id="improve-footer"/);
-
-  // Exactly one scroller, and it is the session list.
-  const body = html.slice(bodyAt, footAt);
-  assert.equal((body.match(/overflow-y-auto/g) || []).length, 1,
-    'the session list is the only scrolling region between body and footer');
+  assert.match(sheet, /id="improve-footer"/);
 });
 
 test('app.css drops the tab-bar rules and draws the Improve panel', () => {

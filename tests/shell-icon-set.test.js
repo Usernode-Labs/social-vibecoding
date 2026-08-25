@@ -172,7 +172,6 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // disclosure caret; the follow-up removed that disclosure. Every call site
     // left is behind route state — the Dev board frame's General-chat card and
     // its group rows, none of which are in <Shell/>.
-    'M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z',
     'M9 5l7 7-7 7',
     // CheckIcon and ArrowRightShortIcon — the browse screen's Add button and
     // its detail page's Open pill (#1191 slice 6). Both render from row/detail
@@ -182,6 +181,10 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // which is behind the same iOS-only gate as InfoCircleIcon below.
     'M5 13l4 4L19 7',
     'M13 7l5 5m0 0l-5 5m5-5H6',
+    // DiscussionIcon / BoardIcon / AppWindowIcon left this list with the
+    // Streamlined Concept: the always-mounted app-context sheet draws all
+    // three, so they prerender now.
+    //
     // The home panels' three glyphs, all behind the same gate: Discover,
     // Challenges and Create app render from the /api/home-panels cache, which
     // is FETCHED, so the prerendered sections are empty by contract (see
@@ -190,8 +193,19 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // TrophyOutlineIcon — the Challenges bar's leaderboard link and its
     // standings footer.
     'M16.5 18.75h-9m9 0a3 3 0 013 3h-15a3 3 0 013-3m9 0v-3.375c0-.621-.503-1.125-1.125-1.125h-.871M7.5 18.75v-3.375c0-.621.504-1.125 1.125-1.125h.872m5.007 0H9.497m5.007 0a7.454 7.454 0 01-.982-3.172M9.497 14.25a7.454 7.454 0 00.981-3.172M5.25 4.236c-.982.143-1.954.317-2.916.52A6.003 6.003 0 007.73 9.728M5.25 4.236V4.5c0 2.108.966 3.99 2.48 5.228M5.25 4.236V2.721C7.456 2.41 9.71 2.25 12 2.25c2.291 0 4.545.16 6.75.47v1.516M7.73 9.728a6.726 6.726 0 002.748 1.35m8.272-7.322c.983.143 1.954.317 2.916.52a6.003 6.003 0 01-5.395 4.972m0 0a6.726 6.726 0 01-2.749 1.35m0 0a6.772 6.772 0 01-3.044 0',
-    // ChevronDownIcon — the Challenges footer's expand caret.
-    'M19 9l-7 7-7-7',
+    // ChatIcon and LightBulbIcon — they left the prerender when the Improve
+    // pill and the panel's two actions dropped their glyphs (owner review:
+    // the Figma bar and buttons are text-only). Both still render behind
+    // state elsewhere (chat surfaces; nothing draws the bulb today).
+    'M8 10h.01M12 10h.01M16 10h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z',
+    'M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z',
+    // PencilSparklesIcon — the session bar's "back to building" half of the
+    // doing↔seeing pair (Streamlined Concept). Renders only on a session
+    // screen with a live preview, so neither of its two paths prerenders.
+    'M16.5 6.5a2.12 2.12 0 0 1 3 3L9 20l-4 1 1-4z',
+    'M6 3l.75 1.75L8.5 5.5l-1.75.75L6 8l-.75-1.75L3.5 5.5l1.75-.75z',
+    // (ChevronDownIcon left this list when the drawer's Your-apps fold put
+    // it in the shipped markup — owner review round 2.)
     // PlusWideIcon — Discover's add badge and the Create app tile. Its other
     // call site is an HTML string in features/home/home.js's card menu, which
     // is not rendered by <Shell/> either.
@@ -243,9 +257,6 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // none. They render the moment one is published.
     'M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z',
     'M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z',
-    // BellIcon — the bell BUTTON itself, retired when the notifications list
-    // merged into the hamburger. The badges it carried moved to that button.
-    'M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9',
     // SunIcon — the theme control's row icon. Theme is a Settings section now,
     // and its pane renders the segmented track without a row glyph.
     'M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z',
@@ -273,13 +284,10 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     //
     // ListLinesIcon is NOT here: the Dev board frame's own Feed tab renders
     // it from <Shell/>, so it still lands in the static document.
-    'M4 5h4v14H4zM10 5h4v9h-4zM16 5h4v6h-4z',
     // AppWindowIcon — both subpaths of the toggle's "App" segment, which is
     // the most conditional glyph in the shell: it needs a target AND a target
     // that is not the platform's own self-hosted row (which has no reachable
     // App tab). New with the toggle, so it has never prerendered.
-    'M4 6a1 1 0 011-1h14a1 1 0 011 1v12a1 1 0 01-1 1H5a1 1 0 01-1-1V6z',
-    'M4 9.5h16',
     // ── The dev chat composer's five glyphs ─────────────────────────
     // None of them can prerender: the composer is written into #dc-view at
     // runtime by `renderChatView`, and the prerendered document ships that

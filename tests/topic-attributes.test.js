@@ -825,17 +825,17 @@ test('category dropdown offers a text box + the app custom block', () => {
     }),
     /&lt;img src=x onerror=alert\(1\)&gt;/,
   );
-  // The filter select is features/dev-board/kanban-filters.tsx's since #1191,
-  // so a custom category's value reaches the attribute through React rather
-  // than through `escapeAttr`. Rendered, because that is the only way to say
-  // it once the string renderer is gone.
+  // The active-filter chips are features/dev-board/kanban-filters.tsx's
+  // (Streamlined Concept) — a user-supplied category label is a TEXT CHILD of
+  // the chip button, so React escapes it. The selects the bar used to render
+  // live in the Filters dialog, where React does the same for option labels.
   assert.match(
     renderComponent('frontend/src/features/dev-board/kanban-filters.tsx', 'KanbanFiltersView', {
-      mounted: true, q: '', priority: '', category: '', assignee: '',
-      needsVote: false, active: false, seq: 0, assignees: [],
-      categories: [{ value: 'x" onmouseover="alert(1)', label: '<b>hi</b>' }],
+      mounted: true, q: '', seq: 0, count: 1,
+      chips: [{ key: 'category', label: '<b>hi</b>' }],
     }),
-    /<option value="x&quot; onmouseover=&quot;alert\(1\)">&lt;b&gt;hi&lt;\/b&gt;<\/option>/,
+    /&lt;b&gt;hi&lt;\/b&gt;/,
+    'the active-category chip escapes its label',
   );
 
   // _categoryMeta must resolve unknown (custom) slugs rather than returning
@@ -843,15 +843,11 @@ test('category dropdown offers a text box + the app custom block', () => {
   assert.match(fe, /_categoryTint\(/, 'custom categories get a deterministic tint');
   assert.match(fe, /CATEGORY_CUSTOM_TINTS/, 'a dedicated custom-category palette exists');
 
-  // The filter bar is vocabulary-driven, and refreshes after a repaint.
-  assert.match(fe, /_kanbanCategoryOptionList\(\)/, 'the category filter is vocabulary-driven');
-  // The select is re-published rather than re-innerHTML'd after a repaint, so
-  // an option created during this session shows up without a reload — and the
-  // one select the reader currently has OPEN is left alone, because rebuilding
-  // its options would close the dropdown under them.
-  assert.match(fe, /_publishKanbanFilters\(AppView\._kanbanFilterView\(except\)\)/,
-    'the selects are refreshed after a repaint so new options appear');
-  assert.match(fe, /if \(except !== 'category'\) view\.categories = AppView\._kanbanCategoryOptionList\(\);/);
+  // The Filters dialog is vocabulary-driven: choices are computed fresh at
+  // every open, so a category created this session appears without a reload.
+  assert.match(fe, /_kanbanCategoryChoices\(\)/, 'the category filter is vocabulary-driven');
+  assert.match(fe, /categories: AppView\._kanbanCategoryChoices\(\)/,
+    'the dialog payload reads the vocabulary at open time');
 });
 
 // #780: _categoryMeta must never return null for a non-empty slug — chips,

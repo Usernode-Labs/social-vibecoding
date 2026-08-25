@@ -46,7 +46,8 @@ const FRAME = read('frontend/src/features/dev-board/board-frame.tsx');
 const CHAT_FRAME = read('frontend/src/features/dev-board/chat-frame.tsx');
 const SESSION_FRAME = read('frontend/src/features/dev-board/session-frame.tsx');
 const STORE = read('frontend/src/features/dev-board/view-mode-store.ts');
-const TOGGLE = read('frontend/src/features/improve/view-toggle.tsx');
+// Streamlined Concept: the Board draws its own Kanban|Feed control now,
+// inside the frame itself — there is no separate toggle module to read.
 const MAIN = read('frontend/src/main.tsx');
 const APP_VIEW = read('public/js/app-view.js');
 const APP = read('public/js/app.js');
@@ -210,7 +211,7 @@ test('the bridge is published before hydration, and guarded for the SSG pass', (
   // app-view.js with no bundle) do not throw.
   assert.match(APP_VIEW, /AppView\._reactDevBoard\(\)\?\.mountBoard\(content, \{/,
     'renderDevView mounts the board through the bridge');
-  assert.match(APP_VIEW, /AppView\._reactDevBoard\(\)\?\.mountChatSubView\(content, \{/,
+  assert.match(APP_VIEW, /AppView\._reactDevBoard\(\)\?\.mountChatSubView\(content\)/,
     'the general-chat sub-view mounts through the bridge');
   assert.match(APP_VIEW, /AppView\._reactDevBoard\(\)\?\.mountSessionShell\(content\);/,
     'the session shell mounts through the bridge');
@@ -327,12 +328,9 @@ test('the view toggle is real React state, and the className writer is gone', ()
     '_setViewMode publishes the new mode');
   assert.match(STORE, /useSyncExternalStore\(subscribe, getSnapshot/,
     'the frame subscribes through useSyncExternalStore');
-  // The frame no longer reads the store at all: it stopped drawing a control
-  // for the mode when the header's App/Feed/Kanban toggle replaced its tabs
-  // (#1367 follow-up). The TOGGLE is the reader now.
-  assert.match(TOGGLE, /useDevViewMode\(\)/, 'the header toggle reads the store');
-  assert.ok(!FRAME.includes('useDevViewMode'),
-    'the dev frame draws no view control of its own any more');
+  // Streamlined Concept: the Board draws its own Kanban|Feed control again
+  // (see BoardViewToggle in the frame), so the FRAME is the store's reader.
+  assert.match(FRAME, /useDevViewMode\(\)/, 'the board control reads the store');
   // The click still runs the module's behaviour, unchanged.
   assert.match(APP_VIEW, /_selectViewMode\(v\) \{/, 'the click handler lives in the module');
   assert.match(APP_VIEW, /AppView\._setViewMode\(mode\);\s*\n\s*\/\/[^\n]*\n\s*AppView\._repaintDevBody\(\);/,
@@ -346,16 +344,11 @@ test('the view toggle is real React state, and the className writer is gone', ()
     assert.ok(!FRAME.includes(`id: '${id}'`) && !FRAME.includes(`id="${id}"`),
       `${id} was retired with the dev-screen tab strip`);
   }
-  // The control that replaced it is still a tablist reflecting the live mode,
-  // so the active view reaches the a11y tree exactly as the strip did.
-  assert.match(TOGGLE, /role="tablist"/, 'the header toggle is a tablist');
-  assert.match(TOGGLE, /aria-selected=\{active === '(app|feed|kanban)' \? 'true' : 'false'\}/,
+  // The control is still a tablist reflecting the live mode, so the active
+  // view reaches the a11y tree exactly as the strip did.
+  assert.match(FRAME, /role="tablist"/, 'the board control is a tablist');
+  assert.match(FRAME, /aria-selected=\{mode === '(feed|kanban)' \? 'true' : 'false'\}/,
     'aria-selected reflects the active segment');
-  // BOTH form factors keep a switch — that is what makes removing the strip
-  // safe. The header copy is wide-screen only and the Improve panel carries
-  // the phone copy.
-  assert.match(TOGGLE, /hidden sm:inline-flex/, 'header copy is wide-screen only');
-  assert.match(TOGGLE, /flex sm:hidden/, 'panel copy covers the phone');
   // Seeded from the module before the first paint, so ?view=kanban does not
   // flash list first.
   assert.match(MOUNT, /publishViewMode\(options\.viewMode\);/, 'the store is seeded at mount');
@@ -370,7 +363,9 @@ test('the wiring the module still owns is untouched', () => {
     'PlatformUI.pullToRefresh(devScroll, () => AppView._loadDevFeed());',
     'AppView._attrInit();',
     'AppView._cardMenuInit();',
-    'AppView._loadChatCardPreview();',
+    // _loadChatCardPreview left this list with the General-chat card
+    // (Streamlined Concept): Activity is an app-context sheet row and a
+    // first-class hash, so the board offers no second door to it.
   ]) {
     assert.ok(APP_VIEW.includes(call), `${call} still runs after the mount`);
   }

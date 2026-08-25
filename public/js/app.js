@@ -45,6 +45,7 @@ const App = {
   // Platform-wide direct and group conversations (#488). The screen itself
   // is React-owned; this flag only coordinates the classic shell router.
   _inMessages: false,
+  _inNotifications: false,
 
   // Chromeless full-screen mode (#app/<slug>/full): the App tab with the
   // platform header + tab bar hidden, so the embedded app fills the
@@ -589,6 +590,7 @@ const App = {
     App._applyLaunchShot();
     App._applyOfflineAppShot();
     App._applyFeedbackShot();
+    App._applyAppContextShot();
   },
 
   // Screenshot-state deep link `?shot=improve`: open the Improve panel at
@@ -620,6 +622,26 @@ const App = {
   // check asserts panel MARKUP that renders closed, not an open surface.)
   IMPROVE_SHOT_TRIES: 40,
   IMPROVE_SHOT_INTERVAL_MS: 100,
+
+  // `?shot=app-context`: open the app-context sheet at boot — the surface
+  // behind the header's "app name ⌄" tab (Streamlined Concept). Same
+  // wait-for-a-target poll as ?shot=improve below, and for the same reason:
+  // the sheet refuses to open until an app target is published.
+  _applyAppContextShot() {
+    let shot = null;
+    try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
+    if (shot !== 'app-context') return;
+    let tries = App.IMPROVE_SHOT_TRIES;
+    const attempt = () => {
+      try {
+        window.AppContext?.open();
+        const panel = document.getElementById('app-context-sheet');
+        if (panel && panel.hasAttribute('data-open')) return;
+      } catch (err) { /* ignore */ }
+      if (--tries > 0) setTimeout(attempt, App.IMPROVE_SHOT_INTERVAL_MS);
+    };
+    setTimeout(attempt, 50);
+  },
 
   _applyImproveShot() {
     let shot = null;
@@ -2185,6 +2207,9 @@ const App = {
       // Browse's detail level (#apps/<slug>) claims the button as "up to
       // the list"; on the list itself it declines and we leave the screen.
       if (App._inBrowse && window.Browse?.handleBack?.()) return;
+      // A dev SESSION claims it as "back to the Board" (Streamlined
+      // Concept); declines when no session is open.
+      if (App.currentApp && window.DevChat?.handleBack?.()) return;
       App.navigateHome();
     });
 
@@ -2333,6 +2358,7 @@ const App = {
         else if (App._inSettings) App.navigateHome();
         else if (App._inBrowse) App.navigateHome();
         else if (App._inMessages) App.navigateHome();
+        else if (App._inNotifications) App.navigateHome();
         else {
           // Already on home (no app, no leaderboard). Don't call
           // navigateHome() — that would pushState, AppView.close(),
@@ -2356,7 +2382,8 @@ const App = {
         // regression test for the mode toggle uses (#748).
         App.setChromeless(false);
         if (App.currentApp || App._inLeaderboard || App._inProfile
-          || App._inAdmin || App._inSettings || App._inBrowse || App._inMessages) {
+          || App._inAdmin || App._inSettings || App._inBrowse || App._inMessages
+          || App._inNotifications) {
           App.navigateHome();
         } else {
           App.setHeaderTitle('Social Vibecoding');
@@ -2473,6 +2500,13 @@ const App = {
         App.navigateToSettings(parts[1] || null);
         return;
       }
+      if (parts[0] === 'notifications') {
+        // The full-screen Notifications view (Streamlined Concept). No
+        // sub-routes: rows navigate away themselves via _onItemClick.
+        App.setChromeless(false);
+        App.navigateToNotifications();
+        return;
+      }
       if (parts[0] === 'messages') {
         // Platform-wide conversations. A malformed/oversized id degrades to
         // the list without ever reaching a fetch URL. Conversations use
@@ -2541,6 +2575,14 @@ const App = {
           const pm = fragQuery.match(/(?:^|&)path=(.*)$/);
           if (pm) innerPath = App._validateInnerPath(pm[1]);
         }
+        // Streamlined Concept aliases: the app-context sheet's two
+        // destinations get first-class hashes. `activity` IS the general
+        // chat stream (same screen dev/chat always was) and `board` IS the
+        // forum card area (feed and kanban are both board modes now), so
+        // both rewrite onto the vocabulary the switch below already
+        // handles — old `dev` / `dev/chat` links keep working unchanged.
+        if (tab === 'activity') { tab = 'dev'; parts[2] = 'dev'; parts[3] = 'chat'; }
+        else if (tab === 'board') { tab = 'dev'; parts[2] = 'dev'; parts[3] = null; }
         if (tab === 'dev') {
           const sec = parts[3] || null;
           if (sec === 'sessions' && parts[4]) {
@@ -2583,6 +2625,7 @@ const App = {
         if (App._inAdmin) App._exitAdminConsole();
         if (App._inSettings) App._exitSettings();
         if (App._inMessages) App._exitMessages();
+        if (App._inNotifications) App._exitNotifications();
         App.setChromeless(chromeless);
         // Stash the validated inner path where renderAppTab / the token
         // refresh read it. Set on EVERY pass (null when absent) so
@@ -2620,6 +2663,7 @@ const App = {
         if (App._inAdmin) App._exitAdminConsole();
         if (App._inSettings) App._exitSettings();
         if (App._inMessages) App._exitMessages();
+        if (App._inNotifications) App._exitNotifications();
         if (App._inBrowse) App._exitBrowse();
         App._showOnlyScreen('home-screen');
         document.getElementById('back-btn').classList.add('hidden');
@@ -2738,7 +2782,7 @@ const App = {
   // the zoom transition).
   SCREEN_IDS: ['app-view', 'home-screen', 'browse-screen',
     'leaderboard-screen', 'profile-screen', 'admin-screen',
-    'settings-screen', 'messages-screen'],
+    'settings-screen', 'messages-screen', 'notifications-screen'],
 
   // Reveal `revealId`, hide every other screen root (except any id in
   // `keepAlso`), and hand the header's back chevron back to its default
@@ -2792,6 +2836,8 @@ const App = {
     'leaderboard-screen',
     // #488 — the fully React-owned platform Messages screen.
     'messages-screen',
+    // Streamlined Concept — the fully React-owned Notifications screen.
+    'notifications-screen',
     // ...and home last. This is the first converted root that ships
     // VISIBLE, which is why _isScreenVisible below grew a DOM fallback.
     'home-screen',
@@ -2867,65 +2913,19 @@ const App = {
   // Same ordering rule as _showOnlyScreen: inside the transition
   // callback only.
   _enterScreenChrome() {
-    document.getElementById('back-btn').classList.remove('hidden');
+    // #back-btn visibility is setBackIcon's alone now (arrow mode only) —
+    // the blanket reveal that lived here showed the retired home icon.
     // The GitHub and Share drawer rows were hidden by hand here. Both are
     // Improve panel rows now, and setAppOpen(false) below clears the panel's
     // target — which retires them for the same reason and in one move.
+    //
+    // #1406 used to re-publish the PLATFORM target right after this clear, so
+    // the improve button and the view selector survived onto settings,
+    // profile and messages. The Streamlined Concept takes the other side of
+    // that decision on purpose: a platform screen carries a plain title and
+    // an empty right slot — navigation lives in the drawer, and the title
+    // tab means "an app context is on screen", which these screens are not.
     App.DrawerStatus.setAppOpen(false);
-    // #1406: …and then the PLATFORM's own row goes back, so the improve button
-    // and the view selector survive onto settings, profile, messages and the
-    // rest instead of disappearing the moment you leave home.
-    //
-    // The clear above still has to happen FIRST: it is what drops the OPEN
-    // APP's target, and these screens are reached from inside an app as often
-    // as from home. So this is a swap, exactly as it already is on home — the
-    // same call, from the one function every non-home platform screen enters
-    // through, which is why it lands in one place rather than six.
-    App._publishPlatformChrome();
-  },
-
-  // The half of _enterScreenChrome that describes the PLATFORM in the header:
-  // the improve target, and then which selector segment is current. Extracted
-  // because it has to be able to run a second time (see below) while the rest
-  // of _enterScreenChrome must not — setAppOpen(false) there is destructive by
-  // design, and re-running it after an app has opened would clear that app's
-  // own target.
-  //
-  // The two calls stay in THIS order. setTab is a no-op while there is no
-  // slug, so the target has to be published first or the tab is dropped.
-  _publishPlatformChrome() {
-    if (typeof Home === 'undefined' || !Home.publishImproveTarget) return;
-
-    // On a DIRECT load of one of these screens (a refresh on /#settings, a
-    // link straight to it) the app list has never been fetched — only home
-    // and browse fetch it, each gated on its own screen — so there is no
-    // platform row to publish yet and the call below correctly publishes
-    // nothing. Ask for the payload once and run this again when it lands.
-    //
-    // ensureAppsLoaded answers null once it has been asked, so the second
-    // pass does not recurse — on success and on failure alike.
-    const loading = Home.ensureAppsLoaded?.();
-    if (loading) {
-      loading.then(() => {
-        // Only if one of these screens is still the one on show. A slow
-        // payload can land after the viewer has opened an app or gone home,
-        // and both of those own the header themselves — describing the
-        // platform then would overwrite what they published, which is the
-        // same mistake publishImproveTarget's own two gates exist to avoid.
-        if (App.currentApp) return;
-        if (App._isScreenVisible('home-screen')) return;
-        App._publishPlatformChrome();
-      }).catch(() => {});
-    }
-
-    // #1406: the PLATFORM's own row goes back, so the improve button and the
-    // view selector survive onto settings, profile, messages and the rest
-    // instead of disappearing the moment you leave home.
-    Home.publishImproveTarget();
-    // …and say which of the selector's segments is current: none of them.
-    // This screen is not home, not the app tab and not the dev area, so a
-    // control whose job is saying where you are must not mark one.
-    window.Improve?.setTab?.('other');
   },
 
   // Show the Leaderboard screen. Sibling to navigateToApp/navigateHome —
@@ -2979,6 +2979,7 @@ const App = {
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inSettings) App._exitSettings();
     if (App._inMessages) App._exitMessages();
+    if (App._inNotifications) App._exitNotifications();
     if (App._inBrowse) App._exitBrowse();
     // Screen reveal + chrome, all inside the transition callback so the
     // outgoing page is snapshotted as it actually looked (#979).
@@ -3072,6 +3073,7 @@ const App = {
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inSettings) App._exitSettings();
     if (App._inMessages) App._exitMessages();
+    if (App._inNotifications) App._exitNotifications();
     if (App._inBrowse) App._exitBrowse();
     const screen = document.getElementById('profile-screen');
     PlatformUI.transition(() => {
@@ -3127,6 +3129,7 @@ const App = {
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inSettings) App._exitSettings();
     if (App._inMessages) App._exitMessages();
+    if (App._inNotifications) App._exitNotifications();
     const screen = document.getElementById('browse-screen');
     App._inBrowse = true;
     // Renders into the still-hidden screen; `chrome: false` holds back its
@@ -3199,6 +3202,7 @@ const App = {
     if (App._inProfile) App._exitProfile();
     if (App._inSettings) App._exitSettings();
     if (App._inMessages) App._exitMessages();
+    if (App._inNotifications) App._exitNotifications();
     if (App._inBrowse) App._exitBrowse();
     const screen = document.getElementById('admin-screen');
     App._inAdmin = true;
@@ -3248,6 +3252,7 @@ const App = {
     if (App._inProfile) App._exitProfile();
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inMessages) App._exitMessages();
+    if (App._inNotifications) App._exitNotifications();
     if (App._inBrowse) App._exitBrowse();
     const screen = document.getElementById('settings-screen');
     App._inSettings = true;
@@ -3314,6 +3319,38 @@ const App = {
     window.UsernodeReact?.messages?.close?.();
   },
 
+  // The full-screen Notifications view (Streamlined Concept), on the
+  // Messages screen's pattern minus the island controller: the screen is
+  // always mounted and renders purely from the notifications store, so the
+  // swap is all there is — no route() to call, no chrome to sync. The data
+  // is already live (Notifications.init() ran at hydration and the WS keeps
+  // it fresh), which is exactly the drawer's own contract.
+  navigateToNotifications() {
+    if (App._inNotifications) return;
+    const fromIframe = !!(App.currentApp && App.currentTab === 'app');
+    const leavingApp = !!App.currentApp;
+    App.currentApp = null;
+    if (App._inLeaderboard) App._exitLeaderboard();
+    if (App._inProfile) App._exitProfile();
+    if (App._inAdmin) App._exitAdminConsole();
+    if (App._inSettings) App._exitSettings();
+    if (App._inBrowse) App._exitBrowse();
+    if (App._inMessages) App._exitMessages();
+    const screen = document.getElementById('notifications-screen');
+    App._inNotifications = true;
+    PlatformUI.transition(() => {
+      if (leavingApp) AppView.close();
+      App._showOnlyScreen('notifications-screen');
+      App._enterScreenChrome();
+      App.setHeaderTitle('Notifications');
+    }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
+  },
+
+  // State-only teardown; the incoming transition hides the root.
+  _exitNotifications() {
+    App._inNotifications = false;
+  },
+
   // navigateToTopochainLeaderboard / _exitTopochainLeaderboard used to
   // live here (Task 14, public screens). The Topochain leaderboard is a
   // TAB of the Leaderboard screen now, so it has no navigate/exit pair of
@@ -3344,7 +3381,9 @@ const App = {
         if (App.currentSubTab === 'sessions' && DevChat.currentSession) {
           newHash = `#app/${App.currentApp}/dev/sessions/${DevChat.currentSession.id}`;
         } else if (App.currentSubTab === 'chat') {
-          newHash = `#app/${App.currentApp}/dev/chat`;
+          // Streamlined Concept: the general chat is the ACTIVITY screen and
+          // its canonical address; old /dev/chat links still parse.
+          newHash = `#app/${App.currentApp}/activity`;
         } else if (App.currentSubTab === 'topic'
             && typeof AppView !== 'undefined' && AppView._devTopic) {
           const t = AppView._devTopic;
@@ -3353,7 +3392,9 @@ const App = {
             : t.kind === 'session' ? 'shared' : 'governance';
           newHash = `#app/${App.currentApp}/dev/${seg}/${t.id}`;
         } else {
-          newHash = `#app/${App.currentApp}/dev`;
+          // The card area is the BOARD (Streamlined Concept); old /dev links
+          // still parse.
+          newHash = `#app/${App.currentApp}/board`;
         }
       } else {
         // Chromeless mode round-trips through reloads/history via its
@@ -3389,6 +3430,14 @@ const App = {
       // Strip the fragment-query (#743) so #app/x/full?path=/t/1 and
       // #app/x/full are the SAME screen (replace, not a spurious push).
       const segs = String(h || '').replace(/^#/, '').split('?')[0].split('/');
+      // Streamlined Concept aliases (see restoreFromHash): #app/x/activity
+      // is dev/chat and #app/x/board is dev, so an alias in the address bar
+      // and the canonical form updateHash computes are the SAME screen —
+      // replace, never a spurious push.
+      if (segs[0] === 'app') {
+        if (segs[2] === 'activity') segs.splice(2, 1, 'dev', 'chat');
+        else if (segs[2] === 'board') segs.splice(2, 1, 'dev');
+      }
       if (segs[0] === 'app' && segs[2] === 'dev') {
         return SUB_SCREENS.has(segs[3])
           ? segs.slice(0, 4).join('/')
@@ -3554,6 +3603,7 @@ const App = {
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inSettings) App._exitSettings();
     if (App._inMessages) App._exitMessages();
+    if (App._inNotifications) App._exitNotifications();
     // Real screen navigation. From a launcher grid (home's "Your apps" /
     // featured row, or the #apps browse screen) the app view expands out
     // of the clicked tile (kit 'zoom-in'); from anywhere else (deep link,
@@ -3577,7 +3627,6 @@ const App = {
     const appViewEl = document.getElementById('app-view');
     PlatformUI.transition(() => {
       App._setScreenVisible('app-view', true);
-      document.getElementById('back-btn').classList.remove('hidden');
       // Best-effort: returns false (and changes nothing) for anything whose
       // App tab wouldn't be a plain production iframe — self-hosted apps,
       // demo cards, non-running apps, an explicit non-app tab, offline.
@@ -3621,8 +3670,10 @@ const App = {
     // "what's actually on screen right now" signal.
     if (App.currentApp !== slug) return;
 
-    // After app data is loaded, swap header to the display name.
-    if (AppView.appData?.name) {
+    // After app data is loaded, swap header to the display name — unless a
+    // Dev view owns the title by now (Streamlined Concept: Activity / Board
+    // name themselves; the app's name lives on the center tab's sheet).
+    if (AppView.appData?.name && App.currentTab !== 'dev') {
       App.setHeaderTitle(AppView.appData.name);
     }
 
@@ -3663,6 +3714,7 @@ const App = {
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inSettings) App._exitSettings();
     if (App._inMessages) App._exitMessages();
+    if (App._inNotifications) App._exitNotifications();
     if (App._inBrowse) App._exitBrowse();
     // Preferred: shrink the app view back into its home tile (kit
     // 'zoom-out': fn reveals home beneath the pinned overlay, `after`
@@ -3745,6 +3797,11 @@ const App = {
     if (chevron) chevron.classList.toggle('hidden', !arrow);
     const btn = document.getElementById('back-btn');
     if (btn) {
+      // Streamlined Concept (owner review): there is never a HOME button
+      // beside the hamburger — home is the drawer and the title tab's
+      // business. The slot renders only as a level-2 BACK arrow, so this
+      // is now the single owner of the anchor's visibility.
+      btn.classList.toggle('hidden', !arrow);
       btn.setAttribute('aria-label', arrow ? 'Back' : 'Home');
       const target = href || (window.NavLink ? NavLink.homeHref() : '/');
       btn.setAttribute('href', target);
@@ -3776,8 +3833,12 @@ const App = {
   // (Flutter logs and drops unknown methods), so this is safe to ship
   // ahead of the Flutter rebuild.
   setHeaderTitle(text) {
-    const headerEl = document.getElementById('header-title');
-    if (headerEl) headerEl.textContent = text;
+    // Streamlined Concept: #header-title is React-owned now
+    // (frontend/src/features/header/header-title-tab.tsx renders it as the
+    // tappable app-context tab), so the text goes through the bridge into
+    // header-title-store — never a direct textContent write, which React
+    // would reconcile away.
+    window.UsernodeReact?.headerTitle?.set?.(text);
     document.title = text;
     // Re-apply the dev-chat status marker ("⏳ thinking / ✅ done",
     // #108) that the plain title assignment above just wiped, then let
@@ -3883,7 +3944,7 @@ const App = {
     // App/Feed/Kanban toggle (#1367) — but it is React-rendered from the
     // Improve store, so this publishes the fact instead of repainting a node:
     // one owner for the attribute, which is the whole ownership rule.
-    window.Improve?.setTab(tab);
+    window.Improve?.setTab(tab, App.currentSubTab);
 
     // Leaving the Sessions sub-tab. The cross-app active-sessions POLL used
     // to be torn down here; it and the panel it drove are retired (#1367),
@@ -3903,6 +3964,10 @@ const App = {
     }
 
     if (tab === 'app') {
+      // The session screen's ← is renderDevView's; leaving Dev for the app
+      // itself must take it back down (sub-view hops never pass
+      // _showOnlyScreen, the usual owner of this reset).
+      App.setBackIcon('home');
       AppView.renderAppTab();
     } else {
       await AppView.renderDevView(App.currentSubTab, ref);

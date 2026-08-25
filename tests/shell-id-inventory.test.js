@@ -40,6 +40,14 @@ const after = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
 
 // Ids a conversion chunk deliberately removed, each with the reason.
 const RETIRED_IDS = {
+  // ── Streamlined Concept: the notification list left the drawer ───
+  // The rows render on the full-screen #notifications view now
+  // (notifications-screen.tsx, its own ids in ADDED_IDS below); the saved +
+  // invites sections moved WITH the surface keeping their ids, so only the
+  // drawer-specific chrome is gone.
+  'notifications-mark-all': 'The drawer block\'s mark-all control; the screen renders its own (#notifications-screen-mark-all), React-wired.',
+  'notifications-list': 'The drawer\'s list scroller; the screen renders rows directly.',
+  'notifications-empty': 'Drawer-only never-had-one hint; the screen\'s All tab empty state says it now.',
   'drawer-row-app-version': 'Per-dApp SHA removed from platform information; app versions remain on app cards.',
   'app-version-pill-slot': 'Drawer-only per-dApp SHA renderer removed with its row.',
   // ── THE UI OVERHAUL: four header controls became one ──────────────
@@ -54,16 +62,17 @@ const RETIRED_IDS = {
   'work-drawer-icon': 'The cog glyph, retired with its button. The spinning-while-busy cue is the per-row busy dot in the Improve panel now.',
   'dev-console-btn': 'Header terminal icon retired — the Improve panel\'s "Developer terminal" row is shown on the same DevConsole signal. #staging-dev-console-btn survives; the staging overlay has its own chrome.',
   'dev-console-badge': 'Unseen-error count on the retired header terminal icon. #staging-dev-console-badge survives.',
-  // ── The Improve button becomes the one that says what is happening ──
-  // The dot lit when the platform version row said "deploying", and that row
-  // moved into the Improve panel's footer with THE UI OVERHAUL — so the dot
-  // was pointing at something behind a different control. It is
-  // #improve-version-dot on #improve-btn now (see ADDED_IDS), and it gained
-  // the violet "the platform rolled past the SHA this tab loaded against"
-  // state its single amber colour could never show. Same reader
-  // (DrawerStatus.refreshDeployDot), which publishes a state instead of
-  // toggling a class.
-  'header-menu-deploy-dot': 'Renamed to #improve-version-dot and moved onto #improve-btn, following the version rows it reads.',
+  // ── The version dot's round trip ──────────────────────────────────
+  // #1412 renamed #header-menu-deploy-dot to #improve-version-dot and moved
+  // it onto #improve-btn; the Streamlined Concept moved it straight back to
+  // the hamburger under its ORIGINAL id — the board keeps the hamburger as
+  // the badge cluster, and the Improve slot slims to a text action. So the
+  // id matches the baseline again and neither map lists it. What #1412
+  // actually added is kept: the violet "the platform rolled past the SHA
+  // this tab loaded against" state, and a reader
+  // (DrawerStatus.refreshDeployDot) that publishes a state through
+  // improveStore instead of toggling a class — the dot renders from
+  // <MenuIndicators/> in platform-header.tsx now.
   // ── #1367: two Improve rows became a segmented toggle ────────────
   // "Development kanban" and "Latest development activity" were list rows
   // with a chevron. They are two segments of the App/Feed/Kanban control now
@@ -104,6 +113,13 @@ const RETIRED_IDS = {
 
 // Ids a conversion chunk deliberately added, each with the reason.
 const ADDED_IDS = {
+  // ── Streamlined Concept: the drawer leads with Your apps ─────────
+  'drawer-your-apps': 'The drawer\'s "Your apps" section container — React-owned, filled on drawer open from /api/apps via the home screen\'s partition (see drawer-apps.tsx).',
+  'drawer-top-rows': 'The drawer\'s leading group — Notifications and Messages rows (owner review round 2).',
+  'drawer-row-your-apps': 'The "Your apps" NAV ROW — navigates home, where the apps grid lives; a distinct item like Notifications (owner review round 2).',
+  'drawer-your-apps-toggle': 'The chevron disclosure beside that row — folds the app list.',
+  'drawer-row-notifications': 'Badged Notifications nav row — the way into the full-screen #notifications view now that the list left the drawer.',
+  'drawer-notifications-badge': 'Notifications-only unread count on that row (bell unread + invites), painted by Notifications._renderBadge.',
   // #1281 — the session-CLI bridge opt-in. The spec marks that venue
   // settings-gated and "most users: no", so the gate needs somewhere to
   // live: Settings → Experimental, beside the other per-user preview flag.
@@ -122,11 +138,9 @@ const ADDED_IDS = {
   'cu-save': 'Submit for the username change.',
   'cu-status': 'Status line for the username change.',
   'settings-mobile-push-preferences': 'Account-level Social mobile-push category controls in Settings → Alerts.',
-  // The renamed deploy dot's new home and name. Two states, not one: amber
-  // while a deploy is in flight, violet once the platform has rolled past
-  // this tab. Top-LEFT corner, because the green session count took the
-  // top-right and #feedback-queue-dot moved to the bottom-left to make room.
-  'improve-version-dot': 'Platform version cue on #improve-btn — was #header-menu-deploy-dot on the hamburger.',
+  // (#1412's #improve-version-dot came and went: the Streamlined Concept
+  // returned the version cue to the hamburger under its original
+  // #header-menu-deploy-dot id — see the note in RETIRED_IDS.)
   // ── #1191: the build-flow preference stops being injected ────────
   // These three were BUILT AT RUNTIME by Settings._renderDevFlowSection,
   // which created the block and inserted it into the Connections pane on
@@ -156,10 +170,8 @@ const ADDED_IDS = {
   'improve-close': 'Close button in the Improve panel header.',
   'improve-body': 'The panel\'s scroller.',
   'improve-row-feedback': 'Opens the feedback dialog — the retired #feedback-btn.',
-  'notifications-caught-up': 'The drawer\'s "you\'re all caught up" state — nothing unread, but there IS history behind "See more notifications". Deliberately a different node and sentence from #notifications-empty, which still means "you have never had a notification".',
   'improve-row-new-session': 'Starts a dev session — the Dev "+" menu\'s "Propose a change".',
   'improve-footer': 'Reference block: View on GitHub, Share app, version — all three moved out of the hamburger drawer.',
-  'drawer-notifications': 'The notifications region at the top of the hamburger, where the bell dropdown\'s body now renders.',
   'settings-theme-section': 'The Theme settings pane\'s inner node, matching every other section\'s wrapper/inner pair.',
   // ── THE UI OVERHAUL: the home screen's four areas ────────────────
   // Your apps, Discover, Challenges, Create app — stacked, in that order.
@@ -248,6 +260,38 @@ const ADDED_IDS = {
   'settings-openrouter-copy': 'Copy action for the one-time child-key reveal (#1344).',
   'settings-openrouter-dismiss-reveal': 'Clears the one-time plaintext key from the settings DOM (#1344).',
   'settings-openrouter-personal-controls': 'Personal-BYOK controls hidden while a managed key owns the credential slot (#1344).',
+  // ── Streamlined Concept: the Board Filters dialog ────────────────
+  // The Figma board (Streamlined Concept / Dev Sessions and Navigation)
+  // moves the Board's filter selects and the needs-vote toggle off the
+  // filter bar into a dialog; the bar keeps search and gains a
+  // `Filters (n)` chip plus dismissable active-filter chips (those are
+  // runtime-injected, so only the dialog's ids land in the shell).
+  'board-filters-modal': 'The Filters dialog root — tenth shell dialog, same useDialog/static-modal contract as the nine.',
+  'board-filters-priority': 'Priority select inside the Filters dialog (was #dev-kanban-priority on the bar).',
+  'board-filters-category': 'Category select inside the Filters dialog (was #dev-kanban-category on the bar).',
+  'board-filters-assignee': 'Assignee select inside the Filters dialog (was #dev-kanban-assignee on the bar).',
+  'board-filters-needsvote': 'The "Needs my vote" switch inside the Filters dialog (was the bar chip #dev-kanban-needsvote).',
+  'board-filters-done': 'The dialog\'s Done button — applies the staged filters via AppView.applyKanbanFilters.',
+  // ── Streamlined Concept: the app-context sheet ───────────────────
+  // The surface behind the header's "app name ⌄" tab: the app's three
+  // views, its changes in progress/elsewhere, and the reference footer
+  // (which moved here from the Improve panel keeping its ids).
+  'app-context-sheet': 'The sheet root — always mounted, data-open slides it in; kit-adopted on touch (features/app-context).',
+  'app-context-overlay': 'Backdrop behind the sheet — opacity-faded, never hidden, like #improve-overlay.',
+  'app-context-body': 'The sheet\'s scroller — a column flex so #improve-footer bottom-anchors, exactly as #improve-body did.',
+  'app-context-close': 'Close button in the sheet header.',
+  'app-context-row-app': 'Destination row: view and use the app (Improve.openApp).',
+  'app-context-row-activity': 'Destination row: the Activity stream (#app/<slug>/activity).',
+  'app-context-row-board': 'Destination row: the Board (#app/<slug>/board).',
+  'app-context-new-change': 'The + New change action beside the Changes-in-progress heading (Improve.startSession).',
+  // ── Streamlined Concept: the full-screen Notifications view ──────
+  // A real screen behind the drawer's Notifications row, on the Messages
+  // screen's fully-React pattern: All | Unread tabs, Today/Earlier
+  // sections, avatar-initial rows. Renders from the same notifications
+  // store as the drawer's list.
+  'notifications-screen': 'The Notifications screen root — in App.SCREEN_IDS and REACT_SCREEN_IDS, revealed by App.navigateToNotifications on #notifications.',
+  'notifications-screen-tabs': 'The screen\'s sticky All | Unread tab row, with its own Mark-all-read control.',
+  'notifications-screen-mark-all': 'Mark-all-read on the screen — same controller action as the drawer\'s #notifications-mark-all, React-wired instead of id-bound.',
 };
 
 test('the shell still carries every id in the frozen baseline', () => {

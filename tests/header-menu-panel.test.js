@@ -55,11 +55,13 @@ function openBody() {
   return headerMenuJs.slice(at, headerMenuJs.indexOf('  close() {', at));
 }
 
-test('the touch branch presents a right-side kit panel', () => {
+test('the touch branch presents a left-side kit panel', () => {
   const body = openBody();
   assert.match(body, /gate:\s*'touch'/, 'still gated on the touch platform');
   assert.match(body, /kind:\s*'panel'/, 'a panel, not a sheet');
-  assert.match(body, /side:\s*'right'/, 'a drawer that opens from the bottom is the bug being fixed');
+  // Streamlined Concept: the drawer mirrors the hamburger, which leads the
+  // header's LEFT group now.
+  assert.match(body, /side:\s*'left'/, 'a drawer that opens from the bottom is the bug being fixed');
   assert.match(body, /contentEl:\s*panel/,
     'the shell panel itself is adopted so its row listeners ride along');
   // …and the gate and the seam are what the shared lift means by those two.
@@ -210,16 +212,17 @@ test('the theme segments left the drawer entirely', () => {
     'and the settings screen makes that announcement in its place');
 });
 
-test('notifications lead the drawer, and the bell is gone', () => {
-  // The merge: two top-right drawers that opened the same way, one slot apart,
-  // became one. The LIST is rendered here from the same store, so the module
-  // is unchanged; what had to move is the init, because the island that used
-  // to own it is retired.
-  assert.match(headerMenuTsx, /<NotificationsBody \/>/,
-    'the drawer renders the notifications body');
+test('Your apps lead the drawer; notifications are a badged row to the screen', () => {
+  // Streamlined Concept: the notification LIST left the drawer for the
+  // #notifications screen; the drawer leads with the viewer's apps and the
+  // badged Notifications row is the way in. The module's init stays on this
+  // island's layout effect — the drawer is still the always-mounted host.
+  assert.match(headerMenuTsx, /<DrawerApps \/>/,
+    'the drawer renders the Your-apps section');
   assert.match(headerMenuTsx, /window\.Notifications\?\.init\(\)/,
     'and initialises the module from its layout effect, before DOMContentLoaded');
-  assert.match(headerMenuTsx, /id="drawer-notifications"/, 'inside its own region');
+  assert.match(headerMenuTsx, /id="drawer-row-notifications"/, 'the badged row exists');
+  assert.match(headerMenuTsx, /id="drawer-notifications-badge"/, 'with its unread badge');
   assert.equal(html.indexOf('id="notifications-panel"'), -1,
     'the retired bell panel must not still ship');
   assert.equal(html.indexOf('id="notifications-btn"'), -1,
@@ -303,16 +306,15 @@ test('a dapp check pins the drawer to the panel on a forced-touch route', () => 
 // list, both still render — so each strand is pinned against the source and
 // against the prerendered document in the style of the contracts above.
 
-test('notifications anchor to the top of the drawer, the nav rows to the bottom', () => {
-  // Opposite ends of one column flex. #drawer-notifications is a SIBLING of
-  // #drawer-main-rows now rather than its first child — that nesting is what
-  // made independent anchoring impossible.
+test('Your apps anchor to the top of the drawer, the nav rows to the bottom', () => {
+  // Opposite ends of one column flex. The apps section inherited the slot —
+  // and the anchoring layout — the notifications block held (#1367).
   const rowsAt = html.indexOf('id="header-menu-rows"');
-  const notifAt = html.indexOf('id="drawer-notifications"');
+  const notifAt = html.indexOf('id="drawer-your-apps"');
   const navAt = html.indexOf('id="drawer-main-rows"');
   assert.ok(rowsAt !== -1 && notifAt !== -1 && navAt !== -1, 'all three ids survive');
   assert.ok(rowsAt < notifAt && notifAt < navAt,
-    'notifications first, navigation rows after, both inside #header-menu-rows');
+    'Your apps first, navigation rows after, both inside #header-menu-rows');
 
   const rowsTag = html.slice(rowsAt, html.indexOf('>', rowsAt));
   assert.match(rowsTag, /flex flex-col/,
@@ -320,22 +322,24 @@ test('notifications anchor to the top of the drawer, the nav rows to the bottom'
 
   // WHICH BLOCK ABSORBS THE FREE SPACE, and therefore which one scrolls.
   //
-  // The nav rows used to hug the bottom with `mt-auto`, which collects the
-  // space ABOVE them — and so did nothing in the one case that mattered, a
-  // notification list long enough to leave none: Profile / Messages /
-  // Settings / Admin then sat below the fold behind a scroll nobody expects
-  // in a menu. It is the other way round now. The notifications block is the
-  // flexing, scrolling one; the rows are `shrink-0` and unconditional.
+  // WHO FLEXES: the apps section is the flexing, scrolling block (#1421's
+  // fix, inherited by the section that inherited the slot) — a long apps
+  // list scrolls within it instead of pushing Profile / Settings below the
+  // fold. The nav rows are `shrink-0` and unconditional, and `mt-auto` keeps
+  // them hugging the bottom when the apps list is short (mt-auto collects
+  // the free space above them, and flex-1 above means there is only any
+  // when the apps section has nothing to fill it with).
   const navTag = html.slice(navAt, html.indexOf('>', navAt));
   assert.match(navTag, /\bshrink-0\b/, 'the navigation rows keep their height');
-  assert.ok(!/\bmt-auto\b/.test(navTag),
-    'and do not depend on free space existing above them');
+  assert.match(navTag, /\bmt-auto\b/, 'and hug the bottom when space is free');
   const notifTag = html.slice(notifAt, html.indexOf('>', notifAt));
-  assert.match(notifTag, /\bflex-1\b/, 'the notifications block takes what is left');
+  assert.match(notifTag, /\bflex-1\b/, 'the apps section takes what is left');
   assert.match(notifTag, /\bmin-h-0\b/,
     'and may shrink below its content, which is what lets it scroll');
   assert.ok(!/\boverflow-y-auto\b/.test(rowsTag),
-    '#header-menu-rows itself must not scroll — only the list inside it does');
+    '#header-menu-rows itself must not scroll — only the section inside it does');
+  assert.ok(!/\bmt-auto\b/.test(notifTag),
+    'nothing may push the apps section off the top');
 });
 
 // ── The follow-up: the SECTION is not collapsible; its GROUPS are ────
@@ -347,26 +351,32 @@ test('notifications anchor to the top of the drawer, the nav rows to the bottom'
 // each fails silently if it drifts (a section that quietly ships collapsed
 // again, or groups that stay expanded from the last visit).
 
-test('the notifications SECTION has no disclosure of its own', () => {
+test('Your apps is a nav row of its own, with a fold beside it', () => {
   const block = html.slice(
-    html.indexOf('id="drawer-notifications"'),
+    html.indexOf('id="drawer-your-apps"'),
     html.indexOf('id="drawer-main-rows"'),
   );
-  // The body is rendered plainly — not behind a `hidden` wrapper, which is
-  // what the retired disclosure used and what took the saved-message rows out
-  // of `document.body.innerText` and broke #1280's two checks.
-  assert.ok(!/<div class="hidden">/.test(block),
-    'the section body must not ship inside a hidden wrapper');
-  assert.ok(!/aria-expanded/.test(block),
-    'and its header must not be a disclosure control');
-  // The island holds no state for it either.
-  assert.ok(!/notificationsOpen/.test(headerMenuTsx),
-    'no section-collapse state survives in the island');
-  assert.ok(!/sv:notifications-expand/.test(headerMenuTsx),
-    'and no expand channel for it');
-  // The rows it must still contain.
-  assert.ok(block.includes('id="notifications-list"'));
-  assert.ok(block.includes('id="notifications-mark-all"'));
+  // Owner review round 2: the section header is BOTH a distinct nav item
+  // (navigates home, where the apps grid lives) and a collapsible
+  // disclosure. The fold is the chevron BUTTON beside the anchor — the
+  // anchor itself never carries the disclosure semantics.
+  assert.ok(/id="drawer-row-your-apps"/.test(block), 'the nav row exists');
+  assert.ok(/id="drawer-your-apps-toggle"/.test(block), 'with its fold beside it');
+  assert.ok(/aria-expanded/.test(block), 'the fold is a real disclosure');
+  // The drawer's groups (owner review round 2): Notifications + Messages on
+  // top, then Your apps; Profile, Settings, Admin close the menu.
+  for (const id of ['drawer-row-notifications', 'drawer-row-messages',
+    'drawer-row-your-apps', 'drawer-row-profile', 'drawer-row-settings',
+    'drawer-row-admin']) {
+    assert.ok(html.includes(`id="${id}"`), `#${id} survives in the drawer`);
+  }
+  assert.ok(
+    html.indexOf('id="drawer-row-notifications"') < html.indexOf('id="drawer-your-apps"'),
+    'Notifications and Messages sit ABOVE the apps section');
+  assert.ok(
+    html.indexOf('id="drawer-row-profile"') < html.indexOf('id="drawer-row-settings"')
+    && html.indexOf('id="drawer-row-settings"') < html.indexOf('id="drawer-row-admin"'),
+    'the bottom group runs Profile, Settings, Admin & moderation');
 });
 
 test('each drawer open starts on what is NEW', () => {
@@ -386,36 +396,25 @@ test('each drawer open starts on what is NEW', () => {
   assert.match(headerMenuJs, /dispatchEvent\(new CustomEvent\('sv:drawer-open'\)\)/);
 });
 
-test('read notifications leave the list, with a way back to them', () => {
+test('read notifications keep a way back, on the screen', () => {
   const notificationsJs = fs.readFileSync(
     path.join(root, 'frontend/src/features/notifications/notifications.js'), 'utf8');
-  const listTsx = fs.readFileSync(
-    path.join(root, 'frontend/src/features/notifications/notifications-list.tsx'), 'utf8');
+  const screenTsx = fs.readFileSync(
+    path.join(root, 'frontend/src/features/notifications/notifications-screen.tsx'), 'utf8');
 
-  // "Viewed" is the EXISTING readAt field — nothing new is stored and nothing
-  // is deleted, which is what lets the older view bring them all back.
-  const at = notificationsJs.indexOf('  _bellItems() {');
-  const body = notificationsJs.slice(at, notificationsJs.indexOf('\n  },', at));
-  assert.match(body, /filter\(\(n\) => !n\.readAt\)/,
-    'the default list is the unread ones');
-  assert.match(body, /if \(Notifications\.showOlder\) return Notifications\.items;/,
-    'and the older view is every one of them');
+  // Streamlined Concept: the list is the #notifications screen. Read rows
+  // are always in hand there — the All tab shows them, Unread filters them —
+  // so the drawer-era showOlder reveal has no renderer; what survives is
+  // that "viewed" stays the EXISTING readAt field (nothing stored, nothing
+  // deleted) and the screen's pager keeps the server cursor reachable.
+  assert.match(screenTsx, /tab === 'unread' \? unread : all/,
+    'the two tabs are a client-side partition of the same rows');
+  assert.match(screenTsx, /screenCanLoadMore/,
+    'the screen offers the keyset pager');
+  assert.match(notificationsJs, /screenList: Notifications\.items\.map\(rowView\)/,
+    'the screen list is every fetched row, read and unread');
 
-  // Per drawer OPEN, so a visit always starts on what is new.
-  assert.match(notificationsJs, /_setShowOlder\(false\)/,
-    'the older view resets when the drawer opens');
-
-  // Two DIFFERENT empty states. "You have never had a notification" and "you
-  // have dealt with all of them" are not the same sentence, and showing the
-  // first to somebody with a month of history reads as lost data.
-  assert.match(listTsx, /id="notifications-caught-up"/, 'the caught-up state exists');
-  assert.match(listTsx, /id="notifications-empty"/, 'and the never-had-one state survives');
-  assert.match(notificationsJs, /caughtUp: olderCount > 0 && !Notifications\.showOlder/,
-    'caught-up means nothing unread but something behind the toggle');
-  assert.match(notificationsJs, /olderCount === 0/,
-    'and the original empty hint now requires there be no history either');
-
-  // The toggle only renders when it would reveal something.
-  assert.match(listTsx, /state\.olderCount > 0 \?/,
-    'no older button when there is nothing older');
+  // Two DIFFERENT empty states survive as the two tab sentences.
+  assert.match(screenTsx, /all caught up/, 'the caught-up state exists');
+  assert.match(screenTsx, /Nothing here yet/, 'and the never-had-one state survives');
 });

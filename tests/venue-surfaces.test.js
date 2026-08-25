@@ -98,10 +98,12 @@ test('the selector is painted in the session header, top right (#1348)', () => {
   assert.ok(header < body, 'and it opens before the chat body does');
   // The strip's ORDER is the component's now, and the venue button is last —
   // which is the contract, because dapp.json selects it as `:last-child`.
-  const pill = HEADER_TSX.indexOf('id="dc-status-pill"');
+  // (The lifecycle pill moved up into the platform header with the
+  // Streamlined Concept; the strip's own state chip is #dc-mode-chip.)
+  const chip = HEADER_TSX.indexOf('id="dc-mode-chip"');
   const select = HEADER_TSX.indexOf('<VenueSelect');
-  assert.ok(pill !== -1 && select !== -1, 'both are painted');
-  assert.ok(pill < select, 'and the venue is last in that row, so it lands top-right');
+  assert.ok(chip !== -1 && select !== -1, 'both are painted');
+  assert.ok(chip < select, 'and the venue is last in that row, so it lands top-right');
   assert.match(DEV_CHAT_SRC, /BuildVenues\.venue\(DevChat\._currentVenueId\(\)\)/,
     'resolved through the shared module, not retyped');
 });

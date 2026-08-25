@@ -41,7 +41,7 @@ const nativeJs = fs.readFileSync(
 // up as a missing entry rather than passing vacuously.
 const SCREEN_ROOTS = ['app-view', 'home-screen', 'browse-screen',
   'leaderboard-screen', 'profile-screen', 'admin-screen', 'settings-screen',
-  'messages-screen'];
+  'messages-screen', 'notifications-screen'];
 
 const NAVIGATIONS = [
   { fn: 'navigateToLeaderboard', reveal: 'leaderboard-screen' },
@@ -50,10 +50,11 @@ const NAVIGATIONS = [
   { fn: 'navigateToAdminConsole', reveal: 'admin-screen' },
   { fn: 'navigateToSettings', reveal: 'settings-screen' },
   { fn: 'navigateToMessages', reveal: 'messages-screen' },
+  { fn: 'navigateToNotifications', reveal: 'notifications-screen' },
 ];
 
 const EXITS = ['_exitLeaderboard', '_exitProfile', '_exitBrowse',
-  '_exitAdminConsole', '_exitSettings', '_exitMessages'];
+  '_exitAdminConsole', '_exitSettings', '_exitMessages', '_exitNotifications'];
 
 // The body of a top-level App method, from its two-space-indented
 // definition to the closing `},` at the same indent.
@@ -158,8 +159,12 @@ test('navigateToApp reveals in fn and conceals every other root in after', () =>
   const callback = zoom.slice(at);
   assert.match(callback, /App\._setScreenVisible\('app-view', true\)/,
     'fn reveals the app view (the departing screen stays visible beneath it)');
-  assert.match(callback, /getElementById\('back-btn'\)\.classList\.remove\('hidden'\)/,
-    'the back button is revealed inside the callback too');
+  // The blanket back-button reveal that lived in this callback is gone
+  // (Streamlined Concept, owner review): there is never a HOME button beside
+  // the hamburger, and setBackIcon is the anchor's single visibility owner
+  // (it shows the slot only in its level-2 arrow mode).
+  assert.ok(!callback.includes("getElementById('back-btn').classList.remove"),
+    'no blanket back-button reveal creeps back into the callback');
   assert.match(callback, /after: \(\) => \{ App\._showOnlyScreen\('app-view'\); \}/,
     'the conceal hook hides EVERY other root — the _exitX helpers no longer do');
   // The one deliberate exception, documented at the call site: the

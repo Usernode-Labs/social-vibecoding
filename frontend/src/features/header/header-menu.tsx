@@ -7,27 +7,17 @@
  * ── What THE UI OVERHAUL changed here ─────────────────────────────────
  *
  * The bell merged into this drawer. #notifications-panel is gone and the
- * notifications list is the FIRST thing in the panel — two top-right drawers
- * that opened the same way, one slot apart, were one affordance too many, and
- * "what happened while I was away" belongs at the top of the catch-all menu.
- * The list is rendered by the same components from the same store, so
- * ../notifications/notifications.js is unchanged.
+ * notifications list briefly led the panel; the Streamlined Concept moved it
+ * to its own SCREEN (#notifications) behind a badged Notifications row, and
+ * the drawer now leads with the viewer's APPS — see ./drawer-apps.tsx.
  *
- * ── What #1367 changed ────────────────────────────────────────────────
- *
- * The two blocks are anchored to OPPOSITE ENDS of the panel — notifications to
+ * The two blocks are anchored to OPPOSITE ENDS of the panel — Your apps to
  * the top, the navigation rows to the bottom via `mt-auto` — rather than
- * stacked from the top with all the slack underneath. That is why
- * #drawer-notifications is a sibling of #drawer-main-rows rather than its
- * first child.
+ * stacked from the top with all the slack underneath (#1367's layout,
+ * inherited by the apps section).
  *
- * #1367 also collapsed the notifications SECTION behind a disclosure, and its
- * follow-up took that back out: the useful grain is each GROUP inside the
- * section, not the section itself. See the note in the component body.
- *
- * So this island is markup-only again, exactly as the header above describes —
- * no state, no disclosure, and <NotificationsBody/> still the one subtree that
- * renders from a store.
+ * So this island is markup-only apart from <DrawerApps/>, the one subtree
+ * that renders from a store.
  *
  * Five things left: the theme selector (a SETTING now, and the first one —
  * features/settings/sections/theme.tsx), the kudos and AI-credit meters
@@ -50,12 +40,11 @@
  * (PlatformUI.panel({contentEl}) reparents it and adds .platform-panel-adopted),
  * which a re-render of the panel's own `className` or child order would clobber.
  *
- * <NotificationsBody/> is the one exception, and it earns it the same way the
- * theme segments used to: its whole subtree is React's, driven by
- * ../notifications/notifications-store.js, and nothing in public/js/** writes
- * inside it. It renders the shipped markup exactly on the first pass — an empty
- * list with the hint and "Mark all read" both inert — so hydration matches byte
- * for byte.
+ * <DrawerApps/> is the one exception, and it earns it the same way the
+ * notifications body used to: its whole subtree is React's, driven by
+ * ./drawer-apps-store.js, and nothing in public/js/** writes inside it. It
+ * renders the shipped markup exactly on the first pass — the empty container
+ * — so hydration matches byte for byte.
  *
  * Why init() moves to a layout effect: imported modules evaluate while the
  * bundle loads — before hydration — and both node-pill and wallet-sheet lift
@@ -67,6 +56,7 @@
  */
 
 import {
+  BellIcon,
   ChatBubbleTailIcon,
   CogIcon,
   GitHubIcon,
@@ -81,7 +71,7 @@ import {
   XIcon,
 } from '@/components/ui/icons';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
-import { NotificationsBody } from '../notifications/notifications-list';
+import { DrawerApps } from './drawer-apps';
 // Two side-effect modules whose ROWS moved out of this drawer — the AI-credit
 // figure to Settings → Anthropic API key, the mobile-app version to the
 // Improve panel's footer — but whose imports stay here on purpose. Both
@@ -139,24 +129,17 @@ export function HeaderMenu() {
     // and `sv:authed` fires at most once, so a late listener would never get
     // the first fetch.
     window.Notifications?.init();
-    // The list's pull-to-refresh, a kit attachment on a node this island owns.
-    // The list is never re-created, so attaching it once here — from the same
-    // effect as init() — is the same contract the bell's island had. The kit
-    // no-ops it on desktop, exactly as before.
-    const list = document.getElementById('notifications-list');
-    if (list && window.PlatformUI?.pullToRefresh) {
-      window.PlatformUI.pullToRefresh(
-        list,
-        () => window.Notifications?.refresh() ?? Promise.resolve(),
-      );
-    }
+    // The list's pull-to-refresh moved to the Notifications SCREEN with the
+    // list itself (Streamlined Concept) — see notifications-screen.tsx.
   }, []);
 
   return (
     <>
       {/*
           Slide-out navigation drawer (all viewport widths — #122).
-          Overlay dims the page; panel slides in from the right. Both are
+          Overlay dims the page; panel slides in from the LEFT (Streamlined
+          Concept — it mirrors the hamburger, which leads the header's left
+          group now). Both are
           controlled by HeaderMenu.open() / HeaderMenu.close() in app.js.
           On touch the panel below is ADOPTED into a kit side drawer
           (unNative.presentPanel — drag-to-dismiss), which supplies its own
@@ -169,7 +152,7 @@ export function HeaderMenu() {
         id="header-menu-panel"
         role="dialog"
         aria-label="Navigation menu"
-        className={"fixed top-0 right-0 bottom-0 z-50 w-60 max-w-[85vw] flex flex-col\n              bg-white dark:bg-zinc-900 border-l border-zinc-200 dark:border-zinc-700\n              shadow-2xl header-menu-panel-transition"}
+        className={"fixed top-0 left-0 bottom-0 z-50 w-60 max-w-[85vw] flex flex-col\n              bg-white dark:bg-zinc-900 border-r border-zinc-200 dark:border-zinc-700\n              shadow-2xl header-menu-panel-transition"}
       >
         {/* Panel header with close button */}
         <div className="flex items-center justify-end px-4 py-3 border-b border-zinc-100 dark:border-zinc-800">
@@ -193,60 +176,51 @@ export function HeaderMenu() {
         */}
         <div id="header-menu-rows" className="flex-1 min-h-0 overflow-hidden flex flex-col">
           {/*
-              NOTIFICATIONS, anchored to the TOP of the drawer (#1367).
-
-              THE UI OVERHAUL merged the bell into the hamburger: two
-              top-right drawers that opened the same way, one slot apart,
-              were one affordance too many, and "what happened while I was
-              away" belongs at the top of the catch-all menu rather than
-              behind an icon of its own. #notifications-panel is gone; its
-              whole body lives here, rendered by the same components from
-              the same store, so ./notifications.js is unchanged.
-
-              It is a SIBLING of #drawer-main-rows now rather than its first
-              child, which is what lets the two ends of the panel be anchored
-              independently: this block sits at the top, the navigation rows
-              carry `mt-auto` and hug the bottom, and the free space between
-              them belongs to neither. Both keep their ids — nothing moved
-              out of the drawer, the nesting changed.
-
-              THIS is the block that flexes, and the only one that scrolls.
-              `flex-1 min-h-0` hands it whatever the navigation rows below do
-              not use; `overflow-y-auto` keeps everything inside it — the
-              saved section, the invites, the list — within that height. The
-              comment here promised "bounded height with its own scroller" and
-              the element was `shrink-0`, so it had neither.
-
-              The scroll is on THIS element rather than on #notifications-list
-              deliberately. Making this a column flex and giving the list the
-              `flex-1` it already carries looks tidier and behaves worse: the
-              saved and invites sections are capped at `max-h-48` EACH, so on
-              a short viewport those two caps alone can consume the whole
-              block and leave the list at zero height — the notifications
-              themselves, invisible, in the notifications drawer. One scroller
-              over all three lets them share the space in the order they are
-              written.
+              THE TOP OF THE DRAWER (owner review, round 2): Notifications
+              and Messages lead — the two "what happened while I was away"
+              rows — then the collapsible Your-apps section. Only Profile,
+              Settings and Admin & moderation stay in the bottom-anchored
+              group.
           */}
-          <div
-            id="drawer-notifications"
-            className="flex-1 min-h-0 overflow-y-auto border-b border-zinc-100 dark:border-zinc-800"
-          >
-            <div className="flex items-center gap-2 px-4 py-2">
-              <span className="text-[0.7rem] font-semibold text-zinc-500 dark:text-zinc-400">
-                Notifications
-              </span>
-              <span className="flex-1">
-              </span>
-              <button
-                id="notifications-mark-all"
-                className="text-xs text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200 disabled:opacity-40"
-                disabled={true}
-              >
-                Mark all read
-              </button>
-            </div>
-            <NotificationsBody />
+          <div id="drawer-top-rows" className="shrink-0">
+            {/*
+                Notifications — the full-screen view (Streamlined Concept).
+                The list left the drawer for #notifications; this badged row
+                is the way in, first of the nav rows because "what happened
+                while I was away" keeps its top-of-menu billing. Real anchor,
+                like every nav row. The badge (#drawer-notifications-badge) is
+                painted by Notifications._renderBadge — notifications-only
+                (bell unread + invites), while the hamburger's red badge sums
+                Messages in as the whole drawer's number.
+            */}
+            <a
+              id="drawer-row-notifications"
+              href="#notifications"
+              className="flex items-center gap-3 px-4 min-h-[44px] border-b border-zinc-100 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800"
+            >
+              <BellIcon className="w-5 h-5 shrink-0" />
+              <span className="text-sm font-medium">Notifications</span>
+              <span id="drawer-notifications-badge" className="hidden ml-auto min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold leading-[18px] text-center" aria-label="Unread notifications"></span>
+            </a>
+            {/* Platform-wide direct and group conversations (#488). A real
+                anchor keeps deep links and modified clicks browser-native;
+                the badge is updated by the React Messages store. */}
+            <a
+              id="drawer-row-messages"
+              href="#messages"
+              className="flex items-center gap-3 px-4 min-h-[44px] border-b border-zinc-100 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800"
+            >
+              <ChatBubbleTailIcon className="w-5 h-5 shrink-0" />
+              <span className="text-sm font-medium">Messages</span>
+              <span id="drawer-messages-badge" className="hidden ml-auto min-w-[18px] h-[18px] px-1 rounded-full bg-violet-600 text-white text-[10px] font-bold leading-[18px] text-center" aria-label="Unread messages"></span>
+            </a>
           </div>
+          {/*
+              YOUR APPS — a nav item of its own AND a collapsible section:
+              the row navigates home (where the grid lives), the chevron
+              folds the app list. Fully React-owned — see ./drawer-apps.tsx.
+          */}
+          <DrawerApps />
           {/*
               THE NAVIGATION ROWS, at the BOTTOM and always on screen.
 
@@ -262,7 +236,7 @@ export function HeaderMenu() {
               (.platform-panel-adopted), so this sits at the bottom of the
               screen there too — which is where a thumb actually is.
           */}
-          <div id="drawer-main-rows" className="shrink-0">
+          <div id="drawer-main-rows" className="shrink-0 mt-auto">
             {/*
                 The theme selector used to be the first thing in this drawer,
                 and the kudos + AI-credit meters (#drawer-status-pane) sat
@@ -308,8 +282,25 @@ export function HeaderMenu() {
                 then the admin surface; the app-scoped and reference rows sit
                 outside this group (status pane above, footer below).
             */}
+
             {/*
-                Profile — web screen (#profile hash route, public/js/profile.js;
+                The Leaderboard row used to sit here — the one entry point for
+                shared progress (Topochain standings, Kudos, the season's
+                challenges), itself the replacement for the header trophy.
+
+                THE UI OVERHAUL moved it to the HOME SCREEN, into the header of
+                the Challenges area, which is the one place on the platform
+                already showing the season's shared progress. A menu row is
+                where you go when you remember the feature exists; a link
+                beside the challenges themselves is where you notice it.
+                #leaderboard is unchanged as a route.
+            */}
+            {/*
+                Profile — leads the bottom group (owner review, round 2:
+                Profile, Settings, Admin & moderation and nothing else down
+                here). Same id, same avatar swap — App.applyUserAvatar still
+                resolves #drawer-avatar / #drawer-profile-glyph by id.
+                Original web-screen note (#profile hash route, public/js/profile.js;
                 profile-and-settings-to-web migration). Always visible: the row
                 used to be hidden until the Usernode bridge reported the
                 getProfileInfo capability, but /challenges-api/me/* scopes to
@@ -327,23 +318,10 @@ export function HeaderMenu() {
                 both keep the glyph, and nothing requests /avatars/ until there is
                 something to request.
             */}
-            {/*
-                THE ROW HAIRLINE IS INSET past the glyph — `left-12` is this
-                row's `px-4` (1rem) plus the 20px icon plus `gap-3` (0.75rem),
-                i.e. exactly where the label starts. It is a pseudo-element
-                rather than `border-b` because a border cannot be inset.
-
-                Same treatment, same reason, as the home panels' rules and
-                @/components/ui/grouped-list.tsx: the widget language starts a
-                row separator at the content, not at the sheet's edge. The
-                drawer's own chrome boundaries (the close-button strip at the
-                top, the notifications pane's foot) keep their full-bleed
-                borders — those divide PANES, not rows.
-            */}
             <a
               id="drawer-row-profile"
               href="#profile"
-              className="flex items-center gap-3 px-4 min-h-[44px] relative after:absolute after:bottom-0 after:left-12 after:right-0 after:h-px after:bg-zinc-100 dark:after:bg-zinc-800 after:content-[''] text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800"
+              className="flex items-center gap-3 px-4 min-h-[44px] border-b border-zinc-100 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800"
             >
               <UserIcon id="drawer-profile-glyph" className="w-5 h-5 shrink-0" />
               <img
@@ -355,30 +333,6 @@ export function HeaderMenu() {
                 Profile
               </span>
             </a>
-            {/* Platform-wide direct and group conversations (#488). A real
-                anchor keeps deep links and modified clicks browser-native;
-                the badge is updated by the React Messages store. */}
-            <a
-              id="drawer-row-messages"
-              href="#messages"
-              className="flex items-center gap-3 px-4 min-h-[44px] relative after:absolute after:bottom-0 after:left-12 after:right-0 after:h-px after:bg-zinc-100 dark:after:bg-zinc-800 after:content-[''] text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800"
-            >
-              <ChatBubbleTailIcon className="w-5 h-5 shrink-0" />
-              <span className="text-sm font-medium">Messages</span>
-              <span id="drawer-messages-badge" className="hidden ml-auto min-w-[18px] h-[18px] px-1 rounded-full bg-violet-600 text-white text-[10px] font-bold leading-[18px] text-center" aria-label="Unread messages"></span>
-            </a>
-            {/*
-                The Leaderboard row used to sit here — the one entry point for
-                shared progress (Topochain standings, Kudos, the season's
-                challenges), itself the replacement for the header trophy.
-
-                THE UI OVERHAUL moved it to the HOME SCREEN, into the header of
-                the Challenges area, which is the one place on the platform
-                already showing the season's shared progress. A menu row is
-                where you go when you remember the feature exists; a link
-                beside the challenges themselves is where you notice it.
-                #leaderboard is unchanged as a route.
-            */}
             {/*
                 Settings — always shown; green dot is the BYOK "key configured"
                 indicator, toggled directly by settings.js _renderIndicator().
@@ -427,6 +381,7 @@ export function HeaderMenu() {
                 Admin &amp; moderation
               </span>
             </a>
+
           </div>
           {/*
               ── Drawer footer ────────────────────────────────────────────────

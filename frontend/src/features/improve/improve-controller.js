@@ -55,6 +55,19 @@ function isBusy(session) {
 }
 
 /**
+ * A PARKED session (owner review).
+ *
+ * "Changes in progress" and "Changes in other apps" are lists of what is
+ * MOVING. A paused session is not in progress — it is set down — and listing
+ * it under that heading both overstates the list and pushes the rows that are
+ * actually running further from the thumb. Paused work stays reachable where
+ * parked work belongs: the Board, and the session's own screen.
+ */
+function isParked(session) {
+  return String((session && session.status) || '').toLowerCase() === 'paused';
+}
+
+/**
  * A session row's display status.
  *
  * Deliberately the same three words the cog drawer used, so a viewer who knew
@@ -93,6 +106,9 @@ function toRow(session, appNameFallback) {
     status: statusLabel(session),
     busy: isBusy(session),
     sortAt: timeOf(session.last_activity_at) || timeOf(session.created_at),
+    // Streamlined Concept: the app-context sheet's change rows show a
+    // relative time, the way the Figma board draws them.
+    lastActivityAt: session.last_activity_at || session.created_at || null,
   };
 }
 
@@ -206,13 +222,43 @@ const Improve = {
    * assigned. Only meaningful while there IS a target, so a switch with none
    * published is dropped rather than stored against nothing.
    */
-  setTab(tab) {
+  setTab(tab, subTab) {
     if (!improveStore.get().slug) return;
-    // #1406: 'other' is a platform screen that is neither half of an app. It
-    // is passed explicitly by App._enterScreenChrome and never inferred, so
-    // anything unrecognised still collapses to 'app' exactly as before.
+    // #1406's 'other' value survives in the store's type but has no publisher
+    // since the Streamlined Concept took platform screens back to a plain
+    // title; anything unrecognised still collapses to 'app' exactly as before.
     const next = tab === 'dev' ? 'dev' : (tab === 'other' ? 'other' : 'app');
-    improveStore.set({ tab: next });
+    improveStore.set({
+      tab: next,
+      // Which dev sub-view: the header's eye is a PREVIEW control on a
+      // session and a back-to-the-app control everywhere else.
+      subTab: next === 'dev' ? (subTab || 'forum') : null,
+    });
+  },
+
+  /**
+   * The open session's staging preview, or null.
+   *
+   * Called by DevChat._publishPreview() whenever the open session or its
+   * `staging_url` changes. Gates the header's eye — see improve-button.tsx.
+   */
+  setSessionPreview(preview) {
+    improveStore.set({
+      previewSessionId: (preview && preview.sessionId) || null,
+      previewUrl: (preview && preview.url) || null,
+    });
+  },
+
+  /**
+   * Whether a staging preview is on screen right now — the "seeing" half of
+   * the doing↔seeing loop. AppView.ensureStaging publishes true (every
+   * preview open funnels through it, #439); AppView.closeStagingOverlay
+   * publishes false. Drives the eye/pencil pair and the Preview chip.
+   */
+  setPreviewActive(on) {
+    if (improveStore.get().previewActive !== !!on) {
+      improveStore.set({ previewActive: !!on });
+    }
   },
 
   /**
@@ -426,6 +472,10 @@ const Improve = {
       else others.push(row);
     };
     for (const session of Improve._all) {
+      // Active only — see isParked. (statusLabel keeps its 'Paused' branch:
+      // it is the shared vocabulary, and a caller that does not filter still
+      // gets the right word.)
+      if (isParked(session)) continue;
       place(toRow(session, session.app_slug === slug ? name : null), session.app_slug);
     }
     // #1417: open connector work orders go in the SAME two buckets, by the

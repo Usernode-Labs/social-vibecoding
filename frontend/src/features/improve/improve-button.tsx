@@ -18,52 +18,36 @@
  * now — the call every path funnels through — so the button is either there on
  * every home visit or on none.
  *
- * ── Why a labelled pill and not a fifth icon ───────────────────────────
+ * ── Why a labelled text action and not an icon ─────────────────────────
  *
- * Everything else in the right group is a 28px glyph, and a sixth would have
- * been unreadable — "improve" has no conventional glyph the way a bell or a
- * hamburger does. It also has to carry the weight the segmented switch carried:
- * that control was the one thing in the header that changed what the screen
- * WAS, and its replacement should not read as another notification affordance.
- * So it is a pill with a word in it, sized to the header's 28px content row.
+ * "improve" has no conventional glyph the way a bell or a hamburger does, so
+ * it is a word. Per owner review it is a PLAIN violet text action, not a
+ * pill — the header stays quiet and the word carries it — sized to the
+ * header's 28px content row.
  *
  * ── What the button says while the panel is SHUT ───────────────────────
  *
- * Four things, in three corners, and each is here because the thing it is
- * about is behind this button rather than anywhere else:
+ * One thing: `#feedback-queue-dot` (bottom-left, amber) came with the retired
+ * feedback button, kept its id and its writer, and belongs here because this
+ * button is the only way to reach the feedback dialog — an unsent draft with
+ * no visible cue is the failure it exists to prevent.
  *
- *   - THE GLYPH is a spinner instead of a lightbulb while a dev session is
- *     mid-turn. It is the ambient "something is running" cue, and it costs no
- *     space at all.
- *   - `#notifications-badge-ai` (top-right, green) is the unread
- *     session-related count. It sat on the hamburger, next to the bell's red
- *     unread badge — but sessions are not notifications, and the drawer is not
- *     where you go to look at one. Green vs red on ONE control was also the
- *     thing that made it "two different reasons to open me"; the two reasons
- *     are two controls now.
- *   - `#improve-version-dot` (top-left) is the platform version cue: amber
- *     while a deploy is in flight, violet once the platform has rolled past
- *     the SHA this tab loaded against. It was `#header-menu-deploy-dot` on the
- *     hamburger, from when the version rows lived in that drawer's footer.
- *     They live in THIS panel's footer now, so the dot followed them.
- *   - `#feedback-queue-dot` (bottom-left, amber) came with the retired
- *     feedback button, kept its id and its writer, and belongs here because
- *     this button is the only way to reach the feedback dialog — an unsent
- *     draft with no visible cue is the failure it exists to prevent. It moved
- *     off the top-right corner when the green count arrived there.
+ * #1412 parked the green session count, the version dot and a
+ * spinner-while-working glyph here; the Streamlined Concept re-homed all of
+ * that onto the hamburger's badge cluster — see <MenuIndicators/> in
+ * ../header/platform-header.tsx (the working cue is the emerald badge's
+ * pulse there) — because this slot slims to a plain word and the board keeps
+ * the hamburger as THE indicator cluster.
  *
- * Three corners on one 28px pill is a lot, and it is bounded by how rarely
- * they coincide: the queue dot only appears offline, the version dot only
- * during a deploy or after a roll, the count only with unread session news.
- *
- * All four render from ./improve-store.js. None may be written by id from a
- * classic module: this button is React-owned end to end, and a pre-hydration
- * `classList` write is a mismatch React patches straight back out.
+ * The dot's visibility rides the visibility store; nothing here may be
+ * written by id from a classic module: this button is React-owned end to
+ * end, and a pre-hydration `classList` write is a mismatch React patches
+ * straight back out.
  */
 
 import { useRef } from 'react';
 
-import { LightBulbIcon, SpinnerArcIcon } from '@/components/ui/icons';
+import { EyeIcon, PencilSparklesIcon } from '@/components/ui/icons';
 
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
@@ -77,20 +61,17 @@ import { Improve } from './improve-controller.js';
  * thing that appears in the header when an app opens, so its height IS the
  * header's height there.
  */
+// Owner review (twice): Improve is NOT a button — a plain violet text
+// action, no fill, no border. The element stays a <button> for semantics
+// and its ids/handlers; only the chrome is text.
 const IMPROVE_BTN_CLASS =
-  'relative inline-flex items-center gap-1.5 h-7 px-2.5 mr-2.5 rounded-lg '
-  + 'bg-violet-600 hover:bg-violet-500 text-white text-xs font-medium '
+  'relative inline-flex items-center h-7 px-1 mr-2.5 '
+  + 'text-violet-600 dark:text-violet-400 hover:text-violet-500 text-sm font-medium '
   + 'transition-colors un-touch-target';
-
-/** Amber while a deploy runs, violet once the platform has rolled past us. */
-const VERSION_DOT: Record<string, string> = {
-  deploying: 'bg-amber-500',
-  stale: 'bg-violet-400',
-};
 
 export function ImproveButton() {
   const {
-    target, open, working, sessionUnread, sessionDone, versionState,
+    target, open, tab, subTab, previewSessionId, previewUrl, previewActive,
   } = useStoreState(improveStore);
   // "this app" is wrong on home, where the target is the platform itself
   // (#1367). The visible label stays the single word "Improve" at both — what
@@ -112,56 +93,125 @@ export function ImproveButton() {
   useIsomorphicLayoutEffect(() => {
     (window as unknown as { HeaderLayout?: { refresh?: () => void } })
       .HeaderLayout?.refresh?.();
-  }, [target]);
+    // `tab` is a dependency because the pill ↔ eye swap below changes the
+    // right group's width just as materially as the pill appearing does —
+    // and so do `subTab` / `previewUrl`, which decide whether a session
+    // screen shows the eye at all.
+  }, [target, tab, subTab, previewUrl]);
+
+
+  // Streamlined Concept: the Improve pill belongs to the app's DEFAULT (use)
+  // state only. On the Dev screens — Activity, Board, a session — the slot
+  // renders the EYE instead. Client-only states both (the prerender has no
+  // target), so the swap can be a real conditional render.
+  //
+  // ── The eye means "go and look at the running thing" ─────────────────
+  //
+  // On Activity and Board that is the app itself, which is always there. On
+  // a SESSION it is that session's staging preview, which is not: a change
+  // has no preview until one is built. The rest of the platform already
+  // treats this eye glyph as exactly that gated affordance —
+  // AppView.cardPreviewHtml renders PREVIEW_EYE_SVG only for a session with
+  // a `staging_url` — so the header follows the same rule rather than
+  // offering a control that would have nothing to show (owner review).
+  const onSession = tab === 'dev' && subTab === 'sessions';
+  const canPreview = !!previewUrl;
+  const eye = !!target && tab === 'dev' && (!onSession || canPreview);
+  // The pill is the USE state's control and nothing else's. Gating it on
+  // `target` alone would hand it back the moment the eye stands down — a
+  // session with no preview yet — which is the one place the board is
+  // explicit that Improve does not belong. The slot is simply empty there.
+  const pill = !!target && tab !== 'dev';
+
+  if (eye && onSession) {
+    // ── The doing↔seeing PAIR (Streamlined Concept) ────────────────────
+    //
+    // The Figma session bar's quick loop: the EYE opens the staging preview
+    // (seeing), the PENCIL brings the chat back (doing), and whichever mode
+    // is CURRENT wears a filled disc — amber for seeing (the Preview chip's
+    // colour), violet for doing (the Building chip's). The pair renders only
+    // once a preview exists — the owner-reviewed gate above — because with
+    // nothing to see there is no loop to draw.
+    const seeing = !!previewActive;
+    return (
+      <span className="flex items-center gap-1 mr-2.5">
+        <button
+          id="app-eye-btn"
+          type="button"
+          className={'w-7 h-7 flex items-center justify-center rounded-full un-touch-target '
+            + (seeing
+              ? 'bg-amber-400/25 text-amber-600 dark:text-amber-400'
+              : 'text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200')}
+          aria-label="Preview this change"
+          aria-pressed={seeing ? 'true' : 'false'}
+          title="Preview this change on staging"
+          onClick={() => {
+            if (seeing) return;
+            (window as unknown as {
+              AppView?: { swapToStagingForSession?: (id: number, url: string) => void };
+            }).AppView?.swapToStagingForSession?.(previewSessionId as number, previewUrl as string);
+          }}
+        >
+          <EyeIcon className="w-5 h-5" aria-hidden="true" />
+        </button>
+        <button
+          id="session-build-btn"
+          type="button"
+          className={'w-7 h-7 flex items-center justify-center rounded-full un-touch-target '
+            + (seeing
+              ? 'text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200'
+              : 'bg-violet-500/15 text-violet-600 dark:text-violet-400')}
+          aria-label="Back to building"
+          aria-pressed={seeing ? 'false' : 'true'}
+          title="Back to the session chat"
+          onClick={() => {
+            if (!seeing) return;
+            (window as unknown as {
+              AppView?: { closeStagingOverlay?: () => void };
+            }).AppView?.closeStagingOverlay?.();
+          }}
+        >
+          <PencilSparklesIcon className="w-5 h-5" aria-hidden="true" />
+        </button>
+      </span>
+    );
+  }
+
+  if (eye) {
+    return (
+      <button
+        id="app-eye-btn"
+        type="button"
+        className={'w-7 h-7 mr-2.5 flex items-center justify-center un-touch-target '
+          + 'text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200'}
+        aria-label="Use the app"
+        title="View and use the app"
+        onClick={() => Improve.openApp()}
+      >
+        <EyeIcon className="w-5 h-5" aria-hidden="true" />
+      </button>
+    );
+  }
 
   return (
     <button
       id="improve-btn"
       type="button"
-      className={target ? IMPROVE_BTN_CLASS : `hidden ${IMPROVE_BTN_CLASS}`}
+      className={pill ? IMPROVE_BTN_CLASS : `hidden ${IMPROVE_BTN_CLASS}`}
       aria-label={label}
       aria-haspopup="dialog"
       aria-expanded={open ? 'true' : 'false'}
       onClick={() => Improve.toggle()}
     >
-      {working
-        ? <SpinnerArcIcon className="w-4 h-4 animate-spin" aria-hidden="true" />
-        : <LightBulbIcon className="w-4 h-4" aria-hidden="true" />}
       Improve
-      {/* Bottom-LEFT since the green count took the top-right corner. */}
+      {/* Bottom-LEFT, where it landed when #1412's green count took the
+          top-right corner; the count re-homed to the hamburger since, but
+          moving this back would churn the geometry for nothing. */}
       <span
         ref={dotRef}
         id="feedback-queue-dot"
         className="hidden absolute -bottom-0.5 -left-0.5 w-2 h-2 rounded-full bg-amber-400"
       />
-      {/* PRESENT-BUT-HIDDEN at rest, not absent, and both of these are the
-          same decision. The prerender has to emit the shape the document
-          always carried — an island whose first render differs from the
-          prerendered markup is a hydration mismatch, and a console error on
-          any route fails proposal checks — and two declared checks resolve
-          these ids on a route where neither is lit. `hidden` is how every
-          other indicator in the header says "nothing to report". */}
-      <span
-        id="improve-version-dot"
-        className={VERSION_DOT[versionState]
-          ? `absolute -top-0.5 -left-0.5 w-2 h-2 rounded-full ${VERSION_DOT[versionState]}`
-          : 'hidden absolute -top-0.5 -left-0.5 w-2 h-2 rounded-full bg-amber-500'}
-        aria-hidden="true"
-      />
-      {/* The green session count. `data-session-done` rides along on the same
-          node it always did — a declared check selects on it to prove the
-          badge is up for a real reason rather than merely present. Same
-          corner, size and pill geometry as the hamburger's red unread badge,
-          so the two still read as one badge convention across two controls. */}
-      <span
-        id="notifications-badge-ai"
-        data-session-done={String(sessionDone)}
-        className={sessionUnread > 0
-          ? 'absolute -top-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-emerald-500 text-white text-[0.65rem] font-bold flex items-center justify-center'
-          : 'hidden absolute -top-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-emerald-500 text-white text-[0.65rem] font-bold flex items-center justify-center'}
-      >
-        {sessionUnread > 0 ? (sessionUnread > 99 ? '99+' : String(sessionUnread)) : ''}
-      </span>
     </button>
   );
 }
