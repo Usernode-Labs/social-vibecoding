@@ -158,6 +158,11 @@ const Home = {
   // payload. Kept separate from _apps because [] is both the safe initial
   // value and a legitimate loaded result for an account with no apps.
   _appsLoaded: false,
+  // #1406: one-shot guard for ensureAppsLoaded below. Set the moment the
+  // out-of-band fetch is STARTED, not when it succeeds, so a failed attempt
+  // (offline, a 500) is not retried on every screen entry — and, more
+  // importantly, so the re-entry in App._enterScreenChrome cannot loop.
+  _appsFetchAttempted: false,
   _query: '',
 
   // "Your apps" = apps the viewer is a member of (creator or accepted
@@ -712,6 +717,49 @@ const Home = {
   // repeatedly is free — improveStore.set() is a no-op when nothing changed,
   // and setTarget only re-buckets sessions when the slug actually moves.
   //
+  // Make sure this document has SEEN a /api/apps payload, for callers that
+  // need the platform row but are not the home screen (#1406).
+  //
+  // Only two places fetch that list — load() here and Browse._load() — and
+  // both are gated on their own screen being on show. So a DIRECT load of
+  // settings, profile or messages (a refresh on /#settings, a shared link
+  // straight to it) reaches publishImproveTarget with `_apps` still empty,
+  // which correctly publishes nothing: with no payload there is no row, and
+  // "no row" is also the answer for a viewer who may not see the platform
+  // app at all. The two are indistinguishable from here, which is exactly
+  // why this has to ask rather than assume — and why the privacy stance in
+  // the note below survives unchanged. We fetch the same list the viewer
+  // would have been served on home, and read the same field out of it.
+  //
+  // Returns a promise ONLY when it actually starts the fetch, and null
+  // forever after. The caller re-enters itself when that promise settles, so
+  // a null second answer is what terminates it — including on failure, which
+  // leaves `_appsLoaded` false and simply means no button, exactly as today.
+  // Navigating home runs the real load() and recovers from that.
+  ensureAppsLoaded() {
+    if (Home._appsLoaded || Home._appsFetchAttempted) return null;
+    Home._appsFetchAttempted = true;
+    return (async () => {
+      try {
+        // Same ?demo=1 pass-through as load(): staging injects its icon-demo
+        // tiles on this endpoint, and a payload without them would disagree
+        // with the one home shows.
+        const demoQS = new URLSearchParams(location.search).get('demo') === '1' ? '?demo=1' : '';
+        const res = await fetch(`/api/apps${demoQS}`);
+        if (!res.ok) return;
+        const { apps } = await res.json();
+        // The same two writes load() makes, in the same order, and NOT a
+        // render(): home is not the screen on show, and navigateHome() calls
+        // load() — which re-fetches and renders — before it ever is.
+        Home._apps = apps;
+        Home._appsLoaded = true;
+      } catch {
+        // Offline is a state, not a failure (#1021). No payload, no row, no
+        // button — which is where this screen already was.
+      }
+    })();
+  },
+
   // ── The two gates ──────────────────────────────────────────────────
   //
   // HOME HAS TO BE THE SCREEN ON SHOW. render() also runs while an app is
