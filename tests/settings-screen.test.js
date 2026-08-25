@@ -411,8 +411,8 @@ test('every sibling-exit site tears the settings screen down too', () => {
 test('the header back button consults Settings.handleBack behind _inSettings', () => {
   const idx = appJs.indexOf("document.getElementById('back-btn').addEventListener");
   // Wide enough for every screen hook the handler chains (admin, settings,
-  // browse) plus the navigateHome fallthrough below them.
-  const fn = appJs.slice(idx, idx + 800);
+  // browse, the dev session) plus the navigateHome fallthrough below them.
+  const fn = appJs.slice(idx, idx + 1000);
   assert.match(fn, /if \(App\._inSettings && window\.Settings\?\.handleBack\?\.\(\)\) return;/,
     'the mobile section arrow is consumed by the module');
   assert.match(fn, /App\.navigateHome\(\);/, 'and everything else still goes home');

@@ -186,15 +186,17 @@ test('the header back/home control is a real anchor', () => {
 });
 
 test('the header click handler guards before it preventDefaults', () => {
-  const body = handlerAfter(appJs, "document.getElementById('back-btn').addEventListener", 900);
+  const body = handlerAfter(appJs, "document.getElementById('back-btn').addEventListener", 1400);
   const guard = body.indexOf('NavLink.isNativeClick(e)');
   const prevent = body.indexOf('e.preventDefault()');
   assert.ok(guard !== -1, 'the modified-click guard went missing');
   assert.ok(guard < prevent, 'the guard must come FIRST, or cmd-click is swallowed');
-  // The existing screen-hook chain is unchanged and still ordered.
+  // The existing screen-hook chain is unchanged and still ordered — with the
+  // dev session's claim (Streamlined Concept) last before the home fallback.
   assert.ok(body.indexOf('AdminConsole?.handleBack') < body.indexOf('Settings?.handleBack'));
   assert.ok(body.indexOf('Settings?.handleBack') < body.indexOf('Browse?.handleBack'));
-  assert.ok(body.indexOf('Browse?.handleBack') < body.indexOf('App.navigateHome()'));
+  assert.ok(body.indexOf('Browse?.handleBack') < body.indexOf('DevChat?.handleBack'));
+  assert.ok(body.indexOf('DevChat?.handleBack') < body.indexOf('App.navigateHome()'));
 });
 
 test('setBackIcon owns the anchor href, defaulting to home', () => {
@@ -284,31 +286,23 @@ test('the app-wide dev chat carries no back control any more', () => {
     'chat-frame.tsx: the back anchor is retired');
 });
 
-// The dev session's back link, split by the session-header conversion: the
-// anchor is JSX in frontend/src/features/dev-chat/session-header.tsx, and the
-// plain-click path is `DevChat.leaveSession()`, which the component calls by
-// name. Same two properties the loop above asserts for every other control —
-// a real <a> with a resolvable target, and a guard that runs BEFORE
-// preventDefault, or a ⌘-click is swallowed.
-test('"back out of a dev session" is a real anchor with a real target', () => {
-  assert.match(sessionHeaderTsx, /<a\s+id="dc-back"/,
-    'session-header.tsx: the control must be an <a>');
-  assert.ok(!/<button[^>]*id="dc-back"/.test(sessionHeaderTsx + devChatJs),
-    'the old <button> tag is gone from both the component and dev-chat.js');
-  assert.match(sessionHeaderTsx, /href=\{s\.backHref\}/,
-    'session-header.tsx: the anchor must carry the href from the model, not a bare "#"');
-  assert.match(devChatJs, /backHref: App\.currentApp \? `#app\/\$\{App\.currentApp\}\/dev` : '',/,
-    'dev-chat.js must still resolve that href from the app in scope');
-});
-
-test('"back out of a dev session" leaves a modified click to the browser', () => {
-  const body = handlerAfter(sessionHeaderTsx, 'id="dc-back"', 700);
-  const guard = body.indexOf('NavLink?.isNativeClick(e)');
-  const prevent = body.indexOf('e.preventDefault()');
-  assert.ok(guard !== -1, 'session-header.tsx: the modified-click guard went missing');
-  assert.ok(prevent !== -1, 'session-header.tsx: a plain click must still be intercepted');
-  assert.ok(guard < prevent,
-    'session-header.tsx: preventDefault ahead of the guard swallows the new tab');
+// The dev session's back control is the PLATFORM HEADER's #back-btn now
+// (Streamlined Concept): renderDevView's session branch calls
+// App.setBackIcon('arrow', '#app/<slug>/board'), so the anchor and its
+// modified-click guard are app.js's — the same real-anchor contract the
+// loop above pins for every other control. The in-strip #dc-back retired.
+test('"back out of a dev session" rides the header back anchor, with a real target', () => {
+  assert.ok(!/dc-back/.test(sessionHeaderTsx),
+    'session-header.tsx: the in-strip back control stays retired');
+  assert.match(appViewJs, /setBackIcon\?\.\('arrow', `#app\/\$\{App\.currentApp\}\/board`\)/,
+    'app-view.js points the header anchor at the Board on the way into a session');
+  // The header listener's guard runs before preventDefault (pinned in
+  // app.js for every screen the anchor serves), and the plain click walks
+  // the handleBack chain into dev-chat.js's.
+  assert.match(appJs, /window\.DevChat\?\.handleBack\?\.\(\)/,
+    'app.js consults DevChat before the navigate-home fallback');
+  assert.match(devChatJs, /handleBack\(\) \{[\s\S]{0,300}?leaveSession\(\)/,
+    'a session claims the click');
   // And the work the plain click does is still dev-chat.js's.
   assert.match(devChatJs, /leaveSession\(\) \{[\s\S]{0,900}?App\.switchTab\('dev'\)/);
 });
@@ -339,14 +333,12 @@ test('"back out of an issue / proposal / governance topic" leaves a modified cli
     'app-view.js: preventDefault ahead of the guard swallows the new tab');
 });
 
-test('"back out of the app-wide dev chat" leaves a modified click to the browser', () => {
-  const body = handlerAfter(appViewJs, 'mountChatSubView(content, {', 600);
-  const guard = body.indexOf('NavLink.isNativeClick(e)');
-  const prevent = body.indexOf('e.preventDefault()');
-  assert.ok(guard !== -1, 'app-view.js: the modified-click guard went missing');
-  assert.ok(prevent !== -1, 'app-view.js: a plain click must still be intercepted');
-  assert.ok(guard < prevent,
-    'app-view.js: preventDefault ahead of the guard swallows the new tab');
+test('the app-wide dev chat mounts without back-bar props', () => {
+  // Activity has no in-frame back control (see the retirement test above),
+  // so the mount takes no backHref/onBackClick — a prop that came back here
+  // would be the second navigation system creeping in.
+  assert.match(appViewJs, /mountChatSubView\(content\);/,
+    'app-view.js hands the host over and nothing else');
 });
 
 test('the dev sub-views resolve their target through one helper', () => {
@@ -556,17 +548,20 @@ test('dapp.json pins the anchors that a capture can actually see', () => {
   const checks = (dapp.tests || []).filter(
     (t) => typeof t.name === 'string' && t.name.includes('#1036')
   );
-  assert.ok(checks.length >= 3,
+  assert.ok(checks.length >= 2,
     'without checks a button-to-anchor regression ships silently');
 
   const bySelector = (frag) => checks.find(
     (t) => typeof t.expectSelector === 'string' && t.expectSelector.includes(frag)
   );
 
-  const session = bySelector('a#dc-back');
-  assert.ok(session, 'the control named in the issue needs its own check');
-  assert.match(session.expectSelector, /a#dc-back\[href="#app\/[^"]+\/dev"\]/,
-    'assert the TARGET, not just the tag — an anchor with no href is no fix');
+  // The session's back control is the header's own anchor now (Streamlined
+  // Concept — #dc-back retired), so its check pins a#back-btn at the Board.
+  const session = (dapp.tests || []).find(
+    (t) => typeof t.expectSelector === 'string'
+      && /a#back-btn[^"]*\[href="#app\/[^"]+\/board"\]/.test(t.expectSelector)
+  );
+  assert.ok(session, 'the session back anchor needs its own check');
   assert.match(session.path, /dev\/sessions\/\d+/, 'it must land on a session');
 
   const home = bySelector('a#back-btn');
@@ -597,6 +592,6 @@ test('the declared checks survive the manifest reader', () => {
     `dapp.json declares more than ${appManifest.MAX_DECLARED_TESTS} valid checks — `
     + 'checks past the ceiling never run');
   const kept = meta.tests.filter((t) => /#1036/.test(t.name || ''));
-  assert.ok(kept.length >= 3,
+  assert.ok(kept.length >= 2,
     'a malformed entry is silently dropped, which gates nothing');
 });

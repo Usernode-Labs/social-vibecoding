@@ -43,6 +43,8 @@ import { ChromelessPill } from './chromeless-pill';
 import { HeaderTitleTab } from './header-title-tab';
 import { ImproveButton } from '../improve/improve-button';
 import { improveStore } from '../improve/improve-store.js';
+import { MergeStatusPill } from '../dev-chat/session-header';
+import { sessionHeaderStore } from '../dev-chat/session-header-store';
 import { useHeaderLayout } from './use-header-layout';
 
 /** Amber while a deploy runs, violet once the platform has rolled past us. */
@@ -54,6 +56,32 @@ const VERSION_DOT: Record<string, string> = {
 const AI_BADGE_CLS =
   'absolute -top-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full '
   + 'bg-emerald-500 text-white text-[0.65rem] font-bold flex items-center justify-center';
+
+/**
+ * The session lifecycle pill, IN THE TOP BAR (Streamlined Concept): the
+ * Figma session bar leads with ← and a `Checks run…` status pill, so the
+ * MergeStatus lifecycle renders here — beside the back arrow — while a
+ * session is on screen, instead of in the in-content strip it used to
+ * share with the title. Same descriptor, same component, new seat: it
+ * reads the session-header store dev-chat.js already publishes on every
+ * lifecycle transition, so nothing new keeps it live.
+ *
+ * Renders nothing off the session screen (and at SSG, where no target
+ * exists), so hydration matches the shipped bar byte for byte. ON the
+ * session screen the HOST span always renders — the same always-there
+ * contract the strip's #dc-status-pill kept — with the pill inside only
+ * while the session has a lifecycle worth drawing.
+ */
+function SessionStatusPill() {
+  const { tab, subTab } = useStoreState(improveStore);
+  const { life } = useStoreState(sessionHeaderStore);
+  if (tab !== 'dev' || subTab !== 'sessions') return null;
+  return (
+    <span id="header-status-pill" className="min-w-0 truncate">
+      {life ? <MergeStatusPill life={life} /> : null}
+    </span>
+  );
+}
 
 /**
  * The hamburger's store-rendered indicators (Streamlined Concept × #1412).
@@ -193,7 +221,7 @@ export function PlatformHeader() {
         <div ref={leftGroupRef} className="h-7 shrink-0 flex items-center gap-1">
           <button
             id="header-menu-btn"
-            className="relative w-7 h-7 flex items-center justify-center un-touch-target text-zinc-400 hover:text-zinc-200"
+            className="relative w-7 h-7 flex items-center justify-center un-touch-target text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200"
             aria-label="Open menu"
             aria-expanded="false"
           >
@@ -240,6 +268,7 @@ export function PlatformHeader() {
               <ChevronLeftIcon id="back-icon-arrow" className="w-5 h-5 hidden" />
             </a>
           </div>
+          <SessionStatusPill />
         </div>
         {/*
             The center tab (Streamlined Concept): the screen's only h1, and —

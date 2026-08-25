@@ -2079,9 +2079,21 @@ const AppView = {
     // other three branches, so the teardown — and the one Dev navigation that
     // threw the board frame's state away — is gone with the template.
 
+    // The Dev sub-views own the header's back slot: a SESSION leads with a
+    // real ← to the Board (the Figma session bar's left zone), every other
+    // sub-view hides it. Down here rather than per-branch because sub-view
+    // hops never pass App._showOnlyScreen, the usual single owner of that
+    // reset — without this, the session's arrow would linger on the Board.
+    App.setBackIcon?.('home');
+
     // Session view — a single DevChat session, full-screen, reached
     // from the Your-sessions strip, proposal cards, or the "+" flow.
     if (subTab === 'sessions' && ref) {
+      // Streamlined Concept: a cold deep link must not inherit the previous
+      // screen's title — the center tab names the app here, same as the app's
+      // other screens (the session's own name lives in #dc-session-header).
+      if (AppView.appData?.name) App.setHeaderTitle?.(AppView.appData.name);
+      App.setBackIcon?.('arrow', `#app/${App.currentApp}/board`);
       // <DevSessionShell/> — #dev-section stays the host renderDevChatTab
       // writes into, exactly as when this was a template.
       AppView._reactDevBoard()?.mountSessionShell(content);
@@ -3449,24 +3461,14 @@ const AppView = {
   },
 
   // ── Full-screen general chat sub-view ───────────────────────────────
-  // A slim back-button header above the existing chat pane.
-  // renderGroupChatTab mounts into #dev-chat-body exactly as it used to
-  // mount into the pinned pane — spec side-panel, autocomplete, drafts,
-  // and scroll restore all unchanged.
+  // The ACTIVITY screen (Streamlined Concept): renderGroupChatTab mounts
+  // into #dev-chat-body exactly as it used to mount into the pinned pane —
+  // spec side-panel, autocomplete, drafts, and scroll restore all unchanged.
+  // No in-frame back bar: the ways out are the header's eye and title tab.
   _renderChatSubView(content) {
     // <DevChatSubView/> — #dev-chat-body stays the host renderGroupChatTab
-    // writes into. The back link's click handler moved into the component's
-    // onClick prop (below) rather than being bound after the fact, because
-    // React owns the anchor now; the guard and the target are unchanged.
-    AppView._reactDevBoard()?.mountChatSubView(content, {
-      backHref: AppView._devPageHref(),
-      onBackClick: (e) => {
-        // #1036: real anchor — leave a modified click to the browser.
-        if (window.NavLink && NavLink.isNativeClick(e)) return;
-        e.preventDefault();
-        App.switchTab('dev');
-      },
-    });
+    // writes into.
+    AppView._reactDevBoard()?.mountChatSubView(content);
 
     AppView.renderGroupChatTab();
     // Vote snapshot for the inline buttons on activity rows — needed
@@ -12395,12 +12397,19 @@ const AppView = {
     const staging = AppView._staging();
     const jump = !!(opts && opts.jump);
     const dock = !!(opts && opts.dock);
+    // Streamlined Concept: every preview open funnels through here (#439),
+    // so this is where "the viewer is SEEING" gets published — it flips the
+    // header's eye/pencil pair and the session strip's Preview chip. The
+    // matching false is closeStagingOverlay's.
+    window.Improve?.setPreviewActive?.(true);
 
     // #621: read-only viewers can't trigger a rebuild (the ensure POST is
     // collab-gated) — open the last-known staging URL directly. If it was
     // GC'd they see the dead-preview page rather than a rebuild spinner.
     if (AppView.readOnly) {
       if (fallbackUrl) AppView.swapToStaging(fallbackUrl, testing, { jump, dock });
+      // Nothing opened — take the optimistic publish above back.
+      else window.Improve?.setPreviewActive?.(false);
       return;
     }
 
@@ -13241,6 +13250,9 @@ const AppView = {
   closeStagingOverlay() {
     const staging = AppView._staging();
     const iframe = staging.frame();
+    // The "seeing" half of the doing↔seeing loop ends here — see the
+    // matching publish in ensureStaging.
+    window.Improve?.setPreviewActive?.(false);
     // #771: leave docked mode first (strips the docked class + pinned
     // geometry, disconnects the slot observer) and collapse the dev-chat
     // placeholder slot. The open check on stagingPanel makes this safe to

@@ -70,7 +70,7 @@ export function HeaderTitleTab({ titleRef }: { titleRef: RefObject<HTMLHeadingEl
           <span className="truncate">
             {text}
           </span>
-          <ChevronDownIcon className="w-4 h-4 shrink-0 text-zinc-400" aria-hidden="true" />
+          <ChevronDownIcon className="w-4 h-4 shrink-0 text-zinc-500 dark:text-zinc-400" aria-hidden="true" />
         </button>
       ) : text}
     </h1>

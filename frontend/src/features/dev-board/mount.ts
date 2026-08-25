@@ -81,10 +81,7 @@ export interface MountBoardOptions extends DevBoardFrameProps {
 
 export interface DevBoardBridge {
   mountBoard(host: Element | null, options: MountBoardOptions): void;
-  mountChatSubView(
-    host: Element | null,
-    options: { backHref: string; onBackClick: (event: MouseEvent) => void },
-  ): void;
+  mountChatSubView(host: Element | null): void;
   mountTopicSubView(
     host: Element | null,
     options: { backHref: string; onBackClick: (event: MouseEvent) => void },
@@ -185,15 +182,12 @@ export const devBoardBridge: DevBoardBridge = {
     mountLegacyPortal(host, createElement(DevBoardFrame, rest));
   },
 
-  mountChatSubView(host, _options) {
-    // The back-bar props are accepted and dropped (Streamlined Concept):
-    // Activity is a first-class destination with no in-frame back control,
-    // and keeping the signature saves touching app-view.js's call site.
+  // Activity is a first-class destination with no in-frame back control
+  // (Streamlined Concept), so the mount takes no back-bar props.
+  mountChatSubView(host) {
     mountLegacyPortal(host, createElement(DevChatSubView));
   },
 
-  // The same shape as mountChatSubView, and the same note about the synthetic
-  // event applies.
   mountTopicSubView(host, options) {
     mountLegacyPortal(
       host,

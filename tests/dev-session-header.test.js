@@ -118,7 +118,7 @@ test('the venue button is the LAST direct child, with the attributes the check r
   // LAST: nothing is rendered after it. The portal puts these children
   // directly under `#dc-session-header`, so `>` and `:last-child` both hold.
   assert.match(html, /<\/button>$/, 'the strip ends with the venue button');
-  assert.equal(html.indexOf('dc-venue-select') > html.indexOf('dc-status-pill'), true);
+  assert.equal(html.indexOf('dc-venue-select') > html.indexOf('New change'), true);
 });
 
 test('the caption sentence is the TOOLTIP, never the label', () => {
@@ -156,11 +156,28 @@ test('mid-turn the venue cannot be changed', () => {
 
 // ── 2. The rest of the strip ───────────────────────────────────────────
 
-test('the back control is a real anchor at the dev page', () => {
-  const { view } = makeDevChat();
-  const html = headerHtml(view(SESSION));
-  assert.match(html, /<a id="dc-back"[^>]*href="#app\/recipe-box\/dev"/);
-  assert.doesNotMatch(html, /<button[^>]*id="dc-back"/);
+test('the strip carries no back control — the platform header owns ← now', () => {
+  // Streamlined Concept: the session bar leads with the header's own
+  // #back-btn (App.setBackIcon('arrow', '#app/<slug>/board') on the way in),
+  // and its plain click walks app.js's handleBack chain into
+  // DevChat.handleBack → leaveSession. The in-strip #dc-back retired.
+  const { view, DevChat, sandbox } = makeDevChat();
+  assert.doesNotMatch(headerHtml(view(SESSION)), /dc-back/);
+  // The decline contract: no session → false (the chain keeps walking);
+  // a session → handled, and the session is left.
+  DevChat.currentSession = null;
+  assert.equal(DevChat.handleBack(), false);
+  DevChat.currentSession = { ...SESSION };
+  let switched = null;
+  sandbox.App.switchTab = (tab) => { switched = tab; };
+  assert.equal(DevChat.handleBack(), true);
+  assert.equal(switched, 'dev', 'backing out of a session lands on the Board');
+  // And app.js's header listener actually consults it, before the
+  // navigate-home fallback.
+  const appJs = read('public', 'js', 'app.js');
+  const chainAt = appJs.indexOf("window.DevChat?.handleBack?.()");
+  const homeAt = appJs.indexOf('App.navigateHome();', appJs.indexOf("getElementById('back-btn').addEventListener"));
+  assert.ok(chainAt !== -1 && chainAt < homeAt, 'DevChat.handleBack precedes the home fallback');
 });
 
 test('a session with a pull request offers it; one without says so', () => {
@@ -183,34 +200,57 @@ test('the title falls back through its three sources, and the branch is the tool
   assert.match(headerHtml(view(SESSION)), /title="dev\/evan-1"/);
 });
 
-// ── 3. The lifecycle pill ──────────────────────────────────────────────
+// ── 3. The lifecycle pill (in the TOP BAR now) ─────────────────────────
+//
+// Streamlined Concept: the Figma session bar leads with ← and the
+// `Checks run…` pill, so MergeStatusPill renders in the platform header
+// (#header-status-pill, frontend/src/features/header/platform-header.tsx)
+// from this same store — the strip carries the Building/Preview MODE chip
+// instead. The pill's own rendering is asserted on the component directly.
+
+/** Render the pill alone, as the platform header does. */
+function pillHtml(life) {
+  const m = mod();
+  return renderToHtml(createElement(m.MergeStatusPill, { life: JSON.parse(JSON.stringify(life)) }));
+}
 
 test('the pill draws MergeStatus\'s descriptor, tone and glyph included', () => {
   const { view } = makeDevChat();
-  const html = headerHtml(view({ ...SESSION, check_state: 'passing' }));
-  assert.match(html, /<span id="dc-status-pill">/);
+  const html = pillHtml(view({ ...SESSION, check_state: 'passing' }).life);
   assert.match(html, /class="ms-pill ms-pill-green"/);
   assert.match(html, /✓ Checks passed/, 'glyph and label are ONE text run, as the string version emitted');
 });
 
 test('an in-vote session carries its tally, and its advisory surplus separately', () => {
   const { view } = makeDevChat();
-  const html = headerHtml(view({
+  const html = pillHtml(view({
     ...SESSION, status: 'promoted', check_state: 'passing',
     yes_count: 1, no_count: 0, majority: 3,
     qualified_yes_count: 1, approval_policy: 'invited', approvals_required: 3,
-  }));
+  }).life);
   assert.match(html, /ms-pill/);
   assert.match(html, / · 1\/3/, 'the header has no vote pill of its own, so the tally rides in the label');
 });
 
-test('a session with no lifecycle still renders the pill HOST', () => {
-  // `#dc-status-pill` is what the mid-turn patch used to find, and the
-  // strip's spacing was written against the empty span being there.
+test('the strip hosts no lifecycle pill — the platform header does', () => {
   const { view } = makeDevChat();
-  const html = headerHtml(view({ ...SESSION, status: 'paused' }));
-  assert.match(html, /<span id="dc-status-pill">/);
+  const html = headerHtml(view({ ...SESSION, check_state: 'passing' }));
+  assert.doesNotMatch(html, /dc-status-pill/);
   assert.doesNotMatch(html, /ms-pill/);
+  // The bar renders it from the SAME store, gated on the session sub-view.
+  const headerTsx = read('frontend', 'src', 'features', 'header', 'platform-header.tsx');
+  assert.match(headerTsx, /id="header-status-pill"/);
+  assert.match(headerTsx, /sessionHeaderStore/);
+  assert.match(headerTsx, /MergeStatusPill/);
+  assert.match(headerTsx, /subTab !== 'sessions'/, 'only a session screen shows it');
+});
+
+test('the strip renders the MODE chip: Building while a turn runs', () => {
+  const { view } = makeDevChat();
+  const rest = headerHtml(view(SESSION));
+  assert.doesNotMatch(rest, /dc-mode-chip/, 'absent at rest');
+  const busy = headerHtml({ ...view(SESSION), busy: true });
+  assert.match(busy, /id="dc-mode-chip"[^>]*>Building</);
 });
 
 test('the mid-turn repaint publishes instead of writing innerHTML', () => {

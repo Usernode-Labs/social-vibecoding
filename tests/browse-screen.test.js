@@ -921,7 +921,7 @@ test('navigateToBrowse / _exitBrowse follow the screen pattern', () => {
 
 test('the header back button consults Browse.handleBack', () => {
   const handler = APP_SRC.slice(APP_SRC.indexOf("getElementById('back-btn').addEventListener"));
-  const body = handler.slice(0, 700);
+  const body = handler.slice(0, 1000);
   assert.match(body, /App\._inBrowse && window\.Browse\?\.handleBack\?\.\(\)/);
   // Ordered after the admin/settings hooks and before navigateHome.
   assert.ok(body.indexOf('Browse?.handleBack') < body.indexOf('App.navigateHome()'));

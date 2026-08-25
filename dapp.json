@@ -2483,9 +2483,19 @@
       "expectText": "a reset link is on its way"
     },
     {
-      "name": "Back from a dev session is a real link you can open in a new tab (#1036)",
+      "name": "Back from a dev session is the header's own arrow, a real link at the Board (Streamlined Concept)",
       "path": "/?demo=1#app/usernode-2d5619/dev/sessions/990402",
-      "expectSelector": "a#dc-back[href=\"#app/usernode-2d5619/dev\"]"
+      "expectSelector": "a#back-btn:not(.hidden)[href=\"#app/usernode-2d5619/board\"]"
+    },
+    {
+      "name": "The session bar carries the lifecycle pill's seat beside the back arrow (Streamlined Concept)",
+      "path": "/?demo=1#app/usernode-2d5619/dev/sessions/990402",
+      "expectSelector": "#platform-header #header-status-pill"
+    },
+    {
+      "name": "A cold session deep link titles the bar with the app, not the previous screen (Streamlined Concept)",
+      "path": "/?demo=1#app/usernode-2d5619/dev/sessions/990402",
+      "expectSelector": "#header-title #header-title-tab"
     },
     {
       "name": "The header home button is a real link, not a button (#1036)",

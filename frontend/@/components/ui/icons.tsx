@@ -131,6 +131,17 @@ export const AppWindowIcon = stroked('AppWindowIcon', [
   'M4 9.5h16',
 ]);
 
+/**
+ * The pencil with a spark — "back to building" on a session screen while its
+ * preview is up (Streamlined Concept: the Figma bar names lucide's
+ * pencil-sparkles; this is the shell's own transcription of that idea — the
+ * composer's pencil body plus a four-point spark in the freed corner).
+ */
+export const PencilSparklesIcon = stroked('PencilSparklesIcon', [
+  'M16.5 6.5a2.12 2.12 0 0 1 3 3L9 20l-4 1 1-4z',
+  'M6 3l.75 1.75L8.5 5.5l-1.75.75L6 8l-.75-1.75L3.5 5.5l1.75-.75z',
+]);
+
 export const ArrowRightIcon = stroked('ArrowRightIcon', 'M14 5l7 7m0 0l-7 7m7-7H3');
 
 /**

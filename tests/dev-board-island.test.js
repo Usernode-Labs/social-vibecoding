@@ -211,7 +211,7 @@ test('the bridge is published before hydration, and guarded for the SSG pass', (
   // app-view.js with no bundle) do not throw.
   assert.match(APP_VIEW, /AppView\._reactDevBoard\(\)\?\.mountBoard\(content, \{/,
     'renderDevView mounts the board through the bridge');
-  assert.match(APP_VIEW, /AppView\._reactDevBoard\(\)\?\.mountChatSubView\(content, \{/,
+  assert.match(APP_VIEW, /AppView\._reactDevBoard\(\)\?\.mountChatSubView\(content\)/,
     'the general-chat sub-view mounts through the bridge');
   assert.match(APP_VIEW, /AppView\._reactDevBoard\(\)\?\.mountSessionShell\(content\);/,
     'the session shell mounts through the bridge');
