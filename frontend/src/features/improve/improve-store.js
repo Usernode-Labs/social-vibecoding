@@ -33,13 +33,32 @@
 import { createStore } from '../../lib/plain-store.js';
 
 /**
+ * One row in the panel's list. TWO KINDS share this shape (#1417):
+ *
+ *   'session'  a chat_sessions row — a real dev session with a container, a
+ *              transcript and a worker. Opens its session page.
+ *   'task'     an OPEN connector work order: work handed to a coding agent
+ *              running on the user's own machine. It has no container, no
+ *              transcript and no worker, so there is no session page to open
+ *              — it points at the request it was prepared from instead.
+ *
+ * They are one shape because they answer one question ("what of mine is in
+ * flight?"), and one list because splitting them would ask the reader to
+ * know which mechanism produced their work before they can find it. `href`
+ * is what keeps them honest: each kind names its own destination rather than
+ * the panel inferring one from an id that means different things.
+ *
  * @typedef {object} ImproveSession
+ * @property {string} key         Unique across both kinds; ids are not.
+ * @property {'session'|'task'} kind
  * @property {number} id
  * @property {string} appSlug
  * @property {string} appName
  * @property {string} title
- * @property {string|null} status  Display label ("Working…", "Paused"), or null.
- * @property {boolean} busy        An AI turn is in flight right now.
+ * @property {string} href        Where the row goes when clicked.
+ * @property {string|null} status Display label ("Working…", "Paused"), or null.
+ * @property {boolean} busy       An AI turn is in flight right now.
+ * @property {number} sortAt      Recency, ms since epoch. Mixed-kind ordering.
  */
 
 /**

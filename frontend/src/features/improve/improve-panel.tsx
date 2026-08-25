@@ -119,16 +119,26 @@ function ImproveRow({
   );
 }
 
-/** A session row — the compact shape the cog drawer used, minus the app column. */
+/**
+ * A row — the compact shape the cog drawer used, minus the app column.
+ *
+ * Serves both kinds (#1417). The destination arrives on the row as `href`
+ * rather than being built here from an id: a session's id addresses a session
+ * page, a work order's addresses nothing the browser can open, and a
+ * component that assumed the first would send every task row to a 404.
+ */
 function SessionRow({
   session,
   showApp,
 }: {
   session: {
+    key: string;
+    kind: 'session' | 'task';
     id: number;
     appSlug: string | null;
     appName: string;
     title: string;
+    href: string;
     status: string | null;
     busy: boolean;
   };
@@ -136,18 +146,27 @@ function SessionRow({
 }) {
   return (
     <a
-      href={`#app/${session.appSlug}/dev/sessions/${session.id}`}
+      href={session.href}
+      data-improve-row={session.kind}
       className="flex items-center gap-2 px-4 min-h-[44px] text-left hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors"
       onClick={() => Improve.dismissForNav()}
     >
       {/* The busy dot is the whole reason a session row is worth scanning:
           it says an AI turn is in flight right now. Pulsing only while busy —
-          a static dot on every row would say nothing. */}
+          a static dot on every row would say nothing.
+
+          A work order is never busy: its agent runs on the user's own machine,
+          where the platform cannot see whether a turn is in flight. It gets
+          the idle dot, hollow rather than filled, so the row reads as "handed
+          off, state unknown here" instead of borrowing a liveness claim this
+          side has no way to make. */}
       <span
         className={
           session.busy
             ? 'w-2 h-2 rounded-full bg-emerald-500 shrink-0 animate-pulse'
-            : 'w-2 h-2 rounded-full bg-zinc-300 dark:bg-zinc-600 shrink-0'
+            : session.kind === 'task'
+              ? 'w-2 h-2 rounded-full border border-zinc-400 dark:border-zinc-500 shrink-0'
+              : 'w-2 h-2 rounded-full bg-zinc-300 dark:bg-zinc-600 shrink-0'
         }
         aria-hidden="true"
       />
@@ -312,14 +331,14 @@ export function ImprovePanel() {
             </div>
           ) : null}
           {sessions.map((session) => (
-            <SessionRow key={session.id} session={session} showApp={false} />
+            <SessionRow key={session.key} session={session} showApp={false} />
           ))}
           {state.sessionsLoaded && sessions.length === 0 ? (
             <div
               id="improve-sessions-empty"
               className="px-4 py-2 text-xs text-zinc-500 dark:text-zinc-400"
             >
-              No sessions running on this app.
+              No work in progress on this app.
             </div>
           ) : null}
           {/*
@@ -349,7 +368,7 @@ export function ImprovePanel() {
             <>
               <div className={SECTION_LABEL_CLASS}>Running on your other apps</div>
               {otherSessions.map((session) => (
-                <SessionRow key={session.id} session={session} showApp={true} />
+                <SessionRow key={session.key} session={session} showApp={true} />
               ))}
             </>
           ) : null}
