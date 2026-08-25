@@ -1262,6 +1262,15 @@ const App = {
       try {
         const data = JSON.parse(event.data);
         switch (data.type) {
+          // A cross-instance event whose payload did not fit in a NOTIFY
+          // (8000 bytes), so the emitting pod sent a nudge instead of a
+          // truncated event — see services/ws-bus.js. "Something you are
+          // looking at moved; go and re-read it" is exactly what a dropped
+          // socket already means, so it takes the identical recovery path
+          // rather than a second one that could drift from it.
+          case 'resync_hint':
+            App.resyncCurrentView();
+            break;
           case 'app_status':
             App.handleAppStatusUpdate(data);
             break;
