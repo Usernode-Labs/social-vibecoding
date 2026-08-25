@@ -23,10 +23,10 @@ const vm = require('node:vm');
 
 const { HOME_SRC } = require('./helpers/home-modules');
 
-function makeHome() {
+function makeHome(appOver) {
   const sandbox = {
     console,
-    App: { user: { id: 1 } },
+    App: { user: { id: 1 }, ...appOver },
     document: {
       getElementById: () => null,
       querySelector: () => null,
@@ -225,4 +225,96 @@ test('render: an empty home is the widgets, not an empty-state hero', () => {
   // The centered #empty-state block (and its permissions helper) stays gone.
   assert.doesNotMatch(HOME_SRC, /applyEmptyStateForPermissions/);
   assert.doesNotMatch(HOME_SRC, /getElementById\('empty-state'\)/);
+});
+
+// ── The newest app you created is pinned first ────────────────────
+//
+// After a create, the app you just made should be the first tile you
+// see rather than buried by the server's 7-day-activity ordering (a
+// brand-new app has no activity at all, so it sorts last). Exactly ONE
+// row is hoisted: the most recently created app whose `created_by` is
+// you. Everything else keeps the order it already had.
+//
+// This reorders the `yours` array, which feeds Home.presentIds →
+// HomeLayout.deriveDefault — i.e. the DERIVED default grid. A user who
+// has dragged their grid has a stored arrangement that wins in
+// Home.currentLayout, and we deliberately do not shove their tiles
+// around; their new app still lands in the first free cell via
+// HomeLayout.repair.
+
+test('partitionApps: my newest app is hoisted to the front of "Your apps"', () => {
+  const Home = makeHome();
+  const old = app({
+    slug: 'old-mine', is_collaborator: true,
+    created_by: 1, created_at: '2026-01-01T00:00:00Z',
+  });
+  const fresh = app({
+    slug: 'fresh-mine', is_collaborator: true,
+    created_by: 1, created_at: '2026-08-25T00:00:00Z',
+  });
+  const theirs = app({
+    slug: 'theirs', is_collaborator: true,
+    created_by: 2, created_at: '2026-08-26T00:00:00Z',
+  });
+  const { yours } = Home.partitionApps([old, theirs, fresh]);
+  assert.deepEqual(
+    yours.map((a) => a.slug),
+    ['fresh-mine', 'old-mine', 'theirs'],
+    'newest of mine first; the rest keep their relative order'
+  );
+});
+
+test('partitionApps: only one row is hoisted, and it beats an explicit favorite_order', () => {
+  const Home = makeHome();
+  const pinned = app({
+    slug: 'hand-pinned', is_favorited: true, favorite_order: 0,
+    created_by: 2, created_at: '2026-01-01T00:00:00Z',
+  });
+  const mineOld = app({
+    slug: 'mine-old', is_collaborator: true,
+    created_by: 1, created_at: '2026-02-01T00:00:00Z',
+  });
+  const mineNew = app({
+    slug: 'mine-new', is_collaborator: true,
+    created_by: 1, created_at: '2026-08-25T00:00:00Z',
+  });
+  const { yours } = Home.partitionApps([pinned, mineOld, mineNew]);
+  assert.deepEqual(
+    yours.map((a) => a.slug),
+    ['mine-new', 'hand-pinned', 'mine-old'],
+    'exactly one hoist; the favorite_order run stays intact below it'
+  );
+});
+
+test('partitionApps: nothing is hoisted when you own none of them', () => {
+  const Home = makeHome();
+  const a1 = app({ slug: 'a1', is_collaborator: true, created_by: 2, created_at: '2026-01-01T00:00:00Z' });
+  const a2 = app({ slug: 'a2', is_collaborator: true, created_by: 3, created_at: '2026-08-01T00:00:00Z' });
+  const { yours } = Home.partitionApps([a1, a2]);
+  assert.deepEqual(yours.map((a) => a.slug), ['a1', 'a2'], 'server order untouched');
+});
+
+test('partitionApps: a signed-out viewer never hoists', () => {
+  const Home = makeHome({ user: null });
+  const mine = app({ slug: 'mine', is_collaborator: true, created_by: 1, created_at: '2026-08-25T00:00:00Z' });
+  const other = app({ slug: 'other', is_collaborator: true, created_by: 2, created_at: '2026-01-01T00:00:00Z' });
+  assert.deepEqual(
+    Home.partitionApps([other, mine]).yours.map((a) => a.slug),
+    ['other', 'mine'],
+    'no signed-in user means no "mine" to hoist'
+  );
+});
+
+test('partitionApps: a row with no created_at is not a hoist candidate', () => {
+  const Home = makeHome();
+  const other = app({ slug: 'other', is_collaborator: true, created_by: 2, created_at: '2026-01-01T00:00:00Z' });
+  const undated = app({ slug: 'undated', is_collaborator: true, created_by: 1, created_at: null });
+  assert.deepEqual(
+    Home.partitionApps([other, undated]).yours.map((a) => a.slug),
+    ['other', 'undated']
+  );
+  // Sanity: the same Home DOES hoist once the date is present, so the
+  // assertion above is about the missing date and not a dead code path.
+  const dated = app({ slug: 'dated', is_collaborator: true, created_by: 1, created_at: '2026-08-25T00:00:00Z' });
+  assert.equal(Home.partitionApps([other, dated]).yours[0].slug, 'dated');
 });

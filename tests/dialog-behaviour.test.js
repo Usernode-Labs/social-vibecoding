@@ -235,11 +235,25 @@ test('create: mode, import check and POST /api/apps all moved', () => {
   assert.match(src, /applyMode\('new'\)/);
   assert.match(src, /\/api\/github\/verify-access\?url=/, 'the import URL check moved with it');
   assert.match(src, /fetch\('\/api\/apps', \{/, 'the create POST moved with it');
-  // #1418: a successful create/import confirms itself with a toast — the
-  // async build's only other signal is the tile's small "Spinning up…" label.
-  assert.match(src, /window\.PlatformUI\?\.toast\?\.\(/, 'success path raises the creation toast');
+  // A successful create/import no longer closes the dialog. #1418 covered
+  // the async build with a toast over a CLOSED dialog, because the tile's
+  // small "Spinning up…" was easy to miss; the dialog now stays open and
+  // reports the phases app-creator broadcasts (features/dialogs/
+  // create-progress.tsx, tests/create-progress-view.test.js). The toast
+  // survives only on the path that has nothing to report on — a 201 with
+  // no slug to follow.
+  assert.match(src, /watchCreation\(slug\)/, 'the success path starts following the build');
+  assert.match(src, /setCreated\(\{ slug/, 'and swaps the card to the progress view');
+  assert.match(src, /if \(!slug\) \{/, 'a 201 we cannot follow falls back to the old close+toast');
+  assert.match(src, /window\.PlatformUI\?\.toast\?\.\(/, 'that fallback still raises the toast');
   assert.match(src, /being imported/, 'import mode gets the imported wording');
   assert.match(src, /being created/, 'new mode gets the created wording');
+  // The progress subtree must never reach the prerendered document — its
+  // ids are not in tests/baselines/shell-markup.json and its markup is
+  // not in the 338 declared dapp.json selectors. `created` starting null
+  // is what guarantees that.
+  assert.match(src, /useState<\{ slug: string; name: string \} \| null>\(null\)/,
+    'the progress view is gated on state that starts null');
   // Close resets the form, so a half-finished import is never inherited.
   assert.match(src, /formRef\.current\?\.reset\(\)/);
   // The home screen's "+" still opens it by name.

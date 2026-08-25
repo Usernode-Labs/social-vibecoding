@@ -1449,6 +1449,14 @@ const App = {
   },
 
   handleAppStatusUpdate(data) {
+    // The create dialog's progress view, if one is open on this app.
+    // Forwarded unconditionally — the store drops messages for apps it
+    // is not watching, and it is the only thing that knows which app
+    // that is. `?.` all the way down because this file is a classic
+    // script that runs BEFORE the deferred React bundle: a status
+    // message arriving in that window has no store to publish into yet.
+    window.UsernodeReact?.appCreationProgress?.publish?.(data);
+
     // Update home screen card if visible
     const card = document.querySelector(`.app-card[data-slug="${data.slug}"]`);
     if (card) {

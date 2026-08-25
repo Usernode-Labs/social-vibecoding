@@ -94,6 +94,10 @@ function loadAppCreator({ dockerStubs = {}, ws = {}, githubStubs = {} } = {}) {
   stub(ids.pool, { getPool: () => pool });
   stub(ids.ws, {
     pushAppStatusUpdate: (payload) => statusPushes.push(payload),
+    // Creation-phase broadcasts are not what this file asserts on, but
+    // app-creator calls them, so the stub has to carry the whole seam.
+    // tests/app-creation-progress.test.js is where they are checked.
+    pushAppCreationPhase: () => {},
     ...ws,
   });
 

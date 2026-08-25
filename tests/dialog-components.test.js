@@ -57,11 +57,40 @@ const DIALOG_IDS = [
   'app-secrets-modal',
 ];
 
-const componentFiles = fs.readdirSync(DIALOGS)
+/**
+ * Not every .tsx here is a dialog.
+ *
+ * `create-progress.tsx` is the second VIEW of the create dialog — the card
+ * swaps to it after a successful POST /api/apps and reports the creation
+ * phases app-creator broadcasts. It renders no modal root, holds no
+ * visibility, and is rendered by create-app.tsx rather than by index.tsx,
+ * so the seam contract below does not apply to it.
+ *
+ * The partition is by "does this file render a *-modal root", and the
+ * support half is then checked against an EXPLICIT list. That second step
+ * is the load-bearing one: without it, a genuine dialog that forgot its
+ * root would fall into the support half and skip every check in this file.
+ */
+const SUPPORT_FILES = ['create-progress.tsx'];
+
+const allFiles = fs.readdirSync(DIALOGS)
   .filter((f) => f.endsWith('.tsx') && f !== 'index.tsx');
-const componentSrc = new Map(
-  componentFiles.map((f) => [f, fs.readFileSync(path.join(DIALOGS, f), 'utf8')]),
+const allSrc = new Map(
+  allFiles.map((f) => [f, fs.readFileSync(path.join(DIALOGS, f), 'utf8')]),
 );
+const componentFiles = allFiles.filter((f) => !SUPPORT_FILES.includes(f));
+const componentSrc = new Map(componentFiles.map((f) => [f, allSrc.get(f)]));
+
+test('the dialogs/ directory is exactly nine dialogs plus its known support files', () => {
+  assert.equal(componentFiles.length, DIALOG_IDS.length,
+    `features/dialogs/ holds ${componentFiles.length} dialog components for ${DIALOG_IDS.length} roots — `
+    + `a new file must either render a root or be listed in SUPPORT_FILES with a reason`);
+  for (const file of SUPPORT_FILES) {
+    assert.ok(allSrc.has(file), `SUPPORT_FILES lists ${file}, which no longer exists`);
+    assert.ok(!/id="[a-z0-9-]+-modal"/.test(allSrc.get(file)),
+      `${file} renders a modal root, so it is a dialog and must not be exempted here`);
+  }
+});
 
 /**
  * The opening tag of a component's modal root, as source text.
