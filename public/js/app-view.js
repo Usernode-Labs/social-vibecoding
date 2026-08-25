@@ -2358,6 +2358,49 @@ const AppView = {
       || null;
   },
 
+  // ── The one-shot caches go STALE, and nothing else refreshes them ────
+  //
+  // _topicProposal / _topicGov are written once by their fetch-on-demand
+  // path when a topic opens, and cleared only by openTopic. _loadDevData
+  // refreshes the LISTS — _proposals, _merged, _govProposals — so a topic
+  // resolving from one of those repaints with live data on every WS event.
+  // A topic resolving from the on-demand cache repaints from a frozen
+  // snapshot: refreshDevData runs, _loadDevData runs, _renderTopicHead
+  // runs, and nothing on screen changes. The checks badge, the vote tally
+  // and the merge state all sit at whatever they were when the page was
+  // opened, until it is reloaded and the fetch happens again.
+  //
+  // Reachable for any proposal opened from beyond the cached page, and
+  // RELIABLY so for a settled one: _loadDevData resets _merged to page 1 on
+  // every call, so a merged proposal deeper than that drops onto the cache
+  // the moment the first refresh lands — the fallback exists precisely
+  // because of that reset (see _topicProposal's own note below).
+  //
+  // So re-fetch on the same trigger that refreshes the lists. The guards
+  // mirror _findTopicItem's resolution order exactly, so a topic the lists
+  // already cover costs nothing; and both fetchers are best-effort, leaving
+  // the cache untouched on a miss, so the worst case is today's behaviour.
+  async _refreshTopicOnDemandRow() {
+    const t = AppView._devTopic;
+    if (!t) return;
+    // Issues and sessions have no on-demand cache — they resolve from
+    // _ghIssues / _sharedSessions / _mySessions, which _loadDevData owns.
+    if (t.kind === 'issue' || t.kind === 'session') return;
+    if (t.kind === 'proposal') {
+      if ((AppView._proposals || []).some((p) => p.id === t.id)) return;
+      if ((AppView._merged || []).some((p) => p.id === t.id)) return;
+      if (!AppView._topicProposal || AppView._topicProposal.id !== t.id) return;
+      await AppView._fetchProposalById(t.id);
+      return;
+    }
+    // Governance, matching _findTopicItem's trailing branch.
+    if ((AppView._govProposals || []).some((i) => i.id === t.id)) return;
+    if ((AppView._merged || []).some(
+      (r) => r.row_type === 'close_issue' && r.id === t.id)) return;
+    if (!AppView._topicGov || AppView._topicGov.id !== t.id) return;
+    await AppView._fetchGovProposalById(t.id);
+  },
+
   // Single-item cache for a proposal opened from beyond the cached
   // Completed page (the fetch-on-demand recovery path). Kept SEPARATE from
   // _merged because _loadDevData() resets _merged to its first page on
@@ -3664,7 +3707,13 @@ const AppView = {
       // which repaints far more often than the data changes — a vote
       // arriving over the WS is a refresh, a repaint is not.
       if (AppView._devTopic) delete AppView._voteRoster[AppView._devTopic.id];
-      AppView._loadDevData().then(() => AppView._renderTopicHead());
+      // _refreshTopicOnDemandRow between the two: _loadDevData refreshes the
+      // lists, and a topic the lists do not hold would otherwise repaint
+      // from a snapshot frozen when the page opened. It no-ops for every
+      // topic the lists do cover.
+      AppView._loadDevData()
+        .then(() => AppView._refreshTopicOnDemandRow())
+        .then(() => AppView._renderTopicHead());
       return;
     }
     if (App.currentSubTab !== 'forum') return;
