@@ -94,7 +94,7 @@ test('the connect flow recommends the canonical name where it is typed', () => {
 
 // ── 2. The shipped allow rules ─────────────────────────────────────────
 
-test('the read-only allow rules are two globs and one literal, per spelling of the name', () => {
+test('the shipped allow rules are two globs and three literals, per spelling of the name', () => {
   // Six, not three: the same three rules under each spelling of the server
   // name Usernode can guess. A permission rule names the server LITERALLY —
   // there is no `mcp__*__` — so a user whose client registered the connector
@@ -103,19 +103,31 @@ test('the read-only allow rules are two globs and one literal, per spelling of t
   // costs two lines of JSON and covers the one variation the platform can
   // predict; anything else is what the Settings field rewrites.
   assert.deepEqual([...constants.ALLOW_RULE_SERVER_NAMES], ['usernode', 'Usernode']);
+  // #1405 added the two `notify_*` literals. They are WRITES, and they are
+  // here anyway because the only thing they touch is the caller's own
+  // notification feed — the reasoning lives beside SELF_SCOPED_ALLOW_TOOLS.
+  // Literals, never a `notify_*` glob: a glob promises something about every
+  // future tool that happens to start that way.
   assert.deepEqual([...constants.READ_ONLY_ALLOW_RULES], [
     'mcp__usernode__get_*',
     'mcp__usernode__list_*',
     'mcp__usernode__whoami',
+    'mcp__usernode__notify_awaiting_input',
+    'mcp__usernode__notify_input_received',
     'mcp__Usernode__get_*',
     'mcp__Usernode__list_*',
     'mcp__Usernode__whoami',
+    'mcp__Usernode__notify_awaiting_input',
+    'mcp__Usernode__notify_input_received',
   ]);
-  // Grouped by spelling, not by tool, so the block reads as "these three, and
-  // the same three again" rather than as six unrelated rules.
+  // Grouped by spelling, not by tool, so the block reads as "these five, and
+  // the same five again" rather than as ten unrelated rules.
   assert.deepEqual(
     constants.READ_ONLY_ALLOW_RULES.map((r) => r.split('__')[1]),
-    ['usernode', 'usernode', 'usernode', 'Usernode', 'Usernode', 'Usernode']
+    [
+      'usernode', 'usernode', 'usernode', 'usernode', 'usernode',
+      'Usernode', 'Usernode', 'Usernode', 'Usernode', 'Usernode',
+    ]
   );
   // And the canonical spelling is the configured one — the second is the
   // variant, and the order matters because the hint names them in it.
@@ -145,14 +157,28 @@ test('never a whole-server allow — the scaffold grants for everyone', () => {
   const settings = scaffold().get('.claude/settings.json');
   assert.ok(!settings.includes(`"${wildcard}"`), 'the scaffold ships no whole-server rule');
 
-  // And every shipped rule can only match a read: a glob's prefix is one of
-  // the read-only prefixes, or it is a literal read tool.
+  // And every shipped rule can only match something the scaffold is entitled
+  // to grant on a stranger's machine: a glob whose prefix is a read-only one,
+  // a literal read tool, or one of #1405's self-scoped writes.
+  //
+  // The third category is bounded by being a LIST rather than a shape — that
+  // is the whole reason it is enumerated in the constants instead of derived
+  // from a name pattern. Nothing can drift into it by being named a certain
+  // way; a tool joins it only by a reviewed edit to that list.
   for (const rule of constants.READ_ONLY_ALLOW_RULES) {
     const tool = rule.slice(rule.lastIndexOf('__') + 2);
     const ok = constants.READ_ONLY_TOOL_PREFIXES.some((p) => tool === `${p}*`)
-      || constants.READ_ONLY_TOOL_EXCEPTIONS.includes(tool);
-    assert.ok(ok, `${rule} can only ever match a read-only tool`);
+      || constants.READ_ONLY_TOOL_EXCEPTIONS.includes(tool)
+      || constants.SELF_SCOPED_ALLOW_TOOLS.includes(tool);
+    assert.ok(ok, `${rule} matches a read, or a reviewed self-scoped write`);
   }
+
+  // The self-scoped list stays SHORT and stays enumerated. A scaffold that
+  // grants more of a connector by default is the thing this whole file exists
+  // to prevent, so growing this list is a deliberate act with a test to
+  // notice it.
+  assert.ok(constants.SELF_SCOPED_ALLOW_TOOLS.length <= 2,
+    'self-scoped grants stay a short reviewed list, not a growing default');
 });
 
 // ── 3. The scaffold ────────────────────────────────────────────────────

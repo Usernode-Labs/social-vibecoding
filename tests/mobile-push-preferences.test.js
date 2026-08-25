@@ -22,6 +22,10 @@ const CURRENT_KINDS = [
   'pr_proposed', 'spec_shared', 'collab_invite', 'collab_invite_accepted',
   'approver_invite', 'approver_invite_accepted', 'session_done',
   'auto_solve_done',
+  // #1405: a connector session put work somewhere, and a connector session is
+  // holding for an answer. Both are "a coding session did something while you
+  // were away", so both join developer_sessions rather than adding a category.
+  'connector_submitted', 'agent_awaiting_input',
 ];
 
 test('every current inbox kind maps exactly once to one closed category', () => {

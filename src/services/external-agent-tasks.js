@@ -2292,6 +2292,27 @@ async function submitWork(deps, params) {
   return withTaskLock(deps.pool, params.taskId, () => submitWorkLocked(deps, params));
 }
 
+// #1405 path A. Tell the OWNER that their agent put work somewhere.
+//
+// Best-effort by construction: the work has already landed on GitHub and is
+// already a card or a proposal by the time this runs, so a failed insert or a
+// dead push must never turn a successful submission into an error. Every
+// failure here is a warning and nothing more.
+async function notifyConnectorSubmitted(pool, { userId, appId, sessionId, detail }) {
+  if (!userId || !sessionId) return;
+  try {
+    const notifications = require('./notifications');
+    const created = await notifications.createConnectorSubmittedNotification(pool, {
+      userId, appId, sessionId, detail,
+    });
+    if (created.length) await notifications.hydrateAndPush(pool, created[0]);
+  } catch (err) {
+    log.warn('external-agent-tasks', 'connector_submitted notify failed', {
+      sessionId, err: err.message,
+    });
+  }
+}
+
 async function submitWorkLocked(deps, params) {
   const { pool, config, gh, githubLink, limits } = deps;
   const {
@@ -2567,6 +2588,12 @@ async function submitWorkLocked(deps, params) {
         log.warn('external-agent-tasks', 'share task stamp failed', { taskId: task.id, err: err.message });
       }
     }
+    // Only the FIRST share notifies. #1347 lets an agent push onto the same
+    // card as often as it likes, and one notification per push would be
+    // miserable — the reshare branch above returns before reaching here.
+    await notifyConnectorSubmitted(pool, {
+      userId: user.id, appId: task ? task.app_id : null, sessionId, detail: 'shared',
+    });
     return {
       ok: true,
       shared: true,
@@ -2833,6 +2860,10 @@ async function submitWorkLocked(deps, params) {
       log.warn('external-agent-tasks', 'task close failed', { taskId: task.id, err: err.message });
     }
   }
+
+  await notifyConnectorSubmitted(pool, {
+    userId: user.id, appId: task ? task.app_id : null, sessionId, detail: 'submitted',
+  });
 
   return {
     ok: true,

@@ -151,6 +151,29 @@ const SERVER_VERSION = serverVersionFor(process.env.GIT_SHA);
 // not an attempt to guess them all.
 const ALLOW_RULE_SERVER_NAMES = Object.freeze([SERVER_NAME, 'Usernode']);
 
+// ── Allow-listed, but NOT reads (#1405) ────────────────────────────────
+//
+// A separate list on purpose. `READ_ONLY_TOOL_EXCEPTIONS` answers "is this
+// tool a read?", and these two are not — they write a row. Folding them in
+// would make the naming contract above say something false, and that contract
+// is what the `get_*` / `list_*` globs' safety rests on.
+//
+// What they are instead is SELF-SCOPED: the only thing they touch is the
+// caller's own notification feed. They spend nothing, reach no app, are
+// invisible to the group, and cannot be aimed at another user — the target is
+// the connection's own identity, never input. Every ACTING tool puts something
+// in front of other people; these put a line in front of you. Granting them is
+// a decision about your own attention, which a scaffolded repo may reasonably
+// make on a stranger's machine where "every call this connector can make"
+// would not be.
+//
+// Listed literally rather than as a `notify_*` glob: a glob is a standing
+// promise about every future tool that happens to start that way.
+const SELF_SCOPED_ALLOW_TOOLS = Object.freeze([
+  'notify_awaiting_input',
+  'notify_input_received',
+]);
+
 // The read-only allow rules Usernode ships in the app scaffold and
 // documents. Two globs plus one literal per covered spelling, and
 // deliberately NOT the whole-server `mcp__usernode__*`.
@@ -167,11 +190,30 @@ const ALLOW_RULE_SERVER_NAMES = Object.freeze([SERVER_NAME, 'Usernode']);
 //
 // They stay durable only while the naming contract below holds. Tests
 // enforce it against the registered tool surface.
+//
+// #1405 adds a SECOND literal, for the same reason `whoami` is one: the two
+// awaiting-input tools do not fit the read prefixes, and they are called at the
+// boundaries of ordinary turns — a prompt on every call would make them worse
+// than not having the feature at all.
+//
+// They earn the exception on the same ground `whoami` does. Every ACTING tool
+// puts something in front of OTHER PEOPLE: a request on a board, a proposal at
+// a vote, a build against a credit balance. These put a line in the caller's
+// own notification feed and nothing else. They spend nothing, touch no app,
+// are invisible to the group, and cannot be aimed at another user — the target
+// is the connection's own identity, never input. Granting them is a decision
+// about your own attention, which is exactly the kind a scaffolded repo may
+// reasonably make on a stranger's machine.
+//
+// Still literals rather than a `notify_*` glob: a glob is a standing promise
+// about every future tool that happens to start that way, and this is a
+// promise about these two.
 const READ_ONLY_ALLOW_RULES = Object.freeze(
   ALLOW_RULE_SERVER_NAMES.flatMap((name) => [
     `mcp__${name}__get_*`,
     `mcp__${name}__list_*`,
     `mcp__${name}__whoami`,
+    ...SELF_SCOPED_ALLOW_TOOLS.map((tool) => `mcp__${name}__${tool}`),
   ])
 );
 
@@ -194,6 +236,7 @@ const READ_ONLY_ALLOW_RULES = Object.freeze(
 // these rules.
 const READ_ONLY_TOOL_PREFIXES = Object.freeze(['get_', 'list_']);
 const READ_ONLY_TOOL_EXCEPTIONS = Object.freeze(['whoami']);
+
 
 // ── What the client silently cuts ──────────────────────────────────────
 //
@@ -242,6 +285,7 @@ module.exports = {
   serverVersionFor,
   ALLOW_RULE_SERVER_NAMES,
   READ_ONLY_ALLOW_RULES,
+  SELF_SCOPED_ALLOW_TOOLS,
   READ_ONLY_TOOL_PREFIXES,
   READ_ONLY_TOOL_EXCEPTIONS,
   SERVER_INSTRUCTIONS_MAX_CHARS,

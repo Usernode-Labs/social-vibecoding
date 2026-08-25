@@ -36,7 +36,14 @@ const CATEGORY_DEFINITIONS = Object.freeze([
     label: 'Developer sessions',
     description: 'Interactive and unattended coding sessions that finish while you are away.',
     defaultEnabled: true,
-    kinds: Object.freeze(['session_done', 'auto_solve_done']),
+    // #1405's two join this category rather than getting one of their own:
+    // both are "a coding session did something while you were away", which is
+    // exactly what this category's own description already promises. A
+    // connector user who wants session pushes wants these; one who turned them
+    // off does not, and should not have to find a second switch.
+    kinds: Object.freeze([
+      'session_done', 'auto_solve_done', 'connector_submitted', 'agent_awaiting_input',
+    ]),
   }),
   Object.freeze({
     key: 'proposal_alerts',
