@@ -2891,6 +2891,68 @@ function prTitleFor({ title, task, slug }) {
 // since the beginning — the work order it prints even says "This implements
 // request #N" — but the number stopped there, so a proposal built FROM a
 // request was not linked to it in any way the platform could act on.
+// #1417: the viewer's OPEN work orders, for the Improve panel.
+//
+// A connector work order is not a chat_sessions row and does not become one
+// until the agent shares (#1347) or submits — so between prepare_work and
+// that moment the person who started the work sees nothing of it, while the
+// group already does (#1225 claims the request on their behalf). This is the
+// read behind closing that gap.
+//
+// `session_id IS NOT NULL` is excluded rather than left in: a task carries a
+// session only once its work has been shared, and that shared card is already
+// in the panel's session list. Listing both would show one piece of work
+// twice, under two names.
+//
+// The title comes from the brief's first line, which is the request's own
+// title — prepare_work builds the brief as title, then body, then discussion,
+// each wrapped in the untrusted envelope. Reading it here rather than
+// re-fetching the GitHub issue keeps this to one query, and a `brief`-only
+// task (no request behind it) still gets a sensible line. Envelope-stripped,
+// because those tags are for an agent's prompt, not for a row in a panel.
+function workOrderTitle(brief, issueNumber) {
+  const first = stripEnvelope(brief).split('\n').map((l) => l.trim()).find(Boolean);
+  if (first) return first.slice(0, 120);
+  return issueNumber ? `Request #${issueNumber}` : 'Work order';
+}
+
+async function listOpenWorkOrders(pool, userId) {
+  const id = Number(userId);
+  if (!Number.isSafeInteger(id) || id <= 0) return [];
+  try {
+    const { rows } = await pool.query(
+      `SELECT t.id, t.issue_number, t.branch_name, t.brief, t.client_id,
+              t.created_at, a.slug AS app_slug, a.name AS app_name
+         FROM external_agent_tasks t
+         JOIN apps a ON t.app_id = a.id
+        WHERE t.user_id = $1
+          AND t.status = 'open'
+          AND t.expires_at > NOW()
+          AND t.session_id IS NULL
+        ORDER BY t.created_at DESC`,
+      [id]
+    );
+    return rows.map((r) => ({
+      id: Number(r.id),
+      issue_number: r.issue_number == null ? null : Number(r.issue_number),
+      title: workOrderTitle(r.brief, r.issue_number),
+      branch_name: r.branch_name,
+      // Which coding agent it was handed to, by the same mapping the work
+      // order's own wording uses, so the row says "Codex" when that is what
+      // is holding it.
+      agent: normalizeAgent(r.client_id, r.client_id),
+      created_at: r.created_at,
+      app_slug: r.app_slug,
+      app_name: r.app_name,
+    }));
+  } catch (err) {
+    // The panel is a read: a failed lookup costs the work-order rows and
+    // leaves the session list alone, rather than failing the whole call.
+    log.warn('external-agent-tasks', 'open work-order lookup failed', { err: err.message });
+    return [];
+  }
+}
+
 function linkedIssuesFor(task) {
   const n = task && Number(task.issue_number);
   return Number.isInteger(n) && n > 0 ? [n] : [];
@@ -2933,6 +2995,8 @@ module.exports = {
   normalizeSource,
   agentLabel,
   stripEnvelope,
+  listOpenWorkOrders,
+  workOrderTitle,
   // The request-linking pair (#1217), unit-tested directly.
   linkedIssuesFor,
   prBodyFor,

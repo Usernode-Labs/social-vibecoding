@@ -79,7 +79,19 @@ const MANIFEST_FILENAME = 'dapp.json';
 // tests/checks-budget.test.js pins. Raising it any further means raising
 // that deadline (and the container run timeout above it) in the same
 // change.
-const MAX_DECLARED_TESTS = 430;
+//
+// Raised 430 → 480 (#1417), and that is the bump the note above says has to
+// move the deadline with it, so TESTS_DEADLINE_MS goes 420s → 470s in
+// services/visuals.js. The arithmetic is the same one: 480 checks at ~3.9s
+// over a pool of 8 is ~234s of ideal work, and 470s clears the 2x margin
+// with 2s to spare. RUN_TIMEOUT_MS stays at 600s — it only has to sit
+// 120s above the deadline, and 130s does.
+//
+// The manifest was at 410 when this was raised, which is EXACTLY the
+// 20-slot floor: the previous ceiling had no room for a single further
+// check, so any proposal declaring one at all was blocked. That is the
+// state this bump clears, not one feature's three checks.
+const MAX_DECLARED_TESTS = 480;
 
 // The pre-pool cap, kept for exactly one purpose: services/check-history.js
 // bootstraps an app with no recorded history by marking its first
