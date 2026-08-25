@@ -76,7 +76,7 @@ const Secrets = {
           const { error } = await res.json().catch(() => ({}));
           throw new Error(error || `HTTP ${res.status}`);
         }
-        Secrets.setStatus('Redeploy started — watch the version pill.', 'ok');
+        Secrets.setStatus('Redeploy started. Watch the version pill.', 'ok');
       } catch (err) {
         Secrets.setStatus(`Redeploy failed: ${err.message}`, 'err');
       }
@@ -217,7 +217,7 @@ const Secrets = {
         ? 'The platform\'s own environment variables, declared in its '
           + '<code class="text-xs">dapp.json</code>. '
           + '<span class="font-semibold text-zinc-700 dark:text-zinc-300">A change here is not live '
-          + 'immediately — it is applied by the platform\'s next deploy.</span>'
+          + 'immediately: it is applied by the platform\'s next deploy.</span>'
         : 'Environment variables this app declares in <code class="text-xs">dapp.json</code>.';
     }
 
@@ -238,12 +238,12 @@ const Secrets = {
     if (!data.secrets || !data.secrets.length) {
       list.innerHTML = isPlatform
         ? `<p class="text-sm text-zinc-500 dark:text-zinc-400">
-             No platform variables are declared yet — use “New variable” below to
+             No platform variables are declared yet. Use “New variable” below to
              declare the first one.
            </p>`
         : `<p class="text-sm text-zinc-500 dark:text-zinc-400">
              This app's <code class="text-xs">dapp.json</code> doesn't declare any
-             secrets yet — use “New secret” below to declare the first one.
+             secrets yet. Use “New secret” below to declare the first one.
            </p>`;
       Secrets.renderDeclareSection(data);
       return;
@@ -350,15 +350,15 @@ const Secrets = {
     } else if (isProposed) {
       valueDisplay = s.hasValue
         ? `<span class="text-xs text-violet-700 dark:text-violet-300">value included${
-          s.valueLast4 ? ` (…${escapeHtml(s.valueLast4)})` : ''} — applied when the proposal merges</span>`
-        : '<span class="text-xs text-zinc-500 dark:text-zinc-400">declaration only — no value proposed</span>';
+          s.valueLast4 ? ` (…${escapeHtml(s.valueLast4)})` : ''}, applied when the proposal merges</span>`
+        : '<span class="text-xs text-zinc-500 dark:text-zinc-400">declaration only, no value proposed</span>';
     } else if (s.hasValue && s.value != null) {
       // A non-private platform variable whose plaintext the server was
       // willing to return (admins only). Showing it in full is the point of
       // marking a variable non-private.
       valueDisplay = `<code class="text-xs font-mono text-zinc-700 dark:text-zinc-300 break-all">${escapeHtml(s.value)}</code>`;
     } else if (s.hasValue && s.private && s.state) {
-      valueDisplay = '<span class="text-xs text-zinc-500 dark:text-zinc-400 font-mono">•••••••• (private — never displayed)</span>';
+      valueDisplay = '<span class="text-xs text-zinc-500 dark:text-zinc-400 font-mono">•••••••• (private, never displayed)</span>';
     } else if (s.hasValue && s.state === 'set' && !s.private && s.valueLast4 == null) {
       // Stored, but the plaintext couldn't be decrypted (rotated
       // JWT_SECRET, corrupt row). listView() degrades to this rather than
@@ -368,7 +368,7 @@ const Secrets = {
       const last4 = s.valueLast4 ? `…${escapeHtml(s.valueLast4)}` : '••••••••';
       valueDisplay = `<span class="font-mono text-xs text-emerald-700 dark:text-emerald-400">set ${last4}</span>`;
     } else if (s.required && !s.unwritable) {
-      valueDisplay = `<span class="text-xs font-medium text-red-700 dark:text-red-400">missing — deploys are blocked</span>`;
+      valueDisplay = `<span class="text-xs font-medium text-red-700 dark:text-red-400">missing, deploys are blocked</span>`;
     } else if (s.default != null) {
       valueDisplay = `<span class="font-mono text-xs text-zinc-500 dark:text-zinc-400">default: ${escapeHtml(s.default)}</span>`;
     } else {
@@ -430,15 +430,15 @@ const Secrets = {
         </div>
         ${s.description ? `<p class="text-xs text-zinc-500 dark:text-zinc-400 mb-2">${escapeHtml(s.description)}</p>` : ''}
         ${isGithubRow ? `<p class="text-xs text-zinc-500 dark:text-zinc-400 mb-2">
-          Stored as an Actions secret on the platform repo. Its value can't be shown — GitHub's
-          API never returns one — so change it in the repo's Settings → Secrets and variables →
+          Stored as an Actions secret on the platform repo. Its value can't be shown, because GitHub's
+          API never returns one. Change it in the repo's Settings → Secrets and variables →
           Actions.</p>` : ''}
         ${!isGithubRow && s.unwritable ? `<p class="text-xs text-zinc-500 dark:text-zinc-400 mb-2">
           Set by the deploy from a GitHub secret. It can't be edited here.</p>` : ''}
         ${!isGithubRow && s.githubSecret ? `<p class="text-xs text-zinc-500 dark:text-zinc-400 mb-2">
           ${alsoGithub(s.githubSecret)}</p>` : ''}
         ${isProposed ? `<p class="text-xs text-violet-700 dark:text-violet-300 mb-2">
-          Not declared yet — a proposal adding it to <code class="text-[0.65rem]">dapp.json</code>
+          Not declared yet. A proposal adding it to <code class="text-[0.65rem]">dapp.json</code>
           is up for vote${s.pending && s.pending.proposedBy
     ? ` (opened by ${escapeHtml(s.pending.proposedBy)})` : ''}.</p>` : ''}
         ${!isProposed && s.pending ? `<p class="text-xs text-violet-700 dark:text-violet-300 mb-2">
@@ -446,7 +446,7 @@ const Secrets = {
     ? ` (PR #${escapeHtml(String(s.pending.prNumber))})` : ''}.</p>` : ''}
         ${s.state === 'orphan' ? `<p class="text-xs text-amber-800 dark:text-amber-400 mb-2">
           No longer declared in <code class="text-[0.65rem]">dapp.json</code>. Its value is kept so a
-          rollback still works — clear it once you're sure.</p>` : ''}
+          rollback still works, so clear it once you're sure.</p>` : ''}
         <div class="flex items-center gap-2 flex-wrap">
           ${valueDisplay}
           <span class="flex-1"></span>
@@ -539,7 +539,7 @@ const Secrets = {
             <label class="${lbl}" for="decl-key">Key</label>
             <input id="decl-key" class="${input} font-mono" placeholder="MY_NEW_TOKEN"
               autocapitalize="characters" autocomplete="off" spellcheck="false">
-            <p class="${help}">UPPER_SNAKE_CASE — the name your code reads from the environment.</p>
+            <p class="${help}">UPPER_SNAKE_CASE: the name your code reads from the environment.</p>
           </div>
           <div>
             <label class="${lbl}" for="decl-description">Description</label>
@@ -567,7 +567,7 @@ const Secrets = {
             <label class="${lbl}" for="decl-default">Default</label>
             <input id="decl-default" class="${input} font-mono" placeholder="optional">
             <p class="${help}">${isPlatform
-    ? 'Documents the fallback your code already uses — the platform\'s deploy does not apply it, so set a value above if the variable really needs one.'
+    ? 'Documents the fallback your code already uses. The platform\'s deploy does not apply it, so set a value above if the variable really needs one.'
     : 'Used at deploy time when no value is stored.'}</p>
           </div>
           ${isPlatform ? `
@@ -621,7 +621,7 @@ const Secrets = {
     // server-side: a single quote or a bare CR can't survive the
     // single-quoted line the platform's deploy writes.
     if (isPlatform && f.value && /['\r]/.test(f.value)) {
-      return "Values can't contain a single quote or a carriage return — they wouldn't survive being "
+      return "Values can't contain a single quote or a carriage return. They wouldn't survive being "
         + "written to the platform's .env file.";
     }
     return null;
@@ -668,13 +668,13 @@ const Secrets = {
       const opened = `Proposal opened for ${fields.key}${payload.prNumber ? ` (PR #${payload.prNumber})` : ''}.`;
       Secrets.setStatus(`${opened} ${payload.valueApplied
         ? 'Your value is stored; the declaration still needs a merge vote.'
-        : 'Vote on it in the group chat panel — the value applies when it merges.'}`, 'ok');
+        : 'Vote on it in the group chat panel. The value applies when it merges.'}`, 'ok');
       Secrets.notifyDevChatRefresh();
       await Secrets.open(Secrets.currentSlug);
       // open() clears the status line, so re-post the outcome after it.
       Secrets.setStatus(`${opened} ${payload.valueApplied
         ? 'Your value is stored; the declaration still needs a merge vote.'
-        : 'Vote on it in the group chat panel — the value applies when it merges.'}`, 'ok');
+        : 'Vote on it in the group chat panel. The value applies when it merges.'}`, 'ok');
     } catch (err) {
       Secrets.setStatus(`Failed: ${err.message}`, 'err');
     } finally {
@@ -685,7 +685,7 @@ const Secrets = {
   async handleSet(key, sensitive) {
     const value = await PlatformUI.prompt({
       title: `Set ${key}`,
-      message: sensitive ? 'This value is sensitive — it is encrypted at rest and never shown again.' : undefined,
+      message: sensitive ? 'This value is sensitive: it is encrypted at rest and never shown again.' : undefined,
       placeholder: 'value',
       confirmLabel: 'Save',
     });

@@ -97,7 +97,7 @@
     lines.push('');
     if (hasIssue) {
       lines.push('What to build: request #' + issue
-        + (title ? ' — ' + title : '')
+        + (title ? ': ' + title : '')
         + '. Read it in full before you start; prepare_work returns its title and body.');
     } else if (title) {
       lines.push('What to build: ' + title);
@@ -108,7 +108,7 @@
     lines.push('Use the Usernode MCP connector, in this order:');
     lines.push('1. Call `prepare_work` with slug `' + (slug || '<app slug>') + '`'
       + (hasIssue ? ' and requestNumber ' + issue : '') + '.');
-    lines.push('2. Follow the work order it returns EXACTLY — it names the repository, the');
+    lines.push('2. Follow the work order it returns EXACTLY. It names the repository, the');
     lines.push('   fork to push to, the branch, and the 40-character base commit to start');
     lines.push('   from. Do not substitute the fork’s default branch for that commit.');
     lines.push('3. Implement and test the change, then push your branch to your own fork.');
@@ -159,7 +159,7 @@
 
     var importStep = s.canImport === false
       ? '<div class="dc-launchpad-step-detail">Importing a pull request needs push access to this app, '
-        + 'which this account does not have. Your agent can still submit through the connector — '
+        + 'which this account does not have. Your agent can still submit through the connector. '
         + '<code>submit_work</code> opens the pull request for you.</div>'
       : '<div class="dc-launchpad-step-detail">If your agent submitted through the connector it is '
         + 'already a proposal and there is nothing to do here. Import is the manual door, for a '
@@ -172,7 +172,7 @@
     return ''
       + '<div class="dc-launchpad" data-launchpad="own-tools-pr">'
       + '<div class="dc-launchpad-lead">Building with your own tools</div>'
-      + '<div class="dc-launchpad-sub">There is no Usernode chat for this one — the conversation '
+      + '<div class="dc-launchpad-sub">There is no Usernode chat for this one. The conversation '
       + 'happens in your own agent. Usernode still opens the pull request, builds the preview '
       + 'and runs the checks.</div>'
       + '<div class="dc-launchpad-steps">'

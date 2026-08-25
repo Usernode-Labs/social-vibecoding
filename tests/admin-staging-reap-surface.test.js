@@ -146,7 +146,7 @@ test('the console section exists, is admin-visible, and its button is write-gate
     'canWrite is derived from canAdminWrite — the view-only-admin split');
   assert.match(reapTsx, /\{canWrite \? \(/,
     'the start button is conditional on write access, the section itself is not');
-  assert.match(reapTsx, /View-only admin — you can watch a sweep, but not start one\./,
+  assert.match(reapTsx, /View-only admin: you can watch a sweep, but not start one\./,
     'and a view-only admin is told why the button is missing');
   assert.match(reapTsx, /id="admin-reap-list"/, 'a host for the live per-preview table');
 });

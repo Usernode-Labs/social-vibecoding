@@ -1037,7 +1037,7 @@
       "name": "Estimator-off long run shows the cohort note in place of an estimate (#906)",
       "path": "/#app/usernode-2d5619/dev/sessions/900811",
       "expectSelector": ".dc-cc-attached-summary .dc-cc-cohort",
-      "expectText": "this is a long one — some runs go 30 min+"
+      "expectText": "this is a long one, some runs go 30 min+"
     },
     {
       "name": "A turn the server cannot stop offers a spinner, not a red Stop (#1378)",
@@ -1054,7 +1054,7 @@
       "name": "A chat-shared own session flips its ⋯ row to \"Chat shared — stop sharing\"",
       "path": "/?demo=1&shot=card-menu&card=session:990104#app/usernode-2d5619/dev",
       "expectSelector": ".dev-card-menu [data-menu-idx][title^=\"Stop others reading this chat\"]",
-      "expectText": "Chat shared — stop sharing"
+      "expectText": "Chat shared. Stop sharing"
     },
     {
       "name": "A published chat arrives expanded on the shared session’s own page",
@@ -1288,7 +1288,7 @@
       "name": "A long-stalled close proposal degrades to the retry copy, no spinner (#1010)",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": "[data-gov-row='9100006'] .gc-checks-running-badge",
-      "expectText": "Close pending — will retry automatically"
+      "expectText": "Close pending, will retry automatically"
     },
     {
       "name": "The closing state also renders on the proposal's own discussion page (#1010)",
@@ -1559,7 +1559,7 @@
       "name": "Visible own session renders under the Yours-visible divider",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectText": "Yours · visible",
-      "expectSelector": ".dev-col-divider-label[title^=\"Visible to everyone — including a live preview\"]"
+      "expectSelector": ".dev-col-divider-label[title^=\"Visible to everyone, including a live preview\"]"
     },
     {
       "name": "Visible own session offers its public discussion from the ⋯ menu",
@@ -2323,7 +2323,7 @@
     {
       "name": "A spent allowance says so instead of showing a count (#964)",
       "path": "/?shot=feedback-spent",
-      "expectText": "resets Monday 00:00 UTC"
+      "expectText": "Resets Monday 00:00 UTC"
     },
     {
       "name": "Out of daily credits: the chat offers every way to keep building (#967, #1049, #1086)",
@@ -2409,7 +2409,7 @@
       "name": "Settings has a Claude & ChatGPT connectors section with the connector URL (#967)",
       "path": "/?demo=1#settings/connectors",
       "expectSelector": "[data-settings-section=\"connectors\"]:not(.hidden) #connectors-section:not(.hidden) #connector-url",
-      "expectText": "Claude — claude.ai"
+      "expectText": "Claude (claude.ai)"
     },
     {
       "name": "Connector setup walks Claude web and ChatGPT web through numbered onboarding steps (#1289)",
@@ -2421,7 +2421,7 @@
       "name": "Offline: the signed-in shell keeps a visible offline strip above everything (#1021)",
       "path": "/?shot=offline",
       "expectSelector": "body.is-offline #offline-banner:not(.hidden)",
-      "expectText": "You're offline — showing saved content"
+      "expectText": "You're offline. Showing saved content"
     },
     {
       "name": "Offline sign-in explains why the form cannot work instead of failing silently (#1021)",

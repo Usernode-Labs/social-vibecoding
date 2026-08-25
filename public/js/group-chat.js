@@ -747,7 +747,7 @@ const GroupChat = {
         // block the send (input keeps its text).
         const threadScope = { type, ref };
         if (GroupChat.attachmentsUploading(threadScope)) {
-          GroupChat._setAttachError('Still uploading — one moment…', threadScope);
+          GroupChat._setAttachError('Still uploading, one moment…', threadScope);
           return;
         }
         if (!content && !GroupChat.hasPendingAttachments(threadScope)) return;
@@ -877,7 +877,7 @@ const GroupChat = {
       {
         earlier: !!(st.loaded && st.hasMore && st.messages.length),
         placeholder: st.loaded
-          ? (st.messages.length ? null : 'No messages yet — start the thread.')
+          ? (st.messages.length ? null : 'No messages yet. Start the thread.')
           : 'Loading…',
       },
     );
@@ -1427,7 +1427,7 @@ const GroupChat = {
       const notice = row.querySelector('.gc-edit-notice');
       if (notice) {
         notice.hidden = false;
-        notice.textContent = 'Not connected — your edit wasn’t sent. Try again in a moment.';
+        notice.textContent = 'Not connected. Your edit wasn’t sent, so try again in a moment.';
       }
       return;
     }
@@ -1791,24 +1791,24 @@ const GroupChat = {
     const ext = (file.name.toLowerCase().match(/\.([a-z0-9]+)$/) || [])[1] || '';
     if (L.imageExts.includes(ext)) {
       if (file.size > L.maxImageBytes) {
-        return { error: `"${file.name}" is too big — images max ${Math.round(L.maxImageBytes / 1024 / 1024)} MB.` };
+        return { error: `"${file.name}" is too big. Images max ${Math.round(L.maxImageBytes / 1024 / 1024)} MB.` };
       }
       return { kind: 'image' };
     }
     if (ext === 'md' || ext === 'markdown') {
       if (file.size > L.maxMarkdownBytes) {
-        return { error: `"${file.name}" is too big — markdown files max ${Math.round(L.maxMarkdownBytes / 1024)} KB.` };
+        return { error: `"${file.name}" is too big. Markdown files max ${Math.round(L.maxMarkdownBytes / 1024)} KB.` };
       }
       return { kind: 'markdown' };
     }
     if (ext === 'html' || ext === 'htm') {
       if (file.size > L.maxHtmlBytes) {
-        return { error: `"${file.name}" is too big — HTML files max ${Math.round(L.maxHtmlBytes / 1024 / 1024)} MB.` };
+        return { error: `"${file.name}" is too big. HTML files max ${Math.round(L.maxHtmlBytes / 1024 / 1024)} MB.` };
       }
       return { kind: 'html' };
     }
     if (file.size > L.maxBinaryBytes) {
-      return { error: `"${file.name}" is too big — files max ${Math.round(L.maxBinaryBytes / 1024 / 1024)} MB.` };
+      return { error: `"${file.name}" is too big. Files max ${Math.round(L.maxBinaryBytes / 1024 / 1024)} MB.` };
     }
     if (file.size <= L.maxTextBytes) {
       try {

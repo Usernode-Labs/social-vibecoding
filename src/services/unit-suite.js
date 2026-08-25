@@ -97,7 +97,7 @@ function failureDetail(stdout, stderr, { timedOut = false } = {}) {
     parts.push(`Suite run exceeded ${Math.round(UNIT_SUITE_TIMEOUT_MS / 1000)}s and was killed.`);
   }
   if (!out.includes(SETUP_DONE_SENTINEL) && !timedOut) {
-    parts.push('Suite setup failed (clone / npm ci) — the tests never ran.');
+    parts.push('Suite setup failed (clone / npm ci), so the tests never ran.');
   }
   const notOk = lines.filter((l) => l.startsWith('not ok '));
   if (notOk.length) {

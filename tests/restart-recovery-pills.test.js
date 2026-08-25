@@ -111,11 +111,11 @@ test('the unanswered set with a resend pill is also sanitizer-clean', () => {
 
 test('breadcrumb strings are non-empty and stable', () => {
   assert.equal(UNANSWERED_BREADCRUMB,
-    "I didn't get to reply to that — send your message again.");
+    "I didn't get to reply to that. Send your message again.");
   assert.equal(SCOUT_NO_SPEC_BREADCRUMB,
-    "The scout didn't produce a spec — please send your request again.");
+    "The scout didn't produce a spec. Please send your request again.");
   assert.equal(TURN_UNFINISHED_BREADCRUMB,
-    "That coding turn didn't finish — please send your request again.");
+    "That coding turn didn't finish. Please send your request again.");
 });
 
 // #896: the user-facing breadcrumbs name the situation and the action —

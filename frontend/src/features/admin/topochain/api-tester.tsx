@@ -142,18 +142,18 @@ function ApiTesterScreen() {
         // the free-text path exactly as it was and say why the list is gone.
         if (!alive.current) return;
         setRoutes([]);
-        setNote(`Could not load the endpoint list (${err.message}) — enter a path by hand.`);
+        setNote(`Could not load the endpoint list (${err.message}). Enter a path by hand.`);
         return;
       }
       // The operator may have navigated away while the fetch was in flight.
       if (!alive.current) return;
       setRoutes(loaded);
       if (!loaded.length) {
-        setNote('No /api/v4 endpoints were reported — enter a path by hand.');
+        setNote('No /api/v4 endpoints were reported. Enter a path by hand.');
         return;
       }
       setNote(`${loaded.length} endpoint${loaded.length === 1 ? '' : 's'} mounted in this build`
-        + ' — pick “Custom…” to send any other path.');
+        + '. Pick “Custom…” to send any other path.');
       // Default to the Seasons index — this screen lives under Seasons, and
       // it is a parameter-free GET, so it is safe to have preselected.
       const preferred = loaded.find((r) => r.method === 'GET' && r.path === '/admin/seasons')
@@ -223,7 +223,7 @@ function ApiTesterScreen() {
     <>
       <ScreenHeader
         title="API tester"
-        subtitle="Same-origin requests sent with your own session — the platform still applies its own gates."
+        subtitle="Same-origin requests sent with your own session. The platform still applies its own gates."
       />
       <Panel
         title="Request"

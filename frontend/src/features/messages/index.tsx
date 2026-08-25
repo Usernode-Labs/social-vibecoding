@@ -66,7 +66,7 @@ function ConversationList() {
         <div><h2 className="font-bold text-zinc-900 dark:text-zinc-100">Messages</h2><p className="text-xs text-zinc-500 dark:text-zinc-400">Direct and group conversations</p></div>
         <button type="button" onClick={() => openDialog('messagesCreate')} className="messages-new-button" aria-label="New conversation" title="New conversation"><PlusIcon aria-hidden="true" /></button>
       </div>
-      {!snap.online ? <div className="messages-network-banner">Offline — queued messages retry when you reconnect.</div> : null}
+      {!snap.online ? <div className="messages-network-banner">Offline. Queued messages retry when you reconnect.</div> : null}
       <div className="messages-list-scroll platform-safe-scroll">
         {snap.loadingList && !snap.listLoaded ? <div className="messages-state"><span className="messages-spinner" />Loading conversations…</div> : null}
         {snap.error ? <div className="messages-state messages-state-error"><p>{snap.error}</p><button type="button" onClick={() => void loadConversations(true)}>Try again</button></div> : null}

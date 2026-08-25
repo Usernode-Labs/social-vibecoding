@@ -440,7 +440,7 @@ test('buildVisualsBlock single root group is byte-identical to the legacy form',
   );
   assert.equal(legacy, grouped);
   assert.ok(legacy.includes('## Before / after\n'));
-  assert.ok(!legacy.includes('Before / after —'));
+  assert.ok(!legacy.includes('Before / after:'));
 });
 
 test('buildVisualsBlock emits one labelled table per capture group', () => {
@@ -450,8 +450,8 @@ test('buildVisualsBlock emits one labelled table per capture group', () => {
       { index: 1, path: '/settings', before: null, after: { png: ID_A } },
     ],
   }, DOMAIN);
-  assert.ok(block.includes('### Before / after — `/board`'));
-  assert.ok(block.includes('### Before / after — `/settings`'));
+  assert.ok(block.includes('### Before / after: `/board`'));
+  assert.ok(block.includes('### Before / after: `/settings`'));
   assert.ok(block.includes('| Before | After |'));
   // The after-only group falls back to the one-column variant.
   assert.ok(block.includes('No production version to compare'));
@@ -464,7 +464,7 @@ test('buildVisualsBlock labels a single non-root group with its path', () => {
     { captures: [{ index: 0, path: '/board', after: { gif: ID_A } }] },
     DOMAIN
   );
-  assert.ok(block.includes('### Before / after — `/board`'));
+  assert.ok(block.includes('### Before / after: `/board`'));
 });
 
 test('buildVisualsBlock suffixes a mobile group label with (mobile) (#768)', () => {
@@ -474,8 +474,8 @@ test('buildVisualsBlock suffixes a mobile group label with (mobile) (#768)', () 
       { index: 1, path: '/board', viewport: 'mobile', after: { gif: ID_B } },
     ],
   }, DOMAIN);
-  assert.ok(block.includes('### Before / after — `/board`\n'));
-  assert.ok(block.includes('### Before / after — `/board` (mobile)'));
+  assert.ok(block.includes('### Before / after: `/board`\n'));
+  assert.ok(block.includes('### Before / after: `/board` (mobile)'));
 });
 
 test('buildVisualsBlock labels a lone mobile ROOT group instead of the legacy heading', () => {
@@ -483,7 +483,7 @@ test('buildVisualsBlock labels a lone mobile ROOT group instead of the legacy he
     { captures: [{ index: 0, path: '/', viewport: 'mobile', after: { gif: ID_A } }] },
     DOMAIN
   );
-  assert.ok(block.includes('### Before / after — `/` (mobile)'));
+  assert.ok(block.includes('### Before / after: `/` (mobile)'));
   assert.ok(!block.includes('## Before / after\n'));
 });
 

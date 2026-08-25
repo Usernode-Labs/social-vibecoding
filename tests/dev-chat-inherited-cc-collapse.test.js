@@ -160,7 +160,7 @@ test('inherited status + attached progressLog renders COLLAPSED (ccrun)', () => 
   assert.match(html, /data-persist-id="101:ccrun"/, 'persist id keyed off the status row');
   // The summary stays informative while collapsed.
   assert.match(html, /Claude Code is running/, 'status text still in the summary');
-  assert.match(html, /class="dc-cc-current">— Editing public\/js\/dev-chat\.js</, 'activity snippet still in the summary');
+  assert.match(html, /class="dc-cc-current">· Editing public\/js\/dev-chat\.js</, 'activity snippet still in the summary');
   assert.match(html, /class="dc-cc-steps">· 2 steps</, 'step counter still in the summary');
   assert.match(html, /dc-cc-attached-chevron/, 'chevron affordance still rendered');
   assert.match(html, /\(took [^)]+\)/, 'duration still shown on the summary');

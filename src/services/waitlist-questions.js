@@ -65,7 +65,7 @@ const GROUP_TOOLS = {
   spreadsheet: 'A spreadsheet somebody maintains',
   docs: 'Notion or Google Docs',
   forum: 'A forum',
-  nothing: "Nothing — it's word of mouth",
+  nothing: "Nothing, it's word of mouth",
 };
 
 // ── Stage 2: the loss ───────────────────────────────────────────────────
@@ -192,7 +192,7 @@ function validateStage1(body) {
   const madeUrl = str(body?.made_url, 2000);
   if (!madeUrl) return { ok: false, error: 'Please link something you have made.' };
   if (!/^https?:\/\/\S+\.\S+/i.test(madeUrl)) {
-    return { ok: false, error: 'That does not look like a link — it should start with https://' };
+    return { ok: false, error: 'That does not look like a link. It should start with https://' };
   }
 
   const source = str(body?.discovery_source, 32);

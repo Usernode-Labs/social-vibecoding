@@ -474,7 +474,7 @@ const Leaderboard = {
     }));
 
     const subtitle = isHistory
-      ? 'Everything you’ve given — kudos, bounty pledges, and votes — newest first. Only you can see this.'
+      ? 'Everything you’ve given: kudos, bounty pledges, and votes, newest first. Only you can see this.'
       // #964: read the cap from the budget the badge already fetched rather
       // than hardcoding it here, so raising WEEKLY_KUDOS_LIMIT server-side
       // can never leave this subtitle quoting a stale number again. The

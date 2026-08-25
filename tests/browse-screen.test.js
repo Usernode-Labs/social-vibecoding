@@ -300,7 +300,7 @@ test('rowView: an app-store row — icon, name, meta, Add state', () => {
   // the two labels are browse-list.tsx's.
   assert.equal(fresh.added, false);
   assert.equal(rowFor(state, 'mine').added, true);
-  assert.match(rowFor(state, 'mine').addTitle, /tap to remove/);
+  assert.match(rowFor(state, 'mine').addTitle, /Tap to remove/);
   // The "…" menu is gone from this screen — the detail page absorbed it.
   assert.doesNotMatch(BROWSE_SRC, /card-menu-btn/);
   assert.doesNotMatch(BROWSE_SRC, /card-add-btn/, 'the corner badge is a real button now');

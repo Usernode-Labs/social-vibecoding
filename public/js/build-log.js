@@ -49,7 +49,7 @@ const BuildLog = {
       bodyHtml = `
         <p class="text-sm text-zinc-500 dark:text-zinc-400">
           No build failure detail is recorded for this app. Failures that
-          happened before this feature shipped weren't captured — retry the
+          happened before this feature shipped weren't captured. Retry the
           deploy to record a fresh log.
         </p>`;
     } else {

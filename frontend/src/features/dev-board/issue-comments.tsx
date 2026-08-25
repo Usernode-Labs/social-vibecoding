@@ -55,7 +55,7 @@ export function IssueCommentsView({ comments, truncated, htmlUrl }: IssueComment
       <div className="text-[0.9375rem] text-zinc-500 dark:text-zinc-500 px-1">Discussion</div>
       {truncated ? (
         <div className="text-[11px] text-zinc-500 dark:text-zinc-500 px-1">
-          {'Earlier comments omitted — '}
+          {'Earlier comments omitted. '}
           {htmlUrl ? (
             <a
               href={htmlUrl}
@@ -63,9 +63,9 @@ export function IssueCommentsView({ comments, truncated, htmlUrl }: IssueComment
               rel="noopener"
               className="underline hover:text-zinc-600 dark:hover:text-zinc-300"
             >
-              view the full thread on GitHub
+              View the full thread on GitHub
             </a>
-          ) : 'view the full thread on GitHub'}
+          ) : 'View the full thread on GitHub'}
           .
         </div>
       ) : null}

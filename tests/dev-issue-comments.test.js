@@ -82,12 +82,12 @@ test('a truncated thread says so, and links out when it can', () => {
     truncated: true,
     htmlUrl: 'https://github.com/example/app/issues/1',
   });
-  assert.match(linked, /Earlier comments omitted — /);
-  assert.match(linked, /<a href="https:\/\/github.com\/example\/app\/issues\/1" target="_blank" rel="noopener"[^>]*>view the full thread on GitHub<\/a>/);
+  assert.match(linked, /Earlier comments omitted\. /);
+  assert.match(linked, /<a href="https:\/\/github.com\/example\/app\/issues\/1" target="_blank" rel="noopener"[^>]*>View the full thread on GitHub<\/a>/);
 
   // No URL: the same sentence, without a dead link.
   const bare = render({ comments: [comment()], truncated: true });
-  assert.match(bare, /Earlier comments omitted — view the full thread on GitHub\./);
+  assert.match(bare, /Earlier comments omitted\. View the full thread on GitHub\./);
   assert.ok(!bare.includes('<a '), 'nothing to link to, so no anchor');
 
   // Not truncated: no notice at all.

@@ -56,7 +56,7 @@ test('salvage: suggestions with empty question labels fall back to a generic ask
   const suggestions = [{ question: '', answers: ['Dark', 'Light'] }];
   assert.equal(
     salvageAssistantText('', suggestions, null),
-    'I have a couple of clarifying questions — pick an answer below.'
+    'I have a couple of clarifying questions. Pick an answer below.'
   );
 });
 
@@ -210,12 +210,12 @@ test('errors: opaque 429 gets a rate-limit framing', () => {
 
 test('errors: 529 maps to the overloaded line', () => {
   const err = Object.assign(new Error('upstream unavailable'), { status: 529 });
-  assert.equal(describeTurnError(err), 'The AI provider is overloaded right now — try again in a minute.');
+  assert.equal(describeTurnError(err), 'The AI provider is overloaded right now. Try again in a minute.');
 });
 
 test('errors: "overloaded" in the message maps even without a status code', () => {
   const err = new Error('Overloaded');
-  assert.equal(describeTurnError(err), 'The AI provider is overloaded right now — try again in a minute.');
+  assert.equal(describeTurnError(err), 'The AI provider is overloaded right now. Try again in a minute.');
 });
 
 test('errors: statusCode is honored as an alias for status', () => {

@@ -88,7 +88,7 @@
       + '    </button>'
       + '  </div>'
       + '  <div class="px-4 py-3 overflow-y-auto">'
-      + '    <p class="text-xs text-zinc-600 dark:text-zinc-300">This session stays right here — same transcript, same branch, same proposal. Its turns just run through Claude Code on your machine, on your own Claude plan, and each one asks in your terminal before it starts.</p>'
+      + '    <p class="text-xs text-zinc-600 dark:text-zinc-300">This session stays right here: same transcript, same branch, same proposal. Its turns just run through Claude Code on your machine, on your own Claude plan, and each one asks in your terminal before it starts.</p>'
       + '    <pre id="dc-options-commands" class="mt-3 rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 p-3 text-[0.7rem] leading-relaxed font-mono whitespace-pre-wrap break-words select-text text-zinc-700 dark:text-zinc-300">'
       + escapeHtml(cmdText)
       + '</pre>'

@@ -2712,6 +2712,40 @@ This is an agent-facing quality aid. The before/after screenshots and
 the "Test this change" button (driven by the TESTING block) remain the
 reviewer-facing tools and are unchanged.
 
+## Writing user-facing copy: no em dashes
+
+**Do not use an em dash (`—`) in any string a user reads.** Button
+labels, headings, empty states, toasts, validation errors, push and email
+bodies, `dapp.json` descriptions: all of it. A dash-heavy line is the single
+strongest tell that copy was machine-written, and an app full of them feels
+generated rather than made. The rule covers every encoding an em dash arrives
+in (the raw character, `&mdash;`, `&#8212;`, and the `\u2014` escape), because
+a sweep that only greps for the raw character misses whole files.
+
+Reach for the punctuation the sentence actually wants:
+
+- **Status then instruction** (`Upload failed — try again`) becomes two
+  sentences: `Upload failed. Try again.` This is the default when nothing
+  else fits, and on a push body or a table cell it is also the shortest fix.
+- **Label and value**, or a heading and its qualifier, takes a colon:
+  `Failed step: cloning the repository`.
+- **A trailing qualifier**, especially `optional`, takes parentheses:
+  `Display name (optional)`.
+- **Cause and consequence** takes `, so` or `, because`, or a colon.
+- **A mid-sentence aside** takes commas, or gets restructured. If you remove
+  one dash of a bracketing pair, remove the other one too. A single leftover
+  dash reads worse than the pair did.
+
+**Never substitute a plain hyphen or a spaced hyphen.** `Upload failed - try
+again` reads as a typo and keeps exactly the texture the rule exists to
+remove.
+
+Three uses are not prose punctuation and stay: a lone `—` rendered as the
+placeholder for a missing value, a `— Section —` separator row in a picker,
+and an en dash in a numeric range (`20–60 seconds`). Comments, README and
+docs prose, and LLM prompt text are agent-facing rather than user-facing, so
+they are out of scope, this document's own prose included.
+
 ## Outputting file edits
 
 When Claude Code outputs updated file contents, use the standard

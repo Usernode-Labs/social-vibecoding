@@ -1373,8 +1373,8 @@ test('an unusable route is dropped rather than stored, and the rules are the blo
   // but doing it silently left the author with no signal at all until
   // `captureDefaultedToRoot` came back minutes later on another endpoint.
   assert.deepEqual(result.testingPathsRejected, [
-    'https://evil.test/steal (not a usable in-app path — it must start with a single "/")',
-    '//evil.test (not a usable in-app path — it must start with a single "/")',
+    'https://evil.test/steal (not a usable in-app path: it must start with a single "/")',
+    '//evil.test (not a usable in-app path: it must start with a single "/")',
     '/ok?x=1 (already listed)',
     '/c (over the 3-route cap)',
     '/d (over the 3-route cap)',
@@ -1395,7 +1395,7 @@ test('a route the caller already had rejected is still reported back (#1214)', a
   assert.equal(result.ok, true);
   assert.deepEqual(result.testingPaths, ['/kept']);
   assert.deepEqual(result.testingPathsRejected, [
-    'nope (not a usable in-app path — it must start with a single "/")',
+    'nope (not a usable in-app path: it must start with a single "/")',
   ]);
 });
 

@@ -95,7 +95,7 @@ function validateAvatarUpload(data) {
   if (data.length > MAX_AVATAR_BYTES) {
     return {
       ok: false,
-      error: `Image too large (max ${Math.round(MAX_AVATAR_BYTES / 1024)} KB) — try a smaller photo`,
+      error: `Image too large (max ${Math.round(MAX_AVATAR_BYTES / 1024)} KB). Try a smaller photo`,
     };
   }
   const contentType = sniffImageType(data);

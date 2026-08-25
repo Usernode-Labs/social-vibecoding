@@ -219,7 +219,7 @@ async function hasByokKeyOnFile(pool, userId) {
 // (limits.claimByokSwitchNotice). The copy is day-scoped to match — it is no
 // longer describing just "this turn".
 async function emitSwitchNotice(pool, sessionId, userId) {
-  const text = 'Your free daily AI credits ran out — work is now continuing on your Anthropic API key. Credits reset at midnight UTC.';
+  const text = 'Your free daily AI credits ran out. Work is now continuing on your Anthropic API key. Credits reset at midnight UTC.';
   try {
     await pool.query(
       `INSERT INTO chat_session_messages (session_id, role, content, metadata)

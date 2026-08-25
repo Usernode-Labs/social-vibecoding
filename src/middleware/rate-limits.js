@@ -90,7 +90,7 @@ const appCreateLimiter = makeLimiter({
   max: 5,
   name: 'app-create',
   keyByUser: true,
-  message: 'You\'ve created a lot of apps recently — try again in a bit',
+  message: 'You\'ve created a lot of apps recently. Try again in a bit',
 });
 
 // Issue / rename / visibility proposals: 20 / hour / user. Loose enough
@@ -155,7 +155,7 @@ const chatLimiter = makeLimiter({
   max: 30,
   name: 'chat',
   keyByUser: true,
-  message: 'Too many chat messages — slow down for a minute.',
+  message: 'Too many chat messages. Slow down for a minute.',
 });
 
 // Native app/group-chat JSON writes: 60 / minute / user. Browser clients
@@ -168,7 +168,7 @@ const groupChatWriteLimiter = makeLimiter({
   max: 60,
   name: 'group-chat-write',
   keyByUser: true,
-  message: 'Too many discussion messages — slow down for a minute.',
+  message: 'Too many discussion messages. Slow down for a minute.',
 });
 
 // Platform Messages has separate safety buckets from app group chat. Failed
@@ -179,7 +179,7 @@ const conversationMessageLimiter = makeLimiter({
   max: 60,
   name: 'conversation-message',
   keyByUser: true,
-  message: 'Too many messages — slow down for a minute.',
+  message: 'Too many messages. Slow down for a minute.',
 });
 
 const conversationActionLimiter = makeLimiter({
@@ -187,7 +187,7 @@ const conversationActionLimiter = makeLimiter({
   max: 20,
   name: 'conversation-action',
   keyByUser: true,
-  message: 'Too many conversation or invitation changes — try again later.',
+  message: 'Too many conversation or invitation changes. Try again later.',
 });
 
 // Consent exits must never share a bucket with invitation churn: a user who
@@ -198,7 +198,7 @@ const conversationSafetyLimiter = makeLimiter({
   max: 120,
   name: 'conversation-safety',
   keyByUser: true,
-  message: 'Too many consent changes — slow down and try again.',
+  message: 'Too many consent changes. Slow down and try again.',
 });
 
 // express-rate-limit increments once per request. Group APIs batch recipients,
@@ -222,7 +222,7 @@ function conversationInviteLimiter(req, res, next) {
     });
     res.set('Retry-After', String(retryAfterSeconds));
     return res.status(429).json({
-      error: 'Too many conversation invitations — try again later.',
+      error: 'Too many conversation invitations. Try again later.',
       retryAfterSeconds,
     });
   }
@@ -235,7 +235,7 @@ const conversationReactionLimiter = makeLimiter({
   max: 120,
   name: 'conversation-reaction',
   keyByUser: true,
-  message: 'Too many reactions — slow down for a minute.',
+  message: 'Too many reactions. Slow down for a minute.',
 });
 
 // #1280: saving/unsaving a group-chat message. Sized like the reaction
@@ -248,7 +248,7 @@ const messageBookmarkLimiter = makeLimiter({
   max: 120,
   name: 'message-bookmark',
   keyByUser: true,
-  message: 'Too many saves — slow down for a minute.',
+  message: 'Too many saves. Slow down for a minute.',
 });
 
 const conversationReportLimiter = makeLimiter({
@@ -256,7 +256,7 @@ const conversationReportLimiter = makeLimiter({
   max: 10,
   name: 'conversation-report',
   keyByUser: true,
-  message: 'Too many reports — try again later.',
+  message: 'Too many reports. Try again later.',
 });
 
 // #556: live title previews for the feedback modal (POST /api/feedback/
@@ -270,7 +270,7 @@ const feedbackTitleLimiter = makeLimiter({
   max: 20,
   name: 'feedback-title',
   keyByUser: true,
-  message: 'Too many title previews — slow down for a minute.',
+  message: 'Too many title previews. Slow down for a minute.',
 });
 
 // Dev-chat attachment uploads (#450): 30 / minute / user. Each upload is
@@ -283,7 +283,7 @@ const attachmentUploadLimiter = makeLimiter({
   max: 30,
   name: 'attachment-upload',
   keyByUser: true,
-  message: 'Too many file uploads — slow down for a minute.',
+  message: 'Too many file uploads. Slow down for a minute.',
 });
 
 // App file-storage uploads via the shell relay (#752): 20 / minute /
@@ -297,7 +297,7 @@ const appFileUploadLimiter = makeLimiter({
   max: 20,
   name: 'app-file-upload',
   keyByUser: true,
-  message: 'Too many file uploads — slow down for a minute.',
+  message: 'Too many file uploads. Slow down for a minute.',
 });
 
 // #683: feedback-modal screenshot uploads. Each is a ≤4 MB bytea INSERT;
@@ -309,7 +309,7 @@ const issueScreenshotLimiter = makeLimiter({
   max: 10,
   name: 'issue-screenshot-upload',
   keyByUser: true,
-  message: 'Too many screenshot uploads — slow down for a few minutes.',
+  message: 'Too many screenshot uploads. Slow down for a few minutes.',
 });
 
 // Profile customization writes (issue #982): PATCH /api/me/profile plus
@@ -325,7 +325,7 @@ const profileWriteLimiter = makeLimiter({
   max: 20,
   name: 'profile-write',
   keyByUser: true,
-  message: 'Too many profile updates — slow down for a minute.',
+  message: 'Too many profile updates. Slow down for a minute.',
 });
 
 // Username changes: 5 / hour / user. The 30-day cooldown in
@@ -339,7 +339,7 @@ const usernameChangeLimiter = makeLimiter({
   max: 5,
   name: 'username-change',
   keyByUser: true,
-  message: 'Too many username attempts — try again in a little while.',
+  message: 'Too many username attempts. Try again in a little while.',
 });
 
 // Priority / assignee attribute votes: 60 / minute / user. Loose enough
@@ -350,7 +350,7 @@ const attributeVoteLimiter = makeLimiter({
   max: 60,
   name: 'attribute-vote',
   keyByUser: true,
-  message: 'Too many updates — slow down for a minute.',
+  message: 'Too many updates. Slow down for a minute.',
 });
 
 // #613: drag-and-drop reorder of Dev-board cards. Dragging is bursty (a
@@ -362,7 +362,7 @@ const boardOrderLimiter = makeLimiter({
   max: 60,
   name: 'board-order',
   keyByUser: true,
-  message: 'Too many reorder updates — slow down for a minute.',
+  message: 'Too many reorder updates. Slow down for a minute.',
 });
 
 // #911: per-user show/hide of a home-screen panel. A checkbox flip is a
@@ -373,7 +373,7 @@ const homePanelPrefLimiter = makeLimiter({
   max: 30,
   name: 'home-panel-pref',
   keyByUser: true,
-  message: 'Too many changes — slow down for a minute.',
+  message: 'Too many changes. Slow down for a minute.',
 });
 
 // Free-form home-grid placement: one PUT per completed drag, and a drag is a
@@ -387,7 +387,7 @@ const homeLayoutLimiter = makeLimiter({
   max: 120,
   name: 'home-layout',
   keyByUser: true,
-  message: 'Too many layout changes — slow down for a minute.',
+  message: 'Too many layout changes. Slow down for a minute.',
 });
 
 // #940: saved dev-chat drafts, now server-backed. One write per deliberate
@@ -401,7 +401,7 @@ const draftWriteLimiter = makeLimiter({
   max: 60,
   name: 'chat-drafts',
   keyByUser: true,
-  message: 'Too many draft updates — slow down for a minute.',
+  message: 'Too many draft updates. Slow down for a minute.',
 });
 
 // Platform database export tickets: 3 / 24h / full admin. Each ticket
@@ -450,7 +450,7 @@ const topochainMobileAuthLimiter = makeLimiter({
   windowMs: 60 * 1000,
   max: 10,
   name: 'topochain-mobile-auth',
-  message: 'Too many requests — slow down for a minute.',
+  message: 'Too many requests. Slow down for a minute.',
 });
 
 // Authenticated device-state synchronization. Normal lifecycle traffic is a
@@ -461,7 +461,7 @@ const topochainMobilePushRegistrationLimiter = makeLimiter({
   max: 60,
   name: 'topochain-mobile-push-registration',
   keyByUser: true,
-  message: 'Too many push registration updates — slow down for a minute.',
+  message: 'Too many push registration updates. Slow down for a minute.',
 });
 
 // Public waitlist join: 5 / 15 min / IP. Anonymous write endpoint on the
@@ -471,7 +471,7 @@ const waitlistJoinLimiter = makeLimiter({
   windowMs: 15 * 60 * 1000,
   max: 5,
   name: 'waitlist-join',
-  message: 'Too many signups from this address — try again in a few minutes.',
+  message: 'Too many signups from this address. Try again in a few minutes.',
 });
 
 // Waitlist token routes (confirm link, stage-2 survey read/save): these are
@@ -484,7 +484,7 @@ const waitlistTokenLimiter = makeLimiter({
   windowMs: 15 * 60 * 1000,
   max: 60,
   name: 'waitlist-token',
-  message: 'Too many waitlist requests from this address — try again in a few minutes.',
+  message: 'Too many waitlist requests from this address. Try again in a few minutes.',
 });
 
 // Exact public-profile reads deliberately have no directory/search endpoint;
@@ -493,7 +493,7 @@ const publicProfileReadLimiter = makeLimiter({
   windowMs: 60 * 1000,
   max: 120,
   name: 'public-profile-read',
-  message: 'Too many profile lookups — slow down for a minute.',
+  message: 'Too many profile lookups. Slow down for a minute.',
 });
 
 const profileReportLimiter = makeLimiter({
@@ -502,7 +502,7 @@ const profileReportLimiter = makeLimiter({
   name: 'profile-report',
   keyByUser: true,
   skipFailedRequests: true,
-  message: 'Too many profile reports — try again later.',
+  message: 'Too many profile reports. Try again later.',
 });
 
 // Admin "send a test email": 10 / hour / full admin. This is the one
@@ -561,7 +561,7 @@ const userDirectoryLimiter = makeLimiter({
   max: 120,
   name: 'user-directory',
   keyByUser: true,
-  message: 'Too many directory lookups — please slow down.',
+  message: 'Too many directory lookups. Please slow down.',
 });
 
 module.exports = { userDirectoryLimiter, dbExportLimiter, authLimiter, homePanelPrefLimiter, homeLayoutLimiter, draftWriteLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, groupChatWriteLimiter, conversationMessageLimiter, conversationActionLimiter, conversationSafetyLimiter, conversationInviteLimiter, conversationReactionLimiter, conversationReportLimiter, messageBookmarkLimiter, attributeVoteLimiter, attachmentUploadLimiter, appFileUploadLimiter, feedbackTitleLimiter, boardOrderLimiter, issueScreenshotLimiter, profileWriteLimiter, usernameChangeLimiter, publicProfileReadLimiter, profileReportLimiter, topochainMobileAuthLimiter, topochainMobilePushRegistrationLimiter, reportAiLimiter, reportSnapshotLimiter, waitlistJoinLimiter, waitlistTokenLimiter, mailTestLimiter };

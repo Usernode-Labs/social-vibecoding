@@ -60,8 +60,8 @@ interface Row {
 const DB_EXPORT_REASONS: Record<string, string> = {
   staging: 'Database export is disabled in staging previews.',
   unavailable: 'Database export is unavailable on this deployment.',
-  in_progress: 'An export is already in progress — try again shortly.',
-  rate_limited: 'Daily export limit reached — try again later.',
+  in_progress: 'An export is already in progress. Try again shortly.',
+  rate_limited: 'Daily export limit reached. Try again later.',
 };
 
 const DB_EXPORT_STATUS_BADGE: Record<string, { label: string; cls: string }> = {
@@ -158,7 +158,7 @@ function DbExportSection() {
     if (httpStatus === 403) { setStatus(null); setStatusText('Admin access required.'); return; }
     if (!data || typeof data !== 'object') {
       setStatus(null);
-      setStatusText('Couldn’t read the export status — try Refresh.');
+      setStatusText('Couldn’t read the export status. Try Refresh.');
       return;
     }
     setStatusText(null);
@@ -217,7 +217,7 @@ function DbExportSection() {
       timers.current.push(setTimeout(() => loadHistory(), 12000));
     } catch {
       if (!alive.current) return;
-      setError('Network error — the export was not started.');
+      setError('Network error. The export was not started.');
       setBusy(false);
     }
   };
@@ -225,7 +225,7 @@ function DbExportSection() {
   return (
     <div id="admin-db-export-panel" className="space-y-4">
       <div className="rounded-lg border border-red-300 dark:border-red-900 bg-red-50 dark:bg-red-950/40 p-4">
-        <h2 className="text-lg font-semibold text-red-700 dark:text-red-300">Database export — handle as a credential</h2>
+        <h2 className="text-lg font-semibold text-red-700 dark:text-red-300">Database export: handle as a credential</h2>
         <p className="text-sm text-red-800 dark:text-red-200 mt-2">
           This downloads an unredacted copy of durable platform data. Ephemeral mobile push registrations and delivery rows are excluded.
           Anyone holding the file can take over accounts and reach every app&apos;s data.
@@ -241,7 +241,7 @@ function DbExportSection() {
         </ul>
         <p className="text-sm text-red-800 dark:text-red-200 mt-3">
           {'It does '}<span className="font-semibold">not</span>
-          {' contain the individual apps’ own databases, uploaded app-file bytes (those live in object storage), the chain node’s data, or the platform’s environment file — which matters, because the key that decrypts the API-key and app-secret blobs lives only there.'}
+          {' contain the individual apps’ own databases, uploaded app-file bytes (those live in object storage), the chain node’s data, or the platform’s environment file, which matters because the key that decrypts the API-key and app-secret blobs lives only there.'}
         </p>
       </div>
 
@@ -326,15 +326,15 @@ function DbExportSection() {
       <details id="admin-db-export-guidance" open={guidanceOpen} onToggle={(e) => setGuidanceOpen((e.target as HTMLDetailsElement).open)}
         className="rounded-lg border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 p-4">
         <summary className="text-sm font-semibold text-amber-800 dark:text-amber-200 cursor-pointer">
-          After you download it — and what to do if it leaks
+          After you download it, and what to do if it leaks
         </summary>
         <ul className="text-sm text-amber-800 dark:text-amber-200 mt-3 list-disc pl-5 space-y-1">
           <li>Treat the file as a live credential: keep it encrypted, never on shared storage, and delete it when you&apos;re done.</li>
           <li>
-            {'It is unencrypted in your Downloads folder — gzip is compression, not protection; cloud backup may sync it and anyone can read it with '}
+            {'It is unencrypted in your Downloads folder. Gzip is compression, not protection; cloud backup may sync it and anyone can read it with '}
             <code className="font-mono">zless</code>{'.'}
           </li>
-          <li>If it may have been exposed, deletion is not enough — rotate:</li>
+          <li>If it may have been exposed, deletion is not enough. Rotate:</li>
           <li className="list-none pl-4">— the platform JWT secret (invalidates every session; stored API keys and app secrets must be re-entered afterwards)</li>
           <li className="list-none pl-4">— the platform database password</li>
           <li className="list-none pl-4">— every per-app database password, LLM proxy token and storage token</li>
@@ -346,7 +346,7 @@ function DbExportSection() {
       <div className={`${AdminUI.card} p-4`}>
         <div className="flex flex-wrap items-center justify-between gap-3 mb-1">
           <h3 className="text-base font-semibold">Export history</h3>
-          <span className="text-xs text-zinc-500 dark:text-zinc-400">Append-only — cannot be cleared</span>
+          <span className="text-xs text-zinc-500 dark:text-zinc-400">Append-only: cannot be cleared</span>
         </div>
         <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-3">Every attempt, including refused ones, is recorded here permanently.</p>
         <div id="admin-db-export-history" className="space-y-2">

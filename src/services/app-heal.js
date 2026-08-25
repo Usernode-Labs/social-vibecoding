@@ -149,7 +149,7 @@ async function provisionMissingRepo(config, pool, app) {
   // anything (no repo_url → no PRs), and the template push below just
   // commits on top of whatever the orphan contains.
   const repo = await github.createRepo(botUsername, app.slug, {
-    description: `${app.name} — built on Usernode Social Vibecoding`,
+    description: `${app.name}: built on Usernode Social Vibecoding`,
     adoptExisting: true,
   });
   const repoUrl = repo.html_url;
