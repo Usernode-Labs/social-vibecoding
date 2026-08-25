@@ -32,6 +32,7 @@ const path = require('path');
 
 const {
   isImmuneApiRequest,
+  isShellDocumentUrl,
   raceNetworkAndCache,
   bytesEqual,
   API_CACHE,
@@ -47,6 +48,22 @@ const SW_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'sw.js'), 'utf8'
 );
 const ORIGIN = 'https://social-vibecoding.example';
+
+// One strategy's source, bounded by the NEXT strategy rather than by a
+// character count. A fixed-length slice silently runs past the end of a
+// short function into its neighbour, which is how the assertion below that
+// every tier writes to its cache passed while networkFirstNavigate — the
+// one that did not — sat right in front of the one that did.
+const STRATEGIES = ['networkFirstShell', 'networkFirstNavigate', 'networkFirstApi'];
+const strategyBody = (fn) => {
+  const start = SW_SRC.indexOf(`async function ${fn}(`);
+  assert.ok(start !== -1, `${fn} not found in sw.js`);
+  const ends = STRATEGIES
+    .filter((other) => other !== fn)
+    .map((other) => SW_SRC.indexOf(`async function ${other}(`, start))
+    .filter((at) => at !== -1);
+  return SW_SRC.slice(start, ends.length ? Math.min(...ends) : undefined);
+};
 
 // A schedule() that fires deadlines on demand instead of on a clock, so
 // these tests are instant and can't flake on a loaded machine.
@@ -256,12 +273,97 @@ test('all three network-first strategies carry a deadline', () => {
     'the API tier must be more patient than the shell tier');
 
   for (const fn of ['networkFirstShell', 'networkFirstNavigate', 'networkFirstApi']) {
-    const body = SW_SRC.slice(SW_SRC.indexOf(`async function ${fn}(`));
-    assert.match(body.slice(0, 2600), /raceNetworkAndCache/,
+    const body = strategyBody(fn);
+    assert.match(body, /raceNetworkAndCache/,
       `${fn} does not use the deadline helper`);
-    assert.match(body.slice(0, 2600), /event\.waitUntil\(pending/,
-      `${fn} drops the in-flight request instead of letting it refresh the cache`);
+    assert.match(body, /event\.waitUntil\(pending/,
+      `${fn} drops the in-flight request instead of keeping it alive`);
+    // Keeping the request ALIVE is only half of it, and the half that is
+    // easy to have without the other. raceNetworkAndCache deliberately
+    // leaves the cache write to the caller's startFetch, so a strategy that
+    // waits on `pending` and never stores the result serves a stale copy
+    // for the life of the worker while still calling itself network-first.
+    // That is exactly what networkFirstNavigate did. The write is spelled
+    // differently in each tier — the API one goes through stampAndPut so
+    // the entry carries its cached-at header — so accept either.
+    assert.match(body, /cache\.put\(|stampAndPut\(cache/,
+      `${fn}'s startFetch never writes the response to the cache`);
   }
+});
+
+// ── 2b. The cached document has to track the deploy ──────────────────
+//
+// install() writes /index.html into the shell cache exactly once per
+// worker, and the navigation strategy reads that key on every load that
+// misses the deadline — which, with the deadline deliberately set below a
+// round trip, is most of them. So if the navigation never writes the key
+// back, the cached shell freezes at whatever shipped the last time sw.js
+// changed bytes, and no later deploy can dislodge it.
+//
+// The symptom that surfaced it: #1400 moved the body ground from bg-white
+// to bg-zinc-100 without touching sw.js, so an ordinary load rendered the
+// old white page while a hard refresh — which bypasses the worker — showed
+// the new grey one, indefinitely.
+
+test('the navigation writes the fresh document back under the read key', () => {
+  const nav = SW_SRC.slice(
+    SW_SRC.indexOf('async function networkFirstNavigate('),
+    SW_SRC.indexOf('async function networkFirstApi(')
+  );
+  // The key is what matters, not merely that a put happens: matchCache
+  // reads the fixed '/index.html', so storing under event.request would
+  // fill the cache with per-route copies and leave the one key that is
+  // actually read as stale as before.
+  assert.match(nav, /cache\.put\('\/index\.html'/,
+    'the refreshed document must land on the key matchCache reads');
+  assert.match(nav, /matchCache: \(\) => cache\.match\('\/index\.html'\)/,
+    'and that key must still be the one read back');
+  assert.doesNotMatch(nav, /startFetch: \(\) => fetch\(event\.request\),/,
+    'a bare startFetch is the bug: nothing refreshes the cached shell');
+});
+
+test('only the real shell document may be stored as the shell', () => {
+  // classifyRequest returns 'navigate' for far more than the shell's own
+  // two URLs. #860's redirect stubs are ~1KB of location.replace(): the
+  // right thing to SERVE the cached shell for offline, and a disaster to
+  // STORE as it — every later cache-served navigation would get a stub
+  // instead of the app, which is strictly worse than the staleness this
+  // whole section fixes.
+  for (const p of ['/', '/index.html']) {
+    assert.equal(isShellDocumentUrl(`${ORIGIN}${p}`, ORIGIN), true, p);
+  }
+  for (const p of [
+    '/login.html', '/register.html', '/dashboard.html', '/gallery.html',
+    '/admin.html', '/status.html', '/debug.html', '/node-status.html',
+    '/landing.html', '/waiting.html', '/admin-features.html',
+    '/cli-authorize.html', '/connect-authorize.html', '/reports/tok',
+  ]) {
+    assert.equal(isShellDocumentUrl(`${ORIGIN}${p}`, ORIGIN), false, p);
+  }
+  // A query string or hash is still the shell — every SPA route is a hash
+  // route, and /?return_to=… is the CLI authorize hand-off.
+  assert.equal(isShellDocumentUrl(`${ORIGIN}/#app/x/dev`, ORIGIN), true);
+  assert.equal(isShellDocumentUrl(`${ORIGIN}/?return_to=abc`, ORIGIN), true);
+  // Cross-origin and unparseable inputs are refused rather than thrown on.
+  assert.equal(isShellDocumentUrl('https://elsewhere.example/', ORIGIN), false);
+  assert.equal(isShellDocumentUrl('::not a url::', ORIGIN), false);
+});
+
+test('a redirect or an error response is never stored as the shell', () => {
+  const nav = SW_SRC.slice(
+    SW_SRC.indexOf('async function networkFirstNavigate('),
+    SW_SRC.indexOf('async function networkFirstApi(')
+  );
+  // Everything navigable that is not the shell bounces to '/' at the
+  // server (middleware/auth.js), so the response reaching here for those
+  // is a redirect — and a redirected 200 for /login.html carries the
+  // stub's URL, not the shell's.
+  assert.match(nav, /!res\.redirected/,
+    'a followed redirect must not be mistaken for the shell document');
+  assert.match(nav, /res\.ok/,
+    'a 4xx/5xx error page must never replace the cached shell');
+  assert.match(nav, /isShellDocumentUrl\(event\.request\.url, ORIGIN\)/,
+    'the path guard must be applied to the request that was actually made');
 });
 
 // ── 3. One build per page load ───────────────────────────────────────
@@ -274,7 +376,7 @@ test('all three network-first strategies carry a deadline', () => {
 
 test('the navigation publishes its cache/network verdict for the load', () => {
   const nav = SW_SRC.slice(SW_SRC.indexOf('async function networkFirstNavigate('));
-  assert.match(nav.slice(0, 1400), /shellFromCacheThisLoad = fromCache/,
+  assert.match(nav.slice(0, 3600), /shellFromCacheThisLoad = fromCache/,
     'the navigation must record whether it was answered from cache');
 });
 

@@ -326,6 +326,32 @@ function classifyRequest(method, url, acceptHeader, mode, selfOrigin) {
   return 'bypass';
 }
 
+// The two URLs at which the server serves the SPA shell ITSELF, as opposed
+// to a document that merely falls back to it offline. `networkFirstNavigate`
+// caches under the fixed '/index.html' key — one document answers every hash
+// route — so it may only write back a response that really IS that document.
+//
+// The distinction matters because `classifyRequest` returns 'navigate' for
+// far more than these two. /login.html, /dashboard.html, /gallery.html and
+// the rest of #860's redirect stubs are a KB of `location.replace()` each:
+// correct to *serve* the cached shell for when offline, catastrophic to
+// *store* as the cached shell, which would leave every later cache-served
+// navigation holding a stub instead of the app. Anything else navigable
+// bounces to '/' at the server (middleware/auth.js), so its response is a
+// redirect rather than the shell too.
+//
+// Pure, and exported, so tests/pwa-offline-cache.test.js can pin the stub
+// list directly rather than inferring the guard from source text.
+const SHELL_DOCUMENT_PATHS = ['/', '/index.html'];
+
+function isShellDocumentUrl(url, selfOrigin) {
+  try {
+    const u = new URL(url, selfOrigin);
+    if (u.origin !== selfOrigin) return false;
+    return SHELL_DOCUMENT_PATHS.includes(u.pathname);
+  } catch { return false; }
+}
+
 // Is this cached API entry exempt from eviction? Pure so the trim and
 // age-prune passes can be pinned in Node.
 function isImmuneApiRequest(url, selfOrigin) {
@@ -417,6 +443,8 @@ if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     classifyRequest,
     isImmuneApiRequest,
+    isShellDocumentUrl,
+    SHELL_DOCUMENT_PATHS,
     raceNetworkAndCache,
     bytesEqual,
     SHELL_ASSETS,
@@ -576,12 +604,43 @@ if (typeof module !== 'undefined' && module.exports) {
 
   async function networkFirstNavigate(event) {
     const cache = await caches.open(SHELL_CACHE);
+
+    // The cached document MUST be refreshed from here, and this is the only
+    // place that can do it. install() precaches /index.html once per worker
+    // and nothing else ever writes that key, so without this the cached
+    // shell is frozen at whatever shipped the last time sw.js itself changed
+    // bytes — and every load that misses the 200ms deadline (i.e. most of
+    // them: the deadline is deliberately BELOW a round trip) serves it.
+    //
+    // That is not a hypothetical. #1400 moved the page ground from
+    // `bg-white` to `bg-zinc-100` in the <body> class and, correctly, did
+    // not touch this file — so install() never re-ran, and every ordinary
+    // load kept rendering the pre-reskin document with the white ground
+    // while a hard refresh, which bypasses the worker entirely, showed the
+    // new grey one. It could not self-heal, because the deploy that would
+    // have fixed it is exactly the thing not being stored.
+    //
+    // Written under the FIXED '/index.html' key, not event.request: that is
+    // the key matchCache reads for every route, and storing per-URL would
+    // leave the one key that is actually read still stale. Guarded by
+    // isShellDocumentUrl for the reason given there — 'navigate' also
+    // covers the redirect stubs, and caching one of those AS the shell
+    // would be far worse than the staleness this fixes.
+    const fetchAndCache = () => fetch(event.request).then((res) => {
+      // Clone synchronously, before the page can start reading the body.
+      if (res && res.ok && !res.redirected
+          && isShellDocumentUrl(event.request.url, ORIGIN)) {
+        cache.put('/index.html', res.clone()).catch(() => {});
+      }
+      return res;
+    });
+
     // Any SPA path serves index.html online (the server's catch-all), so
     // the cached shell is the correct fallback for every route —
     // including the old standalone auth pages, which are redirect stubs
     // into the SPA's hash routes now (fold-auth-pages-into-SPA).
     const { response, fromCache, pending } = await raceNetworkAndCache({
-      startFetch: () => fetch(event.request),
+      startFetch: fetchAndCache,
       matchCache: () => cache.match('/index.html'),
       timeoutMs: NAVIGATE_TIMEOUT_MS,
       schedule: swSchedule,
