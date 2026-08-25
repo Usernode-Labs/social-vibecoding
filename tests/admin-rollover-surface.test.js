@@ -120,9 +120,29 @@ test('the demo job is gated on IS_STAGING && ?demo=1 and never persisted', () =>
 
 test('progress is broadcast to admins only', () => {
   assert.match(wsJs, /function broadcastToAdmins\(payload\)/);
-  const fn = wsJs.slice(wsJs.indexOf('function broadcastToAdmins'));
-  assert.match(fn.slice(0, 500), /client\.user && client\.user\.isAdmin/,
+  // The isAdmin filter lives in the LOCAL half. Cross-instance fan-out split
+  // every broadcast into `deliver*` (this process's sockets) and a wrapper
+  // that also publishes, so the filter moved with the sockets it filters —
+  // and a bus message from another pod re-runs this same function, which is
+  // what keeps the rule true on every instance rather than just the emitter.
+  const local = wsJs.slice(wsJs.indexOf('function deliverToAdmins'));
+  assert.match(local.slice(0, 500), /client\.user && client\.user\.isAdmin/,
     'same isAdmin filter broadcastGlobalScoped applies for private apps');
+  const fn = wsJs.slice(wsJs.indexOf('function broadcastToAdmins'));
+  assert.match(fn.slice(0, 400), /deliverToAdmins\(payload\)/,
+    'the wrapper delegates rather than re-implementing the filter');
+
+  // AND it must publish as 'admins'. This payload is an operational
+  // inventory of every app on the box; publishing it under 'global' would
+  // hand it to every connected client on every OTHER instance — the exact
+  // leak the local filter exists to prevent, reintroduced one layer down
+  // where the filter cannot see it.
+  assert.match(fn.slice(0, 400), /wsBus\.publish\('admins'/,
+    'fanned out to the admin audience, never the global one');
+  const busRoute = wsJs.slice(wsJs.indexOf('function _onBusMessage'));
+  assert.match(busRoute.slice(0, 1600), /case 'admins':\s*\n\s*deliverToAdmins\(payload\);/,
+    'and a remote admins event lands back in the filtered delivery');
+
   assert.match(wsJs, /module\.exports = \{[^}]*broadcastToAdmins/s,
     'exported, or the rollover service cannot reach it');
 

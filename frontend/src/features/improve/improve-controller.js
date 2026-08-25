@@ -68,8 +68,16 @@ function statusLabel(session) {
   return null;
 }
 
+/** ms since epoch, or 0 for anything unparseable — never NaN into a sort. */
+function timeOf(value) {
+  const t = Date.parse(value || '');
+  return Number.isFinite(t) ? t : 0;
+}
+
 function toRow(session, appNameFallback) {
   return {
+    key: `s${session.id}`,
+    kind: 'session',
     id: session.id,
     appSlug: session.app_slug || null,
     appName: session.app_name || appNameFallback || session.app_slug || '',
@@ -81,9 +89,54 @@ function toRow(session, appNameFallback) {
     // all, so every row in the panel read "Untitled session".
     title: session.session_title || session.pr_title || session.branch_name
       || `Session #${session.id}`,
+    href: `#app/${session.app_slug}/dev/sessions/${session.id}`,
     status: statusLabel(session),
     busy: isBusy(session),
+    sortAt: timeOf(session.last_activity_at) || timeOf(session.created_at),
   };
+}
+
+/**
+ * A row for an OPEN connector work order (#1417) — work handed to a coding
+ * agent on the user's own machine, which has no chat_sessions row of its own
+ * until it is shared or submitted.
+ *
+ * `busy` is FALSE, always, and that is a statement rather than a default: the
+ * agent is running somewhere the platform cannot see, so a pulsing dot here
+ * would be an invention. The status carries which agent holds it instead,
+ * which is the honest thing this row does know.
+ *
+ * The destination is the REQUEST, not a session page. There is no transcript
+ * to open, and a row that navigates to a dead end is worse than one that
+ * admits what it is. A task with no request behind it (prepare_work accepts a
+ * bare brief) falls back to the app's Dev board.
+ */
+function taskToRow(task, appNameFallback) {
+  return {
+    key: `t${task.id}`,
+    kind: 'task',
+    id: task.id,
+    appSlug: task.app_slug || null,
+    appName: task.app_name || appNameFallback || task.app_slug || '',
+    title: task.title || `Work order #${task.id}`,
+    href: task.issue_number
+      ? `#app/${task.app_slug}/dev/issues/${task.issue_number}`
+      : `#app/${task.app_slug}/dev`,
+    status: agentLabel(task.agent),
+    busy: false,
+    sortAt: timeOf(task.created_at),
+  };
+}
+
+/**
+ * How the row names the agent holding the work. Deliberately the product
+ * names a person would recognise, mapped from the three values the server
+ * normalizes to — never whatever string a connector client claimed.
+ */
+function agentLabel(agent) {
+  if (agent === 'claude-code') return 'Claude Code';
+  if (agent === 'codex') return 'Codex';
+  return 'Handed off';
 }
 
 const Improve = {
@@ -356,18 +409,41 @@ const Improve = {
    */
   _all: [],
 
+  /**
+   * The same, for OPEN connector work orders (#1417) — kept beside `_all`
+   * rather than merged into it so a reload replaces each list from the field
+   * that produced it, and a server that has not shipped `externalTasks` yet
+   * simply contributes none.
+   */
+  _tasks: [],
+
   _rebucket() {
     const { slug, name } = improveStore.get();
     const mine = [];
     const others = [];
-    for (const session of Improve._all) {
-      const row = toRow(session, session.app_slug === slug ? name : null);
-      if (slug && session.app_slug === slug) mine.push(row);
+    const place = (row, rowSlug) => {
+      if (slug && rowSlug === slug) mine.push(row);
       else others.push(row);
+    };
+    for (const session of Improve._all) {
+      place(toRow(session, session.app_slug === slug ? name : null), session.app_slug);
+    }
+    // #1417: open connector work orders go in the SAME two buckets, by the
+    // same app rule. A row is a row — the panel's question is "what of mine
+    // is in flight on this app", and where the agent happens to be running
+    // is not a reason to make the reader look in a second place for it.
+    for (const task of Improve._tasks) {
+      place(taskToRow(task, task.app_slug === slug ? name : null), task.app_slug);
     }
     // Busy first, then most recently touched — the two things a viewer scanning
     // for "what is running right now" is actually looking for.
-    const order = (a, b) => Number(b.busy) - Number(a.busy) || b.id - a.id;
+    //
+    // Recency is a TIMESTAMP rather than the descending id it used to be.
+    // That proxy only held while every row came from one table: a work order
+    // and a session have unrelated id sequences, so comparing them would sort
+    // by which table the row came from and call it time. `sortAt` is the
+    // server's own last_activity_at, which is already what it orders by.
+    const order = (a, b) => Number(b.busy) - Number(a.busy) || b.sortAt - a.sortAt;
     improveStore.set({
       sessions: mine.sort(order),
       otherSessions: others.sort(order),
@@ -378,11 +454,13 @@ const Improve = {
     const token = ++Improve._loadToken;
     if (!improveStore.get().sessionsLoaded) improveStore.set({ loadingSessions: true });
     let sessions = [];
+    let tasks = [];
     try {
       const res = await fetch(`/api/me/active-sessions${Improve._demoQS()}`);
       if (res.ok) {
         const data = await res.json();
         sessions = Array.isArray(data.sessions) ? data.sessions : [];
+        tasks = Array.isArray(data.externalTasks) ? data.externalTasks : [];
         // Seed the shared live-state store exactly as the cog drawer did, so a
         // session that finishes while the panel is open updates in place
         // instead of going stale until the next open.
@@ -397,6 +475,7 @@ const Improve = {
     // A newer load started while this one was in flight — its answer wins.
     if (token !== Improve._loadToken) return;
     Improve._all = sessions;
+    Improve._tasks = tasks;
     improveStore.set({ loadingSessions: false, sessionsLoaded: true });
     Improve._rebucket();
   },

@@ -1266,7 +1266,8 @@ function issueRoutes(config) {
       const { rows: headlessRows } = await pool.query(
         `SELECT DISTINCT ON (cs.headless_issue_number)
                 cs.headless_issue_number AS n, cs.id, cs.headless_status,
-                cs.headless_outcome, cs.staging_url, cs.pr_number, u.username
+                cs.headless_outcome, cs.staging_url, cs.pr_number, u.username,
+                cs.user_id
            FROM chat_sessions cs LEFT JOIN users u ON u.id = cs.user_id
           WHERE cs.app_id = $1 AND cs.is_headless = TRUE
             AND cs.headless_status IN ('generating', 'ready')
@@ -1302,6 +1303,12 @@ function issueRoutes(config) {
         status: r.headless_status,
         outcome: r.headless_outcome,
         username: r.username,
+        // #1372: whether the VIEWER started this run. `username` cannot
+        // stand in for it — comparing display names client-side is not an
+        // authorization answer, and the client needs a real one here: the
+        // question-outcome button navigates into the run's own session,
+        // which /api/sessions/:id serves only to its owner.
+        mine: r.user_id === req.user.id,
         mySessionId: myCloneByHeadlessId.get(r.id) || null,
         stagingUrl: r.staging_url || null,
         prNumber: r.pr_number || null,
@@ -1443,6 +1450,10 @@ function issueRoutes(config) {
               status: m.status,
               outcome: m.outcome,
               username: 'staging-tester',
+              // No chat_sessions row backs these numbers, so the run-session
+              // navigation has nothing to open — the mock exercises the
+              // not-my-run path on purpose.
+              mine: false,
               mySessionId: null,
               stagingUrl: null,
               prNumber: null,

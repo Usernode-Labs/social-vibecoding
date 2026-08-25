@@ -64,17 +64,17 @@ test('the whole suite fits inside the container run timeout', () => {
 
 test('the budget is big enough for a full manifest at measured speed', () => {
   // Production timing: ~3.9s marginal per check. A FULL manifest at the
-  // ceiling — 430 since the manifest crossed the 20-slot headroom floor at
-  // 382 (400 before that, since PR #1125) — is ~210s of ideal work over a
-  // pool of 8; at the 55-70% efficiency a shared preview actually delivers,
-  // ~300-380s. The budget has to clear that with room, or the tail of a real
-  // manifest gets cut every single build and the checks that were invisible
-  // before become "did not finish" instead.
+  // ceiling — 480 since #1417 (430 before that, 400 since PR #1125) — is
+  // ~234s of ideal work over a pool of 8; at the 55-70% efficiency a shared
+  // preview actually delivers, ~330-425s. The budget has to clear that with
+  // room, or the tail of a real manifest gets cut every single build and the
+  // checks that were invisible before become "did not finish" instead.
   //
   // This is the assertion that makes raising MAX_DECLARED_TESTS cost
-  // something: 430 is exactly where the 420s deadline still clears 2x, so
-  // the NEXT bump has to move the deadline (and RUN_TIMEOUT_MS above it)
-  // with the ceiling.
+  // something, and it is what forced the deadline from 420s to 470s when the
+  // ceiling last moved: at 480 checks the 420s budget cleared only 1.79x. The
+  // NEXT bump has to move this deadline again, and once it passes 480s it has
+  // to move RUN_TIMEOUT_MS with it — that one must stay 120s clear.
   const suiteDeadline = numericConstant('TESTS_DEADLINE_MS');
   const perCheckSeconds = 3.9;
   const pool = capture.poolSize({});

@@ -2378,6 +2378,49 @@ const AppView = {
       || null;
   },
 
+  // ── The one-shot caches go STALE, and nothing else refreshes them ────
+  //
+  // _topicProposal / _topicGov are written once by their fetch-on-demand
+  // path when a topic opens, and cleared only by openTopic. _loadDevData
+  // refreshes the LISTS — _proposals, _merged, _govProposals — so a topic
+  // resolving from one of those repaints with live data on every WS event.
+  // A topic resolving from the on-demand cache repaints from a frozen
+  // snapshot: refreshDevData runs, _loadDevData runs, _renderTopicHead
+  // runs, and nothing on screen changes. The checks badge, the vote tally
+  // and the merge state all sit at whatever they were when the page was
+  // opened, until it is reloaded and the fetch happens again.
+  //
+  // Reachable for any proposal opened from beyond the cached page, and
+  // RELIABLY so for a settled one: _loadDevData resets _merged to page 1 on
+  // every call, so a merged proposal deeper than that drops onto the cache
+  // the moment the first refresh lands — the fallback exists precisely
+  // because of that reset (see _topicProposal's own note below).
+  //
+  // So re-fetch on the same trigger that refreshes the lists. The guards
+  // mirror _findTopicItem's resolution order exactly, so a topic the lists
+  // already cover costs nothing; and both fetchers are best-effort, leaving
+  // the cache untouched on a miss, so the worst case is today's behaviour.
+  async _refreshTopicOnDemandRow() {
+    const t = AppView._devTopic;
+    if (!t) return;
+    // Issues and sessions have no on-demand cache — they resolve from
+    // _ghIssues / _sharedSessions / _mySessions, which _loadDevData owns.
+    if (t.kind === 'issue' || t.kind === 'session') return;
+    if (t.kind === 'proposal') {
+      if ((AppView._proposals || []).some((p) => p.id === t.id)) return;
+      if ((AppView._merged || []).some((p) => p.id === t.id)) return;
+      if (!AppView._topicProposal || AppView._topicProposal.id !== t.id) return;
+      await AppView._fetchProposalById(t.id);
+      return;
+    }
+    // Governance, matching _findTopicItem's trailing branch.
+    if ((AppView._govProposals || []).some((i) => i.id === t.id)) return;
+    if ((AppView._merged || []).some(
+      (r) => r.row_type === 'close_issue' && r.id === t.id)) return;
+    if (!AppView._topicGov || AppView._topicGov.id !== t.id) return;
+    await AppView._fetchGovProposalById(t.id);
+  },
+
   // Single-item cache for a proposal opened from beyond the cached
   // Completed page (the fetch-on-demand recovery path). Kept SEPARATE from
   // _merged because _loadDevData() resets _merged to its first page on
@@ -3684,7 +3727,13 @@ const AppView = {
       // which repaints far more often than the data changes — a vote
       // arriving over the WS is a refresh, a repaint is not.
       if (AppView._devTopic) delete AppView._voteRoster[AppView._devTopic.id];
-      AppView._loadDevData().then(() => AppView._renderTopicHead());
+      // _refreshTopicOnDemandRow between the two: _loadDevData refreshes the
+      // lists, and a topic the lists do not hold would otherwise repaint
+      // from a snapshot frozen when the page opened. It no-ops for every
+      // topic the lists do cover.
+      AppView._loadDevData()
+        .then(() => AppView._refreshTopicOnDemandRow())
+        .then(() => AppView._renderTopicHead());
       return;
     }
     if (App.currentSubTab !== 'forum') return;
@@ -9222,7 +9271,7 @@ const AppView = {
     // ── Actions: the state-driven primary + the claim toggle ──
     const actions = [];
     if (!AppView.readOnly) {
-      const primary = AppView._issuePrimaryActionSpec(issue);
+      const primary = AppView._issuePrimaryActionSpec(issue, { noNav });
       if (primary) actions.push(primary);
       // Promoted off the ⋯ menu: claiming an issue is what a reader does
       // with it before writing any code, and the chip it toggles is right
@@ -9330,17 +9379,21 @@ const AppView = {
   //   no run, I have a session     → Create new proposal
   //   run generating               → Generating proposal…      (disabled)
   //   run ready, I cloned it       → Go to session
-  //   run ready, outcome question  → Answer & regenerate       (ONE button:
-  //                                  it opens the issue's discussion where
-  //                                  the questions were posted, from which
-  //                                  the ⋯ "Generate proposal" re-runs)
+  //   run ready, outcome question  → Answer & regenerate       (ONE button.
+  //                                  YOUR run: opens the run's own session,
+  //                                  which is where it asked. Somebody
+  //                                  else's: that transcript is owner-scoped
+  //                                  and unopenable, so it falls back to the
+  //                                  issue discussion — board only, since
+  //                                  the head already IS that discussion)
   //   run ready, other outcomes    → Review spec / Review solution /
   //                                  Changes ready — review & start session
   //
   // "Generate proposal" for a never-run issue lives in the ⋯ menu: starting
   // a headless run spends the viewer's credits, so it should be a chosen
   // action rather than the card's most prominent button.
-  _issuePrimaryActionSpec(issue) {
+  _issuePrimaryActionSpec(issue, opts) {
+    const noNav = !!(opts && opts.noNav);
     const n = issue.number;
     const h = issue.headless;
     if (h && h.status === 'generating') {
@@ -9358,12 +9411,38 @@ const AppView = {
         };
       }
       if (h.outcome === 'question') {
-        // One button, not two. It lands on the issue's discussion, where the
-        // run posted its questions; re-running is the ⋯ menu's Generate
-        // proposal row once they're answered.
+        // Where the question actually IS decides where this button goes.
+        //
+        // A headless run does not post its questions to the issue: it drafts
+        // its spec and asks in ITS OWN transcript, then waits (#1372's run
+        // ends "reply with the URL(s) ... then tell me to build the spec").
+        // So for the person who started the run, the destination that lets
+        // them do what the label promises is that session — the spec viewer
+        // and the reply box are both there, and answering in it is what
+        // makes the agent regenerate.
+        //
+        // This button used to send everyone to the issue's discussion
+        // instead. On the board that at least moved; on the topic head the
+        // destination WAS the current view, so the click re-rendered what
+        // was already on screen and the button read as broken.
+        if (h.mine && h.sessionId) {
+          return {
+            key: 'primary', cls: 'gc-vote-btn', label: 'Answer & regenerate',
+            title: 'Your auto-solve run is waiting on an answer — open its session to read the question and reply',
+            act: { fn: 'openAutoRunSession', args: [h.sessionId] },
+          };
+        }
+        // Somebody else's run. Dev chats are owner-scoped by authorization,
+        // not just by missing UI (see /api/apps/:slug/shared-sessions), so
+        // its transcript is genuinely not navigable here and sending them
+        // there would only swap one dead button for another. The issue's
+        // discussion is the one place they can contribute — a real
+        // navigation from the board, and nothing at all from the head,
+        // which already IS that discussion.
+        if (noNav) return null;
         return {
           key: 'primary', cls: 'gc-vote-btn', label: 'Answer & regenerate',
-          title: 'The auto-solve run has a question for you — answer it on this issue, then use ⋯ → Generate proposal to re-run',
+          title: 'This auto-solve run has a question — answer it on this issue, then use ⋯ → Generate proposal to re-run',
           act: { fn: 'openTopic', args: ['issue', n] },
         };
       }
@@ -10358,6 +10437,23 @@ const AppView = {
   // again. No DevChat.sessions.unshift needed: the switchTab path reloads
   // the session list itself before opening the session.
   async goToAutoSessionClone(sessionId) {
+    if (typeof DevChat === 'undefined') return;
+    if (typeof App !== 'undefined' && App.switchTab) {
+      await App.switchTab('dev', sessionId, 'sessions');
+    }
+  },
+
+  // "Answer & regenerate" — open the headless auto-run's OWN session, where
+  // it drafted its spec and asked its question. Only ever wired for a run
+  // the viewer started: /api/sessions/:id is owner-scoped, and openSession
+  // returns silently on a non-ok response, so pointing anyone else here
+  // would produce exactly the dead button this replaced. Same navigation as
+  // goToAutoSessionClone — the switchTab path loads the session itself, so
+  // it does not matter that headless rows are excluded from the session
+  // LIST (/api/sessions filters is_headless = FALSE); openSession fetches
+  // /api/sessions/:id directly and resumes the row if it is paused, which a
+  // finished run always is.
+  async openAutoRunSession(sessionId) {
     if (typeof DevChat === 'undefined') return;
     if (typeof App !== 'undefined' && App.switchTab) {
       await App.switchTab('dev', sessionId, 'sessions');

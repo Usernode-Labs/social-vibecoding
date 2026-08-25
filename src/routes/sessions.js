@@ -65,6 +65,10 @@ const debugAccess = require('../services/debug-access');
 // staging, checks, visuals — is the same tail.
 const localAgent = require('../services/local-agent');
 const localAgentDemo = require('../services/local-agent-demo');
+// #1417: the viewer's open connector work orders, read for the Improve
+// panel alongside their sessions. Owns external_agent_tasks, so the query
+// lives there rather than being restated here.
+const { listOpenWorkOrders } = require('../services/external-agent-tasks');
 // #945: Usernode-side issue / proposal discussion threads as agent
 // context. Every loader here degrades to an empty result, so a failed
 // lookup drops the block rather than failing the turn.
@@ -1365,9 +1369,41 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           }
         );
       }
+      // #1417: the work the viewer has handed to a coding agent through the
+      // connector, which is NOT in chat_sessions and never will be until the
+      // agent shares or submits it. Carried on this endpoint rather than a
+      // new one because the Improve panel already makes exactly one call
+      // here, and a second round trip to say "and three of your own things
+      // are also in flight" is a round trip the panel does not need.
+      //
+      // Deliberately NOT folded into `sessions`, and NOT counted in
+      // `totals`: those numbers are the per-user session budget the caps
+      // above are the denominators for, and a work order costs the platform
+      // no worker, no container and no branch. Putting it there would report
+      // a slot as spent that nobody can free by pausing anything.
+      const externalTasks = await listOpenWorkOrders(pool, req.user.id);
+      // Staging-only demo row (?demo=1), same convention as the mock
+      // sessions above: external_agent_tasks is `staging:private`, so a
+      // staging clone has NO rows at all and this list is empty for every
+      // reviewer. Without a fixture the whole feature is unreviewable in a
+      // preview and undeclarable as a check. Read-only and obviously fake.
+      if (process.env.USERNODE_ENV === 'staging' && req.query.demo === '1') {
+        externalTasks.push({
+          id: 990201,
+          issue_number: 900002,
+          title: '[Mock] Work handed to a coding agent',
+          branch_name: 'usernode/mock-issue-900002',
+          agent: 'claude-code',
+          created_at: new Date(Date.now() - 12 * 60 * 1000).toISOString(),
+          app_slug: config.selfAppSlug,
+          app_name: 'Usernode',
+        });
+      }
       // Per-viewer denominators for the "(x/y)" header — full admins get
       // the raised caps. Cheap (pure function on req.user, no query).
-      res.json({ sessions, totals, caps: effectiveSessionCaps(config, req.user) });
+      res.json({
+        sessions, totals, externalTasks, caps: effectiveSessionCaps(config, req.user),
+      });
     } catch (err) {
       log.error('sessions', 'Failed to list active sessions', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });

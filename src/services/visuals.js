@@ -124,7 +124,14 @@ const CAPTURE_CPUS = process.env.CAPTURE_CPUS || '4';
 // container's agree by construction.
 const TEST_CONCURRENCY = process.env.TEST_CONCURRENCY || '8';
 const TEST_TIMEOUT_MS = process.env.TEST_TIMEOUT_MS || '25000';
-const TESTS_DEADLINE_MS = process.env.TESTS_DEADLINE_MS || '420000';
+// 420s → 470s (#1417), moved together with MAX_DECLARED_TESTS 430 → 480 in
+// services/app-manifest.js — the two are one decision, and the note on that
+// constant says so. A full 480-check suite is ~234s of ideal work at the
+// measured ~3.9s per check over this pool of 8; 470s keeps the 2x margin
+// tests/checks-budget.test.js pins, which is what stops a real manifest's
+// tail being cut on every build. RUN_TIMEOUT_MS above stays at 600s: it only
+// has to clear this by 120s, and it clears it by 130s.
+const TESTS_DEADLINE_MS = process.env.TESTS_DEADLINE_MS || '470000';
 
 // Mint a 15-minute capture identity token for a seeded capture identity
 // row, scoped to the app being captured.
