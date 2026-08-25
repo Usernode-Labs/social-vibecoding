@@ -42,6 +42,9 @@ const {
   NAVIGATE_TIMEOUT_MS,
   SHELL_TIMEOUT_MS,
   API_TIMEOUT_MS,
+  apiTimeoutFor,
+  BOOT_READ_PATHS,
+  BOOT_API_TIMEOUT_MS,
 } = require('../public/sw.js');
 
 const SW_SRC = fs.readFileSync(
@@ -462,4 +465,52 @@ test('the boot session wait stays just past the API deadline', () => {
     `BOOT_SESSION_TIMEOUT_MS (${boot}ms) has drifted away from ` +
     `API_TIMEOUT_MS (${API_TIMEOUT_MS}ms) — it is the last serial wait ` +
     'on a cold load');
+});
+
+// ── The three reads that gate the first paint ────────────────────────────
+
+test('the boot reads answer from cache immediately; everything else waits', () => {
+  const O = 'https://example.test';
+  // These three ARE the launcher: the app list, its layout, the home panels.
+  // Every app icon and avatar on the screen is a URL inside one of their
+  // answers, so nothing below the header can paint until they land — which is
+  // why a warm second load still arrived in three waves with the icons last.
+  assert.deepEqual(BOOT_READ_PATHS, ['/api/apps', '/api/home-layout', '/api/home-panels']);
+  assert.equal(BOOT_API_TIMEOUT_MS, 0, 'a cached copy is served on this tick');
+  for (const p of BOOT_READ_PATHS) {
+    assert.equal(apiTimeoutFor(`${O}${p}`, O), BOOT_API_TIMEOUT_MS, p);
+    assert.equal(apiTimeoutFor(`${O}${p}?demo=1`, O), BOOT_API_TIMEOUT_MS,
+      `${p} with a query string is the same read`);
+  }
+  // EXACT pathname match. An app's issues, its messages, its board order all
+  // live under /api/apps/… and a stale answer there is wrong content, not an
+  // old launcher — they keep the patient deadline.
+  for (const p of [
+    '/api/apps/demo/issues',
+    '/api/apps/demo/promoted',
+    '/api/notifications',
+    '/api/auth/me',
+    '/api/home-layouts',
+  ]) {
+    assert.equal(apiTimeoutFor(`${O}${p}`, O), API_TIMEOUT_MS, p);
+  }
+  // A URL the parser cannot make sense of must not fall into the fast lane.
+  assert.equal(apiTimeoutFor('::::', undefined), API_TIMEOUT_MS);
+});
+
+test('serving a stale boot read is only safe because the page is told', () => {
+  // The whole trade — paint the previous session's grid now, correct it when
+  // the network answers — rests on this notify path and on App._onApiUpdated
+  // re-running the visible screen's loader. If either goes, BOOT_READ_PATHS
+  // must go with it.
+  const body = strategyBody('networkFirstApi');
+  assert.match(body, /timeoutMs: apiTimeoutFor\(event\.request\.url, ORIGIN\)/,
+    'the deadline is chosen per request');
+  assert.match(body, /notifyClients\(\{ type: 'api-updated'/,
+    'a late answer that disagrees is announced');
+  assert.match(body, /served\.fromCache && changed/,
+    'and only when the page was actually shown the stale bytes');
+  const app = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
+  assert.match(app, /_onApiUpdated\(\)/, 'the page listens for it');
+  assert.match(app, /App\.refreshActiveScreen/, 'and re-runs the visible screen\'s loader');
 });

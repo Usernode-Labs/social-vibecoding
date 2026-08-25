@@ -38,13 +38,14 @@ import { devKanbanStore } from './cards-store';
 import { FooterView } from './dev-feed';
 import { ListRowView } from './list-rows';
 import type { KanbanColView, ListRow } from './model';
+import { CardSkeleton, CountSkeleton } from './skeleton';
 
 function selectTab(key: string): void {
   const av = typeof window !== 'undefined' ? (window as any).AppView : null;
   if (av && typeof av._onKanbanTabSelect === 'function') av._onKanbanTabSelect(key);
 }
 
-function Tab({ col, active }: { col: KanbanColView; active: boolean }): ReactNode {
+function Tab({ col, active, loading }: { col: KanbanColView; active: boolean; loading: boolean }): ReactNode {
   const cls = 'dev-kanban-tab flex-1 basis-0 min-w-0 min-h-[44px] px-1 py-1.5 flex flex-col items-center justify-center '
     + 'border-b-2 transition-colors '
     + (active
@@ -64,7 +65,7 @@ function Tab({ col, active }: { col: KanbanColView; active: boolean }): ReactNod
       onClick={() => selectTab(col.key)}
     >
       <span className="text-xs leading-tight truncate max-w-full">{col.title}</span>
-      <span className={countCls}>{col.count}</span>
+      <span className={countCls}>{loading ? <CountSkeleton /> : col.count}</span>
     </button>
   );
 }
@@ -87,9 +88,14 @@ function DragItem({ orderKey, children }: { orderKey?: string | null; children: 
   );
 }
 
-function Column({ col, active }: { col: KanbanColView; active: boolean }): ReactNode {
+function Column({ col, active, loading }: { col: KanbanColView; active: boolean; loading: boolean }): ReactNode {
   let cards: ReactNode;
-  if (col.empty) {
+  if (loading) {
+    // Two rows, not four: the point is to show the column is filling, and a
+    // full-height stack of placeholders in each of four columns is a busier
+    // screen than the one it is standing in for.
+    cards = <CardSkeleton n={2} label={`Loading ${col.title}`} />;
+  } else if (col.empty) {
     cards = <div className="text-xs text-zinc-500 dark:text-zinc-500 italic py-2">{col.empty}</div>;
   } else if (col.orderCol) {
     cards = (
@@ -119,7 +125,9 @@ function Column({ col, active }: { col: KanbanColView; active: boolean }): React
         title={col.hint || undefined}
       >
         {`${col.title} `}
-        <span className="text-zinc-500 dark:text-zinc-500 font-mono">{`· ${col.count}`}</span>
+        {loading
+          ? <span className="text-zinc-500 dark:text-zinc-500 font-mono">{'· '}<CountSkeleton /></span>
+          : <span className="text-zinc-500 dark:text-zinc-500 font-mono">{`· ${col.count}`}</span>}
       </div>
       {cards}
       {col.footer ? <div className="mt-2"><FooterView f={col.footer} /></div> : null}
@@ -138,10 +146,14 @@ export function DevKanban(): ReactNode {
         aria-label="Board columns"
         className="sm:hidden flex items-stretch gap-1 mb-2 border-b border-zinc-200 dark:border-zinc-800"
       >
-        {v.cols.map((col) => <Tab key={col.key} col={col} active={col.key === v.activeTab} />)}
+        {v.cols.map((col) => (
+          <Tab key={col.key} col={col} active={col.key === v.activeTab} loading={!!v.loading} />
+        ))}
       </div>
       <div id="dev-kanban" className="flex gap-3 overflow-x-auto pb-2" data-kanban-active={v.activeTab}>
-        {v.cols.map((col) => <Column key={col.key} col={col} active={col.key === v.activeTab} />)}
+        {v.cols.map((col) => (
+          <Column key={col.key} col={col} active={col.key === v.activeTab} loading={!!v.loading} />
+        ))}
       </div>
     </>
   );

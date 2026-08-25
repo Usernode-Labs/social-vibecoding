@@ -25,6 +25,23 @@
  * self-app's hash-routing rules, which are the router's business.
  */
 
+import { skeletonListHtml } from './card/skeleton';
+
+/**
+ * The thread host's initial content, as a constant string.
+ *
+ * `openTopic` mounts this frame, THEN awaits `_loadDevData()`, and only paints
+ * the topic card once that resolves — so on a cold deep link (or a slow link)
+ * the page was a back bar over nothing at all for the whole fetch. One
+ * card-shaped placeholder stands in for the topic card that is coming.
+ *
+ * Module-level for prop IDENTITY, the same reason board-frame.tsx's is: React
+ * 19 assigns `innerHTML` unconditionally when the prop object differs, so an
+ * inline literal would rewrite this host on every re-render of the frame —
+ * including ones that happen after `GroupChat.mountThread` has filled it.
+ */
+const THREAD_INITIAL = { __html: skeletonListHtml(1) };
+
 export interface DevTopicSubViewProps {
   /** `AppView._devPageHref()`. */
   backHref: string;
@@ -55,7 +72,11 @@ export function DevTopicSubView({ backHref, onBackClick }: DevTopicSubViewProps)
           an empty leaf and never looks inside — the same arrangement
           `#dev-chat-body` has in ./chat-frame.tsx.
       */}
-      <div id="dev-topic-thread" className="flex-1 min-h-0" />
+      <div
+        id="dev-topic-thread"
+        className="flex-1 min-h-0"
+        dangerouslySetInnerHTML={THREAD_INITIAL}
+      />
     </div>
   );
 }

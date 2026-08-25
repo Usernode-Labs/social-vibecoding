@@ -102,8 +102,11 @@ test('#1085 chunk H: there is exactly ONE React root in the bundle', () => {
   const portalCode = PORTALS.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
   assert.ok(!portalCode.includes('createRoot'), 'the portal helper creates no root');
   assert.ok(!MOUNT.includes('createRoot'), 'mount.ts creates no root of its own');
-  assert.match(PORTALS, /createPortal\(entry\.node, entry\.host,/,
-    'the subtree is portalled into the host instead');
+  // `entry.node` reaches the host wrapped in an error boundary — see
+  // lib/island-boundary.tsx: without one, a throw in ANY portalled region
+  // unmounts the root, and the root is `document.body`.
+  assert.match(PORTALS, /createPortal\(\s*\/\/[\s\S]*?createElement\(Island, \{ name: `portal:[\s\S]*?\}, entry\.node\),\s*\n\s*entry\.host,/,
+    'the subtree is portalled into the host instead, inside its own boundary');
   assert.equal(MAIN.split('hydrateRoot(').length - 1, 1, 'main.tsx has the only root');
   // The retired helper is gone, not merely unused.
   assert.ok(!fs.existsSync(path.join(root, 'frontend/src/lib/interim-root.ts')),
@@ -246,7 +249,21 @@ test('#dev-body stays a legacy host — a constant dangerouslySetInnerHTML', () 
   assert.ok(!decl[1].includes('${'), 'no interpolation — the string never changes');
   // Byte-for-byte what the template put there.
   assert.ok(decl[1].includes('<div id="dev-feed">'), 'still ships #dev-feed');
-  assert.ok(decl[1].includes('Loading…'), 'still ships the loading placeholder');
+  // The placeholder is a SKELETON now, not the word "Loading…". Eleven
+  // characters of grey in the corner of an empty screen is not a state a
+  // reader notices, and the blank beside it reads as an empty board rather
+  // than a pending one — which is the report this answers. The rows are built
+  // by card/skeleton.tsx so the string here and the components the board
+  // paints a moment later cannot drift apart.
+  assert.ok(decl[1].includes('skeletonListHtml('),
+    'the placeholder rows come from the shared builder');
+  assert.ok(!decl[1].includes('Loading…'),
+    'the bare "Loading…" text is not what stands in for the feed any more');
+  const SKELETON = read('frontend/src/features/dev-board/card/skeleton.tsx');
+  assert.match(SKELETON, /role="status"/,
+    'the skeleton carries one live-region label for the decorative rows');
+  assert.match(SKELETON, /aria-hidden="true"/,
+    'the bars themselves are hidden from assistive tech');
   // #gc-merged is NOT here any more: THE UI OVERHAUL folded completed work
   // into the Feed's own stream (AppView._feedItems), so the second node the
   // template used to ship — the "Completed" block parked below the feed — is

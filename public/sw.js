@@ -114,6 +114,50 @@ const NAVIGATE_TIMEOUT_MS = 200;
 const SHELL_TIMEOUT_MS = 200;
 const API_TIMEOUT_MS = 1000;
 
+// ── The three reads that gate the first paint ────────────────────────
+//
+// The staging a returning visitor sees on home is NOT an asset problem. A
+// warm second load requests all ~38 shell assets in one batch at ~35ms — the
+// precache list below is complete and the sync test keeps it that way. What
+// arrives in stages is DATA: /api/apps, /api/home-layout and /api/home-panels
+// answer around 240ms on a warm local link, the widgets appear when they do,
+// and every app icon and avatar starts loading only THEN, because its URL is
+// a field inside those answers. So the launcher paints in three waves and the
+// icons are last by construction, however well they are cached.
+//
+// These three get a zero deadline, which means: if there is a cached copy,
+// serve it on this tick and let the network answer land behind it. The
+// previous session's grid paints on the first frame, complete with its icons
+// (cache-first '/app-icons' and '/avatars' already hold them), and a change
+// is corrected in place by the api-updated path below.
+//
+// Why these three and not the API tier at large: they are the user's OWN
+// launcher — the app list, its layout and the home panels. Being one load
+// stale on your own grid self-corrects within the second and is the same
+// trade the navigate and shell tiers already take. A stale ANSWER elsewhere
+// (a vote count, a proposal's checks) is wrong content with no such excuse,
+// which is what the 1s above is protecting and why this stays a short,
+// explicit list rather than a lower global.
+//
+// The correction is not optional: it is what makes this safe. networkFirstApi
+// posts `api-updated` when the copy it served disagrees with the answer that
+// arrives, and App._onApiUpdated re-runs the visible screen's own loader. If
+// that path is ever removed, remove this list with it.
+const BOOT_READ_PATHS = ['/api/apps', '/api/home-layout', '/api/home-panels'];
+const BOOT_API_TIMEOUT_MS = 0;
+
+/**
+ * The deadline for one API request: 0 for a boot read, API_TIMEOUT_MS
+ * otherwise. Exact pathname match, so `/api/apps/:slug/...` — an app's
+ * issues, its messages, its board order — keeps the ordinary deadline; only
+ * the launcher's own list is in the fast lane.
+ */
+function apiTimeoutFor(url, selfOrigin) {
+  let p;
+  try { p = new URL(url, selfOrigin).pathname; } catch { return API_TIMEOUT_MS; }
+  return BOOT_READ_PATHS.includes(p) ? BOOT_API_TIMEOUT_MS : API_TIMEOUT_MS;
+}
+
 // Same-origin shell assets precached on install so the very next offline
 // load works even for screens the session never touched. Must list every
 // local script/stylesheet index.html references — the precache-list sync
@@ -442,6 +486,10 @@ function bytesEqual(a, b) {
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     classifyRequest,
+    apiTimeoutFor,
+    BOOT_READ_PATHS,
+    BOOT_API_TIMEOUT_MS,
+    API_TIMEOUT_MS,
     isImmuneApiRequest,
     isShellDocumentUrl,
     SHELL_DOCUMENT_PATHS,
@@ -689,7 +737,7 @@ if (typeof module !== 'undefined' && module.exports) {
         if (hit) served.fromCache = true;
         return hit;
       },
-      timeoutMs: API_TIMEOUT_MS,
+      timeoutMs: apiTimeoutFor(event.request.url, ORIGIN),
       schedule: swSchedule,
     });
     if (pending) event.waitUntil(pending.catch(() => {}));

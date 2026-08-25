@@ -168,6 +168,10 @@ test('the note is silent when there is nothing to explain', () => {
 
 function board(AppView, filters, over) {
   const o = over || {};
+  // A seeded board is a LOADED board. `_kanbanView()` reports `loading` until
+  // this is set and the columns draw placeholders instead of cards — see
+  // frontend/src/features/dev-board/card/skeleton.tsx.
+  AppView._devDataReady = true;
   AppView._ghIssues = o.issues || [];
   AppView._envIssueNumbers = new Set();
   AppView._proposals = [];

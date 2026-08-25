@@ -68,6 +68,13 @@ function makeCtx(over) {
 
 function makeAppView() {
   const sandbox = makeCtx();
+  // Every test here drives a board that has ALREADY loaded — filtering,
+  // bucketing, counts. `_devDataReady` is what tells the view models that,
+  // and without it `_kanbanView()` reports `loading` and the columns render
+  // placeholders instead of cards (see card/skeleton.tsx). Set once here
+  // rather than per test: an unloaded board has its own coverage in
+  // tests/dev-board-loading.test.js.
+  sandbox.__AppView._devDataReady = true;
   // The bar's markup is features/dev-board/kanban-filters.tsx's since #1191,
   // so a test that drives the module needs the sandbox back to see what was
   // published — and `document.activeElement`, which decides whether a select

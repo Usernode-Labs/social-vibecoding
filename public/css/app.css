@@ -832,6 +832,25 @@ html.un-kb .platform-safe-bar {
   display: flex !important;
 }
 
+/* THE HOME-INDICATOR INSET IS THE KIT'S JOB INSIDE AN ADOPTED SURFACE.
+   #improve-footer carries .platform-safe-scroll, which is right in the two
+   cases where nothing else reserves that strip: the desktop slide-over
+   (where the inset is 0 anyway) and mobile Safari, where the kit is absent
+   and the panel stays a fixed slide-over.
+
+   Inside a kit sheet or panel it is counted TWICE. `.un-sheet` already sets
+   `padding-bottom: var(--un-safe-inset-bottom, env(safe-area-inset-bottom))`
+   and `.un-sheet-body` adds 20px under that, so a 34px indicator put the
+   version row 88px off the bottom (34 + 20 + 34) instead of 54. Measured,
+   not estimated — the duplicate is this one.
+
+   `!important` because .platform-safe-scroll uses it; the descendant
+   selector is what wins the tie. */
+.platform-sheet-adopted #improve-footer,
+.platform-panel-adopted #improve-footer {
+  padding-bottom: 0 !important;
+}
+
 /* Chat/proposal screen headers wired through unNative.attachNavBar
    (platform-ui.js attachScreenFx): the kit toggles .un-scrolled once
    the screen's scroller moves — that's the cue for the frosted
@@ -6398,18 +6417,24 @@ span.gc-vote-btn-icon { cursor: default; }
   text-align: center;
 }
 
-/* Hide the in-page title when the platform is loaded as the top frame
-   of the Usernode Flutter WebView — the native shell already shows
-   the screen name in its own chrome, so showing ours below it would
-   just duplicate it. The class is set by the inline detection script
-   in <head> right after the bridge loads (see index.html), so this
-   takes effect before first paint and there's no flash.
-   `document.title` (browser-tab title) is still kept in sync via
-   App.setHeaderTitle — useful for the native shell if it ever
-   surfaces it, and harmless otherwise. */
-html.in-native-webview #header-title {
-  display: none;
-}
+/* THE IN-PAGE TITLE IS SHOWN IN THE NATIVE WEBVIEW TOO.
+   It was hidden here on the reasoning that "the native shell already
+   shows the screen name in its own chrome, so showing ours below it
+   would just duplicate it" — and App.setHeaderTitle does post a
+   `titleChanged` message to the shell's AppBar, so that was a real
+   arrangement rather than a guess.
+   On a device it reads as a screen with no title at all, which is the
+   report that removed this rule. The in-page title is the one this
+   codebase can see and style; the AppBar's is the app's, and if it is
+   showing the name as well that is a duplicate worth fixing on the side
+   that can be measured from here.
+   NOTHING ELSE CHANGES. `.in-native-webview` still drives the safe-area
+   and performance rules around it, `titleChanged` still goes out, and
+   the title stays LEFT-ALIGNED on a phone by the ordinary geometry:
+   use-header-layout.ts centres only when
+   `titleNaturalW <= headerW - 2*(max(sideGroup) + gap)`, which a 390px
+   viewport carrying the Improve button and the hamburger never
+   satisfies for a real title. */
 
 /* ── Mobile pill collapse ─────────────────────────────────
    On narrow viewports the per-card pills on Home eat into the space

@@ -22,6 +22,7 @@ import { useStoreState } from '../../../lib/use-store-state';
 import { devFeedStore } from './cards-store';
 import { ListRowView } from './list-rows';
 import type { FooterSpec } from './model';
+import { CardSkeleton } from './skeleton';
 
 function callAppView(fn: string): void {
   const av = typeof window !== 'undefined' ? (window as any).AppView : null;
@@ -54,6 +55,9 @@ export function FooterView({ f }: { f: FooterSpec }): ReactNode {
 
 export function DevFeed(): ReactNode {
   const v = useStoreState(devFeedStore);
+  // Before the first load lands there is nothing true to say about this
+  // stream — not its emptiness, not its length. Draw its shape instead.
+  if (v.loading) return <CardSkeleton n={4} label="Loading activity" />;
   return (
     <>
       {v.block.length ? (

@@ -2642,10 +2642,10 @@
       "expectSelector": "#dev-actions > #dev-kanban-filterbar:empty + div > #dev-plus-btn"
     },
     {
-      "name": "The notifications drawer offers its older notifications",
+      "name": "The notifications drawer offers the rest of its notifications",
       "path": "/?shot=notifications&demo=1",
       "expectSelector": "#notifications-older-toggle",
-      "expectText": "older notification"
+      "expectText": "See more notifications"
     },
     {
       "name": "The notifications drawer is a flat list of rows (#1385)",

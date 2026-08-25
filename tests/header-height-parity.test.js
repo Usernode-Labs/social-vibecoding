@@ -23,8 +23,10 @@
 //   inside an app        55px  (#app-mode-switch was 30px: py-1 segments
 //                               = 24px + p-0.5 = 4px + 1px border × 2)
 //   landing, >= 640px    61px  (CTAs were sm:py-2 sm:text-sm = 36px)
-//   home, native WebView 45px  (html.in-native-webview hides the title, and
-//                               the 20px icon buttons were all that was left)
+//   home, native WebView 45px  (html.in-native-webview USED to hide the
+//                               title, leaving only 20px icon buttons; the
+//                               title is drawn there now, and the 28px
+//                               content-row floor is what holds the height)
 //
 // So the row is pinned from BOTH directions and this file is what keeps it
 // pinned — a "tidy up the header" edit that re-adds vertical padding to a
@@ -244,4 +246,55 @@ test('no JS sets a header height — the contract lives entirely in markup + CSS
   const appJs = fs.readFileSync(path.join(root, 'public/js/app.js'), 'utf8');
   assert.doesNotMatch(appJs, /getElementById\('platform-header'\)\.style/,
     'app.js never writes #platform-header inline styles');
+});
+
+// ── The native WebView shows the in-page title ────────────────────────
+//
+// It was hidden under `html.in-native-webview` because the Flutter shell puts
+// the screen name in its own AppBar — a real arrangement, not a guess:
+// App.setHeaderTitle posts `titleChanged` to it. On a device that read as a
+// screen with no title at all, so the in-page one is drawn there too.
+//
+// Pinned because the obvious "tidy up" is to restore the hide: the CSS rule
+// reads like dead weight next to the AppBar message, and the two halves live
+// in different files.
+
+test('no rule hides the header title in the native WebView', () => {
+  const css = fs.readFileSync(
+    path.join(__dirname, '..', 'public', 'css', 'app.css'), 'utf8');
+  const rules = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.doesNotMatch(rules, /in-native-webview[^{]*#header-title[^{]*\{[^}]*display:\s*none/,
+    'the native WebView must not hide #header-title');
+  // The class itself stays — it still gates the safe-area and native
+  // performance rules, so this is not "delete the detection".
+  assert.match(rules, /html\.un-ios\.in-native-webview/,
+    'the native marker class is still load-bearing elsewhere');
+});
+
+test('the title is left-aligned on a phone by an explicit rule, not by a native branch', () => {
+  // The request was "left justified, leaving space for the home icon, since
+  // there wouldn't be room to centre".
+  //
+  // This test used to assert that the EXISTING measurement already produced
+  // that, on the reasoning that a 390px viewport carrying #improve-btn and
+  // the hamburger could never satisfy
+  //   titleNaturalW <= headerW - 2 * (max(sideGroup) + gap)
+  // for a real title. That was wrong twice over, and the preview showed it:
+  // "Settings" DID satisfy it, and the formula was over-reporting the room by
+  // the header's own `px-4` on each side, so the centred title overlapped the
+  // Improve button. Both halves are fixed in use-header-layout.ts and pinned
+  // in tests/header-title-centering.test.js, which drives the arithmetic
+  // directly on the measurements that failed.
+  //
+  // What belongs HERE is the part that is about this file's subject — that
+  // alignment stays ONE rule for every surface, with no native-webview branch
+  // to drift out of sync with the browser one.
+  const hook = fs.readFileSync(path.join(__dirname, '..', 'frontend', 'src',
+    'features', 'header', 'use-header-layout.ts'), 'utf8');
+  assert.match(hook, /const CENTER_MIN_WIDTH_PX = 640;/,
+    'a phone is left-aligned by a stated breakpoint, not by hoping the maths says so');
+  assert.match(hook, /const canCenter = canCenterTitle\(\{/,
+    'and the decision goes through the one exported, tested function');
+  assert.doesNotMatch(hook, /in-native-webview|isNative/,
+    'alignment is one geometric rule for every surface');
 });
