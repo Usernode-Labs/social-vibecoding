@@ -130,44 +130,56 @@ test('every other outcome also yields exactly one primary', () => {
   assert.ok(hasAction(fresh, 'createPrForIssue', 5));
 });
 
-// ── The topic head is not the board ────────────────────────────────────
+// ── Where "Answer & regenerate" goes ──────────────────────────────────
 //
-// The same _issueCardModel draws the board card AND the topic head
-// (app-view.js's _renderTopicHead calls it with { noNav: true }). On the
-// board, the question-outcome primary is a real navigation: "Answer &
-// regenerate" opens the issue's discussion, which is where the run posted
-// its questions. On the head you are ALREADY in that discussion, so the
-// same spec becomes a button whose whole action is to re-render the view
-// it is drawn on — it looks broken because nothing visibly happens.
+// A headless run does not post its questions to the issue — it drafts a
+// spec and asks in its OWN transcript, then waits. So the button has to
+// land in that session, and it can only do that for the person who started
+// the run: /api/sessions/:id is owner-scoped, and DevChat.openSession
+// returns silently on a non-ok response.
 //
-// The head is not left without the action: _detailActionsView already
-// spells "Generate proposal" out in full there, which is the re-run the
-// board's button was only pointing at. That is also why the head must not
-// grow its own copy — two Generate affordances is this file's subject.
+// The fallback for everybody else is the issue's discussion, which is a
+// real navigation from the board and a no-op from the topic head — the head
+// IS that discussion, and _issueCardModel draws both surfaces (the head via
+// { noNav: true }). That no-op was the reported bug: the button did nothing.
 
-test('the topic head does not draw a primary that navigates to itself', () => {
+test('my own run: the button opens the run\'s session', () => {
   const AppView = makeAppView();
-  const head = AppView._issueCardModel(
-    issue({ status: 'ready', outcome: 'question', sessionId: 91 }),
-    { noNav: true }
-  );
-  const acts = (head.actions || []).map((a) => a.act).filter(Boolean);
-  assert.ok(!acts.some((a) => a.fn === 'openTopic'),
-    'the head\'s own card must not offer "open this issue" — it IS this issue');
-  assert.ok(!cardHtml(head).includes('Answer &amp; regenerate'),
-    'the board\'s wording promises a navigation the head cannot perform');
+  const h = { status: 'ready', outcome: 'question', sessionId: 91, mine: true };
+  for (const [surface, opts] of [['board', undefined], ['head', { noNav: true }]]) {
+    const model = AppView._issueCardModel(issue(h), opts);
+    assert.ok(hasAction(model, 'openAutoRunSession', 91), `${surface}: opens the session`);
+    assert.ok(!(model.actions || []).some((a) => a.act && a.act.fn === 'openTopic'),
+      `${surface}: not the issue discussion`);
+    assert.match(cardHtml(model), /Answer &amp; regenerate/, `${surface}: keeps the label`);
+  }
 });
 
-test('the board card keeps it — the fix is scoped to the head', () => {
+test('the opener exists on AppView — the dispatcher looks it up by name', () => {
   const AppView = makeAppView();
-  const board = AppView._issueCardModel(issue({ status: 'ready', outcome: 'question', sessionId: 91 }));
-  assert.ok(hasAction(board, 'openTopic', 'issue', 5), 'still a real navigation on the board');
-  assert.match(cardHtml(board), /Answer &amp; regenerate/);
+  assert.equal(typeof AppView.openAutoRunSession, 'function',
+    'dev-card.tsx call() resolves window.AppView[ref.fn]; a missing name is a silent no-op');
+});
+
+test("somebody else's run: board falls back to the issue, head draws nothing", () => {
+  const AppView = makeAppView();
+  const h = { status: 'ready', outcome: 'question', sessionId: 91, mine: false };
+
+  const board = AppView._issueCardModel(issue(h));
+  assert.ok(hasAction(board, 'openTopic', 'issue', 5), 'a real navigation from the board');
+  assert.ok(!hasAction(board, 'openAutoRunSession'), 'never into a session it cannot open');
+
+  const head = AppView._issueCardModel(issue(h), { noNav: true });
+  const acts = (head.actions || []).map((a) => a.act).filter(Boolean);
+  assert.ok(!acts.some((a) => a.fn === 'openTopic'),
+    'the head must not offer "open this issue" — it IS this issue');
+  assert.ok(!cardHtml(head).includes('Answer &amp; regenerate'),
+    'and must not promise a navigation it cannot perform');
 });
 
 test('the head still offers exactly one Generate affordance, in its detail actions', () => {
   const AppView = makeAppView();
-  const item = issue({ status: 'ready', outcome: 'question', sessionId: 91 });
+  const item = issue({ status: 'ready', outcome: 'question', sessionId: 91, mine: false });
   const head = AppView._issueCardModel(item, { noNav: true });
   assert.ok(!hasAction(head, 'confirmAutoSession'),
     'the head card must not grow its own re-run — the detail list owns it');
