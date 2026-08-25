@@ -51,6 +51,7 @@ import {
   XIcon,
 } from '@/components/ui/icons';
 
+import { NativeAppVersionRow } from '../header/native-app-version-row';
 import { useStoreState } from '../../lib/use-store-state';
 import { improveStore } from './improve-store.js';
 import { Improve } from './improve-controller.js';
@@ -440,16 +441,7 @@ export function ImprovePanel() {
                 0.4.0/1223. Deliberately independent of the platform version
                 above and never the open app's commit. Hidden outside the
                 mobile app. */}
-            <div id="drawer-row-native-app-version" className="hidden drawer-ver-row flex items-center gap-2 px-4">
-              <span className="drawer-ver-label">
-                Mobile app version
-              </span>
-              <span
-                id="native-app-version-slot"
-                className="drawer-ver drawer-ver-value ml-auto min-w-0 justify-end"
-              >
-              </span>
-            </div>
+            <NativeAppVersionRow />
             {/* Fork lineage: the amber "⑂ Forked from <name>" label, written by
                 AppView.renderForkBadge() and revealed by
                 App.DrawerStatus.setForkVisible(). App context, not a version. */}

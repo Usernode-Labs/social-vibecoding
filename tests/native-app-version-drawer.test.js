@@ -15,14 +15,37 @@ const menuSource = fs.readFileSync(
   path.join(root, 'frontend/src/features/header/header-menu.tsx'), 'utf8');
 const html = fs.readFileSync(path.join(root, 'public/index.html'), 'utf8');
 
-function element({ hidden = false } = {}) {
-  const classes = new Set(hidden ? ['hidden'] : []);
+const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+
+// ONE bundle per process, deliberately: each `loadTsx` entry is its own
+// bundle, so a second would hand this file a different `nativeAppVersionStore`
+// from the one the component subscribes to.
+let api = null;
+const mod = () => (api || (api = loadTsx('tests/fixtures/native-app-version-api.ts')));
+
+/**
+ * The row as the browser would draw it, from the store the module just wrote.
+ *
+ * This used to be a DOM stub whose `textContent` and `classList` the module
+ * assigned directly. The module publishes now and the component renders, so
+ * the same two assertions read the REAL markup instead of a fake node — which
+ * is strictly more than they checked before: a component that forgot the id,
+ * or escaped nothing, would now fail them.
+ */
+function rendered() {
+  const html = renderToHtml(createElement(mod().NativeAppVersionRow, {}));
+  const raw = (html.match(/id="native-app-version-slot"[^>]*>([^<]*)</) || [, ''])[1];
+  // Decode, so `slot.textContent` below keeps meaning textContent. The RAW
+  // form is asserted separately — that is where the escaping shows.
+  const slotText = raw
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"')
+    .replace(/&#x27;/g, "'").replace(/&amp;/g, '&');
+  const rowClass = (html.match(/id="drawer-row-native-app-version"[^>]*class="([^"]*)"/) || [, ''])[1];
   return {
-    textContent: '',
-    classList: {
-      contains(name) { return classes.has(name); },
-      remove(name) { classes.delete(name); },
-    },
+    html,
+    rawSlot: raw,
+    slot: { textContent: slotText },
+    row: { classList: { contains: (name) => rowClass.split(/\s+/).includes(name) } },
   };
 }
 
@@ -32,8 +55,6 @@ function loadRenderer({
   bridgeInfos = [],
   snapshots = [],
 } = {}) {
-  const row = element({ hidden: true });
-  const slot = element();
   const listeners = {};
   let infoReads = 0;
   let settingsReads = 0;
@@ -65,27 +86,27 @@ function loadRenderer({
         return snapshots.length ? snapshots[at] : null;
       },
     },
-    document: {
-      getElementById(id) {
-        return {
-          'drawer-row-native-app-version': row,
-          'native-app-version-slot': slot,
-        }[id] || null;
-      },
-    },
     addEventListener(type, listener) {
       (listeners[type] ||= []).push(listener);
     },
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  // The module is an ordinary bundle module now (./header-menu.tsx imports it)
+  // and pulls its store in by name. Bind the REAL store into the sandbox and
+  // drop the import line, so the module body evaluates as a script exactly as
+  // it did — same technique as tests/challenge-template-prefill.test.js.
+  mod().nativeAppVersionStore.set({ value: '' });
+  sandbox.nativeAppVersionStore = mod().nativeAppVersionStore;
   vm.createContext(sandbox);
-  vm.runInContext(source, sandbox);
+  vm.runInContext(source.replace(/^import[^\n]*\n/m, ''), sandbox);
   sandbox.NativeAppVersion.init();
 
   return {
-    row,
-    slot,
+    get row() { return rendered().row; },
+    get slot() { return rendered().slot; },
+    get rawSlot() { return rendered().rawSlot; },
+    get html() { return rendered().html; },
     get infoReads() { return infoReads; },
     get settingsReads() { return settingsReads; },
     dispatch(type, detail) {
@@ -226,6 +247,21 @@ test('native values are assigned as text and bounded before rendering', async ()
 
   assert.equal(loaded.slot.textContent,
     '<img src=x onerror=alert(1)>/' + '1'.repeat(50));
-  assert.match(source, /slot\.textContent = value/);
-  assert.doesNotMatch(source, /slot\.innerHTML/);
+
+  // The property this test is really about, now proven on RENDERED OUTPUT
+  // rather than by grepping the writer for `.innerHTML`. The module used
+  // `textContent`; the component renders a text CHILD, and React escapes those
+  // — so a malformed native producer reaches the document inert either way.
+  assert.equal(loaded.rawSlot,
+    '&lt;img src=x onerror=alert(1)&gt;/' + '1'.repeat(50));
+  assert.doesNotMatch(loaded.html, /<img/);
+  const rowSrc = fs.readFileSync(
+    path.join(root, 'frontend/src/features/header/native-app-version-row.tsx'), 'utf8');
+  // The CODE form, not the word: the component's own comment explains why it
+  // does not use this sink, and prose about a sink is not a sink. Same
+  // convention as tests/admin-ui-registry.test.js's `code()`.
+  assert.doesNotMatch(rowSrc, /dangerouslySetInnerHTML=/);
+  // And the module no longer writes the node at all — it publishes.
+  assert.doesNotMatch(source, /slot\.textContent|row\.classList/);
+  assert.match(source, /nativeAppVersionStore\.set\(/);
 });

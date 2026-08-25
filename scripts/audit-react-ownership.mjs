@@ -257,6 +257,10 @@ const OWNED = [
     sel: '#dc-view',
     except: ['#dc-staging-panel'],
   },
+  // Only reachable under NATIVE=1 — see the stubbed bridge below. The row is
+  // features/header/native-app-version-row.tsx; the module that used to write
+  // its text and strip its `hidden` publishes to a store instead.
+  { sel: '#drawer-row-native-app-version' },
   { sel: '#llm-grants-list' },               // features/settings/grants-list.tsx
   { sel: '#cli-tokens-list' },               // features/settings/cli-tokens-list.tsx
   { sel: '#connectors-list' },               // features/settings/connectors-list.tsx
@@ -427,6 +431,59 @@ function instrument(owned) {
   };
 }
 
+
+/**
+ * A stubbed native bridge, for `NATIVE=1`.
+ *
+ * Three header modules and one settings section gate on
+ * `window.usernode.isNative === true` and then read their data from bridge
+ * calls. In an ordinary browser sweep they `return` on their first line, so
+ * their hosts never render and this audit reported nothing about them — which
+ * read as "clean" and meant "never looked".
+ *
+ * IT HAS TO BE INSTALLED AFTER LOAD, and that is not a detail.
+ *
+ * `addInitScript` was the obvious way and it silently does nothing:
+ * `/usernode-bridge.js` sets `window.usernode` synchronously in <head>, and
+ * public/js/native-chrome.js replaces `window.NativeChrome` — so a pre-load
+ * stub is overwritten by both, the modules `return` on their first line, and
+ * this audit reports a confident zero about hosts it never reached. That is
+ * the same shape of bug as a guard whose exemption outlived its reason, and it
+ * is why this runs after the shell has booted and then drives `init()` by hand.
+ *
+ * `?un-native-webview=1` (see frontend/src/head.html) supplies the presentation
+ * half — the `.in-native-webview` class a headless browser can never earn,
+ * because the real signal is an injected JS channel. The flag is deliberately
+ * presentation-only, so the bridge shape below is still this file's to supply.
+ *
+ * It is deliberately a separate MODE, not part of the default sweep: a native
+ * bridge changes chrome, safe areas and several code paths product-wide, and
+ * findings from that configuration are not findings about the web shell.
+ */
+function nativeBridge() {
+  const noop = async () => ({});
+  window.NativeChrome = {
+    getInfo: async () => ({
+      version: 4,
+      capabilities: ['getSettingsState', 'getWalletState', 'getNodeStatus'],
+      appVersion: '0.4.0',
+      buildNumber: '1223',
+    }),
+    ...(window.NativeChrome || {}),
+  };
+  window.usernode = {
+    isNative: true,
+    getSettingsState: async () => ({
+      buildInfo: { appVersion: '0.4.0', buildNumber: '1223' },
+    }),
+    getNodeStatus: async () => ({ state: 'online', peers: 8 }),
+    getWalletState: async () => ({ address: 'un1qaudit', balance: '0' }),
+    getTransactionRecords: async () => ({ records: [] }),
+    manageStaking: noop,
+    ...(window.usernode || {}),
+  };
+}
+
 const browser = await chromium.launch({ executablePath: CHROME });
 const context = await browser.newContext({
   viewport: { width: 440, height: 950 },
@@ -434,12 +491,29 @@ const context = await browser.newContext({
   ...(AUTH && fs.existsSync(AUTH) ? { storageState: AUTH } : {}),
 });
 const page = await context.newPage();
+const NATIVE = process.env.NATIVE === '1';
 await page.addInitScript(instrument, OWNED);
 
 const found = new Map();
 for (const route of ROUTES) {
-  await page.goto(BASE + '/' + route, { waitUntil: 'networkidle' });
+  const url = NATIVE
+    ? BASE + '/' + (route.startsWith('?') ? route.replace('?', '?un-native-webview=1&') : '?un-native-webview=1' + route)
+    : BASE + '/' + route;
+  await page.goto(url, { waitUntil: 'networkidle' });
   await page.waitForTimeout(2600);
+  if (NATIVE) {
+    // Bridge first (see nativeBridge's note on why this cannot be an init
+    // script), then init the modules that gate on it, then open the drawer —
+    // its footer is where the native rows live and no URL reaches it.
+    await page.evaluate(nativeBridge);
+    await page.evaluate(async () => {
+      for (const name of ['NativeAppVersion', 'NodePill', 'WalletSheet']) {
+        try { await window[name]?.init?.(); } catch { /* not on this route */ }
+      }
+      try { (window.UsernodeReact?.improve || window.Improve)?.open?.(); } catch { /* ditto */ }
+    });
+    await page.waitForTimeout(1500);
+  }
   const hits = await page.evaluate(() => {
     const out = window.__ownHits || [];
     window.__ownHits = [];

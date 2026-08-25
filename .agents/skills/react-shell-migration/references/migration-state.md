@@ -53,13 +53,42 @@ now reconciles — and is the thing to update when one moves across.
 - nothing on the Leaderboard screen. See the note under "Converted".
 - nothing on the Dev screen but `showLaunchCoverShot`'s launch cover, which
   is deliberate — see "Large" below.
-- the header's own strays, ALL of them native-only now:
-  `header/wallet-sheet.js`, `header/node-pill.js` and
-  `header/native-app-version.js` each `return` unless
-  `window.usernode.isNative === true`, so like `#settings-usernode-section`
-  they need a phone, not a browser. `native-chrome.js` and
-  `screenshot-select.js` build no markup. `header/ai-credit.js` was the one
-  browser-visible stray and has converted — see below.
+- the header's own strays, all native-gated: `header/wallet-sheet.js` and
+  `header/node-pill.js` (`header/native-app-version.js` has CONVERTED — see
+  below). Each `return`s unless `window.usernode.isNative === true`, as does
+  `#settings-usernode-section`. `native-chrome.js` and `screenshot-select.js`
+  build no markup. `header/ai-credit.js` was the one browser-visible stray and
+  has converted.
+
+  **"They need a phone, not a browser" is what this list used to say, and it
+  is wrong in the way that matters.** It conflates two things:
+
+  - **Converting them** is ordinary work and needs no device.
+    `tests/node-pill-native-status.test.js` and fourteen others already build
+    `usernode: { isNative: true }` + `NativeChrome` + a DOM stub and call
+    `init()`. That is the same vm harness every other conversion used, and
+    `native-app-version.js` went through it unchanged.
+  - **Auditing them in a browser** is the part that is genuinely hard, and
+    NOT for the reason the old line gave. A pre-load stub does not work:
+    `/usernode-bridge.js` sets `window.usernode` synchronously in `<head>`
+    and `public/js/native-chrome.js` replaces `window.NativeChrome`, so
+    `page.addInitScript` is overwritten by both and the modules still bail on
+    their first line — while the sweep reports a confident zero about hosts it
+    never reached. `frontend/src/head.html` says why in its own words: the
+    real signal is an injected JS channel, "which a headless browser can never
+    have".
+
+  The recipe that DOES work, and what `NATIVE=1` in
+  `scripts/audit-react-ownership.mjs` now does: load with
+  `?un-native-webview=1` (the sanctioned presentation flag), then install the
+  bridge shape AFTER boot, then drive `init()` by hand, then open the drawer.
+  Verified: the version row loses its `hidden` and renders `0.4.0/1223` with
+  zero page errors.
+
+  What still genuinely needs a device is SIGN-OFF — real bridge response
+  shapes, the kit's sheet presentation, safe areas. That is a verification
+  step, not a prerequisite for writing the conversion, and treating it as one
+  is what left four surfaces untouched for the whole run.
 
 `members-controller.js` and `app-secrets-controller.js` are NOT on this list
 and should not be added: AGENTS.md documents both as legitimate legacy hosts
